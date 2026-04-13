@@ -610,17 +610,22 @@ impl<'a> LayoutEngine<'a> {
     /// `start_idx` within a filtered visible-ids list. The chain extends
     /// as long as consecutive nodes have `keep_next_content_area` or the
     /// next node has `keep_previous_content_area`.
+    /// Returns (chain_height, chain_length).  A chain of length 1 means no
+    /// keep properties link the node to its neighbour — it should NOT trigger
+    /// a keep-chain page break and instead go through normal overflow/split.
     fn visible_keep_chain_height(
         &self,
         visible_ids: &[(usize, FormNodeId)],
         start_idx: usize,
         available: Size,
-    ) -> f64 {
+    ) -> (f64, usize) {
         let mut total = 0.0;
+        let mut count = 0usize;
         for i in start_idx..visible_ids.len() {
             let (_, id) = visible_ids[i];
             let sz = self.compute_extent_with_available(id, Some(available));
             total += sz.height;
+            count += 1;
             // Check if the chain continues to the next node.
             if i + 1 < visible_ids.len() {
                 let (_, next_id) = visible_ids[i + 1];
@@ -634,7 +639,7 @@ impl<'a> LayoutEngine<'a> {
                 }
             }
         }
-        total
+        (total, count)
     }
 
     fn extract_page_structure(
@@ -910,11 +915,16 @@ impl<'a> LayoutEngine<'a> {
             // Keep-chain look-ahead: if this node starts a keep chain and
             // the chain doesn't fit in remaining space (but WOULD fit on a
             // fresh page), break now so the chain starts on the next page.
+            // Only applies to actual multi-node chains (chain_len > 1), OR
+            // single non-splittable nodes.  A splittable single node should go
+            // through normal overflow/split logic instead of being pushed to a
+            // fresh page, which wastes space and causes over-pagination (#866).
             if placed_count > 0 && vis_pos < visible_ids.len() {
-                let chain_height = self.visible_keep_chain_height(&visible_ids, vis_pos, available);
+                let (chain_height, chain_len) = self.visible_keep_chain_height(&visible_ids, vis_pos, available);
                 let remaining_on_page = content_bottom - y_cursor;
-                if chain_height > remaining_on_page && chain_height <= content_height {
-                    // Chain fits on a fresh page — break now.
+                let is_single_splittable = chain_len == 1 && self.can_split(child_id);
+                if !is_single_splittable && chain_height > remaining_on_page && chain_height <= content_height {
+                    // Chain (or non-splittable single node) fits on a fresh page — break now.
                     break;
                 }
                 // Unsatisfiable keep chain (exceeds page height):
@@ -985,7 +995,6 @@ impl<'a> LayoutEngine<'a> {
                     let partial_fits = partial.rect.height <= remaining_height + 1.0;
                     let split_productive = !partial.children.is_empty()
                         && (partial_fits || partial.children.len() > 1);
-
                     if !partial.children.is_empty() && (partial_fits || split_productive) {
                         let mut offset_node = partial;
                         offset_node.rect.x += content_area.x;

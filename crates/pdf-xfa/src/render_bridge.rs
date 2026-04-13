@@ -1082,47 +1082,111 @@ fn render_caption(
     let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
     let idh_metrics = lookup_font_metrics(node_style, config);
 
-    let (text_x, text_y) = match caption_placement {
-        "right" => {
-            // Caption in the right portion of the field
-            let cap_x = x + w - caption_reserve;
-            let asc_pt = ascender_pt(&metrics, fs);
-            (cap_x, pdf_y + h - asc_pt)
-        }
-        "top" => {
-            // Caption above the value area (within the field's total height)
-            let asc_pt = ascender_pt(&metrics, fs);
-            let text_y = pdf_y + h - asc_pt;
-            (x, text_y)
-        }
-        "bottom" => {
-            // Caption below the value area (within the field's total height)
-            let asc_pt = ascender_pt(&metrics, fs);
-            let text_y = pdf_y + caption_reserve - asc_pt;
-            (x, text_y)
-        }
-        _ => {
-            // "left" (default): caption in the left portion of the field
-            let asc_pt = ascender_pt(&metrics, fs);
-            (x, pdf_y + h - asc_pt)
-        }
+    // Determine the caption bounding box.
+    let (cap_x, cap_y, cap_w, cap_h) = match caption_placement {
+        "right" => (x + w - caption_reserve, pdf_y, caption_reserve, h),
+        "top" => (x, pdf_y + h - caption_reserve, w, caption_reserve),
+        "bottom" => (x, pdf_y, w, caption_reserve),
+        _ => (x, pdf_y + h - caption_reserve, caption_reserve, caption_reserve.min(h)),
     };
 
-    let encoded = pdf_encode_text(caption_text, idh_metrics);
-    write_ops(
-        ops,
-        format_args!(
-            "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
-            config.text_color[0], config.text_color[1], config.text_color[2], font_ref, fs,
-        ),
-    );
-    emit_text_style_ops(node_style, ops);
-    write_ops(
-        ops,
-        format_args!("{:.2} {:.2} Td\n{} Tj\n", text_x, text_y, encoded),
-    );
-    reset_text_style_ops(node_style, ops);
-    ops.extend_from_slice(b"ET\n");
+    // For multi-line captions (contains newlines or wider than caption area),
+    // wrap and render line-by-line.  Single-line captions use the fast path.
+    let is_multiline = caption_text.contains('\n')
+        || metrics.measure_width(caption_text) > cap_w;
+
+    if is_multiline {
+        let line_height = node_style
+            .line_height_pt
+            .unwrap_or_else(|| metrics.line_height_pt());
+        let pad_left = node_style.margin_left_pt.unwrap_or(0.0);
+        let pad_right = node_style.margin_right_pt.unwrap_or(0.0);
+        let text_indent = node_style.text_indent_pt.unwrap_or(0.0);
+        let usable_w = (cap_w - pad_left - pad_right).max(1.0);
+
+        // Wrap text paragraphs.
+        let layout = xfa_layout_engine::text::wrap_text(
+            caption_text,
+            usable_w,
+            &metrics,
+            text_indent,
+            node_style.line_height_pt,
+        );
+
+        if layout.lines.is_empty() {
+            return;
+        }
+
+        let asc_pt = ascender_pt(&metrics, fs);
+        let space_above = node_style.space_above_pt.unwrap_or(0.0);
+        let total_text_h = layout.lines.len() as f64 * line_height;
+
+        // Vertical start position (PDF y, top-of-first-line baseline).
+        let first_line_pdf_y = match node_style.v_align {
+            Some(VerticalAlign::Middle) => {
+                cap_y + cap_h - asc_pt - space_above
+                    - (cap_h - space_above - total_text_h) / 2.0
+                    + (cap_h - space_above - total_text_h) / 2.0
+            }
+            Some(VerticalAlign::Bottom) => cap_y + total_text_h - asc_pt,
+            _ => cap_y + cap_h - asc_pt - space_above,
+        };
+
+        let tc = node_style
+            .text_color
+            .map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+            .unwrap_or(config.text_color);
+
+        write_ops(
+            ops,
+            format_args!(
+                "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+                tc[0], tc[1], tc[2], font_ref, fs
+            ),
+        );
+        emit_text_style_ops(node_style, ops);
+
+        let text_x_base = cap_x + pad_left;
+        let mut prev_x = text_x_base;
+        for (i, line) in layout.lines.iter().enumerate() {
+            let is_para_start = layout.first_line_of_para.get(i).copied().unwrap_or(false);
+            let indent = if is_para_start { text_indent } else { 0.0 };
+            let text_x = text_x_base + indent;
+            let line_y = first_line_pdf_y - (i as f64 * line_height);
+            if i == 0 {
+                write_ops(ops, format_args!("{:.2} {:.2} Td\n", text_x, line_y));
+            } else {
+                let dx = text_x - prev_x;
+                write_ops(ops, format_args!("{:.2} {:.2} Td\n", dx, -line_height));
+            }
+            prev_x = text_x;
+            let encoded = pdf_encode_text(line, idh_metrics);
+            write_ops(ops, format_args!("{} Tj\n", encoded));
+        }
+
+        reset_text_style_ops(node_style, ops);
+        ops.extend_from_slice(b"ET\n");
+    } else {
+        // Single-line fast path.
+        let asc_pt = ascender_pt(&metrics, fs);
+        let text_y = cap_y + cap_h - asc_pt;
+
+        let encoded = pdf_encode_text(caption_text, idh_metrics);
+        write_ops(
+            ops,
+            format_args!(
+                "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+                config.text_color[0], config.text_color[1], config.text_color[2], font_ref, fs,
+            ),
+        );
+        emit_text_style_ops(node_style, ops);
+        write_ops(
+            ops,
+            format_args!("{:.2} {:.2} Td\n{} Tj\n", cap_x, text_y, encoded),
+        );
+        reset_text_style_ops(node_style, ops);
+        ops.extend_from_slice(b"ET\n");
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
