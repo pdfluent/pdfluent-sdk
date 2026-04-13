@@ -134,18 +134,40 @@ pub fn embed_image(
     data: &[u8],
     mime_type: &str,
 ) -> Result<ImageXObjectResult, String> {
-    let format = detect_image_format(data)
-        .or(match mime_type {
-            "image/jpeg" | "image/jpg" => Some(ImageFormat::Jpeg),
-            "image/png" => Some(ImageFormat::Png),
-            _ => None,
-        })
-        .ok_or_else(|| "unsupported image format".to_string())?;
+    let format = detect_image_format(data).or(match mime_type {
+        "image/jpeg" | "image/jpg" => Some(ImageFormat::Jpeg),
+        "image/png" => Some(ImageFormat::Png),
+        _ => None,
+    });
 
     match format {
-        ImageFormat::Jpeg => embed_jpeg(doc, data),
-        ImageFormat::Png => embed_png(doc, data),
+        Some(ImageFormat::Jpeg) => embed_jpeg(doc, data),
+        Some(ImageFormat::Png) => embed_png(doc, data),
+        // XFA 3.3 §20.2 allows JPEG, PNG, GIF, BMP, TIFF. For anything the
+        // native embedders don't handle (GIF/BMP/TIFF/etc.), let the `image`
+        // crate decode the bytes and re-encode as PNG before embedding —
+        // this preserves the image at the cost of one decode/encode pass
+        // instead of dropping it entirely (see 01de9ce4's Finance Corp logo
+        // which ships as image/tif).
+        None => embed_via_reencode(doc, data, mime_type),
     }
+}
+
+fn embed_via_reencode(
+    doc: &mut lopdf::Document,
+    data: &[u8],
+    mime_type: &str,
+) -> Result<ImageXObjectResult, String> {
+    let img = image::load_from_memory(data).map_err(|e| {
+        format!("unsupported image format (mime={mime_type}); decode failed: {e}")
+    })?;
+    let mut png_buf: Vec<u8> = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut png_buf),
+        image::ImageFormat::Png,
+    )
+    .map_err(|e| format!("re-encode to PNG failed: {e}"))?;
+    embed_png(doc, &png_buf)
 }
 
 pub fn render_image_ops(name: &str, x: f64, y: f64, w: f64, h: f64) -> Vec<u8> {
@@ -268,6 +290,43 @@ mod tests {
         let mut doc = lopdf::Document::with_version("1.7");
         let png = minimal_png();
         let result = embed_png(&mut doc, &png).unwrap();
+        assert_eq!(result.width, 2);
+        assert_eq!(result.height, 2);
+    }
+
+    #[test]
+    fn test_embed_image_tiff_via_reencode() {
+        // XFA templates sometimes ship image/tif data (e.g. 01de9ce4's
+        // Finance Corp logo). Before the re-encode fallback these would be
+        // dropped with "unsupported image format". Now they should be
+        // decoded by the `image` crate and re-embedded as PNG.
+        use std::io::Cursor;
+        let img = image::RgbaImage::from_pixel(3, 4, image::Rgba([32, 64, 96, 255]));
+        let mut tiff_buf = Cursor::new(Vec::new());
+        img.write_to(&mut tiff_buf, image::ImageFormat::Tiff).unwrap();
+        let tiff_data = tiff_buf.into_inner();
+        assert_eq!(detect_image_format(&tiff_data), None);
+
+        let mut doc = lopdf::Document::with_version("1.7");
+        let result = embed_image(&mut doc, &tiff_data, "image/tif")
+            .expect("TIFF should be accepted via re-encode fallback");
+        assert_eq!(result.width, 3);
+        assert_eq!(result.height, 4);
+    }
+
+    #[test]
+    fn test_embed_image_gif_via_reencode() {
+        // GIF is also allowed by XFA 3.3 §20.2 but not natively supported
+        // by embed_jpeg/embed_png. Verify it goes through the re-encode path.
+        use std::io::Cursor;
+        let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]));
+        let mut gif_buf = Cursor::new(Vec::new());
+        img.write_to(&mut gif_buf, image::ImageFormat::Gif).unwrap();
+        let gif_data = gif_buf.into_inner();
+
+        let mut doc = lopdf::Document::with_version("1.7");
+        let result = embed_image(&mut doc, &gif_data, "image/gif")
+            .expect("GIF should be accepted via re-encode fallback");
         assert_eq!(result.width, 2);
         assert_eq!(result.height, 2);
     }
