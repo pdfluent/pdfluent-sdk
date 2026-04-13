@@ -236,7 +236,14 @@ fn xfa_flatten_inner(
         DataDom::new()
     };
 
-    let merger = FormMerger::new(&data_dom);
+    // Extract embedded image files from the PDF for resolving <image href="…">
+    // references in the XFA template (XFA §2.3).
+    let image_files = match Document::load_mem(pdf_bytes) {
+        Ok(doc) => extract_embedded_images(&doc),
+        Err(_) => HashMap::new(),
+    };
+
+    let merger = FormMerger::new(&data_dom).with_image_files(image_files);
     let (mut tree, root_id) = merger
         .merge(template_xml)
         .map_err(|e| XfaError::ParseFailed(format!("template merge: {e}")))?;
@@ -485,6 +492,127 @@ fn xfa_flatten_inner(
     doc.save_to(&mut out)
         .map_err(|e| XfaError::LayoutFailed(format!("save: {e}")))?;
     Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Embedded image files extraction (XFA §2.3 href resolution)
+// ---------------------------------------------------------------------------
+
+/// Extract embedded files from the PDF's Names/EmbeddedFiles tree.
+///
+/// XFA `<image href=".\filename.jpg">` references are resolved against this
+/// tree at merge time (XFA Spec 3.3 §2.3).  The returned map is keyed by
+/// the filename as it appears in the Names array (e.g. `.\lintje.jpg`).
+fn extract_embedded_images(doc: &Document) -> HashMap<String, Vec<u8>> {
+    let mut images = HashMap::new();
+
+    // Helper: resolve a potentially indirect object.
+    fn deref_dict<'a>(doc: &'a Document, obj: &'a Object) -> Option<&'a Dictionary> {
+        match obj {
+            Object::Reference(id) => doc.get_dictionary(*id).ok(),
+            Object::Dictionary(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    // Helper: extract stream content (decompressed).
+    fn extract_stream(doc: &Document, obj: &Object) -> Option<Vec<u8>> {
+        let stream_obj = match obj {
+            Object::Reference(id) => doc.get_object(*id).ok()?,
+            other => other,
+        };
+        if let Object::Stream(ref stream) = *stream_obj {
+            let mut s = stream.clone();
+            let _ = s.decompress();
+            Some(s.content.clone())
+        } else {
+            None
+        }
+    }
+
+    // Traverse: Catalog → /Names → /EmbeddedFiles → /Names array
+    let catalog = match doc.catalog() {
+        Ok(c) => c,
+        Err(_) => return images,
+    };
+    let names_obj = match catalog.get(b"Names") {
+        Ok(obj) => obj,
+        Err(_) => {
+            eprintln!("[img-href] no /Names in catalog");
+            return images;
+        }
+    };
+    let names_dict = match deref_dict(doc, names_obj) {
+        Some(d) => d,
+        None => return images,
+    };
+    // XFA PDFs may use /XFAImages instead of /EmbeddedFiles for image
+    // references.  Check both keys.
+    let ef_obj = match names_dict
+        .get(b"XFAImages")
+        .or_else(|_| names_dict.get(b"EmbeddedFiles"))
+    {
+        Ok(obj) => obj,
+        Err(_) => return images,
+    };
+    let ef_dict = match deref_dict(doc, ef_obj) {
+        Some(d) => d,
+        None => return images,
+    };
+
+    // The EmbeddedFiles name tree has a /Names array: [(name1, ref1), …]
+    let names_arr_obj = match ef_dict.get(b"Names") {
+        Ok(obj) => obj,
+        Err(_) => return images,
+    };
+    let names_array = match names_arr_obj {
+        Object::Array(arr) => arr,
+        Object::Reference(id) => match doc.get_object(*id) {
+            Ok(Object::Array(arr)) => arr,
+            _ => return images,
+        },
+        _ => return images,
+    };
+
+    // Process pairs: (name_string, value_ref)
+    let mut i = 0;
+    while i + 1 < names_array.len() {
+        let name = match &names_array[i] {
+            Object::String(bytes, _) => String::from_utf8_lossy(bytes).to_string(),
+            _ => {
+                i += 2;
+                continue;
+            }
+        };
+
+        // The value can be:
+        //   1. A FileSpec dict: /EF → /F → stream
+        //   2. Directly a stream (non-standard but seen in XFA PDFs)
+        let value_ref = &names_array[i + 1];
+
+        // Try path 1: FileSpec dict
+        if let Some(filespec) = deref_dict(doc, value_ref) {
+            if let Ok(ef_obj) = filespec.get(b"EF") {
+                if let Some(ef) = deref_dict(doc, ef_obj) {
+                    if let Ok(f_ref) = ef.get(b"F") {
+                        if let Some(data) = extract_stream(doc, f_ref) {
+                            images.insert(name.clone(), data);
+                            i += 2;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try path 2: Direct stream reference
+        if let Some(data) = extract_stream(doc, value_ref) {
+            images.insert(name.clone(), data);
+        }
+
+        i += 2;
+    }
+    images
 }
 
 // ---------------------------------------------------------------------------

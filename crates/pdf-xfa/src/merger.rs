@@ -37,6 +37,10 @@ use xfa_layout_engine::types::{
 pub struct FormMerger<'a> {
     data_dom: &'a DataDom,
     form_tree: FormTree,
+    /// Embedded image files from the PDF's Names/EmbeddedFiles tree,
+    /// keyed by filename (e.g. `.\lintje.jpg`).  Used to resolve
+    /// `<image href="…">` references in the XFA template (XFA §2.3).
+    image_files: std::collections::HashMap<String, Vec<u8>>,
 }
 
 fn area_layout(elem: Node<'_, '_>) -> LayoutStrategy {
@@ -64,7 +68,17 @@ impl<'a> FormMerger<'a> {
         Self {
             data_dom,
             form_tree: FormTree::new(),
+            image_files: std::collections::HashMap::new(),
         }
+    }
+
+    /// Set embedded image files for resolving `<image href="…">` references.
+    pub fn with_image_files(
+        mut self,
+        files: std::collections::HashMap<String, Vec<u8>>,
+    ) -> Self {
+        self.image_files = files;
+        self
     }
 
     /// Merge the template XML into a FormTree.
@@ -520,7 +534,7 @@ impl<'a> FormMerger<'a> {
             });
         }
 
-        if let Some((image_data, mime_type)) = extract_value_image(elem) {
+        if let Some((image_data, mime_type)) = extract_value_image(elem, &self.image_files) {
             return Ok(FormNode {
                 name,
                 node_type: FormNodeType::Image {
@@ -1575,14 +1589,53 @@ fn is_hidden(elem: Node<'_, '_>) -> bool {
     )
 }
 
-fn extract_value_image(elem: Node<'_, '_>) -> Option<(Vec<u8>, String)> {
+fn extract_value_image(
+    elem: Node<'_, '_>,
+    image_files: &std::collections::HashMap<String, Vec<u8>>,
+) -> Option<(Vec<u8>, String)> {
     let value = find_first_child_by_name(elem, "value")?;
     let image = find_first_child_by_name(value, "image")?;
     let content_type = attr(image, "contentType")
         .unwrap_or("image/png")
         .to_string();
+
+    // XFA §2.3: `href` references an image embedded in the PDF's Names tree.
+    // When present, the inline text content is empty — resolve from the PDF.
+    if let Some(href) = attr(image, "href") {
+        if let Some(data) = image_files.get(href) {
+            let decoded = data.clone();
+            if decoded.starts_with(b"BM") || content_type == "image/bmp" {
+                if let Some(png_data) = bmp_to_png(&decoded) {
+                    return Some((png_data, "image/png".to_string()));
+                }
+                return None;
+            }
+            return Some((decoded, content_type));
+        }
+        // Try normalized key: strip leading ".\" or "./"
+        let normalized = href.trim_start_matches(".\\").trim_start_matches("./");
+        for (k, data) in image_files {
+            let k_norm = k.trim_start_matches(".\\").trim_start_matches("./");
+            if k_norm == normalized {
+                let decoded = data.clone();
+                if decoded.starts_with(b"BM") || content_type == "image/bmp" {
+                    if let Some(png_data) = bmp_to_png(&decoded) {
+                        return Some((png_data, "image/png".to_string()));
+                    }
+                    return None;
+                }
+                return Some((decoded, content_type));
+            }
+        }
+    }
+
     let data = image.text().unwrap_or_default();
     let decoded = base64_decode(data);
+
+    // Skip empty images from unresolved href references.
+    if decoded.is_empty() {
+        return None;
+    }
 
     if decoded.starts_with(b"BM") || content_type == "image/bmp" {
         if let Some(png_data) = bmp_to_png(&decoded) {
