@@ -553,21 +553,25 @@ impl FallbackFontQuery {
                 .get::<u32>(FLAGS)
                 .map(FontFlags::from_bits_truncate)
             {
+                data.is_fixed_pitch = flags.contains(FontFlags::FIXED_PITCH);
                 data.is_serif = flags.contains(FontFlags::SERIF);
                 data.is_italic = flags.contains(FontFlags::ITALIC);
                 data.is_small_cap = flags.contains(FontFlags::SMALL_CAP);
             }
         }
 
-        data.is_italic |= data
-            .post_script_name
-            .as_ref()
-            .is_some_and(|s| s.contains("Italic"));
+        data.is_bold |= data.font_weight >= 700;
 
-        data.is_bold |= data
-            .post_script_name
-            .as_ref()
-            .is_some_and(|s| s.contains("Bold"));
+        if let Some(name) = &data.post_script_name {
+            let lower = name.to_ascii_lowercase();
+            data.is_italic |=
+                lower.contains("italic") || lower.contains("oblique") || lower.contains("slant");
+            data.is_bold |= lower.contains("bold")
+                || lower.contains("demi")
+                || lower.contains("semibold")
+                || lower.contains("heavy")
+                || lower.contains("black");
+        }
 
         data
     }
@@ -720,5 +724,78 @@ mod normalized_glyph_name_tests {
         assert_eq!(normalized_glyph_name(".notdef"), ".notdef");
         assert_eq!(normalized_glyph_name("hyphen"), "hyphen");
         assert_eq!(normalized_glyph_name("space"), "space");
+    }
+}
+
+#[cfg(test)]
+mod fallback_font_query_tests {
+    use super::*;
+
+    fn query_with(name: &str, flags: u32, weight: u32) -> FallbackFontQuery {
+        let mut q = FallbackFontQuery {
+            post_script_name: Some(name.to_string()),
+            font_weight: weight,
+            ..Default::default()
+        };
+
+        let font_flags = FontFlags::from_bits_truncate(flags);
+        q.is_fixed_pitch = font_flags.contains(FontFlags::FIXED_PITCH);
+        q.is_serif = font_flags.contains(FontFlags::SERIF);
+        q.is_italic = font_flags.contains(FontFlags::ITALIC);
+        q.is_small_cap = font_flags.contains(FontFlags::SMALL_CAP);
+
+        q.is_bold |= q.font_weight >= 700;
+
+        if let Some(name) = &q.post_script_name {
+            let lower = name.to_ascii_lowercase();
+            q.is_italic |=
+                lower.contains("italic") || lower.contains("oblique") || lower.contains("slant");
+            q.is_bold |= lower.contains("bold")
+                || lower.contains("demi")
+                || lower.contains("semibold")
+                || lower.contains("heavy")
+                || lower.contains("black");
+        }
+        q
+    }
+
+    #[test]
+    fn fixed_pitch_flag_selects_courier() {
+        let q = query_with("LetterGothic", FontFlags::FIXED_PITCH.bits(), 400);
+        assert!(matches!(q.pick_standard_font(), StandardFont::Courier));
+    }
+
+    #[test]
+    fn demi_in_name_selects_bold() {
+        let q = query_with("FranklinGothic-Demi", FontFlags::SERIF.bits(), 400);
+        assert!(q.is_bold);
+        assert!(matches!(q.pick_standard_font(), StandardFont::TimesBold));
+    }
+
+    #[test]
+    fn oblique_detected_as_italic() {
+        let q = query_with("HelveticaNeue-LightOblique", 0, 400);
+        assert!(q.is_italic);
+        assert!(matches!(
+            q.pick_standard_font(),
+            StandardFont::HelveticaOblique
+        ));
+    }
+
+    #[test]
+    fn font_weight_700_detected_as_bold() {
+        let q = query_with("CustomFont", 0, 700);
+        assert!(q.is_bold);
+        assert!(matches!(
+            q.pick_standard_font(),
+            StandardFont::HelveticaBold
+        ));
+    }
+
+    #[test]
+    fn semibold_detected_as_bold() {
+        let q = query_with("AGaramond-Semibold", FontFlags::SERIF.bits(), 400);
+        assert!(q.is_bold);
+        assert!(matches!(q.pick_standard_font(), StandardFont::TimesBold));
     }
 }
