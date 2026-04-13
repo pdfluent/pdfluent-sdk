@@ -3,8 +3,8 @@ use crate::font::glyph_simulator::GlyphSimulator;
 use crate::font::standard_font::{StandardFont, StandardKind, select_standard_font};
 use crate::font::true_type::{Width, read_encoding, read_widths};
 use crate::font::{
-    Encoding, FallbackFontQuery, glyph_name_to_unicode, normalized_glyph_name, read_to_unicode,
-    synthesize_unicode_map_from_encoding,
+    Encoding, FallbackFontQuery, UNITS_PER_EM, glyph_name_to_unicode, normalized_glyph_name,
+    read_to_unicode, synthesize_unicode_map_from_encoding,
 };
 use crate::{CMapResolverFn, CacheKey, FontResolverFn};
 use kurbo::BezPath;
@@ -12,7 +12,7 @@ use log::warn;
 use pdf_font::cmap::{BfString, CMap};
 use pdf_syntax::object::Dict;
 use pdf_syntax::object::Stream;
-use pdf_syntax::object::dict::keys::{FONT_DESC, FONT_FILE, FONT_FILE3};
+use pdf_syntax::object::dict::keys::{FONT_DESC, FONT_FILE, FONT_FILE3, MISSING_WIDTH};
 use skrifa::GlyphId;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -178,7 +178,7 @@ struct Type1Kind {
     font: Type1FontBlob,
     encoding: Encoding,
     widths: Vec<Width>,
-    missing_width: f32,
+    missing_width: Option<f32>,
     encodings: HashMap<u8, String>,
     glyph_simulator: GlyphSimulator,
     standard_font: Option<StandardFont>,
@@ -192,6 +192,9 @@ impl Type1Kind {
 
         let (encoding, encodings) = read_encoding(dict);
         let (widths, missing_width) = read_widths(dict, &descriptor)?;
+        let missing_width = descriptor
+            .contains_key(MISSING_WIDTH)
+            .then_some(missing_width);
         let standard_font = select_standard_font(dict, &descriptor).map(|(f, _)| f);
 
         let glyph_simulator = GlyphSimulator::new();
@@ -246,16 +249,34 @@ impl Type1Kind {
             })
     }
 
+    fn font_program_width(&self, code: u8) -> Option<f32> {
+        let name = self.code_to_ps_name(code).unwrap_or(".notdef");
+        let width = self
+            .font
+            .table()
+            .glyph_width(name)
+            .or_else(|| self.font.table().glyph_width(normalized_glyph_name(name)))
+            .or_else(|| self.font.table().glyph_width(".notdef"))?;
+
+        Some(width * font_width_scale(self.font.table().matrix().sx))
+    }
+
     fn glyph_width(&self, code: u8) -> Option<f32> {
         match self.widths.get(code as usize).copied() {
             Some(Width::Value(w)) => Some(w),
-            Some(Width::Missing) => Some(self.missing_width),
-            _ => {
-                // If font looks like a standard font, get the width from there.
+            Some(Width::Missing) => self
+                .missing_width
+                .or_else(|| self.font_program_width(code))
+                .or_else(|| {
+                    let sf = self.standard_font?;
+                    self.code_to_ps_name(code)
+                        .and_then(|name| sf.get_width(name))
+                }),
+            _ => self.font_program_width(code).or_else(|| {
                 let sf = self.standard_font?;
                 self.code_to_ps_name(code)
                     .and_then(|name| sf.get_width(name))
-            }
+            }),
         }
     }
 
@@ -269,7 +290,7 @@ struct CffKind {
     font: CffFontBlob,
     encoding: Encoding,
     widths: Vec<Width>,
-    missing_width: f32,
+    missing_width: Option<f32>,
     encodings: HashMap<u8, String>,
     standard_font: Option<StandardFont>,
 }
@@ -282,6 +303,9 @@ impl CffKind {
 
         let (encoding, encodings) = read_encoding(dict);
         let (widths, missing_width) = read_widths(dict, &descriptor)?;
+        let missing_width = descriptor
+            .contains_key(MISSING_WIDTH)
+            .then_some(missing_width);
         let standard_font = select_standard_font(dict, &descriptor).map(|(f, _)| f);
 
         Some(Self {
@@ -331,20 +355,170 @@ impl CffKind {
         }
     }
 
+    fn font_program_width(&self, code: u8) -> Option<f32> {
+        let glyph = self.map_code(code);
+        let glyph = pdf_font::GlyphId(glyph.to_u32() as u16);
+        let width = self.font.table().glyph_width(glyph)?;
+        let matrix = self.font.table().glyph_matrix(glyph);
+        Some(width as f32 * font_width_scale(matrix.sx))
+    }
+
     fn glyph_width(&self, code: u8) -> Option<f32> {
         match self.widths.get(code as usize).copied() {
             Some(Width::Value(w)) => Some(w),
-            Some(Width::Missing) => Some(self.missing_width),
-            _ => {
-                // If font looks like a standard font, get the width from there.
+            Some(Width::Missing) => self
+                .missing_width
+                .or_else(|| self.font_program_width(code))
+                .or_else(|| {
+                    let sf = self.standard_font?;
+                    self.code_to_ps_name(code)
+                        .and_then(|name| sf.get_width(name))
+                }),
+            _ => self.font_program_width(code).or_else(|| {
                 let sf = self.standard_font?;
                 self.code_to_ps_name(code)
                     .and_then(|name| sf.get_width(name))
-            }
+            }),
         }
     }
 
     fn char_code_to_unicode(&self, code: u8) -> Option<char> {
         self.code_to_ps_name(code).and_then(glyph_name_to_unicode)
+    }
+}
+
+fn font_width_scale(matrix_sx: f32) -> f32 {
+    let scale = matrix_sx * UNITS_PER_EM;
+    if scale.abs() > f32::EPSILON {
+        scale
+    } else {
+        1.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::font::blob::Type1FontBlob;
+    use std::fmt::Write;
+
+    fn build_widths(entries: &[(u8, f32)]) -> Vec<Width> {
+        let mut widths = vec![Width::Missing; 256];
+        for (code, width) in entries {
+            widths[*code as usize] = Width::Value(*width);
+        }
+        widths
+    }
+
+    fn encode_type1_number(value: i32) -> Vec<u8> {
+        match value {
+            -107..=107 => vec![(value + 139) as u8],
+            108..=1131 => {
+                let value = value - 108;
+                vec![((value / 256) + 247) as u8, (value % 256) as u8]
+            }
+            -1131..=-108 => {
+                let value = -value - 108;
+                vec![((value / 256) + 251) as u8, (value % 256) as u8]
+            }
+            _ => panic!("unsupported Type1 test number {value}"),
+        }
+    }
+
+    fn charstring_for_width(width: i32) -> Vec<u8> {
+        let mut data = encode_type1_number(0);
+        data.extend(encode_type1_number(width));
+        data.extend([13, 14]);
+        data
+    }
+
+    fn eexec_encrypt_hex(data: &[u8]) -> String {
+        let mut r: u32 = 55665;
+        let mut out = String::new();
+
+        for plain in [0u8, 0, 0, 0].into_iter().chain(data.iter().copied()) {
+            let cipher = plain ^ ((r >> 8) as u8);
+            r = ((cipher as u32 + r).wrapping_mul(52845) + 22719) & 0xFFFF;
+            write!(&mut out, "{cipher:02X}").expect("hex write should succeed");
+        }
+
+        out
+    }
+
+    fn test_type1_font_data() -> Arc<Vec<u8>> {
+        let notdef = charstring_for_width(500);
+        let a = charstring_for_width(700);
+        let b = charstring_for_width(710);
+
+        let mut eexec = Vec::new();
+        eexec.extend_from_slice(b"/Private 8 dict dup begin\n");
+        eexec.extend_from_slice(b"/lenIV -1 def\n");
+        eexec.extend_from_slice(b"/Subrs 0 array\n");
+        eexec.extend_from_slice(b"/CharStrings 3 dict dup begin\n");
+
+        for (name, charstring) in [(".notdef", notdef), ("A", a), ("B", b)] {
+            eexec.extend_from_slice(format!("/{name} {} RD ", charstring.len()).as_bytes());
+            eexec.extend_from_slice(&charstring);
+            eexec.extend_from_slice(b" ND\n");
+        }
+
+        eexec.extend_from_slice(b"end\nend\n");
+
+        let hex = eexec_encrypt_hex(&eexec);
+        let program = format!(
+            "%!PS-AdobeFont-1.0: TestFont 1.0\n\
+/FontName /TestFont def\n\
+/FontType 1 def\n\
+/FontMatrix [0.001 0 0 0.001 0 0] readonly def\n\
+/Encoding StandardEncoding def\n\
+currentfile eexec\n\
+{hex}\n\
+cleartomark\n"
+        );
+
+        Arc::new(program.into_bytes())
+    }
+
+    fn load_type1_kind(widths: Vec<Width>, missing_width: Option<f32>) -> Type1Kind {
+        Type1Kind {
+            font: Type1FontBlob::new(test_type1_font_data())
+                .expect("embedded test font should parse"),
+            encoding: Encoding::WinAnsi,
+            widths,
+            missing_width,
+            encodings: HashMap::new(),
+            glyph_simulator: GlyphSimulator::new(),
+            standard_font: None,
+        }
+    }
+
+    #[test]
+    fn embedded_type1_uses_font_program_width_without_widths_array() {
+        let font = load_type1_kind(Vec::new(), None);
+
+        let width = font
+            .glyph_width(b'A')
+            .expect("embedded font should provide fallback width");
+        assert!(width > 500.0, "expected font-program width, got {width}");
+    }
+
+    #[test]
+    fn embedded_type1_uses_font_program_width_for_codes_missing_from_widths_array() {
+        let font = load_type1_kind(build_widths(&[(b'A', 600.0)]), None);
+
+        assert_eq!(font.glyph_width(b'A'), Some(600.0));
+
+        let width = font
+            .glyph_width(b'B')
+            .expect("missing-width code should fall back to font program");
+        assert!(width > 500.0, "expected font-program width, got {width}");
+    }
+
+    #[test]
+    fn embedded_type1_respects_explicit_zero_missing_width() {
+        let font = load_type1_kind(build_widths(&[(b'A', 600.0)]), Some(0.0));
+
+        assert_eq!(font.glyph_width(b'A'), Some(600.0));
+        assert_eq!(font.glyph_width(b'B'), Some(0.0));
     }
 }
