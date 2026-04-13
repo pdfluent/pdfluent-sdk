@@ -158,9 +158,8 @@ fn embed_via_reencode(
     data: &[u8],
     mime_type: &str,
 ) -> Result<ImageXObjectResult, String> {
-    let img = image::load_from_memory(data).map_err(|e| {
-        format!("unsupported image format (mime={mime_type}); decode failed: {e}")
-    })?;
+    let img = image::load_from_memory(data)
+        .map_err(|e| format!("unsupported image format (mime={mime_type}); decode failed: {e}"))?;
     let mut png_buf: Vec<u8> = Vec::new();
     img.write_to(
         &mut std::io::Cursor::new(&mut png_buf),
@@ -303,7 +302,8 @@ mod tests {
         use std::io::Cursor;
         let img = image::RgbaImage::from_pixel(3, 4, image::Rgba([32, 64, 96, 255]));
         let mut tiff_buf = Cursor::new(Vec::new());
-        img.write_to(&mut tiff_buf, image::ImageFormat::Tiff).unwrap();
+        img.write_to(&mut tiff_buf, image::ImageFormat::Tiff)
+            .unwrap();
         let tiff_data = tiff_buf.into_inner();
         assert_eq!(detect_image_format(&tiff_data), None);
 

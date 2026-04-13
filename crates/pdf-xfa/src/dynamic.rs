@@ -644,7 +644,9 @@ fn split_property_path(path: &str) -> Option<(SomExpression, ResolvedProperty)> 
     let mut expr = parse_som(&normalized).ok()?;
     let property = if let Some(last) = expr.segments.last() {
         match &last.selector {
-            SomSelector::Name(name) => parse_property_name(name).unwrap_or(ResolvedProperty::RawValue),
+            SomSelector::Name(name) => {
+                parse_property_name(name).unwrap_or(ResolvedProperty::RawValue)
+            }
             _ => ResolvedProperty::RawValue,
         }
     } else {
@@ -1696,7 +1698,8 @@ endif
 
         tree.get_mut(root).children = vec![section];
         tree.get_mut(section).children = vec![number1, number2, total];
-        tree.meta_mut(total).event_scripts = vec![formcalc_script("Number1 + Number2", "calculate")];
+        tree.meta_mut(total).event_scripts =
+            vec![formcalc_script("Number1 + Number2", "calculate")];
 
         apply_dynamic_scripts(&mut tree, root);
 

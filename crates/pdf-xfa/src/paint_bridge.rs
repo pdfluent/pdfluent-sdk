@@ -864,8 +864,8 @@ mod tests {
                 },
                 children: vec![],
                 style: Default::default(),
-            display_items: vec![],
-            save_items: vec![],
+                display_items: vec![],
+                save_items: vec![],
             }],
         };
         let cmds = layout_to_commands(&page, &test_config());
@@ -921,8 +921,8 @@ mod tests {
                 },
                 children: vec![],
                 style: Default::default(),
-            display_items: vec![],
-            save_items: vec![],
+                display_items: vec![],
+                save_items: vec![],
             }],
         };
         let cmds = layout_to_commands(&page, &test_config());
@@ -981,12 +981,12 @@ mod tests {
                     },
                     children: vec![],
                     style: Default::default(),
-            display_items: vec![],
-            save_items: vec![],
+                    display_items: vec![],
+                    save_items: vec![],
                 }],
                 style: Default::default(),
-            display_items: vec![],
-            save_items: vec![],
+                display_items: vec![],
+                save_items: vec![],
             }],
         };
         let config = XfaRenderConfig::default();
