@@ -1,10 +1,11 @@
 //! Extract embedded font programs from oracle PDFs and cache them for reuse.
 //!
 //! Usage:
-//!   font-cache-builder --input-dir /opt/xfa-golden-set/flattened --output-dir /opt/xfa-font-cache
+//!   font-cache-builder -i /opt/xfa-golden-set/flattened -i /opt/xfa-golden-set/originals -o /opt/xfa-font-cache
 //!
-//! Reads all PDFs in the input directory, extracts TrueType/CFF font programs,
+//! Reads all PDFs in the input directories, extracts TrueType/CFF font programs,
 //! and writes them to the output directory keyed by PostScript name.
+//! Multiple --input-dir flags can be specified to scan several directories.
 
 use anyhow::{Context, Result};
 use lopdf::Document;
@@ -13,28 +14,31 @@ use std::path::PathBuf;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let (input_dir, output_dir) = parse_args(&args)?;
+    let (input_dirs, output_dir) = parse_args(&args)?;
 
     std::fs::create_dir_all(&output_dir)
         .with_context(|| format!("cannot create output dir: {}", output_dir.display()))?;
 
-    let mut pdf_files: Vec<PathBuf> = std::fs::read_dir(&input_dir)
-        .with_context(|| format!("cannot read input dir: {}", input_dir.display()))?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
-        })
-        .collect();
-    pdf_files.sort();
-
-    println!(
-        "Scanning {} PDFs in {}",
-        pdf_files.len(),
-        input_dir.display()
-    );
+    let mut pdf_files: Vec<PathBuf> = Vec::new();
+    for input_dir in &input_dirs {
+        let mut dir_files: Vec<PathBuf> = std::fs::read_dir(input_dir)
+            .with_context(|| format!("cannot read input dir: {}", input_dir.display()))?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+            })
+            .collect();
+        dir_files.sort();
+        println!(
+            "Scanning {} PDFs in {}",
+            dir_files.len(),
+            input_dir.display()
+        );
+        pdf_files.extend(dir_files);
+    }
 
     let mut total_fonts = 0usize;
     let mut total_new = 0usize;
@@ -84,25 +88,28 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn parse_args(args: &[String]) -> Result<(PathBuf, PathBuf)> {
-    let mut input_dir = None;
+fn parse_args(args: &[String]) -> Result<(Vec<PathBuf>, PathBuf)> {
+    let mut input_dirs = Vec::new();
     let mut output_dir = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--input-dir" | "-i" => {
                 i += 1;
-                input_dir = Some(PathBuf::from(&args[i]));
+                input_dirs.push(PathBuf::from(&args[i]));
             }
             "--output-dir" | "-o" => {
                 i += 1;
                 output_dir = Some(PathBuf::from(&args[i]));
             }
             "--help" | "-h" => {
-                println!("Usage: font-cache-builder --input-dir <DIR> --output-dir <DIR>");
+                println!(
+                    "Usage: font-cache-builder --input-dir <DIR> [--input-dir <DIR2>] --output-dir <DIR>"
+                );
                 println!("\nExtracts embedded font programs from oracle PDFs and caches them.");
+                println!("Multiple --input-dir flags can scan several directories into one cache.");
                 println!("\nOptions:");
-                println!("  -i, --input-dir   Directory containing oracle PDFs");
+                println!("  -i, --input-dir   Directory containing PDFs (repeatable)");
                 println!("  -o, --output-dir  Directory to write cached font files");
                 std::process::exit(0);
             }
@@ -110,9 +117,11 @@ fn parse_args(args: &[String]) -> Result<(PathBuf, PathBuf)> {
         }
         i += 1;
     }
-    let input_dir = input_dir.context("--input-dir is required")?;
+    if input_dirs.is_empty() {
+        anyhow::bail!("at least one --input-dir is required");
+    }
     let output_dir = output_dir.context("--output-dir is required")?;
-    Ok((input_dir, output_dir))
+    Ok((input_dirs, output_dir))
 }
 
 /// Extract all embedded font programs from a single PDF.
