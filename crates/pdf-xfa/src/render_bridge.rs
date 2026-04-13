@@ -1087,13 +1087,17 @@ fn render_caption(
         "right" => (x + w - caption_reserve, pdf_y, caption_reserve, h),
         "top" => (x, pdf_y + h - caption_reserve, w, caption_reserve),
         "bottom" => (x, pdf_y, w, caption_reserve),
-        _ => (x, pdf_y + h - caption_reserve, caption_reserve, caption_reserve.min(h)),
+        _ => (
+            x,
+            pdf_y + h - caption_reserve,
+            caption_reserve,
+            caption_reserve.min(h),
+        ),
     };
 
     // For multi-line captions (contains newlines or wider than caption area),
     // wrap and render line-by-line.  Single-line captions use the fast path.
-    let is_multiline = caption_text.contains('\n')
-        || metrics.measure_width(caption_text) > cap_w;
+    let is_multiline = caption_text.contains('\n') || metrics.measure_width(caption_text) > cap_w;
 
     if is_multiline {
         let line_height = node_style
@@ -1124,8 +1128,7 @@ fn render_caption(
         // Vertical start position (PDF y, top-of-first-line baseline).
         let first_line_pdf_y = match node_style.v_align {
             Some(VerticalAlign::Middle) => {
-                cap_y + cap_h - asc_pt - space_above
-                    - (cap_h - space_above - total_text_h) / 2.0
+                cap_y + cap_h - asc_pt - space_above - (cap_h - space_above - total_text_h) / 2.0
                     + (cap_h - space_above - total_text_h) / 2.0
             }
             Some(VerticalAlign::Bottom) => cap_y + total_text_h - asc_pt,
@@ -3048,8 +3051,14 @@ mod tests {
         };
 
         let s = overlay_str(&make_page(vec![node]));
-        assert!(s.contains("(California) Tj"), "dropdown should render display item: {s}");
-        assert!(!s.contains("(CA) Tj"), "dropdown should not render raw save value: {s}");
+        assert!(
+            s.contains("(California) Tj"),
+            "dropdown should render display item: {s}"
+        );
+        assert!(
+            !s.contains("(CA) Tj"),
+            "dropdown should not render raw save value: {s}"
+        );
     }
 
     #[test]
@@ -3123,7 +3132,10 @@ mod tests {
             ..Default::default()
         };
         let s = styled_overlay_str(make_styled_button(10.0, 10.0, 100.0, 20.0, "", style));
-        assert!(s.contains("(Click) Tj"), "button caption should render as label: {s}");
+        assert!(
+            s.contains("(Click) Tj"),
+            "button caption should render as label: {s}"
+        );
     }
 
     #[test]
