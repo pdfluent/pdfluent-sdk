@@ -30,21 +30,17 @@ pub(crate) enum XObject<'a> {
 }
 
 impl<'a> XObject<'a> {
-    pub(crate) fn new<'res, F>(
+    pub(crate) fn new(
         stream: &Stream<'a>,
-        resolve_cs: F,
         warning_sink: &WarningSinkFn,
         cache: &Cache,
         transfer_function: Option<ActiveTransferFunction>,
-    ) -> Option<Self>
-    where
-        F: Fn(Name) -> Option<Object<'res>> + Copy,
-    {
+    ) -> Option<Self> {
         let dict = stream.dict();
         match dict.get::<Name>(SUBTYPE)?.deref() {
             IMAGE => Some(Self::ImageXObject(ImageXObject::new(
                 stream,
-                resolve_cs,
+                |_| None,
                 warning_sink,
                 cache,
                 false,
@@ -274,17 +270,14 @@ pub(crate) struct ImageXObject<'a> {
 }
 
 impl<'a> ImageXObject<'a> {
-    pub(crate) fn new<'res, F>(
+    pub(crate) fn new(
         stream: &Stream<'a>,
-        resolve_cs: F,
+        resolve_cs: impl FnOnce(&Name) -> Option<ColorSpace>,
         warning_sink: &WarningSinkFn,
         cache: &Cache,
         force_luma: bool,
         transfer_function: Option<ActiveTransferFunction>,
-    ) -> Option<Self>
-    where
-        F: Fn(Name) -> Option<Object<'res>> + Copy,
-    {
+    ) -> Option<Self> {
         let dict = stream.dict();
 
         let image_mask = dict
@@ -298,7 +291,15 @@ impl<'a> ImageXObject<'a> {
                 .get::<Object<'_>>(CS)
                 .or_else(|| dict.get::<Object<'_>>(COLORSPACE));
 
-            cs_obj.and_then(|c| ColorSpace::new_with_resource_resolver(c, cache, resolve_cs))
+            cs_obj
+                .clone()
+                .and_then(|c| ColorSpace::new(c, cache))
+                // Inline images can also refer to color spaces by name.
+                .or_else(|| {
+                    cs_obj
+                        .and_then(|c| c.into_name())
+                        .and_then(|n| resolve_cs(&n))
+                })
         };
 
         // MuPDF uses bilinear interpolation by default for all images regardless of

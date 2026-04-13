@@ -15,7 +15,6 @@ use kurbo::{Affine, BezPath, Rect, Shape};
 use log::warn;
 use pdf_syntax::content::TypedIter;
 use pdf_syntax::object::Dict;
-use pdf_syntax::object::Name;
 use pdf_syntax::object::Stream;
 use pdf_syntax::object::dict::keys::{
     BBOX, EXT_G_STATE, MATRIX, PAINT_TYPE, RESOURCES, SHADING, X_STEP, Y_STEP,
@@ -46,7 +45,6 @@ impl<'a> Pattern<'a> {
                 &dict,
                 &ctx.object_cache,
                 ctx.get().graphics_state.non_stroke_alpha,
-                |name| resources.get_color_space(name),
             )?))
         } else if let Some(stream) = object.clone().into_stream() {
             Some(Self::Tiling(Box::new(TilingPattern::new(
@@ -98,19 +96,11 @@ pub struct ShadingPattern {
 }
 
 impl ShadingPattern {
-    pub(crate) fn new<'a, 'res, F>(
-        dict: &Dict<'a>,
-        cache: &Cache,
-        opacity: f32,
-        resolve_named: F,
-    ) -> Option<Self>
-    where
-        F: Fn(Name) -> Option<Object<'res>>,
-    {
+    pub(crate) fn new(dict: &Dict<'_>, cache: &Cache, opacity: f32) -> Option<Self> {
         let shading = dict.get::<Object<'_>>(SHADING).and_then(|o| {
             let (dict, stream) = dict_or_stream(&o)?;
 
-            Shading::new(&dict, stream.as_ref(), cache, &resolve_named)
+            Shading::new(&dict, stream.as_ref(), cache)
         })?;
         let matrix = dict
             .get::<[f64; 6]>(MATRIX)
