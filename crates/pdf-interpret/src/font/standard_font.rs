@@ -9,7 +9,9 @@ use crate::font::{
 use kurbo::BezPath;
 use pdf_syntax::object::Dict;
 use pdf_syntax::object::Name;
-use pdf_syntax::object::dict::keys::{BASE_FONT, FONT_DESC, FONT_WEIGHT, ITALIC_ANGLE};
+use pdf_syntax::object::dict::keys::{
+    BASE_FONT, FONT_DESC, FONT_WEIGHT, ITALIC_ANGLE, MISSING_WIDTH,
+};
 use skrifa::raw::TableProvider;
 use skrifa::{GlyphId, GlyphId16};
 use std::cell::RefCell;
@@ -365,7 +367,7 @@ pub(crate) struct StandardKind {
     base_font_blob: StandardFontBlob,
     encoding: Encoding,
     widths: Vec<Width>,
-    missing_width: f32,
+    missing_width: Option<f32>,
     fallback: bool,
     glyph_to_code: RefCell<HashMap<GlyphId, u8>>,
     encodings: HashMap<u8, String>,
@@ -386,6 +388,9 @@ impl StandardKind {
     ) -> Option<Self> {
         let descriptor = dict.get::<Dict<'_>>(FONT_DESC).unwrap_or_default();
         let (widths, missing_width) = read_widths(dict, &descriptor)?;
+        let missing_width = descriptor
+            .contains_key(MISSING_WIDTH)
+            .then_some(missing_width);
 
         let (mut encoding, encoding_map) = read_encoding(dict);
 
@@ -480,8 +485,11 @@ impl StandardKind {
     pub(crate) fn glyph_width(&self, code: u8) -> Option<f32> {
         match self.widths.get(code as usize).copied() {
             Some(Width::Value(w)) => Some(w),
-            Some(Width::Missing) => Some(self.missing_width),
-            None => self
+            Some(Width::Missing) => self.missing_width.or_else(|| {
+                self.code_to_ps_name(code)
+                    .and_then(|c| self.base_font.get_width(c))
+            }),
+            _ => self
                 .code_to_ps_name(code)
                 .and_then(|c| self.base_font.get_width(c)),
         }
@@ -505,5 +513,54 @@ impl StandardKind {
 
     pub(crate) fn is_monospace(&self) -> bool {
         self.base_font.is_monospace()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_widths(entries: &[(u8, f32)]) -> Vec<Width> {
+        let mut widths = vec![Width::Missing; 256];
+        for (code, width) in entries {
+            widths[*code as usize] = Width::Value(*width);
+        }
+        widths
+    }
+
+    fn build_standard_kind(widths: Vec<Width>, missing_width: Option<f32>) -> StandardKind {
+        let (data, index) = StandardFont::Helvetica.get_font_data();
+        let base_font_blob =
+            StandardFontBlob::from_data(data, index).expect("standard font data should parse");
+
+        StandardKind {
+            base_font: StandardFont::Helvetica,
+            base_font_blob,
+            encoding: Encoding::WinAnsi,
+            widths,
+            missing_width,
+            fallback: true,
+            glyph_to_code: RefCell::new(HashMap::new()),
+            encodings: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn glyph_width_falls_back_to_base_metrics_when_missing_width_is_absent() {
+        let font = build_standard_kind(build_widths(&[(b'A', 600.0)]), None);
+
+        assert_eq!(font.glyph_width(b'A'), Some(600.0));
+        assert_eq!(
+            font.glyph_width(b'B'),
+            StandardFont::Helvetica.get_width("B")
+        );
+    }
+
+    #[test]
+    fn glyph_width_respects_explicit_zero_missing_width() {
+        let font = build_standard_kind(build_widths(&[(b'A', 600.0)]), Some(0.0));
+
+        assert_eq!(font.glyph_width(b'A'), Some(600.0));
+        assert_eq!(font.glyph_width(b'B'), Some(0.0));
     }
 }
