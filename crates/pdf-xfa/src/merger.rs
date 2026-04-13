@@ -73,10 +73,7 @@ impl<'a> FormMerger<'a> {
     }
 
     /// Set embedded image files for resolving `<image href="…">` references.
-    pub fn with_image_files(
-        mut self,
-        files: std::collections::HashMap<String, Vec<u8>>,
-    ) -> Self {
+    pub fn with_image_files(mut self, files: std::collections::HashMap<String, Vec<u8>>) -> Self {
         self.image_files = files;
         self
     }
