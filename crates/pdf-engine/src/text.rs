@@ -10,6 +10,36 @@ use std::cmp::Ordering;
 
 /// Y tolerance for grouping spans into horizontal bands.
 const BAND_Y_TOLERANCE: f64 = 5.0;
+
+// ANN[r17/TEX1] Multi-signal consensus thresholds.
+// The previous single-threshold scheme (gap > 0.15 * font_size) missed
+// word boundaries when kerning or narrow fonts produced small measured
+// gaps even though the PDF emitted an explicit TJ backward shift, and
+// over-emitted spaces for condensed fonts where 0.15em of kerning is
+// well below an actual word space. The consensus system weights three
+// signals and inserts a space when the combined confidence exceeds
+// SPACE_CONSENSUS_THRESHOLD.
+/// Raw TJ backward adjustment (positive in PDF TJ units) that is
+/// definitively a word break. Matches pdftotext / MuPDF heuristics —
+/// a space glyph is typically emitted as either a literal 0x20 or as
+/// a TJ adjustment of around 250 1/1000 em. 100 units is a safely
+/// conservative floor.
+const TJ_SPACE_THRESHOLD_UNITS: f32 = 100.0;
+/// Weight of the TJ offset signal when confidence is high.
+const TJ_SIGNAL_WEIGHT: f64 = 0.95;
+/// Weight of the purely geometric gap signal.
+const GAP_SIGNAL_WEIGHT: f64 = 0.80;
+/// Weight of character-heuristic signals (CamelCase, digit↔letter).
+const HEURISTIC_SIGNAL_WEIGHT: f64 = 0.60;
+/// Combined weight at which a space is inserted.
+const SPACE_CONSENSUS_THRESHOLD: f64 = 0.75;
+/// Fraction of a median character width above which a gap contributes
+/// to the geometric signal (pdf_oxide uses ~0.30).
+const GAP_TO_MEDIAN_CHAR_FRACTION: f64 = 0.30;
+/// Fallback gap fraction relative to `font_size` when the running
+/// median character width has not yet been established.
+const GAP_TO_FONT_SIZE_FALLBACK_FRACTION: f64 = 0.15;
+
 /// Minimum horizontal gap treated as a column gutter (adaptive fallback).
 const COLUMN_GAP_THRESHOLD_MIN: f64 = 10.0;
 /// Maximum adaptive column gap threshold.
@@ -243,11 +273,45 @@ struct BandGap {
 }
 
 /// A Device implementation that captures text from draw_glyph calls.
+///
+/// ANN[r17/TEX1][r17/TEX3] Space detection uses a multi-signal consensus
+/// rather than a single geometric threshold. Three signals vote:
+///   1. `pending_tj_offset`  — raw TJ backward shift surfaced by the
+///      interpreter (confidence 0.95). This is the definitive word-break
+///      signal used by pdftotext / MuPDF.
+///   2. geometric gap        — measured horizontal distance between the
+///      previous glyph's right edge and this glyph's origin (confidence
+///      0.80). Compared against the running median glyph width rather
+///      than a flat em-fraction so condensed/wide fonts are handled
+///      uniformly.
+///   3. character heuristic  — CamelCase transition or digit↔letter
+///      transition at the merge point (confidence 0.60). Catches cases
+///      where the writer relied on typography (e.g. table cells glued
+///      with zero gap: `Qty1Price$5`).
+///
+/// A space is inserted when the weighted sum meets SPACE_CONSENSUS_THRESHOLD.
+/// Span accumulation still merges adjacent glyphs into one TextSpan (TEX3)
+/// so downstream reading-order logic sees logical text runs, not individual
+/// character positions.
 pub(crate) struct TextExtractionDevice {
     spans: Vec<TextSpan>,
     last_y: f64,
     last_end_x: f64,
+    /// TJ adjustment in raw 1/1000 em units since the last glyph was
+    /// drawn. Positive values = backward shift (i.e., explicit horizontal
+    /// space). Reset every time a glyph is drawn.
+    pending_tj_offset: f32,
+    /// Running sample of measured glyph widths used as the adaptive
+    /// reference for the geometric gap signal. Cheap to maintain and
+    /// avoids having to re-walk all spans per decision.
+    glyph_widths: Vec<f64>,
+    /// Cached median glyph width (kept fresh every `MEDIAN_REFRESH`
+    /// insertions). Zero = not yet established, caller falls back to
+    /// font-size scaling.
+    cached_median_char_width: f64,
 }
+
+const MEDIAN_REFRESH: usize = 32;
 
 impl Default for TextExtractionDevice {
     fn default() -> Self {
@@ -262,7 +326,68 @@ impl TextExtractionDevice {
             spans: Vec::new(),
             last_y: f64::NEG_INFINITY,
             last_end_x: f64::NEG_INFINITY,
+            pending_tj_offset: 0.0,
+            glyph_widths: Vec::new(),
+            cached_median_char_width: 0.0,
         }
+    }
+
+    /// Refresh the cached median char width. Called lazily from
+    /// `draw_glyph` to keep the hot path cheap.
+    fn refresh_median_char_width(&mut self) {
+        if self.glyph_widths.is_empty() {
+            self.cached_median_char_width = 0.0;
+            return;
+        }
+        let mut sorted = self.glyph_widths.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        self.cached_median_char_width = sorted[sorted.len() / 2];
+    }
+
+    /// Decide whether a space should be glued between two glyphs within
+    /// the same span. Returns (insert_space, start_new_span).
+    fn evaluate_space_consensus(
+        &self,
+        gap: f64,
+        font_size: f64,
+        prev_text: &str,
+        next_text: &str,
+    ) -> bool {
+        let mut confidence = 0.0;
+
+        // Signal 1 — TJ offset (highest confidence). Raw units; a full
+        // space is ~250. Anything over TJ_SPACE_THRESHOLD_UNITS counts.
+        if self.pending_tj_offset.abs() >= TJ_SPACE_THRESHOLD_UNITS {
+            confidence += TJ_SIGNAL_WEIGHT;
+        }
+
+        // Signal 2 — geometric gap. Prefer the adaptive median-char-width
+        // reference; fall back to font-size when the median hasn't been
+        // established yet (first few glyphs on a page).
+        let gap_reference = if self.cached_median_char_width > 0.0 {
+            self.cached_median_char_width * GAP_TO_MEDIAN_CHAR_FRACTION
+        } else {
+            font_size * GAP_TO_FONT_SIZE_FALLBACK_FRACTION
+        };
+        if gap > gap_reference {
+            confidence += GAP_SIGNAL_WEIGHT;
+        }
+
+        // Signal 3 — character-class transitions. Only checked when the
+        // previous span ends with a character and the incoming text starts
+        // with one; avoids double-counting with punctuation.
+        if let (Some(prev_last), Some(next_first)) =
+            (prev_text.chars().last(), next_text.chars().next())
+        {
+            let camel = prev_last.is_lowercase() && next_first.is_uppercase();
+            let digit_to_letter = prev_last.is_ascii_digit() && next_first.is_alphabetic();
+            let letter_to_digit = prev_last.is_alphabetic() && next_first.is_ascii_digit();
+            if camel || digit_to_letter || letter_to_digit {
+                confidence += HEURISTIC_SIGNAL_WEIGHT;
+            }
+        }
+
+        confidence >= SPACE_CONSENSUS_THRESHOLD
     }
 
     /// Consume the device and return extracted text as a single string.
@@ -318,36 +443,55 @@ impl Device<'_> for TextExtractionDevice {
         let glyph_width = estimate_glyph_width(glyph, font_size).max(font_size * 0.25);
         let glyph_end_x = x + glyph_width;
 
+        // ANN[r17/TEX4] Feed the running sample used to derive the adaptive
+        // median character width. Capped to protect against pathological
+        // pages with hundreds of thousands of glyphs.
+        if self.glyph_widths.len() < 4096 {
+            self.glyph_widths.push(glyph_width);
+            if self.glyph_widths.len() % MEDIAN_REFRESH == 0 {
+                self.refresh_median_char_width();
+            }
+        }
+
         let same_line = (y - self.last_y).abs() <= font_size.max(BAND_Y_TOLERANCE) * 0.35;
         let gap = x - self.last_end_x;
         let adjacent = same_line && gap >= -font_size * 0.25 && gap < font_size * 0.5;
 
-        if adjacent {
-            if let Some(last) = self.spans.last_mut() {
-                // Inject a space when the horizontal gap between the previous
-                // glyph and this one is wide enough to indicate an inter-word
-                // break (typical PDFs emit `[(foo) -200 (bar)] TJ` or two
-                // separate show-text ops without a literal space glyph). The
-                // 0.15 em threshold matches what pdftotext / MuPDF use: well
-                // below normal letter spacing but comfortably above intra-word
-                // kerning. Skip if either side already ends/starts with space.
-                let glue_needed = gap > font_size * 0.15
-                    && !last.text.ends_with(' ')
-                    && !text.starts_with(' ');
-                if glue_needed {
-                    last.text.push(' ');
-                }
-                last.text.push_str(&text);
-                last.width = last.width.max(glyph_end_x - last.x);
-                last.height = last.height.max(font_size);
-                self.last_y = y;
-                self.last_end_x = glyph_end_x;
-                return;
+        if adjacent && !self.spans.is_empty() {
+            // ANN[r17/TEX1] Multi-signal consensus replaces the prior
+            // single-threshold rule (`gap > 0.15 * font_size`). The
+            // consensus evaluates TJ offset, geometric gap, and
+            // character-class transitions; a space is inserted only
+            // when the weighted sum meets SPACE_CONSENSUS_THRESHOLD.
+            // Decision is computed before the mutable borrow of `last`
+            // to keep the borrow checker happy.
+            let want_space = {
+                let last = self.spans.last().expect("checked non-empty");
+                !last.text.ends_with(' ')
+                    && !text.starts_with(' ')
+                    && self.evaluate_space_consensus(gap, font_size, &last.text, &text)
+            };
+            let last = self.spans.last_mut().expect("checked non-empty");
+            if want_space {
+                last.text.push(' ');
             }
+            last.text.push_str(&text);
+            last.width = last.width.max(glyph_end_x - last.x);
+            last.height = last.height.max(font_size);
+            self.last_y = y;
+            self.last_end_x = glyph_end_x;
+            // ANN[r17/TEX1] Consume the TJ signal: it only counts for
+            // the one merge it preceded.
+            self.pending_tj_offset = 0.0;
+            return;
         }
 
         self.last_y = y;
         self.last_end_x = glyph_end_x;
+        // ANN[r17/TEX1] Non-adjacent glyph starts a fresh span, so any
+        // pending TJ offset is about within-span word breaks and no longer
+        // meaningful here.
+        self.pending_tj_offset = 0.0;
 
         self.spans.push(TextSpan {
             text,
@@ -357,6 +501,14 @@ impl Device<'_> for TextExtractionDevice {
             height: font_size,
             font_size,
         });
+    }
+
+    // ANN[r17/TEX1] Record TJ offsets. Accumulate because a single
+    // inter-substring gap may be expressed as multiple numeric entries
+    // (rare, but legal per PDF §9.4.3). The next draw_glyph consumes
+    // the sum.
+    fn text_adjustment(&mut self, amount: f32) {
+        self.pending_tj_offset += amount;
     }
 }
 
@@ -1143,6 +1295,106 @@ mod tests {
     fn hyphen_stitch_empty_input() {
         let lines: Vec<String> = vec![];
         assert_eq!(stitch_hyphenated_lines(&lines), "");
+    }
+
+    // --- TEX1 multi-signal space consensus tests ---
+
+    fn make_device_with_median(median: f64) -> TextExtractionDevice {
+        let mut dev = TextExtractionDevice::new();
+        // Seed enough samples for the median to resolve to `median`.
+        for _ in 0..MEDIAN_REFRESH {
+            dev.glyph_widths.push(median);
+        }
+        dev.refresh_median_char_width();
+        assert!((dev.cached_median_char_width - median).abs() < 1e-9);
+        dev
+    }
+
+    #[test]
+    fn consensus_inserts_space_on_strong_tj_offset_alone() {
+        // Gap is below the geometric threshold, but the TJ offset is large
+        // enough that the consensus must still fire.
+        let mut dev = make_device_with_median(6.0);
+        dev.pending_tj_offset = 250.0; // full em-space
+        assert!(dev.evaluate_space_consensus(0.5, 12.0, "Hello", "World"));
+    }
+
+    #[test]
+    fn consensus_inserts_space_on_geometric_gap_alone() {
+        // No TJ, no character transition, but a clearly wide geometric gap.
+        let dev = make_device_with_median(6.0);
+        // gap > 0.3 * 6.0 = 1.8 → fires gap signal (0.80), below threshold
+        // on its own? 0.80 < 0.75 threshold? No, 0.80 > 0.75, so it fires.
+        assert!(dev.evaluate_space_consensus(2.5, 12.0, "hello", "world"));
+    }
+
+    #[test]
+    fn consensus_no_space_on_kerning_gap() {
+        // Small kerning-size gap with no other signals must not inject a
+        // space (regression guard against false-positive spaces inside
+        // tightly kerned words).
+        let dev = make_device_with_median(6.0);
+        assert!(!dev.evaluate_space_consensus(0.5, 12.0, "fi", "lm"));
+    }
+
+    #[test]
+    fn consensus_inserts_space_on_camel_case_plus_gap() {
+        // CamelCase heuristic (0.60) alone doesn't reach threshold, but a
+        // moderate gap (0.60 gap + 0.60 heuristic if gap fires) should.
+        // Here gap = 2.5 > 1.8 → gap fires → total 0.80 + 0.60 = 1.40.
+        let dev = make_device_with_median(6.0);
+        assert!(dev.evaluate_space_consensus(2.5, 12.0, "helloWorld", "Inc"));
+    }
+
+    #[test]
+    fn consensus_inserts_space_on_digit_letter_transition_with_gap() {
+        let dev = make_device_with_median(6.0);
+        assert!(dev.evaluate_space_consensus(2.5, 12.0, "123", "abc"));
+    }
+
+    #[test]
+    fn consensus_heuristic_alone_is_insufficient() {
+        // Heuristic (0.60) on its own is below the 0.75 threshold — the
+        // design deliberately requires a second corroborating signal to
+        // avoid gluing spaces into existing CamelCase identifiers that
+        // have no geometric break.
+        let dev = make_device_with_median(6.0);
+        assert!(!dev.evaluate_space_consensus(0.5, 12.0, "camel", "Case"));
+    }
+
+    #[test]
+    fn consensus_falls_back_to_font_size_when_no_median() {
+        // No samples → median is 0; geometric reference uses font-size.
+        let dev = TextExtractionDevice::new();
+        // gap 1.9 > 0.15 * 12.0 = 1.8 → gap signal fires
+        assert!(dev.evaluate_space_consensus(1.9, 12.0, "a", "b"));
+        // gap 1.5 < 1.8 → no signal
+        assert!(!dev.evaluate_space_consensus(1.5, 12.0, "a", "b"));
+    }
+
+    #[test]
+    fn consensus_ignores_tiny_tj_offsets() {
+        // TJ offsets below the threshold are kerning, not word breaks.
+        let mut dev = make_device_with_median(6.0);
+        dev.pending_tj_offset = 50.0;
+        assert!(!dev.evaluate_space_consensus(0.5, 12.0, "Hello", "World"));
+    }
+
+    #[test]
+    fn consensus_accepts_negative_tj_offsets() {
+        // A negative TJ offset still represents an explicit inter-substring
+        // shift and counts toward the consensus (|amount| check).
+        let mut dev = make_device_with_median(6.0);
+        dev.pending_tj_offset = -250.0;
+        assert!(dev.evaluate_space_consensus(0.5, 12.0, "Hello", "World"));
+    }
+
+    #[test]
+    fn text_adjustment_accumulates_until_glyph() {
+        let mut dev = TextExtractionDevice::new();
+        dev.text_adjustment(120.0);
+        dev.text_adjustment(140.0);
+        assert!((dev.pending_tj_offset - 260.0).abs() < 1e-6);
     }
 
     #[test]

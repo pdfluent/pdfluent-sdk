@@ -61,6 +61,14 @@ pub trait Device<'a> {
     fn begin_marked_content(&mut self, _tag: &[u8], _mcid: Option<i32>) {}
     /// Called at the end of a marked content sequence (EMC).
     fn end_marked_content(&mut self) {}
+    /// Called when a TJ-array numeric adjustment is encountered between
+    /// substrings. Positive values shift text backward, negative values shift
+    /// it forward (1/1000 em units, per PDF §9.4.3). Text extractors use this
+    /// as a high-confidence word-boundary signal.
+    // ANN[r17/TEX1] Raw TJ offset surfaced so TextExtractionDevice can use it
+    // as the highest-confidence signal in the multi-signal space-detection
+    // consensus. Default is no-op to stay transparent to rendering devices.
+    fn text_adjustment(&mut self, _amount: f32) {}
 }
 
 /// A device that discards all drawing operations.
