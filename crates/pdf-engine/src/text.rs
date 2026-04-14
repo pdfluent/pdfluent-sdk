@@ -261,12 +261,9 @@ impl TextExtractionDevice {
     /// Consume the device and return extracted text as a single string.
     pub fn into_text(self) -> String {
         let blocks = group_spans_into_blocks(self.spans);
-        let raw = blocks
-            .iter()
-            .map(|b| b.text())
-            .collect::<Vec<_>>()
-            .join("\n");
-        normalize_text_output(&raw)
+        let lines: Vec<String> = blocks.iter().map(|b| b.text()).collect();
+        let stitched = stitch_hyphenated_lines(&lines);
+        normalize_text_output(&stitched)
     }
 
     /// Consume the device and return text blocks.
@@ -630,6 +627,87 @@ fn append_column_region_blocks(
     }
 }
 
+/// Join per-block lines, stitching end-of-line hyphenated word-wraps the
+/// way pdftotext / MuPDF / PDFBox do.
+///
+/// Trigger conditions (all must hold):
+/// 1. Previous line ends with `-` preceded by an alphabetic character.
+/// 2. The alphabetic suffix before the `-` has >= 3 characters.
+/// 3. The next line (trimmed) starts with an ASCII lowercase letter.
+/// 4. The lowercase prefix of the next line has >= 3 characters.
+///
+/// When triggered, the trailing `-` is removed and the two halves are
+/// concatenated without a space or newline.
+///
+/// This avoids false positives on compound words ("real-time"), bullet
+/// lists, numeric ranges ("42-"), and short fragments.
+fn stitch_hyphenated_lines(lines: &[String]) -> String {
+    let mut out = String::new();
+    for (idx, line) in lines.iter().enumerate() {
+        if idx == 0 {
+            out.push_str(line);
+            continue;
+        }
+
+        let next_trimmed = line.trim_start();
+
+        // Check the accumulated output for end-of-line hyphen pattern
+        let should_merge = is_hyphen_wrap_candidate(&out, next_trimmed);
+
+        if should_merge {
+            out.pop(); // drop the trailing '-'
+            out.push_str(next_trimmed);
+        } else {
+            out.push('\n');
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+/// Check if the accumulated text ends with a hyphen-wrap pattern and the
+/// continuation is a valid merge target.
+fn is_hyphen_wrap_candidate(accumulated: &str, next_trimmed: &str) -> bool {
+    // Must end with '-'
+    if !accumulated.ends_with('-') {
+        return false;
+    }
+
+    // Character before '-' must be alphabetic
+    let before_hyphen = accumulated.chars().rev().nth(1);
+    if !before_hyphen.is_some_and(|c| c.is_alphabetic()) {
+        return false;
+    }
+
+    // Count consecutive alphabetic chars before the '-' (the word fragment)
+    let alpha_prefix_len = accumulated
+        .chars()
+        .rev()
+        .skip(1) // skip the '-'
+        .take_while(|c| c.is_alphabetic())
+        .count();
+    if alpha_prefix_len < 3 {
+        return false;
+    }
+
+    // Next line must start with lowercase ASCII
+    let first_next = next_trimmed.chars().next();
+    if !first_next.is_some_and(|c| c.is_ascii_lowercase()) {
+        return false;
+    }
+
+    // Count consecutive lowercase chars at start of next line
+    let next_alpha_len = next_trimmed
+        .chars()
+        .take_while(|c| c.is_ascii_lowercase())
+        .count();
+    if next_alpha_len < 3 {
+        return false;
+    }
+
+    true
+}
+
 /// Normalize extracted text to match pdftotext conventions.
 ///
 /// 1. Trim trailing whitespace from each line.
@@ -950,6 +1028,84 @@ mod tests {
     #[test]
     fn normalize_only_whitespace() {
         assert_eq!(normalize_text_output("   \n  \n"), "");
+    }
+
+    // --- Hyphen stitching tests ---
+
+    #[test]
+    fn hyphen_stitch_joins_wrapped_word() {
+        let lines = vec!["the aver-".into(), "age rainfall".into()];
+        assert_eq!(stitch_hyphenated_lines(&lines), "the average rainfall");
+    }
+
+    #[test]
+    fn hyphen_stitch_handles_leading_whitespace() {
+        let lines = vec!["pre-".into(), "   dict the outcome".into()];
+        // "pre" is only 3 chars → meets >= 3 guard
+        assert_eq!(stitch_hyphenated_lines(&lines), "predict the outcome");
+    }
+
+    #[test]
+    fn hyphen_stitch_capital_continuation_not_stitched() {
+        let lines = vec!["Section three-".into(), "Summary here".into()];
+        assert_eq!(
+            stitch_hyphenated_lines(&lines),
+            "Section three-\nSummary here"
+        );
+    }
+
+    #[test]
+    fn hyphen_stitch_bullet_dash_not_stitched() {
+        // "-" alone: char before hyphen is not alphabetic
+        let lines = vec!["Items:".into(), "-".into(), "milk".into()];
+        assert_eq!(stitch_hyphenated_lines(&lines), "Items:\n-\nmilk");
+    }
+
+    #[test]
+    fn hyphen_stitch_numeric_range_not_stitched() {
+        // "42-" — char before hyphen is digit, not alphabetic
+        let lines = vec!["page 42-".into(), "seventy".into()];
+        assert_eq!(
+            stitch_hyphenated_lines(&lines),
+            "page 42-\nseventy"
+        );
+    }
+
+    #[test]
+    fn hyphen_stitch_short_prefix_not_stitched() {
+        // "re-" only 2 alpha chars before hyphen → below 3-char guard
+        let lines = vec!["re-".into(), "organize".into()];
+        assert_eq!(stitch_hyphenated_lines(&lines), "re-\norganize");
+    }
+
+    #[test]
+    fn hyphen_stitch_short_continuation_not_stitched() {
+        // Next line starts with "an" (2 chars) → below 3-char guard
+        let lines = vec!["counter-".into(), "an example".into()];
+        assert_eq!(
+            stitch_hyphenated_lines(&lines),
+            "counter-\nan example"
+        );
+    }
+
+    #[test]
+    fn hyphen_stitch_compound_word_midline_preserved() {
+        // "real-time" is mid-line, not end-of-line — no stitching applies
+        // because stitch only operates on line boundaries
+        let lines = vec!["real-time system".into()];
+        assert_eq!(stitch_hyphenated_lines(&lines), "real-time system");
+    }
+
+    #[test]
+    fn hyphen_stitch_single_line_unchanged() {
+        let lines = vec!["only line".into()];
+        assert_eq!(stitch_hyphenated_lines(&lines), "only line");
+    }
+
+    #[test]
+    fn hyphen_stitch_empty_input() {
+        let lines: Vec<String> = vec![];
+        assert_eq!(stitch_hyphenated_lines(&lines), "");
     }
 
     #[test]
