@@ -1548,7 +1548,10 @@ impl<'a> LayoutEngine<'a> {
             }
 
             // Overflow detection: child doesn't fit in remaining space.
-            if child_y + child_size.height > remaining_height && !placed_children.is_empty() {
+            // 0.5pt tolerance for sub-point rounding (#971).
+            if child_y + child_size.height > remaining_height + 0.5
+                && !placed_children.is_empty()
+            {
                 // Overflow: split at the last valid split point.
                 if last_valid_split > 0 && last_valid_split < placed_children.len() {
                     // Trim placed_children to the last valid split point.
@@ -1952,7 +1955,10 @@ impl<'a> LayoutEngine<'a> {
             let child_size = self.compute_extent_with_available(child_id, Some(available));
             let child_bottom = y_cursor + child_size.height;
 
-            if child_bottom > available.height {
+            // 0.5pt tolerance prevents marginal overflows from triggering
+            // pagination — sub-point rounding differences should not create
+            // extra pages (#971).
+            if child_bottom > available.height + 0.5 {
                 let remaining_height = (available.height - y_cursor).max(0.0);
 
                 // Use the same overflow semantics as layout_content_fitting():
