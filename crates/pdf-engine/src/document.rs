@@ -276,6 +276,8 @@ impl PdfDocument {
         let page_contains = |i: usize| -> Option<usize> {
             let page = &pages[i];
             let mut device = TextExtractionDevice::new();
+            let mut settings = self.settings.clone();
+            settings.skip_signature_widgets = false;
             let mut ctx = Context::new(
                 page.initial_transform(false),
                 Rect::new(
@@ -285,7 +287,7 @@ impl PdfDocument {
                     page.render_dimensions().1 as f64,
                 ),
                 page.xref(),
-                self.settings.clone(),
+                settings,
             );
             interpret_page(page, &mut ctx, &mut device);
             if device.into_text().to_lowercase().contains(&query_lower) {
@@ -394,11 +396,15 @@ impl PdfDocument {
 
     fn create_context<'a>(&self, page: &Page<'a>) -> Context<'a> {
         let (w, h) = page.render_dimensions();
+        let mut settings = self.settings.clone();
+        // Text extraction should include signature widget appearance streams
+        // that rendering skips to match MuPDF visual output.
+        settings.skip_signature_widgets = false;
         Context::new(
             page.initial_transform(false),
             Rect::new(0.0, 0.0, w as f64, h as f64),
             page.xref(),
-            self.settings.clone(),
+            settings,
         )
     }
 
