@@ -258,15 +258,12 @@ impl PdfDocument {
     /// Extract all text from the document: page content streams plus AcroForm
     /// field values.  Mirrors pdftotext behaviour.
     pub fn extract_all_text(&self) -> String {
-        let mut text = String::new();
-        for i in 0..self.page_count() {
-            if let Ok(page_text) = self.extract_text(i) {
-                text.push_str(&page_text);
-            }
-        }
+        let mut text = join_page_texts((0..self.page_count()).filter_map(|i| self.extract_text(i).ok()));
         let acroform = self.extract_acroform_text();
         if !acroform.is_empty() {
-            text.push('\n');
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
             text.push_str(&acroform);
         }
         text
@@ -415,6 +412,48 @@ impl PdfDocument {
         let mut flat_doc = Self::open(flat_bytes).ok()?;
         flat_doc.settings = self.settings.clone();
         Some(flat_doc)
+    }
+}
+
+fn join_page_texts<I>(page_texts: I) -> String
+where
+    I: IntoIterator,
+    I::Item: AsRef<str>,
+{
+    let mut text = String::new();
+    let mut is_first = true;
+
+    for page_text in page_texts {
+        if !is_first {
+            while !text.is_empty() && !text.ends_with("\n\n") {
+                text.push('\n');
+            }
+            text.push('\u{000C}');
+        }
+        text.push_str(page_text.as_ref());
+        is_first = false;
+    }
+
+    text
+}
+
+#[cfg(test)]
+mod extract_all_text_tests {
+    use super::join_page_texts;
+
+    #[test]
+    fn separates_nonempty_pages_like_pdftotext() {
+        assert_eq!(join_page_texts(["Page 1", "Page 2"]), "Page 1\n\n\u{000C}Page 2");
+    }
+
+    #[test]
+    fn preserves_leading_blank_pages_without_extra_newlines() {
+        assert_eq!(join_page_texts(["", "Page 2"]), "\u{000C}Page 2");
+    }
+
+    #[test]
+    fn reuses_existing_blank_line_before_form_feed() {
+        assert_eq!(join_page_texts(["Page 1\n\n", "Page 2"]), "Page 1\n\n\u{000C}Page 2");
     }
 }
 
