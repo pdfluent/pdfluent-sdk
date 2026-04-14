@@ -45,8 +45,15 @@ pub struct TextSpan {
 }
 
 impl TextSpan {
+    /// Conservative right edge using whichever is wider: measured or estimated.
+    /// Used by column detection to avoid underestimating span extent.
     fn right(&self) -> f64 {
         self.x + self.width.max(self.estimated_width())
+    }
+
+    /// Right edge from measured glyph positions only.
+    fn measured_right(&self) -> f64 {
+        self.x + self.width
     }
 
     fn estimated_width(&self) -> f64 {
@@ -80,7 +87,7 @@ impl TextBlock {
         for pair in self.spans.windows(2) {
             let prev = &pair[0];
             let curr = &pair[1];
-            let expected_end = prev.right();
+            let expected_end = prev.measured_right();
             let gap = curr.x - expected_end;
             if gap > prev.font_size * 0.25 {
                 result.push(' ');
