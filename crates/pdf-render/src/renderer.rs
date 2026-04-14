@@ -41,23 +41,21 @@ impl Renderer {
     }
 
     fn set_stroke_properties(&mut self, stroke_props: &StrokeProps, is_text: bool) {
+        // Minimum renderable stroke width in device pixels. For body strokes
+        // this is 1.0 — PDF spec §10.6.5 says a line width of 0 denotes
+        // "the thinnest line that can be rendered at device resolution",
+        // i.e. exactly one device pixel, and any sub-pixel stroke is
+        // similarly widened so the stroke does not disappear between
+        // samples. For text strokes we allow sub-pixel widths (0.25 px):
+        // anti-aliasing renders them correctly and forcing 1 px would make
+        // small text appear aggressively bold at screen resolutions.
         let threshold = if is_text { 0.25 } else { 1.0 };
 
-        // Best-effort attempt to ensure a line width of at least 1.0, as required by the PDF
-        // specification. If we are stroking text, we reduce the threshold as it will otherwise
-        // lead to very bold-looking text at low resolutions.
         let min_factor = max_factor(self.ctx.transform());
-        let mut line_width = stroke_props.line_width.max(0.01);
-        let transformed_width = line_width * min_factor;
 
-        // Only enforce line width if not inside of pattern.
-        if transformed_width < threshold && !self.inside_pattern {
-            line_width /= transformed_width;
-            line_width *= threshold;
-        }
-
-        let stroke = kurbo::Stroke {
-            width: line_width as f64,
+        // Build the stroke once we know the user-space width.
+        let build_stroke = |width: f64| kurbo::Stroke {
+            width,
             join: stroke_props.line_join,
             miter_limit: stroke_props.miter_limit as f64,
             start_cap: stroke_props.line_cap,
@@ -66,7 +64,34 @@ impl Renderer {
             dash_offset: stroke_props.dash_offset as f64,
         };
 
-        self.ctx.set_stroke(stroke);
+        // Pattern tiles rely on the author's exact stroke width — the tile
+        // pattern is composed later at the caller's CTM, so inflating here
+        // would double-scale. Also skip the DPI logic for degenerate CTMs
+        // where max_factor collapses to zero (or returned negative).
+        if self.inside_pattern || !(min_factor > 0.0) {
+            let width = stroke_props.line_width.max(0.01) as f64;
+            self.ctx.set_stroke(build_stroke(width));
+            return;
+        }
+
+        // PDF §10.6.5: "w 0" = one device pixel. Translate to user-space
+        // directly (1 px / min_factor) so the resulting stroke lands on a
+        // single pixel regardless of zoom.
+        let mut line_width = if stroke_props.line_width == 0.0 {
+            threshold / min_factor
+        } else {
+            stroke_props.line_width
+        };
+
+        // General hairline inflation: any sub-threshold stroke (in device
+        // pixels) gets pushed up to the threshold. Direct computation
+        // avoids the divide-and-multiply pattern that previously flirted
+        // with division-by-zero when line_width was very small.
+        if line_width * min_factor < threshold {
+            line_width = threshold / min_factor;
+        }
+
+        self.ctx.set_stroke(build_stroke(line_width as f64));
     }
 
     fn draw_image_with_alpha_mask(&mut self, rgb_data: RgbData, alpha_data: LumaData) {
