@@ -27,7 +27,7 @@ ecb = "0.1.2"
 encoding_rs = "0.8.32"
 flate2 = "1.0"
 hayro-ccitt = { path = "../hayro-ccitt", optional = true, version = "=0.2.0" }
-hayro-jbig2 = { path = "../hayro-jbig2", optional = true, version = "=0.1.0" }
+hayro-jbig2 = { path = "../hayro-jbig2", optional = true, version = "=0.2.0" }
 hayro-jpeg2000 = { path = "../hayro-jpeg2000", optional = true, default-features = false, version = "=0.3.2" }
 image = { version = "0.25", optional = true }
 indexmap = "2.2.3"
