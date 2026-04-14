@@ -51,10 +51,8 @@ use pdf_engine::PdfDocument;
 fn main() -> pdf_engine::Result<()> {
     let doc = PdfDocument::open(std::fs::read("report.pdf")?)?;
 
-    for i in 0..doc.page_count() {
-        let text = doc.extract_text(i)?;
-        println!("--- Page {} ---\n{}", i + 1, text);
-    }
+    let text = doc.extract_all_text();
+    println!("{text}");
 
     // Search across all pages — returns matching page indices
     let pages = doc.search_text("quarterly revenue");
