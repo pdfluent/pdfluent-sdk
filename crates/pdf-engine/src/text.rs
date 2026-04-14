@@ -261,11 +261,12 @@ impl TextExtractionDevice {
     /// Consume the device and return extracted text as a single string.
     pub fn into_text(self) -> String {
         let blocks = group_spans_into_blocks(self.spans);
-        blocks
+        let raw = blocks
             .iter()
             .map(|b| b.text())
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n");
+        normalize_text_output(&raw)
     }
 
     /// Consume the device and return text blocks.
@@ -629,6 +630,73 @@ fn append_column_region_blocks(
     }
 }
 
+/// Normalize extracted text to match pdftotext conventions.
+///
+/// 1. Trim trailing whitespace from each line.
+/// 2. Collapse runs of more than two consecutive newlines into exactly two.
+/// 3. Preserve form-feed characters (`\x0C`) as page separators.
+/// 4. End with a single trailing newline (or empty for empty input).
+pub(crate) fn normalize_text_output(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+
+    let mut lines: Vec<&str> = Vec::new();
+    for line in text.split('\n') {
+        lines.push(line.trim_end());
+    }
+
+    // Remove trailing empty lines (we'll add exactly one \n at the end)
+    while lines.last() == Some(&"") {
+        lines.pop();
+    }
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    let mut result = String::with_capacity(text.len());
+    let mut consecutive_empty = 0u32;
+
+    for (i, line) in lines.iter().enumerate() {
+        if line.is_empty() || *line == "\x0C" {
+            if line.is_empty() {
+                consecutive_empty += 1;
+                // Collapse >2 consecutive blank lines to 2
+                if consecutive_empty <= 2 {
+                    result.push('\n');
+                }
+            } else {
+                // Bare form-feed line
+                consecutive_empty = 0;
+                result.push_str(line);
+                if i + 1 < lines.len() {
+                    result.push('\n');
+                }
+            }
+        } else {
+            // Check if line starts with form-feed
+            if line.starts_with('\x0C') {
+                consecutive_empty = 0;
+                result.push_str(line);
+            } else {
+                consecutive_empty = 0;
+                result.push_str(line);
+            }
+            if i + 1 < lines.len() {
+                result.push('\n');
+            }
+        }
+    }
+
+    // Ensure single trailing newline
+    if !result.is_empty() && !result.ends_with('\n') {
+        result.push('\n');
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -834,6 +902,54 @@ mod tests {
         let threshold = compute_adaptive_column_gap(&bands);
         assert!((threshold - COLUMN_GAP_THRESHOLD_MAX).abs() < 0.01,
             "expected {COLUMN_GAP_THRESHOLD_MAX}, got {threshold}");
+    }
+
+    #[test]
+    fn normalize_trims_trailing_whitespace_per_line() {
+        assert_eq!(
+            normalize_text_output("hello   \nworld  \n"),
+            "hello\nworld\n"
+        );
+    }
+
+    #[test]
+    fn normalize_collapses_excess_newlines() {
+        // >2 blank lines collapse to 2 (meaning 3 \n in a row: line, blank, blank)
+        assert_eq!(
+            normalize_text_output("hello\n\n\n\n\nworld\n"),
+            "hello\n\n\nworld\n"
+        );
+    }
+
+    #[test]
+    fn normalize_preserves_double_newline() {
+        assert_eq!(
+            normalize_text_output("paragraph one\n\nparagraph two\n"),
+            "paragraph one\n\nparagraph two\n"
+        );
+    }
+
+    #[test]
+    fn normalize_preserves_form_feed() {
+        assert_eq!(
+            normalize_text_output("page1\n\n\x0Cpage2\n"),
+            "page1\n\n\x0Cpage2\n"
+        );
+    }
+
+    #[test]
+    fn normalize_adds_trailing_newline() {
+        assert_eq!(normalize_text_output("hello"), "hello\n");
+    }
+
+    #[test]
+    fn normalize_empty_input() {
+        assert_eq!(normalize_text_output(""), "");
+    }
+
+    #[test]
+    fn normalize_only_whitespace() {
+        assert_eq!(normalize_text_output("   \n  \n"), "");
     }
 
     #[test]
