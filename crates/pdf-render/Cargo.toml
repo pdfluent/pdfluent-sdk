@@ -12,7 +12,7 @@ pdf-interpret = { path = "../pdf-interpret", version = "=0.5.0" }
 kurbo = "0.13.0"
 image = { version = "0.25", features = ["png"] }
 bytemuck = { version = "1", features = ["bytemuck_derive"] }
-vello_cpu = { version = "0.0.6", default-features = false, features = ["std", "png", "u8_pipeline"] }
+vello_cpu = { version = "0.0.6", default-features = false, features = ["std", "png", "f32_pipeline"] }
 fast_image_resize = { version = "6.0", default-features = false, features = ["std"] }
 
 [dev-dependencies]
