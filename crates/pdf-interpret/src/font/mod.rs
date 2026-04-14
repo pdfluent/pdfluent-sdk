@@ -622,18 +622,49 @@ impl Default for FallbackFontQuery {
 }
 
 /// Convert a glyph name to a Unicode character, if possible.
-/// An incomplete implementation of the Adobe Glyph List Specification
+/// Implements the Adobe Glyph List Specification with extended fallbacks
+/// for non-standard names found in real-world PDFs.
 /// <https://github.com/adobe-type-tools/agl-specification>
 pub(crate) fn glyph_name_to_unicode(name: &str) -> Option<char> {
+    // 1. Direct AGL lookup
     if let Some(unicode_str) = glyph_names::get(name) {
         return unicode_str.chars().next();
     }
 
-    unicode_from_name(name).or_else(|| {
-        warn!("failed to map glyph name {} to unicode", name);
+    // 2. uni/u prefix convention
+    if let Some(c) = unicode_from_name(name) {
+        return Some(c);
+    }
 
-        None
-    })
+    // 3. AGL §2.4: strip variant suffix after period (e.g., "A.swash" → "A",
+    //    "comma.alt" → "comma"). Only the base name before the first period
+    //    maps to Unicode.
+    if let Some(dot_pos) = name.find('.') {
+        let base = &name[..dot_pos];
+        if !base.is_empty() {
+            if let Some(c) = glyph_names::get(base).and_then(|s| s.chars().next()) {
+                return Some(c);
+            }
+            if let Some(c) = unicode_from_name(base) {
+                return Some(c);
+            }
+        }
+    }
+
+    // 4. Handle "aXX" decimal glyph names (e.g., "a65" → 'A') used by some
+    //    TeX/LaTeX generated PDFs and custom encoding vectors.
+    if name.starts_with('a') && name.len() >= 2 {
+        if let Ok(code) = name[1..].parse::<u32>() {
+            if let Some(c) = char::from_u32(code) {
+                if !c.is_control() || c == ' ' {
+                    return Some(c);
+                }
+            }
+        }
+    }
+
+    warn!("failed to map glyph name {} to unicode", name);
+    None
 }
 
 pub(crate) fn unicode_from_name(name: &str) -> Option<char> {
@@ -724,6 +755,60 @@ mod normalized_glyph_name_tests {
         assert_eq!(normalized_glyph_name(".notdef"), ".notdef");
         assert_eq!(normalized_glyph_name("hyphen"), "hyphen");
         assert_eq!(normalized_glyph_name("space"), "space");
+    }
+}
+
+#[cfg(test)]
+mod glyph_name_to_unicode_tests {
+    use super::glyph_name_to_unicode;
+
+    #[test]
+    fn standard_agl_name() {
+        assert_eq!(glyph_name_to_unicode("A"), Some('A'));
+        assert_eq!(glyph_name_to_unicode("space"), Some(' '));
+        assert_eq!(glyph_name_to_unicode("hyphen"), Some('-'));
+    }
+
+    #[test]
+    fn uni_prefix() {
+        assert_eq!(glyph_name_to_unicode("uni0041"), Some('A'));
+        assert_eq!(glyph_name_to_unicode("uni00E9"), Some('é'));
+    }
+
+    #[test]
+    fn u_prefix() {
+        assert_eq!(glyph_name_to_unicode("u0041"), Some('A'));
+        assert_eq!(glyph_name_to_unicode("u2022"), Some('•'));
+    }
+
+    #[test]
+    fn variant_suffix_stripped() {
+        assert_eq!(glyph_name_to_unicode("A.swash"), Some('A'));
+        assert_eq!(glyph_name_to_unicode("comma.alt"), Some(','));
+        assert_eq!(glyph_name_to_unicode("space.narrow"), Some(' '));
+    }
+
+    #[test]
+    fn variant_suffix_with_uni_prefix() {
+        assert_eq!(glyph_name_to_unicode("uni0041.ss01"), Some('A'));
+    }
+
+    #[test]
+    fn a_decimal_glyph_name() {
+        assert_eq!(glyph_name_to_unicode("a65"), Some('A'));
+        assert_eq!(glyph_name_to_unicode("a32"), Some(' '));
+        assert_eq!(glyph_name_to_unicode("a97"), Some('a'));
+    }
+
+    #[test]
+    fn a_decimal_rejects_control_chars() {
+        assert_eq!(glyph_name_to_unicode("a0"), None);
+        assert_eq!(glyph_name_to_unicode("a7"), None);
+    }
+
+    #[test]
+    fn unknown_name_returns_none() {
+        assert_eq!(glyph_name_to_unicode("xyzzynonexistent"), None);
     }
 }
 

@@ -421,7 +421,7 @@ impl Type0Font {
     fn unicode_from_font_program(&self, code: u32) -> Option<char> {
         let glyph = self.map_code(code);
         if glyph == GlyphId::NOTDEF {
-            return None;
+            return self.identity_unicode_fallback(code);
         }
 
         match &self.font_type {
@@ -430,7 +430,10 @@ impl Type0Font {
                 let table = c.table();
 
                 if table.is_cid() {
-                    None
+                    // CID CFF fonts have no glyph names — fall back to treating
+                    // the CID as a Unicode code point when the encoding is
+                    // Identity-H/V (common for modern PDF generators).
+                    self.identity_unicode_fallback(code)
                 } else {
                     table
                         .glyph_name(pdf_font::GlyphId(glyph.to_u32() as u16))
@@ -444,6 +447,27 @@ impl Type0Font {
                 .map(|n| n.as_str())
                 .and_then(glyph_name_to_unicode),
         }
+    }
+
+    /// For Identity-H/V encoded fonts (AdobeIdentity), the character code
+    /// maps directly to CID, and the CID is typically the Unicode code point.
+    /// This is extremely common for CJK fonts and modern PDF generators.
+    fn identity_unicode_fallback(&self, code: u32) -> Option<char> {
+        let is_identity = self
+            .encoding
+            .metadata()
+            .character_collection
+            .as_ref()
+            .is_some_and(|cc| cc.family == CidFamily::AdobeIdentity);
+        if !is_identity {
+            return None;
+        }
+        let cid = self.code_to_cid(code).unwrap_or(code);
+        let c = char::from_u32(cid)?;
+        if c.is_control() && c != ' ' && c != '\t' {
+            return None;
+        }
+        Some(c)
     }
 }
 
