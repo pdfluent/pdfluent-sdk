@@ -137,6 +137,24 @@ fn try_decrypt_pdf(pdf_bytes: &[u8]) -> DecryptResult {
     DecryptResult::NotEncrypted
 }
 
+/// Returns `true` if the layout nodes contain at least one `Field` node
+/// (regardless of whether its value is empty or populated).
+fn page_has_fields(nodes: &[LayoutNode]) -> bool {
+    nodes.iter().any(|n| {
+        matches!(&n.content, LayoutContent::Field { .. }) || page_has_fields(&n.children)
+    })
+}
+
+/// Returns `true` if the layout nodes contain at least one `Field` with a
+/// non-empty value (i.e. data-bound content, not just static draw elements).
+/// Used for XFA §4.3 empty page subform suppression.
+fn page_has_field_data(nodes: &[LayoutNode]) -> bool {
+    nodes.iter().any(|n| {
+        matches!(&n.content, LayoutContent::Field { value, .. } if !value.is_empty())
+            || page_has_field_data(&n.children)
+    })
+}
+
 /// Flatten all XFA content in `pdf_bytes` to static PDF content streams.
 ///
 /// Returns the modified PDF bytes. The /AcroForm entry is removed so the
@@ -306,12 +324,40 @@ fn xfa_flatten_inner(
     inject_resolved_metrics(&mut tree, &resolved_fonts);
 
     let engine = LayoutEngine::new(&tree);
-    let layout = engine
+    let mut layout = engine
         .layout(root_id)
         .map_err(|e| XfaError::LayoutFailed(format!("{e:?}")))?;
 
     if layout.pages.is_empty() {
         return Err(XfaError::LayoutFailed("layout produced 0 pages".into()));
+    }
+
+    // XFA Spec §4.3: suppress page subforms whose data is empty or absent.
+    // A page with fields but no populated values is considered "data-empty"
+    // and should be suppressed.  Pages without fields (static-only pages with
+    // draws/images) are always kept.  At least one page is retained.
+    if layout.pages.len() > 1 {
+        let keep: Vec<bool> = layout
+            .pages
+            .iter()
+            .map(|p| {
+                if page_has_fields(&p.nodes) {
+                    page_has_field_data(&p.nodes)
+                } else {
+                    true
+                }
+            })
+            .collect();
+        if keep.iter().any(|&k| k) {
+            let mut idx = 0;
+            layout.pages.retain(|_| {
+                let k = keep[idx];
+                idx += 1;
+                k
+            });
+        } else {
+            layout.pages.truncate(1);
+        }
     }
 
     let mut doc = match Document::load_mem(pdf_bytes) {
