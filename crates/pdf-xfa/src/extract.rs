@@ -121,8 +121,16 @@ fn extract_from_array(array: &Array<'_>) -> XfaPackets {
 }
 
 fn scan_for_xfa(pdf: &Pdf) -> Result<XfaPackets> {
+    // Cap the number of streams we decompress to avoid multi-second stalls on
+    // large non-XFA PDFs. XFA XDP streams are typically among the first few
+    // hundred objects. If we haven't found one after 2000 streams, give up.
+    let mut streams_checked = 0u32;
     for obj in pdf.objects() {
         if let Object::Stream(s) = obj {
+            streams_checked += 1;
+            if streams_checked > 2000 {
+                break;
+            }
             if let Some(d) = decode_stream(&s) {
                 if d.contains("<xdp:xdp") {
                     return Ok(parse_xfa_xml(&d));
