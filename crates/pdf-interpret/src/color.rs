@@ -4,8 +4,8 @@ use crate::cache::{Cache, CacheKey};
 use crate::function::Function;
 use log::warn;
 use moxcms::{
-    ColorProfile, DataColorSpace, Layout, Transform8BitExecutor, TransformF32BitExecutor,
-    TransformOptions, Xyzd,
+    ColorProfile, DataColorSpace, Layout, RenderingIntent, Transform8BitExecutor,
+    TransformF32BitExecutor, TransformOptions, Xyzd,
 };
 use pdf_syntax::object;
 use pdf_syntax::object::Array;
@@ -959,22 +959,24 @@ impl ICCProfile {
             }
         };
 
+        // PDF spec §8.6.5.8: the default rendering intent is RelativeColorimetric.
+        // moxcms defaults to Perceptual, which compresses in-gamut colors and
+        // produces subtle hue shifts on CMYK→sRGB conversions. Use
+        // RelativeColorimetric to match the PDF spec default and the behaviour
+        // of Acrobat/MuPDF. Cherry-picked from reverted #920 overhaul
+        // (commit 23b7007ba); no other colour-pipeline changes from that
+        // commit are included here.
+        let options = TransformOptions {
+            rendering_intent: RenderingIntent::RelativeColorimetric,
+            ..TransformOptions::default()
+        };
+
         let u8_transform = src_profile
-            .create_transform_8bit(
-                src_layout,
-                &dest_profile,
-                Layout::Rgb,
-                TransformOptions::default(),
-            )
+            .create_transform_8bit(src_layout, &dest_profile, Layout::Rgb, options)
             .ok()?;
 
         let f32_transform = src_profile
-            .create_transform_f32(
-                src_layout,
-                &dest_profile,
-                Layout::Rgb,
-                TransformOptions::default(),
-            )
+            .create_transform_f32(src_layout, &dest_profile, Layout::Rgb, options)
             .ok()?;
 
         Some(Self(Arc::new(ICCColorRepr {
