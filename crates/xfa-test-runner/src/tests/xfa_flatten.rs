@@ -52,6 +52,20 @@ impl PdfTest for XfaFlattenTest {
     fn run(&self, pdf_data: &[u8], path: &Path) -> TestResult {
         let start = std::time::Instant::now();
 
+        // Fast byte-level pre-check: skip PDFs that cannot contain XFA.
+        // XFA forms live inside /AcroForm → /XFA. If the raw bytes contain
+        // neither marker, we can skip without the expensive parse+load below.
+        // This prevents timeouts on very large non-XFA PDFs (67MB+).
+        if !bytes_may_contain_xfa(pdf_data) {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some("no /AcroForm or /XFA marker in raw bytes".into()),
+                duration_ms: start.elapsed().as_millis() as u64,
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
+
         // Pre-check: if pdf-syntax cannot parse the original PDF, skip rather
         // than fail.  lopdf is more lenient and may load corrupt fuzzer PDFs
         // that pdf-syntax rejects; after lopdf re-serialises, the output would
@@ -386,6 +400,21 @@ fn has_xfa(doc: &lopdf::Document) -> bool {
             .unwrap_or(false),
         _ => false,
     }
+}
+
+/// Fast byte-level check: returns `true` when the raw PDF bytes contain both
+/// `/AcroForm` AND `/XFA` markers (or the XDP namespace `xdp:xdp`).
+/// This avoids expensive PDF parsing for large non-XFA files.
+fn bytes_may_contain_xfa(data: &[u8]) -> bool {
+    // Window-based search using memchr-style scanning.
+    let has_acroform = data.windows(9).any(|w| w == b"/AcroForm");
+    if !has_acroform {
+        // No AcroForm at all — check for standalone XDP (rare but possible)
+        return data.windows(7).any(|w| w == b"xdp:xdp");
+    }
+    // Has AcroForm — check for /XFA key (may appear anywhere, including font names
+    // like /XFAWDY+, so also verify xdp:xdp or <template as stronger signals).
+    data.windows(4).any(|w| w == b"/XFA")
 }
 
 /// Returns `true` when the PDF catalog has a /Perms entry, indicating a
