@@ -1066,7 +1066,13 @@ impl ToRgb for ICCProfile {
     }
 
     fn convert_u8(&self, input: &[u8], output: &mut [u8]) -> Option<()> {
-        if self.is_srgb() {
+        // sRGB fast path: only skip the transform when input and output
+        // buffers have matching lengths. Otherwise copy_from_slice would
+        // panic — callers can still legitimately pass mismatched slices
+        // (e.g. grayscale → RGB triple-up) and we must fall through to the
+        // moxcms transform in that case. Cherry-picked surgically from
+        // reverted #920 overhaul (commit 23b7007ba).
+        if self.is_srgb() && input.len() == output.len() {
             output.copy_from_slice(input);
         } else {
             self.0.transform_u8.transform(input, output).ok()?;
