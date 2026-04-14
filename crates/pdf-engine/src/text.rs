@@ -8,8 +8,19 @@ use pdf_render::pdf_interpret::{
 };
 use std::cmp::Ordering;
 
-/// Y tolerance for grouping spans into horizontal bands.
+/// Minimum Y tolerance for grouping spans into horizontal bands. The
+/// effective tolerance is typically `median_font_size * BAND_Y_FRACTION`
+/// per ANN[r17/TEX4]; this constant acts as the absolute floor.
 const BAND_Y_TOLERANCE: f64 = 5.0;
+/// Fraction of the page's median font size used as the band-Y
+/// tolerance. Empirically 0.30× works across common typography —
+/// below typical leading (~1.2×) so adjacent lines never collapse,
+/// above sub-pixel baseline drift.
+const BAND_Y_FRACTION: f64 = 0.30;
+/// Multiplier applied to median line spacing to derive the horizontal
+/// paragraph-break cut threshold. Normal line-to-line progression is
+/// ~1.0× the median; paragraph breaks typically show 1.5× or more.
+const PARAGRAPH_BREAK_LINE_SPACING_MULTIPLIER: f64 = 1.8;
 
 // ANN[r17/TEX1] Multi-signal consensus thresholds.
 // The previous single-threshold scheme (gap > 0.15 * font_size) missed
@@ -595,6 +606,103 @@ fn compute_adaptive_column_gap(bands: &[TextBand]) -> f64 {
 
 /// Group spans into reading-order blocks, using column-aware reordering when
 /// a contiguous region repeatedly exposes the same gutters.
+/// Per-page adaptive parameters derived from the span set before any
+/// grouping happens. Centralising these here (TEX4) means the rest of
+/// the pipeline — band grouping, XY-Cut cuts, in-block space insertion
+/// — all speak the same typographic baseline for this specific page,
+/// rather than each helper reaching for an independent fixed constant.
+#[derive(Debug, Clone, Copy)]
+struct PageStats {
+    /// Median font size across all spans (pt).
+    median_font_size: f64,
+    /// Median measured character width (pt). Zero-guarded fallback is
+    /// 0.5 × median_font_size when there aren't enough samples.
+    median_char_width: f64,
+    /// Tight line-to-line spacing (25th percentile of pairwise band
+    /// gaps), representing the body-text leading on this page. The
+    /// quartile is used instead of the median so large paragraph /
+    /// zone gaps don't inflate the baseline. Zero if the page has
+    /// only one band.
+    median_line_spacing: f64,
+}
+
+impl PageStats {
+    fn from_spans(spans: &[TextSpan]) -> Self {
+        if spans.is_empty() {
+            return Self {
+                median_font_size: 12.0,
+                median_char_width: 6.0,
+                median_line_spacing: 0.0,
+            };
+        }
+
+        // Median font size.
+        let mut sizes: Vec<f64> = spans.iter().map(|s| s.font_size).collect();
+        sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        let median_font_size = sizes[sizes.len() / 2];
+
+        // Median char width — measured width / char count, per span.
+        let mut char_widths: Vec<f64> = spans
+            .iter()
+            .filter_map(|s| {
+                let chars = s.text.chars().count();
+                if chars > 0 && s.width > 0.0 {
+                    Some(s.width / chars as f64)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let median_char_width = if char_widths.is_empty() {
+            median_font_size * 0.5
+        } else {
+            char_widths.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+            char_widths[char_widths.len() / 2]
+        };
+
+        // Median line spacing — pairwise gaps between consecutive band
+        // y-values.
+        let band_tolerance = (median_font_size * BAND_Y_FRACTION).max(BAND_Y_TOLERANCE);
+        let mut ys: Vec<f64> = spans.iter().map(|s| s.y).collect();
+        ys.sort_by(|a, b| b.partial_cmp(a).unwrap_or(Ordering::Equal));
+        let mut band_ys: Vec<f64> = Vec::new();
+        for y in ys {
+            if band_ys
+                .last()
+                .map(|prev: &f64| (prev - y).abs() > band_tolerance)
+                .unwrap_or(true)
+            {
+                band_ys.push(y);
+            }
+        }
+        // ANN[r17/TEX4] "Line spacing" here means the TIGHT line-to-line
+        // gap inside a text block — not the median of all gaps. Using
+        // the median drags the estimate up when the page has
+        // paragraph / zone breaks (which are the very gaps the
+        // paragraph-break threshold is supposed to EXCEED). The 25th
+        // percentile is the smallest gap that still shows up in more
+        // than one place on the page; it captures body-text leading
+        // robustly even when large zone gaps dominate.
+        let median_line_spacing = if band_ys.len() < 2 {
+            0.0
+        } else {
+            let mut spacings: Vec<f64> = band_ys
+                .windows(2)
+                .map(|pair| (pair[0] - pair[1]).abs())
+                .collect();
+            spacings.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+            let q1_index = spacings.len() / 4;
+            spacings[q1_index]
+        };
+
+        Self {
+            median_font_size,
+            median_char_width,
+            median_line_spacing,
+        }
+    }
+}
+
 // ANN[r17/TEX2] Maximum recursion depth for XY-Cut. Any real page layout
 // is decomposable in well under 10 alternating cuts; the cap guards
 // against pathological inputs where the cut predicate keeps triggering
@@ -618,27 +726,24 @@ const XY_CUT_MIN_SPANS_PER_COLUMN: usize = 2;
 /// as dense prose (vs. a short-cell table column).
 const XY_CUT_MIN_CHARS_PER_BAND: f64 = 8.0;
 
-/// ANN[r17/TEX2] Top-level grouping uses recursive XY-Cut with a density
-/// guard. Each recursion level tries a vertical cut first (column
-/// gutters), then a horizontal cut (zone separators like header / body
-/// / footer or paragraph breaks). Leaf regions fall back to band-based
-/// row emission so the existing per-line output is preserved.
+/// ANN[r17/TEX2][r17/TEX4] Top-level grouping uses recursive XY-Cut
+/// with a density guard. Per-page stats are computed once up front so
+/// every decision downstream speaks the same typographic baseline.
 fn group_spans_into_blocks(spans: Vec<TextSpan>) -> Vec<TextBlock> {
     if spans.is_empty() {
         return Vec::new();
     }
-    xy_cut_recursive(spans, 0)
+    let stats = PageStats::from_spans(&spans);
+    xy_cut_recursive(spans, 0, &stats)
 }
 
-fn xy_cut_recursive(spans: Vec<TextSpan>, depth: usize) -> Vec<TextBlock> {
+fn xy_cut_recursive(spans: Vec<TextSpan>, depth: usize, stats: &PageStats) -> Vec<TextBlock> {
     if spans.is_empty() {
         return Vec::new();
     }
     if depth >= XY_CUT_MAX_DEPTH {
-        return band_based_blocks(spans);
+        return band_based_blocks(spans, stats);
     }
-
-    let median_font = median_font_size(&spans);
 
     // ANN[r17/TEX2] Pick whichever direction has the largest qualifying
     // gap. Always cutting vertically first breaks layouts where a
@@ -646,8 +751,8 @@ fn xy_cut_recursive(spans: Vec<TextSpan>, depth: usize) -> Vec<TextBlock> {
     // column instead of being recognized as a page-level zone. The
     // "largest gap wins" rule is the standard XY-Cut tie-breaker used
     // by academic OCR literature and matches pdf_oxide.
-    let vcut = try_vertical_cut(&spans, median_font);
-    let hcut = try_horizontal_cut(&spans, median_font);
+    let vcut = try_vertical_cut(&spans, stats);
+    let hcut = try_horizontal_cut(&spans, stats);
 
     let (chosen, _) = match (vcut, hcut) {
         (Some((v_groups, v_gap)), Some((h_groups, h_gap))) => {
@@ -665,19 +770,19 @@ fn xy_cut_recursive(spans: Vec<TextSpan>, depth: usize) -> Vec<TextBlock> {
     if let Some(groups) = chosen {
         let mut out = Vec::new();
         for group in groups {
-            out.extend(xy_cut_recursive(group, depth + 1));
+            out.extend(xy_cut_recursive(group, depth + 1, stats));
         }
         return out;
     }
 
-    band_based_blocks(spans)
+    band_based_blocks(spans, stats)
 }
 
 /// Emit per-band row blocks without any column detection. Used as the
 /// leaf of XY-Cut recursion — at this point the region either has no
 /// further cuts or the density guard refused them.
-fn band_based_blocks(spans: Vec<TextSpan>) -> Vec<TextBlock> {
-    let bands = group_spans_into_bands(spans);
+fn band_based_blocks(spans: Vec<TextSpan>, stats: &PageStats) -> Vec<TextBlock> {
+    let bands = group_spans_into_bands_with_stats(spans, stats);
     bands.iter().map(TextBand::row_block).collect()
 }
 
@@ -706,7 +811,7 @@ fn median_font_size(spans: &[TextSpan]) -> f64 {
 ///      ~70% of that side's column width — catches full-width
 ///      paragraphs (Intro / Outro) that accidentally sit in the
 ///      left-column x-range.
-fn try_vertical_cut(spans: &[TextSpan], median_font: f64) -> Option<(Vec<Vec<TextSpan>>, f64)> {
+fn try_vertical_cut(spans: &[TextSpan], stats: &PageStats) -> Option<(Vec<Vec<TextSpan>>, f64)> {
     if spans.len() < 2 * XY_CUT_MIN_SPANS_PER_COLUMN {
         return None;
     }
@@ -721,17 +826,18 @@ fn try_vertical_cut(spans: &[TextSpan], median_font: f64) -> Option<(Vec<Vec<Tex
         return None;
     }
 
-    // ANN[r17/TEX2] Threshold uses the ADAPTIVE median-word-gap from
-    // the bands rather than a flat font-size multiple. Narrow-gutter
-    // academic layouts have 12pt gutters next to 4pt word spaces —
-    // the adaptive threshold scales with the actual typography used
-    // on this page. Clamped to `XY_CUT_VERTICAL_GAP_FLOOR` to avoid
-    // firing on ordinary inter-word spaces when character advance
-    // data is noisy. Median_font and the width fraction act only as
-    // safety rails for pathological inputs.
-    let bands = group_spans_into_bands(spans.to_vec());
+    // ANN[r17/TEX2][r17/TEX4] Threshold uses the ADAPTIVE median-word-gap
+    // from the bands rather than a flat font-size multiple. Narrow-gutter
+    // academic layouts have 12pt gutters next to 4pt word spaces — the
+    // adaptive threshold scales with the actual typography used on this
+    // page. Clamped to `XY_CUT_VERTICAL_GAP_FLOOR` to avoid firing on
+    // ordinary inter-word spaces when character advance data is noisy.
+    // median_font and the width fraction act only as safety rails for
+    // pathological inputs.
+    let bands = group_spans_into_bands_with_stats(spans.to_vec(), stats);
     let adaptive = compute_adaptive_column_gap(&bands);
-    let floor = median_font
+    let floor = stats
+        .median_font_size
         .max(region_width * XY_CUT_VERTICAL_GAP_REGION_FRACTION)
         .max(XY_CUT_VERTICAL_GAP_FLOOR);
     let min_gap = adaptive.min(floor).max(XY_CUT_VERTICAL_GAP_FLOOR);
@@ -777,10 +883,10 @@ fn try_vertical_cut(spans: &[TextSpan], median_font: f64) -> Option<(Vec<Vec<Tex
         }
     }
 
-    if !columns_are_dense(&left_group, &right_group) {
+    if !columns_are_dense(&left_group, &right_group, stats) {
         return None;
     }
-    if !columns_are_band_aligned(spans, cut_x, region_left, region_right) {
+    if !columns_are_band_aligned(spans, cut_x, region_left, region_right, stats) {
         return None;
     }
 
@@ -797,6 +903,7 @@ fn columns_are_band_aligned(
     cut_x: f64,
     region_left: f64,
     region_right: f64,
+    stats: &PageStats,
 ) -> bool {
     let left_width = (cut_x - region_left).max(1.0);
     let right_width = (region_right - cut_x).max(1.0);
@@ -807,7 +914,7 @@ fn columns_are_band_aligned(
     // content.
     const MAX_SINGLE_SIDE_FRACTION: f64 = 0.70;
 
-    let bands = group_spans_into_bands(spans.to_vec());
+    let bands = group_spans_into_bands_with_stats(spans.to_vec(), stats);
     for band in &bands {
         let mut has_left = false;
         let mut has_right = false;
@@ -837,12 +944,12 @@ fn columns_are_band_aligned(
 /// short spans per column). A column is "dense" when it has at least
 /// MIN_SPANS_PER_COLUMN spans and the average character count per band
 /// exceeds MIN_CHARS_PER_BAND.
-fn columns_are_dense(left: &[TextSpan], right: &[TextSpan]) -> bool {
+fn columns_are_dense(left: &[TextSpan], right: &[TextSpan], stats: &PageStats) -> bool {
     for col in [left, right] {
         if col.len() < XY_CUT_MIN_SPANS_PER_COLUMN {
             return false;
         }
-        let bands = group_spans_into_bands(col.to_vec());
+        let bands = group_spans_into_bands_with_stats(col.to_vec(), stats);
         if bands.is_empty() {
             return false;
         }
@@ -858,7 +965,10 @@ fn columns_are_dense(left: &[TextSpan], right: &[TextSpan]) -> bool {
 /// Attempt a horizontal (zone / paragraph) cut. Unlike vertical cuts
 /// this does NOT need a density guard — splitting top-from-bottom
 /// cannot re-order content.
-fn try_horizontal_cut(spans: &[TextSpan], median_font: f64) -> Option<(Vec<Vec<TextSpan>>, f64)> {
+fn try_horizontal_cut(
+    spans: &[TextSpan],
+    stats: &PageStats,
+) -> Option<(Vec<Vec<TextSpan>>, f64)> {
     if spans.len() < 2 {
         return None;
     }
@@ -870,26 +980,26 @@ fn try_horizontal_cut(spans: &[TextSpan], median_font: f64) -> Option<(Vec<Vec<T
             .then_with(|| a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal))
     });
 
-    let min_gap = median_font * XY_CUT_HORIZONTAL_GAP_FONT_MULTIPLIER;
+    // ANN[r17/TEX4] Paragraph / zone cuts scale with MEDIAN LINE
+    // SPACING when available — this is the typographically correct
+    // baseline (paragraph break ≈ 1.8 × line-spacing). When the page
+    // has only one band, or stats haven't observed spacing yet, fall
+    // back to the font-size multiple the legacy path used.
+    let min_gap = if stats.median_line_spacing > 0.0 {
+        stats.median_line_spacing * PARAGRAPH_BREAK_LINE_SPACING_MULTIPLIER
+    } else {
+        stats.median_font_size * XY_CUT_HORIZONTAL_GAP_FONT_MULTIPLIER
+    };
 
-    // Look for the largest gap between consecutive span y-values. We
-    // define the "bottom" of span i as min(y_i, y_{i+1} contributions).
-    // Simplest: use y positions directly; spans on the same band share
-    // y within font-size tolerance, so the gap appears between bands.
+    // Look for the largest gap between consecutive span y-values.
     let mut best: Option<(f64, f64)> = None; // (gap_size, cut_y)
-    let tolerance = median_font * 0.35;
-    let mut band_top = sorted[0].y;
+    let tolerance = stats.median_font_size * BAND_Y_FRACTION;
     let mut band_bottom = sorted[0].y;
-    let mut prev_band_bottom = f64::NEG_INFINITY;
 
     for span in sorted.iter().skip(1) {
         if (band_bottom - span.y).abs() <= tolerance {
             band_bottom = band_bottom.min(span.y);
-            band_top = band_top.max(span.y);
             continue;
-        }
-        if prev_band_bottom.is_finite() {
-            // Previous band complete; evaluate its gap with the even-older band.
         }
         let gap = band_bottom - span.y;
         if gap >= min_gap {
@@ -899,8 +1009,6 @@ fn try_horizontal_cut(spans: &[TextSpan], median_font: f64) -> Option<(Vec<Vec<T
                 _ => best = Some((gap, cut_y)),
             }
         }
-        prev_band_bottom = band_bottom;
-        band_top = span.y;
         band_bottom = span.y;
     }
 
@@ -990,7 +1098,18 @@ fn group_spans_into_blocks_legacy(spans: Vec<TextSpan>) -> Vec<TextBlock> {
     blocks
 }
 
-fn group_spans_into_bands(mut spans: Vec<TextSpan>) -> Vec<TextBand> {
+/// Legacy wrapper used by call sites that haven't been handed PageStats.
+/// It derives stats locally. Prefer `group_spans_into_bands_with_stats`
+/// inside the XY-Cut pipeline to avoid recomputing the stats per call.
+fn group_spans_into_bands(spans: Vec<TextSpan>) -> Vec<TextBand> {
+    let stats = PageStats::from_spans(&spans);
+    group_spans_into_bands_with_stats(spans, &stats)
+}
+
+fn group_spans_into_bands_with_stats(
+    mut spans: Vec<TextSpan>,
+    stats: &PageStats,
+) -> Vec<TextBand> {
     if spans.is_empty() {
         return Vec::new();
     }
@@ -1001,10 +1120,19 @@ fn group_spans_into_bands(mut spans: Vec<TextSpan>) -> Vec<TextBand> {
             .then_with(|| a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal))
     });
 
+    // ANN[r17/TEX4] Band tolerance scales with this page's median font
+    // size rather than a fixed 5pt floor. Single-page spreads with
+    // huge display fonts (24pt+) previously merged unrelated lines; a
+    // fractional threshold keeps that from happening without hurting
+    // body-text pages.
+    let page_tolerance = (stats.median_font_size * BAND_Y_FRACTION).max(BAND_Y_TOLERANCE);
+
     let mut bands: Vec<TextBand> = Vec::new();
 
     for span in spans {
-        let tolerance = span.height.max(BAND_Y_TOLERANCE) * 0.5;
+        let tolerance = (span.height * BAND_Y_FRACTION)
+            .max(page_tolerance)
+            .max(BAND_Y_TOLERANCE);
         if let Some(band) = bands
             .iter_mut()
             .find(|band| (band.y - span.y).abs() <= tolerance)
@@ -1847,8 +1975,9 @@ mod tests {
             span("L2", 40.0, 684.0, 60.0),
             span("R2", 300.0, 684.0, 60.0),
         ];
+        let stats = PageStats::from_spans(&spans);
         // cut_x between 100 and 300 → 200. Every band straddles the cut.
-        assert!(columns_are_band_aligned(&spans, 200.0, 40.0, 360.0));
+        assert!(columns_are_band_aligned(&spans, 200.0, 40.0, 360.0, &stats));
     }
 
     #[test]
@@ -1858,11 +1987,33 @@ mod tests {
             span("L1", 40.0, 700.0, 60.0),
             span("R1", 300.0, 700.0, 60.0),
         ];
-        // cut_x = 200. Banner only in left group (right edge ~320 > 200
-        // — actually 40+max(280, 27*6=162)=320 → right > 200, so
-        // midpoint = (40+320)/2 = 180 < 200, banner is on LEFT. width
-        // ~280 > 0.7*160 = 112 → rejects.
-        assert!(!columns_are_band_aligned(&spans, 200.0, 40.0, 360.0));
+        let stats = PageStats::from_spans(&spans);
+        // cut_x = 200. Banner only in left group (midpoint < 200). Width
+        // exceeds 0.7 × left column width → rejected.
+        assert!(!columns_are_band_aligned(&spans, 200.0, 40.0, 360.0, &stats));
+    }
+
+    #[test]
+    fn page_stats_computes_median_values() {
+        let spans = vec![
+            span("one", 40.0, 700.0, 30.0),
+            span("two", 40.0, 680.0, 30.0),
+            span("three", 40.0, 660.0, 50.0),
+        ];
+        let stats = PageStats::from_spans(&spans);
+        assert!((stats.median_font_size - 12.0).abs() < 1e-9);
+        // char width = width / chars. one=30/3=10, two=30/3=10, three=50/5=10. median=10.
+        assert!((stats.median_char_width - 10.0).abs() < 1e-9);
+        // line spacing: bands at 700, 680, 660. gaps = 20, 20. median = 20.
+        assert!((stats.median_line_spacing - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn page_stats_handles_empty_input() {
+        let stats = PageStats::from_spans(&[]);
+        assert!((stats.median_font_size - 12.0).abs() < 1e-9);
+        assert!((stats.median_char_width - 6.0).abs() < 1e-9);
+        assert_eq!(stats.median_line_spacing, 0.0);
     }
 
     #[test]
