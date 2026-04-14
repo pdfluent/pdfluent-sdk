@@ -49,12 +49,24 @@ impl Name {
 
             while let Some(b) = r.read_byte() {
                 if b == b'#' {
-                    // The skip phase verified this is a valid 2-hex-digit sequence.
-                    let hex = r.read_bytes(2).expect("verified 2 hex digits during skip");
-                    result.push(
-                        decode_hex_digit(hex[0]).expect("verified hex digit during skip") << 4
-                            | decode_hex_digit(hex[1]).expect("verified hex digit during skip"),
-                    );
+                    // Per PDF 1.2+ spec, `#` introduces a 2-hex-digit escape. Legacy
+                    // PDF 1.0/1.1 files (and some malformed 1.2+ files) use `#` as a
+                    // literal character. Match the lenient skip_name_like behaviour:
+                    // if the next 2 bytes aren't both hex digits, treat `#` as literal.
+                    match r.peek_bytes(2) {
+                        Some(hex)
+                            if hex[0].is_ascii_hexdigit() && hex[1].is_ascii_hexdigit() =>
+                        {
+                            let hex = r.read_bytes(2).unwrap();
+                            result.push(
+                                decode_hex_digit(hex[0]).unwrap() << 4
+                                    | decode_hex_digit(hex[1]).unwrap(),
+                            );
+                        }
+                        _ => {
+                            result.push(b'#');
+                        }
+                    }
                 } else {
                     result.push(b);
                 }
@@ -112,8 +124,18 @@ pub(crate) fn skip_name_like(r: &mut Reader<'_>, solidus: bool) -> Option<()> {
 
     while let Some(b) = r.eat(is_regular_character) {
         if b == b'#' {
-            r.eat(|n| n.is_ascii_hexdigit())?;
-            r.eat(|n| n.is_ascii_hexdigit())?;
+            // Per PDF 1.2+ spec, `#` introduces a 2-hex-digit escape. Legacy PDF 1.0/1.1
+            // files (header `%PDF-1.0`) predate this convention and use `#` as a literal
+            // regular character (e.g. QDF output uses `/Im#1`, `/Im#` as XObject names).
+            // Be lenient: consume the escape only when both following bytes are hex
+            // digits; otherwise accept `#` as a literal. Matches MuPDF/pdfium behaviour.
+            if let Some(hex) = r.peek_bytes(2)
+                && hex[0].is_ascii_hexdigit()
+                && hex[1].is_ascii_hexdigit()
+            {
+                r.read_byte();
+                r.read_byte();
+            }
         }
     }
 
@@ -153,10 +175,39 @@ mod tests {
 
     #[test]
     fn name_3() {
-        assert!(
+        // `#` without two trailing hex digits is accepted leniently as a literal
+        // character (PDF 1.0/1.1 compatibility — see skip_name_like rationale).
+        assert_eq!(
             Reader::new("/AB#FG".as_bytes())
                 .read_without_context::<Name>()
-                .is_none()
+                .unwrap()
+                .deref(),
+            b"AB#FG"
+        );
+    }
+
+    #[test]
+    fn name_18_trailing_hash() {
+        // QDF-style names used in PDF 1.0 documents (0555.pdf):
+        // `#` at end of name is literal when no hex digits follow.
+        assert_eq!(
+            Reader::new("/Im# ".as_bytes())
+                .read_without_context::<Name>()
+                .unwrap()
+                .deref(),
+            b"Im#"
+        );
+    }
+
+    #[test]
+    fn name_19_single_digit_after_hash() {
+        // `/Im#1 ` — one hex digit then whitespace: `#` is literal, `1` is part of name.
+        assert_eq!(
+            Reader::new("/Im#1 ".as_bytes())
+                .read_without_context::<Name>()
+                .unwrap()
+                .deref(),
+            b"Im#1"
         );
     }
 
