@@ -929,6 +929,42 @@ impl ICCProfile {
     fn new(profile: &[u8], number_components: usize) -> Option<Self> {
         let src_profile = ColorProfile::new_from_slice(profile).ok()?;
 
+        // Determine the component count declared by the embedded ICC profile.
+        // Producers occasionally emit /N=3 together with a CMYK profile (or
+        // vice versa), which would otherwise cause moxcms to interpret the
+        // pixel bytes through a wrong layout and silently return garbage
+        // colours. Trust the profile's own color-space marker and fall back
+        // gracefully when the /N count disagrees. Cherry-picked surgically
+        // from reverted #920 overhaul (commit 23b7007ba).
+        let profile_components = match src_profile.color_space {
+            DataColorSpace::Gray => 1,
+            DataColorSpace::Rgb
+            | DataColorSpace::Lab
+            | DataColorSpace::Luv
+            | DataColorSpace::Xyz
+            | DataColorSpace::YCbr
+            | DataColorSpace::Yxy
+            | DataColorSpace::Hsv
+            | DataColorSpace::Hls
+            | DataColorSpace::Cmy
+            | DataColorSpace::Color3 => 3,
+            DataColorSpace::Cmyk | DataColorSpace::Color4 => 4,
+            _ => {
+                warn!(
+                    "unsupported ICC profile color space {:?}",
+                    src_profile.color_space
+                );
+                return None;
+            }
+        };
+
+        if number_components != profile_components {
+            warn!(
+                "ICCBased /N={} does not match embedded ICC profile component count {}; using profile",
+                number_components, profile_components
+            );
+        }
+
         const SRGB_MARKER: &[u8] = b"sRGB";
 
         let is_srgb = profile
@@ -937,7 +973,7 @@ impl ICCProfile {
             .unwrap_or(false);
         let is_lab = src_profile.color_space == DataColorSpace::Lab;
 
-        Self::new_from_src_profile(src_profile, is_srgb, is_lab, number_components)
+        Self::new_from_src_profile(src_profile, is_srgb, is_lab, profile_components)
     }
 
     fn new_from_src_profile(
