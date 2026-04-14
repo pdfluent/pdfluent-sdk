@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 description = "WASM bindings for XFA form processing — parse, extract, and convert XFA PDFs in the browser"
 
+keywords = ["pdf", "xfa", "wasm", "browser", "forms"]
+categories = ["wasm"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 

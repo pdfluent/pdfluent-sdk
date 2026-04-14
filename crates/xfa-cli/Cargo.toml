@@ -4,7 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "PDFluent — PDF and XFA processing CLI: render, extract, fill, flatten, validate, sign."
 
+keywords = ["pdf", "xfa", "forms", "rendering", "cli"]
+categories = ["command-line-utilities"]
 [[bin]]
 name = "pdfluent"
 path = "src/main.rs"

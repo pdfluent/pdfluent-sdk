@@ -5,6 +5,8 @@ edition = "2021"
 license = "MIT"
 description = "Unified PDF rendering engine — page rendering, text extraction, thumbnails."
 
+keywords = ["pdf", "rendering", "text-extraction", "forms"]
+categories = ["rendering", "text-processing"]
 [lib]
 crate-type = ["rlib", "cdylib"]
 
