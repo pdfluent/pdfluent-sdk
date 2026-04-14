@@ -9,12 +9,12 @@ description = "Java JNI bindings for the XFA PDF engine."
 crate-type = ["cdylib"]
 
 [dependencies]
-pdf-engine = { path = "../pdf-engine" }
-pdf-forms = { path = "../pdf-forms" }
-pdf-annot = { path = "../pdf-annot" }
-pdf-redact = { path = "../pdf-redact" }
-pdf-manip = { path = "../pdf-manip" }
-pdf-compliance = { path = "../pdf-compliance" }
-pdf-syntax = { path = "../pdf-syntax" }
-lopdf = { path = "../lopdf" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.1" }
+pdf-forms = { path = "../pdf-forms", version = "=1.0.0-beta.1" }
+pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.1" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.1" }
+pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.1" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.1" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
+lopdf = { path = "../lopdf", version = "=0.39.0" }
 jni = "0.21"

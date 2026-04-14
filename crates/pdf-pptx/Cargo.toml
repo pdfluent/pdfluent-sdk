@@ -9,7 +9,7 @@ description = "PDF to PowerPoint PPTX conversion"
 [dependencies]
 lopdf.workspace = true
 thiserror.workspace = true
-pdf-extract = { path = "../pdf-extract" }
+pdf-extract = { path = "../pdf-extract", version = "=1.0.0-beta.1" }
 quick-xml = { version = "0.37", features = ["serialize"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
