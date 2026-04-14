@@ -162,8 +162,19 @@ fn page_has_field_data(nodes: &[LayoutNode]) -> bool {
 ///
 /// If the PDF has no XFA content, returns a clone of the input unchanged.
 pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
-    // 0. Handle encrypted PDFs: try empty-password decrypt (owner-only encryption),
-    //    otherwise reject early — encrypted content produces garbage output.
+    // 0a. Quick byte-level pre-check: if the raw bytes don't contain /AcroForm
+    //     (where XFA lives per the spec) and no XDP namespace, skip expensive
+    //     parsing. This prevents multi-second stalls on large non-XFA PDFs.
+    if !pdf_bytes
+        .windows(9)
+        .any(|w| w == b"/AcroForm")
+        && !pdf_bytes.windows(7).any(|w| w == b"xdp:xdp")
+    {
+        return Ok(pdf_bytes.to_vec());
+    }
+
+    // 0b. Handle encrypted PDFs: try empty-password decrypt (owner-only encryption),
+    //     otherwise reject early — encrypted content produces garbage output.
     let decrypted;
     let pdf_bytes = match try_decrypt_pdf(pdf_bytes) {
         DecryptResult::NotEncrypted => pdf_bytes,
@@ -276,47 +287,6 @@ fn xfa_flatten_inner(
     if let Some(fxml) = form_xml {
         apply_form_dom_presence(&mut tree, root_id, fxml);
     }
-
-    // Temporary tree dump for debugging
-    fn dump_tree(
-        tree: &xfa_layout_engine::form::FormTree,
-        id: xfa_layout_engine::form::FormNodeId,
-        depth: usize,
-    ) {
-        if depth > 6 {
-            return;
-        }
-        let node = tree.get(id);
-        let meta = tree.meta(id);
-        let indent = "  ".repeat(depth);
-        let val = match &node.node_type {
-            xfa_layout_engine::form::FormNodeType::Field { value } if !value.is_empty() => {
-                let truncated: String = value.chars().take(30).collect();
-                format!(" val={:?}", truncated)
-            }
-            _ => String::new(),
-        };
-        eprintln!(
-            "{indent}{:?} {:?} {:?} {:?} bm={}x{} presence={:?} children={}{}",
-            id,
-            node.name,
-            node.layout,
-            std::mem::discriminant(&node.node_type),
-            node.box_model
-                .width
-                .map_or("auto".to_string(), |w| format!("{:.0}", w)),
-            node.box_model
-                .height
-                .map_or("auto".to_string(), |h| format!("{:.0}", h)),
-            meta.presence,
-            node.children.len(),
-            val
-        );
-        for &cid in &node.children {
-            dump_tree(tree, cid, depth + 1);
-        }
-    }
-    dump_tree(&tree, root_id, 0);
 
     // Resolve fonts BEFORE layout so the layout engine uses actual font metrics
     // (widths, ascender, descender) instead of generic AFM tables.
@@ -3521,8 +3491,8 @@ ET
     }
 
     #[test]
-    fn encrypted_pdf_returns_encrypted_error() {
-        // Build a minimal PDF with an /Encrypt dictionary in the trailer.
+    fn encrypted_pdf_without_xfa_returns_ok() {
+        // Encrypted PDF without AcroForm/XFA → returned as-is (no XFA to flatten).
         let mut doc = Document::with_version("1.4");
         let pages_id = doc.new_object_id();
         let page_id = doc.add_object(Object::Dictionary(dictionary! {
@@ -3547,7 +3517,6 @@ ET
         }));
         doc.trailer.set("Root", Object::Reference(catalog_id));
 
-        // Add a dummy /Encrypt entry to simulate an encrypted PDF.
         let encrypt_id = doc.add_object(Object::Dictionary(dictionary! {
             "Filter" => Object::Name(b"Standard".to_vec()),
             "V"      => Object::Integer(2),
@@ -3557,6 +3526,57 @@ ET
 
         let mut buf = Vec::new();
         doc.save_to(&mut buf).expect("save test PDF");
+
+        let result = flatten_xfa_to_pdf(&buf);
+        assert!(result.is_ok(), "non-XFA encrypted PDF should return Ok");
+    }
+
+    #[test]
+    fn encrypted_xfa_pdf_returns_encrypted_error() {
+        // Encrypted PDF WITH AcroForm/XFA → should reach the decrypt check
+        // and return Err(Encrypted) when the password is required.
+        let mut doc = Document::with_version("1.4");
+        let pages_id = doc.new_object_id();
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Page".to_vec()),
+            "Parent"   => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+        }));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type"  => Object::Name(b"Pages".to_vec()),
+                "Kids"  => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1),
+            }),
+        );
+        // Add AcroForm with XFA key so the byte-level pre-check passes.
+        let xfa_stream_id = doc.add_object(Object::Stream(lopdf::Stream::new(
+            dictionary! {},
+            b"<xdp:xdp></xdp:xdp>".to_vec(),
+        )));
+        let acroform_id = doc.add_object(Object::Dictionary(dictionary! {
+            "XFA" => Object::Reference(xfa_stream_id),
+        }));
+        let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Catalog".to_vec()),
+            "Pages"    => Object::Reference(pages_id),
+            "AcroForm" => Object::Reference(acroform_id),
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let encrypt_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Filter" => Object::Name(b"Standard".to_vec()),
+            "V"      => Object::Integer(2),
+            "Length"  => Object::Integer(128),
+        }));
+        doc.trailer.set("Encrypt", Object::Reference(encrypt_id));
+
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf).expect("save encrypted PDF");
 
         let result = flatten_xfa_to_pdf(&buf);
         assert!(result.is_err(), "expected Encrypted error");
