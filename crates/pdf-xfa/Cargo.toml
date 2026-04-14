@@ -6,14 +6,14 @@ license = "MIT"
 description = "XFA engine — extraction, layout rendering, font resolution."
 
 [dependencies]
-xfa-dom-resolver = { path = "../xfa-dom-resolver" }
-formcalc-interpreter = { path = "../formcalc-interpreter" }
-xfa-layout-engine = { path = "../xfa-layout-engine" }
-xfa-json = { path = "../xfa-json" }
-pdf-syntax = { path = "../pdf-syntax" }
-pdf-font = { path = "../pdf-font" }
-pdf-interpret = { path = "../pdf-interpret" }
-lopdf = { path = "../lopdf" }
+xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.1" }
+formcalc-interpreter = { path = "../formcalc-interpreter", version = "=1.0.0-beta.1" }
+xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.1" }
+xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.1" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
+pdf-font = { path = "../pdf-font", version = "=1.0.0-beta.1" }
+pdf-interpret = { path = "../pdf-interpret", version = "=0.5.0" }
+lopdf = { path = "../lopdf", version = "=0.39.0" }
 flate2 = "1"
 thiserror = "2"
 ttf-parser = "0.25"
