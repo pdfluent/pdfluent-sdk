@@ -3,7 +3,7 @@ use crate::context::Context;
 use crate::device::Device;
 use crate::font::glyph_simulator::GlyphSimulator;
 use crate::font::true_type::{Width, read_encoding, read_widths};
-use crate::font::{Encoding, Glyph, Type3Glyph, UNITS_PER_EM, read_to_unicode};
+use crate::font::{Encoding, Glyph, Type3Glyph, UNITS_PER_EM, glyph_name_to_unicode, read_to_unicode};
 use crate::interpret::state::TextState;
 use crate::soft_mask::SoftMask;
 use crate::util::RectExt;
@@ -96,10 +96,59 @@ impl<'a> Type3<'a> {
     }
 
     pub(crate) fn char_code_to_unicode(&self, char_code: u32) -> Option<BfString> {
-        // Type3 fonts can only provide Unicode via ToUnicode CMap.
-        self.to_unicode
+        // 1) ToUnicode CMap — the only canonical path.
+        if let Some(c) = self
+            .to_unicode
             .as_ref()
             .and_then(|t| t.lookup_bf_string(char_code))
+            && c != BfString::Char('\0')
+        {
+            return Some(c);
+        }
+
+        // Type3 fonts do carry an /Encoding dictionary (read into
+        // `self.encoding` and `self.encodings` via `read_encoding`), so the
+        // absence of a ToUnicode CMap does not have to be terminal — many
+        // embedded OCR/bitmap Type3 fonts label their glyphs with AGL-
+        // compatible names ("A", "space", "hyphen") and extraction is
+        // recoverable via the same fallback chain we apply for Type1
+        // (#937). Without this, a `pdfluent text` on e.g. NTIA/Teledyne
+        // telecommunication papers (`general_858_858662.pdf`) comes back
+        // as only `--- Page N ---` markers.
+        let code = char_code as u8;
+
+        // 2) /Encoding /Differences — a Type3-specific glyph name.
+        if let Some(name) = self.encodings.get(&code)
+            && let Some(ch) = glyph_name_to_unicode(name)
+        {
+            return Some(BfString::Char(ch));
+        }
+
+        // 3) Base encoding (Standard / WinAnsi / MacRoman / MacExpert) →
+        //    AGL. For `Encoding::BuiltIn` this returns None, so we fall
+        //    through to the ASCII identity below.
+        if let Some(name) = self.encoding.map_code(code)
+            && let Some(ch) = glyph_name_to_unicode(name)
+        {
+            return Some(BfString::Char(ch));
+        }
+
+        // 4) Adobe Standard as last-resort encoding guess. Most legacy
+        //    Type3 OCR fonts layout ASCII-compatible content even with
+        //    `Encoding::BuiltIn`.
+        if let Some(name) = Encoding::Standard.map_code(code)
+            && let Some(ch) = glyph_name_to_unicode(name)
+        {
+            return Some(BfString::Char(ch));
+        }
+
+        // 5) Printable-ASCII identity. Emitting a possibly-wrong character
+        //    is strictly better than dropping the glyph.
+        if (0x20..=0x7E).contains(&code) {
+            return Some(BfString::Char(code as char));
+        }
+
+        None
     }
 
     pub(crate) fn render_glyph(
