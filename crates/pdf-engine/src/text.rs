@@ -10,8 +10,14 @@ use std::cmp::Ordering;
 
 /// Y tolerance for grouping spans into horizontal bands.
 const BAND_Y_TOLERANCE: f64 = 5.0;
-/// Minimum horizontal gap treated as a column gutter.
-const COLUMN_GAP_THRESHOLD: f64 = 20.0;
+/// Minimum horizontal gap treated as a column gutter (adaptive fallback).
+const COLUMN_GAP_THRESHOLD_MIN: f64 = 10.0;
+/// Maximum adaptive column gap threshold.
+const COLUMN_GAP_THRESHOLD_MAX: f64 = 40.0;
+/// Multiplier applied to median inter-word gap to derive column threshold.
+const COLUMN_GAP_MEDIAN_MULTIPLIER: f64 = 3.0;
+/// Fallback column gap threshold when median cannot be computed.
+const COLUMN_GAP_THRESHOLD_FALLBACK: f64 = 20.0;
 /// Maximum drift allowed when matching gutters across neighboring bands.
 const COLUMN_GAP_MATCH_TOLERANCE: f64 = 12.0;
 /// Minimum number of gapped bands required before we enable column mode.
@@ -131,14 +137,14 @@ impl TextBand {
         (self.right() - self.left()).max(0.0)
     }
 
-    fn gap_midpoints(&self) -> Vec<f64> {
-        self.gaps()
+    fn gap_midpoints(&self, column_gap_threshold: f64) -> Vec<f64> {
+        self.gaps(column_gap_threshold)
             .into_iter()
             .map(|gap| (gap.start + gap.end) * 0.5)
             .collect()
     }
 
-    fn gaps(&self) -> Vec<BandGap> {
+    fn gaps(&self, column_gap_threshold: f64) -> Vec<BandGap> {
         if self.spans.len() < 2 {
             return Vec::new();
         }
@@ -150,7 +156,7 @@ impl TextBand {
         let mut prev_right = spans[0].right();
         for span in spans.iter().skip(1) {
             let gap = span.x - prev_right;
-            if gap >= COLUMN_GAP_THRESHOLD {
+            if gap >= column_gap_threshold {
                 gaps.push(BandGap {
                     start: prev_right,
                     end: span.x,
@@ -359,6 +365,47 @@ fn estimate_glyph_width(glyph: &Glyph<'_>, font_size: f64) -> f64 {
     }
 }
 
+/// Compute an adaptive column gap threshold from a set of bands.
+///
+/// Collects all positive inter-span gaps within each band, computes the
+/// median, and returns `COLUMN_GAP_MEDIAN_MULTIPLIER × median`, clamped to
+/// `[COLUMN_GAP_THRESHOLD_MIN, COLUMN_GAP_THRESHOLD_MAX]`.  Falls back to
+/// `COLUMN_GAP_THRESHOLD_FALLBACK` when there are no measurable gaps.
+fn compute_adaptive_column_gap(bands: &[TextBand]) -> f64 {
+    let mut all_gaps: Vec<f64> = Vec::new();
+
+    for band in bands {
+        if band.spans.len() < 2 {
+            continue;
+        }
+        let mut sorted = band.spans.clone();
+        sorted.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal));
+        let mut prev_right = sorted[0].right();
+        for span in sorted.iter().skip(1) {
+            let gap = span.x - prev_right;
+            if gap > 0.0 {
+                all_gaps.push(gap);
+            }
+            prev_right = prev_right.max(span.right());
+        }
+    }
+
+    if all_gaps.is_empty() {
+        return COLUMN_GAP_THRESHOLD_FALLBACK;
+    }
+
+    all_gaps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+    let mid = all_gaps.len() / 2;
+    let median = if all_gaps.len() % 2 == 0 {
+        (all_gaps[mid - 1] + all_gaps[mid]) * 0.5
+    } else {
+        all_gaps[mid]
+    };
+
+    (median * COLUMN_GAP_MEDIAN_MULTIPLIER)
+        .clamp(COLUMN_GAP_THRESHOLD_MIN, COLUMN_GAP_THRESHOLD_MAX)
+}
+
 /// Group spans into reading-order blocks, using column-aware reordering when
 /// a contiguous region repeatedly exposes the same gutters.
 fn group_spans_into_blocks(spans: Vec<TextSpan>) -> Vec<TextBlock> {
@@ -367,11 +414,13 @@ fn group_spans_into_blocks(spans: Vec<TextSpan>) -> Vec<TextBlock> {
         return Vec::new();
     }
 
+    let column_gap_threshold = compute_adaptive_column_gap(&bands);
+
     let mut blocks = Vec::new();
     let mut idx = 0;
 
     while idx < bands.len() {
-        let gap_midpoints = bands[idx].gap_midpoints();
+        let gap_midpoints = bands[idx].gap_midpoints(column_gap_threshold);
         if gap_midpoints.is_empty() {
             blocks.push(bands[idx].row_block());
             idx += 1;
@@ -387,7 +436,7 @@ fn group_spans_into_blocks(spans: Vec<TextSpan>) -> Vec<TextBlock> {
 
         while next_idx < bands.len() {
             let next_band = &bands[next_idx];
-            let next_gap_midpoints = next_band.gap_midpoints();
+            let next_gap_midpoints = next_band.gap_midpoints(column_gap_threshold);
             if next_gap_midpoints.is_empty() {
                 if next_band
                     .fits_single_column(&boundaries, region_left, region_right)
@@ -732,5 +781,79 @@ mod tests {
             spans: vec![span("A", 0.0, 0.0, 6.0), span("B", 20.0, 0.0, 6.0)],
         };
         assert_eq!(block.text(), "A B");
+    }
+
+    #[test]
+    fn adaptive_column_gap_fallback_for_no_gaps() {
+        // Single-span bands produce no measurable gaps → fallback
+        let bands = vec![
+            TextBand::new(span("Hello", 40.0, 700.0, 80.0)),
+            TextBand::new(span("World", 40.0, 684.0, 80.0)),
+        ];
+        let threshold = compute_adaptive_column_gap(&bands);
+        assert!((threshold - COLUMN_GAP_THRESHOLD_FALLBACK).abs() < 0.01);
+    }
+
+    #[test]
+    fn adaptive_column_gap_uses_median() {
+        // Three bands with word gaps of ~4pt each → median ≈ 4, threshold = 12
+        let mut bands = Vec::new();
+        for y in [700.0, 684.0, 668.0] {
+            let mut band = TextBand::new(span("word1", 40.0, y, 30.0));
+            band.spans.push(span("word2", 74.0, y, 30.0)); // gap = 4
+            band.spans.push(span("word3", 108.0, y, 30.0)); // gap = 4
+            bands.push(band);
+        }
+        let threshold = compute_adaptive_column_gap(&bands);
+        // median gap = 4, × 3 = 12, clamped to [10, 40] → 12
+        assert!(threshold >= 10.0 && threshold <= 14.0,
+            "expected ~12, got {threshold}");
+    }
+
+    #[test]
+    fn adaptive_column_gap_clamps_to_min() {
+        // Tight gaps (2pt) across many bands → median = 2, 3×2 = 6 → clamped to 10
+        let mut bands = Vec::new();
+        for y in [700.0, 684.0, 668.0, 652.0] {
+            let mut band = TextBand::new(span("abc", 0.0, y, 18.0));
+            // right of "abc" = max(18, 12*0.5*3=18) = 18; gap = 20-18 = 2
+            band.spans.push(span("def", 20.0, y, 18.0));
+            bands.push(band);
+        }
+        let threshold = compute_adaptive_column_gap(&bands);
+        assert!((threshold - COLUMN_GAP_THRESHOLD_MIN).abs() < 0.01,
+            "expected {COLUMN_GAP_THRESHOLD_MIN}, got {threshold}");
+    }
+
+    #[test]
+    fn adaptive_column_gap_clamps_to_max() {
+        // Very wide gaps (50pt) → 3×50 = 150 → clamped to 40
+        let mut band = TextBand::new(span("Left", 0.0, 700.0, 30.0));
+        band.spans.push(span("Right", 80.0, 700.0, 30.0)); // gap = 50
+        let bands = vec![band];
+        let threshold = compute_adaptive_column_gap(&bands);
+        assert!((threshold - COLUMN_GAP_THRESHOLD_MAX).abs() < 0.01,
+            "expected {COLUMN_GAP_THRESHOLD_MAX}, got {threshold}");
+    }
+
+    #[test]
+    fn narrow_gutter_detected_with_adaptive_threshold() {
+        // Academic paper layout: 12pt gutter between columns.
+        // With old fixed 20pt threshold, this was not detected as columnar.
+        // With adaptive: median word gap ~4pt, threshold = 12pt → detects 12pt gutter.
+        let mut spans = Vec::new();
+        for y in [700.0, 684.0, 668.0] {
+            // Left column: two words with 4pt gap, ending at x=145
+            spans.push(span("Lorem ipsum", 40.0, y, 100.0));
+            spans.push(span("dolor sit", 144.0, y, 80.0));
+            // Right column starts at 236 (gap = 12pt from 224)
+            spans.push(span("amet consec", 236.0, y, 100.0));
+            spans.push(span("tetur adipi", 340.0, y, 80.0));
+        }
+        let texts = block_texts(spans);
+        // Should detect 2-column layout and read column-major
+        assert!(texts.len() >= 6, "expected column-major output, got {texts:?}");
+        // First three blocks should be left column lines
+        assert!(texts[0].contains("Lorem"), "first block should be left column: {texts:?}");
     }
 }
