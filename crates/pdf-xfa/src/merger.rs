@@ -3382,4 +3382,55 @@ mod tests {
 
         assert_eq!(nagl.layout, LayoutStrategy::Positioned);
     }
+
+    /// Ancestor scope: a field nested inside a subform should find data
+    /// at an ancestor level when not present at the direct context.
+    #[test]
+    fn field_binds_via_ancestor_scope_walk() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <subform name="details" layout="tb">
+      <field name="city" w="200pt" h="20pt" x="0pt" y="0pt"/>
+    </subform>
+  </subform>
+</template>"#;
+
+        // "city" is at the form1 level, NOT inside "details".
+        // The ancestor scope walk should find it.
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form1>
+      <city>Amsterdam</city>
+      <details/>
+    </form1>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let city = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "city")
+            .expect("city field must exist");
+        match &city.node_type {
+            FormNodeType::Field { value } => {
+                assert_eq!(
+                    value, "Amsterdam",
+                    "city should be found via ancestor scope walk"
+                );
+            }
+            _ => panic!("city should be a field"),
+        }
+    }
 }
