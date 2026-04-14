@@ -10,7 +10,7 @@ use kurbo::BezPath;
 use pdf_syntax::object::Dict;
 use pdf_syntax::object::Name;
 use pdf_syntax::object::dict::keys::{
-    BASE_FONT, FONT_DESC, FONT_WEIGHT, ITALIC_ANGLE, MISSING_WIDTH,
+    BASE_FONT, FONT_DESC, FONT_FAMILY, FONT_WEIGHT, ITALIC_ANGLE, MISSING_WIDTH,
 };
 use skrifa::raw::TableProvider;
 use skrifa::{GlyphId, GlyphId16};
@@ -209,6 +209,53 @@ enum StandardFontFamily {
     Times,
 }
 
+/// PostScript-name aliases commonly produced by Office/iText/etc. that refer
+/// to fonts the reader is expected to substitute with the corresponding
+/// Standard-14 font. Matched after subset-prefix stripping and after the
+/// literal Standard-14 names, but before the keyword-based heuristic.
+///
+/// Aliases are intentionally exact (case-sensitive) matches — the keyword
+/// heuristic below already catches free-form variants like "ArialNarrow-Bold".
+fn standard_font_alias(name: &str) -> Option<StandardFont> {
+    match name {
+        // Arial family → Helvetica
+        "ArialMT" | "Arial" => Some(StandardFont::Helvetica),
+        "Arial-BoldMT" | "Arial,Bold" | "Arial-Bold" => Some(StandardFont::HelveticaBold),
+        "Arial-ItalicMT" | "Arial,Italic" | "Arial-Italic" => Some(StandardFont::HelveticaOblique),
+        "Arial-BoldItalicMT" | "Arial,BoldItalic" | "Arial-BoldItalic" => {
+            Some(StandardFont::HelveticaBoldOblique)
+        }
+        // Times New Roman family → Times
+        "TimesNewRomanPSMT" | "TimesNewRoman" | "TimesNewRomanPS" => {
+            Some(StandardFont::TimesRoman)
+        }
+        "TimesNewRomanPS-BoldMT"
+        | "TimesNewRoman-Bold"
+        | "TimesNewRomanPS-Bold"
+        | "TimesNewRoman,Bold" => Some(StandardFont::TimesBold),
+        "TimesNewRomanPS-ItalicMT"
+        | "TimesNewRoman-Italic"
+        | "TimesNewRomanPS-Italic"
+        | "TimesNewRoman,Italic" => Some(StandardFont::TimesItalic),
+        "TimesNewRomanPS-BoldItalicMT"
+        | "TimesNewRoman-BoldItalic"
+        | "TimesNewRomanPS-BoldItalic"
+        | "TimesNewRoman,BoldItalic" => Some(StandardFont::TimesBoldItalic),
+        // Courier New family → Courier
+        "CourierNewPSMT" | "CourierNew" => Some(StandardFont::Courier),
+        "CourierNewPS-BoldMT" | "CourierNew-Bold" | "CourierNewPS-Bold" => {
+            Some(StandardFont::CourierBold)
+        }
+        "CourierNewPS-ItalicMT" | "CourierNew-Italic" | "CourierNewPS-Italic" => {
+            Some(StandardFont::CourierOblique)
+        }
+        "CourierNewPS-BoldItalicMT"
+        | "CourierNew-BoldItalic"
+        | "CourierNewPS-BoldItalic" => Some(StandardFont::CourierBoldOblique),
+        _ => None,
+    }
+}
+
 pub(crate) fn select_standard_font(
     dict: &Dict<'_>,
     descriptor: &Dict<'_>,
@@ -235,32 +282,71 @@ pub(crate) fn select_standard_font(
         _ => {}
     }
 
+    // PostScript-name aliases commonly emitted by Office/iText/etc. for
+    // unembedded Standard-14-equivalent fonts (e.g. ArialMT → Helvetica).
+    // Treated as non-exact so glyph-width fallback in StandardKind still
+    // consults the supplied Widths array when present.
+    if let Some(alias) = standard_font_alias(name) {
+        return Some((alias, false));
+    }
+
     // Now, we bruteforce, trying to determine a suitable font based on the
-    // keywords that appear in the name.
+    // keywords that appear in the name and the descriptor.
     let lower = name.to_ascii_lowercase();
 
-    let is_bold = descriptor.get::<u32>(FONT_WEIGHT).is_some_and(|w| w >= 700)
+    // FontFamily (descriptor) captures the human-readable family, which is
+    // often present even when BaseFont is an opaque subset name. PDF 1.7 §9.8.1
+    // specifies it as a text string, but producers in the wild use name
+    // objects too; fetch as Name (covers both via implicit conversion).
+    let family_field = descriptor
+        .get::<Name>(FONT_FAMILY)
+        .map(|n| n.as_str().to_ascii_lowercase())
+        .unwrap_or_default();
+
+    // PDF spec §9.8.2 Table 120: FontWeight is a number in {100, 200, … 900};
+    // 400 is normal and 700 is bold. Adobe considers weights ≥ 600 (SemiBold,
+    // DemiBold) as "bold" for substitution purposes — matching that lowers
+    // the threshold from 700 to 600 so fonts like "HelveticaNeue-Medium"
+    // (weight 500) stay regular but "*-SemiBold" (600) map to the bold face.
+    let is_bold = descriptor.get::<u32>(FONT_WEIGHT).is_some_and(|w| w >= 600)
         || lower.contains("bold")
-        || lower.contains("demi");
+        || lower.contains("demi")
+        || family_field.contains("bold")
+        || family_field.contains("demi");
+    // PDF spec §9.8.2 Table 120: ItalicAngle is the angle, in counter-clockwise
+    // degrees, of the dominant vertical strokes. Italic/oblique faces are
+    // negative (typically -10° to -20°). Previously we accepted any non-zero
+    // value, which mis-classified upright fonts that shipped with tiny
+    // rounding noise (e.g. -0.1). The stricter −5° threshold follows what
+    // PDF.js and PDFBox use and avoids that false-positive.
     let is_italic = descriptor
         .get::<f32>(ITALIC_ANGLE)
-        .is_some_and(|a| a != 0.0)
+        .is_some_and(|a| a < -5.0 || a > 5.0)
         || lower.contains("italic")
-        || lower.contains("oblique");
+        || lower.contains("oblique")
+        || family_field.contains("italic")
+        || family_field.contains("oblique");
 
-    let (family, exact) = if lower.contains("helvetica") {
+    // Keyword/family heuristic. Prefer BaseFont; fall back to FontFamily.
+    let haystack = if family_field.is_empty() {
+        lower.clone()
+    } else {
+        format!("{lower} {family_field}")
+    };
+
+    let (family, exact) = if haystack.contains("helvetica") {
         (Some(StandardFontFamily::Helvetica), true)
-    } else if lower.contains("arial") || lower.contains("sans") {
+    } else if haystack.contains("arial") || haystack.contains("sans") {
         (Some(StandardFontFamily::Helvetica), false)
-    } else if lower.contains("courier") {
+    } else if haystack.contains("courier") {
         (Some(StandardFontFamily::Courier), true)
-    } else if lower.contains("mono") {
+    } else if haystack.contains("mono") {
         (Some(StandardFontFamily::Courier), false)
-    } else if lower.contains("times") {
+    } else if haystack.contains("times") {
         (Some(StandardFontFamily::Times), true)
-    } else if lower.contains("serif") {
+    } else if haystack.contains("serif") {
         (Some(StandardFontFamily::Times), false)
-    } else if lower.contains("zapfdingbats") || lower.contains("dingbats") {
+    } else if haystack.contains("zapfdingbats") || haystack.contains("dingbats") {
         return Some((StandardFont::ZapfDingBats, false));
     } else {
         (None, false)
@@ -562,5 +648,72 @@ mod tests {
 
         assert_eq!(font.glyph_width(b'A'), Some(600.0));
         assert_eq!(font.glyph_width(b'B'), Some(0.0));
+    }
+
+    #[test]
+    fn arial_aliases_resolve_to_helvetica_family() {
+        assert!(matches!(
+            standard_font_alias("ArialMT"),
+            Some(StandardFont::Helvetica)
+        ));
+        assert!(matches!(
+            standard_font_alias("Arial-BoldMT"),
+            Some(StandardFont::HelveticaBold)
+        ));
+        assert!(matches!(
+            standard_font_alias("Arial-ItalicMT"),
+            Some(StandardFont::HelveticaOblique)
+        ));
+        assert!(matches!(
+            standard_font_alias("Arial-BoldItalicMT"),
+            Some(StandardFont::HelveticaBoldOblique)
+        ));
+    }
+
+    #[test]
+    fn times_new_roman_aliases_resolve_to_times_family() {
+        assert!(matches!(
+            standard_font_alias("TimesNewRomanPSMT"),
+            Some(StandardFont::TimesRoman)
+        ));
+        assert!(matches!(
+            standard_font_alias("TimesNewRomanPS-BoldMT"),
+            Some(StandardFont::TimesBold)
+        ));
+        assert!(matches!(
+            standard_font_alias("TimesNewRomanPS-ItalicMT"),
+            Some(StandardFont::TimesItalic)
+        ));
+        assert!(matches!(
+            standard_font_alias("TimesNewRomanPS-BoldItalicMT"),
+            Some(StandardFont::TimesBoldItalic)
+        ));
+    }
+
+    #[test]
+    fn courier_new_aliases_resolve_to_courier_family() {
+        assert!(matches!(
+            standard_font_alias("CourierNewPSMT"),
+            Some(StandardFont::Courier)
+        ));
+        assert!(matches!(
+            standard_font_alias("CourierNewPS-BoldMT"),
+            Some(StandardFont::CourierBold)
+        ));
+        assert!(matches!(
+            standard_font_alias("CourierNewPS-ItalicMT"),
+            Some(StandardFont::CourierOblique)
+        ));
+        assert!(matches!(
+            standard_font_alias("CourierNewPS-BoldItalicMT"),
+            Some(StandardFont::CourierBoldOblique)
+        ));
+    }
+
+    #[test]
+    fn unknown_names_do_not_alias() {
+        assert!(standard_font_alias("LiberationSans").is_none());
+        assert!(standard_font_alias("CenturySchoolbook").is_none());
+        assert!(standard_font_alias("").is_none());
     }
 }
