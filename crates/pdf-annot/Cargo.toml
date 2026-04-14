@@ -6,7 +6,7 @@ license = "MIT"
 description = "PDF annotation engine — parsing and typed access to all annotation types per ISO 32000-2 §12.5."
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
 lopdf = { workspace = true, optional = true }
 log = "0.4"
 thiserror = { workspace = true }

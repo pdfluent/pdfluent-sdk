@@ -12,13 +12,13 @@ crate-type = ["cdylib"]
 [workspace]
 
 [dependencies]
-pdf-engine = { path = "../pdf-engine" }
-pdf-sign = { path = "../pdf-sign" }
-pdf-manip = { path = "../pdf-manip", default-features = false }
-pdf-compliance = { path = "../pdf-compliance" }
-pdf-syntax = { path = "../pdf-syntax" }
-pdf-forms = { path = "../pdf-forms" }
-pdf-annot = { path = "../pdf-annot" }
-pdf-redact = { path = "../pdf-redact" }
-lopdf = { path = "../lopdf" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.1" }
+pdf-sign = { path = "../pdf-sign", version = "=1.0.0-beta.1" }
+pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.1" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.1" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
+pdf-forms = { path = "../pdf-forms", version = "=1.0.0-beta.1" }
+pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.1" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.1" }
+lopdf = { path = "../lopdf", version = "=0.39.0" }
 pyo3 = { version = "0.24", features = ["extension-module"] }

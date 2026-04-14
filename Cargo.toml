@@ -80,7 +80,7 @@ repository = "https://github.com/jasperdew/xfa-native-rust"
 
 [workspace.dependencies]
 roxmltree = "0.20"
-lopdf = { path = "crates/lopdf" }
+lopdf = { path = "crates/lopdf", version = "=0.39.0" }
 thiserror = "2"
 image = "0.25"
 pixelmatch = "0.1"
@@ -97,30 +97,30 @@ subsetter = "0.2"
 xmp-writer = "0.3"
 
 # Internal crates (existing XFA)
-xfa-dom-resolver = { path = "crates/xfa-dom-resolver" }
-formcalc-interpreter = { path = "crates/formcalc-interpreter" }
-xfa-layout-engine = { path = "crates/xfa-layout-engine" }
-xfa-json = { path = "crates/xfa-json" }
-xfa-license = { path = "crates/xfa-license" }
+xfa-dom-resolver = { path = "crates/xfa-dom-resolver", version = "=1.0.0-beta.1" }
+formcalc-interpreter = { path = "crates/formcalc-interpreter", version = "=1.0.0-beta.1" }
+xfa-layout-engine = { path = "crates/xfa-layout-engine", version = "=1.0.0-beta.1" }
+xfa-json = { path = "crates/xfa-json", version = "=1.0.0-beta.1" }
+xfa-license = { path = "crates/xfa-license", version = "=1.0.0-beta.1" }
 
 # Forked crates
-pdf-syntax = { path = "crates/pdf-syntax" }
-pdf-interpret = { path = "crates/pdf-interpret" }
-pdf-font = { path = "crates/pdf-font" }
-pdf-render = { path = "crates/pdf-render" }
+pdf-syntax = { path = "crates/pdf-syntax", version = "=0.5.0" }
+pdf-interpret = { path = "crates/pdf-interpret", version = "=0.5.0" }
+pdf-font = { path = "crates/pdf-font", version = "=1.0.0-beta.1" }
+pdf-render = { path = "crates/pdf-render", version = "=1.0.0-beta.1" }
 
 # New engine crates
-pdf-forms = { path = "crates/pdf-forms" }
-pdf-annot = { path = "crates/pdf-annot" }
-pdf-xfa = { path = "crates/pdf-xfa" }
-pdf-sign = { path = "crates/pdf-sign" }
-pdf-engine = { path = "crates/pdf-engine" }
-pdf-compliance = { path = "crates/pdf-compliance" }
-pdf-manip = { path = "crates/pdf-manip" }
-pdf-invoice = { path = "crates/pdf-invoice" }
-pdf-extract = { path = "crates/pdf-extract" }
-pdf-redact = { path = "crates/pdf-redact" }
-pdf-ocr = { path = "crates/pdf-ocr" }
+pdf-forms = { path = "crates/pdf-forms", version = "=1.0.0-beta.1" }
+pdf-annot = { path = "crates/pdf-annot", version = "=1.0.0-beta.1" }
+pdf-xfa = { path = "crates/pdf-xfa", version = "=1.0.0-beta.1" }
+pdf-sign = { path = "crates/pdf-sign", version = "=1.0.0-beta.1" }
+pdf-engine = { path = "crates/pdf-engine", version = "=1.0.0-beta.1" }
+pdf-compliance = { path = "crates/pdf-compliance", version = "=1.0.0-beta.1" }
+pdf-manip = { path = "crates/pdf-manip", version = "=1.0.0-beta.1" }
+pdf-invoice = { path = "crates/pdf-invoice", version = "=1.0.0-beta.1" }
+pdf-extract = { path = "crates/pdf-extract", version = "=1.0.0-beta.1" }
+pdf-redact = { path = "crates/pdf-redact", version = "=1.0.0-beta.1" }
+pdf-ocr = { path = "crates/pdf-ocr", version = "=1.0.0-beta.1" }
 
 [profile.release]
 lto = "fat"

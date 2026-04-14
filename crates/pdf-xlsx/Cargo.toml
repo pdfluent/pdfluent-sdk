@@ -9,7 +9,7 @@ description = "PDF table extraction and XLSX conversion"
 [dependencies]
 lopdf.workspace = true
 thiserror.workspace = true
-pdf-extract = { path = "../pdf-extract" }
+pdf-extract = { path = "../pdf-extract", version = "=1.0.0-beta.1" }
 rust_xlsxwriter = "0.94"
 
 [dev-dependencies]
