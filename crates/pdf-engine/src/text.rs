@@ -313,6 +313,19 @@ impl Device<'_> for TextExtractionDevice {
 
         if adjacent {
             if let Some(last) = self.spans.last_mut() {
+                // Inject a space when the horizontal gap between the previous
+                // glyph and this one is wide enough to indicate an inter-word
+                // break (typical PDFs emit `[(foo) -200 (bar)] TJ` or two
+                // separate show-text ops without a literal space glyph). The
+                // 0.15 em threshold matches what pdftotext / MuPDF use: well
+                // below normal letter spacing but comfortably above intra-word
+                // kerning. Skip if either side already ends/starts with space.
+                let glue_needed = gap > font_size * 0.15
+                    && !last.text.ends_with(' ')
+                    && !text.starts_with(' ');
+                if glue_needed {
+                    last.text.push(' ');
+                }
                 last.text.push_str(&text);
                 last.width = last.width.max(glyph_end_x - last.x);
                 last.height = last.height.max(font_size);
