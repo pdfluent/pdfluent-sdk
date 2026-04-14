@@ -663,6 +663,11 @@ pub fn interpret<'a, 'b>(
 
                 for obj in s.0.iter::<Object<'_>>() {
                     if let Some(adjustment) = obj.clone().into_f32() {
+                        // ANN[r17/TEX1] Surface TJ adjustment to the Device
+                        // before mutating the text matrix so extractors can
+                        // record the word-boundary signal alongside the
+                        // spatial gap they'd otherwise have to infer.
+                        device.text_adjustment(adjustment);
                         context.get_mut().text_state.apply_adjustment(adjustment);
                     } else if let Some(text) = obj.into_string() {
                         text::show_text_string(context, device, resources, text);
