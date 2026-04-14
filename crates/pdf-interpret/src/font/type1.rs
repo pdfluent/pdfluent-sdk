@@ -140,11 +140,42 @@ impl Type1Font {
         }
 
         let code = char_code as u8;
-        match &self.1 {
-            Kind::Standard(s) => s.char_code_to_unicode(code).map(BfString::Char),
-            Kind::Cff(c) => c.char_code_to_unicode(code).map(BfString::Char),
-            Kind::Type1(t) => t.char_code_to_unicode(code).map(BfString::Char),
+        let kind_unicode = match &self.1 {
+            Kind::Standard(s) => s.char_code_to_unicode(code),
+            Kind::Cff(c) => c.char_code_to_unicode(code),
+            Kind::Type1(t) => t.char_code_to_unicode(code),
+        };
+        if let Some(ch) = kind_unicode {
+            return Some(BfString::Char(ch));
         }
+
+        // Final-resort fallbacks for fonts that ship no ToUnicode CMap, no
+        // /Encoding /Differences, *and* whose built-in encoding we could not
+        // translate to a glyph name (typical for Type1C subset fonts that
+        // pdffonts labels "Builtin"). Without this, text extraction returns
+        // an empty string and the SDK loses any chance to surface the
+        // document's content — even though most such fonts layout ASCII-
+        // compatible characters at ASCII-compatible code points.
+        //
+        // 1) Try Adobe Standard Encoding → AGL. A large share of legacy
+        //    Type1 fonts ship with Standard-compatible layout even when
+        //    they don't declare an /Encoding entry in the PDF.
+        if let Some(name) = Encoding::Standard.map_code(code)
+            && let Some(ch) = glyph_name_to_unicode(name)
+        {
+            return Some(BfString::Char(ch));
+        }
+
+        // 2) If the code lies in printable ASCII, assume identity. Emitting
+        //    the likely-wrong character is strictly better than dropping
+        //    the glyph: downstream consumers (pdftotext-style diffs, OCR
+        //    sanity checks, NLP) are dramatically more sensitive to missing
+        //    characters than to occasional mis-encodings.
+        if (0x20..=0x7E).contains(&code) {
+            return Some(BfString::Char(code as char));
+        }
+
+        None
     }
 }
 
