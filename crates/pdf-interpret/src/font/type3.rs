@@ -3,7 +3,7 @@ use crate::context::Context;
 use crate::device::Device;
 use crate::font::glyph_simulator::GlyphSimulator;
 use crate::font::true_type::{Width, read_encoding, read_widths};
-use crate::font::{Encoding, Glyph, Type3Glyph, UNITS_PER_EM, glyph_name_to_unicode, read_to_unicode};
+use crate::font::{Encoding, Glyph, Type3Glyph, UNITS_PER_EM, glyph_name_to_unicode, normalized_glyph_name, read_to_unicode};
 use crate::interpret::state::TextState;
 use crate::soft_mask::SoftMask;
 use crate::util::RectExt;
@@ -118,19 +118,24 @@ impl<'a> Type3<'a> {
         let code = char_code as u8;
 
         // 2) /Encoding /Differences — a Type3-specific glyph name.
-        if let Some(name) = self.encodings.get(&code)
-            && let Some(ch) = glyph_name_to_unicode(name)
-        {
-            return Some(BfString::Char(ch));
+        //    Try the literal name first, then its normalized alias.
+        if let Some(name) = self.encodings.get(&code) {
+            if let Some(ch) = glyph_name_to_unicode(name)
+                .or_else(|| glyph_name_to_unicode(normalized_glyph_name(name)))
+            {
+                return Some(BfString::Char(ch));
+            }
         }
 
         // 3) Base encoding (Standard / WinAnsi / MacRoman / MacExpert) →
         //    AGL. For `Encoding::BuiltIn` this returns None, so we fall
-        //    through to the ASCII identity below.
-        if let Some(name) = self.encoding.map_code(code)
-            && let Some(ch) = glyph_name_to_unicode(name)
-        {
-            return Some(BfString::Char(ch));
+        //    through to the ASCII identity below.  Try normalized alias too.
+        if let Some(name) = self.encoding.map_code(code) {
+            if let Some(ch) = glyph_name_to_unicode(name)
+                .or_else(|| glyph_name_to_unicode(normalized_glyph_name(name)))
+            {
+                return Some(BfString::Char(ch));
+            }
         }
 
         // 4) Adobe Standard as last-resort encoding guess. Most legacy
