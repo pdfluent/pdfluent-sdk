@@ -150,7 +150,7 @@ impl Renderer {
                     &src,
                     &mut dst,
                     &ResizeOptions::new().resize_alg(ResizeAlg::Convolution(
-                        fast_image_resize::FilterType::Bilinear,
+                        fast_image_resize::FilterType::Lanczos3,
                     )),
                 )
                 .unwrap();
@@ -229,7 +229,7 @@ impl Renderer {
                     &src_image,
                     &mut dst_image,
                     &ResizeOptions::new().resize_alg(ResizeAlg::Convolution(
-                        fast_image_resize::FilterType::Bilinear,
+                        fast_image_resize::FilterType::Lanczos3,
                     )),
                 )
                 .unwrap();
