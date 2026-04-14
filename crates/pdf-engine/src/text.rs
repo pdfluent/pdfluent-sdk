@@ -8,8 +8,49 @@ use pdf_render::pdf_interpret::{
 };
 use std::cmp::Ordering;
 
-/// Y tolerance for grouping spans into horizontal bands.
+/// Minimum Y tolerance for grouping spans into horizontal bands. The
+/// effective tolerance is typically `median_font_size * BAND_Y_FRACTION`
+/// per ANN[r17/TEX4]; this constant acts as the absolute floor.
 const BAND_Y_TOLERANCE: f64 = 5.0;
+/// Fraction of the page's median font size used as the band-Y
+/// tolerance. Empirically 0.30× works across common typography —
+/// below typical leading (~1.2×) so adjacent lines never collapse,
+/// above sub-pixel baseline drift.
+const BAND_Y_FRACTION: f64 = 0.30;
+/// Multiplier applied to median line spacing to derive the horizontal
+/// paragraph-break cut threshold. Normal line-to-line progression is
+/// ~1.0× the median; paragraph breaks typically show 1.5× or more.
+const PARAGRAPH_BREAK_LINE_SPACING_MULTIPLIER: f64 = 1.8;
+
+// ANN[r17/TEX1] Multi-signal consensus thresholds.
+// The previous single-threshold scheme (gap > 0.15 * font_size) missed
+// word boundaries when kerning or narrow fonts produced small measured
+// gaps even though the PDF emitted an explicit TJ backward shift, and
+// over-emitted spaces for condensed fonts where 0.15em of kerning is
+// well below an actual word space. The consensus system weights three
+// signals and inserts a space when the combined confidence exceeds
+// SPACE_CONSENSUS_THRESHOLD.
+/// Raw TJ backward adjustment (positive in PDF TJ units) that is
+/// definitively a word break. Matches pdftotext / MuPDF heuristics —
+/// a space glyph is typically emitted as either a literal 0x20 or as
+/// a TJ adjustment of around 250 1/1000 em. 100 units is a safely
+/// conservative floor.
+const TJ_SPACE_THRESHOLD_UNITS: f32 = 100.0;
+/// Weight of the TJ offset signal when confidence is high.
+const TJ_SIGNAL_WEIGHT: f64 = 0.95;
+/// Weight of the purely geometric gap signal.
+const GAP_SIGNAL_WEIGHT: f64 = 0.80;
+/// Weight of character-heuristic signals (CamelCase, digit↔letter).
+const HEURISTIC_SIGNAL_WEIGHT: f64 = 0.60;
+/// Combined weight at which a space is inserted.
+const SPACE_CONSENSUS_THRESHOLD: f64 = 0.75;
+/// Fraction of a median character width above which a gap contributes
+/// to the geometric signal (pdf_oxide uses ~0.30).
+const GAP_TO_MEDIAN_CHAR_FRACTION: f64 = 0.30;
+/// Fallback gap fraction relative to `font_size` when the running
+/// median character width has not yet been established.
+const GAP_TO_FONT_SIZE_FALLBACK_FRACTION: f64 = 0.15;
+
 /// Minimum horizontal gap treated as a column gutter (adaptive fallback).
 const COLUMN_GAP_THRESHOLD_MIN: f64 = 10.0;
 /// Maximum adaptive column gap threshold.
@@ -243,11 +284,45 @@ struct BandGap {
 }
 
 /// A Device implementation that captures text from draw_glyph calls.
+///
+/// ANN[r17/TEX1][r17/TEX3] Space detection uses a multi-signal consensus
+/// rather than a single geometric threshold. Three signals vote:
+///   1. `pending_tj_offset`  — raw TJ backward shift surfaced by the
+///      interpreter (confidence 0.95). This is the definitive word-break
+///      signal used by pdftotext / MuPDF.
+///   2. geometric gap        — measured horizontal distance between the
+///      previous glyph's right edge and this glyph's origin (confidence
+///      0.80). Compared against the running median glyph width rather
+///      than a flat em-fraction so condensed/wide fonts are handled
+///      uniformly.
+///   3. character heuristic  — CamelCase transition or digit↔letter
+///      transition at the merge point (confidence 0.60). Catches cases
+///      where the writer relied on typography (e.g. table cells glued
+///      with zero gap: `Qty1Price$5`).
+///
+/// A space is inserted when the weighted sum meets SPACE_CONSENSUS_THRESHOLD.
+/// Span accumulation still merges adjacent glyphs into one TextSpan (TEX3)
+/// so downstream reading-order logic sees logical text runs, not individual
+/// character positions.
 pub(crate) struct TextExtractionDevice {
     spans: Vec<TextSpan>,
     last_y: f64,
     last_end_x: f64,
+    /// TJ adjustment in raw 1/1000 em units since the last glyph was
+    /// drawn. Positive values = backward shift (i.e., explicit horizontal
+    /// space). Reset every time a glyph is drawn.
+    pending_tj_offset: f32,
+    /// Running sample of measured glyph widths used as the adaptive
+    /// reference for the geometric gap signal. Cheap to maintain and
+    /// avoids having to re-walk all spans per decision.
+    glyph_widths: Vec<f64>,
+    /// Cached median glyph width (kept fresh every `MEDIAN_REFRESH`
+    /// insertions). Zero = not yet established, caller falls back to
+    /// font-size scaling.
+    cached_median_char_width: f64,
 }
+
+const MEDIAN_REFRESH: usize = 32;
 
 impl Default for TextExtractionDevice {
     fn default() -> Self {
@@ -262,7 +337,68 @@ impl TextExtractionDevice {
             spans: Vec::new(),
             last_y: f64::NEG_INFINITY,
             last_end_x: f64::NEG_INFINITY,
+            pending_tj_offset: 0.0,
+            glyph_widths: Vec::new(),
+            cached_median_char_width: 0.0,
         }
+    }
+
+    /// Refresh the cached median char width. Called lazily from
+    /// `draw_glyph` to keep the hot path cheap.
+    fn refresh_median_char_width(&mut self) {
+        if self.glyph_widths.is_empty() {
+            self.cached_median_char_width = 0.0;
+            return;
+        }
+        let mut sorted = self.glyph_widths.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        self.cached_median_char_width = sorted[sorted.len() / 2];
+    }
+
+    /// Decide whether a space should be glued between two glyphs within
+    /// the same span. Returns (insert_space, start_new_span).
+    fn evaluate_space_consensus(
+        &self,
+        gap: f64,
+        font_size: f64,
+        prev_text: &str,
+        next_text: &str,
+    ) -> bool {
+        let mut confidence = 0.0;
+
+        // Signal 1 — TJ offset (highest confidence). Raw units; a full
+        // space is ~250. Anything over TJ_SPACE_THRESHOLD_UNITS counts.
+        if self.pending_tj_offset.abs() >= TJ_SPACE_THRESHOLD_UNITS {
+            confidence += TJ_SIGNAL_WEIGHT;
+        }
+
+        // Signal 2 — geometric gap. Prefer the adaptive median-char-width
+        // reference; fall back to font-size when the median hasn't been
+        // established yet (first few glyphs on a page).
+        let gap_reference = if self.cached_median_char_width > 0.0 {
+            self.cached_median_char_width * GAP_TO_MEDIAN_CHAR_FRACTION
+        } else {
+            font_size * GAP_TO_FONT_SIZE_FALLBACK_FRACTION
+        };
+        if gap > gap_reference {
+            confidence += GAP_SIGNAL_WEIGHT;
+        }
+
+        // Signal 3 — character-class transitions. Only checked when the
+        // previous span ends with a character and the incoming text starts
+        // with one; avoids double-counting with punctuation.
+        if let (Some(prev_last), Some(next_first)) =
+            (prev_text.chars().last(), next_text.chars().next())
+        {
+            let camel = prev_last.is_lowercase() && next_first.is_uppercase();
+            let digit_to_letter = prev_last.is_ascii_digit() && next_first.is_alphabetic();
+            let letter_to_digit = prev_last.is_alphabetic() && next_first.is_ascii_digit();
+            if camel || digit_to_letter || letter_to_digit {
+                confidence += HEURISTIC_SIGNAL_WEIGHT;
+            }
+        }
+
+        confidence >= SPACE_CONSENSUS_THRESHOLD
     }
 
     /// Consume the device and return extracted text as a single string.
@@ -318,36 +454,55 @@ impl Device<'_> for TextExtractionDevice {
         let glyph_width = estimate_glyph_width(glyph, font_size).max(font_size * 0.25);
         let glyph_end_x = x + glyph_width;
 
+        // ANN[r17/TEX4] Feed the running sample used to derive the adaptive
+        // median character width. Capped to protect against pathological
+        // pages with hundreds of thousands of glyphs.
+        if self.glyph_widths.len() < 4096 {
+            self.glyph_widths.push(glyph_width);
+            if self.glyph_widths.len() % MEDIAN_REFRESH == 0 {
+                self.refresh_median_char_width();
+            }
+        }
+
         let same_line = (y - self.last_y).abs() <= font_size.max(BAND_Y_TOLERANCE) * 0.35;
         let gap = x - self.last_end_x;
         let adjacent = same_line && gap >= -font_size * 0.25 && gap < font_size * 0.5;
 
-        if adjacent {
-            if let Some(last) = self.spans.last_mut() {
-                // Inject a space when the horizontal gap between the previous
-                // glyph and this one is wide enough to indicate an inter-word
-                // break (typical PDFs emit `[(foo) -200 (bar)] TJ` or two
-                // separate show-text ops without a literal space glyph). The
-                // 0.15 em threshold matches what pdftotext / MuPDF use: well
-                // below normal letter spacing but comfortably above intra-word
-                // kerning. Skip if either side already ends/starts with space.
-                let glue_needed = gap > font_size * 0.15
-                    && !last.text.ends_with(' ')
-                    && !text.starts_with(' ');
-                if glue_needed {
-                    last.text.push(' ');
-                }
-                last.text.push_str(&text);
-                last.width = last.width.max(glyph_end_x - last.x);
-                last.height = last.height.max(font_size);
-                self.last_y = y;
-                self.last_end_x = glyph_end_x;
-                return;
+        if adjacent && !self.spans.is_empty() {
+            // ANN[r17/TEX1] Multi-signal consensus replaces the prior
+            // single-threshold rule (`gap > 0.15 * font_size`). The
+            // consensus evaluates TJ offset, geometric gap, and
+            // character-class transitions; a space is inserted only
+            // when the weighted sum meets SPACE_CONSENSUS_THRESHOLD.
+            // Decision is computed before the mutable borrow of `last`
+            // to keep the borrow checker happy.
+            let want_space = {
+                let last = self.spans.last().expect("checked non-empty");
+                !last.text.ends_with(' ')
+                    && !text.starts_with(' ')
+                    && self.evaluate_space_consensus(gap, font_size, &last.text, &text)
+            };
+            let last = self.spans.last_mut().expect("checked non-empty");
+            if want_space {
+                last.text.push(' ');
             }
+            last.text.push_str(&text);
+            last.width = last.width.max(glyph_end_x - last.x);
+            last.height = last.height.max(font_size);
+            self.last_y = y;
+            self.last_end_x = glyph_end_x;
+            // ANN[r17/TEX1] Consume the TJ signal: it only counts for
+            // the one merge it preceded.
+            self.pending_tj_offset = 0.0;
+            return;
         }
 
         self.last_y = y;
         self.last_end_x = glyph_end_x;
+        // ANN[r17/TEX1] Non-adjacent glyph starts a fresh span, so any
+        // pending TJ offset is about within-span word breaks and no longer
+        // meaningful here.
+        self.pending_tj_offset = 0.0;
 
         self.spans.push(TextSpan {
             text,
@@ -357,6 +512,14 @@ impl Device<'_> for TextExtractionDevice {
             height: font_size,
             font_size,
         });
+    }
+
+    // ANN[r17/TEX1] Record TJ offsets. Accumulate because a single
+    // inter-substring gap may be expressed as multiple numeric entries
+    // (rare, but legal per PDF §9.4.3). The next draw_glyph consumes
+    // the sum.
+    fn text_adjustment(&mut self, amount: f32) {
+        self.pending_tj_offset += amount;
     }
 }
 
@@ -443,7 +606,434 @@ fn compute_adaptive_column_gap(bands: &[TextBand]) -> f64 {
 
 /// Group spans into reading-order blocks, using column-aware reordering when
 /// a contiguous region repeatedly exposes the same gutters.
+/// Per-page adaptive parameters derived from the span set before any
+/// grouping happens. Centralising these here (TEX4) means the rest of
+/// the pipeline — band grouping, XY-Cut cuts, in-block space insertion
+/// — all speak the same typographic baseline for this specific page,
+/// rather than each helper reaching for an independent fixed constant.
+#[derive(Debug, Clone, Copy)]
+struct PageStats {
+    /// Median font size across all spans (pt).
+    median_font_size: f64,
+    /// Median measured character width (pt). Zero-guarded fallback is
+    /// 0.5 × median_font_size when there aren't enough samples.
+    median_char_width: f64,
+    /// Tight line-to-line spacing (25th percentile of pairwise band
+    /// gaps), representing the body-text leading on this page. The
+    /// quartile is used instead of the median so large paragraph /
+    /// zone gaps don't inflate the baseline. Zero if the page has
+    /// only one band.
+    median_line_spacing: f64,
+}
+
+impl PageStats {
+    fn from_spans(spans: &[TextSpan]) -> Self {
+        if spans.is_empty() {
+            return Self {
+                median_font_size: 12.0,
+                median_char_width: 6.0,
+                median_line_spacing: 0.0,
+            };
+        }
+
+        // Median font size.
+        let mut sizes: Vec<f64> = spans.iter().map(|s| s.font_size).collect();
+        sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        let median_font_size = sizes[sizes.len() / 2];
+
+        // Median char width — measured width / char count, per span.
+        let mut char_widths: Vec<f64> = spans
+            .iter()
+            .filter_map(|s| {
+                let chars = s.text.chars().count();
+                if chars > 0 && s.width > 0.0 {
+                    Some(s.width / chars as f64)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let median_char_width = if char_widths.is_empty() {
+            median_font_size * 0.5
+        } else {
+            char_widths.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+            char_widths[char_widths.len() / 2]
+        };
+
+        // Median line spacing — pairwise gaps between consecutive band
+        // y-values.
+        let band_tolerance = (median_font_size * BAND_Y_FRACTION).max(BAND_Y_TOLERANCE);
+        let mut ys: Vec<f64> = spans.iter().map(|s| s.y).collect();
+        ys.sort_by(|a, b| b.partial_cmp(a).unwrap_or(Ordering::Equal));
+        let mut band_ys: Vec<f64> = Vec::new();
+        for y in ys {
+            if band_ys
+                .last()
+                .map(|prev: &f64| (prev - y).abs() > band_tolerance)
+                .unwrap_or(true)
+            {
+                band_ys.push(y);
+            }
+        }
+        // ANN[r17/TEX4] "Line spacing" here means the TIGHT line-to-line
+        // gap inside a text block — not the median of all gaps. Using
+        // the median drags the estimate up when the page has
+        // paragraph / zone breaks (which are the very gaps the
+        // paragraph-break threshold is supposed to EXCEED). The 25th
+        // percentile is the smallest gap that still shows up in more
+        // than one place on the page; it captures body-text leading
+        // robustly even when large zone gaps dominate.
+        let median_line_spacing = if band_ys.len() < 2 {
+            0.0
+        } else {
+            let mut spacings: Vec<f64> = band_ys
+                .windows(2)
+                .map(|pair| (pair[0] - pair[1]).abs())
+                .collect();
+            spacings.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+            let q1_index = spacings.len() / 4;
+            spacings[q1_index]
+        };
+
+        Self {
+            median_font_size,
+            median_char_width,
+            median_line_spacing,
+        }
+    }
+}
+
+// ANN[r17/TEX2] Maximum recursion depth for XY-Cut. Any real page layout
+// is decomposable in well under 10 alternating cuts; the cap guards
+// against pathological inputs where the cut predicate keeps triggering
+// due to floating-point drift.
+const XY_CUT_MAX_DEPTH: usize = 12;
+/// Minimum fraction of a region's width that a vertical gap must reach
+/// before it qualifies as a column gutter.
+const XY_CUT_VERTICAL_GAP_REGION_FRACTION: f64 = 0.04;
+/// Floor (in pt) for vertical gap regardless of region width. Matches
+/// the previous `COLUMN_GAP_THRESHOLD_MIN` and keeps XY-Cut conservative
+/// on narrow regions (sidebars, tall columns).
+const XY_CUT_VERTICAL_GAP_FLOOR: f64 = 10.0;
+/// Multiplier applied to median font size to produce the horizontal-gap
+/// threshold. 1.8 × line-height matches typical paragraph spacing.
+const XY_CUT_HORIZONTAL_GAP_FONT_MULTIPLIER: f64 = 1.8;
+/// Minimum number of spans a column must contain before it is eligible
+/// for acceptance — one-span "columns" are almost always sidebar noise
+/// or table-cell fragments.
+const XY_CUT_MIN_SPANS_PER_COLUMN: usize = 2;
+/// Average characters per band a column must have before it's accepted
+/// as dense prose (vs. a short-cell table column).
+const XY_CUT_MIN_CHARS_PER_BAND: f64 = 8.0;
+
+/// ANN[r17/TEX2][r17/TEX4] Top-level grouping uses recursive XY-Cut
+/// with a density guard. Per-page stats are computed once up front so
+/// every decision downstream speaks the same typographic baseline.
 fn group_spans_into_blocks(spans: Vec<TextSpan>) -> Vec<TextBlock> {
+    if spans.is_empty() {
+        return Vec::new();
+    }
+    let stats = PageStats::from_spans(&spans);
+    xy_cut_recursive(spans, 0, &stats)
+}
+
+fn xy_cut_recursive(spans: Vec<TextSpan>, depth: usize, stats: &PageStats) -> Vec<TextBlock> {
+    if spans.is_empty() {
+        return Vec::new();
+    }
+    if depth >= XY_CUT_MAX_DEPTH {
+        return band_based_blocks(spans, stats);
+    }
+
+    // ANN[r17/TEX2] Pick whichever direction has the largest qualifying
+    // gap. Always cutting vertically first breaks layouts where a
+    // footer sits in the mid-x range — it would attach to the left
+    // column instead of being recognized as a page-level zone. The
+    // "largest gap wins" rule is the standard XY-Cut tie-breaker used
+    // by academic OCR literature and matches pdf_oxide.
+    let vcut = try_vertical_cut(&spans, stats);
+    let hcut = try_horizontal_cut(&spans, stats);
+
+    let (chosen, _) = match (vcut, hcut) {
+        (Some((v_groups, v_gap)), Some((h_groups, h_gap))) => {
+            if v_gap >= h_gap {
+                (Some(v_groups), v_gap)
+            } else {
+                (Some(h_groups), h_gap)
+            }
+        }
+        (Some((v_groups, v_gap)), None) => (Some(v_groups), v_gap),
+        (None, Some((h_groups, h_gap))) => (Some(h_groups), h_gap),
+        (None, None) => (None, 0.0),
+    };
+
+    if let Some(groups) = chosen {
+        let mut out = Vec::new();
+        for group in groups {
+            out.extend(xy_cut_recursive(group, depth + 1, stats));
+        }
+        return out;
+    }
+
+    band_based_blocks(spans, stats)
+}
+
+/// Emit per-band row blocks without any column detection. Used as the
+/// leaf of XY-Cut recursion — at this point the region either has no
+/// further cuts or the density guard refused them.
+fn band_based_blocks(spans: Vec<TextSpan>, stats: &PageStats) -> Vec<TextBlock> {
+    let bands = group_spans_into_bands_with_stats(spans, stats);
+    bands.iter().map(TextBand::row_block).collect()
+}
+
+fn median_font_size(spans: &[TextSpan]) -> f64 {
+    if spans.is_empty() {
+        return 12.0;
+    }
+    let mut sizes: Vec<f64> = spans.iter().map(|s| s.font_size).collect();
+    sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+    sizes[sizes.len() / 2]
+}
+
+/// Attempt a vertical (column) cut. Returns the span groups plus the
+/// gap size (in pt) if a suitable gutter is found AND the density +
+/// alignment guards accept.
+///
+/// ANN[r17/TEX2] Three guards together avoid false-positive columns:
+///   1. `min_gap` is the MAX of (median_font, 4% of region width, 10pt)
+///      — deliberately lower than `median_font * 2` so narrow-gutter
+///      academic papers (12pt gutters, common in print) are still
+///      detected.
+///   2. `columns_are_dense` rejects column splits where either side
+///      has <2 spans or <8 chars/band — catches table cells.
+///   3. `columns_are_band_aligned` rejects cuts where any band would
+///      end up on only one side of the cut while being wider than
+///      ~70% of that side's column width — catches full-width
+///      paragraphs (Intro / Outro) that accidentally sit in the
+///      left-column x-range.
+fn try_vertical_cut(spans: &[TextSpan], stats: &PageStats) -> Option<(Vec<Vec<TextSpan>>, f64)> {
+    if spans.len() < 2 * XY_CUT_MIN_SPANS_PER_COLUMN {
+        return None;
+    }
+
+    let region_left = spans.iter().map(|s| s.x).fold(f64::INFINITY, f64::min);
+    let region_right = spans
+        .iter()
+        .map(TextSpan::right)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let region_width = region_right - region_left;
+    if region_width <= 0.0 {
+        return None;
+    }
+
+    // ANN[r17/TEX2][r17/TEX4] Threshold uses the ADAPTIVE median-word-gap
+    // from the bands rather than a flat font-size multiple. Narrow-gutter
+    // academic layouts have 12pt gutters next to 4pt word spaces — the
+    // adaptive threshold scales with the actual typography used on this
+    // page. Clamped to `XY_CUT_VERTICAL_GAP_FLOOR` to avoid firing on
+    // ordinary inter-word spaces when character advance data is noisy.
+    // median_font and the width fraction act only as safety rails for
+    // pathological inputs.
+    let bands = group_spans_into_bands_with_stats(spans.to_vec(), stats);
+    let adaptive = compute_adaptive_column_gap(&bands);
+    let floor = stats
+        .median_font_size
+        .max(region_width * XY_CUT_VERTICAL_GAP_REGION_FRACTION)
+        .max(XY_CUT_VERTICAL_GAP_FLOOR);
+    let min_gap = adaptive.min(floor).max(XY_CUT_VERTICAL_GAP_FLOOR);
+
+    // Intervals [x_left, x_right] of every span; we look for an x value
+    // that is free of ALL intervals (full-height gap).
+    let mut intervals: Vec<(f64, f64)> = spans
+        .iter()
+        .map(|s| (s.x, s.right().max(s.x + 0.001)))
+        .collect();
+    intervals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+
+    let mut cursor = intervals[0].1;
+    let mut best_gap: Option<(f64, f64)> = None; // (gap_size, cut_x)
+    for (left, right) in intervals.iter().skip(1) {
+        if *left > cursor {
+            let gap = *left - cursor;
+            if gap >= min_gap {
+                match best_gap {
+                    Some((best, _)) if best >= gap => {}
+                    _ => {
+                        let cut_x = (cursor + *left) * 0.5;
+                        best_gap = Some((gap, cut_x));
+                    }
+                }
+            }
+        }
+        cursor = cursor.max(*right);
+    }
+
+    let (gap_size, cut_x) = best_gap?;
+
+    // Split spans around the cut. A span whose midpoint is < cut_x
+    // belongs to the left group.
+    let mut left_group = Vec::new();
+    let mut right_group = Vec::new();
+    for span in spans {
+        let midpoint = span.x + (span.right() - span.x) * 0.5;
+        if midpoint < cut_x {
+            left_group.push(span.clone());
+        } else {
+            right_group.push(span.clone());
+        }
+    }
+
+    if !columns_are_dense(&left_group, &right_group, stats) {
+        return None;
+    }
+    if !columns_are_band_aligned(spans, cut_x, region_left, region_right, stats) {
+        return None;
+    }
+
+    Some((vec![left_group, right_group], gap_size))
+}
+
+/// ANN[r17/TEX2] Reject a vertical cut when any band sits on only one
+/// side of the cut AND occupies more than ~70% of that side's column
+/// width. Such bands are almost certainly full-width paragraphs that
+/// happened to align with the left margin of one column, and forcing
+/// them into that column re-orders them relative to text that follows.
+fn columns_are_band_aligned(
+    spans: &[TextSpan],
+    cut_x: f64,
+    region_left: f64,
+    region_right: f64,
+    stats: &PageStats,
+) -> bool {
+    let left_width = (cut_x - region_left).max(1.0);
+    let right_width = (region_right - cut_x).max(1.0);
+
+    // Threshold chosen empirically: paragraph bodies in columnar
+    // layouts usually fill ~60-70% of their column; anything wider
+    // than 0.7× is a page-level element masquerading as column
+    // content.
+    const MAX_SINGLE_SIDE_FRACTION: f64 = 0.70;
+
+    let bands = group_spans_into_bands_with_stats(spans.to_vec(), stats);
+    for band in &bands {
+        let mut has_left = false;
+        let mut has_right = false;
+        for span in &band.spans {
+            let midpoint = span.x + (span.right() - span.x) * 0.5;
+            if midpoint < cut_x {
+                has_left = true;
+            } else {
+                has_right = true;
+            }
+        }
+        if has_left && has_right {
+            continue; // Band straddles columns → fine.
+        }
+        let band_width = band.width();
+        if has_left && band_width > left_width * MAX_SINGLE_SIDE_FRACTION {
+            return false;
+        }
+        if has_right && band_width > right_width * MAX_SINGLE_SIDE_FRACTION {
+            return false;
+        }
+    }
+    true
+}
+
+/// Density guard — reject column splits that look like tables (few,
+/// short spans per column). A column is "dense" when it has at least
+/// MIN_SPANS_PER_COLUMN spans and the average character count per band
+/// exceeds MIN_CHARS_PER_BAND.
+fn columns_are_dense(left: &[TextSpan], right: &[TextSpan], stats: &PageStats) -> bool {
+    for col in [left, right] {
+        if col.len() < XY_CUT_MIN_SPANS_PER_COLUMN {
+            return false;
+        }
+        let bands = group_spans_into_bands_with_stats(col.to_vec(), stats);
+        if bands.is_empty() {
+            return false;
+        }
+        let total_chars: usize = col.iter().map(|s| s.text.chars().count()).sum();
+        let chars_per_band = total_chars as f64 / bands.len() as f64;
+        if chars_per_band < XY_CUT_MIN_CHARS_PER_BAND {
+            return false;
+        }
+    }
+    true
+}
+
+/// Attempt a horizontal (zone / paragraph) cut. Unlike vertical cuts
+/// this does NOT need a density guard — splitting top-from-bottom
+/// cannot re-order content.
+fn try_horizontal_cut(
+    spans: &[TextSpan],
+    stats: &PageStats,
+) -> Option<(Vec<Vec<TextSpan>>, f64)> {
+    if spans.len() < 2 {
+        return None;
+    }
+    // Sort by descending y (PDF y grows upward).
+    let mut sorted = spans.to_vec();
+    sorted.sort_by(|a, b| {
+        b.y.partial_cmp(&a.y)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal))
+    });
+
+    // ANN[r17/TEX4] Paragraph / zone cuts scale with MEDIAN LINE
+    // SPACING when available — this is the typographically correct
+    // baseline (paragraph break ≈ 1.8 × line-spacing). When the page
+    // has only one band, or stats haven't observed spacing yet, fall
+    // back to the font-size multiple the legacy path used.
+    let min_gap = if stats.median_line_spacing > 0.0 {
+        stats.median_line_spacing * PARAGRAPH_BREAK_LINE_SPACING_MULTIPLIER
+    } else {
+        stats.median_font_size * XY_CUT_HORIZONTAL_GAP_FONT_MULTIPLIER
+    };
+
+    // Look for the largest gap between consecutive span y-values.
+    let mut best: Option<(f64, f64)> = None; // (gap_size, cut_y)
+    let tolerance = stats.median_font_size * BAND_Y_FRACTION;
+    let mut band_bottom = sorted[0].y;
+
+    for span in sorted.iter().skip(1) {
+        if (band_bottom - span.y).abs() <= tolerance {
+            band_bottom = band_bottom.min(span.y);
+            continue;
+        }
+        let gap = band_bottom - span.y;
+        if gap >= min_gap {
+            let cut_y = (band_bottom + span.y) * 0.5;
+            match best {
+                Some((best_gap, _)) if best_gap >= gap => {}
+                _ => best = Some((gap, cut_y)),
+            }
+        }
+        band_bottom = span.y;
+    }
+
+    let (gap_size, cut_y) = best?;
+
+    let mut top_group = Vec::new();
+    let mut bottom_group = Vec::new();
+    for span in spans {
+        if span.y > cut_y {
+            top_group.push(span.clone());
+        } else {
+            bottom_group.push(span.clone());
+        }
+    }
+    if top_group.is_empty() || bottom_group.is_empty() {
+        return None;
+    }
+    Some((vec![top_group, bottom_group], gap_size))
+}
+
+/// Legacy band+column-detection path, kept for reference and as the
+/// fallback inside `band_based_blocks` test coverage. Not currently
+/// used — XY-Cut supersedes it.
+#[allow(dead_code)]
+fn group_spans_into_blocks_legacy(spans: Vec<TextSpan>) -> Vec<TextBlock> {
     let bands = group_spans_into_bands(spans);
     if bands.is_empty() {
         return Vec::new();
@@ -508,7 +1098,18 @@ fn group_spans_into_blocks(spans: Vec<TextSpan>) -> Vec<TextBlock> {
     blocks
 }
 
-fn group_spans_into_bands(mut spans: Vec<TextSpan>) -> Vec<TextBand> {
+/// Legacy wrapper used by call sites that haven't been handed PageStats.
+/// It derives stats locally. Prefer `group_spans_into_bands_with_stats`
+/// inside the XY-Cut pipeline to avoid recomputing the stats per call.
+fn group_spans_into_bands(spans: Vec<TextSpan>) -> Vec<TextBand> {
+    let stats = PageStats::from_spans(&spans);
+    group_spans_into_bands_with_stats(spans, &stats)
+}
+
+fn group_spans_into_bands_with_stats(
+    mut spans: Vec<TextSpan>,
+    stats: &PageStats,
+) -> Vec<TextBand> {
     if spans.is_empty() {
         return Vec::new();
     }
@@ -519,10 +1120,19 @@ fn group_spans_into_bands(mut spans: Vec<TextSpan>) -> Vec<TextBand> {
             .then_with(|| a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal))
     });
 
+    // ANN[r17/TEX4] Band tolerance scales with this page's median font
+    // size rather than a fixed 5pt floor. Single-page spreads with
+    // huge display fonts (24pt+) previously merged unrelated lines; a
+    // fractional threshold keeps that from happening without hurting
+    // body-text pages.
+    let page_tolerance = (stats.median_font_size * BAND_Y_FRACTION).max(BAND_Y_TOLERANCE);
+
     let mut bands: Vec<TextBand> = Vec::new();
 
     for span in spans {
-        let tolerance = span.height.max(BAND_Y_TOLERANCE) * 0.5;
+        let tolerance = (span.height * BAND_Y_FRACTION)
+            .max(page_tolerance)
+            .max(BAND_Y_TOLERANCE);
         if let Some(band) = bands
             .iter_mut()
             .find(|band| (band.y - span.y).abs() <= tolerance)
@@ -1143,6 +1753,267 @@ mod tests {
     fn hyphen_stitch_empty_input() {
         let lines: Vec<String> = vec![];
         assert_eq!(stitch_hyphenated_lines(&lines), "");
+    }
+
+    // --- TEX1 multi-signal space consensus tests ---
+
+    fn make_device_with_median(median: f64) -> TextExtractionDevice {
+        let mut dev = TextExtractionDevice::new();
+        // Seed enough samples for the median to resolve to `median`.
+        for _ in 0..MEDIAN_REFRESH {
+            dev.glyph_widths.push(median);
+        }
+        dev.refresh_median_char_width();
+        assert!((dev.cached_median_char_width - median).abs() < 1e-9);
+        dev
+    }
+
+    #[test]
+    fn consensus_inserts_space_on_strong_tj_offset_alone() {
+        // Gap is below the geometric threshold, but the TJ offset is large
+        // enough that the consensus must still fire.
+        let mut dev = make_device_with_median(6.0);
+        dev.pending_tj_offset = 250.0; // full em-space
+        assert!(dev.evaluate_space_consensus(0.5, 12.0, "Hello", "World"));
+    }
+
+    #[test]
+    fn consensus_inserts_space_on_geometric_gap_alone() {
+        // No TJ, no character transition, but a clearly wide geometric gap.
+        let dev = make_device_with_median(6.0);
+        // gap > 0.3 * 6.0 = 1.8 → fires gap signal (0.80), below threshold
+        // on its own? 0.80 < 0.75 threshold? No, 0.80 > 0.75, so it fires.
+        assert!(dev.evaluate_space_consensus(2.5, 12.0, "hello", "world"));
+    }
+
+    #[test]
+    fn consensus_no_space_on_kerning_gap() {
+        // Small kerning-size gap with no other signals must not inject a
+        // space (regression guard against false-positive spaces inside
+        // tightly kerned words).
+        let dev = make_device_with_median(6.0);
+        assert!(!dev.evaluate_space_consensus(0.5, 12.0, "fi", "lm"));
+    }
+
+    #[test]
+    fn consensus_inserts_space_on_camel_case_plus_gap() {
+        // CamelCase heuristic (0.60) alone doesn't reach threshold, but a
+        // moderate gap (0.60 gap + 0.60 heuristic if gap fires) should.
+        // Here gap = 2.5 > 1.8 → gap fires → total 0.80 + 0.60 = 1.40.
+        let dev = make_device_with_median(6.0);
+        assert!(dev.evaluate_space_consensus(2.5, 12.0, "helloWorld", "Inc"));
+    }
+
+    #[test]
+    fn consensus_inserts_space_on_digit_letter_transition_with_gap() {
+        let dev = make_device_with_median(6.0);
+        assert!(dev.evaluate_space_consensus(2.5, 12.0, "123", "abc"));
+    }
+
+    #[test]
+    fn consensus_heuristic_alone_is_insufficient() {
+        // Heuristic (0.60) on its own is below the 0.75 threshold — the
+        // design deliberately requires a second corroborating signal to
+        // avoid gluing spaces into existing CamelCase identifiers that
+        // have no geometric break.
+        let dev = make_device_with_median(6.0);
+        assert!(!dev.evaluate_space_consensus(0.5, 12.0, "camel", "Case"));
+    }
+
+    #[test]
+    fn consensus_falls_back_to_font_size_when_no_median() {
+        // No samples → median is 0; geometric reference uses font-size.
+        let dev = TextExtractionDevice::new();
+        // gap 1.9 > 0.15 * 12.0 = 1.8 → gap signal fires
+        assert!(dev.evaluate_space_consensus(1.9, 12.0, "a", "b"));
+        // gap 1.5 < 1.8 → no signal
+        assert!(!dev.evaluate_space_consensus(1.5, 12.0, "a", "b"));
+    }
+
+    #[test]
+    fn consensus_ignores_tiny_tj_offsets() {
+        // TJ offsets below the threshold are kerning, not word breaks.
+        let mut dev = make_device_with_median(6.0);
+        dev.pending_tj_offset = 50.0;
+        assert!(!dev.evaluate_space_consensus(0.5, 12.0, "Hello", "World"));
+    }
+
+    #[test]
+    fn consensus_accepts_negative_tj_offsets() {
+        // A negative TJ offset still represents an explicit inter-substring
+        // shift and counts toward the consensus (|amount| check).
+        let mut dev = make_device_with_median(6.0);
+        dev.pending_tj_offset = -250.0;
+        assert!(dev.evaluate_space_consensus(0.5, 12.0, "Hello", "World"));
+    }
+
+    #[test]
+    fn text_adjustment_accumulates_until_glyph() {
+        let mut dev = TextExtractionDevice::new();
+        dev.text_adjustment(120.0);
+        dev.text_adjustment(140.0);
+        assert!((dev.pending_tj_offset - 260.0).abs() < 1e-6);
+    }
+
+    // --- TEX2 XY-Cut tests ---
+
+    #[test]
+    fn xy_cut_header_body_footer_with_two_columns() {
+        // Header and footer sit in the mid-x range that would
+        // accidentally fall into a left-column bucket with a naive
+        // vertical-first cut. The largest-gap-first rule plus the
+        // alignment guard ensure header and footer bracket the
+        // columnar body.
+        let texts = block_texts(vec![
+            span("HEADLINE TITLE", 180.0, 760.0, 120.0),
+            span("Left col line A", 40.0, 700.0, 110.0),
+            span("Right col line A", 320.0, 700.0, 115.0),
+            span("Left col line B", 40.0, 684.0, 110.0),
+            span("Right col line B", 320.0, 684.0, 115.0),
+            span("Left col line C", 40.0, 668.0, 110.0),
+            span("Right col line C", 320.0, 668.0, 115.0),
+            span("FOOTER LINE TEXT", 180.0, 600.0, 120.0),
+        ]);
+        assert_eq!(texts.first().map(String::as_str), Some("HEADLINE TITLE"));
+        assert_eq!(texts.last().map(String::as_str), Some("FOOTER LINE TEXT"));
+        // Left column lines all come before right column lines.
+        let left_c_idx = texts.iter().position(|s| s == "Left col line C").unwrap();
+        let right_a_idx = texts.iter().position(|s| s == "Right col line A").unwrap();
+        assert!(
+            left_c_idx < right_a_idx,
+            "expected column-major ordering in body: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn xy_cut_rejects_column_split_on_table_rows() {
+        // The density guard must still reject the 280pt inter-cell gap
+        // in a short-cell table, preserving row-major reading order.
+        let texts = block_texts(vec![
+            span("Name", 40.0, 700.0, 30.0),
+            span("Age", 320.0, 700.0, 20.0),
+            span("Alice", 40.0, 684.0, 35.0),
+            span("30", 320.0, 684.0, 15.0),
+        ]);
+        assert_eq!(texts, vec!["Name Age", "Alice 30"]);
+    }
+
+    #[test]
+    fn xy_cut_rejects_column_split_when_one_band_is_full_width() {
+        // The alignment guard catches a full-width paragraph that
+        // would otherwise be forced into the left column of a 2-column
+        // region below it.
+        let texts = block_texts(vec![
+            span("Full width intro spanning both columns here", 40.0, 740.0, 360.0),
+            span("Left A", 40.0, 700.0, 50.0),
+            span("Right A", 320.0, 700.0, 50.0),
+            span("Left B", 40.0, 684.0, 50.0),
+            span("Right B", 320.0, 684.0, 50.0),
+        ]);
+        assert!(
+            texts[0].contains("Full width intro"),
+            "expected full-width intro first: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn xy_cut_horizontal_split_for_zone_boundaries() {
+        // Pure horizontal cut on a single-column page with a big
+        // vertical gap between paragraphs — the cut fires and both
+        // paragraphs stay in their own blocks.
+        let texts = block_texts(vec![
+            span("First paragraph body text", 40.0, 740.0, 200.0),
+            span("Second paragraph body", 40.0, 680.0, 180.0),
+        ]);
+        assert_eq!(texts.len(), 2);
+        assert!(texts[0].starts_with("First"));
+        assert!(texts[1].starts_with("Second"));
+    }
+
+    #[test]
+    fn xy_cut_recursion_terminates_with_single_span() {
+        let texts = block_texts(vec![span("Only one span on the page", 40.0, 700.0, 180.0)]);
+        assert_eq!(texts, vec!["Only one span on the page"]);
+    }
+
+    #[test]
+    fn median_font_size_handles_mixed_sizes() {
+        let spans = vec![
+            TextSpan {
+                text: "small".into(),
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 8.0,
+                font_size: 8.0,
+            },
+            TextSpan {
+                text: "medium".into(),
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 12.0,
+                font_size: 12.0,
+            },
+            TextSpan {
+                text: "large".into(),
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 24.0,
+                font_size: 24.0,
+            },
+        ];
+        assert!((median_font_size(&spans) - 12.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn columns_band_aligned_accepts_aligned_columns() {
+        let spans = vec![
+            span("L1", 40.0, 700.0, 60.0),
+            span("R1", 300.0, 700.0, 60.0),
+            span("L2", 40.0, 684.0, 60.0),
+            span("R2", 300.0, 684.0, 60.0),
+        ];
+        let stats = PageStats::from_spans(&spans);
+        // cut_x between 100 and 300 → 200. Every band straddles the cut.
+        assert!(columns_are_band_aligned(&spans, 200.0, 40.0, 360.0, &stats));
+    }
+
+    #[test]
+    fn columns_band_aligned_rejects_wide_single_side_band() {
+        let spans = vec![
+            span("Wide banner line across top", 40.0, 740.0, 280.0),
+            span("L1", 40.0, 700.0, 60.0),
+            span("R1", 300.0, 700.0, 60.0),
+        ];
+        let stats = PageStats::from_spans(&spans);
+        // cut_x = 200. Banner only in left group (midpoint < 200). Width
+        // exceeds 0.7 × left column width → rejected.
+        assert!(!columns_are_band_aligned(&spans, 200.0, 40.0, 360.0, &stats));
+    }
+
+    #[test]
+    fn page_stats_computes_median_values() {
+        let spans = vec![
+            span("one", 40.0, 700.0, 30.0),
+            span("two", 40.0, 680.0, 30.0),
+            span("three", 40.0, 660.0, 50.0),
+        ];
+        let stats = PageStats::from_spans(&spans);
+        assert!((stats.median_font_size - 12.0).abs() < 1e-9);
+        // char width = width / chars. one=30/3=10, two=30/3=10, three=50/5=10. median=10.
+        assert!((stats.median_char_width - 10.0).abs() < 1e-9);
+        // line spacing: bands at 700, 680, 660. gaps = 20, 20. median = 20.
+        assert!((stats.median_line_spacing - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn page_stats_handles_empty_input() {
+        let stats = PageStats::from_spans(&[]);
+        assert!((stats.median_font_size - 12.0).abs() < 1e-9);
+        assert!((stats.median_char_width - 6.0).abs() < 1e-9);
+        assert_eq!(stats.median_line_spacing, 0.0);
     }
 
     #[test]
