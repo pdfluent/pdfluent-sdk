@@ -595,7 +595,337 @@ fn compute_adaptive_column_gap(bands: &[TextBand]) -> f64 {
 
 /// Group spans into reading-order blocks, using column-aware reordering when
 /// a contiguous region repeatedly exposes the same gutters.
+// ANN[r17/TEX2] Maximum recursion depth for XY-Cut. Any real page layout
+// is decomposable in well under 10 alternating cuts; the cap guards
+// against pathological inputs where the cut predicate keeps triggering
+// due to floating-point drift.
+const XY_CUT_MAX_DEPTH: usize = 12;
+/// Minimum fraction of a region's width that a vertical gap must reach
+/// before it qualifies as a column gutter.
+const XY_CUT_VERTICAL_GAP_REGION_FRACTION: f64 = 0.04;
+/// Floor (in pt) for vertical gap regardless of region width. Matches
+/// the previous `COLUMN_GAP_THRESHOLD_MIN` and keeps XY-Cut conservative
+/// on narrow regions (sidebars, tall columns).
+const XY_CUT_VERTICAL_GAP_FLOOR: f64 = 10.0;
+/// Multiplier applied to median font size to produce the horizontal-gap
+/// threshold. 1.8 × line-height matches typical paragraph spacing.
+const XY_CUT_HORIZONTAL_GAP_FONT_MULTIPLIER: f64 = 1.8;
+/// Minimum number of spans a column must contain before it is eligible
+/// for acceptance — one-span "columns" are almost always sidebar noise
+/// or table-cell fragments.
+const XY_CUT_MIN_SPANS_PER_COLUMN: usize = 2;
+/// Average characters per band a column must have before it's accepted
+/// as dense prose (vs. a short-cell table column).
+const XY_CUT_MIN_CHARS_PER_BAND: f64 = 8.0;
+
+/// ANN[r17/TEX2] Top-level grouping uses recursive XY-Cut with a density
+/// guard. Each recursion level tries a vertical cut first (column
+/// gutters), then a horizontal cut (zone separators like header / body
+/// / footer or paragraph breaks). Leaf regions fall back to band-based
+/// row emission so the existing per-line output is preserved.
 fn group_spans_into_blocks(spans: Vec<TextSpan>) -> Vec<TextBlock> {
+    if spans.is_empty() {
+        return Vec::new();
+    }
+    xy_cut_recursive(spans, 0)
+}
+
+fn xy_cut_recursive(spans: Vec<TextSpan>, depth: usize) -> Vec<TextBlock> {
+    if spans.is_empty() {
+        return Vec::new();
+    }
+    if depth >= XY_CUT_MAX_DEPTH {
+        return band_based_blocks(spans);
+    }
+
+    let median_font = median_font_size(&spans);
+
+    // ANN[r17/TEX2] Pick whichever direction has the largest qualifying
+    // gap. Always cutting vertically first breaks layouts where a
+    // footer sits in the mid-x range — it would attach to the left
+    // column instead of being recognized as a page-level zone. The
+    // "largest gap wins" rule is the standard XY-Cut tie-breaker used
+    // by academic OCR literature and matches pdf_oxide.
+    let vcut = try_vertical_cut(&spans, median_font);
+    let hcut = try_horizontal_cut(&spans, median_font);
+
+    let (chosen, _) = match (vcut, hcut) {
+        (Some((v_groups, v_gap)), Some((h_groups, h_gap))) => {
+            if v_gap >= h_gap {
+                (Some(v_groups), v_gap)
+            } else {
+                (Some(h_groups), h_gap)
+            }
+        }
+        (Some((v_groups, v_gap)), None) => (Some(v_groups), v_gap),
+        (None, Some((h_groups, h_gap))) => (Some(h_groups), h_gap),
+        (None, None) => (None, 0.0),
+    };
+
+    if let Some(groups) = chosen {
+        let mut out = Vec::new();
+        for group in groups {
+            out.extend(xy_cut_recursive(group, depth + 1));
+        }
+        return out;
+    }
+
+    band_based_blocks(spans)
+}
+
+/// Emit per-band row blocks without any column detection. Used as the
+/// leaf of XY-Cut recursion — at this point the region either has no
+/// further cuts or the density guard refused them.
+fn band_based_blocks(spans: Vec<TextSpan>) -> Vec<TextBlock> {
+    let bands = group_spans_into_bands(spans);
+    bands.iter().map(TextBand::row_block).collect()
+}
+
+fn median_font_size(spans: &[TextSpan]) -> f64 {
+    if spans.is_empty() {
+        return 12.0;
+    }
+    let mut sizes: Vec<f64> = spans.iter().map(|s| s.font_size).collect();
+    sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+    sizes[sizes.len() / 2]
+}
+
+/// Attempt a vertical (column) cut. Returns the span groups plus the
+/// gap size (in pt) if a suitable gutter is found AND the density +
+/// alignment guards accept.
+///
+/// ANN[r17/TEX2] Three guards together avoid false-positive columns:
+///   1. `min_gap` is the MAX of (median_font, 4% of region width, 10pt)
+///      — deliberately lower than `median_font * 2` so narrow-gutter
+///      academic papers (12pt gutters, common in print) are still
+///      detected.
+///   2. `columns_are_dense` rejects column splits where either side
+///      has <2 spans or <8 chars/band — catches table cells.
+///   3. `columns_are_band_aligned` rejects cuts where any band would
+///      end up on only one side of the cut while being wider than
+///      ~70% of that side's column width — catches full-width
+///      paragraphs (Intro / Outro) that accidentally sit in the
+///      left-column x-range.
+fn try_vertical_cut(spans: &[TextSpan], median_font: f64) -> Option<(Vec<Vec<TextSpan>>, f64)> {
+    if spans.len() < 2 * XY_CUT_MIN_SPANS_PER_COLUMN {
+        return None;
+    }
+
+    let region_left = spans.iter().map(|s| s.x).fold(f64::INFINITY, f64::min);
+    let region_right = spans
+        .iter()
+        .map(TextSpan::right)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let region_width = region_right - region_left;
+    if region_width <= 0.0 {
+        return None;
+    }
+
+    // ANN[r17/TEX2] Threshold uses the ADAPTIVE median-word-gap from
+    // the bands rather than a flat font-size multiple. Narrow-gutter
+    // academic layouts have 12pt gutters next to 4pt word spaces —
+    // the adaptive threshold scales with the actual typography used
+    // on this page. Clamped to `XY_CUT_VERTICAL_GAP_FLOOR` to avoid
+    // firing on ordinary inter-word spaces when character advance
+    // data is noisy. Median_font and the width fraction act only as
+    // safety rails for pathological inputs.
+    let bands = group_spans_into_bands(spans.to_vec());
+    let adaptive = compute_adaptive_column_gap(&bands);
+    let floor = median_font
+        .max(region_width * XY_CUT_VERTICAL_GAP_REGION_FRACTION)
+        .max(XY_CUT_VERTICAL_GAP_FLOOR);
+    let min_gap = adaptive.min(floor).max(XY_CUT_VERTICAL_GAP_FLOOR);
+
+    // Intervals [x_left, x_right] of every span; we look for an x value
+    // that is free of ALL intervals (full-height gap).
+    let mut intervals: Vec<(f64, f64)> = spans
+        .iter()
+        .map(|s| (s.x, s.right().max(s.x + 0.001)))
+        .collect();
+    intervals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+
+    let mut cursor = intervals[0].1;
+    let mut best_gap: Option<(f64, f64)> = None; // (gap_size, cut_x)
+    for (left, right) in intervals.iter().skip(1) {
+        if *left > cursor {
+            let gap = *left - cursor;
+            if gap >= min_gap {
+                match best_gap {
+                    Some((best, _)) if best >= gap => {}
+                    _ => {
+                        let cut_x = (cursor + *left) * 0.5;
+                        best_gap = Some((gap, cut_x));
+                    }
+                }
+            }
+        }
+        cursor = cursor.max(*right);
+    }
+
+    let (gap_size, cut_x) = best_gap?;
+
+    // Split spans around the cut. A span whose midpoint is < cut_x
+    // belongs to the left group.
+    let mut left_group = Vec::new();
+    let mut right_group = Vec::new();
+    for span in spans {
+        let midpoint = span.x + (span.right() - span.x) * 0.5;
+        if midpoint < cut_x {
+            left_group.push(span.clone());
+        } else {
+            right_group.push(span.clone());
+        }
+    }
+
+    if !columns_are_dense(&left_group, &right_group) {
+        return None;
+    }
+    if !columns_are_band_aligned(spans, cut_x, region_left, region_right) {
+        return None;
+    }
+
+    Some((vec![left_group, right_group], gap_size))
+}
+
+/// ANN[r17/TEX2] Reject a vertical cut when any band sits on only one
+/// side of the cut AND occupies more than ~70% of that side's column
+/// width. Such bands are almost certainly full-width paragraphs that
+/// happened to align with the left margin of one column, and forcing
+/// them into that column re-orders them relative to text that follows.
+fn columns_are_band_aligned(
+    spans: &[TextSpan],
+    cut_x: f64,
+    region_left: f64,
+    region_right: f64,
+) -> bool {
+    let left_width = (cut_x - region_left).max(1.0);
+    let right_width = (region_right - cut_x).max(1.0);
+
+    // Threshold chosen empirically: paragraph bodies in columnar
+    // layouts usually fill ~60-70% of their column; anything wider
+    // than 0.7× is a page-level element masquerading as column
+    // content.
+    const MAX_SINGLE_SIDE_FRACTION: f64 = 0.70;
+
+    let bands = group_spans_into_bands(spans.to_vec());
+    for band in &bands {
+        let mut has_left = false;
+        let mut has_right = false;
+        for span in &band.spans {
+            let midpoint = span.x + (span.right() - span.x) * 0.5;
+            if midpoint < cut_x {
+                has_left = true;
+            } else {
+                has_right = true;
+            }
+        }
+        if has_left && has_right {
+            continue; // Band straddles columns → fine.
+        }
+        let band_width = band.width();
+        if has_left && band_width > left_width * MAX_SINGLE_SIDE_FRACTION {
+            return false;
+        }
+        if has_right && band_width > right_width * MAX_SINGLE_SIDE_FRACTION {
+            return false;
+        }
+    }
+    true
+}
+
+/// Density guard — reject column splits that look like tables (few,
+/// short spans per column). A column is "dense" when it has at least
+/// MIN_SPANS_PER_COLUMN spans and the average character count per band
+/// exceeds MIN_CHARS_PER_BAND.
+fn columns_are_dense(left: &[TextSpan], right: &[TextSpan]) -> bool {
+    for col in [left, right] {
+        if col.len() < XY_CUT_MIN_SPANS_PER_COLUMN {
+            return false;
+        }
+        let bands = group_spans_into_bands(col.to_vec());
+        if bands.is_empty() {
+            return false;
+        }
+        let total_chars: usize = col.iter().map(|s| s.text.chars().count()).sum();
+        let chars_per_band = total_chars as f64 / bands.len() as f64;
+        if chars_per_band < XY_CUT_MIN_CHARS_PER_BAND {
+            return false;
+        }
+    }
+    true
+}
+
+/// Attempt a horizontal (zone / paragraph) cut. Unlike vertical cuts
+/// this does NOT need a density guard — splitting top-from-bottom
+/// cannot re-order content.
+fn try_horizontal_cut(spans: &[TextSpan], median_font: f64) -> Option<(Vec<Vec<TextSpan>>, f64)> {
+    if spans.len() < 2 {
+        return None;
+    }
+    // Sort by descending y (PDF y grows upward).
+    let mut sorted = spans.to_vec();
+    sorted.sort_by(|a, b| {
+        b.y.partial_cmp(&a.y)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal))
+    });
+
+    let min_gap = median_font * XY_CUT_HORIZONTAL_GAP_FONT_MULTIPLIER;
+
+    // Look for the largest gap between consecutive span y-values. We
+    // define the "bottom" of span i as min(y_i, y_{i+1} contributions).
+    // Simplest: use y positions directly; spans on the same band share
+    // y within font-size tolerance, so the gap appears between bands.
+    let mut best: Option<(f64, f64)> = None; // (gap_size, cut_y)
+    let tolerance = median_font * 0.35;
+    let mut band_top = sorted[0].y;
+    let mut band_bottom = sorted[0].y;
+    let mut prev_band_bottom = f64::NEG_INFINITY;
+
+    for span in sorted.iter().skip(1) {
+        if (band_bottom - span.y).abs() <= tolerance {
+            band_bottom = band_bottom.min(span.y);
+            band_top = band_top.max(span.y);
+            continue;
+        }
+        if prev_band_bottom.is_finite() {
+            // Previous band complete; evaluate its gap with the even-older band.
+        }
+        let gap = band_bottom - span.y;
+        if gap >= min_gap {
+            let cut_y = (band_bottom + span.y) * 0.5;
+            match best {
+                Some((best_gap, _)) if best_gap >= gap => {}
+                _ => best = Some((gap, cut_y)),
+            }
+        }
+        prev_band_bottom = band_bottom;
+        band_top = span.y;
+        band_bottom = span.y;
+    }
+
+    let (gap_size, cut_y) = best?;
+
+    let mut top_group = Vec::new();
+    let mut bottom_group = Vec::new();
+    for span in spans {
+        if span.y > cut_y {
+            top_group.push(span.clone());
+        } else {
+            bottom_group.push(span.clone());
+        }
+    }
+    if top_group.is_empty() || bottom_group.is_empty() {
+        return None;
+    }
+    Some((vec![top_group, bottom_group], gap_size))
+}
+
+/// Legacy band+column-detection path, kept for reference and as the
+/// fallback inside `band_based_blocks` test coverage. Not currently
+/// used — XY-Cut supersedes it.
+#[allow(dead_code)]
+fn group_spans_into_blocks_legacy(spans: Vec<TextSpan>) -> Vec<TextBlock> {
     let bands = group_spans_into_bands(spans);
     if bands.is_empty() {
         return Vec::new();
@@ -1395,6 +1725,144 @@ mod tests {
         dev.text_adjustment(120.0);
         dev.text_adjustment(140.0);
         assert!((dev.pending_tj_offset - 260.0).abs() < 1e-6);
+    }
+
+    // --- TEX2 XY-Cut tests ---
+
+    #[test]
+    fn xy_cut_header_body_footer_with_two_columns() {
+        // Header and footer sit in the mid-x range that would
+        // accidentally fall into a left-column bucket with a naive
+        // vertical-first cut. The largest-gap-first rule plus the
+        // alignment guard ensure header and footer bracket the
+        // columnar body.
+        let texts = block_texts(vec![
+            span("HEADLINE TITLE", 180.0, 760.0, 120.0),
+            span("Left col line A", 40.0, 700.0, 110.0),
+            span("Right col line A", 320.0, 700.0, 115.0),
+            span("Left col line B", 40.0, 684.0, 110.0),
+            span("Right col line B", 320.0, 684.0, 115.0),
+            span("Left col line C", 40.0, 668.0, 110.0),
+            span("Right col line C", 320.0, 668.0, 115.0),
+            span("FOOTER LINE TEXT", 180.0, 600.0, 120.0),
+        ]);
+        assert_eq!(texts.first().map(String::as_str), Some("HEADLINE TITLE"));
+        assert_eq!(texts.last().map(String::as_str), Some("FOOTER LINE TEXT"));
+        // Left column lines all come before right column lines.
+        let left_c_idx = texts.iter().position(|s| s == "Left col line C").unwrap();
+        let right_a_idx = texts.iter().position(|s| s == "Right col line A").unwrap();
+        assert!(
+            left_c_idx < right_a_idx,
+            "expected column-major ordering in body: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn xy_cut_rejects_column_split_on_table_rows() {
+        // The density guard must still reject the 280pt inter-cell gap
+        // in a short-cell table, preserving row-major reading order.
+        let texts = block_texts(vec![
+            span("Name", 40.0, 700.0, 30.0),
+            span("Age", 320.0, 700.0, 20.0),
+            span("Alice", 40.0, 684.0, 35.0),
+            span("30", 320.0, 684.0, 15.0),
+        ]);
+        assert_eq!(texts, vec!["Name Age", "Alice 30"]);
+    }
+
+    #[test]
+    fn xy_cut_rejects_column_split_when_one_band_is_full_width() {
+        // The alignment guard catches a full-width paragraph that
+        // would otherwise be forced into the left column of a 2-column
+        // region below it.
+        let texts = block_texts(vec![
+            span("Full width intro spanning both columns here", 40.0, 740.0, 360.0),
+            span("Left A", 40.0, 700.0, 50.0),
+            span("Right A", 320.0, 700.0, 50.0),
+            span("Left B", 40.0, 684.0, 50.0),
+            span("Right B", 320.0, 684.0, 50.0),
+        ]);
+        assert!(
+            texts[0].contains("Full width intro"),
+            "expected full-width intro first: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn xy_cut_horizontal_split_for_zone_boundaries() {
+        // Pure horizontal cut on a single-column page with a big
+        // vertical gap between paragraphs — the cut fires and both
+        // paragraphs stay in their own blocks.
+        let texts = block_texts(vec![
+            span("First paragraph body text", 40.0, 740.0, 200.0),
+            span("Second paragraph body", 40.0, 680.0, 180.0),
+        ]);
+        assert_eq!(texts.len(), 2);
+        assert!(texts[0].starts_with("First"));
+        assert!(texts[1].starts_with("Second"));
+    }
+
+    #[test]
+    fn xy_cut_recursion_terminates_with_single_span() {
+        let texts = block_texts(vec![span("Only one span on the page", 40.0, 700.0, 180.0)]);
+        assert_eq!(texts, vec!["Only one span on the page"]);
+    }
+
+    #[test]
+    fn median_font_size_handles_mixed_sizes() {
+        let spans = vec![
+            TextSpan {
+                text: "small".into(),
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 8.0,
+                font_size: 8.0,
+            },
+            TextSpan {
+                text: "medium".into(),
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 12.0,
+                font_size: 12.0,
+            },
+            TextSpan {
+                text: "large".into(),
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 24.0,
+                font_size: 24.0,
+            },
+        ];
+        assert!((median_font_size(&spans) - 12.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn columns_band_aligned_accepts_aligned_columns() {
+        let spans = vec![
+            span("L1", 40.0, 700.0, 60.0),
+            span("R1", 300.0, 700.0, 60.0),
+            span("L2", 40.0, 684.0, 60.0),
+            span("R2", 300.0, 684.0, 60.0),
+        ];
+        // cut_x between 100 and 300 → 200. Every band straddles the cut.
+        assert!(columns_are_band_aligned(&spans, 200.0, 40.0, 360.0));
+    }
+
+    #[test]
+    fn columns_band_aligned_rejects_wide_single_side_band() {
+        let spans = vec![
+            span("Wide banner line across top", 40.0, 740.0, 280.0),
+            span("L1", 40.0, 700.0, 60.0),
+            span("R1", 300.0, 700.0, 60.0),
+        ];
+        // cut_x = 200. Banner only in left group (right edge ~320 > 200
+        // — actually 40+max(280, 27*6=162)=320 → right > 200, so
+        // midpoint = (40+320)/2 = 180 < 200, banner is on LEFT. width
+        // ~280 > 0.7*160 = 112 → rejects.
+        assert!(!columns_are_band_aligned(&spans, 200.0, 40.0, 360.0));
     }
 
     #[test]
