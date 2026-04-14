@@ -393,6 +393,36 @@ fn compute_adaptive_column_gap(bands: &[TextBand]) -> f64 {
     }
 
     all_gaps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+
+    let min_gap = all_gaps[0];
+
+    // When all inter-span gaps are already large (> MIN threshold), they are
+    // likely all column gaps — the draw_glyph merger absorbed word-level
+    // spaces into span text.  Use a fraction of the smallest gap so that
+    // ALL column gaps exceed the threshold.
+    if min_gap > COLUMN_GAP_THRESHOLD_MIN {
+        return (min_gap * 0.75).clamp(COLUMN_GAP_THRESHOLD_MIN, COLUMN_GAP_THRESHOLD_MAX);
+    }
+
+    // Look for a natural break: the largest relative jump between consecutive
+    // sorted gaps separates word-level gaps from column gaps.
+    let mut best_break_threshold = 0.0f64;
+    let mut best_ratio = 1.5f64; // require at least 1.5× jump
+    for pair in all_gaps.windows(2) {
+        if pair[0] > 0.5 {
+            let ratio = pair[1] / pair[0];
+            if ratio > best_ratio {
+                best_ratio = ratio;
+                best_break_threshold = (pair[0] + pair[1]) * 0.5;
+            }
+        }
+    }
+
+    if best_break_threshold > 0.0 {
+        return best_break_threshold.clamp(COLUMN_GAP_THRESHOLD_MIN, COLUMN_GAP_THRESHOLD_MAX);
+    }
+
+    // Fallback: median × multiplier.
     let mid = all_gaps.len() / 2;
     let median = if all_gaps.len() % 2 == 0 {
         (all_gaps[mid - 1] + all_gaps[mid]) * 0.5
@@ -972,14 +1002,14 @@ mod tests {
     }
 
     #[test]
-    fn adaptive_column_gap_clamps_to_max() {
-        // Very wide gaps (50pt) → 3×50 = 150 → clamped to 40
+    fn adaptive_column_gap_all_large_gaps_uses_fraction_of_min() {
+        // When all gaps are large (> MIN), threshold = 0.75 × min_gap.
         let mut band = TextBand::new(span("Left", 0.0, 700.0, 30.0));
         band.spans.push(span("Right", 80.0, 700.0, 30.0)); // gap = 50
         let bands = vec![band];
         let threshold = compute_adaptive_column_gap(&bands);
-        assert!((threshold - COLUMN_GAP_THRESHOLD_MAX).abs() < 0.01,
-            "expected {COLUMN_GAP_THRESHOLD_MAX}, got {threshold}");
+        assert!((threshold - 37.5).abs() < 0.01,
+            "expected 37.5 (0.75×50), got {threshold}");
     }
 
     #[test]

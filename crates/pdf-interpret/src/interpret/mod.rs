@@ -101,6 +101,11 @@ pub struct InterpreterSettings {
     /// Note that this feature is currently not fully implemented yet, so some
     /// annotations might be missing.
     pub render_annotations: bool,
+    /// Whether to skip `/FT /Sig` (signature widget) appearance streams.
+    ///
+    /// Rendering sets this to `true` to match MuPDF behaviour, but text
+    /// extraction should set it to `false` so that signature text is included.
+    pub skip_signature_widgets: bool,
 }
 
 /// Known paths for CJK fonts, ordered by preference.
@@ -176,6 +181,7 @@ impl Default for InterpreterSettings {
             cmap_resolver: Arc::new(|_| None),
             warning_sink: Arc::new(|_| {}),
             render_annotations: true,
+            skip_signature_widgets: true,
         }
     }
 }
@@ -214,10 +220,12 @@ pub fn interpret_page<'a>(
             // MuPDF renders signature widgets (/FT /Sig) with its own built-in
             // "SIGN here" indicator and ignores the custom /AP/N stream, so we
             // skip AP rendering for these annotations to match MuPDF output.
-            if annot
-                .get::<Name>(FT)
-                .as_deref()
-                .is_some_and(|n| n == b"Sig")
+            // Text extraction disables this skip so signature text is included.
+            if context.settings.skip_signature_widgets
+                && annot
+                    .get::<Name>(FT)
+                    .as_deref()
+                    .is_some_and(|n| n == b"Sig")
             {
                 continue;
             }
