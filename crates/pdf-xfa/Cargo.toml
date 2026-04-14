@@ -5,6 +5,8 @@ edition = "2021"
 license = "MIT"
 description = "XFA engine — extraction, layout rendering, font resolution."
 
+keywords = ["pdf", "xfa", "forms", "adobe"]
+categories = ["rendering"]
 [dependencies]
 xfa-dom-resolver = { path = "../xfa-dom-resolver" }
 formcalc-interpreter = { path = "../formcalc-interpreter" }

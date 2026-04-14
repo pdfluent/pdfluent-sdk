@@ -3,6 +3,7 @@ name = "xfa-pdfrest-compare"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.80.0"
+description = "Visual comparison harness for PDFluent vs pdfRest renders."
 
 [dependencies]
 pdf-xfa = { path = "../pdf-xfa" }
