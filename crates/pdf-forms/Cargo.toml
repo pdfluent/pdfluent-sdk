@@ -6,14 +6,14 @@ license = "MIT"
 description = "AcroForm engine for PDF interactive forms."
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
 thiserror = { workspace = true }
 log = "0.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-lopdf = { path = "../lopdf" }
+lopdf = { path = "../lopdf", version = "=0.39.0" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-lopdf = { path = "../lopdf", default-features = false, features = ["wasm_js"] }
+lopdf = { path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.0" }
 
 [dev-dependencies]

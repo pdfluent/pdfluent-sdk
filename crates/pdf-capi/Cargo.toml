@@ -9,11 +9,11 @@ description = "C-compatible API for the PDF engine (PDFium-compatible interface)
 crate-type = ["cdylib", "staticlib", "lib"]
 
 [dependencies]
-pdf-engine = { path = "../pdf-engine" }
-pdf-compliance = { path = "../pdf-compliance" }
-pdf-forms = { path = "../pdf-forms" }
-pdf-manip = { path = "../pdf-manip" }
-pdf-redact = { path = "../pdf-redact" }
-pdf-sign = { path = "../pdf-sign" }
-pdf-extract = { path = "../pdf-extract" }
-lopdf = { path = "../lopdf" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.1" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.1" }
+pdf-forms = { path = "../pdf-forms", version = "=1.0.0-beta.1" }
+pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.1" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.1" }
+pdf-sign = { path = "../pdf-sign", version = "=1.0.0-beta.1" }
+pdf-extract = { path = "../pdf-extract", version = "=1.0.0-beta.1" }
+lopdf = { path = "../lopdf", version = "=0.39.0" }

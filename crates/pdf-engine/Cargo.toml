@@ -11,15 +11,15 @@ categories = ["rendering", "text-processing"]
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax" }
-pdf-interpret = { path = "../pdf-interpret" }
-lopdf = { path = "../lopdf", default-features = false }
-pdf-render = { path = "../pdf-render" }
-pdf-forms = { path = "../pdf-forms" }
-pdf-xfa = { path = "../pdf-xfa", optional = true }
-xfa-layout-engine = { path = "../xfa-layout-engine", optional = true }
-formcalc-interpreter = { path = "../formcalc-interpreter", optional = true }
-xfa-json = { path = "../xfa-json", optional = true }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
+pdf-interpret = { path = "../pdf-interpret", version = "=0.5.0" }
+lopdf = { path = "../lopdf", default-features = false, version = "=0.39.0" }
+pdf-render = { path = "../pdf-render", version = "=1.0.0-beta.1" }
+pdf-forms = { path = "../pdf-forms", version = "=1.0.0-beta.1" }
+pdf-xfa = { path = "../pdf-xfa", optional = true, version = "=1.0.0-beta.1" }
+xfa-layout-engine = { path = "../xfa-layout-engine", optional = true, version = "=1.0.0-beta.1" }
+formcalc-interpreter = { path = "../formcalc-interpreter", optional = true, version = "=1.0.0-beta.1" }
+xfa-json = { path = "../xfa-json", optional = true, version = "=1.0.0-beta.1" }
 thiserror = { workspace = true }
 kurbo = "0.13.0"
 rayon = { version = "1", optional = true }
