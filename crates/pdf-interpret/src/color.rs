@@ -126,12 +126,19 @@ impl ColorSpaceType {
                 ICC_BASED => {
                     let icc_stream = iter.next::<Stream<'_>>()?;
                     let dict = icc_stream.dict();
-                    let num_components = dict.get::<usize>(N)?;
+                    // `N` is the declared component count. PDF 2.0 §8.6.5.5 says
+                    // it shall be 1, 3 or 4. If the entry is missing, negative,
+                    // or otherwise unusable, the spec requires falling through
+                    // to /Alternate rather than giving up on the color space.
+                    let num_components = dict.get::<usize>(N);
 
                     return cache.get_or_insert_with(icc_stream.cache_key(), || {
-                        if let Some(decoded) = icc_stream.decoded().ok().as_ref() {
-                            ICCProfile::new(decoded, num_components)
-                                .map(|icc| {
+                        // Only try to parse the embedded ICC profile when N is
+                        // valid — without it we can't know how many channels
+                        // to decode.
+                        let from_icc = num_components.and_then(|n| {
+                            icc_stream.decoded().ok().as_ref().and_then(|decoded| {
+                                ICCProfile::new(decoded, n).map(|icc| {
                                     // TODO: For SVG and PNG we can assume that the output color space is
                                     // sRGB. If we ever implement PDF-to-PDF, we probably want to
                                     // let the user pass the native color type and don't make this optimization
@@ -142,19 +149,20 @@ impl ColorSpaceType {
                                         Self::ICCBased(icc)
                                     }
                                 })
-                                .or_else(|| {
-                                    dict.get::<Object<'_>>(ALTERNATE)
-                                        .and_then(|o| Self::new(o, cache))
-                                })
-                                .or_else(|| match dict.get::<u8>(N) {
-                                    Some(1) => Some(Self::DeviceGray),
-                                    Some(3) => Some(Self::DeviceRgb),
-                                    Some(4) => Some(Self::DeviceCmyk),
-                                    _ => None,
-                                })
-                        } else {
-                            None
-                        }
+                            })
+                        });
+
+                        from_icc
+                            .or_else(|| {
+                                dict.get::<Object<'_>>(ALTERNATE)
+                                    .and_then(|o| Self::new(o, cache))
+                            })
+                            .or_else(|| match num_components {
+                                Some(1) => Some(Self::DeviceGray),
+                                Some(3) => Some(Self::DeviceRgb),
+                                Some(4) => Some(Self::DeviceCmyk),
+                                _ => None,
+                            })
                     });
                 }
                 CALCMYK => return Some(Self::DeviceCmyk),
