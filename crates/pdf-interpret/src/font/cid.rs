@@ -425,7 +425,14 @@ impl Type0Font {
         }
 
         match &self.font_type {
-            FontType::OpenType(t) => t.glyph_id_to_unicode(glyph),
+            // For an Identity-H CIDFontType2 font whose embedded TrueType has
+            // no `cmap` table (common in subset fonts) or whose reverse-cmap
+            // has no entry for the resolved glyph, fall back to treating the
+            // character code as a Unicode code point. Matches PDFBox/Poppler
+            // behaviour for Identity-H fonts lacking a usable ToUnicode map.
+            FontType::OpenType(t) => t
+                .glyph_id_to_unicode(glyph)
+                .or_else(|| self.identity_unicode_fallback(code)),
             FontType::Cff(c) => {
                 let table = c.table();
 
