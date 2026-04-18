@@ -488,6 +488,23 @@ fn convert_color_space(image: &mut DecodedImage, bit_depth: u8) -> Result<()> {
                     cielab_to_rgb(simd, &mut image.decoded.components, bit_depth, cielab)
                 })?;
             }
+            EnumeratedColorspace::Ycck => {
+                // YCCK: channels 0-2 are YCbCr, channel 3 is K (black).
+                // Convert YCbCr → RGB using the same transform as SyCC, then
+                // invert channels 0-2 to obtain CMY (C = max−R, M = max−G, Y = max−B).
+                // K (channel 3) stays in standard JP2 convention (0 = no ink).
+                // After this transform all four channels are in DeviceCMYK convention.
+                dispatch!(Level::new(), simd => {
+                    sycc_to_rgb(simd, &mut image.decoded.components, bit_depth)
+                })?;
+                // Invert YCbCr→RGB result into CMY: C = max−R, M = max−G, Y = max−B.
+                let max_val = ((1_u32 << bit_depth) - 1) as f32;
+                for comp in image.decoded.components.iter_mut().take(3) {
+                    for v in comp.container.iter_mut() {
+                        *v = max_val - *v;
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -505,6 +522,10 @@ fn get_color_space(boxes: &ImageBoxes, num_components: usize) -> Result<ColorSpa
         jp2::colr::ColorSpace::Enumerated(e) => {
             match e {
                 EnumeratedColorspace::Cmyk => ColorSpace::CMYK,
+                // YCCK: YCbCr + K channels.  The YCbCr channels are converted to
+                // RGB and then inverted to CMY in convert_color_space(); K is kept
+                // as-is.  The result is DeviceCMYK, so map to CMYK here.
+                EnumeratedColorspace::Ycck => ColorSpace::CMYK,
                 EnumeratedColorspace::Srgb => ColorSpace::RGB,
                 EnumeratedColorspace::RommRgb => {
                     // Use an ICC profile to process the RommRGB color space.
