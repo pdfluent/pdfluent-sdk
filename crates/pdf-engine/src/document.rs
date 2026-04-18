@@ -57,7 +57,12 @@ pub struct PdfDocument {
 impl PdfDocument {
     /// Open a PDF from bytes.
     pub fn open(data: impl Into<pdf_render::pdf_syntax::PdfData>) -> Result<Self> {
-        let pdf = Pdf::new(data).map_err(|e| EngineError::InvalidPdf(format!("{e:?}")))?;
+        let pdf = Pdf::new(data).map_err(|e| match e {
+            pdf_render::pdf_syntax::LoadPdfError::Decryption(d) => {
+                EngineError::Encrypted(format!("{d:?}"))
+            }
+            _ => EngineError::InvalidPdf(format!("{e:?}")),
+        })?;
         Ok(Self {
             pdf,
             settings: InterpreterSettings::default(),
@@ -69,8 +74,12 @@ impl PdfDocument {
         data: impl Into<pdf_render::pdf_syntax::PdfData>,
         password: &str,
     ) -> Result<Self> {
-        let pdf = Pdf::new_with_password(data, password)
-            .map_err(|e| EngineError::InvalidPdf(format!("{e:?}")))?;
+        let pdf = Pdf::new_with_password(data, password).map_err(|e| match e {
+            pdf_render::pdf_syntax::LoadPdfError::Decryption(d) => {
+                EngineError::Encrypted(format!("{d:?}"))
+            }
+            _ => EngineError::InvalidPdf(format!("{e:?}")),
+        })?;
         Ok(Self {
             pdf,
             settings: InterpreterSettings::default(),
@@ -111,6 +120,27 @@ impl PdfDocument {
             return flat_doc.render_page(index, options);
         }
         let page = self.get_page(index)?;
+        // Pre-flight: reject pathologically small or zero-dimension pages before
+        // allocating any pixel buffer. Non-positive dimensions cause panics or
+        // zero-sized allocations inside the rasteriser.
+        let (w, h) = page.render_dimensions();
+        if w <= 0.0 || h <= 0.0 {
+            return Err(EngineError::InvalidPageGeometry {
+                width: w,
+                height: h,
+                reason: "page has zero or negative dimensions".into(),
+            });
+        }
+        // Also reject pages so small they produce zero pixels even at the
+        // minimum meaningful DPI (1 DPI). Below ~0.72pt at 1 DPI = 0 pixels.
+        const MIN_PAGE_PT: f32 = 1.0;
+        if w < MIN_PAGE_PT || h < MIN_PAGE_PT {
+            return Err(EngineError::InvalidPageGeometry {
+                width: w,
+                height: h,
+                reason: "page too small to render (< 1pt)".into(),
+            });
+        }
         Ok(render::render_page(page, options, &self.settings))
     }
 
@@ -128,6 +158,22 @@ impl PdfDocument {
             return flat_doc.render_page_with_config(index, config);
         }
         let page = self.get_page(index)?;
+        let (w, h) = page.render_dimensions();
+        if w <= 0.0 || h <= 0.0 {
+            return Err(EngineError::InvalidPageGeometry {
+                width: w,
+                height: h,
+                reason: "page has zero or negative dimensions".into(),
+            });
+        }
+        const MIN_PAGE_PT: f32 = 1.0;
+        if w < MIN_PAGE_PT || h < MIN_PAGE_PT {
+            return Err(EngineError::InvalidPageGeometry {
+                width: w,
+                height: h,
+                reason: "page too small to render (< 1pt)".into(),
+            });
+        }
         Ok(render::render_page_with_config(
             page,
             config,
