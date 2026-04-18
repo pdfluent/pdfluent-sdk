@@ -827,8 +827,12 @@ impl Separation {
         let name = iter.next::<Name>()?;
         let alternate_space = ColorSpace::new(iter.next::<Object<'_>>()?, cache)?;
         let tint_transform = Function::new(&iter.next::<Object<'_>>()?)?;
-        // Either I did something wrong, or no other viewers properly handles
-        // `All`, so let's just ignore it as well.
+        // PDF spec §8.6.6.4: the special colourant name "None" means no ink —
+        // painting in this colour space has no effect on the page.
+        // Only the literal string "None" triggers this; named inks such as
+        // "PANTONE 123 CVC" or "All" are regular colourants and must NOT be
+        // suppressed here.  ("All" is left to the tint transform; other viewers
+        // treat it as a pass-through as well.)
         let is_none_separation = name.as_str() == "None";
 
         Some(Self {
@@ -870,9 +874,13 @@ impl DeviceN {
         let mut iter = array.flex_iter();
         // Skip `/DeviceN`
         let _ = iter.next::<Name>()?;
-        // Skip `Name`.
         let names = iter.next::<Array<'_>>()?.iter::<Name>().collect::<Vec<_>>();
         let num_components = u8::try_from(names.len()).ok()?;
+        // PDF spec §8.6.6.5: suppress paint only when every component is named
+        // "None".  A DeviceN that mixes real inks with "None" (e.g. a spot
+        // colour channel alongside a filler "None" channel) must still paint,
+        // because the tint transform maps all components to the alternate space
+        // simultaneously.
         let all_none = names.iter().all(|n| n.as_str() == "None");
         let alternate_space = ColorSpace::new(iter.next::<Object<'_>>()?, cache)?;
         let tint_transform = Function::new(&iter.next::<Object<'_>>()?)?;
@@ -1197,5 +1205,81 @@ pub(crate) trait ToRgb {
             output[2],
             (opacity * 255.0 + 0.5) as u8,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pdf_syntax::object::{Array, FromBytes};
+
+    /// Minimal PDF bytes for a Separation colorspace array:
+    ///   [/Separation <name> /DeviceGray <tint-function>]
+    /// The tint function is a Type 2 exponential mapping 1 input → 1 output.
+    fn separation_array(ink_name: &str) -> Vec<u8> {
+        format!(
+            "[/Separation /{ink_name} /DeviceGray \
+             << /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >> ]",
+            ink_name = ink_name
+        )
+        .into_bytes()
+    }
+
+    fn make_separation(ink_name: &str) -> Option<Separation> {
+        let bytes = separation_array(ink_name);
+        let array = Array::from_bytes(&bytes)?;
+        let cache = Cache::new();
+        Separation::new(&array, &cache)
+    }
+
+    /// PDF spec §8.6.6.4: only the literal name "None" suppresses paint.
+    #[test]
+    fn none_ink_is_suppressed() {
+        let sep = make_separation("None").expect("should parse");
+        assert!(sep.is_none(), "ink name 'None' must be suppressed");
+    }
+
+    /// PANTONE spot colours must NOT be suppressed — they are real inks.
+    #[test]
+    fn pantone_ink_is_not_suppressed() {
+        // PDF name encoding: spaces become #20
+        let sep = make_separation("PANTONE#20123#20CVC").expect("should parse");
+        assert!(
+            !sep.is_none(),
+            "PANTONE spot colour must not be suppressed"
+        );
+    }
+
+    /// "All" is a special name meaning every device colourant, not silence.
+    #[test]
+    fn all_ink_is_not_suppressed() {
+        let sep = make_separation("All").expect("should parse");
+        assert!(!sep.is_none(), "'All' separation must not be suppressed");
+    }
+
+    /// A non-None Separation must produce visible output (opacity > 0).
+    #[test]
+    fn pantone_produces_visible_color() {
+        let sep = make_separation("PANTONE#20123#20CVC").expect("should parse");
+        let cs = ColorSpace(Arc::new(ColorSpaceType::Separation(sep)));
+        // tint = 1.0 (full ink) → tint transform maps to grayscale 0 (black)
+        let color = cs.to_rgba(&[1.0], 1.0, false);
+        assert!(
+            color.to_rgba8()[3] > 0,
+            "PANTONE ink at tint=1.0 must be opaque"
+        );
+    }
+
+    /// The "None" separation must produce a fully transparent pixel.
+    #[test]
+    fn none_produces_transparent_color() {
+        let sep = make_separation("None").expect("should parse");
+        let cs = ColorSpace(Arc::new(ColorSpaceType::Separation(sep)));
+        let color = cs.to_rgba(&[1.0], 1.0, false);
+        assert_eq!(
+            color.to_rgba8()[3],
+            0,
+            "Separation/None ink must be fully transparent"
+        );
     }
 }

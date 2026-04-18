@@ -219,22 +219,29 @@ fn build_truetype_cmap_inverse(font_data: &[u8]) -> HashMap<u32, char> {
         return HashMap::new();
     };
 
-    let mut preferred = None;
-    let mut fallback = None;
-
-    for subtable in cmap_table.subtables {
-        if subtable.platform_id == ttf_parser::PlatformId::Windows && subtable.encoding_id == 1 {
-            preferred = Some(subtable);
-            break;
-        }
-        if fallback.is_none() && subtable.is_unicode() {
-            fallback = Some(subtable);
+    // Rank Unicode subtables: prefer full-range (format 12 / UCS-4) over BMP
+    // (format 4) so fonts with supplementary-plane glyphs are fully covered.
+    fn rank(subtable: &ttf_parser::cmap::Subtable<'_>) -> u32 {
+        match (subtable.platform_id, subtable.encoding_id) {
+            (ttf_parser::PlatformId::Windows, 10) => 100,
+            (ttf_parser::PlatformId::Unicode, 6) => 95,
+            (ttf_parser::PlatformId::Unicode, 4) => 90,
+            (ttf_parser::PlatformId::Windows, 1) => 80,
+            (ttf_parser::PlatformId::Unicode, 3) => 70,
+            (ttf_parser::PlatformId::Unicode, _) => 60,
+            _ => 0,
         }
     }
 
+    let best = cmap_table
+        .subtables
+        .into_iter()
+        .filter(|s| s.is_unicode())
+        .max_by_key(rank);
+
     let mut inverse = HashMap::new();
 
-    if let Some(subtable) = preferred.or(fallback) {
+    if let Some(subtable) = best {
         subtable.codepoints(|cp| {
             if let Some(ch) = char::from_u32(cp)
                 && let Some(glyph_id) = subtable.glyph_index(cp)
