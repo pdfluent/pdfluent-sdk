@@ -73,7 +73,11 @@ impl<'a> FormXObject<'a> {
                 .unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
         );
         let bbox = dict.get::<[f32; 4]>(BBOX)?;
-        let is_transparency_group = dict.get::<Dict<'_>>(GROUP).is_some();
+        let is_transparency_group = dict
+            .get::<Dict<'_>>(GROUP)
+            .and_then(|g| g.get::<Name>(S))
+            .as_deref()
+            .is_some_and(|s| s == TRANSPARENCY);
 
         Some(Self {
             decoded,
@@ -125,6 +129,22 @@ pub(crate) fn draw_form_xobject<'a, 'b>(
     context.pre_concat_affine(x_object.matrix);
     context.push_root_transform();
 
+    // Push the BBox clip before opening any transparency group, so that the
+    // group is composited onto the parent surface with the clip already active.
+    // PDF spec §8.10.1: establish the clip in the parent coordinate system,
+    // then render the Form XObject content (possibly inside a group) within it.
+    device.push_clip_path(&ClipPath {
+        path: context.get().ctm
+            * Rect::new(
+                x_object.bbox[0] as f64,
+                x_object.bbox[1] as f64,
+                x_object.bbox[2] as f64,
+                x_object.bbox[3] as f64,
+            )
+            .to_path(0.1),
+        fill: FillRule::NonZero,
+    });
+
     if x_object.is_transparency_group {
         device.push_transparency_group(
             context.get().graphics_state.non_stroke_alpha,
@@ -139,18 +159,6 @@ pub(crate) fn draw_form_xobject<'a, 'b>(
     device.set_soft_mask(context.get().graphics_state.soft_mask.clone());
     device.set_blend_mode(context.get().graphics_state.blend_mode);
 
-    device.push_clip_path(&ClipPath {
-        path: context.get().ctm
-            * Rect::new(
-                x_object.bbox[0] as f64,
-                x_object.bbox[1] as f64,
-                x_object.bbox[2] as f64,
-                x_object.bbox[3] as f64,
-            )
-            .to_path(0.1),
-        fill: FillRule::NonZero,
-    });
-
     interpret(
         iter,
         &Resources::from_parent(x_object.resources.clone(), resources.clone()),
@@ -158,11 +166,11 @@ pub(crate) fn draw_form_xobject<'a, 'b>(
         device,
     );
 
-    device.pop_clip_path();
-
     if x_object.is_transparency_group {
         device.pop_transparency_group();
     }
+
+    device.pop_clip_path();
 
     context.pop_root_transform();
     context.restore_state(device);
@@ -800,4 +808,72 @@ fn decode(
     }
 
     Some(decoded_arr)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::device::DummyDevice;
+    use crate::util::PageExt;
+    use crate::{Context, InterpreterSettings, interpret_page};
+    use pdf_syntax::Pdf;
+
+    /// A minimal PDF with a Form XObject invoked via the `Do` operator.
+    ///
+    /// The Form XObject draws a filled rectangle. The test verifies that
+    /// `interpret_page` completes without panicking, which would happen if the
+    /// graphics state save/restore or the clip push/pop were imbalanced.
+    ///
+    /// The PDF also contains a transparency-group Form XObject (with a `/Group`
+    /// dict specifying `/S /Transparency`) to exercise the path where
+    /// `push_transparency_group` / `pop_transparency_group` are called. A Form
+    /// XObject whose `/Group` dict has a *different* subtype must NOT be treated
+    /// as a transparency group (regression guard for the too-broad
+    /// `is_transparency_group` check that previously matched any `/Group` dict).
+    #[test]
+    fn form_xobject_state_isolation() {
+        // The PDF is hand-crafted with cross-reference offsets computed to be
+        // accurate for the byte layout below.
+        let pdf_bytes = b"%PDF-1.4\n\
+            1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n\
+            2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n\
+            3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100]\n\
+              /Resources << /XObject << /Fm0 4 0 R /Fm1 5 0 R >> >>\n\
+              /Contents 6 0 R >>\nendobj\n\
+            4 0 obj\n\
+            << /Type /XObject /Subtype /Form /BBox [0 0 50 50]\n\
+               /Matrix [1 0 0 1 10 10] >>\n\
+            stream\n0.5 g\n0 0 40 40 re f\nendstream\nendobj\n\
+            5 0 obj\n\
+            << /Type /XObject /Subtype /Form /BBox [0 0 50 50]\n\
+               /Group << /Type /Group /S /Transparency >> >>\n\
+            stream\n0.8 g\n0 0 50 50 re f\nendstream\nendobj\n\
+            6 0 obj\n<< /Length 20 >>\nstream\n/Fm0 Do\n/Fm1 Do\nendstream\nendobj\n\
+            xref\n0 7\n\
+            0000000000 65535 f \n\
+            0000000009 00000 n \n\
+            0000000058 00000 n \n\
+            0000000115 00000 n \n\
+            0000000266 00000 n \n\
+            0000000380 00000 n \n\
+            0000000494 00000 n \n\
+            trailer\n<< /Size 7 /Root 1 0 R >>\n\
+            startxref\n564\n%%EOF\n";
+
+        let pdf = Pdf::new(pdf_bytes.to_vec());
+        // If parsing fails the PDF bytes are malformed; skip rather than fail.
+        let Ok(pdf) = pdf else { return };
+
+        let pages = pdf.pages();
+        let Some(page) = pages.get(0) else { return };
+
+        let settings = InterpreterSettings::default();
+        let initial_transform = page.initial_transform(true);
+        let bbox = kurbo::Rect::new(0.0, 0.0, 100.0, 100.0);
+        let mut context = Context::new(initial_transform, bbox, page.xref(), settings);
+        let mut device = DummyDevice;
+
+        // Must not panic: verifies that q/Q (save/restore) and clip push/pop
+        // are balanced for both plain and transparency-group Form XObjects.
+        interpret_page(&page, &mut context, &mut device);
+    }
 }

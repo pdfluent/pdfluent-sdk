@@ -118,7 +118,34 @@ pub enum Commands {
     Demo,
 }
 
-fn main() -> Result<()> {
+fn main() {
+    match run() {
+        Ok(()) => {}
+        Err(e) => {
+            eprintln!("Error: {e:#}");
+            let code = if let Some(engine_err) = e.downcast_ref::<pdf_engine::EngineError>() {
+                match engine_err {
+                    pdf_engine::EngineError::Encrypted(_) => 2,
+                    pdf_engine::EngineError::InvalidPageGeometry { .. } => 3,
+                    pdf_engine::EngineError::XfaFlattenFailed(_) => 4,
+                    _ => 1,
+                }
+            } else {
+                // Fallback: inspect the error message for XFA flatten failures
+                // that may have been wrapped in an anyhow chain without preserving
+                // the concrete EngineError type.
+                if format!("{e:?}").contains("XFA flatten failed") {
+                    4
+                } else {
+                    1
+                }
+            };
+            std::process::exit(code);
+        }
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {

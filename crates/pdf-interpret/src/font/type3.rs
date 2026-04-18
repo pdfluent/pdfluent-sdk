@@ -178,17 +178,26 @@ impl<'a> Type3<'a> {
         let decoded = program.decoded().ok()?;
         let iter = TypedIter::new(decoded.as_ref());
 
+        // Every valid Type3 glyph stream must begin with either:
+        //   d0  (ColorGlyph)  — colored glyph: the stream defines its own colors.
+        //   d1  (ShapeGlyph)  — uncolored/shape glyph: drawn in current fill color.
+        //
+        // We scan for the first occurrence.  Default is `false` (colored / d0
+        // behaviour) so that if the stream is malformed and contains neither
+        // operator we still render it with its own colors rather than
+        // incorrectly forcing the parent fill color.
         let is_shape_glyph = {
             let iter = iter.clone();
-            let mut is_shape_glyph = true;
+            let mut is_shape_glyph = false;
 
             for op in iter {
                 match op {
                     TypedInstruction::ShapeGlyph(_) => {
+                        is_shape_glyph = true;
                         break;
                     }
                     TypedInstruction::ColorGlyph(_) => {
-                        is_shape_glyph = false;
+                        // is_shape_glyph stays false
                         break;
                     }
                     _ => {}

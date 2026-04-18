@@ -721,6 +721,12 @@ pub fn interpret<'a, 'b>(
                 context.get_mut().text_state.leading = -ty as f32;
                 text::next_line(context, tx, ty);
             }
+            // d1: uncolored (shape) glyph header.  The advance width (wx) and
+            // bounding-box arguments are intentionally ignored here: the glyph
+            // advance is taken from the Type3 font's /Widths array (via
+            // Font::code_advance), and the is_shape_glyph flag is determined
+            // by the pre-scan in Type3::render_glyph before the stream is
+            // interpreted.
             TypedInstruction::ShapeGlyph(_) => {}
             TypedInstruction::XObject(x) => {
                 let cache = context.object_cache.clone();
@@ -795,6 +801,8 @@ pub fn interpret<'a, 'b>(
             }
             TypedInstruction::BeginCompatibility(_) => {}
             TypedInstruction::EndCompatibility(_) => {}
+            // d0: colored glyph header.  The advance width (wx) argument is
+            // intentionally ignored here for the same reason as d1 above.
             TypedInstruction::ColorGlyph(_) => {}
             TypedInstruction::ShowTextWithParameters(t) => {
                 context.get_mut().text_state.word_space = t.0.as_f32();
