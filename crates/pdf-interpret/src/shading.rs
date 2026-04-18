@@ -394,6 +394,17 @@ pub struct TriangleVertex {
     pub colors: ColorComponents,
 }
 
+impl TriangleVertex {
+    /// Create a new triangle vertex (crate-internal constructor for tests).
+    pub(crate) fn new(flag: u32, point: Point, colors: ColorComponents) -> Self {
+        Self {
+            flag,
+            point,
+            colors,
+        }
+    }
+}
+
 /// A coons patch.
 #[derive(Clone, Debug)]
 pub struct CoonsPatch {

@@ -887,6 +887,31 @@ mod tests {
     }
 
     #[test]
+    fn extract_text_identity_h_bogus_tounicode_recovers_via_identity_fallback() {
+        // PDFBOX-4322-3.pdf ships an Identity-H Type0 font whose `/ToUnicode`
+        // stream is actually an Identity-H *encoding* CMap (only
+        // `begincidrange <0000> <FFFF> 0`, no bf-mappings). The embedded
+        // TrueType subset also has no `cmap` table, so both the ToUnicode
+        // lookup and the reverse-cmap fallback fail. Previously this yielded
+        // a 0-byte extraction because the character codes — which are Unicode
+        // code points under Identity-H — were silently discarded.
+        let bytes =
+            std::fs::read(corpus_path("PDFBOX-4322-3.pdf")).expect("read PDFBOX-4322-3 fixture");
+        let doc = PdfDocument::open(bytes).expect("open PDFBOX-4322-3");
+        let text = doc.extract_all_text();
+
+        let norm = normalize_text(&text);
+        assert!(
+            norm.contains("Transatlantic Council"),
+            "expected Identity-H codes to resolve as Unicode: {norm}"
+        );
+        assert!(
+            norm.contains("Boy Scouts of America"),
+            "expected body text to be recovered: {norm}"
+        );
+    }
+
+    #[test]
     fn render_page_with_config_srgb_matches_legacy_render_page() {
         let doc = PdfDocument::open(solid_fill_pdf_bytes("1 0 0 rg")).expect("open rgb fixture");
         let legacy = doc
