@@ -131,11 +131,16 @@ fn main() {
                     _ => 1,
                 }
             } else {
-                // Fallback: inspect the error message for XFA flatten failures
-                // that may have been wrapped in an anyhow chain without preserving
-                // the concrete EngineError type.
-                if format!("{e:?}").contains("XFA flatten failed") {
+                // Fallback: inspect the error message when the concrete EngineError
+                // type is not preserved through the anyhow chain (e.g. wrapped in
+                // CliError or another anyhow layer).
+                let msg = format!("{e:?}");
+                if msg.contains("XFA flatten failed") {
                     4
+                } else if msg.contains("PDF is encrypted") || msg.contains("PasswordProtected") {
+                    2
+                } else if msg.contains("invalid page geometry") || msg.contains("zero pages") {
+                    3
                 } else {
                     1
                 }
