@@ -7,7 +7,11 @@ use crate::error::CliError;
 use pdf_engine::{EngineError, PdfDocument, RenderOptions};
 
 fn try_xfa_flatten(data: &[u8]) -> Option<Vec<u8>> {
-    pdf_xfa::flatten_xfa_to_pdf(data).ok()
+    // GL-QA36: wrap in catch_unwind so a panic inside the XFA engine
+    // (e.g. LayoutFailed on stressful files) becomes None instead of SIGABRT.
+    std::panic::catch_unwind(|| pdf_xfa::flatten_xfa_to_pdf(data))
+        .ok()
+        .and_then(|r| r.ok())
 }
 
 pub fn run(input: &Path, output: &Path, dpi: f64, pages: Option<&str>) -> Result<()> {
@@ -23,6 +27,13 @@ pub fn run(input: &Path, output: &Path, dpi: f64, pages: Option<&str>) -> Result
     let doc = match PdfDocument::open(data.clone()) {
         Ok(doc) => doc,
         Err(e) => {
+            // GL-QA35: Encrypted and InvalidPageGeometry must propagate as
+            // EngineError so main.rs can map them to exit codes 2 and 3.
+            // Wrapping them in CliError loses the concrete type and causes
+            // downcast_ref to return None → wrong exit code.
+            if matches!(e, EngineError::Encrypted(_) | EngineError::InvalidPageGeometry { .. }) {
+                return Err(anyhow::anyhow!(e));
+            }
             if let Some(flattened) = try_xfa_flatten(&data) {
                 PdfDocument::open(flattened).map_err(|open_err| {
                     anyhow::anyhow!(EngineError::XfaFlattenFailed(format!(
@@ -44,6 +55,16 @@ pub fn run(input: &Path, output: &Path, dpi: f64, pages: Option<&str>) -> Result
         }
     };
     let total = doc.page_count();
+
+    // GL-QA37: A document with zero pages cannot produce output; treat as
+    // InvalidPageGeometry (exit 3) rather than silently succeeding.
+    if total == 0 {
+        return Err(anyhow::anyhow!(EngineError::InvalidPageGeometry {
+            width: 0.0,
+            height: 0.0,
+            reason: "document has zero pages".to_string(),
+        }));
+    }
 
     let page_indices = match pages {
         Some(s) => crate::parse_page_list(s, total)?,

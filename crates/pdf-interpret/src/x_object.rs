@@ -126,13 +126,26 @@ pub(crate) fn draw_form_xobject<'a, 'b>(
 
     context.path_mut().truncate(0);
     context.save_state();
+    // PDF spec §8.10.1 rendering order for Form XObjects (both transparency and
+    // non-transparency paths):
+    //   1. Save graphics state
+    //   2. Pre-concatenate /Matrix with the current CTM  (GL-QA39)
+    //   3. Apply /BBox as a clip path (in the resulting coordinate system)
+    //   4. Render the Form XObject's content stream
+    //   5. Restore graphics state
+    //
+    // Pre-concatenation means CTM' = CTM * Matrix, i.e. the Matrix is applied
+    // on the right so that it transforms from form-local space to the parent
+    // space before the parent CTM is applied. `pre_concat_affine` computes
+    // `ctm *= matrix` which is exactly CTM * Matrix — correct for both paths.
     context.pre_concat_affine(x_object.matrix);
     context.push_root_transform();
 
-    // Push the BBox clip before opening any transparency group, so that the
-    // group is composited onto the parent surface with the clip already active.
-    // PDF spec §8.10.1: establish the clip in the parent coordinate system,
-    // then render the Form XObject content (possibly inside a group) within it.
+    // Push the BBox clip after applying /Matrix, so the BBox is expressed in
+    // the form's own coordinate system (post-Matrix). `context.get().ctm` at
+    // this point already incorporates the Matrix, giving the correct clip
+    // region in device space. This holds for both the transparency and
+    // non-transparency paths. PDF spec §8.10.1.
     device.push_clip_path(&ClipPath {
         path: context.get().ctm
             * Rect::new(

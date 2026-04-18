@@ -90,6 +90,9 @@ impl Type0Font {
         };
 
         let default_width = descendant_font.get::<f32>(DW).unwrap_or(1000.0);
+        // PDF spec §9.7.4.3 (GL-QA40): default /DW2 when the entry is absent is
+        // [880 -1000], where 880 is v_y (the y-coordinate of the position vector
+        // origin) and -1000 is w1y (the vertical advance, negative = downward).
         let dw2 = descendant_font
             .get::<[f32; 2]>(DW2)
             .map(|v| (v[0], v[1]))
@@ -99,6 +102,10 @@ impl Type0Font {
             .get::<Array<'_>>(W)
             .and_then(|a| read_widths(&a))
             .unwrap_or_default();
+        // PDF spec §9.7.4.3 (GL-QA40): /W2 entries are triples [w1y v_x v_y].
+        // read_widths2 handles both the array form [c_first [w1y v_x v_y ...]]
+        // and the range form [c_first c_last w1y v_x v_y], mapping each CID to
+        // [w1y, v_x, v_y]. code_advance uses w1y; origin_displacement uses v_x/v_y.
         let widths2 = descendant_font
             .get::<Array<'_>>(W2)
             .and_then(|a| read_widths2(&a))
