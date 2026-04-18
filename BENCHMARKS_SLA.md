@@ -72,7 +72,7 @@ python3 scripts/check_benchmark_sla.py \
 
 | Date | Render text p95 | Render mixed p95 | XFA simple p95 | Notes |
 |---|---|---|---|---|
-| TBD | TBD | TBD | TBD | First baseline run needed |
+| 2026-04-18 | GATE #60: 948/974 = 97.3% pass (1k corpus) | r19 branch post CMYK/shading/tiling fixes | — | First baseline; 5k corpus: 91.7% (pre-r19) |
 
 ---
 
