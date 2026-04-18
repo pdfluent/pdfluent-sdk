@@ -992,10 +992,17 @@ impl ICCProfile {
     ) -> Option<Self> {
         let dest_profile = ColorProfile::new_srgb();
 
+        // PDF spec §8.6.5.5 (GL-QA41): ICCBased colorspaces with N=4 components
+        // are CMYK profiles. moxcms uses Layout::Rgba as its 4-channel layout
+        // (documented: "Cmyk8 uses the same layout as Rgba8"), so Layout::Rgba
+        // is the correct choice for 4-component (CMYK) ICC source profiles.
+        // The full ICC transform is applied — no naive CMYK formula fallback —
+        // which correctly handles embedded ICC CMYK profiles that override the
+        // default DeviceCMYK-to-sRGB conversion.
         let src_layout = match number_components {
             1 => Layout::Gray,
             3 => Layout::Rgb,
-            4 => Layout::Rgba,
+            4 => Layout::Rgba, // 4-channel CMYK; moxcms Rgba layout == CMYK layout
             _ => {
                 warn!("unsupported number of components {number_components} for ICC profile");
 
