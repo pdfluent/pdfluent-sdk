@@ -140,7 +140,13 @@ pub struct TilingPattern<'a> {
     /// A transformation to apply prior to rendering.
     pub matrix: Affine,
     stream: Stream<'a>,
-    is_color: bool,
+    /// Whether this is a colored (`PaintType 1`) tiling pattern.
+    pub is_color: bool,
+    /// For colored tiling patterns: the non-stroking opacity from the parent
+    /// graphics state at the time the pattern was set. PDF §8.7.3.1 states
+    /// that the current graphics state (including opacity) applies when a
+    /// tiling pattern is painted, so we capture it here for later use.
+    pub opacity: f32,
     pub(crate) stroke_paint: Color,
     pub(crate) non_stroking_paint: Color,
     pub(crate) parent_resources: Resources<'a>,
@@ -192,16 +198,24 @@ impl<'a> TilingPattern<'a> {
             .pattern_cs()
             .unwrap_or(ColorSpace::device_gray());
 
+        let non_stroke_alpha = state.graphics_state.non_stroke_alpha;
+        let stroke_alpha = state.graphics_state.stroke_alpha;
+
         let non_stroking_paint = Color::new(
             fill_cs,
             state.graphics_state.non_stroke_color.clone(),
-            state.graphics_state.non_stroke_alpha,
+            non_stroke_alpha,
         );
         let stroke_paint = Color::new(
             stroke_cs,
             state.graphics_state.stroke_color.clone(),
-            state.graphics_state.stroke_alpha,
+            stroke_alpha,
         );
+
+        // For colored tiling patterns the fill opacity controls transparency
+        // of the whole tile; for uncolored patterns it is already embedded in
+        // the paint colors above, so we record it but use it conditionally.
+        let opacity = non_stroke_alpha;
 
         Some(Self {
             cache_key,
@@ -212,6 +226,7 @@ impl<'a> TilingPattern<'a> {
             ctx_bbox,
             is_color,
             stream,
+            opacity,
             stroke_paint,
             non_stroking_paint,
             settings: ctx.settings.clone(),

@@ -512,13 +512,22 @@ impl Renderer {
                             * initial_transform.inverse()
                             * step_round_correction;
 
+                        // For colored tiling patterns, apply the opacity from the
+                        // parent graphics state (PDF §8.7.3.1: the current
+                        // graphics state applies when a tiling pattern is
+                        // painted).  For uncolored patterns the opacity is
+                        // already embedded in the stroke/fill paint colors, so
+                        // we leave the image alpha at 1.0 to avoid double-
+                        // applying it.
+                        let tile_alpha = if t.is_color { t.opacity } else { 1.0 };
+
                         let image = Image {
                             image: ImageSource::Pixmap(Arc::new(pix)),
                             sampler: ImageSampler {
                                 x_extend: peniko::Extend::Repeat,
                                 y_extend: peniko::Extend::Repeat,
                                 quality: ImageQuality::Medium,
-                                alpha: 1.0,
+                                alpha: tile_alpha,
                             },
                         };
 
