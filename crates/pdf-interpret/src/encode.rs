@@ -188,7 +188,7 @@ fn encode_axial_shading(
 fn sample_triangles(
     triangles: &[Triangle],
     transform: Affine,
-) -> FxHashMap<(u16, u16), ColorComponents> {
+) -> FxHashMap<(i32, i32), ColorComponents> {
     let mut map = FxHashMap::default();
 
     for t in triangles {
@@ -209,8 +209,11 @@ fn sample_triangles(
 
         let bbox = t.bounding_box();
 
-        for y in (bbox.y0.floor() as u16)..(bbox.y1.ceil() as u16) {
-            for x in (bbox.x0.floor() as u16)..(bbox.x1.ceil() as u16) {
+        // Use i32 keys so that negative coordinates (e.g. patterns that start
+        // left/above the page origin) and large coordinate values (> 65535)
+        // are represented correctly without wrapping or saturation.
+        for y in (bbox.y0.floor() as i32)..(bbox.y1.ceil() as i32) {
+            for x in (bbox.x0.floor() as i32)..(bbox.x1.ceil() as i32) {
                 let point = Point::new(x as f64, y as f64);
                 if t.contains_point(point) {
                     map.insert((x, y), t.interpolate(point));
@@ -255,7 +258,7 @@ pub(crate) enum EncodedShadingType {
         extend: [bool; 2],
     },
     Sampled {
-        samples: FxHashMap<(u16, u16), ColorComponents>,
+        samples: FxHashMap<(i32, i32), ColorComponents>,
         function: Option<ShadingFunction>,
     },
     Dummy,
@@ -318,7 +321,11 @@ impl EncodedShadingType {
                 Some(color_space.to_rgba(&val, 1.0, false))
             }
             Self::Sampled { samples, function } => {
-                let sample_point = (pos.x as u16, pos.y as u16);
+                // Use i32 keys (matching sample_triangles) and round rather
+                // than truncate so the 0.5-offset centre point hits the
+                // correct bucket and we avoid systematic off-by-one gaps
+                // along triangle edges.
+                let sample_point = (pos.x.round() as i32, pos.y.round() as i32);
 
                 if let Some(color) = samples.get(&sample_point) {
                     if let Some(function) = function {
@@ -422,5 +429,80 @@ fn radial_pos(
         (Some(min), None) => Some(min),
         (None, Some(max)) => Some(max),
         (None, None) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shading::{Triangle, TriangleVertex};
+    use kurbo::{Affine, Point};
+    use rustc_hash::FxHashMap;
+    use smallvec::smallvec;
+
+    fn make_vertex(x: f64, y: f64, color: f32) -> TriangleVertex {
+        TriangleVertex::new(0, Point::new(x, y), smallvec![color])
+    }
+
+    /// sample_triangles must use i32 keys so that negative coordinates (e.g.
+    /// patterns starting above/left of the page origin) are stored and looked
+    /// up consistently without wrapping at 0.
+    #[test]
+    fn sample_triangles_negative_coords() {
+        let v0 = make_vertex(-2.0, -2.0, 0.0);
+        let v1 = make_vertex(2.0, -2.0, 1.0);
+        let v2 = make_vertex(0.0, 2.0, 0.5);
+        let tri = Triangle::new(v0, v1, v2);
+
+        let map = sample_triangles(&[tri], Affine::IDENTITY);
+
+        // The map should contain entries for negative coordinate pixels.
+        assert!(
+            map.keys().any(|(x, _)| *x < 0),
+            "expected negative x keys in sample map"
+        );
+        assert!(
+            map.keys().any(|(_, y)| *y < 0),
+            "expected negative y keys in sample map"
+        );
+    }
+
+    /// The Sampled::eval lookup must match the i32 keys written by
+    /// sample_triangles, and rounding must agree so samples are not missed.
+    #[test]
+    fn sampled_eval_roundtrip() {
+        use crate::color::ColorSpace;
+
+        let mut samples: FxHashMap<(i32, i32), ColorComponents> = FxHashMap::default();
+        samples.insert((10, 20), smallvec![0.5]);
+
+        let stype = EncodedShadingType::Sampled {
+            samples,
+            function: None,
+        };
+
+        let cs = ColorSpace::device_gray();
+        let bg = AlphaColor::TRANSPARENT;
+
+        // Exact integer lookup should find the sample.
+        let hit = stype.eval(Point::new(10.0, 20.0), bg, &cs);
+        assert!(hit.is_some(), "exact integer lookup should find sample");
+        let color = hit.unwrap();
+        assert!(color.components()[3] > 0.0, "sample should be opaque");
+
+        // A point 0.4 away rounds to the same bucket.
+        let hit2 = stype.eval(Point::new(10.4, 20.4), bg, &cs);
+        assert!(
+            hit2.is_some(),
+            "nearby point (0.4 offset) should hit same bucket"
+        );
+
+        // A point 0.6 away rounds to (11, 21) which is not in the map → bg.
+        let miss = stype.eval(Point::new(10.6, 20.6), bg, &cs);
+        assert_eq!(
+            miss.map(|c| c.components()[3]),
+            Some(bg.components()[3]),
+            "point rounding to (11,21) should return bg"
+        );
     }
 }
