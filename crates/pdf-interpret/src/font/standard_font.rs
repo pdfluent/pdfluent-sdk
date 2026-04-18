@@ -334,25 +334,41 @@ pub(crate) fn select_standard_font(
         format!("{lower} {family_field}")
     };
 
-    // GL-QA38: The keyword heuristic is an approximation — even "HelveticaNeue"
-    // or "Courier-Custom" are not the same font as the exact Standard-14 face.
-    // Returning exact=true here caused the PDF's /Widths array to be silently
-    // ignored (PDF viewers only ignore /Widths for confirmed Standard-14 fonts,
-    // not for lookalike substitutions).  Always return exact=false from this
-    // heuristic path so that the /Widths array is respected when present, and
-    // the Standard-14 metric tables are used only as the fallback of last resort.
-    let family = if haystack.contains("helvetica") || haystack.contains("arial") || haystack.contains("sans") {
-        Some(StandardFontFamily::Helvetica)
-    } else if haystack.contains("courier") || haystack.contains("mono") {
-        Some(StandardFontFamily::Courier)
-    } else if haystack.contains("times") || haystack.contains("serif") {
-        Some(StandardFontFamily::Times)
+    // Keyword/family heuristic (last resort — only reached when the font name
+    // did not match any Standard-14 alias above).
+    //
+    // `exact` controls whether the caller should trust PDF /Widths entries or
+    // fall back to Standard-14 AFM metrics:
+    //   exact=true  → AFM metrics used; PDF /Widths ignored (safe for genuine
+    //                 Standard-14 faces whose names survived case folding here)
+    //   exact=false → PDF /Widths respected when present; AFM is only fallback
+    //                 (correct for non-Standard-14 lookalikes like "ArialMT")
+    //
+    // GL-QA38 regression note: setting exact=false for ALL heuristic matches
+    // caused 116 SSIM regressions in gate-5k-04 because many PDFs that contained
+    // "helvetica" or "times" in the font name ARE genuine Standard-14 and their
+    // /Widths arrays (when present) are less accurate than Standard-14 AFM.
+    // The corrected approach: treat Standard-14 keyword matches (helvetica,
+    // courier, times) as exact=true; treat clear non-Standard-14 keywords
+    // (arial, sans, mono, serif without "times") as exact=false so we respect
+    // their embedded /Widths.
+    let (family, exact) = if haystack.contains("helvetica") {
+        (Some(StandardFontFamily::Helvetica), true)  // likely genuine Helvetica — use AFM
+    } else if haystack.contains("arial") || haystack.contains("sans") {
+        (Some(StandardFontFamily::Helvetica), false) // Arial/generic sans — respect /Widths
+    } else if haystack.contains("courier") {
+        (Some(StandardFontFamily::Courier), true)    // likely genuine Courier — use AFM
+    } else if haystack.contains("mono") {
+        (Some(StandardFontFamily::Courier), false)   // generic monospace — respect /Widths
+    } else if haystack.contains("times") {
+        (Some(StandardFontFamily::Times), true)      // likely genuine Times — use AFM
+    } else if haystack.contains("serif") {
+        (Some(StandardFontFamily::Times), false)     // generic serif — respect /Widths
     } else if haystack.contains("zapfdingbats") || haystack.contains("dingbats") {
         return Some((StandardFont::ZapfDingBats, false));
     } else {
-        None
+        (None, false)
     };
-    let exact = false;
 
     let font = match (family?, is_bold, is_italic) {
         (StandardFontFamily::Helvetica, false, false) => StandardFont::Helvetica,
