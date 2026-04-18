@@ -70,14 +70,34 @@ pub(crate) fn decode(
     let mut decoded = decoder.decode().ok()?;
 
     if out_colorspace == ColorSpace::YCCK {
-        // See <https://github.com/mozilla/pdf.js/blob/69595a29192b7704733404a42a2ebb537601117b/src/core/jpg.js#L1331>
+        // YCCK JPEG: channels 0-2 are YCbCr, channel 3 is K (JPEG-inverted: 255=no ink).
+        // Convert YCbCr to CMY (ink-density form: 0=no ink, 255=full ink), then invert K
+        // so all four channels are in PDF DeviceCMYK convention (0=no ink, 255=full ink).
+        // Downstream DeviceCMYK ICC profile expects this convention.
+        //
+        // Conversion formula adapted from:
+        // <https://github.com/mozilla/pdf.js/blob/69595a29192b7704733404a42a2ebb537601117b/src/core/jpg.js#L1331>
+        // Values are clamped to [0, 255] to avoid wrapping artefacts from the as-cast.
         for c in decoded.chunks_mut(4) {
             let y = c[0] as f32;
             let cb = c[1] as f32;
             let cr = c[2] as f32;
-            c[0] = (434.456 - y - 1.402 * cr) as u8;
-            c[1] = (119.541 - y + 0.344 * cb + 0.714 * cr) as u8;
-            c[2] = (481.816 - y - 1.772 * cb) as u8;
+            c[0] = (434.456 - y - 1.402 * cr).clamp(0.0, 255.0) as u8;
+            c[1] = (119.541 - y + 0.344 * cb + 0.714 * cr).clamp(0.0, 255.0) as u8;
+            c[2] = (481.816 - y - 1.772 * cb).clamp(0.0, 255.0) as u8;
+            // Invert K: JPEG stores K as 255=no ink; DeviceCMYK expects 0=no ink.
+            c[3] = 255 - c[3];
+        }
+    }
+
+    // JPEG CMYK (including YCCK after the conversion above): JPEG encodes CMYK as
+    // inverted ink density (255 = no ink, 0 = full ink), i.e. the complement of the
+    // PDF DeviceCMYK convention (0 = no ink).  Invert all channels so that the data
+    // can be fed directly into the DeviceCMYK ICC profile which expects standard
+    // DeviceCMYK values.
+    if out_colorspace == CMYK {
+        for byte in &mut decoded {
+            *byte = 255 - *byte;
         }
     }
 
