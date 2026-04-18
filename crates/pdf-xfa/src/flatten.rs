@@ -51,10 +51,29 @@
 //! - System font fallback may have different metrics than the PDF's embedded font
 
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, StringFormat};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
 use std::thread;
 use std::time::Duration;
+
+// GL-QA36: Re-entrance guard for flatten_xfa_to_pdf.
+//
+// When the XFA layout fails and static_fallback returns the original bytes
+// unchanged (because lopdf also cannot parse the file), a caller that retries
+// flatten on those same bytes will trigger the same failure path again,
+// causing infinite recursion and ultimately a stack overflow.
+//
+// This thread-local counter is incremented on entry to flatten_xfa_to_pdf and
+// decremented by a drop guard on exit.  If the counter is already ≥ 1 when
+// the function is entered, we return an error immediately to break the cycle.
+//
+// The counter is thread-local so the spawned worker thread (thread::spawn
+// inside flatten_xfa_to_pdf) starts with its own fresh counter = 0 and is
+// not affected by the caller's guard.
+thread_local! {
+    static FLATTEN_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
 
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
@@ -162,6 +181,30 @@ fn page_has_field_data(nodes: &[LayoutNode]) -> bool {
 ///
 /// If the PDF has no XFA content, returns a clone of the input unchanged.
 pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
+    // GL-QA36: Re-entrance guard.  If this function is entered while already
+    // running on this thread (depth ≥ 1), a recursive call has occurred —
+    // most likely a fallback path returning the original bytes which still
+    // contain /AcroForm + xdp:xdp markers.  Abort immediately with an error
+    // to prevent the infinite recursion / stack overflow.
+    //
+    // The worker thread spawned below has its own thread-local so its depth
+    // starts at 0 and is unaffected by this guard.
+    let depth = FLATTEN_DEPTH.with(|d| d.get());
+    if depth >= 1 {
+        return Err(XfaError::LayoutFailed(
+            "flatten_xfa_to_pdf called recursively — aborting to prevent stack overflow".into(),
+        ));
+    }
+    FLATTEN_DEPTH.with(|d| d.set(depth + 1));
+    // Drop guard: decrement the counter even if we return early.
+    struct DepthGuard;
+    impl Drop for DepthGuard {
+        fn drop(&mut self) {
+            FLATTEN_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        }
+    }
+    let _depth_guard = DepthGuard;
+
     // 0a. Quick byte-level pre-check: if the raw bytes don't contain /AcroForm
     //     (where XFA lives per the spec) and no XDP namespace, skip expensive
     //     parsing. This prevents multi-second stalls on large non-XFA PDFs.
@@ -2767,6 +2810,22 @@ fn remove_acroform(doc: &mut Document) {
 // Tests
 // ---------------------------------------------------------------------------
 
+/// Test helper (GL-QA36): simulate a re-entrant call to flatten_xfa_to_pdf by
+/// pre-setting FLATTEN_DEPTH to 1 before calling.  This is used to verify the
+/// recursion guard without exposing the thread-local to the test sub-module.
+///
+/// IMPORTANT: This function resets FLATTEN_DEPTH to 0 before returning so that
+/// subsequent calls on the same thread are not affected.
+#[cfg(test)]
+fn flatten_xfa_to_pdf_simulate_reentrant(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
+    FLATTEN_DEPTH.with(|d| d.set(1));
+    let result = flatten_xfa_to_pdf(pdf_bytes);
+    // Reset — the guard will have left depth at 1 because it detected depth>=1
+    // and returned early before the DepthGuard could decrement.
+    FLATTEN_DEPTH.with(|d| d.set(0));
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4015,5 +4074,35 @@ ET
             })
             .collect();
         assert_eq!(values, vec!["Alpha", "Beta", "Gamma"]);
+    }
+
+    // GL-QA36: verify the re-entrance guard prevents infinite recursion.
+    //
+    // We call flatten_xfa_to_pdf_simulate_reentrant (a #[cfg(test)] helper
+    // that sets FLATTEN_DEPTH=1 before calling) to avoid accessing the
+    // thread-local directly from the test sub-module.
+    #[test]
+    fn flatten_xfa_to_pdf_recursion_guard_returns_error() {
+        let pdf_bytes = build_xfa_pdf(SIMPLE_XDP);
+        let result = flatten_xfa_to_pdf_simulate_reentrant(&pdf_bytes);
+        assert!(result.is_err(), "expected recursion guard to return Err, got Ok");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("recursively"),
+            "expected error message to mention recursion, got: {err_msg}"
+        );
+    }
+
+    // GL-QA36: verify the depth counter is reset to 0 after a normal call so
+    // subsequent calls on the same thread are not falsely blocked.
+    #[test]
+    fn flatten_xfa_to_pdf_depth_counter_resets_after_call() {
+        let pdf_bytes = build_xfa_pdf(SIMPLE_XDP);
+        // First call; should succeed and reset depth to 0.
+        let _ = flatten_xfa_to_pdf(&pdf_bytes);
+        // Second call must not be blocked by a leaked counter.
+        let pdf_bytes2 = build_xfa_pdf(SIMPLE_XDP);
+        let result = flatten_xfa_to_pdf(&pdf_bytes2);
+        assert!(result.is_ok(), "second flatten call should succeed, got: {result:?}");
     }
 }
