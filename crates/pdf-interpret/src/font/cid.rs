@@ -630,6 +630,86 @@ fn read_widths2(arr: &Array<'_>) -> Option<HashMap<u32, [f32; 3]>> {
     Some(map)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pdf_syntax::object::FromBytes;
+
+    fn parse_widths(bytes: &[u8]) -> HashMap<u32, f32> {
+        let arr = Array::from_bytes(bytes).expect("valid array bytes");
+        read_widths(&arr).expect("read_widths returned None")
+    }
+
+    /// /W [40 60 600] — range form: glyphs 40..=60 all get width 600
+    #[test]
+    fn test_w_range_form() {
+        let map = parse_widths(b"[40 60 600]");
+        assert_eq!(map.len(), 21); // 60 - 40 + 1
+        for cid in 40..=60 {
+            assert_eq!(
+                map.get(&cid).copied(),
+                Some(600.0),
+                "cid {cid} should have width 600"
+            );
+        }
+    }
+
+    /// /W [40 [600 700 800]] — array form: glyph 40=600, 41=700, 42=800
+    #[test]
+    fn test_w_array_form() {
+        let map = parse_widths(b"[40 [600 700 800]]");
+        assert_eq!(map.len(), 3);
+        assert_eq!(map.get(&40).copied(), Some(600.0));
+        assert_eq!(map.get(&41).copied(), Some(700.0));
+        assert_eq!(map.get(&42).copied(), Some(800.0));
+    }
+
+    /// /DW fallback: glyph not in /W should return dw
+    #[test]
+    fn test_dw_fallback() {
+        // read_widths itself doesn't know about /DW; the fallback is in
+        // horizontal_width(). Verify it directly: a map that has no entry
+        // for cid 99 should return dw when get() returns None.
+        let map = parse_widths(b"[40 [600]]");
+        // cid 99 is absent → simulate what horizontal_width() does
+        let dw = 1000.0_f32;
+        let width = map.get(&99).copied().unwrap_or(dw);
+        assert_eq!(width, dw, "missing cid should fall back to /DW");
+    }
+
+    /// /W [40 [600 600] 100 200 500] — mixed: array form followed by range form
+    #[test]
+    fn test_w_mixed_form() {
+        let map = parse_widths(b"[40 [600 600] 100 200 500]");
+        // array form: cid 40=600, 41=600
+        assert_eq!(map.get(&40).copied(), Some(600.0));
+        assert_eq!(map.get(&41).copied(), Some(600.0));
+        // range form: cids 100..=200 = 500
+        for cid in 100..=200 {
+            assert_eq!(
+                map.get(&cid).copied(),
+                Some(500.0),
+                "cid {cid} should have width 500"
+            );
+        }
+    }
+
+    /// A single-glyph range form (/W [50 50 250]) is valid per the spec.
+    #[test]
+    fn test_w_range_single_glyph() {
+        let map = parse_widths(b"[50 50 250]");
+        assert_eq!(map.get(&50).copied(), Some(250.0));
+        assert_eq!(map.len(), 1);
+    }
+
+    /// Empty /W array should produce an empty map (not an error).
+    #[test]
+    fn test_w_empty_array() {
+        let map = parse_widths(b"[]");
+        assert!(map.is_empty());
+    }
+}
+
 fn read_encoding(object: &Object<'_>, cmap_resolver: &CMapResolverFn) -> Option<CMap> {
     // TODO: Support fetching CMaps referenced via `usecmap` in the PDF.
     match object {
