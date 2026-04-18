@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 use crate::error::CliError;
-use pdf_engine::{PdfDocument, RenderOptions};
+use pdf_engine::{EngineError, PdfDocument, RenderOptions};
 
 fn try_xfa_flatten(data: &[u8]) -> Option<Vec<u8>> {
     pdf_xfa::flatten_xfa_to_pdf(data).ok()
@@ -24,13 +24,12 @@ pub fn run(input: &Path, output: &Path, dpi: f64, pages: Option<&str>) -> Result
         Ok(doc) => doc,
         Err(e) => {
             if let Some(flattened) = try_xfa_flatten(&data) {
-                PdfDocument::open(flattened).map_err(|e| {
-                    anyhow::anyhow!(CliError {
-                        message: format!("Could not open flattened XFA: {}", input.display()),
-                        why: Some(e.to_string()),
-                        fix: Some("XFA flattening failed to produce valid PDF".to_string()),
-                        docs: Some("https://docs.pdfluent.com/errors/E005".to_string()),
-                    })
+                PdfDocument::open(flattened).map_err(|open_err| {
+                    anyhow::anyhow!(EngineError::XfaFlattenFailed(format!(
+                        "{}: {}",
+                        input.display(),
+                        open_err
+                    )))
                 })?
             } else {
                 return Err(anyhow::anyhow!(CliError {
