@@ -53,18 +53,17 @@ Run on VPS:
 
 ```bash
 # Build release binary
-cargo build --release -p pdf-engine -p pdfluent
+cargo build --release -p xfa-cli
 
 # Run benchmark suite
 ./scripts/run_benchmarks.sh \
   --corpus-dir /opt/xfa-corpus/curated-1k \
-  --hardware-profile benchmarks/hardware/hetzner-e2176g.json \
   --warmup-seconds 2 \
   --measure-seconds 10
 
 # Check against SLA
 python3 scripts/check_benchmark_sla.py \
-  --suite-json benchmarks/results/hetzner-e2176g-$(date +%Y-%m-%d).suite.json \
+  --suite-json benchmarks/results/hetzner-e2176g-$(date +%Y-%m-%d).json \
   --sla BENCHMARKS_SLA.md
 ```
 
