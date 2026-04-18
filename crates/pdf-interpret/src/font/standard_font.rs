@@ -334,23 +334,25 @@ pub(crate) fn select_standard_font(
         format!("{lower} {family_field}")
     };
 
-    let (family, exact) = if haystack.contains("helvetica") {
-        (Some(StandardFontFamily::Helvetica), true)
-    } else if haystack.contains("arial") || haystack.contains("sans") {
-        (Some(StandardFontFamily::Helvetica), false)
-    } else if haystack.contains("courier") {
-        (Some(StandardFontFamily::Courier), true)
-    } else if haystack.contains("mono") {
-        (Some(StandardFontFamily::Courier), false)
-    } else if haystack.contains("times") {
-        (Some(StandardFontFamily::Times), true)
-    } else if haystack.contains("serif") {
-        (Some(StandardFontFamily::Times), false)
+    // GL-QA38: The keyword heuristic is an approximation — even "HelveticaNeue"
+    // or "Courier-Custom" are not the same font as the exact Standard-14 face.
+    // Returning exact=true here caused the PDF's /Widths array to be silently
+    // ignored (PDF viewers only ignore /Widths for confirmed Standard-14 fonts,
+    // not for lookalike substitutions).  Always return exact=false from this
+    // heuristic path so that the /Widths array is respected when present, and
+    // the Standard-14 metric tables are used only as the fallback of last resort.
+    let family = if haystack.contains("helvetica") || haystack.contains("arial") || haystack.contains("sans") {
+        Some(StandardFontFamily::Helvetica)
+    } else if haystack.contains("courier") || haystack.contains("mono") {
+        Some(StandardFontFamily::Courier)
+    } else if haystack.contains("times") || haystack.contains("serif") {
+        Some(StandardFontFamily::Times)
     } else if haystack.contains("zapfdingbats") || haystack.contains("dingbats") {
         return Some((StandardFont::ZapfDingBats, false));
     } else {
-        (None, false)
+        None
     };
+    let exact = false;
 
     let font = match (family?, is_bold, is_italic) {
         (StandardFontFamily::Helvetica, false, false) => StandardFont::Helvetica,
