@@ -214,6 +214,341 @@ pub fn generate_all_overlays(
         .collect()
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// RenderTree — inspectable intermediate representation (XFA-F5-01 / #1104)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// A node in the intermediate render representation.
+///
+/// `RenderTree` is cheap to build and intended for debug/inspection only.
+/// It mirrors the structure of the layout DOM but strips out raw PDF operator
+/// details in favour of human-readable fields.
+#[derive(Debug, Clone)]
+pub enum RenderNode {
+    /// A page container with known dimensions.
+    Page {
+        width: f64,
+        height: f64,
+        children: Vec<RenderNode>,
+    },
+    /// A single line of text positioned in PDF coordinate space.
+    Text {
+        x: f64,
+        y: f64,
+        content: String,
+        font: String,
+        size: f64,
+    },
+    /// A filled/stroked rectangle.
+    Rect {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        fill: Option<[u8; 3]>,
+        stroke: Option<[u8; 3]>,
+    },
+    /// An embedded image placeholder (actual bytes excluded for brevity).
+    Image {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        data_len: usize,
+    },
+    /// An interactive form widget.
+    Widget {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        field_name: String,
+        value: String,
+    },
+    /// A group of child nodes (e.g. a subform container).
+    Group { children: Vec<RenderNode> },
+}
+
+impl RenderNode {
+    /// Produce a human-readable, indented tree representation.
+    fn fmt_indented(&self, buf: &mut String, depth: usize) {
+        let indent = "  ".repeat(depth);
+        match self {
+            RenderNode::Page {
+                width,
+                height,
+                children,
+            } => {
+                buf.push_str(&format!("{indent}Page({width:.1}x{height:.1})\n"));
+                for c in children {
+                    c.fmt_indented(buf, depth + 1);
+                }
+            }
+            RenderNode::Text {
+                x,
+                y,
+                content,
+                font,
+                size,
+            } => {
+                let preview: String = content.chars().take(40).collect();
+                let ellipsis = if content.len() > 40 { "…" } else { "" };
+                buf.push_str(&format!(
+                    "{indent}Text({x:.1},{y:.1}) font={font} size={size:.1} \"{preview}{ellipsis}\"\n"
+                ));
+            }
+            RenderNode::Rect {
+                x,
+                y,
+                width,
+                height,
+                fill,
+                stroke,
+            } => {
+                let fill_str = fill
+                    .map(|[r, g, b]| format!("fill=#{r:02X}{g:02X}{b:02X}"))
+                    .unwrap_or_default();
+                let stroke_str = stroke
+                    .map(|[r, g, b]| format!("stroke=#{r:02X}{g:02X}{b:02X}"))
+                    .unwrap_or_default();
+                buf.push_str(&format!(
+                    "{indent}Rect({x:.1},{y:.1} {width:.1}x{height:.1}) {fill_str} {stroke_str}\n"
+                ));
+            }
+            RenderNode::Image {
+                x,
+                y,
+                width,
+                height,
+                data_len,
+            } => {
+                buf.push_str(&format!(
+                    "{indent}Image({x:.1},{y:.1} {width:.1}x{height:.1}) bytes={data_len}\n"
+                ));
+            }
+            RenderNode::Widget {
+                x,
+                y,
+                width,
+                height,
+                field_name,
+                value,
+            } => {
+                let preview: String = value.chars().take(30).collect();
+                buf.push_str(&format!(
+                    "{indent}Widget({x:.1},{y:.1} {width:.1}x{height:.1}) name={field_name} value=\"{preview}\"\n"
+                ));
+            }
+            RenderNode::Group { children } => {
+                buf.push_str(&format!("{indent}Group\n"));
+                for c in children {
+                    c.fmt_indented(buf, depth + 1);
+                }
+            }
+        }
+    }
+}
+
+/// The full intermediate render tree for a document.
+///
+/// Each element of `pages` is a `RenderNode::Page` containing the positioned
+/// content nodes for that page.
+#[derive(Debug, Clone)]
+pub struct RenderTree {
+    pub pages: Vec<RenderNode>,
+}
+
+impl RenderTree {
+    /// Produce a human-readable, indented tree string for debug output.
+    pub fn to_debug_string(&self) -> String {
+        let mut buf = String::new();
+        for page in &self.pages {
+            page.fmt_indented(&mut buf, 0);
+        }
+        buf
+    }
+}
+
+/// Build a `RenderTree` from a `LayoutDom`.
+///
+/// This is a lightweight, non-mutating walk: no PDF operators are emitted.
+/// Intended for inspection and debug tooling only; not called on the hot path.
+pub fn layout_dom_to_render_tree(layout: &LayoutDom, config: &XfaRenderConfig) -> RenderTree {
+    let pages = layout
+        .pages
+        .iter()
+        .map(|page| {
+            let mapper = CoordinateMapper::new(page.height, page.width);
+            let children = render_tree_nodes(&page.nodes, 0.0, 0.0, &mapper, config);
+            RenderNode::Page {
+                width: page.width,
+                height: page.height,
+                children,
+            }
+        })
+        .collect();
+    RenderTree { pages }
+}
+
+fn render_tree_nodes(
+    nodes: &[LayoutNode],
+    parent_x: f64,
+    parent_y: f64,
+    mapper: &CoordinateMapper,
+    config: &XfaRenderConfig,
+) -> Vec<RenderNode> {
+    let mut result = Vec::new();
+    for node in nodes {
+        let abs_x = node.rect.x + parent_x;
+        let abs_y = node.rect.y + parent_y;
+        let w = node.rect.width;
+        let h = node.rect.height;
+        let pdf_y = mapper.xfa_to_pdf_y(abs_y, h);
+        let node_cfg = apply_node_style(config, &node.style);
+
+        // Emit a Rect node when background or border is configured.
+        let fill = node_cfg.background_color.map(|c| {
+            [
+                (c[0] * 255.0) as u8,
+                (c[1] * 255.0) as u8,
+                (c[2] * 255.0) as u8,
+            ]
+        });
+        let stroke = if node_cfg.draw_borders && node_cfg.border_width > 0.0 {
+            let bc = node_cfg.border_color;
+            Some([
+                (bc[0] * 255.0) as u8,
+                (bc[1] * 255.0) as u8,
+                (bc[2] * 255.0) as u8,
+            ])
+        } else {
+            None
+        };
+        if fill.is_some() || stroke.is_some() {
+            result.push(RenderNode::Rect {
+                x: abs_x,
+                y: pdf_y,
+                width: w,
+                height: h,
+                fill,
+                stroke,
+            });
+        }
+
+        let leaf = match &node.content {
+            LayoutContent::Field {
+                value,
+                field_kind,
+                font_size,
+                font_family,
+            } => {
+                use xfa_layout_engine::form::FieldKind;
+                match field_kind {
+                    FieldKind::Checkbox | FieldKind::Radio => Some(RenderNode::Widget {
+                        x: abs_x,
+                        y: pdf_y,
+                        width: w,
+                        height: h,
+                        field_name: node.name.clone(),
+                        value: value.clone(),
+                    }),
+                    _ => {
+                        let font_ref = config
+                            .font_map
+                            .get(&font_bridge_key_for_tree(*font_family))
+                            .cloned()
+                            .unwrap_or_else(|| node_cfg.default_font.clone());
+                        if !value.is_empty() {
+                            Some(RenderNode::Text {
+                                x: abs_x,
+                                y: pdf_y,
+                                content: value.clone(),
+                                font: font_ref,
+                                size: if *font_size > 0.0 {
+                                    *font_size
+                                } else {
+                                    node_cfg.default_font_size
+                                },
+                            })
+                        } else {
+                            Some(RenderNode::Widget {
+                                x: abs_x,
+                                y: pdf_y,
+                                width: w,
+                                height: h,
+                                field_name: node.name.clone(),
+                                value: value.clone(),
+                            })
+                        }
+                    }
+                }
+            }
+            LayoutContent::Text(text) => {
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(RenderNode::Text {
+                        x: abs_x,
+                        y: pdf_y,
+                        content: text.clone(),
+                        font: node_cfg.default_font.clone(),
+                        size: node_cfg.default_font_size,
+                    })
+                }
+            }
+            LayoutContent::WrappedText {
+                lines, font_size, ..
+            } => {
+                if lines.is_empty() {
+                    None
+                } else {
+                    Some(RenderNode::Text {
+                        x: abs_x,
+                        y: pdf_y,
+                        content: lines.join(" "),
+                        font: node_cfg.default_font.clone(),
+                        size: *font_size,
+                    })
+                }
+            }
+            LayoutContent::Image { data, .. } => Some(RenderNode::Image {
+                x: abs_x,
+                y: pdf_y,
+                width: w,
+                height: h,
+                data_len: data.len(),
+            }),
+            LayoutContent::Draw(_) | LayoutContent::None => None,
+        };
+        if let Some(leaf_node) = leaf {
+            result.push(leaf_node);
+        }
+
+        // Recurse into children.
+        if !node.children.is_empty() {
+            let child_x = abs_x + node.style.inset_left_pt.unwrap_or(0.0);
+            let child_y = abs_y + node.style.inset_top_pt.unwrap_or(0.0);
+            let child_nodes = render_tree_nodes(&node.children, child_x, child_y, mapper, config);
+            if !child_nodes.is_empty() {
+                result.push(RenderNode::Group {
+                    children: child_nodes,
+                });
+            }
+        }
+    }
+    result
+}
+
+/// Return a font-bridge lookup key from a FontFamily enum for render-tree use.
+fn font_bridge_key_for_tree(family: xfa_layout_engine::text::FontFamily) -> String {
+    use xfa_layout_engine::text::FontFamily;
+    match family {
+        FontFamily::SansSerif => "sans-serif".to_string(),
+        FontFamily::Monospace => "monospace".to_string(),
+        FontFamily::Serif => "serif".to_string(),
+    }
+}
+
 fn render_nodes(
     nodes: &[LayoutNode],
     parent_x: f64,
@@ -1480,6 +1815,26 @@ fn draw_check_mark(
     }
 }
 
+/// Render a checkbox widget (XFA `<checkButton>`).
+///
+/// # Checked/unchecked state (XFA-F5-03)
+///
+/// The checked state is resolved by `is_check_button_checked`, which compares
+/// the bound `value` against:
+/// - `node_style.check_button_on_value` — the "on" value string from the XFA
+///   template's `<items>` or `<value><integer>1</integer></value>` entry.
+/// - A set of conventional truthy strings: "1", "true", "yes", "on" (case-
+///   insensitive) when no explicit on-value is set.
+///
+/// When checked, `draw_check_mark` renders the mark symbol according to
+/// `config.check_button_mark` (XFA `<checkButton mark="check|cross|…">`).
+/// Supported marks: check (default), cross, circle, diamond, square, star.
+///
+/// When unchecked, only the outer rectangle border is drawn.
+///
+/// Background fill is only applied when `node_style.bg_color` is explicitly set
+/// (i.e. the XFA template has a `<fill>` element).  Global config background
+/// is intentionally ignored to avoid regression with check/radio controls.
 fn render_checkbox(
     x: f64,
     pdf_y: f64,
@@ -1536,6 +1891,21 @@ fn render_checkbox(
     write_ops(ops, format_args!("Q\n"));
 }
 
+/// Render a radio-button widget (XFA `<checkButton shape="round">`).
+///
+/// # Selected state (XFA-F5-03)
+///
+/// Selected state is resolved identically to checkboxes via
+/// `is_check_button_checked` using `FieldKind::Radio`.
+///
+/// When selected, a filled inner circle (smaller radius, ~55% of outer) is
+/// drawn using 4 Bézier curves (`c` operator) unless `node_style.check_button_mark`
+/// overrides the symbol type (e.g. `mark="cross"` draws an ✕ instead).
+///
+/// When deselected, only the outer circle border is drawn (stroke only, no fill).
+///
+/// Background fill follows the same rule as checkboxes: only `node_style.bg_color`
+/// (explicit template fill) is honoured; global config background is ignored.
 fn render_radio(
     x: f64,
     pdf_y: f64,
@@ -1741,6 +2111,24 @@ fn is_check_button_checked(value: &str, field_kind: FieldKind, node_style: &Form
     false
 }
 
+/// Render a dropdown/listbox widget (XFA `<choiceList>`).
+///
+/// # Selected value display (XFA-F5-03)
+///
+/// The dropdown renders its **display value** (the human-readable label),
+/// not the raw data value.  Per XFA Spec 3.3 §7.7, a `<choiceList>` has two
+/// parallel item lists:
+/// - `save_items` — the programmatic values bound to the data model.
+/// - `display_items` — the labels shown to the user.
+///
+/// Resolution order:
+/// 1. Look up `value` in `save_items`; if found, render `display_items[idx]`.
+/// 2. If no match, render `value` as-is (fallback for pre-filled raw text).
+/// 3. If the resolved display value is empty, nothing is rendered (matches
+///    Adobe Acrobat behaviour for empty choice fields).
+///
+/// The dropdown arrow indicator (triangle) is rendered via `/F2` (Symbol font)
+/// so it appears even when the main font map does not include Symbol.
 #[allow(clippy::too_many_arguments)]
 fn render_dropdown(
     x: f64,
@@ -2005,6 +2393,33 @@ fn render_signature(
     }
 }
 
+/// Render a single-line static text element (XFA `<draw>` with text content).
+///
+/// # Font selection (XFA-F5-02)
+///
+/// Font is resolved in priority order:
+/// 1. `config.font_map` keyed by the node's resolved `FontFamily` enum (via
+///    `resolve_font_ref`). This maps XFA typeface names to PDF `/XFA_Fn` refs
+///    built by `font_bridge` during the flatten pipeline.
+/// 2. Fallback to the globally configured `config.default_font` (e.g.
+///    `"Helvetica"` for built-in Type1 fonts).
+///
+/// Font size comes from `node_style.font_size` with `config.default_font_size`
+/// as a fallback.
+///
+/// # Character / word spacing
+///
+/// Character and word spacing operators (`Tc`, `Tw`) are NOT emitted by this
+/// function.  XFA does not expose character/word spacing in its data model, so
+/// the PDF default (0 pt spacing) is used.  Spacing is effectively controlled
+/// by the font metrics and layout engine word-wrapping instead.
+///
+/// # Line wrapping
+///
+/// Single-line text nodes are never wrapped by the render bridge.  All
+/// word-wrapping decisions are made in the layout engine (`xfa-layout-engine`)
+/// before the `LayoutDom` is produced.  Multi-line output arrives as
+/// `LayoutContent::WrappedText` with pre-computed `lines`.
 #[allow(clippy::too_many_arguments)]
 fn render_text(
     x: f64,
@@ -2114,6 +2529,30 @@ fn render_text(
     }
 }
 
+/// Render pre-wrapped multiline text from a `LayoutContent::WrappedText` node.
+///
+/// # Line-spacing / Td offsets (XFA-F5-02)
+///
+/// Each line is positioned with a PDF `Td` operator:
+/// - **First line**: absolute `Td` (`text_x`, `first_line_pdf_y`) places the
+///   baseline at the resolved starting Y coordinate.
+/// - **Subsequent lines**: relative `Td` (0, `-line_height`) advances downward
+///   by `line_height` (in PDF's coordinate system the Y axis grows upward, so
+///   a negative delta moves down).
+///
+/// `line_height` is taken from `node_style.line_height_pt` if explicitly set,
+/// otherwise derived from the resolved font's ascender + descender scaled to
+/// the current font size (`font_metrics.line_height_pt()`).
+///
+/// # Paragraph indentation
+///
+/// When `first_line_of_para[i]` is `true`, the first character of line `i` is
+/// shifted right by `node_style.text_indent_pt`.  All other lines are indented
+/// by `pad_left` (margin-left).
+///
+/// # Character / word spacing
+///
+/// Neither `Tc` nor `Tw` are emitted.  XFA does not surface these properties.
 #[allow(clippy::too_many_arguments)]
 fn render_multiline(
     x: f64,
@@ -3839,6 +4278,263 @@ mod tests {
         assert!(
             cross_overlay.matches(" l\nS\n").count() >= 2,
             "explicit radio mark should render the requested symbol: {cross_overlay}"
+        );
+    }
+
+    // ── RenderTree tests (#1104) ──────────────────────────────────────────────
+
+    #[test]
+    fn render_tree_page_dimensions() {
+        let page = make_page(vec![]);
+        let layout = LayoutDom { pages: vec![page] };
+        let tree = layout_dom_to_render_tree(&layout, &XfaRenderConfig::default());
+        assert_eq!(tree.pages.len(), 1);
+        match &tree.pages[0] {
+            RenderNode::Page { width, height, .. } => {
+                assert!((*width - 612.0).abs() < 0.01, "width should be 612pt");
+                assert!((*height - 792.0).abs() < 0.01, "height should be 792pt");
+            }
+            other => panic!("expected Page node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn render_tree_text_node_captured() {
+        let node = LayoutNode {
+            form_node: xfa_layout_engine::form::FormNodeId(0),
+            rect: xfa_layout_engine::types::Rect::new(10.0, 20.0, 100.0, 15.0),
+            name: "lbl".to_string(),
+            content: LayoutContent::Text("Hello tree".to_string()),
+            children: vec![],
+            style: Default::default(),
+            display_items: vec![],
+            save_items: vec![],
+        };
+        let layout = LayoutDom {
+            pages: vec![LayoutPage {
+                width: 612.0,
+                height: 792.0,
+                nodes: vec![node],
+            }],
+        };
+        let tree = layout_dom_to_render_tree(&layout, &XfaRenderConfig::default());
+        let debug = tree.to_debug_string();
+        assert!(
+            debug.contains("Hello tree"),
+            "debug string should contain text content: {debug}"
+        );
+        assert!(
+            debug.contains("Text("),
+            "debug string should contain Text node: {debug}"
+        );
+    }
+
+    // ── Text fidelity tests (#1105) ───────────────────────────────────────────
+
+    #[test]
+    fn text_node_emits_correct_font_and_size_operators() {
+        // A text field with font_size=12 should emit /F1 12.0 Tf (or the default
+        // font reference) in the content stream.
+        let node = LayoutNode {
+            form_node: xfa_layout_engine::form::FormNodeId(0),
+            rect: xfa_layout_engine::types::Rect::new(10.0, 10.0, 100.0, 20.0),
+            name: "f".to_string(),
+            content: LayoutContent::Field {
+                value: "test value".to_string(),
+                field_kind: FieldKind::Text,
+                font_size: 12.0,
+                font_family: xfa_layout_engine::text::FontFamily::Serif,
+            },
+            children: vec![],
+            style: Default::default(),
+            display_items: vec![],
+            save_items: vec![],
+        };
+        let s = overlay_str(&make_page(vec![node]));
+        // Content stream must contain a Tf operator and the size 12.0
+        assert!(s.contains("Tf"), "should contain Tf font-select operator: {s}");
+        assert!(
+            s.contains("12.0 Tf"),
+            "should use specified font size 12.0: {s}"
+        );
+        assert!(s.contains("(test value) Tj"), "should render the value: {s}");
+    }
+
+    #[test]
+    fn multiline_text_has_correct_td_offsets() {
+        // A WrappedText node with two lines should emit two Td position operators.
+        let node = LayoutNode {
+            form_node: xfa_layout_engine::form::FormNodeId(0),
+            rect: xfa_layout_engine::types::Rect::new(10.0, 10.0, 100.0, 40.0),
+            name: "ml".to_string(),
+            content: LayoutContent::WrappedText {
+                lines: vec!["line one".to_string(), "line two".to_string()],
+                first_line_of_para: vec![true, false],
+                font_size: 10.0,
+                text_align: xfa_layout_engine::types::TextAlign::Left,
+                font_family: xfa_layout_engine::text::FontFamily::Serif,
+                space_above_pt: None,
+                space_below_pt: None,
+            },
+            children: vec![],
+            style: Default::default(),
+            display_items: vec![],
+            save_items: vec![],
+        };
+        let s = overlay_str(&make_page(vec![node]));
+        // Both lines should be rendered.
+        assert!(s.contains("(line one) Tj"), "first line missing: {s}");
+        assert!(s.contains("(line two) Tj"), "second line missing: {s}");
+        // There should be at least two Td operators (one per line).
+        let td_count = s.matches(" Td\n").count();
+        assert!(td_count >= 2, "expected ≥2 Td operators for two lines: {s}");
+    }
+
+    // ── Widget rendering tests (#1106) ────────────────────────────────────────
+
+    #[test]
+    fn checkbox_checked_renders_nonempty_stream() {
+        let node = make_styled_checkbox(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "1",
+            FormNodeStyle {
+                check_button_on_value: Some("1".to_string()),
+                check_button_off_value: Some("0".to_string()),
+                border_width_pt: Some(0.5),
+                ..Default::default()
+            },
+        );
+        let s = overlay_str(&make_page(vec![node]));
+        assert!(!s.is_empty(), "checked checkbox overlay must not be empty");
+        assert!(s.contains("re"), "checkbox must emit a rectangle: {s}");
+    }
+
+    #[test]
+    fn radio_selected_renders_nonempty_stream() {
+        let node = make_styled_radio(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "yes",
+            FormNodeStyle {
+                check_button_on_value: Some("yes".to_string()),
+                check_button_off_value: Some("no".to_string()),
+                ..Default::default()
+            },
+        );
+        let s = overlay_str(&make_page(vec![node]));
+        assert!(!s.is_empty(), "selected radio overlay must not be empty");
+        // Selected radio should render a filled inner circle (Bezier 'c' operators).
+        assert!(
+            s.contains(" c\n"),
+            "selected radio must render circular fill: {s}"
+        );
+    }
+
+    #[test]
+    fn dropdown_selected_value_renders_nonempty_stream() {
+        let node = LayoutNode {
+            form_node: xfa_layout_engine::form::FormNodeId(0),
+            rect: xfa_layout_engine::types::Rect::new(10.0, 10.0, 100.0, 20.0),
+            name: "dd".to_string(),
+            content: LayoutContent::Field {
+                value: "opt1".to_string(),
+                field_kind: FieldKind::Dropdown,
+                font_size: 10.0,
+                font_family: xfa_layout_engine::text::FontFamily::Serif,
+            },
+            children: vec![],
+            style: Default::default(),
+            display_items: vec!["Option 1".to_string()],
+            save_items: vec!["opt1".to_string()],
+        };
+        let s = overlay_str(&make_page(vec![node]));
+        assert!(!s.is_empty(), "dropdown overlay must not be empty");
+        assert!(
+            s.contains("(Option 1) Tj"),
+            "dropdown must render display label: {s}"
+        );
+    }
+
+    // ── Field rendering tests (#1107) ─────────────────────────────────────────
+
+    #[test]
+    fn text_field_renders_bound_value() {
+        let node = LayoutNode {
+            form_node: xfa_layout_engine::form::FormNodeId(0),
+            rect: xfa_layout_engine::types::Rect::new(10.0, 10.0, 100.0, 20.0),
+            name: "name_field".to_string(),
+            content: LayoutContent::Field {
+                value: "John Doe".to_string(),
+                field_kind: FieldKind::Text,
+                font_size: 10.0,
+                font_family: xfa_layout_engine::text::FontFamily::Serif,
+            },
+            children: vec![],
+            style: Default::default(),
+            display_items: vec![],
+            save_items: vec![],
+        };
+        let s = overlay_str(&make_page(vec![node]));
+        assert!(
+            s.contains("(John Doe) Tj"),
+            "text field must render its bound value: {s}"
+        );
+    }
+
+    #[test]
+    fn numeric_field_formats_value_with_default_pattern() {
+        // NumericEdit with no explicit pattern: trailing zeros stripped.
+        let node = LayoutNode {
+            form_node: xfa_layout_engine::form::FormNodeId(0),
+            rect: xfa_layout_engine::types::Rect::new(10.0, 10.0, 80.0, 20.0),
+            name: "amount".to_string(),
+            content: LayoutContent::Field {
+                value: "42.00000000".to_string(),
+                field_kind: FieldKind::NumericEdit,
+                font_size: 10.0,
+                font_family: xfa_layout_engine::text::FontFamily::Serif,
+            },
+            children: vec![],
+            style: Default::default(),
+            display_items: vec![],
+            save_items: vec![],
+        };
+        let s = overlay_str(&make_page(vec![node]));
+        // format_numeric_default strips trailing zeros → "42"
+        assert!(
+            s.contains("(42) Tj"),
+            "numeric field should render cleaned value: {s}"
+        );
+    }
+
+    #[test]
+    fn date_field_renders_value_with_format_pattern() {
+        // DateField: value rendered with the format_pattern if set, else raw.
+        // Here we simulate a date field with a raw value and no pattern: must render value as-is.
+        let node = LayoutNode {
+            form_node: xfa_layout_engine::form::FormNodeId(0),
+            rect: xfa_layout_engine::types::Rect::new(10.0, 10.0, 100.0, 20.0),
+            name: "date_field".to_string(),
+            content: LayoutContent::Field {
+                value: "2024-01-15".to_string(),
+                field_kind: FieldKind::DateTimePicker,
+                font_size: 10.0,
+                font_family: xfa_layout_engine::text::FontFamily::Serif,
+            },
+            children: vec![],
+            style: Default::default(),
+            display_items: vec![],
+            save_items: vec![],
+        };
+        let s = overlay_str(&make_page(vec![node]));
+        assert!(
+            s.contains("(2024-01-15) Tj"),
+            "date field must render its value: {s}"
         );
     }
 }
