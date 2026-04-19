@@ -12,6 +12,25 @@ CLI usage:
 Also importable as a module:
     from validate_flatten_output import validate_flatten
 """
+
+# VALIDATOR FIX DESIGN (FSC-04/FSC-06)
+#
+# Current: _has_xfa() and _has_widget_annotations() use raw byte scan.
+# This causes false positives when orphaned lopdf objects remain in the byte
+# stream after catalog references are removed.
+#
+# Fix: replace raw scans with structural traversal using pikepdf:
+#   _has_xfa(): pdf.Root -> /AcroForm -> /XFA (None if not reachable)
+#   _has_widget_annotations(): all pages -> /Annots -> /Subtype == /Widget
+#
+# Fallback: if pikepdf is unavailable, use a context-aware scan like
+# _has_acroform(). Do not fall back to bare `b"/XFA" in pdf_bytes`.
+#
+# Validation primacy (FLATTEN_OUTPUT_SPEC.md):
+#   L1 (structural) is the locking gate. L2 (bytes) is informational only.
+#   flatten_clean = "pass" when the catalog is clean, even if orphaned bytes
+#   remain in the serialized output.
+
 import argparse
 import json
 import re
