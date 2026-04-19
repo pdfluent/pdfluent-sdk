@@ -10,3 +10,4 @@ description = "Box-model and pagination layout engine for XFA forms."
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
 thiserror.workspace = true
+log = "0.4"

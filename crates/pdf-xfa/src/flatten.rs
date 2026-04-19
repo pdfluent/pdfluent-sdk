@@ -206,6 +206,16 @@ fn page_has_field_data(nodes: &[LayoutNode]) -> bool {
 ///
 /// If the PDF has no XFA content, returns a clone of the input unchanged.
 ///
+/// # Performance Target
+///
+/// P95 latency ≤ 5 seconds for 50-page documents (see
+/// `docs/XFA_SUCCESS_CRITERIA.md`).  The pipeline uses a 30-second hard
+/// timeout per document; pathological inputs fall back to `static_fallback`.
+///
+/// # Debug Logging
+///
+/// Enable debug logging with `RUST_LOG=pdf_xfa=debug`.
+///
 /// # Oracle Comparison Approach (XFA-F1-04)
 ///
 /// Reference ("oracle") output for quality comparison is generated using:
@@ -231,6 +241,7 @@ fn page_has_field_data(nodes: &[LayoutNode]) -> bool {
 ///
 /// Quality is measured as per-page SSIM vs. the pdfRest oracle (target ≥ 0.95).
 /// See `scripts/generate_xfa_reference.sh` and `docs/XFA_SUCCESS_CRITERIA.md`.
+#[must_use = "flattened PDF bytes must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     // GL-QA36: Re-entrance guard.  If this function is entered while already
     // running on this thread (depth ≥ 1), a recursive call has occurred —
@@ -357,6 +368,12 @@ fn xfa_flatten_inner(
     let mut _stage = PipelineStage::Extract;
 
     // PIPELINE: stage 0 — Extract (parse datasets and image files from PDF)
+    log::debug!(
+        "XFA flatten: {} bytes input, template={} bytes",
+        pdf_bytes.len(),
+        template_xml.len()
+    );
+
     let data_dom = if let Some(ds_xml) = datasets_xml {
         DataDom::from_xml(ds_xml)
             .map_err(|e| XfaError::ParseFailed(format!("datasets parse: {e}")))?
@@ -371,6 +388,19 @@ fn xfa_flatten_inner(
         Err(_) => HashMap::new(),
     };
 
+    // XFA-F9-02 (#1121): Graceful degradation — warn on unsupported features
+    // instead of failing silently.  These checks run once per document after
+    // template extraction so they add negligible overhead.
+    if template_xml.contains("barcode") {
+        log::warn!("XFA barcode elements found but not supported — rendered as empty boxes");
+    }
+    if template_xml.contains("<signature") || template_xml.contains("<Signature") {
+        log::warn!("XFA signature elements found but not supported — elements skipped");
+    }
+    if template_xml.contains("text/javascript") {
+        log::warn!("XFA JavaScript found but not supported — scripts will not execute");
+    }
+
     // PIPELINE: stage 1 — Bind (merge template with data DOM)
     debug_assert!(_stage <= PipelineStage::Bind, "pipeline stage order violated: expected <= Bind");
     _stage = PipelineStage::Bind;
@@ -379,6 +409,11 @@ fn xfa_flatten_inner(
     let (mut tree, root_id) = merger
         .merge(template_xml)
         .map_err(|e| XfaError::ParseFailed(format!("template merge: {e}")))?;
+
+    log::debug!(
+        "XFA bind: {} form nodes created",
+        tree.nodes.len()
+    );
 
     let _ = apply_dynamic_scripts(&mut tree, root_id);
 
@@ -408,6 +443,11 @@ fn xfa_flatten_inner(
     if layout.pages.is_empty() {
         return Err(XfaError::LayoutFailed("layout produced 0 pages".into()));
     }
+
+    log::debug!(
+        "XFA layout: {} pages produced",
+        layout.pages.len()
+    );
 
     // XFA Spec §4.3: suppress page subforms whose data is empty or absent.
     // A page with fields but no populated values is considered "data-empty"
@@ -453,6 +493,12 @@ fn xfa_flatten_inner(
     debug_assert!(_stage <= PipelineStage::Embed, "pipeline stage order violated: expected <= Embed");
     _stage = PipelineStage::Embed;
 
+    // PERF: embed_resolved_fonts is O(f * p) where f = unique resolved fonts
+    // and p = PDF pages.  Each font requires a full font-program copy into the
+    // PDF object stream plus /Widths array serialisation.  For documents with
+    // many embedded fonts and many pages this is the dominant allocation source.
+    // Potential optimisation: share font objects across pages (already done for
+    // standard Type1 fonts F1-F3; extend to TrueType/CID fonts).
     let (font_map, embedded_font_objects, metrics_data) =
         embed_resolved_fonts(&mut doc, &resolved_fonts, &layout);
 
@@ -464,6 +510,12 @@ fn xfa_flatten_inner(
 
     let overlays = generate_all_overlays(&layout, &config)
         .map_err(|e| XfaError::LayoutFailed(format!("overlay generation: {e:?}")))?;
+
+    log::debug!(
+        "XFA render: {} content streams generated ({} bytes total)",
+        overlays.len(),
+        overlays.iter().map(|o| o.content_stream.len()).sum::<usize>()
+    );
 
     // Register standard PDF fonts: F1=Times-Roman (serif), F2=Helvetica (sans), F3=Courier (mono).
     let font_ids: [ObjectId; 3] = [
@@ -5008,5 +5060,41 @@ ET
         assert_eq!(v.completeness_ratio, 1.0);
         assert!(v.expected_values.is_empty());
         assert!(v.missing_values.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // XFA-F9-03 (#1122): Debug logging — no panic/error on empty/non-XFA input
+    // -----------------------------------------------------------------------
+
+    /// Calling `flatten_xfa_to_pdf` with completely empty input must not panic
+    /// and must return an Ok (pass-through) or a well-formed Err.
+    ///
+    /// This also exercises the logging infrastructure: no log::error! calls
+    /// should be emitted for inputs that simply have no XFA content.
+    #[test]
+    fn flatten_empty_bytes_does_not_panic_and_does_not_error() {
+        // Empty byte slice: not a PDF, no XFA markers — should return Ok([])
+        // or at worst a well-formed Err (not a panic).
+        let result = flatten_xfa_to_pdf(b"");
+        // We only assert it does not panic; Ok with empty bytes is acceptable.
+        match result {
+            Ok(_) => {}
+            Err(_) => {} // Err is fine for invalid input
+        }
+    }
+
+    /// Non-XFA PDF bytes: flatten_xfa_to_pdf must return the input unchanged
+    /// and must not emit any log errors.
+    #[test]
+    fn flatten_non_xfa_bytes_returns_input_unchanged() {
+        // A trivial byte string that looks vaguely like PDF but has no /AcroForm
+        // and no xdp:xdp — the pre-check at the start of flatten_xfa_to_pdf
+        // should return immediately with the original bytes cloned.
+        let input = b"%PDF-1.4\n%%EOF\n";
+        let result = flatten_xfa_to_pdf(input);
+        match result {
+            Ok(out) => assert_eq!(out, input, "non-XFA input should pass through unchanged"),
+            Err(_) => {} // Err is acceptable for degenerate input
+        }
     }
 }

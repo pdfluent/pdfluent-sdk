@@ -99,6 +99,57 @@ pub struct LayoutDom {
     pub pages: Vec<LayoutPage>,
 }
 
+impl LayoutDom {
+    /// Estimate the total heap bytes consumed by this layout tree.
+    ///
+    /// Walks every page and every node recursively, summing the heap
+    /// contributions of `Vec` fields (children, display_items, save_items)
+    /// and inline `String` fields (name, content strings).  The estimate is
+    /// a lower bound — it does not account for `Vec` capacity overheads or
+    /// internal allocator padding.
+    ///
+    /// Primary use: memory-usage regression tests and profiling dashboards.
+    pub fn estimated_heap_bytes(&self) -> usize {
+        fn node_bytes(n: &LayoutNode) -> usize {
+            // Name string heap allocation
+            let mut total = n.name.len();
+            // Children vec + each child
+            total += n.children.capacity() * std::mem::size_of::<LayoutNode>();
+            for child in &n.children {
+                total += node_bytes(child);
+            }
+            // display_items / save_items
+            for s in &n.display_items {
+                total += s.len();
+            }
+            for s in &n.save_items {
+                total += s.len();
+            }
+            // Content strings
+            total += match &n.content {
+                LayoutContent::None => 0,
+                LayoutContent::Text(t) => t.len(),
+                LayoutContent::Field { value, .. } => value.len(),
+                LayoutContent::WrappedText { lines, .. } => {
+                    lines.iter().map(|l| l.len()).sum::<usize>()
+                }
+                LayoutContent::Image { data, mime_type } => data.len() + mime_type.len(),
+                LayoutContent::Draw(_) => 0,
+            };
+            total
+        }
+
+        let mut total = self.pages.capacity() * std::mem::size_of::<LayoutPage>();
+        for page in &self.pages {
+            total += page.nodes.capacity() * std::mem::size_of::<LayoutNode>();
+            for node in &page.nodes {
+                total += node_bytes(node);
+            }
+        }
+        total
+    }
+}
+
 /// Absolute maximum number of pages to prevent pagination explosion.
 /// Used as a hard upper bound; the dynamic limit from
 /// `estimate_page_limit` is preferred. (#729, #764)
@@ -260,12 +311,22 @@ impl<'a> LayoutEngine<'a> {
                             &[remaining[0].id],
                             root_node.layout,
                         )?;
+                        log::debug!(
+                            "XFA layout: processing page {}/{} (forced)",
+                            pages.len() + 1,
+                            page_limit
+                        );
                         pages.push(forced);
                         remaining = remaining[1..].to_vec();
                     } else if consumed_break_only {
                         // Break-only page: skip the blank page, continue with rest
                         remaining = rest;
                     } else {
+                        log::debug!(
+                            "XFA layout: processing page {}/{}",
+                            pages.len() + 1,
+                            page_limit
+                        );
                         pages.push(page);
                         remaining = rest;
                     }
@@ -1834,6 +1895,16 @@ impl<'a> LayoutEngine<'a> {
     /// Layout children within available space using the given strategy.
     ///
     /// Children with `occur.count() > 1` are expanded into multiple instances.
+    /// Primary layout hot path.
+    ///
+    /// Performance: this function is called recursively for every container in
+    /// the form tree (n = total nodes) and for every page during pagination
+    /// (m = pages).  The effective complexity is O(n * m) in the worst case
+    /// (e.g. 100-occurrence repeating subforms with overflow across 50 pages).
+    ///
+    /// Known hotspot: `expand_occur` allocates a new Vec on every call.
+    /// Memoizing subform heights for repeated occurrences of the same
+    /// `FormNodeId` would eliminate redundant `compute_extent` calls.
     fn layout_children(
         &self,
         children: &[FormNodeId],
@@ -6256,6 +6327,33 @@ mod tests {
         assert_eq!(resolve_display_value("abc", &meta), "abc");
         assert_eq!(resolve_display_value("", &meta), "");
     }
+
+    // -----------------------------------------------------------------------
+    // XFA-F8-02 (#1118): estimated_heap_bytes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn estimated_heap_bytes_is_positive_for_non_empty_layout() {
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "Field1", 100.0, 20.0);
+        let f2 = make_field(&mut tree, "Field2", 100.0, 20.0);
+        let root = make_subform(
+            &mut tree,
+            "Root",
+            LayoutStrategy::TopToBottom,
+            Some(200.0),
+            Some(200.0),
+            vec![f1, f2],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let layout = engine.layout(root).unwrap();
+
+        // A layout with two fields must report non-zero heap usage.
+        assert!(!layout.pages.is_empty(), "expected at least one page");
+        let bytes = layout.estimated_heap_bytes();
+        assert!(bytes > 0, "estimated_heap_bytes should be > 0 for non-empty layout");
+    }
 }
 
 #[cfg(test)]
@@ -6865,4 +6963,5 @@ mod keep_chain_tests {
         assert!(p2_names.contains(&"Heading"), "Heading should be on page 2");
         assert!(p2_names.contains(&"Body"), "Body should be on page 2");
     }
+
 }
