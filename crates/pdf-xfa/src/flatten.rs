@@ -180,6 +180,32 @@ fn page_has_field_data(nodes: &[LayoutNode]) -> bool {
 /// result is a plain PDF/1.4 document.
 ///
 /// If the PDF has no XFA content, returns a clone of the input unchanged.
+///
+/// # Oracle Comparison Approach (XFA-F1-04)
+///
+/// Reference ("oracle") output for quality comparison is generated using:
+///
+/// 1. **pdfRest** — `POST https://api.pdfrest.com/flatten-pdf`
+///    Uses Adobe's XFA engine.  Highest fidelity.  Rate-limited to ~1200
+///    calls/month across two accounts.  Keys at
+///    `~/.config/pdfluent/pdfrest-keys.json`.
+///
+///    ```bash
+///    # curl -X POST "https://api.pdfrest.com/flatten-pdf" \
+///    #   -H "Api-Key: <KEY>" \
+///    #   --form "input=@form.xfa.pdf;type=application/pdf" \
+///    #   -o reference.pdfrest.pdf
+///    ```
+///
+/// 2. **mutool** — `mutool convert -o reference.pdf input.xfa.pdf`
+///    Secondary oracle.  Free, offline, limited XFA support.
+///
+///    ```bash
+///    # mutool convert -o reference.mutool.pdf input.xfa.pdf
+///    ```
+///
+/// Quality is measured as per-page SSIM vs. the pdfRest oracle (target ≥ 0.95).
+/// See `scripts/generate_xfa_reference.sh` and `docs/XFA_SUCCESS_CRITERIA.md`.
 pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     // GL-QA36: Re-entrance guard.  If this function is entered while already
     // running on this thread (depth ≥ 1), a recursive call has occurred —
@@ -4104,5 +4130,17 @@ ET
         let pdf_bytes2 = build_xfa_pdf(SIMPLE_XDP);
         let result = flatten_xfa_to_pdf(&pdf_bytes2);
         assert!(result.is_ok(), "second flatten call should succeed, got: {result:?}");
+    }
+
+    // XFA-F1-05 (issue #1088): flatten_xfa_to_pdf must never panic on empty input.
+    // An empty byte slice is not a valid PDF, so the function should return an
+    // error rather than panic or crash.
+    #[test]
+    fn flatten_xfa_to_pdf_does_not_panic_on_empty_input() {
+        let result = flatten_xfa_to_pdf(&[]);
+        // We only require it does not panic; an Err is perfectly acceptable.
+        // (An Ok result would mean the PDF library accepts empty bytes, which
+        //  would also be fine — the important invariant is no panic/abort.)
+        let _ = result;
     }
 }
