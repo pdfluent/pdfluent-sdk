@@ -113,6 +113,11 @@ impl<'a> FormMerger<'a> {
     ///   bind regardless of hierarchy depth.
     pub fn merge(mut self, template_xml: &str) -> Result<(FormTree, FormNodeId)> {
         let mode = detect_merge_mode(template_xml);
+        log::debug!(
+            "XFA merge: mode={:?}, {} data nodes",
+            mode,
+            self.data_dom.len()
+        );
         let doc = roxmltree::Document::parse(template_xml)
             .map_err(|e| XfaError::ParseFailed(format!("template XML parse error: {e}")))?;
         let root_elem = doc.root_element();

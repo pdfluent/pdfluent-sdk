@@ -8567,6 +8567,7 @@ name = "xfa-layout-engine"
 version = "1.0.0-beta.1"
 dependencies = [
  "formcalc-interpreter",
+ "log",
  "thiserror 2.0.18",
  "xfa-dom-resolver",
 ]

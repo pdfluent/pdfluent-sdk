@@ -91,6 +91,26 @@ impl DataNode {
 }
 
 /// Arena-based Data DOM tree.
+///
+/// # Memory allocation strategy
+///
+/// Nodes are stored in a flat `Vec<DataNode>` (the arena) and referenced by
+/// index (`DataNodeId`).  This is deliberately different from a naive
+/// tree-of-Boxes (`Box<DataNode>` with child `Box<DataNode>` pointers) in
+/// three important ways:
+///
+/// 1. **No pointer indirection**: traversal walks a contiguous slice —
+///    cache-friendly reads instead of pointer chasing across the heap.
+/// 2. **Single allocation**: all nodes live in one `Vec` backing store;
+///    resizing doubles capacity like a standard `Vec` rather than allocating
+///    a separate `Box` per node.
+/// 3. **Trivial bulk deallocation**: dropping the `DataDom` drops the `Vec`
+///    in one `free()` call regardless of tree size; a tree-of-Boxes requires
+///    O(n) destructor calls.
+///
+/// The trade-off is that node removal is not O(1) (indices become stale), but
+/// the XFA data DOM is append-only during parsing and read-only during binding,
+/// so this is not a concern in practice.
 #[derive(Debug)]
 pub struct DataDom {
     nodes: Vec<DataNode>,
