@@ -30,3 +30,4 @@ package-lock.json
 /benchmarks/weekly/benchmark-*.json
 /benchmarks/weekly/benchmark-*-report.md
 /benchmarks/weekly/regression-*.md
+scripts/__pycache__/
