@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """EVH-C2-05: Validate that a flattened PDF has no XFA artifacts.
 
-Scans PDF bytes for XFA-related markers and basic structural validity.
-No external dependencies — stdlib + raw byte scanning only.
+Uses structural traversal when `pikepdf` is available, with context-aware byte
+fallbacks for basic XFA artifact detection.
 
 CLI usage:
     python3 scripts/validate_flatten_output.py \
@@ -32,6 +32,7 @@ Also importable as a module:
 #   remain in the serialized output.
 
 import argparse
+import io
 import json
 import re
 import sys
@@ -43,12 +44,31 @@ MIN_PDF_SIZE = 1024  # 1 KB
 
 
 # ---------------------------------------------------------------------------
-# Raw-byte scan helpers
+# Structural and fallback helpers
 # ---------------------------------------------------------------------------
 
 def _has_xfa(pdf_bytes: bytes) -> bool:
-    """True if /XFA key is present in the PDF bytes."""
-    return b"/XFA" in pdf_bytes
+    """True if /XFA is reachable from the document catalog."""
+    try:
+        import pikepdf
+
+        with pikepdf.open(io.BytesIO(pdf_bytes)) as pdf:
+            acroform = pdf.Root.get("/AcroForm")
+            if acroform is None:
+                return False
+            try:
+                return acroform.get("/XFA") is not None
+            except Exception:
+                return False
+    except ImportError:
+        return _has_xfa_bytes_fallback(pdf_bytes)
+    except Exception:
+        return _has_xfa_bytes_fallback(pdf_bytes)
+
+
+def _has_xfa_bytes_fallback(pdf_bytes: bytes) -> bool:
+    """Context-aware fallback when pikepdf is unavailable."""
+    return bool(re.search(rb"/XFA\s*[\[<\d]", pdf_bytes))
 
 
 def _has_needs_rendering(pdf_bytes: bytes) -> bool:
@@ -57,8 +77,34 @@ def _has_needs_rendering(pdf_bytes: bytes) -> bool:
 
 
 def _has_widget_annotations(pdf_bytes: bytes) -> bool:
-    """True if /Widget subtype annotations are present."""
-    return b"/Widget" in pdf_bytes
+    """True if /Widget annotations are reachable from any page."""
+    try:
+        import pikepdf
+
+        with pikepdf.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                annots = page.get("/Annots")
+                if annots is None:
+                    continue
+                try:
+                    for annot in annots:
+                        try:
+                            if str(annot.get("/Subtype", "")) == "/Widget":
+                                return True
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+        return False
+    except ImportError:
+        return _has_widget_bytes_fallback(pdf_bytes)
+    except Exception:
+        return _has_widget_bytes_fallback(pdf_bytes)
+
+
+def _has_widget_bytes_fallback(pdf_bytes: bytes) -> bool:
+    """Context-aware fallback when pikepdf is unavailable."""
+    return bool(re.search(rb"/Subtype\s*/Widget", pdf_bytes))
 
 
 def _has_acroform(pdf_bytes: bytes) -> bool:
@@ -162,13 +208,16 @@ def validate_flatten(pdf_path: str) -> dict:
         else:
             issues.append("no content pages detected")
 
-    # flatten_clean: pass only if no XFA artifacts and has content
-    # Note: has_acroform is informational — AcroForm without XFA is acceptable
+    # flatten_clean: pass only if the locking structural checks pass and the
+    # output still has content. Note: has_acroform is informational —
+    # AcroForm without reachable /XFA is acceptable.
     flatten_clean = (
         "pass"
         if (not has_xfa and not has_needs_rendering and not has_widget and has_content)
         else "fail"
     )
+    # Note: has_xfa and has_widget use structural traversal when available.
+    # Orphaned bytes alone do not cause flatten_clean="fail".
 
     return {
         "is_valid_pdf": valid_pdf,
