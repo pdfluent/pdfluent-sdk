@@ -2937,8 +2937,10 @@ fn find_pages_root(doc: &Document) -> Result<ObjectId> {
 /// 2. Remove `/NeedsRendering` from the catalog.
 /// 3. Remove `/XFA` from the AcroForm dictionary (if it was an indirect object
 ///    whose dict still exists in the object table).
-/// 4. Remove widget annotations from all page `/Annots` arrays.
-/// 5. Remove empty `/Annots` arrays left behind after widget removal.
+/// 4. Remove orphaned XFA packet objects and the unreachable AcroForm object
+///    from the lopdf object table.
+/// 5. Remove widget annotations from all page `/Annots` arrays.
+/// 6. Remove empty `/Annots` arrays left behind after widget removal.
 fn remove_acroform(doc: &mut Document) {
     let root_id = match doc.trailer.get(b"Root") {
         Ok(Object::Reference(id)) => *id,
@@ -2950,7 +2952,11 @@ fn remove_acroform(doc: &mut Document) {
     let acroform_id: Option<ObjectId> = {
         if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(root_id) {
             let acroform_ref = dict.get(b"AcroForm").ok().and_then(|o| {
-                if let Object::Reference(id) = o { Some(*id) } else { None }
+                if let Object::Reference(id) = o {
+                    Some(*id)
+                } else {
+                    None
+                }
             });
             dict.remove(b"AcroForm");
             dict.remove(b"NeedsRendering");
@@ -2960,14 +2966,43 @@ fn remove_acroform(doc: &mut Document) {
         }
     };
 
-    // Step 3: remove /XFA from the AcroForm dictionary object.
+    // Step 3: collect /XFA stream object IDs, then remove /XFA from the
+    // AcroForm dictionary object.
+    let xfa_stream_ids: Vec<ObjectId> = acroform_id
+        .and_then(|af_id| doc.get_dictionary(af_id).ok())
+        .map(|af_dict| match af_dict.get(b"XFA") {
+            Ok(Object::Array(arr)) => arr
+                .iter()
+                .filter_map(|o| {
+                    if let Object::Reference(id) = o {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            Ok(Object::Reference(id)) => vec![*id],
+            _ => Vec::new(),
+        })
+        .unwrap_or_default();
+
     if let Some(af_id) = acroform_id {
         if let Ok(Object::Dictionary(ref mut af_dict)) = doc.get_object_mut(af_id) {
             af_dict.remove(b"XFA");
         }
     }
 
-    // Step 4 & 5: remove widget annotations from every page's /Annots array,
+    // Step 4 (FSC-05): purge orphaned XFA packet objects and the unreachable
+    // AcroForm dictionary from the object table. lopdf serializes every object
+    // still present in doc.objects, even if the catalog no longer references it.
+    for stream_id in xfa_stream_ids {
+        doc.objects.remove(&stream_id);
+    }
+    if let Some(af_id) = acroform_id {
+        doc.objects.remove(&af_id);
+    }
+
+    // Step 5 & 6: remove widget annotations from every page's /Annots array,
     // then drop empty /Annots arrays entirely.
     let page_ids: Vec<ObjectId> = doc.page_iter().collect();
     for page_id in page_ids {
@@ -2978,7 +3013,13 @@ fn remove_acroform(doc: &mut Document) {
                     Ok(Object::Array(arr)) => {
                         let refs: Vec<ObjectId> = arr
                             .iter()
-                            .filter_map(|o| if let Object::Reference(r) = o { Some(*r) } else { None })
+                            .filter_map(|o| {
+                                if let Object::Reference(r) = o {
+                                    Some(*r)
+                                } else {
+                                    None
+                                }
+                            })
                             .collect();
                         Some(
                             arr.iter()
@@ -3550,6 +3591,75 @@ mod tests {
 
     fn build_xfa_pdf(xdp: &str) -> Vec<u8> {
         build_xfa_pdf_with_content(xdp, Vec::new())
+    }
+
+    fn build_xfa_doc_with_xfa_array() -> (Document, ObjectId, Vec<ObjectId>) {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.4");
+        let pages_id = doc.new_object_id();
+        let content_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! { "Length" => Object::Integer(0) },
+            Vec::new(),
+        )));
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Page".to_vec()),
+            "Parent"   => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Contents" => Object::Reference(content_id)
+        }));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type"  => Object::Name(b"Pages".to_vec()),
+                "Kids"  => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1)
+            }),
+        );
+
+        let packet_payloads = [
+            (
+                b"xdp:xdp".to_vec(),
+                br#"<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"></xdp:xdp>"#.to_vec(),
+            ),
+            (
+                b"template".to_vec(),
+                br#"<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform/></template>"#
+                    .to_vec(),
+            ),
+            (
+                b"datasets".to_vec(),
+                br#"<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"></xfa:datasets>"#
+                    .to_vec(),
+            ),
+        ];
+
+        let mut xfa_array = Vec::new();
+        let mut xfa_ids = Vec::new();
+        for (packet_name, payload) in packet_payloads {
+            let stream_id = doc.add_object(Object::Stream(Stream::new(
+                dictionary! { "Length" => Object::Integer(payload.len() as i64) },
+                payload,
+            )));
+            xfa_array.push(Object::Name(packet_name));
+            xfa_array.push(Object::Reference(stream_id));
+            xfa_ids.push(stream_id);
+        }
+
+        let acroform_id = doc.add_object(Object::Dictionary(dictionary! {
+            "XFA"    => Object::Array(xfa_array),
+            "Fields" => Object::Array(vec![])
+        }));
+        let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Catalog".to_vec()),
+            "Pages"    => Object::Reference(pages_id),
+            "AcroForm" => Object::Reference(acroform_id)
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        (doc, acroform_id, xfa_ids)
     }
 
     fn build_xfa_pdf_with_widget_appearance(
@@ -4856,6 +4966,36 @@ ET
         assert!(
             !flattened_str.contains("/XFA"),
             "/XFA must be absent from flattened output, but was found"
+        );
+    }
+
+    #[test]
+    fn remove_acroform_purges_xfa_packet_objects() {
+        let (mut doc, acroform_id, xfa_ids) = build_xfa_doc_with_xfa_array();
+
+        remove_acroform(&mut doc);
+
+        assert!(
+            !doc.objects.contains_key(&acroform_id),
+            "AcroForm object should be removed from doc.objects"
+        );
+        for xfa_id in &xfa_ids {
+            assert!(
+                !doc.objects.contains_key(xfa_id),
+                "XFA packet object {xfa_id:?} should be removed from doc.objects"
+            );
+        }
+
+        let mut out = Vec::new();
+        doc.save_to(&mut out).expect("save cleaned PDF");
+        let out_str = String::from_utf8_lossy(&out);
+        assert!(
+            !out_str.contains("xdp:xdp"),
+            "serialized output should not contain orphaned XFA packet payloads"
+        );
+        assert!(
+            !out_str.contains("<template"),
+            "serialized output should not contain orphaned template payloads"
         );
     }
 
