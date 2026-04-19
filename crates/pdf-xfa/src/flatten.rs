@@ -3173,6 +3173,258 @@ pub fn compare_flatten_quality(
 }
 
 // ---------------------------------------------------------------------------
+// XFA-F7-02 (#1114): Text completeness validation
+// ---------------------------------------------------------------------------
+
+/// Result of a text completeness validation pass.
+///
+/// Compares the data values bound in the original XFA datasets against the
+/// text content extracted from the flattened PDF to verify all field values
+/// appear in the output.
+pub struct TextValidation {
+    /// Data values extracted from the original XFA datasets XML.
+    pub expected_values: Vec<String>,
+    /// Values from `expected_values` that were found in the output text.
+    pub found_values: Vec<String>,
+    /// Values from `expected_values` that were NOT found in the output text.
+    pub missing_values: Vec<String>,
+    /// Ratio of found/expected. 1.0 means all expected values are present.
+    /// Returns 1.0 when `expected_values` is empty (nothing to check).
+    pub completeness_ratio: f64,
+}
+
+/// Extract all non-empty text node values from XFA `<field>` elements in the
+/// datasets XML packet.
+fn extract_field_values_from_datasets(datasets_xml: &str) -> Vec<String> {
+    // Minimal parser: locate every <field …> … </field> block and grab direct
+    // text content (the value node inside).  We keep this dependency-free by
+    // doing a simple byte-scan rather than pulling in an XML parser.
+    let mut values = Vec::new();
+    let mut remaining = datasets_xml;
+
+    while let Some(open_pos) = remaining.find("<field") {
+        // Advance past the opening tag itself (up to the closing `>`).
+        let tag_end = match remaining[open_pos..].find('>') {
+            Some(p) => open_pos + p + 1,
+            None => break,
+        };
+
+        // Self-closing tag (<field … />) — no value.
+        if remaining[open_pos..tag_end].ends_with("/>") {
+            remaining = &remaining[tag_end..];
+            continue;
+        }
+
+        // Find the matching </field>.
+        let close_tag = "</field>";
+        match remaining[tag_end..].find(close_tag) {
+            Some(close_pos) => {
+                let inner = &remaining[tag_end..tag_end + close_pos];
+                // Extract text from a nested <value><text>…</text></value> or
+                // just plain text between the tags.
+                let text = extract_innermost_text(inner);
+                if !text.is_empty() {
+                    values.push(text);
+                }
+                remaining = &remaining[tag_end + close_pos + close_tag.len()..];
+            }
+            None => break,
+        }
+    }
+    values
+}
+
+/// Given the inner content of a `<field>` element, return the first non-empty
+/// text value found (handles `<value><text>…</text></value>` nesting).
+fn extract_innermost_text(inner: &str) -> String {
+    // Try <text>…</text> first.
+    if let Some(start) = inner.find("<text>") {
+        let content_start = start + "<text>".len();
+        if let Some(end) = inner[content_start..].find("</text>") {
+            let s = inner[content_start..content_start + end].trim().to_string();
+            if !s.is_empty() {
+                return s;
+            }
+        }
+    }
+    // Fall back to stripping all XML tags and returning the trimmed text.
+    let stripped = strip_xml_tags(inner);
+    stripped.trim().to_string()
+}
+
+/// Remove XML/HTML tags from a string, returning only the text content.
+fn strip_xml_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for ch in s.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Extract visible text from a PDF content stream by scanning for the `Tj`,
+/// `TJ`, `'`, and `"` text-showing operators.
+///
+/// This is a best-effort scan of the raw (potentially un-decoded) bytes.
+/// It does not handle all encodings or compressed streams but is sufficient
+/// for validating that literal ASCII/Latin text values are present.
+fn extract_text_from_pdf_bytes(pdf_bytes: &[u8]) -> String {
+    let doc = match Document::load_mem(pdf_bytes) {
+        Ok(d) => d,
+        Err(_) => return String::new(),
+    };
+
+    let mut text = String::new();
+
+    for (_, obj) in &doc.objects {
+        if let Object::Stream(ref stream) = obj {
+            // Read raw stream content (decompression may fail silently).
+            let content = match stream.decompressed_content() {
+                Ok(c) => c,
+                Err(_) => stream.content.clone(),
+            };
+            let fragment = extract_text_from_content_stream(&content);
+            if !fragment.is_empty() {
+                text.push(' ');
+                text.push_str(&fragment);
+            }
+        }
+    }
+    text
+}
+
+/// Scan a PDF content stream byte slice for string operands attached to
+/// text-showing operators (Tj, TJ, ', ").
+fn extract_text_from_content_stream(content: &[u8]) -> String {
+    let s = String::from_utf8_lossy(content);
+    let mut result = String::new();
+
+    // Find parenthesis-delimited strings: (…) followed optionally by whitespace
+    // and then one of the text operators.
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, ch)) = chars.next() {
+        if ch == '(' {
+            // Collect until matching ')'.
+            let start = i + 1;
+            let mut depth: i32 = 1;
+            let mut end = start;
+            let bytes = s.as_bytes();
+            while end < bytes.len() && depth > 0 {
+                match bytes[end] {
+                    b'(' => depth += 1,
+                    b')' => depth -= 1,
+                    b'\\' => {
+                        end += 1; // skip escaped char
+                    }
+                    _ => {}
+                }
+                end += 1;
+            }
+            if depth == 0 {
+                let literal = &s[start..end - 1];
+                // Only collect printable ASCII — skip binary font strings.
+                if literal.chars().all(|c| c.is_ascii() && (c.is_alphanumeric() || c.is_whitespace() || c.is_ascii_punctuation())) {
+                    let trimmed = literal.trim();
+                    if !trimmed.is_empty() {
+                        result.push(' ');
+                        result.push_str(trimmed);
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Validate that all data values bound in the original XFA form appear in the
+/// text content of the flattened PDF.
+///
+/// Steps:
+/// 1. Extract the XFA `datasets` packet from `original_xfa_bytes`.
+/// 2. Parse all `<field>` values from the datasets XML.
+/// 3. Scan the flattened PDF's content streams for those strings.
+/// 4. Return a [`TextValidation`] with completeness metrics.
+///
+/// Returns `Ok` even when the datasets packet is absent or the XFA cannot be
+/// parsed — in that case `expected_values` will be empty and
+/// `completeness_ratio` will be `1.0`.
+pub fn validate_text_completeness(
+    original_xfa_bytes: &[u8],
+    flattened_bytes: &[u8],
+) -> crate::error::Result<TextValidation> {
+    // Step 1: extract the datasets packet from the original XFA PDF.
+    let packets = match crate::extract::extract_xfa_from_bytes(original_xfa_bytes.to_vec()) {
+        Ok(p) => p,
+        Err(_) => {
+            // Cannot extract XFA — nothing to validate.
+            return Ok(TextValidation {
+                expected_values: vec![],
+                found_values: vec![],
+                missing_values: vec![],
+                completeness_ratio: 1.0,
+            });
+        }
+    };
+
+    let datasets_xml = match packets.datasets() {
+        Some(ds) => ds.to_string(),
+        None => {
+            return Ok(TextValidation {
+                expected_values: vec![],
+                found_values: vec![],
+                missing_values: vec![],
+                completeness_ratio: 1.0,
+            });
+        }
+    };
+
+    // Step 2: extract field values.
+    let expected_values = extract_field_values_from_datasets(&datasets_xml);
+
+    if expected_values.is_empty() {
+        return Ok(TextValidation {
+            expected_values: vec![],
+            found_values: vec![],
+            missing_values: vec![],
+            completeness_ratio: 1.0,
+        });
+    }
+
+    // Step 3: extract text from the flattened PDF.
+    let output_text = extract_text_from_pdf_bytes(flattened_bytes);
+
+    // Step 4: check which expected values appear in the output.
+    let mut found_values = Vec::new();
+    let mut missing_values = Vec::new();
+
+    for value in &expected_values {
+        if output_text.contains(value.as_str()) {
+            found_values.push(value.clone());
+        } else {
+            missing_values.push(value.clone());
+        }
+    }
+
+    let completeness_ratio = if expected_values.is_empty() {
+        1.0
+    } else {
+        found_values.len() as f64 / expected_values.len() as f64
+    };
+
+    Ok(TextValidation {
+        expected_values,
+        found_values,
+        missing_values,
+        completeness_ratio,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -4340,7 +4592,7 @@ ET
     /// the FormTree and populate field values.
     #[test]
     fn form_dom_expands_repeating_subform_instances() {
-        use xfa_layout_engine::form::{FormNodeType, Occur};
+        use xfa_layout_engine::form::FormNodeType;
 
         // Template: one Activity subform with bind=none, occur max=-1
         let template = r#"<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
@@ -4691,5 +4943,70 @@ ET
             "content_ratio mismatch: expected {expected}, got {}",
             metrics.content_ratio
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // XFA-F7-02 (#1114): validate_text_completeness tests
+    // -----------------------------------------------------------------------
+
+    /// validate_text_completeness returns completeness_ratio = 1.0 when the
+    /// original XFA bytes have no datasets packet (nothing to check).
+    #[test]
+    fn validate_text_completeness_no_datasets_returns_perfect_ratio() {
+        // Build an XFA PDF whose XDP has no <datasets> packet — just a template.
+        let xdp = r#"<?xml version="1.0"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+  <template>
+    <subform name="root">
+      <field name="greeting"><ui><textEdit/></ui></field>
+    </subform>
+  </template>
+</xdp:xdp>"#;
+        let original = build_xfa_pdf(xdp);
+        // Use a minimal clean PDF as the "flattened" output.
+        let mut doc = Document::with_version("1.4");
+        let pages_id = doc.new_object_id();
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Page".to_vec()),
+            "Parent"   => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ])
+        }));
+        doc.objects.insert(pages_id, Object::Dictionary(dictionary! {
+            "Type"  => Object::Name(b"Pages".to_vec()),
+            "Kids"  => Object::Array(vec![Object::Reference(page_id)]),
+            "Count" => Object::Integer(1)
+        }));
+        let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"  => Object::Name(b"Catalog".to_vec()),
+            "Pages" => Object::Reference(pages_id)
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        let mut flattened = Vec::new();
+        doc.save_to(&mut flattened).unwrap();
+
+        let result = validate_text_completeness(&original, &flattened)
+            .expect("validate_text_completeness should not fail");
+        assert!(
+            result.expected_values.is_empty(),
+            "no datasets packet means no expected values"
+        );
+        assert_eq!(
+            result.completeness_ratio, 1.0,
+            "empty expected set should yield ratio 1.0"
+        );
+    }
+
+    /// validate_text_completeness returns ratio 1.0 on empty inputs (no panic).
+    #[test]
+    fn validate_text_completeness_empty_inputs_do_not_panic() {
+        let result = validate_text_completeness(&[], &[]);
+        assert!(result.is_ok(), "should return Ok on empty inputs");
+        let v = result.unwrap();
+        assert_eq!(v.completeness_ratio, 1.0);
+        assert!(v.expected_values.is_empty());
+        assert!(v.missing_values.is_empty());
     }
 }

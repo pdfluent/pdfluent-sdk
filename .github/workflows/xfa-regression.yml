@@ -1,0 +1,31 @@
+name: XFA Regression Suite
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    paths:
+      - 'crates/pdf-xfa/**'
+      - 'crates/xfa-layout-engine/**'
+      - 'crates/xfa-dom-resolver/**'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  xfa-tests:
+    name: XFA Regression Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run XFA unit tests
+        run: cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
+
+      - name: Run XFA integration tests
+        run: cargo test -p pdf-xfa --test '*' --release
