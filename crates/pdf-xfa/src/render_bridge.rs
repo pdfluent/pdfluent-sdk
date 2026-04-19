@@ -1215,23 +1215,37 @@ fn is_bold_style(node_style: &FormNodeStyle) -> bool {
     node_style.font_weight.as_deref() == Some("bold")
 }
 
-/// Returns true if the font reference indicates a bold variant.
-/// PDF font names typically include "Bold" in the name for bold fonts.
-fn font_ref_is_bold(font_ref: &str) -> bool {
-    font_ref.to_uppercase().contains("BOLD")
+/// Returns true when the resolved resource came from an actual bold variant in
+/// the font map, so synthetic bold stroking is unnecessary.
+fn style_uses_real_bold_variant(
+    font_map: &HashMap<String, String>,
+    node_style: &FormNodeStyle,
+) -> bool {
+    if !is_bold_style(node_style) {
+        return false;
+    }
+    let Some(typeface) = node_style.font_family.as_deref() else {
+        return false;
+    };
+    let vkey = font_variant_key(
+        typeface,
+        node_style.font_weight.as_deref(),
+        node_style.font_style.as_deref(),
+    );
+    font_map.contains_key(&vkey)
 }
 
 /// Emit synthetic bold operators: fill+stroke rendering mode with thin stroke.
 /// Uses text rendering mode 2 (fill then stroke) to simulate bold weight when
 /// the actual bold font variant is unavailable.
 fn emit_synthetic_bold_ops(
+    font_map: &HashMap<String, String>,
     node_style: &FormNodeStyle,
-    font_ref: &str,
     font_size: f64,
     text_color: &[f64; 3],
     ops: &mut Vec<u8>,
 ) {
-    if is_bold_style(node_style) && !font_ref_is_bold(font_ref) {
+    if is_bold_style(node_style) && !style_uses_real_bold_variant(font_map, node_style) {
         let stroke_w = font_size * 0.03;
         write_ops(
             ops,
@@ -1244,8 +1258,12 @@ fn emit_synthetic_bold_ops(
 }
 
 /// Reset synthetic bold state back to fill-only rendering.
-fn reset_synthetic_bold_ops(node_style: &FormNodeStyle, font_ref: &str, ops: &mut Vec<u8>) {
-    if is_bold_style(node_style) && !font_ref_is_bold(font_ref) {
+fn reset_synthetic_bold_ops(
+    font_map: &HashMap<String, String>,
+    node_style: &FormNodeStyle,
+    ops: &mut Vec<u8>,
+) {
+    if is_bold_style(node_style) && !style_uses_real_bold_variant(font_map, node_style) {
         write_ops(ops, format_args!("0 Tr\n"));
     }
 }
@@ -1631,14 +1649,14 @@ fn render_field(
                     config.text_color[0], config.text_color[1], config.text_color[2], font_ref, fs,
                 ),
             );
-            emit_synthetic_bold_ops(node_style, font_ref, fs, &config.text_color, ops);
+            emit_synthetic_bold_ops(&config.font_map, node_style, fs, &config.text_color, ops);
             emit_text_style_ops(node_style, ops);
             write_ops(
                 ops,
                 format_args!("{:.2} {:.2} Td\n{} Tj\n", x + pad_left, text_y, encoded),
             );
             reset_text_style_ops(node_style, ops);
-            reset_synthetic_bold_ops(node_style, font_ref, ops);
+            reset_synthetic_bold_ops(&config.font_map, node_style, ops);
             ops.extend_from_slice(b"ET\n");
         } else {
             let lines = wrap_text(value, content_w, &metrics);
@@ -1659,7 +1677,7 @@ fn render_field(
                     config.text_color[0], config.text_color[1], config.text_color[2], font_ref, fs,
                 ),
             );
-            emit_synthetic_bold_ops(node_style, font_ref, fs, &config.text_color, ops);
+            emit_synthetic_bold_ops(&config.font_map, node_style, fs, &config.text_color, ops);
             emit_text_style_ops(node_style, ops);
             write_ops(
                 ops,
@@ -1681,7 +1699,7 @@ fn render_field(
                 write_ops(ops, format_args!("{} Tj\n", encoded));
             }
             reset_text_style_ops(node_style, ops);
-            reset_synthetic_bold_ops(node_style, font_ref, ops);
+            reset_synthetic_bold_ops(&config.font_map, node_style, ops);
             ops.extend_from_slice(b"ET\n");
         }
     }
@@ -2203,14 +2221,14 @@ fn render_dropdown(
                 config.text_color[0], config.text_color[1], config.text_color[2], font_ref, fs,
             ),
         );
-        emit_synthetic_bold_ops(node_style, font_ref, fs, &config.text_color, ops);
+        emit_synthetic_bold_ops(&config.font_map, node_style, fs, &config.text_color, ops);
         emit_text_style_ops(node_style, ops);
         write_ops(
             ops,
             format_args!("{:.2} {:.2} Td\n{} Tj\n", x + 2.0, v_offset, encoded),
         );
         reset_text_style_ops(node_style, ops);
-        reset_synthetic_bold_ops(node_style, font_ref, ops);
+        reset_synthetic_bold_ops(&config.font_map, node_style, ops);
         ops.extend_from_slice(b"ET\n");
     }
 
@@ -2481,12 +2499,12 @@ fn render_text(
             tc[0], tc[1], tc[2], font_ref, fs,
         ),
     );
-    emit_synthetic_bold_ops(node_style, font_ref, fs, &tc, ops);
+    emit_synthetic_bold_ops(&config.font_map, node_style, fs, &tc, ops);
     write_ops(
         ops,
         format_args!("{:.2} {:.2} Td\n{} Tj\n", x + p, text_y, encoded),
     );
-    reset_synthetic_bold_ops(node_style, font_ref, ops);
+    reset_synthetic_bold_ops(&config.font_map, node_style, ops);
     ops.extend_from_slice(b"ET\n");
     let text_x = x + p;
     let text_y = pdf_y + p;
@@ -2596,7 +2614,7 @@ fn render_multiline(
             tc[0], tc[1], tc[2], font_ref, font_size
         ),
     );
-    emit_synthetic_bold_ops(node_style, font_ref, font_size, &tc, ops);
+    emit_synthetic_bold_ops(&config.font_map, node_style, font_size, &tc, ops);
     emit_text_style_ops(node_style, ops);
     let ascender_pt = if let (Some(asc), Some(upem)) =
         (font_metrics.resolved_ascender, font_metrics.resolved_upem)
@@ -2647,7 +2665,7 @@ fn render_multiline(
         write_ops(ops, format_args!("{} Tj\n", encoded));
     }
     reset_text_style_ops(node_style, ops);
-    reset_synthetic_bold_ops(node_style, font_ref, ops);
+    reset_synthetic_bold_ops(&config.font_map, node_style, ops);
     ops.extend_from_slice(b"ET\n");
 }
 
@@ -2783,7 +2801,8 @@ fn render_rich_multiline(
                     cur_tc = span_tc;
                 }
                 let is_span_bold = span.font_weight.as_deref() == Some("bold");
-                if is_span_bold && !font_ref_is_bold(span_font_ref) {
+                let span_has_real_bold = style_uses_real_bold_variant(&config.font_map, &span_style);
+                if is_span_bold && !span_has_real_bold {
                     let stroke_w = span_fs * 0.03;
                     write_ops(
                         ops,
@@ -2795,7 +2814,7 @@ fn render_rich_multiline(
                 }
                 let encoded = pdf_encode_text(&seg.text, idh_metrics);
                 write_ops(ops, format_args!("{} Tj\n", encoded));
-                if is_span_bold && !font_ref_is_bold(span_font_ref) {
+                if is_span_bold && !span_has_real_bold {
                     write_ops(ops, format_args!("0 Tr\n"));
                 }
             }
@@ -2841,6 +2860,13 @@ struct LineSpanSegment {
     span_idx: usize,
 }
 
+fn leading_whitespace_len(s: &str) -> usize {
+    s.char_indices()
+        .find(|(_, ch)| !ch.is_whitespace())
+        .map(|(idx, _)| idx)
+        .unwrap_or(s.len())
+}
+
 fn map_spans_to_lines(spans: &[RichTextSpan], lines: &[String]) -> Vec<Vec<LineSpanSegment>> {
     let mut result = Vec::with_capacity(lines.len());
     let mut span_idx = 0_usize;
@@ -2872,33 +2898,42 @@ fn map_spans_to_lines(spans: &[RichTextSpan], lines: &[String]) -> Vec<Vec<LineS
             let common = line_rest
                 .chars()
                 .zip(span_rest.chars())
-                .take_while(|(a, b)| a == b)
+                .take_while(|(a, b)| a == b || (a.is_whitespace() && b.is_whitespace()))
                 .count();
 
             if common > 0 {
                 let common_str: String = line_rest.chars().take(common).collect();
-                let common_byte_len = common_str.len();
+                let common_line_byte_len = common_str.len();
+                let common_span_byte_len: usize =
+                    span_rest.chars().take(common).map(char::len_utf8).sum();
                 segs.push(LineSpanSegment {
                     text: common_str,
                     span_idx,
                 });
-                line_pos += common_byte_len;
-                span_off += common_byte_len;
+                line_pos += common_line_byte_len;
+                span_off += common_span_byte_len;
                 if span_off >= span.text.len() {
                     span_idx += 1;
                     span_off = 0;
                 }
             } else {
-                let skip = span_rest
-                    .bytes()
-                    .take_while(|b: &u8| b.is_ascii_whitespace())
-                    .count();
-                if skip > 0 {
-                    span_off += skip;
+                let span_skip = leading_whitespace_len(span_rest);
+                if span_skip > 0 {
+                    span_off += span_skip;
                     if span_off >= span.text.len() {
                         span_idx += 1;
                         span_off = 0;
                     }
+                    continue;
+                }
+
+                let line_skip = leading_whitespace_len(line_rest);
+                if line_skip > 0 {
+                    segs.push(LineSpanSegment {
+                        text: line_rest[..line_skip].to_string(),
+                        span_idx,
+                    });
+                    line_pos += line_skip;
                 } else {
                     segs.push(LineSpanSegment {
                         text: line_rest.to_string(),
@@ -2917,10 +2952,7 @@ fn map_spans_to_lines(spans: &[RichTextSpan], lines: &[String]) -> Vec<Vec<LineS
                 break;
             }
             let rest = &span.text[span_off..];
-            let skip = rest
-                .bytes()
-                .take_while(|b: &u8| b.is_ascii_whitespace())
-                .count();
+            let skip = leading_whitespace_len(rest);
             if skip > 0 {
                 span_off += skip;
                 if span_off >= span.text.len() {
@@ -3100,12 +3132,12 @@ fn render_draw(
                         tc[0], tc[1], tc[2], font_ref, fs,
                     ),
                 );
-                emit_synthetic_bold_ops(node_style, font_ref, fs, &tc, ops);
+                emit_synthetic_bold_ops(&config.font_map, node_style, fs, &tc, ops);
                 write_ops(
                     ops,
                     format_args!("{:.2} {:.2} Td\n{} Tj\n", abs_x, pdf_y, encoded),
                 );
-                reset_synthetic_bold_ops(node_style, font_ref, ops);
+                reset_synthetic_bold_ops(&config.font_map, node_style, ops);
                 ops.extend_from_slice(b"ET\n");
             }
         }
@@ -4016,6 +4048,133 @@ mod tests {
         };
         let encoded = pdf_encode_text("ţ", Some(&metrics));
         assert_eq!(encoded, "(\\200)");
+    }
+
+    #[test]
+    fn rich_text_span_mapping_preserves_space_after_bold_label() {
+        let spans = vec![
+            RichTextSpan {
+                text: "Instructions:".to_string(),
+                font_size: None,
+                font_family: None,
+                font_weight: Some("bold".to_string()),
+                font_style: None,
+                text_color: None,
+                underline: false,
+                line_through: false,
+            },
+            RichTextSpan {
+                text: "This form is for your use.".to_string(),
+                font_size: None,
+                font_family: None,
+                font_weight: Some("normal".to_string()),
+                font_style: None,
+                text_color: None,
+                underline: false,
+                line_through: false,
+            },
+        ];
+        let lines = vec!["Instructions: This form is for your use.".to_string()];
+
+        let mapped = map_spans_to_lines(&spans, &lines);
+
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].len(), 3);
+        assert_eq!(mapped[0][0].text, "Instructions:");
+        assert_eq!(mapped[0][0].span_idx, 0);
+        assert_eq!(mapped[0][1].text, " ");
+        assert_eq!(mapped[0][1].span_idx, 1);
+        assert_eq!(mapped[0][2].text, "This form is for your use.");
+        assert_eq!(mapped[0][2].span_idx, 1);
+    }
+
+    #[test]
+    fn rich_text_span_mapping_treats_nbsp_spaceruns_as_normal_spaces() {
+        let spans = vec![
+            RichTextSpan {
+                text: "Instructions:".to_string(),
+                font_size: None,
+                font_family: None,
+                font_weight: Some("bold".to_string()),
+                font_style: None,
+                text_color: None,
+                underline: false,
+                line_through: false,
+            },
+            RichTextSpan {
+                text: "This form is for your use.".to_string(),
+                font_size: None,
+                font_family: None,
+                font_weight: Some("normal".to_string()),
+                font_style: None,
+                text_color: None,
+                underline: false,
+                line_through: false,
+            },
+            RichTextSpan {
+                text: "\u{00A0}\u{00A0}".to_string(),
+                font_size: None,
+                font_family: None,
+                font_weight: Some("normal".to_string()),
+                font_style: None,
+                text_color: None,
+                underline: false,
+                line_through: false,
+            },
+            RichTextSpan {
+                text: "Mail in at least 14 days before".to_string(),
+                font_size: None,
+                font_family: None,
+                font_weight: Some("normal".to_string()),
+                font_style: None,
+                text_color: None,
+                underline: false,
+                line_through: false,
+            },
+        ];
+        let lines = vec![
+            "Instructions: This form is for your use.".to_string(),
+            "Mail in at least 14 days before".to_string(),
+        ];
+
+        let mapped = map_spans_to_lines(&spans, &lines);
+
+        assert_eq!(mapped.len(), 2);
+        assert_eq!(mapped[0][0].span_idx, 0);
+        assert_eq!(mapped[0][2].span_idx, 1);
+        assert_eq!(mapped[1].len(), 1);
+        assert_eq!(mapped[1][0].text, "Mail in at least 14 days before");
+        assert_eq!(mapped[1][0].span_idx, 3);
+    }
+
+    #[test]
+    fn real_bold_font_variant_skips_synthetic_bold_stroke() {
+        let mut config = XfaRenderConfig::default();
+        config
+            .font_map
+            .insert("Arial_Bold_Normal".to_string(), "/XFA_Fbold".to_string());
+
+        let s = styled_overlay_str_with_config(
+            make_styled_field(
+                10.0,
+                10.0,
+                200.0,
+                20.0,
+                "Bold",
+                FormNodeStyle {
+                    font_family: Some("Arial".to_string()),
+                    font_weight: Some("bold".to_string()),
+                    ..Default::default()
+                },
+            ),
+            config,
+        );
+
+        assert!(
+            !s.contains("2 Tr"),
+            "actual bold variants should not get synthetic stroke bolding: {s}"
+        );
+        assert!(s.contains("/XFA_Fbold 10.0 Tf"), "expected real bold resource: {s}");
     }
 
     #[test]

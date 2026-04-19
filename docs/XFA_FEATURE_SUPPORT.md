@@ -29,7 +29,7 @@ Status as of XFA Engine Milestone #47 (Phase 8/9).
 | Image (href) | Full | Embedded EmbeddedFiles resolution |
 | Draw elements | Full | Line, rectangle, arc, text draws |
 | FormCalc scripting | Partial | Basic expressions; complex scripts may not execute |
-| JavaScript | Not supported | Would require full JS engine |
+| JavaScript | Not supported | Would require full JS engine; viewer-version checks, runtime host scripts, and service-prefill flows are excluded as unsupported |
 | Barcode rendering | Not supported | Rendered as empty placeholder boxes |
 | Signature fields | Not supported | Stripped — no signature widget rendering |
 | Rich text (xhtml) | Partial | Basic spans; complex HTML not fully rendered |
@@ -49,3 +49,4 @@ with `RUST_LOG=pdf_xfa=warn`.
 | `<barcode>` | Warning logged; element rendered as empty box |
 | `<signature>` | Warning logged; element skipped |
 | `<script type="text/javascript">` | Warning logged; script not executed |
+| Acrobat/XFA viewer checks or connectionSet prefill | Benchmark exclusion as unsupported | Forms that depend on host-version JavaScript or runtime service bindings are not treated as render regressions |
