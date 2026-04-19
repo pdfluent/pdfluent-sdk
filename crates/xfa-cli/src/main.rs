@@ -11,6 +11,7 @@ mod cmd_doctor;
 mod cmd_extract;
 mod cmd_fill;
 mod cmd_flatten;
+mod cmd_flatten_check;
 mod cmd_info;
 mod cmd_manpage;
 mod cmd_render;
@@ -74,6 +75,14 @@ pub enum Commands {
         /// Output PDF file.
         #[arg(short, long)]
         output: PathBuf,
+    },
+    /// Flatten a PDF and print quality metrics comparing before and after.
+    FlattenCheck {
+        /// Input PDF file.
+        input: PathBuf,
+        /// Optional output path for the flattened PDF.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
     /// Display PDF document information.
     Info {
@@ -178,6 +187,9 @@ fn run() -> Result<()> {
             data,
         } => cmd_fill::run(&input, &output, &data),
         Commands::Flatten { input, output } => cmd_flatten::run(&input, &output),
+        Commands::FlattenCheck { input, output } => {
+            cmd_flatten_check::run(&input, output.as_deref())
+        }
         Commands::Info { input, json } => cmd_info::run(&input, json),
         Commands::Validate {
             input,
