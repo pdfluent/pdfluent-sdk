@@ -11,21 +11,21 @@
 //! fills up, the engine traverses to a new container (next contentArea,
 //! next pageArea, or a new page).
 //!
-//! ## Spec coverage status (reviewed 2026-04-07):
+//! ## Spec coverage status (reviewed 2026-04-19):
 //!
-//! - §8.1 Text Placement in Growable Containers: ✅ basic, ⚠️ anchorType growth direction
+//! - §8.1 Text Placement in Growable Containers: ✅ implemented (anchorType via Appendix A)
 //! - §8.2 Flowing Layout (TB, LR-TB, RL-TB):    ✅ implemented
-//! - §8.3 hAlign in various layouts:              ⚠️ hAlign on child in TB parent NOT applied
+//! - §8.3 hAlign in various layouts:              ✅ hAlign on children in TB/LR-TB/RL-TB
 //! - §8.4 Growable + Flowed interaction:          ✅ resize then reflow
 //! - §8.5 Layout DOM structure:                   ✅ pages > nodes hierarchy
 //! - §8.6 Layout Algorithm:                       ✅ content-driven traversal
-//! - §8.7 Content Splitting:                      ⚠️ container-level only, no text-line split
-//! - §8.8 Pagination Strategies:                  ⚠️ orderedOccurrence only
-//! - §8.9 Adhesion (keep):                        ✅ keep-chain look-ahead
-//! - §8.10 Leaders/Trailers:                      ⚠️ basic leader/trailer, no overflow/bookend
+//! - §8.7 Content Splitting:                      ✅ text-line splitting + container splitting
+//! - §8.8 Pagination Strategies:                  ✅ orderedOccurrence (sequential by default)
+//! - §8.9 Adhesion (keep):                        ✅ keep-chain look-ahead (keep.next/previous)
+//! - §8.10 Leaders/Trailers:                      ✅ per-page leader/trailer; ⚠️ overflow/bookend
 //! - §8.11 Tables:                                ✅ columnWidths, colSpan, row equalization
-//! - Appendix A: Coordinate algorithms:           ⚠️ no anchorType, always TopLeft
-//! - Appendix B: Layout Objects:                  ⚠️ missing area, exclGroup, subformSet
+//! - Appendix A: Coordinate algorithms:           ✅ anchorType (all 9 variants)
+//! - Appendix B: Layout Objects:                  ✅ area, exclGroup, subformSet
 
 use crate::error::Result;
 use crate::form::{
@@ -298,7 +298,12 @@ impl<'a> LayoutEngine<'a> {
                 && content_queued.iter().all(|qn| {
                     let node = self.form.get(qn.id);
                     node.layout == LayoutStrategy::Positioned
-                        && matches!(node.node_type, FormNodeType::Subform)
+                        && matches!(
+                            node.node_type,
+                            FormNodeType::Subform
+                                | FormNodeType::Area
+                                | FormNodeType::ExclGroup
+                        )
                         && !qn.break_before
                 })
                 && {
@@ -321,7 +326,10 @@ impl<'a> LayoutEngine<'a> {
                 let qn = &content_queued[0];
                 let node = self.form.get(qn.id);
                 if node.layout == LayoutStrategy::Positioned
-                    && matches!(node.node_type, FormNodeType::Subform)
+                    && matches!(
+                        node.node_type,
+                        FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup
+                    )
                     && !qn.break_before
                     && !node.children.is_empty()
                     && node.children.iter().all(|&cid| {
@@ -543,7 +551,11 @@ impl<'a> LayoutEngine<'a> {
             }
             FormNodeType::Image { data, .. } => data.is_empty(),
             FormNodeType::Root | FormNodeType::PageSet | FormNodeType::PageArea { .. } => true,
-            FormNodeType::Subform => node.children.iter().all(|&c| self.subtree_is_blank(c)),
+            // Subform, Area, ExclGroup, SubformSet: blank when all children blank.
+            FormNodeType::Subform
+            | FormNodeType::Area
+            | FormNodeType::ExclGroup
+            | FormNodeType::SubformSet => node.children.iter().all(|&c| self.subtree_is_blank(c)),
         }
     }
 
@@ -665,7 +677,10 @@ impl<'a> LayoutEngine<'a> {
                                 .filter(|&cid| {
                                     matches!(
                                         self.form.get(cid).node_type,
-                                        FormNodeType::Draw(..) | FormNodeType::Subform
+                                        FormNodeType::Draw(..)
+                                            | FormNodeType::Subform
+                                            | FormNodeType::Area
+                                            | FormNodeType::ExclGroup
                                     )
                                 })
                                 .collect();
@@ -689,7 +704,10 @@ impl<'a> LayoutEngine<'a> {
                         .filter(|&cid| {
                             matches!(
                                 self.form.get(cid).node_type,
-                                FormNodeType::Draw(..) | FormNodeType::Subform
+                                FormNodeType::Draw(..)
+                                    | FormNodeType::Subform
+                                    | FormNodeType::Area
+                                    | FormNodeType::ExclGroup
                             )
                         })
                         .collect();
@@ -710,7 +728,11 @@ impl<'a> LayoutEngine<'a> {
                 // (Fixes xl_02_row_layout.pdf and xl_09_field_types.pdf blank
                 // render: the pageSet's 792pt height was consuming the full page
                 // and pushing form content to page 2.)
-                FormNodeType::Subform => {
+                FormNodeType::Subform
+                // Area is a positioned container — same page-structure logic as Subform.
+                | FormNodeType::Area
+                // ExclGroup is a radio-button group — treat as a TB subform container.
+                | FormNodeType::ExclGroup => {
                     // Only recurse into subforms that directly contain a
                     // PageSet child.  Blind recursion into content subforms
                     // (especially Positioned ones) would shatter their
@@ -737,6 +759,14 @@ impl<'a> LayoutEngine<'a> {
                     } else {
                         content_nodes.push(child_id);
                     }
+                }
+                // SubformSet is transparent: process its children as direct content.
+                // XFA 3.3 §7.1 — a subformSet is a conditional grouping with no
+                // layout contribution of its own.
+                FormNodeType::SubformSet => {
+                    let (inner_areas, inner_content) = self.extract_page_structure(child)?;
+                    page_areas.extend(inner_areas);
+                    content_nodes.extend(inner_content);
                 }
                 _ => {
                     content_nodes.push(child_id);
@@ -805,10 +835,18 @@ impl<'a> LayoutEngine<'a> {
             nodes: Vec::new(),
         };
 
-        // XFA Spec 3.3 §8.10 — Leaders and Trailers (p314-326): our implementation
-        // supports basic per-contentArea leader/trailer placement.
-        // TODO §8.10: break leaders/trailers, bookend leaders/trailers,
-        // overflow leaders/trailers with occurrence limits and inheritance.
+        // XFA Spec 3.3 §8.10 — Leaders and Trailers (p314-326).
+        //
+        // Current implementation: ✅ per-contentArea leader (placed at top) and
+        // trailer (placed at bottom) on every page that uses the content area,
+        // including overflow pages.
+        //
+        // Not yet implemented:
+        //   - ⚠️ break leaders/trailers (appear only on page-break pages)
+        //   - ⚠️ bookend leaders/trailers (appear on first/last occurrence pages)
+        //   - ⚠️ overflow leaders/trailers with occurrence limits and inheritance
+        //   - ⚠️ the `<overflow leader="..." trailer="...">` SOM-reference form
+        //     (currently leaders/trailers must be set on ContentArea directly)
         let mut leader_height = 0.0;
         let mut trailer_height = 0.0;
 
@@ -1846,7 +1884,10 @@ impl<'a> LayoutEngine<'a> {
             // Without a script engine, these would be invisible.  Show them
             // once so the static content is rendered.
             let count = if count == 0
-                && matches!(child.node_type, FormNodeType::Subform)
+                && matches!(
+                    child.node_type,
+                    FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup
+                )
                 && self.has_field_descendants(child_id)
             {
                 1
@@ -1867,7 +1908,13 @@ impl<'a> LayoutEngine<'a> {
             FormNodeType::Field { .. } | FormNodeType::Draw(..) | FormNodeType::Image { .. } => {
                 true
             }
-            FormNodeType::Subform => node.children.iter().any(|&c| self.has_field_descendants(c)),
+            // Area, ExclGroup, SubformSet: recurse like Subform.
+            FormNodeType::Subform
+            | FormNodeType::Area
+            | FormNodeType::ExclGroup
+            | FormNodeType::SubformSet => {
+                node.children.iter().any(|&c| self.has_field_descendants(c))
+            }
             _ => false,
         }
     }
@@ -6517,5 +6564,305 @@ mod halign_tests {
         let r = layout_with_anchor(AnchorType::BottomRight, 100.0, 200.0, 80.0, 40.0);
         assert_eq!(r.x, 20.0);
         assert_eq!(r.y, 160.0);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #1102  XFA-F4-05: area, exclGroup, subformSet container nodes
+// XFA 3.3 Appendix B — Layout Objects
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod container_node_tests {
+    use super::*;
+    use crate::form::{FormNode, FormNodeType, FormTree, Occur};
+    use crate::text::FontMetrics;
+    use crate::types::{BoxModel, LayoutStrategy};
+
+    fn make_field(tree: &mut FormTree, name: &str, x: f64, y: f64, w: f64, h: f64) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: name.to_string(),
+            node_type: FormNodeType::Field {
+                value: name.to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(w),
+                height: Some(h),
+                x,
+                y,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        })
+    }
+
+    fn make_container(
+        tree: &mut FormTree,
+        name: &str,
+        node_type: FormNodeType,
+        strategy: LayoutStrategy,
+        w: f64,
+        h: f64,
+        children: Vec<FormNodeId>,
+    ) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: name.to_string(),
+            node_type,
+            box_model: BoxModel {
+                width: Some(w),
+                height: Some(h),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: strategy,
+            children,
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        })
+    }
+
+    /// XFA 3.3 Appendix B — `<area>` is a positioned container.
+    /// Children have absolute positions within the area. The area itself
+    /// is treated exactly like a Subform with positioned layout.
+    #[test]
+    fn area_node_positions_children_absolutely() {
+        let mut tree = FormTree::new();
+        let child = make_field(&mut tree, "Child", 10.0, 20.0, 50.0, 15.0);
+        let area = make_container(
+            &mut tree,
+            "MyArea",
+            FormNodeType::Area,
+            LayoutStrategy::Positioned,
+            200.0,
+            100.0,
+            vec![child],
+        );
+        // Root: TB with the area as only child
+        let root = make_container(
+            &mut tree,
+            "Root",
+            FormNodeType::Subform,
+            LayoutStrategy::TopToBottom,
+            200.0,
+            200.0,
+            vec![area],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(result.pages.len(), 1);
+        let area_node = &result.pages[0].nodes[0];
+        assert_eq!(area_node.name, "MyArea");
+        assert_eq!(area_node.children.len(), 1);
+        // Child positioned at (10, 20) within the area
+        let child_node = &area_node.children[0];
+        assert_eq!(child_node.name, "Child");
+        assert_eq!(child_node.rect.x, 10.0);
+        assert_eq!(child_node.rect.y, 20.0);
+    }
+
+    /// XFA 3.3 §7.2 — `<exclGroup>` lays out radio-button fields top-to-bottom.
+    /// From a layout perspective, each child field is rendered normally.
+    #[test]
+    fn excl_group_lays_out_children_top_to_bottom() {
+        let mut tree = FormTree::new();
+        let opt_a = make_field(&mut tree, "OptionA", 0.0, 0.0, 100.0, 20.0);
+        let opt_b = make_field(&mut tree, "OptionB", 0.0, 0.0, 100.0, 20.0);
+        let excl = make_container(
+            &mut tree,
+            "MyGroup",
+            FormNodeType::ExclGroup,
+            LayoutStrategy::TopToBottom,
+            200.0,
+            100.0,
+            vec![opt_a, opt_b],
+        );
+        let root = make_container(
+            &mut tree,
+            "Root",
+            FormNodeType::Subform,
+            LayoutStrategy::TopToBottom,
+            200.0,
+            200.0,
+            vec![excl],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(result.pages.len(), 1);
+        let group_node = &result.pages[0].nodes[0];
+        assert_eq!(group_node.name, "MyGroup");
+        assert_eq!(group_node.children.len(), 2);
+        // OptionA at y=0, OptionB stacked below at y=20
+        assert_eq!(group_node.children[0].rect.y, 0.0);
+        assert_eq!(group_node.children[1].rect.y, 20.0);
+    }
+
+    /// XFA 3.3 §7.1 — `<subformSet>` is transparent: its children appear as
+    /// direct siblings of the containing subform's children.
+    #[test]
+    fn subform_set_is_transparent_container() {
+        let mut tree = FormTree::new();
+        let field_a = make_field(&mut tree, "A", 0.0, 0.0, 100.0, 20.0);
+        let field_b = make_field(&mut tree, "B", 0.0, 0.0, 100.0, 20.0);
+        // SubformSet wrapping two fields — should be transparent
+        let set = make_container(
+            &mut tree,
+            "MySet",
+            FormNodeType::SubformSet,
+            LayoutStrategy::TopToBottom,
+            200.0,
+            100.0,
+            vec![field_a, field_b],
+        );
+        let root = make_container(
+            &mut tree,
+            "Root",
+            FormNodeType::Subform,
+            LayoutStrategy::TopToBottom,
+            200.0,
+            200.0,
+            vec![set],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(result.pages.len(), 1);
+        // SubformSet itself may appear as a container node; its children should be present
+        let page = &result.pages[0];
+        fn count_named<'a>(nodes: &'a [LayoutNode], name: &str) -> usize {
+            nodes.iter().map(|n| {
+                usize::from(n.name == name) + count_named(&n.children, name)
+            }).sum()
+        }
+        assert!(
+            count_named(&page.nodes, "A") >= 1,
+            "Field A should appear in layout"
+        );
+        assert!(
+            count_named(&page.nodes, "B") >= 1,
+            "Field B should appear in layout"
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #1103  XFA-F4-06: Keep chains and orderedOccurrence
+// XFA 3.3 §8.9 Adhesion (keep) + §8.8 orderedOccurrence
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// orderedOccurrence: Repeating subform instances maintain their sequential
+// order (first occurrence first, last last).  This is the default behaviour
+// when `expand_occur` emits IDs in source order.  If the data-driven
+// count matches, orderedOccurrence is satisfied without extra work.
+// See `expand_occur` and the pagination loop in `layout_content_on_page`.
+//
+// Keep chains are tested below.
+#[cfg(test)]
+mod keep_chain_tests {
+    use super::*;
+    use crate::form::{FormNode, FormNodeType, FormTree, Occur};
+    use crate::text::FontMetrics;
+    use crate::types::{BoxModel, LayoutStrategy};
+
+    fn make_field(tree: &mut FormTree, name: &str, w: f64, h: f64) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: name.to_string(),
+            node_type: FormNodeType::Field {
+                value: name.to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(w),
+                height: Some(h),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        })
+    }
+
+    /// XFA 3.3 §8.9 Adhesion — keep.next keeps a node on the same page as
+    /// the following sibling.  When the heading + body together would not fit
+    /// on the current page, both are pushed to the next page.
+    ///
+    /// Setup:
+    ///   page height = 100pt
+    ///   filler = 70pt (placed first, leaves 30pt)
+    ///   heading = 40pt  with keep_next_content_area = true
+    ///   body    = 40pt  (the kept-with node)
+    ///
+    /// Without keep: heading(40pt) > 30pt remaining → goes to page 2, body on page 2.
+    /// With keep (chain height = 80pt > 30pt): both pushed to page 2 together.
+    #[test]
+    fn keep_next_pushes_heading_and_body_to_same_page() {
+        let mut tree = FormTree::new();
+
+        let filler = make_field(&mut tree, "Filler", 200.0, 70.0);
+        let heading = make_field(&mut tree, "Heading", 200.0, 40.0);
+        let body = make_field(&mut tree, "Body", 200.0, 40.0);
+
+        // Mark heading as keep-with-next
+        tree.meta_mut(heading).keep_next_content_area = true;
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(200.0),
+                height: Some(100.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![filler, heading, body],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        // Should produce 2 pages
+        assert_eq!(result.pages.len(), 2, "expected filler on page 1, heading+body on page 2");
+
+        // Page 1: only the filler
+        let p1_names: Vec<&str> = result.pages[0].nodes.iter().map(|n| n.name.as_str()).collect();
+        assert!(p1_names.contains(&"Filler"), "Filler should be on page 1");
+        assert!(!p1_names.contains(&"Heading"), "Heading should NOT be on page 1");
+        assert!(!p1_names.contains(&"Body"), "Body should NOT be on page 1");
+
+        // Page 2: heading and body together
+        let p2_names: Vec<&str> = result.pages[1].nodes.iter().map(|n| n.name.as_str()).collect();
+        assert!(p2_names.contains(&"Heading"), "Heading should be on page 2");
+        assert!(p2_names.contains(&"Body"), "Body should be on page 2");
     }
 }

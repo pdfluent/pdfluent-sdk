@@ -60,7 +60,9 @@ fn merge_node(data: &FormData, tree: &mut FormTree, node_id: FormNodeId, parent_
         FormNodeType::Image { .. } => {
             // Images are static content - no data binding
         }
-        FormNodeType::Subform => {
+        // Area and ExclGroup behave like Subform for data import.
+        // SubformSet is transparent — recurse into children.
+        FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup => {
             if is_repeating {
                 // Repeating subforms are handled by the parent via
                 // merge_children_with_repeating_groups — skip here.
@@ -68,7 +70,10 @@ fn merge_node(data: &FormData, tree: &mut FormTree, node_id: FormNodeId, parent_
                 merge_children_with_repeating_groups(data, tree, &children, &path);
             }
         }
-        FormNodeType::Root | FormNodeType::PageSet | FormNodeType::PageArea { .. } => {
+        FormNodeType::SubformSet
+        | FormNodeType::Root
+        | FormNodeType::PageSet
+        | FormNodeType::PageArea { .. } => {
             merge_children_with_repeating_groups(data, tree, &children, &path);
         }
     }

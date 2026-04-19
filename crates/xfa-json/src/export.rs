@@ -66,7 +66,9 @@ fn walk_node(
         FormNodeType::Draw(_) | FormNodeType::Image { .. } => {
             // Non-text draws and images are static content - not exported as form data
         }
-        FormNodeType::Subform => {
+        // Area and ExclGroup behave like Subform for data export.
+        // SubformSet is transparent — recurse into children.
+        FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup => {
             if node.occur.is_repeating() {
                 // Repeating subform: collect siblings with the same name as an array.
                 // The caller handles this via collect_repeating_siblings.
@@ -91,7 +93,10 @@ fn walk_node(
                 }
             }
         }
-        FormNodeType::Root | FormNodeType::PageSet | FormNodeType::PageArea { .. } => {
+        FormNodeType::SubformSet
+        | FormNodeType::Root
+        | FormNodeType::PageSet
+        | FormNodeType::PageArea { .. } => {
             for &child_id in &node.children {
                 walk_node(tree, child_id, &path, fields);
             }
