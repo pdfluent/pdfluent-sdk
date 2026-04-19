@@ -27,3 +27,6 @@ metadata.sqlite
 node_modules/
 package-lock.json
 !/test-data/xfa-golden/*.pdf
+/benchmarks/weekly/benchmark-*.json
+/benchmarks/weekly/benchmark-*-report.md
+/benchmarks/weekly/regression-*.md
