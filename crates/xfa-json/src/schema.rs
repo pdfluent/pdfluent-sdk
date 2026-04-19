@@ -76,12 +76,14 @@ fn walk_schema(
                 },
             );
         }
-        FormNodeType::Subform => {
-            for &child_id in &node.children {
-                walk_schema(tree, child_id, &path, is_repeatable, fields);
-            }
-        }
-        FormNodeType::Root | FormNodeType::PageSet | FormNodeType::PageArea { .. } => {
+        // Area, ExclGroup, and SubformSet recurse like Subform for schema export.
+        FormNodeType::Subform
+        | FormNodeType::Area
+        | FormNodeType::ExclGroup
+        | FormNodeType::SubformSet
+        | FormNodeType::Root
+        | FormNodeType::PageSet
+        | FormNodeType::PageArea { .. } => {
             for &child_id in &node.children {
                 walk_schema(tree, child_id, &path, is_repeatable, fields);
             }

@@ -210,6 +210,24 @@ pub enum FormNodeType {
     PageArea { content_areas: Vec<ContentArea> },
     /// A generic subform container.
     Subform,
+    /// XFA `<area>` — a positioned container (XFA 3.3 Appendix B).
+    ///
+    /// Semantically identical to a `Subform` with positioned layout: children
+    /// have absolute positions within the area.  The layout engine treats this
+    /// exactly like `Subform` for layout purposes.
+    Area,
+    /// XFA `<exclGroup>` — an exclusive (radio-button) group (XFA 3.3 §7.2).
+    ///
+    /// Contains multiple radio-button `<field>` children where exactly one can
+    /// be selected.  In layout this behaves like a `Subform` with top-to-bottom
+    /// flow; each child field is rendered normally.
+    ExclGroup,
+    /// XFA `<subformSet>` — a transparent set of subforms (XFA 3.3 §7.1).
+    ///
+    /// Used for conditional instantiation.  In layout the set is transparent:
+    /// its children are processed as if they were direct children of the
+    /// containing subform (same data context).
+    SubformSet,
     /// A form field (text field, checkbox, etc.).
     Field { value: String },
     /// A static draw element (text, image, line, etc.).
