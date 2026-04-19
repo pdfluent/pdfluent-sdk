@@ -298,8 +298,10 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     let packets = match extract_xfa_from_bytes(pdf_bytes.to_vec()) {
         Ok(p) => p,
         Err(_) => {
-            // No XFA — return as-is.
-            return Ok(pdf_bytes.to_vec());
+            // No XFA packet was extracted, but the byte-level pre-check already
+            // established that the document carries /AcroForm or XFA markers.
+            // Fall back to static cleanup so AcroForm-only inputs still flatten.
+            return static_fallback(pdf_bytes);
         }
     };
 
@@ -2637,46 +2639,6 @@ fn flatten_page_contents_entries(doc: &mut Document, object: Object, out: &mut V
 /// the original page content is preserved and only the interactive XFA/AcroForm
 /// layer is removed.
 fn strip_widgets_and_acroform(doc: &mut Document) {
-    // Collect Widget annotation object IDs.
-    let widget_ids: std::collections::HashSet<ObjectId> = doc
-        .objects
-        .iter()
-        .filter_map(|(&id, obj)| {
-            let dict = obj.as_dict().ok()?;
-            let subtype = dict.get(b"Subtype").ok()?;
-            if matches!(subtype, Object::Name(n) if n == b"Widget") {
-                Some(id)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    // Remove Widget refs from page /Annots arrays.
-    let page_ids: Vec<ObjectId> = doc.page_iter().collect();
-    for page_id in page_ids {
-        let annots_ref = {
-            let Ok(page_dict) = doc.get_dictionary(page_id) else {
-                continue;
-            };
-            match page_dict.get(b"Annots") {
-                Ok(Object::Reference(r)) => Some(*r),
-                _ => None,
-            }
-        };
-
-        if let Some(ref_id) = annots_ref {
-            if let Ok(Object::Array(arr)) = doc.get_object(ref_id).cloned() {
-                let filtered: Vec<Object> = arr
-                    .into_iter()
-                    .filter(|o| !matches!(o, Object::Reference(r) if widget_ids.contains(r)))
-                    .collect();
-                doc.objects.insert(ref_id, Object::Array(filtered));
-            }
-        }
-    }
-
-    // Strip /AcroForm from catalog.
     remove_acroform(doc);
 }
 
@@ -3006,58 +2968,7 @@ fn remove_acroform(doc: &mut Document) {
     // then drop empty /Annots arrays entirely.
     let page_ids: Vec<ObjectId> = doc.page_iter().collect();
     for page_id in page_ids {
-        // Collect the Annots, filtering out Widget-subtype entries.
-        let annots_opt: Option<Vec<Object>> = {
-            if let Ok(page_dict) = doc.get_dictionary(page_id) {
-                match page_dict.get(b"Annots") {
-                    Ok(Object::Array(arr)) => {
-                        let refs: Vec<ObjectId> = arr
-                            .iter()
-                            .filter_map(|o| {
-                                if let Object::Reference(r) = o {
-                                    Some(*r)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        Some(
-                            arr.iter()
-                                .filter(|o| {
-                                    if let Object::Reference(r) = o {
-                                        // Keep non-widget annotations.
-                                        !refs.contains(r) || {
-                                            doc.get_dictionary(*r)
-                                                .ok()
-                                                .and_then(|d| d.get(b"Subtype").ok())
-                                                .map(|st| st != &Object::Name(b"Widget".to_vec()))
-                                                .unwrap_or(true)
-                                        }
-                                    } else {
-                                        true
-                                    }
-                                })
-                                .cloned()
-                                .collect(),
-                        )
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            }
-        };
-
-        if let Some(filtered) = annots_opt {
-            if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(page_id) {
-                if filtered.is_empty() {
-                    // Step 5: remove empty /Annots arrays.
-                    dict.remove(b"Annots");
-                } else {
-                    dict.set("Annots", Object::Array(filtered));
-                }
-            }
-        }
+        strip_widget_annotations(doc, page_id);
     }
 }
 
@@ -3166,19 +3077,15 @@ pub fn validate_flattened_pdf(pdf_bytes: &[u8]) -> Result<FlattenValidation> {
     let page_ids: Vec<ObjectId> = doc.page_iter().collect();
     let page_count = page_ids.len();
     for page_id in page_ids {
-        if let Ok(page_dict) = doc.get_dictionary(page_id) {
-            if let Ok(Object::Array(annots)) = page_dict.get(b"Annots") {
-                for annot_obj in annots {
-                    let is_widget = annot_obj
-                        .as_reference()
-                        .ok()
-                        .and_then(|id| doc.get_dictionary(id).ok())
-                        .and_then(|d| d.get(b"Subtype").ok().map(|st| st == &Object::Name(b"Widget".to_vec())))
-                        .unwrap_or(false);
-                    if is_widget {
-                        warnings.push(format!("widget annotation found on page (object {:?})", annot_obj));
-                    }
-                }
+        for annot_obj in page_annotations(&doc, page_id) {
+            let is_widget = annot_obj
+                .as_reference()
+                .ok()
+                .and_then(|id| doc.get_dictionary(id).ok())
+                .and_then(|d| d.get(b"Subtype").ok().map(|st| st == &Object::Name(b"Widget".to_vec())))
+                .unwrap_or(false);
+            if is_widget {
+                warnings.push(format!("widget annotation found on page (object {:?})", annot_obj));
             }
         }
     }
@@ -5030,6 +4937,109 @@ ET
                 _ => {} // absent = good
             }
         }
+    }
+
+    #[test]
+    fn remove_acroform_strips_widgets_from_indirect_annots_arrays() {
+        let appearance = Object::Stream(Stream::new(
+            dictionary! {
+                "Type" => Object::Name(b"XObject".to_vec()),
+                "Subtype" => Object::Name(b"Form".to_vec()),
+                "BBox" => Object::Array(vec![
+                    Object::Integer(0), Object::Integer(0),
+                    Object::Integer(20), Object::Integer(20),
+                ]),
+                "Resources" => Object::Dictionary(dictionary! {}),
+            },
+            b"BT /F1 8 Tf 1 1 Td (X) Tj ET\n".to_vec(),
+        ));
+        let pdf_bytes = build_xfa_pdf_with_widget_appearance(
+            Vec::new(),
+            appearance,
+            dictionary! {
+                "FT" => Object::Name(b"Tx".to_vec()),
+                "T" => Object::string_literal("field[0]"),
+            },
+        );
+
+        let mut doc = Document::load_mem(&pdf_bytes).expect("parse test PDF");
+        let page_id = doc.page_iter().next().expect("page");
+        let annots = page_annotations(&doc, page_id);
+        let annots_id = doc.add_object(Object::Array(annots));
+        if let Ok(Object::Dictionary(ref mut page_dict)) = doc.get_object_mut(page_id) {
+            page_dict.set("Annots", Object::Reference(annots_id));
+        }
+
+        remove_acroform(&mut doc);
+
+        let page = doc.get_dictionary(page_id).expect("page dict");
+        assert!(
+            page.get(b"Annots").is_err(),
+            "widget-only indirect /Annots must be removed"
+        );
+    }
+
+    #[test]
+    fn acroform_without_xfa_falls_back_to_static_cleanup() {
+        let appearance = Object::Stream(Stream::new(
+            dictionary! {
+                "Type" => Object::Name(b"XObject".to_vec()),
+                "Subtype" => Object::Name(b"Form".to_vec()),
+                "BBox" => Object::Array(vec![
+                    Object::Integer(0), Object::Integer(0),
+                    Object::Integer(20), Object::Integer(20),
+                ]),
+                "Resources" => Object::Dictionary(dictionary! {}),
+            },
+            b"BT /F1 8 Tf 1 1 Td (X) Tj ET\n".to_vec(),
+        ));
+        let pdf_bytes = build_xfa_pdf_with_widget_appearance(
+            Vec::new(),
+            appearance,
+            dictionary! {
+                "FT" => Object::Name(b"Tx".to_vec()),
+                "T" => Object::string_literal("field[0]"),
+            },
+        );
+
+        let mut doc = Document::load_mem(&pdf_bytes).expect("parse source PDF");
+        let root_id = match doc.trailer.get(b"Root") {
+            Ok(Object::Reference(id)) => *id,
+            _ => panic!("no Root"),
+        };
+        let acroform_id = doc
+            .get_dictionary(root_id)
+            .expect("catalog")
+            .get(b"AcroForm")
+            .expect("AcroForm")
+            .as_reference()
+            .expect("AcroForm ref");
+        if let Ok(Object::Dictionary(ref mut acroform)) = doc.get_object_mut(acroform_id) {
+            acroform.remove(b"XFA");
+        }
+        let mut acroform_only = Vec::new();
+        doc.save_to(&mut acroform_only)
+            .expect("save AcroForm-only PDF");
+
+        let flattened = flatten_xfa_to_pdf(&acroform_only).expect("flatten failed");
+        let flattened_doc = Document::load_mem(&flattened).expect("parse flattened PDF");
+        let root_id = match flattened_doc.trailer.get(b"Root") {
+            Ok(Object::Reference(id)) => *id,
+            _ => panic!("no Root in flattened PDF"),
+        };
+        let catalog = flattened_doc
+            .get_dictionary(root_id)
+            .expect("flattened catalog");
+        assert!(
+            catalog.get(b"AcroForm").is_err(),
+            "AcroForm-only PDFs should still be cleaned by flatten"
+        );
+
+        let page_id = flattened_doc.page_iter().next().expect("flattened page");
+        assert!(
+            page_annotations(&flattened_doc, page_id).is_empty(),
+            "flattened AcroForm-only PDFs should not retain widget annotations"
+        );
     }
 
     // -----------------------------------------------------------------------
