@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod cmd_completions;
+mod cmd_debug_xfa;
 mod cmd_demo;
 mod cmd_doctor;
 mod cmd_extract;
@@ -116,6 +117,14 @@ pub enum Commands {
     Man,
     /// Run the XFA engine demo pipeline.
     Demo,
+    /// Dump the XFA render tree for a PDF (developer tool).
+    DebugXfa {
+        /// Input PDF file.
+        input: PathBuf,
+        /// Output format: 'tree' (default) or 'json'.
+        #[arg(long, default_value = "tree")]
+        format: cmd_debug_xfa::DebugFormat,
+    },
 }
 
 fn main() {
@@ -183,6 +192,7 @@ fn run() -> Result<()> {
         }
         Commands::Man => cmd_manpage::run(),
         Commands::Demo => cmd_demo::run(),
+        Commands::DebugXfa { input, format } => cmd_debug_xfa::run(&input, format),
     }
 }
 
