@@ -1225,6 +1225,7 @@ fn store_font_data(
     } else {
         base_font.to_string()
     };
+    let allow_family_alias = family_alias_is_regular_face(&clean_name, &data);
 
     // Store under the PostScript name (subset prefix already stripped)
     fonts.push(EmbeddedFontData {
@@ -1235,30 +1236,38 @@ fn store_font_data(
         pdf_source_font,
     });
 
-    // Also store under the font family name from the name table,
-    // since XFA templates use family names (e.g. "Arial") while PDF
-    // BaseFont uses PostScript names (e.g. "ArialMT").
+    // Store additional aliases from the font name table. The bare family name
+    // (e.g. "Arial") is only attached to the regular face so a normal-weight
+    // XFA request does not get hijacked by a bold/italic variant.
     if let Ok(face) = ttf_parser::Face::parse(&data, 0) {
         for name_record in face.names() {
-            if name_record.name_id == ttf_parser::name_id::FAMILY {
-                if let Some(family) = name_record.to_string() {
-                    if family != clean_name {
-                        fonts.push(EmbeddedFontData {
-                            name: family,
-                            data: data.clone(),
-                            pdf_widths: pdf_widths.clone(),
-                            pdf_encoding: pdf_encoding.clone(),
-                            pdf_source_font,
-                        });
-                    }
+            let allow_alias = match name_record.name_id {
+                ttf_parser::name_id::FAMILY => allow_family_alias,
+                ttf_parser::name_id::FULL_NAME | ttf_parser::name_id::POST_SCRIPT_NAME => true,
+                _ => false,
+            };
+            if !allow_alias {
+                continue;
+            }
+            if let Some(alias) = name_record.to_string() {
+                if alias != clean_name {
+                    fonts.push(EmbeddedFontData {
+                        name: alias,
+                        data: data.clone(),
+                        pdf_widths: pdf_widths.clone(),
+                        pdf_encoding: pdf_encoding.clone(),
+                        pdf_source_font,
+                    });
                 }
             }
         }
     }
 
-    // Common PostScript-to-family normalization as fallback
+    // Common PostScript-to-family normalization as fallback. As with the name
+    // table family alias above, reserve the bare family name for the regular
+    // face so `Arial` resolves to `ArialMT` rather than `Arial-BoldMT`.
     let normalized = ps_name_to_family(&clean_name);
-    if normalized != clean_name {
+    if allow_family_alias && normalized != clean_name {
         fonts.push(EmbeddedFontData {
             name: normalized,
             data,
@@ -1267,6 +1276,17 @@ fn store_font_data(
             pdf_source_font,
         });
     }
+}
+
+fn family_alias_is_regular_face(clean_name: &str, data: &[u8]) -> bool {
+    if let Ok(face) = ttf_parser::Face::parse(data, 0) {
+        if face.is_bold() || face.is_italic() {
+            return false;
+        }
+    }
+
+    let lower = clean_name.to_ascii_lowercase();
+    !lower.contains("bold") && !lower.contains("italic") && !lower.contains("oblique")
 }
 
 /// Convert a PostScript font name to its likely family name.
@@ -2132,6 +2152,14 @@ fn page_content_streams(doc: &Document, page_id: ObjectId) -> Vec<Vec<u8>> {
             .iter()
             .filter_map(|object| resolve_stream_content(doc, object))
             .collect(),
+        Ok(Object::Reference(id)) => match doc.get_object(*id) {
+            Ok(Object::Array(arr)) => arr
+                .iter()
+                .filter_map(|object| resolve_stream_content(doc, object))
+                .collect(),
+            Ok(object) => resolve_stream_content(doc, object).into_iter().collect(),
+            Err(_) => Vec::new(),
+        },
         Ok(object) => resolve_stream_content(doc, object).into_iter().collect(),
         Err(_) => Vec::new(),
     }
@@ -4580,6 +4608,90 @@ ET
             font.pdf_source_font,
             Some(PdfSourceFont { object_id: font_id })
         );
+    }
+
+    #[test]
+    fn store_font_data_reserves_family_alias_for_regular_face() {
+        let mut fonts = Vec::new();
+        store_font_data(
+            &mut fonts,
+            "ArialMT",
+            Vec::new(),
+            Some((32, vec![278, 333, 611])),
+            None,
+            Some(PdfSourceFont { object_id: (1, 0) }),
+        );
+        store_font_data(
+            &mut fonts,
+            "Arial-BoldMT",
+            Vec::new(),
+            Some((32, vec![278, 333, 611])),
+            None,
+            Some(PdfSourceFont { object_id: (2, 0) }),
+        );
+        store_font_data(
+            &mut fonts,
+            "Arial-ItalicMT",
+            Vec::new(),
+            Some((32, vec![278, 333, 611])),
+            None,
+            Some(PdfSourceFont { object_id: (3, 0) }),
+        );
+
+        let aliases: Vec<_> = fonts.iter().map(|font| font.name.as_str()).collect();
+        assert!(aliases.contains(&"ArialMT"));
+        assert!(aliases.contains(&"Arial-BoldMT"));
+        assert!(aliases.contains(&"Arial-ItalicMT"));
+        assert_eq!(
+            aliases.iter().filter(|name| **name == "Arial").count(),
+            1,
+            "only the regular face should claim the bare family alias"
+        );
+    }
+
+    #[test]
+    fn store_font_data_keeps_regular_ps_family_alias() {
+        let mut fonts = Vec::new();
+        store_font_data(
+            &mut fonts,
+            "MyriadPro-Regular",
+            Vec::new(),
+            Some((32, vec![278, 333, 612])),
+            None,
+            Some(PdfSourceFont { object_id: (4, 0) }),
+        );
+
+        assert!(
+            fonts.iter().any(|font| font.name == "Myriad Pro"),
+            "regular PostScript names should still expose their family alias"
+        );
+    }
+
+    #[test]
+    fn page_content_streams_resolves_indirect_contents_arrays() {
+        let mut doc = Document::new();
+        let stream_a = doc.add_object(Stream::new(
+            dictionary! {"Length" => Object::Integer(8)},
+            b"(A) Tj\n".to_vec(),
+        ));
+        let stream_b = doc.add_object(Stream::new(
+            dictionary! {"Length" => Object::Integer(8)},
+            b"(B) Tj\n".to_vec(),
+        ));
+        let contents_array = doc.add_object(Object::Array(vec![
+            Object::Reference(stream_a),
+            Object::Reference(stream_b),
+        ]));
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Page".to_vec()),
+            "Contents" => Object::Reference(contents_array),
+        }));
+
+        let streams = page_content_streams(&doc, page_id);
+
+        assert_eq!(streams.len(), 2, "indirect /Contents arrays must be traversed");
+        assert!(streams[0].windows(2).any(|w| w == b"Tj"));
+        assert!(streams[1].windows(2).any(|w| w == b"Tj"));
     }
 
     #[test]
