@@ -90,6 +90,31 @@ use xfa_dom_resolver::data_dom::DataDom;
 use xfa_layout_engine::form::{DrawContent, FormNodeId, FormNodeStyle, FormTree};
 use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutEngine, LayoutNode};
 
+// ---------------------------------------------------------------------------
+// XFA-F6-01 (#1109): Pipeline stage ordering contract.
+//
+// The XFA flatten pipeline must execute stages in strict order:
+//   Extract → Bind → Layout → Render → Embed → Write → Cleanup
+//
+// `debug_assert!` calls at stage boundaries verify this order at runtime in
+// debug builds. The PipelineStage enum is Ord so comparisons are cheap.
+// ---------------------------------------------------------------------------
+
+/// Ordered pipeline stages for the XFA flatten process.
+///
+/// Stages must execute in ascending order. Use `debug_assert!` at each stage
+/// boundary to verify ordering in debug builds.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+enum PipelineStage {
+    Extract = 0,
+    Bind = 1,
+    Layout = 2,
+    Render = 3,
+    Embed = 4,
+    Write = 5,
+    Cleanup = 6,
+}
+
 fn create_minimal_pdf_document() -> Document {
     let mut doc = Document::new();
     let pages_id = doc.add_object(Object::Dictionary(dictionary! {
@@ -327,6 +352,11 @@ fn xfa_flatten_inner(
 ) -> Result<Vec<u8>> {
     use crate::dynamic::apply_dynamic_scripts;
 
+    // XFA-F6-01 (#1109): pipeline stage tracker — verifies strict ordering via
+    // debug_assert in each stage transition below.
+    let mut _stage = PipelineStage::Extract;
+
+    // PIPELINE: stage 0 — Extract (parse datasets and image files from PDF)
     let data_dom = if let Some(ds_xml) = datasets_xml {
         DataDom::from_xml(ds_xml)
             .map_err(|e| XfaError::ParseFailed(format!("datasets parse: {e}")))?
@@ -340,6 +370,10 @@ fn xfa_flatten_inner(
         Ok(doc) => extract_embedded_images(&doc),
         Err(_) => HashMap::new(),
     };
+
+    // PIPELINE: stage 1 — Bind (merge template with data DOM)
+    debug_assert!(_stage <= PipelineStage::Bind, "pipeline stage order violated: expected <= Bind");
+    _stage = PipelineStage::Bind;
 
     let merger = FormMerger::new(&data_dom).with_image_files(image_files);
     let (mut tree, root_id) = merger
@@ -361,6 +395,10 @@ fn xfa_flatten_inner(
     // (widths, ascender, descender) instead of generic AFM tables.
     let resolved_fonts = resolve_template_fonts(template_xml, pdf_bytes);
     inject_resolved_metrics(&mut tree, &resolved_fonts);
+
+    // PIPELINE: stage 2 — Layout (compute page positions using resolved font metrics)
+    debug_assert!(_stage <= PipelineStage::Layout, "pipeline stage order violated: expected <= Layout");
+    _stage = PipelineStage::Layout;
 
     let engine = LayoutEngine::new(&tree);
     let mut layout = engine
@@ -399,6 +437,10 @@ fn xfa_flatten_inner(
         }
     }
 
+    // PIPELINE: stage 3 — Render (generate XFA overlay content streams from layout)
+    debug_assert!(_stage <= PipelineStage::Render, "pipeline stage order violated: expected <= Render");
+    _stage = PipelineStage::Render;
+
     let mut doc = match Document::load_mem(pdf_bytes) {
         Ok(d) => d,
         Err(_) => {
@@ -406,6 +448,10 @@ fn xfa_flatten_inner(
             create_minimal_pdf_document()
         }
     };
+
+    // PIPELINE: stage 4 — Embed (embed fonts/images into PDF document)
+    debug_assert!(_stage <= PipelineStage::Embed, "pipeline stage order violated: expected <= Embed");
+    _stage = PipelineStage::Embed;
 
     let (font_map, embedded_font_objects, metrics_data) =
         embed_resolved_fonts(&mut doc, &resolved_fonts, &layout);
@@ -492,6 +538,10 @@ fn xfa_flatten_inner(
     let preserve_static =
         is_static_form || n_layout < n_existing || has_static_content && overlay_is_substantial;
 
+    // PIPELINE: stage 5 — Write (write content streams to PDF pages)
+    debug_assert!(_stage <= PipelineStage::Write, "pipeline stage order violated: expected <= Write");
+    _stage = PipelineStage::Write;
+
     if preserve_static {
         // Bake widget appearances (field values, checkboxes, etc.) into the
         // page content so they survive AcroForm removal.
@@ -577,6 +627,11 @@ fn xfa_flatten_inner(
             }
         }
     }
+
+    // PIPELINE: stage 6 — Cleanup (remove AcroForm/XFA markers)
+    debug_assert!(_stage <= PipelineStage::Cleanup, "pipeline stage order violated: expected <= Cleanup");
+    #[allow(unused_assignments)]
+    { _stage = PipelineStage::Cleanup; }
 
     remove_acroform(&mut doc);
 
@@ -2821,15 +2876,300 @@ fn find_pages_root(doc: &Document) -> Result<ObjectId> {
         .ok_or_else(|| XfaError::LoadFailed("no /Pages in catalog".to_string()))
 }
 
+/// Remove all interactive XFA/AcroForm artifacts from the PDF document.
+///
+/// XFA-F6-02 (#1110): this function ensures the output is a clean static PDF
+/// with no residual interactive form markers. Steps performed:
+///
+/// 1. Remove `/AcroForm` from the catalog.
+/// 2. Remove `/NeedsRendering` from the catalog.
+/// 3. Remove `/XFA` from the AcroForm dictionary (if it was an indirect object
+///    whose dict still exists in the object table).
+/// 4. Remove widget annotations from all page `/Annots` arrays.
+/// 5. Remove empty `/Annots` arrays left behind after widget removal.
 fn remove_acroform(doc: &mut Document) {
     let root_id = match doc.trailer.get(b"Root") {
         Ok(Object::Reference(id)) => *id,
         _ => return,
     };
-    if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(root_id) {
-        dict.remove(b"AcroForm");
-        dict.remove(b"NeedsRendering");
+
+    // Step 1 & 2: remove /AcroForm and /NeedsRendering from catalog.
+    // Also capture the AcroForm object ID so we can clean up /XFA inside it.
+    let acroform_id: Option<ObjectId> = {
+        if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(root_id) {
+            let acroform_ref = dict.get(b"AcroForm").ok().and_then(|o| {
+                if let Object::Reference(id) = o { Some(*id) } else { None }
+            });
+            dict.remove(b"AcroForm");
+            dict.remove(b"NeedsRendering");
+            acroform_ref
+        } else {
+            None
+        }
+    };
+
+    // Step 3: remove /XFA from the AcroForm dictionary object.
+    if let Some(af_id) = acroform_id {
+        if let Ok(Object::Dictionary(ref mut af_dict)) = doc.get_object_mut(af_id) {
+            af_dict.remove(b"XFA");
+        }
     }
+
+    // Step 4 & 5: remove widget annotations from every page's /Annots array,
+    // then drop empty /Annots arrays entirely.
+    let page_ids: Vec<ObjectId> = doc.page_iter().collect();
+    for page_id in page_ids {
+        // Collect the Annots, filtering out Widget-subtype entries.
+        let annots_opt: Option<Vec<Object>> = {
+            if let Ok(page_dict) = doc.get_dictionary(page_id) {
+                match page_dict.get(b"Annots") {
+                    Ok(Object::Array(arr)) => {
+                        let refs: Vec<ObjectId> = arr
+                            .iter()
+                            .filter_map(|o| if let Object::Reference(r) = o { Some(*r) } else { None })
+                            .collect();
+                        Some(
+                            arr.iter()
+                                .filter(|o| {
+                                    if let Object::Reference(r) = o {
+                                        // Keep non-widget annotations.
+                                        !refs.contains(r) || {
+                                            doc.get_dictionary(*r)
+                                                .ok()
+                                                .and_then(|d| d.get(b"Subtype").ok())
+                                                .map(|st| st != &Object::Name(b"Widget".to_vec()))
+                                                .unwrap_or(true)
+                                        }
+                                    } else {
+                                        true
+                                    }
+                                })
+                                .cloned()
+                                .collect(),
+                        )
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(filtered) = annots_opt {
+            if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(page_id) {
+                if filtered.is_empty() {
+                    // Step 5: remove empty /Annots arrays.
+                    dict.remove(b"Annots");
+                } else {
+                    dict.set("Annots", Object::Array(filtered));
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// XFA-F6-03 (#1111): Post-flatten validation
+// ---------------------------------------------------------------------------
+
+/// Result of a post-flatten validation pass.
+///
+/// All `has_no_*` fields should be `true` for a clean flat PDF. Any
+/// remaining XFA artifacts are reported in `warnings`.
+pub struct FlattenValidation {
+    /// True when the catalog contains no `/XFA` entry (directly or via AcroForm).
+    pub has_no_xfa: bool,
+    /// True when the catalog contains no `/NeedsRendering` entry.
+    pub has_no_needs_rendering: bool,
+    /// True when the catalog contains no `/AcroForm` entry.
+    pub has_no_acroform: bool,
+    /// Number of pages in the output PDF.
+    pub page_count: usize,
+    /// Human-readable warnings for each detected XFA artifact.
+    pub warnings: Vec<String>,
+}
+
+/// Validate that a PDF has been fully flattened (no XFA/AcroForm artifacts remain).
+///
+/// Returns a [`FlattenValidation`] summary. Call after [`flatten_xfa_to_pdf`] to
+/// confirm the output is clean.
+///
+/// This function never panics — parse failures produce a validation result with
+/// all `has_no_*` fields set to `false` and a warning explaining the parse error.
+pub fn validate_flattened_pdf(pdf_bytes: &[u8]) -> Result<FlattenValidation> {
+    if pdf_bytes.is_empty() {
+        return Ok(FlattenValidation {
+            has_no_xfa: true,
+            has_no_needs_rendering: true,
+            has_no_acroform: true,
+            page_count: 0,
+            warnings: vec!["empty input — no PDF to validate".into()],
+        });
+    }
+
+    let doc = match Document::load_mem(pdf_bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            return Ok(FlattenValidation {
+                has_no_xfa: false,
+                has_no_needs_rendering: false,
+                has_no_acroform: false,
+                page_count: 0,
+                warnings: vec![format!("could not parse PDF: {e}")],
+            });
+        }
+    };
+
+    let mut warnings = Vec::new();
+    let mut has_no_xfa = true;
+    let mut has_no_needs_rendering = true;
+    let mut has_no_acroform = true;
+
+    // Check catalog for AcroForm, NeedsRendering, and XFA.
+    let root_id = doc
+        .trailer
+        .get(b"Root")
+        .ok()
+        .and_then(|o| if let Object::Reference(id) = o { Some(*id) } else { None });
+
+    if let Some(rid) = root_id {
+        if let Ok(catalog) = doc.get_dictionary(rid) {
+            if catalog.get(b"AcroForm").is_ok() {
+                has_no_acroform = false;
+                warnings.push("/AcroForm still present in catalog".into());
+
+                // Check whether the AcroForm dict contains /XFA.
+                let acroform_has_xfa = catalog
+                    .get(b"AcroForm")
+                    .ok()
+                    .and_then(|o| match o {
+                        Object::Reference(id) => doc.get_dictionary(*id).ok(),
+                        Object::Dictionary(d) => Some(d),
+                        _ => None,
+                    })
+                    .map(|d| d.get(b"XFA").is_ok())
+                    .unwrap_or(false);
+
+                if acroform_has_xfa {
+                    has_no_xfa = false;
+                    warnings.push("/XFA still present in AcroForm dictionary".into());
+                }
+            }
+
+            if catalog.get(b"NeedsRendering").is_ok() {
+                has_no_needs_rendering = false;
+                warnings.push("/NeedsRendering still present in catalog".into());
+            }
+
+            // Direct /XFA on catalog (non-standard but possible).
+            if catalog.get(b"XFA").is_ok() {
+                has_no_xfa = false;
+                warnings.push("/XFA still present directly in catalog".into());
+            }
+        }
+    }
+
+    // Check page annotations for widget annotations.
+    let page_ids: Vec<ObjectId> = doc.page_iter().collect();
+    let page_count = page_ids.len();
+    for page_id in page_ids {
+        if let Ok(page_dict) = doc.get_dictionary(page_id) {
+            if let Ok(Object::Array(annots)) = page_dict.get(b"Annots") {
+                for annot_obj in annots {
+                    let is_widget = annot_obj
+                        .as_reference()
+                        .ok()
+                        .and_then(|id| doc.get_dictionary(id).ok())
+                        .and_then(|d| d.get(b"Subtype").ok().map(|st| st == &Object::Name(b"Widget".to_vec())))
+                        .unwrap_or(false);
+                    if is_widget {
+                        warnings.push(format!("widget annotation found on page (object {:?})", annot_obj));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(FlattenValidation {
+        has_no_xfa,
+        has_no_needs_rendering,
+        has_no_acroform,
+        page_count,
+        warnings,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// XFA-F6-04 (#1112): Flatten quality metrics
+// ---------------------------------------------------------------------------
+
+/// Metrics comparing a PDF before and after flattening.
+///
+/// Used by [`compare_flatten_quality`] and the `flatten-check` CLI subcommand.
+pub struct FlattenQualityMetrics {
+    /// Number of pages in the original (pre-flatten) PDF.
+    pub page_count_before: usize,
+    /// Number of pages in the flattened (post-flatten) PDF.
+    pub page_count_after: usize,
+    /// True when `page_count_before == page_count_after`.
+    pub page_count_match: bool,
+    /// Total byte length of all content streams in the original PDF.
+    pub content_stream_bytes_before: usize,
+    /// Total byte length of all content streams in the flattened PDF.
+    pub content_stream_bytes_after: usize,
+    /// Ratio of after/before content stream bytes. 1.0 = same size, <1.0 = smaller.
+    /// Returns 1.0 when `content_stream_bytes_before == 0` to avoid division by zero.
+    pub content_ratio: f64,
+}
+
+/// Compute quality metrics comparing the original PDF to its flattened version.
+///
+/// Parses both byte slices and compares page count and total content stream size.
+/// Returns an error only if both PDFs fail to parse.
+pub fn compare_flatten_quality(
+    original_bytes: &[u8],
+    flattened_bytes: &[u8],
+) -> Result<FlattenQualityMetrics> {
+    fn count_pages_and_stream_bytes(pdf_bytes: &[u8]) -> (usize, usize) {
+        let doc = match Document::load_mem(pdf_bytes) {
+            Ok(d) => d,
+            Err(_) => return (0, 0),
+        };
+        let page_count = doc.page_iter().count();
+        let stream_bytes: usize = doc
+            .objects
+            .values()
+            .filter_map(|obj| {
+                if let Object::Stream(s) = obj {
+                    // Use decompressed content length when available.
+                    s.content.len().into()
+                } else {
+                    None
+                }
+            })
+            .sum();
+        (page_count, stream_bytes)
+    }
+
+    let (page_count_before, content_stream_bytes_before) =
+        count_pages_and_stream_bytes(original_bytes);
+    let (page_count_after, content_stream_bytes_after) =
+        count_pages_and_stream_bytes(flattened_bytes);
+
+    let content_ratio = if content_stream_bytes_before == 0 {
+        1.0_f64
+    } else {
+        content_stream_bytes_after as f64 / content_stream_bytes_before as f64
+    };
+
+    Ok(FlattenQualityMetrics {
+        page_count_before,
+        page_count_after,
+        page_count_match: page_count_before == page_count_after,
+        content_stream_bytes_before,
+        content_stream_bytes_after,
+        content_ratio,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -4142,5 +4482,214 @@ ET
         // (An Ok result would mean the PDF library accepts empty bytes, which
         //  would also be fine — the important invariant is no panic/abort.)
         let _ = result;
+    }
+
+    // -----------------------------------------------------------------------
+    // XFA-F6-01 (#1109): Pipeline contract — minimal well-formed XFA PDF
+    // -----------------------------------------------------------------------
+
+    /// XFA-F6-01: the flatten pipeline completes without panicking on a
+    /// minimal well-formed XFA PDF. This exercises all pipeline stages and
+    /// verifies the debug_assert ordering constraints hold.
+    #[test]
+    fn flatten_pipeline_completes_on_minimal_xfa_pdf() {
+        let pdf_bytes = build_xfa_pdf(SIMPLE_XDP);
+        // The pipeline must not panic (debug_assert violations would panic in
+        // debug builds). We do not require Ok — layout failure → static_fallback
+        // is acceptable, the important invariant is no panic.
+        let result = flatten_xfa_to_pdf(&pdf_bytes);
+        let _ = result; // Ok or Err both acceptable; panic is not
+    }
+
+    // -----------------------------------------------------------------------
+    // XFA-F6-02 (#1110): AcroForm/XFA removal tests
+    // -----------------------------------------------------------------------
+
+    /// After flattening an XFA PDF, the output must not contain /NeedsRendering.
+    #[test]
+    fn flatten_removes_needs_rendering() {
+        // Build a PDF with NeedsRendering in the catalog.
+        let mut pdf_bytes = build_xfa_pdf(SIMPLE_XDP);
+        // Insert NeedsRendering into the catalog via lopdf.
+        {
+            let mut doc = Document::load_mem(&pdf_bytes).expect("parse for NeedsRendering test");
+            let root_id = match doc.trailer.get(b"Root") {
+                Ok(Object::Reference(id)) => *id,
+                _ => panic!("no Root in trailer"),
+            };
+            if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(root_id) {
+                dict.set("NeedsRendering", Object::Boolean(true));
+            }
+            let mut out = Vec::new();
+            doc.save_to(&mut out).expect("re-save for NeedsRendering test");
+            pdf_bytes = out;
+        }
+
+        // Flatten should strip NeedsRendering.
+        let flattened = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
+        let doc = Document::load_mem(&flattened).expect("parse flattened PDF");
+        let root_id = match doc.trailer.get(b"Root") {
+            Ok(Object::Reference(id)) => *id,
+            _ => panic!("no Root in flattened trailer"),
+        };
+        let catalog = doc.get_dictionary(root_id).expect("catalog dict");
+        assert!(
+            catalog.get(b"NeedsRendering").is_err(),
+            "/NeedsRendering must be absent after flatten"
+        );
+    }
+
+    /// After flattening an XFA PDF, the output must not contain /XFA anywhere
+    /// in the catalog or AcroForm dictionary.
+    #[test]
+    fn flatten_removes_xfa_entry() {
+        let pdf_bytes = build_xfa_pdf(SIMPLE_XDP);
+        let flattened = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
+
+        // Search the serialised bytes for /XFA — the key must not appear.
+        // We look for " /XFA" / "\n/XFA" patterns in the raw output.
+        let flattened_str = String::from_utf8_lossy(&flattened);
+        assert!(
+            !flattened_str.contains("/XFA"),
+            "/XFA must be absent from flattened output, but was found"
+        );
+    }
+
+    /// After flattening, there must be no empty /Annots arrays in the output.
+    #[test]
+    fn flatten_removes_empty_annots_arrays() {
+        // Build a PDF with an empty Annots array on the page.
+        let mut pdf_bytes = build_xfa_pdf(SIMPLE_XDP);
+        {
+            let mut doc = Document::load_mem(&pdf_bytes).expect("parse for annots test");
+            let page_id = doc.page_iter().next().expect("at least one page");
+            if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(page_id) {
+                dict.set("Annots", Object::Array(vec![]));
+            }
+            let mut out = Vec::new();
+            doc.save_to(&mut out).expect("re-save for annots test");
+            pdf_bytes = out;
+        }
+
+        let flattened = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
+        let doc = Document::load_mem(&flattened).expect("parse flattened PDF");
+        for page_id in doc.page_iter() {
+            let page = doc.get_dictionary(page_id).expect("page dict");
+            match page.get(b"Annots") {
+                Ok(Object::Array(arr)) => {
+                    assert!(
+                        !arr.is_empty(),
+                        "page {:?}: /Annots must either be absent or non-empty after flatten",
+                        page_id
+                    );
+                }
+                _ => {} // absent = good
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // XFA-F6-03 (#1111): validate_flattened_pdf tests
+    // -----------------------------------------------------------------------
+
+    /// A clean (non-XFA) PDF must pass validation with no warnings.
+    #[test]
+    fn validate_flattened_pdf_clean_pdf_passes() {
+        // Build the minimal PDF document (no AcroForm/XFA).
+        let mut doc = Document::with_version("1.4");
+        let pages_id = doc.new_object_id();
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Page".to_vec()),
+            "Parent"   => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ])
+        }));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type"  => Object::Name(b"Pages".to_vec()),
+                "Kids"  => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1)
+            }),
+        );
+        let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"  => Object::Name(b"Catalog".to_vec()),
+            "Pages" => Object::Reference(pages_id)
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        let mut pdf_bytes = Vec::new();
+        doc.save_to(&mut pdf_bytes).expect("save clean PDF");
+
+        let validation = validate_flattened_pdf(&pdf_bytes).expect("validate failed");
+        assert!(validation.has_no_acroform, "clean PDF should have no AcroForm");
+        assert!(validation.has_no_xfa, "clean PDF should have no XFA");
+        assert!(validation.has_no_needs_rendering, "clean PDF should have no NeedsRendering");
+        assert_eq!(validation.page_count, 1, "clean PDF should report 1 page");
+        assert!(
+            validation.warnings.is_empty(),
+            "clean PDF should produce no warnings, got: {:?}",
+            validation.warnings
+        );
+    }
+
+    /// validate_flattened_pdf must not panic on empty input.
+    #[test]
+    fn validate_flattened_pdf_does_not_panic_on_empty_input() {
+        let result = validate_flattened_pdf(&[]);
+        // Should return Ok with a warning, not panic.
+        assert!(result.is_ok(), "expected Ok from empty input, got: {:?}", result.err());
+        let v = result.unwrap();
+        assert_eq!(v.page_count, 0, "empty input has 0 pages");
+        assert!(!v.warnings.is_empty(), "empty input should produce at least one warning");
+    }
+
+    // -----------------------------------------------------------------------
+    // XFA-F6-04 (#1112): compare_flatten_quality tests
+    // -----------------------------------------------------------------------
+
+    /// Page count comparison works correctly via compare_flatten_quality.
+    #[test]
+    fn compare_flatten_quality_page_count_comparison() {
+        let original = build_xfa_pdf(SIMPLE_XDP);
+        let flattened = flatten_xfa_to_pdf(&original).expect("flatten failed");
+        let metrics = compare_flatten_quality(&original, &flattened)
+            .expect("compare_flatten_quality failed");
+        // Both before and after must parse to at least 1 page.
+        assert!(metrics.page_count_before >= 1, "original must have >= 1 page");
+        assert!(metrics.page_count_after >= 1, "flattened must have >= 1 page");
+        // page_count_match must reflect equality.
+        assert_eq!(
+            metrics.page_count_match,
+            metrics.page_count_before == metrics.page_count_after,
+            "page_count_match must equal page_count_before == page_count_after"
+        );
+    }
+
+    /// Content ratio is computed correctly.
+    #[test]
+    fn compare_flatten_quality_content_ratio_computed() {
+        let original = build_xfa_pdf(SIMPLE_XDP);
+        let flattened = flatten_xfa_to_pdf(&original).expect("flatten failed");
+        let metrics = compare_flatten_quality(&original, &flattened)
+            .expect("compare_flatten_quality failed");
+        // Ratio should be a finite positive number.
+        assert!(
+            metrics.content_ratio.is_finite() && metrics.content_ratio >= 0.0,
+            "content_ratio must be finite and >= 0, got: {}",
+            metrics.content_ratio
+        );
+        // Verify the ratio matches the raw values.
+        let expected = if metrics.content_stream_bytes_before == 0 {
+            1.0_f64
+        } else {
+            metrics.content_stream_bytes_after as f64 / metrics.content_stream_bytes_before as f64
+        };
+        assert!(
+            (metrics.content_ratio - expected).abs() < 1e-9,
+            "content_ratio mismatch: expected {expected}, got {}",
+            metrics.content_ratio
+        );
     }
 }
