@@ -518,6 +518,19 @@ impl<'a> FormTreeSomResolver<'a> {
         segment: &xfa_dom_resolver::som::SomSegment,
         allow_self: bool,
     ) -> Vec<FormNodeId> {
+        // XFA-F3-06: `..` (parent) navigation — a segment whose name is an
+        // empty string (produced by the `.` separator after `..` in the raw path)
+        // or literally ".." navigates to the parent node.
+        if let SomSelector::Name(name) = &segment.selector {
+            if name == ".." {
+                // Navigate to parent
+                if let Some(&parent_id) = self.parents.get(&node_id) {
+                    return apply_index_to_single(parent_id, segment.index);
+                }
+                return Vec::new();
+            }
+        }
+
         if allow_self && self.node_matches_selector(node_id, &segment.selector) {
             return apply_index_to_single(node_id, segment.index);
         }
@@ -605,6 +618,11 @@ impl SomResolver for FormTreeSomResolver<'_> {
         path: &str,
     ) -> formcalc_interpreter::error::Result<Option<FormCalcValue>> {
         let Some(target) = self.resolve_target(path) else {
+            // XFA-F3-06: log a warning instead of silently returning None so
+            // that SOM path failures are diagnosable.
+            if !path.trim().is_empty() {
+                log::warn!("SOM bridge: path not resolved: {:?}", path.trim());
+            }
             return Ok(None);
         };
         Ok(Some(read_formcalc_value(
@@ -621,6 +639,10 @@ impl SomResolver for FormTreeSomResolver<'_> {
         value: FormCalcValue,
     ) -> formcalc_interpreter::error::Result<bool> {
         let Some(target) = self.resolve_target(path) else {
+            // XFA-F3-06: descriptive warning on assignment failure.
+            if !path.trim().is_empty() {
+                log::warn!("SOM bridge: assignment target not found: {:?}", path.trim());
+            }
             return Ok(false);
         };
         self.changes += write_formcalc_value(self.form, target.node_id, target.property, value);
@@ -1555,6 +1577,64 @@ endif
             panic!("expected field");
         }
         assert_eq!(tree.meta(details).presence, Presence::Visible);
+    }
+
+    // ─── #1097: FormCalc SOM bridge hardening ────────────────────────────────
+
+    /// SOM path `form1.#subform[0].field1.rawValue` resolves correctly on a
+    /// simple form tree.
+    #[test]
+    fn som_path_resolves_on_simple_form_tree() {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let form1 = add_node(&mut tree, "form1", FormNodeType::Subform);
+        let subform = add_node(&mut tree, "subform1", FormNodeType::Subform);
+        let field1 = add_node(
+            &mut tree,
+            "field1",
+            FormNodeType::Field {
+                value: "hello".to_string(),
+            },
+        );
+
+        tree.get_mut(root).children = vec![form1];
+        tree.get_mut(form1).children = vec![subform];
+        tree.get_mut(subform).children = vec![field1];
+
+        // Use a calculate script to read the value via absolute SOM path
+        tree.meta_mut(root).event_scripts =
+            vec![formcalc_script("form1.subform1.field1.rawValue", "calculate")];
+
+        let parents = super::build_parent_map(&tree, root);
+        let resolver = FormTreeSomResolver::new(&mut tree, root, &parents, root);
+        let target = resolver.resolve_target("form1.subform1.field1.rawValue");
+        assert!(target.is_some(), "SOM path must resolve to a node");
+        let target = target.unwrap();
+        let val = super::read_formcalc_value(&tree, root, &parents, target);
+        match val {
+            formcalc_interpreter::value::Value::String(s) => assert_eq!(s, "hello"),
+            formcalc_interpreter::value::Value::Number(n) => {
+                // number coercion: not expected here
+                panic!("expected string, got number {n}")
+            }
+            _ => panic!("expected string value"),
+        }
+    }
+
+    /// An invalid SOM path returns `None` (descriptive non-panic failure).
+    #[test]
+    fn invalid_som_path_returns_none_not_panic() {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let parents = super::build_parent_map(&tree, root);
+        let resolver = FormTreeSomResolver::new(&mut tree, root, &parents, root);
+
+        // This should not panic — it should return None
+        let result = resolver.resolve_target("nonexistent.deep.path.rawValue");
+        assert!(
+            result.is_none(),
+            "invalid SOM path must return None, not panic"
+        );
     }
 
     #[test]
