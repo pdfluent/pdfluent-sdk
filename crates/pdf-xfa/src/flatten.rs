@@ -88,7 +88,9 @@ use crate::render_bridge::{
 };
 use xfa_dom_resolver::data_dom::DataDom;
 use xfa_layout_engine::form::{DrawContent, FormNodeId, FormNodeStyle, FormTree};
-use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutEngine, LayoutNode};
+use xfa_layout_engine::layout::{
+    LayoutContent, LayoutDom, LayoutEngine, LayoutNode, LayoutProfile,
+};
 
 // ---------------------------------------------------------------------------
 // XFA-F6-01 (#1109): Pipeline stage ordering contract.
@@ -128,6 +130,40 @@ fn create_minimal_pdf_document() -> Document {
     }));
     doc.trailer.set("Root", Object::Reference(catalog_id));
     doc
+}
+
+/// Layout metadata emitted only for CLI diagnostics.
+#[derive(Debug, Clone, Default)]
+pub struct LayoutDump {
+    pub pages: Vec<LayoutDumpEntry>,
+}
+
+/// One page entry in the optional layout dump.
+#[derive(Debug, Clone)]
+pub struct LayoutDumpEntry {
+    pub page_num: u32,
+    pub page_height: f64,
+    pub used_height: f64,
+    pub overflow_to_next: bool,
+    pub first_overflow_element: Option<String>,
+}
+
+struct FlattenOutput {
+    pdf_bytes: Vec<u8>,
+    layout_dump: LayoutDump,
+}
+
+impl FlattenOutput {
+    fn new(pdf_bytes: Vec<u8>, layout_dump: LayoutDump) -> Self {
+        Self {
+            pdf_bytes,
+            layout_dump,
+        }
+    }
+
+    fn without_dump(pdf_bytes: Vec<u8>) -> Self {
+        Self::new(pdf_bytes, LayoutDump::default())
+    }
 }
 
 /// Returns `true` if the PDF bytes contain an `/Encrypt` entry in the trailer.
@@ -184,9 +220,9 @@ fn try_decrypt_pdf(pdf_bytes: &[u8]) -> DecryptResult {
 /// Returns `true` if the layout nodes contain at least one `Field` node
 /// (regardless of whether its value is empty or populated).
 fn page_has_fields(nodes: &[LayoutNode]) -> bool {
-    nodes.iter().any(|n| {
-        matches!(&n.content, LayoutContent::Field { .. }) || page_has_fields(&n.children)
-    })
+    nodes
+        .iter()
+        .any(|n| matches!(&n.content, LayoutContent::Field { .. }) || page_has_fields(&n.children))
 }
 
 /// Returns `true` if the layout nodes contain at least one `Field` with a
@@ -243,6 +279,19 @@ fn page_has_field_data(nodes: &[LayoutNode]) -> bool {
 /// See `scripts/generate_xfa_reference.sh` and `docs/XFA_SUCCESS_CRITERIA.md`.
 #[must_use = "flattened PDF bytes must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
+    flatten_xfa_to_pdf_internal(pdf_bytes, false).map(|out| out.pdf_bytes)
+}
+
+#[must_use = "flattened PDF bytes and layout dump must be used; discarding them loses output"]
+pub fn flatten_xfa_to_pdf_with_layout_dump(pdf_bytes: &[u8]) -> Result<(Vec<u8>, LayoutDump)> {
+    let out = flatten_xfa_to_pdf_internal(pdf_bytes, true)?;
+    Ok((out.pdf_bytes, out.layout_dump))
+}
+
+fn flatten_xfa_to_pdf_internal(
+    pdf_bytes: &[u8],
+    collect_layout_dump: bool,
+) -> Result<FlattenOutput> {
     // GL-QA36: Re-entrance guard.  If this function is entered while already
     // running on this thread (depth ≥ 1), a recursive call has occurred —
     // most likely a fallback path returning the original bytes which still
@@ -270,12 +319,10 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     // 0a. Quick byte-level pre-check: if the raw bytes don't contain /AcroForm
     //     (where XFA lives per the spec) and no XDP namespace, skip expensive
     //     parsing. This prevents multi-second stalls on large non-XFA PDFs.
-    if !pdf_bytes
-        .windows(9)
-        .any(|w| w == b"/AcroForm")
+    if !pdf_bytes.windows(9).any(|w| w == b"/AcroForm")
         && !pdf_bytes.windows(7).any(|w| w == b"xdp:xdp")
     {
-        return Ok(pdf_bytes.to_vec());
+        return Ok(FlattenOutput::without_dump(pdf_bytes.to_vec()));
     }
 
     // 0b. Handle encrypted PDFs: try empty-password decrypt (owner-only encryption),
@@ -301,7 +348,7 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
             // No XFA packet was extracted, but the byte-level pre-check already
             // established that the document carries /AcroForm or XFA markers.
             // Fall back to static cleanup so AcroForm-only inputs still flatten.
-            return static_fallback(pdf_bytes);
+            return static_fallback(pdf_bytes).map(FlattenOutput::without_dump);
         }
     };
 
@@ -310,7 +357,7 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
         None => {
             // XFA present but template packet missing/unparseable (truncated XML).
             // Strip AcroForm + NeedsRendering so renderers use static content.
-            return static_fallback(pdf_bytes);
+            return static_fallback(pdf_bytes).map(FlattenOutput::without_dump);
         }
     };
 
@@ -318,7 +365,7 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     //     real content (no <subform> or <pageSet> children) produce blank output.
     //     Fall back to static page copy so the original pages are preserved.
     if is_corrupt_xfa_template(pdf_bytes.len(), &template_xml) {
-        return static_fallback(pdf_bytes);
+        return static_fallback(pdf_bytes).map(FlattenOutput::without_dump);
     }
 
     // 2. Try XFA template → layout → render pipeline.
@@ -340,6 +387,7 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
             &template_xml_owned,
             datasets_xml_owned.as_deref(),
             form_xml_owned.as_deref(),
+            collect_layout_dump,
         )
     });
 
@@ -347,11 +395,11 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
         Ok(Ok(out)) => Ok(out),
         Ok(Err(e)) => {
             eprintln!("XFA flatten failed: {e:?}");
-            static_fallback(pdf_bytes)
+            static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
         }
         Err(_) => {
             eprintln!("XFA flatten timed out after {:?}", FLATTEN_TIMEOUT);
-            static_fallback(pdf_bytes)
+            static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
         }
     }
 }
@@ -362,7 +410,8 @@ fn xfa_flatten_inner(
     template_xml: &str,
     datasets_xml: Option<&str>,
     form_xml: Option<&str>,
-) -> Result<Vec<u8>> {
+    collect_layout_dump: bool,
+) -> Result<FlattenOutput> {
     use crate::dynamic::apply_dynamic_scripts;
 
     // XFA-F6-01 (#1109): pipeline stage tracker — verifies strict ordering via
@@ -404,7 +453,10 @@ fn xfa_flatten_inner(
     }
 
     // PIPELINE: stage 1 — Bind (merge template with data DOM)
-    debug_assert!(_stage <= PipelineStage::Bind, "pipeline stage order violated: expected <= Bind");
+    debug_assert!(
+        _stage <= PipelineStage::Bind,
+        "pipeline stage order violated: expected <= Bind"
+    );
     _stage = PipelineStage::Bind;
 
     let merger = FormMerger::new(&data_dom).with_image_files(image_files);
@@ -412,10 +464,7 @@ fn xfa_flatten_inner(
         .merge(template_xml)
         .map_err(|e| XfaError::ParseFailed(format!("template merge: {e}")))?;
 
-    log::debug!(
-        "XFA bind: {} form nodes created",
-        tree.nodes.len()
-    );
+    log::debug!("XFA bind: {} form nodes created", tree.nodes.len());
 
     let _ = apply_dynamic_scripts(&mut tree, root_id);
 
@@ -434,22 +483,30 @@ fn xfa_flatten_inner(
     inject_resolved_metrics(&mut tree, &resolved_fonts);
 
     // PIPELINE: stage 2 — Layout (compute page positions using resolved font metrics)
-    debug_assert!(_stage <= PipelineStage::Layout, "pipeline stage order violated: expected <= Layout");
+    debug_assert!(
+        _stage <= PipelineStage::Layout,
+        "pipeline stage order violated: expected <= Layout"
+    );
     _stage = PipelineStage::Layout;
 
     let engine = LayoutEngine::new(&tree);
-    let mut layout = engine
-        .layout(root_id)
-        .map_err(|e| XfaError::LayoutFailed(format!("{e:?}")))?;
+    let (mut layout, mut layout_dump) = if collect_layout_dump {
+        let (layout, profile) = engine
+            .layout_with_profile(root_id)
+            .map_err(|e| XfaError::LayoutFailed(format!("{e:?}")))?;
+        (layout, Some(layout_dump_from_profile(profile)))
+    } else {
+        let layout = engine
+            .layout(root_id)
+            .map_err(|e| XfaError::LayoutFailed(format!("{e:?}")))?;
+        (layout, None)
+    };
 
     if layout.pages.is_empty() {
         return Err(XfaError::LayoutFailed("layout produced 0 pages".into()));
     }
 
-    log::debug!(
-        "XFA layout: {} pages produced",
-        layout.pages.len()
-    );
+    log::debug!("XFA layout: {} pages produced", layout.pages.len());
 
     // XFA Spec §4.3: suppress page subforms whose data is empty or absent.
     // A page with fields but no populated values is considered "data-empty"
@@ -482,17 +539,35 @@ fn xfa_flatten_inner(
                 idx += 1;
                 k
             });
+            if let Some(ref mut dump) = layout_dump {
+                let mut idx = 0;
+                dump.pages.retain(|_| {
+                    let k = keep[idx];
+                    idx += 1;
+                    k
+                });
+            }
         } else if data_dom.is_empty() {
             // No datasets data at all: show only the first page template.
             layout.pages.truncate(1);
+            if let Some(ref mut dump) = layout_dump {
+                dump.pages.truncate(1);
+            }
         }
         // else: datasets data is present but binding did not populate
         // LayoutContent::Field.value for any page — keep all pages to
         // preserve the full document structure.
     }
 
+    if let Some(ref mut dump) = layout_dump {
+        renumber_layout_dump_pages(dump);
+    }
+
     // PIPELINE: stage 3 — Render (generate XFA overlay content streams from layout)
-    debug_assert!(_stage <= PipelineStage::Render, "pipeline stage order violated: expected <= Render");
+    debug_assert!(
+        _stage <= PipelineStage::Render,
+        "pipeline stage order violated: expected <= Render"
+    );
     _stage = PipelineStage::Render;
 
     let mut doc = match Document::load_mem(pdf_bytes) {
@@ -504,7 +579,10 @@ fn xfa_flatten_inner(
     };
 
     // PIPELINE: stage 4 — Embed (embed fonts/images into PDF document)
-    debug_assert!(_stage <= PipelineStage::Embed, "pipeline stage order violated: expected <= Embed");
+    debug_assert!(
+        _stage <= PipelineStage::Embed,
+        "pipeline stage order violated: expected <= Embed"
+    );
     _stage = PipelineStage::Embed;
 
     // PERF: embed_resolved_fonts is O(f * p) where f = unique resolved fonts
@@ -528,7 +606,10 @@ fn xfa_flatten_inner(
     log::debug!(
         "XFA render: {} content streams generated ({} bytes total)",
         overlays.len(),
-        overlays.iter().map(|o| o.content_stream.len()).sum::<usize>()
+        overlays
+            .iter()
+            .map(|o| o.content_stream.len())
+            .sum::<usize>()
     );
 
     // Register standard PDF fonts: F1=Times-Roman (serif), F2=Helvetica (sans), F3=Courier (mono).
@@ -605,7 +686,10 @@ fn xfa_flatten_inner(
         is_static_form || n_layout < n_existing || has_static_content && overlay_is_substantial;
 
     // PIPELINE: stage 5 — Write (write content streams to PDF pages)
-    debug_assert!(_stage <= PipelineStage::Write, "pipeline stage order violated: expected <= Write");
+    debug_assert!(
+        _stage <= PipelineStage::Write,
+        "pipeline stage order violated: expected <= Write"
+    );
     _stage = PipelineStage::Write;
 
     if preserve_static {
@@ -695,16 +779,44 @@ fn xfa_flatten_inner(
     }
 
     // PIPELINE: stage 6 — Cleanup (remove AcroForm/XFA markers)
-    debug_assert!(_stage <= PipelineStage::Cleanup, "pipeline stage order violated: expected <= Cleanup");
+    debug_assert!(
+        _stage <= PipelineStage::Cleanup,
+        "pipeline stage order violated: expected <= Cleanup"
+    );
     #[allow(unused_assignments)]
-    { _stage = PipelineStage::Cleanup; }
+    {
+        _stage = PipelineStage::Cleanup;
+    }
 
     remove_acroform(&mut doc);
 
     let mut out = Vec::new();
     doc.save_to(&mut out)
         .map_err(|e| XfaError::LayoutFailed(format!("save: {e}")))?;
-    Ok(out)
+    Ok(FlattenOutput::new(out, layout_dump.unwrap_or_default()))
+}
+
+fn layout_dump_from_profile(profile: LayoutProfile) -> LayoutDump {
+    LayoutDump {
+        pages: profile
+            .pages
+            .into_iter()
+            .enumerate()
+            .map(|(idx, page)| LayoutDumpEntry {
+                page_num: idx as u32 + 1,
+                page_height: page.page_height,
+                used_height: page.used_height,
+                overflow_to_next: page.overflow_to_next,
+                first_overflow_element: page.first_overflow_element,
+            })
+            .collect(),
+    }
+}
+
+fn renumber_layout_dump_pages(dump: &mut LayoutDump) {
+    for (idx, page) in dump.pages.iter_mut().enumerate() {
+        page.page_num = idx as u32 + 1;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3075,11 +3187,13 @@ pub fn validate_flattened_pdf(pdf_bytes: &[u8]) -> Result<FlattenValidation> {
     let mut has_no_acroform = true;
 
     // Check catalog for AcroForm, NeedsRendering, and XFA.
-    let root_id = doc
-        .trailer
-        .get(b"Root")
-        .ok()
-        .and_then(|o| if let Object::Reference(id) = o { Some(*id) } else { None });
+    let root_id = doc.trailer.get(b"Root").ok().and_then(|o| {
+        if let Object::Reference(id) = o {
+            Some(*id)
+        } else {
+            None
+        }
+    });
 
     if let Some(rid) = root_id {
         if let Ok(catalog) = doc.get_dictionary(rid) {
@@ -3127,10 +3241,17 @@ pub fn validate_flattened_pdf(pdf_bytes: &[u8]) -> Result<FlattenValidation> {
                 .as_reference()
                 .ok()
                 .and_then(|id| doc.get_dictionary(id).ok())
-                .and_then(|d| d.get(b"Subtype").ok().map(|st| st == &Object::Name(b"Widget".to_vec())))
+                .and_then(|d| {
+                    d.get(b"Subtype")
+                        .ok()
+                        .map(|st| st == &Object::Name(b"Widget".to_vec()))
+                })
                 .unwrap_or(false);
             if is_widget {
-                warnings.push(format!("widget annotation found on page (object {:?})", annot_obj));
+                warnings.push(format!(
+                    "widget annotation found on page (object {:?})",
+                    annot_obj
+                ));
             }
         }
     }
@@ -3373,7 +3494,10 @@ fn extract_text_from_content_stream(content: &[u8]) -> String {
             if depth == 0 {
                 let literal = &s[start..end - 1];
                 // Only collect printable ASCII — skip binary font strings.
-                if literal.chars().all(|c| c.is_ascii() && (c.is_alphanumeric() || c.is_whitespace() || c.is_ascii_punctuation())) {
+                if literal.chars().all(|c| {
+                    c.is_ascii()
+                        && (c.is_alphanumeric() || c.is_whitespace() || c.is_ascii_punctuation())
+                }) {
                     let trimmed = literal.trim();
                     if !trimmed.is_empty() {
                         result.push(' ');
@@ -4736,7 +4860,11 @@ ET
 
         let streams = page_content_streams(&doc, page_id);
 
-        assert_eq!(streams.len(), 2, "indirect /Contents arrays must be traversed");
+        assert_eq!(
+            streams.len(),
+            2,
+            "indirect /Contents arrays must be traversed"
+        );
         assert!(streams[0].windows(2).any(|w| w == b"Tj"));
         assert!(streams[1].windows(2).any(|w| w == b"Tj"));
     }
@@ -4931,7 +5059,10 @@ ET
     fn flatten_xfa_to_pdf_recursion_guard_returns_error() {
         let pdf_bytes = build_xfa_pdf(SIMPLE_XDP);
         let result = flatten_xfa_to_pdf_simulate_reentrant(&pdf_bytes);
-        assert!(result.is_err(), "expected recursion guard to return Err, got Ok");
+        assert!(
+            result.is_err(),
+            "expected recursion guard to return Err, got Ok"
+        );
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("recursively"),
@@ -4949,7 +5080,10 @@ ET
         // Second call must not be blocked by a leaked counter.
         let pdf_bytes2 = build_xfa_pdf(SIMPLE_XDP);
         let result = flatten_xfa_to_pdf(&pdf_bytes2);
-        assert!(result.is_ok(), "second flatten call should succeed, got: {result:?}");
+        assert!(
+            result.is_ok(),
+            "second flatten call should succeed, got: {result:?}"
+        );
     }
 
     // XFA-F1-05 (issue #1088): flatten_xfa_to_pdf must never panic on empty input.
@@ -4981,6 +5115,19 @@ ET
         let _ = result; // Ok or Err both acceptable; panic is not
     }
 
+    #[test]
+    fn flatten_with_layout_dump_preserves_pdf_bytes() {
+        let pdf_bytes = build_xfa_pdf(SIMPLE_XDP);
+        let flattened = flatten_xfa_to_pdf(&pdf_bytes).expect("plain flatten should succeed");
+        let (flattened_with_dump, layout_dump) =
+            flatten_xfa_to_pdf_with_layout_dump(&pdf_bytes).expect("dump flatten should succeed");
+
+        assert_eq!(flattened_with_dump, flattened);
+        assert!(!layout_dump.pages.is_empty());
+        assert_eq!(layout_dump.pages[0].page_num, 1);
+        assert!(layout_dump.pages[0].used_height <= layout_dump.pages[0].page_height);
+    }
+
     // -----------------------------------------------------------------------
     // XFA-F6-02 (#1110): AcroForm/XFA removal tests
     // -----------------------------------------------------------------------
@@ -5001,7 +5148,8 @@ ET
                 dict.set("NeedsRendering", Object::Boolean(true));
             }
             let mut out = Vec::new();
-            doc.save_to(&mut out).expect("re-save for NeedsRendering test");
+            doc.save_to(&mut out)
+                .expect("re-save for NeedsRendering test");
             pdf_bytes = out;
         }
 
@@ -5236,9 +5384,15 @@ ET
         doc.save_to(&mut pdf_bytes).expect("save clean PDF");
 
         let validation = validate_flattened_pdf(&pdf_bytes).expect("validate failed");
-        assert!(validation.has_no_acroform, "clean PDF should have no AcroForm");
+        assert!(
+            validation.has_no_acroform,
+            "clean PDF should have no AcroForm"
+        );
         assert!(validation.has_no_xfa, "clean PDF should have no XFA");
-        assert!(validation.has_no_needs_rendering, "clean PDF should have no NeedsRendering");
+        assert!(
+            validation.has_no_needs_rendering,
+            "clean PDF should have no NeedsRendering"
+        );
         assert_eq!(validation.page_count, 1, "clean PDF should report 1 page");
         assert!(
             validation.warnings.is_empty(),
@@ -5252,10 +5406,17 @@ ET
     fn validate_flattened_pdf_does_not_panic_on_empty_input() {
         let result = validate_flattened_pdf(&[]);
         // Should return Ok with a warning, not panic.
-        assert!(result.is_ok(), "expected Ok from empty input, got: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "expected Ok from empty input, got: {:?}",
+            result.err()
+        );
         let v = result.unwrap();
         assert_eq!(v.page_count, 0, "empty input has 0 pages");
-        assert!(!v.warnings.is_empty(), "empty input should produce at least one warning");
+        assert!(
+            !v.warnings.is_empty(),
+            "empty input should produce at least one warning"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -5267,11 +5428,17 @@ ET
     fn compare_flatten_quality_page_count_comparison() {
         let original = build_xfa_pdf(SIMPLE_XDP);
         let flattened = flatten_xfa_to_pdf(&original).expect("flatten failed");
-        let metrics = compare_flatten_quality(&original, &flattened)
-            .expect("compare_flatten_quality failed");
+        let metrics =
+            compare_flatten_quality(&original, &flattened).expect("compare_flatten_quality failed");
         // Both before and after must parse to at least 1 page.
-        assert!(metrics.page_count_before >= 1, "original must have >= 1 page");
-        assert!(metrics.page_count_after >= 1, "flattened must have >= 1 page");
+        assert!(
+            metrics.page_count_before >= 1,
+            "original must have >= 1 page"
+        );
+        assert!(
+            metrics.page_count_after >= 1,
+            "flattened must have >= 1 page"
+        );
         // page_count_match must reflect equality.
         assert_eq!(
             metrics.page_count_match,
@@ -5285,8 +5452,8 @@ ET
     fn compare_flatten_quality_content_ratio_computed() {
         let original = build_xfa_pdf(SIMPLE_XDP);
         let flattened = flatten_xfa_to_pdf(&original).expect("flatten failed");
-        let metrics = compare_flatten_quality(&original, &flattened)
-            .expect("compare_flatten_quality failed");
+        let metrics =
+            compare_flatten_quality(&original, &flattened).expect("compare_flatten_quality failed");
         // Ratio should be a finite positive number.
         assert!(
             metrics.content_ratio.is_finite() && metrics.content_ratio >= 0.0,
@@ -5335,11 +5502,14 @@ ET
                 Object::Integer(612), Object::Integer(792),
             ])
         }));
-        doc.objects.insert(pages_id, Object::Dictionary(dictionary! {
-            "Type"  => Object::Name(b"Pages".to_vec()),
-            "Kids"  => Object::Array(vec![Object::Reference(page_id)]),
-            "Count" => Object::Integer(1)
-        }));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type"  => Object::Name(b"Pages".to_vec()),
+                "Kids"  => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1)
+            }),
+        );
         let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
             "Type"  => Object::Name(b"Catalog".to_vec()),
             "Pages" => Object::Reference(pages_id)
