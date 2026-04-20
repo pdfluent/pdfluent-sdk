@@ -99,6 +99,21 @@ pub struct LayoutDom {
     pub pages: Vec<LayoutPage>,
 }
 
+/// Per-page pagination diagnostics collected only on opt-in code paths.
+#[derive(Debug, Clone, Default)]
+pub struct LayoutProfile {
+    pub pages: Vec<LayoutProfilePage>,
+}
+
+/// Minimal vertical-space profiling metadata for one laid out page.
+#[derive(Debug, Clone)]
+pub struct LayoutProfilePage {
+    pub page_height: f64,
+    pub used_height: f64,
+    pub overflow_to_next: bool,
+    pub first_overflow_element: Option<String>,
+}
+
 impl LayoutDom {
     /// Estimate the total heap bytes consumed by this layout tree.
     ///
@@ -252,6 +267,13 @@ impl<'a> LayoutEngine<'a> {
         Self { form }
     }
 
+    /// Perform layout and collect pagination diagnostics for each emitted page.
+    pub fn layout_with_profile(&self, root: FormNodeId) -> Result<(LayoutDom, LayoutProfile)> {
+        let mut profile = LayoutProfile::default();
+        let dom = self.layout_internal(root, Some(&mut profile))?;
+        Ok((dom, profile))
+    }
+
     /// Perform layout on the entire form tree starting from the root node.
     ///
     /// XFA Spec 3.3 §8.6 — The Layout Algorithm (p288): content-driven single
@@ -266,7 +288,16 @@ impl<'a> LayoutEngine<'a> {
     /// TODO §8.8: simplexPaginated/duplexPaginated, pagePosition/oddOrEven/
     /// blankOrNotBlank qualifications, termination processing (last/only page).
     pub fn layout(&self, root: FormNodeId) -> Result<LayoutDom> {
+        self.layout_internal(root, None)
+    }
+
+    fn layout_internal(
+        &self,
+        root: FormNodeId,
+        mut profile: Option<&mut LayoutProfile>,
+    ) -> Result<LayoutDom> {
         let root_node = self.form.get(root);
+        let collect_profile = profile.is_some();
 
         let (page_areas, raw_content_nodes) = self.extract_page_structure(root_node)?;
         // Build queued nodes with break_before flags and occur expansion.
@@ -300,8 +331,14 @@ impl<'a> LayoutEngine<'a> {
                         );
                         break;
                     }
-                    let (page, rest, consumed_break_only, _) =
-                        self.layout_content_fitting(&area, &remaining, page_w, page_h)?;
+                    let (page, rest, consumed_break_only, _, page_profile) = self
+                        .layout_content_fitting(
+                            &area,
+                            &remaining,
+                            page_w,
+                            page_h,
+                            collect_profile,
+                        )?;
                     if page.nodes.is_empty() && !consumed_break_only {
                         // Force place one item to prevent infinite loop
                         let forced = self.layout_content_on_page(
@@ -311,13 +348,27 @@ impl<'a> LayoutEngine<'a> {
                             &[remaining[0].id],
                             root_node.layout,
                         )?;
+                        let next_remaining = remaining[1..].to_vec();
                         log::debug!(
                             "XFA layout: processing page {}/{} (forced)",
                             pages.len() + 1,
                             page_limit
                         );
+                        if let Some(profile) = profile.as_deref_mut() {
+                            profile.pages.push(
+                                self.profile_page_from_nodes(
+                                    &forced,
+                                    area.y,
+                                    area.height,
+                                    !next_remaining.is_empty(),
+                                    next_remaining
+                                        .first()
+                                        .map(|qn| self.describe_queued_node(qn)),
+                                ),
+                            );
+                        }
                         pages.push(forced);
-                        remaining = remaining[1..].to_vec();
+                        remaining = next_remaining;
                     } else if consumed_break_only {
                         // Break-only page: skip the blank page, continue with rest
                         remaining = rest;
@@ -327,6 +378,11 @@ impl<'a> LayoutEngine<'a> {
                             pages.len() + 1,
                             page_limit
                         );
+                        if let (Some(profile), Some(page_profile)) =
+                            (profile.as_deref_mut(), page_profile)
+                        {
+                            profile.pages.push(page_profile);
+                        }
                         pages.push(page);
                         remaining = rest;
                     }
@@ -340,6 +396,15 @@ impl<'a> LayoutEngine<'a> {
                     &raw_content_nodes,
                     root_node.layout,
                 )?;
+                if let Some(profile) = profile.as_deref_mut() {
+                    profile.pages.push(self.profile_page_from_nodes(
+                        &page,
+                        area.y,
+                        area.height,
+                        false,
+                        None,
+                    ));
+                }
                 pages.push(page);
             }
         } else {
@@ -361,9 +426,7 @@ impl<'a> LayoutEngine<'a> {
                     node.layout == LayoutStrategy::Positioned
                         && matches!(
                             node.node_type,
-                            FormNodeType::Subform
-                                | FormNodeType::Area
-                                | FormNodeType::ExclGroup
+                            FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup
                         )
                         && !qn.break_before
                 })
@@ -421,8 +484,18 @@ impl<'a> LayoutEngine<'a> {
                     &ids,
                     LayoutStrategy::Positioned,
                 )?;
+                let page_profile = if collect_profile {
+                    Some(self.profile_page_from_nodes(&page, ca.y, ca.height, false, None))
+                } else {
+                    None
+                };
                 self.prepend_fixed_nodes(&pa.fixed_nodes, &mut page)?;
                 if Self::has_visible_content(&page.nodes) {
+                    if let (Some(profile), Some(page_profile)) =
+                        (profile.as_deref_mut(), page_profile)
+                    {
+                        profile.pages.push(page_profile);
+                    }
                     pages.push(page);
                 }
             }
@@ -438,12 +511,23 @@ impl<'a> LayoutEngine<'a> {
                     break;
                 }
                 let ca = primary_content_area(pa);
-                let (mut placed, rest, consumed_break_only, _) =
-                    self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
+                let (mut placed, rest, consumed_break_only, _, page_profile) = self
+                    .layout_content_fitting(
+                        ca,
+                        &remaining,
+                        pa.page_width,
+                        pa.page_height,
+                        collect_profile,
+                    )?;
                 if consumed_break_only {
                     remaining = rest;
                 } else if Self::has_visible_content(&placed.nodes) {
                     self.prepend_fixed_nodes(&pa.fixed_nodes, &mut placed)?;
+                    if let (Some(profile), Some(page_profile)) =
+                        (profile.as_deref_mut(), page_profile)
+                    {
+                        profile.pages.push(page_profile);
+                    }
                     pages.push(placed);
                     remaining = rest;
                 } else if !pa.fixed_nodes.is_empty() {
@@ -454,6 +538,11 @@ impl<'a> LayoutEngine<'a> {
                     // whose flowing content is blank/hidden.
                     self.prepend_fixed_nodes(&pa.fixed_nodes, &mut placed)?;
                     if Self::has_visible_content(&placed.nodes) {
+                        if let (Some(profile), Some(page_profile)) =
+                            (profile.as_deref_mut(), page_profile)
+                        {
+                            profile.pages.push(page_profile);
+                        }
                         pages.push(placed);
                     }
                     remaining = rest;
@@ -483,8 +572,14 @@ impl<'a> LayoutEngine<'a> {
                     let pa = &page_areas[pa_idx];
                     let ca = primary_content_area(pa);
 
-                    let (mut page, rest, consumed_break_only, _) =
-                        self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
+                    let (mut page, rest, consumed_break_only, _, page_profile) = self
+                        .layout_content_fitting(
+                            ca,
+                            &remaining,
+                            pa.page_width,
+                            pa.page_height,
+                            collect_profile,
+                        )?;
                     if page.nodes.is_empty() && !consumed_break_only {
                         let forced = self.layout_content_on_page(
                             ca,
@@ -493,17 +588,43 @@ impl<'a> LayoutEngine<'a> {
                             &[remaining[0].id],
                             LayoutStrategy::TopToBottom,
                         )?;
+                        let next_remaining = remaining[1..].to_vec();
                         if Self::has_visible_content(&forced.nodes) {
                             let mut forced = forced;
+                            let forced_profile = if collect_profile {
+                                Some(
+                                    self.profile_page_from_nodes(
+                                        &forced,
+                                        ca.y,
+                                        ca.height,
+                                        !next_remaining.is_empty(),
+                                        next_remaining
+                                            .first()
+                                            .map(|qn| self.describe_queued_node(qn)),
+                                    ),
+                                )
+                            } else {
+                                None
+                            };
                             self.prepend_fixed_nodes(&pa.fixed_nodes, &mut forced)?;
+                            if let (Some(profile), Some(page_profile)) =
+                                (profile.as_deref_mut(), forced_profile)
+                            {
+                                profile.pages.push(page_profile);
+                            }
                             pages.push(forced);
                         }
-                        remaining = remaining[1..].to_vec();
+                        remaining = next_remaining;
                     } else if consumed_break_only {
                         remaining = rest;
                     } else {
                         if Self::has_visible_content(&page.nodes) {
                             self.prepend_fixed_nodes(&pa.fixed_nodes, &mut page)?;
+                            if let (Some(profile), Some(page_profile)) =
+                                (profile.as_deref_mut(), page_profile)
+                            {
+                                profile.pages.push(page_profile);
+                            }
                             pages.push(page);
                         }
                         remaining = rest;
@@ -869,6 +990,29 @@ impl<'a> LayoutEngine<'a> {
         Ok(page)
     }
 
+    fn profile_page_from_nodes(
+        &self,
+        page: &LayoutPage,
+        content_y: f64,
+        usable_height: f64,
+        overflow_to_next: bool,
+        first_overflow_element: Option<String>,
+    ) -> LayoutProfilePage {
+        let used_height = page
+            .nodes
+            .iter()
+            .map(|node| (node.rect.y + node.rect.height) - content_y)
+            .fold(0.0_f64, f64::max)
+            .clamp(0.0, usable_height.max(0.0));
+
+        LayoutProfilePage {
+            page_height: usable_height.max(0.0),
+            used_height,
+            overflow_to_next,
+            first_overflow_element,
+        }
+    }
+
     /// Lay out page-area fixed nodes (headers, footers, lines) at their
     /// absolute positions and prepend them to the page's node list so they
     /// render behind flowing content.
@@ -889,7 +1033,14 @@ impl<'a> LayoutEngine<'a> {
         content_ids: &[QueuedNode],
         page_width: f64,
         page_height: f64,
-    ) -> Result<(LayoutPage, Vec<QueuedNode>, bool, Option<String>)> {
+        profile_enabled: bool,
+    ) -> Result<(
+        LayoutPage,
+        Vec<QueuedNode>,
+        bool,
+        Option<String>,
+        Option<LayoutProfilePage>,
+    )> {
         let mut page = LayoutPage {
             width: page_width,
             height: page_height,
@@ -967,6 +1118,7 @@ impl<'a> LayoutEngine<'a> {
         let content_bottom = leader_height + content_height;
         let mut consumed_break_only = false;
         let break_target = None;
+        let mut max_used_bottom = 0.0_f64;
 
         // Count leader/trailer nodes placed so far (for force-place detection).
         let header_node_count = (if content_area.leader.is_some() { 1 } else { 0 })
@@ -1086,6 +1238,10 @@ impl<'a> LayoutEngine<'a> {
                     let (partial, rest_nodes) =
                         self.split_text_node(child_id, y_cursor, remaining_height, &lines)?;
                     if partial.rect.height > 0.0 && partial.rect.height <= remaining_height + 1.0 {
+                        if profile_enabled {
+                            max_used_bottom = max_used_bottom
+                                .max((y_cursor + partial.rect.height - leader_height).max(0.0));
+                        }
                         let mut offset_node = partial;
                         offset_node.rect.x += content_area.x;
                         offset_node.rect.y += content_area.y;
@@ -1110,6 +1266,10 @@ impl<'a> LayoutEngine<'a> {
                     let split_productive = !partial.children.is_empty()
                         && (partial_fits || partial.children.len() > 1);
                     if !partial.children.is_empty() && (partial_fits || split_productive) {
+                        if profile_enabled {
+                            max_used_bottom = max_used_bottom
+                                .max((y_cursor + partial.rect.height - leader_height).max(0.0));
+                        }
                         let mut offset_node = partial;
                         offset_node.rect.x += content_area.x;
                         offset_node.rect.y += content_area.y;
@@ -1125,6 +1285,10 @@ impl<'a> LayoutEngine<'a> {
                 } else if idx == 0 || page.nodes.len() <= header_node_count {
                     // First content item too large and can't split — force place it
                     let x = self.child_h_align_offset(child_id, child_size.width, available.width);
+                    if profile_enabled {
+                        max_used_bottom = max_used_bottom
+                            .max((y_cursor + child_size.height - leader_height).max(0.0));
+                    }
                     let node = self.layout_single_node_with_extent(
                         child_id,
                         child,
@@ -1156,6 +1320,10 @@ impl<'a> LayoutEngine<'a> {
                 )?;
                 let remaining_on_page = content_bottom - y_cursor;
                 if !partial.children.is_empty() && partial.rect.height <= remaining_on_page {
+                    if profile_enabled {
+                        max_used_bottom = max_used_bottom
+                            .max((y_cursor + partial.rect.height - leader_height).max(0.0));
+                    }
                     let mut offset_node = partial;
                     offset_node.rect.x += content_area.x;
                     offset_node.rect.y += content_area.y;
@@ -1166,6 +1334,10 @@ impl<'a> LayoutEngine<'a> {
                     break;
                 } else {
                     if !partial.children.is_empty() {
+                        if profile_enabled {
+                            max_used_bottom = max_used_bottom
+                                .max((y_cursor + partial.rect.height - leader_height).max(0.0));
+                        }
                         let mut offset_node = partial;
                         offset_node.rect.x += content_area.x;
                         offset_node.rect.y += content_area.y;
@@ -1209,6 +1381,10 @@ impl<'a> LayoutEngine<'a> {
                     qn.children_override.as_deref(),
                 )?
             };
+            if profile_enabled {
+                max_used_bottom =
+                    max_used_bottom.max((y_cursor + child_size.height - leader_height).max(0.0));
+            }
             let mut offset_node = node;
             offset_node.rect.x += content_area.x;
             offset_node.rect.y += content_area.y;
@@ -1225,7 +1401,66 @@ impl<'a> LayoutEngine<'a> {
 
         let mut remaining = split_remaining;
         remaining.extend(content_ids[placed_count..].iter().cloned());
-        Ok((page, remaining, consumed_break_only, break_target))
+        let page_profile = if profile_enabled {
+            Some(LayoutProfilePage {
+                page_height: content_height.max(0.0),
+                used_height: max_used_bottom.clamp(0.0, content_height.max(0.0)),
+                overflow_to_next: !remaining.is_empty() && !consumed_break_only,
+                first_overflow_element: if !remaining.is_empty() && !consumed_break_only {
+                    Some(self.describe_queued_node(&remaining[0]))
+                } else {
+                    None
+                },
+            })
+        } else {
+            None
+        };
+        Ok((
+            page,
+            remaining,
+            consumed_break_only,
+            break_target,
+            page_profile,
+        ))
+    }
+
+    fn describe_queued_node(&self, queued: &QueuedNode) -> String {
+        let node = self.form.get(queued.id);
+        let identifier = self
+            .form
+            .meta(queued.id)
+            .xfa_id
+            .clone()
+            .filter(|id| !id.is_empty())
+            .or_else(|| (!node.name.is_empty()).then(|| node.name.clone()))
+            .unwrap_or_else(|| queued.id.0.to_string());
+        let height = self
+            .compute_extent_with_available_and_override(
+                queued.id,
+                None,
+                queued.children_override.as_deref(),
+            )
+            .height;
+        format!(
+            "{}#{} (h={height:.1})",
+            Self::form_node_type_name(&node.node_type),
+            identifier
+        )
+    }
+
+    fn form_node_type_name(node_type: &FormNodeType) -> &'static str {
+        match node_type {
+            FormNodeType::Root => "root",
+            FormNodeType::PageSet => "pageSet",
+            FormNodeType::PageArea { .. } => "pageArea",
+            FormNodeType::Subform => "subform",
+            FormNodeType::Area => "area",
+            FormNodeType::ExclGroup => "exclGroup",
+            FormNodeType::SubformSet => "subformSet",
+            FormNodeType::Field { .. } => "field",
+            FormNodeType::Draw(_) => "draw",
+            FormNodeType::Image { .. } => "image",
+        }
     }
 
     /// XFA Spec 3.3 §8.7 — Content Splitting (p290): determines whether a node
@@ -1648,9 +1883,7 @@ impl<'a> LayoutEngine<'a> {
 
             // Overflow detection: child doesn't fit in remaining space.
             // 0.5pt tolerance for sub-point rounding (#971).
-            if child_y + child_size.height > remaining_height + 0.5
-                && !placed_children.is_empty()
-            {
+            if child_y + child_size.height > remaining_height + 0.5 && !placed_children.is_empty() {
                 // Overflow: split at the last valid split point.
                 if last_valid_split > 0 && last_valid_split < placed_children.len() {
                     // Trim placed_children to the last valid split point.
@@ -4212,6 +4445,53 @@ mod tests {
     }
 
     #[test]
+    fn pagination_profile_reports_height_usage_and_overflow_target() {
+        let mut tree = FormTree::new();
+        let mut fields = Vec::new();
+        for i in 0..4 {
+            let field = make_field(&mut tree, &format!("F{i}"), 200.0, 30.0);
+            tree.meta_mut(field).xfa_id = Some(format!("row_{i}"));
+            fields.push(field);
+        }
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(100.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: fields,
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let (layout, profile) = engine.layout_with_profile(root).unwrap();
+
+        assert_eq!(layout.pages.len(), 2);
+        assert_eq!(profile.pages.len(), 2);
+        assert_eq!(profile.pages[0].page_height, 100.0);
+        assert_eq!(profile.pages[0].used_height, 90.0);
+        assert!(profile.pages[0].overflow_to_next);
+        assert_eq!(
+            profile.pages[0].first_overflow_element.as_deref(),
+            Some("field#row_3 (h=30.0)")
+        );
+        assert_eq!(profile.pages[1].used_height, 30.0);
+        assert!(!profile.pages[1].overflow_to_next);
+        assert!(profile.pages[1].first_overflow_element.is_none());
+    }
+
+    #[test]
     fn pagination_with_page_area() {
         // PageArea with content area, content overflows to multiple pages
         let mut tree = FormTree::new();
@@ -6352,7 +6632,10 @@ mod tests {
         // A layout with two fields must report non-zero heap usage.
         assert!(!layout.pages.is_empty(), "expected at least one page");
         let bytes = layout.estimated_heap_bytes();
-        assert!(bytes > 0, "estimated_heap_bytes should be > 0 for non-empty layout");
+        assert!(
+            bytes > 0,
+            "estimated_heap_bytes should be > 0 for non-empty layout"
+        );
     }
 }
 
@@ -6845,9 +7128,10 @@ mod container_node_tests {
         // SubformSet itself may appear as a container node; its children should be present
         let page = &result.pages[0];
         fn count_named<'a>(nodes: &'a [LayoutNode], name: &str) -> usize {
-            nodes.iter().map(|n| {
-                usize::from(n.name == name) + count_named(&n.children, name)
-            }).sum()
+            nodes
+                .iter()
+                .map(|n| usize::from(n.name == name) + count_named(&n.children, name))
+                .sum()
         }
         assert!(
             count_named(&page.nodes, "A") >= 1,
@@ -6950,18 +7234,32 @@ mod keep_chain_tests {
         let result = engine.layout(root).unwrap();
 
         // Should produce 2 pages
-        assert_eq!(result.pages.len(), 2, "expected filler on page 1, heading+body on page 2");
+        assert_eq!(
+            result.pages.len(),
+            2,
+            "expected filler on page 1, heading+body on page 2"
+        );
 
         // Page 1: only the filler
-        let p1_names: Vec<&str> = result.pages[0].nodes.iter().map(|n| n.name.as_str()).collect();
+        let p1_names: Vec<&str> = result.pages[0]
+            .nodes
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect();
         assert!(p1_names.contains(&"Filler"), "Filler should be on page 1");
-        assert!(!p1_names.contains(&"Heading"), "Heading should NOT be on page 1");
+        assert!(
+            !p1_names.contains(&"Heading"),
+            "Heading should NOT be on page 1"
+        );
         assert!(!p1_names.contains(&"Body"), "Body should NOT be on page 1");
 
         // Page 2: heading and body together
-        let p2_names: Vec<&str> = result.pages[1].nodes.iter().map(|n| n.name.as_str()).collect();
+        let p2_names: Vec<&str> = result.pages[1]
+            .nodes
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect();
         assert!(p2_names.contains(&"Heading"), "Heading should be on page 2");
         assert!(p2_names.contains(&"Body"), "Body should be on page 2");
     }
-
 }

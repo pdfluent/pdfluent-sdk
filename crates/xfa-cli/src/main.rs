@@ -75,6 +75,9 @@ pub enum Commands {
         /// Output PDF file.
         #[arg(short, long)]
         output: PathBuf,
+        /// Write per-page layout metadata to JSON.
+        #[arg(long, value_name = "PATH")]
+        dump_layout: Option<PathBuf>,
     },
     /// Flatten a PDF and print quality metrics comparing before and after.
     FlattenCheck {
@@ -186,7 +189,11 @@ fn run() -> Result<()> {
             output,
             data,
         } => cmd_fill::run(&input, &output, &data),
-        Commands::Flatten { input, output } => cmd_flatten::run(&input, &output),
+        Commands::Flatten {
+            input,
+            output,
+            dump_layout,
+        } => cmd_flatten::run(&input, &output, dump_layout.as_deref()),
         Commands::FlattenCheck { input, output } => {
             cmd_flatten_check::run(&input, output.as_deref())
         }
@@ -205,6 +212,37 @@ fn run() -> Result<()> {
         Commands::Man => cmd_manpage::run(),
         Commands::Demo => cmd_demo::run(),
         Commands::DebugXfa { input, format } => cmd_debug_xfa::run(&input, format),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flatten_parses_dump_layout_flag() {
+        let cli = Cli::parse_from([
+            "pdfluent",
+            "flatten",
+            "input.pdf",
+            "--output",
+            "output.pdf",
+            "--dump-layout",
+            "/tmp/layout.json",
+        ]);
+
+        match cli.command {
+            Commands::Flatten {
+                input,
+                output,
+                dump_layout,
+            } => {
+                assert_eq!(input, PathBuf::from("input.pdf"));
+                assert_eq!(output, PathBuf::from("output.pdf"));
+                assert_eq!(dump_layout, Some(PathBuf::from("/tmp/layout.json")));
+            }
+            _ => panic!("unexpected command"),
+        }
     }
 }
 

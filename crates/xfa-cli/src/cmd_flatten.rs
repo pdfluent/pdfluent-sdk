@@ -1,28 +1,94 @@
 //! Flatten AcroForm fields — remove interactive form elements.
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use std::path::Path;
 
-pub fn run(input: &Path, output: &Path) -> Result<()> {
+#[derive(Serialize)]
+struct LayoutDumpJson {
+    pages: Vec<LayoutDumpEntryJson>,
+}
+
+#[derive(Serialize)]
+struct LayoutDumpEntryJson {
+    page_num: u32,
+    page_height: f64,
+    used_height: f64,
+    overflow_to_next: bool,
+    first_overflow_element: Option<String>,
+}
+
+fn write_layout_dump(path: &Path, dump: pdf_xfa::LayoutDump) -> Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).context("failed to create dump-layout directory")?;
+    }
+
+    let json = LayoutDumpJson {
+        pages: dump
+            .pages
+            .into_iter()
+            .map(|entry| LayoutDumpEntryJson {
+                page_num: entry.page_num,
+                page_height: entry.page_height,
+                used_height: entry.used_height,
+                overflow_to_next: entry.overflow_to_next,
+                first_overflow_element: entry.first_overflow_element,
+            })
+            .collect(),
+    };
+
+    let bytes = serde_json::to_vec_pretty(&json).context("failed to serialise layout dump")?;
+    std::fs::write(path, bytes).context("failed to write layout dump JSON")?;
+    Ok(())
+}
+
+pub fn run(input: &Path, output: &Path, dump_layout: Option<&Path>) -> Result<()> {
     let pdf_bytes = std::fs::read(input).context("failed to read input PDF")?;
 
-    match pdf_xfa::flatten_xfa_to_pdf(&pdf_bytes) {
-        Ok(flattened_bytes) => {
-            std::fs::write(output, &flattened_bytes).context("failed to write output PDF")?;
-            println!("Flattened XFA/AcroForm -> {}", output.display());
-        }
-        Err(pdf_xfa::error::XfaError::Encrypted(msg)) => {
-            eprintln!("SKIP: encrypted PDF — {msg}");
-            std::process::exit(2);
-        }
-        Err(e) => {
-            eprintln!("XFA flatten failed: {e:?}");
-            // Fallback to regular acroform flatten
-            let mut doc = lopdf::Document::load_mem(&pdf_bytes).context("failed to parse PDF")?;
-            let removed = flatten_acroform(&mut doc);
-            doc.save(output).context("failed to save output PDF")?;
-            println!("Flattened {removed} form fields -> {}", output.display());
-        }
+    match dump_layout {
+        Some(dump_path) => match pdf_xfa::flatten_xfa_to_pdf_with_layout_dump(&pdf_bytes) {
+            Ok((flattened_bytes, layout_dump)) => {
+                std::fs::write(output, &flattened_bytes).context("failed to write output PDF")?;
+                write_layout_dump(dump_path, layout_dump)?;
+                println!("Flattened XFA/AcroForm -> {}", output.display());
+            }
+            Err(pdf_xfa::error::XfaError::Encrypted(msg)) => {
+                eprintln!("SKIP: encrypted PDF — {msg}");
+                std::process::exit(2);
+            }
+            Err(e) => {
+                eprintln!("XFA flatten failed: {e:?}");
+                // Fallback to regular acroform flatten
+                let mut doc =
+                    lopdf::Document::load_mem(&pdf_bytes).context("failed to parse PDF")?;
+                let removed = flatten_acroform(&mut doc);
+                doc.save(output).context("failed to save output PDF")?;
+                write_layout_dump(dump_path, pdf_xfa::LayoutDump::default())?;
+                println!("Flattened {removed} form fields -> {}", output.display());
+            }
+        },
+        None => match pdf_xfa::flatten_xfa_to_pdf(&pdf_bytes) {
+            Ok(flattened_bytes) => {
+                std::fs::write(output, &flattened_bytes).context("failed to write output PDF")?;
+                println!("Flattened XFA/AcroForm -> {}", output.display());
+            }
+            Err(pdf_xfa::error::XfaError::Encrypted(msg)) => {
+                eprintln!("SKIP: encrypted PDF — {msg}");
+                std::process::exit(2);
+            }
+            Err(e) => {
+                eprintln!("XFA flatten failed: {e:?}");
+                // Fallback to regular acroform flatten
+                let mut doc =
+                    lopdf::Document::load_mem(&pdf_bytes).context("failed to parse PDF")?;
+                let removed = flatten_acroform(&mut doc);
+                doc.save(output).context("failed to save output PDF")?;
+                println!("Flattened {removed} form fields -> {}", output.display());
+            }
+        },
     }
     Ok(())
 }
