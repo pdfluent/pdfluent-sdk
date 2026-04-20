@@ -2196,11 +2196,11 @@ fn count_text_operators(stream: &[u8]) -> usize {
 /// onto existing page content for dynamic XFA forms.
 ///
 /// Hybrid XFA PDFs carry pre-rendered appearance streams in their widget `/AP/N`
-/// dictionaries.  For radio/checkbox widgets the Normal appearance dict often has
-/// only the "on" state (filled circle / checkmark) with no "Off" entry.  The
-/// oracle (iText / Adobe) renders this mark regardless of the current `/AS`
-/// value.  This function stamps the "on" Normal appearance for every
-/// checkbox/radio widget onto the page so the flattened output matches.
+/// dictionaries. For radio/checkbox widgets the Normal appearance dict often has
+/// only the "on" state (filled circle / checkmark) with no "Off" entry. Only
+/// widgets that are currently asserted should contribute that mark to the
+/// flattened page; widgets explicitly in the `Off` state must not be stamped
+/// with the on-mark just because `/AP/N` lacks an `Off` appearance.
 fn bake_checkbox_radio_ap_marks(doc: &mut Document, page_id: ObjectId) -> usize {
     let annots = page_annotations(doc, page_id);
     if annots.is_empty() {
@@ -2248,6 +2248,10 @@ fn bake_checkbox_radio_ap_marks(doc: &mut Document, page_id: ObjectId) -> usize 
             Object::Dictionary(d) => d.clone(),
             _ => continue,
         };
+
+        if matches!(selected_widget_state(&annot_dict), Some(state) if state == b"Off") {
+            continue;
+        }
 
         // Find the first non-"Off" state (the "on" mark appearance).
         let on_id = states
@@ -4194,6 +4198,38 @@ ET
             resolve_widget_normal_appearance(&mut doc, &annot).is_some(),
             "Off state with no Off appearance should fall through to on state"
         );
+    }
+
+    #[test]
+    fn bake_checkbox_radio_ap_marks_skips_off_widgets_without_off_normal_appearance() {
+        let pdf_bytes = build_xfa_pdf_with_widget_appearance(
+            Vec::new(),
+            Object::Dictionary(dictionary! {
+                "1" => Object::Stream(Stream::new(
+                    dictionary! {
+                        "Type" => Object::Name(b"XObject".to_vec()),
+                        "Subtype" => Object::Name(b"Form".to_vec()),
+                        "BBox" => Object::Array(vec![
+                            Object::Integer(0), Object::Integer(0),
+                            Object::Integer(10), Object::Integer(10),
+                        ]),
+                        "Resources" => Object::Dictionary(dictionary! {}),
+                    },
+                    b"q 1 1 8 8 re W n 2 8 m 8 2 l 8 8 m 2 2 l s Q\n".to_vec(),
+                )),
+            }),
+            dictionary! {
+                "FT" => Object::Name(b"Btn".to_vec()),
+                "AS" => Object::Name(b"Off".to_vec()),
+                "T" => Object::string_literal("checkbox[0]"),
+            },
+        );
+
+        let mut doc = Document::load_mem(&pdf_bytes).expect("parse test PDF");
+        let page_id = doc.page_iter().next().expect("page");
+        let baked = bake_checkbox_radio_ap_marks(&mut doc, page_id);
+
+        assert_eq!(baked, 0, "Off-state widget must not stamp the on-mark");
     }
 
     #[test]
