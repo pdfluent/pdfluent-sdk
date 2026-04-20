@@ -455,6 +455,13 @@ fn xfa_flatten_inner(
     // A page with fields but no populated values is considered "data-empty"
     // and should be suppressed.  Pages without fields (static-only pages with
     // draws/images) are always kept.  At least one page is retained.
+    //
+    // Guard: when the form carries datasets data but our binding has not yet
+    // propagated values into LayoutContent::Field.value for any page (e.g.
+    // nested or namespace-qualified data paths), keep all layout pages.
+    // Suppressing when binding is incomplete would incorrectly drop pages of
+    // explicitly-paginated documents whose fields appear data-empty to this
+    // heuristic even though real data is present.
     if layout.pages.len() > 1 {
         let keep: Vec<bool> = layout
             .pages
@@ -467,16 +474,21 @@ fn xfa_flatten_inner(
                 }
             })
             .collect();
-        if keep.iter().any(|&k| k) {
+        let any_keep = keep.iter().any(|&k| k);
+        if any_keep {
             let mut idx = 0;
             layout.pages.retain(|_| {
                 let k = keep[idx];
                 idx += 1;
                 k
             });
-        } else {
+        } else if data_dom.is_empty() {
+            // No datasets data at all: show only the first page template.
             layout.pages.truncate(1);
         }
+        // else: datasets data is present but binding did not populate
+        // LayoutContent::Field.value for any page — keep all pages to
+        // preserve the full document structure.
     }
 
     // PIPELINE: stage 3 — Render (generate XFA overlay content streams from layout)
