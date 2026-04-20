@@ -2502,10 +2502,11 @@ fn resolve_appearance_state(
                 return Some(id);
             }
         }
-        // When the selected state is "Off" but no "Off" appearance exists,
-        // fall through to the "on" appearance.  Radio/checkbox widgets in
-        // hybrid XFA forms often have only the "on" mark in /AP/N — the
-        // oracle (iText/Adobe) renders that mark regardless of /AS (#886).
+        if state == b"Off" {
+            // Previously assumed oracle always stamps on-mark for hybrid XFA widgets.
+            // Corrected per GL-WF-01/M#55: /AS state from source data is authoritative.
+            return None;
+        }
     }
 
     for fallback in [b"Yes".as_slice(), b"On".as_slice(), b"Off".as_slice()] {
@@ -4159,12 +4160,10 @@ ET
     }
 
     #[test]
-    fn widget_as_off_without_off_appearance_falls_through_to_on() {
+    fn widget_as_off_without_off_appearance_returns_none() {
         // When /AS is "Off" but the Normal appearance dict has no "Off" key,
-        // resolve_widget_normal_appearance should fall through to the "on"
-        // state appearance.  Radio/checkbox widgets in hybrid XFA forms
-        // often have only the "on" mark in /AP/N; the oracle renders that
-        // mark regardless of /AS (#886).
+        // the widget is deselected. Returning None avoids baking a checked
+        // mark from the only remaining on-state appearance.
         let yes_stream = Object::Stream(Stream::new(
             dictionary! {
                 "Type" => Object::Name(b"XObject".to_vec()),
@@ -4195,8 +4194,8 @@ ET
             "FT" => Object::Name(b"Btn".to_vec()),
         };
         assert!(
-            resolve_widget_normal_appearance(&mut doc, &annot).is_some(),
-            "Off state with no Off appearance should fall through to on state"
+            resolve_widget_normal_appearance(&mut doc, &annot).is_none(),
+            "Off state with no Off appearance should not resolve to the on-state stream"
         );
     }
 
