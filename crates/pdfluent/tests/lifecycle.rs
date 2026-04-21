@@ -133,11 +133,50 @@ fn save_roundtrip_via_path() {
     let _ = std::fs::remove_file(&tmp);
 
     let doc = PdfDocument::open(FIXTURE_PATH).expect("open");
-    doc.save(&tmp).expect("save");
+    doc.save(&tmp).expect("first save to new path");
 
     // Re-open the saved file and verify content survives the round-trip.
     let reloaded = PdfDocument::open(&tmp).expect("re-open saved");
     assert_eq!(reloaded.page_count(), doc.page_count());
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn save_refuses_to_clobber_existing_file_by_default() {
+    // Per RFC §1.2 + SaveOptions::default (overwrite=false): save() must
+    // refuse when the target already exists. This protects against
+    // accidental overwrites (the same path used twice in a script).
+    let tmp = std::env::temp_dir().join("pdfluent-test-save-refuse-clobber.pdf");
+    let _ = std::fs::remove_file(&tmp);
+
+    let doc = PdfDocument::open(FIXTURE_PATH).expect("open");
+
+    // First call: file doesn't exist → succeeds.
+    doc.save(&tmp).expect("first save creates new file");
+
+    // Second call: file exists → must refuse.
+    let err = doc.save(&tmp).unwrap_err();
+    match err {
+        pdfluent::Error::Io { source, .. } => {
+            assert_eq!(source.kind(), std::io::ErrorKind::AlreadyExists);
+        }
+        other => panic!("expected Error::Io(AlreadyExists), got {other:?}"),
+    }
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn save_with_overwrite_true_clobbers() {
+    // Opt-in overwrite bypasses the refuse-on-exists default.
+    let tmp = std::env::temp_dir().join("pdfluent-test-overwrite-true.pdf");
+    let _ = std::fs::remove_file(&tmp);
+
+    let doc = PdfDocument::open(FIXTURE_PATH).expect("open");
+    doc.save(&tmp).expect("first save");
+    doc.save_with(&tmp, pdfluent::SaveOptions::new().with_overwrite(true))
+        .expect("with_overwrite(true) must clobber");
 
     let _ = std::fs::remove_file(&tmp);
 }
