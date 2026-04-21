@@ -4,10 +4,12 @@ use crate::document::PdfDocument;
 use crate::error::Result;
 
 /// Strategy for combining bookmarks when merging.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum BookmarkMergeStrategy {
     /// Concatenate each source document's bookmarks under a top-level entry.
+    /// **Default** — matches the most common expectation.
+    #[default]
     Concat,
     /// Flatten all bookmarks into a single top-level sequence.
     FlattenAll,
@@ -19,7 +21,7 @@ pub enum BookmarkMergeStrategy {
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct MergeOptions {
-    pub(crate) bookmarks: Option<BookmarkMergeStrategy>,
+    pub(crate) bookmarks: BookmarkMergeStrategy,
     pub(crate) page_labels: bool,
 }
 
@@ -57,14 +59,10 @@ impl PdfMerger {
         self
     }
 
-    /// Add a document from raw bytes.
-    pub fn add_bytes(self, _bytes: &[u8]) -> Result<Self> {
-        unimplemented!("Epic 2 #1243 wires this against PdfDocument::from_bytes");
-    }
-
-    /// Choose how to combine bookmarks.
+    /// Choose how to combine bookmarks. Default is
+    /// [`BookmarkMergeStrategy::Concat`].
     pub fn with_bookmarks(mut self, strategy: BookmarkMergeStrategy) -> Self {
-        self.opts.bookmarks = Some(strategy);
+        self.opts.bookmarks = strategy;
         self
     }
 
@@ -75,11 +73,6 @@ impl PdfMerger {
     }
 
     /// Build the merged document.
-    ///
-    /// # Errors
-    ///
-    /// - [`crate::Error::InvalidPdf`] if any input is unreadable after merge setup.
-    /// - [`crate::Error::Internal`] on unexpected failures (please report).
     pub fn build(self) -> Result<PdfDocument> {
         unimplemented!("Epic 2 #1243 wires this against pdf_manip::pages::merge_docs");
     }

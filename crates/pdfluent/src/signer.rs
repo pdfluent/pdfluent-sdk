@@ -5,18 +5,25 @@ use std::path::Path;
 use crate::error::Result;
 
 /// PAdES (PDF Advanced Electronic Signatures) profile level.
+///
+/// Mapping to ETSI EN 319 142-1:
+///
+/// - [`BasicSignature`](Self::BasicSignature) — PAdES B-B (basic, no timestamp).
+/// - [`Timestamped`](Self::Timestamped) — PAdES B-T (with timestamp).
+/// - [`LongTerm`](Self::LongTerm) — PAdES B-LT (with DSS, long-term validation). **Default.**
+/// - [`LongTermArchive`](Self::LongTermArchive) — PAdES B-LTA (with archive timestamp).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum PadesProfile {
-    /// PAdES B-B — basic, no timestamp.
-    BB,
-    /// PAdES B-T — with timestamp.
-    BT,
-    /// PAdES B-LT — long-term validation with DSS. Default.
+    /// PAdES B-B — basic signature, no timestamp.
+    BasicSignature,
+    /// PAdES B-T — signature with trusted timestamp.
+    Timestamped,
+    /// PAdES B-LT — signature with long-term validation data (DSS). **Default.**
     #[default]
-    BLT,
-    /// PAdES B-LTA — long-term with archive timestamp.
-    BLTA,
+    LongTerm,
+    /// PAdES B-LTA — signature with archive timestamp for renewal.
+    LongTermArchive,
 }
 
 /// Options for signing a document.
@@ -32,7 +39,7 @@ pub struct SignOptions {
 }
 
 impl SignOptions {
-    /// New options with PAdES B-LT default.
+    /// New options with [`PadesProfile::LongTerm`] as default.
     pub fn new() -> Self {
         Self::default()
     }
@@ -110,15 +117,31 @@ impl PdfSigner for Pkcs12Signer {
     }
 }
 
-/// A digital signature found in a document.
+// ---------------------------------------------------------------------------
+// Read-only vs validated types
+// ---------------------------------------------------------------------------
+
+/// Lightweight metadata about a signature present in the document.
+///
+/// `SignatureInfo` carries **no validation result**. Use
+/// [`crate::PdfDocument::verify_signatures`] for cryptographic validation.
 #[derive(Debug, Clone)]
-pub struct Signature {
-    /// Form field name.
+pub struct SignatureInfo {
+    /// Form field name holding the signature.
     pub field_name: String,
-    /// Human-readable signer name (from CN).
+    /// Human-readable signer name (from certificate CN).
     pub signer_name: String,
-    /// Signing timestamp (ISO 8601), if present.
+    /// Signing timestamp (ISO 8601) if present.
     pub timestamp: Option<String>,
+    /// PAdES profile declared by the signature, if determinable from `/SubFilter`.
+    pub profile: Option<PadesProfile>,
+}
+
+/// A signature with its validation result.
+#[derive(Debug, Clone)]
+pub struct SignatureValidation {
+    /// Metadata about the signature.
+    pub info: SignatureInfo,
     /// Validation status.
     pub status: SignatureStatus,
 }
@@ -127,46 +150,47 @@ pub struct Signature {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SignatureStatus {
-    /// Cryptographically valid, chain trusted.
+    /// Cryptographically valid and certificate chain trusted.
     Valid,
     /// Cryptographically invalid.
     Invalid {
         /// Reason.
         reason: String,
     },
-    /// Unknown or not yet validated.
+    /// Validation could not be completed (e.g. chain unknown).
     Unknown {
         /// Reason.
         reason: String,
     },
 }
 
-/// Aggregate report of signature validation over a document.
+/// Aggregate report produced by
+/// [`crate::PdfDocument::verify_signatures`].
 #[derive(Debug, Clone, Default)]
 pub struct SignatureValidationReport {
-    signatures: Vec<Signature>,
+    validations: Vec<SignatureValidation>,
 }
 
 impl SignatureValidationReport {
-    /// All signatures in the document.
-    pub fn signatures(&self) -> &[Signature] {
-        &self.signatures
+    /// All validations in the report.
+    pub fn validations(&self) -> &[SignatureValidation] {
+        &self.validations
     }
 
-    /// True if every signature is [`SignatureStatus::Valid`].
+    /// `true` if every signature is [`SignatureStatus::Valid`].
     pub fn all_valid(&self) -> bool {
-        !self.signatures.is_empty()
+        !self.validations.is_empty()
             && self
-                .signatures
+                .validations
                 .iter()
-                .all(|s| matches!(s.status, SignatureStatus::Valid))
+                .all(|v| matches!(v.status, SignatureStatus::Valid))
     }
 
-    /// List of signatures that are not [`SignatureStatus::Valid`].
-    pub fn failures(&self) -> Vec<&Signature> {
-        self.signatures
+    /// Signatures that are not [`SignatureStatus::Valid`].
+    pub fn failures(&self) -> Vec<&SignatureValidation> {
+        self.validations
             .iter()
-            .filter(|s| !matches!(s.status, SignatureStatus::Valid))
+            .filter(|v| !matches!(v.status, SignatureStatus::Valid))
             .collect()
     }
 }

@@ -1,15 +1,18 @@
 //! Watermarking options.
 
-/// Rotation in 90-degree steps for page-level rotation operations.
+/// Page rotation in 90-degree increments.
+///
+/// All rotations are **clockwise** relative to the upright page orientation,
+/// matching ISO 32000-2 §14.11 (`/Rotate` entry).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Rotation {
     /// 90° clockwise.
-    D90,
+    Clockwise90,
     /// 180°.
-    D180,
+    Clockwise180,
     /// 270° clockwise (= 90° counter-clockwise).
-    D270,
+    Clockwise270,
 }
 
 /// Layer — whether the watermark goes in front of or behind content.
@@ -38,18 +41,10 @@ pub enum Position {
     Exact(f32, f32),
 }
 
-/// Text alignment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Alignment {
-    /// Left-aligned.
-    Left,
-    /// Centred.
-    Center,
-    /// Right-aligned.
-    Right,
-}
-
 /// Options for a text watermark.
+///
+/// Image-watermark support ships in Epic 2 #1225 via the unified
+/// `PageDecoration` builder.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct WatermarkOptions {

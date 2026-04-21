@@ -1,8 +1,6 @@
 //! License tiers and the tier → capability mapping.
 //!
-//! Tiers match the pricing page on <https://pdfluent.com/pricing>. Old tier
-//! names from 0.x releases are accepted as serde aliases during the 1.0.x
-//! compatibility window.
+//! Tiers match the pricing page on <https://pdfluent.com/pricing>.
 
 use crate::capability::{Capability, CapabilitySet};
 
@@ -34,12 +32,10 @@ impl Tier {
 
     /// Canonical set of capabilities granted by this tier.
     ///
-    /// This mapping is the source of truth. It is snapshot-tested against the
-    /// public pricing page under `tests/tier_matches_pricing_page.rs`.
+    /// Snapshot-tested against the pricing page in Epic 3 #1227.
     pub fn capabilities(self) -> CapabilitySet {
         use Capability::*;
 
-        // Core — available in every tier including Trial.
         let core = CapabilitySet::empty()
             .with(PdfParse)
             .with(PdfWrite)
@@ -57,34 +53,32 @@ impl Tier {
             .with(WasmRuntime);
 
         match self {
-            Tier::Trial => {
-                // All capabilities in Trial; output is marked.
-                core.with(PdfaValidate)
-                    .with(PdfaConvertA1b)
-                    .with(PdfaConvertA2b)
-                    .with(PdfaConvertA3b)
-                    .with(DigitalSignatureSign)
-                    .with(DigitalSignatureVerify)
-                    .with(PadesBLT)
-                    .with(PadesBLTA)
-                    .with(Redaction)
-                    .with(PdfuaValidate)
-                    .with(PdfuaConvert)
-                    .with(EInvoiceZugferd)
-                    .with(EInvoiceFacturX)
-                    .with(EInvoiceXRechnung)
-                    .with(XfaParse)
-                    .with(XfaFill)
-                    .with(XfaFlatten)
-                    .with(OcrTesseract)
-                    .with(OcrPaddle)
-                    .with(Html2Pdf)
-                    .with(DocxExport)
-                    .with(XlsxExport)
-                    .with(PptxExport)
-                    .with(PdfDiff)
-                    .with(TableExtract)
-            }
+            Tier::Trial => core
+                .with(PdfaValidate)
+                .with(PdfaConvertA1b)
+                .with(PdfaConvertA2b)
+                .with(PdfaConvertA3b)
+                .with(DigitalSignatureSign)
+                .with(DigitalSignatureVerify)
+                .with(PadesLongTerm)
+                .with(PadesLongTermArchive)
+                .with(Redaction)
+                .with(PdfuaValidate)
+                .with(PdfuaConvert)
+                .with(EInvoiceZugferd)
+                .with(EInvoiceFacturX)
+                .with(EInvoiceXRechnung)
+                .with(XfaParse)
+                .with(XfaFill)
+                .with(XfaFlatten)
+                .with(OcrTesseract)
+                .with(OcrPaddle)
+                .with(Html2Pdf)
+                .with(DocxExport)
+                .with(XlsxExport)
+                .with(PptxExport)
+                .with(PdfDiff)
+                .with(TableExtract),
             Tier::Developer => core.with(XfaParse).with(XfaFill),
             Tier::Team => core
                 .with(XfaParse)
@@ -95,8 +89,8 @@ impl Tier {
                 .with(PdfaConvertA3b)
                 .with(DigitalSignatureSign)
                 .with(DigitalSignatureVerify)
-                .with(PadesBLT)
-                .with(PadesBLTA)
+                .with(PadesLongTerm)
+                .with(PadesLongTermArchive)
                 .with(Redaction)
                 .with(PdfuaValidate)
                 .with(PdfuaConvert)

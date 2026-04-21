@@ -4,6 +4,14 @@
 //!
 //! Validates the `PdfDocument::form_mut()` accessor and `PdfFormMut::set_*`
 //! chain from RFC 0001 §2, §3.2.
+//!
+//! # Website-drift note
+//!
+//! The original website snippet had `doc.form_mut()?` returning `Result`.
+//! RFC 0001 validation pass 01 changed `form_mut()` to return `PdfFormMut`
+//! directly (no `Result`) for consistency with `metadata_mut()`. The
+//! website snippet needs updating; tracked as a content-audit item for
+//! Epic 6 #1237.
 
 use pdfluent::prelude::*;
 
@@ -12,7 +20,7 @@ pub fn run() -> Result<()> {
     let mut doc = PdfDocument::open("tests/fixtures/form.pdf")?;
 
     {
-        let mut form = doc.form_mut()?;
+        let mut form = doc.form_mut();
         form.set_text("first_name", "Jane")?
             .set_text("last_name", "Smith")?
             .set_checkbox("agree_terms", true)?;

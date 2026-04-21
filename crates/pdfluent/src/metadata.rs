@@ -26,8 +26,10 @@ pub struct Metadata {
 
 /// Mutable metadata handle.
 ///
-/// Obtained via [`crate::PdfDocument::metadata_mut`]. Changes are applied on
-/// [`MetadataMut::commit`] or on drop.
+/// Obtained via [`crate::PdfDocument::metadata_mut`]. Returned
+/// unconditionally; a document always has a metadata dictionary (created
+/// lazily if absent). Changes are flushed on [`commit`](MetadataMut::commit)
+/// or when the handle is dropped.
 pub struct MetadataMut<'a> {
     _doc: std::marker::PhantomData<&'a mut crate::PdfDocument>,
 }
@@ -53,7 +55,10 @@ impl<'a> MetadataMut<'a> {
         unimplemented!("Epic 2 #1245");
     }
 
-    /// Apply the pending changes to the document.
+    /// Apply pending changes to the document.
+    ///
+    /// Changes are also auto-committed on drop; calling `commit` explicitly
+    /// surfaces errors that otherwise would be silently swallowed during drop.
     pub fn commit(self) -> Result<()> {
         unimplemented!("Epic 2 #1245");
     }

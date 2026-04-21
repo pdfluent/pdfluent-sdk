@@ -1,15 +1,14 @@
 //! [`PdfDocument`] and lifecycle types.
 //!
 //! Per RFC 0001 §1, `PdfDocument` is the owning container for a parsed PDF.
-//! It is `Send + Sync`, not `Copy`, and provides scoped `_mut` accessors for
-//! mutation. Constructors, save variants, and read-only content access live
-//! here. Mutating operations delegate to feature-specific modules
-//! ([`crate::form`], [`crate::metadata`], etc.).
+//! It is `Send + Sync` and **not** `Clone` (explicit duplication via
+//! `from_bytes(doc.to_bytes()?)`). Mutating operations take `&mut self`
+//! directly or are exposed via scoped `_mut` accessors.
 
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::encrypt::{EncryptOptions, PermissionsBuilder};
+use crate::encrypt::EncryptOptions;
 use crate::error::Result;
 use crate::form::{FormField, PdfFormMut};
 use crate::metadata::{Metadata, MetadataMut};
@@ -26,6 +25,7 @@ pub struct OpenOptions {
     pub(crate) password: Option<String>,
     pub(crate) repair: bool,
     pub(crate) memory_limit: Option<usize>,
+    pub(crate) license_key: Option<String>,
 }
 
 impl OpenOptions {
@@ -49,6 +49,16 @@ impl OpenOptions {
     /// Cap peak memory usage during load.
     pub fn strict_memory_limit(mut self, bytes: usize) -> Self {
         self.memory_limit = Some(bytes);
+        self
+    }
+
+    /// Provide a per-document license key override.
+    ///
+    /// Overrides the process-global license set via
+    /// [`crate::license::set_license_key`] or the `PDFLUENT_LICENSE_KEY`
+    /// environment variable.
+    pub fn with_license_key(mut self, key: impl Into<String>) -> Self {
+        self.license_key = Some(key.into());
         self
     }
 }
@@ -89,22 +99,17 @@ impl SaveOptions {
 /// See RFC 0001 §1 for the full lifecycle contract. Key properties:
 ///
 /// - `Send + Sync`
-/// - Not `Copy`; [`Clone`] is implemented but expensive (full-document copy).
+/// - Not `Clone`. Duplicate via `PdfDocument::from_bytes(doc.to_bytes()?)`.
 /// - All mutation is explicit via `&mut self` methods or `_mut` accessors.
 ///
 /// # Memory
 ///
 /// A `PdfDocument` holds the fully-parsed PDF in memory. Peak extra
 /// allocation per operation is documented on each method.
-///
-/// # Cloning
-///
-/// `PdfDocument` implements [`Clone`] for convenience, but cloning is
-/// O(document size) in allocations. Prefer moving or borrowing over cloning.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PdfDocument {
-    // Placeholder: internal handle replaced during Epic 2 wiring. The private
-    // field keeps the type opaque and un-constructable from outside the crate.
+    // Placeholder; replaced during Epic 2 wiring. Private field keeps the
+    // type opaque from outside the crate.
     _placeholder: (),
 }
 
@@ -112,13 +117,6 @@ impl PdfDocument {
     // ---------- Constructors ----------
 
     /// Open a PDF from a filesystem path.
-    ///
-    /// # Errors
-    ///
-    /// - [`crate::Error::FileNotFound`] if the path does not exist.
-    /// - [`crate::Error::InvalidPdf`] if the file is not a valid PDF.
-    /// - [`crate::Error::DecryptionFailed`] if the file is encrypted and no
-    ///   password was provided via [`OpenOptions::with_password`].
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::open_with(path, OpenOptions::new())
     }
@@ -133,7 +131,7 @@ impl PdfDocument {
         unimplemented!("Epic 2 #1242 wires this against lopdf::Document::load_from");
     }
 
-    /// Construct a document from an in-memory byte buffer with explicit options.
+    /// Construct a document from bytes with explicit options.
     pub fn from_bytes_with(_bytes: &[u8], _opts: OpenOptions) -> Result<Self> {
         unimplemented!("Epic 2 #1242 wires this against lopdf::Document::load_from");
     }
@@ -166,7 +164,10 @@ impl PdfDocument {
     }
 
     /// Extract text grouped into structured blocks with coordinates.
-    pub fn structured_text(&self) -> Result<Vec<TextBlock>> {
+    ///
+    /// Matches the `Capability::TextExtractWithLayout` capability. Prefer
+    /// [`text`] if you only need plain text.
+    pub fn text_with_layout(&self) -> Result<Vec<TextBlock>> {
         unimplemented!("Epic 2 #1242");
     }
 
@@ -192,21 +193,23 @@ impl PdfDocument {
         unimplemented!("Epic 2 #1245");
     }
 
-    /// Mutate document metadata. The returned builder applies changes on
-    /// [`MetadataMut::commit`] or on drop.
+    /// Mutate document metadata. Changes are flushed on
+    /// [`MetadataMut::commit`] or when the handle is dropped.
     pub fn metadata_mut(&mut self) -> MetadataMut<'_> {
         unimplemented!("Epic 2 #1245");
     }
 
     // ---------- Forms ----------
 
-    /// Read-only list of form fields.
-    pub fn form_fields(&self) -> Result<Vec<FormField>> {
+    /// Read-only list of form fields. Returns an empty `Vec` if the document
+    /// has no form.
+    pub fn form_fields(&self) -> Vec<FormField> {
         unimplemented!("Epic 2 #1245");
     }
 
-    /// Mutable form handle.
-    pub fn form_mut(&mut self) -> Result<PdfFormMut<'_>> {
+    /// Mutable form handle. Returns a handle even if the document has no
+    /// form; errors surface on the individual `set_*` calls.
+    pub fn form_mut(&mut self) -> PdfFormMut<'_> {
         unimplemented!("Epic 2 #1245");
     }
 
@@ -231,7 +234,10 @@ impl PdfDocument {
 
     // ---------- Security ----------
 
-    /// Encrypt the document with AES-256 (per [`EncryptOptions`]).
+    /// Encrypt the document with the given options.
+    ///
+    /// On an already-encrypted document, this re-encrypts with the new
+    /// options (requires the owner password to be set via [`decrypt`] first).
     pub fn encrypt(&mut self, _opts: EncryptOptions) -> Result<()> {
         unimplemented!("Epic 2 #1244");
     }
@@ -239,11 +245,6 @@ impl PdfDocument {
     /// Decrypt the document using the provided password.
     pub fn decrypt(&mut self, _password: &str) -> Result<()> {
         unimplemented!("Epic 2 #1244");
-    }
-
-    /// Obtain a permissions builder. Applies encryption on commit.
-    pub fn permissions_mut(&mut self) -> PermissionsBuilder<'_> {
-        unimplemented!("Epic 2 #1225 / #1244");
     }
 
     /// Sign the document using the given signer.
@@ -255,12 +256,17 @@ impl PdfDocument {
         unimplemented!("Epic 2 #1244");
     }
 
-    /// List all signatures in the document.
-    pub fn signatures(&self) -> Result<Vec<crate::signer::Signature>> {
+    /// Lightweight list of signatures present in the document.
+    ///
+    /// Does **not** cryptographically validate signatures. Use
+    /// [`verify_signatures`] for full validation.
+    pub fn signatures(&self) -> Result<Vec<crate::signer::SignatureInfo>> {
         unimplemented!("Epic 2 #1244");
     }
 
-    /// Verify all signatures and return a structured report.
+    /// Cryptographically validate all signatures and return a structured
+    /// report with per-signature status, certificate-chain result, and
+    /// timestamp verification.
     pub fn verify_signatures(&self) -> Result<crate::signer::SignatureValidationReport> {
         unimplemented!("Epic 2 #1244");
     }
@@ -288,11 +294,6 @@ impl PdfDocument {
     }
 }
 
-// SAFETY invariant: none of the placeholders hold unsound state. When Epic 2
-// wires the real inner handle, we'll re-assert Send+Sync against the concrete
-// fields rather than relying on the unit type here.
-// At scaffold stage this compiles trivially because `()` is Send+Sync.
-
 // ---------------------------------------------------------------------------
 // Supporting types
 // ---------------------------------------------------------------------------
@@ -300,7 +301,7 @@ impl PdfDocument {
 /// PDF version tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PdfVersion {
-    /// Major version (always 1 or 2 for ISO 32000).
+    /// Major version (1 or 2 for ISO 32000).
     pub major: u8,
     /// Minor version.
     pub minor: u8,
@@ -328,7 +329,7 @@ impl Page<'_> {
         unimplemented!("Epic 2 #1242");
     }
 
-    /// Page dimensions in points (width, height).
+    /// Page dimensions in points `(width, height)`.
     pub fn dimensions(&self) -> (f64, f64) {
         unimplemented!("Epic 2 #1242");
     }
@@ -339,46 +340,14 @@ pub struct Pages<'a> {
     _doc: std::marker::PhantomData<&'a PdfDocument>,
 }
 
+impl<'a> Iterator for Pages<'a> {
+    type Item = Page<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        unimplemented!("Epic 2 #1242");
+    }
+}
+
 /// Mutating iterator over all pages.
 pub struct PagesMut<'a> {
     _doc: std::marker::PhantomData<&'a mut PdfDocument>,
-}
-
-/// Convenience builder for constructing `PdfDocument` with fluent options.
-///
-/// Prefer [`PdfDocument::open_with`] for one-shot construction. The builder
-/// is primarily useful for tests and documentation.
-#[derive(Debug, Default)]
-pub struct PdfDocumentBuilder {
-    opts: OpenOptions,
-}
-
-impl PdfDocumentBuilder {
-    /// New builder with default options.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set the decryption password.
-    pub fn with_password(mut self, pw: impl Into<String>) -> Self {
-        self.opts.password = Some(pw.into());
-        self
-    }
-
-    /// Enable repair mode.
-    pub fn with_repair(mut self, v: bool) -> Self {
-        self.opts.repair = v;
-        self
-    }
-
-    /// Cap peak memory.
-    pub fn strict_memory_limit(mut self, bytes: usize) -> Self {
-        self.opts.memory_limit = Some(bytes);
-        self
-    }
-
-    /// Open the document from a path.
-    pub fn open<P: AsRef<Path>>(self, path: P) -> Result<PdfDocument> {
-        PdfDocument::open_with(path.as_ref().to_path_buf() as PathBuf, self.opts)
-    }
 }
