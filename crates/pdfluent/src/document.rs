@@ -25,6 +25,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use crate::capability::Capability;
+use crate::decoration::PageDecoration;
 use crate::encrypt::EncryptOptions;
 use crate::error::{internal_error, Error, Result};
 use crate::form::{FormField, PdfFormMut};
@@ -512,11 +513,46 @@ impl PdfDocument {
         unimplemented!("Epic 2 #1223 / #1245");
     }
 
-    // ---------- Decoration (Epic 2 #1223) ----------
+    // ---------- Decoration (Epic 2 #1223 / Epic 3 #1225) ----------
+
+    /// Apply a page decoration.
+    ///
+    /// This is the consolidated entry point for all decoration families
+    /// (watermark today; header/footer, page numbers, and stamp land
+    /// in 1.1 via new [`PageDecoration`] variants without breaking this
+    /// signature).
+    ///
+    /// # Family-specific methods
+    ///
+    /// [`add_watermark`](Self::add_watermark) is preserved for backwards
+    /// compatibility with website snippets; it delegates here.
+    ///
+    /// # 1.0 status
+    ///
+    /// The decoration runtime is tracked on issue #1223. Calling this
+    /// method currently returns [`Error::MissingDependency`] — the
+    /// consolidated surface is in place so 1.0 code compiles against
+    /// the final API, but the rendering pipeline lands post-freeze.
+    pub fn add_decoration(&mut self, decoration: PageDecoration) -> Result<()> {
+        self.require_capability(Capability::PdfWrite)?;
+        match decoration {
+            PageDecoration::Watermark {
+                text: _,
+                options: _,
+            } => Err(Error::MissingDependency {
+                dep: "pdf-manip::watermark",
+                install_hint:
+                    "watermark runtime lands with Epic 2 #1223; consolidated surface is in place",
+            }),
+        }
+    }
 
     /// Add a text watermark to pages.
-    pub fn add_watermark(&mut self, _text: &str, _opts: WatermarkOptions) -> Result<()> {
-        unimplemented!("Epic 2 #1223");
+    ///
+    /// Thin wrapper around [`add_decoration`](Self::add_decoration) with
+    /// the [`PageDecoration::Watermark`] variant.
+    pub fn add_watermark(&mut self, text: &str, opts: WatermarkOptions) -> Result<()> {
+        self.add_decoration(PageDecoration::watermark(text, opts))
     }
 
     // ---------- Parity methods (Epic 3 #1224) ----------

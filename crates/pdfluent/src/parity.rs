@@ -113,6 +113,43 @@ impl CompressOptions {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Strict preset — full stack, no lossy passes.
+    ///
+    /// Identical to [`Self::default`] today; the explicit preset exists
+    /// so calling code reads intent-first and is stable against future
+    /// additions to lossy-only passes.
+    pub fn strict() -> Self {
+        Self {
+            subset_fonts: true,
+            compress_streams: true,
+            deduplicate_streams: true,
+            remove_unused: true,
+        }
+    }
+
+    /// Lossy preset — enables every pass the strict preset enables.
+    ///
+    /// Today this is the same pass set as `strict()`. Lossy image
+    /// downsampling lands in the 1.1 compress stack; reserving the
+    /// preset now keeps callers forward-compatible.
+    pub fn lossy() -> Self {
+        Self::strict()
+    }
+
+    /// Archival preset — maximally safe: skip lossy / non-reversible
+    /// passes, keep unused objects that might be referenced by future
+    /// incremental updates.
+    pub fn archival() -> Self {
+        Self {
+            subset_fonts: true,
+            compress_streams: true,
+            deduplicate_streams: true,
+            // Archival preserves unused objects that might be referenced
+            // by future incremental updates or signed appearance streams.
+            remove_unused: false,
+        }
+    }
 }
 
 /// Report returned by [`PdfDocument::subset_fonts`] and included in the
