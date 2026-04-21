@@ -6,9 +6,22 @@
 //! `Permissions::print_only()` from RFC 0001 §3.1.
 
 use pdfluent::prelude::*;
+use std::path::PathBuf;
+
+fn out_path() -> PathBuf {
+    std::env::temp_dir().join("pdfluent-bootstrap-encrypted.pdf")
+}
 
 /// Encrypt a PDF with AES-256 and print-only permissions.
-pub fn run() -> Result<()> {
+///
+/// # Website-drift note
+///
+/// The published snippet writes to `/tmp/encrypted.pdf` without cleanup
+/// and without `save_with(overwrite=true)`. Because our save-contract
+/// refuses to clobber by default (RFC §1.2), this test uses a
+/// cross-platform temp path and removes-before-run. Tracked for
+/// Epic 6 #1237 content audit.
+pub fn run_to(out: &std::path::Path) -> Result<()> {
     let mut doc = PdfDocument::open("tests/fixtures/sample.pdf")?;
 
     doc.encrypt(
@@ -18,14 +31,22 @@ pub fn run() -> Result<()> {
             .with_permissions(Permissions::print_only()),
     )?;
 
-    doc.save("/tmp/encrypted.pdf")?;
+    doc.save(out)?;
     Ok(())
 }
 
+/// Website-snippet entry point kept for the `_compiles` test.
+pub fn run() -> Result<()> {
+    run_to(&out_path())
+}
+
 #[test]
-#[ignore = "blocked on Epic 2 #1244 (Security & encryption wiring)"]
 fn encrypt_pdf_rust_runs() {
-    run().expect("encrypt flow");
+    // Enabled by Epic 2 #1244 wiring.
+    let path = out_path();
+    let _ = std::fs::remove_file(&path);
+    run_to(&path).expect("encrypt flow");
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
