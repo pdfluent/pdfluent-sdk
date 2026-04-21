@@ -32,9 +32,11 @@ internal-legacy = []
 tracing = ["dep:tracing"]
 
 [dependencies]
-# All internal crate deps will be added as optional + gated when Epic 2 starts wiring.
-# For the scaffold, no external deps needed; this crate currently compiles
-# against its own module structure only.
+# Epic 2 wiring: underlying PDF crates.
+# pdf-engine provides read-side (parse, page_count, text extraction, render).
+# lopdf provides write-side (save, save_to).
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.1" }
+lopdf = { path = "../lopdf", version = "=0.39.0", default-features = false }
 tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]

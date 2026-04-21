@@ -14,10 +14,16 @@ pub fn run() -> Result<String> {
 }
 
 #[test]
-#[ignore = "blocked on Epic 2 #1242 (Document lifecycle wiring)"]
 fn extract_text_rust_runs() {
+    // Enabled by Epic 2 #1242 wiring: `PdfDocument::open` +
+    // `PdfDocument::text` now route to lopdf + pdf-engine and produce
+    // real text output from the fixture.
     let out = run().expect("text extraction");
     assert!(!out.is_empty(), "expected non-empty text output");
+    assert!(
+        out.contains("PDFluent test fixture"),
+        "expected fixture text in output; got {out:?}",
+    );
 }
 
 #[test]
