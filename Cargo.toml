@@ -68,6 +68,7 @@ members = [
     # --- Forked dependencies ---
     "crates/lopdf",
     "crates/cff-parser",
+    "crates/pdfluent",
 ]
 resolver = "2"
 
