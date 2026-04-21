@@ -294,3 +294,18 @@ impl std::error::Error for Error {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Internal helpers (pub(crate) — not part of the public API)
+// ---------------------------------------------------------------------------
+
+/// Build an [`Error::Internal`] with the given message and the current
+/// crate version. Used for runtime invariant checks that should never fire
+/// under normal operation (e.g. out-of-range page index after bounds
+/// validation).
+pub(crate) fn internal_error(message: impl Into<String>) -> Error {
+    Error::Internal {
+        message: message.into(),
+        crate_version: env!("CARGO_PKG_VERSION"),
+    }
+}
