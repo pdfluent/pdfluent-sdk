@@ -33,6 +33,7 @@ use crate::form::{
 };
 use crate::text::{self, FontFamily};
 use crate::types::{LayoutStrategy, Rect, Size, TextAlign};
+use std::sync::{Mutex, OnceLock};
 
 /// Resolve the display value for a field.
 ///
@@ -257,6 +258,23 @@ struct QueuedNode {
     nested_child_overrides: Option<Vec<(FormNodeId, Vec<FormNodeId>)>>,
 }
 
+#[derive(Debug, Default)]
+struct GroundTruthTraceState {
+    last_break_before_read: Option<String>,
+}
+
+static GROUNDTRUTH_TRACE_STATE: OnceLock<Mutex<GroundTruthTraceState>> = OnceLock::new();
+
+fn groundtruth_trace_enabled() -> bool {
+    std::env::var("XFA_TRACE_DOC")
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
+}
+
+fn groundtruth_trace_state() -> &'static Mutex<GroundTruthTraceState> {
+    GROUNDTRUTH_TRACE_STATE.get_or_init(|| Mutex::new(GroundTruthTraceState::default()))
+}
+
 /// The layout engine.
 pub struct LayoutEngine<'a> {
     form: &'a FormTree,
@@ -265,6 +283,183 @@ pub struct LayoutEngine<'a> {
 impl<'a> LayoutEngine<'a> {
     pub fn new(form: &'a FormTree) -> Self {
         Self { form }
+    }
+
+    fn trace_node_id(&self, id: FormNodeId) -> String {
+        let node = self.form.get(id);
+        self.form
+            .meta(id)
+            .xfa_id
+            .clone()
+            .filter(|value| !value.is_empty())
+            .or_else(|| (!node.name.is_empty()).then(|| node.name.clone()))
+            .unwrap_or_else(|| id.0.to_string())
+    }
+
+    fn trace_node_name(&self, id: FormNodeId) -> String {
+        let node = self.form.get(id);
+        if !node.name.is_empty() {
+            node.name.clone()
+        } else {
+            self.trace_node_id(id)
+        }
+    }
+
+    fn trace_parent_id(&self, child_id: FormNodeId) -> Option<FormNodeId> {
+        self.form
+            .nodes
+            .iter()
+            .enumerate()
+            .find_map(|(idx, node)| node.children.contains(&child_id).then_some(FormNodeId(idx)))
+    }
+
+    fn trace_path_segment(&self, id: FormNodeId) -> String {
+        let node = self.form.get(id);
+        format!(
+            "{}#{}",
+            Self::form_node_type_name(&node.node_type),
+            self.trace_node_id(id)
+        )
+    }
+
+    fn trace_node_path(&self, id: FormNodeId) -> String {
+        let mut chain = vec![id];
+        let mut cursor = id;
+        while let Some(parent_id) = self.trace_parent_id(cursor) {
+            chain.push(parent_id);
+            cursor = parent_id;
+        }
+        chain.reverse();
+        chain
+            .into_iter()
+            .map(|node_id| self.trace_path_segment(node_id))
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
+    #[track_caller]
+    fn trace_vertical_state(
+        &self,
+        function: &'static str,
+        current_y: Option<f64>,
+        remaining_space: Option<f64>,
+        node_id: Option<FormNodeId>,
+        message: impl AsRef<str>,
+    ) {
+        if !groundtruth_trace_enabled() {
+            return;
+        }
+
+        let location = std::panic::Location::caller();
+        let (triggering_id, node_type, node_name) = if let Some(node_id) = node_id {
+            let node = self.form.get(node_id);
+            (
+                self.trace_node_id(node_id),
+                Self::form_node_type_name(&node.node_type).to_string(),
+                self.trace_node_name(node_id),
+            )
+        } else {
+            ("-".to_string(), "-".to_string(), "-".to_string())
+        };
+
+        eprintln!(
+            "{}:{} fn={} current_y={} remaining_space={} triggering_element_id={} node_type={} node_name={} {}",
+            location.file(),
+            location.line(),
+            function,
+            current_y
+                .map(|value| format!("{value:.3}"))
+                .unwrap_or_else(|| "-".to_string()),
+            remaining_space
+                .map(|value| format!("{value:.3}"))
+                .unwrap_or_else(|| "-".to_string()),
+            triggering_id,
+            node_type,
+            node_name,
+            message.as_ref(),
+        );
+    }
+
+    #[track_caller]
+    fn trace_break_before_read(
+        &self,
+        current_y: f64,
+        remaining_space: f64,
+        node_id: FormNodeId,
+        break_before: bool,
+        placed_count: usize,
+        header_node_count: usize,
+    ) {
+        if !groundtruth_trace_enabled() {
+            return;
+        }
+
+        let location = std::panic::Location::caller();
+        let preceding = format!(
+            "{}:{} break_before={} placed_count={} header_node_count={}",
+            location.file(),
+            location.line(),
+            break_before,
+            placed_count,
+            header_node_count
+        );
+        if let Ok(mut state) = groundtruth_trace_state().lock() {
+            state.last_break_before_read = Some(preceding);
+        }
+        self.trace_vertical_state(
+            "layout_content_fitting",
+            Some(current_y),
+            Some(remaining_space),
+            Some(node_id),
+            format!(
+                "break_before check break_before={} placed_count={} header_node_count={} event_type=read",
+                break_before,
+                placed_count,
+                header_node_count
+            ),
+        );
+    }
+
+    #[track_caller]
+    fn trace_commit_page_boundary(
+        &self,
+        current_page: usize,
+        used_height: Option<f64>,
+        page_height: Option<f64>,
+        next_item: Option<&QueuedNode>,
+    ) {
+        if !groundtruth_trace_enabled() {
+            return;
+        }
+
+        let remaining_space = match (used_height, page_height) {
+            (Some(used), Some(total)) => Some(total - used),
+            _ => None,
+        };
+        let preceding_break_read = groundtruth_trace_state()
+            .lock()
+            .ok()
+            .and_then(|state| state.last_break_before_read.clone())
+            .unwrap_or_else(|| "none".to_string());
+        let break_before = next_item.map(|queued| queued.break_before).unwrap_or(false);
+        let subform_path = next_item
+            .map(|queued| self.trace_node_path(queued.id))
+            .unwrap_or_else(|| "none".to_string());
+
+        self.trace_vertical_state(
+            "layout_internal",
+            used_height,
+            remaining_space,
+            next_item.map(|queued| queued.id),
+            format!(
+                "event_type=page_commit COMMIT page_boundary page={} -> page={} break_before={} preceding_break_read=\"{}\" subform_path={}",
+                current_page,
+                current_page + 1,
+                break_before,
+                preceding_break_read,
+                subform_path
+            ),
+        );
     }
 
     /// Perform layout and collect pagination diagnostics for each emitted page.
@@ -296,10 +491,28 @@ impl<'a> LayoutEngine<'a> {
         root: FormNodeId,
         mut profile: Option<&mut LayoutProfile>,
     ) -> Result<LayoutDom> {
+        self.trace_vertical_state(
+            "layout_internal",
+            Some(0.0),
+            None,
+            Some(root),
+            format!("enter collect_profile={}", profile.is_some()),
+        );
         let root_node = self.form.get(root);
         let collect_profile = profile.is_some();
 
         let (page_areas, raw_content_nodes) = self.extract_page_structure(root_node)?;
+        self.trace_vertical_state(
+            "layout_internal",
+            Some(0.0),
+            None,
+            Some(root),
+            format!(
+                "page structure extracted page_areas={} raw_content_nodes={} event_type=runtime_allocation",
+                page_areas.len(),
+                raw_content_nodes.len()
+            ),
+        );
         // Build queued nodes with break_before flags and occur expansion.
         let content_queued = self.queue_content(&raw_content_nodes);
 
@@ -378,6 +591,14 @@ impl<'a> LayoutEngine<'a> {
                             pages.len() + 1,
                             page_limit
                         );
+                        if !rest.is_empty() {
+                            self.trace_commit_page_boundary(
+                                pages.len() + 1,
+                                page_profile.as_ref().map(|profile| profile.used_height),
+                                page_profile.as_ref().map(|profile| profile.page_height),
+                                rest.first(),
+                            );
+                        }
                         if let (Some(profile), Some(page_profile)) =
                             (profile.as_deref_mut(), page_profile)
                         {
@@ -519,6 +740,9 @@ impl<'a> LayoutEngine<'a> {
                         pa.page_height,
                         collect_profile,
                     )?;
+                let commit_used_height = page_profile.as_ref().map(|profile| profile.used_height);
+                let commit_page_height = page_profile.as_ref().map(|profile| profile.page_height);
+                let mut page_committed = false;
                 if consumed_break_only {
                     remaining = rest;
                 } else if Self::has_visible_content(&placed.nodes) {
@@ -529,6 +753,7 @@ impl<'a> LayoutEngine<'a> {
                         profile.pages.push(page_profile);
                     }
                     pages.push(placed);
+                    page_committed = true;
                     remaining = rest;
                 } else if !pa.fixed_nodes.is_empty() {
                     // Content nodes are invisible but the page area has
@@ -544,12 +769,21 @@ impl<'a> LayoutEngine<'a> {
                             profile.pages.push(page_profile);
                         }
                         pages.push(placed);
+                        page_committed = true;
                     }
                     remaining = rest;
                 } else {
                     // Content nodes are all hidden/invisible and the page
                     // area has no fixed elements — suppress the blank page.
                     remaining = rest;
+                }
+                if page_committed && !remaining.is_empty() {
+                    self.trace_commit_page_boundary(
+                        pages.len(),
+                        commit_used_height,
+                        commit_page_height,
+                        remaining.first(),
+                    );
                 }
             }
 
@@ -620,6 +854,14 @@ impl<'a> LayoutEngine<'a> {
                     } else {
                         if Self::has_visible_content(&page.nodes) {
                             self.prepend_fixed_nodes(&pa.fixed_nodes, &mut page)?;
+                            if !rest.is_empty() {
+                                self.trace_commit_page_boundary(
+                                    pages.len() + 1,
+                                    page_profile.as_ref().map(|profile| profile.used_height),
+                                    page_profile.as_ref().map(|profile| profile.page_height),
+                                    rest.first(),
+                                );
+                            }
                             if let (Some(profile), Some(page_profile)) =
                                 (profile.as_deref_mut(), page_profile)
                             {
@@ -707,6 +949,18 @@ impl<'a> LayoutEngine<'a> {
             .filter(|&id| !self.is_layout_hidden(id))
             .map(|id| {
                 let meta = self.form.meta(id);
+                self.trace_vertical_state(
+                    "queue_content",
+                    None,
+                    None,
+                    Some(id),
+                    format!(
+                        "copy FormNodeMeta -> QueuedNode break_before={} break_after={} break_target={} event_type=copy_merge",
+                        meta.page_break_before,
+                        meta.page_break_after,
+                        meta.break_target.clone().unwrap_or_default()
+                    ),
+                );
                 QueuedNode {
                     id,
                     break_before: meta.page_break_before,
@@ -814,6 +1068,17 @@ impl<'a> LayoutEngine<'a> {
         start_idx: usize,
         available: Size,
     ) -> (f64, usize) {
+        self.trace_vertical_state(
+            "visible_keep_chain_height",
+            Some(0.0),
+            Some(available.height),
+            visible_ids.get(start_idx).map(|(_, id)| *id),
+            format!(
+                "enter start_idx={} visible_ids={}",
+                start_idx,
+                visible_ids.len()
+            ),
+        );
         let mut total = 0.0;
         let mut count = 0usize;
         for i in start_idx..visible_ids.len() {
@@ -821,6 +1086,19 @@ impl<'a> LayoutEngine<'a> {
             let sz = self.compute_extent_with_available(id, Some(available));
             total += sz.height;
             count += 1;
+            self.trace_vertical_state(
+                "visible_keep_chain_height",
+                Some(total),
+                Some(available.height - total),
+                Some(id),
+                format!(
+                    "accumulate keep chain index={} node_height={:.3} running_total={:.3} count={} event_type=read",
+                    i,
+                    sz.height,
+                    total,
+                    count
+                ),
+            );
             // Check if the chain continues to the next node.
             if i + 1 < visible_ids.len() {
                 let (_, next_id) = visible_ids[i + 1];
@@ -829,11 +1107,35 @@ impl<'a> LayoutEngine<'a> {
                 let keep = cur_meta.keep_next_content_area
                     || nxt_meta.keep_previous_content_area
                     || (cur_meta.keep_intact_content_area && self.subtree_is_blank(id));
+                self.trace_vertical_state(
+                    "visible_keep_chain_height",
+                    Some(total),
+                    Some(available.height - total),
+                    Some(id),
+                    format!(
+                        "keep-chain continuation check next={} cur.keep_next={} next.keep_previous={} cur.keep_intact_blank={} result={} event_type=read",
+                        self.trace_node_id(next_id),
+                        cur_meta.keep_next_content_area,
+                        nxt_meta.keep_previous_content_area,
+                        cur_meta.keep_intact_content_area && self.subtree_is_blank(id),
+                        keep
+                    ),
+                );
                 if !keep {
                     break;
                 }
             }
         }
+        self.trace_vertical_state(
+            "visible_keep_chain_height",
+            Some(total),
+            Some(available.height - total),
+            visible_ids.get(start_idx).map(|(_, id)| *id),
+            format!(
+                "return chain_height={:.3} chain_len={} event_type=read",
+                total, count
+            ),
+        );
         (total, count)
     }
 
@@ -1134,6 +1436,33 @@ impl<'a> LayoutEngine<'a> {
             .collect();
         let mut vis_pos = 0; // current position in visible_ids
 
+        self.trace_vertical_state(
+            "layout_content_fitting",
+            Some(y_cursor),
+            Some(content_height),
+            content_ids.first().map(|queued| queued.id),
+            format!(
+                "enter page_width={:.3} page_height={:.3} content_area={} content_nodes={} leader_height={:.3} trailer_height={:.3} effective_ca_height={:.3}",
+                page_width,
+                page_height,
+                content_area.name,
+                content_ids.len(),
+                leader_height,
+                trailer_height,
+                effective_ca_height
+            ),
+        );
+        self.trace_vertical_state(
+            "layout_content_fitting",
+            Some(y_cursor),
+            Some(content_height),
+            content_ids.first().map(|queued| queued.id),
+            format!(
+                "visible_ids prepared count={} event_type=runtime_allocation",
+                visible_ids.len()
+            ),
+        );
+
         for (idx, qn) in content_ids.iter().enumerate() {
             let child_id = qn.id;
 
@@ -1143,9 +1472,28 @@ impl<'a> LayoutEngine<'a> {
                 continue;
             }
 
+            self.trace_vertical_state(
+                "layout_content_fitting",
+                Some(y_cursor),
+                Some(content_bottom - y_cursor),
+                Some(child_id),
+                format!(
+                    "loop entry idx={} placed_count={} vis_pos={} break_before={} break_after={}",
+                    idx, placed_count, vis_pos, qn.break_before, qn.break_after
+                ),
+            );
+
             // Handle break_before: if this node requests a page break and
             // we already placed content on this page, stop here so the
             // caller starts a new page with this node.
+            self.trace_break_before_read(
+                y_cursor,
+                content_bottom - y_cursor,
+                child_id,
+                qn.break_before,
+                placed_count,
+                header_node_count,
+            );
             if qn.break_before && placed_count > 0 {
                 // Check if all placed content is blank spacers — if so,
                 // fold the blank page: mark as consumed_break_only so the
@@ -1186,11 +1534,32 @@ impl<'a> LayoutEngine<'a> {
                     self.visible_keep_chain_height(&visible_ids, vis_pos, available);
                 let remaining_on_page = content_bottom - y_cursor;
                 let is_single_splittable = chain_len == 1 && self.can_split(child_id);
+                self.trace_vertical_state(
+                    "layout_content_fitting",
+                    Some(y_cursor),
+                    Some(remaining_on_page),
+                    Some(child_id),
+                    format!(
+                        "keep look-ahead chain_height={:.3} chain_len={} remaining_on_page={:.3} content_height={:.3} is_single_splittable={} event_type=read",
+                        chain_height,
+                        chain_len,
+                        remaining_on_page,
+                        content_height,
+                        is_single_splittable
+                    ),
+                );
                 if !is_single_splittable
                     && chain_height > remaining_on_page
                     && chain_height <= content_height
                 {
                     // Chain (or non-splittable single node) fits on a fresh page — break now.
+                    self.trace_vertical_state(
+                        "layout_content_fitting",
+                        Some(y_cursor),
+                        Some(remaining_on_page),
+                        Some(child_id),
+                        "keep look-ahead fired: current chain does not fit remaining space but fits on a fresh page event_type=rule_decision",
+                    );
                     break;
                 }
                 // Unsatisfiable keep chain (exceeds page height):
@@ -1394,13 +1763,46 @@ impl<'a> LayoutEngine<'a> {
             placed_count += 1;
             vis_pos += 1;
 
+            self.trace_vertical_state(
+                "layout_content_fitting",
+                Some(y_cursor),
+                Some(content_bottom - y_cursor),
+                Some(child_id),
+                format!(
+                    "placed node child_height={:.3} new_y_cursor={:.3} placed_count={} vis_pos={}",
+                    child_size.height, y_cursor, placed_count, vis_pos
+                ),
+            );
+
             if qn.break_after {
+                self.trace_vertical_state(
+                    "layout_content_fitting",
+                    Some(y_cursor),
+                    Some(content_bottom - y_cursor),
+                    Some(child_id),
+                    format!("break_after check break_after={}", qn.break_after),
+                );
                 break;
             }
         }
 
         let mut remaining = split_remaining;
         remaining.extend(content_ids[placed_count..].iter().cloned());
+        self.trace_vertical_state(
+            "layout_content_fitting",
+            Some(y_cursor),
+            Some(content_bottom - y_cursor),
+            remaining.first().map(|queued| queued.id),
+            format!(
+                "return remaining_nodes={} consumed_break_only={} first_remaining={}",
+                remaining.len(),
+                consumed_break_only,
+                remaining
+                    .first()
+                    .map(|queued| self.describe_queued_node(queued))
+                    .unwrap_or_else(|| "none".to_string())
+            ),
+        );
         let page_profile = if profile_enabled {
             Some(LayoutProfilePage {
                 page_height: content_height.max(0.0),
