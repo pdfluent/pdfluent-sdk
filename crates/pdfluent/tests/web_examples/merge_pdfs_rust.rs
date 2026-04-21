@@ -4,12 +4,19 @@
 //!
 //! Validates the `PdfMerger` builder API defined in RFC 0001 §9.2.
 //!
-//! This example is `#[ignore]` until Epic 2 split #1243 (Merge & combine)
-//! wires `PdfMerger::build()` to `pdf_manip::pages::merge_docs`.
+//! # Website-drift note
+//!
+//! The published snippet writes to `/tmp/combined.pdf` without cleaning up.
+//! Because `save()` refuses to clobber existing files per RFC §1.2, a second
+//! run of the unmodified snippet would fail. This test removes the target
+//! before running so CI is idempotent; the website snippet will be updated
+//! as part of the #1237 content-audit pass.
 
 use pdfluent::prelude::*;
 
-/// Merge three PDFs into a single combined document.
+const OUT: &str = "/tmp/pdfluent-bootstrap-merge-combined.pdf";
+
+/// Merge two PDFs into a single combined document.
 pub fn run() -> Result<()> {
     let merged = PdfMerger::new()
         .add(PdfDocument::open("tests/fixtures/sample.pdf")?)
@@ -17,14 +24,16 @@ pub fn run() -> Result<()> {
         .with_bookmarks(BookmarkMergeStrategy::Concat)
         .build()?;
 
-    merged.save("/tmp/combined.pdf")?;
+    merged.save(OUT)?;
     Ok(())
 }
 
 #[test]
-#[ignore = "blocked on Epic 2 #1243 (Merge & combine methods wiring)"]
 fn merge_pdfs_rust_compiles_and_runs() {
+    // Enabled by Epic 2 #1243 wiring.
+    let _ = std::fs::remove_file(OUT);
     run().expect("merge flow");
+    let _ = std::fs::remove_file(OUT);
 }
 
 #[test]
