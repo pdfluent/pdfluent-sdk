@@ -291,8 +291,8 @@ pub enum Capability {
     EncryptionWrite,
     DigitalSignatureSign,
     DigitalSignatureVerify,
-    PadesBLT,
-    PadesBLTA,
+    PadesLongTerm,
+    PadesLongTermArchive,
 
     // Compliance
     PdfaValidate,
@@ -354,7 +354,7 @@ Canonical mapping — this table is the source of truth and is snapshot-tested a
 | AcroFormRead, AcroFormFill, AcroFormFlatten | ✓ | ✓ | ✓ | ✓ | ✓ |
 | EncryptionRead, EncryptionWrite | ✓ | ✓ | ✓ | ✓ | ✓ |
 | PdfaValidate, PdfaConvertA1b/A2b/A3b | ✓ | ✗ | ✓ | ✓ | ✓ |
-| DigitalSignatureSign, Verify, PadesBLT, PadesBLTA | ✓ | ✗ | ✓ | ✓ | ✓ |
+| DigitalSignatureSign, Verify, PadesLongTerm, PadesLongTermArchive | ✓ | ✗ | ✓ | ✓ | ✓ |
 | Redaction | ✓ | ✗ | ✓ | ✓ | ✓ |
 | PdfuaValidate, PdfuaConvert | ✓ | ✗ | ✓ | ✓ | ✓ |
 | EInvoiceZugferd / FacturX / XRechnung | ✓ | ✗ | ✓ | ✓ | ✓ |
@@ -531,7 +531,7 @@ fn main() -> Result<()> {
             .contact_info("legal@example.com")
             .field_name("Signature1")
             .visible_rect(1, [50.0, 50.0, 250.0, 130.0])
-            .profile(PadesProfile::BLT),
+            .profile(PadesProfile::LongTerm),
     )?;
 
     // Save
@@ -546,7 +546,7 @@ fn main() -> Result<()> {
 }
 ```
 
-Capabilities exercised: `DigitalSignatureSign`, `PadesBLT`, `DigitalSignatureVerify`.
+Capabilities exercised: `DigitalSignatureSign`, `PadesLongTerm`, `DigitalSignatureVerify`.
 
 These three flows compile against the `pdfluent` crate skeleton delivered alongside this RFC (see `crates/pdfluent/tests/web_examples/`). `#1240` tracks the bootstrap validation against this API.
 
@@ -594,5 +594,32 @@ This RFC is considered accepted when:
 After acceptance, the API is frozen. Breaking changes require a new RFC.
 
 ---
+
+
+---
+
+## 13. Not in 1.0 (explicit)
+
+The following capabilities are **not** part of the 1.0 public API surface. Attempting to use them results in a compile error (the symbol does not exist) rather than a runtime `FeatureNotInTier`. Each is tracked by a separate milestone.
+
+| Capability | Why not in 1.0 | Tracked by |
+|---|---|---|
+| HTML → PDF (`PdfDocument::from_html`, `HtmlToPdfOptions`) | Requires headless Chromium integration, out of scope for core facade | Milestone #57 / design story #1206 (IronPDF Parity) |
+| OCR direct API on `PdfDocument` (`make_searchable`, `ocr_text`) | Available via `pdf-ocr` crate; facade wrapper deferred to 1.1 | Milestone #52 Epic 2 #1224 (partial); expanded post-1.0 |
+| DOCX / XLSX / PPTX conversion facades | `to_docx` lands under #1224 in 1.0; XLSX and PPTX deferred | Milestone #52 Epic 2 #1224 |
+| Async API for full surface | `pdfluent::r#async` ships as beta in 1.0 with limited methods | Milestone #52 Epic 5 #1235, promote to stable in 1.1 |
+| AI-based document intelligence | Separate product line, not an SDK concern | Not scheduled |
+| PDF forms → web rendering | Online product, not a library concern | Not scheduled |
+
+These are documented here so a user who tries `PdfDocument::from_html` and gets `no such method` knows where to look.
+
+---
+
+## 14. Validation pass revision log
+
+| Date | Revision | Changes |
+|---|---|---|
+| 2026-04-21 | v1.1 | Post-validation-pass update. Applied 12 fixes: removed `PdfDocumentBuilder`; removed `permissions_mut`; split `Signature` into `SignatureInfo` + `SignatureValidation`; renamed `structured_text` → `text_with_layout`; renamed `PadesProfile` variants to descriptive names; renamed `Rotation` variants to `ClockwiseN`; made `metadata_mut`/`form_mut` both return plain handles (no `Result`); `BookmarkMergeStrategy::Concat` as `Default`; removed unused `Alignment` type; `Error::docs_url` returns `&'static str`; `PdfDocument` dropped `Clone`; added license-provisioning API (`set_license_key`, `OpenOptions::with_license_key`, env var `PDFLUENT_LICENSE_KEY`). Full report: `xfa-program-office/SDK_CORE_FACADE_VALIDATION_PASS_01.md`. |
+
 
 🤖 Drafted 2026-04-21 as part of milestone #52 execution (SDK Core Facade & API Ergonomics).

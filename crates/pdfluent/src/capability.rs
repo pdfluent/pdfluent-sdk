@@ -8,9 +8,6 @@
 //! See RFC 0001 §6 for the full mapping to tiers.
 
 /// A capability represents a discrete SDK feature subject to licensing.
-///
-/// Capabilities are grouped by category in declaration order. The enum is
-/// `#[non_exhaustive]` — new capabilities may be added in minor releases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Capability {
@@ -62,9 +59,9 @@ pub enum Capability {
     /// Verify digital signatures.
     DigitalSignatureVerify,
     /// PAdES B-LT (long-term validation) signing.
-    PadesBLT,
+    PadesLongTerm,
     /// PAdES B-LTA (long-term with archive timestamp) signing.
-    PadesBLTA,
+    PadesLongTermArchive,
 
     // ---------- Compliance ----------
     /// Validate PDF/A conformance.
@@ -138,5 +135,11 @@ impl CapabilitySet {
     pub fn with(mut self, cap: Capability) -> Self {
         self.bits |= 1u64 << (cap as u32);
         self
+    }
+}
+
+impl std::fmt::Display for CapabilitySet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CapabilitySet(0b{:b})", self.bits)
     }
 }

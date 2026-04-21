@@ -2,7 +2,7 @@
 //!
 //! One [`Error`] enum covers all public operations. The enum is
 //! `#[non_exhaustive]` to permit additional variants in minor releases
-//! without breaking match exhaustiveness in downstream code.
+//! without breaking match exhaustiveness.
 //!
 //! Each variant carries:
 //! - a stable [`code`](Error::code) string of the form `E-<CATEGORY>-<SPECIFIC>`,
@@ -22,9 +22,6 @@ use crate::tier::Tier;
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Top-level error type for all `pdfluent` operations.
-///
-/// Variants are grouped by category; the discriminant [`Error::code`] is
-/// stable across `1.x` releases.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
@@ -36,7 +33,6 @@ pub enum Error {
         /// Path under operation, if applicable.
         path: Option<PathBuf>,
     },
-
     /// File not found at the given path.
     FileNotFound {
         /// Path that was searched.
@@ -51,7 +47,6 @@ pub enum Error {
         /// Human-readable reason.
         reason: String,
     },
-
     /// PDF version is newer than the supported maximum.
     UnsupportedPdfVersion {
         /// Version in the document header.
@@ -75,8 +70,7 @@ pub enum Error {
         /// Specific failure cause.
         reason: DecryptionFailureReason,
     },
-
-    /// A digital signature in the document is invalid.
+    /// A digital signature is invalid.
     InvalidSignature {
         /// Form field name holding the signature.
         field: String,
@@ -91,55 +85,38 @@ pub enum Error {
         capability: Capability,
         /// The tier the user currently holds.
         current_tier: Tier,
-        /// The minimum tier required for this capability.
+        /// The minimum tier required.
         required_tier: Tier,
-        /// Deep link to the error docs page.
-        docs_url: &'static str,
-        /// Deep link to the pricing page for upgrade.
-        upgrade_url: &'static str,
     },
-
-    /// Capability is gated behind a Cargo feature that is not enabled at
-    /// compile time.
+    /// Capability is gated behind a Cargo feature that is not compiled in.
     CapabilityNotCompiled {
         /// Capability that was requested.
         capability: Capability,
         /// Cargo feature flag to enable.
         feature_flag: &'static str,
-        /// Docs URL.
-        docs_url: &'static str,
     },
-
     /// License key is malformed or expired.
     InvalidLicense {
         /// Human-readable reason.
         reason: String,
-        /// Docs URL.
-        docs_url: &'static str,
     },
 
     // ---------- Environment ----------
     /// Operation is not supported in WebAssembly builds.
     UnsupportedOnWasm {
-        /// Name of the operation that was attempted.
+        /// Name of the attempted operation.
         operation: &'static str,
-        /// Docs URL.
-        docs_url: &'static str,
     },
-
     /// A native dependency is required but not installed or discoverable.
     MissingDependency {
         /// Name of the missing dependency.
         dep: &'static str,
         /// Installation hint.
         install_hint: &'static str,
-        /// Docs URL.
-        docs_url: &'static str,
     },
 
     // ---------- Budget ----------
-    /// Memory budget set via [`crate::OpenOptions::strict_memory_limit`] was
-    /// exceeded.
+    /// Memory budget set via [`crate::OpenOptions::strict_memory_limit`] exceeded.
     MemoryBudgetExceeded {
         /// Bytes that would have been allocated.
         requested: usize,
@@ -148,8 +125,7 @@ pub enum Error {
     },
 
     // ---------- Internal ----------
-    /// Internal safety-net. Should never fire under normal operation — if
-    /// observed, please report a bug.
+    /// Internal safety-net. Should never fire under normal operation.
     Internal {
         /// Diagnostic message.
         message: String,
@@ -170,9 +146,19 @@ pub enum DecryptionFailureReason {
     MalformedDictionary,
 }
 
+impl std::fmt::Display for DecryptionFailureReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongPassword => f.write_str("wrong password"),
+            Self::UnsupportedAlgorithm => f.write_str("unsupported encryption algorithm"),
+            Self::MalformedDictionary => f.write_str("malformed encryption dictionary"),
+        }
+    }
+}
+
 impl Error {
-    /// Stable error code of the form `E-<CATEGORY>-<SPECIFIC>`.
-    pub fn code(&self) -> &'static str {
+    /// Stable error code (`E-<CATEGORY>-<SPECIFIC>`), frozen per snapshot test.
+    pub const fn code(&self) -> &'static str {
         match self {
             Error::Io { .. } => "E-IO-GENERIC",
             Error::FileNotFound { .. } => "E-IO-FILE-NOT-FOUND",
@@ -191,9 +177,42 @@ impl Error {
         }
     }
 
-    /// Deep link to the documentation page for this error code.
-    pub fn docs_url(&self) -> String {
-        format!("https://pdfluent.com/errors/{}", self.code())
+    /// Static deep-link to the documentation page for this error code.
+    pub const fn docs_url(&self) -> &'static str {
+        match self {
+            Error::Io { .. } => "https://pdfluent.com/errors/E-IO-GENERIC",
+            Error::FileNotFound { .. } => "https://pdfluent.com/errors/E-IO-FILE-NOT-FOUND",
+            Error::InvalidPdf { .. } => "https://pdfluent.com/errors/E-PARSE-INVALID-PDF",
+            Error::UnsupportedPdfVersion { .. } => {
+                "https://pdfluent.com/errors/E-PARSE-UNSUPPORTED-VERSION"
+            }
+            Error::PdfaValidationFailed { .. } => {
+                "https://pdfluent.com/errors/E-COMPLIANCE-PDFA-INVALID"
+            }
+            Error::DecryptionFailed { .. } => {
+                "https://pdfluent.com/errors/E-SECURITY-DECRYPTION-FAILED"
+            }
+            Error::InvalidSignature { .. } => {
+                "https://pdfluent.com/errors/E-SECURITY-INVALID-SIGNATURE"
+            }
+            Error::FeatureNotInTier { .. } => {
+                "https://pdfluent.com/errors/E-LICENSE-FEATURE-NOT-IN-TIER"
+            }
+            Error::CapabilityNotCompiled { .. } => {
+                "https://pdfluent.com/errors/E-LICENSE-CAPABILITY-NOT-COMPILED"
+            }
+            Error::InvalidLicense { .. } => "https://pdfluent.com/errors/E-LICENSE-INVALID",
+            Error::UnsupportedOnWasm { .. } => {
+                "https://pdfluent.com/errors/E-ENV-UNSUPPORTED-ON-WASM"
+            }
+            Error::MissingDependency { .. } => {
+                "https://pdfluent.com/errors/E-ENV-MISSING-DEPENDENCY"
+            }
+            Error::MemoryBudgetExceeded { .. } => {
+                "https://pdfluent.com/errors/E-BUDGET-MEMORY-EXCEEDED"
+            }
+            Error::Internal { .. } => "https://pdfluent.com/errors/E-INTERNAL",
+        }
     }
 }
 
@@ -218,7 +237,7 @@ impl std::fmt::Display for Error {
                 "PDF/A validation failed for profile {profile:?} with {} violation(s)",
                 violations.len()
             ),
-            Error::DecryptionFailed { reason } => write!(f, "Decryption failed: {reason:?}"),
+            Error::DecryptionFailed { reason } => write!(f, "Decryption failed: {reason}"),
             Error::InvalidSignature { field, reason } => {
                 write!(f, "Signature '{field}' is invalid: {reason}")
             }
@@ -226,34 +245,34 @@ impl std::fmt::Display for Error {
                 capability,
                 current_tier,
                 required_tier,
-                docs_url,
-                upgrade_url,
             } => write!(
                 f,
-                "Capability {capability:?} requires tier {required_tier:?}; current tier is {current_tier:?}.\n  Upgrade: {upgrade_url}\n  Docs: {docs_url}"
+                "Capability {capability:?} requires tier {required_tier:?}; current tier is {current_tier:?}.\n  Upgrade: https://pdfluent.com/pricing\n  Docs: {}",
+                self.docs_url()
             ),
             Error::CapabilityNotCompiled {
                 capability,
                 feature_flag,
-                docs_url,
             } => write!(
                 f,
-                "Capability {capability:?} requires the `{feature_flag}` Cargo feature, which is not enabled in this build.\n  Docs: {docs_url}"
+                "Capability {capability:?} requires the `{feature_flag}` Cargo feature, which is not enabled in this build.\n  Docs: {}",
+                self.docs_url()
             ),
-            Error::InvalidLicense { reason, docs_url } => {
-                write!(f, "Invalid license: {reason}\n  Docs: {docs_url}")
+            Error::InvalidLicense { reason } => {
+                write!(f, "Invalid license: {reason}\n  Docs: {}", self.docs_url())
             }
-            Error::UnsupportedOnWasm { operation, docs_url } => write!(
+            Error::UnsupportedOnWasm { operation } => write!(
                 f,
-                "Operation `{operation}` is not supported on wasm32 targets.\n  Docs: {docs_url}"
+                "Operation `{operation}` is not supported on wasm32 targets.\n  Docs: {}",
+                self.docs_url()
             ),
             Error::MissingDependency {
                 dep,
                 install_hint,
-                docs_url,
             } => write!(
                 f,
-                "Missing dependency: {dep}.\n  Install: {install_hint}\n  Docs: {docs_url}"
+                "Missing dependency: {dep}.\n  Install: {install_hint}\n  Docs: {}",
+                self.docs_url()
             ),
             Error::MemoryBudgetExceeded { requested, limit } => write!(
                 f,

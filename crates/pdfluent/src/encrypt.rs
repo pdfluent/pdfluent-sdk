@@ -1,7 +1,5 @@
 //! Encryption, decryption, and permissions.
 
-use crate::error::Result;
-
 /// Encryption algorithm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -12,10 +10,10 @@ pub enum EncryptionAlgorithm {
     Aes256,
 }
 
-/// Permissions granted on a decrypted PDF.
+/// Permissions granted on an encrypted PDF.
 ///
-/// Construct via [`Permissions::print_only`], [`Permissions::read_only`],
-/// [`Permissions::annotate`], or the builder.
+/// Construct via presets ([`Permissions::print_only`], [`read_only`],
+/// [`annotate`]) or the individual `with_*` methods for fine control.
 #[derive(Debug, Clone, Copy)]
 pub struct Permissions {
     pub(crate) print: bool,
@@ -73,6 +71,9 @@ impl Permissions {
 }
 
 /// Options for encrypting a document.
+///
+/// Used both to encrypt an un-encrypted document and to re-encrypt an
+/// already-encrypted one (requires [`crate::PdfDocument::decrypt`] first).
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct EncryptOptions {
@@ -89,7 +90,7 @@ impl Default for EncryptOptions {
 }
 
 impl EncryptOptions {
-    /// AES-256 with default permissions (all allowed).
+    /// AES-256 with default permissions (annotate preset).
     pub fn aes256() -> Self {
         Self {
             algorithm: EncryptionAlgorithm::Aes256,
@@ -123,20 +124,5 @@ impl EncryptOptions {
     pub fn with_permissions(mut self, p: Permissions) -> Self {
         self.permissions = p;
         self
-    }
-}
-
-/// Builder for mutating document permissions.
-///
-/// Obtained via [`crate::PdfDocument::permissions_mut`]. Changes commit on
-/// drop or explicit [`PermissionsBuilder::commit`].
-pub struct PermissionsBuilder<'a> {
-    _doc: std::marker::PhantomData<&'a mut crate::PdfDocument>,
-}
-
-impl<'a> PermissionsBuilder<'a> {
-    /// Apply pending changes and encrypt the document.
-    pub fn commit(self) -> Result<()> {
-        unimplemented!("Epic 2 #1225 / #1244");
     }
 }

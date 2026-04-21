@@ -23,33 +23,22 @@
 //! }
 //! ```
 //!
+//! ## Licensing
+//!
+//! Provide a license key via any of (highest precedence first):
+//!
+//! 1. [`OpenOptions::with_license_key`](crate::document::OpenOptions::with_license_key)
+//!    — per-document override.
+//! 2. [`license::set_license_key`] — process-global.
+//! 3. `PDFLUENT_LICENSE_KEY` environment variable.
+//!
+//! Without a license the SDK runs in [`Tier::Trial`] mode: all capabilities
+//! accessible, output marked via `/Producer` metadata.
+//!
 //! ## Design foundation
 //!
-//! The public API is frozen per RFC 0001 (see `docs/rfc/0001-sdk-core-api.md`
-//! in the repository). Breaking changes require a new RFC.
-//!
-//! - Sync default; async opt-in via the `async-tokio` feature under
-//!   [`pdfluent::r#async`](r#async).
-//! - Capability-gated: each licensed capability is enforced at runtime with a
-//!   documented [`Error::FeatureNotInTier`] variant when unavailable.
-//! - One error type: [`Error`]. No `anyhow`, no `Box<dyn Error>` in the public
-//!   signature.
-//!
-//! ## Modules
-//!
-//! - [`document`] — [`PdfDocument`] and lifecycle types.
-//! - [`merger`]   — [`PdfMerger`] factory builder for combining documents.
-//! - [`signer`]   — [`PdfSigner`] trait and [`Pkcs12Signer`] for PAdES signing.
-//! - [`form`]     — form field reading and mutation.
-//! - [`metadata`] — document metadata (Info dict + XMP).
-//! - [`encrypt`]  — AES-256 encryption and permissions.
-//! - [`watermark`] — text/image watermarks.
-//! - [`redact`]    — content redaction.
-//! - [`compliance`] — PDF/A validation and conversion.
-//! - [`capability`] — [`Capability`] enum.
-//! - [`tier`] — [`Tier`] enum and runtime license.
-//! - [`error`] — [`Error`] enum.
-//! - [`prelude`] — convenient re-export of the top types.
+//! The public API is frozen per RFC 0001 (see `docs/rfc/0001-sdk-core-api.md`).
+//! Breaking changes require a new RFC.
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
@@ -61,6 +50,7 @@ pub mod document;
 pub mod encrypt;
 pub mod error;
 pub mod form;
+pub mod license;
 pub mod merger;
 pub mod metadata;
 pub mod prelude;
@@ -79,20 +69,20 @@ pub mod r#async;
 
 pub use crate::capability::{Capability, CapabilitySet};
 pub use crate::compliance::{PdfAProfile, PdfAValidationReport, Violation};
-pub use crate::document::{OpenOptions, PdfDocument, PdfDocumentBuilder, Page, Pages, PagesMut, SaveOptions};
-pub use crate::encrypt::{
-    EncryptOptions, EncryptionAlgorithm, Permissions, PermissionsBuilder,
-};
+pub use crate::document::{OpenOptions, Page, Pages, PagesMut, PdfDocument, PdfVersion, SaveOptions, TextBlock};
+pub use crate::encrypt::{EncryptOptions, EncryptionAlgorithm, Permissions};
 pub use crate::error::{Error, Result};
 pub use crate::form::{FieldType, FormField, PdfFormMut};
+pub use crate::license::{license_info, set_license_key, LicenseInfo};
 pub use crate::merger::{BookmarkMergeStrategy, MergeOptions, PdfMerger};
 pub use crate::metadata::{Metadata, MetadataMut};
 pub use crate::redact::RedactOptions;
 pub use crate::signer::{
-    PadesProfile, PdfSigner, Pkcs12Signer, SignOptions, Signature, SignatureValidationReport,
+    PadesProfile, PdfSigner, Pkcs12Signer, SignOptions, SignatureInfo, SignatureStatus,
+    SignatureValidation, SignatureValidationReport,
 };
 pub use crate::tier::Tier;
-pub use crate::watermark::{Alignment, Layer, Position, Rotation, WatermarkOptions};
+pub use crate::watermark::{Layer, Position, Rotation, WatermarkOptions};
 
 /// The SDK version at compile time. Bindings check this at runtime to ensure
 /// compatibility with the loaded `pdfluent` dynamic library.

@@ -41,14 +41,20 @@ pub struct FormField {
 
 /// Mutable form handle.
 ///
-/// Use via [`crate::PdfDocument::form_mut`]. Operations take effect on the
-/// owning document immediately; there is no commit step.
+/// Returned by [`crate::PdfDocument::form_mut`] unconditionally — the handle
+/// is always constructable, even if the document has no form. Errors
+/// surface on the individual setter calls when a field does not exist.
 pub struct PdfFormMut<'a> {
     _doc: std::marker::PhantomData<&'a mut crate::PdfDocument>,
 }
 
 impl<'a> PdfFormMut<'a> {
     /// Set a text field value.
+    ///
+    /// # Errors
+    ///
+    /// - [`crate::Error::Internal`] wrapping `FieldNotFound` when the field
+    ///   does not exist in the document.
     pub fn set_text(&mut self, _name: &str, _value: &str) -> Result<&mut Self> {
         unimplemented!("Epic 2 #1245");
     }
