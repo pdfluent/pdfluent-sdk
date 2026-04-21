@@ -259,19 +259,18 @@ impl PdfDocument {
 
         let owned = bytes.to_vec();
         let engine = match &opts.password {
-            Some(pw) => pdf_engine::PdfDocument::open_with_password(owned.clone(), pw.as_str())
-                .map_err(map_engine_error)?,
-            None => pdf_engine::PdfDocument::open(owned.clone()).map_err(map_engine_error)?,
+            Some(pw) => pdf_engine::PdfDocument::open_with_password(owned.clone(), pw.as_str())?,
+            None => pdf_engine::PdfDocument::open(owned.clone())?,
         };
 
         let lopdf = match &opts.password {
             Some(pw) => {
-                let mut doc = lopdf::Document::load_mem(&owned).map_err(map_lopdf_error)?;
+                let mut doc = lopdf::Document::load_mem(&owned)?;
                 // lopdf separates load from decrypt: decrypt in place if possible.
                 let _ = doc.decrypt(pw.as_str());
                 doc
             }
-            None => lopdf::Document::load_mem(&owned).map_err(map_lopdf_error)?,
+            None => lopdf::Document::load_mem(&owned)?,
         };
 
         Ok(Self {
@@ -369,10 +368,7 @@ impl PdfDocument {
         let mut out = Vec::new();
         let count = self.engine.page_count();
         for idx in 0..count {
-            let blocks = self
-                .engine
-                .extract_text_blocks(idx)
-                .map_err(map_engine_error)?;
+            let blocks = self.engine.extract_text_blocks(idx)?;
             for block in blocks {
                 out.push(TextBlock::from_engine(block, idx + 1));
             }
@@ -532,8 +528,8 @@ impl PdfDocument {
             Rotation::Clockwise180 => 180,
             Rotation::Clockwise270 => 270,
         };
-        pdf_manip::pages::rotate_page(&mut self.lopdf, page as u32, degrees)
-            .map_err(map_manip_error)
+        pdf_manip::pages::rotate_page(&mut self.lopdf, page as u32, degrees)?;
+        Ok(())
     }
 
     // ---------- Security (Epic 2 #1244) ----------
@@ -590,8 +586,7 @@ impl PdfDocument {
         // rebuild `self.engine` — see the method doc-comment for the
         // read-after-encrypt contract.
         let mut sink = std::io::sink();
-        pdf_manip::encrypt::encrypt_and_save(&mut self.lopdf, &config, &mut sink)
-            .map_err(map_manip_error)?;
+        pdf_manip::encrypt::encrypt_and_save(&mut self.lopdf, &config, &mut sink)?;
         Ok(())
     }
 
@@ -602,7 +597,7 @@ impl PdfDocument {
     /// the now-plaintext content.
     pub fn decrypt(&mut self, password: &str) -> Result<()> {
         self.require_capability(Capability::EncryptionRead)?;
-        pdf_manip::encrypt::decrypt(&mut self.lopdf, password).map_err(map_manip_error)?;
+        pdf_manip::encrypt::decrypt(&mut self.lopdf, password)?;
         self.refresh_from_lopdf()
     }
 
@@ -623,8 +618,7 @@ impl PdfDocument {
         // Wrap our trait-object signer in an adapter that implements the
         // pdf_sign::PdfSigner trait by delegation.
         let adapter = PdfSignerAdapter { inner: signer };
-        let signed =
-            pdf_sign::sign_pdf(&pdf_bytes, &adapter, &inner_opts).map_err(map_sign_error)?;
+        let signed = pdf_sign::sign_pdf(&pdf_bytes, &adapter, &inner_opts)?;
         *self = Self::from_bytes(&signed)?;
         Ok(())
     }
@@ -700,8 +694,7 @@ impl PdfDocument {
                 .map(|v| v.iter().map(|p| *p as u32).collect()),
             overlay_text: None,
         };
-        pdf_redact::search_and_redact(&mut self.lopdf, text, &search_opts)
-            .map_err(map_redact_error)?;
+        pdf_redact::search_and_redact(&mut self.lopdf, text, &search_opts)?;
         self.refresh_from_lopdf()
     }
 
@@ -719,7 +712,7 @@ impl PdfDocument {
             fill_color: [0.0, 0.0, 0.0],
             overlay_text: None,
         });
-        redactor.apply(&mut self.lopdf).map_err(map_redact_error)?;
+        redactor.apply(&mut self.lopdf)?;
         self.refresh_from_lopdf()
     }
 
@@ -746,7 +739,7 @@ impl PdfDocument {
     /// page content.
     pub fn split_pages(&self) -> Result<Vec<PdfDocument>> {
         self.require_capability(Capability::PageOps)?;
-        let split = pdf_manip::pages::split_per_page(&self.lopdf).map_err(map_manip_error)?;
+        let split = pdf_manip::pages::split_per_page(&self.lopdf)?;
         let mut out = Vec::with_capacity(split.len());
         for lopdf_doc in split {
             out.push(Self::from_lopdf(lopdf_doc)?);
@@ -777,8 +770,7 @@ impl PdfDocument {
         let total = self.engine.page_count();
         let (start, end) = normalise_page_range(&range, total)?;
         let pages: Vec<u32> = (start..=end).map(|p| p as u32).collect();
-        let lopdf_doc =
-            pdf_manip::pages::extract_pages(&self.lopdf, &pages).map_err(map_manip_error)?;
+        let lopdf_doc = pdf_manip::pages::extract_pages(&self.lopdf, &pages)?;
         Self::from_lopdf(lopdf_doc)
     }
 
@@ -949,10 +941,8 @@ impl Page<'_> {
     /// Extract text from this page.
     pub fn text(&self) -> Result<String> {
         self.doc.require_capability(Capability::TextExtract)?;
-        self.doc
-            .engine
-            .extract_text(self.index)
-            .map_err(map_engine_error)
+        let text = self.doc.engine.extract_text(self.index)?;
+        Ok(text)
     }
 
     /// Page dimensions in points `(width, height)`.
@@ -994,81 +984,11 @@ impl<'a> Iterator for Pages<'a> {
 // Internal error mapping
 // ---------------------------------------------------------------------------
 
-fn map_engine_error(e: pdf_engine::EngineError) -> Error {
-    // Flatten pdf-engine's error variants into our public `Error`. Epic 4
-    // #1231 will tighten this with richer per-variant mapping and binding
-    // integration.
-    use pdf_engine::EngineError as E;
-    match e {
-        E::Encrypted(_reason) => Error::DecryptionFailed {
-            reason: crate::error::DecryptionFailureReason::WrongPassword,
-        },
-        E::InvalidPdf(reason) => Error::InvalidPdf {
-            byte_offset: None,
-            reason,
-        },
-        other => Error::InvalidPdf {
-            byte_offset: None,
-            reason: format!("{other:?}"),
-        },
-    }
-}
-
-fn map_lopdf_error(e: lopdf::Error) -> Error {
-    Error::InvalidPdf {
-        byte_offset: None,
-        reason: e.to_string(),
-    }
-}
-
-fn map_manip_error(e: pdf_manip::ManipError) -> Error {
-    // Targeted per-variant mapping for the publicly observable error
-    // kinds; Epic 4 #1231 will push this further. The decrypt path is
-    // the most user-visible: a wrong password must surface as
-    // `Error::DecryptionFailed`, not a generic `InvalidPdf`.
-    use pdf_manip::ManipError as M;
-    match e {
-        M::DecryptionFailed => Error::DecryptionFailed {
-            reason: crate::error::DecryptionFailureReason::WrongPassword,
-        },
-        other => Error::InvalidPdf {
-            byte_offset: None,
-            reason: other.to_string(),
-        },
-    }
-}
-
-fn map_sign_error(e: pdf_sign::SignError) -> Error {
-    // Map pdf_sign::SignError to the existing public Error surface. Epic 4
-    // #1231 will introduce a richer mapping; until then we reuse
-    // InvalidSignature where the shape fits and fall back to Internal for
-    // the rest.
-    use pdf_sign::SignError as S;
-    match e {
-        S::Pkcs12Load(reason)
-        | S::UnsupportedKeyType(reason)
-        | S::CmsBuild(reason)
-        | S::SigningFailed(reason) => Error::InvalidSignature {
-            field: "<signing>".into(),
-            reason,
-        },
-        S::NoPrivateKey => Error::InvalidSignature {
-            field: "<signing>".into(),
-            reason: "PKCS#12 identity contained no private key".into(),
-        },
-        S::NoCertificate => Error::InvalidSignature {
-            field: "<signing>".into(),
-            reason: "PKCS#12 identity contained no certificate".into(),
-        },
-    }
-}
-
-fn map_redact_error(e: pdf_redact::RedactError) -> Error {
-    Error::InvalidPdf {
-        byte_offset: None,
-        reason: e.to_string(),
-    }
-}
+// Error mapping lives in `crate::error` as `From<internal>` impls, letting
+// call-sites use the `?` operator directly. See `error.rs` for the five
+// conversions (pdf_engine::EngineError, lopdf::Error, pdf_manip::ManipError,
+// pdf_sign::SignError, pdf_redact::RedactError) that replaced the earlier
+// ad-hoc `map_*_error` helpers that used to live here.
 
 fn map_encryption_algorithm(
     alg: crate::encrypt::EncryptionAlgorithm,

@@ -309,3 +309,99 @@ pub(crate) fn internal_error(message: impl Into<String>) -> Error {
         crate_version: env!("CARGO_PKG_VERSION"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// From<internal error> conversions
+// ---------------------------------------------------------------------------
+//
+// These impls replace the earlier ad-hoc `map_*_error` helpers in
+// `document.rs` and siblings. With `From` impls in place, call-sites can
+// use the `?` operator directly instead of `.map_err(map_engine_error)?`.
+//
+// The impls are at the Rust item-level public (an `impl From<X> for Y`
+// block has no visibility modifier), but since the internal error types
+// (`pdf_engine::EngineError`, `lopdf::Error`, `pdf_manip::ManipError`,
+// `pdf_sign::SignError`, `pdf_redact::RedactError`) are not re-exported
+// from the `pdfluent` public surface, end users of the `pdfluent` crate
+// never encounter them: the leak is theoretical only.
+//
+// Every conversion preserves a short textual reason but **never** wraps
+// the internal error as `source()` — that would expose the internal type
+// through `std::error::Error::source`. Peek at the `source()` impl above
+// to confirm: only `Error::Io { source, .. }` chains, and its source is
+// `std::io::Error` which is public std.
+
+impl From<pdf_engine::EngineError> for Error {
+    fn from(e: pdf_engine::EngineError) -> Self {
+        use pdf_engine::EngineError as E;
+        match e {
+            E::Encrypted(_reason) => Error::DecryptionFailed {
+                reason: DecryptionFailureReason::WrongPassword,
+            },
+            E::InvalidPdf(reason) => Error::InvalidPdf {
+                byte_offset: None,
+                reason,
+            },
+            other => Error::InvalidPdf {
+                byte_offset: None,
+                reason: format!("{other:?}"),
+            },
+        }
+    }
+}
+
+impl From<lopdf::Error> for Error {
+    fn from(e: lopdf::Error) -> Self {
+        Error::InvalidPdf {
+            byte_offset: None,
+            reason: e.to_string(),
+        }
+    }
+}
+
+impl From<pdf_manip::ManipError> for Error {
+    fn from(e: pdf_manip::ManipError) -> Self {
+        use pdf_manip::ManipError as M;
+        match e {
+            M::DecryptionFailed => Error::DecryptionFailed {
+                reason: DecryptionFailureReason::WrongPassword,
+            },
+            other => Error::InvalidPdf {
+                byte_offset: None,
+                reason: other.to_string(),
+            },
+        }
+    }
+}
+
+impl From<pdf_sign::SignError> for Error {
+    fn from(e: pdf_sign::SignError) -> Self {
+        use pdf_sign::SignError as S;
+        match e {
+            S::Pkcs12Load(reason)
+            | S::UnsupportedKeyType(reason)
+            | S::CmsBuild(reason)
+            | S::SigningFailed(reason) => Error::InvalidSignature {
+                field: "<signing>".into(),
+                reason,
+            },
+            S::NoPrivateKey => Error::InvalidSignature {
+                field: "<signing>".into(),
+                reason: "PKCS#12 identity contained no private key".into(),
+            },
+            S::NoCertificate => Error::InvalidSignature {
+                field: "<signing>".into(),
+                reason: "PKCS#12 identity contained no certificate".into(),
+            },
+        }
+    }
+}
+
+impl From<pdf_redact::RedactError> for Error {
+    fn from(e: pdf_redact::RedactError) -> Self {
+        Error::InvalidPdf {
+            byte_offset: None,
+            reason: e.to_string(),
+        }
+    }
+}
