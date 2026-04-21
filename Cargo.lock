@@ -4440,6 +4440,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdfluent"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "peeking_take_while"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
