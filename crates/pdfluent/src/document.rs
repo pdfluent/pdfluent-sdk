@@ -391,22 +391,65 @@ impl PdfDocument {
 
     // ---------- Metadata (Epic 2 #1245) ----------
 
-    /// Read document metadata (Info dict + XMP).
+    /// Read document metadata (Info dict + XMP-derived date fields).
+    ///
+    /// Combines [`pdf_engine::DocumentInfo`] (title/author/subject/keywords/
+    /// creator/producer) with the `/CreationDate` + `/ModDate` strings
+    /// extracted directly from the Info dict.
     pub fn metadata(&self) -> Metadata {
-        unimplemented!("Epic 2 #1245");
+        let info = self.engine.info();
+        let (creation, modification) = crate::metadata::read_info_dates(&self.lopdf);
+        Metadata {
+            title: info.title,
+            author: info.author,
+            subject: info.subject,
+            keywords: crate::metadata::parse_keywords(info.keywords),
+            producer: info.producer,
+            creator: info.creator,
+            creation_date: creation,
+            modification_date: modification,
+        }
     }
 
     /// Mutate document metadata. The returned handle flushes changes on
     /// [`MetadataMut::commit`] or when dropped.
+    ///
+    /// The handle operates on the internal lopdf `/Info` dictionary.
+    /// After commit, a subsequent `save` / `to_bytes` serialises the
+    /// updated metadata. Note that the engine-side representation used
+    /// by [`metadata`](Self::metadata) is only refreshed when the document
+    /// is re-opened; call `metadata_mut(...).commit()?.to_bytes()?` + reopen
+    /// if you need the engine-side to reflect new values in the same
+    /// process.
     pub fn metadata_mut(&mut self) -> MetadataMut<'_> {
-        unimplemented!("Epic 2 #1245");
+        MetadataMut::new(self)
+    }
+
+    // ---------- Internal accessor for MetadataMut ----------
+
+    /// Crate-private mutable access to the lopdf representation. Used by
+    /// `MetadataMut::commit` and future mutating facade methods.
+    pub(crate) fn lopdf_mut(&mut self) -> &mut lopdf::Document {
+        &mut self.lopdf
     }
 
     // ---------- Forms (Epic 2 #1245 / #1223) ----------
 
-    /// Read-only list of form fields.
+    /// Read-only list of AcroForm fields.
+    ///
+    /// Returns an empty `Vec` if the document has no AcroForm dictionary.
+    /// XFA-only documents also return an empty Vec; use XFA-specific APIs
+    /// (tracked separately) for XFA field enumeration.
+    ///
+    /// # 1.0 scope
+    ///
+    /// The read surface covers field name, field type, current value, and
+    /// required/read-only flags. Richer field introspection (kid hierarchy,
+    /// widget appearances, javascript actions) lands with the form-mutation
+    /// wiring in follow-up issues.
     pub fn form_fields(&self) -> Result<Vec<FormField>> {
-        unimplemented!("Epic 2 #1245");
+        license::require_capability(Capability::AcroFormRead)?;
+        Ok(crate::form::read_acroform_fields(&self.lopdf))
     }
 
     /// Mutable form handle.
