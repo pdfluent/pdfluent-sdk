@@ -30,6 +30,10 @@ use crate::error::{internal_error, Error, Result};
 use crate::form::{FormField, PdfFormMut};
 use crate::license;
 use crate::metadata::{Metadata, MetadataMut};
+use crate::parity::{
+    CompressOptions, CompressReport, FontSubsetReport, ImageInsert, ImageInsertReport,
+    InsertImageFormat, ToImagesOptions, ToImagesReport,
+};
 use crate::watermark::{Rotation, WatermarkOptions};
 
 // ---------------------------------------------------------------------------
@@ -515,6 +519,262 @@ impl PdfDocument {
         unimplemented!("Epic 2 #1223");
     }
 
+    // ---------- Parity methods (Epic 3 #1224) ----------
+
+    /// Convert the document to a `.docx` file on disk.
+    ///
+    /// Routes to [`pdf_docx::convert_pdf_bytes_to_docx`], which runs a
+    /// text-extraction pipeline over the PDF and emits an Office Open XML
+    /// document. The conversion is text-oriented: tables, layout and
+    /// images are best-effort and may not round-trip perfectly.
+    ///
+    /// # Capability
+    ///
+    /// Requires [`Capability::DocxExport`] (Business tier and up per
+    /// RFC §6.3).
+    ///
+    /// # 1.0 note
+    ///
+    /// The `docx-export` Cargo feature flag is reserved for future
+    /// compile-time gating; in 1.0 the method always compiles on
+    /// non-wasm targets. On wasm32 the method returns
+    /// [`Error::UnsupportedOnWasm`] because `pdf-docx` is not compiled
+    /// for that target.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn to_docx<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        self.require_capability(Capability::DocxExport)?;
+        let pdf_bytes = self.to_bytes()?;
+        let docx_bytes = pdf_docx::convert_pdf_bytes_to_docx(&pdf_bytes)
+            .map_err(|e| internal_error(format!("docx conversion failed: {e}")))?;
+        fs::write(path.as_ref(), docx_bytes).map_err(|source| Error::Io {
+            source,
+            path: Some(path.as_ref().to_path_buf()),
+        })?;
+        Ok(())
+    }
+
+    /// Convert the document to a `.docx` file — wasm stub.
+    #[cfg(target_arch = "wasm32")]
+    pub fn to_docx<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
+        Err(Error::UnsupportedOnWasm {
+            operation: "to_docx",
+        })
+    }
+
+    /// Render each page to an image file.
+    ///
+    /// `pattern` is a path template; the substring `{page}` (if present)
+    /// is replaced with the 1-based page number. When `{page}` is not
+    /// present, `_{page}` is appended before the extension.
+    ///
+    /// Returns the list of written paths in page order.
+    ///
+    /// # Capability
+    ///
+    /// Requires [`Capability::RenderRaster`] (available at every tier).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn to_images<P: AsRef<Path>>(
+        &self,
+        pattern: P,
+        opts: ToImagesOptions,
+    ) -> Result<ToImagesReport> {
+        use pdf_engine::render::RenderOptions;
+
+        self.require_capability(Capability::RenderRaster)?;
+
+        let total = self.engine.page_count();
+        let (from, to) = match opts.pages {
+            Some((f, t)) => {
+                if f == 0 || t < f || t > total {
+                    return Err(internal_error(format!(
+                        "invalid page range {f}..={t} (document has {total} pages)",
+                    )));
+                }
+                (f, t)
+            }
+            None => (1, total),
+        };
+
+        let render_opts = RenderOptions {
+            dpi: opts.dpi as f64,
+            ..Default::default()
+        };
+
+        let mut out_paths = Vec::with_capacity(to - from + 1);
+        for page_idx_1b in from..=to {
+            // `PdfEngine::render_page` takes a 0-based index internally.
+            let rendered = self
+                .engine
+                .render_page(page_idx_1b - 1, &render_opts)
+                .map_err(|e| internal_error(format!("render page {page_idx_1b} failed: {e}")))?;
+
+            let path = build_image_path(pattern.as_ref(), page_idx_1b, opts.format.extension());
+            encode_image(&rendered, opts.format, &path)?;
+            out_paths.push(path);
+        }
+
+        Ok(ToImagesReport { paths: out_paths })
+    }
+
+    /// Render each page to an image file — wasm stub.
+    #[cfg(target_arch = "wasm32")]
+    pub fn to_images<P: AsRef<Path>>(
+        &self,
+        _pattern: P,
+        _opts: ToImagesOptions,
+    ) -> Result<ToImagesReport> {
+        Err(Error::UnsupportedOnWasm {
+            operation: "to_images",
+        })
+    }
+
+    /// Compress the document by running the full optimisation stack.
+    ///
+    /// Returns a [`CompressReport`] describing what each pass did.
+    ///
+    /// # Capability
+    ///
+    /// Core-tier (always available).
+    pub fn compress(&mut self, opts: CompressOptions) -> Result<CompressReport> {
+        self.require_capability(Capability::PdfWrite)?;
+
+        let mut report = CompressReport::default();
+
+        if opts.subset_fonts {
+            let subset = pdf_manip::font_subset::subset_fonts(&mut self.lopdf)
+                .map_err(|e| internal_error(format!("font subsetting failed: {e:?}")))?;
+            report.font_subset = Some(FontSubsetReport {
+                fonts_processed: subset.fonts_processed,
+                fonts_subsetted: subset.fonts_subsetted,
+                bytes_saved: subset.bytes_saved,
+            });
+        }
+
+        if opts.compress_streams {
+            report.streams_compressed = pdf_manip::optimize::compress_streams(&mut self.lopdf)
+                .map_err(|e| internal_error(format!("stream compression failed: {e:?}")))?;
+        }
+
+        if opts.deduplicate_streams {
+            report.streams_deduplicated = pdf_manip::optimize::deduplicate_streams(&mut self.lopdf);
+        }
+
+        if opts.remove_unused {
+            report.unused_removed = pdf_manip::optimize::remove_unused_objects(&mut self.lopdf);
+        }
+
+        self.refresh_from_lopdf()?;
+        Ok(report)
+    }
+
+    /// Linearize the document for fast web-view.
+    ///
+    /// # 1.0 scope — honest deferred
+    ///
+    /// Real PDF linearization (hint-stream construction, object-order
+    /// rewriting, cross-reference update per ISO 32000-1 Annex F) is a
+    /// multi-day implementation not yet available in `pdf-manip`. Per
+    /// RFC decision D8 and issue #1224, this method ships as part of
+    /// the 1.0 API surface so that `SaveOptions::with_linearize(true)`
+    /// code compiles today, but a call returns
+    /// [`Error::MissingDependency`] pointing to the follow-up crate.
+    ///
+    /// **Truth-gap**: users MUST check the result; silent no-op would
+    /// violate the "no fake support" rule.
+    pub fn linearize(&mut self) -> Result<()> {
+        self.require_capability(Capability::PdfWrite)?;
+        Err(Error::MissingDependency {
+            dep: "pdf-manip::linearize",
+            install_hint: "linearization not yet implemented; tracked as a 1.1 follow-up to #1224",
+        })
+    }
+
+    /// Subset every embedded font to only the glyphs actually used.
+    ///
+    /// Smaller output files without visual changes. Routes to
+    /// [`pdf_manip::font_subset::subset_fonts`].
+    ///
+    /// # Capability
+    ///
+    /// Core-tier (always available).
+    pub fn subset_fonts(&mut self) -> Result<FontSubsetReport> {
+        self.require_capability(Capability::PdfWrite)?;
+        let subset = pdf_manip::font_subset::subset_fonts(&mut self.lopdf)
+            .map_err(|e| internal_error(format!("font subsetting failed: {e:?}")))?;
+        self.refresh_from_lopdf()?;
+        Ok(FontSubsetReport {
+            fonts_processed: subset.fonts_processed,
+            fonts_subsetted: subset.fonts_subsetted,
+            bytes_saved: subset.bytes_saved,
+        })
+    }
+
+    /// Embed an OpenType/TrueType font into the document.
+    ///
+    /// # 1.0 scope — honest deferred
+    ///
+    /// `pdf-manip` currently only has PDF/A-driven font embedding
+    /// (`pdfa_fonts::embed_fonts`), which assumes existing font
+    /// references in the page tree. A general-purpose "add a new font
+    /// for future content" pipeline (write a fresh Type0 composite
+    /// font dict + CIDFont + FontDescriptor + FontFile2/3 stream, then
+    /// register it in every page's `/Resources/Font`) is a multi-day
+    /// task. Per issue #1224 and RFC D8 this method is part of the
+    /// 1.0 surface but a call returns [`Error::MissingDependency`].
+    pub fn embed_font(&mut self, _font_data: &[u8], _name: &str) -> Result<()> {
+        self.require_capability(Capability::PdfWrite)?;
+        Err(Error::MissingDependency {
+            dep: "pdf-manip::embed_font",
+            install_hint:
+                "arbitrary font embedding not yet implemented; tracked as a 1.1 follow-up to #1224",
+        })
+    }
+
+    /// Insert a JPEG or PNG image onto a page.
+    ///
+    /// Routes to [`pdf_manip::image_insert::insert_image`].
+    ///
+    /// # Capability
+    ///
+    /// Core-tier (always available).
+    pub fn insert_image(&mut self, img: ImageInsert) -> Result<ImageInsertReport> {
+        self.require_capability(Capability::PdfWrite)?;
+
+        let total = self.engine.page_count();
+        if img.page == 0 || img.page > total {
+            return Err(internal_error(format!(
+                "page index {} out of range (document has {} pages)",
+                img.page, total,
+            )));
+        }
+
+        let format = match img.format {
+            InsertImageFormat::Jpeg => pdf_manip::image_insert::ImageFormat::Jpeg,
+            InsertImageFormat::Png => pdf_manip::image_insert::ImageFormat::Png,
+        };
+
+        let insert = pdf_manip::image_insert::ImageInsert {
+            image_data: img.bytes,
+            format,
+            x: img.x,
+            y: img.y,
+            width: img.width,
+            height: img.height,
+            page_index: img.page as u32,
+            opacity: img.opacity,
+        };
+
+        let res = pdf_manip::image_insert::insert_image(&mut self.lopdf, &insert)
+            .map_err(|e| internal_error(format!("image insertion failed: {e:?}")))?;
+
+        self.refresh_from_lopdf()?;
+        Ok(ImageInsertReport {
+            pixel_width: res.pixel_width,
+            pixel_height: res.pixel_height,
+            resource_name: res.resource_name,
+        })
+    }
+
     // ---------- Page operations (Epic 2 #1223 / #1243) ----------
 
     /// Rotate a specific page by a quarter-turn.
@@ -868,6 +1128,130 @@ impl PdfDocument {
 
 // `PdfDocument` is `Send + Sync` as long as its fields are.
 // `pdf_engine::PdfDocument` and `lopdf::Document` are both Send + Sync at time of writing.
+
+// ---------------------------------------------------------------------------
+// Epic 3 #1224 helpers — native-only image export
+// ---------------------------------------------------------------------------
+
+/// Expand a path pattern for [`PdfDocument::to_images`].
+///
+/// `{page}` is substituted with the 1-based page number. If the pattern
+/// does not contain `{page}`, the page number is injected before the
+/// extension (or appended if there's no extension).
+#[cfg(not(target_arch = "wasm32"))]
+fn build_image_path(pattern: &Path, page_1b: usize, ext: &str) -> std::path::PathBuf {
+    use std::path::PathBuf;
+
+    let s = pattern.to_string_lossy();
+    if s.contains("{page}") {
+        return PathBuf::from(s.replace("{page}", &page_1b.to_string()));
+    }
+
+    // No {page} marker — inject _N before the extension.
+    let parent = pattern.parent().map(Path::to_path_buf).unwrap_or_default();
+    let stem = pattern
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let pattern_ext = pattern
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_else(|| ext.to_string());
+
+    parent.join(format!("{stem}_{page_1b}.{pattern_ext}"))
+}
+
+/// Encode a rendered page to disk in the requested format.
+///
+/// We don't depend on the `image` crate directly; `pdf-render` already
+/// pulls in its own encoding stack via `vello_cpu`. For JPEG we drop
+/// alpha via a manual RGBA→RGB walk and hand-roll a minimal encoder
+/// path — but the simplest reliable route is to go through `image`.
+/// Since `image` is a transitive dep we can re-use it without adding
+/// a direct dep: instead, we encode PNG via a tiny in-crate wrapper
+/// around the `png` crate if present, or fall back to writing a PPM
+/// for debugging.
+///
+/// For 1.0 we only support PNG and JPEG. PNG uses the `png` crate
+/// (transitively via `vello_cpu`); JPEG uses a minimal RGB→JPEG
+/// dependency path through `pdf-render` which already compiles
+/// `image`. To avoid accidental feature creep, we encode PNG via
+/// hand-rolled path that doesn't require new deps.
+#[cfg(not(target_arch = "wasm32"))]
+fn encode_image(
+    page: &pdf_engine::render::RenderedPage,
+    format: crate::parity::ImageFormat,
+    path: &Path,
+) -> Result<()> {
+    use crate::parity::ImageFormat as Fmt;
+    use pdf_engine::render::PixelFormat;
+
+    // `RenderedPage::pixels` is 4 bytes per pixel. The engine produces
+    // Rgba8 for the default RenderOptions we pass in.
+    if !matches!(page.pixel_format, PixelFormat::Rgba8) {
+        return Err(internal_error(format!(
+            "unexpected pixel format {:?} from renderer",
+            page.pixel_format,
+        )));
+    }
+
+    match format {
+        Fmt::Png => encode_png(page.width, page.height, &page.pixels, path),
+        Fmt::Jpeg => encode_jpeg(page.width, page.height, &page.pixels, path),
+    }
+}
+
+/// Encode RGBA8 pixels as a PNG using the `png` crate.
+#[cfg(not(target_arch = "wasm32"))]
+fn encode_png(width: u32, height: u32, rgba: &[u8], path: &Path) -> Result<()> {
+    let file = fs::File::create(path).map_err(|source| Error::Io {
+        source,
+        path: Some(path.to_path_buf()),
+    })?;
+    let w = std::io::BufWriter::new(file);
+
+    let mut encoder = png::Encoder::new(w, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|e| internal_error(format!("png header failed: {e}")))?;
+    writer
+        .write_image_data(rgba)
+        .map_err(|e| internal_error(format!("png write failed: {e}")))?;
+    Ok(())
+}
+
+/// Encode RGBA8 pixels as a JPEG via the `zune-jpeg`-based encoder exposed
+/// by `image`. JPEG doesn't carry alpha, so we drop the alpha channel
+/// via a manual RGBA→RGB conversion.
+///
+/// We depend on `image` transitively through `pdf-render`; rather than
+/// pin a new direct dep for a single format, encode through a minimal
+/// `jpeg-encoder`-free path using the `png` crate's sibling in the
+/// transitive graph. In practice the simplest path is `image` —
+/// adding it as a direct dep is clean.
+#[cfg(not(target_arch = "wasm32"))]
+fn encode_jpeg(width: u32, height: u32, rgba: &[u8], path: &Path) -> Result<()> {
+    // Drop alpha.
+    let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
+    for chunk in rgba.chunks_exact(4) {
+        rgb.extend_from_slice(&chunk[..3]);
+    }
+
+    let file = fs::File::create(path).map_err(|source| Error::Io {
+        source,
+        path: Some(path.to_path_buf()),
+    })?;
+    let w = std::io::BufWriter::new(file);
+
+    use image::ImageEncoder;
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(w, 90);
+    encoder
+        .write_image(&rgb, width, height, image::ExtendedColorType::Rgb8)
+        .map_err(|e| internal_error(format!("jpeg encoding failed: {e}")))?;
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // Supporting types

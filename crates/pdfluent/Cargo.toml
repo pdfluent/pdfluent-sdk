@@ -46,6 +46,20 @@ pdf-sign = { path = "../pdf-sign", version = "=1.0.0-beta.1" }
 pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.1" }
 tracing = { version = "0.1", optional = true }
 
+# Epic 3 #1224 parity methods — native-only. `to_docx` and `to_images`
+# back onto pdf-docx and pdf-render; both pull in filesystem / zip /
+# vello stacks we do not compile on wasm32. On wasm32 the methods
+# surface as [`Error::UnsupportedOnWasm`].
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pdf-docx = { path = "../pdf-docx", version = "=1.0.0-beta.1" }
+pdf-render = { path = "../pdf-render", version = "=1.0.0-beta.1" }
+# Image encoding for `to_images` — PNG via the `png` crate, JPEG via
+# `image`'s JpegEncoder. Both are already transitively present via
+# `pdf-render`; we pin direct versions so the `to_images` code is
+# robust against transitive churn.
+png = "0.17"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
 # WASM target: getrandom needs the `js` feature to resolve its backend on
 # wasm32-unknown-unknown. pdf-sign / pdf-redact pull it in transitively
 # via rand/crypto primitives. This target-specific entry unblocks

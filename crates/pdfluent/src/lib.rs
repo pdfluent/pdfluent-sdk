@@ -53,6 +53,7 @@ pub mod form;
 pub mod license;
 pub mod merger;
 pub mod metadata;
+pub mod parity;
 pub mod prelude;
 pub mod redact;
 pub mod signer;
@@ -74,6 +75,10 @@ pub use crate::form::{FieldType, FormField, PdfFormMut};
 pub use crate::license::{license_info, set_license_key, LicenseInfo};
 pub use crate::merger::{BookmarkMergeStrategy, MergeOptions, PdfMerger};
 pub use crate::metadata::{Metadata, MetadataMut};
+pub use crate::parity::{
+    CompressOptions, CompressReport, FontSubsetReport, ImageFormat, ImageInsert, ImageInsertReport,
+    InsertImageFormat, ToImagesOptions, ToImagesReport,
+};
 pub use crate::redact::RedactOptions;
 pub use crate::signer::{
     PadesProfile, PdfSigner, Pkcs12Signer, SignOptions, SignatureInfo, SignatureStatus,

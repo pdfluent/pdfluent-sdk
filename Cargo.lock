@@ -4444,11 +4444,15 @@ name = "pdfluent"
 version = "1.0.0-alpha.1"
 dependencies = [
  "getrandom 0.2.17",
+ "image",
  "lopdf 0.39.0",
+ "pdf-docx",
  "pdf-engine",
  "pdf-manip",
  "pdf-redact",
+ "pdf-render",
  "pdf-sign",
+ "png 0.17.16",
  "tracing",
 ]
 
