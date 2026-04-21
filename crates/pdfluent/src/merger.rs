@@ -54,6 +54,13 @@ impl PdfMerger {
     }
 
     /// Add a document to merge.
+    ///
+    /// `add(doc)` is intentionally the builder-style name and is **not**
+    /// meant as an implementation of [`std::ops::Add`]. `PdfMerger` is a
+    /// one-way accumulator; the signature `(self, doc) -> Self` matches
+    /// other fluent builders throughout the crate (`SignOptions::reason`
+    /// etc.). See RFC 0001 §3.3.
+    #[allow(clippy::should_implement_trait)]
     pub fn add(mut self, doc: PdfDocument) -> Self {
         self.inputs.push(doc);
         self
