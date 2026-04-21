@@ -91,29 +91,57 @@ pub trait PdfSigner: Send + Sync {
 }
 
 /// A signer backed by a PKCS#12 (`.p12` / `.pfx`) identity.
-#[derive(Debug)]
 pub struct Pkcs12Signer {
-    _inner: (),
+    inner: pdf_sign::Pkcs12Signer,
+}
+
+impl std::fmt::Debug for Pkcs12Signer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Pkcs12Signer").finish_non_exhaustive()
+    }
 }
 
 impl Pkcs12Signer {
     /// Load a PKCS#12 identity from a file on disk.
-    pub fn from_pfx_file<P: AsRef<Path>>(_path: P, _password: &str) -> Result<Self> {
-        unimplemented!("Epic 2 #1244 wires this against pdf_sign::signer::Pkcs12Signer");
+    pub fn from_pfx_file<P: AsRef<Path>>(path: P, password: &str) -> Result<Self> {
+        let path_ref = path.as_ref();
+        let bytes = std::fs::read(path_ref).map_err(|source| match source.kind() {
+            std::io::ErrorKind::NotFound => crate::Error::FileNotFound {
+                path: path_ref.to_path_buf(),
+            },
+            _ => crate::Error::Io {
+                source,
+                path: Some(path_ref.to_path_buf()),
+            },
+        })?;
+        Self::from_pfx_bytes(&bytes, password)
     }
 
     /// Load a PKCS#12 identity from bytes.
-    pub fn from_pfx_bytes(_bytes: &[u8], _password: &str) -> Result<Self> {
-        unimplemented!("Epic 2 #1244 wires this against pdf_sign::signer::Pkcs12Signer");
+    pub fn from_pfx_bytes(bytes: &[u8], password: &str) -> Result<Self> {
+        let inner = pdf_sign::Pkcs12Signer::from_pkcs12(bytes, password).map_err(|e| {
+            crate::Error::InvalidSignature {
+                field: "<signer-load>".into(),
+                reason: format!("{e:?}"),
+            }
+        })?;
+        Ok(Self { inner })
     }
 }
 
 impl PdfSigner for Pkcs12Signer {
-    fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
-        unimplemented!("Epic 2 #1244");
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        use pdf_sign::PdfSigner as InnerSigner;
+        self.inner
+            .sign(data)
+            .map_err(|e| crate::Error::InvalidSignature {
+                field: "<signing>".into(),
+                reason: format!("{e:?}"),
+            })
     }
     fn certificate_chain(&self) -> &[Vec<u8>] {
-        unimplemented!("Epic 2 #1244");
+        use pdf_sign::PdfSigner as InnerSigner;
+        self.inner.certificate_chain_der()
     }
 }
 
@@ -172,6 +200,13 @@ pub struct SignatureValidationReport {
 }
 
 impl SignatureValidationReport {
+    /// Crate-private constructor — used by `PdfDocument::verify_signatures`
+    /// to wrap the underlying `pdf_sign::ValidationResult` list after
+    /// conversion to our public types.
+    pub(crate) fn from_validations(validations: Vec<SignatureValidation>) -> Self {
+        Self { validations }
+    }
+
     /// All validations in the report.
     pub fn validations(&self) -> &[SignatureValidation] {
         &self.validations

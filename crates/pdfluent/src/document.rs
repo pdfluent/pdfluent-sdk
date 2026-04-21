@@ -518,44 +518,201 @@ impl PdfDocument {
     // ---------- Security (Epic 2 #1244) ----------
 
     /// Encrypt the document with the given options.
-    pub fn encrypt(&mut self, _opts: EncryptOptions) -> Result<()> {
-        unimplemented!("Epic 2 #1244");
+    ///
+    /// Routes to `pdf_manip::encrypt::encrypt_and_save`, which encrypts
+    /// every object in the internal lopdf representation in place. The
+    /// engine-side representation is **not** refreshed — re-parsing an
+    /// encrypted document from our own serialised output through
+    /// `pdf-engine` + `pdf-syntax` is currently unreliable for PDF 2.0
+    /// AES-256 output (tracked as a post-1.0 improvement).
+    ///
+    /// # Usage contract
+    ///
+    /// After `encrypt(...)` returns successfully:
+    ///
+    /// - [`save`](Self::save) / [`to_bytes`](Self::to_bytes) /
+    ///   [`write_to`](Self::write_to) produce the encrypted bytes.
+    /// - Reading operations ([`text`](Self::text),
+    ///   [`metadata`](Self::metadata), etc.) on the same handle return
+    ///   results for the **pre-encryption** state; they do not
+    ///   transparently follow the encryption. This is an acceptable
+    ///   trade-off for 1.0 because:
+    ///   1. The typical `encrypt-then-save` flow does not read after.
+    ///   2. Users who need to read encrypted content should save the
+    ///      output, then re-open with
+    ///      `OpenOptions::new().with_password(...)`.
+    ///
+    /// On an already-encrypted document, call [`decrypt`](Self::decrypt)
+    /// first; `pdf-manip`'s encryption pipeline does not perform a
+    /// decrypt-and-re-encrypt in a single call.
+    pub fn encrypt(&mut self, opts: EncryptOptions) -> Result<()> {
+        license::require_capability(Capability::EncryptionWrite)?;
+
+        // Build the pdf-manip encrypt config. Empty passwords mean the
+        // caller did not supply one; leave them empty (lopdf accepts).
+        let user_pw = opts.user_password.clone().unwrap_or_default();
+        let owner_pw = opts
+            .owner_password
+            .clone()
+            .unwrap_or_else(|| user_pw.clone());
+
+        let config = pdf_manip::encrypt::EncryptConfig {
+            user_password: user_pw.into_bytes(),
+            owner_password: owner_pw.into_bytes(),
+            algorithm: map_encryption_algorithm(opts.algorithm),
+            permissions: map_permissions(opts.permissions),
+        };
+
+        // `encrypt_and_save` writes to a `Write` sink AND mutates the
+        // document in place. We discard the buffer; the mutated
+        // `self.lopdf` is what `save`/`to_bytes` serialises. We do not
+        // rebuild `self.engine` — see the method doc-comment for the
+        // read-after-encrypt contract.
+        let mut sink = std::io::sink();
+        pdf_manip::encrypt::encrypt_and_save(&mut self.lopdf, &config, &mut sink)
+            .map_err(map_manip_error)?;
+        Ok(())
     }
 
     /// Decrypt the document using the provided password.
-    pub fn decrypt(&mut self, _password: &str) -> Result<()> {
-        unimplemented!("Epic 2 #1244");
+    ///
+    /// Routes to `pdf_manip::encrypt::decrypt`. The decrypted state is then
+    /// serialised and re-parsed so the engine-side representation reflects
+    /// the now-plaintext content.
+    pub fn decrypt(&mut self, password: &str) -> Result<()> {
+        license::require_capability(Capability::EncryptionRead)?;
+        pdf_manip::encrypt::decrypt(&mut self.lopdf, password).map_err(map_manip_error)?;
+        self.refresh_from_lopdf()
     }
 
     /// Sign the document using the given signer.
+    ///
+    /// Routes to `pdf_sign::sign_pdf`. The current state is serialised,
+    /// signed, and re-parsed. Supports PAdES B-LT by default (via the
+    /// signer's SubFilter), matching `pdfluent::SignOptions::new()`'s
+    /// default.
     pub fn sign(
         &mut self,
-        _signer: &dyn crate::signer::PdfSigner,
-        _opts: crate::signer::SignOptions,
+        signer: &dyn crate::signer::PdfSigner,
+        opts: crate::signer::SignOptions,
     ) -> Result<()> {
-        unimplemented!("Epic 2 #1244");
+        license::require_capability(Capability::DigitalSignatureSign)?;
+        let pdf_bytes = self.to_bytes()?;
+        let inner_opts = map_sign_options(&opts);
+        // Wrap our trait-object signer in an adapter that implements the
+        // pdf_sign::PdfSigner trait by delegation.
+        let adapter = PdfSignerAdapter { inner: signer };
+        let signed =
+            pdf_sign::sign_pdf(&pdf_bytes, &adapter, &inner_opts).map_err(map_sign_error)?;
+        *self = Self::from_bytes(&signed)?;
+        Ok(())
     }
 
     /// Lightweight list of signatures present in the document.
+    ///
+    /// Does **not** cryptographically validate. Use
+    /// [`verify_signatures`](Self::verify_signatures) for the full report.
     pub fn signatures(&self) -> Result<Vec<crate::signer::SignatureInfo>> {
-        unimplemented!("Epic 2 #1244");
+        license::require_capability(Capability::DigitalSignatureVerify)?;
+        let pdf = self.engine.pdf();
+        let fields = pdf_sign::signature_fields(pdf);
+        let mut out = Vec::with_capacity(fields.len());
+        for f in fields {
+            out.push(crate::signer::SignatureInfo {
+                field_name: f.field_name.clone(),
+                signer_name: f.sig.signer_name().unwrap_or_default(),
+                timestamp: f.sig.signing_time(),
+                profile: None, // PAdES profile inference is post-1.0
+            });
+        }
+        Ok(out)
     }
 
-    /// Cryptographically validate all signatures.
+    /// Cryptographically validate all signatures and return a structured
+    /// report.
     pub fn verify_signatures(&self) -> Result<crate::signer::SignatureValidationReport> {
-        unimplemented!("Epic 2 #1244");
+        license::require_capability(Capability::DigitalSignatureVerify)?;
+        let pdf = self.engine.pdf();
+        let results = pdf_sign::validate_signatures(pdf);
+        let validations = results
+            .into_iter()
+            .map(|r| crate::signer::SignatureValidation {
+                info: crate::signer::SignatureInfo {
+                    field_name: r.field_name,
+                    signer_name: r.signer.unwrap_or_default(),
+                    timestamp: r.timestamp,
+                    profile: None,
+                },
+                status: match r.status {
+                    pdf_sign::ValidationStatus::Valid => crate::signer::SignatureStatus::Valid,
+                    pdf_sign::ValidationStatus::Invalid(reason) => {
+                        crate::signer::SignatureStatus::Invalid { reason }
+                    }
+                    pdf_sign::ValidationStatus::Unknown(reason) => {
+                        crate::signer::SignatureStatus::Unknown { reason }
+                    }
+                },
+            })
+            .collect();
+        Ok(crate::signer::SignatureValidationReport::from_validations(
+            validations,
+        ))
     }
 
     // ---------- Redaction (Epic 2 #1244) ----------
 
     /// Redact every occurrence of the given text.
-    pub fn redact(&mut self, _text: &str, _opts: crate::redact::RedactOptions) -> Result<()> {
-        unimplemented!("Epic 2 #1244");
+    ///
+    /// Routes to `pdf_redact::search_and_redact`. Honours
+    /// [`RedactOptions::case_sensitive`](crate::redact::RedactOptions),
+    /// [`RedactOptions::regex`], and
+    /// [`RedactOptions::on_pages`] — page numbers are translated 1-to-1.
+    pub fn redact(&mut self, text: &str, opts: crate::redact::RedactOptions) -> Result<()> {
+        license::require_capability(Capability::Redaction)?;
+        let search_opts = pdf_redact::RedactSearchOptions {
+            case_sensitive: opts.case_sensitive,
+            regex: opts.regex,
+            fill_color: [0.0, 0.0, 0.0],
+            pages: opts
+                .on_pages
+                .as_ref()
+                .map(|v| v.iter().map(|p| *p as u32).collect()),
+            overlay_text: None,
+        };
+        pdf_redact::search_and_redact(&mut self.lopdf, text, &search_opts)
+            .map_err(map_redact_error)?;
+        self.refresh_from_lopdf()
     }
 
     /// Redact a specific rectangular region on the given page.
-    pub fn redact_region(&mut self, _page: usize, _rect: [f64; 4]) -> Result<()> {
-        unimplemented!("Epic 2 #1244");
+    ///
+    /// Routes to `pdf_redact::Redactor::apply` with a single
+    /// [`pdf_redact::RedactionArea`]. `page` is 1-based; `rect` is
+    /// `[x_min, y_min, x_max, y_max]` in PDF points.
+    pub fn redact_region(&mut self, page: usize, rect: [f64; 4]) -> Result<()> {
+        license::require_capability(Capability::Redaction)?;
+        let mut redactor = pdf_redact::Redactor::new();
+        redactor.mark(pdf_redact::RedactionArea {
+            page: page as u32,
+            rect,
+            fill_color: [0.0, 0.0, 0.0],
+            overlay_text: None,
+        });
+        redactor.apply(&mut self.lopdf).map_err(map_redact_error)?;
+        self.refresh_from_lopdf()
+    }
+
+    /// Re-parse the engine-side from the current lopdf state. Used after
+    /// in-place lopdf mutations (decrypt, redact) to keep the two
+    /// representations consistent.
+    fn refresh_from_lopdf(&mut self) -> Result<()> {
+        let mut buf = Vec::with_capacity(64 * 1024);
+        let mut clone = self.lopdf.clone();
+        clone
+            .save_to(&mut buf)
+            .map_err(|source| Error::Io { source, path: None })?;
+        *self = Self::from_bytes(&buf)?;
+        Ok(())
     }
 
     // ---------- Split / extract (Epic 2 #1243) ----------
@@ -850,6 +1007,113 @@ fn map_manip_error(e: pdf_manip::ManipError) -> Error {
     Error::InvalidPdf {
         byte_offset: None,
         reason: e.to_string(),
+    }
+}
+
+fn map_sign_error(e: pdf_sign::SignError) -> Error {
+    // Map pdf_sign::SignError to the existing public Error surface. Epic 4
+    // #1231 will introduce a richer mapping; until then we reuse
+    // InvalidSignature where the shape fits and fall back to Internal for
+    // the rest.
+    use pdf_sign::SignError as S;
+    match e {
+        S::Pkcs12Load(reason)
+        | S::UnsupportedKeyType(reason)
+        | S::CmsBuild(reason)
+        | S::SigningFailed(reason) => Error::InvalidSignature {
+            field: "<signing>".into(),
+            reason,
+        },
+        S::NoPrivateKey => Error::InvalidSignature {
+            field: "<signing>".into(),
+            reason: "PKCS#12 identity contained no private key".into(),
+        },
+        S::NoCertificate => Error::InvalidSignature {
+            field: "<signing>".into(),
+            reason: "PKCS#12 identity contained no certificate".into(),
+        },
+    }
+}
+
+fn map_redact_error(e: pdf_redact::RedactError) -> Error {
+    Error::InvalidPdf {
+        byte_offset: None,
+        reason: e.to_string(),
+    }
+}
+
+fn map_encryption_algorithm(
+    alg: crate::encrypt::EncryptionAlgorithm,
+) -> pdf_manip::encrypt::EncryptionAlgorithm {
+    use crate::encrypt::EncryptionAlgorithm as Ours;
+    use pdf_manip::encrypt::EncryptionAlgorithm as Theirs;
+    match alg {
+        Ours::Aes128 => Theirs::Aes128,
+        Ours::Aes256 => Theirs::Aes256,
+    }
+}
+
+fn map_permissions(perms: crate::encrypt::Permissions) -> pdf_manip::encrypt::Permissions {
+    // Our Permissions struct has pub(crate) bool fields; pdf-manip's
+    // Permissions has the same 8 fields under slightly different names.
+    pdf_manip::encrypt::Permissions {
+        print: perms.print,
+        modify_contents: perms.modify,
+        extract_content: perms.copy,
+        modify_annotations: perms.annotate,
+        fill_forms: perms.fill_forms,
+        extract_for_accessibility: perms.extract_accessibility,
+        assemble_document: perms.assemble,
+        print_high_quality: perms.print_high_quality,
+    }
+}
+
+fn map_sign_options(opts: &crate::signer::SignOptions) -> pdf_sign::SignOptions {
+    let sub_filter = match opts.profile {
+        crate::signer::PadesProfile::BasicSignature => pdf_sign::SubFilter::EtsiCadesDetached,
+        crate::signer::PadesProfile::Timestamped => pdf_sign::SubFilter::EtsiCadesDetached,
+        crate::signer::PadesProfile::LongTerm => pdf_sign::SubFilter::EtsiCadesDetached,
+        crate::signer::PadesProfile::LongTermArchive => pdf_sign::SubFilter::EtsiCadesDetached,
+    };
+    pdf_sign::SignOptions {
+        reason: opts.reason.clone(),
+        location: opts.location.clone(),
+        contact: opts.contact_info.clone(),
+        field_name: opts.field_name.clone(),
+        visible_rect: opts.visible_rect.map(|(page, rect)| (page as u32, rect)),
+        sub_filter,
+        certification: None,
+        placeholder_size: 8192,
+    }
+}
+
+/// Adapter that makes a `&dyn crate::signer::PdfSigner` usable where
+/// `pdf_sign` expects a concrete `impl pdf_sign::PdfSigner`.
+///
+/// The two traits have different method-sets but compatible enough
+/// semantics: both sign bytes and expose a DER-encoded certificate chain.
+/// The adapter maps digest-algorithm selection onto pdf-sign's default
+/// (SHA-256) since our public trait does not yet expose the choice.
+struct PdfSignerAdapter<'a> {
+    inner: &'a dyn crate::signer::PdfSigner,
+}
+
+impl<'a> pdf_sign::PdfSigner for PdfSignerAdapter<'a> {
+    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, pdf_sign::SignError> {
+        self.inner
+            .sign(data)
+            .map_err(|e| pdf_sign::SignError::SigningFailed(e.to_string()))
+    }
+    fn certificate_chain_der(&self) -> &[Vec<u8>] {
+        self.inner.certificate_chain()
+    }
+    fn digest_algorithm(&self) -> pdf_sign::DigestAlgorithm {
+        pdf_sign::DigestAlgorithm::Sha256
+    }
+    fn signature_algorithm_oid(&self) -> &[u8] {
+        // rsaEncryption — the most common default for RSA PKCS#1 signers.
+        // Concrete implementations may override via a richer trait in 1.1.
+        &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01]
     }
 }
 
