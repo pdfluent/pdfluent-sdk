@@ -1001,12 +1001,19 @@ fn map_lopdf_error(e: lopdf::Error) -> Error {
 }
 
 fn map_manip_error(e: pdf_manip::ManipError) -> Error {
-    // Placeholder mapping — Epic 4 #1231 will tighten per-variant. For now
-    // route everything through InvalidPdf, which matches the existing
-    // pdf-engine/lopdf error-pattern in this crate.
-    Error::InvalidPdf {
-        byte_offset: None,
-        reason: e.to_string(),
+    // Targeted per-variant mapping for the publicly observable error
+    // kinds; Epic 4 #1231 will push this further. The decrypt path is
+    // the most user-visible: a wrong password must surface as
+    // `Error::DecryptionFailed`, not a generic `InvalidPdf`.
+    use pdf_manip::ManipError as M;
+    match e {
+        M::DecryptionFailed => Error::DecryptionFailed {
+            reason: crate::error::DecryptionFailureReason::WrongPassword,
+        },
+        other => Error::InvalidPdf {
+            byte_offset: None,
+            reason: other.to_string(),
+        },
     }
 }
 
