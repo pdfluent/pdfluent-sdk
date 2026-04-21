@@ -4,27 +4,51 @@
 //!
 //! Validates the `PdfMerger` builder API defined in RFC 0001 §9.2.
 //!
-//! This example is `#[ignore]` until Epic 2 split #1243 (Merge & combine)
-//! wires `PdfMerger::build()` to `pdf_manip::pages::merge_docs`.
+//! # Website-drift note
+//!
+//! The published snippet writes to `/tmp/combined.pdf` without cleaning up.
+//! Because `save()` refuses to clobber existing files per RFC §1.2, a second
+//! run of the unmodified snippet would fail. This test removes the target
+//! before running so CI is idempotent; the website snippet will be updated
+//! as part of the #1237 content-audit pass.
 
 use pdfluent::prelude::*;
+use std::path::PathBuf;
 
-/// Merge three PDFs into a single combined document.
-pub fn run() -> Result<()> {
+fn out_path() -> PathBuf {
+    std::env::temp_dir().join("pdfluent-bootstrap-merge-combined.pdf")
+}
+
+/// Merge two PDFs into a single combined document.
+///
+/// This is parametrised over the target path so the test can keep
+/// things cross-platform (website snippet uses a hard-coded `/tmp/...`
+/// which is Unix-only).
+pub fn run_to(out: &std::path::Path) -> Result<()> {
     let merged = PdfMerger::new()
         .add(PdfDocument::open("tests/fixtures/sample.pdf")?)
         .add(PdfDocument::open("tests/fixtures/sample.pdf")?)
         .with_bookmarks(BookmarkMergeStrategy::Concat)
         .build()?;
 
-    merged.save("/tmp/combined.pdf")?;
+    merged.save(out)?;
     Ok(())
 }
 
+/// Website-snippet entry-point kept for the `_compiles` test. In the
+/// published how-to this targets `/tmp/combined.pdf`; here we route to a
+/// cross-platform temp path inside the test so CI works on Windows.
+pub fn run() -> Result<()> {
+    run_to(&out_path())
+}
+
 #[test]
-#[ignore = "blocked on Epic 2 #1243 (Merge & combine methods wiring)"]
 fn merge_pdfs_rust_compiles_and_runs() {
-    run().expect("merge flow");
+    // Enabled by Epic 2 #1243 wiring.
+    let path = out_path();
+    let _ = std::fs::remove_file(&path);
+    run_to(&path).expect("merge flow");
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
