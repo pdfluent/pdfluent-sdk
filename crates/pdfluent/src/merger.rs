@@ -1,7 +1,9 @@
 //! [`PdfMerger`] — factory builder for merging multiple PDF documents.
 
+use crate::capability::Capability;
 use crate::document::PdfDocument;
-use crate::error::Result;
+use crate::error::{internal_error, Error, Result};
+use crate::license;
 
 /// Strategy for combining bookmarks when merging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -80,7 +82,39 @@ impl PdfMerger {
     }
 
     /// Build the merged document.
+    ///
+    /// # 1.0 behaviour
+    ///
+    /// - Page trees are concatenated in `add()` order via
+    ///   `pdf_manip::pages::merge_documents`.
+    /// - [`BookmarkMergeStrategy::Concat`] (the default) is the only
+    ///   strategy that receives dedicated treatment in 1.0. `FlattenAll`
+    ///   and `Discard` are accepted and fall back to the Concat-like
+    ///   behaviour provided by the underlying merger, with bookmarks
+    ///   treated on a best-effort basis. RFC §14 v1.5 documents this
+    ///   truth-gap; full strategy support lands in 1.1.
+    /// - `with_page_labels(true)` is accepted but a no-op in 1.0.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Internal`] if called with zero inputs.
+    /// - [`Error::InvalidPdf`] wrapping the underlying merge error.
     pub fn build(self) -> Result<PdfDocument> {
-        unimplemented!("Epic 2 #1243 wires this against pdf_manip::pages::merge_docs");
+        license::require_capability(Capability::PageOps)?;
+        if self.inputs.is_empty() {
+            return Err(internal_error(
+                "PdfMerger::build() called with no inputs; add at least one PdfDocument first",
+            ));
+        }
+        // `pdf_manip::pages::merge_documents` takes `&[lopdf::Document]`.
+        // Extract references to each input's lopdf representation.
+        let lopdf_docs: Vec<lopdf::Document> =
+            self.inputs.iter().map(|d| d.lopdf().clone()).collect();
+        let merged =
+            pdf_manip::pages::merge_documents(&lopdf_docs).map_err(|e| Error::InvalidPdf {
+                byte_offset: None,
+                reason: e.to_string(),
+            })?;
+        PdfDocument::from_lopdf(merged)
     }
 }
