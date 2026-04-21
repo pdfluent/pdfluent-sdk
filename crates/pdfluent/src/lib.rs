@@ -14,10 +14,12 @@
 //!     doc.metadata_mut()
 //!         .set_title("Processed Invoice")
 //!         .commit()?;
-//!     doc.add_watermark(
-//!         "PAID",
-//!         WatermarkOptions::centered().rotated(45.0).opacity(0.3),
-//!     )?;
+//!     {
+//!         let mut form = doc.form_mut();
+//!         form.set_text("invoice_number", "INV-2026-0042")?
+//!             .set_checkbox("paid", true)?;
+//!     }
+//!     doc.compress(CompressOptions::strict())?;
 //!     doc.save("invoice-processed.pdf")?;
 //!     Ok(())
 //! }
@@ -46,6 +48,7 @@
 
 pub mod capability;
 pub mod compliance;
+pub mod decoration;
 pub mod document;
 pub mod encrypt;
 pub mod error;
@@ -66,6 +69,7 @@ pub mod watermark;
 
 pub use crate::capability::{Capability, CapabilitySet};
 pub use crate::compliance::{PdfAProfile, PdfAValidationReport, Violation};
+pub use crate::decoration::PageDecoration;
 pub use crate::document::{
     OpenOptions, Page, Pages, PdfDocument, PdfVersion, SaveOptions, TextBlock,
 };
