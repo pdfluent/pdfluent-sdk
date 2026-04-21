@@ -12,8 +12,17 @@ pub enum EncryptionAlgorithm {
 
 /// Permissions granted on an encrypted PDF.
 ///
-/// Construct via presets ([`Permissions::print_only`], [`read_only`],
-/// [`annotate`]) or the individual `with_*` methods for fine control.
+/// Construct via presets ([`Permissions::full_access`], [`print_only`],
+/// [`read_only`], [`annotate`]) or the individual `with_*` methods for fine
+/// control.
+///
+/// # Accessibility
+///
+/// All presets enable `extract_accessibility`. Per **ISO 32000-2 §7.6.4.2**,
+/// a PDF consumer is required to honour accessibility-extraction regardless
+/// of the author's permission bits. Setting `extract_accessibility = false`
+/// via [`Permissions::with_extract_accessibility`] is therefore advisory; a
+/// spec-compliant reader will still allow screen-reader access.
 #[derive(Debug, Clone, Copy)]
 pub struct Permissions {
     pub(crate) print: bool,
@@ -27,7 +36,23 @@ pub struct Permissions {
 }
 
 impl Permissions {
-    /// All permissions denied except high-quality printing.
+    /// All permissions allowed. Use this when you only want encryption for
+    /// confidentiality, not to restrict what authorised readers can do.
+    pub const fn full_access() -> Self {
+        Self {
+            print: true,
+            modify: true,
+            copy: true,
+            annotate: true,
+            fill_forms: true,
+            extract_accessibility: true,
+            assemble: true,
+            print_high_quality: true,
+        }
+    }
+
+    /// Printing allowed (including high-quality); all other operations
+    /// denied. Accessibility-extraction remains enabled per ISO 32000-2.
     pub const fn print_only() -> Self {
         Self {
             print: true,
@@ -41,7 +66,8 @@ impl Permissions {
         }
     }
 
-    /// All permissions denied.
+    /// All operations denied. Accessibility-extraction remains enabled per
+    /// ISO 32000-2 — assistive technologies retain access to the content.
     pub const fn read_only() -> Self {
         Self {
             print: false,
@@ -55,7 +81,8 @@ impl Permissions {
         }
     }
 
-    /// Allow commenting and form filling, deny modification.
+    /// Allow commenting, form filling, copying, and printing. Denies
+    /// document-structure modification and page assembly.
     pub const fn annotate() -> Self {
         Self {
             print: true,
@@ -142,17 +169,23 @@ impl Default for EncryptOptions {
 }
 
 impl EncryptOptions {
-    /// AES-256 with default permissions (annotate preset).
+    /// AES-256 with [`Permissions::full_access`]. Intended for the common
+    /// case: "encrypt to protect the bytes in transit, let authorised
+    /// readers do anything."
+    ///
+    /// Override with [`with_permissions`](Self::with_permissions) if you
+    /// want to restrict operations (e.g. [`Permissions::print_only`]).
     pub fn aes256() -> Self {
         Self {
             algorithm: EncryptionAlgorithm::Aes256,
             user_password: None,
             owner_password: None,
-            permissions: Permissions::annotate(),
+            permissions: Permissions::full_access(),
         }
     }
 
-    /// AES-128 with default permissions.
+    /// AES-128 with [`Permissions::full_access`]. Prefer [`aes256`] unless
+    /// targeting readers older than PDF 1.7 ext.
     pub fn aes128() -> Self {
         Self {
             algorithm: EncryptionAlgorithm::Aes128,

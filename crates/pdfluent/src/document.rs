@@ -181,11 +181,6 @@ impl PdfDocument {
         unimplemented!("Epic 2 #1242");
     }
 
-    /// Mutate pages in-place.
-    pub fn pages_mut(&mut self) -> PagesMut<'_> {
-        unimplemented!("Epic 2 #1242");
-    }
-
     // ---------- Metadata ----------
 
     /// Read document metadata (Info dict + XMP).
@@ -391,9 +386,4 @@ impl<'a> Iterator for Pages<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         unimplemented!("Epic 2 #1242");
     }
-}
-
-/// Mutating iterator over all pages.
-pub struct PagesMut<'a> {
-    _doc: std::marker::PhantomData<&'a mut PdfDocument>,
 }

@@ -42,7 +42,6 @@ Capability-gated via Cargo features:
 | `html-to-pdf` | HTML/URL → PDF | Business+ |
 | `docx-export` / `xlsx-export` / `pptx-export` | Office exports | Business+ |
 | `xfa-flatten` | XFA → static PDF flattening | Business+ |
-| `async-tokio` | Async API under `pdfluent::r#async` | any |
 | `wasm` | WebAssembly target | any |
 | `tracing` | Observability via `tracing` crate | any |
 

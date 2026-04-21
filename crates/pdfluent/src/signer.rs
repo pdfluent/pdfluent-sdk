@@ -177,13 +177,31 @@ impl SignatureValidationReport {
         &self.validations
     }
 
-    /// `true` if every signature is [`SignatureStatus::Valid`].
-    pub fn all_valid(&self) -> bool {
+    /// `true` if the document contains at least one signature.
+    ///
+    /// Use this to distinguish "unsigned document" from "signed document
+    /// with all signatures valid" — both produce [`all_valid`](Self::all_valid) `== true`.
+    pub fn is_signed(&self) -> bool {
         !self.validations.is_empty()
-            && self
-                .validations
-                .iter()
-                .all(|v| matches!(v.status, SignatureStatus::Valid))
+    }
+
+    /// `true` when every signature in the document has
+    /// [`SignatureStatus::Valid`].
+    ///
+    /// **Vacuous semantics:** returns `true` for a document without any
+    /// signatures ("no signature fails validation"). Combine with
+    /// [`is_signed`](Self::is_signed) if presence is required:
+    ///
+    /// ```
+    /// # use pdfluent::SignatureValidationReport;
+    /// # fn check(report: &SignatureValidationReport) -> bool {
+    /// report.is_signed() && report.all_valid()
+    /// # }
+    /// ```
+    pub fn all_valid(&self) -> bool {
+        self.validations
+            .iter()
+            .all(|v| matches!(v.status, SignatureStatus::Valid))
     }
 
     /// Signatures that are not [`SignatureStatus::Valid`].

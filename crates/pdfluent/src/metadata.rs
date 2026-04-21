@@ -57,9 +57,22 @@ impl<'a> MetadataMut<'a> {
 
     /// Apply pending changes to the document.
     ///
-    /// Changes are also auto-committed on drop; calling `commit` explicitly
-    /// surfaces errors that otherwise would be silently swallowed during drop.
-    pub fn commit(self) -> Result<()> {
+    /// Takes `&mut self` (not `self`) so `commit` can be used at the end of
+    /// a setter-chain without moving out of a `&mut` reference. The handle
+    /// remains valid after `commit` and may be reused for additional
+    /// mutations. Auto-commits on drop; calling `commit` explicitly surfaces
+    /// errors that would otherwise be silently swallowed.
+    ///
+    /// ```no_run
+    /// # use pdfluent::prelude::*;
+    /// # fn run(mut doc: PdfDocument) -> Result<()> {
+    /// doc.metadata_mut()
+    ///     .set_title("Invoice")
+    ///     .set_author("Acme")
+    ///     .commit()?;
+    /// # Ok(()) }
+    /// ```
+    pub fn commit(&mut self) -> Result<()> {
         unimplemented!("Epic 2 #1245");
     }
 }

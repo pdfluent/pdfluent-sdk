@@ -60,11 +60,12 @@ Rules:
 - All I/O methods are explicit. No hidden writes.
 - Opening a PDF does not mutate the source file. `save` writes to a new path or overwrites only when explicitly requested via `SaveOptions::overwrite(true)`.
 
-### 1.3 `Page`, `Pages`, `PagesMut`
+### 1.3 `Page`, `Pages`
 
 - `Page<'a>` — borrowed handle to a single page (`doc.page(n)?`). Lives for `'a = lifetime of &doc`.
 - `Pages<'a>` — iterator + random-access over all pages.
-- `PagesMut<'a>` — mutating iterator, supports `rotate`, `delete`, `crop`, `insert_blank`, `reorder`.
+
+A batch `PagesMut` builder with `rotate` / `delete` / `crop` / `insert_blank` / `reorder` is **deferred to 1.1** (see §13). 1.0 ships with the direct methods [`rotate_page`](`PdfDocument::rotate_page`), [`split_pages`](`PdfDocument::split_pages`), and [`extract_pages`](`PdfDocument::extract_pages`) which cover the common operations.
 
 ---
 
@@ -143,31 +144,11 @@ Never a mix.
 
 ## 4. Sync vs async
 
-**Default: synchronous API.** The entire `pdfluent::*` public surface is sync.
+**The entire `pdfluent::*` public surface in 1.0 is synchronous.** There is no `async` module, no `async-tokio` Cargo feature, and no `tokio` dependency.
 
-**Async is feature-gated under `async-tokio`.** Enabled via:
+Async support is **deferred to 1.1** (see §13 "Not in 1.0"). When it lands it will live under `pdfluent::r#async` with a concrete, committed surface and tokio-only runtime support. The shape documented in earlier drafts (feature-gated beta in 1.0) was dropped during validation pass 02 because shipping an empty `r#async` module would be worse than either fully supporting or fully omitting.
 
-```toml
-pdfluent = { version = "1.0", features = ["async-tokio"] }
-```
-
-Async types live under `pdfluent::r#async`:
-
-```rust
-use pdfluent::r#async::PdfDocument;
-
-let doc = PdfDocument::open("in.pdf").await?;
-```
-
-Rules:
-
-- Only `tokio`. No `async-std`, no `smol`.
-- Types are distinct between `pdfluent::PdfDocument` (sync) and `pdfluent::r#async::PdfDocument` (async). No bridge methods.
-- Async is marked **beta** in 1.0; promoted to stable in 1.1 if demand materialises.
-- CPU-bound work runs via `tokio::task::spawn_blocking`. I/O uses `tokio::fs`.
-- `pdfluent::r#async` is **not a 1.0 GA blocker**.
-
-Decision D4 (RFC §6.2 in design story): **sync default, feature-gated `async-tokio` opt-in.**
+Decision D4 is now: **sync default in 1.0. Async deferred to 1.1 with a dedicated RFC.**
 
 ---
 
@@ -399,7 +380,6 @@ Rust is the source of truth. Each binding mirrors the API 1:1 with idiomatic ada
 | Type `PdfDocument` | struct | class | class | class | opaque `pdfluent_doc_t*` |
 | Error | `Result<T, Error>` | exceptions (`PdfLuentError` hierarchy) | Error subclass with `.code`/`.docsUrl` | checked `PdfLuentException` | `pdfluent_error_code_t` + thread-local message |
 | Capability check | `license.require(cap)` | same, raises `FeatureNotInTierError` | same, throws Error | same, throws exception | returns non-zero error code |
-| Async | `pdfluent::r#async` feature | `async def` equivalents (feature-gated) | native Promise-based | `CompletableFuture` | n/a |
 | Error codes | `&'static str` (e.g., `"E-IO-FILE-NOT-FOUND"`) | identical string in `.code` | identical in `.code` | identical in `getCode()` | identical in lookup table |
 | API-version contract | `pdfluent::api_version()` constant | `pdfluent.api_version()` | `pdfluent.apiVersion()` | `PdfLuent.apiVersion()` | `pdfluent_api_version()` |
 
@@ -430,8 +410,6 @@ pdfluent/
 │   ├── tier.rs                 # Tier enum, tier→capability mapping
 │   ├── license.rs              # License struct, require() enforcement
 │   ├── prelude.rs              # Re-exports of top-15 types
-│   └── r#async/                # feature "async-tokio"
-│       └── mod.rs
 ├── tests/
 │   ├── web_examples/           # scraped from pdfluent.com
 │   ├── fixtures/               # shared test PDFs
@@ -559,7 +537,7 @@ These three flows compile against the `pdfluent` crate skeleton delivered alongs
 | D1 | Tier rename: code → website or website → code? | **Code follows website.** Rename `Basic`→`Developer`, `Professional`→`Team`, merge `Archival` into `Enterprise` as capability subset. Serde aliases for back-compat. | Marketing-copy changes are more expensive than code changes. |
 | D2 | Meta-crate in monorepo or separate repo? | **Monorepo** at `crates/pdfluent/`, published as separate crates.io package. | Tooling, CI, cross-crate refactors easier in monorepo. |
 | D3 | Keep `pdf_engine::api::Document`? | **Deprecate** behind `internal-legacy` feature for 1.0.x, remove in 2.0. | One blessed public API avoids support confusion. |
-| D4 | Async default or opt-in? | **Sync default**, feature-gated `async-tokio` opt-in. | See §4 rationale. Async is not a 1.0 GA blocker. |
+| D4 | Async default or opt-in? | **Sync only in 1.0.** Async deferred to 1.1 (see §4 and §13). | Shipping an empty `r#async` module was worse than full defer; caught in validation pass 02. |
 | D5 | Capability gating also on inner crates? | **Only at `pdfluent` level.** | Power users can bypass; production use via `pdfluent` is the contract. |
 | D6 | Binding sync scope in milestone? | **Top-30 methods** within milestone; full parity follow-up. | Full sync is ~3 days/language; covers 80% of how-tos. |
 | D7 | Web-examples CI: SDK-repo or website-repo? | **SDK-repo source of truth.** | Snippets must compile against SDK. |
@@ -609,6 +587,7 @@ The following capabilities are **not** part of the 1.0 public API surface. Attem
 | DOCX / XLSX / PPTX conversion facades | `to_docx` lands under #1224 in 1.0; XLSX and PPTX deferred | Milestone #52 Epic 2 #1224 |
 | Async API (`pdfluent::r#async` module, `async-tokio` feature) | Dropped from 1.0 entirely after validation pass 02 found the scaffold shipped an empty module. Will land properly in 1.1 with a concrete minimal surface. | Milestone #52 Epic 5 #1235 (renamed 1.1 scope), feature re-introduced in 1.1 |
 | Image watermarks (`add_image_watermark`) and `PageDecoration` builder | Delivered as a single consolidated API in Epic 2 #1225 post-freeze; text-only `add_watermark` remains in 1.0 | Milestone #52 Epic 2 #1225 |
+| `PagesMut` batch page-mutation builder (`rotate`/`delete`/`crop`/`insert_blank`/`reorder` chain) | 1.0 ships direct methods `rotate_page`, `split_pages`, `extract_pages`; the fluent batch builder lands in 1.1 | Tracked for 1.1 |
 | AI-based document intelligence | Separate product line, not an SDK concern | Not scheduled |
 | PDF forms → web rendering | Online product, not a library concern | Not scheduled |
 
@@ -622,6 +601,7 @@ These are documented here so a user who tries `PdfDocument::from_html` and gets 
 |---|---|---|
 | 2026-04-21 | v1.1 | Post-validation-pass update. Applied 12 fixes: removed `PdfDocumentBuilder`; removed `permissions_mut`; split `Signature` into `SignatureInfo` + `SignatureValidation`; renamed `structured_text` → `text_with_layout`; renamed `PadesProfile` variants to descriptive names; renamed `Rotation` variants to `ClockwiseN`; made `metadata_mut`/`form_mut` both return plain handles (no `Result`); `BookmarkMergeStrategy::Concat` as `Default`; removed unused `Alignment` type; `Error::docs_url` returns `&'static str`; `PdfDocument` dropped `Clone`; added license-provisioning API (`set_license_key`, `OpenOptions::with_license_key`, env var `PDFLUENT_LICENSE_KEY`). Full report: `xfa-program-office/SDK_CORE_FACADE_VALIDATION_PASS_01.md`. |
 | 2026-04-21 | v1.2 | Post-validation-pass-02 update. Fixed 8 items: restored `redact(text, RedactOptions)` + `redact_region(page, rect)` + `split_pages()` + `extract_pages(range)` (regressions from v1.1); restored `form_fields() -> Result<Vec<FormField>>`; dropped `async-tokio` feature and `pdfluent::r#async` module entirely (shipped empty in v1.1 — deferred to 1.1 with concrete scope); added `Permissions::with_*()` builder methods for custom permission combinations; changed `SignOptions::visible_rect(page: u32, ...)` to `usize` for cross-module consistency; added `RedactOptions::on_pages(&[usize])` and wired `RedactOptions` into `redact()` signature (was a declared-but-unused dead type); documented image watermarks and async defer in §13. Full report: `xfa-program-office/SDK_CORE_FACADE_VALIDATION_PASS_02.md`. |
+| 2026-04-21 | v1.3 | Codex triage round. Fixed 7 contract drift points: rewrote §4 (async fully deferred to 1.1 — dropped feature, removed from cross-language table and module tree, updated D4); removed `PagesMut` struct and `pages_mut()` method from public 1.0 API (direct methods `rotate_page`/`split_pages`/`extract_pages` remain; batch builder deferred to 1.1); fixed `MetadataMut::commit(&mut self)` so advertised chain-with-commit pattern compiles; added `Permissions::full_access()` preset and made it the default for `EncryptOptions::aes256()` / `aes128()`; clarified all presets honour ISO 32000-2 §7.6.4.2 accessibility-extraction; changed `SignatureValidationReport::all_valid()` to vacuous-true + added `is_signed()` to distinguish "unsigned" from "valid"; documented Trial tier scope (technical caps only; AirGapped/OemRedistribution remain Enterprise). |
 
 
 🤖 Drafted 2026-04-21 as part of milestone #52 execution (SDK Core Facade & API Ergonomics).

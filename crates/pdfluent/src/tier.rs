@@ -32,6 +32,14 @@ impl Tier {
 
     /// Canonical set of capabilities granted by this tier.
     ///
+    /// # Trial scope
+    ///
+    /// [`Tier::Trial`] grants every **technical** capability so developers
+    /// can evaluate the full surface, with output marked via `/Producer`
+    /// metadata. Trial does **not** include deployment or legal rights:
+    /// [`Capability::AirGapped`] and [`Capability::OemRedistribution`]
+    /// remain gated to [`Tier::Enterprise`] regardless of Trial status.
+    ///
     /// Snapshot-tested against the pricing page in Epic 3 #1227.
     pub fn capabilities(self) -> CapabilitySet {
         use Capability::*;
