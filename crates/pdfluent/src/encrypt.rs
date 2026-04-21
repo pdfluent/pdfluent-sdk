@@ -68,6 +68,54 @@ impl Permissions {
             print_high_quality: true,
         }
     }
+
+    /// Allow / deny printing (low resolution).
+    pub const fn with_print(mut self, v: bool) -> Self {
+        self.print = v;
+        self
+    }
+
+    /// Allow / deny modification.
+    pub const fn with_modify(mut self, v: bool) -> Self {
+        self.modify = v;
+        self
+    }
+
+    /// Allow / deny copying text and graphics.
+    pub const fn with_copy(mut self, v: bool) -> Self {
+        self.copy = v;
+        self
+    }
+
+    /// Allow / deny adding/editing annotations.
+    pub const fn with_annotate(mut self, v: bool) -> Self {
+        self.annotate = v;
+        self
+    }
+
+    /// Allow / deny filling form fields.
+    pub const fn with_fill_forms(mut self, v: bool) -> Self {
+        self.fill_forms = v;
+        self
+    }
+
+    /// Allow / deny accessibility extraction (screen readers).
+    pub const fn with_extract_accessibility(mut self, v: bool) -> Self {
+        self.extract_accessibility = v;
+        self
+    }
+
+    /// Allow / deny assembling (insert/rotate/delete pages).
+    pub const fn with_assemble(mut self, v: bool) -> Self {
+        self.assemble = v;
+        self
+    }
+
+    /// Allow / deny high-resolution printing.
+    pub const fn with_print_high_quality(mut self, v: bool) -> Self {
+        self.print_high_quality = v;
+        self
+    }
 }
 
 /// Options for encrypting a document.

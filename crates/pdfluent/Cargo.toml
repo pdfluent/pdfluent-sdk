@@ -27,7 +27,6 @@ docx-export = []
 xlsx-export = []
 pptx-export = []
 xfa-flatten = []
-async-tokio = ["dep:tokio"]
 wasm = []
 internal-legacy = []
 tracing = ["dep:tracing"]
@@ -36,7 +35,6 @@ tracing = ["dep:tracing"]
 # All internal crate deps will be added as optional + gated when Epic 2 starts wiring.
 # For the scaffold, no external deps needed; this crate currently compiles
 # against its own module structure only.
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "fs", "io-util"], optional = true }
 tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]

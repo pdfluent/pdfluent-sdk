@@ -59,10 +59,6 @@ pub mod signer;
 pub mod tier;
 pub mod watermark;
 
-#[cfg(feature = "async-tokio")]
-#[cfg_attr(docsrs, doc(cfg(feature = "async-tokio")))]
-pub mod r#async;
-
 // ---------------------------------------------------------------------------
 // Top-level re-exports (public API surface)
 // ---------------------------------------------------------------------------
