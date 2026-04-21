@@ -64,7 +64,33 @@ impl OpenOptions {
         self
     }
 
-    /// Cap peak memory usage during load.
+    /// Cap the **input size** accepted during load.
+    ///
+    /// If the source file (for [`PdfDocument::open_with`]) or byte buffer
+    /// (for [`PdfDocument::from_bytes_with`] / [`PdfDocument::from_reader`])
+    /// exceeds `bytes`, load fails with
+    /// [`crate::Error::MemoryBudgetExceeded`] before any parsing begins.
+    ///
+    /// # Scope — read carefully
+    ///
+    /// This is **not** a guaranteed cap on peak process memory. The PDF
+    /// parser (`pdf-engine` + `lopdf`) builds internal tree structures
+    /// whose size is bounded by the input but typically 1×–3× the raw
+    /// byte count. During load, peak RSS can therefore reach ~3× `bytes`
+    /// for pathological inputs.
+    ///
+    /// What it *does* guarantee:
+    ///
+    /// - A file larger than `bytes` is refused before any allocation.
+    /// - This protects against the most common DoS vector (load a 10 GB
+    ///   PDF to exhaust memory) without needing an OS-level cgroup.
+    ///
+    /// For hard peak-memory guarantees use OS-level sandboxing
+    /// (cgroups, ulimit, jails) — the SDK cannot enforce them from
+    /// inside the process.
+    ///
+    /// A stricter in-process peak-memory limiter is tracked as a
+    /// post-1.0 improvement.
     pub fn strict_memory_limit(mut self, bytes: usize) -> Self {
         self.memory_limit = Some(bytes);
         self
@@ -82,24 +108,16 @@ impl OpenOptions {
 }
 
 /// Options for saving a PDF document.
-#[derive(Debug, Clone)]
+///
+/// **Default behaviour** (per RFC 0001 §1.2): `linearize = false`,
+/// `overwrite = false`. `save` / `save_with` therefore refuse to
+/// clobber existing files unless you opt in via
+/// [`with_overwrite(true)`](Self::with_overwrite).
+#[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct SaveOptions {
     pub(crate) linearize: bool,
     pub(crate) overwrite: bool,
-}
-
-impl Default for SaveOptions {
-    fn default() -> Self {
-        // `overwrite` defaults to `true` to match `std::fs::write` semantics:
-        // `doc.save("out.pdf")` is expected to succeed even when `out.pdf`
-        // already exists. Users who want refuse-on-exists opt in via
-        // [`Self::with_overwrite(false)`].
-        Self {
-            linearize: false,
-            overwrite: true,
-        }
-    }
 }
 
 impl SaveOptions {
@@ -120,7 +138,12 @@ impl SaveOptions {
         self
     }
 
-    /// Allow overwriting the source file when saving to the same path.
+    /// Permit overwriting an existing file at the target path.
+    ///
+    /// Default is `false` per RFC 0001 §1.2: `save` / `save_with` refuse
+    /// to clobber an existing file unless you opt in here. This protects
+    /// against accidental overwrites of either the source file or
+    /// unrelated files.
     pub fn with_overwrite(mut self, v: bool) -> Self {
         self.overwrite = v;
         self
@@ -468,15 +491,37 @@ impl PdfDocument {
     // ---------- Persistence ----------
 
     /// Save the document to a filesystem path.
+    ///
+    /// **Refuses to clobber existing files by default** (per RFC §1.2). If
+    /// `path` already points at an existing file, returns
+    /// [`Error::Io`] with `ErrorKind::AlreadyExists`. To overwrite, use
+    /// [`save_with`](Self::save_with) with
+    /// `SaveOptions::new().with_overwrite(true)`.
+    ///
+    /// ```no_run
+    /// # use pdfluent::prelude::*;
+    /// # fn run(doc: PdfDocument) -> Result<()> {
+    /// // New output file: works.
+    /// doc.save("output-new.pdf")?;
+    ///
+    /// // Existing path: refused unless you opt in.
+    /// doc.save_with(
+    ///     "output-new.pdf",
+    ///     SaveOptions::new().with_overwrite(true),
+    /// )?;
+    /// # Ok(()) }
+    /// ```
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.save_with(path, SaveOptions::new())
     }
 
     /// Save with explicit options.
     ///
-    /// When `opts.overwrite` is `false` and the target file already exists,
+    /// When `opts.overwrite` is `false` (the default — see
+    /// [`SaveOptions::with_overwrite`]) and the target file already exists,
     /// returns [`Error::Io`] with `ErrorKind::AlreadyExists` rather than
-    /// clobbering the file. Default options have `overwrite: true`.
+    /// clobbering the file. This honours RFC §1.2: *"save writes to a new
+    /// path or overwrites only when explicitly requested"*.
     ///
     /// See [`SaveOptions::with_linearize`] for the 1.0 linearize-is-no-op
     /// caveat.
