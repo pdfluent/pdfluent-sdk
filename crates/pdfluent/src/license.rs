@@ -157,23 +157,36 @@ fn parse_key_to_tier(key: &str) -> Result<Tier> {
 // Internal capability enforcement
 // ---------------------------------------------------------------------------
 
-/// Check that the active license grants the given capability.
+/// Check that the active license grants the given capability, optionally
+/// overridden by a per-document license key.
 ///
-/// Reads the effective tier (see [`effective_tier`]) and tests the
-/// capability-set. Returns [`Error::FeatureNotInTier`] on denial, with the
-/// fields populated so the Elm-style `Display` impl produces a complete
-/// upgrade hint.
-pub(crate) fn require_capability(cap: Capability) -> Result<()> {
-    let tier = effective_tier();
-    let caps = tier.capabilities();
-    if caps.contains(cap) {
+/// Precedence when `override_key` is `Some`:
+///
+/// 1. Parse the per-document key into a Tier. If parsing succeeds, that
+///    tier is the effective tier for this call.
+/// 2. If parsing fails, the call returns `Error::InvalidLicense` —
+///    malformed per-doc keys are always a hard error.
+///
+/// When `override_key` is `None`, the effective tier comes from
+/// [`effective_tier`] (process-global → env → Trial).
+///
+/// `required_tier` is the minimum **paid** tier that grants the
+/// capability (Trial is excluded so the upgrade hint never says
+/// "upgrade to Trial").
+pub(crate) fn require_capability_with_override(
+    cap: Capability,
+    override_key: Option<&str>,
+) -> Result<()> {
+    let tier = match override_key {
+        Some(key) => parse_key_to_tier(key)?,
+        None => effective_tier(),
+    };
+    if tier.capabilities().contains(cap) {
         return Ok(());
     }
 
-    // Find the minimum tier that grants this capability for the error's
-    // `required_tier` field. Walk in ascending order.
+    // Paid tiers only — suggesting "upgrade to Trial" is nonsensical.
     let required = [
-        Tier::Trial,
         Tier::Developer,
         Tier::Team,
         Tier::Business,
@@ -189,4 +202,10 @@ pub(crate) fn require_capability(cap: Capability) -> Result<()> {
         current_tier: tier,
         required_tier: required,
     })
+}
+
+/// Backwards-compatible entry for call-sites without a per-document
+/// override (e.g. associated constructors that don't have `&self`).
+pub(crate) fn require_capability(cap: Capability) -> Result<()> {
+    require_capability_with_override(cap, None)
 }
