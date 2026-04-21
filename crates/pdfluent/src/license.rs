@@ -56,3 +56,23 @@ pub fn set_license_key(_key: &str) -> Result<()> {
 pub fn license_info() -> LicenseInfo {
     unimplemented!("Epic 3 #1227");
 }
+
+// ---------------------------------------------------------------------------
+// Internal capability enforcement
+// ---------------------------------------------------------------------------
+
+/// Check that the active license grants the given capability.
+///
+/// # 1.0 behaviour
+///
+/// Until Epic 3 #1227 lands real enforcement, this always succeeds — every
+/// capability is unlocked under the implicit Trial tier. Call-sites
+/// throughout the facade already route through this helper so the
+/// enforcement wiring in #1227 is a single-point change, not a sweeping
+/// audit.
+pub(crate) fn require_capability(_cap: crate::capability::Capability) -> Result<()> {
+    // TODO(#1227): read effective license (per-doc override > global >
+    // env) and check `capabilities().contains(_cap)`. Return
+    // `Error::FeatureNotInTier` on denial.
+    Ok(())
+}
