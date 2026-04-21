@@ -66,7 +66,7 @@ pub mod watermark;
 pub use crate::capability::{Capability, CapabilitySet};
 pub use crate::compliance::{PdfAProfile, PdfAValidationReport, Violation};
 pub use crate::document::{
-    OpenOptions, Page, Pages, PagesMut, PdfDocument, PdfVersion, SaveOptions, TextBlock,
+    OpenOptions, Page, Pages, PdfDocument, PdfVersion, SaveOptions, TextBlock,
 };
 pub use crate::encrypt::{EncryptOptions, EncryptionAlgorithm, Permissions};
 pub use crate::error::{Error, Result};
