@@ -1,0 +1,50 @@
+[package]
+name = "pdfluent"
+version = "1.0.0-alpha.1"
+edition = "2021"
+rust-version = "1.75"
+authors = ["PDFluent Contributors <team@pdfluent.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jasperdew/xfa-native-rust"
+homepage = "https://pdfluent.com"
+documentation = "https://docs.rs/pdfluent"
+readme = "README.md"
+description = "Pure-Rust PDF SDK with XFA, PDF/A, digital signatures, and WASM support."
+keywords = ["pdf", "xfa", "pdfa", "signing", "sdk"]
+categories = ["api-bindings", "parser-implementations"]
+
+[features]
+default = ["signing", "pdfa", "redaction"]
+
+# Capability feature families (see RFC 0001 §10 D8)
+signing = []
+pdfa = []
+redaction = []
+ocr-tesseract = []
+ocr-paddle = []
+html-to-pdf = []
+docx-export = []
+xlsx-export = []
+pptx-export = []
+xfa-flatten = []
+wasm = []
+internal-legacy = []
+tracing = ["dep:tracing"]
+
+[dependencies]
+# All internal crate deps will be added as optional + gated when Epic 2 starts wiring.
+# For the scaffold, no external deps needed; this crate currently compiles
+# against its own module structure only.
+tracing = { version = "0.1", optional = true }
+
+[dev-dependencies]
+# Bootstrap tests run as integration tests under tests/web_examples/.
+# No heavy fixtures or external crates at scaffold stage.
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
