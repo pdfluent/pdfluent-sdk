@@ -35,11 +35,24 @@ tracing = ["dep:tracing"]
 # Epic 2 wiring: underlying PDF crates.
 # pdf-engine provides read-side (parse, page_count, text extraction, render).
 # lopdf provides write-side (save, save_to, page tree operations).
-# pdf-manip provides page-level operations (rotate, merge, split, extract).
+# pdf-manip provides page-level operations (rotate, merge, split, extract,
+# encrypt, permissions).
+# pdf-sign provides PAdES signing + signature validation.
+# pdf-redact provides content redaction (search + region).
 pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.1" }
 lopdf = { path = "../lopdf", version = "=0.39.0", default-features = false }
 pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.1" }
+pdf-sign = { path = "../pdf-sign", version = "=1.0.0-beta.1" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.1" }
 tracing = { version = "0.1", optional = true }
+
+# WASM target: getrandom needs the `js` feature to resolve its backend on
+# wasm32-unknown-unknown. pdf-sign / pdf-redact pull it in transitively
+# via rand/crypto primitives. This target-specific entry unblocks
+# `cargo check --target wasm32-unknown-unknown` without affecting native
+# builds.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 # Bootstrap tests run as integration tests under tests/web_examples/.
