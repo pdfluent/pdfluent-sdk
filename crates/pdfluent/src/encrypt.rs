@@ -125,6 +125,10 @@ impl Permissions {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct EncryptOptions {
+    // Captured at construction by `aes128()` / `aes256()`; read by the
+    // `PdfDocument::encrypt` body when wired in Epic 2 #1244. Marked with
+    // an explicit allow so the scaffold phase does not fail `-D warnings`.
+    #[allow(dead_code)]
     pub(crate) algorithm: EncryptionAlgorithm,
     pub(crate) user_password: Option<String>,
     pub(crate) owner_password: Option<String>,

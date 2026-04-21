@@ -275,7 +275,6 @@ impl PdfDocument {
         unimplemented!("Epic 2 #1244");
     }
 
-
     // ---------- Redaction ----------
 
     /// Redact every occurrence of the given text.

@@ -48,6 +48,11 @@ pub enum Position {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct WatermarkOptions {
+    // Captured at construction; read by the `PdfDocument::add_watermark`
+    // body when wired in Epic 2 #1223 (and later consolidated via
+    // `PageDecoration` in #1225). Marked with an explicit allow so the
+    // scaffold phase does not fail `-D warnings`.
+    #[allow(dead_code)]
     pub(crate) position: Position,
     pub(crate) rotation_degrees: f32,
     pub(crate) opacity: f32,
