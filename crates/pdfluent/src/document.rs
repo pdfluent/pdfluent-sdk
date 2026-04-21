@@ -169,6 +169,12 @@ impl SaveOptions {
 pub struct PdfDocument {
     engine: pdf_engine::PdfDocument,
     lopdf: lopdf::Document,
+    /// Per-document license-key override from
+    /// [`OpenOptions::with_license_key`]. Consulted by
+    /// [`require_capability`](Self::require_capability) when gated
+    /// methods are called. `None` means the process-global license
+    /// (or env, or Trial) applies.
+    license_key_override: Option<String>,
 }
 
 impl std::fmt::Debug for PdfDocument {
@@ -268,7 +274,11 @@ impl PdfDocument {
             None => lopdf::Document::load_mem(&owned).map_err(map_lopdf_error)?,
         };
 
-        Ok(Self { engine, lopdf })
+        Ok(Self {
+            engine,
+            lopdf,
+            license_key_override: opts.license_key.clone(),
+        })
     }
 
     /// Construct a document from a [`std::io::Read`] stream.
@@ -346,7 +356,7 @@ impl PdfDocument {
     /// per-page content streams with `\f` page separators (pdftotext
     /// convention) and appends any AcroForm field values.
     pub fn text(&self) -> Result<String> {
-        license::require_capability(Capability::TextExtract)?;
+        self.require_capability(Capability::TextExtract)?;
         Ok(self.engine.extract_all_text())
     }
 
@@ -355,7 +365,7 @@ impl PdfDocument {
     /// Matches the [`Capability::TextExtractWithLayout`] capability. Prefer
     /// [`text`](Self::text) if you only need plain text.
     pub fn text_with_layout(&self) -> Result<Vec<TextBlock>> {
-        license::require_capability(Capability::TextExtractWithLayout)?;
+        self.require_capability(Capability::TextExtractWithLayout)?;
         let mut out = Vec::new();
         let count = self.engine.page_count();
         for idx in 0..count {
@@ -425,6 +435,17 @@ impl PdfDocument {
         MetadataMut::new(self)
     }
 
+    // ---------- Capability enforcement ----------
+
+    /// Check that this document's effective license grants `cap`.
+    ///
+    /// Honours the per-document [`OpenOptions::with_license_key`]
+    /// override set at construction before falling back to process-global
+    /// / env / Trial per [`license::effective_tier`].
+    pub(crate) fn require_capability(&self, cap: Capability) -> Result<()> {
+        license::require_capability_with_override(cap, self.license_key_override.as_deref())
+    }
+
     // ---------- Internal accessors ----------
 
     /// Crate-private read access to the lopdf representation. Used by the
@@ -467,7 +488,7 @@ impl PdfDocument {
     /// widget appearances, javascript actions) lands with the form-mutation
     /// wiring in follow-up issues.
     pub fn form_fields(&self) -> Result<Vec<FormField>> {
-        license::require_capability(Capability::AcroFormRead)?;
+        self.require_capability(Capability::AcroFormRead)?;
         Ok(crate::form::read_acroform_fields(&self.lopdf))
     }
 
@@ -499,7 +520,7 @@ impl PdfDocument {
     /// - [`Error::Internal`] wrapping "page out of range" if `page` is 0 or
     ///   exceeds [`page_count`](Self::page_count).
     pub fn rotate_page(&mut self, page: usize, rotation: Rotation) -> Result<()> {
-        license::require_capability(Capability::PageOps)?;
+        self.require_capability(Capability::PageOps)?;
         let total = self.engine.page_count();
         if page == 0 || page > total {
             return Err(internal_error(format!(
@@ -546,7 +567,7 @@ impl PdfDocument {
     /// first; `pdf-manip`'s encryption pipeline does not perform a
     /// decrypt-and-re-encrypt in a single call.
     pub fn encrypt(&mut self, opts: EncryptOptions) -> Result<()> {
-        license::require_capability(Capability::EncryptionWrite)?;
+        self.require_capability(Capability::EncryptionWrite)?;
 
         // Build the pdf-manip encrypt config. Empty passwords mean the
         // caller did not supply one; leave them empty (lopdf accepts).
@@ -580,7 +601,7 @@ impl PdfDocument {
     /// serialised and re-parsed so the engine-side representation reflects
     /// the now-plaintext content.
     pub fn decrypt(&mut self, password: &str) -> Result<()> {
-        license::require_capability(Capability::EncryptionRead)?;
+        self.require_capability(Capability::EncryptionRead)?;
         pdf_manip::encrypt::decrypt(&mut self.lopdf, password).map_err(map_manip_error)?;
         self.refresh_from_lopdf()
     }
@@ -596,7 +617,7 @@ impl PdfDocument {
         signer: &dyn crate::signer::PdfSigner,
         opts: crate::signer::SignOptions,
     ) -> Result<()> {
-        license::require_capability(Capability::DigitalSignatureSign)?;
+        self.require_capability(Capability::DigitalSignatureSign)?;
         let pdf_bytes = self.to_bytes()?;
         let inner_opts = map_sign_options(&opts);
         // Wrap our trait-object signer in an adapter that implements the
@@ -613,7 +634,7 @@ impl PdfDocument {
     /// Does **not** cryptographically validate. Use
     /// [`verify_signatures`](Self::verify_signatures) for the full report.
     pub fn signatures(&self) -> Result<Vec<crate::signer::SignatureInfo>> {
-        license::require_capability(Capability::DigitalSignatureVerify)?;
+        self.require_capability(Capability::DigitalSignatureVerify)?;
         let pdf = self.engine.pdf();
         let fields = pdf_sign::signature_fields(pdf);
         let mut out = Vec::with_capacity(fields.len());
@@ -631,7 +652,7 @@ impl PdfDocument {
     /// Cryptographically validate all signatures and return a structured
     /// report.
     pub fn verify_signatures(&self) -> Result<crate::signer::SignatureValidationReport> {
-        license::require_capability(Capability::DigitalSignatureVerify)?;
+        self.require_capability(Capability::DigitalSignatureVerify)?;
         let pdf = self.engine.pdf();
         let results = pdf_sign::validate_signatures(pdf);
         let validations = results
@@ -668,7 +689,7 @@ impl PdfDocument {
     /// [`RedactOptions::regex`], and
     /// [`RedactOptions::on_pages`] — page numbers are translated 1-to-1.
     pub fn redact(&mut self, text: &str, opts: crate::redact::RedactOptions) -> Result<()> {
-        license::require_capability(Capability::Redaction)?;
+        self.require_capability(Capability::Redaction)?;
         let search_opts = pdf_redact::RedactSearchOptions {
             case_sensitive: opts.case_sensitive,
             regex: opts.regex,
@@ -690,7 +711,7 @@ impl PdfDocument {
     /// [`pdf_redact::RedactionArea`]. `page` is 1-based; `rect` is
     /// `[x_min, y_min, x_max, y_max]` in PDF points.
     pub fn redact_region(&mut self, page: usize, rect: [f64; 4]) -> Result<()> {
-        license::require_capability(Capability::Redaction)?;
+        self.require_capability(Capability::Redaction)?;
         let mut redactor = pdf_redact::Redactor::new();
         redactor.mark(pdf_redact::RedactionArea {
             page: page as u32,
@@ -724,7 +745,7 @@ impl PdfDocument {
     /// per-page in 1.0; this is a best-effort split that only preserves
     /// page content.
     pub fn split_pages(&self) -> Result<Vec<PdfDocument>> {
-        license::require_capability(Capability::PageOps)?;
+        self.require_capability(Capability::PageOps)?;
         let split = pdf_manip::pages::split_per_page(&self.lopdf).map_err(map_manip_error)?;
         let mut out = Vec::with_capacity(split.len());
         for lopdf_doc in split {
@@ -752,7 +773,7 @@ impl PdfDocument {
     /// - [`Error::Internal`] if the normalised range is empty or points
     ///   past the end of the document.
     pub fn extract_pages<R: std::ops::RangeBounds<usize>>(&self, range: R) -> Result<PdfDocument> {
-        license::require_capability(Capability::PageOps)?;
+        self.require_capability(Capability::PageOps)?;
         let total = self.engine.page_count();
         let (start, end) = normalise_page_range(&range, total)?;
         let pages: Vec<u32> = (start..=end).map(|p| p as u32).collect();
@@ -799,7 +820,7 @@ impl PdfDocument {
     /// See [`SaveOptions::with_linearize`] for the 1.0 linearize-is-no-op
     /// caveat.
     pub fn save_with<P: AsRef<Path>>(&self, path: P, opts: SaveOptions) -> Result<()> {
-        license::require_capability(Capability::PdfWrite)?;
+        self.require_capability(Capability::PdfWrite)?;
         let path_ref = path.as_ref();
         if !opts.overwrite && path_ref.exists() {
             return Err(Error::Io {
@@ -820,7 +841,7 @@ impl PdfDocument {
 
     /// Serialise the document to a byte vector.
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        license::require_capability(Capability::PdfWrite)?;
+        self.require_capability(Capability::PdfWrite)?;
         let mut buf = Vec::with_capacity(64 * 1024);
         // lopdf::Document::save_to takes &mut self; clone so `to_bytes`
         // stays &self. For documents up to ~200 MB this is acceptable;
@@ -834,7 +855,7 @@ impl PdfDocument {
 
     /// Write the document to a [`std::io::Write`] sink.
     pub fn write_to<W: Write>(&self, mut writer: W) -> Result<()> {
-        license::require_capability(Capability::PdfWrite)?;
+        self.require_capability(Capability::PdfWrite)?;
         let bytes = self.to_bytes()?;
         writer
             .write_all(&bytes)
@@ -927,7 +948,7 @@ pub struct Page<'a> {
 impl Page<'_> {
     /// Extract text from this page.
     pub fn text(&self) -> Result<String> {
-        license::require_capability(Capability::TextExtract)?;
+        self.doc.require_capability(Capability::TextExtract)?;
         self.doc
             .engine
             .extract_text(self.index)
