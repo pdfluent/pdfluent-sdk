@@ -1,10 +1,24 @@
 //! Encryption, decryption, and permissions.
 
 /// Encryption algorithm.
+///
+/// # 1.0 behaviour
+///
+/// Both [`Aes128`](Self::Aes128) and [`Aes256`](Self::Aes256) currently
+/// produce AES-256 output at the crypto layer because
+/// `lopdf::aes256_encryption_state` is the only AES helper exposed by our
+/// underlying `lopdf` fork today. This means selecting `Aes128` yields
+/// **stronger** encryption than its name advertises, not weaker — safe
+/// but misleading. A true AES-128 path (PDF 1.6 V=4, R=4) lands in a
+/// post-1.0 follow-up.
+///
+/// Recommended: use [`Aes256`](Self::Aes256) explicitly to match what
+/// actually happens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EncryptionAlgorithm {
-    /// AES with 128-bit key (PDF 1.6).
+    /// AES-128 selector. **Currently routed to AES-256** — see the enum
+    /// doc-comment.
     Aes128,
     /// AES with 256-bit key (PDF 1.7 ext / 2.0). **Recommended.**
     Aes256,

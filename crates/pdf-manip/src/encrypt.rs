@@ -225,10 +225,24 @@ pub fn encrypt_and_save<W: Write>(
     let owner_pw = std::str::from_utf8(&config.owner_password)
         .map_err(|_| ManipError::Encryption("owner_password is not valid UTF-8".into()))?;
 
+    // Honour the permissions from the caller's config rather than forcing
+    // `LopdfPerms::all()`. The conversion takes our Permissions → /P integer
+    // → LopdfPerms bitflags so the callee sees the exact bits the user
+    // requested.
+    let perms_bits = config.permissions.to_p_value() as u64;
+    let lopdf_perms = LopdfPerms::from_bits_retain(perms_bits);
+
     let state = match config.algorithm {
         // AES-256 (PDF 2.0, V=5, R=6) — no /ID required; random key generated internally.
+        //
+        // Note: AES-128 currently falls through to AES-256 at the crypto
+        // layer because `lopdf::aes256_encryption_state` is the only AES
+        // helper exposed by lopdf today. An AES-128 path lands in a
+        // post-1.0 follow-up; output is stronger (not weaker) than
+        // advertised so this is safe-but-misleading and documented on
+        // the pdfluent side.
         EncryptionAlgorithm::Aes256 | EncryptionAlgorithm::Aes128 => {
-            lopdf::aes256_encryption_state(owner_pw, user_pw, LopdfPerms::all())
+            lopdf::aes256_encryption_state(owner_pw, user_pw, lopdf_perms)
                 .map_err(|e| ManipError::Encryption(e.to_string()))?
         }
         // RC4-128 (V=2, R=3) — requires /ID in the trailer.
@@ -239,7 +253,7 @@ pub fn encrypt_and_save<W: Write>(
                 owner_password: owner_pw,
                 user_password: user_pw,
                 key_length: 128,
-                permissions: LopdfPerms::all(),
+                permissions: lopdf_perms,
             })
             .map_err(|e| ManipError::Encryption(e.to_string()))?
         }
@@ -250,7 +264,7 @@ pub fn encrypt_and_save<W: Write>(
                 document: doc,
                 owner_password: owner_pw,
                 user_password: user_pw,
-                permissions: LopdfPerms::all(),
+                permissions: lopdf_perms,
             })
             .map_err(|e| ManipError::Encryption(e.to_string()))?
         }
