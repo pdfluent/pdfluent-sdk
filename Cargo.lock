@@ -4443,7 +4443,12 @@ dependencies = [
 name = "pdfluent"
 version = "1.0.0-alpha.1"
 dependencies = [
- "tokio",
+ "getrandom 0.2.17",
+ "lopdf 0.39.0",
+ "pdf-engine",
+ "pdf-manip",
+ "pdf-redact",
+ "pdf-sign",
  "tracing",
 ]
 

@@ -489,8 +489,18 @@ impl PdfDocument {
     }
 
     /// Mutable form handle.
+    ///
+    /// Returns unconditionally — the handle is always constructable, even
+    /// on documents without an AcroForm. Capability enforcement and field
+    /// lookups happen on the individual setter calls.
+    ///
+    /// See [`PdfFormMut`] for the 1.0 scope notes (flat AcroForm walk,
+    /// no `/Kids` recursion).
     pub fn form_mut(&mut self) -> PdfFormMut<'_> {
-        unimplemented!("Epic 2 #1245");
+        // Read the license override BEFORE the mutable borrow of `lopdf`
+        // so the two field borrows don't overlap.
+        let license_override = self.license_key_override.as_deref();
+        PdfFormMut::new(&mut self.lopdf, license_override)
     }
 
     /// Flatten all AcroForm fields to static content.

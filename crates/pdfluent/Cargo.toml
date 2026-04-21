@@ -56,7 +56,10 @@ getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 # Bootstrap tests run as integration tests under tests/web_examples/.
-# No heavy fixtures or external crates at scaffold stage.
+# Form-mutation integration tests (3C-1 / #1245) construct small in-memory
+# PDF fixtures directly via lopdf rather than shipping binary fixtures
+# for every field-type permutation.
+lopdf = { path = "../lopdf", version = "=0.39.0", default-features = false }
 
 [lints.rust]
 unsafe_code = "forbid"
