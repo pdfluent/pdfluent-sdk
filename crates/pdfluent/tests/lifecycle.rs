@@ -166,6 +166,58 @@ fn write_to_forwards_full_bytes() {
 }
 
 #[test]
+fn save_with_overwrite_false_refuses_existing_file() {
+    let tmp = std::env::temp_dir().join("pdfluent-test-overwrite-false.pdf");
+    let _ = std::fs::remove_file(&tmp);
+
+    let doc = PdfDocument::open(FIXTURE_PATH).expect("open");
+    // First save: clobbers freely because file doesn't exist yet.
+    doc.save(&tmp).expect("first save");
+
+    // Second save with overwrite=false: must refuse.
+    let err = doc
+        .save_with(&tmp, pdfluent::SaveOptions::new().with_overwrite(false))
+        .unwrap_err();
+    match err {
+        pdfluent::Error::Io { source, .. } => {
+            assert_eq!(source.kind(), std::io::ErrorKind::AlreadyExists);
+        }
+        other => panic!("expected Error::Io(AlreadyExists), got {other:?}"),
+    }
+
+    // But explicit overwrite=true still clobbers.
+    doc.save_with(&tmp, pdfluent::SaveOptions::new().with_overwrite(true))
+        .expect("overwrite=true must succeed");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn open_with_memory_limit_rejects_before_reading_large_file() {
+    // Ensure the memory-limit check fires based on file size (via
+    // fs::metadata) rather than after fully reading into memory.
+    let fixture_size = std::fs::metadata(FIXTURE_PATH).unwrap().len() as usize;
+    let tiny_limit = fixture_size / 2; // well below fixture size
+
+    let err = PdfDocument::open_with(
+        FIXTURE_PATH,
+        pdfluent::OpenOptions::new().strict_memory_limit(tiny_limit),
+    )
+    .unwrap_err();
+
+    match err {
+        pdfluent::Error::MemoryBudgetExceeded { requested, limit } => {
+            assert_eq!(
+                requested, fixture_size,
+                "requested should be the file size derived from metadata",
+            );
+            assert_eq!(limit, tiny_limit);
+        }
+        other => panic!("expected MemoryBudgetExceeded, got {other:?}"),
+    }
+}
+
+#[test]
 fn save_with_linearize_is_noop_in_1_0() {
     // Per RFC §14 v1.3 + SaveOptions::with_linearize rustdoc: linearize is
     // accepted but a no-op in 1.0. Assert this behaviour is stable so

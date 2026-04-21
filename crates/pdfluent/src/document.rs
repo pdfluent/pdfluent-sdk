@@ -82,11 +82,24 @@ impl OpenOptions {
 }
 
 /// Options for saving a PDF document.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SaveOptions {
     pub(crate) linearize: bool,
     pub(crate) overwrite: bool,
+}
+
+impl Default for SaveOptions {
+    fn default() -> Self {
+        // `overwrite` defaults to `true` to match `std::fs::write` semantics:
+        // `doc.save("out.pdf")` is expected to succeed even when `out.pdf`
+        // already exists. Users who want refuse-on-exists opt in via
+        // [`Self::with_overwrite(false)`].
+        Self {
+            linearize: false,
+            overwrite: true,
+        }
+    }
 }
 
 impl SaveOptions {
@@ -162,6 +175,29 @@ impl PdfDocument {
     pub fn open_with<P: AsRef<Path>>(path: P, opts: OpenOptions) -> Result<Self> {
         license::require_capability(Capability::PdfParse)?;
         let path_ref = path.as_ref();
+
+        // Enforce memory budget BEFORE reading the file into memory. Without
+        // this, a malicious PDF could exhaust RAM before the limit check ever
+        // ran (file already in `bytes` by then).
+        if let Some(limit) = opts.memory_limit {
+            let metadata = fs::metadata(path_ref).map_err(|source| match source.kind() {
+                std::io::ErrorKind::NotFound => Error::FileNotFound {
+                    path: path_ref.to_path_buf(),
+                },
+                _ => Error::Io {
+                    source,
+                    path: Some(path_ref.to_path_buf()),
+                },
+            })?;
+            let size = metadata.len() as usize;
+            if size > limit {
+                return Err(Error::MemoryBudgetExceeded {
+                    requested: size,
+                    limit,
+                });
+            }
+        }
+
         let bytes = fs::read(path_ref).map_err(|source| match source.kind() {
             std::io::ErrorKind::NotFound => Error::FileNotFound {
                 path: path_ref.to_path_buf(),
@@ -438,14 +474,28 @@ impl PdfDocument {
 
     /// Save with explicit options.
     ///
+    /// When `opts.overwrite` is `false` and the target file already exists,
+    /// returns [`Error::Io`] with `ErrorKind::AlreadyExists` rather than
+    /// clobbering the file. Default options have `overwrite: true`.
+    ///
     /// See [`SaveOptions::with_linearize`] for the 1.0 linearize-is-no-op
     /// caveat.
-    pub fn save_with<P: AsRef<Path>>(&self, path: P, _opts: SaveOptions) -> Result<()> {
+    pub fn save_with<P: AsRef<Path>>(&self, path: P, opts: SaveOptions) -> Result<()> {
         license::require_capability(Capability::PdfWrite)?;
+        let path_ref = path.as_ref();
+        if !opts.overwrite && path_ref.exists() {
+            return Err(Error::Io {
+                source: std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "target file exists; pass `SaveOptions::new().with_overwrite(true)` to clobber",
+                ),
+                path: Some(path_ref.to_path_buf()),
+            });
+        }
         let bytes = self.to_bytes()?;
-        fs::write(path.as_ref(), bytes).map_err(|source| Error::Io {
+        fs::write(path_ref, bytes).map_err(|source| Error::Io {
             source,
-            path: Some(path.as_ref().to_path_buf()),
+            path: Some(path_ref.to_path_buf()),
         })?;
         Ok(())
     }
