@@ -425,12 +425,31 @@ impl PdfDocument {
         MetadataMut::new(self)
     }
 
-    // ---------- Internal accessor for MetadataMut ----------
+    // ---------- Internal accessors ----------
+
+    /// Crate-private read access to the lopdf representation. Used by the
+    /// merger and future read-side mutating facades.
+    pub(crate) fn lopdf(&self) -> &lopdf::Document {
+        &self.lopdf
+    }
 
     /// Crate-private mutable access to the lopdf representation. Used by
     /// `MetadataMut::commit` and future mutating facade methods.
     pub(crate) fn lopdf_mut(&mut self) -> &mut lopdf::Document {
         &mut self.lopdf
+    }
+
+    /// Crate-private constructor from a freshly-built lopdf document.
+    ///
+    /// Used by merge/split/extract paths that produce a new `lopdf::Document`
+    /// from existing inputs. Re-parses via `to_bytes` round-trip so the
+    /// parallel pdf-engine representation is consistent with the lopdf one.
+    pub(crate) fn from_lopdf(mut lopdf_doc: lopdf::Document) -> Result<Self> {
+        let mut buf = Vec::with_capacity(64 * 1024);
+        lopdf_doc
+            .save_to(&mut buf)
+            .map_err(|source| Error::Io { source, path: None })?;
+        Self::from_bytes(&buf)
     }
 
     // ---------- Forms (Epic 2 #1245 / #1223) ----------
@@ -471,9 +490,29 @@ impl PdfDocument {
 
     // ---------- Page operations (Epic 2 #1223 / #1243) ----------
 
-    /// Rotate a specific page.
-    pub fn rotate_page(&mut self, _page: usize, _rotation: Rotation) -> Result<()> {
-        unimplemented!("Epic 2 #1223 / #1243");
+    /// Rotate a specific page by a quarter-turn.
+    ///
+    /// Pages are 1-based. Routes to `pdf_manip::pages::rotate_page`.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Internal`] wrapping "page out of range" if `page` is 0 or
+    ///   exceeds [`page_count`](Self::page_count).
+    pub fn rotate_page(&mut self, page: usize, rotation: Rotation) -> Result<()> {
+        license::require_capability(Capability::PageOps)?;
+        let total = self.engine.page_count();
+        if page == 0 || page > total {
+            return Err(internal_error(format!(
+                "page index {page} out of range (document has {total} pages)",
+            )));
+        }
+        let degrees: i64 = match rotation {
+            Rotation::Clockwise90 => 90,
+            Rotation::Clockwise180 => 180,
+            Rotation::Clockwise270 => 270,
+        };
+        pdf_manip::pages::rotate_page(&mut self.lopdf, page as u32, degrees)
+            .map_err(map_manip_error)
     }
 
     // ---------- Security (Epic 2 #1244) ----------
@@ -522,13 +561,47 @@ impl PdfDocument {
     // ---------- Split / extract (Epic 2 #1243) ----------
 
     /// Split the document into individual one-page documents.
+    ///
+    /// The source document is unchanged. Returns a new [`PdfDocument`] per
+    /// input page, in order. Bookmarks on the source are **not** propagated
+    /// per-page in 1.0; this is a best-effort split that only preserves
+    /// page content.
     pub fn split_pages(&self) -> Result<Vec<PdfDocument>> {
-        unimplemented!("Epic 2 #1243");
+        license::require_capability(Capability::PageOps)?;
+        let split = pdf_manip::pages::split_per_page(&self.lopdf).map_err(map_manip_error)?;
+        let mut out = Vec::with_capacity(split.len());
+        for lopdf_doc in split {
+            out.push(Self::from_lopdf(lopdf_doc)?);
+        }
+        Ok(out)
     }
 
     /// Extract a page range into a new document.
-    pub fn extract_pages<R: std::ops::RangeBounds<usize>>(&self, _range: R) -> Result<PdfDocument> {
-        unimplemented!("Epic 2 #1243");
+    ///
+    /// Accepts any range expression (inclusive or exclusive). Pages are
+    /// 1-based. The source document is unchanged.
+    ///
+    /// ```no_run
+    /// # use pdfluent::prelude::*;
+    /// # fn run() -> Result<()> {
+    /// let doc = PdfDocument::open("full.pdf")?;
+    /// let first_chapter = doc.extract_pages(1..=10)?;
+    /// first_chapter.save("chapter1.pdf")?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Internal`] if the normalised range is empty or points
+    ///   past the end of the document.
+    pub fn extract_pages<R: std::ops::RangeBounds<usize>>(&self, range: R) -> Result<PdfDocument> {
+        license::require_capability(Capability::PageOps)?;
+        let total = self.engine.page_count();
+        let (start, end) = normalise_page_range(&range, total)?;
+        let pages: Vec<u32> = (start..=end).map(|p| p as u32).collect();
+        let lopdf_doc =
+            pdf_manip::pages::extract_pages(&self.lopdf, &pages).map_err(map_manip_error)?;
+        Self::from_lopdf(lopdf_doc)
     }
 
     // ---------- Persistence ----------
@@ -768,4 +841,39 @@ fn map_lopdf_error(e: lopdf::Error) -> Error {
         byte_offset: None,
         reason: e.to_string(),
     }
+}
+
+fn map_manip_error(e: pdf_manip::ManipError) -> Error {
+    // Placeholder mapping — Epic 4 #1231 will tighten per-variant. For now
+    // route everything through InvalidPdf, which matches the existing
+    // pdf-engine/lopdf error-pattern in this crate.
+    Error::InvalidPdf {
+        byte_offset: None,
+        reason: e.to_string(),
+    }
+}
+
+/// Convert a user-provided `RangeBounds<usize>` into an inclusive 1-based
+/// `(start, end)` page range, validating against the document size.
+fn normalise_page_range<R: std::ops::RangeBounds<usize>>(
+    range: &R,
+    total_pages: usize,
+) -> Result<(usize, usize)> {
+    use std::ops::Bound;
+    let start = match range.start_bound() {
+        Bound::Included(&n) => n,
+        Bound::Excluded(&n) => n + 1,
+        Bound::Unbounded => 1,
+    };
+    let end = match range.end_bound() {
+        Bound::Included(&n) => n,
+        Bound::Excluded(&n) => n.saturating_sub(1),
+        Bound::Unbounded => total_pages,
+    };
+    if start == 0 || start > total_pages || end < start || end > total_pages {
+        return Err(internal_error(format!(
+            "page range {start}..={end} is out of bounds (document has {total_pages} pages)",
+        )));
+    }
+    Ok((start, end))
 }
