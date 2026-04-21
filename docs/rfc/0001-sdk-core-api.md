@@ -607,7 +607,8 @@ The following capabilities are **not** part of the 1.0 public API surface. Attem
 | HTML → PDF (`PdfDocument::from_html`, `HtmlToPdfOptions`) | Requires headless Chromium integration, out of scope for core facade | Milestone #57 / design story #1206 (IronPDF Parity) |
 | OCR direct API on `PdfDocument` (`make_searchable`, `ocr_text`) | Available via `pdf-ocr` crate; facade wrapper deferred to 1.1 | Milestone #52 Epic 2 #1224 (partial); expanded post-1.0 |
 | DOCX / XLSX / PPTX conversion facades | `to_docx` lands under #1224 in 1.0; XLSX and PPTX deferred | Milestone #52 Epic 2 #1224 |
-| Async API for full surface | `pdfluent::r#async` ships as beta in 1.0 with limited methods | Milestone #52 Epic 5 #1235, promote to stable in 1.1 |
+| Async API (`pdfluent::r#async` module, `async-tokio` feature) | Dropped from 1.0 entirely after validation pass 02 found the scaffold shipped an empty module. Will land properly in 1.1 with a concrete minimal surface. | Milestone #52 Epic 5 #1235 (renamed 1.1 scope), feature re-introduced in 1.1 |
+| Image watermarks (`add_image_watermark`) and `PageDecoration` builder | Delivered as a single consolidated API in Epic 2 #1225 post-freeze; text-only `add_watermark` remains in 1.0 | Milestone #52 Epic 2 #1225 |
 | AI-based document intelligence | Separate product line, not an SDK concern | Not scheduled |
 | PDF forms → web rendering | Online product, not a library concern | Not scheduled |
 
@@ -620,6 +621,7 @@ These are documented here so a user who tries `PdfDocument::from_html` and gets 
 | Date | Revision | Changes |
 |---|---|---|
 | 2026-04-21 | v1.1 | Post-validation-pass update. Applied 12 fixes: removed `PdfDocumentBuilder`; removed `permissions_mut`; split `Signature` into `SignatureInfo` + `SignatureValidation`; renamed `structured_text` → `text_with_layout`; renamed `PadesProfile` variants to descriptive names; renamed `Rotation` variants to `ClockwiseN`; made `metadata_mut`/`form_mut` both return plain handles (no `Result`); `BookmarkMergeStrategy::Concat` as `Default`; removed unused `Alignment` type; `Error::docs_url` returns `&'static str`; `PdfDocument` dropped `Clone`; added license-provisioning API (`set_license_key`, `OpenOptions::with_license_key`, env var `PDFLUENT_LICENSE_KEY`). Full report: `xfa-program-office/SDK_CORE_FACADE_VALIDATION_PASS_01.md`. |
+| 2026-04-21 | v1.2 | Post-validation-pass-02 update. Fixed 8 items: restored `redact(text, RedactOptions)` + `redact_region(page, rect)` + `split_pages()` + `extract_pages(range)` (regressions from v1.1); restored `form_fields() -> Result<Vec<FormField>>`; dropped `async-tokio` feature and `pdfluent::r#async` module entirely (shipped empty in v1.1 — deferred to 1.1 with concrete scope); added `Permissions::with_*()` builder methods for custom permission combinations; changed `SignOptions::visible_rect(page: u32, ...)` to `usize` for cross-module consistency; added `RedactOptions::on_pages(&[usize])` and wired `RedactOptions` into `redact()` signature (was a declared-but-unused dead type); documented image watermarks and async defer in §13. Full report: `xfa-program-office/SDK_CORE_FACADE_VALIDATION_PASS_02.md`. |
 
 
 🤖 Drafted 2026-04-21 as part of milestone #52 execution (SDK Core Facade & API Ergonomics).

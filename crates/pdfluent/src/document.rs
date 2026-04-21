@@ -203,7 +203,11 @@ impl PdfDocument {
 
     /// Read-only list of form fields. Returns an empty `Vec` if the document
     /// has no form.
-    pub fn form_fields(&self) -> Vec<FormField> {
+    ///
+    /// # Errors
+    ///
+    /// - [`crate::Error::InvalidPdf`] if the form dictionary is malformed.
+    pub fn form_fields(&self) -> Result<Vec<FormField>> {
         unimplemented!("Epic 2 #1245");
     }
 
@@ -269,6 +273,49 @@ impl PdfDocument {
     /// timestamp verification.
     pub fn verify_signatures(&self) -> Result<crate::signer::SignatureValidationReport> {
         unimplemented!("Epic 2 #1244");
+    }
+
+
+    // ---------- Redaction ----------
+
+    /// Redact every occurrence of the given text.
+    ///
+    /// Use [`RedactOptions::on_pages`] to scope to specific pages, or
+    /// [`RedactOptions::regex`] to use a regular expression.
+    pub fn redact(&mut self, _text: &str, _opts: crate::redact::RedactOptions) -> Result<()> {
+        unimplemented!("Epic 2 #1244 wires this against pdf_redact::redact_text");
+    }
+
+    /// Redact a specific rectangular region on the given page.
+    pub fn redact_region(&mut self, _page: usize, _rect: [f64; 4]) -> Result<()> {
+        unimplemented!("Epic 2 #1244 wires this against pdf_redact::redact_region");
+    }
+
+    // ---------- Split / extract ----------
+
+    /// Split the document into individual one-page documents.
+    ///
+    /// The source document is unchanged. Returns a new `PdfDocument` per
+    /// input page, in order.
+    pub fn split_pages(&self) -> Result<Vec<PdfDocument>> {
+        unimplemented!("Epic 2 #1243 wires this against pdf_manip::pages::split_per_page");
+    }
+
+    /// Extract a page range into a new document.
+    ///
+    /// Accepts any range expression (inclusive or exclusive). Pages are
+    /// 1-based. The source document is unchanged.
+    ///
+    /// ```no_run
+    /// # use pdfluent::prelude::*;
+    /// # fn run() -> Result<()> {
+    /// let doc = PdfDocument::open("full.pdf")?;
+    /// let first_chapter = doc.extract_pages(1..=10)?;
+    /// first_chapter.save("chapter1.pdf")?;
+    /// # Ok(()) }
+    /// ```
+    pub fn extract_pages<R: std::ops::RangeBounds<usize>>(&self, _range: R) -> Result<PdfDocument> {
+        unimplemented!("Epic 2 #1243 wires this against pdf_manip::pages::extract_pages");
     }
 
     // ---------- Persistence ----------

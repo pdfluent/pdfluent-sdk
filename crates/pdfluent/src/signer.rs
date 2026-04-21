@@ -34,7 +34,7 @@ pub struct SignOptions {
     pub(crate) location: Option<String>,
     pub(crate) contact_info: Option<String>,
     pub(crate) field_name: Option<String>,
-    pub(crate) visible_rect: Option<(u32, [f64; 4])>,
+    pub(crate) visible_rect: Option<(usize, [f64; 4])>,
     pub(crate) profile: PadesProfile,
 }
 
@@ -69,7 +69,7 @@ impl SignOptions {
     }
 
     /// Place a visible signature appearance on a specific page.
-    pub fn visible_rect(mut self, page: u32, rect: [f64; 4]) -> Self {
+    pub fn visible_rect(mut self, page: usize, rect: [f64; 4]) -> Self {
         self.visible_rect = Some((page, rect));
         self
     }
