@@ -8,7 +8,7 @@ use crate::capability::{Capability, CapabilitySet};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Tier {
-    /// Free evaluation. All capabilities available; output is marked via
+    /// Free evaluation with minimum evaluation surface; output is marked via
     /// `/Producer` metadata.
     Trial,
     /// €499/yr — single developer.
@@ -32,92 +32,64 @@ impl Tier {
 
     /// Canonical set of capabilities granted by this tier.
     ///
-    /// # Trial scope
+    /// Each tier is a strict superset of the tier below it. Trial grants
+    /// the minimum surface needed to evaluate the SDK; full capabilities
+    /// unlock progressively from Developer through Enterprise.
     ///
-    /// [`Tier::Trial`] grants every **technical** capability so developers
-    /// can evaluate the full surface, with output marked via `/Producer`
-    /// metadata. Trial does **not** include deployment or legal rights:
-    /// [`Capability::AirGapped`] and [`Capability::OemRedistribution`]
-    /// remain gated to [`Tier::Enterprise`] regardless of Trial status.
-    ///
-    /// Snapshot-tested against the pricing page in Epic 3 #1227.
+    /// Snapshot-tested in `tests/tier_matrix.rs`.
     pub fn capabilities(self) -> CapabilitySet {
         use Capability::*;
 
-        let core = CapabilitySet::empty()
+        let trial = CapabilitySet::empty()
             .with(PdfParse)
             .with(PdfWrite)
             .with(PageOps)
             .with(TextExtract)
-            .with(TextExtractWithLayout)
-            .with(ImageExtract)
-            .with(RenderRaster)
-            .with(RenderThumbnail)
             .with(AcroFormRead)
-            .with(AcroFormFill)
-            .with(AcroFormFlatten)
-            .with(EncryptionRead)
-            .with(EncryptionWrite)
-            .with(WasmRuntime);
+            .with(PdfaValidate);
 
         match self {
-            Tier::Trial => core
-                .with(PdfaValidate)
-                .with(PdfaConvertA1b)
+            Tier::Trial => trial,
+            Tier::Developer => trial
+                .with(TextExtractWithLayout)
+                .with(ImageExtract)
+                .with(AcroFormFill)
+                .with(AcroFormFlatten)
                 .with(PdfaConvertA2b)
-                .with(PdfaConvertA3b)
-                .with(DigitalSignatureSign)
-                .with(DigitalSignatureVerify)
-                .with(PadesLongTerm)
-                .with(PadesLongTermArchive)
                 .with(Redaction)
-                .with(PdfuaValidate)
-                .with(PdfuaConvert)
-                .with(EInvoiceZugferd)
-                .with(EInvoiceFacturX)
-                .with(EInvoiceXRechnung)
                 .with(XfaParse)
                 .with(XfaFill)
+                .with(EncryptionRead),
+            Tier::Team => Tier::Developer
+                .capabilities()
+                .with(DigitalSignatureSign)
+                .with(DigitalSignatureVerify)
                 .with(XfaFlatten)
-                .with(OcrTesseract)
-                .with(OcrPaddle)
-                .with(Html2Pdf)
-                .with(DocxExport)
-                .with(XlsxExport)
-                .with(PptxExport)
-                .with(PdfDiff)
-                .with(TableExtract),
-            Tier::Developer => core.with(XfaParse).with(XfaFill),
-            Tier::Team => core
-                .with(XfaParse)
-                .with(XfaFill)
-                .with(PdfaValidate)
-                .with(PdfaConvertA1b)
-                .with(PdfaConvertA2b)
-                .with(PdfaConvertA3b)
-                .with(DigitalSignatureSign)
-                .with(DigitalSignatureVerify)
-                .with(PadesLongTerm)
-                .with(PadesLongTermArchive)
-                .with(Redaction)
+                .with(WasmRuntime)
+                .with(RenderRaster)
+                .with(RenderThumbnail)
+                .with(EncryptionWrite)
                 .with(PdfuaValidate)
                 .with(PdfuaConvert)
                 .with(EInvoiceZugferd)
                 .with(EInvoiceFacturX)
-                .with(EInvoiceXRechnung)
-                .with(TableExtract),
+                .with(EInvoiceXRechnung),
             Tier::Business => Tier::Team
                 .capabilities()
-                .with(XfaFlatten)
+                .with(PadesLongTerm)
+                .with(PadesLongTermArchive)
+                .with(PdfaConvertA1b)
+                .with(PdfaConvertA3b)
                 .with(OcrTesseract)
-                .with(OcrPaddle)
-                .with(Html2Pdf)
+                .with(TableExtract)
+                .with(PdfDiff)
                 .with(DocxExport)
                 .with(XlsxExport)
                 .with(PptxExport)
-                .with(PdfDiff),
+                .with(Html2Pdf),
             Tier::Enterprise => Tier::Business
                 .capabilities()
+                .with(OcrPaddle)
                 .with(AirGapped)
                 .with(OemRedistribution),
         }

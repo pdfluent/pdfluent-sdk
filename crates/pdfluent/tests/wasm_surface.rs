@@ -12,6 +12,11 @@
 
 use pdfluent::prelude::*;
 
+fn enterprise_doc(path: &str) -> PdfDocument {
+    PdfDocument::open_with(path, pdfluent::OpenOptions::new().with_license_key("tier:enterprise"))
+        .expect("open sample")
+}
+
 // ---------------------------------------------------------------------------
 // Signature compile-time parity
 // ---------------------------------------------------------------------------
@@ -44,7 +49,7 @@ fn to_images_has_stable_signature() {
 
 #[test]
 fn to_docx_native_succeeds_on_sample() {
-    let doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let doc = enterprise_doc("tests/fixtures/sample.pdf");
     let out = std::env::temp_dir().join("pdfluent-wasm-surface-to_docx.docx");
     let _ = std::fs::remove_file(&out);
     doc.to_docx(&out).expect("to_docx native");
@@ -54,7 +59,7 @@ fn to_docx_native_succeeds_on_sample() {
 
 #[test]
 fn to_images_native_succeeds_on_sample() {
-    let doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let doc = enterprise_doc("tests/fixtures/sample.pdf");
     let dir = std::env::temp_dir().join("pdfluent-wasm-surface-to_images");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -75,14 +80,14 @@ fn to_images_native_succeeds_on_sample() {
 
 #[test]
 fn linearize_returns_missing_dependency_on_both_targets() {
-    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let mut doc = enterprise_doc("tests/fixtures/sample.pdf");
     let err = doc.linearize().expect_err("deferred");
     assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
 }
 
 #[test]
 fn embed_font_returns_missing_dependency_on_both_targets() {
-    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let mut doc = enterprise_doc("tests/fixtures/sample.pdf");
     let err = doc
         .embed_font(b"not-a-real-font", "Unknown")
         .expect_err("deferred");
@@ -91,7 +96,7 @@ fn embed_font_returns_missing_dependency_on_both_targets() {
 
 #[test]
 fn add_decoration_returns_missing_dependency_on_both_targets() {
-    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let mut doc = enterprise_doc("tests/fixtures/sample.pdf");
     let err = doc
         .add_decoration(PageDecoration::watermark(
             "DRAFT",
