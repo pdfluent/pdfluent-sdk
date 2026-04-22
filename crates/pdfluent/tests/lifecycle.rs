@@ -143,6 +143,95 @@ fn save_roundtrip_via_path() {
 }
 
 #[test]
+fn save_with_default_refuses_existing_file_without_writing() {
+    let tmp = std::env::temp_dir().join("pdfluent-test-save-default-refuses-existing.pdf");
+    let original = b"do-not-overwrite".to_vec();
+    let _ = std::fs::remove_file(&tmp);
+
+    std::fs::write(&tmp, &original).expect("seed existing file");
+
+    let doc = PdfDocument::open(FIXTURE_PATH).expect("open");
+    let err = doc
+        .save_with(&tmp, pdfluent::SaveOptions::default())
+        .unwrap_err();
+
+    match err {
+        pdfluent::Error::Io { source, path } => {
+            assert_eq!(source.kind(), std::io::ErrorKind::AlreadyExists);
+            assert_eq!(path.as_deref(), Some(tmp.as_path()));
+        }
+        other => panic!("expected Error::Io(AlreadyExists), got {other:?}"),
+    }
+
+    assert_eq!(
+        std::fs::read(&tmp).expect("re-read existing file"),
+        original,
+        "save_with(default) must not write any bytes when the target exists",
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn save_with_overwrite_true_replaces_existing_file() {
+    let tmp = std::env::temp_dir().join("pdfluent-test-save-overwrite-replaces-existing.pdf");
+    let original = b"old-bytes".to_vec();
+    let _ = std::fs::remove_file(&tmp);
+
+    std::fs::write(&tmp, &original).expect("seed existing file");
+
+    let doc = PdfDocument::open(FIXTURE_PATH).expect("open");
+    doc.save_with(&tmp, pdfluent::SaveOptions::new().with_overwrite(true))
+        .expect("with_overwrite(true) must replace existing bytes");
+
+    let overwritten = std::fs::read(&tmp).expect("read overwritten file");
+    assert_ne!(overwritten, original);
+    assert!(
+        overwritten.starts_with(b"%PDF-"),
+        "overwrite=true should replace the file with a PDF payload",
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[cfg(unix)]
+#[test]
+fn open_with_strict_memory_limit_rejects_oversized_unreadable_file_before_read() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = std::env::temp_dir().join("pdfluent-test-open-memory-limit-before-read.pdf");
+    let _ = std::fs::remove_file(&tmp);
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&tmp)
+        .expect("create temp file");
+    file.set_len(8 * 1024 * 1024)
+        .expect("create sparse oversized file");
+    drop(file);
+
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o000))
+        .expect("remove read permissions");
+
+    let err = PdfDocument::open_with(&tmp, pdfluent::OpenOptions::new().strict_memory_limit(1024))
+        .unwrap_err();
+
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+        .expect("restore permissions for cleanup");
+    let _ = std::fs::remove_file(&tmp);
+
+    match err {
+        pdfluent::Error::MemoryBudgetExceeded { requested, limit } => {
+            assert_eq!(requested, 8 * 1024 * 1024);
+            assert_eq!(limit, 1024);
+        }
+        other => panic!("expected MemoryBudgetExceeded before any fs::read, got {other:?}"),
+    }
+}
+
+#[test]
 fn save_refuses_to_clobber_existing_file_by_default() {
     // Per RFC §1.2 + SaveOptions::default (overwrite=false): save() must
     // refuse when the target already exists. This protects against

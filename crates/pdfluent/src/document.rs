@@ -23,6 +23,7 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::capability::Capability;
 use crate::decoration::PageDecoration;
@@ -190,6 +191,32 @@ impl std::fmt::Debug for PdfDocument {
     }
 }
 
+fn open_engine_from_shared_bytes(
+    shared: Arc<Vec<u8>>,
+    password: Option<&str>,
+) -> Result<pdf_engine::PdfDocument> {
+    match password {
+        Some(pw) => pdf_engine::PdfDocument::open_with_password(shared, pw),
+        None => pdf_engine::PdfDocument::open(shared),
+    }
+    .map_err(Into::into)
+}
+
+fn load_lopdf_from_shared_bytes(
+    shared: &Arc<Vec<u8>>,
+    password: Option<&str>,
+) -> Result<lopdf::Document> {
+    match password {
+        Some(pw) => {
+            let mut doc = lopdf::Document::load_mem(shared.as_slice())?;
+            // lopdf separates load from decrypt: decrypt in place if possible.
+            let _ = doc.decrypt(pw);
+            Ok(doc)
+        }
+        None => lopdf::Document::load_mem(shared.as_slice()).map_err(Into::into),
+    }
+}
+
 impl PdfDocument {
     // ---------- Constructors ----------
 
@@ -258,6 +285,18 @@ impl PdfDocument {
     }
 
     /// Construct a document from an in-memory byte buffer with explicit options.
+    ///
+    /// If [`OpenOptions::strict_memory_limit`] is set, the input length is
+    /// checked before `pdfluent` takes any owned copy of `bytes`.
+    ///
+    /// # Peak input ownership
+    ///
+    /// On success, `pdfluent` takes exactly one owned copy of `bytes` into a
+    /// shared `Arc<Vec<u8>>`. `pdf_engine` keeps shared ownership of that
+    /// buffer, while `lopdf` parses from a borrowed slice of the same bytes.
+    /// This avoids the previous second input-sized clone in the engine path.
+    /// Any further allocations come from parser-internal state rather than a
+    /// duplicated raw-input buffer inside `pdfluent`.
     #[cfg_attr(
         feature = "tracing",
         tracing::instrument(
@@ -278,21 +317,9 @@ impl PdfDocument {
             }
         }
 
-        let owned = bytes.to_vec();
-        let engine = match &opts.password {
-            Some(pw) => pdf_engine::PdfDocument::open_with_password(owned.clone(), pw.as_str())?,
-            None => pdf_engine::PdfDocument::open(owned.clone())?,
-        };
-
-        let lopdf = match &opts.password {
-            Some(pw) => {
-                let mut doc = lopdf::Document::load_mem(&owned)?;
-                // lopdf separates load from decrypt: decrypt in place if possible.
-                let _ = doc.decrypt(pw.as_str());
-                doc
-            }
-            None => lopdf::Document::load_mem(&owned)?,
-        };
+        let shared = Arc::new(bytes.to_vec());
+        let engine = open_engine_from_shared_bytes(shared.clone(), opts.password.as_deref())?;
+        let lopdf = load_lopdf_from_shared_bytes(&shared, opts.password.as_deref())?;
 
         Ok(Self {
             engine,
@@ -1616,4 +1643,94 @@ fn normalise_page_range<R: std::ops::RangeBounds<usize>>(
         )));
     }
     Ok((start, end))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{load_lopdf_from_shared_bytes, open_engine_from_shared_bytes, SaveOptions};
+    use std::sync::Arc;
+
+    fn minimal_pdf_bytes() -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.4");
+        let pages_id = doc.new_object_id();
+        let page_id = doc.new_object_id();
+        let content = Stream::new(dictionary! {}, b"BT ET".to_vec());
+        let content_id = doc.add_object(content);
+
+        doc.objects.insert(
+            page_id,
+            Object::Dictionary(dictionary! {
+                "Type" => Object::Name(b"Page".to_vec()),
+                "Parent" => Object::Reference(pages_id),
+                "MediaBox" => Object::Array(vec![
+                    Object::Integer(0),
+                    Object::Integer(0),
+                    Object::Integer(72),
+                    Object::Integer(72),
+                ]),
+                "Contents" => Object::Reference(content_id),
+            }),
+        );
+
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => Object::Name(b"Pages".to_vec()),
+                "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1),
+            }),
+        );
+
+        let catalog_id = doc.new_object_id();
+        doc.objects.insert(
+            catalog_id,
+            Object::Dictionary(dictionary! {
+                "Type" => Object::Name(b"Catalog".to_vec()),
+                "Pages" => Object::Reference(pages_id),
+            }),
+        );
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("build minimal fixture");
+        bytes
+    }
+
+    #[test]
+    fn from_bytes_with_shares_single_owned_input_buffer() {
+        let shared = Arc::new(minimal_pdf_bytes());
+        let shared_ptr = shared.as_slice().as_ptr();
+        let shared_len = shared.len();
+
+        let engine = open_engine_from_shared_bytes(shared.clone(), None)
+            .expect("open engine from shared bytes");
+
+        assert_eq!(
+            engine.pdf().data().as_ref().as_ptr(),
+            shared_ptr,
+            "pdf_engine should retain the same shared buffer rather than a second Vec clone",
+        );
+        assert_eq!(engine.pdf().data().as_ref().len(), shared_len);
+        let owners_after_engine = Arc::strong_count(&shared);
+        assert!(
+            owners_after_engine >= 2,
+            "pdf_engine should retain shared ownership of the input buffer",
+        );
+
+        let _lopdf = load_lopdf_from_shared_bytes(&shared, None)
+            .expect("load lopdf from borrowed shared bytes");
+
+        assert_eq!(
+            Arc::strong_count(&shared),
+            owners_after_engine,
+            "lopdf should parse from a borrowed slice of the same shared buffer",
+        );
+    }
+
+    #[test]
+    fn save_options_default_overwrite_is_false() {
+        assert!(!SaveOptions::default().overwrite);
+    }
 }
