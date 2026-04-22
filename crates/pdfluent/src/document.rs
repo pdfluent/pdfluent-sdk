@@ -1090,6 +1090,10 @@ impl PdfDocument {
     /// [`RedactOptions::case_sensitive`](crate::redact::RedactOptions),
     /// [`RedactOptions::regex`], and
     /// [`RedactOptions::on_pages`] — page numbers are translated 1-to-1.
+    ///
+    /// Images within redaction regions are fully blacked out. Unsupported image
+    /// filters (JBIG2, JPEG2000) cause the operation to fail. Overlapping
+    /// annotations and XMP metadata are cleaned during apply.
     #[cfg_attr(
         feature = "tracing",
         // `text` is the redaction query — frequently PII/secrets the
@@ -1122,6 +1126,10 @@ impl PdfDocument {
     /// Routes to `pdf_redact::Redactor::apply` with a single
     /// [`pdf_redact::RedactionArea`]. `page` is 1-based; `rect` is
     /// `[x_min, y_min, x_max, y_max]` in PDF points.
+    ///
+    /// Images within redaction regions are fully blacked out. Unsupported image
+    /// filters (JBIG2, JPEG2000) cause the operation to fail. Overlapping
+    /// annotations and XMP metadata are cleaned during apply.
     pub fn redact_region(&mut self, page: usize, rect: [f64; 4]) -> Result<()> {
         self.require_capability(Capability::Redaction)?;
         let mut redactor = pdf_redact::Redactor::new();
