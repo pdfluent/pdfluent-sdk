@@ -1148,6 +1148,40 @@ impl PdfDocument {
         Ok(())
     }
 
+    // ---------- PDF/A compliance (M5 #1291) ----------
+
+    /// Validate the document against the given PDF/A profile.
+    ///
+    /// Returns a [`PdfAValidationReport`] describing all findings. Call
+    /// [`PdfAValidationReport::is_compliant`] to check whether the document
+    /// passes without error-severity violations.
+    ///
+    /// Requires the `pdfa` feature and a license tier that grants
+    /// [`Capability::PdfaValidate`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::prelude::*;
+    ///
+    /// let doc = PdfDocument::open("form.pdf").unwrap();
+    /// let report = doc.validate_pdfa(PdfAProfile::A2b).unwrap();
+    /// if !report.is_compliant() {
+    ///     for v in &report.violations {
+    ///         eprintln!("[{}] {}", v.rule, v.message);
+    ///     }
+    /// }
+    /// ```
+    #[cfg(feature = "pdfa")]
+    pub fn validate_pdfa(
+        &self,
+        profile: crate::compliance::PdfAProfile,
+    ) -> Result<crate::compliance::PdfAValidationReport> {
+        self.require_capability(Capability::PdfaValidate)?;
+        let raw = pdf_compliance::validate_pdfa(self.engine.pdf(), profile.into());
+        Ok(crate::compliance::report_from_compliance(raw, profile))
+    }
+
     // ---------- Split / extract (Epic 2 #1243) ----------
 
     /// Split the document into individual one-page documents.
@@ -1732,5 +1766,22 @@ mod tests {
     #[test]
     fn save_options_default_overwrite_is_false() {
         assert!(!SaveOptions::default().overwrite);
+    }
+
+    #[cfg(feature = "pdfa")]
+    #[test]
+    fn validate_pdfa_returns_report_for_non_conforming_doc() {
+        use crate::compliance::PdfAProfile;
+        use super::PdfDocument;
+
+        let bytes = minimal_pdf_bytes();
+        let doc = PdfDocument::from_bytes(&bytes).expect("parse minimal fixture");
+        let report = doc
+            .validate_pdfa(PdfAProfile::A2b)
+            .expect("validate_pdfa should not return an error");
+        assert!(
+            !report.is_compliant(),
+            "a minimal synthetic PDF must not pass PDF/A-2b validation"
+        );
     }
 }
