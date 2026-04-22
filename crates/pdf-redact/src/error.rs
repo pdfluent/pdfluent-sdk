@@ -16,6 +16,9 @@ pub enum RedactError {
     #[error("no redaction areas specified")]
     NoAreas,
 
+    #[error("unsupported image filter: {0}")]
+    UnsupportedImageFilter(String),
+
     #[error("{0}")]
     Other(String),
 }

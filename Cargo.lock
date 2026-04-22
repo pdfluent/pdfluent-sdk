@@ -4504,6 +4504,7 @@ dependencies = [
  "getrandom 0.2.17",
  "image",
  "lopdf 0.39.0",
+ "pdf-compliance",
  "pdf-docx",
  "pdf-engine",
  "pdf-manip",
@@ -4511,6 +4512,7 @@ dependencies = [
  "pdf-render",
  "pdf-sign",
  "png 0.17.16",
+ "tokio",
  "tracing",
 ]
 
