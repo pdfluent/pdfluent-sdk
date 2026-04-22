@@ -63,6 +63,9 @@ pub struct FormField {
 /// surface on the individual setter calls when a field does not exist
 /// or has an incompatible type.
 ///
+/// This is the immediate-apply pattern: each setter mutates the in-memory
+/// document immediately, so there is no separate `commit()` step.
+///
 /// Mutations are applied to the in-memory `lopdf::Document` and are flushed
 /// to disk at the next `save` / `save_with` / `to_bytes` call.
 pub struct PdfFormMut<'a> {

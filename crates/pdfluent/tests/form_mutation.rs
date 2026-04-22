@@ -202,6 +202,38 @@ fn setters_chain_via_mut_self_return() {
     assert_eq!(field_value(&doc, "country").as_deref(), Some("DE"));
 }
 
+#[test]
+fn setters_try_chain_via_question_mark_propagates_errors() {
+    fn apply_with_question_mark(form: &mut pdfluent::PdfFormMut<'_>) -> pdfluent::Result<()> {
+        form.set_text("first_name", "Jane")?
+            .set_checkbox("agree_terms", true)?
+            .set_radio("preferred_color", "Green")?
+            .set_dropdown("does_not_exist", "DE")?;
+        Ok(())
+    }
+
+    let bytes = build_full_form_pdf();
+    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let original_country = field_value(&doc, "country");
+
+    let err = {
+        let mut form = doc.form_mut();
+        apply_with_question_mark(&mut form).unwrap_err()
+    };
+
+    assert!(
+        matches!(err, pdfluent::Error::Internal { .. }),
+        "expected the `?` try-chain to return the setter error, got {err:?}",
+    );
+    assert_eq!(field_value(&doc, "first_name").as_deref(), Some("Jane"));
+    assert_eq!(field_value(&doc, "agree_terms").as_deref(), Some("Yes"));
+    assert_eq!(
+        field_value(&doc, "preferred_color").as_deref(),
+        Some("Green"),
+    );
+    assert_eq!(field_value(&doc, "country"), original_country);
+}
+
 // ---------------------------------------------------------------------------
 // Round-trip: save → reopen → values preserved
 // ---------------------------------------------------------------------------
