@@ -7,6 +7,7 @@
 use crate::error::{RedactError, Result};
 use lopdf::content::{Content, Operation};
 use lopdf::{dictionary, Document, Object, ObjectId, Stream};
+use std::collections::HashMap;
 use std::io::Write;
 
 /// A rectangular area on a page to be redacted.
@@ -126,13 +127,18 @@ impl Redactor {
             let ops_removed = redact_page_content(doc, page_id, areas)?;
             total_ops_removed += ops_removed;
 
-            // Phase 2: Draw redaction overlays.
+            // Phase 2: Black out Image XObjects whose bounding box overlaps a
+            // redaction area.  Unsupported filters (JBIG2, JPEG2000, Crypt)
+            // cause this to return UnsupportedImageFilter.
+            redact_image_xobjects(doc, page_id, areas)?;
+
+            // Phase 3: Draw redaction overlays.
             draw_redaction_overlays(doc, page_id, areas)?;
 
             affected_pages.insert(page_num);
         }
 
-        // Phase 3: Clean metadata.
+        // Phase 4: Clean metadata (Info dict removal + thumbnail strip).
         clean_metadata(doc);
 
         Ok(RedactionReport {
@@ -314,21 +320,261 @@ fn draw_redaction_overlays(
     Ok(())
 }
 
-/// Clean document metadata: remove Info dictionary, XMP metadata, and thumbnails.
-fn clean_metadata(doc: &mut Document) {
-    // Remove Info dictionary reference from trailer.
-    doc.trailer.remove(b"Info");
+// ---------------------------------------------------------------------------
+// Image XObject redaction (#1293)
+// ---------------------------------------------------------------------------
 
-    // Remove XMP metadata from the catalog.
-    if let Ok(catalog_id) = doc.trailer.get(b"Root") {
-        if let Object::Reference(root_id) = catalog_id.clone() {
-            if let Ok(Object::Dictionary(ref mut catalog)) = doc.get_object_mut(root_id) {
-                catalog.remove(b"Metadata");
+/// Black out all Image XObjects on `page_id` whose page-space bounding box
+/// overlaps any of `areas`.  Returns `UnsupportedImageFilter` if a matching
+/// image uses JBIG2Decode, JPXDecode, or Crypt.
+fn redact_image_xobjects(
+    doc: &mut Document,
+    page_id: ObjectId,
+    areas: &[&RedactionArea],
+) -> Result<()> {
+    let overlapping = find_overlapping_images(doc, page_id, areas)?;
+    for id in overlapping {
+        blackout_image_xobject(doc, id)?;
+    }
+    Ok(())
+}
+
+/// Walk the page content streams, tracking the CTM, and collect IDs of Image
+/// XObjects whose transformed bounding box overlaps a redaction area.
+fn find_overlapping_images(
+    doc: &Document,
+    page_id: ObjectId,
+    areas: &[&RedactionArea],
+) -> Result<Vec<ObjectId>> {
+    let mut overlapping: Vec<ObjectId> = Vec::new();
+    let xobjects = get_page_xobjects(doc, page_id);
+
+    for content_id in get_content_stream_ids(doc, page_id) {
+        let content_bytes = match doc.get_object(content_id) {
+            Ok(Object::Stream(ref s)) => {
+                let mut stream = s.clone();
+                let _ = stream.decompress();
+                stream.content
+            }
+            _ => continue,
+        };
+
+        let (parseable, _) = pdf_manip::content_editor::strip_inline_images(&content_bytes);
+        let content = match Content::decode(&parseable) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // Identity CTM: [a, b, c, d, e, f] where x' = a*x + c*y + e
+        let mut ctm_stack: Vec<[f64; 6]> = vec![[1.0, 0.0, 0.0, 1.0, 0.0, 0.0]];
+
+        for op in &content.operations {
+            match op.operator.as_str() {
+                "q" => {
+                    let top = ctm_stack.last().copied().unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+                    ctm_stack.push(top);
+                }
+                "Q" => {
+                    if ctm_stack.len() > 1 {
+                        ctm_stack.pop();
+                    }
+                }
+                "cm" if op.operands.len() >= 6 => {
+                    let cm = [
+                        as_number(&op.operands[0]).unwrap_or(0.0),
+                        as_number(&op.operands[1]).unwrap_or(0.0),
+                        as_number(&op.operands[2]).unwrap_or(0.0),
+                        as_number(&op.operands[3]).unwrap_or(0.0),
+                        as_number(&op.operands[4]).unwrap_or(0.0),
+                        as_number(&op.operands[5]).unwrap_or(0.0),
+                    ];
+                    if let Some(current) = ctm_stack.last_mut() {
+                        *current = concat_matrix(cm, *current);
+                    }
+                }
+                "Do" if !op.operands.is_empty() => {
+                    if let Object::Name(ref name) = op.operands[0] {
+                        let name_str = String::from_utf8_lossy(name).into_owned();
+                        if let Some(&xobj_id) = xobjects.get(&name_str) {
+                            if is_image_xobject(doc, xobj_id) {
+                                let ctm =
+                                    ctm_stack.last().copied().unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+                                let bbox = ctm_bbox(ctm);
+                                if bbox_overlaps_any(bbox, areas) && !overlapping.contains(&xobj_id)
+                                {
+                                    overlapping.push(xobj_id);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
 
-    // Remove thumbnails from pages.
+    Ok(overlapping)
+}
+
+/// Replace the content of an Image XObject with all-black pixel data.
+///
+/// Preserves Width, Height, and ColorSpace.  Updates Filter to FlateDecode.
+/// Returns `UnsupportedImageFilter` for JBIG2Decode, JPXDecode, and Crypt.
+fn blackout_image_xobject(doc: &mut Document, xobj_id: ObjectId) -> Result<()> {
+    let (width, height, components) = {
+        match doc.get_object(xobj_id) {
+            Ok(Object::Stream(ref s)) => {
+                check_image_filter(&s.dict)?;
+                let w = s.dict.get(b"Width").ok().and_then(as_number).unwrap_or(1.0) as usize;
+                let h = s.dict.get(b"Height").ok().and_then(as_number).unwrap_or(1.0) as usize;
+                let c = color_space_components(&s.dict);
+                (w, h, c)
+            }
+            _ => return Ok(()),
+        }
+    };
+
+    let black = vec![0u8; width * height * components];
+    let compressed = compress_flate(&black);
+    let len = compressed.len() as i64;
+
+    if let Ok(Object::Stream(ref mut s)) = doc.get_object_mut(xobj_id) {
+        s.content = compressed;
+        s.dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+        s.dict.set("Length", Object::Integer(len));
+        s.dict.remove(b"DecodeParms");
+    }
+    Ok(())
+}
+
+/// Return an error if the image stream uses an unsupported filter.
+fn check_image_filter(dict: &lopdf::Dictionary) -> Result<()> {
+    let filter_obj = match dict.get(b"Filter") {
+        Ok(f) => f.clone(),
+        Err(_) => return Ok(()),
+    };
+    let names: Vec<String> = match filter_obj {
+        Object::Name(ref n) => vec![String::from_utf8_lossy(n).into_owned()],
+        Object::Array(ref arr) => arr
+            .iter()
+            .filter_map(|o| {
+                if let Object::Name(ref n) = o {
+                    Some(String::from_utf8_lossy(n).into_owned())
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        _ => vec![],
+    };
+    for name in &names {
+        if matches!(name.as_str(), "JBIG2Decode" | "JPXDecode" | "Crypt") {
+            return Err(RedactError::UnsupportedImageFilter(name.clone()));
+        }
+    }
+    Ok(())
+}
+
+/// Number of colour components implied by a ColorSpace entry.
+fn color_space_components(dict: &lopdf::Dictionary) -> usize {
+    match dict.get(b"ColorSpace") {
+        Ok(Object::Name(ref n)) => match std::str::from_utf8(n).unwrap_or("") {
+            "DeviceGray" | "CalGray" => 1,
+            "DeviceCMYK" => 4,
+            _ => 3, // DeviceRGB, sRGB, unknown → default RGB
+        },
+        _ => 3,
+    }
+}
+
+/// Collect the name → ObjectId map of XObjects declared in the page's Resources.
+fn get_page_xobjects(doc: &Document, page_id: ObjectId) -> HashMap<String, ObjectId> {
+    let mut result = HashMap::new();
+
+    let page_dict = match doc.get_object(page_id) {
+        Ok(Object::Dictionary(ref d)) => d.clone(),
+        _ => return result,
+    };
+    let resources = match page_dict.get(b"Resources") {
+        Ok(Object::Dictionary(ref d)) => d.clone(),
+        Ok(Object::Reference(id)) => match doc.get_object(*id) {
+            Ok(Object::Dictionary(ref d)) => d.clone(),
+            _ => return result,
+        },
+        _ => return result,
+    };
+    let xobj_dict = match resources.get(b"XObject") {
+        Ok(Object::Dictionary(ref d)) => d.clone(),
+        Ok(Object::Reference(id)) => match doc.get_object(*id) {
+            Ok(Object::Dictionary(ref d)) => d.clone(),
+            _ => return result,
+        },
+        _ => return result,
+    };
+
+    for (name, obj) in xobj_dict.iter() {
+        if let Object::Reference(id) = obj {
+            result.insert(String::from_utf8_lossy(name).into_owned(), *id);
+        }
+    }
+    result
+}
+
+/// Return true if the object at `id` is an Image XObject.
+fn is_image_xobject(doc: &Document, id: ObjectId) -> bool {
+    match doc.get_object(id) {
+        Ok(Object::Stream(ref s)) => match s.dict.get(b"Subtype") {
+            Ok(Object::Name(ref n)) => n.as_slice() == b"Image",
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Concatenate two CTM matrices: result = `a` × `b` (both in PDF [a b c d e f] order).
+fn concat_matrix(a: [f64; 6], b: [f64; 6]) -> [f64; 6] {
+    let [aa, ab, ac, ad, ae, af] = a;
+    let [m0, m1, m2, m3, m4, m5] = b;
+    [
+        aa * m0 + ac * m1,
+        ab * m0 + ad * m1,
+        aa * m2 + ac * m3,
+        ab * m2 + ad * m3,
+        aa * m4 + ac * m5 + ae,
+        ab * m4 + ad * m5 + af,
+    ]
+}
+
+/// Compute the axis-aligned bounding box of the unit square [0,0]–[1,1]
+/// after applying `ctm`.  This is the page-space bbox of an Image XObject.
+fn ctm_bbox(ctm: [f64; 6]) -> [f64; 4] {
+    let [a, b, c, d, e, f] = ctm;
+    let corners = [(e, f), (a + e, b + f), (c + e, d + f), (a + c + e, b + d + f)];
+    let min_x = corners.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+    let min_y = corners.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+    let max_x = corners.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+    let max_y = corners.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+    [min_x, min_y, max_x, max_y]
+}
+
+/// Return true if `bbox` overlaps any of `areas` (AABB test).
+fn bbox_overlaps_any(bbox: [f64; 4], areas: &[&RedactionArea]) -> bool {
+    let [bx0, by0, bx1, by1] = bbox;
+    for area in areas {
+        let [ax0, ay0, ax1, ay1] = area.rect;
+        let (rax0, rax1) = if ax0 < ax1 { (ax0, ax1) } else { (ax1, ax0) };
+        let (ray0, ray1) = if ay0 < ay1 { (ay0, ay1) } else { (ay1, ay0) };
+        let no_overlap = bx1 < rax0 || bx0 > rax1 || by1 < ray0 || by0 > ray1;
+        if !no_overlap {
+            return true;
+        }
+    }
+    false
+}
+
+/// Clean document metadata: remove Info dictionary and strip thumbnails.
+fn clean_metadata(doc: &mut Document) {
+    doc.trailer.remove(b"Info");
     let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
     for page_id in page_ids {
         if let Ok(Object::Dictionary(ref mut page)) = doc.get_object_mut(page_id) {
@@ -451,13 +697,11 @@ fn resolve_content_streams(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> {
 fn flatten_content_refs(doc: &Document, obj: &Object) -> Vec<ObjectId> {
     match obj {
         Object::Reference(id) => {
-            if let Ok(resolved) = doc.get_object(*id) {
-                if let Object::Array(arr) = resolved {
-                    return arr
-                        .iter()
-                        .flat_map(|o| flatten_content_refs(doc, o))
-                        .collect();
-                }
+            if let Ok(Object::Array(arr)) = doc.get_object(*id) {
+                return arr
+                    .iter()
+                    .flat_map(|o| flatten_content_refs(doc, o))
+                    .collect();
             }
             vec![*id]
         }
