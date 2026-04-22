@@ -1,214 +1,354 @@
 # API Reference
 
-## Rust API
+`pdfluent` exposes a single owning `PdfDocument` facade plus a small set of
+focused helper types. This page documents the current public surface in this
+branch and calls out the places where the facade exists in name but is not yet
+fully wired.
 
-### xfa-json
+## 1. Open, Create, And Save Documents
 
-The primary API for XFA form data conversion.
+The document lifecycle starts with `PdfDocument` constructors:
 
-#### `form_tree_to_json(tree: &FormTree, root: FormNodeId) -> FormData`
+- `PdfDocument::open(path)`
+- `PdfDocument::open_with(path, OpenOptions)`
+- `PdfDocument::from_bytes(bytes)`
+- `PdfDocument::from_bytes_with(bytes, OpenOptions)`
+- `PdfDocument::from_reader(reader)`
+- `PdfDocument::create()`
 
-Extracts field values from a `FormTree` into a JSON-friendly `FormData` structure.
-Fields are keyed by SOM-style dotted paths (e.g., `form1.Customer.Name`).
+The persistence surface is:
 
-Repeating subforms become `FieldValue::Array` entries.
+- `PdfDocument::save(path)`
+- `PdfDocument::save_with(path, SaveOptions)`
+- `PdfDocument::to_bytes()`
+- `PdfDocument::write_to(writer)`
 
-#### `form_tree_to_value(tree: &FormTree, root: FormNodeId) -> serde_json::Value`
+`SaveOptions` currently exposes:
 
-Convenience wrapper that returns a raw `serde_json::Value`.
+- `SaveOptions::new()`
+- `SaveOptions::with_linearize(bool)` — accepted, but currently a no-op in
+  this branch
+- `SaveOptions::with_overwrite(bool)` — opt in to overwriting an existing path
 
-#### `json_to_form_tree(data: &FormData, tree: &mut FormTree, root: FormNodeId)`
+```rust,no_run
+use pdfluent::prelude::*;
 
-Merges JSON field values back into an existing `FormTree`.
-Matches fields by SOM path and handles repeating sections by array index.
+fn roundtrip(bytes: &[u8]) -> Result<()> {
+    let doc = PdfDocument::from_bytes(bytes)?;
+    let reopened = PdfDocument::open_with(
+        "input.pdf",
+        OpenOptions::new().with_repair(true),
+    )?;
 
-#### `export_schema(tree: &FormTree, root: FormNodeId) -> FormSchema`
+    assert!(doc.page_count() >= 1);
+    assert!(reopened.page_count() >= 1);
 
-Exports field metadata (types, required flags, repeat rules, scripts) as a `FormSchema`.
+    doc.save_with(
+        "output.pdf",
+        SaveOptions::new()
+            .with_overwrite(true)
+            .with_linearize(true),
+    )?;
 
-### pdfium-ffi-bridge / template_parser
-
-#### `parse_template(template_xml: &str, datasets_xml: Option<&str>) -> Result<(FormTree, FormNodeId)>`
-
-Parses an XFA template XML string into a `FormTree`. Optionally merges data
-values from a datasets XML string.
-
-### Types
-
-#### `FormData`
-
-```rust
-pub struct FormData {
-    pub fields: IndexMap<String, FieldValue>,
+    let copy = doc.to_bytes()?;
+    let _again = PdfDocument::from_bytes(&copy)?;
+    Ok(())
 }
 ```
 
-#### `FieldValue`
+## 2. Metadata Read And Write
 
-```rust
-pub enum FieldValue {
-    Number(f64),      // Numeric values
-    Boolean(bool),    // true/false, 1/0
-    Text(String),     // Text strings
-    Null,             // Empty/missing fields
-    Array(Vec<IndexMap<String, FieldValue>>), // Repeating sections
+`PdfDocument::metadata()` returns a `Metadata` snapshot with title, author,
+subject, keywords, producer, creator, creation date, and modification date.
+
+`PdfDocument::metadata_mut()` returns `MetadataMut`, which exposes:
+
+- `MetadataMut::set_title(...)`
+- `MetadataMut::set_author(...)`
+- `MetadataMut::set_subject(...)`
+- `MetadataMut::set_keywords(...)`
+- `MetadataMut::commit()`
+
+`MetadataMut` is chainable and auto-commits on drop, but explicit `commit()`
+is the safer path because it surfaces errors. The write goes into the document
+metadata dictionary; if you need `metadata()` to reflect the new values on the
+same handle, save and reopen the document.
+
+```rust,no_run
+use pdfluent::prelude::*;
+
+fn rewrite_metadata() -> Result<()> {
+    let mut doc = PdfDocument::open("report.pdf")?;
+
+    doc.metadata_mut()
+        .set_title("Quarterly Report")
+        .set_author("Finance")
+        .set_subject("Q2 close")
+        .set_keywords(&["quarterly", "finance", "internal"])
+        .commit()?;
+
+    doc.save_with(
+        "report-updated.pdf",
+        SaveOptions::new().with_overwrite(true),
+    )?;
+    Ok(())
 }
 ```
 
-Values are automatically coerced from XFA string representations:
-- `"123.45"` → `Number(123.45)`
-- `"true"`, `"1"` → `Boolean(true)`
-- `""` → `Null`
+## 3. Pages, Text, And Page-Level Helpers
 
-#### `FormSchema`
+The read surface for document structure and text includes:
 
-```rust
-pub struct FormSchema {
-    pub fields: IndexMap<String, FieldSchema>,
-}
+- `PdfDocument::page_count()`
+- `PdfDocument::version()`
+- `PdfDocument::text()`
+- `PdfDocument::text_with_layout()`
+- `PdfDocument::page(page_number)`
+- `PdfDocument::pages()`
 
-pub struct FieldSchema {
-    pub som_path: String,
-    pub field_type: FieldType,  // text, numeric, boolean, static
-    pub required: bool,
-    pub repeatable: bool,
-    pub max_occurrences: Option<u32>,
-    pub calculate: Option<String>,  // FormCalc script
-    pub validate: Option<String>,   // FormCalc script
-}
-```
+The current page-level helpers also include:
 
-### pdfium-ffi-bridge
+- `PdfDocument::rotate_page(page, rotation)`
+- `PdfDocument::split_pages()`
+- `PdfDocument::extract_pages(range)`
 
-#### PDF Reading
+Per-page access uses the borrowed `Page` handle:
 
-```rust
-// From file
-let reader = PdfReader::from_file(Path::new("form.pdf"))?;
+- `Page::number()`
+- `Page::dimensions()`
+- `Page::text()`
 
-// From bytes
-let reader = PdfReader::from_bytes(&pdf_bytes)?;
+```rust,no_run
+use pdfluent::prelude::*;
 
-// Extract XFA packets
-let packets: XfaPackets = reader.extract_xfa()?;
-```
+fn inspect_pages() -> Result<()> {
+    let doc = PdfDocument::open("input.pdf")?;
 
-#### `XfaPackets`
+    println!("PDF version {}", doc.version());
+    println!("pages: {}", doc.page_count());
 
-```rust
-pub struct XfaPackets { /* private fields */ }
-
-impl XfaPackets {
-    /// Get a specific packet by name.
-    pub fn get_packet(&self, name: &str) -> Option<&str>;
-    /// Get the template packet.
-    pub fn template(&self) -> Option<&str>;
-    /// Get the datasets packet.
-    pub fn datasets(&self) -> Option<&str>;
-    /// Get the config packet.
-    pub fn config(&self) -> Option<&str>;
-}
-```
-
-#### Rendering
-
-```rust
-use pdfium_ffi_bridge::pipeline::{render_form_tree, save_pages_as_png};
-use pdfium_ffi_bridge::native_renderer::RenderConfig;
-
-let config = RenderConfig::default();        // 72 DPI
-let config = RenderConfig::with_dpi(144.0);  // 144 DPI (2x)
-
-let images = render_form_tree(&mut tree, root, &config)?;
-save_pages_as_png(&images, Path::new("output/"), "form")?;
-```
-
-## REST API Endpoints
-
-### `POST /extract`
-
-Extract field values from an XFA PDF.
-
-**Request:** `multipart/form-data` with `file` field
-**Response:** `application/json`
-
-```json
-{
-  "fields": {
-    "form1.Name": "John Doe",
-    "form1.Amount": 100.0
-  }
-}
-```
-
-### `POST /schema`
-
-Export the form schema (field types, constraints).
-
-**Request:** `multipart/form-data` with `file` field
-**Response:** `application/json`
-
-```json
-{
-  "fields": {
-    "form1.Name": {
-      "som_path": "form1.Name",
-      "field_type": "text",
-      "required": true,
-      "repeatable": false,
-      "max_occurrences": 1
+    for page in doc.pages() {
+        let (width, height) = page.dimensions();
+        println!("page {}: {} x {}", page.number(), width, height);
+        println!("{}", page.text()?);
     }
-  }
+
+    let first_ten = doc.extract_pages(1..=10)?;
+    first_ten.save_with(
+        "chapter-1.pdf",
+        SaveOptions::new().with_overwrite(true),
+    )?;
+    Ok(())
 }
 ```
 
-### `POST /validate`
+## 4. Forms
 
-Validate form field values against their schemas and scripts.
+Read-only form access is available today:
 
-**Request:** `multipart/form-data` with `file` field
-**Response:** `application/json`
+- `PdfDocument::form_fields() -> Result<Vec<FormField>>`
+- `FormField` exposes `name`, `field_type`, `value`, `required`, and
+  `read_only`
+- `FieldType` distinguishes text, checkbox, radio, dropdown, signature, and
+  related field kinds
 
-```json
-{
-  "valid": true,
-  "errors": []
+```rust,no_run
+use pdfluent::prelude::*;
+
+fn list_fields() -> Result<()> {
+    let doc = PdfDocument::open("form.pdf")?;
+
+    for field in doc.form_fields()? {
+        println!(
+            "{} {:?} value={:?} required={} read_only={}",
+            field.name,
+            field.field_type,
+            field.value,
+            field.required,
+            field.read_only,
+        );
+    }
+
+    Ok(())
 }
 ```
 
-### `POST /fill`
+The public mutation surface is present, but it is not fully wired on this
+branch:
 
-Fill form fields with provided data and return the modified PDF.
+- `PdfDocument::form_mut()`
+- `PdfDocument::flatten_forms()`
+- `PdfFormMut::set_text(...)`
+- `PdfFormMut::set_checkbox(...)`
+- `PdfFormMut::set_radio(...)`
+- `PdfFormMut::set_dropdown(...)`
 
-**Request:** `multipart/form-data` with `file` and `data` fields
-**Response:** `application/pdf`
+Treat those mutation methods as placeholders for now. They are part of the
+public surface, but they currently `unimplemented!()` rather than performing a
+real write, so the read path is the stable forms API in this branch.
 
-### `POST /flatten`
+## 5. Redaction
 
-Flatten XFA form to static AcroForm PDF.
+Requires feature `redaction`.
 
-**Request:** `multipart/form-data` with `file` field
-**Response:** `application/pdf`
+The redaction surface includes:
 
-### `POST /render`
+- `PdfDocument::redact(text, RedactOptions)`
+- `PdfDocument::redact_region(page, rect)`
+- `RedactOptions::new()`
+- `RedactOptions::case_sensitive(bool)`
+- `RedactOptions::regex(bool)`
+- `RedactOptions::on_pages(&[usize])`
 
-Render form pages to PNG images.
+Both redaction calls mutate the document in memory. Save afterwards to persist
+the new bytes.
 
-**Request:** `multipart/form-data` with `file` field, optional `dpi` parameter
-**Response:** `application/json` with base64-encoded images
+```rust,no_run
+use pdfluent::prelude::*;
 
-## Error Responses
+fn apply_redaction() -> Result<()> {
+    let mut doc = PdfDocument::open("input.pdf")?;
 
-All endpoints return errors in this format:
+    doc.redact(
+        "SSN",
+        RedactOptions::new()
+            .case_sensitive(false)
+            .on_pages(&[1, 2]),
+    )?;
+    doc.redact_region(1, [72.0, 72.0, 216.0, 108.0])?;
 
-```json
-{
-  "error": "Description of what went wrong"
+    doc.save_with(
+        "redacted.pdf",
+        SaveOptions::new().with_overwrite(true),
+    )?;
+    Ok(())
 }
 ```
 
-HTTP status codes:
-- `200` — Success
-- `400` — Invalid input (missing file, bad JSON)
-- `422` — XFA parsing or validation error
-- `500` — Internal server error
+## 6. Signatures And PAdES Profiles
+
+Requires feature `signing`.
+
+Signing helpers:
+
+- `Pkcs12Signer::from_pfx_file(...)`
+- `Pkcs12Signer::from_pfx_bytes(...)`
+- `PdfDocument::sign(...)`
+- `PdfDocument::signatures()`
+- `PdfDocument::verify_signatures()`
+
+`SignOptions` exposes:
+
+- `SignOptions::new()`
+- `SignOptions::reason(...)`
+- `SignOptions::location(...)`
+- `SignOptions::contact_info(...)`
+- `SignOptions::field_name(...)`
+- `SignOptions::visible_rect(page, rect)`
+- `SignOptions::profile(profile)`
+
+`PadesProfile` maps to the common PAdES levels:
+
+- `BasicSignature` = PAdES B-B
+- `Timestamped` = PAdES B-T
+- `LongTerm` = PAdES B-LT and is the current default
+- `LongTermArchive` = PAdES B-LTA
+
+```rust,no_run
+use pdfluent::prelude::*;
+
+fn sign_document() -> Result<()> {
+    let mut doc = PdfDocument::open("contract.pdf")?;
+    let signer = Pkcs12Signer::from_pfx_file("signer.p12", "secret")?;
+
+    doc.sign(
+        &signer,
+        SignOptions::new()
+            .reason("Approved")
+            .location("Amsterdam")
+            .field_name("Signature1")
+            .profile(PadesProfile::LongTerm),
+    )?;
+
+    let report = doc.verify_signatures()?;
+    assert!(report.is_signed());
+    Ok(())
+}
+```
+
+## 7. PDF/A Validation
+
+Requires feature `pdfa`.
+
+This branch exposes the PDF/A types and licensing metadata:
+
+- `PdfAProfile`
+- `PdfAValidationReport`
+- `Violation`
+- `Capability::PdfaValidate`
+
+The missing piece is the actual facade entry point: there is no public
+`PdfDocument` PDF/A validation method in the current branch. That is why this
+page does not show a runnable `doc.validate_pdfa(...)` example: no such method
+exists on the facade, and this reference does not invent APIs that are not
+present.
+
+```rust,no_run
+use pdfluent::prelude::*;
+
+fn profile_only() -> Result<()> {
+    let profile = PdfAProfile::A2b;
+    let _ = profile;
+    Ok(())
+}
+```
+
+## 8. Capability Gates And Tier Overview
+
+The facade has two different gating layers:
+
+1. Cargo feature gates. The current opt-in feature families are `signing`,
+   `redaction`, `pdfa`, and several additional export, OCR, and WASM-related
+   flags. This crate currently enables `signing`, `redaction`, and `pdfa` by
+   default.
+2. Runtime license tiers. Every gated method checks the active tier and
+   returns `Error::FeatureNotInTier` when the capability is unavailable.
+
+License sources are precedence-ordered:
+
+- `OpenOptions::with_license_key(...)` for a per-document override
+- `set_license_key("tier:<name>")` for a process-global tier
+- `PDFLUENT_LICENSE_KEY` environment variable
+
+At runtime you can inspect the active tier with `license_info()` and check
+individual capabilities with `CapabilitySet::contains(...)`.
+
+```rust,no_run
+use pdfluent::prelude::*;
+
+fn inspect_license() -> Result<()> {
+    set_license_key("tier:team")?;
+
+    let info = license_info();
+    assert!(info.capabilities.contains(Capability::PdfaValidate));
+    assert!(info.capabilities.contains(Capability::DigitalSignatureSign));
+
+    Ok(())
+}
+```
+
+Tier snapshot for the current branch:
+
+- `Trial`: all technical capabilities enabled, but saved output is marked
+- `Developer`: core read/write plus XFA parse/fill
+- `Team`: adds PDF/A, signatures, redaction, PDF/UA, and e-invoicing
+- `Business`: adds XFA flatten, OCR, HTML-to-PDF, office export, and diff
+  helpers
+- `Enterprise`: adds deployment rights such as air-gapped and OEM
+  redistribution
+
+Common gate failures:
+
+- `Error::FeatureNotInTier` when the license tier is too low
+- `Error::CapabilityNotCompiled` when the crate was built without the required
+  Cargo feature
