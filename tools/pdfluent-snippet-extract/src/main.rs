@@ -257,11 +257,16 @@ fn select_snippet(html: &str, page: &Page) -> Option<String> {
     //   — Prism-style.
     // Pattern 3: `<code class="rust">...`
     //   — bare.
+    // Pattern 4: bare `<pre><code>...` — some sites (including
+    //   pdfluent.com today) use generic CSS classes and never tag
+    //   blocks by language. We fall back to any `<pre><code>` and
+    //   rely entirely on the `looks_like_rust` heuristic.
     let candidates = [
         "pre > code.language-rust",
         "pre.language-rust > code",
         "code.rust",
         "code.language-rust",
+        "pre > code",
     ];
 
     let mut all_rust_blocks: Vec<String> = Vec::new();
