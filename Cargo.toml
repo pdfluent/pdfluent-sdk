@@ -69,6 +69,9 @@ members = [
     "crates/lopdf",
     "crates/cff-parser",
     "crates/pdfluent",
+
+    # --- Documentation drift-guard tooling (Epic 5 / Slag 2) ---
+    "tools/pdfluent-snippet-extract",
 ]
 resolver = "2"
 

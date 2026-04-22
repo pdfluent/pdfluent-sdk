@@ -1,0 +1,28 @@
+[package]
+name = "pdfluent-snippet-extract"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Extracts Rust code snippets from pdfluent.com how-to pages into testable .rs artefacts for the Slag 2 drift-guard pipeline (#1236/#1237/#1238/#1246)."
+
+[[bin]]
+name = "pdfluent-snippet-extract"
+path = "src/main.rs"
+
+[dependencies]
+scraper = "0.19"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+ureq = { version = "2", default-features = false, features = ["tls"], optional = true }
+
+[features]
+default = []
+# Opt-in network access. Without this feature, the extractor operates
+# only on local HTML fixtures — the default mode so CI stays
+# deterministic.
+online = ["dep:ureq"]
+
+[lints.rust]
+unsafe_code = "forbid"

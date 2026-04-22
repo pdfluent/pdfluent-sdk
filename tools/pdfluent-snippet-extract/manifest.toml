@@ -1,0 +1,53 @@
+# Snippet-extract manifest — Epic 5 #1236.
+#
+# Each `[[page]]` entry names a pdfluent.com how-to URL, the slug the
+# extractor uses as output filename, and optional tweaks for how to
+# pick the Rust block from that page.
+#
+# Growth rule: add one `[[page]]` entry per website how-to as we
+# cover it. Leave the file sorted by slug for clean diffs.
+
+# ---------------------------------------------------------------------------
+# Seed set — pages that already have a hand-written counterpart in
+# `crates/pdfluent/tests/web_examples/`. The extractor can round-trip
+# these; #1238 drift-guard compares its output against the committed
+# files.
+# ---------------------------------------------------------------------------
+
+[[page]]
+url = "https://pdfluent.com/how-to/encrypt-pdf-rust"
+slug = "encrypt_pdf_rust"
+
+[[page]]
+url = "https://pdfluent.com/how-to/extract-text-pdf-rust"
+slug = "extract_text_pdf_rust"
+
+[[page]]
+url = "https://pdfluent.com/how-to/fill-pdf-form-rust"
+slug = "fill_pdf_form_rust"
+
+[[page]]
+url = "https://pdfluent.com/how-to/merge-pdfs-rust"
+slug = "merge_pdfs_rust"
+
+[[page]]
+url = "https://pdfluent.com/how-to/render-pdf-to-png-rust"
+slug = "render_pdf_to_png_rust"
+
+# ---------------------------------------------------------------------------
+# Expansion — pages covered by 3C-2 parity methods that don't yet
+# have a test counterpart. Populated as each cached HTML lands in
+# `tools/pdfluent-snippet-extract/cache/`.
+# ---------------------------------------------------------------------------
+
+# [[page]]
+# url = "https://pdfluent.com/how-to/convert-pdf-to-docx-rust"
+# slug = "to_docx_rust"
+#
+# [[page]]
+# url = "https://pdfluent.com/how-to/compress-pdf-rust"
+# slug = "compress_pdf_rust"
+#
+# [[page]]
+# url = "https://pdfluent.com/how-to/insert-image-pdf-rust"
+# slug = "insert_image_pdf_rust"
