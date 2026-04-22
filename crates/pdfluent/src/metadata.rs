@@ -48,6 +48,9 @@ struct PendingChanges {
 /// unconditionally; a document always has a metadata dictionary (created
 /// lazily in [`MetadataMut::commit`] if absent). Changes are flushed on
 /// [`commit`](MetadataMut::commit) or when the handle is dropped.
+///
+/// This is the pending-changes pattern: setters buffer edits on the handle,
+/// and `commit()` is the explicit flush that surfaces write errors.
 pub struct MetadataMut<'a> {
     doc: &'a mut crate::PdfDocument,
     pending: PendingChanges,
@@ -219,5 +222,50 @@ pub(crate) fn parse_keywords(raw: Option<String>) -> Vec<String> {
             .map(|k| k.trim().to_owned())
             .filter(|k| !k.is_empty())
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lopdf::Object;
+
+    fn attach_invalid_info_object(doc: &mut crate::PdfDocument) {
+        let info_id = doc.lopdf_mut().add_object(Object::Integer(7));
+        doc.lopdf_mut()
+            .trailer
+            .set("Info", Object::Reference(info_id));
+    }
+
+    #[test]
+    fn commit_surfaces_flush_errors_that_drop_would_swallow() {
+        let mut explicit = crate::PdfDocument::create();
+        attach_invalid_info_object(&mut explicit);
+
+        let err = explicit
+            .metadata_mut()
+            .set_title("Broken title")
+            .commit()
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::Error::Internal { .. }),
+            "expected explicit commit to surface the flush failure, got {err:?}",
+        );
+
+        let mut best_effort = crate::PdfDocument::create();
+        attach_invalid_info_object(&mut best_effort);
+        {
+            let mut metadata = best_effort.metadata_mut();
+            metadata.set_title("Dropped title");
+        }
+
+        let bytes = best_effort
+            .to_bytes()
+            .expect("drop path should swallow metadata flush errors");
+        let reopened = crate::PdfDocument::from_bytes(&bytes).expect("reparse after drop");
+        assert_eq!(
+            reopened.metadata().title.as_deref(),
+            None,
+            "drop auto-commit should remain best-effort when flushing metadata fails",
+        );
     }
 }
