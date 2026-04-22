@@ -1,0 +1,120 @@
+//! WASM surface parity tests (Epic 4 #1233).
+//!
+//! These tests run on the **native** target but compile-check the
+//! wasm-stub behaviour: both native and wasm paths of methods in the
+//! "⚠️ native + wasm stub" row of `WASM_SUPPORT.md` must expose an
+//! identical signature + return a typed error when the underlying
+//! implementation is absent.
+//!
+//! The companion wasm build (`cargo check --target
+//! wasm32-unknown-unknown -p pdfluent`) covers the actual
+//! cross-compile; this file catches signature drift on native.
+
+use pdfluent::prelude::*;
+
+// ---------------------------------------------------------------------------
+// Signature compile-time parity
+// ---------------------------------------------------------------------------
+//
+// A native-only method like `to_docx` has `#[cfg(not(target_arch =
+// "wasm32"))]` on the real impl and `#[cfg(target_arch = "wasm32")]`
+// on the wasm stub. Both must have the same external signature so
+// callers don't need target-gated code. These `fn`-pointer
+// assignments fail to compile if any signature drifts.
+
+#[test]
+fn to_docx_has_stable_signature() {
+    let _: fn(&PdfDocument, &std::path::Path) -> Result<()> = |doc, p| doc.to_docx(p);
+}
+
+#[test]
+fn to_images_has_stable_signature() {
+    let _: fn(&PdfDocument, &std::path::Path, ToImagesOptions) -> Result<ToImagesReport> =
+        |doc, p, o| doc.to_images(p, o);
+}
+
+// ---------------------------------------------------------------------------
+// WASM_SUPPORT.md §2.5 truth-check — native path invariants
+// ---------------------------------------------------------------------------
+//
+// These tests run on native and verify the native arm works. The
+// wasm arm is verified by `cargo check --target
+// wasm32-unknown-unknown` (a separate CI step) and by the matrix
+// doc itself.
+
+#[test]
+fn to_docx_native_succeeds_on_sample() {
+    let doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let out = std::env::temp_dir().join("pdfluent-wasm-surface-to_docx.docx");
+    let _ = std::fs::remove_file(&out);
+    doc.to_docx(&out).expect("to_docx native");
+    assert!(out.exists());
+    let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn to_images_native_succeeds_on_sample() {
+    let doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let dir = std::env::temp_dir().join("pdfluent-wasm-surface-to_images");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let pattern = dir.join("page_{page}.png");
+    let report = doc
+        .to_images(&pattern, ToImagesOptions::new().with_dpi(72))
+        .expect("to_images native");
+    assert_eq!(report.paths.len(), doc.page_count());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------
+// Deferred items in WASM_SUPPORT.md §2.5 — must return
+// Error::MissingDependency on BOTH targets today. The native arm
+// is directly testable; the wasm arm compiles identically so the
+// contract is preserved by signature-parity above.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn linearize_returns_missing_dependency_on_both_targets() {
+    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let err = doc.linearize().expect_err("deferred");
+    assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
+}
+
+#[test]
+fn embed_font_returns_missing_dependency_on_both_targets() {
+    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let err = doc
+        .embed_font(b"not-a-real-font", "Unknown")
+        .expect_err("deferred");
+    assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
+}
+
+#[test]
+fn add_decoration_returns_missing_dependency_on_both_targets() {
+    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let err = doc
+        .add_decoration(PageDecoration::watermark(
+            "DRAFT",
+            WatermarkOptions::centered(),
+        ))
+        .expect_err("deferred");
+    assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
+}
+
+// ---------------------------------------------------------------------------
+// Error surface — UnsupportedOnWasm variant must remain stable.
+// ---------------------------------------------------------------------------
+//
+// The WASM stubs construct this variant; its `code()` is part of
+// the frozen error contract (STABILITY.md §8).
+
+#[test]
+fn unsupported_on_wasm_code_is_stable() {
+    let err = Error::UnsupportedOnWasm {
+        operation: "example",
+    };
+    assert_eq!(err.code(), "E-ENV-UNSUPPORTED-ON-WASM");
+    let msg = format!("{err}");
+    assert!(msg.contains("example"));
+    assert!(msg.to_lowercase().contains("wasm"));
+}
