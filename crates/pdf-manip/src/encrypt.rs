@@ -28,7 +28,8 @@ impl EncryptionAlgorithm {
     fn version(&self) -> i64 {
         match self {
             Self::Rc4_40 => 1,
-            Self::Rc4_128 | Self::Aes128 => 2,
+            Self::Rc4_128 => 2,
+            Self::Aes128 => 4,
             Self::Aes256 => 5,
         }
     }
@@ -234,16 +235,29 @@ pub fn encrypt_and_save<W: Write>(
 
     let state = match config.algorithm {
         // AES-256 (PDF 2.0, V=5, R=6) — no /ID required; random key generated internally.
-        //
-        // Note: AES-128 currently falls through to AES-256 at the crypto
-        // layer because `lopdf::aes256_encryption_state` is the only AES
-        // helper exposed by lopdf today. An AES-128 path lands in a
-        // post-1.0 follow-up; output is stronger (not weaker) than
-        // advertised so this is safe-but-misleading and documented on
-        // the pdfluent side.
-        EncryptionAlgorithm::Aes256 | EncryptionAlgorithm::Aes128 => {
+        EncryptionAlgorithm::Aes256 => {
             lopdf::aes256_encryption_state(owner_pw, user_pw, lopdf_perms)
                 .map_err(|e| ManipError::Encryption(e.to_string()))?
+        }
+        // AES-128 (PDF 1.6, V=4, R=4) — uses document /ID in key derivation.
+        EncryptionAlgorithm::Aes128 => {
+            use lopdf::encryption::crypt_filters::Aes128CryptFilter;
+            use std::collections::BTreeMap;
+            use std::sync::Arc;
+            ensure_document_id(doc);
+            let crypt_filter: Arc<dyn lopdf::encryption::crypt_filters::CryptFilter> =
+                Arc::new(Aes128CryptFilter);
+            EncryptionState::try_from(EncryptionVersion::V4 {
+                document: doc,
+                encrypt_metadata: true,
+                crypt_filters: BTreeMap::from([(b"StdCF".to_vec(), crypt_filter)]),
+                stream_filter: b"StdCF".to_vec(),
+                string_filter: b"StdCF".to_vec(),
+                owner_password: owner_pw,
+                user_password: user_pw,
+                permissions: lopdf_perms,
+            })
+            .map_err(|e| ManipError::Encryption(e.to_string()))?
         }
         // RC4-128 (V=2, R=3) — requires /ID in the trailer.
         EncryptionAlgorithm::Rc4_128 => {
@@ -326,5 +340,80 @@ mod tests {
         assert_eq!(EncryptionAlgorithm::Aes256.version(), 5);
         assert_eq!(EncryptionAlgorithm::Aes256.revision(), 6);
         assert_eq!(EncryptionAlgorithm::Aes256.key_length(), 256);
+        assert_eq!(EncryptionAlgorithm::Aes128.version(), 4);
+        assert_eq!(EncryptionAlgorithm::Aes128.revision(), 4);
+        assert_eq!(EncryptionAlgorithm::Aes128.key_length(), 128);
+    }
+
+    fn make_minimal_doc() -> lopdf::Document {
+        use lopdf::{dictionary, Object, Stream};
+        let mut doc = lopdf::Document::with_version("1.7");
+        let content = Stream::new(dictionary! {}, b"BT (Hello) Tj ET".to_vec());
+        let content_id = doc.add_object(Object::Stream(content));
+        let page = dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => Object::Reference(content_id),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page));
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        };
+        let pages_id = doc.add_object(Object::Dictionary(pages));
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        doc
+    }
+
+    #[test]
+    fn aes128_encrypt_decrypt_roundtrip() {
+        let mut doc = make_minimal_doc();
+        let config = EncryptConfig {
+            user_password: b"secret".to_vec(),
+            owner_password: b"owner".to_vec(),
+            algorithm: EncryptionAlgorithm::Aes128,
+            permissions: Permissions::allow_all(),
+        };
+
+        let mut output = Vec::new();
+        encrypt_and_save(&mut doc, &config, &mut output).expect("AES-128 encrypt should succeed");
+        assert!(!output.is_empty(), "encrypted output must not be empty");
+
+        // Load + decrypt — lopdf decrypts content streams in-place.
+        let mut dec_doc = lopdf::Document::load_mem(&output).expect("load encrypted doc");
+        dec_doc.decrypt("secret").expect("AES-128 decrypt should succeed with correct password");
+    }
+
+    #[test]
+    fn aes128_trailer_v4_r4_aesv2() {
+        let mut doc = make_minimal_doc();
+        let config = EncryptConfig {
+            user_password: b"".to_vec(),
+            owner_password: b"owner".to_vec(),
+            algorithm: EncryptionAlgorithm::Aes128,
+            permissions: Permissions::allow_all(),
+        };
+
+        let mut output = Vec::new();
+        encrypt_and_save(&mut doc, &config, &mut output).expect("encrypt");
+
+        // Scan raw PDF bytes for encryption parameters — dictionary keys and
+        // name values are not encrypted, so they appear as plain text.
+        let text = String::from_utf8_lossy(&output);
+        assert!(text.contains("/V 4"), "raw PDF must contain /V 4 for AES-128");
+        assert!(text.contains("/R 4"), "raw PDF must contain /R 4 for AES-128");
+        assert!(text.contains("/StmF"), "raw PDF must contain /StmF");
+        assert!(text.contains("/StrF"), "raw PDF must contain /StrF");
+        assert!(text.contains("/StdCF"), "raw PDF must reference StdCF filter");
+        assert!(text.contains("AESV2"), "raw PDF must contain AESV2 crypt filter method");
     }
 }

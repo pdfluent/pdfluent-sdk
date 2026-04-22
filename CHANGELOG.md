@@ -9,10 +9,12 @@ All notable changes to the xfa-native-rust PDF engine are documented here.
 - `PadesProfile` enum and `SignerConfig` struct in `pdf-sign` — #1295
 - `infer_pades_profile`: B-B / B-T / B-LT / B-LTA auto-selected from `tsa_url` + `enable_ltv` — #1295
 - `Pkcs12Signer::with_config` builder + `effective_pades_profile()` — #1295
+- Native AES-128 encryption in `pdf-manip` (V=4, R=4, CFM AESV2) — #1296
 
 ### Changed
 
 - **[BEHAVIOR]** `Pkcs12Signer::effective_pades_profile()` now infers the correct PAdES level from the attached `SignerConfig`. Previously there was no inference and callers selected the signing entry point manually. Callers with an explicit `profile` field are unaffected — explicit always wins — #1295
+- **[BREAKING]** `EncryptionAlgorithm::Aes128` now produces genuine AES-128 (V=4, R=4, CFM AESV2) instead of silently upgrading to AES-256. PDFs encrypted with `Aes128` will now correctly identify as AES-128 in conforming readers. Callers that relied on the silent upgrade to AES-256 must switch to `EncryptionAlgorithm::Aes256` explicitly — #1296
 
 ## [Unreleased] — 2026-04-02
 
