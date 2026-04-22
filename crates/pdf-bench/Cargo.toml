@@ -22,6 +22,26 @@ lopdf.workspace = true
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 
+[[bin]]
+name = "gen-corpus"
+path = "src/corpus_gen.rs"
+
+[[bin]]
+name = "cold-start"
+path = "src/cold_start.rs"
+
+[[bin]]
+name = "idle-rss"
+path = "src/idle_rss.rs"
+
+[[bin]]
+name = "merge-once"
+path = "src/merge_once.rs"
+
+[[bin]]
+name = "extract-once"
+path = "src/extract_once.rs"
+
 [[bench]]
 name = "pdf_parse"
 harness = false
@@ -36,5 +56,9 @@ harness = false
 
 [[bench]]
 name = "pdf_benchmarks"
+harness = false
+
+[[bench]]
+name = "comparison"
 harness = false
 
