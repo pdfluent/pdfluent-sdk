@@ -104,18 +104,20 @@ pub fn render(
     // vello_common::Pixmap::new(0, 0) allocates an empty buffer; any subsequent
     // pixel sample then panics with "index out of bounds: the len is 0".
     // Fixes crashes on poppler-327-0.zip-{0,1}.pdf. (#546)
-    // Ceil (not floor or round) to match MuPDF canvas sizes for non-integer
-    // MediaBox dimensions. MuPDF consistently uses ceil to compute the output
-    // pixmap size, e.g. 25pt × 10pt at 150 DPI = 52.08 × 20.83 → 53 × 21.
-    // For exact integer values the result is identical to floor/round. (#544, #558)
+    // Round-half-up (PDFium convention: (int)(size*scale + 0.5)) rather than
+    // ceil. PDFium / pdfRest is our AVRT oracle; ceil produced a 0–1 px
+    // height/width excess vs pdfrest on 9 non-integer-MediaBox PDFs (e.g.
+    // 0273, 0139, 0356, 0368, 0508, 0272, 0568, 0418, 0325), destroying SSIM
+    // through pixel-row/column misalignment.
+    // For exact integer values round/ceil/floor are identical. (#1001, #544, #558)
     let (pix_width, pix_height) = (
         render_settings
             .width
-            .unwrap_or(scaled_width.ceil() as u16)
+            .unwrap_or(scaled_width.round() as u16)
             .max(1),
         render_settings
             .height
-            .unwrap_or(scaled_height.ceil() as u16)
+            .unwrap_or(scaled_height.round() as u16)
             .max(1),
     );
     let mut state = Context::new(

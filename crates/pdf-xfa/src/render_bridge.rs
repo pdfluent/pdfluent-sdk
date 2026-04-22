@@ -1437,15 +1437,11 @@ fn render_caption(
 
     // Determine the caption bounding box.
     let (cap_x, cap_y, cap_w, cap_h) = match caption_placement {
+        "left" => (x, pdf_y, caption_reserve, h),
         "right" => (x + w - caption_reserve, pdf_y, caption_reserve, h),
         "top" => (x, pdf_y + h - caption_reserve, w, caption_reserve),
         "bottom" => (x, pdf_y, w, caption_reserve),
-        _ => (
-            x,
-            pdf_y + h - caption_reserve,
-            caption_reserve,
-            caption_reserve.min(h),
-        ),
+        _ => (x, pdf_y, caption_reserve, h),
     };
 
     // For multi-line captions (contains newlines or wider than caption area),

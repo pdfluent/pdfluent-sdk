@@ -1012,23 +1012,46 @@ impl ICCProfile {
 
         // PDF spec §8.6.5.8: the default rendering intent is RelativeColorimetric.
         // moxcms defaults to Perceptual, which compresses in-gamut colors and
-        // produces subtle hue shifts on CMYK→sRGB conversions. Use
+        // produces subtle hue shifts on CMYK→sRGB conversions. Prefer
         // RelativeColorimetric to match the PDF spec default and the behaviour
-        // of Acrobat/MuPDF. Cherry-picked from reverted #920 overhaul
-        // (commit 23b7007ba); no other colour-pipeline changes from that
-        // commit are included here.
-        let options = TransformOptions {
-            rendering_intent: RenderingIntent::RelativeColorimetric,
-            ..TransformOptions::default()
-        };
-
-        let u8_transform = src_profile
-            .create_transform_8bit(src_layout, &dest_profile, Layout::Rgb, options)
-            .ok()?;
-
-        let f32_transform = src_profile
-            .create_transform_f32(src_layout, &dest_profile, Layout::Rgb, options)
-            .ok()?;
+        // of Acrobat/MuPDF.
+        //
+        // BUT: many bundled/embedded ICC profiles — including our own built-in
+        // CGATS001Compat-v2-micro CMYK profile — ship only a Perceptual A2B
+        // LUT. moxcms returns UnsupportedLutRenderingIntent in that case,
+        // which silently poisoned the entire CMYK path (profile load returns
+        // None → default_cmyk_profile() returns None → DeviceCMYK falls back
+        // to the PDF §10.3.5 algebraic formula, which hard-clamps rich-black
+        // CMYK to zero and produces near-black output where Acrobat/PDFium
+        // render colour correctly). Fall back from RelativeColorimetric to
+        // Perceptual to Saturation on missing-LUT so the profile still works.
+        // (#1002)
+        let intents_to_try = [
+            RenderingIntent::RelativeColorimetric,
+            RenderingIntent::Perceptual,
+            RenderingIntent::Saturation,
+        ];
+        let mut u8_transform = None;
+        let mut f32_transform = None;
+        for intent in intents_to_try {
+            let options = TransformOptions {
+                rendering_intent: intent,
+                ..TransformOptions::default()
+            };
+            let u8_ok = src_profile
+                .create_transform_8bit(src_layout, &dest_profile, Layout::Rgb, options)
+                .ok();
+            let f32_ok = src_profile
+                .create_transform_f32(src_layout, &dest_profile, Layout::Rgb, options)
+                .ok();
+            if let (Some(u), Some(f)) = (u8_ok, f32_ok) {
+                u8_transform = Some(u);
+                f32_transform = Some(f);
+                break;
+            }
+        }
+        let u8_transform = u8_transform?;
+        let f32_transform = f32_transform?;
 
         Some(Self(Arc::new(ICCColorRepr {
             transform_u8: u8_transform,
