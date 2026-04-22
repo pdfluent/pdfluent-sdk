@@ -447,7 +447,8 @@ impl Type0Font {
             // behaviour for Identity-H fonts lacking a usable ToUnicode map.
             FontType::OpenType(t) => t
                 .glyph_id_to_unicode(glyph)
-                .or_else(|| self.identity_unicode_fallback(code)),
+                .or_else(|| self.identity_unicode_fallback(code))
+                .map(BfString::Char),
             FontType::Cff(c) => {
                 let table = c.table();
 
