@@ -243,3 +243,47 @@ fn embed_font_returns_missing_dependency() {
         .expect_err("embed_font should be deferred");
     assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
 }
+
+/// Codex #1269 P2 regression guard: `to_images` on a document with zero
+/// pages previously underflowed `with_capacity(to - from + 1)` and
+/// panicked. Since FASE B it returns an empty report cleanly.
+#[test]
+fn to_images_on_zero_page_document_returns_empty_report() {
+    // Build an in-memory PDF with a catalog + /Pages dict that has
+    // Count=0 and an empty /Kids array. This is a legal (if unusual)
+    // PDF.
+    use lopdf::{dictionary, Document, Object};
+    let mut doc_builder = Document::with_version("1.4");
+    let pages_id = doc_builder.new_object_id();
+    doc_builder.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => Vec::<Object>::new(),
+            "Count" => 0,
+        }),
+    );
+    let catalog_id = doc_builder.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    doc_builder.trailer.set("Root", catalog_id);
+    let mut bytes = Vec::new();
+    doc_builder.save_to(&mut bytes).expect("serialise");
+
+    let doc = PdfDocument::from_bytes(&bytes).expect("parse empty doc");
+    assert_eq!(doc.page_count(), 0);
+
+    let dir = std::env::temp_dir().join("pdfluent-zero-page-to_images");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let pattern = dir.join("page_{page}.png");
+
+    // Must NOT panic — must return an empty report.
+    let report = doc
+        .to_images(&pattern, ToImagesOptions::new().with_dpi(72))
+        .expect("to_images on empty doc");
+    assert!(report.paths.is_empty());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

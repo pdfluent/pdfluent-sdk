@@ -1,0 +1,53 @@
+name: WASM Surface Guard
+
+# Epic 4 #1233 follow-up (Codex #1277 P2): cross-compile-check the
+# wasm_surface integration test so the native/wasm signature-parity
+# contract is actually pinned on the wasm target, not merely on native.
+#
+# `cargo check --target wasm32-unknown-unknown -p pdfluent` by itself
+# doesn't check the integration-test targets. We pass `--tests` here
+# so the `tests/wasm_surface.rs` fn-pointer assertions compile in
+# the wasm target too — if the native and wasm arms of `to_docx` /
+# `to_images` ever drift, this job fails.
+
+on:
+  pull_request:
+    paths:
+      - 'crates/pdfluent/src/**'
+      - 'crates/pdfluent/tests/wasm_surface.rs'
+      - 'WASM_SUPPORT.md'
+      - '.github/workflows/wasm-surface-guard.yml'
+  push:
+    branches: [master]
+
+jobs:
+  wasm-surface:
+    name: Cross-compile wasm_surface on wasm32-unknown-unknown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: wasm-surface
+
+      - name: Cross-compile pdfluent tests for wasm32
+        # --tests pulls in the integration-test targets including
+        # wasm_surface.rs. The fn-pointer assignments inside that file
+        # are the actual contract pinning — they fail to compile if
+        # the native and wasm signatures of to_docx/to_images drift.
+        run: |
+          cargo check \
+            --target wasm32-unknown-unknown \
+            -p pdfluent \
+            --tests
+
+      - name: Native smoke test (sanity)
+        # If this passes but the wasm check above failed, the drift
+        # is wasm-specific — which is exactly what this job guards.
+        run: cargo test -p pdfluent --test wasm_surface

@@ -235,11 +235,17 @@ fn naturally_runnable_slugs_match_master_reality() {
                 body.find(&format!("fn {abbreviated}_runs"))
             })
             .or_else(|| body.find("_runs()"));
-        let Some(idx) = idx else {
-            // Missing _runs entirely is caught by the classification
-            // test above; fall through.
-            continue;
-        };
+        // Codex #1279 P2: a slug on NATURALLY_RUNNABLE MUST have a
+        // `_runs` function. Silently continuing would let CI pass
+        // after a `_runs` test is accidentally deleted while the
+        // slug remains in the runnable list.
+        let idx = idx.unwrap_or_else(|| {
+            panic!(
+                "{slug} is listed in NATURALLY_RUNNABLE but has no _runs \
+                 function in tests/web_examples/{slug}.rs. Either add \
+                 the test or move the slug to DEFERRED_RUNTIME."
+            )
+        });
         // Look backwards from `fn foo_runs` for attributes on the
         // same item. `#[ignore]` typically sits 1-2 lines above.
         let window_start = idx.saturating_sub(120);

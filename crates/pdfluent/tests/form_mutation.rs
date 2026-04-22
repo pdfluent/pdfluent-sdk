@@ -444,3 +444,21 @@ fn checkbox_on_state_resolves_from_kid_widget() {
         "resolver should have picked up the kid's /AP/N on-state instead of defaulting to Yes",
     );
 }
+
+// ---------------------------------------------------------------------------
+// GA blocker (FASE B) — flatten_forms no longer panics
+// ---------------------------------------------------------------------------
+
+#[test]
+fn flatten_forms_returns_missing_dependency_not_panic() {
+    let bytes = build_full_form_pdf();
+    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+
+    let err = doc.flatten_forms().expect_err("flatten deferred");
+    assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("flatten") || msg.contains("1223"),
+        "error should explain the deferred-runtime state, got: {msg}",
+    );
+}

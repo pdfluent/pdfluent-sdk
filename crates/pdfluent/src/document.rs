@@ -525,8 +525,22 @@ impl PdfDocument {
     }
 
     /// Flatten all AcroForm fields to static content.
+    ///
+    /// # 1.0 status — deferred runtime
+    ///
+    /// The flatten pipeline (widget appearance stream rendering +
+    /// acroform removal + /Annots pruning) is tracked on #1223 and
+    /// lands post-freeze. Calling this method at 1.0 returns
+    /// [`Error::MissingDependency`] — no panic. Users MUST check the
+    /// result; see [STABILITY.md §3.3](../STABILITY.md) for the
+    /// full deferred-items register.
     pub fn flatten_forms(&mut self) -> Result<()> {
-        unimplemented!("Epic 2 #1223 / #1245");
+        self.require_capability(Capability::AcroFormFlatten)?;
+        Err(Error::MissingDependency {
+            dep: "pdf-manip::flatten_forms",
+            install_hint: "AcroForm flatten runtime tracked on #1223; lands in a 1.x MINOR. Use \
+                 pdf_manip::flatten_forms directly for now if you need the raw pipeline.",
+        })
     }
 
     // ---------- Decoration (Epic 2 #1223 / Epic 3 #1225) ----------
@@ -651,6 +665,14 @@ impl PdfDocument {
         self.require_capability(Capability::RenderRaster)?;
 
         let total = self.engine.page_count();
+        // Codex P2 on #1269: guard zero-page documents BEFORE computing
+        // `to - from + 1` — otherwise a default `opts.pages = None` on
+        // a 0-page doc produces `from=1, to=0`, and the subsequent
+        // `with_capacity(usize::MAX)` panics in debug (underflow) or
+        // tries a huge allocation in release.
+        if total == 0 {
+            return Ok(ToImagesReport { paths: Vec::new() });
+        }
         let (from, to) = match opts.pages {
             Some((f, t)) => {
                 if f == 0 || t < f || t > total {
@@ -1043,7 +1065,14 @@ impl PdfDocument {
     /// [`RedactOptions::on_pages`] — page numbers are translated 1-to-1.
     #[cfg_attr(
         feature = "tracing",
-        tracing::instrument(target = "pdfluent", skip(self, opts), fields(text_len = text.len()))
+        // `text` is the redaction query — frequently PII/secrets the
+        // caller is trying to scrub. MUST be skipped so the tracing
+        // span records only `text_len` (low-cardinality, non-secret).
+        tracing::instrument(
+            target = "pdfluent",
+            skip(self, text, opts),
+            fields(text_len = text.len())
+        )
     )]
     pub fn redact(&mut self, text: &str, opts: crate::redact::RedactOptions) -> Result<()> {
         self.require_capability(Capability::Redaction)?;
