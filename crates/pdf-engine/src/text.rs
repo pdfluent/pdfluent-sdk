@@ -130,6 +130,12 @@ impl TextBlock {
             let curr = &pair[1];
             let expected_end = prev.measured_right();
             let gap = curr.x - expected_end;
+            if gap <= prev.font_size * 0.12 {
+                if let Some(trimmed) = trim_overlapping_word_prefix(&prev.text, &curr.text) {
+                    result.push_str(&trimmed);
+                    continue;
+                }
+            }
             if gap > prev.font_size * 0.25 {
                 result.push(' ');
             }
@@ -159,6 +165,7 @@ impl TextBand {
                 .unwrap_or(Ordering::Equal)
                 .then_with(|| b.y.partial_cmp(&a.y).unwrap_or(Ordering::Equal))
         });
+        collapse_overprinted_spans(&mut self.spans);
     }
 
     fn row_block(&self) -> TextBlock {
@@ -533,6 +540,99 @@ fn estimate_glyph_width(glyph: &Glyph<'_>, font_size: f64) -> f64 {
     }
 }
 
+/// Collapse fake-bold / overprint duplicates inside one band.
+///
+/// Real-word corpus failures such as 0105.pdf draw the same text several times
+/// with sub-point x drift to simulate heavier weight. Text extraction should
+/// keep the most informative span once rather than concatenate every overprint.
+fn collapse_overprinted_spans(spans: &mut Vec<TextSpan>) {
+    if spans.len() < 2 {
+        return;
+    }
+
+    let mut deduped: Vec<TextSpan> = Vec::with_capacity(spans.len());
+    for span in spans.drain(..) {
+        if let Some(last) = deduped.last_mut() {
+            if spans_are_overprint_duplicates(last, &span) {
+                let choose_incoming = span.text.chars().count() > last.text.chars().count()
+                    || (span.text.chars().count() == last.text.chars().count()
+                        && span.width > last.width);
+                let preferred_text = if choose_incoming {
+                    span.text.clone()
+                } else {
+                    last.text.clone()
+                };
+                let left = last.x.min(span.x);
+                let right = last.right().max(span.right());
+                last.x = left;
+                last.y = (last.y + span.y) * 0.5;
+                last.width = (right - left).max(last.width).max(span.width);
+                last.height = last.height.max(span.height);
+                last.font_size = last.font_size.max(span.font_size);
+                last.text = preferred_text;
+                continue;
+            }
+        }
+
+        deduped.push(span);
+    }
+
+    *spans = deduped;
+}
+
+fn spans_are_overprint_duplicates(lhs: &TextSpan, rhs: &TextSpan) -> bool {
+    let lhs_text = lhs.text.trim();
+    let rhs_text = rhs.text.trim();
+    if lhs_text.is_empty() || rhs_text.is_empty() {
+        return false;
+    }
+
+    let same_baseline = (lhs.y - rhs.y).abs() <= lhs.font_size.max(rhs.font_size) * 0.12;
+    if !same_baseline {
+        return false;
+    }
+
+    let lhs_left = lhs.x;
+    let lhs_right = lhs.right();
+    let rhs_left = rhs.x;
+    let rhs_right = rhs.right();
+    let overlap = (lhs_right.min(rhs_right) - lhs_left.max(rhs_left)).max(0.0);
+    let min_width = (lhs_right - lhs_left).min(rhs_right - rhs_left).max(1.0);
+    let heavily_overlaps = overlap / min_width >= 0.85;
+    if !heavily_overlaps {
+        return false;
+    }
+
+    lhs_text == rhs_text || lhs_text.starts_with(rhs_text) || rhs_text.starts_with(lhs_text)
+}
+
+fn trim_overlapping_word_prefix(prev: &str, curr: &str) -> Option<String> {
+    let prev_chars: Vec<char> = prev.trim_end().chars().collect();
+    let curr_chars: Vec<char> = curr.trim_start().chars().collect();
+    let max = prev_chars.len().min(curr_chars.len());
+
+    for len in (4..=max).rev() {
+        let prev_start = prev_chars.len() - len;
+        if prev_chars[prev_start..] != curr_chars[..len] {
+            continue;
+        }
+
+        if !curr_chars[..len].iter().all(|ch| ch.is_alphanumeric()) {
+            continue;
+        }
+
+        let prev_boundary = prev_start == 0 || !prev_chars[prev_start - 1].is_alphanumeric();
+        let curr_boundary = len == curr_chars.len() || !curr_chars[len].is_alphanumeric();
+        if !prev_boundary || !curr_boundary {
+            continue;
+        }
+
+        return Some(curr_chars[len..].iter().collect());
+    }
+
+    None
+}
+
 /// Compute an adaptive column gap threshold from a set of bands.
 ///
 /// Collects all positive inter-span gaps within each band, computes the
@@ -782,8 +882,11 @@ fn xy_cut_recursive(spans: Vec<TextSpan>, depth: usize, stats: &PageStats) -> Ve
 /// leaf of XY-Cut recursion — at this point the region either has no
 /// further cuts or the density guard refused them.
 fn band_based_blocks(spans: Vec<TextSpan>, stats: &PageStats) -> Vec<TextBlock> {
-    let bands = group_spans_into_bands_with_stats(spans, stats);
-    bands.iter().map(TextBand::row_block).collect()
+    // XY-Cut can miss recurring gutters when a small number of bands span the
+    // full page width (e.g. a running header above a 3-column body). In that
+    // case, fall back to the older band/gutter detector inside the leaf region
+    // instead of flattening everything row-major.
+    group_spans_into_blocks_legacy_with_stats(spans, stats)
 }
 
 fn median_font_size(spans: &[TextSpan]) -> f64 {
@@ -965,10 +1068,7 @@ fn columns_are_dense(left: &[TextSpan], right: &[TextSpan], stats: &PageStats) -
 /// Attempt a horizontal (zone / paragraph) cut. Unlike vertical cuts
 /// this does NOT need a density guard — splitting top-from-bottom
 /// cannot re-order content.
-fn try_horizontal_cut(
-    spans: &[TextSpan],
-    stats: &PageStats,
-) -> Option<(Vec<Vec<TextSpan>>, f64)> {
+fn try_horizontal_cut(spans: &[TextSpan], stats: &PageStats) -> Option<(Vec<Vec<TextSpan>>, f64)> {
     if spans.len() < 2 {
         return None;
     }
@@ -1035,6 +1135,18 @@ fn try_horizontal_cut(
 #[allow(dead_code)]
 fn group_spans_into_blocks_legacy(spans: Vec<TextSpan>) -> Vec<TextBlock> {
     let bands = group_spans_into_bands(spans);
+    group_spans_into_blocks_legacy_from_bands(bands)
+}
+
+fn group_spans_into_blocks_legacy_with_stats(
+    spans: Vec<TextSpan>,
+    stats: &PageStats,
+) -> Vec<TextBlock> {
+    let bands = group_spans_into_bands_with_stats(spans, stats);
+    group_spans_into_blocks_legacy_from_bands(bands)
+}
+
+fn group_spans_into_blocks_legacy_from_bands(bands: Vec<TextBand>) -> Vec<TextBlock> {
     if bands.is_empty() {
         return Vec::new();
     }
@@ -1074,7 +1186,7 @@ fn group_spans_into_blocks_legacy(spans: Vec<TextSpan>) -> Vec<TextBlock> {
                 break;
             }
 
-            if !boundaries_match(&boundaries, &next_gap_midpoints) {
+            if !boundaries_match(&boundaries, &next_gap_midpoints, column_gap_threshold) {
                 break;
             }
 
@@ -1106,10 +1218,7 @@ fn group_spans_into_bands(spans: Vec<TextSpan>) -> Vec<TextBand> {
     group_spans_into_bands_with_stats(spans, &stats)
 }
 
-fn group_spans_into_bands_with_stats(
-    mut spans: Vec<TextSpan>,
-    stats: &PageStats,
-) -> Vec<TextBand> {
+fn group_spans_into_bands_with_stats(mut spans: Vec<TextSpan>, stats: &PageStats) -> Vec<TextBand> {
     if spans.is_empty() {
         return Vec::new();
     }
@@ -1153,12 +1262,15 @@ fn group_spans_into_bands_with_stats(
     bands
 }
 
-fn boundaries_match(boundaries: &[f64], gap_midpoints: &[f64]) -> bool {
+fn boundaries_match(boundaries: &[f64], gap_midpoints: &[f64], column_gap_threshold: f64) -> bool {
+    let tolerance = (column_gap_threshold * 1.5)
+        .max(COLUMN_GAP_MATCH_TOLERANCE)
+        .min(60.0);
     boundaries.len() == gap_midpoints.len()
         && boundaries
             .iter()
             .zip(gap_midpoints)
-            .all(|(lhs, rhs)| (lhs - rhs).abs() <= COLUMN_GAP_MATCH_TOLERANCE)
+            .all(|(lhs, rhs)| (lhs - rhs).abs() <= tolerance)
 }
 
 fn update_boundaries(boundaries: &mut [f64], gap_midpoints: &[f64], seen_gapped_bands: usize) {
@@ -1599,8 +1711,10 @@ mod tests {
         }
         let threshold = compute_adaptive_column_gap(&bands);
         // median gap = 4, × 3 = 12, clamped to [10, 40] → 12
-        assert!(threshold >= 10.0 && threshold <= 14.0,
-            "expected ~12, got {threshold}");
+        assert!(
+            threshold >= 10.0 && threshold <= 14.0,
+            "expected ~12, got {threshold}"
+        );
     }
 
     #[test]
@@ -1614,8 +1728,10 @@ mod tests {
             bands.push(band);
         }
         let threshold = compute_adaptive_column_gap(&bands);
-        assert!((threshold - COLUMN_GAP_THRESHOLD_MIN).abs() < 0.01,
-            "expected {COLUMN_GAP_THRESHOLD_MIN}, got {threshold}");
+        assert!(
+            (threshold - COLUMN_GAP_THRESHOLD_MIN).abs() < 0.01,
+            "expected {COLUMN_GAP_THRESHOLD_MIN}, got {threshold}"
+        );
     }
 
     #[test]
@@ -1625,8 +1741,10 @@ mod tests {
         band.spans.push(span("Right", 80.0, 700.0, 30.0)); // gap = 50
         let bands = vec![band];
         let threshold = compute_adaptive_column_gap(&bands);
-        assert!((threshold - 37.5).abs() < 0.01,
-            "expected 37.5 (0.75×50), got {threshold}");
+        assert!(
+            (threshold - 37.5).abs() < 0.01,
+            "expected 37.5 (0.75×50), got {threshold}"
+        );
     }
 
     #[test]
@@ -1712,10 +1830,7 @@ mod tests {
     fn hyphen_stitch_numeric_range_not_stitched() {
         // "42-" — char before hyphen is digit, not alphabetic
         let lines = vec!["page 42-".into(), "seventy".into()];
-        assert_eq!(
-            stitch_hyphenated_lines(&lines),
-            "page 42-\nseventy"
-        );
+        assert_eq!(stitch_hyphenated_lines(&lines), "page 42-\nseventy");
     }
 
     #[test]
@@ -1729,10 +1844,7 @@ mod tests {
     fn hyphen_stitch_short_continuation_not_stitched() {
         // Next line starts with "an" (2 chars) → below 3-char guard
         let lines = vec!["counter-".into(), "an example".into()];
-        assert_eq!(
-            stitch_hyphenated_lines(&lines),
-            "counter-\nan example"
-        );
+        assert_eq!(stitch_hyphenated_lines(&lines), "counter-\nan example");
     }
 
     #[test]
@@ -1904,7 +2016,12 @@ mod tests {
         // would otherwise be forced into the left column of a 2-column
         // region below it.
         let texts = block_texts(vec![
-            span("Full width intro spanning both columns here", 40.0, 740.0, 360.0),
+            span(
+                "Full width intro spanning both columns here",
+                40.0,
+                740.0,
+                360.0,
+            ),
             span("Left A", 40.0, 700.0, 50.0),
             span("Right A", 320.0, 700.0, 50.0),
             span("Left B", 40.0, 684.0, 50.0),
@@ -1990,7 +2107,9 @@ mod tests {
         let stats = PageStats::from_spans(&spans);
         // cut_x = 200. Banner only in left group (midpoint < 200). Width
         // exceeds 0.7 × left column width → rejected.
-        assert!(!columns_are_band_aligned(&spans, 200.0, 40.0, 360.0, &stats));
+        assert!(!columns_are_band_aligned(
+            &spans, 200.0, 40.0, 360.0, &stats
+        ));
     }
 
     #[test]
@@ -2032,8 +2151,66 @@ mod tests {
         }
         let texts = block_texts(spans);
         // Should detect 2-column layout and read column-major
-        assert!(texts.len() >= 6, "expected column-major output, got {texts:?}");
+        assert!(
+            texts.len() >= 6,
+            "expected column-major output, got {texts:?}"
+        );
         // First three blocks should be left column lines
-        assert!(texts[0].contains("Lorem"), "first block should be left column: {texts:?}");
+        assert!(
+            texts[0].contains("Lorem"),
+            "first block should be left column: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn xy_cut_leaf_falls_back_to_legacy_columns_for_header_plus_three_columns() {
+        let texts = block_texts(vec![
+            span("73022", 45.0, 750.0, 70.0),
+            span("Federal Register banner", 125.6, 750.0, 260.0),
+            span("Left column line one", 45.0, 725.0, 140.0),
+            span("Middle column line one", 222.0, 725.0, 140.0),
+            span("Right column line one", 399.0, 725.0, 120.0),
+            span("Left column line two", 45.0, 715.0, 140.0),
+            span("Middle column line two", 210.0, 715.0, 152.0),
+            span("Right column line two", 388.0, 715.0, 132.0),
+            span("Left column line three", 45.0, 705.0, 140.0),
+            span("Middle column line three", 235.0, 705.0, 135.0),
+            span("Right column line three", 408.0, 705.0, 118.0),
+        ]);
+
+        assert_eq!(
+            texts,
+            vec![
+                "73022 Federal Register banner",
+                "Left column line one",
+                "Left column line two",
+                "Left column line three",
+                "Middle column line one",
+                "Middle column line two",
+                "Middle column line three",
+                "Right column line one",
+                "Right column line two",
+                "Right column line three",
+            ]
+        );
+    }
+
+    #[test]
+    fn overlapping_fake_bold_spans_collapse_to_single_copy() {
+        let texts = block_texts(vec![
+            span("1 This is fakebold text.", 25.9, 785.3, 320.0),
+            span("1 This is fakebold text.", 26.2, 785.3, 320.0),
+            span("1 This is fakebold text.", 26.4, 785.3, 320.0),
+            span("1 This is fakebold text.", 26.7, 785.3, 320.0),
+            span("2 This is a fakebold", 27.0, 714.8, 142.0),
+            span(" fakebold", 169.8, 714.8, 70.0),
+            span(" fakebold", 170.1, 714.8, 70.0),
+            span(" fakebold word.", 170.4, 714.8, 110.0),
+        ]);
+
+        assert_eq!(
+            texts,
+            vec!["1 This is fakebold text.", "2 This is a fakebold word.",]
+        );
     }
 }
