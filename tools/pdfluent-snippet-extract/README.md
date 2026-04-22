@@ -100,14 +100,49 @@ input. That's the property the #1238 drift-guard relies on.
 cargo test -p pdfluent-snippet-extract
 ```
 
-## Follow-ups
+## CI drift-guard (#1238)
 
-- **#1237** — import each `tests/web_examples/*.rs` into a
-  `web_examples.rs` index so `cargo test -p pdfluent` sweeps them.
-- **#1238** — GitHub Action runs this extractor and fails if its
-  output differs from what's committed.
+`.github/workflows/docs-drift-guard.yml` runs the extractor in
+offline mode and fails if its output diverges from the committed
+`tests/web_examples/*.rs`.
+
+Two contract files the workflow depends on:
+
+- `tools/pdfluent-snippet-extract/cache/*.html` — the HTML snapshots
+  the extractor consumes. Committed to the repo so CI never hits
+  the network.
+- `tools/pdfluent-snippet-extract/cache/.last-fetched` — a single
+  line holding the ISO date (`YYYY-MM-DD`) that the workflow feeds
+  into `--fetched`. Must match the date stamp in each generated
+  header so the diff stays clean.
+
+### Refreshing the cache
+
+```bash
+# 1. Fetch fresh HTML (requires network + the `online` feature).
+cargo run -p pdfluent-snippet-extract --features online -- \
+    --online \
+    --manifest  tools/pdfluent-snippet-extract/manifest.toml \
+    --cache-dir tools/pdfluent-snippet-extract/cache \
+    --out-dir   crates/pdfluent/tests/web_examples \
+    --fetched   $(date -u +%Y-%m-%d)
+
+# 2. Update the stamp file.
+date -u +%Y-%m-%d > tools/pdfluent-snippet-extract/cache/.last-fetched
+
+# 3. Commit cache/ + the regenerated tests/web_examples/*.rs together.
+```
+
+If the cache directory is empty at CI time, the workflow logs a
+notice and exits 0 — there's nothing to diff. This is the current
+bootstrap state until the first online refresh lands.
+
+## Related issues
+
+- **#1237** — imports each `tests/web_examples/*.rs` into the
+  `cargo test -p pdfluent` sweep. Done (PR #1276).
 - **#1246** — end-to-end parity runner compiles + runs each
-  extracted snippet against shared fixtures.
+  snippet against shared fixtures.
 
 ## Non-goals
 

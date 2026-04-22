@@ -206,6 +206,14 @@ impl PdfDocument {
     }
 
     /// Open a PDF from a filesystem path with explicit options.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            target = "pdfluent",
+            skip(opts),
+            fields(path = %path.as_ref().display())
+        )
+    )]
     pub fn open_with<P: AsRef<Path>>(path: P, opts: OpenOptions) -> Result<Self> {
         license::require_capability(Capability::PdfParse)?;
         let path_ref = path.as_ref();
@@ -250,6 +258,14 @@ impl PdfDocument {
     }
 
     /// Construct a document from an in-memory byte buffer with explicit options.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            target = "pdfluent",
+            skip(bytes, opts),
+            fields(len = bytes.len())
+        )
+    )]
     pub fn from_bytes_with(bytes: &[u8], opts: OpenOptions) -> Result<Self> {
         license::require_capability(Capability::PdfParse)?;
 
@@ -577,6 +593,14 @@ impl PdfDocument {
     /// [`Error::UnsupportedOnWasm`] because `pdf-docx` is not compiled
     /// for that target.
     #[cfg(not(target_arch = "wasm32"))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            target = "pdfluent",
+            skip(self),
+            fields(path = %path.as_ref().display())
+        )
+    )]
     pub fn to_docx<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.require_capability(Capability::DocxExport)?;
         let pdf_bytes = self.to_bytes()?;
@@ -609,6 +633,14 @@ impl PdfDocument {
     ///
     /// Requires [`Capability::RenderRaster`] (available at every tier).
     #[cfg(not(target_arch = "wasm32"))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            target = "pdfluent",
+            skip(self, opts),
+            fields(pattern = %pattern.as_ref().display())
+        )
+    )]
     pub fn to_images<P: AsRef<Path>>(
         &self,
         pattern: P,
@@ -671,6 +703,10 @@ impl PdfDocument {
     /// # Capability
     ///
     /// Core-tier (always available).
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(target = "pdfluent", skip(self, opts))
+    )]
     pub fn compress(&mut self, opts: CompressOptions) -> Result<CompressReport> {
         self.require_capability(Capability::PdfWrite)?;
 
@@ -868,6 +904,10 @@ impl PdfDocument {
     /// On an already-encrypted document, call [`decrypt`](Self::decrypt)
     /// first; `pdf-manip`'s encryption pipeline does not perform a
     /// decrypt-and-re-encrypt in a single call.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(target = "pdfluent", skip(self, opts))
+    )]
     pub fn encrypt(&mut self, opts: EncryptOptions) -> Result<()> {
         self.require_capability(Capability::EncryptionWrite)?;
 
@@ -901,6 +941,11 @@ impl PdfDocument {
     /// Routes to `pdf_manip::encrypt::decrypt`. The decrypted state is then
     /// serialised and re-parsed so the engine-side representation reflects
     /// the now-plaintext content.
+    #[cfg_attr(
+        feature = "tracing",
+        // `password` is deliberately NOT in fields — it's a secret.
+        tracing::instrument(target = "pdfluent", skip(self, password))
+    )]
     pub fn decrypt(&mut self, password: &str) -> Result<()> {
         self.require_capability(Capability::EncryptionRead)?;
         pdf_manip::encrypt::decrypt(&mut self.lopdf, password)?;
@@ -913,6 +958,10 @@ impl PdfDocument {
     /// signed, and re-parsed. Supports PAdES B-LT by default (via the
     /// signer's SubFilter), matching `pdfluent::SignOptions::new()`'s
     /// default.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(target = "pdfluent", skip_all)
+    )]
     pub fn sign(
         &mut self,
         signer: &dyn crate::signer::PdfSigner,
@@ -951,6 +1000,10 @@ impl PdfDocument {
 
     /// Cryptographically validate all signatures and return a structured
     /// report.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(target = "pdfluent", skip(self))
+    )]
     pub fn verify_signatures(&self) -> Result<crate::signer::SignatureValidationReport> {
         self.require_capability(Capability::DigitalSignatureVerify)?;
         let pdf = self.engine.pdf();
@@ -988,6 +1041,10 @@ impl PdfDocument {
     /// [`RedactOptions::case_sensitive`](crate::redact::RedactOptions),
     /// [`RedactOptions::regex`], and
     /// [`RedactOptions::on_pages`] — page numbers are translated 1-to-1.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(target = "pdfluent", skip(self, opts), fields(text_len = text.len()))
+    )]
     pub fn redact(&mut self, text: &str, opts: crate::redact::RedactOptions) -> Result<()> {
         self.require_capability(Capability::Redaction)?;
         let search_opts = pdf_redact::RedactSearchOptions {
@@ -1117,6 +1174,14 @@ impl PdfDocument {
     ///
     /// See [`SaveOptions::with_linearize`] for the 1.0 linearize-is-no-op
     /// caveat.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            target = "pdfluent",
+            skip(self, opts),
+            fields(path = %path.as_ref().display(), overwrite = opts.overwrite)
+        )
+    )]
     pub fn save_with<P: AsRef<Path>>(&self, path: P, opts: SaveOptions) -> Result<()> {
         self.require_capability(Capability::PdfWrite)?;
         let path_ref = path.as_ref();
@@ -1138,6 +1203,10 @@ impl PdfDocument {
     }
 
     /// Serialise the document to a byte vector.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(target = "pdfluent", skip(self))
+    )]
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         self.require_capability(Capability::PdfWrite)?;
         let mut buf = Vec::with_capacity(64 * 1024);
