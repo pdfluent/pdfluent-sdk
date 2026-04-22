@@ -221,6 +221,8 @@ fn build_truetype_cmap_inverse(font_data: &[u8]) -> HashMap<u32, char> {
 
     // Rank Unicode subtables: prefer full-range (format 12 / UCS-4) over BMP
     // (format 4) so fonts with supplementary-plane glyphs are fully covered.
+    // We merge ALL unicode subtables so that BMP mappings from (3,1) are not
+    // lost when a sparse (3,10) format-12 table is also present.
     fn rank(subtable: &ttf_parser::cmap::Subtable<'_>) -> u32 {
         match (subtable.platform_id, subtable.encoding_id) {
             (ttf_parser::PlatformId::Windows, 10) => 100,
@@ -233,21 +235,24 @@ fn build_truetype_cmap_inverse(font_data: &[u8]) -> HashMap<u32, char> {
         }
     }
 
-    let best = cmap_table
+    // Collect and sort ascending by rank so higher-priority subtables are
+    // processed last and their mappings overwrite lower-priority ones.
+    let mut ranked: Vec<_> = cmap_table
         .subtables
         .into_iter()
         .filter(|s| s.is_unicode())
-        .max_by_key(rank);
+        .collect();
+    ranked.sort_by_key(|s| rank(&s));
 
     let mut inverse = HashMap::new();
 
-    if let Some(subtable) = best {
+    for subtable in &ranked {
         subtable.codepoints(|cp| {
             if let Some(ch) = char::from_u32(cp)
                 && let Some(glyph_id) = subtable.glyph_index(cp)
                 && glyph_id.0 != 0
             {
-                inverse.entry(glyph_id.0 as u32).or_insert(ch);
+                inverse.insert(glyph_id.0 as u32, ch);
             }
         });
     }

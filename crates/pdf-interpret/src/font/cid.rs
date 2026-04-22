@@ -2,7 +2,7 @@ use crate::font::blob::{CffFontBlob, OpenTypeFontBlob, Type1FontBlob};
 use crate::font::generated::glyph_names;
 use crate::font::standard_font::select_standard_font;
 use crate::font::{
-    FallbackFontQuery, FontFlags, FontQuery, glyph_name_to_unicode, read_to_unicode, stretch_glyph,
+    FallbackFontQuery, FontFlags, FontQuery, glyph_name_to_string, read_to_unicode, stretch_glyph,
     strip_subset_prefix,
 };
 use crate::{CMapResolverFn, CacheKey, FontResolverFn};
@@ -411,7 +411,7 @@ impl Type0Font {
             let key = if self.to_unicode_is_cid_indexed {
                 match self.code_to_cid(code) {
                     Some(cid) => cid,
-                    None => return self.unicode_from_font_program(code).map(BfString::Char),
+                    None => return self.unicode_from_font_program(code),
                 }
             } else {
                 code
@@ -422,13 +422,21 @@ impl Type0Font {
             }
         }
 
-        self.unicode_from_font_program(code).map(BfString::Char)
+        self.unicode_from_font_program(code)
     }
 
-    fn unicode_from_font_program(&self, code: u32) -> Option<char> {
+    fn unicode_from_font_program(&self, code: u32) -> Option<BfString> {
+        fn bf_string_from(s: String) -> BfString {
+            let mut chars = s.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => BfString::Char(c),
+                _ => BfString::String(s),
+            }
+        }
+
         let glyph = self.map_code(code);
         if glyph == GlyphId::NOTDEF {
-            return self.identity_unicode_fallback(code);
+            return self.identity_unicode_fallback(code).map(BfString::Char);
         }
 
         match &self.font_type {
@@ -447,11 +455,16 @@ impl Type0Font {
                     // CID CFF fonts have no glyph names — fall back to treating
                     // the CID as a Unicode code point when the encoding is
                     // Identity-H/V (common for modern PDF generators).
-                    self.identity_unicode_fallback(code)
+                    self.identity_unicode_fallback(code).map(BfString::Char)
                 } else {
+                    // `glyph_name_to_string` recognises underscore-joined
+                    // ligature names (e.g. `f_i`, `f_f_i`) that the single-char
+                    // path drops, which shows up in Latin text from CFF fonts
+                    // without a ToUnicode map.
                     table
                         .glyph_name(pdf_font::GlyphId(glyph.to_u32() as u16))
-                        .and_then(glyph_name_to_unicode)
+                        .and_then(glyph_name_to_string)
+                        .map(bf_string_from)
                 }
             }
             FontType::Type1(t) => t
@@ -459,7 +472,8 @@ impl Type0Font {
                 .charstring_names()
                 .get(glyph.to_u32() as usize)
                 .map(|n| n.as_str())
-                .and_then(glyph_name_to_unicode),
+                .and_then(glyph_name_to_string)
+                .map(bf_string_from),
         }
     }
 

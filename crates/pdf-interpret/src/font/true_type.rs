@@ -37,6 +37,15 @@ pub(crate) struct TrueTypeFont {
 enum Kind {
     Embedded(EmbeddedKind),
     Standard(StandardKind),
+    /// Constructed when the font program could neither be loaded from
+    /// `FontFile2` nor substituted by the standard-font resolver, but the
+    /// dictionary still declares a usable encoding (or `ToUnicode`) so text
+    /// extraction can recover the glyph stream as Unicode.
+    ///
+    /// Rendering paths receive empty outlines for these fonts; visible
+    /// rendering is impossible without a font program. Width and code-mapping
+    /// data come from the dictionary's `/Widths` array.
+    TextOnly(TextOnlyKind),
 }
 
 impl TrueTypeFont {
@@ -87,28 +96,53 @@ impl TrueTypeFont {
         };
 
         if let Some(standard) = StandardKind::new(dict, font_resolver) {
-            Some(Self {
+            return Some(Self {
                 cache_key,
                 kind: Kind::Standard(standard),
                 to_unicode,
                 encoding_unicode,
-            })
-        } else {
-            fallback()
+            });
         }
+
+        if let Some(font) = fallback() {
+            return Some(font);
+        }
+
+        // Both standard-font lookup paths failed. If we still have a way to
+        // recover Unicode (declared encoding or ToUnicode), construct a
+        // text-only stub so extraction surfaces the page's prose. Without
+        // this fallback the font would be silently dropped and every glyph
+        // would yield an empty `as_unicode()` from the extractor.
+        if to_unicode.is_some() || encoding_unicode.is_some() {
+            let text_only = TextOnlyKind::new(dict);
+            warn!(
+                "TrueType font {} has no embedded program and no substitute; \
+                 falling back to text-only extraction (no rendering)",
+                text_only.postscript_name.as_deref().unwrap_or("(no name)")
+            );
+            return Some(Self {
+                cache_key,
+                kind: Kind::TextOnly(text_only),
+                to_unicode,
+                encoding_unicode,
+            });
+        }
+
+        None
     }
 
     pub(crate) fn outline_glyph(&self, glyph: GlyphId) -> BezPath {
         match &self.kind {
             Kind::Embedded(e) => e.outline_glyph(glyph),
             Kind::Standard(s) => s.outline_glyph(glyph),
+            Kind::TextOnly(_) => BezPath::new(),
         }
     }
 
     pub(crate) fn font_data(&self) -> Option<crate::font::FontData> {
         match &self.kind {
             Kind::Embedded(e) => Some(e.base_font.font_data()),
-            Kind::Standard(_) => None,
+            Kind::Standard(_) | Kind::TextOnly(_) => None,
         }
     }
 
@@ -116,6 +150,7 @@ impl TrueTypeFont {
         match &self.kind {
             Kind::Embedded(e) => e.postscript_name.as_deref(),
             Kind::Standard(_) => None,
+            Kind::TextOnly(t) => t.postscript_name.as_deref(),
         }
     }
 
@@ -126,6 +161,7 @@ impl TrueTypeFont {
                 if weight > 0 { Some(weight) } else { None }
             }
             Kind::Standard(s) => Some(if s.is_bold() { 700 } else { 400 }),
+            Kind::TextOnly(t) => Some(t.weight),
         }
     }
 
@@ -142,6 +178,7 @@ impl TrueTypeFont {
                 e.base_font.font_ref().attributes().style != Style::Normal
             }
             Kind::Standard(s) => s.is_italic(),
+            Kind::TextOnly(t) => t.is_italic,
         }
     }
 
@@ -152,6 +189,7 @@ impl TrueTypeFont {
                 .as_ref()
                 .is_some_and(|f| f.contains(FontFlags::SERIF)),
             Kind::Standard(s) => s.is_serif(),
+            Kind::TextOnly(t) => t.is_serif,
         }
     }
 
@@ -174,6 +212,7 @@ impl TrueTypeFont {
                     .is_monospace
             }
             Kind::Standard(s) => s.is_monospace(),
+            Kind::TextOnly(t) => t.is_monospace,
         }
     }
 
@@ -181,6 +220,10 @@ impl TrueTypeFont {
         match &self.kind {
             Kind::Embedded(e) => e.map_code(code),
             Kind::Standard(s) => s.map_code(code),
+            // No font program — there is no real glyph table, but returning
+            // a code-derived id keeps any per-glyph cache distinct and is
+            // harmless because `outline_glyph` returns an empty path.
+            Kind::TextOnly(_) => GlyphId::new(code as u32),
         }
     }
 
@@ -188,6 +231,7 @@ impl TrueTypeFont {
         match &self.kind {
             Kind::Embedded(e) => e.glyph_width(code),
             Kind::Standard(s) => s.glyph_width(code).unwrap_or(0.0),
+            Kind::TextOnly(t) => t.glyph_width(code),
         }
     }
 
@@ -214,12 +258,53 @@ impl TrueTypeFont {
                 .and_then(glyph_name_to_unicode)
                 .map(BfString::Char),
             Kind::Standard(s) => s.char_code_to_unicode(code as u8).map(BfString::Char),
+            Kind::TextOnly(_) => None,
         }
 
         // TODO: The test PDFs below fail (but mutool can render them correctly).
         // There is likely some other strategy that requires processing the font tables
         // pdf-interpret-tests/pdfs/custom/font_truetype_7.pdf
         // pdf-interpret-tests/pdfs/custom/font_truetype_6.pdf
+    }
+}
+
+/// Holds the metadata needed to support text extraction when the dictionary
+/// declares a TrueType font but neither the embedded program nor a substitute
+/// for a standard font is available.
+#[derive(Debug)]
+pub(crate) struct TextOnlyKind {
+    widths: Vec<Width>,
+    missing_width: f32,
+    postscript_name: Option<String>,
+    weight: u32,
+    is_italic: bool,
+    is_serif: bool,
+    is_monospace: bool,
+}
+
+impl TextOnlyKind {
+    fn new(dict: &Dict<'_>) -> Self {
+        let descriptor = dict.get::<Dict<'_>>(FONT_DESC).unwrap_or_default();
+        let (widths, missing_width) =
+            read_widths(dict, &descriptor).unwrap_or_else(|| (Vec::new(), 0.0));
+
+        let query = FallbackFontQuery::new(dict);
+        Self {
+            widths,
+            missing_width,
+            postscript_name: query.post_script_name.clone(),
+            weight: query.font_weight,
+            is_italic: query.is_italic,
+            is_serif: query.is_serif,
+            is_monospace: query.is_fixed_pitch,
+        }
+    }
+
+    fn glyph_width(&self, code: u8) -> f32 {
+        match self.widths.get(code as usize).copied() {
+            Some(Width::Value(w)) => w,
+            _ => self.missing_width,
+        }
     }
 }
 
