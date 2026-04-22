@@ -6,6 +6,8 @@ Pure Rust PDF/A SDK with XFA support and WASM bindings.
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Build](https://img.shields.io/github/actions/workflow/status/jasperdewinter/xfa-native-rust/ci.yml)
 
+See [SETUP.md](SETUP.md) for contributor onboarding.
+
 ```rust
 use pdfluent::Document;
 
