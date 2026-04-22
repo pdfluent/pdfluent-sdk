@@ -8,7 +8,7 @@ use crate::text::{TextBlock, TextExtractionDevice};
 use crate::thumbnail::ThumbnailOptions;
 
 use pdf_forms::parse::parse_acroform;
-use pdf_forms::tree::FieldValue;
+use pdf_forms::tree::{FieldType, FieldValue};
 use pdf_render::pdf_interpret::PageExt;
 use pdf_render::pdf_interpret::{interpret_page, Context, InterpreterSettings};
 use pdf_render::pdf_syntax::object::dict::keys::{FIRST, NEXT, OUTLINES, TITLE};
@@ -262,7 +262,7 @@ impl PdfDocument {
         Ok(device.into_blocks())
     }
 
-    /// Extract text values from AcroForm fields (text and choice fields only).
+    /// Extract text values from AcroForm fields, including push-button captions.
     ///
     /// Returns a single string concatenating all non-empty field values separated
     /// by newlines. Useful when the document stores its readable content in form
@@ -293,7 +293,18 @@ impl PdfDocument {
                     }
                     _ => None,
                 };
-                if let Some(s) = value_str {
+                let button_caption = value_str.is_none()
+                    && tree.effective_field_type(id) == Some(FieldType::Button);
+                let extracted = value_str.or_else(|| {
+                    button_caption.then(|| {
+                        node.mk
+                            .as_ref()
+                            .and_then(|mk| mk.caption.as_ref())
+                            .filter(|caption| !caption.is_empty())
+                            .cloned()
+                    })?
+                });
+                if let Some(s) = extracted {
                     parts.push(s);
                 }
             }
@@ -848,6 +859,207 @@ mod tests {
             rendered.pixels[idx + 2],
             rendered.pixels[idx + 3],
         ]
+    }
+
+    /// Build a minimal one-page PDF whose only font is a non-embedded TrueType
+    /// reference (no `FontFile2`). The character codes in the content stream
+    /// resolve through the declared `/Encoding`, exercising the same code path
+    /// as corpus PDFs like `171_171940.pdf`.
+    fn non_embedded_truetype_pdf_bytes(
+        base_font: &[u8],
+        encoding: &[u8],
+        text_bytes: &[u8],
+    ) -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.4");
+
+        let font_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "TrueType",
+            "Name" => Object::Name(b"F0".to_vec()),
+            "BaseFont" => Object::Name(base_font.to_vec()),
+            "Encoding" => Object::Name(encoding.to_vec()),
+        }));
+
+        let resources_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Font" => dictionary! { "F0" => Object::Reference(font_id) },
+        }));
+
+        let mut content = Vec::new();
+        content.extend_from_slice(b"BT\n/F0 12 Tf\n100 700 Td\n(");
+        for &b in text_bytes {
+            match b {
+                b'(' | b')' | b'\\' => {
+                    content.push(b'\\');
+                    content.push(b);
+                }
+                _ => content.push(b),
+            }
+        }
+        content.extend_from_slice(b") Tj\nET\n");
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content));
+
+        let pages_id = doc.new_object_id();
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Page",
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![0.into(), 0.into(), 612.into(), 792.into()]),
+            "Resources" => Object::Reference(resources_id),
+            "Contents" => Object::Reference(content_id),
+        }));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1),
+            }),
+        );
+        let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save non-embedded fixture");
+        bytes
+    }
+
+    /// Build a minimal AcroForm push button whose only human-readable text
+    /// lives in the widget `/MK /CA` caption entry.
+    fn push_button_caption_pdf_bytes(caption: &[u8]) -> Vec<u8> {
+        use lopdf::{StringFormat, dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.4");
+
+        let catalog_id = doc.new_object_id();
+        let pages_id = doc.new_object_id();
+        let page_id = doc.new_object_id();
+        let acroform_id = doc.new_object_id();
+        let content_id = doc.new_object_id();
+        let widget_id = doc.new_object_id();
+
+        doc.objects
+            .insert(content_id, Object::Stream(Stream::new(dictionary! {}, Vec::new())));
+        doc.objects.insert(
+            widget_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Annot",
+                "Subtype" => "Widget",
+                "FT" => "Btn",
+                "Ff" => Object::Integer(1 << 16),
+                "T" => Object::String(b"button".to_vec(), StringFormat::Literal),
+                "MK" => dictionary! {
+                    "CA" => Object::String(caption.to_vec(), StringFormat::Literal),
+                },
+                "Rect" => Object::Array(vec![100.into(), 700.into(), 260.into(), 730.into()]),
+                "P" => Object::Reference(page_id),
+            }),
+        );
+        doc.objects.insert(
+            page_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Page",
+                "Parent" => Object::Reference(pages_id),
+                "MediaBox" => Object::Array(vec![0.into(), 0.into(), 612.into(), 792.into()]),
+                "Annots" => Object::Array(vec![Object::Reference(widget_id)]),
+                "Contents" => Object::Reference(content_id),
+            }),
+        );
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1),
+            }),
+        );
+        doc.objects.insert(
+            acroform_id,
+            Object::Dictionary(dictionary! {
+                "Fields" => Object::Array(vec![Object::Reference(widget_id)]),
+            }),
+        );
+        doc.objects.insert(
+            catalog_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => Object::Reference(pages_id),
+                "AcroForm" => Object::Reference(acroform_id),
+            }),
+        );
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save push-button caption fixture");
+        bytes
+    }
+
+    #[test]
+    fn extract_text_non_embedded_truetype_alias_resolves_via_winansi() {
+        // Mirrors corpus PDF `171_171940.pdf`: TrueType font references
+        // `TimesNewRoman` (resolves through the standard-font alias table)
+        // with `WinAnsiEncoding` and no embedded font program. Extraction must
+        // recover the text from the declared encoding even though no glyph
+        // outlines are available.
+        let bytes = non_embedded_truetype_pdf_bytes(
+            b"TimesNewRoman",
+            b"WinAnsiEncoding",
+            b"UNITED STATES DISTRICT COURT",
+        );
+        let text = PdfDocument::open(bytes)
+            .expect("open non-embedded TrueType fixture")
+            .extract_text(0)
+            .expect("extract non-embedded TrueType text");
+        let norm = normalize_text(&text);
+        assert!(
+            norm.contains("UNITED STATES DISTRICT COURT"),
+            "expected WinAnsi-decoded text, got: {norm:?}"
+        );
+    }
+
+    #[test]
+    fn extract_text_non_embedded_truetype_unknown_name_still_decodes() {
+        // Custom BaseFont that does not match any standard alias and lacks the
+        // keywords used by the heuristic. The standard-font fallback (via
+        // FallbackFontQuery) still picks Helvetica, but on hosts without the
+        // embedded font assets that path returns None — the new TextOnly
+        // branch is what keeps extraction non-empty in that case. Either way,
+        // the WinAnsi-driven char map must produce the original prose.
+        let bytes = non_embedded_truetype_pdf_bytes(
+            b"OpaqueCustomXYZ",
+            b"WinAnsiEncoding",
+            b"Hello, world!",
+        );
+        let text = PdfDocument::open(bytes)
+            .expect("open custom non-embedded fixture")
+            .extract_text(0)
+            .expect("extract custom non-embedded text");
+        let norm = normalize_text(&text);
+        assert!(
+            norm.contains("Hello, world!"),
+            "expected WinAnsi-decoded text, got: {norm:?}"
+        );
+    }
+
+    #[test]
+    fn extract_acroform_text_includes_push_button_mk_caption() {
+        let bytes = push_button_caption_pdf_bytes(b"Don't cry over spilt milk");
+        let doc = PdfDocument::open(bytes).expect("open push-button caption fixture");
+
+        let page_text = doc.extract_text(0).expect("extract page text");
+        assert!(
+            normalize_text(&page_text).is_empty(),
+            "expected empty page content stream, got: {page_text:?}"
+        );
+
+        let acroform_text = doc.extract_acroform_text();
+        assert_eq!(normalize_text(&acroform_text), "Don't cry over spilt milk");
+
+        let all_text = doc.extract_all_text();
+        assert_eq!(normalize_text(&all_text), "Don't cry over spilt milk");
     }
 
     #[test]
