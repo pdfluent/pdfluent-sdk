@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>How to open a PDF (Rust) — PDFluent</title></head>
+<body>
+<article>
+  <h1>How to open a PDF in Rust</h1>
+  <p>First make sure you have <code>pdfluent</code> in your Cargo.toml:</p>
+  <pre><code class="language-toml">[dependencies]
+pdfluent = "1"</code></pre>
+
+  <p>And a quick shell check:</p>
+  <pre><code class="language-bash">$ cargo build</code></pre>
+
+  <p>Now the Rust code:</p>
+  <pre><code class="language-rust">use pdfluent::prelude::*;
+
+fn main() -&gt; Result&lt;()&gt; {
+    let doc = PdfDocument::open(&quot;sample.pdf&quot;)?;
+    println!(&quot;{} pages&quot;, doc.page_count());
+    Ok(())
+}
+</code></pre>
+</article>
+</body>
+</html>
