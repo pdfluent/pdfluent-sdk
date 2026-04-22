@@ -229,6 +229,8 @@ pub enum LayoutContent {
         space_above_pt: Option<f64>,
         /// Additional space below the last line of text (from XFA `<para spaceBelow>`).
         space_below_pt: Option<f64>,
+        /// True when this text originates from a field value (not a draw element).
+        from_field: bool,
     },
     /// A static image.
     Image {
@@ -1734,6 +1736,7 @@ impl<'a> LayoutEngine<'a> {
                         font_family: child.font.typeface,
                         space_above_pt: child_style.space_above_pt,
                         space_below_pt: child_style.space_below_pt,
+                        from_field: matches!(child.node_type, FormNodeType::Field { .. }),
                     },
                     children: Vec::new(),
                     style: self.form.meta(child_id).style.clone(),
@@ -1992,6 +1995,7 @@ impl<'a> LayoutEngine<'a> {
                     font_family: node.font.typeface,
                     space_above_pt: split_style.space_above_pt,
                     space_below_pt: split_style.space_below_pt,
+                    from_field: matches!(node.node_type, FormNodeType::Field { .. }),
                 },
                 children: Vec::new(),
                 style: self.form.meta(id).style.clone(),
@@ -2019,6 +2023,7 @@ impl<'a> LayoutEngine<'a> {
                 font_family: node.font.typeface,
                 space_above_pt: split_style.space_above_pt,
                 space_below_pt: split_style.space_below_pt,
+                from_field: matches!(node.node_type, FormNodeType::Field { .. }),
             },
             children: Vec::new(),
             style: self.form.meta(id).style.clone(),
@@ -3174,6 +3179,7 @@ impl<'a> LayoutEngine<'a> {
                         font_family: node.font.typeface,
                         space_above_pt: node_style.space_above_pt,
                         space_below_pt: node_style.space_below_pt,
+                        from_field: true,
                     }
                 } else {
                     LayoutContent::Field {
@@ -3207,6 +3213,7 @@ impl<'a> LayoutEngine<'a> {
                         font_family: node.font.typeface,
                         space_above_pt: node_style.space_above_pt,
                         space_below_pt: node_style.space_below_pt,
+                        from_field: false,
                     }
                 } else {
                     LayoutContent::Text(content.clone())

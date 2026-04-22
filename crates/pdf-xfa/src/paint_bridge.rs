@@ -724,6 +724,7 @@ mod tests {
             font_map: std::collections::HashMap::new(),
             font_metrics_data: std::collections::HashMap::new(),
             check_button_mark: None,
+            field_values_only: false,
         }
     }
 
@@ -861,6 +862,7 @@ mod tests {
                     font_family: xfa_layout_engine::text::FontFamily::SansSerif,
                     space_above_pt: None,
                     space_below_pt: None,
+                    from_field: false,
                 },
                 children: vec![],
                 style: Default::default(),

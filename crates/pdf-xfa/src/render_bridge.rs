@@ -43,6 +43,11 @@ pub struct XfaRenderConfig {
     pub font_metrics_data: HashMap<String, FontMetricsData>,
     /// CheckButton mark style (check, circle, cross, diamond, square, star).
     pub check_button_mark: Option<String>,
+    /// When true, only render field value text — skip backgrounds, borders,
+    /// captions, draws, and wrapped text.  Used by the preserve_static hybrid
+    /// path to add XFA field values on top of pre-rendered page content without
+    /// duplicating the visual structure.
+    pub field_values_only: bool,
 }
 
 /// Resolved font metrics for a typeface, used for accurate text measurement.
@@ -99,6 +104,7 @@ impl Default for XfaRenderConfig {
             font_map: HashMap::new(),
             font_metrics_data: HashMap::new(),
             check_button_mark: None,
+            field_values_only: false,
         }
     }
 }
@@ -549,6 +555,22 @@ fn font_bridge_key_for_tree(family: xfa_layout_engine::text::FontFamily) -> Stri
     }
 }
 
+/// Generate overlays containing only field value text — no backgrounds,
+/// borders, captions, draws, or images.  Used by the preserve_static path
+/// when widgets lack AP streams.
+pub fn generate_field_values_overlays(
+    layout: &LayoutDom,
+    config: &XfaRenderConfig,
+) -> Result<Vec<PageOverlay>> {
+    let mut fv_config = config.clone();
+    fv_config.field_values_only = true;
+    layout
+        .pages
+        .iter()
+        .map(|page| generate_page_overlay(page, &fv_config))
+        .collect()
+}
+
 fn render_nodes(
     nodes: &[LayoutNode],
     parent_x: f64,
@@ -603,7 +625,7 @@ fn render_nodes(
         let val_y_offset = inset_t + cap_dy;
         let val_pdf_y = mapper.xfa_to_pdf_y(abs_y + val_y_offset, val_h);
 
-        if !matches!(node.content, LayoutContent::Field { .. }) {
+        if !matches!(node.content, LayoutContent::Field { .. }) && !config.field_values_only {
             let border_radius = node.style.border_radius_pt.unwrap_or(0.0);
             let border_style = node.style.border_style.as_deref();
             // Border/bg at inner rect (after margin insets), or at value
@@ -676,6 +698,7 @@ fn render_nodes(
         if node.style.caption_text.is_some()
             && !is_button
             && (!is_field || !field_caption_needs_post_body_render)
+            && !config.field_values_only
         {
             render_caption(
                 abs_x + inset_l,
@@ -808,6 +831,7 @@ fn render_nodes(
                 if node.style.caption_text.is_some()
                     && !is_button
                     && field_caption_needs_post_body_render
+                    && !config.field_values_only
                 {
                     // fixes #818: only top-placed field captions need the
                     // post-body path. Left/right/bottom captions relied on the
@@ -828,6 +852,7 @@ fn render_nodes(
                     );
                 }
             }
+            LayoutContent::Text(_) if config.field_values_only => {}
             LayoutContent::Text(text) => {
                 let inner_pdf_y = mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h);
                 render_text(
@@ -841,6 +866,7 @@ fn render_nodes(
                     ops,
                 )
             }
+            LayoutContent::WrappedText { from_field: false, .. } if config.field_values_only => {}
             LayoutContent::WrappedText {
                 lines,
                 first_line_of_para,
@@ -904,6 +930,7 @@ fn render_nodes(
                     );
                 }
             }
+            LayoutContent::Image { .. } if config.field_values_only => {}
             LayoutContent::Image { data, mime_type } => {
                 let img_name = format!("XImg{}", images.len());
                 ops.extend(crate::image_bridge::render_image_ops(
@@ -915,6 +942,7 @@ fn render_nodes(
                     mime_type: mime_type.clone(),
                 });
             }
+            LayoutContent::Draw(_) if config.field_values_only => {}
             LayoutContent::Draw(draw_content) => {
                 render_draw(
                     draw_content,
@@ -1557,6 +1585,7 @@ fn render_field(
     let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
     let border_style = node_style.border_style.as_deref();
 
+    if !config.field_values_only {
     // fix(#809): flattening should only paint explicit template fills.
     // The light-gray interactive widget default is a viewer affordance, not a
     // flatten artifact in Adobe/pdfRest output.
@@ -1609,6 +1638,7 @@ fn render_field(
             reset_border_dash(ops, border_style);
         }
     }
+    } // end if !config.field_values_only
     if !value.is_empty() {
         let fs = if font_size > 0.0 {
             font_size
