@@ -2,6 +2,18 @@
 
 All notable changes to the xfa-native-rust PDF engine are documented here.
 
+## [Unreleased] — 2026-04-22
+
+### Added
+
+- `PadesProfile` enum and `SignerConfig` struct in `pdf-sign` — #1295
+- `infer_pades_profile`: B-B / B-T / B-LT / B-LTA auto-selected from `tsa_url` + `enable_ltv` — #1295
+- `Pkcs12Signer::with_config` builder + `effective_pades_profile()` — #1295
+
+### Changed
+
+- **[BEHAVIOR]** `Pkcs12Signer::effective_pades_profile()` now infers the correct PAdES level from the attached `SignerConfig`. Previously there was no inference and callers selected the signing entry point manually. Callers with an explicit `profile` field are unaffected — explicit always wins — #1295
+
 ## [Unreleased] — 2026-04-02
 
 ### Added

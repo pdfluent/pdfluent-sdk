@@ -31,6 +31,58 @@ pub enum SignError {
     NoCertificate,
 }
 
+/// PAdES Baseline profile level.
+///
+/// Determines which validation material and timestamps are embedded in the
+/// signed PDF. Higher levels require TSA and/or LTV support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PadesProfile {
+    /// B-B: basic electronic signature, no timestamp or validation material.
+    BB,
+    /// B-T: includes an RFC 3161 trusted timestamp.
+    BT,
+    /// B-LT: timestamp plus embedded validation material (OCSP, CRL, DSS).
+    BLT,
+    /// B-LTA: B-LT with an additional archive timestamp for long-term archiving.
+    BLTA,
+}
+
+/// Configuration for PAdES-profile-aware signing.
+///
+/// Pass to `Pkcs12Signer::with_config` to enable profile inference. When
+/// `profile` is `None`, `infer_pades_profile` selects the level from the
+/// other fields.
+#[derive(Debug, Clone, Default)]
+pub struct SignerConfig {
+    /// TSA endpoint URL for B-T / B-LT / B-LTA profiles.
+    pub tsa_url: Option<String>,
+    /// Include LTV validation material (OCSP, CRL, DSS) for B-LT / B-LTA.
+    pub enable_ltv: bool,
+    /// Explicit PAdES profile override. When `Some`, inference is skipped.
+    pub profile: Option<PadesProfile>,
+}
+
+/// Infer the PAdES Baseline profile from `cfg`.
+///
+/// Rules (highest level first):
+/// - B-LTA when `tsa_url.is_some() && enable_ltv`
+/// - B-LT  when `enable_ltv` without TSA
+/// - B-T   when `tsa_url.is_some()` without LTV
+/// - B-B   otherwise
+///
+/// An explicit `cfg.profile` always wins regardless of other fields.
+pub(crate) fn infer_pades_profile(cfg: &SignerConfig) -> PadesProfile {
+    if let Some(p) = cfg.profile {
+        return p;
+    }
+    match (cfg.tsa_url.is_some(), cfg.enable_ltv) {
+        (true, true) => PadesProfile::BLTA,
+        (false, true) => PadesProfile::BLT,
+        (true, false) => PadesProfile::BT,
+        (false, false) => PadesProfile::BB,
+    }
+}
+
 /// Trait for PDF signature creation.
 ///
 /// Implementations produce a DER-encoded CMS SignedData for the given
@@ -69,6 +121,7 @@ pub struct Pkcs12Signer {
     cert_chain: Vec<Vec<u8>>,
     digest_algo: DigestAlgorithm,
     sig_algo_oid: Vec<u8>,
+    config: Option<SignerConfig>,
 }
 
 // OIDs for key type detection from PKCS#8 PrivateKeyInfo.
@@ -116,6 +169,7 @@ impl Pkcs12Signer {
             cert_chain: cert_bags,
             digest_algo,
             sig_algo_oid,
+            config: None,
         })
     }
 
@@ -125,6 +179,22 @@ impl Pkcs12Signer {
             .first()
             .and_then(|der| crate::x509::X509Certificate::from_der(der))
             .and_then(|cert| cert.subject_common_name())
+    }
+
+    /// Attach a `SignerConfig` to enable PAdES profile inference.
+    pub fn with_config(mut self, cfg: SignerConfig) -> Self {
+        self.config = Some(cfg);
+        self
+    }
+
+    /// Return the effective PAdES profile for this signer.
+    ///
+    /// Uses `infer_pades_profile` when no explicit profile is set in the
+    /// attached `SignerConfig`.  Returns `PadesProfile::BB` when no config
+    /// has been attached.
+    pub fn effective_pades_profile(&self) -> PadesProfile {
+        let cfg = self.config.as_ref().cloned().unwrap_or_default();
+        infer_pades_profile(&cfg)
     }
 
     /// Produce the raw signature bytes over the given data.
@@ -354,5 +424,49 @@ mod tests {
         let parsed = crate::cms::CmsSignedData::from_der(&cms_der).unwrap();
         assert!(parsed.verify_structural_integrity());
         assert!(!parsed.signature_value().is_empty());
+    }
+
+    // --- PAdES profile inference tests (#1295) ---
+
+    #[test]
+    fn pades_profile_b_b_inferred() {
+        let cfg = SignerConfig::default();
+        assert_eq!(infer_pades_profile(&cfg), PadesProfile::BB);
+    }
+
+    #[test]
+    fn pades_profile_b_t_inferred() {
+        let cfg = SignerConfig {
+            tsa_url: Some("https://tsa.example.com".into()),
+            ..Default::default()
+        };
+        assert_eq!(infer_pades_profile(&cfg), PadesProfile::BT);
+    }
+
+    #[test]
+    fn pades_profile_b_lt_inferred() {
+        let cfg = SignerConfig { enable_ltv: true, ..Default::default() };
+        assert_eq!(infer_pades_profile(&cfg), PadesProfile::BLT);
+    }
+
+    #[test]
+    fn pades_profile_b_lta_inferred() {
+        let cfg = SignerConfig {
+            tsa_url: Some("https://tsa.example.com".into()),
+            enable_ltv: true,
+            ..Default::default()
+        };
+        assert_eq!(infer_pades_profile(&cfg), PadesProfile::BLTA);
+    }
+
+    #[test]
+    fn explicit_profile_wins() {
+        // B-B override despite TSA+LTV present — explicit always beats inference.
+        let cfg = SignerConfig {
+            tsa_url: Some("https://tsa.example.com".into()),
+            enable_ltv: true,
+            profile: Some(PadesProfile::BB),
+        };
+        assert_eq!(infer_pades_profile(&cfg), PadesProfile::BB);
     }
 }
