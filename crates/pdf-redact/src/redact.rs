@@ -10,6 +10,8 @@ use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 use std::collections::HashMap;
 use std::io::Write;
 
+const MINIMAL_XMP: &[u8] = b"<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n    <rdf:Description rdf:about=\"\" xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\">\n      <pdf:Producer>pdfluent</pdf:Producer>\n    </rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta>\n<?xpacket end=\"w\"?>";
+
 /// A rectangular area on a page to be redacted.
 #[derive(Debug, Clone)]
 pub struct RedactionArea {
@@ -135,10 +137,13 @@ impl Redactor {
             // Phase 3: Draw redaction overlays.
             draw_redaction_overlays(doc, page_id, areas)?;
 
+            // Phase 4: Strip /Contents and /T from overlapping annotations.
+            strip_annotation_contents(doc, page_id, areas)?;
+
             affected_pages.insert(page_num);
         }
 
-        // Phase 4: Clean metadata (Info dict removal + thumbnail strip).
+        // Phase 5: Clean metadata (Info dict removal + XMP replacement).
         clean_metadata(doc);
 
         Ok(RedactionReport {
@@ -572,13 +577,119 @@ fn bbox_overlaps_any(bbox: [f64; 4], areas: &[&RedactionArea]) -> bool {
     false
 }
 
-/// Clean document metadata: remove Info dictionary and strip thumbnails.
+// ---------------------------------------------------------------------------
+// Annotation field stripping (#1294)
+// ---------------------------------------------------------------------------
+
+/// Strip `/Contents` and `/T` from every annotation on `page_id` whose
+/// `/Rect` overlaps any of `areas`.
+fn strip_annotation_contents(
+    doc: &mut Document,
+    page_id: ObjectId,
+    areas: &[&RedactionArea],
+) -> Result<()> {
+    let annot_ids = get_page_annotation_ids(doc, page_id);
+    for annot_id in annot_ids {
+        let rect = match get_annotation_rect(doc, annot_id) {
+            Some(r) => r,
+            None => continue,
+        };
+        if bbox_overlaps_any(rect, areas) {
+            if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(annot_id) {
+                d.remove(b"Contents");
+                d.remove(b"T");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Return the ObjectIds of all annotations on `page_id`.
+fn get_page_annotation_ids(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> {
+    let page_dict = match doc.get_object(page_id) {
+        Ok(Object::Dictionary(ref d)) => d.clone(),
+        _ => return Vec::new(),
+    };
+    let annots_arr = match page_dict.get(b"Annots") {
+        Ok(Object::Array(ref arr)) => arr.clone(),
+        Ok(Object::Reference(id)) => match doc.get_object(*id) {
+            Ok(Object::Array(ref arr)) => arr.clone(),
+            _ => return Vec::new(),
+        },
+        _ => return Vec::new(),
+    };
+    annots_arr
+        .iter()
+        .filter_map(|o| if let Object::Reference(id) = o { Some(*id) } else { None })
+        .collect()
+}
+
+/// Return the page-space bounding rectangle of an annotation, or None.
+fn get_annotation_rect(doc: &Document, annot_id: ObjectId) -> Option<[f64; 4]> {
+    let dict = match doc.get_object(annot_id) {
+        Ok(Object::Dictionary(ref d)) => d.clone(),
+        _ => return None,
+    };
+    match dict.get(b"Rect") {
+        Ok(Object::Array(ref arr)) if arr.len() >= 4 => {
+            let vals: Vec<f64> = arr.iter().filter_map(as_number).collect();
+            if vals.len() >= 4 {
+                Some([vals[0], vals[1], vals[2], vals[3]])
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Clean document metadata: remove Info dictionary, replace XMP, and strip thumbnails.
 fn clean_metadata(doc: &mut Document) {
     doc.trailer.remove(b"Info");
+    replace_xmp_metadata(doc);
     let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
     for page_id in page_ids {
         if let Ok(Object::Dictionary(ref mut page)) = doc.get_object_mut(page_id) {
             page.remove(b"Thumb");
+        }
+    }
+}
+
+/// Replace the catalog /Metadata XMP stream with a minimal stub that only
+/// preserves `pdf:Producer`.  Creates the stream if none exists.
+fn replace_xmp_metadata(doc: &mut Document) {
+    let root_id = match doc.trailer.get(b"Root") {
+        Ok(Object::Reference(id)) => *id,
+        _ => return,
+    };
+
+    let meta_id: Option<ObjectId> = {
+        match doc.get_object(root_id) {
+            Ok(Object::Dictionary(ref d)) => match d.get(b"Metadata") {
+                Ok(Object::Reference(id)) => Some(*id),
+                _ => None,
+            },
+            _ => return,
+        }
+    };
+
+    let xmp = MINIMAL_XMP.to_vec();
+    let xmp_len = xmp.len() as i64;
+
+    if let Some(meta_stream_id) = meta_id {
+        if let Ok(Object::Stream(ref mut s)) = doc.get_object_mut(meta_stream_id) {
+            s.content = xmp;
+            s.dict.set("Length", Object::Integer(xmp_len));
+            s.dict.remove(b"Filter");
+        }
+    } else {
+        let xmp_stream = Stream::new(
+            dictionary! { "Type" => "Metadata", "Subtype" => "XML" },
+            xmp,
+        );
+        let new_id = doc.add_object(Object::Stream(xmp_stream));
+        if let Ok(Object::Dictionary(ref mut catalog)) = doc.get_object_mut(root_id) {
+            catalog.set("Metadata", Object::Reference(new_id));
         }
     }
 }
