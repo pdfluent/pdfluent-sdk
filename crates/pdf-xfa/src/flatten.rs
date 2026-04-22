@@ -84,7 +84,8 @@ use crate::font_bridge::{
 use crate::image_bridge::embed_image;
 use crate::merger::FormMerger;
 use crate::render_bridge::{
-    generate_all_overlays, unicode_to_winansi, FontMetricsData, PageOverlay, XfaRenderConfig,
+    generate_all_overlays, generate_field_values_overlays, unicode_to_winansi, FontMetricsData,
+    PageOverlay, XfaRenderConfig,
 };
 use xfa_dom_resolver::data_dom::DataDom;
 use xfa_layout_engine::form::{DrawContent, FormNodeId, FormNodeStyle, FormTree};
@@ -217,21 +218,28 @@ fn try_decrypt_pdf(pdf_bytes: &[u8]) -> DecryptResult {
     DecryptResult::NotEncrypted
 }
 
-/// Returns `true` if the layout nodes contain at least one `Field` node
-/// (regardless of whether its value is empty or populated).
-fn page_has_fields(nodes: &[LayoutNode]) -> bool {
-    nodes
-        .iter()
-        .any(|n| matches!(&n.content, LayoutContent::Field { .. }) || page_has_fields(&n.children))
+/// Returns `true` if the layout nodes contain at least one field node.
+/// Checks the FormTree source node because the layout engine may emit
+/// `WrappedText` instead of `Field` for fields with content.
+fn page_has_fields(nodes: &[LayoutNode], tree: &FormTree) -> bool {
+    use xfa_layout_engine::form::FormNodeType;
+    nodes.iter().any(|n| {
+        matches!(tree.get(n.form_node).node_type, FormNodeType::Field { .. })
+            || page_has_fields(&n.children, tree)
+    })
 }
 
-/// Returns `true` if the layout nodes contain at least one `Field` with a
-/// non-empty value (i.e. data-bound content, not just static draw elements).
-/// Used for XFA §4.3 empty page subform suppression.
-fn page_has_field_data(nodes: &[LayoutNode]) -> bool {
+/// Returns `true` if the layout nodes contain at least one field with a
+/// non-empty value.  Checks the FormTree source node because the layout
+/// engine converts non-empty field values to `WrappedText` for line-
+/// wrapping, making `LayoutContent::Field` unreliable for data detection.
+fn page_has_field_data(nodes: &[LayoutNode], tree: &FormTree) -> bool {
+    use xfa_layout_engine::form::FormNodeType;
     nodes.iter().any(|n| {
-        matches!(&n.content, LayoutContent::Field { value, .. } if !value.is_empty())
-            || page_has_field_data(&n.children)
+        matches!(
+            &tree.get(n.form_node).node_type,
+            FormNodeType::Field { value } if !value.is_empty()
+        ) || page_has_field_data(&n.children, tree)
     })
 }
 
@@ -524,8 +532,8 @@ fn xfa_flatten_inner(
             .pages
             .iter()
             .map(|p| {
-                if page_has_fields(&p.nodes) {
-                    page_has_field_data(&p.nodes)
+                if page_has_fields(&p.nodes, &tree) {
+                    page_has_field_data(&p.nodes, &tree)
                 } else {
                     true
                 }
@@ -547,16 +555,10 @@ fn xfa_flatten_inner(
                     k
                 });
             }
-        } else if data_dom.is_empty() {
-            // No datasets data at all: show only the first page template.
-            layout.pages.truncate(1);
-            if let Some(ref mut dump) = layout_dump {
-                dump.pages.truncate(1);
-            }
         }
-        // else: datasets data is present but binding did not populate
-        // LayoutContent::Field.value for any page — keep all pages to
-        // preserve the full document structure.
+        // When NO page has data, keep all pages: the form is empty and
+        // all structural pages should be preserved (e.g. a 6-page
+        // inspection report with no filled-in values).
     }
 
     if let Some(ref mut dump) = layout_dump {
@@ -682,6 +684,7 @@ fn xfa_flatten_inner(
     // additional pages once XFA data is laid out. Clamping all 1-page inputs
     // to the original page count causes under-pagination on dynamic forms such
     // as Travel Expense Report / Checklist where Adobe renders 2-3 pages.
+    //
     let preserve_static =
         is_static_form || n_layout < n_existing || has_static_content && overlay_is_substantial;
 
@@ -693,14 +696,33 @@ fn xfa_flatten_inner(
     _stage = PipelineStage::Write;
 
     if preserve_static {
-        // Bake widget appearances (field values, checkboxes, etc.) into the
-        // page content so they survive AcroForm removal.
-        flatten_widget_appearances(&mut doc);
-
-        // No XFA overlay for preserved pages.  Widget AP baking is
-        // sufficient — overlaying XFA content on top of baked widget
-        // appearances causes ghost/double text because widget APs may
-        // contain rotation matrices that produce differently-positioned text.
+        let baked = flatten_widget_appearances(&mut doc);
+        if baked == 0 {
+            // No widget APs were baked — the form structure lives in the
+            // pre-rendered page content but field values exist only in the
+            // XFA overlay.  Generate a lightweight overlay with just field
+            // value text (no backgrounds/borders/captions) and append it
+            // on top so field values become visible without visual artifacts.
+            if let Ok(fv_overlays) =
+                generate_field_values_overlays(&layout, &config)
+            {
+                for (i, overlay) in fv_overlays.iter().enumerate() {
+                    if i < n_existing && !overlay.content_stream.is_empty() {
+                        let _ = overlay_page_content(
+                            &mut doc,
+                            existing_page_ids[i],
+                            overlay,
+                            &font_ids,
+                            &embedded_font_objects,
+                        );
+                    }
+                }
+            }
+        }
+        // When widgets WERE baked, their AP streams already contain field
+        // content.  Overlaying XFA on top of baked widget appearances
+        // causes ghost/double text because widget APs may contain rotation
+        // matrices that produce differently-positioned text.
     } else {
         // Dynamic form: the layout engine determines page count.
         // Write each layout page to the output: overwrite existing pages
@@ -2078,6 +2100,34 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
                     apply_recursive(tree, fid, xc);
                 }
                 group_idx += 1;
+            }
+        }
+
+        // XFA §3.1: the form DOM represents the runtime-instantiated form.
+        // Named template subforms NOT present in the form DOM were never
+        // instantiated by Adobe's runtime (e.g. script-driven conditional
+        // sections).  Hide them to prevent over-pagination from phantom
+        // page-level subforms.
+        //
+        // Only suppress when the form DOM explicitly lists subform children;
+        // a sparse form DOM with no structural children means it didn't
+        // record child state and we should not infer absence.
+        let has_subform_children = xml_children
+            .iter()
+            .any(|c| c.tag_name().name() == "subform");
+        if has_subform_children {
+            for (i, &fid) in form_children.iter().enumerate() {
+                if used[i] {
+                    continue;
+                }
+                let child_node = tree.get(fid);
+                // Only suppress named subforms — skip pageSet, unnamed
+                // transparent nodes, draws, fields, and structural elements.
+                if matches!(child_node.node_type, FormNodeType::Subform)
+                    && !child_node.name.is_empty()
+                {
+                    tree.meta_mut(fid).presence = Presence::Hidden;
+                }
             }
         }
     }
