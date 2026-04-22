@@ -667,6 +667,39 @@ pub(crate) fn glyph_name_to_unicode(name: &str) -> Option<char> {
     None
 }
 
+/// AGL §2.2: resolve a glyph name to one or more Unicode code points. Handles
+/// everything `glyph_name_to_unicode` does, plus underscore-joined ligature
+/// names (e.g. `f_i` → "fi", `f_f_i` → "ffi") which glyph-list-based fonts
+/// use for Latin ligatures. Returns the full string, so ligatures surface as
+/// their component code points rather than being dropped when the composite
+/// name isn't in the AGL.
+///
+/// Strips the variant suffix (`.ss01`, `.swash`, …) from the base name before
+/// splitting, matching AGL §2.4. Bails out if any component fails to resolve
+/// so we never produce a partial string (which would be worse than None).
+pub(crate) fn glyph_name_to_string(name: &str) -> Option<String> {
+    // Try the single-code-point fast path first — it also handles `.suffix`
+    // stripping, `uniXXXX`, and the `aNN` decimal convention.
+    if let Some(c) = glyph_name_to_unicode(name) {
+        return Some(c.to_string());
+    }
+
+    let base = name.split_once('.').map(|(b, _)| b).unwrap_or(name);
+    if !base.contains('_') {
+        return None;
+    }
+
+    let mut out = String::new();
+    for part in base.split('_') {
+        if part.is_empty() {
+            return None;
+        }
+        let c = glyph_name_to_unicode(part)?;
+        out.push(c);
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 pub(crate) fn unicode_from_name(name: &str) -> Option<char> {
     let convert = |input: &str| u32::from_str_radix(input, 16).ok().and_then(char::from_u32);
 
@@ -760,13 +793,45 @@ mod normalized_glyph_name_tests {
 
 #[cfg(test)]
 mod glyph_name_to_unicode_tests {
-    use super::glyph_name_to_unicode;
+    use super::{glyph_name_to_string, glyph_name_to_unicode};
 
     #[test]
     fn standard_agl_name() {
         assert_eq!(glyph_name_to_unicode("A"), Some('A'));
         assert_eq!(glyph_name_to_unicode("space"), Some(' '));
         assert_eq!(glyph_name_to_unicode("hyphen"), Some('-'));
+    }
+
+    #[test]
+    fn ligature_name_underscore_joined() {
+        // AGL maps `fi` directly (U+FB01); the underscore form is what
+        // CFF fonts without a ToUnicode map tend to emit for the same
+        // ligature. We want the decomposed string so readers see "fi".
+        assert_eq!(glyph_name_to_string("f_i"), Some("fi".to_string()));
+        assert_eq!(glyph_name_to_string("f_f_i"), Some("ffi".to_string()));
+        assert_eq!(glyph_name_to_string("A_B_C"), Some("ABC".to_string()));
+    }
+
+    #[test]
+    fn ligature_name_with_suffix() {
+        // Variant suffix must be stripped before splitting on `_`.
+        assert_eq!(glyph_name_to_string("f_i.alt"), Some("fi".to_string()));
+    }
+
+    #[test]
+    fn ligature_name_falls_back_to_single_char_path() {
+        // Direct AGL hit should still win and yield the precomposed char.
+        assert_eq!(glyph_name_to_string("fi"), Some("\u{FB01}".to_string()));
+        assert_eq!(glyph_name_to_string("A"), Some("A".to_string()));
+    }
+
+    #[test]
+    fn ligature_name_rejects_unresolvable_component() {
+        // If any segment is unknown we return None rather than a partial
+        // string — a partial would be more confusing than a drop.
+        assert!(glyph_name_to_string("A_totallyUnknownGlyph").is_none());
+        assert!(glyph_name_to_string("_").is_none());
+        assert!(glyph_name_to_string("A__B").is_none());
     }
 
     #[test]
