@@ -15,3 +15,16 @@ mod extract_text_pdf_rust;
 mod fill_pdf_form_rust;
 mod merge_pdfs_rust;
 mod render_pdf_to_png_rust;
+
+// ---------------------------------------------------------------------------
+// Epic 5 #1237 — expanded compile + runtime coverage for the 3C-2
+// parity methods. These files are placeholders until the corresponding
+// how-to pages land on pdfluent.com; at that point the extractor
+// (#1236) takes over and rewrites them in-place.
+// ---------------------------------------------------------------------------
+
+mod compress_pdf_rust;
+mod convert_pdf_to_docx_rust;
+mod insert_image_pdf_rust;
+mod render_pdf_to_jpeg_rust;
+mod subset_fonts_rust;
