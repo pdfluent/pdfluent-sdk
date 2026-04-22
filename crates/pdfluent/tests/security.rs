@@ -7,6 +7,19 @@ use pdfluent::prelude::*;
 
 const SAMPLE: &str = "tests/fixtures/sample.pdf";
 
+fn enterprise_doc(path: &str) -> PdfDocument {
+    PdfDocument::open_with(path, pdfluent::OpenOptions::new().with_license_key("tier:enterprise"))
+        .expect("open")
+}
+
+fn enterprise_from_bytes(bytes: &[u8]) -> PdfDocument {
+    PdfDocument::from_bytes_with(
+        bytes,
+        pdfluent::OpenOptions::new().with_license_key("tier:enterprise"),
+    )
+    .expect("reparse")
+}
+
 // ---------------------------------------------------------------------------
 // Encryption
 // ---------------------------------------------------------------------------
@@ -17,7 +30,7 @@ fn encrypt_with_aes256_completes_and_serialises() {
     // produce encrypted bytes. We verify the header stays valid (the
     // /Encrypt trailer entry is an lopdf implementation detail the test
     // doesn't need to grep for).
-    let mut doc = PdfDocument::open(SAMPLE).expect("open");
+    let mut doc = enterprise_doc(SAMPLE);
 
     doc.encrypt(
         EncryptOptions::aes256()
@@ -47,7 +60,7 @@ fn encrypt_output_refuses_reparse_without_password() {
     // our own encrypted output is a post-1.0 improvement (documented in
     // PdfDocument::encrypt rustdoc) — this test pins down the LOPDF-side
     // behaviour so we notice if that breaks.
-    let mut doc = PdfDocument::open(SAMPLE).expect("open");
+    let mut doc = enterprise_doc(SAMPLE);
     doc.encrypt(
         EncryptOptions::aes256()
             .with_user_password("secret")
@@ -73,7 +86,7 @@ fn encrypt_honours_print_only_preset() {
     // Doesn't currently verify permission bits in the output bit-perfectly
     // (that requires parsing the /Encrypt dict), but does verify the
     // operation completes without error on the strictest preset.
-    let mut doc = PdfDocument::open(SAMPLE).expect("open");
+    let mut doc = enterprise_doc(SAMPLE);
     doc.encrypt(
         EncryptOptions::aes256()
             .with_user_password("u")
@@ -89,7 +102,7 @@ fn encrypt_honours_print_only_preset() {
 
 #[test]
 fn signatures_empty_on_unsigned_doc() {
-    let doc = PdfDocument::open(SAMPLE).expect("open");
+    let doc = enterprise_doc(SAMPLE);
     let sigs = doc.signatures().expect("signatures");
     assert!(sigs.is_empty(), "sample.pdf has no signatures");
 }
@@ -97,7 +110,7 @@ fn signatures_empty_on_unsigned_doc() {
 #[test]
 fn verify_signatures_all_valid_on_unsigned_doc_vacuous_true() {
     // Per RFC v1.3: all_valid() returns true on empty (vacuous truth).
-    let doc = PdfDocument::open(SAMPLE).expect("open");
+    let doc = enterprise_doc(SAMPLE);
     let report = doc.verify_signatures().expect("verify");
     assert!(!report.is_signed(), "sample.pdf is not signed");
     assert!(report.all_valid(), "vacuous-true on empty");
@@ -132,19 +145,19 @@ fn sign_with_missing_pfx_file_fails_clean() {
 
 #[test]
 fn redact_text_removes_matches() {
-    let mut doc = PdfDocument::open(SAMPLE).expect("open");
+    let mut doc = enterprise_doc(SAMPLE);
     // sample.pdf contains the string "PDFluent test fixture." — redact
     // the literal word "fixture" and confirm the operation succeeds.
     doc.redact("fixture", RedactOptions::new())
         .expect("redact text");
     // After redaction the doc should still be serialisable and re-parseable.
     let bytes = doc.to_bytes().expect("to_bytes after redact");
-    let _reloaded = PdfDocument::from_bytes(&bytes).expect("reparse");
+    let _reloaded = enterprise_from_bytes(&bytes);
 }
 
 #[test]
 fn redact_text_honours_on_pages_scope() {
-    let mut doc = PdfDocument::open(SAMPLE).expect("open");
+    let mut doc = enterprise_doc(SAMPLE);
     // Page 1 is the only page in the fixture; the scope filter should
     // still accept it.
     doc.redact("fixture", RedactOptions::new().on_pages(&[1]))
@@ -153,18 +166,18 @@ fn redact_text_honours_on_pages_scope() {
 
 #[test]
 fn redact_region_marks_and_applies() {
-    let mut doc = PdfDocument::open(SAMPLE).expect("open");
+    let mut doc = enterprise_doc(SAMPLE);
     // Rectangle covering most of the page. pdf-redact applies the overlay
     // and content-removal pipeline.
     doc.redact_region(1, [50.0, 700.0, 400.0, 740.0])
         .expect("redact_region");
     let bytes = doc.to_bytes().expect("to_bytes");
-    let _reloaded = PdfDocument::from_bytes(&bytes).expect("reparse");
+    let _reloaded = enterprise_from_bytes(&bytes);
 }
 
 #[test]
 fn redact_region_invalid_page_errors() {
-    let mut doc = PdfDocument::open(SAMPLE).expect("open");
+    let mut doc = enterprise_doc(SAMPLE);
     let err = doc.redact_region(99, [0.0, 0.0, 100.0, 100.0]).unwrap_err();
     assert!(matches!(err, pdfluent::Error::InvalidPdf { .. }));
 }
@@ -173,7 +186,7 @@ fn redact_region_invalid_page_errors() {
 fn decrypt_with_wrong_password_returns_decryption_failed() {
     // Pin the Codex-resolved contract: decrypt() failures surface as
     // Error::DecryptionFailed, not a generic Error::InvalidPdf.
-    let mut doc = PdfDocument::open(SAMPLE).expect("open");
+    let mut doc = enterprise_doc(SAMPLE);
     // Encrypt first so decrypt has something to operate on.
     doc.encrypt(
         EncryptOptions::aes256()

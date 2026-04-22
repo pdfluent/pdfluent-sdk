@@ -34,33 +34,27 @@ fn license_info_defaults_to_trial_without_key() {
 }
 
 #[test]
-fn tier_trial_grants_all_technical_caps_but_not_deployment_rights() {
+fn tier_trial_grants_minimum_surface_only() {
     use pdfluent::Capability as C;
     let caps = pdfluent::Tier::Trial.capabilities();
 
-    // Trial grants technical caps
+    // Trial grants minimum evaluation surface
+    for cap in [C::PdfParse, C::PdfWrite, C::PageOps, C::TextExtract, C::AcroFormRead, C::PdfaValidate] {
+        assert!(caps.contains(cap), "Trial must grant {cap:?}");
+    }
+
+    // Trial does NOT grant advanced capabilities
     for cap in [
-        C::PdfParse,
-        C::PdfWrite,
-        C::TextExtract,
         C::RenderRaster,
         C::DigitalSignatureSign,
         C::Redaction,
         C::OcrTesseract,
         C::Html2Pdf,
+        C::AirGapped,
+        C::OemRedistribution,
     ] {
-        assert!(caps.contains(cap), "Trial must grant {cap:?}");
+        assert!(!caps.contains(cap), "Trial must not grant {cap:?}");
     }
-
-    // Trial does NOT grant deployment/legal rights
-    assert!(
-        !caps.contains(C::AirGapped),
-        "Trial must not grant AirGapped — that's Enterprise-only",
-    );
-    assert!(
-        !caps.contains(C::OemRedistribution),
-        "Trial must not grant OemRedistribution — that's Enterprise-only",
-    );
 }
 
 #[test]
@@ -70,8 +64,9 @@ fn tier_developer_excludes_signing_but_includes_core() {
     assert!(caps.contains(C::PdfParse));
     assert!(caps.contains(C::PdfWrite));
     assert!(caps.contains(C::TextExtract));
-    assert!(caps.contains(C::EncryptionWrite));
-    // Signing is Team+
+    assert!(caps.contains(C::EncryptionRead));
+    // EncryptionWrite and signing are Team+
+    assert!(!caps.contains(C::EncryptionWrite));
     assert!(!caps.contains(C::DigitalSignatureSign));
     // OCR is Business+
     assert!(!caps.contains(C::OcrTesseract));

@@ -15,13 +15,18 @@
 
 use pdfluent::prelude::*;
 
+fn business_doc(path: &str) -> PdfDocument {
+    PdfDocument::open_with(path, pdfluent::OpenOptions::new().with_license_key("tier:business"))
+        .expect("open sample")
+}
+
 // ---------------------------------------------------------------------------
 // to_docx
 // ---------------------------------------------------------------------------
 
 #[test]
 fn to_docx_writes_non_empty_file() {
-    let doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let doc = business_doc("tests/fixtures/sample.pdf");
     let out = std::env::temp_dir().join("pdfluent-parity-sample.docx");
     let _ = std::fs::remove_file(&out);
 
@@ -47,7 +52,7 @@ fn to_docx_writes_non_empty_file() {
 
 #[test]
 fn to_images_renders_png_per_page() {
-    let doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let doc = business_doc("tests/fixtures/sample.pdf");
     let dir = std::env::temp_dir().join("pdfluent-parity-images-png");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("mkdir");
@@ -71,7 +76,7 @@ fn to_images_renders_png_per_page() {
 
 #[test]
 fn to_images_renders_jpeg_when_requested() {
-    let doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let doc = business_doc("tests/fixtures/sample.pdf");
     let dir = std::env::temp_dir().join("pdfluent-parity-images-jpg");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("mkdir");
@@ -97,7 +102,7 @@ fn to_images_renders_jpeg_when_requested() {
 
 #[test]
 fn to_images_rejects_out_of_range_page() {
-    let doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let doc = business_doc("tests/fixtures/sample.pdf");
     let dir = std::env::temp_dir().join("pdfluent-parity-images-bad");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("mkdir");
@@ -117,7 +122,7 @@ fn to_images_rejects_out_of_range_page() {
 
 #[test]
 fn to_images_pattern_without_marker_injects_page_number() {
-    let doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let doc = business_doc("tests/fixtures/sample.pdf");
     let dir = std::env::temp_dir().join("pdfluent-parity-images-auto");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("mkdir");
@@ -139,7 +144,7 @@ fn to_images_pattern_without_marker_injects_page_number() {
 
 #[test]
 fn compress_returns_report_and_preserves_document() {
-    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let mut doc = business_doc("tests/fixtures/sample.pdf");
     let page_count_before = doc.page_count();
 
     let report = doc.compress(CompressOptions::default()).expect("compress");
@@ -153,7 +158,7 @@ fn compress_returns_report_and_preserves_document() {
 
 #[test]
 fn subset_fonts_returns_report() {
-    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let mut doc = business_doc("tests/fixtures/sample.pdf");
     let report = doc.subset_fonts().expect("subset_fonts");
     // sample.pdf has no embedded fonts with FontFile streams, so the
     // report is all zeros — still a valid report.
@@ -178,7 +183,7 @@ fn tiny_jpeg() -> Vec<u8> {
 
 #[test]
 fn insert_image_on_valid_page_returns_report() {
-    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let mut doc = business_doc("tests/fixtures/sample.pdf");
 
     let img = ImageInsert::new(
         tiny_jpeg(),
@@ -202,7 +207,7 @@ fn insert_image_on_valid_page_returns_report() {
 
 #[test]
 fn insert_image_rejects_out_of_range_page() {
-    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let mut doc = business_doc("tests/fixtures/sample.pdf");
     let total = doc.page_count();
 
     let err = doc
@@ -225,7 +230,7 @@ fn insert_image_rejects_out_of_range_page() {
 
 #[test]
 fn linearize_returns_missing_dependency() {
-    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let mut doc = business_doc("tests/fixtures/sample.pdf");
     let err = doc.linearize().expect_err("linearize should be deferred");
     assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
     let msg = format!("{err}");
@@ -237,7 +242,7 @@ fn linearize_returns_missing_dependency() {
 
 #[test]
 fn embed_font_returns_missing_dependency() {
-    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let mut doc = business_doc("tests/fixtures/sample.pdf");
     let err = doc
         .embed_font(b"not-a-real-font", "MyFont")
         .expect_err("embed_font should be deferred");
@@ -271,7 +276,11 @@ fn to_images_on_zero_page_document_returns_empty_report() {
     let mut bytes = Vec::new();
     doc_builder.save_to(&mut bytes).expect("serialise");
 
-    let doc = PdfDocument::from_bytes(&bytes).expect("parse empty doc");
+    let doc = PdfDocument::from_bytes_with(
+        &bytes,
+        pdfluent::OpenOptions::new().with_license_key("tier:business"),
+    )
+    .expect("parse empty doc");
     assert_eq!(doc.page_count(), 0);
 
     let dir = std::env::temp_dir().join("pdfluent-zero-page-to_images");

@@ -22,7 +22,7 @@ fn out_path() -> PathBuf {
 /// cross-platform temp path and removes-before-run. Tracked for
 /// Epic 6 #1237 content audit.
 pub fn run_to(out: &std::path::Path) -> Result<()> {
-    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf")?;
+    let mut doc = PdfDocument::open_with("tests/fixtures/sample.pdf", pdfluent::OpenOptions::new().with_license_key("tier:team"))?;
 
     doc.encrypt(
         EncryptOptions::aes256()

@@ -15,6 +15,11 @@
 use lopdf::{dictionary, Document, Object, Stream};
 use pdfluent::prelude::*;
 
+fn dev_doc(bytes: &[u8]) -> PdfDocument {
+    PdfDocument::from_bytes_with(bytes, OpenOptions::new().with_license_key("tier:developer"))
+        .expect("parse fixture")
+}
+
 // ---------------------------------------------------------------------------
 // Fixture construction
 // ---------------------------------------------------------------------------
@@ -123,7 +128,7 @@ fn field_value(doc: &PdfDocument, name: &str) -> Option<String> {
 #[test]
 fn set_text_updates_field_value() {
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     doc.form_mut()
         .set_text("first_name", "Jane")
@@ -135,7 +140,7 @@ fn set_text_updates_field_value() {
 #[test]
 fn set_checkbox_updates_field_value() {
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     doc.form_mut()
         .set_checkbox("agree_terms", true)
@@ -153,7 +158,7 @@ fn set_checkbox_updates_field_value() {
 #[test]
 fn set_radio_updates_field_value() {
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     doc.form_mut()
         .set_radio("preferred_color", "Blue")
@@ -168,7 +173,7 @@ fn set_radio_updates_field_value() {
 #[test]
 fn set_dropdown_updates_field_value() {
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     doc.form_mut()
         .set_dropdown("country", "NL")
@@ -184,7 +189,7 @@ fn set_dropdown_updates_field_value() {
 #[test]
 fn setters_chain_via_mut_self_return() {
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     doc.form_mut()
         .set_text("first_name", "Jane")
@@ -213,7 +218,7 @@ fn setters_try_chain_via_question_mark_propagates_errors() {
     }
 
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
     let original_country = field_value(&doc, "country");
 
     let err = {
@@ -241,7 +246,7 @@ fn setters_try_chain_via_question_mark_propagates_errors() {
 #[test]
 fn save_and_reopen_preserves_all_mutations() {
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     doc.form_mut()
         .set_text("first_name", "Jane")
@@ -251,7 +256,7 @@ fn save_and_reopen_preserves_all_mutations() {
         .expect("chain");
 
     let serialised = doc.to_bytes().expect("to_bytes");
-    let reopened = PdfDocument::from_bytes(&serialised).expect("reopen");
+    let reopened = dev_doc(&serialised);
 
     assert_eq!(
         field_value(&reopened, "first_name").as_deref(),
@@ -275,7 +280,7 @@ fn save_and_reopen_preserves_all_mutations() {
 #[test]
 fn set_on_unknown_field_errors() {
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     let err = doc
         .form_mut()
@@ -295,7 +300,7 @@ fn set_on_unknown_field_errors() {
 #[test]
 fn set_text_on_checkbox_errors() {
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     let err = doc
         .form_mut()
@@ -312,7 +317,7 @@ fn set_text_on_checkbox_errors() {
 #[test]
 fn set_checkbox_on_text_errors() {
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     let err = doc
         .form_mut()
@@ -327,7 +332,7 @@ fn set_checkbox_on_text_errors() {
 #[test]
 fn set_radio_on_dropdown_errors() {
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     let err = doc
         .form_mut()
@@ -379,7 +384,7 @@ fn setter_on_formless_document_errors_cleanly() {
 #[test]
 fn unicode_text_values_roundtrip() {
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     doc.form_mut()
         .set_text("first_name", "Renée 北京")
@@ -387,7 +392,7 @@ fn unicode_text_values_roundtrip() {
         .expect("fill unicode");
 
     let serialised = doc.to_bytes().expect("to_bytes");
-    let reopened = PdfDocument::from_bytes(&serialised).expect("reopen");
+    let reopened = dev_doc(&serialised);
 
     assert_eq!(
         field_value(&reopened, "first_name").as_deref(),
@@ -464,7 +469,7 @@ fn build_kid_widget_checkbox_pdf() -> Vec<u8> {
 #[test]
 fn checkbox_on_state_resolves_from_kid_widget() {
     let bytes = build_kid_widget_checkbox_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     doc.form_mut()
         .set_checkbox("subscribe", true)
@@ -484,7 +489,7 @@ fn checkbox_on_state_resolves_from_kid_widget() {
 #[test]
 fn flatten_forms_returns_missing_dependency_not_panic() {
     let bytes = build_full_form_pdf();
-    let mut doc = PdfDocument::from_bytes(&bytes).expect("parse fixture");
+    let mut doc = dev_doc(&bytes);
 
     let err = doc.flatten_forms().expect_err("flatten deferred");
     assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
