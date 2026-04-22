@@ -59,6 +59,9 @@ pub mod metadata;
 pub mod parity;
 pub mod prelude;
 pub mod redact;
+/// Async I/O wrappers via Tokio's blocking pool.
+#[cfg(feature = "async-tokio")]
+pub mod async_io;
 pub mod signer;
 pub mod tier;
 pub mod watermark;
