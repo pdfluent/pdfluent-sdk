@@ -53,3 +53,36 @@ impl PdfAValidationReport {
             .any(|v| matches!(v.severity, Severity::Error))
     }
 }
+
+#[cfg(feature = "pdfa")]
+impl From<PdfAProfile> for pdf_compliance::PdfALevel {
+    fn from(p: PdfAProfile) -> Self {
+        match p {
+            PdfAProfile::A1b => pdf_compliance::PdfALevel::A1b,
+            PdfAProfile::A2b => pdf_compliance::PdfALevel::A2b,
+            PdfAProfile::A3b => pdf_compliance::PdfALevel::A3b,
+        }
+    }
+}
+
+#[cfg(feature = "pdfa")]
+pub(crate) fn report_from_compliance(
+    raw: pdf_compliance::ComplianceReport,
+    profile: PdfAProfile,
+) -> PdfAValidationReport {
+    let violations = raw
+        .issues
+        .into_iter()
+        .filter(|i| !matches!(i.severity, pdf_compliance::Severity::Info))
+        .map(|i| Violation {
+            rule: i.rule,
+            message: i.message,
+            severity: match i.severity {
+                pdf_compliance::Severity::Error => Severity::Error,
+                _ => Severity::Warning,
+            },
+            page: None,
+        })
+        .collect();
+    PdfAValidationReport { profile, violations }
+}

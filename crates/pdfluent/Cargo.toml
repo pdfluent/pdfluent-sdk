@@ -19,7 +19,7 @@ async-tokio = ["dep:tokio"]
 
 # Capability feature families (see RFC 0001 §10 D8)
 signing = []
-pdfa = []
+pdfa = ["dep:pdf-compliance"]
 redaction = []
 ocr-tesseract = []
 ocr-paddle = []
@@ -45,6 +45,7 @@ lopdf = { path = "../lopdf", version = "=0.39.0", default-features = false }
 pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.1" }
 pdf-sign = { path = "../pdf-sign", version = "=1.0.0-beta.1" }
 pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.1" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.1", optional = true }
 tokio = { version = "1", features = ["rt", "fs"], optional = true }
 tracing = { version = "0.1", optional = true }
 
