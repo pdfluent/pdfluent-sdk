@@ -141,15 +141,16 @@ silent no-op. Users MUST check the result.
 | `PdfDocument::embed_font(..)` | `Error::MissingDependency { dep: "pdf-manip::embed_font", .. }` | 1.1 follow-up to #1224 |
 | `PdfDocument::add_decoration(..)` (all variants) | `Error::MissingDependency { dep: "pdf-manip::watermark", .. }` | #1223 watermark runtime |
 | `PdfDocument::add_watermark(..)` | same as above (delegates) | #1223 |
-| `PdfDocument::flatten_forms()` | **Panics via `unimplemented!()` in alpha / beta. GA-blocker: must migrate to `Error::MissingDependency` before `1.0.0` tag.** | #1223 |
+| `PdfDocument::flatten_forms()` | `Error::MissingDependency { dep: "pdf-manip::flatten_forms", .. }` | #1223 |
 | `SaveOptions::with_linearize(true)` | Accepted, currently a no-op on save | 1.1 |
+| `PdfFormMut::set_checkbox` on kid-widget checkboxes | Writes `/V` correctly; widget annotations' `/AS` are **not** synced. Appearance may lag in viewers that honour `/AS`. | 1.1 follow-up to #1245 |
+| `PdfFormMut::set_radio` on kid-widget radio groups | Same — `/V` on parent; kid `/AS` not synced. | 1.1 follow-up to #1245 |
+| `EncryptOptions::aes128()` | Backend currently uses `aes256_encryption_state` regardless of algorithm tag. Output is AES-256. | 1.1 follow-up to #1244 |
 
-**flatten_forms panic is an alpha/beta-only state.** The 1.0 GA tag
-will not be cut while any public method panics on its happy path.
-Promotion from `unimplemented!()` to `Error::MissingDependency` is
-itself a Stable-compatible change (§2.2 — observable behaviour becomes
-a checkable `Result` instead of an abort, which is strictly better
-for callers).
+**flatten_forms GA-blocker is resolved.** The method previously
+panicked via `unimplemented!()` in alpha / beta; it now returns
+`Error::MissingDependency` matching the other deferred items in
+this table. No public method panics on its happy path at 1.0 GA.
 
 **Promotion rule.** When a deferred item acquires its runtime in a
 future MINOR, the semver policy for that item becomes Stable. The
