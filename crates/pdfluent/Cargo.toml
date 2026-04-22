@@ -74,6 +74,11 @@ getrandom = { version = "0.2", features = ["js"] }
 # PDF fixtures directly via lopdf rather than shipping binary fixtures
 # for every field-type permutation.
 lopdf = { path = "../lopdf", version = "=0.39.0", default-features = false }
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "facade"
+harness = false
 
 [lints.rust]
 unsafe_code = "forbid"
