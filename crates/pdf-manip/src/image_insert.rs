@@ -11,6 +11,11 @@ use lopdf::content::{Content, Operation};
 use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 use std::io::Write;
 
+/// Conservative ceiling that still admits practical large images while rejecting absurd headers.
+pub(crate) const MAX_IMAGE_DIMENSION: u32 = 65_535;
+/// 256 MiB covers roughly an 8K RGBA working buffer without allowing unbounded allocations.
+pub(crate) const MAX_IMAGE_ALLOCATION_BYTES: usize = 256 * 1024 * 1024;
+
 /// Image format for insertion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
@@ -167,6 +172,9 @@ fn create_jpeg_xobject(doc: &mut Document, jpeg_data: &[u8]) -> Result<(ObjectId
 
 /// Create a PNG Image XObject (decode to raw pixels, FlateDecode, optional SMask).
 fn create_png_xobject(doc: &mut Document, png_data: &[u8]) -> Result<(ObjectId, u32, u32)> {
+    let (width, height, png_bytes_per_pixel) = parse_png_header(png_data)?;
+    checked_image_allocation_len(width, height, png_bytes_per_pixel)?;
+
     let img = image::load_from_memory_with_format(png_data, image::ImageFormat::Png)
         .map_err(|e| ManipError::Image(format!("failed to decode PNG: {e}")))?;
 
@@ -174,15 +182,26 @@ fn create_png_xobject(doc: &mut Document, png_data: &[u8]) -> Result<(ObjectId, 
     let has_alpha = img.color().has_alpha();
 
     let (raw_rgb, alpha_channel) = if has_alpha {
+        checked_image_allocation_len(width, height, 4)?;
         let rgba = img.to_rgba8();
-        let mut rgb = Vec::with_capacity((width * height * 3) as usize);
-        let mut alpha = Vec::with_capacity((width * height) as usize);
+        let pixel_count = checked_image_allocation_len(width, height, 1)?;
+        let mut rgb = Vec::with_capacity(pixel_count.checked_mul(3).ok_or_else(|| {
+            ManipError::ImageTooLarge {
+                width,
+                height,
+                bytes_per_pixel: 4,
+                max_dimension: MAX_IMAGE_DIMENSION,
+                max_allocation_bytes: MAX_IMAGE_ALLOCATION_BYTES,
+            }
+        })?);
+        let mut alpha = Vec::with_capacity(pixel_count);
         for pixel in rgba.pixels() {
             rgb.extend_from_slice(&pixel.0[..3]);
             alpha.push(pixel.0[3]);
         }
         (rgb, Some(alpha))
     } else {
+        checked_image_allocation_len(width, height, 3)?;
         (img.to_rgb8().into_raw(), None)
     };
 
@@ -222,6 +241,68 @@ fn create_png_xobject(doc: &mut Document, png_data: &[u8]) -> Result<(ObjectId, 
     let id = doc.add_object(Object::Stream(stream));
 
     Ok((id, width, height))
+}
+
+fn parse_png_header(data: &[u8]) -> Result<(u32, u32, u32)> {
+    const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+
+    if data.len() < 29 || data[..8] != PNG_SIGNATURE {
+        return Err(ManipError::Image("not a valid PNG".into()));
+    }
+
+    let ihdr_len = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
+    if ihdr_len != 13 || &data[12..16] != b"IHDR" {
+        return Err(ManipError::Image("invalid PNG IHDR".into()));
+    }
+
+    let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+    let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+    let color_type = data[25];
+    let bytes_per_pixel = match color_type {
+        0 | 2 => 3,
+        _ => 4,
+    };
+
+    Ok((width, height, bytes_per_pixel))
+}
+
+pub(crate) fn checked_image_allocation_len(
+    width: u32,
+    height: u32,
+    bytes_per_pixel: u32,
+) -> Result<usize> {
+    if width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION {
+        return Err(ManipError::ImageTooLarge {
+            width,
+            height,
+            bytes_per_pixel,
+            max_dimension: MAX_IMAGE_DIMENSION,
+            max_allocation_bytes: MAX_IMAGE_ALLOCATION_BYTES,
+        });
+    }
+
+    let allocation_len = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(bytes_per_pixel))
+        .ok_or_else(|| ManipError::ImageTooLarge {
+            width,
+            height,
+            bytes_per_pixel,
+            max_dimension: MAX_IMAGE_DIMENSION,
+            max_allocation_bytes: MAX_IMAGE_ALLOCATION_BYTES,
+        })? as usize;
+
+    if allocation_len > MAX_IMAGE_ALLOCATION_BYTES {
+        return Err(ManipError::ImageTooLarge {
+            width,
+            height,
+            bytes_per_pixel,
+            max_dimension: MAX_IMAGE_DIMENSION,
+            max_allocation_bytes: MAX_IMAGE_ALLOCATION_BYTES,
+        });
+    }
+
+    Ok(allocation_len)
 }
 
 /// Parse JPEG dimensions from SOF marker.
@@ -473,6 +554,22 @@ mod tests {
         buf.into_inner()
     }
 
+    fn oversized_png_header(width: u32, height: u32, color_type: u8) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        data.extend_from_slice(&13u32.to_be_bytes());
+        data.extend_from_slice(b"IHDR");
+        data.extend_from_slice(&width.to_be_bytes());
+        data.extend_from_slice(&height.to_be_bytes());
+        data.push(8);
+        data.push(color_type);
+        data.push(0);
+        data.push(0);
+        data.push(0);
+        data.extend_from_slice(&0u32.to_be_bytes());
+        data
+    }
+
     #[test]
     fn test_detect_format() {
         let jpeg = minimal_jpeg();
@@ -565,6 +662,31 @@ mod tests {
         } else {
             panic!("expected stream object");
         }
+    }
+
+    #[test]
+    fn test_create_png_xobject_rejects_oversized_header() {
+        let mut doc = make_test_doc();
+        let png = oversized_png_header(MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION, 6);
+
+        let err = create_png_xobject(&mut doc, &png).unwrap_err();
+        assert!(matches!(
+            err,
+            ManipError::ImageTooLarge {
+                width: MAX_IMAGE_DIMENSION,
+                height: MAX_IMAGE_DIMENSION,
+                bytes_per_pixel: 4,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_create_png_xobject_accepts_small_valid_png() {
+        let mut doc = make_test_doc();
+        let result = create_png_xobject(&mut doc, &minimal_png());
+
+        assert!(result.is_ok());
     }
 
     #[test]

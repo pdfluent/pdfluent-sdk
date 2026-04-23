@@ -34,6 +34,17 @@ pub enum ManipError {
     #[error("image error: {0}")]
     Image(String),
 
+    #[error(
+        "image {width}x{height} exceeds pdf-manip safety limits (max dimension {max_dimension}, max allocation {max_allocation_bytes} bytes at {bytes_per_pixel} bytes/pixel)"
+    )]
+    ImageTooLarge {
+        width: u32,
+        height: u32,
+        bytes_per_pixel: u32,
+        max_dimension: u32,
+        max_allocation_bytes: usize,
+    },
+
     #[error("{0}")]
     Other(String),
 }
