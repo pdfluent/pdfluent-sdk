@@ -5,6 +5,7 @@
 
 use crate::error::{ManipError, Result};
 use crate::flate_decode::decode_zlib;
+use crate::image_insert::checked_image_allocation_len;
 use image::imageops::FilterType;
 use image::{DynamicImage, RgbImage};
 use lopdf::content::Content;
@@ -109,6 +110,11 @@ pub fn downsample_images(
         let scale = config.target_dpi as f64 / current_dpi;
         let new_w = ((pixel_w as f64 * scale).round() as u32).max(1);
         let new_h = ((pixel_h as f64 * scale).round() as u32).max(1);
+        let expected_cmyk_len = if components == 4 {
+            Some(checked_image_allocation_len(pixel_w, pixel_h, 4)?)
+        } else {
+            None
+        };
 
         let raw_pixels = {
             let Some(Object::Stream(stream)) = doc.objects.get(&id) else {
@@ -131,7 +137,15 @@ pub fn downsample_images(
                 .map(DynamicImage::ImageLuma8),
             3 => RgbImage::from_raw(pixel_w, pixel_h, raw_pixels).map(DynamicImage::ImageRgb8),
             4 => {
-                let mut rgb_data = Vec::with_capacity((pixel_w * pixel_h * 3) as usize);
+                let Some(expected_cmyk_len) = expected_cmyk_len else {
+                    continue;
+                };
+                if raw_pixels.len() != expected_cmyk_len {
+                    continue;
+                }
+
+                let mut rgb_data =
+                    Vec::with_capacity(checked_image_allocation_len(pixel_w, pixel_h, 3)?);
                 for chunk in raw_pixels.chunks(4) {
                     let c = chunk[0] as f32 / 255.0;
                     let m = chunk[1] as f32 / 255.0;
@@ -454,6 +468,78 @@ mod tests {
         doc
     }
 
+    fn make_doc_with_cmyk_image(width: u32, height: u32, image_data: Vec<u8>) -> Document {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+
+        let img_dict = dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => Object::Integer(width as i64),
+            "Height" => Object::Integer(height as i64),
+            "BitsPerComponent" => Object::Integer(8),
+            "ColorSpace" => "DeviceCMYK",
+            "Length" => Object::Integer(image_data.len() as i64),
+        };
+        let img_id = doc.add_object(Object::Stream(Stream::new(img_dict, image_data)));
+
+        let content_ops = vec![
+            lopdf::content::Operation::new("q", vec![]),
+            lopdf::content::Operation::new(
+                "cm",
+                vec![
+                    Object::Real(72.0),
+                    Object::Real(0.0),
+                    Object::Real(0.0),
+                    Object::Real(72.0),
+                    Object::Real(0.0),
+                    Object::Real(0.0),
+                ],
+            ),
+            lopdf::content::Operation::new("Do", vec![Object::Name(b"Im1".to_vec())]),
+            lopdf::content::Operation::new("Q", vec![]),
+        ];
+        let content_data = lopdf::content::Content {
+            operations: content_ops,
+        }
+        .encode()
+        .unwrap();
+        let content_id = doc.add_object(Object::Stream(Stream::new(dictionary! {}, content_data)));
+
+        let mut xobject_dict = lopdf::Dictionary::new();
+        xobject_dict.set("Im1", Object::Reference(img_id));
+        let mut res_dict = lopdf::Dictionary::new();
+        res_dict.set("XObject", Object::Dictionary(xobject_dict));
+
+        let page = dictionary! {
+            "Type" => "Page",
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Dictionary(res_dict),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page));
+
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Count" => Object::Integer(1),
+            "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        doc
+    }
+
     #[test]
     fn test_downsample_default_config() {
         let mut doc = make_doc_with_image();
@@ -510,5 +596,31 @@ mod tests {
 
         let report = downsample_images(&mut doc, &DownsampleConfig::default()).unwrap();
         assert_eq!(report.images_inspected, 0);
+    }
+
+    #[test]
+    fn test_reject_oversized_cmyk_image() {
+        let mut doc = make_doc_with_cmyk_image(
+            crate::image_insert::MAX_IMAGE_DIMENSION,
+            crate::image_insert::MAX_IMAGE_DIMENSION,
+            vec![0, 0, 0, 0],
+        );
+        let config = DownsampleConfig {
+            target_dpi: 2,
+            jpeg_quality: 80,
+            min_width: 1,
+        };
+
+        let err = downsample_images(&mut doc, &config).unwrap_err();
+        assert!(matches!(
+            err,
+            ManipError::ImageTooLarge {
+                width,
+                height,
+                bytes_per_pixel: 4,
+                ..
+            } if width == crate::image_insert::MAX_IMAGE_DIMENSION
+                && height == crate::image_insert::MAX_IMAGE_DIMENSION
+        ));
     }
 }
