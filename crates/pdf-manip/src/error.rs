@@ -45,6 +45,9 @@ pub enum ManipError {
         max_allocation_bytes: usize,
     },
 
+    #[error("decompressed FlateDecode stream exceeds {0}-byte limit")]
+    DecompressionLimitExceeded(u64),
+
     #[error("{0}")]
     Other(String),
 }

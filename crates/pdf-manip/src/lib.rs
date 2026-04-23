@@ -56,6 +56,7 @@ pub mod downsample;
 pub(crate) mod encoding_utils;
 pub mod encrypt;
 pub mod error;
+pub(crate) mod flate_decode;
 #[cfg(feature = "font-subset")]
 pub mod font_subset;
 pub mod header_footer;

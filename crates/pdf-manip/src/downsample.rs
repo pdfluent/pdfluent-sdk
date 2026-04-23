@@ -4,13 +4,12 @@
 //! to reduce file size. Re-encodes as JPEG via DCTDecode.
 
 use crate::error::{ManipError, Result};
-use flate2::read::ZlibDecoder;
+use crate::flate_decode::decode_zlib;
 use image::imageops::FilterType;
 use image::{DynamicImage, RgbImage};
 use lopdf::content::Content;
 use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 use std::collections::HashMap;
-use std::io::Read;
 
 /// Configuration for image downsampling.
 #[derive(Debug, Clone)]
@@ -346,14 +345,9 @@ fn decode_image_data(
     _components: u32,
 ) -> Result<Vec<u8>> {
     match filter {
-        Some("FlateDecode") => {
-            let mut decoder = ZlibDecoder::new(data);
-            let mut buf = Vec::new();
-            decoder
-                .read_to_end(&mut buf)
-                .map_err(|e| ManipError::Image(format!("FlateDecode failed: {e}")))?;
-            Ok(buf)
-        }
+        Some("FlateDecode") => decode_zlib(data, |e| {
+            ManipError::Image(format!("FlateDecode failed: {e}"))
+        }),
         Some("DCTDecode") => {
             let img = image::load_from_memory_with_format(data, image::ImageFormat::Jpeg)
                 .map_err(|e| ManipError::Image(format!("JPEG decode failed: {e}")))?;
