@@ -549,7 +549,7 @@ fn _parse_char_string(
 
                 if let Some(local_subrs) = ctx.local_subrs {
                     let subroutine_bias = calc_subroutine_bias(local_subrs.len());
-                    let index = conv_subroutine_index(p.stack.pop(), subroutine_bias)?;
+                    let index = conv_subroutine_index(p.stack.pop()?, subroutine_bias)?;
                     let char_string = local_subrs
                         .get(index)
                         .ok_or(CFFError::InvalidSubroutineIndex)?;
@@ -583,12 +583,14 @@ fn _parse_char_string(
             operator::ENDCHAR => {
                 if p.stack.len() == 4 || (ctx.width.is_none() && p.stack.len() == 5) {
                     // Process 'seac'.
-                    let accent_char = seac_code_to_glyph_id(&ctx.metadata.charset, p.stack.pop())
+                    let accent_char =
+                        seac_code_to_glyph_id(&ctx.metadata.charset, p.stack.pop()?)
                         .ok_or(CFFError::InvalidSeacCode)?;
-                    let base_char = seac_code_to_glyph_id(&ctx.metadata.charset, p.stack.pop())
+                    let base_char =
+                        seac_code_to_glyph_id(&ctx.metadata.charset, p.stack.pop()?)
                         .ok_or(CFFError::InvalidSeacCode)?;
-                    let dy = p.stack.pop();
-                    let dx = p.stack.pop();
+                    let dy = p.stack.pop()?;
+                    let dx = p.stack.pop()?;
 
                     // If a 5th argument remains, it is the Type 1-compatible 'asb'
                     // (accent sidebearing from Type 1 seac), NOT an explicit advance
@@ -631,7 +633,7 @@ fn _parse_char_string(
                         _parse_char_string(ctx, accent_char_string, depth + 1, p)?;
                     }
                 } else if p.stack.len() == 1 && ctx.width.is_none() {
-                    ctx.width = Some(p.stack.pop());
+                    ctx.width = Some(p.stack.pop()?);
                 }
 
                 if !p.is_first_move_to {
@@ -713,7 +715,7 @@ fn _parse_char_string(
                 }
 
                 let subroutine_bias = calc_subroutine_bias(ctx.metadata.global_subrs.len());
-                let index = conv_subroutine_index(p.stack.pop(), subroutine_bias)?;
+                let index = conv_subroutine_index(p.stack.pop()?, subroutine_bias)?;
                 let char_string = ctx
                     .metadata
                     .global_subrs
@@ -1424,5 +1426,19 @@ mod width_tests {
     fn parse_truncated_header_returns_none() {
         // Header is 4 bytes; 3 bytes is not enough.
         assert!(Table::parse(&[0x01, 0x00, 0x04]).is_none());
+    }
+
+    #[test]
+    fn malformed_charstring_returns_error() {
+        let mut data = MINIMAL_CID_CFF.to_vec();
+        data[48] = operator::CALL_GLOBAL_SUBROUTINE;
+        data[49] = operator::ENDCHAR;
+        data[50] = 0;
+
+        let table = Table::parse(&data).expect("CID CFF should parse");
+        assert_eq!(
+            table.outline(GlyphId(1), &mut DummyOutline),
+            Err(CFFError::InvalidArgumentsStackLength)
+        );
     }
 }
