@@ -365,14 +365,14 @@ impl CharStringParser<'_> {
                 return Err(CFFError::InvalidArgumentsStackLength);
             }
 
-            let x1 = self.x + self.stack.pop();
+            let x1 = self.x + self.stack.pop()?;
             let y1 = self.y;
-            let x2 = x1 + self.stack.pop();
-            let y2 = y1 + self.stack.pop();
-            self.y = y2 + self.stack.pop();
+            let x2 = x1 + self.stack.pop()?;
+            let y2 = y1 + self.stack.pop()?;
+            self.y = y2 + self.stack.pop()?;
             self.x = x2;
             if self.stack.len() == 1 {
-                self.x += self.stack.pop();
+                self.x += self.stack.pop()?;
             }
             self.builder.curve_to(x1, y1, x2, y2, self.x, self.y);
             if self.stack.is_empty() {
@@ -384,18 +384,17 @@ impl CharStringParser<'_> {
             }
 
             let x1 = self.x;
-            let y1 = self.y + self.stack.pop();
-            let x2 = x1 + self.stack.pop();
-            let y2 = y1 + self.stack.pop();
-            self.x = x2 + self.stack.pop();
+            let y1 = self.y + self.stack.pop()?;
+            let x2 = x1 + self.stack.pop()?;
+            let y2 = y1 + self.stack.pop()?;
+            self.x = x2 + self.stack.pop()?;
             self.y = y2;
             if self.stack.len() == 1 {
-                self.y += self.stack.pop()
+                self.y += self.stack.pop()?
             }
             self.builder.curve_to(x1, y1, x2, y2, self.x, self.y);
         }
 
-        debug_assert!(self.stack.is_empty());
         Ok(())
     }
 
@@ -419,13 +418,13 @@ impl CharStringParser<'_> {
             }
 
             let x1 = self.x;
-            let y1 = self.y + self.stack.pop();
-            let x2 = x1 + self.stack.pop();
-            let y2 = y1 + self.stack.pop();
-            self.x = x2 + self.stack.pop();
+            let y1 = self.y + self.stack.pop()?;
+            let x2 = x1 + self.stack.pop()?;
+            let y2 = y1 + self.stack.pop()?;
+            self.x = x2 + self.stack.pop()?;
             self.y = y2;
             if self.stack.len() == 1 {
-                self.y += self.stack.pop();
+                self.y += self.stack.pop()?;
             }
             self.builder.curve_to(x1, y1, x2, y2, self.x, self.y);
             if self.stack.is_empty() {
@@ -436,19 +435,18 @@ impl CharStringParser<'_> {
                 return Err(CFFError::InvalidArgumentsStackLength);
             }
 
-            let x1 = self.x + self.stack.pop();
+            let x1 = self.x + self.stack.pop()?;
             let y1 = self.y;
-            let x2 = x1 + self.stack.pop();
-            let y2 = y1 + self.stack.pop();
-            self.y = y2 + self.stack.pop();
+            let x2 = x1 + self.stack.pop()?;
+            let y2 = y1 + self.stack.pop()?;
+            self.y = y2 + self.stack.pop()?;
             self.x = x2;
             if self.stack.len() == 1 {
-                self.x += self.stack.pop();
+                self.x += self.stack.pop()?;
             }
             self.builder.curve_to(x1, y1, x2, y2, self.x, self.y);
         }
 
-        debug_assert!(self.stack.is_empty());
         Ok(())
     }
 
@@ -590,7 +588,6 @@ impl CharStringParser<'_> {
     pub fn parse_int2(&mut self, op: u8, s: &mut Stream) -> Result<(), CFFError> {
         let b1 = s.read::<u8>().ok_or(CFFError::ReadOutOfBounds)?;
         let n = (i16::from(op) - 247) * 256 + i16::from(b1) + 108;
-        debug_assert!((108..=1131).contains(&n));
         self.stack.push(f64::from(n))?;
         Ok(())
     }
@@ -599,7 +596,6 @@ impl CharStringParser<'_> {
     pub fn parse_int3(&mut self, op: u8, s: &mut Stream) -> Result<(), CFFError> {
         let b1 = s.read::<u8>().ok_or(CFFError::ReadOutOfBounds)?;
         let n = -(i16::from(op) - 251) * 256 - i16::from(b1) - 108;
-        debug_assert!((-1131..=-108).contains(&n));
         self.stack.push(f64::from(n))?;
         Ok(())
     }

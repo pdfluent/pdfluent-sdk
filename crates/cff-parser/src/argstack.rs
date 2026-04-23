@@ -34,10 +34,13 @@ impl<'a> ArgumentsStack<'a> {
     }
 
     #[inline]
-    pub fn pop(&mut self) -> f64 {
-        debug_assert!(!self.is_empty());
+    pub fn pop(&mut self) -> Result<f64, CFFError> {
+        if self.is_empty() {
+            return Err(CFFError::InvalidArgumentsStackLength);
+        }
+
         self.len -= 1;
-        self.data[self.len]
+        Ok(self.data[self.len])
     }
 
     #[inline]
@@ -60,5 +63,22 @@ impl<'a> ArgumentsStack<'a> {
 impl core::fmt::Debug for ArgumentsStack<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_list().entries(&self.data[..self.len]).finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pop_empty_stack_returns_error() {
+        let mut data = [0.0; 1];
+        let mut stack = ArgumentsStack {
+            data: &mut data,
+            len: 0,
+            max_len: 1,
+        };
+
+        assert_eq!(stack.pop(), Err(CFFError::InvalidArgumentsStackLength));
     }
 }
