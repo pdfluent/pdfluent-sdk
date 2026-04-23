@@ -4,12 +4,12 @@
 //! using the `subsetter` crate for OpenType/TrueType subsetting.
 
 use crate::error::{ManipError, Result};
-use flate2::read::ZlibDecoder;
+use crate::flate_decode::decode_zlib;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use lopdf::{Document, Object, ObjectId};
 use std::collections::HashSet;
-use std::io::{Read, Write};
+use std::io::Write;
 
 /// Report from a font subsetting pass.
 #[derive(Debug, Clone)]
@@ -260,12 +260,9 @@ fn get_base_font_name(dict: &lopdf::Dictionary) -> String {
 }
 
 fn decompress_stream(data: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = ZlibDecoder::new(data);
-    let mut buf = Vec::new();
-    decoder
-        .read_to_end(&mut buf)
-        .map_err(|e| ManipError::Other(format!("FlateDecode failed: {e}")))?;
-    Ok(buf)
+    decode_zlib(data, |e| {
+        ManipError::Other(format!("FlateDecode failed: {e}"))
+    })
 }
 
 fn compress_data(data: &[u8]) -> Result<Vec<u8>> {

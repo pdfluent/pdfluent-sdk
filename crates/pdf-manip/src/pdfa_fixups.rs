@@ -3,9 +3,10 @@
 //! Additional passes that address remaining veraPDF rule failures
 //! not fully covered by pdfa_cleanup or pdfa_fonts modules.
 
-use flate2::read::ZlibDecoder;
+use crate::error::ManipError;
+use crate::flate_decode::decode_zlib;
 use lopdf::{dictionary, Document, Object, ObjectId};
-use std::io::{Read, Write};
+use std::io::Write;
 
 /// Run all supplementary PDF/A fixups.
 pub fn run_fixups(doc: &mut Document) -> FixupReport {
@@ -5284,9 +5285,7 @@ fn fix_unreadable_content_streams(doc: &mut Document) -> usize {
                 // with a zlib header (0x78) after decompression — re-decompress.
                 if let Ok(dec1) = s.decompressed_content() {
                     if dec1.len() > 2 && dec1[0] == 0x78 {
-                        let mut dec2 = Vec::new();
-                        let mut decoder = ZlibDecoder::new(dec1.as_slice());
-                        if decoder.read_to_end(&mut dec2).is_ok() && !dec2.is_empty() {
+                        if decode_flate(dec1.as_slice()).is_ok_and(|dec2| !dec2.is_empty()) {
                             2 // re-decompress and store uncompressed
                         } else {
                             0
@@ -5316,11 +5315,9 @@ fn fix_unreadable_content_streams(doc: &mut Document) -> usize {
             2 => {
                 // Re-decompress double-compressed content, then store re-compressed.
                 let double_dec = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
-                    s.decompressed_content().ok().and_then(|dec1| {
-                        let mut dec2 = Vec::new();
-                        let mut decoder = ZlibDecoder::new(dec1.as_slice());
-                        decoder.read_to_end(&mut dec2).ok().map(|_| dec2)
-                    })
+                    s.decompressed_content()
+                        .ok()
+                        .and_then(|dec1| decode_flate(dec1.as_slice()).ok())
                 } else {
                     None
                 };
@@ -5356,9 +5353,13 @@ fn strict_flate_decode_fails(stream: &lopdf::Stream) -> bool {
         return false;
     }
 
-    let mut decoder = ZlibDecoder::new(stream.content.as_slice());
-    let mut decoded = Vec::new();
-    decoder.read_to_end(&mut decoded).is_err()
+    decode_flate(stream.content.as_slice()).is_err()
+}
+
+fn decode_flate(data: &[u8]) -> crate::error::Result<Vec<u8>> {
+    decode_zlib(data, |e| {
+        ManipError::Other(format!("FlateDecode failed: {e}"))
+    })
 }
 
 /// Strip invalid non-ASCII bytes before the first content token.
