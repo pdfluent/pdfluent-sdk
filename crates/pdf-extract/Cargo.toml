@@ -9,6 +9,7 @@ description = "PDF content extraction: images, text with positions, and full-tex
 [dependencies]
 thiserror.workspace = true
 flate2 = "1"
+unicode-normalization = "0.1"
 
 # lopdf: full-featured on native, wasm_js backend (no rayon) on wasm32.
 # Direct path used (not workspace = true) to allow default-features = false override.

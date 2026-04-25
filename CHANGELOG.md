@@ -2,6 +2,17 @@
 
 All notable changes to the xfa-native-rust PDF engine are documented here.
 
+## [Unreleased] — 2026-04-23
+
+### Added
+
+- `/ActualText` extraction from BDC marked-content in `pdf-extract`; `TextBlock.actual_text: Option<String>` field — #1313
+- Ligature decomposition in `pdf-extract` text extraction (FB00–FB06 + `st` / `ct`) with NFKD fallback inside FB00–FB4F — #1314
+
+### Changed
+
+- **[BEHAVIOR]** `pdf-extract` now decomposes ligature glyphs to constituent characters by default (`fi` → `fi`, `ffi` → `ffi`, etc.). Extracted text from PDFs with ligature-enabled fonts will read `office` instead of `o\u{FB03}ce`. Decomposition is toggled via an internal `LIGATURE_DECOMP` constant (default ON); public API is unchanged. `PositionedChar` bounding boxes for decomposed glyphs are split proportionally within the original glyph footprint — #1314
+
 ## [Unreleased] — 2026-04-22
 
 ### Added

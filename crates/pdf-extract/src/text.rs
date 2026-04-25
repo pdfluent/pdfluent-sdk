@@ -632,6 +632,9 @@ fn mac_roman_encoding() -> &'static [char; 256] {
 /// - `uniXXXX` names (4+ hex digits after "uni")
 /// - `uXXXX` / `uXXXXX` names
 /// - Common AGL names (top ~250 entries covering >99% of real-world PDFs)
+/// - The `ct` ligature, which has no precomposed Unicode codepoint — routed
+///   through [`CT_LIGATURE_SENTINEL`] so the downstream decomposition pass
+///   in [`decompose_ligatures`] can expand it to `"ct"`.
 fn glyph_name_to_unicode(name: &str) -> Option<char> {
     // Handle uniXXXX / uXXXXX patterns.
     if name.starts_with("uni") && name.len() >= 7 {
@@ -646,8 +649,16 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
             .and_then(char::from_u32);
     }
 
-    // Look up in the built-in AGL table.
-    agl_table().get(name).copied()
+    if let Some(c) = agl_table().get(name).copied() {
+        return Some(c);
+    }
+
+    match name {
+        "ct" => Some(CT_LIGATURE_SENTINEL),
+        "st" => Some('\u{FB06}'),
+        "longst" => Some('\u{FB05}'),
+        _ => None,
+    }
 }
 
 /// Built-in Adobe Glyph List table (most common ~250 entries).
@@ -1011,6 +1022,74 @@ fn is_printable_or_space(ch: char) -> bool {
     cp >= 0x20 || cp == 0x09 || cp == 0x0A || cp == 0x0D
 }
 
+/// Whether to expand precomposed-ligature characters and known ligature
+/// glyph names into their constituent ASCII characters during text
+/// extraction. Default-on so that text-search, copy-paste and accessibility
+/// flows see the human-readable string ("office") rather than an opaque
+/// glyph cluster ("o\u{FB03}ce"). Internal for now — the public surface
+/// stays unchanged; future configuration would surface this on a higher-
+/// level type without breaking the current API.
+const LIGATURE_DECOMP: bool = true;
+
+/// Sentinel codepoint for the `ct` ligature. PDF authors use the AGL glyph
+/// name `ct` for this ligature, but Unicode has no precomposed codepoint —
+/// so we route it through this Private Use Area sentinel and decompose it
+/// to `"ct"` in [`decompose_ligature_char`]. Without a sentinel, the byte
+/// would fall through to PDFDocEncoding and surface as a stray character.
+const CT_LIGATURE_SENTINEL: char = '\u{E007}';
+
+/// Decompose a precomposed-ligature character (Alphabetic Presentation Forms,
+/// U+FB00..U+FB06) and the `ct` PUA sentinel into their constituent string.
+/// Returns `None` for any other character — the caller keeps the original
+/// codepoint in that case.
+fn decompose_ligature_char(c: char) -> Option<&'static str> {
+    Some(match c {
+        '\u{FB00}' => "ff",
+        '\u{FB01}' => "fi",
+        '\u{FB02}' => "fl",
+        '\u{FB03}' => "ffi",
+        '\u{FB04}' => "ffl",
+        // U+FB05 (long s + t) and U+FB06 (st) both decompose to "st" for
+        // search/copy-paste purposes; the historical long-s spelling is
+        // not preserved.
+        '\u{FB05}' | '\u{FB06}' => "st",
+        CT_LIGATURE_SENTINEL => "ct",
+        _ => return None,
+    })
+}
+
+/// Apply ligature decomposition to a string. Hardcoded mappings cover the
+/// six common Latin ligatures (fi, fl, ffi, ffl, ff, st). For any other
+/// character in the Alphabetic Presentation Forms block (U+FB00..U+FB4F)
+/// not covered above — Hebrew, Arabic, Armenian forms — apply NFKD locally
+/// to that character only. NFKD is *not* applied globally to avoid breaking
+/// legitimate composed accented characters elsewhere in the string.
+fn decompose_ligatures(s: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if let Some(replacement) = decompose_ligature_char(c) {
+            out.push_str(replacement);
+        } else if matches!(c, '\u{FB00}'..='\u{FB4F}') {
+            out.extend(c.nfkd());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Apply [`decompose_ligatures`] when the feature is enabled; otherwise
+/// return the input unchanged. Centralizes the gate so callers don't
+/// repeat the `if LIGATURE_DECOMP` check at every emission site.
+fn maybe_decompose(s: String) -> String {
+    if LIGATURE_DECOMP {
+        decompose_ligatures(&s)
+    } else {
+        s
+    }
+}
+
 /// Extract text blocks from a specific page.
 pub fn extract_page_blocks(doc: &Document, page_num: u32) -> Vec<TextBlock> {
     let pages = doc.get_pages();
@@ -1342,9 +1421,12 @@ fn extract_blocks_from_ops_inner(
                     if !text.is_empty() {
                         let x = state.tm[4];
                         let y = state.tm[5];
-                        let text_width = text.len() as f64 * char_w;
+                        // Decompose ligatures *after* glyph counting so position
+                        // advance uses the original glyph count.
+                        let display_text = maybe_decompose(text.clone());
+                        let text_width = display_text.len() as f64 * char_w;
                         blocks.push(TextBlock {
-                            text: text.clone(),
+                            text: display_text,
                             page,
                             bbox: [x, y, x + text_width, y + state.font_size],
                             font_name: state.font_name.clone(),
@@ -1388,7 +1470,7 @@ fn extract_blocks_from_ops_inner(
                     if !combined_text.is_empty() {
                         let x_end = state.tm[4];
                         blocks.push(TextBlock {
-                            text: combined_text,
+                            text: maybe_decompose(combined_text),
                             page,
                             bbox: [x_start, y, x_end, y + state.font_size],
                             font_name: state.font_name.clone(),
@@ -1411,9 +1493,10 @@ fn extract_blocks_from_ops_inner(
                     if !text.is_empty() {
                         let x = state.tm[4];
                         let y = state.tm[5];
-                        let text_width = text.len() as f64 * char_w;
+                        let display_text = maybe_decompose(text.clone());
+                        let text_width = display_text.len() as f64 * char_w;
                         blocks.push(TextBlock {
-                            text: text.clone(),
+                            text: display_text,
                             page,
                             bbox: [x, y, x + text_width, y + state.font_size],
                             font_name: state.font_name.clone(),
@@ -1449,9 +1532,10 @@ fn extract_blocks_from_ops_inner(
                         if !text.is_empty() {
                             let x = state.tm[4];
                             let y = state.tm[5];
-                            let text_width = text.len() as f64 * char_w;
+                            let display_text = maybe_decompose(text.clone());
+                            let text_width = display_text.len() as f64 * char_w;
                             blocks.push(TextBlock {
-                                text: text.clone(),
+                                text: display_text,
                                 page,
                                 bbox: [x, y, x + text_width, y + state.font_size],
                                 font_name: state.font_name.clone(),
@@ -1653,6 +1737,45 @@ fn build_font_info_from_value(doc: &Document, value: &Object) -> Option<FontInfo
     })
 }
 
+/// Emit one or more `PositionedChar` for a single glyph, decomposing
+/// ligatures by splitting the glyph's `char_w` advance evenly across the
+/// constituent characters. The text matrix advances exactly once (per
+/// glyph), preserving the original layout — only the per-character bbox is
+/// subdivided.
+fn push_glyph_positioned(
+    chars: &mut Vec<PositionedChar>,
+    state: &mut TextState,
+    page: u32,
+    glyph: char,
+    char_w: f64,
+) {
+    let (gx, gy) = apply_ctm(state);
+    let constituents: &str = if LIGATURE_DECOMP {
+        decompose_ligature_char(glyph).unwrap_or("")
+    } else {
+        ""
+    };
+    if constituents.is_empty() {
+        chars.push(PositionedChar {
+            ch: glyph,
+            page,
+            bbox: [gx, gy, gx + char_w, gy + state.font_size],
+        });
+    } else {
+        let n = constituents.chars().count() as f64;
+        let part_w = char_w / n;
+        for (i, c) in constituents.chars().enumerate() {
+            let x = gx + part_w * i as f64;
+            chars.push(PositionedChar {
+                ch: c,
+                page,
+                bbox: [x, gy, x + part_w, gy + state.font_size],
+            });
+        }
+    }
+    state.tm[4] += char_w + state.tc;
+}
+
 /// Extract positioned characters from operations.
 fn extract_chars_from_ops(
     ops: &[Operation],
@@ -1751,13 +1874,7 @@ fn extract_chars_from_ops(
                 if let Some(text) = extract_string_operand_with_font(&op.operands, fi) {
                     let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
                     for ch in text.chars() {
-                        let (x, y) = apply_ctm(&state);
-                        chars.push(PositionedChar {
-                            ch,
-                            page,
-                            bbox: [x, y, x + char_w, y + state.font_size],
-                        });
-                        state.tm[4] += char_w + state.tc;
+                        push_glyph_positioned(&mut chars, &mut state, page, ch, char_w);
                     }
                 }
             }
@@ -1770,13 +1887,9 @@ fn extract_chars_from_ops(
                             Object::String(bytes, _) => {
                                 let text = decode_pdf_string_with_font(bytes, fi);
                                 for ch in text.chars() {
-                                    let (x, y) = apply_ctm(&state);
-                                    chars.push(PositionedChar {
-                                        ch,
-                                        page,
-                                        bbox: [x, y, x + char_w, y + state.font_size],
-                                    });
-                                    state.tm[4] += char_w + state.tc;
+                                    push_glyph_positioned(
+                                        &mut chars, &mut state, page, ch, char_w,
+                                    );
                                 }
                             }
                             _ => {
@@ -1797,13 +1910,7 @@ fn extract_chars_from_ops(
                 if let Some(text) = extract_string_operand_with_font(&op.operands, fi) {
                     let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
                     for ch in text.chars() {
-                        let (x, y) = apply_ctm(&state);
-                        chars.push(PositionedChar {
-                            ch,
-                            page,
-                            bbox: [x, y, x + char_w, y + state.font_size],
-                        });
-                        state.tm[4] += char_w + state.tc;
+                        push_glyph_positioned(&mut chars, &mut state, page, ch, char_w);
                     }
                 }
             }
@@ -1825,13 +1932,7 @@ fn extract_chars_from_ops(
                     if let Some(text) = extract_string_operand_with_font(&op.operands[2..], fi) {
                         let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
                         for ch in text.chars() {
-                            let (x, y) = apply_ctm(&state);
-                            chars.push(PositionedChar {
-                                ch,
-                                page,
-                                bbox: [x, y, x + char_w, y + state.font_size],
-                            });
-                            state.tm[4] += char_w + state.tc;
+                            push_glyph_positioned(&mut chars, &mut state, page, ch, char_w);
                         }
                     }
                 }
@@ -2073,5 +2174,156 @@ mod tests {
         let blocks = extract_text(&doc);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].actual_text.as_deref(), Some("fi"));
+    }
+
+    // -- M4-LIG-01: ligature decomposition -------------------------------
+
+    #[test]
+    fn ligature_fi_decomposes() {
+        assert_eq!(decompose_ligature_char('\u{FB01}'), Some("fi"));
+        assert_eq!(decompose_ligatures("\u{FB01}"), "fi");
+        assert_eq!(decompose_ligatures("of\u{FB01}ce"), "office");
+    }
+
+    #[test]
+    fn ligature_fl_decomposes() {
+        assert_eq!(decompose_ligature_char('\u{FB02}'), Some("fl"));
+        assert_eq!(decompose_ligatures("\u{FB02}ame"), "flame");
+    }
+
+    #[test]
+    fn ligature_ffi_decomposes() {
+        assert_eq!(decompose_ligature_char('\u{FB03}'), Some("ffi"));
+        assert_eq!(decompose_ligatures("o\u{FB03}ce"), "office");
+    }
+
+    #[test]
+    fn ligature_ffl_decomposes() {
+        assert_eq!(decompose_ligature_char('\u{FB04}'), Some("ffl"));
+        assert_eq!(decompose_ligatures("ba\u{FB04}e"), "baffle");
+    }
+
+    /// `st` has both U+FB05 (long-s + t, archaic) and U+FB06 (regular st);
+    /// both decompose to "st" — historical spelling is not preserved since
+    /// the goal is text-search/copy-paste, not typographic round-trip.
+    /// Glyph name `st` also routes through this codepoint.
+    #[test]
+    fn ligature_st_decomposes() {
+        assert_eq!(decompose_ligature_char('\u{FB06}'), Some("st"));
+        assert_eq!(decompose_ligature_char('\u{FB05}'), Some("st"));
+        assert_eq!(decompose_ligatures("fa\u{FB06}"), "fast");
+        // Glyph name path: `st` → U+FB06 → "st"
+        assert_eq!(glyph_name_to_unicode("st"), Some('\u{FB06}'));
+    }
+
+    /// `ct` has no precomposed Unicode codepoint, so it routes through a
+    /// PUA sentinel and decomposes to "ct" downstream. Without this, the
+    /// encoding lookup would return None and the byte would surface as
+    /// a stray PDFDocEncoding character.
+    #[test]
+    fn ligature_ct_decomposes_via_sentinel() {
+        assert_eq!(glyph_name_to_unicode("ct"), Some(CT_LIGATURE_SENTINEL));
+        assert_eq!(decompose_ligature_char(CT_LIGATURE_SENTINEL), Some("ct"));
+        let mut s = String::from("a");
+        s.push(CT_LIGATURE_SENTINEL);
+        s.push('s');
+        assert_eq!(decompose_ligatures(&s), "acts");
+    }
+
+    /// Build a one-page Document with a font whose /Encoding /Differences
+    /// remaps byte 1 to the given ligature glyph name. Used by the golden
+    /// "office" fixture below to drive ligature decomposition end-to-end
+    /// through the text extractor.
+    fn make_doc_with_ligature_font(content: &[u8], glyph_name: &str) -> Document {
+        let mut doc = Document::with_version("1.7");
+
+        let content_stream = Stream::new(dictionary! {}, content.to_vec());
+        let content_id = doc.add_object(Object::Stream(content_stream));
+
+        let encoding = dictionary! {
+            "Type" => "Encoding",
+            "BaseEncoding" => "WinAnsiEncoding",
+            "Differences" => vec![
+                1_i64.into(),
+                Object::Name(glyph_name.as_bytes().to_vec()),
+            ],
+        };
+        let encoding_id = doc.add_object(Object::Dictionary(encoding));
+
+        let font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+            "Encoding" => Object::Reference(encoding_id),
+        };
+        let font_id = doc.add_object(Object::Dictionary(font));
+
+        let resources = dictionary! {
+            "Font" => dictionary! { "F1" => Object::Reference(font_id) },
+        };
+        let resources_id = doc.add_object(Object::Dictionary(resources));
+
+        let page_dict = dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Reference(resources_id),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+        let pages_dict = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        };
+        let pages_id = doc.add_object(Object::Dictionary(pages_dict));
+
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        doc
+    }
+
+    /// Golden fixture: byte sequence `o + ffi + c + e` rendered through a
+    /// font whose /Differences remaps byte 1 → /ffi → U+FB03. End-to-end
+    /// the extractor should produce "office", not "o\u{FB03}ce". This is
+    /// the single test that exercises the full pipeline: glyph→unicode →
+    /// encoding map → decode → ligature decomposition.
+    #[test]
+    fn ligature_office_golden_ffi() {
+        // Hex string <6F016365>: o (0x6F), ffi (0x01), c (0x63), e (0x65)
+        let doc = make_doc_with_ligature_font(b"BT /F1 12 Tf <6F016365> Tj ET", "ffi");
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].text, "office");
+    }
+
+    /// PositionedChar: a ligature glyph splits its bbox evenly across the
+    /// constituent characters so character offsets stay within the glyph's
+    /// horizontal footprint. The matrix advances exactly once per glyph,
+    /// not once per constituent — so layout is preserved.
+    #[test]
+    fn ligature_positioned_chars_split_bbox() {
+        let doc = make_doc_with_ligature_font(b"BT /F1 12 Tf <01> Tj ET", "ffi");
+        let chars = extract_positioned_chars(&doc, 1).unwrap();
+        assert_eq!(chars.len(), 3, "ffi → 3 chars");
+        assert_eq!(chars[0].ch, 'f');
+        assert_eq!(chars[1].ch, 'f');
+        assert_eq!(chars[2].ch, 'i');
+        // Bboxes should tile horizontally.
+        assert!(chars[0].bbox[2] <= chars[1].bbox[0] + 1e-9);
+        assert!(chars[1].bbox[2] <= chars[2].bbox[0] + 1e-9);
+        // And total width should equal one glyph's char_w.
+        let total = chars[2].bbox[2] - chars[0].bbox[0];
+        let expected = 12.0 * APPROX_CHAR_WIDTH;
+        assert!((total - expected).abs() < 1e-6);
     }
 }

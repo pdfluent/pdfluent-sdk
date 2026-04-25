@@ -4250,6 +4250,7 @@ dependencies = [
  "lopdf 0.39.0",
  "tempfile",
  "thiserror 2.0.18",
+ "unicode-normalization",
 ]
 
 [[package]]
