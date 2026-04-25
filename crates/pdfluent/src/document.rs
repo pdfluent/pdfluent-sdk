@@ -451,9 +451,12 @@ impl PdfDocument {
     pub fn text_with_layout(&self) -> Result<Vec<TextBlock>> {
         self.require_capability(Capability::TextExtractWithLayout)?;
         let mut out = Vec::new();
-        let count = self.engine.page_count();
-        for idx in 0..count {
-            let blocks = self.engine.extract_text_blocks(idx)?;
+        for (idx, blocks) in self
+            .engine
+            .extract_all_text_blocks()
+            .into_iter()
+            .enumerate()
+        {
             for block in blocks {
                 out.push(TextBlock::from_engine(block, idx + 1));
             }
@@ -999,15 +1002,15 @@ impl PdfDocument {
 
         // Build the pdf-manip encrypt config. Empty passwords mean the
         // caller did not supply one; leave them empty (lopdf accepts).
-        let user_pw = opts.user_password.clone().unwrap_or_default();
-        let owner_pw = opts
+        let user_pw_bytes = opts.user_password.unwrap_or_default().into_bytes();
+        let owner_pw_bytes = opts
             .owner_password
-            .clone()
-            .unwrap_or_else(|| user_pw.clone());
+            .map(String::into_bytes)
+            .unwrap_or_else(|| user_pw_bytes.clone());
 
         let config = pdf_manip::encrypt::EncryptConfig {
-            user_password: user_pw.into_bytes(),
-            owner_password: owner_pw.into_bytes(),
+            user_password: user_pw_bytes,
+            owner_password: owner_pw_bytes,
             algorithm: map_encryption_algorithm(opts.algorithm),
             permissions: map_permissions(opts.permissions),
         };

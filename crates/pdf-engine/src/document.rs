@@ -253,6 +253,31 @@ impl PdfDocument {
         Ok(device.into_text())
     }
 
+    /// Extract text from a sequence of pages while reusing the same settings object.
+    #[doc(hidden)]
+    pub fn extract_text_pages_reusing_settings<I>(&self, indices: I) -> Result<Vec<String>>
+    where
+        I: IntoIterator<Item = usize>,
+    {
+        let pages = self.pdf.pages();
+        let mut settings = self.text_extraction_settings();
+        let indices = indices.into_iter();
+        let (lower_bound, upper_bound) = indices.size_hint();
+        let mut texts = Vec::with_capacity(upper_bound.unwrap_or(lower_bound));
+
+        for index in indices {
+            let page = pages.get(index).ok_or(EngineError::PageOutOfRange {
+                index,
+                count: pages.len(),
+            })?;
+            let (text, next_settings) = Self::extract_text_with_settings(page, settings);
+            settings = next_settings;
+            texts.push(text);
+        }
+
+        Ok(texts)
+    }
+
     /// Extract structured text blocks from a page.
     pub fn extract_text_blocks(&self, index: usize) -> Result<Vec<TextBlock>> {
         let page = self.get_page(index)?;
@@ -260,6 +285,22 @@ impl PdfDocument {
         let mut ctx = self.create_context(page);
         interpret_page(page, &mut ctx, &mut device);
         Ok(device.into_blocks())
+    }
+
+    /// Extract structured text blocks from all pages, reusing interpreter settings.
+    pub fn extract_all_text_blocks(&self) -> Vec<Vec<TextBlock>> {
+        let pages = self.pdf.pages();
+        let mut settings = self.text_extraction_settings();
+        let mut blocks = Vec::with_capacity(pages.len());
+
+        for page in pages.iter() {
+            let (page_blocks, next_settings) =
+                Self::extract_text_blocks_with_settings(page, settings);
+            settings = next_settings;
+            blocks.push(page_blocks);
+        }
+
+        blocks
     }
 
     /// Extract text values from AcroForm fields, including push-button captions.
@@ -315,7 +356,16 @@ impl PdfDocument {
     /// Extract all text from the document: page content streams plus AcroForm
     /// field values.  Mirrors pdftotext behaviour.
     pub fn extract_all_text(&self) -> String {
-        let mut text = join_page_texts((0..self.page_count()).filter_map(|i| self.extract_text(i).ok()));
+        let pages = self.pdf.pages();
+        let mut settings = self.text_extraction_settings();
+        let mut page_texts = Vec::with_capacity(pages.len());
+        for page in pages.iter() {
+            let (page_text, next_settings) = Self::extract_text_with_settings(page, settings);
+            settings = next_settings;
+            page_texts.push(page_text);
+        }
+
+        let mut text = join_page_texts(page_texts.iter().map(String::as_str));
         let acroform = self.extract_acroform_text();
         if !acroform.is_empty() {
             if !text.is_empty() && !text.ends_with('\n') {
@@ -330,24 +380,11 @@ impl PdfDocument {
     pub fn search_text(&self, query: &str) -> Vec<usize> {
         let pages = self.pdf.pages();
         let query_lower = query.to_lowercase();
+        #[cfg(feature = "parallel")]
         let page_contains = |i: usize| -> Option<usize> {
             let page = &pages[i];
-            let mut device = TextExtractionDevice::new();
-            let mut settings = self.settings.clone();
-            settings.skip_signature_widgets = false;
-            let mut ctx = Context::new(
-                page.initial_transform(false),
-                Rect::new(
-                    0.0,
-                    0.0,
-                    page.render_dimensions().0 as f64,
-                    page.render_dimensions().1 as f64,
-                ),
-                page.xref(),
-                settings,
-            );
-            interpret_page(page, &mut ctx, &mut device);
-            if device.into_text().to_lowercase().contains(&query_lower) {
+            let (text, _) = Self::extract_text_with_settings(page, self.text_extraction_settings());
+            if text.to_lowercase().contains(&query_lower) {
                 Some(i)
             } else {
                 None
@@ -359,7 +396,18 @@ impl PdfDocument {
             .filter_map(page_contains)
             .collect();
         #[cfg(not(feature = "parallel"))]
-        (0..pages.len()).filter_map(page_contains).collect()
+        {
+            let mut settings = self.text_extraction_settings();
+            let mut hits = Vec::new();
+            for (i, page) in pages.iter().enumerate() {
+                let (text, next_settings) = Self::extract_text_with_settings(page, settings);
+                settings = next_settings;
+                if text.to_lowercase().contains(&query_lower) {
+                    hits.push(i);
+                }
+            }
+            hits
+        }
     }
 
     /// Extract document metadata.
@@ -451,18 +499,51 @@ impl PdfDocument {
         Ok(&pages[index])
     }
 
-    fn create_context<'a>(&self, page: &Page<'a>) -> Context<'a> {
-        let (w, h) = page.render_dimensions();
+    fn text_extraction_settings(&self) -> InterpreterSettings {
         let mut settings = self.settings.clone();
         // Text extraction should include signature widget appearance streams
         // that rendering skips to match MuPDF visual output.
         settings.skip_signature_widgets = false;
+        settings
+    }
+
+    fn create_context<'a>(&self, page: &Page<'a>) -> Context<'a> {
+        Self::create_context_with_settings(page, self.text_extraction_settings())
+    }
+
+    fn create_context_with_settings<'a>(
+        page: &Page<'a>,
+        settings: InterpreterSettings,
+    ) -> Context<'a> {
+        let (w, h) = page.render_dimensions();
         Context::new(
             page.initial_transform(false),
             Rect::new(0.0, 0.0, w as f64, h as f64),
             page.xref(),
             settings,
         )
+    }
+
+    fn extract_text_with_settings<'a>(
+        page: &Page<'a>,
+        settings: InterpreterSettings,
+    ) -> (String, InterpreterSettings) {
+        let mut device = TextExtractionDevice::new();
+        let mut ctx = Self::create_context_with_settings(page, settings);
+        interpret_page(page, &mut ctx, &mut device);
+        let settings = ctx.into_settings();
+        (device.into_text(), settings)
+    }
+
+    fn extract_text_blocks_with_settings<'a>(
+        page: &Page<'a>,
+        settings: InterpreterSettings,
+    ) -> (Vec<TextBlock>, InterpreterSettings) {
+        let mut device = TextExtractionDevice::new();
+        let mut ctx = Self::create_context_with_settings(page, settings);
+        interpret_page(page, &mut ctx, &mut device);
+        let settings = ctx.into_settings();
+        (device.into_blocks(), settings)
     }
 
     #[cfg(feature = "xfa")]

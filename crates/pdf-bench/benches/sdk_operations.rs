@@ -1,4 +1,5 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use lopdf::{dictionary, Document, Object, Stream};
 use std::path::PathBuf;
 
 fn corpus_dir() -> PathBuf {
@@ -38,6 +39,72 @@ fn pick_samples(pdfs: &[(String, Vec<u8>)]) -> Vec<&(String, Vec<u8>)> {
     } else {
         pdfs.iter().collect()
     }
+}
+
+fn blank_pdf(page_count: usize) -> Vec<u8> {
+    let mut doc = Document::with_version("1.7");
+    let pages_id = doc.new_object_id();
+    let mut kids = Vec::with_capacity(page_count);
+
+    for _ in 0..page_count {
+        let content_id = doc.add_object(Stream::new(dictionary! {}, Vec::new()));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Resources" => dictionary! {},
+            "Contents" => content_id,
+        });
+        kids.push(page_id.into());
+    }
+
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => kids,
+            "Count" => page_count as i64,
+        }),
+    );
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf)
+        .expect("serialising an in-memory benchmark PDF should succeed");
+    buf
+}
+
+fn bench_settings_reuse(c: &mut Criterion) {
+    let doc = pdf_engine::PdfDocument::open(blank_pdf(100)).expect("open benchmark PDF");
+    let indices: Vec<usize> = (0..100).collect();
+
+    let mut group = c.benchmark_group("settings_reuse");
+    group.sample_size(20);
+
+    group.bench_function("clone_per_page", |b| {
+        b.iter(|| {
+            let texts: Vec<String> = indices
+                .iter()
+                .map(|&index| doc.extract_text(std::hint::black_box(index)).unwrap())
+                .collect();
+            std::hint::black_box(texts.iter().map(String::len).sum::<usize>())
+        });
+    });
+
+    group.bench_function("pooled_settings", |b| {
+        b.iter(|| {
+            let texts = doc
+                .extract_text_pages_reusing_settings(indices.iter().copied())
+                .unwrap();
+            std::hint::black_box(texts.iter().map(String::len).sum::<usize>())
+        });
+    });
+
+    group.finish();
 }
 
 fn bench_render_page(c: &mut Criterion) {
@@ -161,6 +228,7 @@ fn bench_memory_profile(c: &mut Criterion) {
 
 criterion_group!(
     benches,
+    bench_settings_reuse,
     bench_render_page,
     bench_text_extract,
     bench_compliance_check,

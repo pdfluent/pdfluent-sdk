@@ -76,6 +76,11 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// Return the interpreter settings owned by this context.
+    pub fn into_settings(self) -> InterpreterSettings {
+        self.settings
+    }
+
     pub(crate) fn save_state(&mut self) {
         let Some(cur) = self.states.last().cloned() else {
             warn!("attempted to save state without existing state");
