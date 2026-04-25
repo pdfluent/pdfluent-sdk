@@ -293,6 +293,7 @@ mod tests {
             bbox: [x, y, x + text.len() as f64 * font_size * 0.5, y + font_size],
             font_name: "F1".to_string(),
             font_size,
+            actual_text: None,
         }
     }
 
