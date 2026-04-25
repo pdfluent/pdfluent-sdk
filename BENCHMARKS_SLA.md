@@ -67,6 +67,32 @@ python3 scripts/check_benchmark_sla.py \
   --sla BENCHMARKS_SLA.md
 ```
 
+## Stress Fixture Baselines
+
+These measurements are baselines only. They do **not** set SLA targets; the
+target threshold will be derived from repeated M2 memory/performance data.
+Generated stress PDFs are intentionally not committed.
+
+Generate the standard local/PR-CI fixture:
+
+```bash
+python3 scripts/generate_stress_fixtures.py --size 100M
+```
+
+Run the stress parse bench with Cargo's bench-argument separator:
+
+```bash
+cargo bench -p pdf-bench --bench pdf_parse stress -- --sample-size 3
+```
+
+500 MiB and 1 GiB fixtures are nightly/local-only. Generate them explicitly and
+set `BENCHMARK_STRESS_LARGE=1` when including them in a bench run.
+
+| Date | Environment | Fixture | Parser | Runs | Mean time | Peak time | Peak RSS |
+|---|---|---|---|---:|---:|---:|---:|
+| 2026-04-25 | macOS 26.3.1, Apple M1 Pro, 32 GiB RAM | `stress-100m.pdf` (100 MiB) | `lopdf_load_mem` | 3 | 3220.774 ms | 3435.760 ms | 214256 KB (209.2 MiB) |
+| 2026-04-25 | macOS 26.3.1, Apple M1 Pro, 32 GiB RAM | `stress-100m.pdf` (100 MiB) | `pdf_syntax_new` | 3 | 40.235 ms | 44.373 ms | 108836 KB (106.3 MiB) |
+
 ## SLA History
 
 | Date | Render text p95 | Render mixed p95 | XFA simple p95 | Notes |
