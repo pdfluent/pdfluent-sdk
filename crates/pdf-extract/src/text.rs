@@ -25,6 +25,11 @@ pub struct TextBlock {
     pub font_name: String,
     /// Font size in points.
     pub font_size: f64,
+    /// `/ActualText` override from a surrounding marked-content sequence (BDC),
+    /// if any. PDF/UA-compliant authors use this to provide the canonical
+    /// reading-order text for ligatures or other glyph clusters whose visual
+    /// `text` does not match the intended characters.
+    pub actual_text: Option<String>,
 }
 
 /// A single character with its position on the page.
@@ -149,7 +154,7 @@ fn build_font_map(doc: &Document, page_id: ObjectId) -> HashMap<String, FontInfo
 
         // For Type0 fonts, also check DescendantFonts for ToUnicode.
         let to_unicode = if to_unicode.is_empty() && is_cid {
-            if let Some(Object::Array(descendants)) = font.get(b"DescendantFonts").ok() {
+            if let Ok(Object::Array(descendants)) = font.get(b"DescendantFonts") {
                 descendants
                     .iter()
                     .find_map(|d| {
@@ -355,7 +360,7 @@ fn hex_to_unicode_string(hex: &str) -> String {
         .filter_map(|i| u8::from_str_radix(&hex[i..i + 2.min(hex.len() - i)], 16).ok())
         .collect();
 
-    if bytes.len() >= 2 && bytes.len() % 2 == 0 {
+    if bytes.len() >= 2 && bytes.len().is_multiple_of(2) {
         // Interpret as UTF-16BE
         let u16s: Vec<u16> = bytes
             .chunks(2)
@@ -435,14 +440,16 @@ fn build_encoding_map(doc: &Document, font: &lopdf::Dictionary) -> [Option<char>
             let name_str = String::from_utf8_lossy(name);
             apply_base_encoding(&mut table, &name_str);
         }
-        Object::Reference(r) => {
-            if let Some(Object::Dictionary(enc_dict)) = doc.get_object(*r).ok() {
+        Object::Reference(r) => match doc.get_object(*r) {
+            Ok(Object::Dictionary(enc_dict)) => {
                 parse_encoding_dict(doc, enc_dict, &mut table);
-            } else if let Some(Object::Name(name)) = doc.get_object(*r).ok() {
+            }
+            Ok(Object::Name(name)) => {
                 let name_str = String::from_utf8_lossy(name);
                 apply_base_encoding(&mut table, &name_str);
             }
-        }
+            _ => {}
+        },
         Object::Dictionary(enc_dict) => {
             parse_encoding_dict(doc, enc_dict, &mut table);
         }
@@ -459,7 +466,7 @@ fn parse_encoding_dict(
     table: &mut [Option<char>; 256],
 ) {
     // Apply BaseEncoding first.
-    if let Some(Object::Name(base)) = enc_dict.get(b"BaseEncoding").ok() {
+    if let Ok(Object::Name(base)) = enc_dict.get(b"BaseEncoding") {
         let base_str = String::from_utf8_lossy(base);
         apply_base_encoding(table, &base_str);
     }
@@ -493,7 +500,7 @@ fn parse_encoding_dict(
             }
             Object::Reference(r) => {
                 // Indirect name reference (rare).
-                if let Some(Object::Name(name)) = doc.get_object(*r).ok() {
+                if let Ok(Object::Name(name)) = doc.get_object(*r) {
                     if let Some(c) = code {
                         if c < 256 {
                             let glyph = String::from_utf8_lossy(name);
@@ -1145,6 +1152,89 @@ fn get_page_content_bytes(doc: &Document, page_id: ObjectId) -> std::result::Res
     doc.get_page_content(page_id).map_err(|_| ())
 }
 
+/// One entry on the marked-content stack. PDF marked-content sequences nest
+/// (e.g. `BDC … BDC … EMC … EMC`); each `BDC`/`BMC` pushes, `EMC` pops. The
+/// innermost entry with `actual_text = Some(_)` wins for any glyph emitted
+/// inside that range.
+#[derive(Debug, Clone, Default)]
+struct MarkedContentEntry {
+    /// `/ActualText` value from the property dict, decoded as a PDF text
+    /// string (UTF-16BE if BOM-prefixed, otherwise PDFDocEncoding/Latin-1).
+    actual_text: Option<String>,
+}
+
+/// Resolve the property dict for a `BDC` operator. The second operand is
+/// either an inline dictionary or a `/Name` referring to an entry in
+/// `Resources/Properties`.
+fn resolve_bdc_properties(
+    doc_and_resources: Option<(&Document, &lopdf::Dictionary)>,
+    operand: &Object,
+) -> Option<lopdf::Dictionary> {
+    match operand {
+        Object::Dictionary(d) => Some(d.clone()),
+        Object::Reference(r) => doc_and_resources.and_then(|(doc, _)| {
+            doc.get_object(*r).ok().and_then(|o| match o {
+                Object::Dictionary(d) => Some(d.clone()),
+                _ => None,
+            })
+        }),
+        Object::Name(n) => {
+            let (doc, resources) = doc_and_resources?;
+            let props = resolve_dict(doc, resources, b"Properties")?;
+            match props.get(n.as_slice()).ok()? {
+                Object::Dictionary(d) => Some(d.clone()),
+                Object::Reference(r) => match doc.get_object(*r).ok()? {
+                    Object::Dictionary(d) => Some(d.clone()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Decode a PDF text string (BOM-detected UTF-16BE / UTF-8, otherwise
+/// PDFDocEncoding-ish Latin-1). Used for the `/ActualText` value, which is
+/// stored as a regular text string — not as a glyph-coded string.
+fn decode_pdf_text_string(bytes: &[u8]) -> String {
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        let u16s: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
+        return String::from_utf16_lossy(&u16s);
+    }
+    if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+        return String::from_utf8_lossy(&bytes[3..]).into_owned();
+    }
+    bytes
+        .iter()
+        .filter_map(|&b| {
+            let ch = b as char;
+            if is_printable_or_space(ch) {
+                Some(ch)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Extract `/ActualText` from a BDC property dict, if present.
+fn extract_actual_text(props: &lopdf::Dictionary) -> Option<String> {
+    let obj = props.get(b"ActualText").ok()?;
+    match obj {
+        Object::String(bytes, _) => Some(decode_pdf_text_string(bytes)),
+        _ => None,
+    }
+}
+
+/// Innermost `actual_text` from the stack, if any.
+fn current_actual_text(stack: &[MarkedContentEntry]) -> Option<String> {
+    stack.iter().rev().find_map(|e| e.actual_text.clone())
+}
+
 /// Extract text blocks from a list of operations, handling Form XObject recursion via `Do`.
 fn extract_blocks_from_ops_inner(
     ops: &[Operation],
@@ -1155,6 +1245,7 @@ fn extract_blocks_from_ops_inner(
 ) -> Vec<TextBlock> {
     let mut state = TextState::default();
     let mut blocks = Vec::new();
+    let mut mc_stack: Vec<MarkedContentEntry> = Vec::new();
 
     for op in ops {
         match op.operator.as_str() {
@@ -1258,6 +1349,7 @@ fn extract_blocks_from_ops_inner(
                             bbox: [x, y, x + text_width, y + state.font_size],
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
+                            actual_text: current_actual_text(&mc_stack),
                         });
                     }
 
@@ -1301,6 +1393,7 @@ fn extract_blocks_from_ops_inner(
                             bbox: [x_start, y, x_end, y + state.font_size],
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
+                            actual_text: current_actual_text(&mc_stack),
                         });
                     }
                 }
@@ -1325,6 +1418,7 @@ fn extract_blocks_from_ops_inner(
                             bbox: [x, y, x + text_width, y + state.font_size],
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
+                            actual_text: current_actual_text(&mc_stack),
                         });
                     }
 
@@ -1362,6 +1456,7 @@ fn extract_blocks_from_ops_inner(
                                 bbox: [x, y, x + text_width, y + state.font_size],
                                 font_name: state.font_name.clone(),
                                 font_size: state.font_size,
+                                actual_text: current_actual_text(&mc_stack),
                             });
                         }
 
@@ -1370,6 +1465,29 @@ fn extract_blocks_from_ops_inner(
                         }
                     }
                 }
+            }
+            "BMC" => {
+                // Begin marked-content (no property list). Push an empty entry
+                // so EMC pops the right level — without this, nested BMC inside
+                // a BDC/ActualText range would pop the BDC entry early.
+                mc_stack.push(MarkedContentEntry::default());
+            }
+            "BDC" => {
+                // Begin marked-content with property list. Operand 1 is the
+                // tag (Name); operand 2 is either an inline dict or a Name
+                // resolved via Resources/Properties.
+                let actual_text = op
+                    .operands
+                    .get(1)
+                    .and_then(|o| resolve_bdc_properties(doc_and_resources, o))
+                    .as_ref()
+                    .and_then(extract_actual_text);
+                mc_stack.push(MarkedContentEntry { actual_text });
+            }
+            "EMC" => {
+                // End marked-content. Use pop (not unwrap) so a malformed
+                // stream with an unmatched EMC doesn't panic.
+                mc_stack.pop();
             }
             "Do" => {
                 // Invoke Form XObject — recurse into its content stream.
@@ -1499,7 +1617,7 @@ fn build_font_info_from_value(doc: &Document, value: &Object) -> Option<FontInfo
     let mut to_unicode = parse_to_unicode_from_font(doc, &font);
 
     if to_unicode.is_empty() && is_cid {
-        if let Some(Object::Array(descendants)) = font.get(b"DescendantFonts").ok() {
+        if let Ok(Object::Array(descendants)) = font.get(b"DescendantFonts") {
             for d in descendants {
                 let desc_dict = match d {
                     Object::Reference(r) => {
@@ -1886,5 +2004,74 @@ mod tests {
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].text, "Line1");
         assert_eq!(blocks[1].text, "Line2");
+    }
+
+    /// `/ActualText` on a BDC marked-content sequence overrides the glyph
+    /// reading of the inner Tj. Glyph text is preserved on `text`; the
+    /// canonical reading lives on `actual_text`.
+    #[test]
+    fn actual_text_basic_bdc_override() {
+        let doc = make_doc_with_text(b"BT /F1 12 Tf /Span <</ActualText (fi)>> BDC (X) Tj EMC ET");
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].text, "X");
+        assert_eq!(blocks[0].actual_text.as_deref(), Some("fi"));
+    }
+
+    /// Nested BDCs: the innermost `/ActualText` wins inside its range, and
+    /// the outer override is restored after the inner EMC. A flat flag would
+    /// leak the inner value past its scope; the stack must pop one level.
+    #[test]
+    fn actual_text_nested_bdc_inner_overrides_outer() {
+        let doc = make_doc_with_text(
+            b"BT /F1 12 Tf \
+              /Span <</ActualText (outer)>> BDC \
+                (A) Tj \
+                /Span <</ActualText (inner)>> BDC \
+                  (B) Tj \
+                EMC \
+                (C) Tj \
+              EMC ET",
+        );
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].text, "A");
+        assert_eq!(blocks[0].actual_text.as_deref(), Some("outer"));
+        assert_eq!(blocks[1].text, "B");
+        assert_eq!(blocks[1].actual_text.as_deref(), Some("inner"));
+        assert_eq!(blocks[2].text, "C");
+        assert_eq!(blocks[2].actual_text.as_deref(), Some("outer"));
+    }
+
+    /// BMC (no property list) still pushes a stack entry so the matching EMC
+    /// pops the right level — otherwise an EMC inside a BDC range would leak.
+    #[test]
+    fn actual_text_bmc_does_not_leak_emc() {
+        let doc = make_doc_with_text(
+            b"BT /F1 12 Tf \
+              /Span <</ActualText (X)>> BDC \
+                /Artifact BMC (in) Tj EMC \
+                (out) Tj \
+              EMC \
+              (after) Tj ET",
+        );
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].actual_text.as_deref(), Some("X"));
+        assert_eq!(blocks[1].actual_text.as_deref(), Some("X"));
+        assert_eq!(blocks[2].actual_text, None);
+    }
+
+    /// `/ActualText` encoded as UTF-16BE (with BOM) decodes to the proper
+    /// Unicode string. Real PDFs almost always use this form.
+    #[test]
+    fn actual_text_utf16be_bom_decodes() {
+        // <FEFF00660069> = UTF-16BE BOM + "fi"
+        let doc = make_doc_with_text(
+            b"BT /F1 12 Tf /Span <</ActualText <FEFF00660069> >> BDC (X) Tj EMC ET",
+        );
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].actual_text.as_deref(), Some("fi"));
     }
 }
