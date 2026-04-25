@@ -4135,6 +4135,7 @@ version = "1.0.0-beta.1"
 dependencies = [
  "criterion",
  "formcalc-interpreter",
+ "libc",
  "lopdf 0.39.0",
  "pdf-compliance",
  "pdf-engine",
