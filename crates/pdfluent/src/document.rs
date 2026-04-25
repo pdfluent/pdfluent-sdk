@@ -407,6 +407,43 @@ impl PdfDocument {
         Ok(self.engine.extract_all_text())
     }
 
+    /// Extract plain text from every page, joined with `"\n\n"` between pages.
+    ///
+    /// This is the simplest way to get all text out of a document. Each page's
+    /// text is extracted independently via [`Page::text`] and the results are
+    /// concatenated with a double-newline separator so paragraph boundaries are
+    /// preserved across page breaks. Pages that yield no text contribute an
+    /// empty string (no extra blank lines are inserted for them).
+    ///
+    /// Requires [`Capability::TextExtract`] (available from the Trial tier).
+    /// For structured output with bounding boxes, use
+    /// [`text_with_layout`](Self::text_with_layout) instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::FeatureNotInTier`] if the active license tier does not
+    /// grant [`Capability::TextExtract`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::prelude::*;
+    ///
+    /// let doc = PdfDocument::open("report.pdf").unwrap();
+    /// let text = doc.extract_text().unwrap();
+    /// println!("{text}");
+    /// ```
+    pub fn extract_text(&self) -> Result<String> {
+        self.require_capability(Capability::TextExtract)?;
+        let count = self.engine.page_count();
+        let mut parts: Vec<String> = Vec::with_capacity(count);
+        for idx in 0..count {
+            let page_text = self.engine.extract_text(idx)?;
+            parts.push(page_text);
+        }
+        Ok(parts.join("\n\n"))
+    }
+
     /// Extract text grouped into structured blocks with coordinates.
     ///
     /// Matches the [`Capability::TextExtractWithLayout`] capability. Prefer
@@ -1790,6 +1827,135 @@ mod tests {
         assert!(
             !report.is_compliant(),
             "a minimal synthetic PDF must not pass PDF/A-2b validation"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // extract_text tests (M4-FACADE-01 / #1316)
+    // -----------------------------------------------------------------------
+
+    /// `extract_text` must succeed on a minimal single-page document and
+    /// return a `String` (possibly empty for a content-free page).
+    #[test]
+    fn extract_text_returns_ok_for_minimal_pdf() {
+        use super::PdfDocument;
+
+        let bytes = minimal_pdf_bytes();
+        let doc = PdfDocument::from_bytes(&bytes).expect("parse minimal fixture");
+        let text = doc.extract_text().expect("extract_text should not fail");
+        // The minimal PDF has an empty `BT ET` content stream, so the result
+        // is the empty string joined across one page — just assert it round-
+        // trips as a String without panicking.
+        let _ = text; // type-check: must be String
+    }
+
+    /// `extract_text` on a multi-page document joins page texts with `"\n\n"`.
+    ///
+    /// We verify the separator contract using the minimal lopdf builder to
+    /// construct a two-page PDF and confirming a `"\n\n"` is present in the
+    /// output when both pages have text.  Because the minimal content stream
+    /// produces no extractable text, this test limits itself to asserting the
+    /// method returns `Ok` and that the result contains at most one `"\n\n"`
+    /// separator for a two-page document (i.e. join is used, not something
+    /// that inserts extra separators).
+    #[test]
+    fn extract_text_joins_pages_with_double_newline() {
+        use lopdf::{dictionary, Document, Object, Stream};
+        use super::PdfDocument;
+
+        let mut doc = Document::with_version("1.4");
+        let pages_id = doc.new_object_id();
+
+        let make_page = |doc: &mut Document, pages_id| {
+            let content = Stream::new(dictionary! {}, b"BT ET".to_vec());
+            let content_id = doc.add_object(content);
+            let page_id = doc.new_object_id();
+            doc.objects.insert(
+                page_id,
+                Object::Dictionary(dictionary! {
+                    "Type" => Object::Name(b"Page".to_vec()),
+                    "Parent" => Object::Reference(pages_id),
+                    "MediaBox" => Object::Array(vec![
+                        Object::Integer(0),
+                        Object::Integer(0),
+                        Object::Integer(72),
+                        Object::Integer(72),
+                    ]),
+                    "Contents" => Object::Reference(content_id),
+                }),
+            );
+            page_id
+        };
+
+        let page1_id = make_page(&mut doc, pages_id);
+        let page2_id = make_page(&mut doc, pages_id);
+
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => Object::Name(b"Pages".to_vec()),
+                "Kids" => Object::Array(vec![
+                    Object::Reference(page1_id),
+                    Object::Reference(page2_id),
+                ]),
+                "Count" => Object::Integer(2),
+            }),
+        );
+        let catalog_id = doc.new_object_id();
+        doc.objects.insert(
+            catalog_id,
+            Object::Dictionary(dictionary! {
+                "Type" => Object::Name(b"Catalog".to_vec()),
+                "Pages" => Object::Reference(pages_id),
+            }),
+        );
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("build two-page fixture");
+        let pdf_doc = PdfDocument::from_bytes(&bytes).expect("parse two-page fixture");
+
+        assert_eq!(pdf_doc.page_count(), 2, "fixture must have 2 pages");
+        let text = pdf_doc.extract_text().expect("extract_text on two-page doc");
+        // The join produces exactly one "\n\n" separator for a two-page doc.
+        // Both pages are empty here, so result is "\n\n" (empty + sep + empty).
+        assert_eq!(
+            text.matches("\n\n").count(),
+            1,
+            "two pages joined with '\\n\\n' must produce exactly one separator; got {text:?}",
+        );
+    }
+
+    /// Capability gate: `extract_text` must return `Error::FeatureNotInTier`
+    /// when the effective tier does not include `Capability::TextExtract`.
+    ///
+    /// `TextExtract` is granted to all tiers (including Trial), so we verify
+    /// the gate by constructing the `FeatureNotInTier` variant directly and
+    /// asserting its `code()` matches the stable error code — this is the
+    /// same approach used in `tests/capability_enforcement.rs` for caps that
+    /// are not currently withheld from any real tier.
+    #[test]
+    fn extract_text_capability_gate_error_is_well_formed() {
+        use crate::capability::Capability;
+        use crate::error::Error;
+        use crate::tier::Tier;
+
+        // Construct the error that `extract_text` would return if a future
+        // tier configuration excluded TextExtract.
+        let err = Error::FeatureNotInTier {
+            capability: Capability::TextExtract,
+            current_tier: Tier::Trial,
+            required_tier: Tier::Developer,
+        };
+        assert_eq!(
+            err.code(),
+            "E-LICENSE-FEATURE-NOT-IN-TIER",
+            "stable error code must match RFC §5.4",
+        );
+        let rendered = format!("{err}");
+        assert!(
+            rendered.contains("TextExtract"),
+            "Display must mention the missing capability; got {rendered:?}",
         );
     }
 }

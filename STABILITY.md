@@ -117,6 +117,13 @@ Concretely, this covers:
 - `LicenseInfo`, `set_license_key`, `license_info`
 - `Error`, `Result`, `Error::code() -> &'static str`, `Error::docs_url() -> &'static str`
 
+The following methods were added after 1.0 GA and carry the same Stable
+contract as §3.1:
+
+| Method | Added | Tracking |
+|---|---|---|
+| `PdfDocument::extract_text` — Stable | 1.0.1 | #1316 (M4-FACADE-01) |
+
 ### 3.2 Unstable items in 1.0
 
 None at GA. Any future Unstable addition must:
