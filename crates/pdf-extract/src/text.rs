@@ -1213,6 +1213,7 @@ pub fn extract_page_blocks(doc: &Document, page_num: u32) -> Vec<TextBlock> {
                 &font_map,
                 Some((doc, &resources)),
                 0,
+                None,
             );
         }
     }
@@ -1240,6 +1241,7 @@ pub fn extract_blocks_from_page_id(
                 &font_map,
                 Some((doc, &resources)),
                 0,
+                None,
             );
         }
     }
@@ -1262,6 +1264,7 @@ pub fn extract_text(doc: &Document) -> Vec<TextBlock> {
                     &font_map,
                     Some((doc, &resources)),
                     0,
+                    None,
                 );
                 blocks.extend(page_blocks);
             }
@@ -1298,6 +1301,7 @@ pub fn extract_page_text(doc: &Document, page_num: u32) -> Result<String> {
         &font_map,
         Some((doc, &resources)),
         0,
+        None,
     );
     let text = blocks
         .iter()
@@ -1415,18 +1419,34 @@ fn extract_actual_text(props: &lopdf::Dictionary) -> Option<String> {
     }
 }
 
-/// Innermost `actual_text` from the stack, if any.
-fn current_actual_text(stack: &[MarkedContentEntry]) -> Option<String> {
-    stack.iter().rev().find_map(|e| e.actual_text.clone())
+/// Innermost `actual_text` from the stack, falling back to an inherited
+/// value supplied by the caller. The inherited value carries the parent
+/// invocation's top-of-stack `/ActualText` across `Do` recursion into a
+/// Form XObject, so text emitted inside the XObject's `BT`...`ET` blocks
+/// is tagged with the surrounding `BDC`/`EMC` pair's `/ActualText`.
+fn current_actual_text(
+    stack: &[MarkedContentEntry],
+    inherited: Option<&str>,
+) -> Option<String> {
+    stack
+        .iter()
+        .rev()
+        .find_map(|e| e.actual_text.clone())
+        .or_else(|| inherited.map(|s| s.to_string()))
 }
 
-/// Extract text blocks from a list of operations, handling Form XObject recursion via `Do`.
+/// Extract text blocks from a list of operations, handling Form XObject
+/// recursion via `Do`. `inherited_actual_text` carries the parent's active
+/// `/ActualText` binding into the recursion so a `BDC` ... `Do` ... `EMC`
+/// sequence keeps tagging text emitted inside the invoked Form XObject.
+/// Top-level callers pass `None`.
 fn extract_blocks_from_ops_inner(
     ops: &[Operation],
     page: u32,
     font_map: &HashMap<String, FontInfo>,
     doc_and_resources: Option<(&Document, &lopdf::Dictionary)>,
     depth: u32,
+    inherited_actual_text: Option<&str>,
 ) -> Vec<TextBlock> {
     let mut state = TextState::default();
     let mut blocks = Vec::new();
@@ -1537,7 +1557,7 @@ fn extract_blocks_from_ops_inner(
                             bbox: [x, y, x + text_width, y + state.font_size],
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
-                            actual_text: current_actual_text(&mc_stack),
+                            actual_text: current_actual_text(&mc_stack, inherited_actual_text),
                         });
                     }
 
@@ -1581,7 +1601,7 @@ fn extract_blocks_from_ops_inner(
                             bbox: [x_start, y, x_end, y + state.font_size],
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
-                            actual_text: current_actual_text(&mc_stack),
+                            actual_text: current_actual_text(&mc_stack, inherited_actual_text),
                         });
                     }
                 }
@@ -1607,7 +1627,7 @@ fn extract_blocks_from_ops_inner(
                             bbox: [x, y, x + text_width, y + state.font_size],
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
-                            actual_text: current_actual_text(&mc_stack),
+                            actual_text: current_actual_text(&mc_stack, inherited_actual_text),
                         });
                     }
 
@@ -1648,7 +1668,7 @@ fn extract_blocks_from_ops_inner(
                                 bbox: [x, y, x + text_width, y + state.font_size],
                                 font_name: state.font_name.clone(),
                                 font_size: state.font_size,
-                                actual_text: current_actual_text(&mc_stack),
+                                actual_text: current_actual_text(&mc_stack, inherited_actual_text),
                             });
                         }
 
@@ -1683,10 +1703,15 @@ fn extract_blocks_from_ops_inner(
             }
             "Do" => {
                 // Invoke Form XObject — recurse into its content stream.
+                // Propagate the active /ActualText binding (top-of-stack, or
+                // whatever this invocation itself inherited) so text inside
+                // the XObject is tagged with the surrounding BDC/EMC pair.
                 if depth < 5 {
                     if let Some((doc, resources)) = doc_and_resources {
                         if let Some(Object::Name(ref xobj_name)) = op.operands.first() {
                             let xobj_name_str = String::from_utf8_lossy(xobj_name);
+                            let inherited_for_child =
+                                current_actual_text(&mc_stack, inherited_actual_text);
                             if let Some(xobj_blocks) = extract_form_xobject_text(
                                 doc,
                                 resources,
@@ -1694,6 +1719,7 @@ fn extract_blocks_from_ops_inner(
                                 page,
                                 font_map,
                                 depth,
+                                inherited_for_child.as_deref(),
                             ) {
                                 blocks.extend(xobj_blocks);
                             }
@@ -1708,7 +1734,12 @@ fn extract_blocks_from_ops_inner(
     blocks
 }
 
-/// Extract text from a Form XObject referenced by name in the page's Resources/XObject dict.
+/// Extract text from a Form XObject referenced by name in the page's
+/// Resources/XObject dict. `inherited_actual_text` is the active
+/// `/ActualText` binding from the calling context (parent stack +
+/// whatever the parent itself inherited), so text emitted inside this
+/// XObject's `BT`...`ET` blocks is tagged correctly when the `Do`
+/// operator sits between a `BDC` and matching `EMC`.
 fn extract_form_xobject_text(
     doc: &Document,
     resources: &lopdf::Dictionary,
@@ -1716,6 +1747,7 @@ fn extract_form_xobject_text(
     page: u32,
     font_map: &HashMap<String, FontInfo>,
     depth: u32,
+    inherited_actual_text: Option<&str>,
 ) -> Option<Vec<TextBlock>> {
     // Look up the XObject in the Resources dictionary.
     let xobj_dict = match resources.get(b"XObject").ok()? {
@@ -1782,6 +1814,7 @@ fn extract_form_xobject_text(
         &xobj_font_map,
         Some((doc, &xobj_resources)),
         depth + 1,
+        inherited_actual_text,
     ))
 }
 
@@ -2299,6 +2332,128 @@ mod tests {
         assert_eq!(blocks[0].actual_text.as_deref(), Some("X"));
         assert_eq!(blocks[1].actual_text.as_deref(), Some("X"));
         assert_eq!(blocks[2].actual_text, None);
+    }
+
+    /// Build a one-page Document whose page invokes a Form XObject (via
+    /// `/Fm0 Do`) wrapped in a `BDC` / `EMC` pair. `xobj_content` is the
+    /// content stream placed inside the Form XObject; `page_pre` runs
+    /// before the `Do`, and `page_post` runs after it (still inside the
+    /// surrounding `BDC` / `EMC`). Used to drive issue #1358 regression.
+    fn make_doc_with_xobj_inside_bdc(
+        page_pre: &[u8],
+        xobj_content: &[u8],
+        page_post: &[u8],
+        actual_text: &str,
+    ) -> Document {
+        let mut doc = Document::with_version("1.7");
+
+        let xobj_dict = dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Form",
+            "BBox" => vec![0.into(), 0.into(), 100.into(), 100.into()],
+        };
+        let xobj_stream = Stream::new(xobj_dict, xobj_content.to_vec());
+        let xobj_id = doc.add_object(Object::Stream(xobj_stream));
+
+        // Page content: BT /F1 12 Tf /Span <</ActualText(...)>> BDC <pre> /Fm0 Do <post> EMC ET
+        let mut page_content = Vec::<u8>::new();
+        page_content.extend_from_slice(b"BT /F1 12 Tf /Span <</ActualText (");
+        page_content.extend_from_slice(actual_text.as_bytes());
+        page_content.extend_from_slice(b")>> BDC ");
+        page_content.extend_from_slice(page_pre);
+        page_content.extend_from_slice(b" /Fm0 Do ");
+        page_content.extend_from_slice(page_post);
+        page_content.extend_from_slice(b" EMC ET");
+
+        let content_stream = Stream::new(dictionary! {}, page_content);
+        let content_id = doc.add_object(Object::Stream(content_stream));
+
+        let resources = dictionary! {
+            "XObject" => dictionary! { "Fm0" => Object::Reference(xobj_id) },
+        };
+        let resources_id = doc.add_object(Object::Dictionary(resources));
+
+        let page_dict = dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Reference(resources_id),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+        let pages_dict = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        };
+        let pages_id = doc.add_object(Object::Dictionary(pages_dict));
+
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        doc
+    }
+
+    /// Regression guard for issue #1358: when a `Do` operator invoking a
+    /// Form XObject sits inside a `BDC` / `EMC` pair carrying
+    /// `/ActualText`, text emitted by the XObject's own `Tj`/`TJ`
+    /// operators must inherit that `/ActualText` value. Previously the
+    /// recursive `extract_blocks_from_ops_inner` reset the marked-content
+    /// stack and lost the surrounding context.
+    #[test]
+    fn actual_text_propagates_into_form_xobject_recursion() {
+        let doc = make_doc_with_xobj_inside_bdc(
+            b"(pre) Tj",
+            b"BT /F1 12 Tf (inside) Tj ET",
+            b"(post) Tj",
+            "wrapped",
+        );
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].text, "pre");
+        assert_eq!(blocks[0].actual_text.as_deref(), Some("wrapped"));
+        // The block emitted inside the Form XObject's BT/ET must inherit
+        // the surrounding /ActualText — not silently become None.
+        assert_eq!(blocks[1].text, "inside");
+        assert_eq!(
+            blocks[1].actual_text.as_deref(),
+            Some("wrapped"),
+            "Form XObject text lost surrounding /ActualText (issue #1358)"
+        );
+        assert_eq!(blocks[2].text, "post");
+        assert_eq!(blocks[2].actual_text.as_deref(), Some("wrapped"));
+    }
+
+    /// Inverse regression: when a `Do` invokes a Form XObject whose own
+    /// content has its own `BDC` ... `EMC` pair with a different
+    /// `/ActualText`, the inner pair takes precedence inside the XObject
+    /// and the outer pair resumes after the inner `EMC`. This guards
+    /// against the inherited binding clobbering legitimate inner
+    /// marked-content state.
+    #[test]
+    fn actual_text_inner_xobj_bdc_overrides_inherited() {
+        let doc = make_doc_with_xobj_inside_bdc(
+            b"",
+            b"BT /F1 12 Tf \
+              /Span <</ActualText (inner)>> BDC (B) Tj EMC \
+              (after) Tj ET",
+            b"",
+            "outer",
+        );
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].text, "B");
+        assert_eq!(blocks[0].actual_text.as_deref(), Some("inner"));
+        assert_eq!(blocks[1].text, "after");
+        assert_eq!(blocks[1].actual_text.as_deref(), Some("outer"));
     }
 
     /// `/ActualText` encoded as UTF-16BE (with BOM) decodes to the proper
