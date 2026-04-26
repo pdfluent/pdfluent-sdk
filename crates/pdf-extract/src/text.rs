@@ -1145,6 +1145,31 @@ fn decompose_ligature_char_with_origin(c: char, is_ct_origin: bool) -> Option<&'
     }
 }
 
+/// Decompose a single precomposed-ligature character into its constituent
+/// string. Combines the hardcoded Latin set ([`decompose_ligature_char`])
+/// with an NFKD fallback over the rest of the Alphabetic Presentation
+/// Forms block (U+FB00..U+FB4F) — Hebrew, Arabic, Armenian forms — so
+/// that string-level [`decompose_ligatures`] and the per-glyph
+/// `push_glyph_positioned` path agree on what counts as a decomposable
+/// glyph.
+fn decompose_glyph_to_string(c: char) -> Option<String> {
+    use unicode_normalization::UnicodeNormalization;
+    if let Some(s) = decompose_ligature_char(c) {
+        return Some(s.to_string());
+    }
+    if matches!(c, '\u{FB00}'..='\u{FB4F}') {
+        let nfkd: String = c.nfkd().collect();
+        // Some codepoints in this block have no compatibility decomposition
+        // and would round-trip back as themselves; only treat them as
+        // decomposable when NFKD actually maps them, including legitimate
+        // single-codepoint mappings such as Hebrew presentation forms.
+        if nfkd != c.to_string() {
+            return Some(nfkd);
+        }
+    }
+    None
+}
+
 /// Apply ligature decomposition to a string. Hardcoded mappings cover the
 /// six common Latin ligatures (fi, fl, ffi, ffl, ff, st). For any other
 /// character in the Alphabetic Presentation Forms block (U+FB00..U+FB4F)
@@ -1152,13 +1177,10 @@ fn decompose_ligature_char_with_origin(c: char, is_ct_origin: bool) -> Option<&'
 /// to that character only. NFKD is *not* applied globally to avoid breaking
 /// legitimate composed accented characters elsewhere in the string.
 fn decompose_ligatures(s: &str) -> String {
-    use unicode_normalization::UnicodeNormalization;
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
-        if let Some(replacement) = decompose_ligature_char_with_origin(c, false) {
-            out.push_str(replacement);
-        } else if matches!(c, '\u{FB00}'..='\u{FB4F}') {
-            out.extend(c.nfkd());
+        if let Some(replacement) = decompose_glyph_to_string(c) {
+            out.push_str(&replacement);
         } else {
             out.push(c);
         }
@@ -1167,13 +1189,12 @@ fn decompose_ligatures(s: &str) -> String {
 }
 
 fn decompose_decoded_ligatures(s: &DecodedPdfString) -> String {
-    use unicode_normalization::UnicodeNormalization;
     let mut out = String::with_capacity(s.text.len());
     for (c, is_ct_origin) in s.iter() {
         if let Some(replacement) = decompose_ligature_char_with_origin(c, is_ct_origin) {
             out.push_str(replacement);
-        } else if matches!(c, '\u{FB00}'..='\u{FB4F}') {
-            out.extend(c.nfkd());
+        } else if let Some(replacement) = decompose_glyph_to_string(c) {
+            out.push_str(&replacement);
         } else {
             out.push(c);
         }
@@ -1547,8 +1568,9 @@ fn extract_blocks_from_ops_inner(
                     if !text.is_empty() {
                         let x = state.tm[4];
                         let y = state.tm[5];
-                        // Decompose ligatures *after* glyph counting so position
-                        // advance uses the original glyph count.
+                        // Bbox width tracks the *rendered* glyph footprint
+                        // (one char_w per source glyph), not the byte- or
+                        // char-length of the decomposed display string.
                         let text_width = text.glyph_count() as f64 * char_w;
                         let display_text = maybe_decompose_decoded(&text);
                         blocks.push(TextBlock {
@@ -1619,6 +1641,8 @@ fn extract_blocks_from_ops_inner(
                     if !text.is_empty() {
                         let x = state.tm[4];
                         let y = state.tm[5];
+                        // Bbox width tracks rendered glyph footprint (one
+                        // char_w per source glyph) — match the Tj path.
                         let text_width = text.glyph_count() as f64 * char_w;
                         let display_text = maybe_decompose_decoded(&text);
                         blocks.push(TextBlock {
@@ -1660,6 +1684,8 @@ fn extract_blocks_from_ops_inner(
                         if !text.is_empty() {
                             let x = state.tm[4];
                             let y = state.tm[5];
+                            // Bbox width tracks rendered glyph footprint
+                            // (one char_w per source glyph) — match Tj path.
                             let text_width = text.glyph_count() as f64 * char_w;
                             let display_text = maybe_decompose_decoded(&text);
                             blocks.push(TextBlock {
@@ -1884,6 +1910,14 @@ fn build_font_info_from_value(doc: &Document, value: &Object) -> Option<FontInfo
 /// constituent characters. The text matrix advances exactly once (per
 /// glyph), preserving the original layout — only the per-character bbox is
 /// subdivided.
+///
+/// Uses the unified [`decompose_glyph_to_string`] helper so that the
+/// per-glyph decomposition matches the string-level
+/// [`decompose_ligatures`] used by `extract_page_text` / `TextBlock`.
+/// Without this alignment, presentation-form codepoints outside the
+/// hardcoded Latin set (e.g. Armenian U+FB13) would expand in extracted
+/// text but stay as a single PositionedChar, leaving consumers that pair
+/// text offsets with bounding boxes misaligned.
 fn push_glyph_positioned(
     chars: &mut Vec<PositionedChar>,
     state: &mut TextState,
@@ -1893,27 +1927,37 @@ fn push_glyph_positioned(
     char_w: f64,
 ) {
     let (gx, gy) = apply_ctm(state);
-    let constituents: &str = if LIGATURE_DECOMP {
-        decompose_ligature_char_with_origin(glyph, is_ct_origin).unwrap_or("")
+    let constituents: Option<String> = if LIGATURE_DECOMP {
+        // Try ct-origin marker first (preserves U+E007 → "ct" only when it
+        // came from a /ct glyph-name path), then fall back to the unified
+        // decomposition helper which covers the Latin set + FB00–FB4F NFKD.
+        if let Some(s) = decompose_ligature_char_with_origin(glyph, is_ct_origin) {
+            Some(s.to_string())
+        } else {
+            decompose_glyph_to_string(glyph)
+        }
     } else {
-        ""
+        None
     };
-    if constituents.is_empty() {
-        chars.push(PositionedChar {
-            ch: glyph,
-            page,
-            bbox: [gx, gy, gx + char_w, gy + state.font_size],
-        });
-    } else {
-        let n = constituents.chars().count() as f64;
-        let part_w = char_w / n;
-        for (i, c) in constituents.chars().enumerate() {
-            let x = gx + part_w * i as f64;
+    match constituents {
+        None => {
             chars.push(PositionedChar {
-                ch: c,
+                ch: glyph,
                 page,
-                bbox: [x, gy, x + part_w, gy + state.font_size],
+                bbox: [gx, gy, gx + char_w, gy + state.font_size],
             });
+        }
+        Some(s) => {
+            let n = s.chars().count() as f64;
+            let part_w = char_w / n;
+            for (i, c) in s.chars().enumerate() {
+                let x = gx + part_w * i as f64;
+                chars.push(PositionedChar {
+                    ch: c,
+                    page,
+                    bbox: [x, gy, x + part_w, gy + state.font_size],
+                });
+            }
         }
     }
     state.tm[4] += char_w + state.tc;
@@ -2472,6 +2516,13 @@ mod tests {
     // -- M4-LIG-01: ligature decomposition -------------------------------
 
     #[test]
+    fn ligature_ff_decomposes() {
+        assert_eq!(decompose_ligature_char('\u{FB00}'), Some("ff"));
+        assert_eq!(decompose_ligatures("\u{FB00}"), "ff");
+        assert_eq!(decompose_ligatures("o\u{FB00}ice"), "office");
+    }
+
+    #[test]
     fn ligature_fi_decomposes() {
         assert_eq!(decompose_ligature_char('\u{FB01}'), Some("fi"));
         assert_eq!(decompose_ligatures("\u{FB01}"), "fi");
@@ -2718,5 +2769,118 @@ mod tests {
         let total = chars[2].bbox[2] - chars[0].bbox[0];
         let expected = 12.0 * APPROX_CHAR_WIDTH;
         assert!((total - expected).abs() < 1e-6);
+    }
+
+    // -- M4-FOLLOWUP-03: PositionedChar decomposition + Tj bbox geometry ---
+
+    /// Regression guard for issue #1359 (problem 1): ligatures outside the
+    /// hardcoded Latin set must decompose in PositionedChar output the same
+    /// way they decompose in extracted text. Previously
+    /// `push_glyph_positioned` only ran the hardcoded Latin map while
+    /// extracted text additionally applied an NFKD fallback over
+    /// FB00..FB4F, leaving counts misaligned for Armenian/Hebrew/Arabic
+    /// presentation forms.
+    #[test]
+    fn positioned_chars_match_extracted_text_for_armenian_ligature() {
+        // U+FB13 (Armenian small ligature men now) NFKDs to U+0574 U+0576.
+        // The font's /Differences slot 1 maps to glyph name uniFB13.
+        let doc = make_doc_with_ligature_font(b"BT /F1 12 Tf <01> Tj ET", "uniFB13");
+        let blocks = extract_text(&doc);
+        let chars = extract_positioned_chars(&doc, 1).unwrap();
+        assert_eq!(blocks.len(), 1);
+        // Both paths must agree on the constituent count.
+        assert_eq!(
+            blocks[0].text.chars().count(),
+            chars.len(),
+            "PositionedChar count drifted from extract_text() char count \
+             (issue #1359 problem 1): blocks[0].text = {:?}, chars = {:?}",
+            blocks[0].text,
+            chars.iter().map(|c| c.ch).collect::<String>(),
+        );
+        // And on the actual characters.
+        let chars_str: String = chars.iter().map(|c| c.ch).collect();
+        assert_eq!(blocks[0].text, chars_str);
+        // Total bbox span equals one glyph's char_w (the matrix advanced once).
+        let total = chars.last().unwrap().bbox[2] - chars.first().unwrap().bbox[0];
+        let expected = 12.0 * APPROX_CHAR_WIDTH;
+        assert!((total - expected).abs() < 1e-6);
+    }
+
+    /// Hebrew presentation forms may NFKD-map to a single base Hebrew
+    /// codepoint. Those mappings are still semantic decompositions and must
+    /// not be dropped just because the output has one scalar.
+    #[test]
+    fn hebrew_presentation_form_extracts_single_codepoint_nfkd_mapping() {
+        // U+FB21 (Hebrew letter wide alef) NFKDs to U+05D0.
+        let doc = make_doc_with_ligature_font(b"BT /F1 12 Tf <01> Tj ET", "uniFB21");
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].text, "\u{05D0}");
+        assert_eq!(
+            decompose_glyph_to_string('\u{FB21}').as_deref(),
+            Some("\u{05D0}")
+        );
+    }
+
+    /// The positioned-character stream must expose the same text characters
+    /// as extract_text for single-codepoint Hebrew presentation-form
+    /// decompositions.
+    #[test]
+    fn positioned_chars_match_extracted_text_for_hebrew_presentation_form() {
+        let doc = make_doc_with_ligature_font(b"BT /F1 12 Tf <01> Tj ET", "uniFB21");
+        let blocks = extract_text(&doc);
+        let chars = extract_positioned_chars(&doc, 1).unwrap();
+        let chars_str: String = chars.iter().map(|c| c.ch).collect();
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].text, "\u{05D0}");
+        assert_eq!(chars_str, blocks[0].text);
+        assert_eq!(blocks[0].text.chars().count(), chars.len());
+    }
+
+    /// Regression guard for issue #1359 (problem 2): a Tj operator that
+    /// emits a single ligature glyph must produce a TextBlock whose bbox
+    /// width equals one rendered glyph's footprint, not the byte length
+    /// of the decomposed display string. Previously `display_text.len()`
+    /// over-counted because ligature expansion grows the string while
+    /// the text matrix advances exactly once per source glyph.
+    #[test]
+    fn tj_block_width_matches_rendered_glyph_count() {
+        let doc = make_doc_with_ligature_font(b"BT /F1 12 Tf <01> Tj ET", "ffi");
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].text, "ffi");
+        let width = blocks[0].bbox[2] - blocks[0].bbox[0];
+        let expected = 12.0 * APPROX_CHAR_WIDTH;
+        assert!(
+            (width - expected).abs() < 1e-6,
+            "Tj bbox width {} != one glyph's char_w {} (issue #1359 problem 2)",
+            width,
+            expected,
+        );
+    }
+
+    /// Cross-operator consistency: a `Tj` block and a `TJ` block emitting
+    /// the same single-glyph ligature must produce TextBlocks with equal
+    /// bbox widths. Pre-fix, Tj used `display_text.len()` (3 for "ffi")
+    /// and TJ used `x_end - x_start` (1 glyph advance) — so the same input
+    /// rendered as ~3× wider in Tj than in TJ.
+    #[test]
+    fn tj_and_tj_array_bbox_widths_agree_for_ligature() {
+        let tj_doc = make_doc_with_ligature_font(b"BT /F1 12 Tf <01> Tj ET", "ffi");
+        let tj_blocks = extract_text(&tj_doc);
+        let tj_doc_arr = make_doc_with_ligature_font(b"BT /F1 12 Tf [<01>] TJ ET", "ffi");
+        let tj_arr_blocks = extract_text(&tj_doc_arr);
+        assert_eq!(tj_blocks.len(), 1);
+        assert_eq!(tj_arr_blocks.len(), 1);
+        let tj_w = tj_blocks[0].bbox[2] - tj_blocks[0].bbox[0];
+        let tj_arr_w = tj_arr_blocks[0].bbox[2] - tj_arr_blocks[0].bbox[0];
+        assert!(
+            (tj_w - tj_arr_w).abs() < 1e-6,
+            "Tj bbox width {} disagrees with TJ bbox width {} for the same \
+             single-glyph ligature input (issue #1359 problem 2)",
+            tj_w,
+            tj_arr_w,
+        );
     }
 }
