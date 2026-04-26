@@ -105,6 +105,14 @@ struct FontInfo {
     /// Encoding-based code→char map for simple fonts (derived from BaseEncoding + Differences).
     /// Index = byte code (0..255), value = Unicode char if known.
     encoding_map: [Option<char>; 256],
+    /// Side-table marking codes whose `Differences` glyph name is `ct`.
+    /// The `ct` ligature has no precomposed Unicode codepoint, so it cannot
+    /// be expressed as a `char` in `encoding_map`. When this flag is set,
+    /// decoding emits one private-use marker scalar and records that marker's
+    /// origin so glyph advance remains one codepoint wide. The marker expands
+    /// to "ct" only in the ligature-decomposition layer, avoiding clobbering
+    /// legitimate U+E007 values that arrive through ToUnicode CMaps.
+    ct_codes: [bool; 256],
 }
 
 /// Build a map from font resource name (e.g. "F1") to FontInfo for a page.
@@ -182,10 +190,10 @@ fn build_font_map(doc: &Document, page_id: ObjectId) -> HashMap<String, FontInfo
         };
 
         // Build encoding map for simple fonts (from Encoding + Differences).
-        let encoding_map = if !is_cid {
+        let (encoding_map, ct_codes) = if !is_cid {
             build_encoding_map(doc, &font)
         } else {
-            [None; 256]
+            ([None; 256], [false; 256])
         };
 
         map.insert(
@@ -194,6 +202,7 @@ fn build_font_map(doc: &Document, page_id: ObjectId) -> HashMap<String, FontInfo
                 is_cid,
                 to_unicode,
                 encoding_map,
+                ct_codes,
             },
         );
     }
@@ -426,12 +435,16 @@ fn resolve_dict(doc: &Document, dict: &lopdf::Dictionary, key: &[u8]) -> Option<
 /// - Named base encodings: WinAnsiEncoding, MacRomanEncoding, MacExpertEncoding
 /// - Differences arrays: `[code1 /name1 /name2 ... codeN /nameN ...]`
 /// - Glyph name → Unicode via AGL (Adobe Glyph List) lookup
-fn build_encoding_map(doc: &Document, font: &lopdf::Dictionary) -> [Option<char>; 256] {
+fn build_encoding_map(
+    doc: &Document,
+    font: &lopdf::Dictionary,
+) -> ([Option<char>; 256], [bool; 256]) {
     let mut table = [None::<char>; 256];
+    let mut ct_codes = [false; 256];
 
     let encoding = match font.get(b"Encoding").ok() {
         Some(obj) => obj,
-        None => return table,
+        None => return (table, ct_codes),
     };
 
     match encoding {
@@ -442,7 +455,7 @@ fn build_encoding_map(doc: &Document, font: &lopdf::Dictionary) -> [Option<char>
         }
         Object::Reference(r) => match doc.get_object(*r) {
             Ok(Object::Dictionary(enc_dict)) => {
-                parse_encoding_dict(doc, enc_dict, &mut table);
+                parse_encoding_dict(doc, enc_dict, &mut table, &mut ct_codes);
             }
             Ok(Object::Name(name)) => {
                 let name_str = String::from_utf8_lossy(name);
@@ -451,12 +464,12 @@ fn build_encoding_map(doc: &Document, font: &lopdf::Dictionary) -> [Option<char>
             _ => {}
         },
         Object::Dictionary(enc_dict) => {
-            parse_encoding_dict(doc, enc_dict, &mut table);
+            parse_encoding_dict(doc, enc_dict, &mut table, &mut ct_codes);
         }
         _ => {}
     }
 
-    table
+    (table, ct_codes)
 }
 
 /// Parse an Encoding dictionary with optional BaseEncoding and Differences.
@@ -464,6 +477,7 @@ fn parse_encoding_dict(
     doc: &Document,
     enc_dict: &lopdf::Dictionary,
     table: &mut [Option<char>; 256],
+    ct_codes: &mut [bool; 256],
 ) {
     // Apply BaseEncoding first.
     if let Ok(Object::Name(base)) = enc_dict.get(b"BaseEncoding") {
@@ -491,9 +505,7 @@ fn parse_encoding_dict(
                 if let Some(c) = code {
                     if c < 256 {
                         let glyph = String::from_utf8_lossy(name);
-                        if let Some(ch) = glyph_name_to_unicode(&glyph) {
-                            table[c as usize] = Some(ch);
-                        }
+                        apply_glyph_name(&glyph, c as usize, table, ct_codes);
                     }
                     code = Some(c + 1);
                 }
@@ -504,9 +516,7 @@ fn parse_encoding_dict(
                     if let Some(c) = code {
                         if c < 256 {
                             let glyph = String::from_utf8_lossy(name);
-                            if let Some(ch) = glyph_name_to_unicode(&glyph) {
-                                table[c as usize] = Some(ch);
-                            }
+                            apply_glyph_name(&glyph, c as usize, table, ct_codes);
                         }
                         code = Some(c + 1);
                     }
@@ -514,6 +524,30 @@ fn parse_encoding_dict(
             }
             _ => {}
         }
+    }
+}
+
+/// Resolve a glyph name to either a single Unicode codepoint (stored in
+/// `table`) or the `ct` ligature marker (recorded in `ct_codes`). The `ct`
+/// ligature has no precomposed Unicode codepoint, so it cannot live in
+/// `table`; it is tracked separately so that decoding can emit one internal
+/// marker and preserve one-glyph text advance before later decomposition.
+fn apply_glyph_name(
+    glyph: &str,
+    code: usize,
+    table: &mut [Option<char>; 256],
+    ct_codes: &mut [bool; 256],
+) {
+    if glyph == "ct" {
+        // Clear any prior char mapping at this slot — the ct flag is the
+        // sole source of truth for this code.
+        table[code] = None;
+        ct_codes[code] = true;
+        return;
+    }
+    if let Some(ch) = glyph_name_to_unicode(glyph) {
+        table[code] = Some(ch);
+        ct_codes[code] = false;
     }
 }
 
@@ -632,9 +666,10 @@ fn mac_roman_encoding() -> &'static [char; 256] {
 /// - `uniXXXX` names (4+ hex digits after "uni")
 /// - `uXXXX` / `uXXXXX` names
 /// - Common AGL names (top ~250 entries covering >99% of real-world PDFs)
-/// - The `ct` ligature, which has no precomposed Unicode codepoint — routed
-///   through [`CT_LIGATURE_SENTINEL`] so the downstream decomposition pass
-///   in [`decompose_ligatures`] can expand it to `"ct"`.
+///
+/// The `ct` ligature has no precomposed Unicode codepoint and is handled
+/// separately via the `ct_codes` side-table on `FontInfo` — see
+/// [`apply_glyph_name`] — rather than through any PUA sentinel here.
 fn glyph_name_to_unicode(name: &str) -> Option<char> {
     // Handle uniXXXX / uXXXXX patterns.
     if name.starts_with("uni") && name.len() >= 7 {
@@ -654,7 +689,6 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
     }
 
     match name {
-        "ct" => Some(CT_LIGATURE_SENTINEL),
         "st" => Some('\u{FB06}'),
         "longst" => Some('\u{FB05}'),
         _ => None,
@@ -927,8 +961,55 @@ fn agl_table() -> &'static HashMap<&'static str, char> {
     })
 }
 
-/// Decode a PDF string using the font's ToUnicode CMap (if available).
-fn decode_pdf_string_with_font(bytes: &[u8], font_info: Option<&FontInfo>) -> String {
+const CT_LIGATURE_MARKER: char = '\u{E007}';
+
+#[derive(Clone, Default)]
+struct DecodedPdfString {
+    text: String,
+    ct_origins: Vec<bool>,
+}
+
+impl DecodedPdfString {
+    fn from_text(text: String) -> Self {
+        let ct_origins = vec![false; text.chars().count()];
+        Self { text, ct_origins }
+    }
+
+    fn push_char(&mut self, ch: char, is_ct_origin: bool) {
+        self.text.push(ch);
+        self.ct_origins.push(is_ct_origin);
+    }
+
+    fn push_str(&mut self, s: &str) {
+        for ch in s.chars() {
+            self.push_char(ch, false);
+        }
+    }
+
+    fn extend(&mut self, other: DecodedPdfString) {
+        self.text.push_str(&other.text);
+        self.ct_origins.extend(other.ct_origins);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    fn glyph_count(&self) -> usize {
+        self.ct_origins.len()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (char, bool)> + '_ {
+        self.text.chars().zip(self.ct_origins.iter().copied())
+    }
+}
+
+/// Decode a PDF string using the font's ToUnicode CMap (if available),
+/// preserving origin metadata for internal `ct` ligature markers.
+fn decode_pdf_string_with_font_marked(
+    bytes: &[u8],
+    font_info: Option<&FontInfo>,
+) -> DecodedPdfString {
     // Check for UTF-16BE BOM first — always takes priority.
     if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
         let chars: Vec<u16> = bytes[2..]
@@ -941,13 +1022,13 @@ fn decode_pdf_string_with_font(bytes: &[u8], font_info: Option<&FontInfo>) -> St
                 }
             })
             .collect();
-        return String::from_utf16_lossy(&chars);
+        return DecodedPdfString::from_text(String::from_utf16_lossy(&chars));
     }
 
     if let Some(info) = font_info {
         if info.is_cid && !info.to_unicode.is_empty() {
             // CID font: decode 2-byte codes via ToUnicode.
-            let mut result = String::new();
+            let mut result = DecodedPdfString::default();
             let mut i = 0;
             while i + 1 < bytes.len() {
                 let code = u16::from_be_bytes([bytes[i], bytes[i + 1]]) as u32;
@@ -957,7 +1038,7 @@ fn decode_pdf_string_with_font(bytes: &[u8], font_info: Option<&FontInfo>) -> St
                     // Fallback: try direct Unicode interpretation.
                     if let Some(ch) = char::from_u32(code) {
                         if !ch.is_control() || ch == ' ' || ch == '\t' || ch == '\n' {
-                            result.push(ch);
+                            result.push_char(ch, false);
                         }
                     }
                 }
@@ -968,16 +1049,18 @@ fn decode_pdf_string_with_font(bytes: &[u8], font_info: Option<&FontInfo>) -> St
 
         if !info.is_cid && !info.to_unicode.is_empty() {
             // Simple font with ToUnicode: decode 1-byte codes.
-            let mut result = String::new();
+            let mut result = DecodedPdfString::default();
             for &b in bytes {
                 if let Some(s) = info.to_unicode.get(&(b as u32)) {
                     result.push_str(s);
+                } else if info.ct_codes[b as usize] {
+                    result.push_char(CT_LIGATURE_MARKER, true);
                 } else if let Some(ch) = info.encoding_map[b as usize] {
-                    result.push(ch);
+                    result.push_char(ch, false);
                 } else {
                     let ch = b as char;
                     if is_printable_or_space(ch) {
-                        result.push(ch);
+                        result.push_char(ch, false);
                     }
                 }
             }
@@ -985,15 +1068,19 @@ fn decode_pdf_string_with_font(bytes: &[u8], font_info: Option<&FontInfo>) -> St
         }
 
         // Simple font with encoding map but no ToUnicode.
-        if !info.is_cid && info.encoding_map.iter().any(|c| c.is_some()) {
-            let mut result = String::new();
+        if !info.is_cid
+            && (info.encoding_map.iter().any(|c| c.is_some()) || info.ct_codes.iter().any(|f| *f))
+        {
+            let mut result = DecodedPdfString::default();
             for &b in bytes {
-                if let Some(ch) = info.encoding_map[b as usize] {
-                    result.push(ch);
+                if info.ct_codes[b as usize] {
+                    result.push_char(CT_LIGATURE_MARKER, true);
+                } else if let Some(ch) = info.encoding_map[b as usize] {
+                    result.push_char(ch, false);
                 } else {
                     let ch = b as char;
                     if is_printable_or_space(ch) {
-                        result.push(ch);
+                        result.push_char(ch, false);
                     }
                 }
             }
@@ -1002,17 +1089,14 @@ fn decode_pdf_string_with_font(bytes: &[u8], font_info: Option<&FontInfo>) -> St
     }
 
     // Fallback: PDFDocEncoding (ASCII + Latin-1), skipping control chars.
-    bytes
-        .iter()
-        .filter_map(|&b| {
-            let ch = b as char;
-            if is_printable_or_space(ch) {
-                Some(ch)
-            } else {
-                None
-            }
-        })
-        .collect()
+    let mut result = DecodedPdfString::default();
+    for &b in bytes {
+        let ch = b as char;
+        if is_printable_or_space(ch) {
+            result.push_char(ch, false);
+        }
+    }
+    result
 }
 
 /// Returns true if a character is printable or common whitespace (tab, newline, CR, space).
@@ -1031,17 +1115,13 @@ fn is_printable_or_space(ch: char) -> bool {
 /// level type without breaking the current API.
 const LIGATURE_DECOMP: bool = true;
 
-/// Sentinel codepoint for the `ct` ligature. PDF authors use the AGL glyph
-/// name `ct` for this ligature, but Unicode has no precomposed codepoint —
-/// so we route it through this Private Use Area sentinel and decompose it
-/// to `"ct"` in [`decompose_ligature_char`]. Without a sentinel, the byte
-/// would fall through to PDFDocEncoding and surface as a stray character.
-const CT_LIGATURE_SENTINEL: char = '\u{E007}';
-
 /// Decompose a precomposed-ligature character (Alphabetic Presentation Forms,
-/// U+FB00..U+FB06) and the `ct` PUA sentinel into their constituent string.
-/// Returns `None` for any other character — the caller keeps the original
-/// codepoint in that case.
+/// U+FB00..U+FB06) into its constituent string. Returns `None` for any other
+/// character — the caller keeps the original codepoint in that case.
+///
+/// The `ct` ligature uses an internal marker plus origin metadata because
+/// it has no precomposed Unicode codepoint and must not collide with
+/// legitimate PUA values from ToUnicode CMaps.
 fn decompose_ligature_char(c: char) -> Option<&'static str> {
     Some(match c {
         '\u{FB00}' => "ff",
@@ -1053,9 +1133,16 @@ fn decompose_ligature_char(c: char) -> Option<&'static str> {
         // search/copy-paste purposes; the historical long-s spelling is
         // not preserved.
         '\u{FB05}' | '\u{FB06}' => "st",
-        CT_LIGATURE_SENTINEL => "ct",
         _ => return None,
     })
+}
+
+fn decompose_ligature_char_with_origin(c: char, is_ct_origin: bool) -> Option<&'static str> {
+    if is_ct_origin && c == CT_LIGATURE_MARKER {
+        Some("ct")
+    } else {
+        decompose_ligature_char(c)
+    }
 }
 
 /// Apply ligature decomposition to a string. Hardcoded mappings cover the
@@ -1068,7 +1155,22 @@ fn decompose_ligatures(s: &str) -> String {
     use unicode_normalization::UnicodeNormalization;
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
-        if let Some(replacement) = decompose_ligature_char(c) {
+        if let Some(replacement) = decompose_ligature_char_with_origin(c, false) {
+            out.push_str(replacement);
+        } else if matches!(c, '\u{FB00}'..='\u{FB4F}') {
+            out.extend(c.nfkd());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn decompose_decoded_ligatures(s: &DecodedPdfString) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let mut out = String::with_capacity(s.text.len());
+    for (c, is_ct_origin) in s.iter() {
+        if let Some(replacement) = decompose_ligature_char_with_origin(c, is_ct_origin) {
             out.push_str(replacement);
         } else if matches!(c, '\u{FB00}'..='\u{FB4F}') {
             out.extend(c.nfkd());
@@ -1082,11 +1184,15 @@ fn decompose_ligatures(s: &str) -> String {
 /// Apply [`decompose_ligatures`] when the feature is enabled; otherwise
 /// return the input unchanged. Centralizes the gate so callers don't
 /// repeat the `if LIGATURE_DECOMP` check at every emission site.
-fn maybe_decompose(s: String) -> String {
+fn maybe_decompose_decoded(s: &DecodedPdfString) -> String {
     if LIGATURE_DECOMP {
-        decompose_ligatures(&s)
+        if s.ct_origins.iter().any(|origin| *origin) {
+            decompose_decoded_ligatures(s)
+        } else {
+            decompose_ligatures(&s.text)
+        }
     } else {
-        s
+        s.text.clone()
     }
 }
 
@@ -1412,7 +1518,7 @@ fn extract_blocks_from_ops_inner(
             }
             "Tj" => {
                 let fi = font_map.get(&state.font_name);
-                if let Some(text) = extract_string_operand_with_font(&op.operands, fi) {
+                if let Some(text) = extract_decoded_string_operand_with_font(&op.operands, fi) {
                     let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
 
                     // Skip empty text blocks (consistent with TJ handler) — empty
@@ -1423,8 +1529,8 @@ fn extract_blocks_from_ops_inner(
                         let y = state.tm[5];
                         // Decompose ligatures *after* glyph counting so position
                         // advance uses the original glyph count.
-                        let display_text = maybe_decompose(text.clone());
-                        let text_width = display_text.len() as f64 * char_w;
+                        let text_width = text.glyph_count() as f64 * char_w;
+                        let display_text = maybe_decompose_decoded(&text);
                         blocks.push(TextBlock {
                             text: display_text,
                             page,
@@ -1436,7 +1542,7 @@ fn extract_blocks_from_ops_inner(
                     }
 
                     // Advance text position.
-                    for _ in text.chars() {
+                    for _ in text.iter() {
                         state.tm[4] += char_w + state.tc;
                     }
                 }
@@ -1446,17 +1552,17 @@ fn extract_blocks_from_ops_inner(
                     let x_start = state.tm[4];
                     let y = state.tm[5];
                     let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
-                    let mut combined_text = String::new();
+                    let mut combined_text = DecodedPdfString::default();
                     let fi = font_map.get(&state.font_name);
 
                     for item in arr {
                         match item {
                             Object::String(bytes, _) => {
-                                let text = decode_pdf_string_with_font(bytes, fi);
-                                for _ in text.chars() {
+                                let text = decode_pdf_string_with_font_marked(bytes, fi);
+                                for _ in text.iter() {
                                     state.tm[4] += char_w + state.tc;
                                 }
-                                combined_text.push_str(&text);
+                                combined_text.extend(text);
                             }
                             _ => {
                                 if let Some(adj) = as_number(item) {
@@ -1470,7 +1576,7 @@ fn extract_blocks_from_ops_inner(
                     if !combined_text.is_empty() {
                         let x_end = state.tm[4];
                         blocks.push(TextBlock {
-                            text: maybe_decompose(combined_text),
+                            text: maybe_decompose_decoded(&combined_text),
                             page,
                             bbox: [x_start, y, x_end, y + state.font_size],
                             font_name: state.font_name.clone(),
@@ -1487,14 +1593,14 @@ fn extract_blocks_from_ops_inner(
                 state.tm = new_tlm;
 
                 let fi = font_map.get(&state.font_name);
-                if let Some(text) = extract_string_operand_with_font(&op.operands, fi) {
+                if let Some(text) = extract_decoded_string_operand_with_font(&op.operands, fi) {
                     let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
 
                     if !text.is_empty() {
                         let x = state.tm[4];
                         let y = state.tm[5];
-                        let display_text = maybe_decompose(text.clone());
-                        let text_width = display_text.len() as f64 * char_w;
+                        let text_width = text.glyph_count() as f64 * char_w;
+                        let display_text = maybe_decompose_decoded(&text);
                         blocks.push(TextBlock {
                             text: display_text,
                             page,
@@ -1505,7 +1611,7 @@ fn extract_blocks_from_ops_inner(
                         });
                     }
 
-                    for _ in text.chars() {
+                    for _ in text.iter() {
                         state.tm[4] += char_w + state.tc;
                     }
                 }
@@ -1526,14 +1632,16 @@ fn extract_blocks_from_ops_inner(
                     state.tm = new_tlm;
 
                     let fi = font_map.get(&state.font_name);
-                    if let Some(text) = extract_string_operand_with_font(&op.operands[2..], fi) {
+                    if let Some(text) =
+                        extract_decoded_string_operand_with_font(&op.operands[2..], fi)
+                    {
                         let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
 
                         if !text.is_empty() {
                             let x = state.tm[4];
                             let y = state.tm[5];
-                            let display_text = maybe_decompose(text.clone());
-                            let text_width = display_text.len() as f64 * char_w;
+                            let text_width = text.glyph_count() as f64 * char_w;
+                            let display_text = maybe_decompose_decoded(&text);
                             blocks.push(TextBlock {
                                 text: display_text,
                                 page,
@@ -1544,7 +1652,7 @@ fn extract_blocks_from_ops_inner(
                             });
                         }
 
-                        for _ in text.chars() {
+                        for _ in text.iter() {
                             state.tm[4] += char_w + state.tc;
                         }
                     }
@@ -1724,16 +1832,17 @@ fn build_font_info_from_value(doc: &Document, value: &Object) -> Option<FontInfo
         }
     }
 
-    let encoding_map = if !is_cid {
+    let (encoding_map, ct_codes) = if !is_cid {
         build_encoding_map(doc, &font)
     } else {
-        [None; 256]
+        ([None; 256], [false; 256])
     };
 
     Some(FontInfo {
         is_cid,
         to_unicode,
         encoding_map,
+        ct_codes,
     })
 }
 
@@ -1747,11 +1856,12 @@ fn push_glyph_positioned(
     state: &mut TextState,
     page: u32,
     glyph: char,
+    is_ct_origin: bool,
     char_w: f64,
 ) {
     let (gx, gy) = apply_ctm(state);
     let constituents: &str = if LIGATURE_DECOMP {
-        decompose_ligature_char(glyph).unwrap_or("")
+        decompose_ligature_char_with_origin(glyph, is_ct_origin).unwrap_or("")
     } else {
         ""
     };
@@ -1871,10 +1981,17 @@ fn extract_chars_from_ops(
             }
             "Tj" => {
                 let fi = font_map.get(&state.font_name);
-                if let Some(text) = extract_string_operand_with_font(&op.operands, fi) {
+                if let Some(text) = extract_decoded_string_operand_with_font(&op.operands, fi) {
                     let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
-                    for ch in text.chars() {
-                        push_glyph_positioned(&mut chars, &mut state, page, ch, char_w);
+                    for (ch, is_ct_origin) in text.iter() {
+                        push_glyph_positioned(
+                            &mut chars,
+                            &mut state,
+                            page,
+                            ch,
+                            is_ct_origin,
+                            char_w,
+                        );
                     }
                 }
             }
@@ -1885,10 +2002,15 @@ fn extract_chars_from_ops(
                     for item in arr {
                         match item {
                             Object::String(bytes, _) => {
-                                let text = decode_pdf_string_with_font(bytes, fi);
-                                for ch in text.chars() {
+                                let text = decode_pdf_string_with_font_marked(bytes, fi);
+                                for (ch, is_ct_origin) in text.iter() {
                                     push_glyph_positioned(
-                                        &mut chars, &mut state, page, ch, char_w,
+                                        &mut chars,
+                                        &mut state,
+                                        page,
+                                        ch,
+                                        is_ct_origin,
+                                        char_w,
                                     );
                                 }
                             }
@@ -1907,10 +2029,17 @@ fn extract_chars_from_ops(
                 state.tm = new_tlm;
 
                 let fi = font_map.get(&state.font_name);
-                if let Some(text) = extract_string_operand_with_font(&op.operands, fi) {
+                if let Some(text) = extract_decoded_string_operand_with_font(&op.operands, fi) {
                     let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
-                    for ch in text.chars() {
-                        push_glyph_positioned(&mut chars, &mut state, page, ch, char_w);
+                    for (ch, is_ct_origin) in text.iter() {
+                        push_glyph_positioned(
+                            &mut chars,
+                            &mut state,
+                            page,
+                            ch,
+                            is_ct_origin,
+                            char_w,
+                        );
                     }
                 }
             }
@@ -1929,10 +2058,19 @@ fn extract_chars_from_ops(
                     state.tm = new_tlm;
 
                     let fi = font_map.get(&state.font_name);
-                    if let Some(text) = extract_string_operand_with_font(&op.operands[2..], fi) {
+                    if let Some(text) =
+                        extract_decoded_string_operand_with_font(&op.operands[2..], fi)
+                    {
                         let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
-                        for ch in text.chars() {
-                            push_glyph_positioned(&mut chars, &mut state, page, ch, char_w);
+                        for (ch, is_ct_origin) in text.iter() {
+                            push_glyph_positioned(
+                                &mut chars,
+                                &mut state,
+                                page,
+                                ch,
+                                is_ct_origin,
+                                char_w,
+                            );
                         }
                     }
                 }
@@ -1960,13 +2098,13 @@ fn apply_ctm(state: &TextState) -> (f64, f64) {
 }
 
 /// Extract the first string operand, decoding via font's ToUnicode CMap if available.
-fn extract_string_operand_with_font(
+fn extract_decoded_string_operand_with_font(
     operands: &[Object],
     font_info: Option<&FontInfo>,
-) -> Option<String> {
+) -> Option<DecodedPdfString> {
     for op in operands {
         if let Object::String(bytes, _) = op {
-            return Some(decode_pdf_string_with_font(bytes, font_info));
+            return Some(decode_pdf_string_with_font_marked(bytes, font_info));
         }
     }
     None
@@ -2216,18 +2354,50 @@ mod tests {
         assert_eq!(glyph_name_to_unicode("st"), Some('\u{FB06}'));
     }
 
-    /// `ct` has no precomposed Unicode codepoint, so it routes through a
-    /// PUA sentinel and decomposes to "ct" downstream. Without this, the
-    /// encoding lookup would return None and the byte would surface as
-    /// a stray PDFDocEncoding character.
+    /// `ct` has no precomposed Unicode codepoint, so `glyph_name_to_unicode`
+    /// reports `None`; the encoding-map builder records the slot in the
+    /// `ct_codes` side-table instead. Decoding emits one internal marker
+    /// scalar for that code, then the ligature layer expands only markers
+    /// whose origin came from `ct_codes`. This avoids clobbering legitimate
+    /// U+E007 values arriving through ToUnicode CMaps.
     #[test]
-    fn ligature_ct_decomposes_via_sentinel() {
-        assert_eq!(glyph_name_to_unicode("ct"), Some(CT_LIGATURE_SENTINEL));
-        assert_eq!(decompose_ligature_char(CT_LIGATURE_SENTINEL), Some("ct"));
-        let mut s = String::from("a");
-        s.push(CT_LIGATURE_SENTINEL);
-        s.push('s');
-        assert_eq!(decompose_ligatures(&s), "acts");
+    fn ligature_ct_via_glyph_name_emits_string() {
+        assert_eq!(glyph_name_to_unicode("ct"), None);
+        // End-to-end: byte 1 → /ct → "ct" in extracted text.
+        let doc = make_doc_with_ligature_font(b"BT /F1 12 Tf <6101> Tj ET", "ct");
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].text, "act");
+    }
+
+    /// Regression guard for issue #1357: a ToUnicode CMap that legitimately
+    /// maps a code to U+E007 must NOT be silently rewritten to "ct". The
+    /// previous PUA-sentinel implementation clobbered every U+E007 it saw,
+    /// regardless of origin.
+    #[test]
+    fn tounicode_pua_e007_is_preserved() {
+        let doc = make_doc_with_tounicode_cmap(b"BT /F1 12 Tf <01> Tj ET", 0x01, 0xE007);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].text, "\u{E007}");
+        assert_ne!(blocks[0].text, "ct");
+    }
+
+    /// A `/ct` glyph must advance the text matrix as one glyph even though
+    /// it expands to two extracted characters. Otherwise following glyphs in
+    /// the same show operator drift right by one extra glyph width.
+    #[test]
+    fn ligature_ct_positioned_chars_advance_as_single_glyph() {
+        // <610162>: a (0x61), ct (0x01 via /Differences), b (0x62)
+        let doc = make_doc_with_ligature_font(b"BT /F1 12 Tf <610162> Tj ET", "ct");
+        let chars = extract_positioned_chars(&doc, 1).unwrap();
+        let extracted: String = chars.iter().map(|c| c.ch).collect();
+        assert_eq!(extracted, "actb");
+        assert_eq!(chars.len(), 4);
+
+        let char_w = 12.0 * APPROX_CHAR_WIDTH;
+        assert!((chars[1].bbox[0] - char_w).abs() < 1e-6);
+        assert!((chars[3].bbox[0] - (2.0 * char_w)).abs() < 1e-6);
     }
 
     /// Build a one-page Document with a font whose /Encoding /Differences
@@ -2304,6 +2474,74 @@ mod tests {
         let blocks = extract_text(&doc);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].text, "office");
+    }
+
+    /// Build a one-page Document whose font has a ToUnicode CMap mapping a
+    /// single 1-byte source code to an explicit Unicode scalar. Used to
+    /// drive the regression guard for issue #1357: a ToUnicode-supplied
+    /// codepoint must round-trip through the extractor unchanged.
+    fn make_doc_with_tounicode_cmap(content: &[u8], src: u8, dst: u32) -> Document {
+        let mut doc = Document::with_version("1.7");
+
+        let content_stream = Stream::new(dictionary! {}, content.to_vec());
+        let content_id = doc.add_object(Object::Stream(content_stream));
+
+        // Minimal ToUnicode CMap with a single bfchar mapping.
+        let cmap_text = format!(
+            "/CIDInit /ProcSet findresource begin\n\
+             12 dict begin\n\
+             begincmap\n\
+             /CMapType 2 def\n\
+             1 beginbfchar\n\
+             <{:02X}> <{:04X}>\n\
+             endbfchar\n\
+             endcmap CMapName currentdict /CMap defineresource pop end end",
+            src, dst
+        );
+        let cmap_stream = Stream::new(dictionary! {}, cmap_text.into_bytes());
+        let cmap_id = doc.add_object(Object::Stream(cmap_stream));
+
+        let font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+            "Encoding" => "WinAnsiEncoding",
+            "ToUnicode" => Object::Reference(cmap_id),
+        };
+        let font_id = doc.add_object(Object::Dictionary(font));
+
+        let resources = dictionary! {
+            "Font" => dictionary! { "F1" => Object::Reference(font_id) },
+        };
+        let resources_id = doc.add_object(Object::Dictionary(resources));
+
+        let page_dict = dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Reference(resources_id),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+        let pages_dict = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        };
+        let pages_id = doc.add_object(Object::Dictionary(pages_dict));
+
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        doc
     }
 
     /// PositionedChar: a ligature glyph splits its bbox evenly across the
