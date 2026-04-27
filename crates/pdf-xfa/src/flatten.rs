@@ -82,6 +82,7 @@ use crate::font_bridge::{
     PdfSimpleEncoding, PdfSourceFont, ResolvedFont, XfaFontResolver, XfaFontSpec,
 };
 use crate::image_bridge::embed_image;
+use crate::javascript_policy::{self, JavaScriptEntryPoint};
 use crate::merger::FormMerger;
 use crate::render_bridge::{
     generate_all_overlays, generate_field_values_overlays, unicode_to_winansi, FontMetricsData,
@@ -401,6 +402,7 @@ fn flatten_xfa_to_pdf_internal(
 
     match handle.join() {
         Ok(Ok(out)) => Ok(out),
+        Ok(Err(e @ XfaError::UnsupportedFeature(_))) => Err(e),
         Ok(Err(e)) => {
             eprintln!("XFA flatten failed: {e:?}");
             static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
@@ -456,8 +458,11 @@ fn xfa_flatten_inner(
     if template_xml.contains("<signature") || template_xml.contains("<Signature") {
         log::warn!("XFA signature elements found but not supported — elements skipped");
     }
-    if template_xml.contains("text/javascript") {
-        log::warn!("XFA JavaScript found but not supported — scripts will not execute");
+    if javascript_policy::template_mentions_javascript(template_xml) {
+        log::warn!(
+            "{}",
+            javascript_policy::execution_denied_message(JavaScriptEntryPoint::XfaEventHook)
+        );
     }
 
     // PIPELINE: stage 1 — Bind (merge template with data DOM)
@@ -474,7 +479,7 @@ fn xfa_flatten_inner(
 
     log::debug!("XFA bind: {} form nodes created", tree.nodes.len());
 
-    let _ = apply_dynamic_scripts(&mut tree, root_id);
+    apply_dynamic_scripts(&mut tree, root_id)?;
 
     // XFA §3: when the PDF contains a pre-merged form DOM (saved by Adobe's
     // runtime after scripts executed), use its presence attributes to override
@@ -703,9 +708,7 @@ fn xfa_flatten_inner(
             // XFA overlay.  Generate a lightweight overlay with just field
             // value text (no backgrounds/borders/captions) and append it
             // on top so field values become visible without visual artifacts.
-            if let Ok(fv_overlays) =
-                generate_field_values_overlays(&layout, &config)
-            {
+            if let Ok(fv_overlays) = generate_field_values_overlays(&layout, &config) {
                 for (i, overlay) in fv_overlays.iter().enumerate() {
                     if i < n_existing && !overlay.content_stream.is_empty() {
                         let _ = overlay_page_content(
@@ -811,6 +814,10 @@ fn xfa_flatten_inner(
     }
 
     remove_acroform(&mut doc);
+    let stripped_js = javascript_policy::strip_javascript_for_flatten(&mut doc);
+    if stripped_js > 0 {
+        log::warn!("stripped {stripped_js} JavaScript action(s) from flattened output");
+    }
 
     let mut out = Vec::new();
     doc.save_to(&mut out)
@@ -1918,6 +1925,7 @@ fn static_fallback(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
         }
     };
     strip_widgets_and_acroform(&mut doc);
+    javascript_policy::strip_javascript_for_flatten(&mut doc);
     let mut out = Vec::new();
     if let Err(e) = doc.save_to(&mut out) {
         eprintln!("static_fallback: save failed ({e}), returning original bytes");
@@ -3976,6 +3984,30 @@ mod tests {
 </template>
 </xdp:xdp>"#;
 
+    const JS_EVENT_XDP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="paginate">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="section" layout="tb" w="7.5in">
+      <event activity="initialize">
+        <script contentType="application/x-javascript">app.alert('blocked');</script>
+      </event>
+      <field name="firstName" w="3.5in" h="0.3in">
+        <caption><value><text>First Name</text></value></caption>
+        <ui><textEdit/></ui>
+        <value><text>John</text></value>
+      </field>
+    </subform>
+  </subform>
+</template>
+</xdp:xdp>"#;
+
     fn overflowing_paginate_xdp(base_profile: Option<&str>) -> String {
         let mut fields = String::new();
         for i in 0..40 {
@@ -4039,6 +4071,54 @@ mod tests {
             }
         }
         assert!(found_content, "all content streams are empty after flatten");
+    }
+
+    #[test]
+    fn flatten_rejects_xfa_javascript_event() {
+        let pdf_bytes = build_xfa_pdf(JS_EVENT_XDP);
+
+        let err = flatten_xfa_to_pdf(&pdf_bytes).unwrap_err();
+
+        assert!(matches!(err, XfaError::UnsupportedFeature(feature) if feature == "javascript"));
+    }
+
+    #[test]
+    fn flatten_strips_catalog_open_action_javascript() {
+        let mut pdf_bytes = build_xfa_pdf(SIMPLE_XDP);
+        {
+            let mut doc = Document::load_mem(&pdf_bytes).expect("parse test PDF");
+            let root_id = match doc.trailer.get(b"Root") {
+                Ok(Object::Reference(id)) => *id,
+                _ => panic!("no Root in test PDF"),
+            };
+            if let Ok(Object::Dictionary(catalog)) = doc.get_object_mut(root_id) {
+                catalog.set(
+                    "OpenAction",
+                    Object::Dictionary(dictionary! {
+                        "S" => Object::Name(b"JavaScript".to_vec()),
+                        "JS" => Object::String(
+                            b"app.alert('blocked')".to_vec(),
+                            lopdf::StringFormat::Literal,
+                        ),
+                    }),
+                );
+            }
+            let mut out = Vec::new();
+            doc.save_to(&mut out).expect("save test PDF");
+            pdf_bytes = out;
+        }
+
+        let flattened = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
+        let doc = Document::load_mem(&flattened).expect("load flattened PDF");
+        let root_id = match doc.trailer.get(b"Root") {
+            Ok(Object::Reference(id)) => *id,
+            _ => panic!("no Root in flattened PDF"),
+        };
+        let catalog = doc.get_dictionary(root_id).expect("catalog dict");
+        assert!(
+            catalog.get(b"OpenAction").is_err(),
+            "/OpenAction JavaScript must be stripped from flattened output"
+        );
     }
 
     /// Tests the canonical XFA nesting: <subform layout="paginate"> wraps
