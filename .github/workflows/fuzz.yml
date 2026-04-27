@@ -2,7 +2,7 @@ name: Nightly Fuzzing
 
 on:
   schedule:
-    - cron: '30 2 * * *'
+    - cron: '30 2 * * 0'    # weekly Sunday 02:30 UTC (was: '30 2 * * *' daily)
   workflow_dispatch:
     inputs:
       duration:
@@ -13,6 +13,10 @@ on:
         description: 'Specific fuzz target (blank = all)'
         default: ''
         type: string
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -71,7 +75,7 @@ jobs:
           name: fuzz-crashes-${{ matrix.target }}
           path: |
             fuzz/artifacts/${{ matrix.target }}/
-          retention-days: 90
+          retention-days: 30
 
       - name: Check for crashes
         if: always()
