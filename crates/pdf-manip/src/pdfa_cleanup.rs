@@ -1170,6 +1170,7 @@ fn is_forbidden_action(s: &[u8]) -> bool {
         b"Launch"
             | b"Sound"
             | b"Movie"
+            | b"SubmitForm"
             | b"ResetForm"
             | b"ImportData"
             | b"Hide"
@@ -5712,6 +5713,57 @@ mod tests {
         doc
     }
 
+    fn add_link_annotation_with_action(doc: &mut Document, action: lopdf::Dictionary) -> ObjectId {
+        let page_id = doc.page_iter().next().expect("basic doc page");
+        let annot_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Annot".to_vec()),
+            "Subtype" => Object::Name(b"Link".to_vec()),
+            "Rect" => Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(100),
+                Object::Integer(20),
+            ]),
+            "A" => Object::Dictionary(action),
+        }));
+        if let Ok(Object::Dictionary(page)) = doc.get_object_mut(page_id) {
+            page.set("Annots", Object::Array(vec![Object::Reference(annot_id)]));
+        }
+        annot_id
+    }
+
+    fn action_dict(action_type: &[u8]) -> lopdf::Dictionary {
+        match action_type {
+            b"GoTo" => dictionary! {
+                "S" => Object::Name(b"GoTo".to_vec()),
+                "D" => Object::Array(vec![Object::Integer(0), Object::Name(b"Fit".to_vec())]),
+            },
+            b"URI" => dictionary! {
+                "S" => Object::Name(b"URI".to_vec()),
+                "URI" => Object::String(
+                    b"https://example.com".to_vec(),
+                    lopdf::StringFormat::Literal,
+                ),
+            },
+            other => dictionary! {
+                "S" => Object::Name(other.to_vec()),
+                "F" => Object::String(
+                    b"https://example.com/upload".to_vec(),
+                    lopdf::StringFormat::Literal,
+                ),
+            },
+        }
+    }
+
+    fn annotation_action_name(doc: &Document, annot_id: ObjectId) -> Option<Vec<u8>> {
+        let annot = doc.get_dictionary(annot_id).ok()?;
+        let action = annot.get(b"A").ok()?.as_dict().ok()?;
+        let Object::Name(name) = action.get(b"S").ok()? else {
+            return None;
+        };
+        Some(name.clone())
+    }
+
     #[test]
     fn test_remove_javascript_empty() {
         let mut doc = make_basic_doc();
@@ -5752,6 +5804,42 @@ mod tests {
 
         let count = remove_additional_actions(&mut doc);
         assert!(count >= 1);
+    }
+
+    #[test]
+    fn forbidden_submitform_launch_importdata_actions_are_removed() {
+        for action_type in [
+            b"SubmitForm".as_slice(),
+            b"Launch".as_slice(),
+            b"ImportData".as_slice(),
+        ] {
+            let mut doc = make_basic_doc();
+            let annot_id = add_link_annotation_with_action(&mut doc, action_dict(action_type));
+
+            remove_forbidden_actions(&mut doc);
+
+            let annot = doc.get_dictionary(annot_id).expect("annotation dict");
+            assert!(
+                annot.get(b"A").is_err(),
+                "{:?} action must be inert after hardening",
+                std::str::from_utf8(action_type).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn goto_and_uri_actions_remain_unchanged() {
+        for action_type in [b"GoTo".as_slice(), b"URI".as_slice()] {
+            let mut doc = make_basic_doc();
+            let annot_id = add_link_annotation_with_action(&mut doc, action_dict(action_type));
+
+            remove_forbidden_actions(&mut doc);
+
+            assert_eq!(
+                annotation_action_name(&doc, annot_id).as_deref(),
+                Some(action_type)
+            );
+        }
     }
 
     #[test]

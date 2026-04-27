@@ -1650,21 +1650,14 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
 // ---------------------------------------------------------------------------
 // §6.5.1 — Strip forbidden actions from annotations and outlines.
 // ---------------------------------------------------------------------------
-// PDF/A forbids: Launch, Sound, Movie, ResetForm, ImportData, Hide,
+// PDF/A forbids: Launch, Sound, Movie, SubmitForm, ResetForm, ImportData, Hide,
 // SetOCGState, Rendition, Trans, GoTo3DView, JavaScript.
 // Named actions: only NextPage, PrevPage, FirstPage, LastPage are allowed.
 
 /// Check if an action dictionary is forbidden by PDF/A §6.5.1.
 fn is_action_forbidden(action: &lopdf::Dictionary) -> bool {
-    const ALLOWED_ACTION_TYPES: &[&[u8]] = &[
-        b"GoTo",
-        b"GoToR",
-        b"GoToE",
-        b"Thread",
-        b"URI",
-        b"Named",
-        b"SubmitForm",
-    ];
+    const ALLOWED_ACTION_TYPES: &[&[u8]] =
+        &[b"GoTo", b"GoToR", b"GoToE", b"Thread", b"URI", b"Named"];
     const ALLOWED_NAMED: &[&[u8]] = &[b"NextPage", b"PrevPage", b"FirstPage", b"LastPage"];
 
     let s = action.get(b"S").ok().and_then(|o| {
@@ -1706,15 +1699,8 @@ fn neutralize_action(action: &mut lopdf::Dictionary) {
 
 fn fix_forbidden_actions(doc: &mut Document) -> usize {
     // PDF/A §6.5.1: only these action types are permitted.
-    const ALLOWED_ACTION_TYPES: &[&[u8]] = &[
-        b"GoTo",
-        b"GoToR",
-        b"GoToE",
-        b"Thread",
-        b"URI",
-        b"Named",
-        b"SubmitForm",
-    ];
+    const ALLOWED_ACTION_TYPES: &[&[u8]] =
+        &[b"GoTo", b"GoToR", b"GoToE", b"Thread", b"URI", b"Named"];
     const ALLOWED_NAMED: &[&[u8]] = &[b"NextPage", b"PrevPage", b"FirstPage", b"LastPage"];
 
     let mut count = 0;
