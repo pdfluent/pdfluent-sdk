@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 
+use crate::error::{Result, XfaError};
+use crate::javascript_policy::{self, JavaScriptEntryPoint};
 use formcalc_interpreter::{
     interpreter::Interpreter, lexer::tokenize, parser, som_bridge::SomResolver,
     value::Value as FormCalcValue,
 };
 use xfa_dom_resolver::som::{parse_som, SomExpression, SomIndex, SomRoot, SomSelector};
 use xfa_layout_engine::form::{
-    DrawContent, EventScript, FormNodeId, FormNodeType, FormTree, GroupKind, Presence,
-    ScriptLanguage,
+    EventScript, FormNodeId, FormNodeType, FormTree, GroupKind, Presence, ScriptLanguage,
 };
 
 // XFA Spec 3.3 §9.3 — Dynamic Forms Re-Layout: after script execution the
@@ -96,7 +97,7 @@ fn should_rollback(
 // Our order (initialize first) differs from the spec but matches Adobe's
 // observed behavior on our 20K test corpus (97%+ SSIM). §28.2 (p1231)
 // documents Adobe's event execution insert-at-position-2 algorithm.
-pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> usize {
+pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> Result<usize> {
     let parents = build_parent_map(form, root_id);
     let scripts: Vec<(FormNodeId, Vec<EventScript>)> = form
         .nodes
@@ -109,6 +110,23 @@ pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> usize 
         })
         .collect();
 
+    if scripts.iter().any(|(_, node_scripts)| {
+        node_scripts
+            .iter()
+            .any(|script| script.language == ScriptLanguage::JavaScript)
+    }) {
+        return Err(javascript_policy::reject_execution(
+            JavaScriptEntryPoint::XfaEventHook,
+        ));
+    }
+    if scripts.iter().any(|(_, node_scripts)| {
+        node_scripts
+            .iter()
+            .any(|script| script.language == ScriptLanguage::Other)
+    }) {
+        return Err(XfaError::UnsupportedFeature("script language".to_string()));
+    }
+
     let snapshot = snapshot_form(form);
     let mut stats = ScriptStats::default();
 
@@ -120,7 +138,7 @@ pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> usize 
         ScriptPhase::Initialize,
         1,
         &mut stats,
-    ) + run_script_phase(
+    )? + run_script_phase(
         form,
         root_id,
         &parents,
@@ -128,14 +146,14 @@ pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> usize 
         ScriptPhase::Calculate,
         MAX_SCRIPT_PASSES,
         &mut stats,
-    );
+    )?;
 
     if should_rollback(form, &snapshot, stats.errors, stats.successes) {
         restore_snapshot(form, &snapshot);
-        return 0;
+        return Ok(0);
     }
 
-    changes
+    Ok(changes)
 }
 
 fn has_hidden_ancestor(
@@ -178,7 +196,7 @@ fn run_script_phase(
     phase: ScriptPhase,
     max_passes: usize,
     stats: &mut ScriptStats,
-) -> usize {
+) -> Result<usize> {
     let mut total_changes = 0;
 
     for _ in 0..max_passes {
@@ -193,7 +211,7 @@ fn run_script_phase(
                 .iter()
                 .filter(|script| should_run_script(script, phase))
             {
-                let result = execute_event_script(form, root_id, parents, *node_id, script, phase);
+                let result = execute_event_script(form, root_id, parents, *node_id, script, phase)?;
                 if result.error {
                     stats.errors += 1;
                 } else {
@@ -209,7 +227,7 @@ fn run_script_phase(
         }
     }
 
-    total_changes
+    Ok(total_changes)
 }
 
 fn should_run_script(script: &EventScript, phase: ScriptPhase) -> bool {
@@ -226,14 +244,15 @@ fn execute_event_script(
     current_id: FormNodeId,
     script: &EventScript,
     phase: ScriptPhase,
-) -> ScriptResult {
+) -> Result<ScriptResult> {
     match script.language {
-        ScriptLanguage::FormCalc => {
-            execute_formcalc_script(form, root_id, parents, current_id, script, phase)
-        }
-        ScriptLanguage::JavaScript | ScriptLanguage::Other => {
-            execute_javascript_script(form, root_id, parents, current_id, &script.script)
-        }
+        ScriptLanguage::FormCalc => Ok(execute_formcalc_script(
+            form, root_id, parents, current_id, script, phase,
+        )),
+        ScriptLanguage::JavaScript => Err(javascript_policy::reject_execution(
+            JavaScriptEntryPoint::XfaEventHook,
+        )),
+        ScriptLanguage::Other => Err(XfaError::UnsupportedFeature("script language".to_string())),
     }
 }
 
@@ -280,68 +299,6 @@ fn execute_formcalc_script(
         changes: resolver.changes,
         error: false,
     }
-}
-
-fn execute_javascript_script(
-    form: &mut FormTree,
-    root_id: FormNodeId,
-    parents: &HashMap<FormNodeId, FormNodeId>,
-    current_id: FormNodeId,
-    script: &str,
-) -> ScriptResult {
-    let lines = preprocess_script(script);
-    let mut idx = 0;
-    let changes =
-        execute_javascript_block(form, root_id, parents, current_id, &lines, &mut idx, false);
-    let has_statements = lines.iter().any(|l| !l.trim().is_empty());
-    ScriptResult {
-        changes,
-        error: has_statements && changes == 0,
-    }
-}
-
-fn execute_javascript_block(
-    form: &mut FormTree,
-    root_id: FormNodeId,
-    parents: &HashMap<FormNodeId, FormNodeId>,
-    current_id: FormNodeId,
-    lines: &[String],
-    idx: &mut usize,
-    stop_on_closing: bool,
-) -> usize {
-    let mut changes = 0;
-
-    while *idx < lines.len() {
-        let line = lines[*idx].trim();
-        if line.is_empty() {
-            *idx += 1;
-            continue;
-        }
-
-        if line.starts_with('}') {
-            *idx += 1;
-            if stop_on_closing {
-                break;
-            }
-            continue;
-        }
-
-        if let Some(condition) = parse_if_condition(line) {
-            *idx += 1;
-            if eval_condition_legacy(form, root_id, parents, current_id, &condition) {
-                changes +=
-                    execute_javascript_block(form, root_id, parents, current_id, lines, idx, true);
-            } else {
-                skip_block(lines, idx);
-            }
-            continue;
-        }
-
-        changes += execute_assignment_legacy(form, root_id, parents, current_id, line);
-        *idx += 1;
-    }
-
-    changes
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -836,355 +793,6 @@ fn build_som_expression(
     }
 }
 
-fn preprocess_script(script: &str) -> Vec<String> {
-    let raw: Vec<String> = script
-        .lines()
-        .map(strip_line_comment)
-        .map(|line| line.trim())
-        .filter(|line| !line.is_empty())
-        .map(ToString::to_string)
-        .collect();
-
-    // Join continuation lines: a line ending with || or && or a trailing
-    // comma is merged with the next line.  This handles multi-line `if`
-    // conditions that span several source lines.
-    let mut merged = Vec::with_capacity(raw.len());
-    let mut buf = String::new();
-    for line in &raw {
-        if buf.is_empty() {
-            buf = line.clone();
-        } else {
-            buf.push(' ');
-            buf.push_str(line);
-        }
-        let trimmed = buf.trim_end();
-        if trimmed.ends_with("||") || trimmed.ends_with("&&") || trimmed.ends_with(',') {
-            // continuation — keep accumulating
-            continue;
-        }
-        merged.push(std::mem::take(&mut buf));
-    }
-    if !buf.is_empty() {
-        merged.push(buf);
-    }
-    merged
-}
-
-fn strip_line_comment(line: &str) -> &str {
-    line.find("//").map(|idx| &line[..idx]).unwrap_or(line)
-}
-
-fn parse_if_condition(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    if !trimmed.starts_with("if") {
-        return None;
-    }
-
-    let open = trimmed.find('(')?;
-    let close = trimmed.rfind(')')?;
-    (close > open).then(|| trimmed[open + 1..close].trim().to_string())
-}
-
-fn skip_block(lines: &[String], idx: &mut usize) {
-    let mut depth = 1usize;
-    while *idx < lines.len() && depth > 0 {
-        let line = lines[*idx].trim();
-        depth += line.chars().filter(|&ch| ch == '{').count();
-        depth = depth.saturating_sub(line.chars().filter(|&ch| ch == '}').count());
-        *idx += 1;
-    }
-}
-
-fn execute_assignment_legacy(
-    form: &mut FormTree,
-    root_id: FormNodeId,
-    parents: &HashMap<FormNodeId, FormNodeId>,
-    current_id: FormNodeId,
-    line: &str,
-) -> usize {
-    let statement = line.trim().trim_end_matches(';').trim();
-
-    if statement == "Utils.hideIfEmpty(this)" {
-        return hide_if_empty(form, current_id);
-    }
-
-    if statement == "Utils.deleteContainerIfEmpty(this)" {
-        return delete_container_if_empty(form, parents, current_id);
-    }
-
-    let Some(eq_pos) = find_assignment_operator(statement) else {
-        return 0;
-    };
-
-    let lhs = statement[..eq_pos].trim();
-    let rhs = statement[eq_pos + 1..].trim();
-
-    if let Some(target) = lhs.strip_suffix(".rawValue") {
-        let Some(node_id) =
-            resolve_reference_legacy(form, root_id, parents, current_id, target.trim())
-        else {
-            return 0;
-        };
-        let value = eval_value_legacy(form, root_id, parents, current_id, rhs);
-        return set_raw_value(form, node_id, value);
-    }
-
-    if let Some(target) = lhs.strip_suffix(".presence") {
-        let target_trimmed = target.trim();
-        let resolved = resolve_reference_legacy(form, root_id, parents, current_id, target_trimmed);
-        let Some(node_id) = resolved else {
-            return 0;
-        };
-        let value = eval_value_legacy(form, root_id, parents, current_id, rhs);
-        return set_presence(form, node_id, value);
-    }
-
-    0
-}
-
-fn hide_if_empty(form: &mut FormTree, node_id: FormNodeId) -> usize {
-    if !node_is_empty(form, node_id) {
-        return 0;
-    }
-    set_presence(form, node_id, ScriptValue::String("hidden".into()))
-}
-
-fn delete_container_if_empty(
-    form: &mut FormTree,
-    parents: &HashMap<FormNodeId, FormNodeId>,
-    node_id: FormNodeId,
-) -> usize {
-    if !node_is_empty(form, node_id) {
-        return 0;
-    }
-    let Some(parent_id) = parents.get(&node_id).copied() else {
-        return 0;
-    };
-    set_presence(form, parent_id, ScriptValue::String("hidden".into()))
-}
-
-fn node_is_empty(form: &FormTree, node_id: FormNodeId) -> bool {
-    match &form.get(node_id).node_type {
-        FormNodeType::Field { value } => value.trim().is_empty(),
-        FormNodeType::Draw(DrawContent::Text(content)) => content.trim().is_empty(),
-        FormNodeType::Subform => form
-            .get(node_id)
-            .children
-            .iter()
-            .all(|&child_id| node_is_empty(form, child_id)),
-        _ => false,
-    }
-}
-
-fn find_assignment_operator(statement: &str) -> Option<usize> {
-    let bytes = statement.as_bytes();
-    for idx in 0..bytes.len() {
-        if bytes[idx] != b'=' {
-            continue;
-        }
-        let prev = idx.checked_sub(1).and_then(|prev| bytes.get(prev)).copied();
-        let next = bytes.get(idx + 1).copied();
-        if prev == Some(b'=') || prev == Some(b'!') || next == Some(b'=') {
-            continue;
-        }
-        return Some(idx);
-    }
-    None
-}
-
-fn eval_condition_legacy(
-    form: &FormTree,
-    root_id: FormNodeId,
-    parents: &HashMap<FormNodeId, FormNodeId>,
-    current_id: FormNodeId,
-    expr: &str,
-) -> bool {
-    let expr = strip_outer_parens(expr.trim());
-
-    let or_parts = split_top_level(expr, "||");
-    if or_parts.len() > 1 {
-        return or_parts
-            .iter()
-            .any(|part| eval_condition_legacy(form, root_id, parents, current_id, part));
-    }
-
-    let and_parts = split_top_level(expr, "&&");
-    if and_parts.len() > 1 {
-        return and_parts
-            .iter()
-            .all(|part| eval_condition_legacy(form, root_id, parents, current_id, part));
-    }
-
-    if let Some((lhs, rhs, negated)) = split_comparison(expr) {
-        let left = eval_value_legacy(form, root_id, parents, current_id, lhs);
-        let right = eval_value_legacy(form, root_id, parents, current_id, rhs);
-        let equals = values_equal(&left, &right);
-        return if negated { !equals } else { equals };
-    }
-
-    match eval_value_legacy(form, root_id, parents, current_id, expr) {
-        ScriptValue::Null => false,
-        ScriptValue::String(value) => !value.trim().is_empty() && value.trim() != "0",
-    }
-}
-
-fn split_comparison(expr: &str) -> Option<(&str, &str, bool)> {
-    find_top_level_operator(expr, "==")
-        .map(|idx| (&expr[..idx], &expr[idx + 2..], false))
-        .or_else(|| {
-            find_top_level_operator(expr, "!=").map(|idx| (&expr[..idx], &expr[idx + 2..], true))
-        })
-}
-
-fn eval_value_legacy(
-    form: &FormTree,
-    root_id: FormNodeId,
-    parents: &HashMap<FormNodeId, FormNodeId>,
-    current_id: FormNodeId,
-    expr: &str,
-) -> ScriptValue {
-    let expr = strip_outer_parens(expr.trim()).trim_end_matches(';').trim();
-    if expr.is_empty() {
-        return ScriptValue::Null;
-    }
-
-    if let Some(quoted) = parse_quoted_string(expr) {
-        return ScriptValue::String(quoted);
-    }
-
-    if expr.eq_ignore_ascii_case("null") {
-        return ScriptValue::Null;
-    }
-
-    if let Ok(number) = expr.parse::<f64>() {
-        return ScriptValue::String(normalize_number(number));
-    }
-
-    if let Some(target) = expr.strip_suffix(".rawValue") {
-        let Some(node_id) =
-            resolve_reference_legacy(form, root_id, parents, current_id, target.trim())
-        else {
-            return ScriptValue::Null;
-        };
-        return get_raw_value(form, node_id);
-    }
-
-    if let Some(target) = expr.strip_suffix(".presence") {
-        let Some(node_id) =
-            resolve_reference_legacy(form, root_id, parents, current_id, target.trim())
-        else {
-            return ScriptValue::Null;
-        };
-        let meta = form.meta(node_id);
-        return ScriptValue::String(
-            match meta.presence {
-                Presence::Visible => "visible",
-                Presence::Hidden => "hidden",
-                Presence::Invisible => "invisible",
-                Presence::Inactive => "inactive",
-            }
-            .to_string(),
-        );
-    }
-
-    ScriptValue::Null
-}
-
-fn parse_quoted_string(expr: &str) -> Option<String> {
-    let bytes = expr.as_bytes();
-    if bytes.len() >= 2
-        && ((bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'')
-            || (bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"'))
-    {
-        return Some(expr[1..expr.len() - 1].to_string());
-    }
-    None
-}
-
-fn resolve_reference_legacy(
-    form: &FormTree,
-    root_id: FormNodeId,
-    parents: &HashMap<FormNodeId, FormNodeId>,
-    current_id: FormNodeId,
-    target: &str,
-) -> Option<FormNodeId> {
-    let target = target.trim();
-    if target == "this" {
-        return Some(current_id);
-    }
-
-    let resolved_target = if let Some(path) = parse_resolve_node_call(target) {
-        path
-    } else {
-        target.to_string()
-    };
-
-    let parts: Vec<&str> = resolved_target
-        .split('.')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .collect();
-    if parts.is_empty() {
-        return None;
-    }
-
-    let mut cursor = Some(current_id);
-    while let Some(node_id) = cursor {
-        for candidate in descendants_inclusive(form, node_id) {
-            if form.get(candidate).name == parts[0] {
-                if let Some(found) = follow_path(form, candidate, &parts) {
-                    return Some(found);
-                }
-            }
-        }
-        cursor = parents.get(&node_id).copied();
-    }
-
-    for candidate in descendants_inclusive(form, root_id) {
-        if form.get(candidate).name == parts[0] {
-            if let Some(found) = follow_path(form, candidate, &parts) {
-                return Some(found);
-            }
-        }
-    }
-
-    if parts.len() == 1 {
-        for candidate in descendants_inclusive(form, root_id) {
-            if form.get(candidate).name == parts[0] {
-                return Some(candidate);
-            }
-        }
-    }
-
-    None
-}
-
-fn parse_resolve_node_call(target: &str) -> Option<String> {
-    let target = target.trim();
-    if !target.starts_with("xfa.resolveNode(") {
-        return None;
-    }
-    let open = target.find('(')?;
-    let close = target.rfind(')')?;
-    parse_quoted_string(target[open + 1..close].trim())
-}
-
-fn follow_path(form: &FormTree, start: FormNodeId, parts: &[&str]) -> Option<FormNodeId> {
-    if form.get(start).name != parts[0] {
-        return None;
-    }
-    let mut current = start;
-    for part in &parts[1..] {
-        current = form
-            .get(current)
-            .children
-            .iter()
-            .copied()
-            .find(|child_id| form.get(*child_id).name == *part)?;
-    }
-    Some(current)
-}
-
 fn descendants_inclusive(form: &FormTree, root_id: FormNodeId) -> Vec<FormNodeId> {
     let mut out = Vec::new();
     collect_descendants(form, root_id, &mut out);
@@ -1212,34 +820,6 @@ fn populate_parent_map(
     for &child_id in &form.get(node_id).children {
         parents.insert(child_id, node_id);
         populate_parent_map(form, child_id, parents);
-    }
-}
-
-fn get_raw_value(form: &FormTree, node_id: FormNodeId) -> ScriptValue {
-    match &form.get(node_id).node_type {
-        FormNodeType::Field { value } => {
-            if value.is_empty() {
-                ScriptValue::Null
-            } else {
-                ScriptValue::String(value.clone())
-            }
-        }
-        _ if form.meta(node_id).group_kind == GroupKind::ExclusiveChoice => {
-            for &child_id in &form.get(node_id).children {
-                if let FormNodeType::Field { value } = &form.get(child_id).node_type {
-                    if !value.is_empty() {
-                        return ScriptValue::String(
-                            form.meta(child_id)
-                                .item_value
-                                .clone()
-                                .unwrap_or_else(|| value.clone()),
-                        );
-                    }
-                }
-            }
-            ScriptValue::Null
-        }
-        _ => ScriptValue::Null,
     }
 }
 
@@ -1300,90 +880,6 @@ fn set_presence(form: &mut FormTree, node_id: FormNodeId, value: ScriptValue) ->
     }
     meta.presence = new_presence;
     1
-}
-
-fn split_top_level<'a>(expr: &'a str, op: &str) -> Vec<&'a str> {
-    let mut parts = Vec::new();
-    let mut depth = 0i32;
-    let mut start = 0usize;
-    let chars: Vec<(usize, char)> = expr.char_indices().collect();
-    let mut i = 0usize;
-    while i < chars.len() {
-        let (byte_idx, ch) = chars[i];
-        match ch {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            _ => {}
-        }
-        if depth == 0 && expr[byte_idx..].starts_with(op) {
-            parts.push(expr[start..byte_idx].trim());
-            start = byte_idx + op.len();
-        }
-        i += 1;
-    }
-    if parts.is_empty() {
-        return vec![expr.trim()];
-    }
-    parts.push(expr[start..].trim());
-    parts
-}
-
-fn find_top_level_operator(expr: &str, op: &str) -> Option<usize> {
-    let mut depth = 0i32;
-    for (idx, ch) in expr.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            _ => {}
-        }
-        if depth == 0 && expr[idx..].starts_with(op) {
-            return Some(idx);
-        }
-    }
-    None
-}
-
-fn strip_outer_parens(expr: &str) -> &str {
-    let mut current = expr.trim();
-    loop {
-        if !(current.starts_with('(') && current.ends_with(')')) {
-            return current;
-        }
-        let mut depth = 0i32;
-        let mut wraps = true;
-        for (idx, ch) in current.char_indices() {
-            match ch {
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 && idx != current.len() - 1 {
-                        wraps = false;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        if wraps {
-            current = current[1..current.len() - 1].trim();
-        } else {
-            return current;
-        }
-    }
-}
-
-fn values_equal(left: &ScriptValue, right: &ScriptValue) -> bool {
-    match (left, right) {
-        (ScriptValue::Null, ScriptValue::Null) => true,
-        (ScriptValue::String(left), ScriptValue::String(right)) => {
-            if let (Ok(left_num), Ok(right_num)) = (left.parse::<f64>(), right.parse::<f64>()) {
-                return (left_num - right_num).abs() < f64::EPSILON;
-            }
-            left == right
-        }
-        (ScriptValue::Null, ScriptValue::String(value))
-        | (ScriptValue::String(value), ScriptValue::Null) => value.is_empty(),
-    }
 }
 
 fn normalize_number(number: f64) -> String {
@@ -1482,7 +978,7 @@ endif
         tree.meta_mut(option2).item_value = Some("2".into());
         tree.meta_mut(details).presence = Presence::Hidden;
 
-        apply_dynamic_scripts(&mut tree, root);
+        apply_dynamic_scripts(&mut tree, root).unwrap();
 
         assert_eq!(tree.meta(details).presence, Presence::Visible);
     }
@@ -1521,7 +1017,7 @@ endif
             "calculate",
         )];
 
-        apply_dynamic_scripts(&mut tree, root);
+        apply_dynamic_scripts(&mut tree, root).unwrap();
 
         assert_eq!(tree.meta(details).presence, Presence::Visible);
     }
@@ -1569,7 +1065,7 @@ endif
             "calculate",
         )];
 
-        apply_dynamic_scripts(&mut tree, root);
+        apply_dynamic_scripts(&mut tree, root).unwrap();
 
         if let FormNodeType::Field { value } = &tree.get(target).node_type {
             assert_eq!(value, "1");
@@ -1602,8 +1098,10 @@ endif
         tree.get_mut(subform).children = vec![field1];
 
         // Use a calculate script to read the value via absolute SOM path
-        tree.meta_mut(root).event_scripts =
-            vec![formcalc_script("form1.subform1.field1.rawValue", "calculate")];
+        tree.meta_mut(root).event_scripts = vec![formcalc_script(
+            "form1.subform1.field1.rawValue",
+            "calculate",
+        )];
 
         let parents = super::build_parent_map(&tree, root);
         let resolver = FormTreeSomResolver::new(&mut tree, root, &parents, root);
@@ -1638,7 +1136,7 @@ endif
     }
 
     #[test]
-    fn resolve_node_calls_are_supported() {
+    fn javascript_resolve_node_call_is_explicitly_denied() {
         let mut tree = FormTree::new();
         let root = add_node(&mut tree, "root", FormNodeType::Root);
         let form = add_node(&mut tree, "formulier1", FormNodeType::Subform);
@@ -1666,17 +1164,18 @@ endif
             "initialize",
         )];
 
-        apply_dynamic_scripts(&mut tree, root);
+        let err = apply_dynamic_scripts(&mut tree, root).unwrap_err();
+        assert!(matches!(err, XfaError::UnsupportedFeature(feature) if feature == "javascript"));
 
         if let FormNodeType::Field { value } = &tree.get(lock).node_type {
-            assert_eq!(value, "0");
+            assert_eq!(value, "1");
         } else {
             panic!("expected field");
         }
     }
 
     #[test]
-    fn utils_hide_if_empty_hides_current_node() {
+    fn javascript_utils_hide_if_empty_is_explicitly_denied() {
         let mut tree = FormTree::new();
         let root = add_node(&mut tree, "root", FormNodeType::Root);
         let empty = add_node(
@@ -1690,13 +1189,14 @@ endif
         tree.meta_mut(empty).event_scripts =
             vec![javascript_script("Utils.hideIfEmpty(this);", "initialize")];
 
-        apply_dynamic_scripts(&mut tree, root);
+        let err = apply_dynamic_scripts(&mut tree, root).unwrap_err();
+        assert!(matches!(err, XfaError::UnsupportedFeature(feature) if feature == "javascript"));
 
-        assert!(tree.meta(empty).presence.is_not_visible());
+        assert!(!tree.meta(empty).presence.is_not_visible());
     }
 
     #[test]
-    fn utils_delete_container_if_empty_hides_parent_container() {
+    fn malformed_javascript_payload_is_explicitly_denied_without_panic() {
         let mut tree = FormTree::new();
         let root = add_node(&mut tree, "root", FormNodeType::Root);
         let container = add_node(&mut tree, "Container", FormNodeType::Subform);
@@ -1711,13 +1211,14 @@ endif
         tree.get_mut(root).children = vec![container];
         tree.get_mut(container).children = vec![empty];
         tree.meta_mut(empty).event_scripts = vec![javascript_script(
-            "Utils.deleteContainerIfEmpty(this);",
+            "\0}{{not.valid.javascript(",
             "initialize",
         )];
 
-        apply_dynamic_scripts(&mut tree, root);
+        let err = apply_dynamic_scripts(&mut tree, root).unwrap_err();
+        assert!(matches!(err, XfaError::UnsupportedFeature(feature) if feature == "javascript"));
 
-        assert!(tree.meta(container).presence.is_not_visible());
+        assert!(!tree.meta(container).presence.is_not_visible());
     }
 
     #[test]
@@ -1741,7 +1242,7 @@ endif
         tree.get_mut(root).children = vec![total];
         tree.meta_mut(total).event_scripts = vec![formcalc_script("40 + 2", "calculate")];
 
-        apply_dynamic_scripts(&mut tree, root);
+        apply_dynamic_scripts(&mut tree, root).unwrap();
 
         match &tree.get(total).node_type {
             FormNodeType::Field { value } => assert_eq!(value, "42"),
@@ -1781,7 +1282,7 @@ endif
         tree.meta_mut(total).event_scripts =
             vec![formcalc_script("Number1 + Number2", "calculate")];
 
-        apply_dynamic_scripts(&mut tree, root);
+        apply_dynamic_scripts(&mut tree, root).unwrap();
 
         match &tree.get(total).node_type {
             FormNodeType::Field { value } => assert_eq!(value, "42"),
@@ -1811,7 +1312,7 @@ Details.presence = "visible"
             "click",
         )];
 
-        apply_dynamic_scripts(&mut tree, root);
+        apply_dynamic_scripts(&mut tree, root).unwrap();
 
         assert_eq!(tree.meta(details).presence, Presence::Hidden);
     }
@@ -1845,7 +1346,7 @@ Details.presence = "visible"
         tree.meta_mut(field_b).event_scripts =
             vec![formcalc_script("@@ALSO_BROKEN@@", "initialize")];
 
-        apply_dynamic_scripts(&mut tree, root);
+        apply_dynamic_scripts(&mut tree, root).unwrap();
 
         // Fields should retain their original values (rollback).
         match &tree.get(field_a).node_type {
@@ -1926,7 +1427,7 @@ Details.presence = "visible"
         tree.get_mut(root).children = vec![total];
         tree.meta_mut(total).event_scripts = vec![formcalc_script("40 + 2", "calculate")];
 
-        apply_dynamic_scripts(&mut tree, root);
+        apply_dynamic_scripts(&mut tree, root).unwrap();
 
         match &tree.get(total).node_type {
             FormNodeType::Field { value } => assert_eq!(value, "42"),

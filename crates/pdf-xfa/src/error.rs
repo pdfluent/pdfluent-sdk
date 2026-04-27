@@ -26,7 +26,6 @@ pub enum XfaError {
     Io(#[from] std::io::Error),
 
     // ---- New structured variants (XFA-F9-01 #1120) ----
-
     /// XFA packet extraction failed (e.g. missing /AcroForm, corrupt stream).
     #[error("XFA extraction failed: {0}")]
     ExtractionFailed(String),
@@ -54,6 +53,10 @@ pub enum XfaError {
     /// Final PDF serialisation / flatten step failed.
     #[error("Flatten failed: {0}")]
     FlattenFailed(String),
+
+    /// Feature is intentionally unsupported by the non-interactive XFA engine.
+    #[error("unsupported feature: {0}")]
+    UnsupportedFeature(String),
 }
 
 pub type Result<T> = std::result::Result<T, XfaError>;
