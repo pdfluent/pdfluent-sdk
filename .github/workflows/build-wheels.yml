@@ -28,6 +28,7 @@ jobs:
         with:
           name: wheels-linux-${{ matrix.target }}
           path: crates/pdf-python/dist
+          retention-days: 30
 
   macos:
     runs-on: macos-latest
@@ -49,6 +50,7 @@ jobs:
         with:
           name: wheels-macos-${{ matrix.target }}
           path: crates/pdf-python/dist
+          retention-days: 30
 
   windows:
     runs-on: windows-latest
@@ -67,6 +69,7 @@ jobs:
         with:
           name: wheels-windows-x86_64
           path: crates/pdf-python/dist
+          retention-days: 30
 
   sdist:
     runs-on: ubuntu-latest
@@ -82,6 +85,7 @@ jobs:
         with:
           name: wheels-sdist
           path: crates/pdf-python/dist
+          retention-days: 30
 
   release:
     name: Publish to PyPI
