@@ -2,10 +2,12 @@ name: Bindings CI
 
 on:
   push:
-    branches: [master]
-  pull_request:
-    branches: [master]
+    tags: ['v*.*.*', 'python/v*']
   workflow_dispatch:
+
+concurrency:
+  group: bindings-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.12"]
+        python-version: ["3.12"]
     defaults:
       run:
         working-directory: crates/pdf-python
@@ -30,6 +32,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
       - name: Install maturin
         run: pip install maturin pytest
       - name: Build wheel
@@ -45,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18, 20]
+        node-version: [20]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
