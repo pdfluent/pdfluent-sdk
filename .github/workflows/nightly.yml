@@ -2,8 +2,8 @@ name: Nightly Corpus Test
 
 on:
   schedule:
-    # Run nightly at 02:00 UTC
-    - cron: '0 2 * * *'
+    # Weekly Sunday at 02:00 UTC (was: '0 2 * * *' daily — CI-COST-06).
+    - cron: '0 2 * * 0'
   workflow_dispatch:
 
 env:
@@ -80,7 +80,7 @@ jobs:
         with:
           name: nightly-corpus-results
           path: /tmp/nightly-results.sqlite
-          retention-days: 90
+          retention-days: 30
           if-no-files-found: ignore
 
       - name: Run accuracy report
@@ -101,7 +101,7 @@ jobs:
         with:
           name: nightly-accuracy-report
           path: reports/accuracy/
-          retention-days: 90
+          retention-days: 30
           if-no-files-found: ignore
 
   benchmarks:
@@ -141,7 +141,7 @@ jobs:
           path: |
             reports/bench-results.txt
             target/criterion/
-          retention-days: 90
+          retention-days: 30
           if-no-files-found: ignore
 
   desktop-tests:
@@ -210,7 +210,7 @@ jobs:
         with:
           name: nightly-verapdf-report
           path: reports/verapdf/
-          retention-days: 90
+          retention-days: 30
 
   visual-regression:
     name: Nightly AVRT
@@ -238,4 +238,4 @@ jobs:
         with:
           name: nightly-avrt-report
           path: reports/avrt/
-          retention-days: 90
+          retention-days: 30
