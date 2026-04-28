@@ -1331,6 +1331,14 @@ impl<'a> LayoutEngine<'a> {
         Ok(())
     }
 
+    // TODO #1364 / #1376 audit-followup: refactor the 5-tuple return into a
+    // dedicated `LayoutFittingResult` struct for readability. Suppressing
+    // clippy::type_complexity here as an interim step so downstream crates
+    // (notably pdf-xfa lib tests + clippy) build clean for security/policy
+    // work — the M8 audit found this baseline blocked validation across
+    // multiple PRs. Revisit when the layout-engine return shapes get a
+    // proper type-design pass.
+    #[allow(clippy::type_complexity)]
     fn layout_content_fitting(
         &self,
         content_area: &ContentArea,

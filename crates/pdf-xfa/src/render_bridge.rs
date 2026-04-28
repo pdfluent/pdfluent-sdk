@@ -4560,6 +4560,8 @@ mod tests {
                 font_family: xfa_layout_engine::text::FontFamily::Serif,
                 space_above_pt: None,
                 space_below_pt: None,
+                // Synthetic test node, not produced from a form field.
+                from_field: false,
             },
             children: vec![],
             style: Default::default(),
