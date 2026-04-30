@@ -19,6 +19,16 @@ pub enum RedactError {
     #[error("unsupported image filter: {0}")]
     UnsupportedImageFilter(String),
 
+    #[error(
+        "unsupported /ToUnicode CMap on redacted page (font {font_resource_name}): \
+         redaction strip refuses to silently drop /ToUnicode; CMap shape not understood by the \
+         conservative pdf-redact parser ({reason})"
+    )]
+    UnsupportedToUnicodeCMap {
+        font_resource_name: String,
+        reason: String,
+    },
+
     #[error("{0}")]
     Other(String),
 }
