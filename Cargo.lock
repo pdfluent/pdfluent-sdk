@@ -4403,6 +4403,7 @@ dependencies = [
  "flate2",
  "lopdf 0.39.0",
  "pdf-extract",
+ "pdf-font",
  "pdf-manip",
  "regex",
  "tempfile",
