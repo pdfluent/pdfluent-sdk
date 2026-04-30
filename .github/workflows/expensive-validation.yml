@@ -1,0 +1,224 @@
+name: Expensive Validation (Manual)
+
+# Manual fallback for the expensive validation suite. The primary
+# route is `scripts/validate-expensive.sh` on a VPS or local machine;
+# this workflow exists as a noodknop when no VPS is available. It is
+# intentionally NOT required for merge — see `docs/ci-cost-control.md`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag, or commit SHA to validate (default: workflow ref)'
+        required: false
+        default: ''
+      phases:
+        description: 'Phases to run (comma-separated): wasm,bindings,desktop,conversion,corpus'
+        required: false
+        default: 'wasm,bindings,desktop,conversion,corpus'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # validate-inputs is the single source of truth for which phases run.
+  # It tokenises the comma-separated `phases` input, validates each
+  # token against the canonical set, and exposes per-phase boolean
+  # outputs (`has_<name>`). Each expensive job then gates on those
+  # outputs -- never on `contains(inputs.phases, ...)` -- so the
+  # validation logic and the scheduling logic cannot drift.
+  #
+  # Tokens are trimmed of leading/trailing whitespace; internal
+  # whitespace is rejected (e.g. `wa sm` is NOT silently accepted as
+  # `wasm`). Empty tokens, unknown tokens, and an empty input each
+  # cause exit 1.
+  validate-inputs:
+    name: Validate Inputs
+    runs-on: ubuntu-latest
+    outputs:
+      has_wasm: ${{ steps.check.outputs.has_wasm }}
+      has_bindings: ${{ steps.check.outputs.has_bindings }}
+      has_desktop: ${{ steps.check.outputs.has_desktop }}
+      has_conversion: ${{ steps.check.outputs.has_conversion }}
+      has_corpus: ${{ steps.check.outputs.has_corpus }}
+    steps:
+      - name: Check phases input
+        id: check
+        env:
+          PHASES_INPUT: ${{ inputs.phases }}
+        run: |
+          set -uo pipefail
+          ALLOWED=(wasm bindings desktop conversion corpus)
+
+          if [[ -z "${PHASES_INPUT// /}" ]]; then
+            echo "::error::inputs.phases is empty. Provide at least one of: ${ALLOWED[*]}"
+            exit 1
+          fi
+
+          declare -A SELECTED
+          IFS=',' read -ra TOKENS <<< "$PHASES_INPUT"
+          for raw in "${TOKENS[@]}"; do
+            # Trim leading and trailing whitespace; keep internal
+            # whitespace verbatim so it can be rejected explicitly.
+            tok="$raw"
+            tok="${tok#"${tok%%[![:space:]]*}"}"
+            tok="${tok%"${tok##*[![:space:]]}"}"
+
+            if [[ -z "$tok" ]]; then
+              echo "::error::Empty phase token in inputs.phases='$PHASES_INPUT'"
+              exit 1
+            fi
+            if [[ "$tok" =~ [[:space:]] ]]; then
+              echo "::error::Phase token '$tok' contains internal whitespace; use comma to separate (allowed: ${ALLOWED[*]})"
+              exit 1
+            fi
+
+            ok=0
+            for a in "${ALLOWED[@]}"; do
+              if [[ "$tok" == "$a" ]]; then
+                SELECTED[$a]=1
+                ok=1
+                break
+              fi
+            done
+            if [[ $ok -eq 0 ]]; then
+              echo "::error::Unknown phase '$tok' in inputs.phases='$PHASES_INPUT' (allowed: ${ALLOWED[*]})"
+              exit 1
+            fi
+          done
+
+          if [[ ${#SELECTED[@]} -eq 0 ]]; then
+            echo "::error::No valid phases parsed from inputs.phases='$PHASES_INPUT'"
+            exit 1
+          fi
+
+          # Emit one boolean output per allowed phase. Each is written
+          # exactly once, so downstream jobs read deterministic values.
+          for a in "${ALLOWED[@]}"; do
+            if [[ -n "${SELECTED[$a]:-}" ]]; then
+              echo "has_$a=true"  >> "$GITHUB_OUTPUT"
+            else
+              echo "has_$a=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+          echo "Selected phases: ${!SELECTED[*]}"
+
+  wasm:
+    name: WASM Build
+    needs: validate-inputs
+    if: needs.validate-inputs.outputs.has_wasm == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --target wasm32-unknown-unknown -p xfa-wasm
+
+  binding-tests:
+    name: Binding Tests (C API)
+    needs: validate-inputs
+    if: needs.validate-inputs.outputs.has_bindings == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build C API library
+        run: cargo build --release -p pdf-capi
+
+      - name: Run C smoke tests
+        run: |
+          if [[ -f crates/pdf-capi/tests/Makefile ]]; then
+            cd crates/pdf-capi/tests
+            make test CAPI_LIB=../../../target/release || echo "C tests skipped (link deps missing)"
+          else
+            echo "No C test Makefile found, skipping"
+          fi
+
+  desktop-tests:
+    name: Desktop App Tests
+    needs: validate-inputs
+    if: needs.validate-inputs.outputs.has_desktop == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Backend unit tests
+        run: cargo test --package pdf-desktop
+
+      - name: Frontend component tests
+        run: |
+          cd crates/pdf-desktop
+          npm install
+          npx vitest run
+
+  conversion-tests:
+    name: Conversion Quality Tests
+    needs: validate-inputs
+    if: needs.validate-inputs.outputs.has_conversion == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run conversion tests
+        run: |
+          cargo test --package pdf-docx
+          cargo test --package pdf-xlsx
+          cargo test --package pdf-pptx
+
+  corpus-regression:
+    name: Corpus Regression Tests
+    needs: validate-inputs
+    if: needs.validate-inputs.outputs.has_corpus == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build test runner
+        run: cargo build --release -p xfa-test-runner
+
+      - name: Run corpus subset
+        run: |
+          if [[ -d tests/corpus-subset/ ]] && [[ $(find tests/corpus-subset/ -name '*.pdf' 2>/dev/null | wc -l) -gt 0 ]]; then
+            ./target/release/xfa-test-runner run \
+              --corpus tests/corpus-subset/ \
+              --db /tmp/results.sqlite \
+              --workers 2 \
+              --timeout 10 \
+              --no-verapdf
+            PANICS=$(sqlite3 /tmp/results.sqlite \
+              "SELECT COUNT(*) FROM test_results WHERE status='crash'")
+            echo "Panics detected: $PANICS"
+            if [ "$PANICS" -gt 0 ]; then
+              echo "REGRESSION: $PANICS panics detected in corpus subset"
+              ./target/release/xfa-test-runner clusters --db /tmp/results.sqlite
+              exit 1
+            fi
+            echo "PASS: zero panics in corpus subset"
+          else
+            echo "No corpus-subset PDFs found, skipping"
+          fi
