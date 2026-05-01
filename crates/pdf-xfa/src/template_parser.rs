@@ -580,9 +580,10 @@ fn parse_bind(elem: Node<'_, '_>) -> (Option<String>, bool) {
 /// Extracts colors from `<fill><color value="r,g,b"/>`, border from
 /// `<border><edge><color value="r,g,b"/>`, and font from `<font>`.
 fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
-    let mut style = FormNodeStyle::default();
-
-    style.check_button_mark = parse_check_button_mark(elem);
+    let mut style = FormNodeStyle {
+        check_button_mark: parse_check_button_mark(elem),
+        ..Default::default()
+    };
 
     // Parse <fill><color value="r,g,b"/> for background color.
     // Skip when presence="hidden"/"invisible"/"inactive".
