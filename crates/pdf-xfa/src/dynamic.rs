@@ -17,6 +17,61 @@ use xfa_layout_engine::form::{
 // pragmatic cap that matches observed Adobe behavior.
 const MAX_SCRIPT_PASSES: usize = 3;
 
+/// Controls only the pre-flight handling of parsed JavaScript-bearing XFA
+/// event hooks. JavaScript execution remains denied by `javascript_policy`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JsExecutionMode {
+    /// Abort before script execution when any JavaScript or unsupported script
+    /// language is present. This preserves the original policy-gate behavior.
+    Strict,
+    /// Skip JavaScript and unsupported-language scripts, then continue running
+    /// FormCalc and the layout pipeline. Skipped scripts are reported in the
+    /// returned outcome.
+    #[default]
+    BestEffortStatic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputQuality {
+    #[default]
+    Exact,
+    BestEffort,
+}
+
+impl OutputQuality {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::BestEffort => "best_effort",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DynamicScriptOutcome {
+    pub changes: usize,
+    pub js_present: bool,
+    pub js_skipped: usize,
+    pub other_skipped: usize,
+    pub formcalc_run: usize,
+    pub formcalc_errors: usize,
+    pub output_quality: OutputQuality,
+}
+
+impl Default for DynamicScriptOutcome {
+    fn default() -> Self {
+        Self {
+            changes: 0,
+            js_present: false,
+            js_skipped: 0,
+            other_skipped: 0,
+            formcalc_run: 0,
+            formcalc_errors: 0,
+            output_quality: OutputQuality::Exact,
+        }
+    }
+}
+
 /// Snapshot of field values and presence states, used for rollback.
 /// NOTE: This rollback mechanism is our own heuristic — the XFA spec does not
 /// define a rollback model.  It protects against scripts that blank out all
@@ -97,9 +152,25 @@ fn should_rollback(
 // Our order (initialize first) differs from the spec but matches Adobe's
 // observed behavior on our 20K test corpus (97%+ SSIM). §28.2 (p1231)
 // documents Adobe's event execution insert-at-position-2 algorithm.
-pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> Result<usize> {
+//
+// The default JavaScript handling is best-effort static flattening: parsed
+// JavaScript and unsupported-language scripts are skipped and reported, while
+// FormCalc continues to run. Use `apply_dynamic_scripts_with_mode(..., Strict)`
+// when callers need the legacy whole-form JavaScript policy gate.
+pub fn apply_dynamic_scripts(
+    form: &mut FormTree,
+    root_id: FormNodeId,
+) -> Result<DynamicScriptOutcome> {
+    apply_dynamic_scripts_with_mode(form, root_id, JsExecutionMode::default())
+}
+
+pub fn apply_dynamic_scripts_with_mode(
+    form: &mut FormTree,
+    root_id: FormNodeId,
+    mode: JsExecutionMode,
+) -> Result<DynamicScriptOutcome> {
     let parents = build_parent_map(form, root_id);
-    let scripts: Vec<(FormNodeId, Vec<EventScript>)> = form
+    let all_scripts: Vec<(FormNodeId, Vec<EventScript>)> = form
         .nodes
         .iter()
         .enumerate()
@@ -110,27 +181,40 @@ pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> Result
         })
         .collect();
 
-    if scripts.iter().any(|(_, node_scripts)| {
+    let has_unsupported_script = all_scripts.iter().any(|(_, node_scripts)| {
         node_scripts
             .iter()
-            .any(|script| script.language == ScriptLanguage::JavaScript)
-    }) {
+            .any(|script| script.language != ScriptLanguage::FormCalc)
+    });
+
+    if mode == JsExecutionMode::Strict && has_unsupported_script {
         return Err(javascript_policy::reject_execution(
             JavaScriptEntryPoint::XfaEventHook,
         ));
     }
-    if scripts.iter().any(|(_, node_scripts)| {
-        node_scripts
-            .iter()
-            .any(|script| script.language == ScriptLanguage::Other)
-    }) {
-        return Err(XfaError::UnsupportedFeature("script language".to_string()));
+
+    let mut js_skipped = 0usize;
+    let mut other_skipped = 0usize;
+    let mut scripts = Vec::new();
+
+    for (node_id, node_scripts) in all_scripts {
+        let mut formcalc_scripts = Vec::new();
+        for script in node_scripts {
+            match script.language {
+                ScriptLanguage::FormCalc => formcalc_scripts.push(script),
+                ScriptLanguage::JavaScript => js_skipped += 1,
+                ScriptLanguage::Other => other_skipped += 1,
+            }
+        }
+        if !formcalc_scripts.is_empty() {
+            scripts.push((node_id, formcalc_scripts));
+        }
     }
 
     let snapshot = snapshot_form(form);
     let mut stats = ScriptStats::default();
 
-    let changes = run_script_phase(
+    let mut changes = run_script_phase(
         form,
         root_id,
         &parents,
@@ -150,10 +234,22 @@ pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> Result
 
     if should_rollback(form, &snapshot, stats.errors, stats.successes) {
         restore_snapshot(form, &snapshot);
-        return Ok(0);
+        changes = 0;
     }
 
-    Ok(changes)
+    Ok(DynamicScriptOutcome {
+        changes,
+        js_present: js_skipped > 0,
+        js_skipped,
+        other_skipped,
+        formcalc_run: stats.formcalc_run,
+        formcalc_errors: stats.formcalc_errors,
+        output_quality: if js_skipped > 0 || other_skipped > 0 {
+            OutputQuality::BestEffort
+        } else {
+            OutputQuality::Exact
+        },
+    })
 }
 
 fn has_hidden_ancestor(
@@ -181,8 +277,11 @@ enum ScriptPhase {
 struct ScriptStats {
     errors: usize,
     successes: usize,
+    formcalc_run: usize,
+    formcalc_errors: usize,
 }
 
+#[derive(Debug)]
 struct ScriptResult {
     changes: usize,
     error: bool,
@@ -212,8 +311,10 @@ fn run_script_phase(
                 .filter(|script| should_run_script(script, phase))
             {
                 let result = execute_event_script(form, root_id, parents, *node_id, script, phase)?;
+                stats.formcalc_run += 1;
                 if result.error {
                     stats.errors += 1;
+                    stats.formcalc_errors += 1;
                 } else {
                     stats.successes += 1;
                 }
@@ -938,6 +1039,82 @@ mod tests {
         EventScript::javascript(script, Some(activity))
     }
 
+    fn other_script(script: &str, activity: &str) -> EventScript {
+        EventScript::new(
+            script.to_string(),
+            ScriptLanguage::Other,
+            Some(activity.to_string()),
+            None,
+            None,
+        )
+    }
+
+    fn script_policy_fixture(include_js: bool) -> (FormTree, FormNodeId, FormNodeId) {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let js_hook = add_node(
+            &mut tree,
+            "JsHook",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+        let runner = add_node(
+            &mut tree,
+            "Runner",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+        let target = add_node(
+            &mut tree,
+            "Target",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+
+        tree.get_mut(root).children = vec![js_hook, runner, target];
+        if include_js {
+            tree.meta_mut(js_hook).event_scripts = vec![javascript_script(
+                "xfa.host.messageBox('skip');",
+                "initialize",
+            )];
+        }
+        tree.meta_mut(runner).event_scripts =
+            vec![formcalc_script(r#"Target.rawValue = "ran""#, "initialize")];
+
+        (tree, root, target)
+    }
+
+    fn other_language_policy_fixture() -> (FormTree, FormNodeId, FormNodeId) {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let other = add_node(&mut tree, "OtherHook", FormNodeType::Subform);
+        let runner = add_node(&mut tree, "Runner", FormNodeType::Subform);
+        let target = add_node(
+            &mut tree,
+            "Target",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+
+        tree.get_mut(root).children = vec![other, runner, target];
+        tree.meta_mut(other).event_scripts = vec![other_script("MsgBox \"skip\"", "initialize")];
+        tree.meta_mut(runner).event_scripts =
+            vec![formcalc_script(r#"Target.rawValue = "ran""#, "initialize")];
+
+        (tree, root, target)
+    }
+
+    fn field_value(tree: &FormTree, node_id: FormNodeId) -> &str {
+        match &tree.get(node_id).node_type {
+            FormNodeType::Field { value } => value,
+            _ => panic!("expected field"),
+        }
+    }
+
     #[test]
     fn change_event_toggles_relative_hidden_subform() {
         let mut tree = FormTree::new();
@@ -1136,6 +1313,93 @@ endif
     }
 
     #[test]
+    fn best_effort_skips_javascript_and_runs_formcalc() {
+        let (mut tree, root, target) = script_policy_fixture(true);
+
+        let outcome = apply_dynamic_scripts(&mut tree, root).unwrap();
+
+        assert_eq!(field_value(&tree, target), "ran");
+        assert!(outcome.js_present);
+        assert_eq!(outcome.js_skipped, 1);
+        assert_eq!(outcome.other_skipped, 0);
+        assert_eq!(outcome.formcalc_run, 1);
+        assert_eq!(outcome.formcalc_errors, 0);
+        assert_eq!(outcome.output_quality, OutputQuality::BestEffort);
+    }
+
+    #[test]
+    fn strict_mode_preserves_javascript_reject() {
+        let (mut tree, root, target) = script_policy_fixture(true);
+
+        let err =
+            apply_dynamic_scripts_with_mode(&mut tree, root, JsExecutionMode::Strict).unwrap_err();
+
+        assert!(matches!(err, XfaError::UnsupportedFeature(feature) if feature == "javascript"));
+        assert_eq!(field_value(&tree, target), "");
+    }
+
+    #[test]
+    fn formcalc_only_reports_exact_quality() {
+        let (mut tree, root, target) = script_policy_fixture(false);
+
+        let outcome = apply_dynamic_scripts(&mut tree, root).unwrap();
+
+        assert_eq!(field_value(&tree, target), "ran");
+        assert!(!outcome.js_present);
+        assert_eq!(outcome.js_skipped, 0);
+        assert_eq!(outcome.other_skipped, 0);
+        assert_eq!(outcome.formcalc_run, 1);
+        assert_eq!(outcome.formcalc_errors, 0);
+        assert_eq!(outcome.output_quality, OutputQuality::Exact);
+    }
+
+    #[test]
+    fn other_language_scripts_skip_in_best_effort_and_reject_in_strict() {
+        let (mut tree, root, target) = other_language_policy_fixture();
+        let (mut strict_tree, strict_root, _) = other_language_policy_fixture();
+
+        let outcome = apply_dynamic_scripts(&mut tree, root).unwrap();
+        assert_eq!(field_value(&tree, target), "ran");
+        assert_eq!(outcome.js_skipped, 0);
+        assert_eq!(outcome.other_skipped, 1);
+        assert_eq!(outcome.formcalc_run, 1);
+        assert_eq!(outcome.output_quality, OutputQuality::BestEffort);
+
+        let err =
+            apply_dynamic_scripts_with_mode(&mut strict_tree, strict_root, JsExecutionMode::Strict)
+                .unwrap_err();
+        assert!(matches!(err, XfaError::UnsupportedFeature(feature) if feature == "javascript"));
+    }
+
+    #[test]
+    fn javascript_direct_executor_call_is_still_denied() {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let trigger = add_node(
+            &mut tree,
+            "Trigger",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+        tree.get_mut(root).children = vec![trigger];
+
+        let parents = build_parent_map(&tree, root);
+        let script = javascript_script("xfa.host.messageBox('deny');", "initialize");
+        let err = execute_event_script(
+            &mut tree,
+            root,
+            &parents,
+            trigger,
+            &script,
+            ScriptPhase::Initialize,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, XfaError::UnsupportedFeature(feature) if feature == "javascript"));
+    }
+
+    #[test]
     fn javascript_resolve_node_call_is_explicitly_denied() {
         let mut tree = FormTree::new();
         let root = add_node(&mut tree, "root", FormNodeType::Root);
@@ -1164,7 +1428,8 @@ endif
             "initialize",
         )];
 
-        let err = apply_dynamic_scripts(&mut tree, root).unwrap_err();
+        let err =
+            apply_dynamic_scripts_with_mode(&mut tree, root, JsExecutionMode::Strict).unwrap_err();
         assert!(matches!(err, XfaError::UnsupportedFeature(feature) if feature == "javascript"));
 
         if let FormNodeType::Field { value } = &tree.get(lock).node_type {
@@ -1189,7 +1454,8 @@ endif
         tree.meta_mut(empty).event_scripts =
             vec![javascript_script("Utils.hideIfEmpty(this);", "initialize")];
 
-        let err = apply_dynamic_scripts(&mut tree, root).unwrap_err();
+        let err =
+            apply_dynamic_scripts_with_mode(&mut tree, root, JsExecutionMode::Strict).unwrap_err();
         assert!(matches!(err, XfaError::UnsupportedFeature(feature) if feature == "javascript"));
 
         assert!(!tree.meta(empty).presence.is_not_visible());
@@ -1215,7 +1481,8 @@ endif
             "initialize",
         )];
 
-        let err = apply_dynamic_scripts(&mut tree, root).unwrap_err();
+        let err =
+            apply_dynamic_scripts_with_mode(&mut tree, root, JsExecutionMode::Strict).unwrap_err();
         assert!(matches!(err, XfaError::UnsupportedFeature(feature) if feature == "javascript"));
 
         assert!(!tree.meta(container).presence.is_not_visible());
