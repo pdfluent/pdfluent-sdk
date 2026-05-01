@@ -260,6 +260,14 @@ struct QueuedNode {
     nested_child_overrides: Option<Vec<(FormNodeId, Vec<FormNodeId>)>>,
 }
 
+type FittingResult = (
+    LayoutPage,
+    Vec<QueuedNode>,
+    bool,
+    Option<String>,
+    Option<LayoutProfilePage>,
+);
+
 #[derive(Debug, Default)]
 struct GroundTruthTraceState {
     last_break_before_read: Option<String>,
@@ -729,8 +737,25 @@ impl<'a> LayoutEngine<'a> {
             } else {
                 content_queued
             };
+            let data_driven_body_queue =
+                self.queued_nodes_have_data_backed_body_content(&remaining);
+            let page_area_continuation_needs_body_content =
+                page_areas.len() > 1 || data_driven_body_queue;
             for pa in &page_areas {
                 if remaining.is_empty() {
+                    break;
+                }
+                // XFA 3.3 §8.6: layout termination is content-driven.  A
+                // queued pageArea continuation after an emitted page is used
+                // only when body content, an explicit page anchor, or an
+                // accepted split remainder still needs that next pageArea.
+                if !pages.is_empty()
+                    && !self.queued_nodes_can_populate_continuation_page_area(
+                        &remaining,
+                        page_area_continuation_needs_body_content,
+                    )
+                {
+                    remaining.clear();
                     break;
                 }
                 let ca = primary_content_area(pa);
@@ -883,6 +908,112 @@ impl<'a> LayoutEngine<'a> {
     // -------------------------------------------------------------------
     // Helper methods for queued/hidden-aware pagination
     // -------------------------------------------------------------------
+
+    fn queued_nodes_can_populate_continuation_page_area(
+        &self,
+        nodes: &[QueuedNode],
+        needs_body_content: bool,
+    ) -> bool {
+        if !needs_body_content {
+            return true;
+        }
+
+        nodes
+            .iter()
+            .any(|node| self.queued_node_can_populate_continuation_page_area(node))
+    }
+
+    fn queued_node_can_populate_continuation_page_area(&self, node: &QueuedNode) -> bool {
+        self.queued_node_has_explicit_page_anchor(node)
+            || Self::queued_node_is_split_remainder(node)
+            || self.queued_node_has_data_backed_body_content(node)
+    }
+
+    fn queued_node_has_explicit_page_anchor(&self, node: &QueuedNode) -> bool {
+        node.break_before
+            || node.break_target.is_some()
+            || self.form.meta(node.id).page_break_before
+    }
+
+    fn queued_node_is_split_remainder(node: &QueuedNode) -> bool {
+        node.text_lines_override.is_some()
+            || node.children_override.is_some()
+            || node
+                .nested_child_overrides
+                .as_ref()
+                .is_some_and(|overrides| !overrides.is_empty())
+    }
+
+    fn queued_nodes_have_data_backed_body_content(&self, nodes: &[QueuedNode]) -> bool {
+        nodes
+            .iter()
+            .any(|node| self.queued_node_has_data_backed_body_content(node))
+    }
+
+    fn queued_node_has_data_backed_body_content(&self, node: &QueuedNode) -> bool {
+        self.subtree_has_data_backed_body_content(
+            node.id,
+            node.children_override.as_deref(),
+            node.nested_child_overrides.as_deref(),
+            false,
+        )
+    }
+
+    /// XFA 3.3 §8.6 — layout termination is driven by remaining content.
+    /// Static template chrome may render on an already-required page, but it
+    /// does not by itself force an extra pageArea continuation after the
+    /// data-backed body content has ended.
+    fn subtree_has_data_backed_body_content(
+        &self,
+        id: FormNodeId,
+        children_override: Option<&[FormNodeId]>,
+        nested_overrides: Option<&[(FormNodeId, Vec<FormNodeId>)]>,
+        inherited_data_context: bool,
+    ) -> bool {
+        if self.is_layout_hidden(id) {
+            return false;
+        }
+
+        let node = self.form.get(id);
+        let meta = self.form.meta(id);
+        let own_data_context = !meta.data_bind_none && meta.data_bind_ref.is_some();
+        let data_context = inherited_data_context || own_data_context;
+
+        match &node.node_type {
+            FormNodeType::Field { value } => data_context && !value.trim().is_empty(),
+            FormNodeType::Root
+            | FormNodeType::Subform
+            | FormNodeType::Area
+            | FormNodeType::ExclGroup
+            | FormNodeType::SubformSet => {
+                let children = children_override.unwrap_or(&node.children);
+                let expanded = if children_override.is_some() {
+                    children.to_vec()
+                } else {
+                    self.expand_occur(children)
+                };
+                expanded.iter().any(|&child_id| {
+                    let child_override = nested_overrides
+                        .and_then(|overrides| {
+                            overrides
+                                .iter()
+                                .find(|(override_id, _)| *override_id == child_id)
+                        })
+                        .map(|(_, child_override)| child_override.as_slice());
+                    self.subtree_has_data_backed_body_content(
+                        child_id,
+                        child_override,
+                        nested_overrides,
+                        data_context,
+                    )
+                })
+            }
+            FormNodeType::PageSet
+            | FormNodeType::PageArea { .. }
+            | FormNodeType::Draw(_)
+            | FormNodeType::Image { .. } => false,
+        }
+    }
 
     /// Estimate a dynamic page limit based on total content height vs page
     /// content area height.  Returns `min(estimated * 2, MAX_PAGES)` with a
@@ -1346,13 +1477,7 @@ impl<'a> LayoutEngine<'a> {
         page_width: f64,
         page_height: f64,
         profile_enabled: bool,
-    ) -> Result<(
-        LayoutPage,
-        Vec<QueuedNode>,
-        bool,
-        Option<String>,
-        Option<LayoutProfilePage>,
-    )> {
+    ) -> Result<FittingResult> {
         let mut page = LayoutPage {
             width: page_width,
             height: page_height,
@@ -3632,6 +3757,115 @@ mod tests {
         count(&page.nodes)
     }
 
+    fn make_field_value(
+        tree: &mut FormTree,
+        name: &str,
+        value: &str,
+        w: f64,
+        h: f64,
+    ) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: name.to_string(),
+            node_type: FormNodeType::Field {
+                value: value.to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(w),
+                height: Some(h),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        })
+    }
+
+    fn make_draw_text(tree: &mut FormTree, name: &str, text: &str, w: f64, h: f64) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: name.to_string(),
+            node_type: FormNodeType::Draw(DrawContent::Text(text.to_string())),
+            box_model: BoxModel {
+                width: Some(w),
+                height: Some(h),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        })
+    }
+
+    fn make_page_area(tree: &mut FormTree, name: &str, width: f64, height: f64) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: name.to_string(),
+            node_type: FormNodeType::PageArea {
+                content_areas: vec![ContentArea {
+                    name: "Body".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    width,
+                    height,
+                    leader: None,
+                    trailer: None,
+                }],
+            },
+            box_model: BoxModel {
+                width: Some(width),
+                height: Some(height),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        })
+    }
+
+    fn make_root(tree: &mut FormTree, children: Vec<FormNodeId>) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children,
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        })
+    }
+
+    fn mark_data_bound(tree: &mut FormTree, id: FormNodeId) {
+        let name = tree.get(id).name.clone();
+        tree.meta_mut(id).data_bind_ref = Some(format!("$.{name}"));
+    }
+
     #[test]
     fn positioned_layout() {
         let mut tree = FormTree::new();
@@ -3992,6 +4226,102 @@ mod tests {
         // Field should be offset by content area position (36, 36)
         assert_eq!(page.nodes[0].rect.x, 36.0);
         assert_eq!(page.nodes[0].rect.y, 36.0);
+    }
+
+    #[test]
+    fn trailing_empty_pagearea_continuation_suppressed() {
+        let mut tree = FormTree::new();
+        let first_page = make_page_area(&mut tree, "Page1", 200.0, 80.0);
+        let continuation_page = make_page_area(&mut tree, "Page2", 200.0, 100.0);
+        let record = make_field_value(&mut tree, "record", "data", 180.0, 80.0);
+        mark_data_bound(&mut tree, record);
+        let template_only = make_draw_text(&mut tree, "template_only", "template", 180.0, 20.0);
+        let root = make_root(
+            &mut tree,
+            vec![first_page, continuation_page, record, template_only],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(result.pages.len(), 1);
+        assert_eq!(count_leaf_nodes(&result.pages[0]), 1);
+    }
+
+    #[test]
+    fn valid_multi_page_overflow_unchanged() {
+        let mut tree = FormTree::new();
+        let page_area = make_page_area(&mut tree, "Page1", 200.0, 100.0);
+        let mut children = vec![page_area];
+        for idx in 0..4 {
+            let field = make_field_value(&mut tree, &format!("record{idx}"), "data", 180.0, 40.0);
+            mark_data_bound(&mut tree, field);
+            children.push(field);
+        }
+        let root = make_root(&mut tree, children);
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(result.pages.len(), 2);
+        assert_eq!(result.pages.iter().map(count_leaf_nodes).sum::<usize>(), 4);
+    }
+
+    #[test]
+    fn template_only_page_kept_when_explicitly_required() {
+        let mut tree = FormTree::new();
+        let first_page = make_page_area(&mut tree, "Page1", 200.0, 80.0);
+        let anchored_page = make_page_area(&mut tree, "Page2", 200.0, 100.0);
+        let record = make_field_value(&mut tree, "record", "data", 180.0, 80.0);
+        mark_data_bound(&mut tree, record);
+        let anchored_draw = make_draw_text(&mut tree, "anchored_draw", "next page", 180.0, 20.0);
+        tree.meta_mut(anchored_draw).page_break_before = true;
+        let root = make_root(
+            &mut tree,
+            vec![first_page, anchored_page, record, anchored_draw],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(result.pages.len(), 2);
+        assert_eq!(count_leaf_nodes(&result.pages[1]), 1);
+    }
+
+    #[test]
+    fn single_page_form_remains_single_page() {
+        let mut tree = FormTree::new();
+        let page_area = make_page_area(&mut tree, "Page1", 200.0, 100.0);
+        let record = make_field_value(&mut tree, "record", "data", 180.0, 40.0);
+        mark_data_bound(&mut tree, record);
+        let root = make_root(&mut tree, vec![page_area, record]);
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(result.pages.len(), 1);
+        assert_eq!(count_leaf_nodes(&result.pages[0]), 1);
+    }
+
+    #[test]
+    fn continuation_with_remaining_body_still_emits() {
+        let mut tree = FormTree::new();
+        let first_page = make_page_area(&mut tree, "Page1", 200.0, 60.0);
+        let continuation_page = make_page_area(&mut tree, "Page2", 200.0, 100.0);
+        let first_record = make_field_value(&mut tree, "first_record", "data", 180.0, 60.0);
+        let second_record = make_field_value(&mut tree, "second_record", "data", 180.0, 40.0);
+        mark_data_bound(&mut tree, first_record);
+        mark_data_bound(&mut tree, second_record);
+        let root = make_root(
+            &mut tree,
+            vec![first_page, continuation_page, first_record, second_record],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(result.pages.len(), 2);
+        assert_eq!(count_leaf_nodes(&result.pages[1]), 1);
     }
 
     #[test]
