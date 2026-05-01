@@ -4,6 +4,7 @@ All notable changes to the xfa-native-rust PDF engine are documented here.
 
 ## [Unreleased] — 2026-04-23
 
+- fix(xfa-layout): suppress trailing empty pageArea continuation
 ### Added
 
 - `/ActualText` extraction from BDC marked-content in `pdf-extract`; `TextBlock.actual_text: Option<String>` field — #1313
