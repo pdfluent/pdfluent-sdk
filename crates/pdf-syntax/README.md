@@ -1,11 +1,10 @@
-# hayro-syntax
-
-[![Crates.io](https://img.shields.io/crates/v/hayro-syntax.svg)](https://crates.io/crates/hayro-syntax)
-[![Documentation](https://docs.rs/hayro-syntax/badge.svg)](https://docs.rs/hayro-syntax)
-
-<!-- cargo-rdme start -->
+# pdf-syntax
 
 A low-level library for reading PDF files.
+
+This crate is a fork of [`hayro-syntax`](https://github.com/LaurenzV/hayro) by Laurenz Stampfl, used by the [PDFluent](https://pdfluent.com) commercial Rust PDF SDK. It is published under the original permissive MIT/Apache-2.0 license — see the License section below.
+
+<!-- cargo-rdme start -->
 
 This crate implements the `Syntax` chapter of the PDF reference, and therefore
 serves as a very good basis for building various abstractions on top of it, without having to reimplement

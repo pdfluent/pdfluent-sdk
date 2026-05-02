@@ -10,6 +10,7 @@ edition = "2024"
 homepage = "https://pdfluent.com"
 keywords = ["pdf", "editing", "manipulation", "merge"]
 license = "MIT"
+readme = "README.md"
 name = "pdfluent-lopdf"
 repository = "https://github.com/pdfluent"
 version = "0.39.1"
