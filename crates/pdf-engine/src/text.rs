@@ -717,6 +717,9 @@ struct PageStats {
     median_font_size: f64,
     /// Median measured character width (pt). Zero-guarded fallback is
     /// 0.5 × median_font_size when there aren't enough samples.
+    /// Currently populated for diagnostics / future tuning; allow dead_code
+    /// under `-D warnings` until a reader is added.
+    #[allow(dead_code)]
     median_char_width: f64,
     /// Tight line-to-line spacing (25th percentile of pairwise band
     /// gaps), representing the body-text leading on this page. The
@@ -889,6 +892,9 @@ fn band_based_blocks(spans: Vec<TextSpan>, stats: &PageStats) -> Vec<TextBlock> 
     group_spans_into_blocks_legacy_with_stats(spans, stats)
 }
 
+/// Median font-size helper. Currently unreferenced after `PageStats` took over
+/// the typography baseline computation; kept available for future tuning paths.
+#[allow(dead_code)]
 fn median_font_size(spans: &[TextSpan]) -> f64 {
     if spans.is_empty() {
         return 12.0;

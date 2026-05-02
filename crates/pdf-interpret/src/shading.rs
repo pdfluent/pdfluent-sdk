@@ -396,6 +396,9 @@ pub struct TriangleVertex {
 
 impl TriangleVertex {
     /// Create a new triangle vertex (crate-internal constructor for tests).
+    /// Used by `encode.rs::tests` only; allow dead_code under `-D warnings`
+    /// so non-test lib builds still compile.
+    #[allow(dead_code)]
     pub(crate) fn new(flag: u32, point: Point, colors: ColorComponents) -> Self {
         Self {
             flag,

@@ -39,7 +39,14 @@ fn tier_trial_grants_minimum_surface_only() {
     let caps = pdfluent::Tier::Trial.capabilities();
 
     // Trial grants minimum evaluation surface
-    for cap in [C::PdfParse, C::PdfWrite, C::PageOps, C::TextExtract, C::AcroFormRead, C::PdfaValidate] {
+    for cap in [
+        C::PdfParse,
+        C::PdfWrite,
+        C::PageOps,
+        C::TextExtract,
+        C::AcroFormRead,
+        C::PdfaValidate,
+    ] {
         assert!(caps.contains(cap), "Trial must grant {cap:?}");
     }
 

@@ -56,11 +56,9 @@ fn fill_pdf_form_rust_runs() {
 
     // Verify the round-trip: reopen the saved file and read the values
     // back through the public `form_fields()` API.
-    let reopened = PdfDocument::open_with(
-        &path,
-        OpenOptions::new().with_license_key("tier:developer"),
-    )
-    .expect("reopen filled form");
+    let reopened =
+        PdfDocument::open_with(&path, OpenOptions::new().with_license_key("tier:developer"))
+            .expect("reopen filled form");
     let by_name: std::collections::HashMap<String, String> = reopened
         .form_fields()
         .expect("form_fields")

@@ -54,9 +54,7 @@ impl Name {
                     // literal character. Match the lenient skip_name_like behaviour:
                     // if the next 2 bytes aren't both hex digits, treat `#` as literal.
                     match r.peek_bytes(2) {
-                        Some(hex)
-                            if hex[0].is_ascii_hexdigit() && hex[1].is_ascii_hexdigit() =>
-                        {
+                        Some(hex) if hex[0].is_ascii_hexdigit() && hex[1].is_ascii_hexdigit() => {
                             let hex = r.read_bytes(2).unwrap();
                             result.push(
                                 decode_hex_digit(hex[0]).unwrap() << 4

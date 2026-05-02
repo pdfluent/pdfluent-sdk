@@ -1274,10 +1274,7 @@ mod tests {
     fn pantone_ink_is_not_suppressed() {
         // PDF name encoding: spaces become #20
         let sep = make_separation("PANTONE#20123#20CVC").expect("should parse");
-        assert!(
-            !sep.is_none(),
-            "PANTONE spot colour must not be suppressed"
-        );
+        assert!(!sep.is_none(), "PANTONE spot colour must not be suppressed");
     }
 
     /// "All" is a special name meaning every device colourant, not silence.

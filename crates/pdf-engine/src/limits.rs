@@ -63,12 +63,12 @@ pub struct ProcessingLimits {
 impl Default for ProcessingLimits {
     fn default() -> Self {
         Self {
-            max_file_bytes: 500 * 1024 * 1024,         // 500 MB
+            max_file_bytes: 500 * 1024 * 1024,          // 500 MB
             max_stream_bytes: 256 * 1024 * 1024,        // 256 MB
             max_total_memory_bytes: 1024 * 1024 * 1024, // 1 GB
             max_object_depth: 100,
             max_operator_count: 10_000_000,
-            max_image_pixels: 16384 * 16384,             // 268 MP
+            max_image_pixels: 16384 * 16384, // 268 MP
             max_xfa_nesting_depth: 50,
             max_formcalc_depth: 200,
         }
@@ -90,11 +90,11 @@ impl ProcessingLimits {
     pub fn wasm() -> Self {
         Self {
             max_file_bytes: 50 * 1024 * 1024,          // 50 MB
-            max_stream_bytes: 32 * 1024 * 1024,         // 32 MB
-            max_total_memory_bytes: 128 * 1024 * 1024,  // 128 MB
+            max_stream_bytes: 32 * 1024 * 1024,        // 32 MB
+            max_total_memory_bytes: 128 * 1024 * 1024, // 128 MB
             max_object_depth: 50,
             max_operator_count: 1_000_000,
-            max_image_pixels: 8192 * 8192,               // 64 MP
+            max_image_pixels: 8192 * 8192, // 64 MP
             max_xfa_nesting_depth: 30,
             max_formcalc_depth: 100,
         }
@@ -222,7 +222,12 @@ pub enum LimitError {
     /// A decompressed stream exceeds the maximum allowed size.
     StreamTooLarge { actual_bytes: u64, limit_bytes: u64 },
     /// An image exceeds the maximum allowed pixel count.
-    ImageTooLarge { width: u64, height: u64, pixels: u64, limit_pixels: u64 },
+    ImageTooLarge {
+        width: u64,
+        height: u64,
+        pixels: u64,
+        limit_pixels: u64,
+    },
     /// An object reference chain exceeds the maximum allowed depth.
     ObjectDepthExceeded { depth: u32, limit: u32 },
     /// A content stream has too many operators.
@@ -236,23 +241,57 @@ pub enum LimitError {
 impl std::fmt::Display for LimitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::FileTooLarge { actual_bytes, limit_bytes } =>
-                write!(f, "PDF file too large: {} MB (limit: {} MB)",
-                    actual_bytes / 1024 / 1024, limit_bytes / 1024 / 1024),
-            Self::StreamTooLarge { actual_bytes, limit_bytes } =>
-                write!(f, "Decompressed stream too large: {} MB (limit: {} MB)",
-                    actual_bytes / 1024 / 1024, limit_bytes / 1024 / 1024),
-            Self::ImageTooLarge { width, height, pixels, limit_pixels } =>
-                write!(f, "Image too large: {}×{} ({} MP, limit: {} MP)",
-                    width, height, pixels / 1_000_000, limit_pixels / 1_000_000),
-            Self::ObjectDepthExceeded { depth, limit } =>
-                write!(f, "Object reference depth exceeded: {} (limit: {})", depth, limit),
-            Self::TooManyOperators { count, limit } =>
-                write!(f, "Content stream has too many operators: {} (limit: {})", count, limit),
-            Self::XfaNestingTooDeep { depth, limit } =>
-                write!(f, "XFA template nesting too deep: {} (limit: {})", depth, limit),
-            Self::FormCalcRecursionTooDeep { depth, limit } =>
-                write!(f, "FormCalc recursion too deep: {} (limit: {})", depth, limit),
+            Self::FileTooLarge {
+                actual_bytes,
+                limit_bytes,
+            } => write!(
+                f,
+                "PDF file too large: {} MB (limit: {} MB)",
+                actual_bytes / 1024 / 1024,
+                limit_bytes / 1024 / 1024
+            ),
+            Self::StreamTooLarge {
+                actual_bytes,
+                limit_bytes,
+            } => write!(
+                f,
+                "Decompressed stream too large: {} MB (limit: {} MB)",
+                actual_bytes / 1024 / 1024,
+                limit_bytes / 1024 / 1024
+            ),
+            Self::ImageTooLarge {
+                width,
+                height,
+                pixels,
+                limit_pixels,
+            } => write!(
+                f,
+                "Image too large: {}×{} ({} MP, limit: {} MP)",
+                width,
+                height,
+                pixels / 1_000_000,
+                limit_pixels / 1_000_000
+            ),
+            Self::ObjectDepthExceeded { depth, limit } => write!(
+                f,
+                "Object reference depth exceeded: {} (limit: {})",
+                depth, limit
+            ),
+            Self::TooManyOperators { count, limit } => write!(
+                f,
+                "Content stream has too many operators: {} (limit: {})",
+                count, limit
+            ),
+            Self::XfaNestingTooDeep { depth, limit } => write!(
+                f,
+                "XFA template nesting too deep: {} (limit: {})",
+                depth, limit
+            ),
+            Self::FormCalcRecursionTooDeep { depth, limit } => write!(
+                f,
+                "FormCalc recursion too deep: {} (limit: {})",
+                depth, limit
+            ),
         }
     }
 }
@@ -283,24 +322,24 @@ mod tests {
     #[test]
     fn test_file_size_check() {
         let l = ProcessingLimits::default();
-        assert!(l.check_file_size(100 * 1024 * 1024).is_ok());   // 100 MB: ok
-        assert!(l.check_file_size(500 * 1024 * 1024).is_ok());   // 500 MB: ok (at limit)
-        assert!(l.check_file_size(501 * 1024 * 1024).is_err());  // 501 MB: exceeded
+        assert!(l.check_file_size(100 * 1024 * 1024).is_ok()); // 100 MB: ok
+        assert!(l.check_file_size(500 * 1024 * 1024).is_ok()); // 500 MB: ok (at limit)
+        assert!(l.check_file_size(501 * 1024 * 1024).is_err()); // 501 MB: exceeded
     }
 
     #[test]
     fn test_image_pixel_check() {
         let l = ProcessingLimits::default();
         assert!(l.check_image_pixels(1920, 1080).is_ok());
-        assert!(l.check_image_pixels(16384, 16384).is_ok());   // at limit
-        assert!(l.check_image_pixels(16385, 16384).is_err());  // just over
+        assert!(l.check_image_pixels(16384, 16384).is_ok()); // at limit
+        assert!(l.check_image_pixels(16385, 16384).is_err()); // just over
     }
 
     #[test]
     fn test_stream_size_check() {
         let l = ProcessingLimits::default();
         assert!(l.check_stream_size(100 * 1024 * 1024).is_ok());
-        assert!(l.check_stream_size(256 * 1024 * 1024).is_ok());  // at limit
+        assert!(l.check_stream_size(256 * 1024 * 1024).is_ok()); // at limit
         assert!(l.check_stream_size(257 * 1024 * 1024).is_err()); // exceeded
     }
 
@@ -315,7 +354,10 @@ mod tests {
 
     #[test]
     fn test_limit_error_display() {
-        let err = LimitError::FileTooLarge { actual_bytes: 600 * 1024 * 1024, limit_bytes: 500 * 1024 * 1024 };
+        let err = LimitError::FileTooLarge {
+            actual_bytes: 600 * 1024 * 1024,
+            limit_bytes: 500 * 1024 * 1024,
+        };
         let msg = err.to_string();
         assert!(msg.contains("600 MB"));
         assert!(msg.contains("500 MB"));

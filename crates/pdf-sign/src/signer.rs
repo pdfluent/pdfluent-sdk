@@ -445,7 +445,10 @@ mod tests {
 
     #[test]
     fn pades_profile_b_lt_inferred() {
-        let cfg = SignerConfig { enable_ltv: true, ..Default::default() };
+        let cfg = SignerConfig {
+            enable_ltv: true,
+            ..Default::default()
+        };
         assert_eq!(infer_pades_profile(&cfg), PadesProfile::BLT);
     }
 

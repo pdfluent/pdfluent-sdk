@@ -583,11 +583,9 @@ fn _parse_char_string(
             operator::ENDCHAR => {
                 if p.stack.len() == 4 || (ctx.width.is_none() && p.stack.len() == 5) {
                     // Process 'seac'.
-                    let accent_char =
-                        seac_code_to_glyph_id(&ctx.metadata.charset, p.stack.pop()?)
+                    let accent_char = seac_code_to_glyph_id(&ctx.metadata.charset, p.stack.pop()?)
                         .ok_or(CFFError::InvalidSeacCode)?;
-                    let base_char =
-                        seac_code_to_glyph_id(&ctx.metadata.charset, p.stack.pop()?)
+                    let base_char = seac_code_to_glyph_id(&ctx.metadata.charset, p.stack.pop()?)
                         .ok_or(CFFError::InvalidSeacCode)?;
                     let dy = p.stack.pop()?;
                     let dx = p.stack.pop()?;

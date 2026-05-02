@@ -8,12 +8,11 @@ use std::path::Path;
 pub fn run(input: &Path, output: Option<&Path>) -> Result<()> {
     let original_bytes = std::fs::read(input).context("failed to read input PDF")?;
 
-    let flattened_bytes = pdf_xfa::flatten_xfa_to_pdf(&original_bytes)
-        .context("XFA flatten failed")?;
+    let flattened_bytes =
+        pdf_xfa::flatten_xfa_to_pdf(&original_bytes).context("XFA flatten failed")?;
 
     if let Some(out_path) = output {
-        std::fs::write(out_path, &flattened_bytes)
-            .context("failed to write flattened PDF")?;
+        std::fs::write(out_path, &flattened_bytes).context("failed to write flattened PDF")?;
         println!("Flattened PDF written to: {}", out_path.display());
     }
 

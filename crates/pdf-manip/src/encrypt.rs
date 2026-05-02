@@ -390,7 +390,9 @@ mod tests {
 
         // Load + decrypt — lopdf decrypts content streams in-place.
         let mut dec_doc = lopdf::Document::load_mem(&output).expect("load encrypted doc");
-        dec_doc.decrypt("secret").expect("AES-128 decrypt should succeed with correct password");
+        dec_doc
+            .decrypt("secret")
+            .expect("AES-128 decrypt should succeed with correct password");
     }
 
     #[test]
@@ -409,11 +411,23 @@ mod tests {
         // Scan raw PDF bytes for encryption parameters — dictionary keys and
         // name values are not encrypted, so they appear as plain text.
         let text = String::from_utf8_lossy(&output);
-        assert!(text.contains("/V 4"), "raw PDF must contain /V 4 for AES-128");
-        assert!(text.contains("/R 4"), "raw PDF must contain /R 4 for AES-128");
+        assert!(
+            text.contains("/V 4"),
+            "raw PDF must contain /V 4 for AES-128"
+        );
+        assert!(
+            text.contains("/R 4"),
+            "raw PDF must contain /R 4 for AES-128"
+        );
         assert!(text.contains("/StmF"), "raw PDF must contain /StmF");
         assert!(text.contains("/StrF"), "raw PDF must contain /StrF");
-        assert!(text.contains("/StdCF"), "raw PDF must reference StdCF filter");
-        assert!(text.contains("AESV2"), "raw PDF must contain AESV2 crypt filter method");
+        assert!(
+            text.contains("/StdCF"),
+            "raw PDF must reference StdCF filter"
+        );
+        assert!(
+            text.contains("AESV2"),
+            "raw PDF must contain AESV2 crypt filter method"
+        );
     }
 }

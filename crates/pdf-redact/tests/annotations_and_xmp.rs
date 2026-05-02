@@ -11,10 +11,7 @@ use pdf_redact::{RedactionArea, Redactor};
 
 /// Build a document with one highlight annotation at `annot_rect` containing
 /// the given `/Contents` text.  Returns `(doc, annot_id)`.
-fn make_doc_with_annotation(
-    annot_rect: [f32; 4],
-    contents: &str,
-) -> (Document, ObjectId) {
+fn make_doc_with_annotation(annot_rect: [f32; 4], contents: &str) -> (Document, ObjectId) {
     let mut doc = Document::with_version("1.7");
 
     let content_str = format!(
@@ -139,8 +136,7 @@ fn annotations_and_xmp_annotation_contents_stripped() {
 #[test]
 fn annotations_and_xmp_annotation_outside_area_intact() {
     // Annotation at [400, 700, 500, 750]; redaction at [0, 0, 100, 100].
-    let (mut doc, annot_id) =
-        make_doc_with_annotation([400.0, 700.0, 500.0, 750.0], "Safe note");
+    let (mut doc, annot_id) = make_doc_with_annotation([400.0, 700.0, 500.0, 750.0], "Safe note");
     let mut redactor = Redactor::new();
     redactor.mark(RedactionArea::new(1, [0.0, 0.0, 100.0, 100.0]));
 
@@ -195,7 +191,16 @@ fn annotations_and_xmp_xmp_replaced_with_minimal() {
     };
 
     let content = std::str::from_utf8(&meta_stream.content).expect("XMP must be UTF-8");
-    assert!(content.contains("pdf:Producer"), "minimal XMP must contain pdf:Producer");
-    assert!(!content.contains("dc:title"), "dc:title must be removed from XMP");
-    assert!(!content.contains("dc:creator"), "dc:creator must be removed from XMP");
+    assert!(
+        content.contains("pdf:Producer"),
+        "minimal XMP must contain pdf:Producer"
+    );
+    assert!(
+        !content.contains("dc:title"),
+        "dc:title must be removed from XMP"
+    );
+    assert!(
+        !content.contains("dc:creator"),
+        "dc:creator must be removed from XMP"
+    );
 }
