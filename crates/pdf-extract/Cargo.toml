@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://pdfluent.com"
 description = "PDF content extraction: images, text with positions, and full-text search"
 
 [dependencies]

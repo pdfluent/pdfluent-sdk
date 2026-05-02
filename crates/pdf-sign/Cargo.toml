@@ -4,6 +4,8 @@ version = "1.0.0-beta.1"
 edition = "2021"
 license = "MIT"
 description = "PDF digital signature validation — PAdES, CMS, certificate chain, DocMDP/FieldMDP, LTV."
+repository = "https://github.com/jasperdew/xfa-native-rust"
+homepage = "https://pdfluent.com"
 
 [dependencies]
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }

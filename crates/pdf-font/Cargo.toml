@@ -5,7 +5,8 @@ description = "PDF font handling: CFF/Type1 parsing, CMap parsing, and PostScrip
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
-repository = "https://github.com/LaurenzV/hayro"
+repository = "https://github.com/jasperdew/xfa-native-rust"
+homepage = "https://pdfluent.com"
 
 [features]
 default = ["std", "embed-cmaps"]

@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://pdfluent.com"
 description = "PDF manipulation: pages, encryption, watermarks, optimization, bookmarks"
 
 [dependencies]
