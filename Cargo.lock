@@ -4394,7 +4394,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.2"
 dependencies = [
  "criterion",
  "getrandom 0.2.17",
