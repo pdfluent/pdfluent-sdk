@@ -4,8 +4,9 @@ version = "1.0.0-beta.1"
 edition = "2021"
 license = "MIT"
 description = "PDF digital signature validation — PAdES, CMS, certificate chain, DocMDP/FieldMDP, LTV."
-repository = "https://github.com/jasperdew/xfa-native-rust"
+repository = "https://github.com/pdfluent"
 homepage = "https://pdfluent.com"
+documentation = "https://pdfluent.com/docs"
 keywords = ["pdf", "signature", "pades", "cms", "pkcs7"]
 categories = ["authentication", "cryptography"]
 

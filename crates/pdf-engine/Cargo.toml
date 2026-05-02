@@ -4,8 +4,9 @@ version = "1.0.0-beta.1"
 edition = "2021"
 license = "MIT"
 description = "Unified PDF rendering engine — page rendering, text extraction, thumbnails."
-repository = "https://github.com/jasperdew/xfa-native-rust"
+repository = "https://github.com/pdfluent"
 homepage = "https://pdfluent.com"
+documentation = "https://pdfluent.com/docs"
 
 keywords = ["pdf", "rendering", "text-extraction", "forms"]
 categories = ["rendering", "text-processing"]
