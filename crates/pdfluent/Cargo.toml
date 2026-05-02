@@ -10,8 +10,8 @@ homepage = "https://pdfluent.com"
 documentation = "https://docs.rs/pdfluent"
 readme = "README.md"
 description = "Pure-Rust PDF SDK with XFA, PDF/A, digital signatures, and WASM support."
-keywords = ["pdf", "xfa", "pdfa", "signing", "sdk"]
-categories = ["api-bindings", "parser-implementations"]
+keywords = ["pdf", "sdk", "document", "forms", "signatures"]
+categories = ["text-processing", "rendering"]
 
 [features]
 default = ["signing", "pdfa", "redaction"]

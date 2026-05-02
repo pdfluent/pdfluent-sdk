@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 homepage = "https://pdfluent.com"
 description = "PDF content extraction: images, text with positions, and full-text search"
+keywords = ["pdf", "text", "extraction", "search", "document"]
+categories = ["text-processing", "parser-implementations"]
 
 [dependencies]
 thiserror.workspace = true
