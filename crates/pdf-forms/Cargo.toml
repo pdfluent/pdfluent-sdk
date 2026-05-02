@@ -6,6 +6,8 @@ license = "MIT"
 description = "AcroForm engine for PDF interactive forms."
 repository = "https://github.com/jasperdew/xfa-native-rust"
 homepage = "https://pdfluent.com"
+keywords = ["pdf", "forms", "acroform", "fields", "interactive"]
+categories = ["parser-implementations"]
 
 [dependencies]
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
