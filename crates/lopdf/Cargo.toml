@@ -7,11 +7,11 @@ categories = ["text-processing"]
 description = "A Rust library for PDF document manipulation."
 documentation = "https://docs.rs/crate/lopdf/"
 edition = "2024"
-homepage = "https://github.com/J-F-Liu/lopdf"
+homepage = "https://pdfluent.com"
 keywords = ["pdf", "editing", "manipulation", "merge"]
 license = "MIT"
 name = "pdfluent-lopdf"
-repository = "https://github.com/J-F-Liu/lopdf.git"
+repository = "https://github.com/jasperdew/xfa-native-rust"
 version = "0.39.0"
 rust-version = "1.85"
 
