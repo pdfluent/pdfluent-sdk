@@ -1,27 +1,23 @@
 # pdfluent
 
-**Pure-Rust PDF library** — read, edit, sign, redact, extract, and convert PDF documents.
+**PDFluent is a commercial Rust PDF SDK.**
+
+**Free for evaluation. A valid license is required for production use.**
 
 [![crates.io](https://img.shields.io/crates/v/pdfluent.svg)](https://crates.io/crates/pdfluent)
-[![docs.rs](https://docs.rs/pdfluent/badge.svg)](https://docs.rs/pdfluent)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://pdfluent.com/license)
+[![Commercial License](https://img.shields.io/badge/license-PDFluent%20Commercial-blue.svg)](https://pdfluent.com/terms)
+
+A pure-Rust PDF SDK with XFA, PDF/A, digital signatures, redaction, text extraction, forms, and a WebAssembly target. Designed as a modern alternative to iText, Apryse/PDFTron, PDFBox, and Foxit — without the JVM, without C++ memory unsafety, without "Contact Sales" pricing.
 
 ---
 
-## Quick install
+## Install
 
 ```bash
 cargo add pdfluent
 ```
 
-Or in `Cargo.toml`:
-
-```toml
-[dependencies]
-pdfluent = "1.0.0-beta.1"
-```
-
-## Quick example
+## Minimal example
 
 ```rust
 use pdfluent::prelude::*;
@@ -31,47 +27,60 @@ fn main() -> Result<()> {
     println!("Pages: {}", doc.page_count());
 
     let text = doc.extract_text(0)?;
-    println!("First page text: {}", text);
+    println!("First page: {text}");
 
     Ok(())
 }
 ```
 
-## Features
-
-Capability-gated via Cargo features (default: `signing`, `pdfa`, `redaction`):
-
-| Feature | Enables | Licence tier |
-|---|---|---|
-| `signing` (default) | Digital signature validation — PAdES B-LT/B-LTA, CMS | Team+ |
-| `pdfa` (default) | PDF/A validation and conversion | Team+ |
-| `redaction` (default) | Content redaction | Team+ |
-| `ocr-tesseract` | OCR via Tesseract | Business+ |
-| `ocr-paddle` | OCR via PaddleOCR | Business+ |
-| `html-to-pdf` | HTML/URL → PDF conversion | Business+ |
-| `docx-export` | PDF → DOCX export | Business+ |
-| `xfa-flatten` | XFA form → static PDF flattening | Business+ |
-| `wasm` | WebAssembly target | any |
-| `tracing` | Observability via the `tracing` crate | any |
-
-## Evaluation
-
-pdfluent ships with a built-in evaluation mode — **no sign-up, no API key required**. Output carries a producer stamp (`Unlicensed PDFluent evaluation`) until a licence key is activated. This lets you evaluate the full SDK in CI, local tooling, or prototypes without friction.
-
-To remove the stamp: [request a free 30-day trial key](https://pdfluent.com/trial) or [buy a licence](https://pdfluent.com/pricing).
-
-## Documentation
-
-- **API reference:** <https://docs.rs/pdfluent>
-- **Getting started guide:** <https://pdfluent.com/docs>
-- **Trial (stamp-free evaluation):** <https://pdfluent.com/trial>
-- **Pricing:** <https://pdfluent.com/pricing>
-- **Changelog:** <https://github.com/pdfluent/pdfluent/blob/master/crates/pdfluent/CHANGELOG.md>
+For more, see <https://pdfluent.com/docs>.
 
 ## Status
 
-`1.0.0-beta.1` — API surface is frozen. Implementation is being wired progressively per milestone. See [the tracker](https://github.com/pdfluent/pdfluent/milestone/52) for what's fully wired vs. scaffolded.
+**Beta software — public API is stabilizing.**
 
-## License
+- Public API surface is frozen for `1.0.0-beta.x` but may receive small breaking changes before `1.0.0`.
+- Not all features are fully complete; capability-gated via Cargo features.
+- **XFA support is still under active development.** `xfa-flatten` is feature-gated and not yet ready for general production use; see the changelog for current XFA fidelity status.
+- PDF/A, digital signatures, redaction, AcroForm fill/flatten, and text extraction have completed quality gates and are production-grade.
 
-MIT OR Apache-2.0 — see [pdfluent.com/license](https://pdfluent.com/license) for commercial licence terms.
+## Capability features
+
+Default: `signing`, `pdfa`, `redaction`.
+
+| Feature | Enables |
+|---|---|
+| `signing` (default) | PAdES B-LT / B-LTA digital signatures, CMS verification |
+| `pdfa` (default) | PDF/A-1b/2b/3b validation and conversion |
+| `redaction` (default) | Content redaction (search-based and region-based) |
+| `ocr-tesseract` | OCR via Tesseract |
+| `ocr-paddle` | OCR via PaddleOCR |
+| `html-to-pdf` | HTML / URL → PDF conversion |
+| `docx-export` | PDF → DOCX export |
+| `xfa-flatten` | XFA form → static PDF flattening (experimental) |
+| `wasm` | WebAssembly target |
+| `tracing` | Observability via the `tracing` crate |
+
+## Licensing
+
+- **Free** for evaluation, development, testing, and demonstration. The unlicensed SDK is fully functional; output carries an "unlicensed evaluation" marker (Producer string in PDF metadata + a one-time stderr warning).
+- **Production use requires a valid PDFluent commercial license.** Tiered pricing from Lite to Unlimited plus Enterprise; see [pdfluent.com/pricing](https://pdfluent.com/pricing).
+- **OEM redistribution** (embedding the SDK in software you distribute to third parties) requires the OEM Redistribution add-on.
+
+See the `LICENSE` file in this crate, or read the full commercial terms at <https://pdfluent.com/terms>.
+
+## Links
+
+- **Documentation:** <https://pdfluent.com/docs>
+- **30-day clean trial key:** <https://pdfluent.com/trial>
+- **Pricing:** <https://pdfluent.com/pricing>
+- **Commercial terms:** <https://pdfluent.com/terms>
+- **Source / issues:** <https://github.com/pdfluent>
+
+## A note on prior versions
+
+`1.0.0-beta.1` and `1.0.0-beta.2` were briefly published under MIT before the licensing model was finalized. Those versions have been yanked. Production use must be on `1.0.0-beta.3` or later under the PDFluent Commercial License. See the [changelog](CHANGELOG.md) for details.
+
+---
+
+Built and maintained by [Innovation Trigger BV](https://pdfluent.com), operating as PDFluent.

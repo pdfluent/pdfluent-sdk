@@ -26,13 +26,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Note on prior releases
 
-Versions `1.0.0-beta.1` and `1.0.0-beta.2` of `pdfluent` (and corresponding
-beta releases of the other commercial crates) were published to crates.io
-under the MIT or MIT-OR-Apache-2.0 license. Those published versions remain
-available under their original licenses — crates.io versions are immutable.
-Going forward (including this release), all production use of the
-proprietary crates requires a valid commercial license. The previous beta
-versions are deprecated and will be yanked once `1.0.0-beta.3` is published.
+**Earlier beta versions were published under permissive licenses and have
+been yanked.** Specifically, `1.0.0-beta.1` and `1.0.0-beta.2` of `pdfluent`
+(and the corresponding beta releases of the other commercial crates listed
+above) were briefly published on crates.io under MIT or MIT-OR-Apache-2.0
+before the licensing model was finalized. All 21 such versions across 19
+commercial crates were yanked on 2026-05-02 to prevent new installations.
+
+Crates.io versions are immutable: anyone who downloaded those versions
+before the yank holds an MIT-licensed copy of those specific bytes
+permanently. From `1.0.0-beta.3` onward, all production use of the
+proprietary crates requires a valid commercial license under the terms of
+the `LICENSE` file in this crate.
+
+This release contains **no functional changes** versus the yanked beta.2 —
+this is a license-correction release only.
 
 ---
 

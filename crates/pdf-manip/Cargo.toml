@@ -3,6 +3,7 @@ name = "pdf-manip"
 version.workspace = true
 edition.workspace = true
 license-file = "LICENSE"
+readme = "README.md"
 repository.workspace = true
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"

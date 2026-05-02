@@ -3,6 +3,7 @@ name = "xfa-license"
 version.workspace = true
 edition.workspace = true
 license-file = "LICENSE"
+readme = "README.md"
 repository.workspace = true
 homepage = "https://pdfluent.com"
 description = "Runtime license-token validation for the PDFluent SDK."
