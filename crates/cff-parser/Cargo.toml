@@ -1,14 +1,12 @@
 [package]
 edition = "2021"
-name = "cff-parser"
+name = "pdfluent-cff"
 version = "0.2.0"
 authors = [
     "Evgeniy Reizner <razrfalcon@gmail.com>",
     "Jeff Muizelaar <jrmuizel@gmail.com>",
 ]
-description = "A parser for the Compact Font Format (CFF)"
-publish = false
-documentation = "https://docs.rs/cff-parser/"
+description = "A parser for the Compact Font Format (CFF) — extended fork used by PDFluent"
 readme = "README.md"
 keywords = [
     "cff",
@@ -17,7 +15,8 @@ keywords = [
 ]
 categories = ["parser-implementations"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/jrmuizel/cff-parser"
+repository = "https://github.com/jasperdew/xfa-native-rust"
+homepage = "https://pdfluent.com"
 
 [lib]
 name = "cff_parser"

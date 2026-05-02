@@ -96,7 +96,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 indexmap = { version = "2", features = ["serde"] }
 ttf-parser = "0.25"
-cff-parser = { path = "crates/cff-parser", version = "0.2" }
+cff-parser = { package = "pdfluent-cff", path = "crates/cff-parser", version = "=0.2.0" }
 subsetter = "0.2"
 xmp-writer = "0.3"
 
