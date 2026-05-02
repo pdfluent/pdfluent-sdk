@@ -116,7 +116,7 @@ pdf-render = { path = "crates/pdf-render", version = "=1.0.0-beta.1" }
 # New engine crates
 pdf-forms = { package = "pdfluent-forms", path = "crates/pdf-forms", version = "=1.0.0-beta.1" }
 pdf-annot = { path = "crates/pdf-annot", version = "=1.0.0-beta.1" }
-pdf-xfa = { path = "crates/pdf-xfa", version = "=1.0.0-beta.1" }
+pdf-xfa = { path = "crates/pdf-xfa", version = "=1.0.0-beta.2" }
 pdf-sign = { package = "pdfluent-sign", path = "crates/pdf-sign", version = "=1.0.0-beta.1" }
 pdf-engine = { path = "crates/pdf-engine", version = "=1.0.0-beta.1" }
 pdf-compliance = { path = "crates/pdf-compliance", version = "=1.0.0-beta.1" }
