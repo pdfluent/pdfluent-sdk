@@ -2,7 +2,7 @@
 name = "formcalc-interpreter"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file = "LICENSE"
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true

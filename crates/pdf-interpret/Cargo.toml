@@ -10,7 +10,7 @@ documentation = "https://pdfluent.com/docs"
 license = "Apache-2.0 OR MIT"
 
 [dependencies]
-pdf-font = { path = "../pdf-font", version = "=1.0.0-beta.1" }
+pdf-font = { path = "../pdf-font", version = "=1.0.0-beta.2" }
 pdf-syntax = { path = "../pdf-syntax", features = ["std", "images"], version = "=0.5.0" }
 kurbo = "0.13.0"
 smallvec = "1"
