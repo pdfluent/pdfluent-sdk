@@ -1,5 +1,5 @@
 [package]
-name = "hayro-ccitt"
+name = "pdfluent-ccitt"
 version = "0.2.0"
 description = "A decoder for group 3 and group 4 CCITT images."
 authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]

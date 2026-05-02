@@ -10,9 +10,9 @@ publish = false
 pdf-syntax = { path = "../pdf-syntax", features = ["std", "images"], version = "=0.5.0" }
 pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.1" }
 pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.1" }
-pdf-extract = { path = "../pdf-extract", version = "=1.0.0-beta.1" }
+pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.1" }
 pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.1" }
-pdf-forms = { path = "../pdf-forms", version = "=1.0.0-beta.1" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.1" }
 pdf-xfa.workspace = true
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
