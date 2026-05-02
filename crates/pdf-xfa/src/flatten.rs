@@ -75,6 +75,7 @@ thread_local! {
     static FLATTEN_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
+use crate::dynamic::{apply_dynamic_scripts, DynamicScriptOutcome, OutputQuality};
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
 use crate::font_bridge::{
@@ -138,6 +139,8 @@ fn create_minimal_pdf_document() -> Document {
 #[derive(Debug, Clone, Default)]
 pub struct LayoutDump {
     pub pages: Vec<LayoutDumpEntry>,
+    pub dynamic_scripts: DynamicScriptOutcome,
+    pub output_quality: OutputQuality,
 }
 
 /// One page entry in the optional layout dump.
@@ -150,21 +153,48 @@ pub struct LayoutDumpEntry {
     pub first_overflow_element: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FlattenMetadata {
+    pub dynamic_scripts: DynamicScriptOutcome,
+    pub output_quality: OutputQuality,
+}
+
+impl FlattenMetadata {
+    fn from_dynamic_scripts(dynamic_scripts: DynamicScriptOutcome) -> Self {
+        Self {
+            dynamic_scripts,
+            output_quality: dynamic_scripts.output_quality,
+        }
+    }
+}
+
 struct FlattenOutput {
     pdf_bytes: Vec<u8>,
     layout_dump: LayoutDump,
+    metadata: FlattenMetadata,
 }
 
 impl FlattenOutput {
-    fn new(pdf_bytes: Vec<u8>, layout_dump: LayoutDump) -> Self {
+    fn new(
+        pdf_bytes: Vec<u8>,
+        mut layout_dump: LayoutDump,
+        dynamic_scripts: DynamicScriptOutcome,
+    ) -> Self {
+        layout_dump.dynamic_scripts = dynamic_scripts;
+        layout_dump.output_quality = dynamic_scripts.output_quality;
         Self {
             pdf_bytes,
             layout_dump,
+            metadata: FlattenMetadata::from_dynamic_scripts(dynamic_scripts),
         }
     }
 
     fn without_dump(pdf_bytes: Vec<u8>) -> Self {
-        Self::new(pdf_bytes, LayoutDump::default())
+        Self::new(
+            pdf_bytes,
+            LayoutDump::default(),
+            DynamicScriptOutcome::default(),
+        )
     }
 }
 
@@ -297,6 +327,20 @@ pub fn flatten_xfa_to_pdf_with_layout_dump(pdf_bytes: &[u8]) -> Result<(Vec<u8>,
     Ok((out.pdf_bytes, out.layout_dump))
 }
 
+#[must_use = "flattened PDF bytes and metadata must be used; discarding them loses output"]
+pub fn flatten_xfa_to_pdf_with_metadata(pdf_bytes: &[u8]) -> Result<(Vec<u8>, FlattenMetadata)> {
+    let out = flatten_xfa_to_pdf_internal(pdf_bytes, false)?;
+    Ok((out.pdf_bytes, out.metadata))
+}
+
+#[must_use = "flattened PDF bytes, layout dump, and metadata must be used; discarding them loses output"]
+pub fn flatten_xfa_to_pdf_with_layout_dump_and_metadata(
+    pdf_bytes: &[u8],
+) -> Result<(Vec<u8>, LayoutDump, FlattenMetadata)> {
+    let out = flatten_xfa_to_pdf_internal(pdf_bytes, true)?;
+    Ok((out.pdf_bytes, out.layout_dump, out.metadata))
+}
+
 fn flatten_xfa_to_pdf_internal(
     pdf_bytes: &[u8],
     collect_layout_dump: bool,
@@ -422,8 +466,6 @@ fn xfa_flatten_inner(
     form_xml: Option<&str>,
     collect_layout_dump: bool,
 ) -> Result<FlattenOutput> {
-    use crate::dynamic::apply_dynamic_scripts;
-
     // XFA-F6-01 (#1109): pipeline stage tracker — verifies strict ordering via
     // debug_assert in each stage transition below.
     let mut _stage = PipelineStage::Extract;
@@ -479,7 +521,27 @@ fn xfa_flatten_inner(
 
     log::debug!("XFA bind: {} form nodes created", tree.nodes.len());
 
-    apply_dynamic_scripts(&mut tree, root_id)?;
+    let dynamic_scripts = apply_dynamic_scripts(&mut tree, root_id)?;
+    if dynamic_scripts.output_quality == OutputQuality::BestEffort {
+        log::warn!(
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={}",
+            dynamic_scripts.output_quality.as_str(),
+            dynamic_scripts.js_present,
+            dynamic_scripts.js_skipped,
+            dynamic_scripts.other_skipped,
+            dynamic_scripts.formcalc_run,
+            dynamic_scripts.formcalc_errors
+        );
+        eprintln!(
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={}",
+            dynamic_scripts.output_quality.as_str(),
+            dynamic_scripts.js_present,
+            dynamic_scripts.js_skipped,
+            dynamic_scripts.other_skipped,
+            dynamic_scripts.formcalc_run,
+            dynamic_scripts.formcalc_errors
+        );
+    }
 
     // XFA §3: when the PDF contains a pre-merged form DOM (saved by Adobe's
     // runtime after scripts executed), use its presence attributes to override
@@ -822,7 +884,11 @@ fn xfa_flatten_inner(
     let mut out = Vec::new();
     doc.save_to(&mut out)
         .map_err(|e| XfaError::LayoutFailed(format!("save: {e}")))?;
-    Ok(FlattenOutput::new(out, layout_dump.unwrap_or_default()))
+    Ok(FlattenOutput::new(
+        out,
+        layout_dump.unwrap_or_default(),
+        dynamic_scripts,
+    ))
 }
 
 fn layout_dump_from_profile(profile: LayoutProfile) -> LayoutDump {
@@ -839,6 +905,7 @@ fn layout_dump_from_profile(profile: LayoutProfile) -> LayoutDump {
                 first_overflow_element: page.first_overflow_element,
             })
             .collect(),
+        ..Default::default()
     }
 }
 
@@ -2084,8 +2151,7 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
             }
 
             // Now match each XML node in the group to a FormTree child
-            let mut group_idx = 0;
-            for &xc in group_xml_nodes {
+            for (group_idx, &xc) in group_xml_nodes.iter().enumerate() {
                 // Find next unmatched FormTree child with this name
                 let matched = form_children
                     .iter()
@@ -2095,8 +2161,7 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
                         form_children
                             .iter()
                             .enumerate()
-                            .filter(|(i, &fid)| used[*i] && tree.get(fid).name == *gname)
-                            .last()
+                            .rfind(|(i, &fid)| used[*i] && tree.get(fid).name == *gname)
                             .map(|(i, _)| i + 1)
                             .unwrap_or(0)
                     } else {
@@ -2107,7 +2172,6 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
                     used[idx] = true;
                     apply_recursive(tree, fid, xc);
                 }
-                group_idx += 1;
             }
         }
 
@@ -3505,7 +3569,7 @@ fn extract_text_from_pdf_bytes(pdf_bytes: &[u8]) -> String {
 
     let mut text = String::new();
 
-    for (_, obj) in &doc.objects {
+    for obj in doc.objects.values() {
         if let Object::Stream(ref stream) = obj {
             // Read raw stream content (decompression may fail silently).
             let content = match stream.decompressed_content() {
@@ -3530,8 +3594,7 @@ fn extract_text_from_content_stream(content: &[u8]) -> String {
 
     // Find parenthesis-delimited strings: (…) followed optionally by whitespace
     // and then one of the text operators.
-    let mut chars = s.char_indices().peekable();
-    while let Some((i, ch)) = chars.next() {
+    for (i, ch) in s.char_indices() {
         if ch == '(' {
             // Collect until matching ')'.
             let start = i + 1;
@@ -4074,12 +4137,16 @@ mod tests {
     }
 
     #[test]
-    fn flatten_rejects_xfa_javascript_event() {
+    fn flatten_reports_best_effort_for_xfa_javascript_event() {
         let pdf_bytes = build_xfa_pdf(JS_EVENT_XDP);
 
-        let err = flatten_xfa_to_pdf(&pdf_bytes).unwrap_err();
+        let (flattened, metadata) =
+            flatten_xfa_to_pdf_with_metadata(&pdf_bytes).expect("flatten should skip JS");
 
-        assert!(matches!(err, XfaError::UnsupportedFeature(feature) if feature == "javascript"));
+        assert!(!flattened.is_empty());
+        assert_eq!(metadata.output_quality, OutputQuality::BestEffort);
+        assert!(metadata.dynamic_scripts.js_present);
+        assert_eq!(metadata.dynamic_scripts.js_skipped, 1);
     }
 
     #[test]

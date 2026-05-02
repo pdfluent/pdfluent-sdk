@@ -1,6 +1,6 @@
 [package]
 name = "pdfluent"
-version = "1.0.0-alpha.1"
+version = "1.0.0-beta.1"
 edition = "2021"
 rust-version = "1.75"
 authors = ["PDFluent Contributors <team@pdfluent.com>"]
@@ -41,9 +41,9 @@ tracing = ["dep:tracing"]
 # pdf-sign provides PAdES signing + signature validation.
 # pdf-redact provides content redaction (search + region).
 pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.1" }
-lopdf = { path = "../lopdf", version = "=0.39.0", default-features = false }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.0", default-features = false }
 pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.1" }
-pdf-sign = { path = "../pdf-sign", version = "=1.0.0-beta.1" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.1" }
 pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.1" }
 pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.1", optional = true }
 tokio = { version = "1", features = ["rt", "fs"], optional = true }
@@ -76,7 +76,7 @@ getrandom = { version = "0.2", features = ["js"] }
 # Form-mutation integration tests (3C-1 / #1245) construct small in-memory
 # PDF fixtures directly via lopdf rather than shipping binary fixtures
 # for every field-type permutation.
-lopdf = { path = "../lopdf", version = "=0.39.0", default-features = false }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.0", default-features = false }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 
 [[bench]]

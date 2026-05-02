@@ -32,6 +32,8 @@ package-lock.json
 /benchmarks/weekly/regression-*.md
 /benchmarks/stress-fixtures/
 scripts/__pycache__/
+.cache/
+out/
 
 # M8-CLEANUP-04 (#1380): VPS/local expensive validation reports
 validation-reports/

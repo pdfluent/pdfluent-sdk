@@ -2264,27 +2264,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hayro-ccitt"
-version = "0.2.0"
-
-[[package]]
-name = "hayro-jbig2"
-version = "0.2.0"
-dependencies = [
- "hayro-ccitt",
-]
-
-[[package]]
-name = "hayro-jpeg2000"
-version = "0.3.2"
-dependencies = [
- "fearless_simd",
- "image",
- "log",
- "moxcms",
-]
-
-[[package]]
 name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3210,44 +3189,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lopdf"
-version = "0.39.0"
-dependencies = [
- "aes",
- "bitflags 2.11.0",
- "cbc",
- "chrono",
- "ecb",
- "encoding_rs",
- "env_logger",
- "flate2",
- "getrandom 0.3.4",
- "hayro-ccitt",
- "hayro-jbig2",
- "hayro-jpeg2000",
- "image",
- "indexmap 2.13.0",
- "itoa",
- "jiff",
- "log",
- "md-5",
- "nom 8.0.0",
- "nom_locate",
- "rand 0.9.2",
- "rangemap",
- "rayon",
- "serde",
- "sha2",
- "stringprep",
- "tempfile",
- "thiserror 2.0.18",
- "time",
- "tokio",
- "ttf-parser",
- "weezl",
-]
-
-[[package]]
 name = "mac"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4124,8 +4065,8 @@ name = "pdf-annot"
 version = "1.0.0-beta.1"
 dependencies = [
  "log",
- "lopdf 0.39.0",
  "pdf-syntax",
+ "pdfluent-lopdf",
  "thiserror 2.0.18",
 ]
 
@@ -4136,14 +4077,14 @@ dependencies = [
  "criterion",
  "formcalc-interpreter",
  "libc",
- "lopdf 0.39.0",
  "pdf-compliance",
  "pdf-engine",
- "pdf-extract",
- "pdf-forms",
  "pdf-manip",
  "pdf-syntax",
  "pdf-xfa",
+ "pdfluent-extract",
+ "pdfluent-forms",
+ "pdfluent-lopdf",
  "xfa-dom-resolver",
  "xfa-layout-engine",
 ]
@@ -4152,14 +4093,14 @@ dependencies = [
 name = "pdf-capi"
 version = "1.0.0-beta.1"
 dependencies = [
- "lopdf 0.39.0",
  "pdf-compliance",
  "pdf-engine",
- "pdf-extract",
- "pdf-forms",
  "pdf-manip",
  "pdf-redact",
- "pdf-sign",
+ "pdfluent-extract",
+ "pdfluent-forms",
+ "pdfluent-lopdf",
+ "pdfluent-sign",
 ]
 
 [[package]]
@@ -4169,8 +4110,8 @@ dependencies = [
  "cff-parser",
  "flate2",
  "log",
- "lopdf 0.39.0",
  "pdf-syntax",
+ "pdfluent-lopdf",
  "thiserror 2.0.18",
  "ttf-parser",
 ]
@@ -4181,9 +4122,9 @@ version = "1.0.0-beta.1"
 dependencies = [
  "base64 0.22.1",
  "image",
- "lopdf 0.39.0",
  "pdf-annot",
  "pdf-engine",
+ "pdfluent-lopdf",
  "serde",
  "serde_json",
  "tauri",
@@ -4203,8 +4144,8 @@ dependencies = [
 name = "pdf-docx"
 version = "1.0.0-beta.1"
 dependencies = [
- "lopdf 0.39.0",
- "pdf-extract",
+ "pdfluent-extract",
+ "pdfluent-lopdf",
  "quick-xml 0.37.5",
  "tempfile",
  "thiserror 2.0.18",
@@ -4221,14 +4162,14 @@ dependencies = [
  "hmac",
  "image",
  "kurbo 0.13.0",
- "lopdf 0.39.0",
  "ocrs",
- "pdf-forms",
  "pdf-interpret",
  "pdf-ocr",
  "pdf-render",
  "pdf-syntax",
  "pdf-xfa",
+ "pdfluent-forms",
+ "pdfluent-lopdf",
  "pkcs8",
  "rayon",
  "reqwest 0.12.28",
@@ -4244,33 +4185,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "pdf-extract"
-version = "1.0.0-beta.1"
-dependencies = [
- "flate2",
- "lopdf 0.39.0",
- "tempfile",
- "thiserror 2.0.18",
- "unicode-normalization",
-]
-
-[[package]]
 name = "pdf-font"
 version = "1.0.0-beta.1"
 dependencies = [
  "brotli",
  "log",
  "phf 0.13.1",
-]
-
-[[package]]
-name = "pdf-forms"
-version = "1.0.0-beta.1"
-dependencies = [
- "log",
- "lopdf 0.39.0",
- "pdf-syntax",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -4299,7 +4219,7 @@ version = "1.0.0-beta.1"
 dependencies = [
  "chrono",
  "flate2",
- "lopdf 0.39.0",
+ "pdfluent-lopdf",
  "quick-xml 0.37.5",
  "roxmltree",
  "serde",
@@ -4313,14 +4233,14 @@ name = "pdf-java"
 version = "1.0.0-beta.1"
 dependencies = [
  "jni",
- "lopdf 0.39.0",
  "pdf-annot",
  "pdf-compliance",
  "pdf-engine",
- "pdf-forms",
  "pdf-manip",
  "pdf-redact",
  "pdf-syntax",
+ "pdfluent-forms",
+ "pdfluent-lopdf",
 ]
 
 [[package]]
@@ -4329,13 +4249,13 @@ version = "1.0.0-beta.1"
 dependencies = [
  "cff-parser",
  "flate2",
- "hayro-jbig2",
  "image",
- "lopdf 0.39.0",
  "pdf-compliance",
  "pdf-engine",
  "pdf-font",
  "pdf-syntax",
+ "pdfluent-jbig2",
+ "pdfluent-lopdf",
  "roxmltree",
  "serde",
  "serde_json",
@@ -4352,18 +4272,18 @@ dependencies = [
 name = "pdf-node"
 version = "1.0.0-beta.1"
 dependencies = [
- "lopdf 0.39.0",
  "napi",
  "napi-build",
  "napi-derive",
  "pdf-annot",
  "pdf-compliance",
  "pdf-engine",
- "pdf-forms",
  "pdf-manip",
  "pdf-redact",
- "pdf-sign",
  "pdf-syntax",
+ "pdfluent-forms",
+ "pdfluent-lopdf",
+ "pdfluent-sign",
  "serde",
  "serde_json",
  "tokio",
@@ -4376,9 +4296,9 @@ dependencies = [
  "dirs-next",
  "image",
  "leptess",
- "lopdf 0.39.0",
  "ndarray",
  "ort",
+ "pdfluent-lopdf",
  "tempfile",
  "thiserror 2.0.18",
  "ureq 3.2.0",
@@ -4388,8 +4308,8 @@ dependencies = [
 name = "pdf-pptx"
 version = "1.0.0-beta.1"
 dependencies = [
- "lopdf 0.39.0",
- "pdf-extract",
+ "pdfluent-extract",
+ "pdfluent-lopdf",
  "quick-xml 0.37.5",
  "tempfile",
  "thiserror 2.0.18",
@@ -4401,10 +4321,10 @@ name = "pdf-redact"
 version = "1.0.0-beta.1"
 dependencies = [
  "flate2",
- "lopdf 0.39.0",
- "pdf-extract",
  "pdf-font",
  "pdf-manip",
+ "pdfluent-extract",
+ "pdfluent-lopdf",
  "regex",
  "tempfile",
  "thiserror 2.0.18",
@@ -4419,32 +4339,9 @@ dependencies = [
  "image",
  "kurbo 0.13.0",
  "log",
- "lopdf 0.39.0",
  "pdf-interpret",
+ "pdfluent-lopdf",
  "vello_cpu",
-]
-
-[[package]]
-name = "pdf-sign"
-version = "1.0.0-beta.1"
-dependencies = [
- "der",
- "digest",
- "ecdsa",
- "log",
- "lopdf 0.39.0",
- "p12",
- "p256",
- "p384",
- "pdf-syntax",
- "pkcs8",
- "rsa",
- "sha1",
- "sha2",
- "signature",
- "spki",
- "thiserror 2.0.18",
- "ureq 2.12.1",
 ]
 
 [[package]]
@@ -4454,11 +4351,11 @@ dependencies = [
  "aes",
  "cbc",
  "flate2",
- "hayro-ccitt",
- "hayro-jbig2",
- "hayro-jpeg2000",
  "log",
  "md5",
+ "pdfluent-ccitt",
+ "pdfluent-jbig2",
+ "pdfluent-jpeg2000",
  "rustc-hash 2.1.1",
  "sha2",
  "smallvec",
@@ -4467,17 +4364,17 @@ dependencies = [
 
 [[package]]
 name = "pdf-xfa"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.2"
 dependencies = [
  "base64 0.22.1",
  "flate2",
  "formcalc-interpreter",
  "image",
  "log",
- "lopdf 0.39.0",
  "pdf-font",
  "pdf-interpret",
  "pdf-syntax",
+ "pdfluent-lopdf",
  "roxmltree",
  "thiserror 2.0.18",
  "ttf-parser",
@@ -4490,8 +4387,8 @@ dependencies = [
 name = "pdf-xlsx"
 version = "1.0.0-beta.1"
 dependencies = [
- "lopdf 0.39.0",
- "pdf-extract",
+ "pdfluent-extract",
+ "pdfluent-lopdf",
  "quick-xml 0.37.5",
  "rust_xlsxwriter",
  "tempfile",
@@ -4501,22 +4398,125 @@ dependencies = [
 
 [[package]]
 name = "pdfluent"
-version = "1.0.0-alpha.1"
+version = "1.0.0-beta.1"
 dependencies = [
  "criterion",
  "getrandom 0.2.17",
  "image",
- "lopdf 0.39.0",
  "pdf-compliance",
  "pdf-docx",
  "pdf-engine",
  "pdf-manip",
  "pdf-redact",
  "pdf-render",
- "pdf-sign",
+ "pdfluent-lopdf",
+ "pdfluent-sign",
  "png 0.17.16",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "pdfluent-ccitt"
+version = "0.2.0"
+
+[[package]]
+name = "pdfluent-extract"
+version = "1.0.0-beta.1"
+dependencies = [
+ "flate2",
+ "pdfluent-lopdf",
+ "tempfile",
+ "thiserror 2.0.18",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "pdfluent-forms"
+version = "1.0.0-beta.1"
+dependencies = [
+ "log",
+ "pdf-syntax",
+ "pdfluent-lopdf",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "pdfluent-jbig2"
+version = "0.2.0"
+dependencies = [
+ "pdfluent-ccitt",
+]
+
+[[package]]
+name = "pdfluent-jpeg2000"
+version = "0.3.2"
+dependencies = [
+ "fearless_simd",
+ "image",
+ "log",
+ "moxcms",
+]
+
+[[package]]
+name = "pdfluent-lopdf"
+version = "0.39.0"
+dependencies = [
+ "aes",
+ "bitflags 2.11.0",
+ "cbc",
+ "chrono",
+ "ecb",
+ "encoding_rs",
+ "env_logger",
+ "flate2",
+ "getrandom 0.3.4",
+ "image",
+ "indexmap 2.13.0",
+ "itoa",
+ "jiff",
+ "log",
+ "md-5",
+ "nom 8.0.0",
+ "nom_locate",
+ "pdfluent-ccitt",
+ "pdfluent-jbig2",
+ "pdfluent-jpeg2000",
+ "rand 0.9.2",
+ "rangemap",
+ "rayon",
+ "serde",
+ "sha2",
+ "stringprep",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "ttf-parser",
+ "weezl",
+]
+
+[[package]]
+name = "pdfluent-sign"
+version = "1.0.0-beta.1"
+dependencies = [
+ "der",
+ "digest",
+ "ecdsa",
+ "log",
+ "p12",
+ "p256",
+ "p384",
+ "pdf-syntax",
+ "pdfluent-lopdf",
+ "pkcs8",
+ "rsa",
+ "sha1",
+ "sha2",
+ "signature",
+ "spki",
+ "thiserror 2.0.18",
+ "ureq 2.12.1",
 ]
 
 [[package]]
@@ -8635,8 +8635,8 @@ version = "1.0.0-beta.1"
 dependencies = [
  "axum",
  "indexmap 2.13.0",
- "lopdf 0.39.0",
  "pdf-xfa",
+ "pdfluent-lopdf",
  "roxmltree",
  "serde",
  "serde_json",
@@ -8663,12 +8663,12 @@ dependencies = [
  "clap_mangen",
  "formcalc-interpreter",
  "image",
- "lopdf 0.39.0",
  "pdf-compliance",
  "pdf-engine",
- "pdf-sign",
  "pdf-syntax",
  "pdf-xfa",
+ "pdfluent-lopdf",
+ "pdfluent-sign",
  "reqwest 0.12.28",
  "roxmltree",
  "serde",
@@ -8692,8 +8692,8 @@ name = "xfa-golden-tests"
 version = "1.0.0-beta.1"
 dependencies = [
  "image",
- "lopdf 0.39.0",
  "pdf-engine",
+ "pdfluent-lopdf",
  "thiserror 2.0.18",
  "xfa-layout-engine",
 ]
@@ -8748,7 +8748,7 @@ dependencies = [
  "anyhow",
  "clap",
  "image",
- "lopdf 0.34.0",
+ "lopdf",
  "pdf-engine",
  "pdf-xfa",
  "rayon",
@@ -8769,23 +8769,23 @@ dependencies = [
  "image",
  "indicatif",
  "libc",
- "lopdf 0.39.0",
  "num_cpus",
  "pdf-annot",
  "pdf-compliance",
  "pdf-docx",
  "pdf-engine",
- "pdf-extract",
- "pdf-forms",
  "pdf-invoice",
  "pdf-manip",
  "pdf-ocr",
  "pdf-pptx",
  "pdf-redact",
- "pdf-sign",
  "pdf-syntax",
  "pdf-xfa",
  "pdf-xlsx",
+ "pdfluent-extract",
+ "pdfluent-forms",
+ "pdfluent-lopdf",
+ "pdfluent-sign",
  "rayon",
  "regex-lite",
  "reqwest 0.12.28",
@@ -8808,14 +8808,14 @@ dependencies = [
  "indexmap 2.13.0",
  "js-sys",
  "kurbo 0.13.0",
- "lopdf 0.39.0",
  "pdf-annot",
  "pdf-compliance",
  "pdf-engine",
  "pdf-manip",
  "pdf-render",
- "pdf-sign",
  "pdf-syntax",
+ "pdfluent-lopdf",
+ "pdfluent-sign",
  "serde",
  "serde_json",
  "wasm-bindgen",

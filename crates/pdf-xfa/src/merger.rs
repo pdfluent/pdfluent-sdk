@@ -272,6 +272,7 @@ impl<'a> FormMerger<'a> {
         Ok((id, trailing_info))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_subform_instance(
         &mut self,
         elem: Node<'_, '_>,
@@ -322,8 +323,7 @@ impl<'a> FormMerger<'a> {
                 child_context = Some(first);
             } else {
                 // Scope match: walk up ancestor chain
-                child_context = self.resolve_with_scope_group(ctx, &name)
-                    .or(data_context);
+                child_context = self.resolve_with_scope_group(ctx, &name).or(data_context);
             }
         } else if let Some(root) = self.data_dom.root() {
             if self.data_dom.get(root).is_some_and(|n| n.name() == name) {
@@ -370,6 +370,7 @@ impl<'a> FormMerger<'a> {
     /// multiple instances (max > 1 or max = -1), the number of form subform
     /// instances is driven by matching data records. Each data record creates
     /// one subform instance, clamped to [occur.min, occur.max].
+    #[allow(clippy::type_complexity)]
     fn expand_repeating_subform_instances(
         &mut self,
         element: Node<'_, '_>,
@@ -408,10 +409,8 @@ impl<'a> FormMerger<'a> {
                 format!("{}[*]", normalized)
             };
             // Full SOM resolution; fall back to root when no data_context
-            resolve_data_path(&self.data_dom, &with_wildcard, data_context)
-                .or_else(|_| {
-                    resolve_data_path(&self.data_dom, &with_wildcard, self.data_dom.root())
-                })
+            resolve_data_path(self.data_dom, &with_wildcard, data_context)
+                .or_else(|_| resolve_data_path(self.data_dom, &with_wildcard, self.data_dom.root()))
                 .unwrap_or_default()
         } else {
             // No bind ref: look up by element name
@@ -486,11 +485,7 @@ impl<'a> FormMerger<'a> {
     /// 2. Sibling (direct child of parent data context).
     /// 3. Ancestor chain — walk up to root, try children at each level.
     /// 4. Global scope (root-level and all descendants).
-    fn resolve_with_scope_value(
-        &self,
-        data_context: DataNodeId,
-        name: &str,
-    ) -> Option<String> {
+    fn resolve_with_scope_value(&self, data_context: DataNodeId, name: &str) -> Option<String> {
         // 1. Direct child
         let direct = self.data_dom.children_by_name(data_context, name);
         if let Some(&val_id) = direct.first() {
@@ -531,11 +526,7 @@ impl<'a> FormMerger<'a> {
     ///
     /// Used when looking for a named child data group for subform binding.
     /// Walks the ancestor chain to find a matching group node by name.
-    fn resolve_with_scope_group(
-        &self,
-        data_context: DataNodeId,
-        name: &str,
-    ) -> Option<DataNodeId> {
+    fn resolve_with_scope_group(&self, data_context: DataNodeId, name: &str) -> Option<DataNodeId> {
         // Walk up the ancestor chain looking for a same-named group
         let mut cursor = self.data_dom.get(data_context).and_then(|n| n.parent());
         while let Some(anc_id) = cursor {
@@ -2160,12 +2151,14 @@ fn detect_field_kind(elem: Node<'_, '_>) -> FieldKind {
 }
 
 fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
-    let mut style = FormNodeStyle::default();
-    style.check_button_mark = parse_check_button_mark(elem);
     let (check_on_value, check_off_value, check_neutral_value) = parse_check_button_values(elem);
-    style.check_button_on_value = check_on_value;
-    style.check_button_off_value = check_off_value;
-    style.check_button_neutral_value = check_neutral_value;
+    let mut style = FormNodeStyle {
+        check_button_mark: parse_check_button_mark(elem),
+        check_button_on_value: check_on_value,
+        check_button_off_value: check_off_value,
+        check_button_neutral_value: check_neutral_value,
+        ..Default::default()
+    };
     if let Some(fill) = find_first_child_by_name(elem, "fill") {
         if !is_hidden(fill) {
             style.bg_color = parse_fill_color(fill);
@@ -3599,9 +3592,15 @@ mod tests {
         let merger = FormMerger::new(&data_dom);
         let (tree, _root_id) = merger.merge(template).unwrap();
 
-        let first = tree.nodes.iter().find(|n| n.name == "firstName")
+        let first = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "firstName")
             .expect("firstName must exist");
-        let last = tree.nodes.iter().find(|n| n.name == "lastName")
+        let last = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "lastName")
             .expect("lastName must exist");
 
         match &first.node_type {
@@ -3654,7 +3653,10 @@ mod tests {
         let merger = FormMerger::new(&data_dom);
         let (tree, _root_id) = merger.merge(template).unwrap();
 
-        let city = tree.nodes.iter().find(|n| n.name == "city")
+        let city = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "city")
             .expect("city field must exist");
         match &city.node_type {
             FormNodeType::Field { value } => assert_eq!(
@@ -3700,7 +3702,10 @@ mod tests {
         let merger = FormMerger::new(&data_dom);
         let (tree, _root_id) = merger.merge(template).unwrap();
 
-        let country = tree.nodes.iter().find(|n| n.name == "country")
+        let country = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "country")
             .expect("country field must exist");
         match &country.node_type {
             FormNodeType::Field { value } => assert_eq!(
@@ -3744,7 +3749,10 @@ mod tests {
         let merger = FormMerger::new(&data_dom);
         let (tree, _root_id) = merger.merge(template).unwrap();
 
-        let postal = tree.nodes.iter().find(|n| n.name == "postalCode")
+        let postal = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "postalCode")
             .expect("postalCode field must exist");
         match &postal.node_type {
             FormNodeType::Field { value } => assert_eq!(value, "1234AB"),
@@ -3856,7 +3864,10 @@ mod tests {
         let merger = FormMerger::new(&data_dom);
         let (tree, _root_id) = merger.merge(template).unwrap();
 
-        let secret_id = tree.nodes.iter().enumerate()
+        let secret_id = tree
+            .nodes
+            .iter()
+            .enumerate()
             .find(|(_, n)| n.name == "secretField")
             .map(|(i, _)| FormNodeId(i))
             .expect("secretField must exist");
@@ -3897,7 +3908,10 @@ mod tests {
         let merger = FormMerger::new(&data_dom);
         let (tree, _root_id) = merger.merge(template).unwrap();
 
-        let field_id = tree.nodes.iter().enumerate()
+        let field_id = tree
+            .nodes
+            .iter()
+            .enumerate()
             .find(|(_, n)| n.name == "normalField")
             .map(|(i, _)| FormNodeId(i))
             .expect("normalField must exist");

@@ -334,8 +334,8 @@ impl PdfDocument {
                     }
                     _ => None,
                 };
-                let button_caption = value_str.is_none()
-                    && tree.effective_field_type(id) == Some(FieldType::Button);
+                let button_caption =
+                    value_str.is_none() && tree.effective_field_type(id) == Some(FieldType::Button);
                 let extracted = value_str.or_else(|| {
                     button_caption.then(|| {
                         node.mk
@@ -587,7 +587,10 @@ mod extract_all_text_tests {
 
     #[test]
     fn separates_nonempty_pages_like_pdftotext() {
-        assert_eq!(join_page_texts(["Page 1", "Page 2"]), "Page 1\n\n\u{000C}Page 2");
+        assert_eq!(
+            join_page_texts(["Page 1", "Page 2"]),
+            "Page 1\n\n\u{000C}Page 2"
+        );
     }
 
     #[test]
@@ -597,7 +600,10 @@ mod extract_all_text_tests {
 
     #[test]
     fn reuses_existing_blank_line_before_form_feed() {
-        assert_eq!(join_page_texts(["Page 1\n\n", "Page 2"]), "Page 1\n\n\u{000C}Page 2");
+        assert_eq!(
+            join_page_texts(["Page 1\n\n", "Page 2"]),
+            "Page 1\n\n\u{000C}Page 2"
+        );
     }
 }
 
@@ -1011,7 +1017,7 @@ mod tests {
     /// Build a minimal AcroForm push button whose only human-readable text
     /// lives in the widget `/MK /CA` caption entry.
     fn push_button_caption_pdf_bytes(caption: &[u8]) -> Vec<u8> {
-        use lopdf::{StringFormat, dictionary, Document, Object, Stream};
+        use lopdf::{dictionary, Document, Object, Stream, StringFormat};
 
         let mut doc = Document::with_version("1.4");
 
@@ -1022,8 +1028,10 @@ mod tests {
         let content_id = doc.new_object_id();
         let widget_id = doc.new_object_id();
 
-        doc.objects
-            .insert(content_id, Object::Stream(Stream::new(dictionary! {}, Vec::new())));
+        doc.objects.insert(
+            content_id,
+            Object::Stream(Stream::new(dictionary! {}, Vec::new())),
+        );
         doc.objects.insert(
             widget_id,
             Object::Dictionary(dictionary! {
@@ -1074,7 +1082,8 @@ mod tests {
         doc.trailer.set("Root", Object::Reference(catalog_id));
 
         let mut bytes = Vec::new();
-        doc.save_to(&mut bytes).expect("save push-button caption fixture");
+        doc.save_to(&mut bytes)
+            .expect("save push-button caption fixture");
         bytes
     }
 

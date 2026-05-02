@@ -32,12 +32,12 @@ impl std::str::FromStr for DebugFormat {
 }
 
 pub fn run(input: &Path, format: DebugFormat) -> Result<()> {
-    let pdf_bytes = std::fs::read(input)
-        .with_context(|| format!("failed to read '{}'", input.display()))?;
+    let pdf_bytes =
+        std::fs::read(input).with_context(|| format!("failed to read '{}'", input.display()))?;
 
     // --- Step 1: Extract XFA packets from the PDF. ---
-    let packets = pdf_xfa::extract::extract_xfa_from_bytes(pdf_bytes.clone())
-        .with_context(|| {
+    let packets =
+        pdf_xfa::extract::extract_xfa_from_bytes(pdf_bytes.clone()).with_context(|| {
             format!(
                 "'{}' does not appear to contain an XFA form (no XFA packets found)",
                 input.display()

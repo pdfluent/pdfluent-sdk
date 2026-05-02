@@ -16,7 +16,10 @@ use pdfluent::prelude::*;
 
 /// Run the documented `to_docx` flow.
 pub fn run(src: &std::path::Path, out: &std::path::Path) -> Result<()> {
-    let doc = PdfDocument::open_with(src, pdfluent::OpenOptions::new().with_license_key("tier:business"))?;
+    let doc = PdfDocument::open_with(
+        src,
+        pdfluent::OpenOptions::new().with_license_key("tier:business"),
+    )?;
     doc.to_docx(out)
 }
 

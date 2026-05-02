@@ -1184,7 +1184,7 @@ fn glyph_name_map() -> &'static HashMap<&'static str, u16> {
     static MAP: OnceLock<HashMap<&'static str, u16>> = OnceLock::new();
     MAP.get_or_init(|| {
         let mut map = HashMap::new();
-        for line in include_str!("../../lopdf/src/encodings/glyphnames.rs").lines() {
+        for line in include_str!("encodings/glyphnames.rs").lines() {
             let line = line.trim();
             let Some(rest) = line.strip_prefix("pub const ") else {
                 continue;
@@ -1213,7 +1213,7 @@ fn base_encoding_tables() -> &'static PdfBaseEncodingTables {
 }
 
 fn parse_base_encoding_table(const_name: &str) -> [Option<u16>; 256] {
-    let src = include_str!("../../lopdf/src/encodings/mappings.rs");
+    let src = include_str!("encodings/mappings.rs");
     let marker = format!("pub const {const_name}: CodedCharacterSet = [");
     let start = src
         .find(&marker)

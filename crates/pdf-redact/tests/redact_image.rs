@@ -85,7 +85,10 @@ fn redact_image_replaces_with_black() {
         &Object::Name(b"FlateDecode".to_vec()),
         "filter should be FlateDecode after blackout"
     );
-    assert!(!stream.content.is_empty(), "replacement content must be non-empty");
+    assert!(
+        !stream.content.is_empty(),
+        "replacement content must be non-empty"
+    );
 }
 
 /// An image whose bounding box does NOT overlap the redaction area must be

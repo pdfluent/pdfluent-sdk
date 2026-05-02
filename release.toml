@@ -1,0 +1,22 @@
+# cargo-release configuration for PDFluent workspace
+# Usage: cargo release -p pdfluent minor
+#        cargo release -p pdfluent 1.0.0-beta.1
+
+# Don't publish by default — use explicit -p flags
+# (pdfluent itself has publish = true in its own Cargo.toml metadata)
+publish = false
+
+# Tag format: pdfluent-v{version}
+tag = true
+tag-name = "{{crate_name}}-v{{version}}"
+tag-message = "Release {{crate_name}} {{version}}"
+
+# Push tags to remote
+push = true
+push-remote = "origin"
+
+# Commit message for version bump
+pre-release-commit-message = "chore(release): bump {{crate_name}} to {{version}}"
+
+# Sign tags
+sign-tag = false

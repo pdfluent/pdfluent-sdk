@@ -1,17 +1,19 @@
 [package]
-name = "hayro-jbig2"
+name = "pdfluent-jbig2"
 version = "0.2.0"
 description = "A memory-safe, pure-Rust JBIG2 decoder."
 authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
 edition = "2024"
 license = "Apache-2.0 OR MIT"
+repository = "https://github.com/jasperdew/xfa-native-rust"
+homepage = "https://pdfluent.com"
 
 [features]
 default = ["std"]
 std = []
 
 [dependencies]
-hayro-ccitt = { path = "../hayro-ccitt", version = "=0.2.0" }
+hayro-ccitt = { package = "pdfluent-ccitt", path = "../hayro-ccitt", version = "=0.2.0" }
 
 [lints.clippy]
 too_many_arguments = "allow"

@@ -8,8 +8,11 @@ use pdfluent::prelude::*;
 const SAMPLE: &str = "tests/fixtures/sample.pdf";
 
 fn enterprise_doc(path: &str) -> PdfDocument {
-    PdfDocument::open_with(path, pdfluent::OpenOptions::new().with_license_key("tier:enterprise"))
-        .expect("open")
+    PdfDocument::open_with(
+        path,
+        pdfluent::OpenOptions::new().with_license_key("tier:enterprise"),
+    )
+    .expect("open")
 }
 
 fn enterprise_from_bytes(bytes: &[u8]) -> PdfDocument {

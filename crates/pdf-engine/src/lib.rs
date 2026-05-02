@@ -75,11 +75,11 @@ pub use color::preserve_device_cmyk;
 pub use document::{BookmarkItem, DocumentInfo, PdfDocument};
 pub use error::{EngineError, Result};
 pub use geometry::{PageBox, PageGeometry, PageRotation};
+pub use limits::{LimitError, ProcessingLimits};
 pub use ocr::{OcrBackend, OcrError, OcrResult, OcrWord};
 pub use render::{ColorMode, PixelFormat, RenderConfig, RenderOptions, RenderedPage};
 pub use text::{TextBlock, TextSpan};
 pub use thumbnail::ThumbnailOptions;
-pub use limits::{LimitError, ProcessingLimits};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use ocr::best_available_backend;

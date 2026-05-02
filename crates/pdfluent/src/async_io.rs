@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use crate::Result;
 use crate::error::internal_error;
+use crate::Result;
 
 /// Open a PDF from a filesystem path on Tokio's blocking pool.
 ///

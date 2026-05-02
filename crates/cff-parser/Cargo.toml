@@ -7,6 +7,7 @@ authors = [
     "Jeff Muizelaar <jrmuizel@gmail.com>",
 ]
 description = "A parser for the Compact Font Format (CFF)"
+publish = false
 documentation = "https://docs.rs/cff-parser/"
 readme = "README.md"
 keywords = [

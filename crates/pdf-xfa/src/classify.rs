@@ -58,14 +58,11 @@ pub fn detect_xfa_type_from_packets(packets: &XfaPackets) -> XfaType {
     let template_xml: Option<&str> = packets.template();
     let full_xml: Option<&str> = packets.full_xml.as_deref();
 
-    let search_text: &str = template_xml
-        .or(full_xml)
-        .unwrap_or("");
+    let search_text: &str = template_xml.or(full_xml).unwrap_or("");
 
     if search_text.contains(r#"baseProfile="interactiveForms""#) {
         XfaType::Static
-    } else if !search_text.is_empty()
-        || packets.packets.iter().any(|(name, _)| name == "template")
+    } else if !search_text.is_empty() || packets.packets.iter().any(|(name, _)| name == "template")
     {
         XfaType::Dynamic
     } else {
@@ -111,7 +108,8 @@ mod tests {
                     Some(xml.len())
                 })
                 .unwrap();
-            p.packets.push(("template".to_string(), xml[start..end].to_string()));
+            p.packets
+                .push(("template".to_string(), xml[start..end].to_string()));
         }
         p
     }

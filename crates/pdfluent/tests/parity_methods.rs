@@ -16,8 +16,11 @@
 use pdfluent::prelude::*;
 
 fn business_doc(path: &str) -> PdfDocument {
-    PdfDocument::open_with(path, pdfluent::OpenOptions::new().with_license_key("tier:business"))
-        .expect("open sample")
+    PdfDocument::open_with(
+        path,
+        pdfluent::OpenOptions::new().with_license_key("tier:business"),
+    )
+    .expect("open sample")
 }
 
 // ---------------------------------------------------------------------------

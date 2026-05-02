@@ -169,9 +169,7 @@ fn stress_20_levels_deep_no_stack_overflow() {
 
     let mut template = String::new();
     for i in 0..DEPTH {
-        template.push_str(&format!(
-            r#"<subform name="l{i}" layout="tb">"#
-        ));
+        template.push_str(&format!(r#"<subform name="l{i}" layout="tb">"#));
     }
     template.push_str(
         r#"<field name="deepField" w="200pt" h="10pt">
