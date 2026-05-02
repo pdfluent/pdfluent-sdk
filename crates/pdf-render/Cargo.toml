@@ -19,7 +19,7 @@ fast_image_resize = { version = "6.0", default-features = false, features = ["st
 
 [dev-dependencies]
 log = "0.4"
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.0" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.1" }
 
 [features]
 default = ["embed-fonts", "embed-cmaps"]
