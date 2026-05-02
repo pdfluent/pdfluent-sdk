@@ -619,7 +619,10 @@ mod tests {
 
         let count = strip_javascript_for_flatten(&mut doc);
         // Field /A removal + JS action /JS+/S removal = 2 strip events.
-        assert_eq!(count, 2, "both field /A and JS action body must be stripped");
+        assert_eq!(
+            count, 2,
+            "both field /A and JS action body must be stripped"
+        );
 
         let field = match doc.objects.get(&field_id) {
             Some(Object::Dictionary(field)) => field,
@@ -680,13 +683,22 @@ mod tests {
                 Some(Object::Dictionary(f)) => f,
                 _ => panic!("field"),
             };
-            assert!(!field.has(b"A"), "field /A must be stripped in both orderings");
+            assert!(
+                !field.has(b"A"),
+                "field /A must be stripped in both orderings"
+            );
             let act = match doc.objects.get(&aid) {
                 Some(Object::Dictionary(a)) => a,
                 _ => panic!("action"),
             };
-            assert!(!act.has(b"JS"), "action /JS must be stripped in both orderings");
-            assert!(!act.has(b"S"), "action /S must be stripped in both orderings");
+            assert!(
+                !act.has(b"JS"),
+                "action /JS must be stripped in both orderings"
+            );
+            assert!(
+                !act.has(b"S"),
+                "action /S must be stripped in both orderings"
+            );
         }
     }
 

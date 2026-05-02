@@ -389,7 +389,11 @@ mod tests {
         assert!(v.has_datasets);
         assert!(v.template_bytes > 0);
         assert!(v.datasets_bytes > 0);
-        assert!(v.warnings.is_empty(), "expected no warnings, got: {:?}", v.warnings);
+        assert!(
+            v.warnings.is_empty(),
+            "expected no warnings, got: {:?}",
+            v.warnings
+        );
     }
 
     #[test]
@@ -398,7 +402,10 @@ mod tests {
         let p = parse_xfa_xml(xml);
         let v = validate_xfa_packets(&p);
         assert!(!v.has_template);
-        assert!(v.warnings.iter().any(|w| w.contains("No template packet found")));
+        assert!(v
+            .warnings
+            .iter()
+            .any(|w| w.contains("No template packet found")));
     }
 
     #[test]
@@ -430,7 +437,8 @@ mod tests {
             "template".to_string(),
             "<template xmlns=\"http://www.xfa.org/schema/xfa-template/3.3/\"><subform name=\"root\"><field name=\"a\"/><field name=\"b\"/><field name=\"c\"/></subform></template>".to_string(),
         ));
-        p.packets.push(("datasets".to_string(), "<ds/>".to_string()));
+        p.packets
+            .push(("datasets".to_string(), "<ds/>".to_string()));
         let v = validate_xfa_packets(&p);
         assert!(v.warnings.iter().any(|w| w.contains("< 50 bytes")));
     }
@@ -536,12 +544,18 @@ mod tests {
             "<template xmlns=\"http://www.xfa.org/schema/xfa-template/3.3/\"><subform name=\"root\"><field name=\"qty\"/><field name=\"price\"/><field name=\"total\"/></subform></template>".to_string(),
         ));
         // Blank (incremental save artefact — very small):
-        p.packets.push(("datasets".to_string(), "<xfa:datasets xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\"/>".to_string()));
+        p.packets.push((
+            "datasets".to_string(),
+            "<xfa:datasets xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\"/>".to_string(),
+        ));
         // Filled (the real data):
         p.packets.push(("datasets".to_string(), "<xfa:datasets xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\"><xfa:data><root><qty>3</qty><price>9.99</price><total>29.97</total></root></xfa:data></xfa:datasets>".to_string()));
         // datasets() must return the LARGEST entry.
         let ds = p.datasets().expect("datasets should exist");
-        assert!(ds.contains("29.97"), "should return the larger/filled datasets");
+        assert!(
+            ds.contains("29.97"),
+            "should return the larger/filled datasets"
+        );
     }
 
     /// 9. Large template with many fields — validation should have no warnings.
@@ -553,14 +567,23 @@ mod tests {
             .collect();
         let xml = format!(
             r#"<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"><template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform name="root">{fields}</subform></template><xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"><xfa:data><root>{}</root></xfa:data></xfa:datasets></xdp:xdp>"#,
-            (1..=20).map(|i| format!("<field{i}>val{i}</field{i}>")).collect::<String>()
+            (1..=20)
+                .map(|i| format!("<field{i}>val{i}</field{i}>"))
+                .collect::<String>()
         );
         let p = parse_xfa_xml(&xml);
         let v = validate_xfa_packets(&p);
         assert!(v.has_template);
         assert!(v.has_datasets);
-        assert!(v.template_bytes >= 100, "large template should exceed 100 bytes");
-        assert!(v.warnings.is_empty(), "no warnings expected: {:?}", v.warnings);
+        assert!(
+            v.template_bytes >= 100,
+            "large template should exceed 100 bytes"
+        );
+        assert!(
+            v.warnings.is_empty(),
+            "no warnings expected: {:?}",
+            v.warnings
+        );
     }
 
     /// 10. XFA with localeSet packet — localeSet is correctly accessible.
@@ -568,7 +591,10 @@ mod tests {
     fn corpus_10_xfa_with_locale_set_packet() {
         let xml = r#"<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"><localeSet xmlns="http://www.xfa.org/schema/xfa-locale-set/2.7/"><locale name="en_US" desc="English (United States)"><calendarSymbols name="gregorian"/></locale></localeSet><template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform name="root"><field name="date"/></subform></template></xdp:xdp>"#;
         let p = parse_xfa_xml(xml);
-        assert!(p.locale_set().is_some(), "localeSet packet should be accessible");
+        assert!(
+            p.locale_set().is_some(),
+            "localeSet packet should be accessible"
+        );
         assert!(p.template().is_some());
         let ls = p.locale_set().unwrap();
         assert!(ls.contains("en_US"));

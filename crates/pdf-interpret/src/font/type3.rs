@@ -3,7 +3,10 @@ use crate::context::Context;
 use crate::device::Device;
 use crate::font::glyph_simulator::GlyphSimulator;
 use crate::font::true_type::{Width, read_encoding, read_widths};
-use crate::font::{Encoding, Glyph, Type3Glyph, UNITS_PER_EM, glyph_name_to_unicode, normalized_glyph_name, read_to_unicode};
+use crate::font::{
+    Encoding, Glyph, Type3Glyph, UNITS_PER_EM, glyph_name_to_unicode, normalized_glyph_name,
+    read_to_unicode,
+};
 use crate::interpret::state::TextState;
 use crate::soft_mask::SoftMask;
 use crate::util::RectExt;

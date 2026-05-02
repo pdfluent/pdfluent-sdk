@@ -2,13 +2,13 @@
 
 Pure-Rust PDF SDK — unified public API for the PDFluent ecosystem.
 
-**Status:** `1.0.0-alpha.1` scaffold. API surface frozen per [RFC 0001](../../docs/rfc/0001-sdk-core-api.md). Method bodies are wired progressively by milestone [#52](https://github.com/jasperdew/xfa-native-rust/milestone/52).
+**Status:** `1.0.0-beta.1`. API surface frozen per [RFC 0001](../../docs/rfc/0001-sdk-core-api.md). Method bodies are wired progressively by milestone [#52](https://github.com/jasperdew/xfa-native-rust/milestone/52).
 
 ## Usage
 
 ```toml
 [dependencies]
-pdfluent = "1.0.0-alpha"
+pdfluent = "1.0.0-beta"
 ```
 
 ```rust

@@ -84,5 +84,8 @@ pub(crate) fn report_from_compliance(
             page: None,
         })
         .collect();
-    PdfAValidationReport { profile, violations }
+    PdfAValidationReport {
+        profile,
+        violations,
+    }
 }

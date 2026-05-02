@@ -226,9 +226,7 @@ fn standard_font_alias(name: &str) -> Option<StandardFont> {
             Some(StandardFont::HelveticaBoldOblique)
         }
         // Times New Roman family → Times
-        "TimesNewRomanPSMT" | "TimesNewRoman" | "TimesNewRomanPS" => {
-            Some(StandardFont::TimesRoman)
-        }
+        "TimesNewRomanPSMT" | "TimesNewRoman" | "TimesNewRomanPS" => Some(StandardFont::TimesRoman),
         "TimesNewRomanPS-BoldMT"
         | "TimesNewRoman-Bold"
         | "TimesNewRomanPS-Bold"
@@ -249,9 +247,9 @@ fn standard_font_alias(name: &str) -> Option<StandardFont> {
         "CourierNewPS-ItalicMT" | "CourierNew-Italic" | "CourierNewPS-Italic" => {
             Some(StandardFont::CourierOblique)
         }
-        "CourierNewPS-BoldItalicMT"
-        | "CourierNew-BoldItalic"
-        | "CourierNewPS-BoldItalic" => Some(StandardFont::CourierBoldOblique),
+        "CourierNewPS-BoldItalicMT" | "CourierNew-BoldItalic" | "CourierNewPS-BoldItalic" => {
+            Some(StandardFont::CourierBoldOblique)
+        }
         _ => None,
     }
 }
@@ -353,17 +351,17 @@ pub(crate) fn select_standard_font(
     // (arial, sans, mono, serif without "times") as exact=false so we respect
     // their embedded /Widths.
     let (family, exact) = if haystack.contains("helvetica") {
-        (Some(StandardFontFamily::Helvetica), true)  // likely genuine Helvetica — use AFM
+        (Some(StandardFontFamily::Helvetica), true) // likely genuine Helvetica — use AFM
     } else if haystack.contains("arial") || haystack.contains("sans") {
         (Some(StandardFontFamily::Helvetica), false) // Arial/generic sans — respect /Widths
     } else if haystack.contains("courier") {
-        (Some(StandardFontFamily::Courier), true)    // likely genuine Courier — use AFM
+        (Some(StandardFontFamily::Courier), true) // likely genuine Courier — use AFM
     } else if haystack.contains("mono") {
-        (Some(StandardFontFamily::Courier), false)   // generic monospace — respect /Widths
+        (Some(StandardFontFamily::Courier), false) // generic monospace — respect /Widths
     } else if haystack.contains("times") {
-        (Some(StandardFontFamily::Times), true)      // likely genuine Times — use AFM
+        (Some(StandardFontFamily::Times), true) // likely genuine Times — use AFM
     } else if haystack.contains("serif") {
-        (Some(StandardFontFamily::Times), false)     // generic serif — respect /Widths
+        (Some(StandardFontFamily::Times), false) // generic serif — respect /Widths
     } else if haystack.contains("zapfdingbats") || haystack.contains("dingbats") {
         return Some((StandardFont::ZapfDingBats, false));
     } else {

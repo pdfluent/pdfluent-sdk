@@ -866,7 +866,9 @@ fn render_nodes(
                     ops,
                 )
             }
-            LayoutContent::WrappedText { from_field: false, .. } if config.field_values_only => {}
+            LayoutContent::WrappedText {
+                from_field: false, ..
+            } if config.field_values_only => {}
             LayoutContent::WrappedText {
                 lines,
                 first_line_of_para,
@@ -1586,58 +1588,68 @@ fn render_field(
     let border_style = node_style.border_style.as_deref();
 
     if !config.field_values_only {
-    // fix(#809): flattening should only paint explicit template fills.
-    // The light-gray interactive widget default is a viewer affordance, not a
-    // flatten artifact in Adobe/pdfRest output.
-    if let Some(bg) = config.background_color {
-        write_ops(
-            ops,
-            format_args!("{:.3} {:.3} {:.3} rg\n", bg[0], bg[1], bg[2]),
-        );
-        emit_rect_path(ops, x, pdf_y, w, h, border_radius);
-        ops.extend_from_slice(b"f\n");
-    }
-    if config.draw_borders && config.border_width > 0.0 {
-        if matches!(border_style, Some("lowered") | Some("raised")) {
-            emit_3d_border(ops, x, pdf_y, w, h, config.border_width, border_style);
-        } else {
+        // fix(#809): flattening should only paint explicit template fills.
+        // The light-gray interactive widget default is a viewer affordance, not a
+        // flatten artifact in Adobe/pdfRest output.
+        if let Some(bg) = config.background_color {
             write_ops(
                 ops,
-                format_args!(
-                    "{:.2} w\n{:.3} {:.3} {:.3} RG\n",
-                    config.border_width,
-                    config.border_color[0],
-                    config.border_color[1],
-                    config.border_color[2],
-                ),
+                format_args!("{:.3} {:.3} {:.3} rg\n", bg[0], bg[1], bg[2]),
             );
-            let per_edge = node_style.border_colors.map(|cs| {
-                cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
-            });
-            let per_edge_widths = node_style.border_widths.as_ref();
-            apply_border_dash(ops, border_style);
-            let edges = node_style.border_edges;
-            if per_edge.is_some() || per_edge_widths.is_some() {
-                emit_individual_edges(
-                    ops,
-                    x,
-                    pdf_y,
-                    w,
-                    h,
-                    &edges,
-                    per_edge.as_ref(),
-                    per_edge_widths,
-                    config.border_width,
-                );
-            } else if edges[0] && edges[1] && edges[2] && edges[3] {
-                emit_rect_path(ops, x, pdf_y, w, h, border_radius);
-                ops.extend_from_slice(b"S\n");
-            } else {
-                emit_individual_edges(ops, x, pdf_y, w, h, &edges, None, None, config.border_width);
-            }
-            reset_border_dash(ops, border_style);
+            emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+            ops.extend_from_slice(b"f\n");
         }
-    }
+        if config.draw_borders && config.border_width > 0.0 {
+            if matches!(border_style, Some("lowered") | Some("raised")) {
+                emit_3d_border(ops, x, pdf_y, w, h, config.border_width, border_style);
+            } else {
+                write_ops(
+                    ops,
+                    format_args!(
+                        "{:.2} w\n{:.3} {:.3} {:.3} RG\n",
+                        config.border_width,
+                        config.border_color[0],
+                        config.border_color[1],
+                        config.border_color[2],
+                    ),
+                );
+                let per_edge = node_style.border_colors.map(|cs| {
+                    cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+                });
+                let per_edge_widths = node_style.border_widths.as_ref();
+                apply_border_dash(ops, border_style);
+                let edges = node_style.border_edges;
+                if per_edge.is_some() || per_edge_widths.is_some() {
+                    emit_individual_edges(
+                        ops,
+                        x,
+                        pdf_y,
+                        w,
+                        h,
+                        &edges,
+                        per_edge.as_ref(),
+                        per_edge_widths,
+                        config.border_width,
+                    );
+                } else if edges[0] && edges[1] && edges[2] && edges[3] {
+                    emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+                    ops.extend_from_slice(b"S\n");
+                } else {
+                    emit_individual_edges(
+                        ops,
+                        x,
+                        pdf_y,
+                        w,
+                        h,
+                        &edges,
+                        None,
+                        None,
+                        config.border_width,
+                    );
+                }
+                reset_border_dash(ops, border_style);
+            }
+        }
     } // end if !config.field_values_only
     if !value.is_empty() {
         let fs = if font_size > 0.0 {
@@ -1879,6 +1891,7 @@ fn draw_check_mark(
 /// Background fill is only applied when `node_style.bg_color` is explicitly set
 /// (i.e. the XFA template has a `<fill>` element).  Global config background
 /// is intentionally ignored to avoid regression with check/radio controls.
+#[allow(clippy::too_many_arguments)]
 fn render_checkbox(
     x: f64,
     pdf_y: f64,
@@ -1950,6 +1963,7 @@ fn render_checkbox(
 ///
 /// Background fill follows the same rule as checkboxes: only `node_style.bg_color`
 /// (explicit template fill) is honoured; global config background is ignored.
+#[allow(clippy::too_many_arguments)]
 fn render_radio(
     x: f64,
     pdf_y: f64,
@@ -2827,7 +2841,8 @@ fn render_rich_multiline(
                     cur_tc = span_tc;
                 }
                 let is_span_bold = span.font_weight.as_deref() == Some("bold");
-                let span_has_real_bold = style_uses_real_bold_variant(&config.font_map, &span_style);
+                let span_has_real_bold =
+                    style_uses_real_bold_variant(&config.font_map, &span_style);
                 if is_span_bold && !span_has_real_bold {
                     let stroke_w = span_fs * 0.03;
                     write_ops(
@@ -4200,7 +4215,10 @@ mod tests {
             !s.contains("2 Tr"),
             "actual bold variants should not get synthetic stroke bolding: {s}"
         );
-        assert!(s.contains("/XFA_Fbold 10.0 Tf"), "expected real bold resource: {s}");
+        assert!(
+            s.contains("/XFA_Fbold 10.0 Tf"),
+            "expected real bold resource: {s}"
+        );
     }
 
     #[test]
@@ -4537,12 +4555,18 @@ mod tests {
         };
         let s = overlay_str(&make_page(vec![node]));
         // Content stream must contain a Tf operator and the size 12.0
-        assert!(s.contains("Tf"), "should contain Tf font-select operator: {s}");
+        assert!(
+            s.contains("Tf"),
+            "should contain Tf font-select operator: {s}"
+        );
         assert!(
             s.contains("12.0 Tf"),
             "should use specified font size 12.0: {s}"
         );
-        assert!(s.contains("(test value) Tj"), "should render the value: {s}");
+        assert!(
+            s.contains("(test value) Tj"),
+            "should render the value: {s}"
+        );
     }
 
     #[test]

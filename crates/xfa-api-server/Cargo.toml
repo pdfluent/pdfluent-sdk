@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "HTTP API server exposing XFA form processing and PDF rendering."
+publish = false
 
 [[bin]]
 name = "xfa-api-server"
@@ -25,8 +26,8 @@ thiserror.workspace = true
 uuid = { version = "1", features = ["v4"] }
 
 # Internal crates
-pdf-xfa = { path = "../pdf-xfa", version = "=1.0.0-beta.1" }
-lopdf = { path = "../lopdf", version = "=0.39.0" }
+pdf-xfa = { path = "../pdf-xfa", version = "=1.0.0-beta.2" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.0" }
 xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.1" }
 xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.1" }
 xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.1" }

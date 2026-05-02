@@ -1445,10 +1445,7 @@ fn extract_actual_text(props: &lopdf::Dictionary) -> Option<String> {
 /// invocation's top-of-stack `/ActualText` across `Do` recursion into a
 /// Form XObject, so text emitted inside the XObject's `BT`...`ET` blocks
 /// is tagged with the surrounding `BDC`/`EMC` pair's `/ActualText`.
-fn current_actual_text(
-    stack: &[MarkedContentEntry],
-    inherited: Option<&str>,
-) -> Option<String> {
+fn current_actual_text(stack: &[MarkedContentEntry], inherited: Option<&str>) -> Option<String> {
     stack
         .iter()
         .rev()

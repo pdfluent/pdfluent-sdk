@@ -1819,8 +1819,8 @@ mod tests {
     #[cfg(feature = "pdfa")]
     #[test]
     fn validate_pdfa_returns_report_for_non_conforming_doc() {
-        use crate::compliance::PdfAProfile;
         use super::PdfDocument;
+        use crate::compliance::PdfAProfile;
 
         let bytes = minimal_pdf_bytes();
         let doc = PdfDocument::from_bytes(&bytes).expect("parse minimal fixture");
@@ -1863,8 +1863,8 @@ mod tests {
     /// that inserts extra separators).
     #[test]
     fn extract_text_joins_pages_with_double_newline() {
-        use lopdf::{dictionary, Document, Object, Stream};
         use super::PdfDocument;
+        use lopdf::{dictionary, Document, Object, Stream};
 
         let mut doc = Document::with_version("1.4");
         let pages_id = doc.new_object_id();
@@ -1919,7 +1919,9 @@ mod tests {
         let pdf_doc = PdfDocument::from_bytes(&bytes).expect("parse two-page fixture");
 
         assert_eq!(pdf_doc.page_count(), 2, "fixture must have 2 pages");
-        let text = pdf_doc.extract_text().expect("extract_text on two-page doc");
+        let text = pdf_doc
+            .extract_text()
+            .expect("extract_text on two-page doc");
         // The join produces exactly one "\n\n" separator for a two-page doc.
         // Both pages are empty here, so result is "\n\n" (empty + sep + empty).
         assert_eq!(
