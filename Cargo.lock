@@ -626,10 +626,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cff-parser"
-version = "0.2.0"
-
-[[package]]
 name = "cfg-expr"
 version = "0.15.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4107,10 +4103,10 @@ dependencies = [
 name = "pdf-compliance"
 version = "1.0.0-beta.1"
 dependencies = [
- "cff-parser",
  "flate2",
  "log",
  "pdf-syntax",
+ "pdfluent-cff",
  "pdfluent-lopdf",
  "thiserror 2.0.18",
  "ttf-parser",
@@ -4247,13 +4243,13 @@ dependencies = [
 name = "pdf-manip"
 version = "1.0.0-beta.1"
 dependencies = [
- "cff-parser",
  "flate2",
  "image",
  "pdf-compliance",
  "pdf-engine",
  "pdf-font",
  "pdf-syntax",
+ "pdfluent-cff",
  "pdfluent-jbig2",
  "pdfluent-lopdf",
  "roxmltree",
@@ -4418,6 +4414,10 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-ccitt"
+version = "0.2.0"
+
+[[package]]
+name = "pdfluent-cff"
 version = "0.2.0"
 
 [[package]]
