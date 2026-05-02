@@ -1,8 +1,8 @@
 [package]
 name = "pdf-compliance"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.2"
 edition = "2021"
-license = "MIT"
+license-file = "LICENSE"
 description = "PDF compliance checking (PDF/A, PDF/UA)."
 repository = "https://github.com/pdfluent"
 homepage = "https://pdfluent.com"

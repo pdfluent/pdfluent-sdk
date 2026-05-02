@@ -6,6 +6,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.0.0-beta.3] — Unreleased (license model correction)
+
+### Changed — BREAKING (LICENSE)
+
+- **Licensing model updated to `PDFluent Commercial License`.** The
+  `pdfluent` crate and the proprietary engine, manipulation, signing,
+  compliance, redaction, extraction, forms, annotation, conversion, render,
+  font, and XFA crates that it depends on now ship under a custom commercial
+  license. Free for evaluation; production use requires a valid commercial
+  license. See the `LICENSE` file at the crate root and `pdfluent.com/terms`.
+- **Open-source foundation crates remain MIT or MIT/Apache-2.0:**
+  `pdfluent-lopdf`, `pdfluent-cff`, `pdfluent-ccitt`, `pdfluent-jbig2`,
+  `pdfluent-jpeg2000`, `pdf-syntax`, `pdf-interpret`. These are forks of
+  upstream open-source libraries and may continue to be used under those
+  terms.
+- Per-crate license matrix is documented in the repository-root `NOTICE`
+  file.
+
+### Note on prior releases
+
+Versions `1.0.0-beta.1` and `1.0.0-beta.2` of `pdfluent` (and corresponding
+beta releases of the other commercial crates) were published to crates.io
+under the MIT or MIT-OR-Apache-2.0 license. Those published versions remain
+available under their original licenses — crates.io versions are immutable.
+Going forward (including this release), all production use of the
+proprietary crates requires a valid commercial license. The previous beta
+versions are deprecated and will be yanked once `1.0.0-beta.3` is published.
+
+---
+
+## [1.0.0-beta.2] — 2026-05-02
+
+### Changed
+- Crate metadata only — no API or behavior changes.
+- `repository`, `homepage`, `documentation` URLs corrected to point at
+  `pdfluent.com` and the PDFluent GitHub organization.
+- Keywords and categories aligned with PDF SDK discoverability conventions.
+
+---
+
 ## [1.0.0-beta.1] — 2026-05-02
 
 ### Added

@@ -1,8 +1,8 @@
 [package]
 name = "pdf-xfa"
-version = "1.0.0-beta.2"
+version = "1.0.0-beta.3"
 edition = "2021"
-license = "MIT"
+license-file = "LICENSE"
 description = "XFA engine — extraction, layout rendering, font resolution."
 repository = "https://github.com/pdfluent"
 homepage = "https://pdfluent.com"
@@ -11,12 +11,12 @@ documentation = "https://pdfluent.com/docs"
 keywords = ["pdf", "xfa", "forms", "adobe"]
 categories = ["rendering"]
 [dependencies]
-xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.1" }
-formcalc-interpreter = { path = "../formcalc-interpreter", version = "=1.0.0-beta.1" }
-xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.1" }
-xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.1" }
+xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.2" }
+formcalc-interpreter = { path = "../formcalc-interpreter", version = "=1.0.0-beta.2" }
+xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.2" }
+xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.2" }
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
-pdf-font = { path = "../pdf-font", version = "=1.0.0-beta.1" }
+pdf-font = { path = "../pdf-font", version = "=1.0.0-beta.2" }
 pdf-interpret = { path = "../pdf-interpret", version = "=0.5.0" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.1" }
 flate2 = "1"
