@@ -13,9 +13,9 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
 pdf-interpret = { path = "../pdf-interpret", version = "=0.5.0" }
-lopdf = { path = "../lopdf", default-features = false, version = "=0.39.0" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, version = "=0.39.0" }
 pdf-render = { path = "../pdf-render", version = "=1.0.0-beta.1" }
-pdf-forms = { path = "../pdf-forms", version = "=1.0.0-beta.1" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.1" }
 pdf-xfa = { path = "../pdf-xfa", optional = true, version = "=1.0.0-beta.1" }
 xfa-layout-engine = { path = "../xfa-layout-engine", optional = true, version = "=1.0.0-beta.1" }
 formcalc-interpreter = { path = "../formcalc-interpreter", optional = true, version = "=1.0.0-beta.1" }

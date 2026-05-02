@@ -84,7 +84,7 @@ repository = "https://github.com/jasperdew/xfa-native-rust"
 
 [workspace.dependencies]
 roxmltree = "0.20"
-lopdf = { path = "crates/lopdf", version = "=0.39.0" }
+lopdf = { package = "pdfluent-lopdf", path = "crates/lopdf", version = "=0.39.0" }
 thiserror = "2"
 image = "0.25"
 pixelmatch = "0.1"
@@ -114,15 +114,15 @@ pdf-font = { path = "crates/pdf-font", version = "=1.0.0-beta.1" }
 pdf-render = { path = "crates/pdf-render", version = "=1.0.0-beta.1" }
 
 # New engine crates
-pdf-forms = { path = "crates/pdf-forms", version = "=1.0.0-beta.1" }
+pdf-forms = { package = "pdfluent-forms", path = "crates/pdf-forms", version = "=1.0.0-beta.1" }
 pdf-annot = { path = "crates/pdf-annot", version = "=1.0.0-beta.1" }
 pdf-xfa = { path = "crates/pdf-xfa", version = "=1.0.0-beta.1" }
-pdf-sign = { path = "crates/pdf-sign", version = "=1.0.0-beta.1" }
+pdf-sign = { package = "pdfluent-sign", path = "crates/pdf-sign", version = "=1.0.0-beta.1" }
 pdf-engine = { path = "crates/pdf-engine", version = "=1.0.0-beta.1" }
 pdf-compliance = { path = "crates/pdf-compliance", version = "=1.0.0-beta.1" }
 pdf-manip = { path = "crates/pdf-manip", version = "=1.0.0-beta.1" }
 pdf-invoice = { path = "crates/pdf-invoice", version = "=1.0.0-beta.1" }
-pdf-extract = { path = "crates/pdf-extract", version = "=1.0.0-beta.1" }
+pdf-extract = { package = "pdfluent-extract", path = "crates/pdf-extract", version = "=1.0.0-beta.1" }
 pdf-redact = { path = "crates/pdf-redact", version = "=1.0.0-beta.1" }
 pdf-ocr = { path = "crates/pdf-ocr", version = "=1.0.0-beta.1" }
 

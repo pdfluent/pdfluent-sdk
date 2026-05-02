@@ -10,7 +10,7 @@ edition = "2024"
 homepage = "https://github.com/J-F-Liu/lopdf"
 keywords = ["pdf", "editing", "manipulation", "merge"]
 license = "MIT"
-name = "lopdf"
+name = "pdfluent-lopdf"
 repository = "https://github.com/J-F-Liu/lopdf.git"
 version = "0.39.0"
 rust-version = "1.85"
@@ -26,9 +26,9 @@ chrono = { version = "0.4", optional = true, default-features = false, features 
 ecb = "0.1.2"
 encoding_rs = "0.8.32"
 flate2 = "1.0"
-hayro-ccitt = { path = "../hayro-ccitt", optional = true, version = "=0.2.0" }
-hayro-jbig2 = { path = "../hayro-jbig2", optional = true, version = "=0.2.0" }
-hayro-jpeg2000 = { path = "../hayro-jpeg2000", optional = true, default-features = false, version = "=0.3.2" }
+hayro-ccitt = { package = "pdfluent-ccitt", path = "../hayro-ccitt", optional = true, version = "=0.2.0" }
+hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.2.0" }
+hayro-jpeg2000 = { package = "pdfluent-jpeg2000", path = "../hayro-jpeg2000", optional = true, default-features = false, version = "=0.3.2" }
 image = { version = "0.25", optional = true }
 indexmap = "2.2.3"
 itoa = "1.0"

@@ -1,5 +1,5 @@
 [package]
-name = "pdf-extract"
+name = "pdfluent-extract"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,10 +14,10 @@ unicode-normalization = "0.1"
 # lopdf: full-featured on native, wasm_js backend (no rayon) on wasm32.
 # Direct path used (not workspace = true) to allow default-features = false override.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-lopdf = { path = "../lopdf", version = "=0.39.0" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.0" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-lopdf = { path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.0" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.0" }
 
 [dev-dependencies]
 tempfile = "3"

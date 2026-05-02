@@ -17,7 +17,7 @@ flate2 = "1"
 # wasm_js backend only (no rayon) on wasm32. Cannot use workspace = true here
 # because workspace default-features override per-crate default-features = false.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-lopdf = { path = "../lopdf", version = "=0.39.0" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.0" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-lopdf = { path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.0" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.0" }
