@@ -4364,7 +4364,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-xfa"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.2"
 dependencies = [
  "base64 0.22.1",
  "flate2",
