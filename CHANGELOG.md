@@ -4,7 +4,6 @@ All notable changes to the xfa-native-rust PDF engine are documented here.
 
 ## [Unreleased] — 2026-04-23
 
-- fix(xfa-layout): suppress trailing empty pageArea continuation
 ### Added
 
 - `/ActualText` extraction from BDC marked-content in `pdf-extract`; `TextBlock.actual_text: Option<String>` field — #1313
@@ -13,6 +12,11 @@ All notable changes to the xfa-native-rust PDF engine are documented here.
 ### Changed
 
 - **[BEHAVIOR]** `pdf-extract` now decomposes ligature glyphs to constituent characters by default (`fi` → `fi`, `ffi` → `ffi`, etc.). Extracted text from PDFs with ligature-enabled fonts will read `office` instead of `o\u{FB03}ce`. Decomposition is toggled via an internal `LIGATURE_DECOMP` constant (default ON); public API is unchanged. `PositionedChar` bounding boxes for decomposed glyphs are split proportionally within the original glyph footprint — #1314
+
+### Fixed
+
+- fix(xfa-layout): suppress trailing empty pageArea continuation (M2 / C2a)
+- fix(pdf-xfa): best-effort static flatten when JavaScript is present (M2 / CJS1)
 
 ## [Unreleased] — 2026-04-22
 
