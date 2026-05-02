@@ -18,7 +18,7 @@ xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.1" }
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
 pdf-font = { path = "../pdf-font", version = "=1.0.0-beta.1" }
 pdf-interpret = { path = "../pdf-interpret", version = "=0.5.0" }
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.0" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.1" }
 flate2 = "1"
 thiserror = "2"
 ttf-parser = "0.25"

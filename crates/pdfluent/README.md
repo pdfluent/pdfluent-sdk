@@ -66,11 +66,11 @@ To remove the stamp: [request a free 30-day trial key](https://pdfluent.com/tria
 - **Getting started guide:** <https://pdfluent.com/docs>
 - **Trial (stamp-free evaluation):** <https://pdfluent.com/trial>
 - **Pricing:** <https://pdfluent.com/pricing>
-- **Changelog:** <https://github.com/jasperdew/xfa-native-rust/blob/master/crates/pdfluent/CHANGELOG.md>
+- **Changelog:** <https://github.com/pdfluent/pdfluent/blob/master/crates/pdfluent/CHANGELOG.md>
 
 ## Status
 
-`1.0.0-beta.1` — API surface is frozen. Implementation is being wired progressively per milestone. See [the tracker](https://github.com/jasperdew/xfa-native-rust/milestone/52) for what's fully wired vs. scaffolded.
+`1.0.0-beta.1` — API surface is frozen. Implementation is being wired progressively per milestone. See [the tracker](https://github.com/pdfluent/pdfluent/milestone/52) for what's fully wired vs. scaffolded.
 
 ## License
 
