@@ -31,7 +31,10 @@ pub fn run(input: &Path, output: &Path, dpi: f64, pages: Option<&str>) -> Result
             // EngineError so main.rs can map them to exit codes 2 and 3.
             // Wrapping them in CliError loses the concrete type and causes
             // downcast_ref to return None → wrong exit code.
-            if matches!(e, EngineError::Encrypted(_) | EngineError::InvalidPageGeometry { .. }) {
+            if matches!(
+                e,
+                EngineError::Encrypted(_) | EngineError::InvalidPageGeometry { .. }
+            ) {
                 return Err(anyhow::anyhow!(e));
             }
             if let Some(flattened) = try_xfa_flatten(&data) {

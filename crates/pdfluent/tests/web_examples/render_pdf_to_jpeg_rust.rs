@@ -15,7 +15,10 @@ use pdfluent::prelude::*;
 
 /// Run the documented `to_images` flow for JPEG output.
 pub fn run(src: &std::path::Path, pattern: &std::path::Path) -> Result<ToImagesReport> {
-    let doc = PdfDocument::open_with(src, pdfluent::OpenOptions::new().with_license_key("tier:team"))?;
+    let doc = PdfDocument::open_with(
+        src,
+        pdfluent::OpenOptions::new().with_license_key("tier:team"),
+    )?;
     doc.to_images(
         pattern,
         ToImagesOptions::new()
