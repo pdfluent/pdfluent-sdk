@@ -15,8 +15,9 @@ keywords = [
 ]
 categories = ["parser-implementations"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/jasperdew/xfa-native-rust"
+repository = "https://github.com/pdfluent"
 homepage = "https://pdfluent.com"
+documentation = "https://pdfluent.com/docs"
 
 [lib]
 name = "cff_parser"

@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage = "https://pdfluent.com"
+documentation = "https://pdfluent.com/docs"
 description = "PDF to DOCX conversion with text, tables, and images"
 
 [dependencies]

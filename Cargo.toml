@@ -80,7 +80,9 @@ version = "1.0.0-beta.1"
 edition = "2021"
 rust-version = "1.80.0"
 license = "MIT"
-repository = "https://github.com/jasperdew/xfa-native-rust"
+repository = "https://github.com/pdfluent"
+homepage = "https://pdfluent.com"
+documentation = "https://pdfluent.com/docs"
 
 [workspace.dependencies]
 roxmltree = "0.20"

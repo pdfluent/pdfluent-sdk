@@ -4,6 +4,9 @@ version = "1.0.0-beta.2"
 edition = "2021"
 license = "MIT"
 description = "XFA engine — extraction, layout rendering, font resolution."
+repository = "https://github.com/pdfluent"
+homepage = "https://pdfluent.com"
+documentation = "https://pdfluent.com/docs"
 
 keywords = ["pdf", "xfa", "forms", "adobe"]
 categories = ["rendering"]

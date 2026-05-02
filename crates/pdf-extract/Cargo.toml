@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage = "https://pdfluent.com"
+documentation = "https://pdfluent.com/docs"
 description = "PDF content extraction: images, text with positions, and full-text search"
 keywords = ["pdf", "text", "extraction", "search", "document"]
 categories = ["text-processing", "parser-implementations"]

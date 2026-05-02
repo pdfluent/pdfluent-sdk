@@ -5,13 +5,13 @@ authors = [
 ]
 categories = ["text-processing"]
 description = "A Rust library for PDF document manipulation."
-documentation = "https://docs.rs/crate/lopdf/"
+documentation = "https://pdfluent.com/docs"
 edition = "2024"
 homepage = "https://pdfluent.com"
 keywords = ["pdf", "editing", "manipulation", "merge"]
 license = "MIT"
 name = "pdfluent-lopdf"
-repository = "https://github.com/jasperdew/xfa-native-rust"
+repository = "https://github.com/pdfluent"
 version = "0.39.0"
 rust-version = "1.85"
 

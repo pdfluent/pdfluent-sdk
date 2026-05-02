@@ -5,8 +5,9 @@ description = "A memory-safe, pure-Rust JPEG 2000 decoder."
 authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
 edition = "2024"
 license = "Apache-2.0 OR MIT"
-repository = "https://github.com/jasperdew/xfa-native-rust"
+repository = "https://github.com/pdfluent"
 homepage = "https://pdfluent.com"
+documentation = "https://pdfluent.com/docs"
 keywords = ["pdf", "image", "jpeg2000", "j2k", "decoder"]
 categories = ["encoding"]
 
