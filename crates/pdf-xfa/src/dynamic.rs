@@ -216,6 +216,26 @@ pub fn apply_dynamic_scripts_with_mode(
     root_id: FormNodeId,
     mode: JsExecutionMode,
 ) -> Result<DynamicScriptOutcome> {
+    // M3-B Phase C-α (2026-05-03): when the caller asks for SandboxedRuntime
+    // and the `xfa-js-sandboxed` feature is compiled in, instantiate the
+    // real QuickJS-backed adapter. Without the feature, fall back to
+    // NullRuntime which surfaces `SandboxError::NotCompiledIn` per script
+    // (existing Phase B fallback semantics).
+    #[cfg(feature = "xfa-js-sandboxed")]
+    {
+        if mode == JsExecutionMode::SandboxedRuntime {
+            match crate::js_runtime::QuickJsRuntime::new() {
+                Ok(mut rt) => {
+                    return apply_dynamic_scripts_with_runtime(form, root_id, mode, &mut rt);
+                }
+                Err(_e) => {
+                    // QuickJS init failure is rare; fall through to NullRuntime
+                    // so the dispatch path can still record per-script errors
+                    // and the flatten succeeds in best-effort mode.
+                }
+            }
+        }
+    }
     apply_dynamic_scripts_with_runtime(form, root_id, mode, &mut NullRuntime::new())
 }
 
