@@ -1,16 +1,17 @@
 [package]
 name = "pdf-render"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.3"
 description = "A PDF rasterizer in pure Rust."
 edition = "2024"
-license = "Apache-2.0 OR MIT"
-authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
+license-file = "LICENSE"
+readme = "README.md"
+authors = ["PDFluent Contributors <team@pdfluent.com>", "Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
 repository = "https://github.com/pdfluent"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 
 [dependencies]
-pdf-interpret = { path = "../pdf-interpret", version = "=0.5.0" }
+pdf-interpret = { path = "../pdf-interpret", version = "=0.5.1" }
 kurbo = "0.13.0"
 image = { version = "0.25", features = ["png"] }
 bytemuck = { version = "1", features = ["bytemuck_derive"] }

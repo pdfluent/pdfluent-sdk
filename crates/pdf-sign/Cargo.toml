@@ -1,8 +1,9 @@
 [package]
 name = "pdfluent-sign"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.3"
 edition = "2021"
-license = "MIT"
+license-file = "LICENSE"
+readme = "README.md"
 description = "PDF digital signature validation — PAdES, CMS, certificate chain, DocMDP/FieldMDP, LTV."
 repository = "https://github.com/pdfluent"
 homepage = "https://pdfluent.com"

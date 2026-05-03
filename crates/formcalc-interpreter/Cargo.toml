@@ -2,11 +2,12 @@
 name = "formcalc-interpreter"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file = "LICENSE"
+readme = "README.md"
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "FormCalc expression interpreter for XFA dynamic forms."
+description = "FormCalc expression interpreter for XFA dynamic forms. Experimental — part of the PDFluent XFA stack, under active development."
 
 [dependencies]
 xfa-dom-resolver.workspace = true

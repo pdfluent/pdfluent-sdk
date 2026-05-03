@@ -1,0 +1,96 @@
+PDFluent — Notice on License Composition
+
+PDFluent is distributed across multiple Rust crates. Different crates within
+the project carry different licenses depending on their origin and role.
+Read this file together with the LICENSE file in the repository root.
+
+============================================================================
+OPEN-SOURCE FOUNDATION (MIT or MIT OR Apache-2.0)
+============================================================================
+
+The following crates are forks of upstream open-source libraries and remain
+distributed under their original permissive licenses. They may be used
+without a commercial license from PDFluent, subject only to the terms of
+their respective open-source licenses:
+
+  pdfluent-lopdf       MIT
+                       (forked from lopdf, https://crates.io/crates/lopdf)
+
+  pdfluent-cff         MIT OR Apache-2.0
+                       (forked from cff-parser)
+
+  pdfluent-ccitt       MIT OR Apache-2.0
+                       (forked from hayro-ccitt by Laurenz Stampfl,
+                        https://github.com/LaurenzV/hayro)
+
+  pdfluent-jbig2       MIT OR Apache-2.0
+                       (forked from hayro-jbig2)
+
+  pdfluent-jpeg2000    MIT OR Apache-2.0
+                       (forked from hayro-jpeg2000)
+
+  pdf-syntax           MIT OR Apache-2.0
+                       (forked from hayro-syntax)
+
+  pdf-interpret        MIT OR Apache-2.0
+                       (forked from hayro-interpret)
+
+The original copyright notices for these upstream projects are preserved
+in their respective source files and in the THIRD_PARTY_LICENSES.txt file.
+
+============================================================================
+PROPRIETARY COMMERCIAL COMPONENTS (PDFluent Commercial License)
+============================================================================
+
+The following crates contain proprietary code developed by PDFluent and are
+distributed under the PDFluent Commercial License (see the LICENSE file
+in this repository). Production Use of these crates requires a valid
+commercial license. See https://pdfluent.com/pricing for licensing options.
+
+  pdfluent             — the unified facade SDK
+  pdf-engine           — orchestration and document model
+  pdf-manip            — page-level manipulation (merge, split, rotate, etc.)
+  pdf-redact           — content redaction
+  pdfluent-sign        — digital signatures (PAdES, S/MIME)
+  pdf-compliance       — PDF/A, PDF/UA, PDF/X validation and conversion
+  pdfluent-extract     — text and image extraction
+  pdfluent-forms       — AcroForm support
+  pdf-annot            — annotations
+  pdf-docx             — DOCX export
+  pdf-ocr              — OCR integration
+  pdf-render           — page rendering (substantially extended fork)
+  pdf-font             — font handling (substantially extended fork)
+  pdf-xfa              — XFA processing engine
+  xfa-dom-resolver     — XFA DOM
+  xfa-layout-engine    — XFA layout engine
+  formcalc-interpreter — FormCalc evaluation
+  xfa-json             — XFA JSON conversion
+  xfa-license          — license enforcement runtime
+
+The Software, when used without a Valid License, may produce output that
+contains identifying markers (a Producer string in PDF metadata and a
+one-time stderr warning). This is by design. See LICENSE §2.
+
+============================================================================
+EVALUATION AND TRIAL
+============================================================================
+
+All PDFluent crates may be used freely for Evaluation Use, including
+development, testing, demonstration, and non-public staging environments.
+
+Production Use of the proprietary commercial crates requires a valid
+license. PDFluent issues 30-day Ed25519-signed clean trial keys (without
+the unlicensed-output markers) on request via the trial form on the
+website.
+
+  Trial:    https://pdfluent.com/trial
+  Pricing:  https://pdfluent.com/pricing
+  Terms:    https://pdfluent.com/terms
+
+============================================================================
+CONTACT
+============================================================================
+
+  Innovation Trigger BV (operating as PDFluent)
+  hello@pdfluent.com
+  https://pdfluent.com

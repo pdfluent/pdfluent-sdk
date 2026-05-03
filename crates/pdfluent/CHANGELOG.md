@@ -6,6 +6,66 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.0.0-beta.3] — 2026-05-03 (license model correction)
+
+### Status
+
+- Beta software — public API surface is stabilizing for 1.0.
+- Not all features are fully complete; capability-gated via Cargo features.
+- **XFA support is experimental and under active development.** Visual
+  fidelity and feature coverage are improving steadily but not yet
+  recommended for production XFA workflows.
+- Other features (PDF parse/save, AcroForms, signatures, PDF/A,
+  redaction, text extraction, rendering) have completed their quality
+  gates and are production-grade.
+
+
+### Changed — BREAKING (LICENSE)
+
+- **Licensing model updated to `PDFluent Commercial License`.** The
+  `pdfluent` crate and the proprietary engine, manipulation, signing,
+  compliance, redaction, extraction, forms, annotation, conversion, render,
+  font, and XFA crates that it depends on now ship under a custom commercial
+  license. Free for evaluation; production use requires a valid commercial
+  license. See the `LICENSE` file at the crate root and `pdfluent.com/terms`.
+- **Open-source foundation crates remain MIT or MIT/Apache-2.0:**
+  `pdfluent-lopdf`, `pdfluent-cff`, `pdfluent-ccitt`, `pdfluent-jbig2`,
+  `pdfluent-jpeg2000`, `pdf-syntax`, `pdf-interpret`. These are forks of
+  upstream open-source libraries and may continue to be used under those
+  terms.
+- Per-crate license matrix is documented in the repository-root `NOTICE`
+  file.
+
+### Note on prior releases
+
+**Earlier beta versions were published under permissive licenses and have
+been yanked.** Specifically, `1.0.0-beta.1` and `1.0.0-beta.2` of `pdfluent`
+(and the corresponding beta releases of the other commercial crates listed
+above) were briefly published on crates.io under MIT or MIT-OR-Apache-2.0
+before the licensing model was finalized. All 21 such versions across 19
+commercial crates were yanked on 2026-05-02 to prevent new installations.
+
+Crates.io versions are immutable: anyone who downloaded those versions
+before the yank holds an MIT-licensed copy of those specific bytes
+permanently. From `1.0.0-beta.3` onward, all production use of the
+proprietary crates requires a valid commercial license under the terms of
+the `LICENSE` file in this crate.
+
+This release contains **no functional changes** versus the yanked beta.2 —
+this is a license-correction release only.
+
+---
+
+## [1.0.0-beta.2] — 2026-05-02
+
+### Changed
+- Crate metadata only — no API or behavior changes.
+- `repository`, `homepage`, `documentation` URLs corrected to point at
+  `pdfluent.com` and the PDFluent GitHub organization.
+- Keywords and categories aligned with PDF SDK discoverability conventions.
+
+---
+
 ## [1.0.0-beta.1] — 2026-05-02
 
 ### Added
