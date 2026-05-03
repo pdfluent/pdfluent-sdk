@@ -49,21 +49,45 @@ impl LinkAnnotation {
     }
 }
 
-/// Known PDF action types (ISO 32000-2 §12.6).
+/// Known PDF action types per ISO 32000-2 §12.6.4.
+///
+/// The non-`Unknown` variants are the action subtypes the parser
+/// recognizes and decodes into typed [`Action`] values. `Unknown`
+/// preserves the original `/S` name so callers can still log or audit
+/// vendor-extension actions without losing information.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionType {
+    /// `/URI` — open a URL in the default browser.
     Uri,
+    /// `/GoTo` — jump to a destination within the same document.
     GoTo,
+    /// `/GoToR` — jump to a destination in another (remote) PDF file.
     GoToR,
+    /// `/Named` — execute one of the PDF-defined named actions
+    /// (NextPage, FirstPage, Print, Find, …).
     Named,
+    /// `/JavaScript` — execute embedded JavaScript. Security-sensitive;
+    /// see [`is_inert_on_flatten`](ActionType::is_inert_on_flatten).
     JavaScript,
+    /// `/SubmitForm` — POST form data to a remote URL.
+    /// Security-sensitive.
     SubmitForm,
+    /// `/Launch` — launch an external application or open a local file.
+    /// Highly security-sensitive (arbitrary code execution path).
     Launch,
+    /// `/ImportData` — import FDF form data from an external file.
+    /// Security-sensitive.
     ImportData,
+    /// An action subtype the parser did not recognize. The inner string
+    /// preserves the original `/S` name verbatim so callers can audit
+    /// vendor extensions.
     Unknown(alloc::string::String),
 }
 
 impl ActionType {
+    /// Map a PDF `/S` action-type name (without leading slash) to an
+    /// `ActionType`. Unknown names are preserved verbatim in the
+    /// [`Unknown`](ActionType::Unknown) variant.
     pub fn from_name(name: &str) -> Self {
         match name {
             "URI" => Self::Uri,
@@ -78,6 +102,15 @@ impl ActionType {
         }
     }
 
+    /// Whether this action type should be stripped (made inert) when
+    /// flattening the document.
+    ///
+    /// `true` for actions that have side effects beyond navigation —
+    /// `JavaScript`, `SubmitForm`, `Launch`, `ImportData`. A flattened
+    /// PDF is meant to be a static archival artifact; any of these
+    /// actions surviving into the flattened output is a security and
+    /// archival-fidelity concern. Use this to decide whether to drop
+    /// the action during flattening.
     pub fn is_inert_on_flatten(&self) -> bool {
         matches!(
             self,
@@ -177,6 +210,10 @@ impl Action {
         }
     }
 
+    /// The [`ActionType`] discriminator for this action — useful when
+    /// you want to filter or count action types without matching every
+    /// concrete variant. For [`Action::Unknown`], returns the preserved
+    /// `/S` name inside `ActionType::Unknown`.
     pub fn action_type(&self) -> ActionType {
         match self {
             Self::Uri(_) => ActionType::Uri,
@@ -204,49 +241,90 @@ fn file_spec_string(dict: &Dict<'_>) -> Option<alloc::string::String> {
         })
 }
 
-/// A destination (ISO 32000-2 §12.3.2).
+/// A PDF destination (ISO 32000-2 §12.3.2) — a target location and
+/// viewport recipe used by GoTo / GoToR actions and by direct `/Dest`
+/// link entries.
+///
+/// `page_index` is 0-based and may be `None` when the source PDF stored
+/// the destination as an indirect-reference array the parser could not
+/// resolve back to a page index. The remaining fields encode the
+/// "where on the page and at what zoom" portion of the destination.
 #[derive(Debug, Clone)]
 pub enum Destination {
-    /// `/XYZ left top zoom`.
+    /// `/XYZ left top zoom` — go to a specific position with optional
+    /// zoom factor. `None` for any field means "preserve current
+    /// viewer setting".
     Xyz {
+        /// 0-based page index, or `None` if unresolved.
         page_index: Option<u32>,
+        /// Horizontal scroll position in PDF user-space points.
         left: Option<f32>,
+        /// Vertical scroll position in PDF user-space points.
         top: Option<f32>,
+        /// Zoom factor (1.0 == 100%). `None` preserves current zoom.
         zoom: Option<f32>,
     },
-    /// `/Fit`.
-    Fit { page_index: Option<u32> },
-    /// `/FitH top`.
-    FitH {
+    /// `/Fit` — fit the entire page into the viewer window.
+    Fit {
+        /// 0-based page index, or `None` if unresolved.
         page_index: Option<u32>,
+    },
+    /// `/FitH top` — fit page width; align so `top` is at the top of
+    /// the viewer.
+    FitH {
+        /// 0-based page index, or `None` if unresolved.
+        page_index: Option<u32>,
+        /// Vertical alignment in PDF user-space points.
         top: Option<f32>,
     },
-    /// `/FitV left`.
+    /// `/FitV left` — fit page height; align so `left` is at the left
+    /// of the viewer.
     FitV {
+        /// 0-based page index, or `None` if unresolved.
         page_index: Option<u32>,
+        /// Horizontal alignment in PDF user-space points.
         left: Option<f32>,
     },
-    /// `/FitR left bottom right top`.
+    /// `/FitR left bottom right top` — fit the given rectangle into
+    /// the viewer window.
     FitR {
+        /// 0-based page index, or `None` if unresolved.
         page_index: Option<u32>,
+        /// Rectangle's left edge in PDF user-space points.
         left: f32,
+        /// Rectangle's bottom edge in PDF user-space points.
         bottom: f32,
+        /// Rectangle's right edge in PDF user-space points.
         right: f32,
+        /// Rectangle's top edge in PDF user-space points.
         top: f32,
     },
-    /// `/FitB`.
-    FitB { page_index: Option<u32> },
-    /// `/FitBH top`.
-    FitBH {
+    /// `/FitB` — fit the page's bounding box (the area containing
+    /// non-blank content) into the viewer.
+    FitB {
+        /// 0-based page index, or `None` if unresolved.
         page_index: Option<u32>,
+    },
+    /// `/FitBH top` — fit the page bounding-box width; align so `top`
+    /// is at the top of the viewer.
+    FitBH {
+        /// 0-based page index, or `None` if unresolved.
+        page_index: Option<u32>,
+        /// Vertical alignment in PDF user-space points.
         top: Option<f32>,
     },
-    /// `/FitBV left`.
+    /// `/FitBV left` — fit the page bounding-box height; align so
+    /// `left` is at the left of the viewer.
     FitBV {
+        /// 0-based page index, or `None` if unresolved.
         page_index: Option<u32>,
+        /// Horizontal alignment in PDF user-space points.
         left: Option<f32>,
     },
-    /// A named destination.
+    /// A named destination — an indirection through the document's
+    /// `/Names` tree. The string is the destination name; resolution
+    /// to a concrete location requires looking it up in the document
+    /// catalog's `/Names /Dests` entry.
     Named(alloc::string::String),
 }
 
