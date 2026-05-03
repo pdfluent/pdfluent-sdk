@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! PDF manipulation: pages, encryption, watermarks, text replacement, and more.
 //!
 //! All operations work on [`lopdf::Document`] objects, which can be loaded

@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! FormCalc Interpreter — lexer, parser, and AST evaluator.
 //!
 //! Implements the FormCalc scripting language from XFA 3.3 §25,

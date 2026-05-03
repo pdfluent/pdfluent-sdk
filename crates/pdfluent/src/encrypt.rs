@@ -26,8 +26,9 @@ pub enum EncryptionAlgorithm {
 
 /// Permissions granted on an encrypted PDF.
 ///
-/// Construct via presets ([`Permissions::full_access`], [`print_only`],
-/// [`read_only`], [`annotate`]) or the individual `with_*` methods for fine
+/// Construct via presets ([`Permissions::full_access`],
+/// [`Permissions::print_only`], [`Permissions::read_only`],
+/// [`Permissions::annotate`]) or the individual `with_*` methods for fine
 /// control.
 ///
 /// # Accessibility
@@ -198,8 +199,9 @@ impl EncryptOptions {
         }
     }
 
-    /// AES-128 with [`Permissions::full_access`]. Prefer [`aes256`] unless
-    /// targeting readers older than PDF 1.7 ext.
+    /// AES-128 with [`Permissions::full_access`]. Prefer
+    /// [`EncryptOptions::aes256`] unless targeting readers older than PDF
+    /// 1.7 ext.
     pub fn aes128() -> Self {
         Self {
             algorithm: EncryptionAlgorithm::Aes128,

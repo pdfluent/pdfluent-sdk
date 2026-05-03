@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! XFA engine — extraction, layout rendering, font resolution.
 
 pub mod appearance_bridge;

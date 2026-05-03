@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! PDF to DOCX conversion with text, tables, and images.
 //!
 //! Extracts text blocks, images, and spatial layout from PDF documents

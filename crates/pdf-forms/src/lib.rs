@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! AcroForm engine for PDF interactive forms.
 //!
 //! Parses AcroForm field dictionaries from a [`pdf_syntax::Pdf`] into an

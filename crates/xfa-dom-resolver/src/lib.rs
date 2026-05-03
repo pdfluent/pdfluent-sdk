@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! XFA DOM Resolver — SOM path resolution and DOM management.
 //!
 //! Implements the Scripting Object Model (SOM) from XFA 3.3 §3,

@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! OCR integration for scanned PDFs with pluggable engine support.
 
 pub mod engine;

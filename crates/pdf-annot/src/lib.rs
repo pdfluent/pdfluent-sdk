@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! PDF annotation engine.
 //!
 //! Provides typed access to all annotation types defined in ISO 32000-2 §12.5,

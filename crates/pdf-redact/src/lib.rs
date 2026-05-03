@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! GDPR-compliant PDF redaction: permanent content removal.
 
 pub mod error;

@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! PDF content extraction: text with positions, images, and full-text search.
 //!
 //! Works directly on [`lopdf::Document`] objects, which can be loaded from a
