@@ -1,0 +1,93 @@
+name: Security Audit
+
+# Runs `cargo audit` against the workspace's locked dependency graph and
+# fails if any RustSec advisory matches a transitive dependency.
+#
+# Triggers:
+# - Every PR to master (path-filtered to dependency-affecting files).
+# - Weekly schedule (Mondays 04:00 UTC) — catches advisories that are
+#   published *after* a PR lands.
+# - `workflow_dispatch` for ad-hoc audits.
+#
+# Failures here are **not blocking by policy** for low-severity advisories
+# of unmaintained crates that the workspace pins via fork (e.g. patched
+# `lopdf`-derived dependencies). The job emits a clear summary of which
+# advisories matched so reviewers can triage; the `continue-on-error`
+# decision is made at the milestone-review level, not here.
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/security-audit.yml'
+  push:
+    branches: [master]
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: security-audit
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+
+      # The official action uses the rustsec/audit-check tool internally.
+      # It posts a check-run with structured advisory data and exits
+      # non-zero on any error-severity finding.
+      - name: Run cargo-audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  cargo-deny-advisories:
+    name: cargo-deny advisories
+    runs-on: ubuntu-latest
+    # Run in addition to cargo-audit because cargo-deny also enforces
+    # license, source, and ban policies declared in deny.toml.
+    # If deny.toml is absent the job is a no-op.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip if no deny.toml
+        id: check
+        run: |
+          if [ ! -f deny.toml ]; then
+            echo "no_deny=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::deny.toml not present — skipping cargo-deny."
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.check.outputs.no_deny != 'true'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.check.outputs.no_deny != 'true'
+        with:
+          shared-key: security-audit
+
+      - name: cargo-deny check advisories
+        if: steps.check.outputs.no_deny != 'true'
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
