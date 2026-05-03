@@ -75,7 +75,10 @@ thread_local! {
     static FLATTEN_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
-use crate::dynamic::{apply_dynamic_scripts, DynamicScriptOutcome, OutputQuality};
+use crate::dynamic::{
+    apply_dynamic_scripts, apply_dynamic_scripts_with_mode, DynamicScriptOutcome, JsExecutionMode,
+    OutputQuality,
+};
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
 use crate::font_bridge::{
@@ -521,7 +524,29 @@ fn xfa_flatten_inner(
 
     log::debug!("XFA bind: {} form nodes created", tree.nodes.len());
 
-    let dynamic_scripts = apply_dynamic_scripts(&mut tree, root_id)?;
+    // M3-B Phase C validation hook (2026-05-03):
+    // Allow operators (CLI, integration tests, cohort runs) to engage the
+    // sandboxed JavaScript runtime by setting `XFA_JS_EXECUTION_MODE`.
+    // - unset / "default" / "best_effort_static" → existing default
+    //   (`BestEffortStatic`), no behaviour change for any existing user.
+    // - "strict" → `Strict` (M8 `DENY_EXECUTION`).
+    // - "sandboxed" / "sandboxed_runtime" → `SandboxedRuntime` (Phase B+C).
+    //   Only effective when the `xfa-js-sandboxed` Cargo feature is compiled
+    //   in; otherwise NullRuntime returns NotCompiledIn and the dispatch
+    //   path falls back to the same skip behaviour as `BestEffortStatic`.
+    let dynamic_scripts = match std::env::var("XFA_JS_EXECUTION_MODE")
+        .ok()
+        .map(|s| s.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("strict") => {
+            apply_dynamic_scripts_with_mode(&mut tree, root_id, JsExecutionMode::Strict)?
+        }
+        Some("sandboxed") | Some("sandboxed_runtime") => {
+            apply_dynamic_scripts_with_mode(&mut tree, root_id, JsExecutionMode::SandboxedRuntime)?
+        }
+        _ => apply_dynamic_scripts(&mut tree, root_id)?,
+    };
     if dynamic_scripts.output_quality != OutputQuality::Exact {
         // M3-B Phase C (2026-05-03): appended host-binding counters after
         // the Phase B JS runtime counters. Defaults stay 0 in
