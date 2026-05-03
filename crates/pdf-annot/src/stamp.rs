@@ -7,24 +7,52 @@ use crate::types::LineEnding;
 use pdf_syntax::object::dict::keys::*;
 use pdf_syntax::object::{Array, Dict, Name, Rect, Stream};
 
-/// Standard stamp names (ISO 32000-2 Table 181).
+/// Standard rubber-stamp names per ISO 32000-2 Table 181 — the
+/// **read** side of stamps (parser output).
+///
+/// PDF viewers ship built-in appearances for the standard names; using a
+/// recognized name produces consistent visuals across viewers. A
+/// non-standard name is preserved verbatim in [`Self::Custom`] so it is
+/// never silently lost.
+///
+/// Note: there is a separate `StampName` enum in
+/// [`crate::builder::StampName`] for the **write** side (annotation
+/// creation). The read side adds the `Custom` variant for non-standard
+/// stamp names found in input documents.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StampName {
+    /// "APPROVED" — green check-style stamp.
     Approved,
+    /// "EXPERIMENTAL" — orange/red stamp.
     Experimental,
+    /// "NOT APPROVED" — red rejection-style stamp.
     NotApproved,
+    /// "AS IS" — neutral stamp meaning "submitted without warranty".
     AsIs,
+    /// "EXPIRED" — red stamp indicating a document has lapsed.
     Expired,
+    /// "NOT FOR PUBLIC RELEASE" — red restriction stamp.
     NotForPublicRelease,
+    /// "CONFIDENTIAL" — red restriction stamp for sensitive material.
     Confidential,
+    /// "FINAL" — green completion stamp.
     Final,
+    /// "SOLD" — typically used in real-estate or auction contexts.
     Sold,
+    /// "DEPARTMENTAL" — internal-use restriction stamp.
     Departmental,
+    /// "FOR COMMENT" — review-cycle stamp.
     ForComment,
+    /// "TOP SECRET" — strongest standard restriction stamp.
     TopSecret,
+    /// "DRAFT" — work-in-progress stamp. Also the fallback default
+    /// when no `/Name` entry is present on the input annotation.
     Draft,
+    /// "FOR PUBLIC RELEASE" — explicit clearance stamp.
     ForPublicRelease,
-    /// A custom stamp name.
+    /// Any non-standard stamp name found in the input PDF, preserved
+    /// verbatim. Custom stamps may render with viewer-default
+    /// appearance only.
     Custom(alloc::string::String),
 }
 
