@@ -26,10 +26,18 @@ pub enum LicenseError {
     FeatureNotAvailable(String),
 
     /// The usage quota has been exceeded.
+    ///
+    /// The license enforces per-resource caps (for example "documents
+    /// processed per month"). When a meter ticks past its limit this
+    /// variant fires. The caller should either upgrade the license tier or
+    /// wait for the metering window to reset.
     #[error("quota exceeded: {used}/{limit} {resource}")]
     QuotaExceeded {
+        /// The metered resource name, e.g. `"documents"` or `"api_calls"`.
         resource: String,
+        /// How many units have been consumed in the current window.
         used: u64,
+        /// The license's hard cap for this resource in the current window.
         limit: u64,
     },
 
