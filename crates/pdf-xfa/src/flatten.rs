@@ -523,11 +523,11 @@ fn xfa_flatten_inner(
 
     let dynamic_scripts = apply_dynamic_scripts(&mut tree, root_id)?;
     if dynamic_scripts.output_quality != OutputQuality::Exact {
-        // M3-B Phase B (2026-05-03): added js_executed / js_runtime_errors /
-        // js_timeouts / js_oom. Defaulted to 0 in `BestEffortStatic` mode
-        // so existing log parsers stay backward-compatible.
+        // M3-B Phase C (2026-05-03): appended host-binding counters after
+        // the Phase B JS runtime counters. Defaults stay 0 in
+        // `BestEffortStatic` mode so existing log parsers remain compatible.
         log::warn!(
-            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={}",
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_binding_errors={} js_resolve_failures={}",
             dynamic_scripts.output_quality.as_str(),
             dynamic_scripts.js_present,
             dynamic_scripts.js_skipped,
@@ -538,9 +538,13 @@ fn xfa_flatten_inner(
             dynamic_scripts.js_runtime_errors,
             dynamic_scripts.js_timeouts,
             dynamic_scripts.js_oom,
+            dynamic_scripts.js_host_calls,
+            dynamic_scripts.js_mutations,
+            dynamic_scripts.js_binding_errors,
+            dynamic_scripts.js_resolve_failures,
         );
         eprintln!(
-            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={}",
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_binding_errors={} js_resolve_failures={}",
             dynamic_scripts.output_quality.as_str(),
             dynamic_scripts.js_present,
             dynamic_scripts.js_skipped,
@@ -551,6 +555,10 @@ fn xfa_flatten_inner(
             dynamic_scripts.js_runtime_errors,
             dynamic_scripts.js_timeouts,
             dynamic_scripts.js_oom,
+            dynamic_scripts.js_host_calls,
+            dynamic_scripts.js_mutations,
+            dynamic_scripts.js_binding_errors,
+            dynamic_scripts.js_resolve_failures,
         );
     }
 

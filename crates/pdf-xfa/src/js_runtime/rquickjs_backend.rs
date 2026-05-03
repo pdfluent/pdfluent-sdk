@@ -19,31 +19,38 @@
 //!   never crosses into the parent flatten path
 //!   (`benchmarks/runs/M3B_RUNTIME_SECURITY_MODEL.md` §1 S-17).
 
+use std::cell::RefCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::rc::Rc;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, OnceLock,
 };
 use std::time::{Duration, Instant};
 
-use rquickjs::{Context, Function, Runtime};
+use rquickjs::function::Opt;
+use rquickjs::{Coerced, Context, Function, Object, Persistent, Runtime};
+use xfa_layout_engine::form::{FormNodeId, FormTree};
 
 use super::{
-    activity_allowed_for_sandbox, RuntimeMetadata, RuntimeOutcome, SandboxError, XfaJsRuntime,
-    DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES,
+    activity_allowed_for_sandbox, HostBindings, RuntimeMetadata, RuntimeOutcome, SandboxError,
+    XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES,
 };
 
 /// QuickJS-backed runtime adapter. One instance is reusable across many
 /// documents; callers MUST invoke [`XfaJsRuntime::reset_for_new_document`]
 /// at the start of each flatten.
 pub struct QuickJsRuntime {
-    runtime: Runtime,
+    eval_script: Option<Persistent<Function<'static>>>,
     context: Context,
+    runtime: Runtime,
     metadata: RuntimeMetadata,
     time_budget: Duration,
     memory_budget_bytes: usize,
     script_deadline: Arc<AtomicU64>,
     script_started: Arc<AtomicBool>,
+    host: Rc<RefCell<HostBindings>>,
+    bindings_registered: bool,
 }
 
 impl std::fmt::Debug for QuickJsRuntime {
@@ -90,13 +97,16 @@ impl QuickJsRuntime {
         })));
 
         Ok(Self {
-            runtime,
+            eval_script: None,
             context,
+            runtime,
             metadata: RuntimeMetadata::default(),
             time_budget: Duration::from_millis(DEFAULT_TIME_BUDGET_MS),
             memory_budget_bytes: DEFAULT_MEMORY_BUDGET_BYTES,
             script_deadline,
             script_started,
+            host: Rc::new(RefCell::new(HostBindings::new())),
+            bindings_registered: false,
         })
     }
 
@@ -129,7 +139,296 @@ impl QuickJsRuntime {
         self.script_started.store(false, Ordering::Release);
         self.script_deadline.store(0, Ordering::Release);
     }
+
+    fn register_host_bindings(&mut self) -> Result<(), String> {
+        if self.bindings_registered {
+            return Ok(());
+        }
+
+        let host = Rc::clone(&self.host);
+        let eval_script = self.context.with(|ctx| {
+            let globals = ctx.globals();
+            let internal =
+                Object::new(ctx.clone()).map_err(|e| format!("host internal object: {e}"))?;
+
+            let resolve_host = Rc::clone(&host);
+            let resolve_node_id = Function::new(ctx.clone(), move |path: Opt<Coerced<String>>| {
+                let Some(path) = path.0 else {
+                    let _ = resolve_host.borrow_mut().resolve_node("");
+                    return -1i32;
+                };
+                resolve_host
+                    .borrow_mut()
+                    .resolve_node(&path.0)
+                    .map(|node_id| node_id.0 as i32)
+                    .unwrap_or(-1)
+            })
+            .map_err(|e| format!("resolveNodeId: {e}"))?;
+            internal
+                .set("resolveNodeId", resolve_node_id)
+                .map_err(|e| format!("set resolveNodeId: {e}"))?;
+
+            let resolve_nodes_host = Rc::clone(&host);
+            let resolve_node_ids =
+                Function::new(ctx.clone(), move |path: Opt<Coerced<String>>| -> Vec<i32> {
+                    let Some(path) = path.0 else {
+                        let _ = resolve_nodes_host.borrow_mut().resolve_nodes("");
+                        return Vec::new();
+                    };
+                    resolve_nodes_host
+                        .borrow_mut()
+                        .resolve_nodes(&path.0)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                })
+                .map_err(|e| format!("resolveNodeIds: {e}"))?;
+            internal
+                .set("resolveNodeIds", resolve_node_ids)
+                .map_err(|e| format!("set resolveNodeIds: {e}"))?;
+
+            let generation_host = Rc::clone(&host);
+            let generation = Function::new(ctx.clone(), move || {
+                generation_host.borrow().generation() as i64
+            })
+            .map_err(|e| format!("generation: {e}"))?;
+            internal
+                .set("generation", generation)
+                .map_err(|e| format!("set generation: {e}"))?;
+
+            let current_host = Rc::clone(&host);
+            let current_node = Function::new(ctx.clone(), move || {
+                current_host
+                    .borrow()
+                    .current_node()
+                    .map(|node_id| node_id.0 as i32)
+                    .unwrap_or(-1)
+            })
+            .map_err(|e| format!("currentNodeId: {e}"))?;
+            internal
+                .set("currentNodeId", current_node)
+                .map_err(|e| format!("set currentNodeId: {e}"))?;
+
+            let get_raw_host = Rc::clone(&host);
+            let get_raw_value = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64| -> Option<String> {
+                    if id < 0 || generation < 0 {
+                        return None;
+                    }
+                    get_raw_host
+                        .borrow_mut()
+                        .get_raw_value(FormNodeId(id as usize), generation as u64)
+                },
+            )
+            .map_err(|e| format!("getRawValue: {e}"))?;
+            internal
+                .set("getRawValue", get_raw_value)
+                .map_err(|e| format!("set getRawValue: {e}"))?;
+
+            let set_raw_host = Rc::clone(&host);
+            let set_raw_value = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64, value: Coerced<String>| -> bool {
+                    if id < 0 || generation < 0 {
+                        return false;
+                    }
+                    set_raw_host.borrow_mut().set_raw_value(
+                        FormNodeId(id as usize),
+                        value.0,
+                        generation as u64,
+                    )
+                },
+            )
+            .map_err(|e| format!("setRawValue: {e}"))?;
+            internal
+                .set("setRawValue", set_raw_value)
+                .map_err(|e| format!("set setRawValue: {e}"))?;
+
+            let num_pages_host = Rc::clone(&host);
+            let num_pages =
+                Function::new(ctx.clone(), move || num_pages_host.borrow_mut().num_pages())
+                    .map_err(|e| format!("numPages: {e}"))?;
+            internal
+                .set("numPages", num_pages)
+                .map_err(|e| format!("set numPages: {e}"))?;
+
+            let binding_error_host = Rc::clone(&host);
+            let binding_error = Function::new(ctx.clone(), move || {
+                binding_error_host.borrow_mut().metadata_binding_error();
+            })
+            .map_err(|e| format!("bindingError: {e}"))?;
+            internal
+                .set("bindingError", binding_error)
+                .map_err(|e| format!("set bindingError: {e}"))?;
+
+            let factory: Function = ctx
+                .eval(PHASE_C_BINDINGS_JS.as_bytes())
+                .map_err(|e| format!("binding factory parse: {e}"))?;
+            let bridge: Object = factory
+                .call((internal,))
+                .map_err(|e| format!("binding factory call: {e}"))?;
+            let xfa: Object = bridge.get("xfa").map_err(|e| format!("get xfa: {e}"))?;
+            let app: Object = bridge.get("app").map_err(|e| format!("get app: {e}"))?;
+            let eval_script: Function = bridge
+                .get("evalScript")
+                .map_err(|e| format!("get evalScript: {e}"))?;
+            globals
+                .set("xfa", xfa)
+                .map_err(|e| format!("set xfa global: {e}"))?;
+            globals
+                .set("app", app)
+                .map_err(|e| format!("set app global: {e}"))?;
+            Ok::<Persistent<Function<'static>>, String>(Persistent::save(&ctx, eval_script))
+        })?;
+
+        self.eval_script = Some(eval_script);
+        self.bindings_registered = true;
+        Ok(())
+    }
 }
+
+const PHASE_C_BINDINGS_JS: &str = r#"
+(function(host) {
+  function protoGuard() {
+    return Object.freeze(Object.create(null));
+  }
+
+  function nullProtoObject() {
+    var obj = Object.create(null);
+    Object.defineProperty(obj, "__proto__", {
+      value: protoGuard(),
+      enumerable: false,
+      configurable: false,
+      writable: false
+    });
+    return obj;
+  }
+
+  function makeHandle(id, generation) {
+    var obj = nullProtoObject();
+    Object.defineProperty(obj, "rawValue", {
+      enumerable: true,
+      configurable: false,
+      get: function() {
+        var value = host.getRawValue(id, generation);
+        return value === undefined ? null : value;
+      },
+      set: function(value) {
+        host.setRawValue(id, generation, value);
+      }
+    });
+    return Object.freeze(obj);
+  }
+
+  var xfaHost = nullProtoObject();
+  Object.defineProperty(xfaHost, "numPages", {
+    enumerable: true,
+    configurable: false,
+    get: function() {
+      return host.numPages();
+    }
+  });
+  Object.defineProperty(xfaHost, "messageBox", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function() {
+      host.bindingError();
+      return null;
+    }
+  });
+
+  var xfaLayout = nullProtoObject();
+  Object.defineProperty(xfaLayout, "pageCount", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function() {
+      return host.numPages();
+    }
+  });
+  Object.defineProperty(xfaLayout, "absPage", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function() {
+      host.bindingError();
+      return null;
+    }
+  });
+
+  var xfa = nullProtoObject();
+  Object.defineProperty(xfa, "host", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: Object.freeze(xfaHost)
+  });
+  Object.defineProperty(xfa, "layout", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: Object.freeze(xfaLayout)
+  });
+  Object.defineProperty(xfa, "resolveNode", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function(path) {
+      var id = host.resolveNodeId(path);
+      if (id < 0) {
+        return null;
+      }
+      return makeHandle(id, host.generation());
+    }
+  });
+  Object.defineProperty(xfa, "resolveNodes", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function(path) {
+      var generation = host.generation();
+      var ids = host.resolveNodeIds(path);
+      var out = [];
+      for (var i = 0; i < ids.length; i++) {
+        out.push(makeHandle(ids[i], generation));
+      }
+      return Object.freeze(out);
+    }
+  });
+
+  var app = nullProtoObject();
+  Object.defineProperty(app, "alert", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function() {
+      host.bindingError();
+      return null;
+    }
+  });
+  Object.defineProperty(app, "launchURL", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function() {
+      host.bindingError();
+      return null;
+    }
+  });
+
+  return {
+    xfa: Object.freeze(xfa),
+    app: Object.freeze(app),
+    evalScript: function(body) {
+      var id = host.currentNodeId();
+      var thisArg = id < 0 ? undefined : makeHandle(id, host.generation());
+      return Function(String(body)).call(thisArg);
+    }
+  };
+})
+"#;
 
 // Process-wide reference epoch; used together with `Instant::now() - EPOCH`
 // to materialise a u64 nanosecond timestamp comparable across the interrupt
@@ -171,7 +470,9 @@ impl XfaJsRuntime for QuickJsRuntime {
                     let _ = math_ns.set("random", rquickjs::Undefined);
                 }
                 Ok::<(), String>(())
-            })
+            })?;
+            self.register_host_bindings()?;
+            Ok::<(), String>(())
         }));
         match result {
             Ok(Ok(())) => Ok(()),
@@ -184,9 +485,35 @@ impl XfaJsRuntime for QuickJsRuntime {
 
     fn reset_for_new_document(&mut self) -> Result<(), SandboxError> {
         self.metadata = RuntimeMetadata::default();
+        self.host.borrow_mut().reset_per_document();
         self.clear_deadline();
         // Memory limit is per-document; re-set to clear any prior accounting.
         self.runtime.set_memory_limit(self.memory_budget_bytes);
+        Ok(())
+    }
+
+    fn set_form_handle(
+        &mut self,
+        form: *mut FormTree,
+        root_id: FormNodeId,
+    ) -> Result<(), SandboxError> {
+        self.host.borrow_mut().set_form_handle(form, root_id);
+        Ok(())
+    }
+
+    fn reset_per_script(
+        &mut self,
+        current_id: FormNodeId,
+        activity: Option<&str>,
+    ) -> Result<(), SandboxError> {
+        self.host
+            .borrow_mut()
+            .reset_per_script(current_id, activity);
+        Ok(())
+    }
+
+    fn set_static_page_count(&mut self, page_count: u32) -> Result<(), SandboxError> {
+        self.host.borrow_mut().set_static_page_count(page_count);
         Ok(())
     }
 
@@ -209,7 +536,15 @@ impl XfaJsRuntime for QuickJsRuntime {
         let script_owned = body.to_string();
         let result = catch_unwind(AssertUnwindSafe(|| {
             self.context.with(|ctx| -> Result<(), rquickjs::Error> {
-                ctx.eval::<(), _>(script_owned.into_bytes())?;
+                let Some(eval_script) = self.eval_script.clone() else {
+                    return Err(rquickjs::Error::new_from_js_message(
+                        "host bindings",
+                        "Function",
+                        "Phase C eval bridge not registered",
+                    ));
+                };
+                let eval_script = eval_script.restore(&ctx)?;
+                eval_script.call::<_, ()>((script_owned,))?;
                 Ok(())
             })
         }));
@@ -226,12 +561,16 @@ impl XfaJsRuntime for QuickJsRuntime {
         match result {
             Ok(Ok(())) => {
                 self.metadata.executed = self.metadata.executed.saturating_add(1);
+                let host_metadata = self.host.borrow_mut().take_metadata();
+                self.metadata.accumulate(host_metadata);
                 Ok(RuntimeOutcome {
                     executed: true,
-                    mutated_field_count: 0,
+                    mutated_field_count: host_metadata.mutations,
                 })
             }
             Ok(Err(other)) => {
+                let host_metadata = self.host.borrow_mut().take_metadata();
+                self.metadata.accumulate(host_metadata);
                 // rquickjs ≤ 0.8 collapses interrupts, OOM, and thrown
                 // exceptions into a small set of Error variants. We
                 // distinguish a Timeout via the deadline snapshot captured
@@ -253,6 +592,8 @@ impl XfaJsRuntime for QuickJsRuntime {
                 }
             }
             Err(_) => {
+                let host_metadata = self.host.borrow_mut().take_metadata();
+                self.metadata.accumulate(host_metadata);
                 self.metadata.runtime_errors = self.metadata.runtime_errors.saturating_add(1);
                 Err(SandboxError::PanicCaptured(
                     "panic during sandboxed script execution".to_string(),

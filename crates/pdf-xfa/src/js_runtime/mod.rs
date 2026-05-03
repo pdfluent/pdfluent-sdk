@@ -15,14 +15,21 @@
 //! See `benchmarks/runs/M3B_RUNTIME_SECURITY_MODEL.md` for the 18
 //! invariants the adapter must respect (S-1..S-18).
 
+pub mod host;
 pub mod null;
 
 #[cfg(feature = "xfa-js-sandboxed")]
 pub mod rquickjs_backend;
 
+pub use host::{
+    HostBindings, MutationLogEntry, MAX_MUTATIONS_PER_DOC, MAX_RESOLVE_CALLS_PER_SCRIPT,
+    MAX_RESOLVE_RESULTS, MAX_SOM_DEPTH,
+};
 pub use null::NullRuntime;
 #[cfg(feature = "xfa-js-sandboxed")]
 pub use rquickjs_backend::QuickJsRuntime;
+
+use xfa_layout_engine::form::{FormNodeId, FormTree};
 
 /// Outcome of evaluating one script body inside the sandbox.
 #[derive(Debug, Clone, Default)]
@@ -97,12 +104,36 @@ pub struct RuntimeMetadata {
     pub timeouts: usize,
     /// Memory-budget exhaustions.
     pub oom: usize,
+    /// Phase C host-binding invocations.
+    pub host_calls: usize,
+    /// Phase C successful `field.rawValue` writes.
+    pub mutations: usize,
+    /// Phase C binding-level failures (type, activity, cap, parse).
+    pub binding_errors: usize,
+    /// Phase C SOM resolution misses / failures.
+    pub resolve_failures: usize,
 }
 
 impl RuntimeMetadata {
     /// True when the runtime never reported any error class.
     pub fn is_clean(&self) -> bool {
-        self.runtime_errors == 0 && self.timeouts == 0 && self.oom == 0
+        self.runtime_errors == 0
+            && self.timeouts == 0
+            && self.oom == 0
+            && self.binding_errors == 0
+            && self.resolve_failures == 0
+    }
+
+    /// Add another metadata snapshot into this one.
+    pub fn accumulate(&mut self, other: RuntimeMetadata) {
+        self.executed = self.executed.saturating_add(other.executed);
+        self.runtime_errors = self.runtime_errors.saturating_add(other.runtime_errors);
+        self.timeouts = self.timeouts.saturating_add(other.timeouts);
+        self.oom = self.oom.saturating_add(other.oom);
+        self.host_calls = self.host_calls.saturating_add(other.host_calls);
+        self.mutations = self.mutations.saturating_add(other.mutations);
+        self.binding_errors = self.binding_errors.saturating_add(other.binding_errors);
+        self.resolve_failures = self.resolve_failures.saturating_add(other.resolve_failures);
     }
 }
 
@@ -146,6 +177,33 @@ pub trait XfaJsRuntime {
     /// Reset per-document state (memory budget, instruction counter,
     /// any cached compiled scripts). Called once per flatten.
     fn reset_for_new_document(&mut self) -> Result<(), SandboxError>;
+
+    /// Phase C: install the `FormTree` the runtime should resolve paths
+    /// against and mutate. The dispatch path owns the mutable borrow and clears
+    /// the handle before returning.
+    fn set_form_handle(
+        &mut self,
+        _form: *mut FormTree,
+        _root_id: FormNodeId,
+    ) -> Result<(), SandboxError> {
+        Ok(())
+    }
+
+    /// Phase C: reset per-script host counters and install the current script
+    /// context node / activity. Backends without host bindings ignore it.
+    fn reset_per_script(
+        &mut self,
+        _current_id: FormNodeId,
+        _activity: Option<&str>,
+    ) -> Result<(), SandboxError> {
+        Ok(())
+    }
+
+    /// Phase C page-count foundation. The current flatten order runs scripts
+    /// before layout, so callers normally leave this at 0.
+    fn set_static_page_count(&mut self, _page_count: u32) -> Result<(), SandboxError> {
+        Ok(())
+    }
 
     /// Execute one script body inside the sandbox.
     ///
