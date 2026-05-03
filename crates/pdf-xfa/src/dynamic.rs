@@ -289,7 +289,19 @@ pub fn apply_dynamic_scripts_with_runtime(
                             }
                             Err(SandboxError::Timeout) => js_skipped += 1,
                             Err(SandboxError::OutOfMemory) => js_skipped += 1,
-                            Err(_) => js_skipped += 1,
+                            Err(e) => {
+                                // M3-B Phase C-α: surface the per-script error
+                                // class via `log::debug!` so operators running
+                                // RUST_LOG=pdf_xfa::dynamic=debug can enumerate
+                                // missing-global ReferenceErrors without
+                                // shipping script bodies into log lines.
+                                log::debug!(
+                                    "sandbox script error on activity={:?}: {}",
+                                    script.activity.as_deref(),
+                                    e
+                                );
+                                js_skipped += 1;
+                            }
                         }
                     } else {
                         js_skipped += 1;
