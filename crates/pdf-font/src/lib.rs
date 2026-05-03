@@ -4,7 +4,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
-#![allow(missing_docs)]
+#![warn(missing_docs)]
 #![allow(clippy::upper_case_acronyms)]
 
 extern crate alloc;

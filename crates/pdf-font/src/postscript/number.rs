@@ -4,7 +4,12 @@ use crate::postscript::reader::{Reader, is_delimiter, is_whitespace};
 /// A PostScript number object (integer or real).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Number {
+    /// Integer literal (PostScript signed 32-bit). Examples: `0`, `-42`,
+    /// `100`. Produced by the parser when the lexeme has no decimal
+    /// point or exponent.
     Integer(i32),
+    /// Real (floating-point) literal — single-precision IEEE 754.
+    /// Examples: `1.5`, `-3.14`, `1e10`.
     Real(f32),
 }
 
