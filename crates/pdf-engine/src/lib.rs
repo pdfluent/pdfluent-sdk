@@ -56,6 +56,8 @@
 //! | [`ThumbnailOptions`] | Max-dimension constraint for thumbnail rendering |
 
 pub mod api;
+/// Public engine error type and stable error-code mapping. See
+/// [`api_error::PdfEngineError`].
 pub mod api_error;
 pub mod batch;
 pub mod color;
