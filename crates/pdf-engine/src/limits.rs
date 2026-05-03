@@ -214,28 +214,85 @@ impl ProcessingLimits {
     }
 }
 
-/// Error returned when a resource limit is exceeded.
+/// Error returned when a configured resource limit is exceeded.
+///
+/// A `LimitError` is a hard stop on the current operation — the caller
+/// should either raise the relevant cap on the [`ProcessingLimits`] used
+/// to construct the engine, or refuse the input. All variants carry both
+/// the observed value and the limit so callers can produce useful error
+/// messages without re-running detection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LimitError {
-    /// PDF file exceeds the maximum allowed size.
-    FileTooLarge { actual_bytes: u64, limit_bytes: u64 },
-    /// A decompressed stream exceeds the maximum allowed size.
-    StreamTooLarge { actual_bytes: u64, limit_bytes: u64 },
-    /// An image exceeds the maximum allowed pixel count.
+    /// PDF file size exceeded [`ProcessingLimits::max_file_bytes`].
+    /// Defends against trivially-DoS-ing the parser with an oversized
+    /// input.
+    FileTooLarge {
+        /// Observed file size in bytes.
+        actual_bytes: u64,
+        /// Configured maximum file size in bytes.
+        limit_bytes: u64,
+    },
+    /// A decompressed stream exceeded
+    /// [`ProcessingLimits::max_stream_bytes`]. Defends against
+    /// "decompression bomb" inputs (Flate, LZW, ASCII85) that expand
+    /// far beyond their compressed footprint.
+    StreamTooLarge {
+        /// Observed decompressed stream size in bytes.
+        actual_bytes: u64,
+        /// Configured maximum stream size in bytes.
+        limit_bytes: u64,
+    },
+    /// An image XObject exceeded [`ProcessingLimits::max_image_pixels`].
+    /// `pixels = width * height` regardless of color depth. Guards the
+    /// memory used by rasterization and color-space conversion.
     ImageTooLarge {
+        /// Observed image width in pixels.
         width: u64,
+        /// Observed image height in pixels.
         height: u64,
+        /// Observed total pixel count (`width * height`).
         pixels: u64,
+        /// Configured maximum pixel count.
         limit_pixels: u64,
     },
-    /// An object reference chain exceeds the maximum allowed depth.
-    ObjectDepthExceeded { depth: u32, limit: u32 },
-    /// A content stream has too many operators.
-    TooManyOperators { count: u64, limit: u64 },
-    /// XFA template nesting is too deep.
-    XfaNestingTooDeep { depth: u32, limit: u32 },
-    /// FormCalc recursion is too deep.
-    FormCalcRecursionTooDeep { depth: u32, limit: u32 },
+    /// Indirect-object reference chain exceeded
+    /// [`ProcessingLimits::max_object_depth`]. Defends against cyclic or
+    /// pathologically nested object graphs that would otherwise blow
+    /// the parser stack.
+    ObjectDepthExceeded {
+        /// Observed reference-chain depth.
+        depth: u32,
+        /// Configured maximum reference-chain depth.
+        limit: u32,
+    },
+    /// Content-stream operator count exceeded
+    /// [`ProcessingLimits::max_operator_count`]. Caps per-page
+    /// rendering work so a billion no-op operators can't pin a CPU.
+    TooManyOperators {
+        /// Observed operator count.
+        count: u64,
+        /// Configured maximum operator count.
+        limit: u64,
+    },
+    /// XFA template subform nesting exceeded
+    /// [`ProcessingLimits::max_xfa_nesting_depth`]. Defends the XFA
+    /// layout engine against pathologically nested templates.
+    XfaNestingTooDeep {
+        /// Observed XFA subform nesting depth.
+        depth: u32,
+        /// Configured maximum nesting depth.
+        limit: u32,
+    },
+    /// FormCalc expression recursion exceeded
+    /// [`ProcessingLimits::max_formcalc_depth`]. Stops infinite or
+    /// deeply mutually-recursive expressions from blowing the FormCalc
+    /// interpreter stack.
+    FormCalcRecursionTooDeep {
+        /// Observed recursion depth.
+        depth: u32,
+        /// Configured maximum recursion depth.
+        limit: u32,
+    },
 }
 
 impl std::fmt::Display for LimitError {

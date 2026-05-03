@@ -8,9 +8,12 @@ use std::path::Path;
 
 pub use crate::api_error::Error;
 
-/// Input source for a PDF document.
+/// Input source for a PDF document — accepts either a filesystem path or
+/// in-memory bytes.
 pub enum PdfSource<'a> {
+    /// Read the PDF from a filesystem path.
     Path(&'a Path),
+    /// Read the PDF from an in-memory byte slice.
     Bytes(&'a [u8]),
 }
 
@@ -40,15 +43,20 @@ pub struct ReadOptions {
 }
 
 impl ReadOptions {
+    /// Construct default `ReadOptions` (no password, no repair).
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Set a password to attempt when the PDF is encrypted (user or owner
+    /// password). Ignored on unencrypted documents.
     pub fn password(&mut self, pw: impl Into<String>) -> &mut Self {
         self.password = Some(pw.into());
         self
     }
 
+    /// Enable best-effort recovery of malformed PDFs (broken xref,
+    /// truncated streams). Slower but loads more inputs.
     pub fn repair(&mut self, repair: bool) -> &mut Self {
         self.repair = repair;
         self
@@ -63,67 +71,120 @@ pub struct SaveOptions {
 }
 
 impl SaveOptions {
+    /// Construct default `SaveOptions` (preserve input format, no
+    /// linearization).
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Force the saver to emit a specific PDF or PDF/A version. When unset,
+    /// the input document's version is preserved.
     pub fn format(&mut self, format: PdfFormat) -> &mut Self {
         self.format = Some(format);
         self
     }
 
+    /// Linearize the output for "fast web view" — the saver reorders
+    /// objects so a viewer can render the first page before the full file
+    /// has downloaded.
     pub fn linearize(&mut self, linearize: bool) -> &mut Self {
         self.linearize = linearize;
         self
     }
 }
 
+/// PDF or PDF/A target version that the saver should emit. Used by
+/// [`SaveOptions::format`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PdfFormat {
+    /// PDF 1.4 — broadest reader compatibility, no AES-256.
     Pdf1_4,
+    /// PDF 1.7 (ISO 32000-1) — modern baseline.
     Pdf1_7,
+    /// PDF 2.0 (ISO 32000-2) — required for AES-256 (`V=5, R=6`).
     Pdf2_0,
+    /// PDF/A-1b (ISO 19005-1, level B) — basic archival.
     PdfA1b,
+    /// PDF/A-2b (ISO 19005-2, level B) — adds JPEG 2000, transparency.
     PdfA2b,
+    /// PDF/A-3b (ISO 19005-3, level B) — adds arbitrary file attachments
+    /// (used for ZUGFeRD/Factur-X).
     PdfA3b,
 }
 
+/// Options for [`Document::add_watermark`]. Defaults: opaque, unrotated.
 #[derive(Default, Debug, Clone)]
 pub struct WatermarkOptions {
+    /// Opacity, 0.0 (transparent) to 1.0 (opaque). Out-of-range values
+    /// clamp at 0.0/1.0.
     pub opacity: f64,
+    /// Rotation in degrees around the page center. Positive =
+    /// counter-clockwise.
     pub rotation: f64,
 }
 
+/// Output format selector for [`Document::to_images`]. PNG for line art /
+/// text, JPEG for photographic content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
+    /// Lossless PNG — preserves text edges and line art.
     Png,
+    /// Lossy JPEG — smaller output for photographic pages.
     Jpeg,
 }
 
-/// A structured block of text from a PDF.
+/// A structured block of text from a PDF, with its bounding box on the
+/// page. Returned by [`Document::structured_text`].
 pub struct TextBlock {
+    /// Block text content in reading order.
     pub text: String,
+    /// Bounding box `[llx, lly, urx, ury]` in PDF user-space points
+    /// (1/72 inch). Origin is the bottom-left of the page.
     pub bbox: [f64; 4],
 }
 
-/// Document metadata.
+/// Document-level metadata read from the `/Info` dictionary or XMP. All
+/// fields are `None` if absent. Returned by [`Document::metadata`].
 pub struct Metadata {
+    /// `/Title`. `None` if not set.
     pub title: Option<String>,
+    /// `/Author`. `None` if not set.
     pub author: Option<String>,
+    /// `/CreationDate` as a PDF date string
+    /// (`D:YYYYMMDDHHmmSSOHH'mm'`). May be malformed in legacy
+    /// documents — parse defensively.
     pub creation_date: Option<String>,
 }
 
-/// An interactive form field.
+/// An interactive form field as seen by the form-fill API. One entry per
+/// terminal field; group fields are flattened. Returned by
+/// [`Document::form_fields`].
 pub struct FormField {
+    /// Fully-qualified field name (`parent.child` notation).
     pub name: String,
+    /// Current field value as a string. For checkboxes this is the
+    /// "on"-state name (e.g. `"Yes"`, `"Off"`); for choice fields, the
+    /// selected option.
     pub value: String,
+    /// Field-type discriminator: `"Tx"` (text), `"Btn"` (button),
+    /// `"Ch"` (choice), `"Sig"` (signature).
     pub field_type: String,
 }
 
-/// A digital signature within the document.
+/// A digital signature widget found in the document. Returned by
+/// [`Document::signatures`]; cryptographic verification is performed
+/// separately by [`Document::verify_signatures`].
 pub struct Signature {
+    /// Display name from the signature dictionary's `/Name` entry, or
+    /// from the certificate's subject if `/Name` is absent.
     pub signer_name: String,
+    /// Signing time as a PDF date string. May be the signer's local
+    /// time (untrusted) or a TSA timestamp (trusted) depending on the
+    /// PAdES profile.
     pub date: String,
+    /// `true` if the signature digest matches and the certificate chain
+    /// validates. For full validation reports, see
+    /// [`Document::verify_signatures`].
     pub is_valid: bool,
 }
 
