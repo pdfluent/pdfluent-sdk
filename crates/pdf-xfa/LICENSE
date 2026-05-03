@@ -113,15 +113,16 @@ covered by each license.
        other proprietary notices contained in the Software or its
        documentation; or
 
-   (g) use the Software, or any derivative thereof, to develop, distribute,
-       host, or operate any product, service, library, or platform whose
-       primary purpose is to provide PDF processing functionality
-       substantially similar to that provided by the Software, where such
-       product, service, library, or platform is offered to third parties.
+   (g) redistribute, sublicense, expose, or offer the Software as a
+       standalone SDK, library, API, platform, service, or substantially
+       similar substitute for PDFluent, except as expressly permitted under
+       an OEM Redistribution add-on.
 
-   Restriction (g) does not prevent Licensee from using the Software within
-   its own products or services that are not themselves PDF processing
-   libraries, SDKs, or general-purpose PDF editors offered to third parties.
+   For clarity, restriction (g) is intended to prevent re-packaging or
+   re-offering the Software (in whole or in substantial part) as a competing
+   PDF SDK or service. It does not restrict Licensee from using the Software
+   inside its own application, product, or service that delivers
+   functionality beyond what the Software itself provides.
 
 ----------------------------------------------------------------------------
 

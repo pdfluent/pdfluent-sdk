@@ -12,14 +12,14 @@ crate-type = ["cdylib"]
 [dependencies]
 napi = { version = "2", features = ["async", "serde-json", "napi9"] }
 napi-derive = "2"
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.2" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.2" }
-pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.2" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.2" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.2" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.3" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.3" }
+pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.3" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.3" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.3" }
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
-pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.2" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.2" }
+pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.3" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.3" }
 lopdf.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -28,6 +28,6 @@ uuid = { version = "1", features = ["v4"] }
 # Internal crates
 pdf-xfa = { path = "../pdf-xfa", version = "=1.0.0-beta.3" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.1" }
-xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.2" }
-xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.2" }
-xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.2" }
+xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.3" }
+xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.3" }
+xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.3" }

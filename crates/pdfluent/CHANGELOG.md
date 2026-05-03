@@ -6,7 +6,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [1.0.0-beta.3] — Unreleased (license model correction)
+## [1.0.0-beta.3] — 2026-05-03 (license model correction)
+
+### Status
+
+- Beta software — public API surface is stabilizing for 1.0.
+- Not all features are fully complete; capability-gated via Cargo features.
+- **XFA support is experimental and under active development.** Visual
+  fidelity and feature coverage are improving steadily but not yet
+  recommended for production XFA workflows.
+- Other features (PDF parse/save, AcroForms, signatures, PDF/A,
+  redaction, text extraction, rendering) have completed their quality
+  gates and are production-grade.
+
 
 ### Changed — BREAKING (LICENSE)
 
