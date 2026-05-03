@@ -9,6 +9,7 @@ pub mod flatten;
 pub mod font_bridge;
 pub mod image_bridge;
 pub mod javascript_policy;
+pub mod js_runtime;
 pub mod merger;
 pub mod paint_bridge;
 pub mod render_bridge;
@@ -22,6 +23,11 @@ pub use flatten::{
     flatten_xfa_to_pdf_with_layout_dump_and_metadata, flatten_xfa_to_pdf_with_metadata,
     is_pdf_encrypted, validate_flattened_pdf, validate_text_completeness, FlattenMetadata,
     FlattenQualityMetrics, FlattenValidation, LayoutDump, LayoutDumpEntry, TextValidation,
+};
+pub use js_runtime::{
+    activity_allowed_for_sandbox, NullRuntime, RuntimeMetadata, RuntimeOutcome, SandboxError,
+    XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES,
+    SANDBOX_ACTIVITY_ALLOWLIST,
 };
 
 pub use formcalc_interpreter as formcalc;
