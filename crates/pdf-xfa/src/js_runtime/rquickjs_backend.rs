@@ -318,7 +318,36 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         host.setRawValue(id, generation, value);
       }
     });
+    // Phase C-α: defensive stub. Real Adobe forms call
+    // `this.somExpression` to obtain the SOM path string. We don't expose
+    // the real SOM path (introspection capability), but returning a
+    // placeholder lets viewer-tweak scripts (e.g. acroSOM substr(15))
+    // proceed without ReferenceError. Mutations via this handle still
+    // require the rawValue setter, which is the only side-effect channel.
+    Object.defineProperty(obj, "somExpression", {
+      enumerable: false,
+      configurable: false,
+      get: function() {
+        return "xfa[0].form[0].placeholder";
+      }
+    });
     return Object.freeze(obj);
+  }
+
+  // Phase C-α: viewer-stub that absorbs property writes silently.
+  // Used as the return value of `event.target.getField()` so
+  // AcroForm widget-tweak scripts (`field.doNotScroll = true`,
+  // `field.required = false`, etc.) complete without error and
+  // without mutating any flatten-relevant state.
+  function makeViewerStub() {
+    return new Proxy({}, {
+      get: function(_t, _prop) { return undefined; },
+      set: function(_t, _prop, _val) {
+        
+        return true;
+      },
+      has: function() { return true; }
+    });
   }
 
   var xfaHost = nullProtoObject();
@@ -418,13 +447,73 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     }
   });
 
+  // Phase C-α: viewer-only `event` global. Real Adobe Reader populates
+  // this with the firing event; during static flatten there is no
+  // dispatched UI event, so the object is a defensive stub that:
+  // - exposes `target` resolving to the firing field handle (≈ `this`),
+  //   so scripts like `event.target.getField(somPath)` complete without
+  //   ReferenceError;
+  // - exposes `change` as an empty string (the spec default);
+  // - returns viewer-stubs from `target.getField()` so AcroForm widget
+  //   tweaks (`doNotScroll`, `required`, etc.) silently absorb.
+  function makeEvent() {
+    var id = host.currentNodeId();
+    var fieldHandle = id < 0 ? null : makeHandle(id, host.generation());
+    var target = nullProtoObject();
+    Object.defineProperty(target, "getField", {
+      enumerable: true, configurable: false, writable: false,
+      value: function() {
+        
+        return makeViewerStub();
+      }
+    });
+    Object.defineProperty(target, "name", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    Object.defineProperty(target, "self", {
+      enumerable: true, configurable: false,
+      get: function() { return fieldHandle; }
+    });
+    var ev = nullProtoObject();
+    Object.defineProperty(ev, "target", {
+      enumerable: true, configurable: false,
+      get: function() { return target; }
+    });
+    Object.defineProperty(ev, "change", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    return Object.freeze(ev);
+  }
+
+  // Phase C-α: minimal `console` no-op. Many forms guard with
+  // `if (typeof console !== "undefined") console.log(...)` and proceed
+  // when the symbol exists. Stub returns undefined; never writes
+  // anywhere observable to the script.
+  var consoleStub = nullProtoObject();
+  ["log","warn","error","info","debug","trace"].forEach(function(name) {
+    Object.defineProperty(consoleStub, name, {
+      enumerable: true, configurable: false, writable: false,
+      value: function() {  return undefined; }
+    });
+  });
+
   return {
     xfa: Object.freeze(xfa),
     app: Object.freeze(app),
+    consoleStub: Object.freeze(consoleStub),
     evalScript: function(body) {
       var id = host.currentNodeId();
       var thisArg = id < 0 ? undefined : makeHandle(id, host.generation());
-      return Function(String(body)).call(thisArg);
+      // Phase C-α: install per-script `event` global in the function
+      // closure so `event.target` resolves to the current field. Wrapping
+      // body inside a function lets us pass `event` as a parameter
+      // without leaking it to globalThis (where it would persist across
+      // unrelated scripts).
+      var ev = makeEvent();
+      var consoleArg = consoleStub;
+      return (Function("event", "console", String(body))).call(thisArg, ev, consoleArg);
     }
   };
 })
