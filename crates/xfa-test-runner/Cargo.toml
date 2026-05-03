@@ -22,25 +22,25 @@ ocr-onnx = ["pdf-engine/ocr-onnx"]
 # Workspace crates
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
 pdf-xfa = { path = "../pdf-xfa", version = "=1.0.0-beta.3" }
-pdf-docx = { path = "../pdf-docx", version = "=1.0.0-beta.2" }
-pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0-beta.2" }
-pdf-xlsx = { path = "../pdf-xlsx", version = "=1.0.0-beta.2" }
-pdf-invoice = { path = "../pdf-invoice", version = "=1.0.0-beta.2" }
+pdf-docx = { path = "../pdf-docx", version = "=1.0.0-beta.3" }
+pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0-beta.3" }
+pdf-xlsx = { path = "../pdf-xlsx", version = "=1.0.0-beta.3" }
+pdf-invoice = { path = "../pdf-invoice", version = "=1.0.0-beta.3" }
 zip = { version = "2", default-features = false, features = ["deflate"] }
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.2" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.2" }
-pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.2" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.2" }
-pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.2" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.2" }
-pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.2" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.2" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.3" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.3" }
+pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.3" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.3" }
+pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.3" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.3" }
+pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.3" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.3" }
 
 # image is required for render-page subcommand (always enabled).
 image = { workspace = true }
 
 # OCR (optional, requires ONNX Runtime)
-pdf-ocr = { path = "../pdf-ocr", features = ["paddle"], optional = true, version = "=1.0.0-beta.2" }
+pdf-ocr = { path = "../pdf-ocr", features = ["paddle"], optional = true, version = "=1.0.0-beta.3" }
 
 # External PDF parsing (used by pdf-extract APIs)
 lopdf = { workspace = true }
