@@ -11,44 +11,96 @@ const PARAGRAPH_GAP_FACTOR: f64 = 1.5;
 /// Tolerance for column alignment in table detection (points).
 const TABLE_X_TOLERANCE: f64 = 5.0;
 
-/// A run of text with formatting.
+/// A run of text with consistent formatting — the smallest unit emitted to
+/// the resulting DOCX.
+///
+/// A [`Paragraph`] is a sequence of one or more runs. A new run is started
+/// whenever the layout detector observes a change in font, size, weight, or
+/// style on the same line; consecutive characters with the same formatting
+/// stay in a single run.
 #[derive(Debug, Clone)]
 pub struct Run {
+    /// The actual text content of this run, in source order. May contain
+    /// any UTF-8 characters extracted from the PDF page.
     pub text: String,
+    /// PostScript name of the font as it appears in the PDF (e.g.
+    /// `Helvetica`, `TimesNewRomanPS-BoldMT`). Mapped to a Word font name
+    /// during DOCX writing.
     pub font_name: String,
+    /// Font size in PDF user-space points. Persisted to DOCX as half-points
+    /// (Word's native unit).
     pub font_size: f64,
+    /// Whether the run is rendered bold. Detected from font name suffix
+    /// (`-Bold`, `Bd`) or PDF font flags.
     pub bold: bool,
+    /// Whether the run is rendered italic. Detected from font name suffix
+    /// (`-Italic`, `It`, `Oblique`) or PDF font flags.
     pub italic: bool,
 }
 
-/// A paragraph composed of one or more runs.
+/// A paragraph composed of one or more [`Run`]s.
+///
+/// Produced by the line-grouping pass: lines whose vertical gap is below
+/// [`PARAGRAPH_GAP_FACTOR`] times the font size are considered part of the
+/// same paragraph; a larger gap ends the paragraph.
 #[derive(Debug, Clone)]
 pub struct Paragraph {
+    /// The runs that make up this paragraph, in reading order. Empty
+    /// paragraphs are valid and represent blank lines.
     pub runs: Vec<Run>,
 }
 
-/// A table with rows and columns.
+/// A table reconstructed from text blocks aligned in columns.
+///
+/// Detected when consecutive lines share the same column x-coordinates
+/// within [`TABLE_X_TOLERANCE`]. Rebuilt into a regular grid where each
+/// row has the same number of cells (`col_count`); short rows are
+/// right-padded with empty strings.
 #[derive(Debug, Clone)]
 pub struct Table {
+    /// Row-major cell content. `rows[r][c]` is the text in column `c` of
+    /// row `r`. All rows have length [`Self::col_count`].
     pub rows: Vec<Vec<String>>,
+    /// Number of columns in the table — the maximum column count observed
+    /// during column-alignment detection.
     pub col_count: usize,
 }
 
-/// An image to include in the document.
+/// An image to embed into the resulting DOCX document.
+///
+/// Produced when the layout pass identifies an image XObject on the page
+/// that should be carried over to the Word document. The bytes are kept
+/// verbatim; the DOCX writer wraps them in the appropriate `w:drawing`
+/// element with the given dimensions.
 #[derive(Debug, Clone)]
 pub struct DocxImage {
+    /// Raw image bytes in the format described by [`Self::content_type`]
+    /// (typically PNG or JPEG).
     pub data: Vec<u8>,
+    /// Image width in pixels. Used to compute the on-page rendered size.
     pub width: u32,
+    /// Image height in pixels. Used to compute the on-page rendered size.
     pub height: u32,
+    /// MIME type of [`Self::data`] — e.g. `image/png`, `image/jpeg`. Drives
+    /// the part name and `Override` content-type entry in the DOCX `[Content_Types].xml`.
     pub content_type: String,
+    /// Stable identifier used to deduplicate images that appear on multiple
+    /// pages and to wire up the relationship reference in the DOCX.
     pub id: String,
 }
 
-/// Page content after layout analysis.
+/// One element in the per-page layout: a paragraph, a table, or an image.
+///
+/// Produced by the layout analysis pass. Pages emit a `Vec<PageElement>` in
+/// reading order; the DOCX writer iterates these and produces matching
+/// Word document parts.
 #[derive(Debug, Clone)]
 pub enum PageElement {
+    /// A flowing paragraph of text — see [`Paragraph`].
     Para(Paragraph),
+    /// A reconstructed table — see [`Table`].
     Tbl(Table),
+    /// An embedded image — see [`DocxImage`].
     Img(DocxImage),
 }
 

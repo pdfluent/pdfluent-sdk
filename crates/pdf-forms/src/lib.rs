@@ -11,7 +11,7 @@
 //! ```no_run
 //! use std::sync::Arc;
 //! use pdf_syntax::Pdf;
-//! use pdf_forms::{parse_acroform, FieldType, FieldValue};
+//! use pdfluent_forms::{parse_acroform, FieldType, FieldValue};
 //!
 //! let data = Arc::new(std::fs::read("form.pdf").unwrap());
 //! let pdf = Pdf::new(data).unwrap();

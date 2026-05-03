@@ -3,14 +3,33 @@
 use crate::flags::FieldFlags;
 use crate::tree::*;
 
-/// Text field sub-kind.
+/// Sub-kind of a text (`/Tx`) field, derived from its flags word.
+///
+/// AcroForm models all text input variants as the same field type; the
+/// flags below distinguish the visual presentation and validation rules.
+/// Use [`text_field_kind`] to derive this enum from a [`FieldFlags`] value.
+/// The variants are checked in priority order — for example, a field with
+/// both `FileSelect` and `Multiline` set resolves to [`Self::FileSelect`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextFieldKind {
+    /// Single-line free-text input. Default when no specialization flag is
+    /// set.
     Normal,
+    /// Multi-line text input — text wraps at the field width and accepts
+    /// embedded newlines. (`Multiline` flag set.)
     Multiline,
+    /// Single-line input that masks each character (typical for password
+    /// entry). (`Password` flag set.)
     Password,
+    /// Fixed-pitch input divided into `MaxLen` equally-spaced cells —
+    /// useful for serial numbers, postal codes. Requires `MaxLen` to be
+    /// set on the field. (`Comb` flag set.)
     Comb,
+    /// Rich-text input where the value carries XHTML formatting in
+    /// addition to the plain text. (`RichText` flag set.)
     RichText,
+    /// File-selector field: the value is a path to a local file the user
+    /// selected via the viewer's file dialog. (`FileSelect` flag set.)
     FileSelect,
 }
 
