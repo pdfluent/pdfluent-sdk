@@ -7,16 +7,36 @@ use crate::error::{ManipError, Result};
 use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 use xmp_writer::XmpWriter;
 
-/// PDF/A conformance level for XMP identification.
+/// PDF/A conformance level identifier written into the XMP `pdfaid:part`
+/// and `pdfaid:conformance` properties.
+///
+/// The variants combine ISO 19005 *part* (1, 2, 3) with the conformance
+/// *level letter* — `A` (accessibility, requires tagged structure), `B`
+/// (basic, visual fidelity only), or `U` (Unicode, ISO 19005-2 onwards
+/// only). Part 4 is intentionally not modelled here; this enum tracks
+/// what the XMP repair pipeline writes today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PdfAConformance {
+    /// PDF/A-1 level B (ISO 19005-1) — basic conformance, the most
+    /// permissive PDF/A profile.
     A1b,
+    /// PDF/A-1 level A (ISO 19005-1) — accessibility-conformant;
+    /// requires a tagged structure tree.
     A1a,
+    /// PDF/A-2 level B (ISO 19005-2) — adds JPEG 2000, transparency.
     A2b,
+    /// PDF/A-2 level A (ISO 19005-2) — A2b plus tagged structure for
+    /// accessibility.
     A2a,
+    /// PDF/A-2 level U (ISO 19005-2) — Unicode-conformant: every text
+    /// glyph must map to a Unicode code point.
     A2u,
+    /// PDF/A-3 level B (ISO 19005-3) — A2b plus arbitrary file
+    /// attachments allowed (used by ZUGFeRD / Factur-X).
     A3b,
+    /// PDF/A-3 level A (ISO 19005-3) — A3b plus tagged structure.
     A3a,
+    /// PDF/A-3 level U (ISO 19005-3) — A3b plus full Unicode mapping.
     A3u,
 }
 
@@ -40,17 +60,41 @@ impl PdfAConformance {
     }
 }
 
-/// Metadata fields for XMP generation.
+/// Document-level metadata used when generating or repairing the XMP
+/// metadata stream during PDF/A conversion.
+///
+/// All fields are typically sourced from the document's `/Info`
+/// dictionary; PDF/A requires that the XMP stream and the `/Info`
+/// dictionary stay synchronized (ISO 19005-1 §6.7.3). Any `None` field
+/// is omitted from the generated XMP rather than written as an empty
+/// string.
 #[derive(Debug, Clone, Default)]
 pub struct PdfMetadata {
+    /// Document title — written as `dc:title` in the XMP and `/Title`
+    /// in `/Info`.
     pub title: Option<String>,
+    /// Document author / creator — written as `dc:creator` in the XMP
+    /// and `/Author` in `/Info`.
     pub creator: Option<String>,
+    /// Document description / subject — written as `dc:description` in
+    /// the XMP and `/Subject` in `/Info`.
     pub description: Option<String>,
+    /// Producer application string (the library or tool that wrote the
+    /// PDF) — written as `pdf:Producer`. PDFluent stamps a Producer
+    /// string here when running unlicensed.
     pub producer: Option<String>,
+    /// Originating authoring tool — written as `xmp:CreatorTool`. Often
+    /// the application the user worked in (Word, Acrobat, …).
     pub creator_tool: Option<String>,
+    /// Document creation timestamp in PDF date format
+    /// (`D:YYYYMMDDHHmmSSOHH'mm'`). Written as `xmp:CreateDate` after
+    /// conversion to ISO 8601.
     pub create_date: Option<String>,
+    /// Last-modification timestamp in PDF date format. Written as
+    /// `xmp:ModifyDate` after conversion to ISO 8601.
     pub modify_date: Option<String>,
-    /// Keywords from /Info /Keywords — written as pdf:Keywords in XMP (§6.7.3.5).
+    /// Keywords from `/Info /Keywords` — written as `pdf:Keywords` in
+    /// XMP (§6.7.3.5).
     pub keywords: Option<String>,
 }
 

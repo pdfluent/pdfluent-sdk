@@ -98,14 +98,25 @@ impl Default for TextWatermark {
     }
 }
 
-/// Preset stamp text templates.
+/// Common preset texts used by [`StampPreset::text`] when stamping a
+/// document. Each variant resolves to a fixed uppercase string written
+/// to the page; use [`StampPreset::text`] to obtain the literal content.
+///
+/// For arbitrary text (custom legends, locale-specific phrases) build a
+/// watermark directly from a string instead of using a preset.
 #[derive(Debug, Clone, Copy)]
 pub enum StampPreset {
+    /// "DRAFT" — work-in-progress marker.
     Draft,
+    /// "CONFIDENTIAL" — distribution-restricted marker.
     Confidential,
+    /// "APPROVED" — review-completed marker.
     Approved,
+    /// "FINAL" — completion marker indicating the document is sealed.
     Final,
+    /// "COPY" — duplicate-tracking marker.
     Copy,
+    /// "NOT FOR DISTRIBUTION" — explicit no-share restriction.
     NotForDistribution,
 }
 

@@ -8,17 +8,28 @@ use lopdf::content::Operation;
 #[cfg(feature = "write")]
 use lopdf::Object;
 
-/// RGB color for annotation appearance.
+/// RGB color used inside annotation appearance streams.
+///
+/// Components are PDF DeviceRGB values in the 0.0–1.0 range. Out-of-range
+/// values are written verbatim and clamped by the consuming PDF viewer.
+/// Used by [`AppearanceStreamBuilder`] to emit `rg` (fill) and `RG`
+/// (stroke) operators in the generated content stream.
 #[cfg(feature = "write")]
 #[derive(Debug, Clone, Copy)]
 pub struct AppearanceColor {
+    /// Red component, 0.0–1.0.
     pub r: f64,
+    /// Green component, 0.0–1.0.
     pub g: f64,
+    /// Blue component, 0.0–1.0.
     pub b: f64,
 }
 
 #[cfg(feature = "write")]
 impl AppearanceColor {
+    /// Construct a new RGB color from components in the 0.0–1.0 range.
+    /// No clamping is performed at construction time; values are passed
+    /// through to the emitted PDF content stream as-is.
     pub fn new(r: f64, g: f64, b: f64) -> Self {
         Self { r, g, b }
     }

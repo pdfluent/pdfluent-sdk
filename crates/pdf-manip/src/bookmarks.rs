@@ -12,12 +12,18 @@ pub enum BookmarkAction {
     /// Navigate to a page in this document.
     /// Page number is 1-based.
     GoTo {
+        /// 1-based target page number within this document.
         page: u32,
         /// Fit type: "Fit", "FitH", "FitV", "XYZ", etc.
         fit: FitType,
     },
     /// Navigate to a page in an external document.
-    GoToR { file: String, page: u32 },
+    GoToR {
+        /// Path or URL of the external PDF document.
+        file: String,
+        /// 1-based target page number within the external document.
+        page: u32,
+    },
     /// Open a URI.
     Uri(String),
     /// Named action (e.g., "NextPage", "PrevPage").
@@ -36,8 +42,13 @@ pub enum FitType {
     FitV(f32),
     /// Display at specific position and zoom.
     Xyz {
+        /// Horizontal scroll position in PDF user-space points.
+        /// `None` preserves the current viewer setting.
         x: Option<f32>,
+        /// Vertical scroll position in PDF user-space points.
+        /// `None` preserves the current viewer setting.
         y: Option<f32>,
+        /// Zoom factor (1.0 == 100%). `None` preserves current zoom.
         zoom: Option<f32>,
     },
 }
