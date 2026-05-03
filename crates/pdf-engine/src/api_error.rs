@@ -1,15 +1,34 @@
 use std::fmt;
 use std::path::PathBuf;
 
-/// The central Error trait for all PDFluent operations.
+/// Common contract for engine error types.
+///
+/// `pdf-engine` exposes errors that flow up through the `pdfluent` facade
+/// to customers. Implementing this trait gives every error a stable,
+/// machine-readable code, an actionable help string, and a deep link to the
+/// public error documentation site.
 pub trait PdfError: std::error::Error {
-    /// Machine-readable error code (bijv. "PASSWORD_REQUIRED")
+    /// Stable machine-readable identifier for the error.
+    ///
+    /// Format: `SCREAMING_SNAKE_CASE` (for example `"PASSWORD_REQUIRED"`).
+    /// These codes are part of the public API contract — bindings, log
+    /// pipelines, and customer error handlers depend on them, so they must
+    /// not change without a deprecation cycle.
     fn code(&self) -> &str;
 
-    /// Menselijk leesbare help tekst met code example
+    /// Human-readable, actionable help text.
+    ///
+    /// Suggests what the developer should do next: a code example, a
+    /// configuration switch, a check to run. Returned as `Option` because
+    /// some variants (e.g. raw I/O wrappers) have no useful generic advice.
     fn help(&self) -> Option<String>;
 
-    /// URL naar de error docs
+    /// Deep link to the canonical documentation page for this error.
+    ///
+    /// Derived from [`code`](Self::code) by lowercasing and substituting
+    /// `_` with `-`. Default implementation points at
+    /// `https://docs.pdfluent.dev/errors/<slug>`; override only if you
+    /// host your own error documentation.
     fn docs_url(&self) -> String {
         format!(
             "https://docs.pdfluent.dev/errors/{}",
@@ -18,76 +37,161 @@ pub trait PdfError: std::error::Error {
     }
 }
 
-/// The central Error enum for all PDFluent operations.
-/// Designed to provide high context and actionable help for developers.
+/// Top-level error type for `pdf-engine` operations.
+///
+/// Each variant maps 1-to-1 to a stable [`PdfError::code`] string. Variants
+/// carry the minimum fields needed to render a useful message and to give
+/// the caller enough context to either retry or surface a clear message
+/// to a human.
+///
+/// The [`std::fmt::Display`] implementation produces a multi-line, formatted
+/// error message including a `Help:` block and a `Docs:` link. Use it as
+/// `format!("{err}")` for human consumption; use [`PdfError::code`] for
+/// programmatic dispatch.
 #[derive(Debug)]
 pub enum Error {
+    /// The requested file could not be found at the given path. Returned
+    /// before any parse work is attempted.
     FileNotFound {
+        /// The path that was requested but does not exist.
         path: PathBuf,
     },
+    /// The PDF is encrypted and a password is required to open it. The
+    /// caller should retry with `OpenOptions::with_password(...)`.
     PasswordRequired {
+        /// The path of the encrypted document.
         path: PathBuf,
     },
+    /// The PDF byte stream could not be parsed. The cross-reference table
+    /// is malformed, the trailer is unreachable, or a critical object is
+    /// missing. Try `OpenOptions::repair(true)` for a best-effort recovery.
     CorruptPdf {
+        /// Path to the source file, when known.
         path: Option<PathBuf>,
+        /// Human-readable diagnostic of what went wrong (for example
+        /// "missing trailer", "bad startxref offset").
         reason: String,
     },
+    /// The caller asked for a page index outside the document's range.
+    /// Page numbers are 1-based at the public API.
     InvalidPageNumber {
+        /// The page index the caller requested.
         requested: usize,
+        /// How many pages the document actually has.
         total: usize,
     },
+    /// A required font could not be located — neither embedded in the PDF,
+    /// nor on the system, nor in the SDK's Standard 14 fallback set.
     FontNotFound {
+        /// The PDF base font name that could not be resolved.
         font_name: String,
     },
+    /// The requested operation is not allowed by the document's
+    /// permission flags. The caller may need an owner password.
     PermissionDenied {
+        /// Which operation was denied (for example "modify", "print").
         reason: String,
     },
+    /// The document declares a PDF version this build of the SDK does not
+    /// understand.
     UnsupportedPdfVersion {
+        /// The version string from the document header (e.g. `"2.1"`).
         version: String,
     },
+    /// A form-field operation referenced a field that does not exist in
+    /// the document's AcroForm dictionary.
     FormFieldNotFound {
+        /// The field name the caller asked for. List actual field names
+        /// with `doc.form_fields()`.
         field_name: String,
     },
+    /// A digital-signature verification step failed (chain of trust,
+    /// hash mismatch, expired certificate, etc.).
     SignatureVerificationFailed {
+        /// Specific failure reason from the signing pipeline.
         reason: String,
     },
+    /// A redaction operation could not complete. The document is
+    /// guaranteed to be unchanged when this is returned (redaction is
+    /// transactional — failure is total).
     RedactionFailed {
+        /// Diagnostic of what blocked the redaction.
         reason: String,
     },
+    /// A format conversion (PDF → DOCX, PDF → image, HTML → PDF, etc.)
+    /// failed before output was produced.
     ConversionFailed {
+        /// Diagnostic of what blocked the conversion.
         reason: String,
     },
+    /// A text or string encoding could not be decoded.
     InvalidEncoding {
+        /// The encoding name that failed (for example `"WinAnsiEncoding"`).
         encoding: String,
     },
+    /// A PDF stream could not be decoded — typically because the stream
+    /// uses an unsupported filter or the encoded payload is corrupt.
     StreamDecodeFailed {
+        /// The PDF filter name from the stream's `/Filter` entry.
         filter: String,
     },
+    /// The cross-reference table is corrupt or unreadable. Try
+    /// `OpenOptions::repair(true)` for a best-effort recovery pass.
     XrefCorrupt {
+        /// Diagnostic of why the xref could not be parsed.
         reason: String,
     },
+    /// The PDFluent license file is past its expiry date. Renew the
+    /// license or accept the unlicensed-evaluation behaviour.
     LicenseExpired {
+        /// The expiry date the license declared, as an ISO-8601 string.
         expired_since: String,
     },
+    /// The license file is malformed, has a bad signature, or is for a
+    /// different product/key set. The SDK falls back to evaluation mode
+    /// when this fires unless the caller treats it as a hard error.
     LicenseInvalid {
+        /// Specific reason the license could not be accepted.
         reason: String,
     },
+    /// Writing the output document failed (disk full, permission denied,
+    /// network drive vanished, etc.).
     OutputWriteFailed {
+        /// The destination path that was being written.
         path: PathBuf,
+        /// Underlying I/O reason from the OS.
         reason: String,
     },
+    /// An embedded image could not be decoded. Common causes: corrupt JPEG,
+    /// unknown JPX profile, truncated pixel data.
     ImageDecodeFailed {
+        /// The image format name (for example `"JPEG"`, `"JPX"`).
         format: String,
     },
+    /// An encryption operation failed (wrong key, unsupported cipher,
+    /// invalid permission flags).
     EncryptionFailed {
+        /// Diagnostic of what blocked encryption.
         reason: String,
     },
+    /// The document violates a declared compliance standard
+    /// (PDF/A, PDF/UA, PDF/X). Use `pdf-compliance` to repair if possible.
     ComplianceViolation {
+        /// The compliance standard the document failed against
+        /// (e.g. `"PDF/A-2b"`).
         standard: String,
+        /// The specific violation that triggered the failure.
         reason: String,
     },
+    /// A wrapped `std::io::Error` from a lower layer. Inspect the inner
+    /// error for the concrete cause.
     Io(std::io::Error),
+    /// The caller exercised a feature the SDK build does not include
+    /// (typically a feature-gated capability that was not enabled at
+    /// compile time).
     UnsupportedFeature {
+        /// The feature name (matching the Cargo feature flag where
+        /// applicable).
         feature: String,
     },
 }
