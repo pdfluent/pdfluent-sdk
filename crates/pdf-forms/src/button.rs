@@ -3,11 +3,25 @@
 use crate::flags::FieldFlags;
 use crate::tree::*;
 
-/// Button sub-kind.
+/// Sub-kind of a button field.
+///
+/// AcroForm models all of checkbox, radio button, and push button as the
+/// same `/Btn` field type, distinguished only by the `Pushbutton` and `Radio`
+/// flags in the field flags word. Use [`button_kind`] to derive this enum
+/// from a [`FieldFlags`] value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonKind {
+    /// Two-state toggle. Default kind when neither `Pushbutton` nor `Radio`
+    /// flags are set. Drawn as a tickbox; user clicks to flip its value
+    /// between the off-state and an "on" appearance state.
     Checkbox,
+    /// Mutually-exclusive option within a parent radio group. Selecting one
+    /// radio child automatically de-selects its siblings — see
+    /// [`select_radio`].
     Radio,
+    /// Click-to-action button without persistent state. Typically wired to
+    /// a JavaScript or submit/reset action via the `/AA` dictionary; its
+    /// `value` is not meaningful as form data.
     PushButton,
 }
 
@@ -82,29 +96,59 @@ pub fn select_radio(tree: &mut FieldTree, id: FieldId) -> bool {
     true
 }
 
-/// Parsed submit-form action.
+/// Parsed submit-form action attached to a button.
+///
+/// Produced when the parser encounters an `/A` dictionary with `/S /SubmitForm`.
+/// Triggered when the user clicks a push button configured to send form data
+/// to a remote endpoint.
 #[derive(Debug, Clone)]
 pub struct SubmitAction {
+    /// The submission target URL (`/F` entry of the action). Usually HTTP/HTTPS;
+    /// PDF also allows `mailto:` and FTP URLs.
     pub url: String,
+    /// Bit flags from the `/Flags` entry controlling submit format (FDF, HTML,
+    /// XFDF, JSON), field inclusion (include vs. exclude), and HTTP method.
+    /// See ISO 32000-2 §12.7.5.2 Table 257 for the bit assignments.
     pub flags: u32,
 }
 
-/// Parsed reset-form action.
+/// Parsed reset-form action attached to a button.
+///
+/// Produced when the parser encounters an `/A` dictionary with `/S /ResetForm`.
+/// Triggered when the user clicks a push button configured to clear form
+/// fields back to their default values.
 #[derive(Debug, Clone)]
 pub struct ResetAction {
+    /// Fully-qualified field names (parent.child notation) targeted by the
+    /// reset. Empty means "reset all fields in the form".
     pub fields: Vec<String>,
+    /// Bit flags controlling include-vs-exclude semantics (`/Fields` is the
+    /// list to reset, or the list to skip, depending on bit 0). See ISO
+    /// 32000-2 §12.7.5.3.
     pub flags: u32,
 }
 
-/// Icon/caption layout for push buttons (/TP values).
+/// Icon and caption arrangement for a push button's appearance.
+///
+/// Maps to the `/TP` entry of the button's appearance characteristics
+/// dictionary (`/MK`). Determines whether the button shows text only, an
+/// image only, or both — and where the caption sits relative to the icon.
+/// PDF default when `/TP` is absent or unrecognized is [`Self::CaptionOnly`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconCaptionLayout {
+    /// `/TP 0` — show only the caption (`/CA`). Icon (if any) is ignored.
     CaptionOnly,
+    /// `/TP 1` — show only the icon. Caption is ignored.
     IconOnly,
+    /// `/TP 2` — caption rendered below the icon.
     CaptionBelow,
+    /// `/TP 3` — caption rendered above the icon.
     CaptionAbove,
+    /// `/TP 4` — caption rendered to the right of the icon.
     CaptionRight,
+    /// `/TP 5` — caption rendered to the left of the icon.
     CaptionLeft,
+    /// `/TP 6` — caption overlaid on top of the icon.
     CaptionOverlay,
 }
 

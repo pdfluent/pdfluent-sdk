@@ -3,12 +3,27 @@
 use crate::flags::FieldFlags;
 use crate::tree::*;
 
-/// Choice field sub-kind.
+/// Sub-kind of a choice (`/Ch`) field, derived from its flags word.
+///
+/// AcroForm models combo boxes and list boxes as the same field type;
+/// the four variants below distinguish the visual presentation and
+/// selection semantics. Use [`choice_kind`] to derive this enum from a
+/// [`FieldFlags`] value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChoiceKind {
+    /// Closed-list combo box: pick one of the predefined `/Opt` entries.
+    /// Free-text input not allowed. (`Combo` flag set; `Edit` clear.)
     ComboBox,
+    /// Combo box that also accepts free-text input not in the option list.
+    /// Useful for "common cities, but type your own" patterns.
+    /// (`Combo` and `Edit` both set.)
     EditableCombo,
+    /// Single-selection list box; one option visible-and-selected at a
+    /// time, others scroll. (`Combo` clear; `MultiSelect` clear.)
     ListBox,
+    /// List box allowing multiple options to be selected simultaneously
+    /// (Ctrl/Cmd-click). The field's value is then a name array rather
+    /// than a single name. (`MultiSelect` flag set.)
     MultiSelectListBox,
 }
 

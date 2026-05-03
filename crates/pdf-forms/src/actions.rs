@@ -2,18 +2,37 @@
 
 use crate::tree::*;
 
-/// Action trigger types from the /AA dictionary.
+/// Action trigger types from the `/AA` (Additional Actions) dictionary on a
+/// form field or page.
+///
+/// Each variant maps to a PDF additional-action key per ISO 32000-2 §12.6.3.
+/// Most are field-level; `PageOpen` and `PageClose` are page-level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionTrigger {
+    /// `/K` — fires on every keystroke while a text field is being edited.
+    /// Used for input filtering (e.g. allow only digits).
     Keystroke,
+    /// `/V` — fires when the field's value is committed (focus loss or
+    /// explicit submit). Used for validation; the script may reject the
+    /// value.
     Validate,
+    /// `/F` — fires before the field's value is displayed. Used to format
+    /// the visual representation (e.g. number formatting, dates).
     Format,
+    /// `/C` — fires when any field referenced in this field's calculation
+    /// order changes. Used to derive a value from other fields.
     Calculate,
+    /// `/E` — fires when the cursor enters the field's annotation area.
     CursorEnter,
+    /// `/X` — fires when the cursor exits the field's annotation area.
     CursorExit,
+    /// `/Fo` — fires when the field gains keyboard focus.
     Focus,
+    /// `/Bl` — fires when the field loses keyboard focus.
     Blur,
+    /// `/O` — page-level: fires when the page is opened in a viewer.
     PageOpen,
+    /// `/C` (page-level): fires when the page is closed in a viewer.
     PageClose,
 }
 
