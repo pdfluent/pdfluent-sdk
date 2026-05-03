@@ -291,15 +291,22 @@ pub fn apply_dynamic_scripts_with_runtime(
                             Err(SandboxError::OutOfMemory) => js_skipped += 1,
                             Err(e) => {
                                 // M3-B Phase C-α: surface the per-script error
-                                // class via `log::debug!` so operators running
-                                // RUST_LOG=pdf_xfa::dynamic=debug can enumerate
-                                // missing-global ReferenceErrors without
-                                // shipping script bodies into log lines.
+                                // class via `log::debug!` for normal builds and
+                                // also via stderr when `XFA_JS_DEBUG=1` is set
+                                // (operator triage aid; xfa-cli does not init
+                                // a logger that respects RUST_LOG).
                                 log::debug!(
                                     "sandbox script error on activity={:?}: {}",
                                     script.activity.as_deref(),
                                     e
                                 );
+                                if std::env::var("XFA_JS_DEBUG").ok().as_deref() == Some("1") {
+                                    eprintln!(
+                                        "XFA_JS_DEBUG sandbox script error on activity={:?}: {}",
+                                        script.activity.as_deref(),
+                                        e
+                                    );
+                                }
                                 js_skipped += 1;
                             }
                         }
