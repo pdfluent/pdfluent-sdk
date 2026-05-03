@@ -162,59 +162,177 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     }
 }
 
-/// Report from supplementary fixups.
+/// Counters reporting how many objects each PDF/A supplementary fixup
+/// pass mutated.
+///
+/// Returned by the supplementary-fixup pipeline that runs alongside
+/// PDF/A conversion. Each field is the count of distinct objects (or
+/// occurrences) the named pass touched. Zero counts mean either "the
+/// input was already compliant on that point" or "the fixup was not
+/// applicable to this document".
+///
+/// Field names are stable; PDF/A-clause references in the per-field
+/// docs point to the relevant section of ISO 19005-1 / 19005-2 so a
+/// caller debugging a non-compliant output can map a count back to the
+/// rule the fixup enforces.
 #[derive(Debug, Clone, Default)]
 pub struct FixupReport {
+    /// PDF/A §6.2.11.6 — `/StandardEncoding` references replaced with
+    /// `/WinAnsiEncoding` on non-symbolic simple fonts.
     pub standard_encoding_fixed: usize,
+    /// PDF/A §6.2.11.6:2 — TrueType font `/Encoding` `/Differences`
+    /// entries normalized so each glyph name resolves under the chosen
+    /// base encoding.
     pub tt_encoding_diffs_fixed: usize,
+    /// PDF/A §6.2.4.4:1 — DeviceN / NChannel `/Colorants` dictionaries
+    /// fixed so every spot colour is also defined as a process-colorant
+    /// alternate.
     pub devicen_colorants_fixed: usize,
+    /// PDF/A §6.3.1:1 — annotations of forbidden subtypes removed
+    /// (3D, Movie, Sound, Screen, FileAttachment, RichMedia, etc.).
     pub forbidden_annots_removed: usize,
+    /// PDF/A §6.5.3 — annotation `/CA` (constant alpha) forced to
+    /// `1.0` since transparent annotations are forbidden.
     pub annotation_opacity_fixed: usize,
+    /// PDF/A §6.1.7.2:1 — `/Crypt` and other forbidden stream filters
+    /// stripped from filter chains.
     pub crypt_filters_removed: usize,
+    /// PDF/A §6.8:2 / §6.8:5 — embedded-file `/EF` streams stripped
+    /// from file-specification dictionaries that target a non-PDF/A
+    /// embedding.
     pub file_spec_ef_stripped: usize,
+    /// PDF/A §6.2.2:2 — missing `/Resources` entries added to content
+    /// streams that referenced fonts/colour-spaces not declared on the
+    /// owning page.
     pub content_resources_added: usize,
+    /// PDF/A §6.1.7.1:1 — stream `/Length` entries corrected to match
+    /// the actual byte count of the stream payload.
     pub stream_lengths_fixed: usize,
+    /// PDF/A §6.2.11.3.3:2 — CMap `/WMode` entries reconciled with the
+    /// referenced CIDFont's writing-mode entry.
     pub cmap_wmode_fixed: usize,
+    /// PDF/A §6.2.11.3.2:1 — Type 2 CIDFont `/CIDToGIDMap` entries
+    /// added or normalized so every glyph index is resolvable.
     pub cidtogidmap_fixed: usize,
+    /// PDF/A §6.2.11.3.1:1 / §6.2.11.3.3:1 — `/CIDSystemInfo`
+    /// registry/ordering mismatches between CIDFont and CMap fixed.
     pub cidsysteminfo_fixed: usize,
+    /// PDF/A §6.2.11.3.3 — non-standard CMaps embedded as content
+    /// streams (instead of relying on viewer-provided pre-defined
+    /// CMaps).
     pub cmap_embedded: usize,
+    /// `/UseCMap` indirections replaced with the inlined CMap content;
+    /// counterpart of `cmap_embedded`.
     pub usecmap_stripped: usize,
+    /// PDF/A §6.2.8:2 — OPI keys (`/OPI`) removed from Image XObject
+    /// dictionaries.
     pub opi_keys_removed: usize,
+    /// PDF/A §6.1.7.1:3 — `/F`, `/FFilter`, `/FDecodeParms` stripped
+    /// from stream dictionaries (external-file streams are forbidden).
     pub stream_f_keys_removed: usize,
+    /// PDF/A §6.2.9:3 — PostScript XObjects (`/Subtype /PS`) removed.
     pub postscript_xobjects_removed: usize,
+    /// PDF/A §6.2.9:2 — reference XObjects (`/Ref` entry on form
+    /// XObjects) removed.
     pub reference_xobjects_removed: usize,
+    /// PDF/A §6.1.13:1 — integer values exceeding ±2³¹-1 clamped to
+    /// the i32 range.
     pub overflow_integers_fixed: usize,
+    /// PDF/A §6.1.13 — real values exceeding ±32767 clamped.
     pub overflow_reals_fixed: usize,
+    /// PDF/A §6.1.13:3 — strings longer than 32767 bytes truncated.
     pub long_strings_fixed: usize,
+    /// Content-stream operator spacing normalized so each operator
+    /// is followed by whitespace as required by lexical rules.
     pub operator_spacing_fixed: usize,
+    /// PDF/A §6.1.13 — subnormal / tiny float values clamped to zero
+    /// so they round-trip through PDF lexers.
     pub tiny_floats_fixed: usize,
+    /// Odd-length hex strings padded to even length so the lexer can
+    /// decode them without ambiguity.
     pub odd_hex_strings_fixed: usize,
+    /// Non-ASCII bytes in PDF `/Name` objects escaped using the `#XX`
+    /// hex escape syntax.
     pub non_ascii_names_fixed: usize,
+    /// PDF/A §6.1.13 — overlong `/Name` objects inside content streams
+    /// shortened to the spec limit (127 bytes).
     pub long_names_in_streams_fixed: usize,
+    /// Dictionary keys exceeding the lexical length limit (127 bytes)
+    /// shortened.
     pub long_dict_keys_fixed: usize,
+    /// PDF/A §6.1.13 — long strings inside content streams truncated
+    /// to fit the spec limit.
     pub long_strings_in_streams_fixed: usize,
+    /// XMP `/Lang` values normalized to a valid BCP-47 / RFC 1766
+    /// language tag.
     pub invalid_lang_fixed: usize,
+    /// Inline-image `/I` (interpolate) abbreviation expanded to its
+    /// full PDF dictionary form.
     pub inline_image_interpolate_fixed: usize,
+    /// Inline-image `/A85` filter abbreviation expanded to
+    /// `/ASCII85Decode`.
     pub ascii85_inline_images_fixed: usize,
+    /// Inline-image `/LZW` filter abbreviation expanded to
+    /// `/LZWDecode`.
     pub lzw_inline_images_fixed: usize,
+    /// JBIG2 `/Globals` references normalized to embedded streams
+    /// when the original referenced an external dictionary.
     pub jbig2_globals_fixed: usize,
+    /// JPEG 2000 `/ColorSpace` mismatches between the JPX bitstream
+    /// and the surrounding image XObject corrected.
     pub jpx_colorspace_fixed: usize,
+    /// Concatenated operators (e.g. `BTET` instead of `BT ET`) split
+    /// in content streams.
     pub concatenated_operators_fixed: usize,
+    /// Unknown / non-spec content-stream operators stripped so PDF/A
+    /// validators don't trip on them.
     pub unknown_operators_stripped: usize,
+    /// Page boundary boxes (`/MediaBox`, `/CropBox`, etc.) corrected
+    /// when invalid (zero/negative width/height or non-aligned).
     pub page_boundary_fixed: usize,
+    /// Transparency group dictionaries (`/Group`) added on pages /
+    /// form XObjects that contain transparency operators but lack
+    /// the required `/CS` declaration.
     pub transparency_groups_added: usize,
+    /// `/SMask` `/Subtype` entries normalized (must be `/Alpha` or
+    /// `/Luminosity` per spec).
     pub smask_subtype_fixed: usize,
+    /// Blend-mode names (`/BM`) normalized to the allowed PDF/A
+    /// subset (`/Normal` and a small fixed list).
     pub blend_mode_fixed: usize,
+    /// Font `/Subtype` entries reconciled with the actual embedded
+    /// program type (e.g. a `Type1` declaration on a CFF program
+    /// fixed to `Type1C`).
     pub font_type_fixed: usize,
+    /// Form XObject `/BBox` entries added when missing or fixed when
+    /// invalid.
     pub form_xobject_bbox_fixed: usize,
+    /// Container objects (arrays/dicts) exceeding the implementation
+    /// length limit truncated.
     pub long_containers_fixed: usize,
+    /// Non-UTF-8 bytes in PDF `/Name` objects escaped or replaced.
     pub non_utf8_names_fixed: usize,
+    /// PDF/A §6.3.4 — annotations missing `/AP` (appearance) streams
+    /// had a default appearance generated.
     pub annot_ap_fixed: usize,
+    /// Garbage characters between hex digits inside hex strings
+    /// removed.
     pub hex_garbage_fixed: usize,
+    /// External `/F` streams normalized to inline streams.
     pub stream_external_f_fixed: usize,
+    /// JBIG2 globals promoted from inline-data references to proper
+    /// stream objects.
     pub jbig2_globals_promoted: usize,
+    /// DeviceCMYK colour usage reconciled with the document's output
+    /// intent (a CMYK output intent must be present when DeviceCMYK
+    /// is used).
     pub device_cmyk_intent_fixed: usize,
+    /// Annotation colour values reconciled with the document's output
+    /// intent so `/C` / `/IC` arrays are valid in the chosen colour
+    /// space.
     pub annotation_color_intent_fixed: usize,
+    /// ICC-profile reuse normalized — duplicate inlined ICC profiles
+    /// replaced with references to a single shared object.
     pub icc_profile_reuse_fixed: usize,
 }
 

@@ -11,11 +11,16 @@ use crate::watermark::{
 use lopdf::content::{Content, Operation};
 use lopdf::{dictionary, Document, Object, Stream};
 
-/// Text alignment for header/footer zones.
+/// Horizontal text alignment within a header / footer / Bates-number
+/// zone. Used by [`HeaderFooter`] (one alignment per zone slot) and by
+/// [`BatesConfig::alignment`].
 #[derive(Debug, Clone, Copy)]
 pub enum Alignment {
+    /// Anchor text to the left margin of the page.
     Left,
+    /// Centre text horizontally between the left and right margins.
     Center,
+    /// Anchor text to the right margin of the page.
     Right,
 }
 
@@ -72,10 +77,17 @@ pub struct BatesConfig {
     pub color: (f32, f32, f32),
 }
 
-/// Where to place the Bates number.
+/// Vertical placement of a Bates number on the page.
+///
+/// Bates numbers are sequential identifiers stamped on every page of a
+/// document set, typically used in legal discovery. This enum chooses
+/// whether the number is rendered in the page header (top margin) or
+/// the page footer (bottom margin).
 #[derive(Debug, Clone, Copy)]
 pub enum BatesPosition {
+    /// Render the Bates number in the page header (top margin).
     Header,
+    /// Render the Bates number in the page footer (bottom margin).
     Footer,
 }
 

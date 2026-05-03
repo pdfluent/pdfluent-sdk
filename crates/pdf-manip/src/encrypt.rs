@@ -96,10 +96,16 @@ impl Default for Permissions {
 }
 
 impl Permissions {
+    /// All permissions granted — useful as a starting point that the
+    /// caller selectively narrows. Equivalent to [`Permissions::default`].
     pub fn allow_all() -> Self {
         Self::default()
     }
 
+    /// All permissions denied — most restrictive starting point.
+    /// Note that PDF readers commonly ignore restrictions when the
+    /// document is opened with the owner password, so this is best
+    /// thought of as a hint rather than a hard guarantee.
     pub fn deny_all() -> Self {
         Self {
             print: false,
@@ -192,12 +198,23 @@ pub fn remove_encryption(doc: &mut Document) {
     doc.trailer.remove(b"Encrypt");
 }
 
-/// Encryption configuration.
+/// Configuration for encrypting a PDF — passwords, algorithm, and the
+/// permission flags written into the encrypted document.
 #[derive(Debug, Clone)]
 pub struct EncryptConfig {
+    /// Password required for "open" access. May be empty (no password
+    /// needed to view, only to modify) — but at least one of user or
+    /// owner password should be set in practice.
     pub user_password: Vec<u8>,
+    /// Password required for full / unrestricted access (owner mode).
+    /// Owner-mode opens override the [`Permissions`] flags. Should be
+    /// distinct from `user_password`.
     pub owner_password: Vec<u8>,
+    /// Encryption algorithm to use (AES-128 or AES-256). AES-256
+    /// requires PDF 2.0 or PDF 1.7 ExtensionLevel 3.
     pub algorithm: EncryptionAlgorithm,
+    /// Permission flags applied to user-password access. Ignored when
+    /// the document is opened with the owner password.
     pub permissions: Permissions,
 }
 

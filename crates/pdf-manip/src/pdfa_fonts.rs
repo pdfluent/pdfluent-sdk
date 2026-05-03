@@ -127,9 +127,18 @@ pub enum ResolvedEncoding {
 }
 
 /// Correction plan for a single font, computed without mutations.
+///
+/// Produced by the read-only analysis pass; applying the plan back to
+/// the document is a separate write pass. Splitting the work this way
+/// lets callers preview every PDF/A font correction before deciding
+/// whether to commit them.
 #[derive(Debug, Clone)]
 pub struct FontCorrectionPlan {
+    /// PDF object ID of the font dictionary the plan applies to.
     pub font_id: ObjectId,
+    /// Encoding that the font should use after applying the plan.
+    /// May match the existing encoding (no change needed) or describe
+    /// the corrected `/Encoding` entry the writer pass should emit.
     pub resolved_encoding: ResolvedEncoding,
     /// Width corrections: index in Widths array → new integer width
     pub width_corrections: Vec<(usize, i32)>,
@@ -5544,6 +5553,14 @@ fn notdef_content_stream_ids(doc: &Document, container: ObjectId) -> Vec<ObjectI
     }
 }
 
+/// Fix Type 1 font subsets that reference glyph names absent from the
+/// embedded font program. PDF/A requires every used glyph to be present
+/// in the embedded font; this pass walks Type 1 subset fonts in `doc`,
+/// detects missing glyphs in the `/CharSet` or charstring index, and
+/// either substitutes a `.notdef` reference or extends the embedded
+/// program.
+///
+/// Returns the number of font objects that were mutated. Idempotent.
 pub fn fix_type1_subset_missing_glyphs(doc: &mut Document) -> usize {
     use std::{
         collections::{hash_map::Entry, HashMap},
@@ -13591,6 +13608,15 @@ fn cff_has_custom_encoding(data: &[u8]) -> bool {
     enc_offset > 1
 }
 
+/// Parse a CFF (Compact Font Format) program and return a map from
+/// 8-bit character codes to 16-bit GID (glyph index) values, as defined
+/// by the CFF Encoding tables (Adobe Tech Note 5176).
+///
+/// Used by PDF/A font correction passes that need to reconcile a Type 1
+/// or CFF font's encoding with the surrounding `/Encoding` PDF dict.
+/// Returns an empty map when `data` is not a valid CFF program or the
+/// encoding section cannot be located — callers should treat that as
+/// "no changes possible" rather than as an error.
 pub fn parse_cff_encoding_map(data: &[u8]) -> std::collections::HashMap<u8, u16> {
     let mut map = std::collections::HashMap::new();
 
@@ -17736,6 +17762,14 @@ pub fn fix_remaining_tt_width_mismatches(doc: &mut Document) -> usize {
     fixed
 }
 
+/// Detect content-stream references to glyph code points that resolve
+/// to `.notdef` in the active font, and either replace them with a
+/// space or remove them. PDF/A forbids visible `.notdef` glyphs because
+/// they break archival fidelity (the shape rendered depends on the
+/// viewer's substitution algorithm).
+///
+/// Returns the number of font objects whose referencing content streams
+/// were mutated. Idempotent.
 pub fn fix_notdef_glyph_refs(doc: &mut Document) -> usize {
     let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     let used_simple_codes = collect_simple_font_used_codes(doc);
@@ -19312,6 +19346,17 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
     total_fixed
 }
 
+/// Detect 8-bit character codes used in content streams that fall
+/// outside the range supported by their referenced simple font
+/// (`Type1` / `TrueType` / `Type3`), and remove or remap them.
+///
+/// Out-of-range codes break PDF/A conformance because they reference
+/// glyphs the font program cannot resolve. This pass clamps the codes
+/// or replaces the referencing operator entirely depending on the font
+/// configuration.
+///
+/// Returns the total number of content-stream objects mutated.
+/// Idempotent.
 pub fn fix_simple_font_out_of_range_codes(doc: &mut Document) -> usize {
     use std::collections::HashMap;
 
