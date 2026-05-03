@@ -1,8 +1,9 @@
 [package]
 name = "pdfluent-forms"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.3"
 edition = "2021"
-license = "MIT"
+license-file = "LICENSE"
+readme = "README.md"
 description = "AcroForm engine for PDF interactive forms."
 repository = "https://github.com/pdfluent"
 homepage = "https://pdfluent.com"

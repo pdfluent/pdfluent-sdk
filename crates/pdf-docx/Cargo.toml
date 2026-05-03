@@ -2,7 +2,8 @@
 name = "pdf-docx"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file = "LICENSE"
+readme = "README.md"
 repository.workspace = true
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
@@ -11,7 +12,7 @@ description = "PDF to DOCX conversion with text, tables, and images"
 [dependencies]
 lopdf.workspace = true
 thiserror.workspace = true
-pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.1" }
+pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.3" }
 quick-xml = { version = "0.37", features = ["serialize"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 

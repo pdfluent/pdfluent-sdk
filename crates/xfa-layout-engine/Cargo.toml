@@ -2,11 +2,12 @@
 name = "xfa-layout-engine"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file = "LICENSE"
+readme = "README.md"
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-description = "Box-model and pagination layout engine for XFA forms."
+description = "Box-model and pagination layout engine for XFA forms. Experimental — part of the PDFluent XFA stack, under active development."
 
 [dependencies]
 xfa-dom-resolver.workspace = true
