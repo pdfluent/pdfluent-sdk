@@ -6,6 +6,7 @@ All notable changes to the xfa-native-rust PDF engine are documented here.
 
 ### Added
 
+- feat(pdf-xfa): feature-gated JavaScript runtime adapter skeleton (`xfa-js-sandboxed`, default off) for M3-B Phase B — opt-in `JsExecutionMode::SandboxedRuntime`, rquickjs backend, no host bindings yet
 - `/ActualText` extraction from BDC marked-content in `pdf-extract`; `TextBlock.actual_text: Option<String>` field — #1313
 - Ligature decomposition in `pdf-extract` text extraction (FB00–FB06 + `st` / `ct`) with NFKD fallback inside FB00–FB4F — #1314
 

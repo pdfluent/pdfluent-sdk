@@ -27,3 +27,15 @@ roxmltree = "0.20"
 log = "0.4"
 base64 = "0.22"
 image = { workspace = true }
+
+# M3-B Phase B: optional sandboxed JavaScript runtime backend.
+# Off by default; enabled via `--features xfa-js-sandboxed`.
+# See benchmarks/runs/M3B_RUNTIME_SECURITY_MODEL.md for the binding contract.
+rquickjs = { version = "0.8", optional = true, default-features = false }
+
+[features]
+default = []
+# Enables the sandboxed QuickJS-backed runtime adapter behind
+# `JsExecutionMode::SandboxedRuntime`. Default behaviour and tests are
+# unaffected; the runtime registers no host bindings in this phase.
+xfa-js-sandboxed = ["dep:rquickjs"]
