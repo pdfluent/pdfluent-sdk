@@ -1,20 +1,56 @@
 # pdfluent-ccitt
 
-A pure-Rust CCITT (Group 3 / Group 4 fax) decoder, used for decoding CCITT-compressed images embedded in PDF files.
+A pure-Rust **CCITT** decoder for Group 3 and Group 4 facsimile-encoded
+bitmap images, used to decode CCITT-compressed images embedded in PDF
+documents.
 
-This crate is a fork of [`hayro-ccitt`](https://github.com/LaurenzV/hayro) by Laurenz Stampfl. It is a low-level decoder used by the [PDFluent](https://pdfluent.com) commercial Rust PDF SDK.
+`pdfluent-ccitt` is one of the open-source foundation crates used by the
+[PDFluent](https://pdfluent.com) commercial Rust PDF SDK. It is published as
+**MIT OR Apache-2.0** so it can also be used standalone.
 
-## License
+This crate is a **fork of [`hayro-ccitt`](https://github.com/LaurenzV/hayro)**
+by Laurenz Stampfl. The fork is maintained by PDFluent for coordinated
+exact-version pinning across the workspace.
 
-**MIT OR Apache-2.0** (preserved from upstream `hayro-ccitt`).
+## What this crate gives you
 
-Original copyright: Laurenz Stampfl. PDFluent fork: Innovation Trigger BV. See `LICENSE-MIT` and `LICENSE-APACHE`.
+- Decode CCITT G3 / G4 (one-dimensional and two-dimensional) bitmap data
+  (the `/Filter /CCITTFaxDecode` PDF stream)
+- Pure Rust — memory-safe, no C dependency, compiles to WebAssembly
+
+CCITT is the dominant compression scheme for monochrome scanned documents
+in older PDFs and for fax workflows.
+
+What this crate is **not**:
+- Not a CCITT encoder
+- Not a generic image processing library
 
 ## Usage
 
-This crate can be used standalone. For the full PDFluent SDK, see [`pdfluent`](https://crates.io/crates/pdfluent).
+This crate is most often invoked transitively via PDFluent's PDF stream
+filtering layer. Direct usage:
+
+```toml
+[dependencies]
+pdfluent-ccitt = "0.2"
+```
+
+For PDF-level rendering, prefer the
+[`pdfluent`](https://crates.io/crates/pdfluent) facade.
+
+## License
+
+**MIT OR Apache-2.0** — preserved from upstream `hayro-ccitt`.
+
+```
+Copyright (c) Laurenz Stampfl (hayro-ccitt)
+Copyright (c) 2026 Innovation Trigger BV (PDFluent fork)
+```
+
+See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
 
 ## Links
 
-- PDFluent: <https://pdfluent.com>
+- PDFluent SDK: <https://pdfluent.com>
+- `cargo add pdfluent` (full SDK): <https://crates.io/crates/pdfluent>
 - Upstream hayro: <https://github.com/LaurenzV/hayro>
