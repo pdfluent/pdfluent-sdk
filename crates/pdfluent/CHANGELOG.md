@@ -6,6 +6,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.0.0-beta.4] — Unreleased (M63 API stability hardening)
+
+### Documentation
+
+- Fixed all 9 broken intra-doc links in `pdfluent` (paths in document.rs,
+  encrypt.rs, error.rs). `cargo doc -p pdfluent` is now warning-free.
+- Documented the **determinism contract** explicitly on `SaveOptions` and
+  in `tests/determinism.rs`: byte-deterministic output for unencrypted
+  documents under unchanged input/options. Encryption (random IVs) and
+  caller-introduced timestamps remain non-deterministic by design.
+
+### Tests
+
+- New integration test file `tests/determinism.rs` with 4 tests:
+  - `determinism_to_bytes_is_idempotent`
+  - `determinism_multi_open_roundtrip`
+  - `determinism_write_to_in_memory_cursor` (CI-safe, in-memory)
+  - `determinism_to_bytes_matches_save_with` (disk-vs-memory parity)
+  All passing on `1.0.0-beta.3` codebase as of 2026-05-03.
+
+### Internal — workspace lints
+
+Enabled `#![warn(missing_docs)]` across 14 commercial crates that did not
+have it (the `pdfluent` facade already had it). Two crates
+(`pdfluent-sign`, `pdf-compliance`) ship `#![deny(missing_docs)]` — no
+change. `pdf-engine` upgraded from `#![allow]` → `#![warn]`. The
+upstream-fork crates `pdf-render` and `pdf-font` still inherit Hayro's
+permissive doc policy and are not yet at warn — left for a future pass.
+
+This produces a baseline of ~895 doc-coverage warnings to address
+incrementally; no compile errors. Customer-facing surface
+(`pdfluent::*`) remains 0-warning.
+
+### Public API
+
+- No breaking changes vs `1.0.0-beta.3`. The audit (#1383) confirmed the
+  facade is well-curated: 233 public items across 18 modules, no
+  `#[doc(hidden)]` leakage, prelude is selective. No renames, no removals.
+
+---
+
 ## [1.0.0-beta.3] — 2026-05-03 (license model correction)
 
 ### Status

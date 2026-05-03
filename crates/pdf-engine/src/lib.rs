@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+#![warn(missing_docs)]
 //! Unified PDF rendering engine.
 //!
 //! `pdf-engine` is the main public-facing API for reading and rendering PDF

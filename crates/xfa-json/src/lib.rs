@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! JSON-first API for XFA forms.
 //!
 //! Provides bidirectional conversion between XFA `FormTree` structures and JSON,

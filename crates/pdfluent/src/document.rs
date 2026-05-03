@@ -119,6 +119,30 @@ impl OpenOptions {
 /// `overwrite = false`. `save` / `save_with` therefore refuse to
 /// clobber existing files unless you opt in via
 /// [`with_overwrite(true)`](Self::with_overwrite).
+///
+/// # Determinism
+///
+/// For an unencrypted document, `save`, `save_with`, `to_bytes`, and
+/// `write_to` produce **byte-identical output** for byte-identical input
+/// (issue #1308). This is enforced by integration tests in
+/// `tests/determinism.rs` and is part of the 1.0 contract.
+///
+/// Specifically guaranteed:
+/// - Object ordering is sorted by `(id, generation)` — `BTreeMap` in lopdf.
+/// - Dictionary key order is preserved on round-trip — `IndexMap` in lopdf.
+/// - Stream content is copied as-is.
+/// - The cross-reference table is derived deterministically.
+///
+/// **NOT deterministic (by design):**
+/// - **Encrypted output** — AES IVs and content keys are randomly generated
+///   per save (security requirement, ISO 32000-2 §7.6). Two saves of the
+///   same encrypted document produce different bytes.
+/// - **Caller-introduced timestamps** — anything you write via
+///   [`metadata_mut()`](PdfDocument::metadata_mut) using the system clock
+///   (e.g. `set_creation_date(SystemTime::now())`).
+///
+/// Customer CI pipelines that compare PDF checksums depend on this
+/// guarantee — break it only with a new RFC.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct SaveOptions {
@@ -1126,10 +1150,9 @@ impl PdfDocument {
 
     /// Redact every occurrence of the given text.
     ///
-    /// Routes to `pdf_redact::search_and_redact`. Honours
-    /// [`RedactOptions::case_sensitive`](crate::redact::RedactOptions),
-    /// [`RedactOptions::regex`], and
-    /// [`RedactOptions::on_pages`] — page numbers are translated 1-to-1.
+    /// Routes to `pdf_redact::search_and_redact`. Honours `case_sensitive`,
+    /// `regex`, and `on_pages` from [`RedactOptions`](crate::redact::RedactOptions)
+    /// — page numbers are translated 1-to-1.
     ///
     /// Images within redaction regions are fully blacked out. Unsupported image
     /// filters (JBIG2, JPEG2000) cause the operation to fail. Overlapping
@@ -1200,9 +1223,11 @@ impl PdfDocument {
 
     /// Validate the document against the given PDF/A profile.
     ///
-    /// Returns a [`PdfAValidationReport`] describing all findings. Call
-    /// [`PdfAValidationReport::is_compliant`] to check whether the document
-    /// passes without error-severity violations.
+    /// Returns a [`PdfAValidationReport`](crate::compliance::PdfAValidationReport)
+    /// describing all findings. Call its
+    /// [`is_compliant`](crate::compliance::PdfAValidationReport::is_compliant)
+    /// method to check whether the document passes without error-severity
+    /// violations.
     ///
     /// Requires the `pdfa` feature and a license tier that grants
     /// [`Capability::PdfaValidate`].

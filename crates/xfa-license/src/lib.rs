@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! XFA License — Ed25519 signed license files with metering and rate limiting.
 //!
 //! Provides an asymmetric (Ed25519) license file system for offline validation.

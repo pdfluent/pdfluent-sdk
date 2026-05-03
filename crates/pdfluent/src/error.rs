@@ -8,7 +8,7 @@
 //! - a stable [`code`](Error::code) string of the form `E-<CATEGORY>-<SPECIFIC>`,
 //! - a deep-linked [`docs_url`](Error::docs_url) to
 //!   `https://pdfluent.com/errors/<code>`,
-//! - a human-readable message via [`Display`].
+//! - a human-readable message via the [`std::fmt::Display`] implementation.
 //!
 //! See RFC 0001 §5 for the full contract.
 
