@@ -2,6 +2,9 @@ use std::collections::HashMap;
 
 use crate::error::{Result, XfaError};
 use crate::javascript_policy::{self, JavaScriptEntryPoint};
+use crate::js_runtime::{
+    activity_allowed_for_sandbox, NullRuntime, RuntimeMetadata, SandboxError, XfaJsRuntime,
+};
 use formcalc_interpreter::{
     interpreter::Interpreter, lexer::tokenize, parser, som_bridge::SomResolver,
     value::Value as FormCalcValue,
@@ -29,6 +32,17 @@ pub enum JsExecutionMode {
     /// returned outcome.
     #[default]
     BestEffortStatic,
+    /// **M3-B Phase B opt-in.** Route JavaScript scripts through the sandboxed
+    /// runtime adapter (`crate::js_runtime`). Requires the Cargo feature
+    /// `xfa-js-sandboxed` to be compiled in for any script to actually
+    /// execute; without the feature the runtime returns
+    /// [`SandboxError::NotCompiledIn`] and the dispatch path falls back to
+    /// the same skip behaviour as [`Self::BestEffortStatic`] while incrementing
+    /// `js_runtime_errors` so callers can observe the dead-code state.
+    /// Phase B registers no host bindings; see
+    /// `benchmarks/runs/M3B_HOST_BINDINGS_MINIMUM_SET.md` for the Phase C
+    /// roadmap.
+    SandboxedRuntime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -36,6 +50,9 @@ pub enum OutputQuality {
     #[default]
     Exact,
     BestEffort,
+    /// **M3-B Phase B.** All JavaScript scripts on the document executed
+    /// inside the sandbox without runtime / timeout / OOM errors.
+    Sandboxed,
 }
 
 impl OutputQuality {
@@ -43,6 +60,7 @@ impl OutputQuality {
         match self {
             Self::Exact => "exact",
             Self::BestEffort => "best_effort",
+            Self::Sandboxed => "sandboxed",
         }
     }
 }
@@ -56,6 +74,19 @@ pub struct DynamicScriptOutcome {
     pub formcalc_run: usize,
     pub formcalc_errors: usize,
     pub output_quality: OutputQuality,
+    /// **M3-B Phase B.** Scripts that ran to completion in the sandboxed
+    /// runtime. Always 0 when mode != [`JsExecutionMode::SandboxedRuntime`]
+    /// or when the `xfa-js-sandboxed` feature is not compiled in.
+    pub js_executed: usize,
+    /// **M3-B Phase B.** Sandbox errors that did not fall under timeout / OOM
+    /// (parse error, throw, missing host binding in Phase B, FFI panic). The
+    /// dispatch path treats these as a script skip; the parent flatten never
+    /// aborts because of them (S-17 fail-open).
+    pub js_runtime_errors: usize,
+    /// **M3-B Phase B.** Per-script time-budget exhaustions.
+    pub js_timeouts: usize,
+    /// **M3-B Phase B.** Per-document memory-budget exhaustions.
+    pub js_oom: usize,
 }
 
 impl Default for DynamicScriptOutcome {
@@ -68,6 +99,10 @@ impl Default for DynamicScriptOutcome {
             formcalc_run: 0,
             formcalc_errors: 0,
             output_quality: OutputQuality::Exact,
+            js_executed: 0,
+            js_runtime_errors: 0,
+            js_timeouts: 0,
+            js_oom: 0,
         }
     }
 }
@@ -169,6 +204,26 @@ pub fn apply_dynamic_scripts_with_mode(
     root_id: FormNodeId,
     mode: JsExecutionMode,
 ) -> Result<DynamicScriptOutcome> {
+    apply_dynamic_scripts_with_runtime(form, root_id, mode, &mut NullRuntime::new())
+}
+
+/// Phase B entry point that lets the caller inject a sandboxed runtime
+/// adapter. When `mode == JsExecutionMode::SandboxedRuntime` the supplied
+/// `runtime` is consulted for every JavaScript script whose `<event activity>`
+/// is in [`crate::js_runtime::SANDBOX_ACTIVITY_ALLOWLIST`]. UI / submission
+/// activities skip the runtime entirely and are recorded as `js_skipped`,
+/// matching `BestEffortStatic` behaviour for those scripts.
+///
+/// Other modes ignore `runtime` entirely; callers that just need the
+/// existing strict / best-effort behaviour should use
+/// [`apply_dynamic_scripts_with_mode`] (which routes through
+/// [`crate::js_runtime::NullRuntime`]).
+pub fn apply_dynamic_scripts_with_runtime(
+    form: &mut FormTree,
+    root_id: FormNodeId,
+    mode: JsExecutionMode,
+    runtime: &mut dyn XfaJsRuntime,
+) -> Result<DynamicScriptOutcome> {
     let parents = build_parent_map(form, root_id);
     let all_scripts: Vec<(FormNodeId, Vec<EventScript>)> = form
         .nodes
@@ -195,20 +250,52 @@ pub fn apply_dynamic_scripts_with_mode(
 
     let mut js_skipped = 0usize;
     let mut other_skipped = 0usize;
+    let mut sandbox_metadata = RuntimeMetadata::default();
     let mut scripts = Vec::new();
+    let sandbox_active = mode == JsExecutionMode::SandboxedRuntime;
+
+    if sandbox_active {
+        // Best-effort init / reset; init failures are non-fatal — the
+        // dispatch path will record them as runtime_errors per script.
+        let _ = runtime.init();
+        let _ = runtime.reset_for_new_document();
+    }
 
     for (node_id, node_scripts) in all_scripts {
         let mut formcalc_scripts = Vec::new();
         for script in node_scripts {
             match script.language {
                 ScriptLanguage::FormCalc => formcalc_scripts.push(script),
-                ScriptLanguage::JavaScript => js_skipped += 1,
+                ScriptLanguage::JavaScript => {
+                    if sandbox_active && activity_allowed_for_sandbox(script.activity.as_deref()) {
+                        // Phase B: route through the runtime. With no host
+                        // bindings registered, every well-formed script body
+                        // resolves to either `RuntimeOutcome { executed: true }`
+                        // (a side-effect-free script that ran to completion)
+                        // or a SandboxError class. The script is never
+                        // re-routed to FormCalc.
+                        match runtime.execute_script(script.activity.as_deref(), &script.script) {
+                            Ok(_outcome) => {
+                                // Counter increment lives on `take_metadata()`.
+                            }
+                            Err(SandboxError::Timeout) => js_skipped += 1,
+                            Err(SandboxError::OutOfMemory) => js_skipped += 1,
+                            Err(_) => js_skipped += 1,
+                        }
+                    } else {
+                        js_skipped += 1;
+                    }
+                }
                 ScriptLanguage::Other => other_skipped += 1,
             }
         }
         if !formcalc_scripts.is_empty() {
             scripts.push((node_id, formcalc_scripts));
         }
+    }
+
+    if sandbox_active {
+        sandbox_metadata = runtime.take_metadata();
     }
 
     let snapshot = snapshot_form(form);
@@ -237,18 +324,28 @@ pub fn apply_dynamic_scripts_with_mode(
         changes = 0;
     }
 
+    let js_seen_count = js_skipped + sandbox_metadata.executed;
+    let js_present = js_seen_count > 0;
+    let output_quality = if sandbox_active && js_present && sandbox_metadata.is_clean() {
+        OutputQuality::Sandboxed
+    } else if js_skipped > 0 || other_skipped > 0 {
+        OutputQuality::BestEffort
+    } else {
+        OutputQuality::Exact
+    };
+
     Ok(DynamicScriptOutcome {
         changes,
-        js_present: js_skipped > 0,
+        js_present,
         js_skipped,
         other_skipped,
         formcalc_run: stats.formcalc_run,
         formcalc_errors: stats.formcalc_errors,
-        output_quality: if js_skipped > 0 || other_skipped > 0 {
-            OutputQuality::BestEffort
-        } else {
-            OutputQuality::Exact
-        },
+        output_quality,
+        js_executed: sandbox_metadata.executed,
+        js_runtime_errors: sandbox_metadata.runtime_errors,
+        js_timeouts: sandbox_metadata.timeouts,
+        js_oom: sandbox_metadata.oom,
     })
 }
 

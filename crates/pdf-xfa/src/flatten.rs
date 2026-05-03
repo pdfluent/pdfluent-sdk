@@ -522,24 +522,35 @@ fn xfa_flatten_inner(
     log::debug!("XFA bind: {} form nodes created", tree.nodes.len());
 
     let dynamic_scripts = apply_dynamic_scripts(&mut tree, root_id)?;
-    if dynamic_scripts.output_quality == OutputQuality::BestEffort {
+    if dynamic_scripts.output_quality != OutputQuality::Exact {
+        // M3-B Phase B (2026-05-03): added js_executed / js_runtime_errors /
+        // js_timeouts / js_oom. Defaulted to 0 in `BestEffortStatic` mode
+        // so existing log parsers stay backward-compatible.
         log::warn!(
-            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={}",
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={}",
             dynamic_scripts.output_quality.as_str(),
             dynamic_scripts.js_present,
             dynamic_scripts.js_skipped,
             dynamic_scripts.other_skipped,
             dynamic_scripts.formcalc_run,
-            dynamic_scripts.formcalc_errors
+            dynamic_scripts.formcalc_errors,
+            dynamic_scripts.js_executed,
+            dynamic_scripts.js_runtime_errors,
+            dynamic_scripts.js_timeouts,
+            dynamic_scripts.js_oom,
         );
         eprintln!(
-            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={}",
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={}",
             dynamic_scripts.output_quality.as_str(),
             dynamic_scripts.js_present,
             dynamic_scripts.js_skipped,
             dynamic_scripts.other_skipped,
             dynamic_scripts.formcalc_run,
-            dynamic_scripts.formcalc_errors
+            dynamic_scripts.formcalc_errors,
+            dynamic_scripts.js_executed,
+            dynamic_scripts.js_runtime_errors,
+            dynamic_scripts.js_timeouts,
+            dynamic_scripts.js_oom,
         );
     }
 
