@@ -78,9 +78,6 @@ pub use crate::document::{
 };
 pub use crate::encrypt::{EncryptOptions, EncryptionAlgorithm, Permissions};
 pub use crate::error::{Error, ResourceLimitKind, Result};
-/// Re-export of [`pdf_engine::ProcessingLimits`] for use with
-/// [`OpenOptions::with_processing_limits`].
-pub use pdf_engine::ProcessingLimits;
 pub use crate::form::{FieldType, FormField, PdfFormMut};
 pub use crate::license::{license_info, set_license_key, LicenseInfo};
 pub use crate::merger::{BookmarkMergeStrategy, MergeOptions, PdfMerger};
@@ -96,6 +93,9 @@ pub use crate::signer::{
 };
 pub use crate::tier::Tier;
 pub use crate::watermark::{Layer, Position, Rotation, WatermarkOptions};
+/// Re-export of [`pdf_engine::ProcessingLimits`] for use with
+/// [`OpenOptions::with_processing_limits`].
+pub use pdf_engine::ProcessingLimits;
 
 /// The SDK version at compile time. Bindings check this at runtime to ensure
 /// compatibility with the loaded `pdfluent` dynamic library.

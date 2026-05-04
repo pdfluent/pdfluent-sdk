@@ -315,10 +315,8 @@ impl PdfDocument {
         //   1. `strict_memory_limit` (predates with_processing_limits)
         //   2. `with_processing_limits` (issue #1429, partial wiring)
         // The smaller cap wins. We do a single stat and check both.
-        let processing_file_cap: Option<u64> = opts
-            .processing_limits
-            .as_ref()
-            .map(|l| l.max_file_bytes);
+        let processing_file_cap: Option<u64> =
+            opts.processing_limits.as_ref().map(|l| l.max_file_bytes);
         if opts.memory_limit.is_some() || processing_file_cap.is_some() {
             let metadata = fs::metadata(path_ref).map_err(|source| match source.kind() {
                 std::io::ErrorKind::NotFound => Error::FileNotFound {
