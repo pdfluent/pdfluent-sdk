@@ -139,8 +139,13 @@ jobs:
           PYEOF
 
       # Post or update a single comment on the PR (runs even if detect step failed).
+      # `continue-on-error: true` so transient GitHub API HTTP 502s on the
+      # comment endpoint do not fail the whole workflow — the regression
+      # signal still comes from the `detect` step's exit code, and the full
+      # bench result is uploaded as an artifact below.
       - name: Comment PR
         if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
