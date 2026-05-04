@@ -1781,10 +1781,9 @@ mod tests {
             resolved.pdf_source_font,
             Some(PdfSourceFont { object_id: (42, 0) })
         );
-        assert!(
-            resolved.data.is_empty(),
-            "reused PDF fonts should not require a synthetic embedded program"
-        );
+        // Note: `data` may be non-empty if a matching system font is found (#858 augmentation
+        // for Identity-H encoding of non-WinAnsi characters). We only assert that the original
+        // PDF font object (pdf_source_font) and its width table are preserved.
     }
 
     #[test]
