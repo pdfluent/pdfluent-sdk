@@ -166,6 +166,18 @@ impl<'a> Stream<'a> {
         &self,
         image_params: &ImageDecodeParams,
     ) -> Result<FilterResult, DecodeFailure> {
+        if let Some(limit) = self.0.dict.ctx().load_limits().image_pixel_limit()
+            && image_params.width > 0
+            && image_params.height > 0
+        {
+            let pixels =
+                u64::from(image_params.width).saturating_mul(u64::from(image_params.height));
+            if pixels > u64::from(limit) {
+                warn!("image pixel count {pixels} exceeds limit {limit}, stopping image decode");
+                return Err(DecodeFailure::ImageDecode);
+            }
+        }
+
         let data = self.raw_data();
 
         let mut current: Option<FilterResult> = None;

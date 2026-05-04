@@ -243,6 +243,7 @@ pub struct PdfDocument {
     /// methods are called. `None` means the process-global license
     /// (or env, or Trial) applies.
     license_key_override: Option<String>,
+    processing_limits: Option<pdf_engine::ProcessingLimits>,
 }
 
 impl std::fmt::Debug for PdfDocument {
@@ -256,10 +257,21 @@ impl std::fmt::Debug for PdfDocument {
 fn open_engine_from_shared_bytes(
     shared: Arc<Vec<u8>>,
     password: Option<&str>,
+    processing_limits: Option<&pdf_engine::ProcessingLimits>,
 ) -> Result<pdf_engine::PdfDocument> {
-    match password {
-        Some(pw) => pdf_engine::PdfDocument::open_with_password(shared, pw),
-        None => pdf_engine::PdfDocument::open(shared),
+    match (password, processing_limits) {
+        (Some(pw), Some(limits)) => {
+            pdf_engine::PdfDocument::open_with_password_and_processing_limits(
+                shared,
+                pw,
+                limits.clone(),
+            )
+        }
+        (None, Some(limits)) => {
+            pdf_engine::PdfDocument::open_with_processing_limits(shared, limits.clone())
+        }
+        (Some(pw), None) => pdf_engine::PdfDocument::open_with_password(shared, pw),
+        (None, None) => pdf_engine::PdfDocument::open(shared),
     }
     .map_err(Into::into)
 }
@@ -415,13 +427,18 @@ impl PdfDocument {
         }
 
         let shared = Arc::new(bytes.to_vec());
-        let engine = open_engine_from_shared_bytes(shared.clone(), opts.password.as_deref())?;
+        let engine = open_engine_from_shared_bytes(
+            shared.clone(),
+            opts.password.as_deref(),
+            opts.processing_limits.as_ref(),
+        )?;
         let lopdf = load_lopdf_from_shared_bytes(&shared, opts.password.as_deref())?;
 
         Ok(Self {
             engine,
             lopdf,
             license_key_override: opts.license_key.clone(),
+            processing_limits: opts.processing_limits.clone(),
         })
     }
 
@@ -627,6 +644,80 @@ impl PdfDocument {
         license::require_capability_with_override(cap, self.license_key_override.as_deref())
     }
 
+    /// Pre-flight check for `to_images`: scan the lopdf representation for
+    /// image XObjects whose pixel count (width × height) exceeds the
+    /// caller's `max_image_pixels` cap.  This fires BEFORE rasterisation
+    /// so that a pathological image dictionary cannot cause an OOM during
+    /// render.
+    fn check_image_pixel_limits(&self) -> Result<()> {
+        let Some(ref limits) = self.processing_limits else {
+            return Ok(());
+        };
+        if limits.max_image_pixels == u64::MAX {
+            return Ok(());
+        }
+
+        use lopdf::Object;
+
+        for obj in self.lopdf.objects.values() {
+            let dict = match obj {
+                Object::Dictionary(d) => d,
+                Object::Stream(stream) => &stream.dict,
+                Object::Reference(id) => match self.lopdf.get_object(*id) {
+                    Ok(Object::Dictionary(d)) => d,
+                    Ok(Object::Stream(stream)) => &stream.dict,
+                    _ => continue,
+                },
+                _ => continue,
+            };
+
+            let is_xobject = match dict.get(b"Type") {
+                Ok(Object::Name(n)) => n.as_slice() == b"XObject",
+                _ => false,
+            };
+            if !is_xobject {
+                continue;
+            }
+
+            let is_image = match dict.get(b"Subtype") {
+                Ok(Object::Name(n)) => n.as_slice() == b"Image",
+                _ => false,
+            };
+            if !is_image {
+                continue;
+            }
+
+            let width = match dict.get(b"Width") {
+                Ok(Object::Integer(v)) if *v > 0 => *v as u64,
+                Ok(Object::Reference(id)) => match self.lopdf.get_object(*id) {
+                    Ok(Object::Integer(v)) if *v > 0 => *v as u64,
+                    _ => continue,
+                },
+                _ => continue,
+            };
+
+            let height = match dict.get(b"Height") {
+                Ok(Object::Integer(v)) if *v > 0 => *v as u64,
+                Ok(Object::Reference(id)) => match self.lopdf.get_object(*id) {
+                    Ok(Object::Integer(v)) if *v > 0 => *v as u64,
+                    _ => continue,
+                },
+                _ => continue,
+            };
+
+            let pixels = width.saturating_mul(height);
+            if pixels > limits.max_image_pixels {
+                return Err(Error::ResourceLimitExceeded {
+                    kind: crate::error::ResourceLimitKind::ImageTooLarge,
+                    observed: pixels,
+                    limit: limits.max_image_pixels,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     // ---------- Internal accessors ----------
 
     /// Crate-private read access to the lopdf representation. Used by the
@@ -827,6 +918,7 @@ impl PdfDocument {
         use pdf_engine::render::RenderOptions;
 
         self.require_capability(Capability::RenderRaster)?;
+        self.check_image_pixel_limits()?;
 
         let total = self.engine.page_count();
         // Codex P2 on #1269: guard zero-page documents BEFORE computing
@@ -1884,7 +1976,7 @@ mod tests {
         let shared_ptr = shared.as_slice().as_ptr();
         let shared_len = shared.len();
 
-        let engine = open_engine_from_shared_bytes(shared.clone(), None)
+        let engine = open_engine_from_shared_bytes(shared.clone(), None, None)
             .expect("open engine from shared bytes");
 
         assert_eq!(

@@ -117,7 +117,14 @@ fn resolve_pages<'a>(
     ctx: PagesContext,
     resources: Resources<'a>,
 ) -> Option<()> {
-    resolve_pages_depth(pages_dict, entries, ctx, resources, 0)
+    let max_depth = resources
+        .ctx
+        .load_limits()
+        .object_depth_limit()
+        .map(|d| d as usize)
+        .unwrap_or(MAX_PAGE_TREE_DEPTH);
+
+    resolve_pages_depth(pages_dict, entries, ctx, resources, 0, max_depth)
 }
 
 fn resolve_pages_depth<'a>(
@@ -126,9 +133,10 @@ fn resolve_pages_depth<'a>(
     mut ctx: PagesContext,
     resources: Resources<'a>,
     depth: usize,
+    max_depth: usize,
 ) -> Option<()> {
-    if depth > MAX_PAGE_TREE_DEPTH {
-        log::warn!("Page tree depth exceeds {MAX_PAGE_TREE_DEPTH}, stopping traversal");
+    if depth > max_depth {
+        log::warn!("Page tree depth exceeds {max_depth}, stopping traversal");
         return None;
     }
 
@@ -161,7 +169,14 @@ fn resolve_pages_depth<'a>(
 
         match dict.get::<Name>(TYPE).as_deref() {
             Some(PAGES) => {
-                resolve_pages_depth(&dict, entries, ctx.clone(), resources.clone(), depth + 1);
+                resolve_pages_depth(
+                    &dict,
+                    entries,
+                    ctx.clone(),
+                    resources.clone(),
+                    depth + 1,
+                    max_depth,
+                );
             }
             // Let's be lenient and assume it's a `Page` in case it's `None` or something else
             // (see corpus test case 0083781).

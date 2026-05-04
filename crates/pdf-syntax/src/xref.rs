@@ -14,7 +14,7 @@ use crate::object::indirect::IndirectObject;
 use crate::object::{Array, MaybeRef};
 use crate::object::{DateTime, Dict};
 use crate::object::{Object, ObjectLike};
-use crate::pdf::PdfVersion;
+use crate::pdf::{PdfLoadLimits, PdfVersion};
 use crate::reader::Reader;
 use crate::reader::{Readable, ReaderContext, ReaderExt};
 use crate::sync::{Arc, FxHashMap, RwLock, RwLockExt};
@@ -35,7 +35,11 @@ pub(crate) enum XRefError {
 }
 
 /// Parse the "root" xref from the PDF.
-pub(crate) fn root_xref(data: PdfData, password: &[u8]) -> Result<XRef, XRefError> {
+pub(crate) fn root_xref(
+    data: PdfData,
+    password: &[u8],
+    limits: PdfLoadLimits,
+) -> Result<XRef, XRefError> {
     let mut xref_map = FxHashMap::default();
     let xref_pos = find_last_xref_pos(data.as_ref()).ok_or(XRefError::Unknown)?;
     let trailer =
@@ -47,18 +51,19 @@ pub(crate) fn root_xref(data: PdfData, password: &[u8]) -> Result<XRef, XRefErro
         XRefInput::TrailerDictData(trailer),
         false,
         password,
+        limits,
     )
 }
 
 /// Try to manually parse the PDF to build an xref table and trailer dictionary.
-pub(crate) fn fallback(data: PdfData, password: &[u8]) -> Option<XRef> {
+pub(crate) fn fallback(data: PdfData, password: &[u8], limits: PdfLoadLimits) -> Option<XRef> {
     warn!("xref table was invalid, trying to manually build xref table");
     let (xref_map, xref_input) = fallback_xref_map(&data, password);
 
     if let Some(xref_input) = xref_input {
         warn!("rebuild xref table with {} entries", xref_map.len());
 
-        XRef::new(data.clone(), xref_map, xref_input, true, password).ok()
+        XRef::new(data.clone(), xref_map, xref_input, true, password, limits).ok()
     } else {
         warn!("couldn't find trailer dictionary, failed to rebuild xref table");
 
@@ -206,6 +211,7 @@ fn fallback_xref_map_inner<'a>(
                 XRefInput::TrailerDictData(d.data()),
                 true,
                 password,
+                PdfLoadLimits::default(),
             )
         }) {
             let ctx = ReaderContext::new(&xref, false);
@@ -239,6 +245,7 @@ impl XRef {
         input: XRefInput<'_>,
         repaired: bool,
         password: &[u8],
+        load_limits: PdfLoadLimits,
     ) -> Result<Self, XRefError> {
         // This is a bit hacky, but the problem is we can't read the resolved trailer dictionary
         // before we actually created the xref struct. So we first create it using dummy data
@@ -253,6 +260,7 @@ impl XRef {
             metadata: Arc::new(Metadata::default()),
             trailer_data,
             password: password.to_vec(),
+            load_limits,
         })));
 
         // We read the trailer twice, once to determine the encryption used and then a second
@@ -352,6 +360,13 @@ impl XRef {
 
     pub(crate) fn dummy() -> &'static Self {
         &DUMMY_XREF
+    }
+
+    pub(crate) fn load_limits(&self) -> PdfLoadLimits {
+        match &self.0 {
+            Inner::Dummy => PdfLoadLimits::default(),
+            Inner::Some(r) => r.load_limits,
+        }
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -656,6 +671,7 @@ struct SomeRepr {
     has_ocgs: bool,
     password: Vec<u8>,
     trailer_data: TrailerData,
+    load_limits: PdfLoadLimits,
 }
 
 #[derive(Debug, Clone)]

@@ -106,6 +106,11 @@ pub struct InterpreterSettings {
     /// Rendering sets this to `true` to match MuPDF behaviour, but text
     /// extraction should set it to `false` so that signature text is included.
     pub skip_signature_widgets: bool,
+    /// Maximum number of content-stream operators to interpret.
+    ///
+    /// `None` preserves the historical unlimited behavior for callers that do
+    /// not configure processing limits.
+    pub max_operator_count: Option<u64>,
 }
 
 /// Known paths for CJK fonts, ordered by preference.
@@ -182,6 +187,7 @@ impl Default for InterpreterSettings {
             warning_sink: Arc::new(|_| {}),
             render_annotations: true,
             skip_signature_widgets: true,
+            max_operator_count: None,
         }
     }
 }
@@ -299,10 +305,20 @@ pub fn interpret<'a, 'b>(
     device: &mut impl Device<'a>,
 ) {
     let num_states = context.num_states();
+    let max_operator_count = context.settings.max_operator_count.unwrap_or(u64::MAX);
+    let mut operator_count = 0_u64;
 
     context.save_state();
 
     for op in ops {
+        operator_count = operator_count.saturating_add(1);
+        if operator_count > max_operator_count {
+            warn!(
+                "content stream operator count exceeds {max_operator_count}, stopping interpretation"
+            );
+            break;
+        }
+
         match op {
             TypedInstruction::SaveState(_) => context.save_state(),
             TypedInstruction::StrokeColorDeviceRgb(s) => {
