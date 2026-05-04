@@ -32,6 +32,59 @@ pub const MAX_OBJECTS: usize = 500_000;
 /// exceed it are rejected with [`LoadPdfError::TooLarge`]. (#497)
 pub const MAX_PAGES: usize = 50_000;
 
+/// Parser-internal limits applied while loading a PDF.
+///
+/// The default preserves the historical parser behavior (no caps). Callers
+/// that need stricter limits can set individual caps before loading.
+#[derive(Debug, Clone, Copy)]
+pub struct PdfLoadLimits {
+    max_object_depth: Option<u32>,
+    max_image_pixels: u32,
+}
+
+impl Default for PdfLoadLimits {
+    fn default() -> Self {
+        // `u32::MAX` is the "no cap" sentinel for `image_pixel_limit()`. A
+        // raw `Default::default()` would produce 0, which would reject every
+        // image and silently turn rendered pages into empty pixel buffers.
+        Self {
+            max_object_depth: None,
+            max_image_pixels: u32::MAX,
+        }
+    }
+}
+
+impl PdfLoadLimits {
+    /// Create a limit set with no caller overrides.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the maximum page-tree/object traversal depth.
+    pub fn max_object_depth(mut self, depth: u32) -> Self {
+        self.max_object_depth = Some(depth);
+        self
+    }
+
+    /// Set the maximum decoded image pixel count.
+    pub fn max_image_pixels(mut self, pixels: u64) -> Self {
+        self.max_image_pixels = u32::try_from(pixels).unwrap_or(u32::MAX);
+        self
+    }
+
+    pub(crate) fn object_depth_limit(self) -> Option<u32> {
+        self.max_object_depth
+    }
+
+    pub(crate) fn image_pixel_limit(self) -> Option<u32> {
+        if self.max_image_pixels == u32::MAX {
+            None
+        } else {
+            Some(self.max_image_pixels)
+        }
+    }
+}
+
 /// An error that occurred while loading a PDF file.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum LoadPdfError {
@@ -55,6 +108,16 @@ impl Pdf {
         Self::new_with_password(data, "")
     }
 
+    /// Try to read the given PDF file with parser load limits.
+    ///
+    /// Returns `Err` if it was unable to read it.
+    pub fn new_with_limits(
+        data: impl Into<PdfData>,
+        limits: PdfLoadLimits,
+    ) -> Result<Self, LoadPdfError> {
+        Self::new_with_password_and_limits(data, "", limits)
+    }
+
     /// Try to read the given PDF file with a password.
     ///
     /// Returns `Err` if it was unable to read it or if the password is incorrect.
@@ -62,14 +125,25 @@ impl Pdf {
         data: impl Into<PdfData>,
         password: &str,
     ) -> Result<Self, LoadPdfError> {
+        Self::new_with_password_and_limits(data, password, PdfLoadLimits::default())
+    }
+
+    /// Try to read the given PDF file with a password and parser load limits.
+    ///
+    /// Returns `Err` if it was unable to read it or if the password is incorrect.
+    pub fn new_with_password_and_limits(
+        data: impl Into<PdfData>,
+        password: &str,
+        limits: PdfLoadLimits,
+    ) -> Result<Self, LoadPdfError> {
         let data = data.into();
         let password = password.as_bytes();
         let version = find_version(data.as_ref()).unwrap_or(PdfVersion::Pdf10);
-        let xref = match root_xref(data.clone(), password) {
+        let xref = match root_xref(data.clone(), password, limits) {
             Ok(x) => x,
             Err(e) => match e {
                 XRefError::Unknown => {
-                    fallback(data.clone(), password).ok_or(LoadPdfError::Invalid)?
+                    fallback(data.clone(), password, limits).ok_or(LoadPdfError::Invalid)?
                 }
                 XRefError::Encryption(e) => return Err(LoadPdfError::Decryption(e)),
             },

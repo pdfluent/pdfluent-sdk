@@ -1,6 +1,7 @@
 //! Reading bytes and PDF objects from data.
 
 use crate::object::ObjectIdentifier;
+use crate::pdf::PdfLoadLimits;
 use crate::sync::Arc;
 use crate::trivia::{Comment, is_eol_character, is_white_space_character};
 use crate::xref::XRef;
@@ -132,12 +133,16 @@ struct ReaderContextData<'a> {
     in_object_stream: bool,
     obj_number: Option<ObjectIdentifier>,
     parent_chain: SmallVec<[ObjectIdentifier; 8]>,
+    load_limits: PdfLoadLimits,
 }
 
 #[derive(Clone, Debug)]
 enum ReaderContextInner<'a> {
     Shared(Arc<ReaderContextData<'a>>),
-    Dummy { in_content_stream: bool },
+    Dummy {
+        in_content_stream: bool,
+        load_limits: PdfLoadLimits,
+    },
 }
 
 /// Context for reading PDF objects.
@@ -152,18 +157,21 @@ impl<'a> ReaderContext<'a> {
             obj_number: None,
             in_object_stream: false,
             parent_chain: smallvec![],
+            load_limits: xref.load_limits(),
         })))
     }
 
     pub fn dummy() -> Self {
         Self(ReaderContextInner::Dummy {
             in_content_stream: false,
+            load_limits: PdfLoadLimits::default(),
         })
     }
 
     pub(crate) fn dummy_in_content_stream() -> Self {
         Self(ReaderContextInner::Dummy {
             in_content_stream: true,
+            load_limits: PdfLoadLimits::default(),
         })
     }
 
@@ -179,7 +187,9 @@ impl<'a> ReaderContext<'a> {
     pub(crate) fn in_content_stream(&self) -> bool {
         match &self.0 {
             ReaderContextInner::Shared(inner) => inner.in_content_stream,
-            ReaderContextInner::Dummy { in_content_stream } => *in_content_stream,
+            ReaderContextInner::Dummy {
+                in_content_stream, ..
+            } => *in_content_stream,
         }
     }
 
@@ -211,7 +221,9 @@ impl<'a> ReaderContext<'a> {
     pub(crate) fn set_in_content_stream(&mut self, val: bool) {
         match &mut self.0 {
             ReaderContextInner::Shared(inner) => Arc::make_mut(inner).in_content_stream = val,
-            ReaderContextInner::Dummy { in_content_stream } => *in_content_stream = val,
+            ReaderContextInner::Dummy {
+                in_content_stream, ..
+            } => *in_content_stream = val,
         }
     }
 
@@ -220,6 +232,14 @@ impl<'a> ReaderContext<'a> {
         match &mut self.0 {
             ReaderContextInner::Shared(inner) => Arc::make_mut(inner).in_object_stream = val,
             ReaderContextInner::Dummy { .. } => {}
+        }
+    }
+
+    #[inline]
+    pub(crate) fn load_limits(&self) -> PdfLoadLimits {
+        match &self.0 {
+            ReaderContextInner::Shared(inner) => inner.load_limits,
+            ReaderContextInner::Dummy { load_limits, .. } => *load_limits,
         }
     }
 

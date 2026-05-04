@@ -3,6 +3,7 @@
 
 use crate::error::{EngineError, Result};
 use crate::geometry::{self, PageGeometry};
+use crate::limits::ProcessingLimits;
 use crate::render::{self, ColorMode, RenderConfig, RenderOptions, RenderedPage};
 use crate::text::{TextBlock, TextExtractionDevice};
 use crate::thumbnail::ThumbnailOptions;
@@ -14,7 +15,7 @@ use pdf_render::pdf_interpret::{interpret_page, Context, InterpreterSettings};
 use pdf_render::pdf_syntax::object::dict::keys::{FIRST, NEXT, OUTLINES, TITLE};
 use pdf_render::pdf_syntax::object::Dict;
 use pdf_render::pdf_syntax::page::Page;
-use pdf_render::pdf_syntax::Pdf;
+use pdf_render::pdf_syntax::{Pdf, PdfLoadLimits};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -69,6 +70,27 @@ impl PdfDocument {
         })
     }
 
+    /// Open a PDF from bytes with processing limits.
+    pub fn open_with_processing_limits(
+        data: impl Into<pdf_render::pdf_syntax::PdfData>,
+        limits: ProcessingLimits,
+    ) -> Result<Self> {
+        let syntax_limits = PdfLoadLimits::new()
+            .max_object_depth(limits.max_object_depth)
+            .max_image_pixels(limits.max_image_pixels);
+        let pdf = Pdf::new_with_limits(data, syntax_limits).map_err(|e| match e {
+            pdf_render::pdf_syntax::LoadPdfError::Decryption(d) => {
+                EngineError::Encrypted(format!("{d:?}"))
+            }
+            _ => EngineError::InvalidPdf(format!("{e:?}")),
+        })?;
+        let settings = InterpreterSettings {
+            max_operator_count: Some(limits.max_operator_count),
+            ..InterpreterSettings::default()
+        };
+        Ok(Self { pdf, settings })
+    }
+
     /// Open a password-protected PDF.
     pub fn open_with_password(
         data: impl Into<pdf_render::pdf_syntax::PdfData>,
@@ -84,6 +106,30 @@ impl PdfDocument {
             pdf,
             settings: InterpreterSettings::default(),
         })
+    }
+
+    /// Open a password-protected PDF with processing limits.
+    pub fn open_with_password_and_processing_limits(
+        data: impl Into<pdf_render::pdf_syntax::PdfData>,
+        password: &str,
+        limits: ProcessingLimits,
+    ) -> Result<Self> {
+        let syntax_limits = PdfLoadLimits::new()
+            .max_object_depth(limits.max_object_depth)
+            .max_image_pixels(limits.max_image_pixels);
+        let pdf = Pdf::new_with_password_and_limits(data, password, syntax_limits).map_err(
+            |e| match e {
+                pdf_render::pdf_syntax::LoadPdfError::Decryption(d) => {
+                    EngineError::Encrypted(format!("{d:?}"))
+                }
+                _ => EngineError::InvalidPdf(format!("{e:?}")),
+            },
+        )?;
+        let settings = InterpreterSettings {
+            max_operator_count: Some(limits.max_operator_count),
+            ..InterpreterSettings::default()
+        };
+        Ok(Self { pdf, settings })
     }
 
     /// Access the underlying parsed PDF.
