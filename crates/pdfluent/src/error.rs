@@ -123,6 +123,23 @@ pub enum Error {
         /// Configured limit.
         limit: usize,
     },
+    /// A configured [`ProcessingLimits`](pdf_engine::ProcessingLimits)
+    /// resource cap was exceeded while loading or processing the
+    /// document.
+    ///
+    /// Returned when the caller has set a limits object via
+    /// [`crate::OpenOptions::with_processing_limits`] and the input
+    /// breaches one of those caps. The `kind` field discriminates which
+    /// cap fired so callers can tell a "file too large" rejection from
+    /// e.g. an "image too large" rejection without parsing the message.
+    ResourceLimitExceeded {
+        /// Which resource cap fired.
+        kind: ResourceLimitKind,
+        /// Observed value (size in bytes / pixel count / depth, by kind).
+        observed: u64,
+        /// Configured limit (same units as `observed`).
+        limit: u64,
+    },
 
     // ---------- Internal ----------
     /// Internal safety-net. Should never fire under normal operation.
@@ -144,6 +161,96 @@ pub enum DecryptionFailureReason {
     UnsupportedAlgorithm,
     /// Encryption dictionary is malformed.
     MalformedDictionary,
+}
+
+/// Discriminator for a [`Error::ResourceLimitExceeded`] error.
+///
+/// Each variant maps onto one of the caps declared by
+/// [`pdf_engine::ProcessingLimits`]. The variants are deliberately
+/// stable across 1.x — a caller can branch on `kind` without parsing
+/// human-readable messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ResourceLimitKind {
+    /// PDF file size exceeded
+    /// [`ProcessingLimits::max_file_bytes`](pdf_engine::ProcessingLimits::max_file_bytes).
+    FileTooLarge,
+    /// A decompressed stream exceeded
+    /// [`ProcessingLimits::max_stream_bytes`](pdf_engine::ProcessingLimits::max_stream_bytes).
+    StreamTooLarge,
+    /// An image XObject exceeded
+    /// [`ProcessingLimits::max_image_pixels`](pdf_engine::ProcessingLimits::max_image_pixels).
+    ImageTooLarge,
+    /// Indirect-reference depth exceeded
+    /// [`ProcessingLimits::max_object_depth`](pdf_engine::ProcessingLimits::max_object_depth).
+    ObjectDepthExceeded,
+    /// Content-stream operator count exceeded
+    /// [`ProcessingLimits::max_operator_count`](pdf_engine::ProcessingLimits::max_operator_count).
+    TooManyOperators,
+    /// XFA template nesting exceeded
+    /// [`ProcessingLimits::max_xfa_nesting_depth`](pdf_engine::ProcessingLimits::max_xfa_nesting_depth).
+    XfaNestingTooDeep,
+    /// FormCalc recursion exceeded
+    /// [`ProcessingLimits::max_formcalc_depth`](pdf_engine::ProcessingLimits::max_formcalc_depth).
+    FormCalcRecursionTooDeep,
+}
+
+impl std::fmt::Display for ResourceLimitKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FileTooLarge => f.write_str("file too large"),
+            Self::StreamTooLarge => f.write_str("decompressed stream too large"),
+            Self::ImageTooLarge => f.write_str("image too large (pixel count)"),
+            Self::ObjectDepthExceeded => f.write_str("object reference depth exceeded"),
+            Self::TooManyOperators => f.write_str("content stream operator count exceeded"),
+            Self::XfaNestingTooDeep => f.write_str("XFA template nesting too deep"),
+            Self::FormCalcRecursionTooDeep => f.write_str("FormCalc recursion too deep"),
+        }
+    }
+}
+
+impl From<pdf_engine::LimitError> for Error {
+    fn from(e: pdf_engine::LimitError) -> Self {
+        use pdf_engine::LimitError as LE;
+        let (kind, observed, limit) = match e {
+            LE::FileTooLarge {
+                actual_bytes,
+                limit_bytes,
+            } => (ResourceLimitKind::FileTooLarge, actual_bytes, limit_bytes),
+            LE::StreamTooLarge {
+                actual_bytes,
+                limit_bytes,
+            } => (ResourceLimitKind::StreamTooLarge, actual_bytes, limit_bytes),
+            LE::ImageTooLarge {
+                pixels,
+                limit_pixels,
+                ..
+            } => (ResourceLimitKind::ImageTooLarge, pixels, limit_pixels),
+            LE::ObjectDepthExceeded { depth, limit } => (
+                ResourceLimitKind::ObjectDepthExceeded,
+                depth as u64,
+                limit as u64,
+            ),
+            LE::TooManyOperators { count, limit } => {
+                (ResourceLimitKind::TooManyOperators, count, limit)
+            }
+            LE::XfaNestingTooDeep { depth, limit } => (
+                ResourceLimitKind::XfaNestingTooDeep,
+                depth as u64,
+                limit as u64,
+            ),
+            LE::FormCalcRecursionTooDeep { depth, limit } => (
+                ResourceLimitKind::FormCalcRecursionTooDeep,
+                depth as u64,
+                limit as u64,
+            ),
+        };
+        Error::ResourceLimitExceeded {
+            kind,
+            observed,
+            limit,
+        }
+    }
 }
 
 impl std::fmt::Display for DecryptionFailureReason {
@@ -173,6 +280,7 @@ impl Error {
             Error::UnsupportedOnWasm { .. } => "E-ENV-UNSUPPORTED-ON-WASM",
             Error::MissingDependency { .. } => "E-ENV-MISSING-DEPENDENCY",
             Error::MemoryBudgetExceeded { .. } => "E-BUDGET-MEMORY-EXCEEDED",
+            Error::ResourceLimitExceeded { .. } => "E-BUDGET-RESOURCE-LIMIT",
             Error::Internal { .. } => "E-INTERNAL",
         }
     }
@@ -210,6 +318,9 @@ impl Error {
             }
             Error::MemoryBudgetExceeded { .. } => {
                 "https://pdfluent.com/errors/E-BUDGET-MEMORY-EXCEEDED"
+            }
+            Error::ResourceLimitExceeded { .. } => {
+                "https://pdfluent.com/errors/E-BUDGET-RESOURCE-LIMIT"
             }
             Error::Internal { .. } => "https://pdfluent.com/errors/E-INTERNAL",
         }
@@ -277,6 +388,15 @@ impl std::fmt::Display for Error {
             Error::MemoryBudgetExceeded { requested, limit } => write!(
                 f,
                 "Memory budget exceeded: requested {requested} bytes, limit is {limit}"
+            ),
+            Error::ResourceLimitExceeded {
+                kind,
+                observed,
+                limit,
+            } => write!(
+                f,
+                "Resource limit exceeded: {kind} (observed {observed}, limit {limit}).\n  Docs: {}",
+                self.docs_url()
             ),
             Error::Internal { message, crate_version } => write!(
                 f,

@@ -77,7 +77,10 @@ pub use crate::document::{
     OpenOptions, Page, Pages, PdfDocument, PdfVersion, SaveOptions, TextBlock,
 };
 pub use crate::encrypt::{EncryptOptions, EncryptionAlgorithm, Permissions};
-pub use crate::error::{Error, Result};
+pub use crate::error::{Error, ResourceLimitKind, Result};
+/// Re-export of [`pdf_engine::ProcessingLimits`] for use with
+/// [`OpenOptions::with_processing_limits`].
+pub use pdf_engine::ProcessingLimits;
 pub use crate::form::{FieldType, FormField, PdfFormMut};
 pub use crate::license::{license_info, set_license_key, LicenseInfo};
 pub use crate::merger::{BookmarkMergeStrategy, MergeOptions, PdfMerger};

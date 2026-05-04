@@ -105,6 +105,14 @@ fn variant_samples() -> Vec<(Error, &'static str)> {
             "E-BUDGET-MEMORY-EXCEEDED",
         ),
         (
+            Error::ResourceLimitExceeded {
+                kind: pdfluent::ResourceLimitKind::FileTooLarge,
+                observed: 0,
+                limit: 0,
+            },
+            "E-BUDGET-RESOURCE-LIMIT",
+        ),
+        (
             Error::Internal {
                 message: "x".into(),
                 crate_version: "test",
