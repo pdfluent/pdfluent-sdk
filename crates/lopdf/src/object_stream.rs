@@ -270,12 +270,11 @@ impl ObjectStream {
                         b"ObjStm" => return false,
 
                         // Catalog can only be excluded in linearized PDFs
-                        b"Catalog" => {
+                        b"Catalog"
                             // Check if PDF is linearized
-                            if Self::is_linearized(doc) {
+                            if Self::is_linearized(doc) => {
                                 return false;
                             }
-                        }
 
                         // Page, Pages, and all other types CAN be compressed
                         _ => {}

@@ -177,6 +177,7 @@ fn get_dimensions_and_color_type(buffer: &Vec<u8>) -> Result<((u32, u32), ColorT
 
 #[cfg(all(feature = "embed_image", not(feature = "async")))]
 #[test]
+#[ignore = "depends on assets/pdf_icon.jpg fixture not committed to the repo"]
 fn insert_image() {
     use super::xobject;
     let mut doc = Document::load("assets/example.pdf").unwrap();
@@ -190,6 +191,7 @@ fn insert_image() {
 
 #[cfg(all(feature = "embed_image", feature = "async"))]
 #[tokio::test]
+#[ignore = "depends on assets/pdf_icon.jpg fixture not committed to the repo"]
 async fn insert_image() {
     use super::xobject;
     let mut doc = Document::load("assets/example.pdf").await.unwrap();
@@ -203,6 +205,7 @@ async fn insert_image() {
 
 #[cfg(feature = "embed_image")]
 #[test]
+#[ignore = "depends on assets/supported_color_type/ fixture dir not committed to the repo"]
 fn embed_supported_color_type() -> Result<()> {
     use content::{Content, Operation};
     use image::GenericImageView;

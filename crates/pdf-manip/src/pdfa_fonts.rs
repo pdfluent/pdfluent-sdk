@@ -3518,11 +3518,11 @@ fn sync_cid_widths_from_truetype_embedded_font(
     let dw_is_missing = doc
         .objects
         .get(&cid_font_id)
-        .and_then(|obj| {
+        .map(|obj| {
             if let Object::Dictionary(cid_dict) = obj {
-                Some(!cid_dict.has(b"DW"))
+                !cid_dict.has(b"DW")
             } else {
-                Some(true)
+                true
             }
         })
         .unwrap_or(true);
@@ -3992,11 +3992,7 @@ fn fix_simple_cff_widths(
 
     // Walk codes [fc..=lc] and collect corrected widths.
     // Extend new_widths to at least expected_len to handle short Widths arrays.
-    let mut new_widths = if existing_widths.len() >= expected_len {
-        existing_widths.clone()
-    } else {
-        existing_widths.clone()
-    };
+    let mut new_widths = existing_widths.clone();
     // Pad with zeros (default width) if existing_widths is too short.
     while new_widths.len() < expected_len {
         new_widths.push(Object::Integer(0));
@@ -5431,7 +5427,7 @@ fn collect_simple_invalid_codes(
         let has_explicit_difference = !differences.is_empty();
         let has_gid_based_names = parsed_cff
             .as_ref()
-            .map(|cff| cff_has_gid_based_names(&cff))
+            .map(|cff| cff_has_gid_based_names(cff))
             .unwrap_or(false);
         let allow_cff_encoding_fallback = !has_pdf_encoding
             || has_gid_based_names
@@ -14795,11 +14791,11 @@ pub fn fix_type1_tounicode_from_encoding(doc: &mut Document) -> usize {
                 if glyph_name.starts_with("uni") && glyph_name.len() == 7 {
                     u32::from_str_radix(&glyph_name[3..], 16)
                         .ok()
-                        .and_then(|cp| char::from_u32(cp))
+                        .and_then(char::from_u32)
                 } else if glyph_name.starts_with("u") && glyph_name.len() == 6 {
                     u32::from_str_radix(&glyph_name[1..], 16)
                         .ok()
-                        .and_then(|cp| char::from_u32(cp))
+                        .and_then(char::from_u32)
                 } else {
                     None
                 }
@@ -14995,11 +14991,11 @@ pub fn fix_incomplete_tounicode_from_encoding(doc: &mut Document) -> usize {
                 if glyph_name.starts_with("uni") && glyph_name.len() == 7 {
                     u32::from_str_radix(&glyph_name[3..], 16)
                         .ok()
-                        .and_then(|cp| char::from_u32(cp))
+                        .and_then(char::from_u32)
                 } else if glyph_name.starts_with("u") && glyph_name.len() == 6 {
                     u32::from_str_radix(&glyph_name[1..], 16)
                         .ok()
-                        .and_then(|cp| char::from_u32(cp))
+                        .and_then(char::from_u32)
                 } else {
                     None
                 }
@@ -15019,7 +15015,7 @@ pub fn fix_incomplete_tounicode_from_encoding(doc: &mut Document) -> usize {
 
         let mut missing_codes: Vec<(u8, u16)> = Vec::new();
         for (code, expected_unicode) in &expected_codes {
-            if existing_map.get(code).is_none() {
+            if !existing_map.contains_key(code) {
                 if let Some(unicode) = expected_unicode {
                     missing_codes.push((*code, *unicode));
                 }
@@ -15213,14 +15209,14 @@ pub fn fix_type0_tounicode(doc: &mut Document) -> usize {
                 use crate::encoding_utils::glyph_name_to_char;
 
                 for gid_idx in 0..cff.number_of_glyphs() {
-                    let gid = cff_parser::GlyphId(gid_idx as u16);
+                    let gid = cff_parser::GlyphId(gid_idx);
                     if let Some(gname) = cff.glyph_name(gid) {
                         if let Some(ch) = glyph_name_to_char(gname) {
                             // Find which CID maps to this GID.
                             // For CFF CIDFonts, GID == CID.
                             // For CFF simple fonts used as CIDFonts (subsetted),
                             // we usually have Identity CIDToGIDMap.
-                            let cid = gid_idx as u16;
+                            let cid = gid_idx;
                             mappings.push((cid, ch as u16));
                         }
                     }
@@ -15369,7 +15365,7 @@ fn sanitize_tounicode_line(line: &str, in_bfchar: bool, in_bfrange: bool) -> Str
     const FORBIDDEN: &[u16] = &[0x0000, 0xFEFF, 0xFFFE, 0xFFFF];
 
     fn is_forbidden(val: u16) -> bool {
-        FORBIDDEN.contains(&val) || (val >= 0xD800 && val <= 0xDFFF)
+        FORBIDDEN.contains(&val) || (0xD800..=0xDFFF).contains(&val)
     }
 
     // Parse all <XXXX> tokens.
@@ -15391,7 +15387,7 @@ fn sanitize_tounicode_line(line: &str, in_bfchar: bool, in_bfrange: bool) -> Str
             let is_destination =
                 (in_bfchar && token_count == 1) || (in_bfrange && token_count == 2);
 
-            if is_destination && (hex_str.len() % 4 == 0) {
+            if is_destination && hex_str.len().is_multiple_of(4) {
                 // ToUnicode maps to UTF-16BE strings. Check each 2-byte unit.
                 let mut hex_bytes: Vec<u8> = Vec::new();
                 let mut valid = true;
@@ -15416,13 +15412,13 @@ fn sanitize_tounicode_line(line: &str, in_bfchar: bool, in_bfrange: bool) -> Str
                         let val = u16::from_be_bytes([hex_bytes[j], hex_bytes[j + 1]]);
 
                         // Is it a high surrogate?
-                        if val >= 0xD800 && val <= 0xDBFF {
+                        if (0xD800..=0xDBFF).contains(&val) {
                             // Check if followed by a low surrogate.
                             let mut has_low = false;
                             if j + 3 < hex_bytes.len() {
                                 let next_val =
                                     u16::from_be_bytes([hex_bytes[j + 2], hex_bytes[j + 3]]);
-                                if next_val >= 0xDC00 && next_val <= 0xDFFF {
+                                if (0xDC00..=0xDFFF).contains(&next_val) {
                                     has_low = true;
                                 }
                             }
@@ -15446,12 +15442,12 @@ fn sanitize_tounicode_line(line: &str, in_bfchar: bool, in_bfrange: bool) -> Str
                         while k + 1 < hex_bytes.len() {
                             let val = u16::from_be_bytes([hex_bytes[k], hex_bytes[k + 1]]);
 
-                            if val >= 0xD800 && val <= 0xDBFF {
+                            if (0xD800..=0xDBFF).contains(&val) {
                                 let mut has_low = false;
                                 if k + 3 < hex_bytes.len() {
                                     let next_val =
                                         u16::from_be_bytes([hex_bytes[k + 2], hex_bytes[k + 3]]);
-                                    if next_val >= 0xDC00 && next_val <= 0xDFFF {
+                                    if (0xDC00..=0xDFFF).contains(&next_val) {
                                         has_low = true;
                                     }
                                 }
@@ -17983,37 +17979,28 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
                         }
                         new_ops.push(op.clone());
                     }
-                    "Tj" | "'" | "\"" => {
-                        if font_map.get(&current_font).copied().unwrap_or(false) {
-                            let mut new_op = op.clone();
-                            let str_idx = if op.operator == "\"" { 2 } else { 0 };
-                            if let Some(Object::String(bytes, _)) = new_op.operands.get_mut(str_idx)
-                            {
-                                if strip_control_bytes(bytes, !has_type0_font) {
-                                    modified = true;
-                                }
+                    "Tj" | "'" | "\"" if font_map.get(&current_font).copied().unwrap_or(false) => {
+                        let mut new_op = op.clone();
+                        let str_idx = if op.operator == "\"" { 2 } else { 0 };
+                        if let Some(Object::String(bytes, _)) = new_op.operands.get_mut(str_idx) {
+                            if strip_control_bytes(bytes, !has_type0_font) {
+                                modified = true;
                             }
-                            new_ops.push(new_op);
-                        } else {
-                            new_ops.push(op.clone());
                         }
+                        new_ops.push(new_op);
                     }
-                    "TJ" => {
-                        if font_map.get(&current_font).copied().unwrap_or(false) {
-                            let mut new_op = op.clone();
-                            if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
-                                for item in arr.iter_mut() {
-                                    if let Object::String(bytes, _) = item {
-                                        if strip_control_bytes(bytes, !has_type0_font) {
-                                            modified = true;
-                                        }
+                    "TJ" if font_map.get(&current_font).copied().unwrap_or(false) => {
+                        let mut new_op = op.clone();
+                        if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
+                            for item in arr.iter_mut() {
+                                if let Object::String(bytes, _) = item {
+                                    if strip_control_bytes(bytes, !has_type0_font) {
+                                        modified = true;
                                     }
                                 }
                             }
-                            new_ops.push(new_op);
-                        } else {
-                            new_ops.push(op.clone());
                         }
+                        new_ops.push(new_op);
                     }
                     _ => {
                         new_ops.push(op.clone());
@@ -18986,6 +18973,7 @@ fn fix_cid_text_string(
 /// `fix_notdef_glyph_refs` because their custom encodings make Differences-based
 /// fixes unreliable. Instead, this function replaces undefined character codes
 /// directly in content streams with a valid code (typically space).
+#[allow(clippy::if_same_then_else)]
 pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
     use std::collections::{HashMap, HashSet};
 
@@ -20025,61 +20013,52 @@ fn replace_simple_font_code_refs(
                         }
                         new_ops.push(op.clone());
                     }
-                    "Tj" | "'" | "\"" => {
-                        if target_names.contains(&current_font) {
-                            let mut new_op = op.clone();
-                            let str_idx = if op.operator == "\"" { 2 } else { 0 };
-                            if let Some(Object::String(bytes, _)) = new_op.operands.get_mut(str_idx)
-                            {
-                                if collapse_two_byte_simple_codes(bytes) {
-                                    modified = true;
-                                }
-                                if let Some(to) = to_code {
-                                    for b in bytes.iter_mut() {
-                                        if *b == from_code {
-                                            *b = to;
-                                            modified = true;
-                                        }
-                                    }
-                                } else {
-                                    let original_len = bytes.len();
-                                    bytes.retain(|b| *b != from_code);
-                                    modified |= bytes.len() != original_len;
-                                }
+                    "Tj" | "'" | "\"" if target_names.contains(&current_font) => {
+                        let mut new_op = op.clone();
+                        let str_idx = if op.operator == "\"" { 2 } else { 0 };
+                        if let Some(Object::String(bytes, _)) = new_op.operands.get_mut(str_idx) {
+                            if collapse_two_byte_simple_codes(bytes) {
+                                modified = true;
                             }
-                            new_ops.push(new_op);
-                        } else {
-                            new_ops.push(op.clone());
+                            if let Some(to) = to_code {
+                                for b in bytes.iter_mut() {
+                                    if *b == from_code {
+                                        *b = to;
+                                        modified = true;
+                                    }
+                                }
+                            } else {
+                                let original_len = bytes.len();
+                                bytes.retain(|b| *b != from_code);
+                                modified |= bytes.len() != original_len;
+                            }
                         }
+                        new_ops.push(new_op);
                     }
-                    "TJ" => {
-                        if target_names.contains(&current_font) {
-                            let mut new_op = op.clone();
-                            if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
-                                for item in arr.iter_mut() {
-                                    if let Object::String(bytes, _) = item {
-                                        if collapse_two_byte_simple_codes(bytes) {
-                                            modified = true;
-                                        }
-                                        if let Some(to) = to_code {
-                                            for b in bytes.iter_mut() {
-                                                if *b == from_code {
-                                                    *b = to;
-                                                    modified = true;
-                                                }
+                    "TJ" if target_names.contains(&current_font) => {
+                        let mut new_op = op.clone();
+                        if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
+                            for item in arr.iter_mut() {
+                                if let Object::String(bytes, _) = item {
+                                    if collapse_two_byte_simple_codes(bytes) {
+                                        modified = true;
+                                    }
+                                    if let Some(to) = to_code {
+                                        for b in bytes.iter_mut() {
+                                            if *b == from_code {
+                                                *b = to;
+                                                modified = true;
                                             }
-                                        } else {
-                                            let original_len = bytes.len();
-                                            bytes.retain(|b| *b != from_code);
-                                            modified |= bytes.len() != original_len;
                                         }
+                                    } else {
+                                        let original_len = bytes.len();
+                                        bytes.retain(|b| *b != from_code);
+                                        modified |= bytes.len() != original_len;
                                     }
                                 }
                             }
-                            new_ops.push(new_op);
-                        } else {
-                            new_ops.push(op.clone());
                         }
+                        new_ops.push(new_op);
                     }
                     _ => {
                         new_ops.push(op.clone());
@@ -22114,6 +22093,7 @@ pub fn fix_type3_notdef_charprocs(doc: &mut Document) -> usize {
 /// Replace `StandardEncoding` with `WinAnsiEncoding` on Type1/MMType1 font
 /// dictionaries. PDF/A §6.2.11.6 forbids StandardEncoding as a BaseEncoding.
 pub fn fix_type1_standard_encoding(doc: &mut Document) -> usize {
+    #[allow(clippy::enum_variant_names)]
     enum FixAction {
         ReplaceName(ObjectId),
         ReplaceBaseInline(ObjectId),
@@ -22132,13 +22112,11 @@ pub fn fix_type1_standard_encoding(doc: &mut Document) -> usize {
         }
 
         match dict.get(b"Encoding").ok() {
-            Some(Object::Name(n)) => {
-                if n == b"StandardEncoding" {
-                    actions.push(FixAction::ReplaceName(font_id));
-                }
+            Some(Object::Name(n)) if n == b"StandardEncoding" => {
+                actions.push(FixAction::ReplaceName(font_id));
             }
             Some(Object::Dictionary(enc_dict)) => {
-                if let Some(Object::Name(base)) = enc_dict.get(b"BaseEncoding").ok() {
+                if let Ok(Object::Name(base)) = enc_dict.get(b"BaseEncoding") {
                     if base == b"StandardEncoding" {
                         actions.push(FixAction::ReplaceBaseInline(font_id));
                     }
@@ -22147,7 +22125,7 @@ pub fn fix_type1_standard_encoding(doc: &mut Document) -> usize {
             Some(Object::Reference(enc_ref)) => {
                 let enc_ref = *enc_ref;
                 if let Some(Object::Dictionary(enc_dict)) = doc.objects.get(&enc_ref) {
-                    if let Some(Object::Name(base)) = enc_dict.get(b"BaseEncoding").ok() {
+                    if let Ok(Object::Name(base)) = enc_dict.get(b"BaseEncoding") {
                         if base == b"StandardEncoding" {
                             actions.push(FixAction::ReplaceBaseIndirect(enc_ref));
                         }

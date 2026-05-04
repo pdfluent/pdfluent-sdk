@@ -20,9 +20,21 @@ use formcalc_interpreter::value::Value;
 #[derive(Debug, thiserror::Error)]
 pub enum ScriptError {
     #[error("FormCalc error in node '{node}': {message}")]
-    Execution { node: String, message: String },
+    /// Script execution error.
+    Execution {
+        /// Node name.
+        node: String,
+        /// Error message.
+        message: String,
+    },
     #[error("Validation failed for node '{node}': {message}")]
-    ValidationFailed { node: String, message: String },
+    /// Validation failed error.
+    ValidationFailed {
+        /// Node name.
+        node: String,
+        /// Error message.
+        message: String,
+    },
 }
 
 /// Result of running all scripts on a form tree.

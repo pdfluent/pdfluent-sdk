@@ -7,14 +7,18 @@ use crate::error::{FormCalcError, Result};
 /// Token position in source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
+    /// Line number.
     pub line: usize,
+    /// Column number.
     pub col: usize,
 }
 
 /// A FormCalc token with position information.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
+    /// Token kind.
     pub kind: TokenKind,
+    /// Source span.
     pub span: Span,
 }
 
@@ -22,68 +26,121 @@ pub struct Token {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // Literals
+    /// Number literal.
     NumberLit(f64),
+    /// String literal.
     StringLit(String),
 
     // Identifier (variable names, SOM references)
+    /// Identifier.
     Ident(String),
 
     // Keywords
+    /// `break`.
     Break,
+    /// `continue`.
     Continue,
+    /// `do`.
     Do,
+    /// `downto`.
     Downto,
+    /// `else`.
     Else,
+    /// `elseif`.
     ElseIf,
+    /// `end`.
     End,
+    /// `endfor`.
     EndFor,
+    /// `endfunc`.
     EndFunc,
+    /// `endif`.
     EndIf,
+    /// `endwhile`.
     EndWhile,
+    /// `for`.
     For,
+    /// `foreach`.
     Foreach,
+    /// `func`.
     Func,
+    /// `if`.
     If,
+    /// `in`.
     In,
+    /// `null`.
     Null,
+    /// `return`.
     Return,
+    /// `step`.
     Step,
+    /// `then`.
     Then,
+    /// `throw`.
     Throw,
+    /// `upto`.
     Upto,
+    /// `var`.
     Var,
+    /// `while`.
     While,
 
     // Operators
+    /// `+`.
     Plus,
+    /// `-`.
     Minus,
+    /// `*`.
     Star,
+    /// `/`.
     Slash,
-    Eq,     // == or eq
-    Ne,     // <> or ne
-    Lt,     // < or lt
-    Le,     // <= or le
-    Gt,     // > or gt
-    Ge,     // >= or ge
-    And,    // & or and
-    Or,     // | or or
-    Not,    // not
-    Amp,    // & (string concatenation, context-dependent)
-    Assign, // =
-    Dot,    // .
-    DotDot, // ..
-    Hash,   // #
+    /// `==` or `eq`.
+    Eq,
+    /// `<>` or `ne`.
+    Ne,
+    /// `<` or `lt`.
+    Lt,
+    /// `<=` or `le`.
+    Le,
+    /// `>` or `gt`.
+    Gt,
+    /// `>=` or `ge`.
+    Ge,
+    /// `&` or `and`.
+    And,
+    /// `|` or `or`.
+    Or,
+    /// `not`.
+    Not,
+    /// `&` (string concatenation).
+    Amp,
+    /// `=`.
+    Assign,
+    /// `.`.
+    Dot,
+    /// `..`.
+    DotDot,
+    /// `#`.
+    Hash,
 
     // Delimiters
+    /// `(`.
     LParen,
+    /// `)`.
     RParen,
+    /// `[`.
     LBracket,
+    /// `]`.
     RBracket,
+    /// `,`.
     Comma,
+    /// `;`.
     Semicolon,
 
     // End
+    /// End of file.
     Eof,
+    /// Newline.
     Newline,
 }
 

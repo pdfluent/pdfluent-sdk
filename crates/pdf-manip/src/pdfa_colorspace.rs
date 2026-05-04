@@ -143,7 +143,7 @@ fn existing_output_intent_has_n(doc: &Document, expected_n: i64) -> bool {
             _ => continue,
         };
         if let Ok(Object::Reference(icc_id)) = dict.get(b"DestOutputProfile") {
-            if let Some(Object::Stream(icc_stream)) = doc.objects.get(&icc_id) {
+            if let Some(Object::Stream(icc_stream)) = doc.objects.get(icc_id) {
                 if let Ok(Object::Integer(n)) = icc_stream.dict.get(b"N") {
                     if *n == expected_n {
                         return true;
@@ -346,13 +346,13 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
                 if get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
                     return true;
                 }
-                if dict.get(b"ShadingType").is_ok() {
-                    if get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
-                        return true;
-                    }
+                if dict.get(b"ShadingType").is_ok()
+                    && get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK")
+                {
+                    return true;
                 }
                 if dict.get(b"PatternType").ok().and_then(|o| o.as_i64().ok()) == Some(2) {
-                    if let Some(Object::Dictionary(shading)) = dict.get(b"Shading").ok() {
+                    if let Ok(Object::Dictionary(shading)) = dict.get(b"Shading") {
                         if get_name(shading, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
                             return true;
                         }
@@ -360,7 +360,7 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
                             match val {
                                 Object::Reference(ref_id) => {
                                     if visited.insert(*ref_id) {
-                                        if let Some(resolved) = doc.objects.get(&ref_id) {
+                                        if let Some(resolved) = doc.objects.get(ref_id) {
                                             stack.push(resolved);
                                         }
                                     }
@@ -370,18 +370,17 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
                         }
                     }
                 }
-                if dict.get(b"PatternType").is_ok()
-                    || get_name(dict, b"Type").as_deref() == Some("Pattern")
+                if (dict.get(b"PatternType").is_ok()
+                    || get_name(dict, b"Type").as_deref() == Some("Pattern"))
+                    && get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK")
                 {
-                    if get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
-                        return true;
-                    }
+                    return true;
                 }
                 for (_, val) in dict.iter() {
                     match val {
                         Object::Reference(ref_id) => {
                             if visited.insert(*ref_id) {
-                                if let Some(resolved) = doc.objects.get(&ref_id) {
+                                if let Some(resolved) = doc.objects.get(ref_id) {
                                     stack.push(resolved);
                                 }
                             }
@@ -394,10 +393,10 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
                 if get_name(&stream.dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
                     return true;
                 }
-                if stream.dict.get(b"ShadingType").is_ok() {
-                    if get_name(&stream.dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
-                        return true;
-                    }
+                if stream.dict.get(b"ShadingType").is_ok()
+                    && get_name(&stream.dict, b"ColorSpace").as_deref() == Some("DeviceCMYK")
+                {
+                    return true;
                 }
                 if stream
                     .dict
@@ -406,7 +405,7 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
                     .and_then(|o| o.as_i64().ok())
                     == Some(2)
                 {
-                    if let Some(Object::Dictionary(shading)) = stream.dict.get(b"Shading").ok() {
+                    if let Ok(Object::Dictionary(shading)) = stream.dict.get(b"Shading") {
                         if get_name(shading, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
                             return true;
                         }
@@ -414,10 +413,10 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
                 }
                 let is_pattern = stream.dict.get(b"PatternType").is_ok()
                     || get_name(&stream.dict, b"Type").as_deref() == Some("Pattern");
-                if is_pattern {
-                    if get_name(&stream.dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
-                        return true;
-                    }
+                if is_pattern
+                    && get_name(&stream.dict, b"ColorSpace").as_deref() == Some("DeviceCMYK")
+                {
+                    return true;
                 }
                 if stream.dict.get(b"N").is_ok() {
                     if let Ok(Object::Integer(n)) = stream.dict.get(b"N") {
@@ -426,18 +425,17 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
                         }
                     }
                 }
-                if get_name(&stream.dict, b"Type").as_deref() == Some("XObject")
-                    || stream.dict.get(b"Type").is_err()
+                if (get_name(&stream.dict, b"Type").as_deref() == Some("XObject")
+                    || stream.dict.get(b"Type").is_err())
+                    && content_has_cmyk(&stream.content)
                 {
-                    if content_has_cmyk(&stream.content) {
-                        return true;
-                    }
+                    return true;
                 }
                 for (_, val) in stream.dict.iter() {
                     match val {
                         Object::Reference(ref_id) => {
                             if visited.insert(*ref_id) {
-                                if let Some(resolved) = doc.objects.get(&ref_id) {
+                                if let Some(resolved) = doc.objects.get(ref_id) {
                                     stack.push(resolved);
                                 }
                             }
@@ -457,7 +455,7 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
                             match &arr[2] {
                                 Object::Name(n) if n == b"DeviceCMYK" => return true,
                                 Object::Reference(ref_id) => {
-                                    if let Some(Object::Name(n)) = doc.objects.get(&ref_id) {
+                                    if let Some(Object::Name(n)) = doc.objects.get(ref_id) {
                                         if n == b"DeviceCMYK" {
                                             return true;
                                         }
@@ -468,27 +466,21 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
                         }
                     }
                     if let Object::Name(name) = &arr[0] {
-                        if name == b"DeviceN" || name == b"NChannel" {
-                            if arr.len() > 4 {
-                                if let Some(Object::Dictionary(attrs)) = arr.get(4) {
-                                    if let Ok(Object::Dictionary(process)) = attrs.get(b"Process") {
-                                        match process.get(b"ColorSpace").ok() {
-                                            Some(Object::Name(n)) => {
+                        if (name == b"DeviceN" || name == b"NChannel") && arr.len() > 4 {
+                            if let Some(Object::Dictionary(attrs)) = arr.get(4) {
+                                if let Ok(Object::Dictionary(process)) = attrs.get(b"Process") {
+                                    match process.get(b"ColorSpace").ok() {
+                                        Some(Object::Name(n)) if n == b"DeviceCMYK" => {
+                                            return true;
+                                        }
+                                        Some(Object::Reference(ref_id)) => {
+                                            if let Some(Object::Name(n)) = doc.objects.get(ref_id) {
                                                 if n == b"DeviceCMYK" {
                                                     return true;
                                                 }
                                             }
-                                            Some(Object::Reference(ref_id)) => {
-                                                if let Some(Object::Name(n)) =
-                                                    doc.objects.get(&ref_id)
-                                                {
-                                                    if n == b"DeviceCMYK" {
-                                                        return true;
-                                                    }
-                                                }
-                                            }
-                                            _ => {}
                                         }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -499,7 +491,7 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
                     match item {
                         Object::Reference(ref_id) => {
                             if visited.insert(*ref_id) {
-                                if let Some(resolved) = doc.objects.get(&ref_id) {
+                                if let Some(resolved) = doc.objects.get(ref_id) {
                                     stack.push(resolved);
                                 }
                             }
@@ -508,11 +500,9 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
                     }
                 }
             }
-            Object::Reference(ref_id) => {
-                if visited.insert(*ref_id) {
-                    if let Some(resolved) = doc.objects.get(&ref_id) {
-                        stack.push(resolved);
-                    }
+            Object::Reference(ref_id) if visited.insert(*ref_id) => {
+                if let Some(resolved) = doc.objects.get(ref_id) {
+                    stack.push(resolved);
                 }
             }
             _ => {}
@@ -2332,18 +2322,9 @@ fn collect_separations_recursive(
                 collect_separations_recursive(doc, id, val, map, visited_refs, depth + 1);
             }
         }
-        Object::Reference(ref_id) => {
-            if visited_refs.insert(*ref_id) {
-                if let Ok(resolved) = doc.get_object(*ref_id) {
-                    collect_separations_recursive(
-                        doc,
-                        *ref_id,
-                        resolved,
-                        map,
-                        visited_refs,
-                        depth + 1,
-                    );
-                }
+        Object::Reference(ref_id) if visited_refs.insert(*ref_id) => {
+            if let Ok(resolved) = doc.get_object(*ref_id) {
+                collect_separations_recursive(doc, *ref_id, resolved, map, visited_refs, depth + 1);
             }
         }
         _ => {}
@@ -2361,10 +2342,8 @@ fn redirect_references_recursive(
         return;
     }
     match obj {
-        Object::Reference(r) => {
-            if *r == old_id {
-                *r = new_id;
-            }
+        Object::Reference(r) if *r == old_id => {
+            *r = new_id;
         }
         Object::Array(arr) => {
             for item in arr.iter_mut() {

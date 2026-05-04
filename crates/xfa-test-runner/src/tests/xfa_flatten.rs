@@ -243,7 +243,7 @@ impl PdfTest for XfaFlattenTest {
                     }
                 };
 
-                let error_message = ssim_oracle_score.map_or(None, |score| {
+                let error_message = ssim_oracle_score.and_then(|score| {
                     if score < 0.0 {
                         Some("no_reference_for_ssim".to_string())
                     } else {

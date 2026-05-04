@@ -3,23 +3,29 @@ use crate::error::{Result, XfaError};
 use pdf_syntax::object::dict::keys::{ACRO_FORM, XFA};
 use pdf_syntax::object::{Array, Dict, Object, Stream};
 use pdf_syntax::Pdf;
+/// XfaPackets.
 
 #[derive(Debug, Clone, Default)]
 pub struct XfaPackets {
+    /// full_xml.
     pub full_xml: Option<String>,
+    /// packets.
     pub packets: Vec<(String, String)>,
 }
 
 impl XfaPackets {
+    /// get_packet.
     pub fn get_packet(&self, name: &str) -> Option<&str> {
         self.packets
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, v)| v.as_str())
     }
+    /// template.
     pub fn template(&self) -> Option<&str> {
         self.get_packet("template")
     }
+    /// datasets.
     pub fn datasets(&self) -> Option<&str> {
         // When multiple "datasets" packets exist (e.g. from incremental saves),
         // prefer the largest one — the small/empty one is the original blank form
@@ -30,14 +36,16 @@ impl XfaPackets {
             .max_by_key(|(_, v)| v.len())
             .map(|(_, v)| v.as_str())
     }
+    /// config.
     pub fn config(&self) -> Option<&str> {
         self.get_packet("config")
     }
+    /// locale_set.
     pub fn locale_set(&self) -> Option<&str> {
         self.get_packet("localeSet")
     }
 }
-
+/// extract_xfa.
 pub fn extract_xfa(pdf: &Pdf) -> Result<XfaPackets> {
     if let Some(mut p) = extract_xfa_from_acroform(pdf) {
         if !p.packets.is_empty() || p.full_xml.is_some() {
@@ -74,12 +82,12 @@ fn scan_for_datasets(pdf: &Pdf, min_len: usize) -> Option<String> {
     }
     best
 }
-
+/// extract_xfa_from_bytes.
 pub fn extract_xfa_from_bytes(data: impl Into<pdf_syntax::PdfData>) -> Result<XfaPackets> {
     let pdf = Pdf::new(data).map_err(|e| XfaError::LoadFailed(format!("{e:?}")))?;
     extract_xfa(&pdf)
 }
-
+/// extract_xfa_from_acroform.
 pub fn extract_xfa_from_acroform(pdf: &Pdf) -> Option<XfaPackets> {
     let xref = pdf.xref();
     let catalog: Dict<'_> = xref.get(xref.root_id())?;
@@ -284,9 +292,8 @@ pub fn validate_xfa_packets(packets: &XfaPackets) -> PacketValidation {
         warnings,
     }
 }
-
+/// extract_embedded_fonts.
 // ─── Embedded font extraction ────────────────────────────────────────────────
-
 pub fn extract_embedded_fonts(pdf: &Pdf) -> Vec<(String, Vec<u8>)> {
     use pdf_syntax::object::dict::keys::{FONT_FILE, FONT_FILE2, FONT_FILE3, FONT_NAME, TYPE};
     use pdf_syntax::object::Name;

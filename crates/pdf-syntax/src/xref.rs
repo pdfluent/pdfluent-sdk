@@ -416,7 +416,7 @@ impl XRef {
 
                 // Try to yield in the order the objects appeared in the
                 // PDF.
-                elements.sort_by(|e1, e2| e1.1.cmp(&e2.1));
+                elements.sort_by_key(|e1| e1.1);
 
                 let mut iter = elements.into_iter();
 

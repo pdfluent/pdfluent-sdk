@@ -1904,7 +1904,7 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
                 continue;
             };
             // Skip dicts whose /Type is a known non-action type.
-            if let Some(Object::Name(ref t)) = dict.get(b"Type").ok() {
+            if let Ok(Object::Name(ref t)) = dict.get(b"Type") {
                 if NON_ACTION_TYPES.iter().any(|nt| t == *nt) {
                     continue;
                 }
@@ -3080,10 +3080,8 @@ fn fix_cidtogidmap_extra(doc: &mut Document) -> usize {
                                 }
                             }
                         }
-                        Object::Dictionary(cidfont) => {
-                            if needs_cidtogid_fix(doc, cidfont) {
-                                inline_targets.push((id, true, idx));
-                            }
+                        Object::Dictionary(cidfont) if needs_cidtogid_fix(doc, cidfont) => {
+                            inline_targets.push((id, true, idx));
                         }
                         _ => {}
                     }
@@ -3121,10 +3119,8 @@ fn fix_cidtogidmap_extra(doc: &mut Document) -> usize {
                                 }
                             }
                         }
-                        Object::Dictionary(cidfont) => {
-                            if needs_cidtogid_fix(doc, cidfont) {
-                                inline_targets.push((*arr_id, false, idx));
-                            }
+                        Object::Dictionary(cidfont) if needs_cidtogid_fix(doc, cidfont) => {
+                            inline_targets.push((*arr_id, false, idx));
                         }
                         _ => {}
                     }
@@ -6570,12 +6566,12 @@ fn fix_jbig2_globals(doc: &mut Document) -> usize {
             }
             // Check for /JBIG2Globals in DecodeParms.
             let globals_ref: Option<ObjectId> =
-                if let Some(Object::Dictionary(dp)) = stream.dict.get(b"DecodeParms").ok() {
+                if let Ok(Object::Dictionary(dp)) = stream.dict.get(b"DecodeParms") {
                     match dp.get(b"JBIG2Globals").ok() {
                         Some(Object::Reference(r)) => Some(*r),
                         _ => None,
                     }
-                } else if let Some(Object::Array(arr)) = stream.dict.get(b"DecodeParms").ok() {
+                } else if let Ok(Object::Array(arr)) = stream.dict.get(b"DecodeParms") {
                     arr.iter().find_map(|o| {
                         if let Object::Dictionary(dp) = o {
                             match dp.get(b"JBIG2Globals").ok() {
@@ -7222,10 +7218,8 @@ fn dict_has_bad_smask(d: &lopdf::Dictionary) -> bool {
     }
     for (_, val) in d.iter() {
         match val {
-            Object::Dictionary(inner) => {
-                if dict_has_bad_smask(inner) {
-                    return true;
-                }
+            Object::Dictionary(inner) if dict_has_bad_smask(inner) => {
+                return true;
             }
             Object::Array(arr) => {
                 for item in arr {
@@ -7325,7 +7319,7 @@ fn fix_blend_recursive(d: &mut lopdf::Dictionary) -> usize {
     let mut count = 0;
     if let Ok(Object::Name(bm)) = d.get(b"BM") {
         let bm_clone = bm.clone();
-        if !VALID_BLEND_MODES.iter().any(|v| *v == bm_clone.as_slice()) {
+        if !VALID_BLEND_MODES.contains(&bm_clone.as_slice()) {
             if let Some(canonical) = find_canonical_blend_mode(&bm_clone) {
                 d.set("BM", Object::Name(canonical.to_vec()));
                 count += 1;
@@ -8869,7 +8863,7 @@ fn inline_image_data_length(dict_bytes: &[u8]) -> usize {
 
     // Row length in bytes (ceiling division)
     let bits_per_row = w * components * bpc;
-    let bytes_per_row = (bits_per_row + 7) / 8;
+    let bytes_per_row = bits_per_row.div_ceil(8);
     bytes_per_row * h
 }
 
@@ -9089,7 +9083,7 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
         // /CS must be present and not a device color space.
         let current_cs = match grp.get(b"CS").ok() {
             Some(cs) => {
-                if let Some(name) = cs.as_name().ok() {
+                if let Ok(name) = cs.as_name() {
                     if name == b"DeviceRGB" || name == b"DeviceCMYK" || name == b"DeviceGray" {
                         return true;
                     }
@@ -9115,10 +9109,10 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
         if let Some(Object::Dictionary(grp)) = doc.objects.get(&id) {
             // We don't know for sure if it's a Group dict, but if it has /S /Transparency
             // and looks like one, we should fix it to be compliant.
-            if grp.get(b"S").ok() == Some(&Object::Name(b"Transparency".to_vec())) {
-                if group_dict_needs_fix(grp, cs_value.as_ref()) {
-                    indirect_fixes.push(id);
-                }
+            if grp.get(b"S").ok() == Some(&Object::Name(b"Transparency".to_vec()))
+                && group_dict_needs_fix(grp, cs_value.as_ref())
+            {
+                indirect_fixes.push(id);
             }
         }
     }
@@ -10629,10 +10623,10 @@ fn ensure_cmyk_profile_extra(doc: &mut Document) -> ObjectId {
     // Look for any existing CMYK profile first.
     for (&id, obj) in &doc.objects {
         if let Object::Stream(ref s) = obj {
-            if s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok()) == Some(4) {
-                if s.dict.get(b"Type").ok().and_then(|o| o.as_name().ok()) == Some(b"ICCBased") {
-                    return id;
-                }
+            if s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok()) == Some(4)
+                && s.dict.get(b"Type").ok().and_then(|o| o.as_name().ok()) == Some(b"ICCBased")
+            {
+                return id;
             }
         }
     }
@@ -10823,10 +10817,11 @@ fn fix_icc_profile_reuse(doc: &mut Document) -> usize {
     let mut to_replace = Vec::new();
     for (&id, obj) in &doc.objects {
         if let Object::Array(ref arr) = obj {
-            if arr.len() == 2 && arr[0].as_name().ok() == Some(b"ICCBased") {
-                if arr[1].as_reference().ok() == Some(profile_id) {
-                    to_replace.push(id);
-                }
+            if arr.len() == 2
+                && arr[0].as_name().ok() == Some(b"ICCBased")
+                && arr[1].as_reference().ok() == Some(profile_id)
+            {
+                to_replace.push(id);
             }
         }
     }

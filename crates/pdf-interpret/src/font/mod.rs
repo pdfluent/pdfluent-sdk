@@ -653,14 +653,13 @@ pub(crate) fn glyph_name_to_unicode(name: &str) -> Option<char> {
 
     // 4. Handle "aXX" decimal glyph names (e.g., "a65" → 'A') used by some
     //    TeX/LaTeX generated PDFs and custom encoding vectors.
-    if name.starts_with('a') && name.len() >= 2 {
-        if let Ok(code) = name[1..].parse::<u32>() {
-            if let Some(c) = char::from_u32(code) {
-                if !c.is_control() || c == ' ' {
-                    return Some(c);
-                }
-            }
-        }
+    if name.starts_with('a')
+        && name.len() >= 2
+        && let Ok(code) = name[1..].parse::<u32>()
+        && let Some(c) = char::from_u32(code)
+        && (!c.is_control() || c == ' ')
+    {
+        return Some(c);
     }
 
     warn!("failed to map glyph name {} to unicode", name);

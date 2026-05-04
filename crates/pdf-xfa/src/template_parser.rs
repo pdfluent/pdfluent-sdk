@@ -1594,13 +1594,12 @@ fn add_children(
                 }
             }
             // Legacy <break> element between content children.
-            "break" => {
+            "break"
                 if attr(child, "before") == Some("pageArea")
-                    && attr(child, "targetType") == Some("pageArea")
-                {
-                    pending_break = true;
-                    pending_break_target = attr(child, "target").map(|s| s.to_string());
-                }
+                    && attr(child, "targetType") == Some("pageArea") =>
+            {
+                pending_break = true;
+                pending_break_target = attr(child, "target").map(|s| s.to_string());
             }
             // Ignore XML elements that are layout metadata, not form nodes.
             // XFA Spec 3.3 §28.1 (p1229) — Adobe Non-conformance: stipple rate only

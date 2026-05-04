@@ -6,6 +6,11 @@ name: CI
 # `scripts/validate-expensive.sh`. A manual fallback workflow lives at
 # `.github/workflows/expensive-validation.yml` (workflow_dispatch only,
 # not required for merge). See `docs/ci-cost-control.md` for rationale.
+#
+# pdf-desktop is excluded from check/test/clippy because it pulls in
+# Tauri/GTK system libs (glib-2.0, gtk-3, webkit2gtk, …) that are not
+# installed on github-hosted runners; desktop validation also runs
+# off-CI per the policy above.
 
 on:
   pull_request:
@@ -24,6 +29,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
 jobs:
   check:
@@ -33,16 +39,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver -p formcalc-interpreter -p xfa-cli
+      - run: cargo check --workspace --exclude pdf-desktop
 
   test:
     name: Test
     runs-on: ubuntu-latest
+    # Linker `ld` runs out of memory on the 7 GB github-hosted runner when
+    # linking ~30 test binaries with full debug info in parallel
+    # (signal 7 / Bus error). Drop debug info for the test profile and
+    # serialize the link step.
+    env:
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_BUILD_JOBS: "2"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver -p formcalc-interpreter
+      - run: cargo test --workspace --exclude pdf-desktop --no-fail-fast
 
   clippy:
     name: Clippy
@@ -53,13 +66,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # Scope to pdf-xfa only: this is the active engine crate with 0 new warnings.
-      # Pre-existing missing_docs debt in xfa-dom-resolver / formcalc-interpreter is
-      # tracked separately and not gated here.
-      # pdf-xfa has #![warn(missing_docs)] + pre-existing collapsible_match debt.
-      # Clippy runs as a warning-only gate here; the VPS validation script
-      # enforces the 0-new-warnings contract (docs/ci-cost-control.md).
-      - run: cargo clippy -p pdf-xfa --no-deps
+      - run: cargo clippy --workspace --exclude pdf-desktop -- -D warnings
 
   fmt:
     name: Format

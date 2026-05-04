@@ -1489,14 +1489,12 @@ fn extract_blocks_from_ops_inner(
                 state.tm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
                 state.tlm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
             }
-            "Tf" => {
-                if op.operands.len() >= 2 {
-                    if let Object::Name(ref name) = op.operands[0] {
-                        state.font_name = String::from_utf8_lossy(name).to_string();
-                    }
-                    if let Some(size) = as_number(&op.operands[1]) {
-                        state.font_size = size;
-                    }
+            "Tf" if op.operands.len() >= 2 => {
+                if let Object::Name(ref name) = op.operands[0] {
+                    state.font_name = String::from_utf8_lossy(name).to_string();
+                }
+                if let Some(size) = as_number(&op.operands[1]) {
+                    state.font_size = size;
                 }
             }
             "Tc" => {
@@ -1524,24 +1522,20 @@ fn extract_blocks_from_ops_inner(
                     state.ts = v;
                 }
             }
-            "Td" => {
-                if op.operands.len() >= 2 {
-                    let tx = as_number(&op.operands[0]).unwrap_or(0.0);
-                    let ty = as_number(&op.operands[1]).unwrap_or(0.0);
-                    let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
-                    state.tlm = new_tlm;
-                    state.tm = new_tlm;
-                }
+            "Td" if op.operands.len() >= 2 => {
+                let tx = as_number(&op.operands[0]).unwrap_or(0.0);
+                let ty = as_number(&op.operands[1]).unwrap_or(0.0);
+                let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
+                state.tlm = new_tlm;
+                state.tm = new_tlm;
             }
-            "TD" => {
-                if op.operands.len() >= 2 {
-                    let tx = as_number(&op.operands[0]).unwrap_or(0.0);
-                    let ty = as_number(&op.operands[1]).unwrap_or(0.0);
-                    state.tl = -ty;
-                    let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
-                    state.tlm = new_tlm;
-                    state.tm = new_tlm;
-                }
+            "TD" if op.operands.len() >= 2 => {
+                let tx = as_number(&op.operands[0]).unwrap_or(0.0);
+                let ty = as_number(&op.operands[1]).unwrap_or(0.0);
+                state.tl = -ty;
+                let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
+                state.tlm = new_tlm;
+                state.tm = new_tlm;
             }
             "Tm" => {
                 if let Some(m) = extract_matrix(&op.operands) {
@@ -1657,47 +1651,43 @@ fn extract_blocks_from_ops_inner(
                     }
                 }
             }
-            "\"" => {
+            "\"" if op.operands.len() >= 3 => {
                 // Set word/char spacing, move to next line, show text.
-                if op.operands.len() >= 3 {
-                    if let Some(tw) = as_number(&op.operands[0]) {
-                        state.tw = tw;
+                if let Some(tw) = as_number(&op.operands[0]) {
+                    state.tw = tw;
+                }
+                if let Some(tc) = as_number(&op.operands[1]) {
+                    state.tc = tc;
+                }
+
+                let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, 0.0, -state.tl]);
+                state.tlm = new_tlm;
+                state.tm = new_tlm;
+
+                let fi = font_map.get(&state.font_name);
+                if let Some(text) = extract_decoded_string_operand_with_font(&op.operands[2..], fi)
+                {
+                    let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
+
+                    if !text.is_empty() {
+                        let x = state.tm[4];
+                        let y = state.tm[5];
+                        // Bbox width tracks rendered glyph footprint
+                        // (one char_w per source glyph) — match Tj path.
+                        let text_width = text.glyph_count() as f64 * char_w;
+                        let display_text = maybe_decompose_decoded(&text);
+                        blocks.push(TextBlock {
+                            text: display_text,
+                            page,
+                            bbox: [x, y, x + text_width, y + state.font_size],
+                            font_name: state.font_name.clone(),
+                            font_size: state.font_size,
+                            actual_text: current_actual_text(&mc_stack, inherited_actual_text),
+                        });
                     }
-                    if let Some(tc) = as_number(&op.operands[1]) {
-                        state.tc = tc;
-                    }
 
-                    let new_tlm =
-                        multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, 0.0, -state.tl]);
-                    state.tlm = new_tlm;
-                    state.tm = new_tlm;
-
-                    let fi = font_map.get(&state.font_name);
-                    if let Some(text) =
-                        extract_decoded_string_operand_with_font(&op.operands[2..], fi)
-                    {
-                        let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
-
-                        if !text.is_empty() {
-                            let x = state.tm[4];
-                            let y = state.tm[5];
-                            // Bbox width tracks rendered glyph footprint
-                            // (one char_w per source glyph) — match Tj path.
-                            let text_width = text.glyph_count() as f64 * char_w;
-                            let display_text = maybe_decompose_decoded(&text);
-                            blocks.push(TextBlock {
-                                text: display_text,
-                                page,
-                                bbox: [x, y, x + text_width, y + state.font_size],
-                                font_name: state.font_name.clone(),
-                                font_size: state.font_size,
-                                actual_text: current_actual_text(&mc_stack, inherited_actual_text),
-                            });
-                        }
-
-                        for _ in text.iter() {
-                            state.tm[4] += char_w + state.tc;
-                        }
+                    for _ in text.iter() {
+                        state.tm[4] += char_w + state.tc;
                     }
                 }
             }
@@ -1724,28 +1714,26 @@ fn extract_blocks_from_ops_inner(
                 // stream with an unmatched EMC doesn't panic.
                 mc_stack.pop();
             }
-            "Do" => {
+            "Do" if depth < 5 => {
                 // Invoke Form XObject — recurse into its content stream.
                 // Propagate the active /ActualText binding (top-of-stack, or
                 // whatever this invocation itself inherited) so text inside
                 // the XObject is tagged with the surrounding BDC/EMC pair.
-                if depth < 5 {
-                    if let Some((doc, resources)) = doc_and_resources {
-                        if let Some(Object::Name(ref xobj_name)) = op.operands.first() {
-                            let xobj_name_str = String::from_utf8_lossy(xobj_name);
-                            let inherited_for_child =
-                                current_actual_text(&mc_stack, inherited_actual_text);
-                            if let Some(xobj_blocks) = extract_form_xobject_text(
-                                doc,
-                                resources,
-                                &xobj_name_str,
-                                page,
-                                font_map,
-                                depth,
-                                inherited_for_child.as_deref(),
-                            ) {
-                                blocks.extend(xobj_blocks);
-                            }
+                if let Some((doc, resources)) = doc_and_resources {
+                    if let Some(Object::Name(ref xobj_name)) = op.operands.first() {
+                        let xobj_name_str = String::from_utf8_lossy(xobj_name);
+                        let inherited_for_child =
+                            current_actual_text(&mc_stack, inherited_actual_text);
+                        if let Some(xobj_blocks) = extract_form_xobject_text(
+                            doc,
+                            resources,
+                            &xobj_name_str,
+                            page,
+                            font_map,
+                            depth,
+                            inherited_for_child.as_deref(),
+                        ) {
+                            blocks.extend(xobj_blocks);
                         }
                     }
                 }
@@ -1988,14 +1976,12 @@ fn extract_chars_from_ops(
                 state.tm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
                 state.tlm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
             }
-            "Tf" => {
-                if op.operands.len() >= 2 {
-                    if let Object::Name(ref name) = op.operands[0] {
-                        state.font_name = String::from_utf8_lossy(name).to_string();
-                    }
-                    if let Some(size) = as_number(&op.operands[1]) {
-                        state.font_size = size;
-                    }
+            "Tf" if op.operands.len() >= 2 => {
+                if let Object::Name(ref name) = op.operands[0] {
+                    state.font_name = String::from_utf8_lossy(name).to_string();
+                }
+                if let Some(size) = as_number(&op.operands[1]) {
+                    state.font_size = size;
                 }
             }
             "Tc" => {
@@ -2023,24 +2009,20 @@ fn extract_chars_from_ops(
                     state.ts = v;
                 }
             }
-            "Td" => {
-                if op.operands.len() >= 2 {
-                    let tx = as_number(&op.operands[0]).unwrap_or(0.0);
-                    let ty = as_number(&op.operands[1]).unwrap_or(0.0);
-                    let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
-                    state.tlm = new_tlm;
-                    state.tm = new_tlm;
-                }
+            "Td" if op.operands.len() >= 2 => {
+                let tx = as_number(&op.operands[0]).unwrap_or(0.0);
+                let ty = as_number(&op.operands[1]).unwrap_or(0.0);
+                let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
+                state.tlm = new_tlm;
+                state.tm = new_tlm;
             }
-            "TD" => {
-                if op.operands.len() >= 2 {
-                    let tx = as_number(&op.operands[0]).unwrap_or(0.0);
-                    let ty = as_number(&op.operands[1]).unwrap_or(0.0);
-                    state.tl = -ty;
-                    let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
-                    state.tlm = new_tlm;
-                    state.tm = new_tlm;
-                }
+            "TD" if op.operands.len() >= 2 => {
+                let tx = as_number(&op.operands[0]).unwrap_or(0.0);
+                let ty = as_number(&op.operands[1]).unwrap_or(0.0);
+                state.tl = -ty;
+                let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
+                state.tlm = new_tlm;
+                state.tm = new_tlm;
             }
             "Tm" => {
                 if let Some(m) = extract_matrix(&op.operands) {
@@ -2117,35 +2099,31 @@ fn extract_chars_from_ops(
                     }
                 }
             }
-            "\"" => {
-                if op.operands.len() >= 3 {
-                    if let Some(tw) = as_number(&op.operands[0]) {
-                        state.tw = tw;
-                    }
-                    if let Some(tc) = as_number(&op.operands[1]) {
-                        state.tc = tc;
-                    }
+            "\"" if op.operands.len() >= 3 => {
+                if let Some(tw) = as_number(&op.operands[0]) {
+                    state.tw = tw;
+                }
+                if let Some(tc) = as_number(&op.operands[1]) {
+                    state.tc = tc;
+                }
 
-                    let new_tlm =
-                        multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, 0.0, -state.tl]);
-                    state.tlm = new_tlm;
-                    state.tm = new_tlm;
+                let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, 0.0, -state.tl]);
+                state.tlm = new_tlm;
+                state.tm = new_tlm;
 
-                    let fi = font_map.get(&state.font_name);
-                    if let Some(text) =
-                        extract_decoded_string_operand_with_font(&op.operands[2..], fi)
-                    {
-                        let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
-                        for (ch, is_ct_origin) in text.iter() {
-                            push_glyph_positioned(
-                                &mut chars,
-                                &mut state,
-                                page,
-                                ch,
-                                is_ct_origin,
-                                char_w,
-                            );
-                        }
+                let fi = font_map.get(&state.font_name);
+                if let Some(text) = extract_decoded_string_operand_with_font(&op.operands[2..], fi)
+                {
+                    let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
+                    for (ch, is_ct_origin) in text.iter() {
+                        push_glyph_positioned(
+                            &mut chars,
+                            &mut state,
+                            page,
+                            ch,
+                            is_ct_origin,
+                            char_w,
+                        );
                     }
                 }
             }

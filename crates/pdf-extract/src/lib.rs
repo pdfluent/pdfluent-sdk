@@ -13,7 +13,7 @@
 //!
 //! ```no_run
 //! use lopdf::Document;
-//! use pdf_extract::{extract_text, extract_page_text, search_text, SearchOptions};
+//! use pdfluent_extract::{extract_text, extract_page_text, search_text, SearchOptions};
 //!
 //! let doc = Document::load("document.pdf").unwrap();
 //!

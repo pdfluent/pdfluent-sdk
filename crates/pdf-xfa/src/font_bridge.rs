@@ -33,15 +33,20 @@ use std::sync::OnceLock;
 /// Reference to a reusable simple-font object already present in the source PDF.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PdfSourceFont {
+    /// object_id.
     pub object_id: ObjectId,
 }
 
 /// Embedded font record extracted from the source PDF.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmbeddedFontData {
+    /// name.
     pub name: String,
+    /// data.
     pub data: Vec<u8>,
+    /// pdf_widths.
     pub pdf_widths: Option<(u16, Vec<u16>)>,
+    /// pdf_encoding.
     pub pdf_encoding: Option<PdfSimpleEncoding>,
     /// Existing simple-font object that can be reused during flattening.
     pub pdf_source_font: Option<PdfSourceFont>,
@@ -50,12 +55,16 @@ pub struct EmbeddedFontData {
 /// Base encodings for simple PDF fonts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PdfBaseEncoding {
+    /// WinAnsi.
     WinAnsi,
+    /// Standard.
     Standard,
+    /// MacRoman.
     MacRoman,
 }
 
 impl PdfBaseEncoding {
+    /// from_pdf_name.
     pub fn from_pdf_name(name: &[u8]) -> Option<Self> {
         match name {
             b"WinAnsiEncoding" => Some(Self::WinAnsi),
@@ -77,11 +86,14 @@ impl PdfBaseEncoding {
 /// Simple-font encoding overrides parsed from a PDF `/Encoding` dictionary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PdfSimpleEncoding {
+    /// base_encoding.
     pub base_encoding: PdfBaseEncoding,
+    /// differences.
     pub differences: Vec<(u8, u16)>,
 }
 
 impl PdfSimpleEncoding {
+    /// code_to_unicode_table.
     pub fn code_to_unicode_table(&self) -> Vec<Option<u16>> {
         let mut table = self.base_encoding.code_to_unicode_table().to_vec();
         for (code, unicode) in &self.differences {
@@ -311,11 +323,17 @@ pub fn font_variant_key(typeface: &str, weight: Option<&str>, posture: Option<&s
 /// XFA Spec 3.3 §28.2 (p1246) — Font mapping step 4: genericFamily mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GenericFamily {
+    /// Serif.
     Serif,
+    /// SansSerif.
     SansSerif,
+    /// Monospaced.
     Monospaced,
+    /// Decorative.
     Decorative,
+    /// Fantasy.
     Fantasy,
+    /// Cursive.
     Cursive,
 }
 
@@ -337,23 +355,33 @@ impl GenericFamily {
 /// XFA font specification from the template.
 #[derive(Debug, Clone)]
 pub struct XfaFontSpec {
+    /// typeface.
     pub typeface: String,
+    /// weight.
     pub weight: FontWeight,
+    /// posture.
     pub posture: FontPosture,
+    /// size_pt.
     pub size_pt: f64,
     /// XFA Spec 3.3 §17 (p716) — genericFamily fallback hint.
     pub generic_family: Option<GenericFamily>,
 }
+/// FontWeight.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FontWeight {
+    /// Normal.
     Normal,
+    /// Bold.
     Bold,
 }
+/// FontPosture.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FontPosture {
+    /// Normal.
     Normal,
+    /// Italic.
     Italic,
 }
 

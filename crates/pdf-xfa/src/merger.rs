@@ -90,6 +90,7 @@ fn area_layout(elem: Node<'_, '_>) -> LayoutStrategy {
 }
 
 impl<'a> FormMerger<'a> {
+    /// new.
     pub fn new(data_dom: &'a DataDom) -> Self {
         Self {
             data_dom,
@@ -844,13 +845,12 @@ impl<'a> FormMerger<'a> {
                         pending_ca_break = true;
                     }
                 }
-                "break" => {
+                "break"
                     if attr(child, "before") == Some("pageArea")
-                        && attr(child, "targetType") == Some("pageArea")
-                    {
-                        pending_break = true;
-                        pending_break_target = attr(child, "target").map(|s| s.to_string());
-                    }
+                        && attr(child, "targetType") == Some("pageArea") =>
+                {
+                    pending_break = true;
+                    pending_break_target = attr(child, "target").map(|s| s.to_string());
                 }
                 _ => {}
             }

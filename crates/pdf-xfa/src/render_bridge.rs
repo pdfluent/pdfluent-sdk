@@ -76,15 +76,20 @@ pub struct FontMetricsData {
 /// Image data collected during rendering for XObject embedding.
 #[derive(Debug, Clone)]
 pub struct ImageInfo {
+    /// name.
     pub name: String,
+    /// data.
     pub data: Vec<u8>,
+    /// mime_type.
     pub mime_type: String,
 }
 
 /// Overlay result for a single page, including content stream and images.
 #[derive(Debug, Clone)]
 pub struct PageOverlay {
+    /// content_stream.
     pub content_stream: Vec<u8>,
+    /// images.
     pub images: Vec<ImageInfo>,
 }
 
@@ -116,6 +121,7 @@ pub struct CoordinateMapper {
 }
 
 impl CoordinateMapper {
+    /// new.
     pub fn new(page_height: f64, page_width: f64) -> Self {
         Self {
             page_height,
@@ -233,46 +239,74 @@ pub fn generate_all_overlays(
 pub enum RenderNode {
     /// A page container with known dimensions.
     Page {
+        /// item.
         width: f64,
+        /// item.
         height: f64,
+        /// item.
         children: Vec<RenderNode>,
     },
     /// A single line of text positioned in PDF coordinate space.
     Text {
+        /// item.
         x: f64,
+        /// item.
         y: f64,
+        /// item.
         content: String,
+        /// item.
         font: String,
+        /// item.
         size: f64,
     },
     /// A filled/stroked rectangle.
     Rect {
+        /// item.
         x: f64,
+        /// item.
         y: f64,
+        /// item.
         width: f64,
+        /// item.
         height: f64,
+        /// item.
         fill: Option<[u8; 3]>,
+        /// item.
         stroke: Option<[u8; 3]>,
     },
     /// An embedded image placeholder (actual bytes excluded for brevity).
     Image {
+        /// item.
         x: f64,
+        /// item.
         y: f64,
+        /// item.
         width: f64,
+        /// item.
         height: f64,
+        /// item.
         data_len: usize,
     },
     /// An interactive form widget.
     Widget {
+        /// item.
         x: f64,
+        /// item.
         y: f64,
+        /// item.
         width: f64,
+        /// item.
         height: f64,
+        /// item.
         field_name: String,
+        /// item.
         value: String,
     },
     /// A group of child nodes (e.g. a subform container).
-    Group { children: Vec<RenderNode> },
+    Group {
+        /// Child render nodes.
+        children: Vec<RenderNode>,
+    },
 }
 
 impl RenderNode {
@@ -361,6 +395,7 @@ impl RenderNode {
 /// content nodes for that page.
 #[derive(Debug, Clone)]
 pub struct RenderTree {
+    /// pages.
     pub pages: Vec<RenderNode>,
 }
 

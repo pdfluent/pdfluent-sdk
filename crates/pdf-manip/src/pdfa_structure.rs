@@ -131,7 +131,7 @@ fn fix_bdc_lang_tags(doc: &mut Document) -> Result<()> {
 /// Required by PDF/A-2 and PDF/A-3 (§6.2.10).
 fn fix_transparency_groups(doc: &mut Document) -> Result<()> {
     let page_ids = doc.get_pages();
-    for (_, &page_id) in &page_ids {
+    for &page_id in page_ids.values() {
         if let Ok(Object::Dictionary(ref mut page_dict)) = doc.get_object_mut(page_id) {
             if page_dict.has(b"Group") {
                 continue;

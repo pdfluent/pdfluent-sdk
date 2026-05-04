@@ -348,9 +348,9 @@ fn generate_diff_image(
             let ref_g = ref_pixels[idx + 1] as i32;
             let ref_b = ref_pixels[idx + 2] as i32;
 
-            let diff_r = (our_r - ref_r).abs() as u8;
-            let diff_g = (our_g - ref_g).abs() as u8;
-            let diff_b = (our_b - ref_b).abs() as u8;
+            let diff_r = (our_r - ref_r).unsigned_abs() as u8;
+            let diff_g = (our_g - ref_g).unsigned_abs() as u8;
+            let diff_b = (our_b - ref_b).unsigned_abs() as u8;
             let max_diff = diff_r.max(diff_g).max(diff_b);
 
             if max_diff < 10 {

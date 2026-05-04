@@ -67,7 +67,10 @@ impl Renderer {
         // Pattern tiles rely on the author's exact stroke width — the tile
         // pattern is composed later at the caller's CTM, so inflating here
         // would double-scale. Also skip the DPI logic for degenerate CTMs
-        // where max_factor collapses to zero (or returned negative).
+        // where max_factor collapses to zero, returned negative, or is NaN.
+        // `!(x > 0.0)` is intentional NaN-safe form (true for 0, neg, NaN);
+        // do not rewrite to `>=` which has different NaN semantics.
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
         if self.inside_pattern || !(min_factor > 0.0) {
             let width = stroke_props.line_width.max(0.01) as f64;
             self.ctx.set_stroke(build_stroke(width));

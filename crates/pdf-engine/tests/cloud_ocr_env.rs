@@ -1,3 +1,8 @@
+// All `OcrBackend`/`OcrError` uses are gated behind the `ocr-*` feature
+// flags below; without any of them enabled the import + helper fns look
+// dead. Allow that — features are external knobs.
+#![allow(dead_code, unused_imports)]
+
 #[cfg(not(target_arch = "wasm32"))]
 use pdf_engine::{OcrBackend, OcrError};
 

@@ -37,7 +37,7 @@ pub struct FontData {
 ///
 /// // Create a new FontData instance.
 /// let font_name = "SomeFont".to_string();
-/// let font_data = lopdf::FontData::new(&font_file, font_name);
+/// let font_data = pdfluent_lopdf::FontData::new(&font_file, font_name);
 /// ```
 ///
 /// Also provides methods to set various font properties such as bounding box, italic angle, ascent, descent, and stemV.
@@ -47,7 +47,7 @@ pub struct FontData {
 /// let font_file = std::fs::read("./SomeFont.ttf").unwrap();
 ///
 /// // Create a new FontData instance along custome value.
-/// let font_data = lopdf::FontData::new(&font_file, "SomeFont".to_string())
+/// let font_data = pdfluent_lopdf::FontData::new(&font_file, "SomeFont".to_string())
 ///                     .set_stem_v(100)
 ///                     .set_italic_angle(10);
 /// ```

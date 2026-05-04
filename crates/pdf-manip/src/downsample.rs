@@ -244,10 +244,8 @@ fn collect_image_display_sizes(doc: &Document) -> HashMap<ObjectId, (f64, f64)> 
                     let current = *ctm_stack.last().unwrap_or(&[1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
                     ctm_stack.push(current);
                 }
-                "Q" => {
-                    if ctm_stack.len() > 1 {
-                        ctm_stack.pop();
-                    }
+                "Q" if ctm_stack.len() > 1 => {
+                    ctm_stack.pop();
                 }
                 "cm" if op.operands.len() >= 6 => {
                     let vals: Vec<f64> = op.operands.iter().filter_map(obj_to_f64).collect();

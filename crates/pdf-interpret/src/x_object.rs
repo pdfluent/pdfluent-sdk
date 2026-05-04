@@ -471,8 +471,8 @@ impl DecodedImageXObject {
 
         if !matches!(bits_per_component, 1 | 2 | 4 | 8 | 16) {
             let divisor = width as u64 * height as u64 * color_space.num_components() as u64;
-            if divisor > 0 {
-                bits_per_component = ((decoded.data.len() as u64 * 8) / divisor) as u8;
+            if let Some(bpc) = (decoded.data.len() as u64 * 8).checked_div(divisor) {
+                bits_per_component = bpc as u8;
             }
         }
 

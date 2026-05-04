@@ -140,13 +140,13 @@ impl Document {
     ///
     /// ```no_run
     /// // Assuming you have a font file at "./SomeFont.ttf"
-    /// use lopdf::dictionary;
+    /// use pdfluent_lopdf::dictionary;
     ///
     /// let font_file = std::fs::read("./SomeFont.ttf").unwrap();
     ///
     /// // Create a new FontData instance with the font file.
     /// let font_name = "SomeFont".to_string();
-    /// let mut font_data = lopdf::FontData::new(&font_file, font_name.clone());
+    /// let mut font_data = pdfluent_lopdf::FontData::new(&font_file, font_name.clone());
     ///
     /// // Customize the font data if needed.
     /// font_data
@@ -155,7 +155,7 @@ impl Document {
     ///
     ///
     /// // Create a new PDF document.
-    /// let mut doc = lopdf::Document::with_version("1.5");
+    /// let mut doc = pdfluent_lopdf::Document::with_version("1.5");
     ///
     /// // Add the font to the document.
     /// let font_id = doc.add_font(font_data).unwrap();

@@ -2549,17 +2549,15 @@ fn detect_device_color_ops(content: &[u8]) -> DeviceColorOps {
             // g: set non-stroking DeviceGray (1 operand + op)
             "g" | "G" => result.has_gray = true,
             // cs/CS: set color space by name
-            "cs" | "CS" => {
-                if i > 0 {
-                    let operand = tokens[i - 1];
-                    // Operand may be /DeviceRGB or just DeviceRGB
-                    let name = operand.strip_prefix('/').unwrap_or(operand);
-                    match name {
-                        "DeviceRGB" => result.has_rgb = true,
-                        "DeviceCMYK" => result.has_cmyk = true,
-                        "DeviceGray" => result.has_gray = true,
-                        _ => {}
-                    }
+            "cs" | "CS" if i > 0 => {
+                let operand = tokens[i - 1];
+                // Operand may be /DeviceRGB or just DeviceRGB
+                let name = operand.strip_prefix('/').unwrap_or(operand);
+                match name {
+                    "DeviceRGB" => result.has_rgb = true,
+                    "DeviceCMYK" => result.has_cmyk = true,
+                    "DeviceGray" => result.has_gray = true,
+                    _ => {}
                 }
             }
             _ => {}
@@ -14646,10 +14644,8 @@ fn check_name_utf8_obj(obj: &Object<'_>) -> bool {
                 return true;
             }
             match &val {
-                MaybeRef::NotRef(Object::Name(n)) => {
-                    if is_bad_name(n.as_ref()) {
-                        return true;
-                    }
+                MaybeRef::NotRef(Object::Name(n)) if is_bad_name(n.as_ref()) => {
+                    return true;
                 }
                 MaybeRef::NotRef(Object::Array(arr)) => {
                     for item in arr.raw_iter() {
@@ -14660,10 +14656,10 @@ fn check_name_utf8_obj(obj: &Object<'_>) -> bool {
                         }
                     }
                 }
-                MaybeRef::NotRef(Object::Dict(d)) if depth < 4 => {
-                    if check_dict_entries(d, depth + 1) {
-                        return true;
-                    }
+                MaybeRef::NotRef(Object::Dict(d))
+                    if depth < 4 && check_dict_entries(d, depth + 1) =>
+                {
+                    return true;
                 }
                 _ => {}
             }
@@ -14830,10 +14826,8 @@ fn check_real_limit_obj(obj: &Object<'_>) -> bool {
         Object::Dict(dict) => {
             for (_, val) in dict.entries() {
                 match val {
-                    MaybeRef::NotRef(Object::Number(n)) => {
-                        if is_real_over_limit(&n) {
-                            return true;
-                        }
+                    MaybeRef::NotRef(Object::Number(n)) if is_real_over_limit(&n) => {
+                        return true;
                     }
                     MaybeRef::NotRef(Object::Array(arr)) => {
                         for item in arr.raw_iter() {
@@ -14983,10 +14977,8 @@ fn check_integer_range_dict(dict: &Dict<'_>, min: f64, max: f64) -> bool {
     use pdf_syntax::object::MaybeRef;
     for (_, val) in dict.entries() {
         match val {
-            MaybeRef::NotRef(Object::Number(n)) => {
-                if is_int_out_of_range(n.as_f64(), min, max) {
-                    return true;
-                }
+            MaybeRef::NotRef(Object::Number(n)) if is_int_out_of_range(n.as_f64(), min, max) => {
+                return true;
             }
             MaybeRef::NotRef(Object::Array(arr)) => {
                 for item in arr.raw_iter() {
@@ -15225,48 +15217,44 @@ fn check_do_tf_refs_in_stream(
         }
 
         match tok {
-            "Do" => {
+            "Do" if i >= 1 => {
                 // /Name Do — XObject invocation; name is 1 token before.
                 // Use contains_key rather than get_x_object (which returns Option<Stream>
                 // and returns None for streams with /F <indirect-ref> that pdf-syntax
                 // can't parse as a Stream, even though the entry exists). Fixes FP=6.2.2
                 // on PDFs where a Form XObject has an external file reference (/F n 0 R).
-                if i >= 1 {
-                    if let Some(name) = tokens[i - 1].strip_prefix('/') {
-                        let in_own = res.x_objects.contains_key(name.as_bytes());
-                        let in_parent = !in_own
-                            && res
-                                .parent()
-                                .is_some_and(|p| p.x_objects.contains_key(name.as_bytes()));
-                        if !in_own && !in_parent {
-                            error_at(
-                                report,
-                                "6.2.2",
-                                format!("/{name} referenced by Do but not in Resources/XObject"),
-                                location.to_string(),
-                            );
-                        }
+                if let Some(name) = tokens[i - 1].strip_prefix('/') {
+                    let in_own = res.x_objects.contains_key(name.as_bytes());
+                    let in_parent = !in_own
+                        && res
+                            .parent()
+                            .is_some_and(|p| p.x_objects.contains_key(name.as_bytes()));
+                    if !in_own && !in_parent {
+                        error_at(
+                            report,
+                            "6.2.2",
+                            format!("/{name} referenced by Do but not in Resources/XObject"),
+                            location.to_string(),
+                        );
                     }
                 }
             }
-            "Tf" => {
+            "Tf" if i >= 2 => {
                 // /Name size Tf — font selection; name is 2 tokens before.
                 // Use contains_key for the same reason as Do above.
-                if i >= 2 {
-                    if let Some(name) = tokens[i - 2].strip_prefix('/') {
-                        let in_own = res.fonts.contains_key(name.as_bytes());
-                        let in_parent = !in_own
-                            && res
-                                .parent()
-                                .is_some_and(|p| p.fonts.contains_key(name.as_bytes()));
-                        if !in_own && !in_parent {
-                            error_at(
-                                report,
-                                "6.2.2",
-                                format!("Font /{name} referenced by Tf but not in Resources/Font"),
-                                location.to_string(),
-                            );
-                        }
+                if let Some(name) = tokens[i - 2].strip_prefix('/') {
+                    let in_own = res.fonts.contains_key(name.as_bytes());
+                    let in_parent = !in_own
+                        && res
+                            .parent()
+                            .is_some_and(|p| p.fonts.contains_key(name.as_bytes()));
+                    if !in_own && !in_parent {
+                        error_at(
+                            report,
+                            "6.2.2",
+                            format!("Font /{name} referenced by Tf but not in Resources/Font"),
+                            location.to_string(),
+                        );
                     }
                 }
             }

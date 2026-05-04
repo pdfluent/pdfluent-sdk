@@ -272,7 +272,7 @@ pub fn detect_pdfa_level(pdf: &Pdf) -> Option<PdfALevel> {
 pub fn preferred_pdfa_level(pdf: &Pdf) -> PdfALevel {
     match detect_pdfa_level(pdf) {
         Some(level) if level.part() >= 2 => level,
-        Some(level)
+        Some(_level)
             if check::has_xref_streams(pdf)
                 || check::uses_transparency(pdf)
                 || check::uses_jpeg2000(pdf) =>

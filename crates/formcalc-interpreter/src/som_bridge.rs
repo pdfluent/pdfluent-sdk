@@ -42,12 +42,14 @@ pub trait SomResolver {
 
 /// Binding between the FormCalc interpreter and a Data DOM.
 pub struct DomContext<'a> {
+    /// Reference to the Data DOM.
     pub dom: &'a mut DataDom,
     /// Current context node for relative SOM paths.
     pub current_node: Option<DataNodeId>,
 }
 
 impl<'a> DomContext<'a> {
+    /// Create a new DOM context.
     pub fn new(dom: &'a mut DataDom) -> Self {
         Self {
             dom,
@@ -55,6 +57,7 @@ impl<'a> DomContext<'a> {
         }
     }
 
+    /// Create a DOM context with a current node.
     pub fn with_current(dom: &'a mut DataDom, current: DataNodeId) -> Self {
         Self {
             dom,

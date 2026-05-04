@@ -116,6 +116,7 @@ impl Default for FontMetrics {
 }
 
 impl FontMetrics {
+    /// Create font metrics with the given size.
     pub fn new(size: f64) -> Self {
         Self {
             size,
