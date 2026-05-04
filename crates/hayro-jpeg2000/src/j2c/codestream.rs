@@ -166,7 +166,7 @@ pub(crate) fn read_header<'a>(
     size_data.x_resolution_shrink_factor *= 1 << skipped_resolution_levels;
     size_data.y_resolution_shrink_factor *= 1 << skipped_resolution_levels;
 
-    ppm_markers.sort_by(|p0, p1| p0.sequence_idx.cmp(&p1.sequence_idx));
+    ppm_markers.sort_by_key(|p0| p0.sequence_idx);
 
     let header = Header {
         size_data,

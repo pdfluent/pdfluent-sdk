@@ -564,7 +564,7 @@ impl PartitionedRanges {
 
     pub(crate) fn sort(&mut self) {
         for bucket in &mut self.buckets {
-            bucket.sort_by(|a, b| a.range.start.cmp(&b.range.start));
+            bucket.sort_by_key(|a| a.range.start);
         }
     }
 }

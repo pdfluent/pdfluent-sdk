@@ -12,14 +12,26 @@ pub enum Expr {
     /// Variable/identifier reference
     Ident(String),
     /// Member access: object.member (SOM path resolution)
-    MemberAccess { object: Box<Expr>, member: String },
+    MemberAccess {
+        /// Object expression.
+        object: Box<Expr>,
+        /// Member name.
+        member: String,
+    },
     /// Indexed access: object[index] — index is 0-based integer or `*` for all.
     IndexAccess {
+        /// Object expression.
         object: Box<Expr>,
+        /// Index expression.
         index: AccessIndex,
     },
     /// Recursive descent: object..member (SOM `..` separator)
-    RecursiveDescent { object: Box<Expr>, member: String },
+    RecursiveDescent {
+        /// Object expression.
+        object: Box<Expr>,
+        /// Member name.
+        member: String,
+    },
 
     /// Unary negation: -expr
     Negate(Box<Expr>),
@@ -30,8 +42,11 @@ pub enum Expr {
 
     /// Binary operation
     BinaryOp {
+        /// Operator.
         op: BinOp,
+        /// Left operand.
         left: Box<Expr>,
+        /// Right operand.
         right: Box<Expr>,
     },
 
@@ -39,52 +54,82 @@ pub enum Expr {
     Concat(Box<Expr>, Box<Expr>),
 
     /// Assignment: target = value
-    Assign { target: Box<Expr>, value: Box<Expr> },
+    Assign {
+        /// Assignment target.
+        target: Box<Expr>,
+        /// Value to assign.
+        value: Box<Expr>,
+    },
 
     /// Function call: name(args...)
-    FuncCall { name: String, args: Vec<Expr> },
+    FuncCall {
+        /// Function name.
+        name: String,
+        /// Arguments.
+        args: Vec<Expr>,
+    },
 
     /// If/elseif/else expression
     If {
+        /// Condition expression.
         condition: Box<Expr>,
+        /// Body when condition is true.
         then_body: Vec<Expr>,
+        /// Else-if clauses.
         elseif_clauses: Vec<(Expr, Vec<Expr>)>,
+        /// Else body.
         else_body: Option<Vec<Expr>>,
     },
 
     /// While loop
     While {
+        /// Loop condition.
         condition: Box<Expr>,
+        /// Loop body.
         body: Vec<Expr>,
     },
 
     /// For loop (upto/downto)
     For {
+        /// Loop variable.
         var: String,
+        /// Start value.
         start: Box<Expr>,
+        /// End value.
         end: Box<Expr>,
+        /// Step expression.
         step: Option<Box<Expr>>,
+        /// Whether the loop is ascending.
         ascending: bool,
+        /// Loop body.
         body: Vec<Expr>,
     },
 
     /// Foreach loop
     Foreach {
+        /// Loop variable.
         var: String,
+        /// List expression.
         list: Box<Expr>,
+        /// Loop body.
         body: Vec<Expr>,
     },
 
     /// Function declaration
     FuncDecl {
+        /// Function name.
         name: String,
+        /// Parameter names.
         params: Vec<String>,
+        /// Function body.
         body: Vec<Expr>,
     },
 
     /// Var declaration: var name = value
     VarDecl {
+        /// Variable name.
         name: String,
+        /// Initial value.
         init: Option<Box<Expr>>,
     },
 
@@ -99,17 +144,29 @@ pub enum Expr {
 /// Binary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
+    /// Addition.
     Add,
+    /// Subtraction.
     Sub,
+    /// Multiplication.
     Mul,
+    /// Division.
     Div,
+    /// Equal.
     Eq,
+    /// Not equal.
     Ne,
+    /// Less than.
     Lt,
+    /// Less than or equal.
     Le,
+    /// Greater than.
     Gt,
+    /// Greater than or equal.
     Ge,
+    /// Logical and.
     And,
+    /// Logical or.
     Or,
 }
 

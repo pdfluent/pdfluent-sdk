@@ -319,7 +319,7 @@ pub(crate) fn select_standard_font(
     // PDF.js and PDFBox use and avoids that false-positive.
     let is_italic = descriptor
         .get::<f32>(ITALIC_ANGLE)
-        .is_some_and(|a| a < -5.0 || a > 5.0)
+        .is_some_and(|a| !(-5.0..=5.0).contains(&a))
         || lower.contains("italic")
         || lower.contains("oblique")
         || family_field.contains("italic")

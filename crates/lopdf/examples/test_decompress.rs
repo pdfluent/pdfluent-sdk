@@ -5,14 +5,14 @@ use std::fs;
 fn main() {
     let path = env::args().nth(1).expect("usage: test_decompress <pdf>");
     let data = fs::read(&path).expect("read");
-    let doc = lopdf::Document::load_mem(&data).expect("load");
+    let doc = pdfluent_lopdf::Document::load_mem(&data).expect("load");
 
     let mut success = 0;
     let mut fail = 0;
     let mut filters_seen = HashSet::new();
 
     for (&id, obj) in &doc.objects {
-        if let lopdf::Object::Stream(ref stream) = *obj {
+        if let pdfluent_lopdf::Object::Stream(ref stream) = *obj {
             if let Ok(filter_list) = stream.filters() {
                 for f in &filter_list {
                     let name = String::from_utf8_lossy(f).to_string();

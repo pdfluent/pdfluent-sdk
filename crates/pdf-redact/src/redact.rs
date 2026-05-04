@@ -391,10 +391,8 @@ fn find_overlapping_images(
                         .unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
                     ctm_stack.push(top);
                 }
-                "Q" => {
-                    if ctm_stack.len() > 1 {
-                        ctm_stack.pop();
-                    }
+                "Q" if ctm_stack.len() > 1 => {
+                    ctm_stack.pop();
                 }
                 "cm" if op.operands.len() >= 6 => {
                     let cm = [
@@ -764,12 +762,8 @@ fn filter_text_ops(ops: &[Operation], areas: &[&RedactionArea]) -> (Vec<Operatio
                 }
                 filtered.push(op.clone());
             }
-            "Tj" | "TJ" | "'" | "\"" => {
-                if in_text && point_in_any_rect(text_x, text_y, areas) {
-                    removed += 1;
-                } else {
-                    filtered.push(op.clone());
-                }
+            "Tj" | "TJ" | "'" | "\"" if in_text && point_in_any_rect(text_x, text_y, areas) => {
+                removed += 1;
             }
             _ => {
                 filtered.push(op.clone());

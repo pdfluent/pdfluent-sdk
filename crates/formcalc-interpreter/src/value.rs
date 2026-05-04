@@ -8,8 +8,11 @@ use std::fmt;
 /// A FormCalc runtime value.
 #[derive(Debug, Clone)]
 pub enum Value {
+    /// Numeric value.
     Number(f64),
+    /// String value.
     String(String),
+    /// Null value.
     Null,
 }
 

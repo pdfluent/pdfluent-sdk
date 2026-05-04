@@ -15,6 +15,7 @@ pub struct FormNodeId(pub usize);
 /// The form tree: a node-based representation of the merged template+data.
 #[derive(Debug)]
 pub struct FormTree {
+    /// Nodes in the form tree.
     pub nodes: Vec<FormNode>,
     /// Per-node metadata (parallel to `nodes`).
     pub metadata: Vec<FormNodeMeta>,
@@ -23,6 +24,7 @@ pub struct FormTree {
 }
 
 impl FormTree {
+    /// Create a new form tree.
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
@@ -31,6 +33,7 @@ impl FormTree {
         }
     }
 
+    /// Add a node to the form tree.
     pub fn add_node(&mut self, node: FormNode) -> FormNodeId {
         let id = FormNodeId(self.nodes.len());
         self.nodes.push(node);
@@ -50,10 +53,12 @@ impl FormTree {
         id
     }
 
+    /// Get a node by ID.
     pub fn get(&self, id: FormNodeId) -> &FormNode {
         &self.nodes[id.0]
     }
 
+    /// Get a mutable reference to a node by ID.
     pub fn get_mut(&mut self, id: FormNodeId) -> &mut FormNode {
         &mut self.nodes[id.0]
     }
@@ -83,10 +88,15 @@ impl Default for FormTree {
 /// A single node in the Form DOM.
 #[derive(Debug, Clone)]
 pub struct FormNode {
+    /// Node name.
     pub name: String,
+    /// Node type.
     pub node_type: FormNodeType,
+    /// Box model.
     pub box_model: BoxModel,
+    /// Layout strategy.
     pub layout: LayoutStrategy,
+    /// Child node IDs.
     pub children: Vec<FormNodeId>,
     /// Occurrence rules for repeating subforms.
     pub occur: Occur,
@@ -120,14 +130,20 @@ pub enum ScriptLanguage {
 /// Script metadata collected from `<event>` / `<calculate>` elements.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct EventScript {
+    /// Script source.
     pub script: String,
+    /// Script language.
     pub language: ScriptLanguage,
+    /// Activity event.
     pub activity: Option<String>,
+    /// Event reference.
     pub event_ref: Option<String>,
+    /// Run-at location.
     pub run_at: Option<String>,
 }
 
 impl EventScript {
+    /// Create a new event script.
     pub fn new(
         script: String,
         language: ScriptLanguage,
@@ -144,6 +160,7 @@ impl EventScript {
         }
     }
 
+    /// Create a FormCalc event script.
     pub fn formcalc(script: impl Into<String>, activity: Option<&str>) -> Self {
         Self::new(
             script.into(),
@@ -154,6 +171,7 @@ impl EventScript {
         )
     }
 
+    /// Create a JavaScript event script.
     pub fn javascript(script: impl Into<String>, activity: Option<&str>) -> Self {
         Self::new(
             script.into(),
@@ -175,26 +193,45 @@ impl EventScript {
 ///   startAngle=0, sweepAngle=360).
 #[derive(Debug, Clone)]
 pub enum DrawContent {
+    /// Text draw content.
     Text(String),
+    /// Line draw content.
     Line {
+        /// Start x coordinate.
         x1: f64,
+        /// Start y coordinate.
         y1: f64,
+        /// End x coordinate.
         x2: f64,
+        /// End y coordinate.
         y2: f64,
     },
+    /// Rectangle draw content.
     Rectangle {
+        /// X coordinate.
         x: f64,
+        /// Y coordinate.
         y: f64,
+        /// Width.
         w: f64,
+        /// Height.
         h: f64,
+        /// Corner radius.
         radius: f64,
     },
+    /// Arc draw content.
     Arc {
+        /// X coordinate.
         x: f64,
+        /// Y coordinate.
         y: f64,
+        /// Width.
         w: f64,
+        /// Height.
         h: f64,
+        /// Start angle.
         start_angle: f64,
+        /// Sweep angle.
         sweep_angle: f64,
     },
 }
@@ -207,7 +244,10 @@ pub enum FormNodeType {
     /// A page set containing page areas.
     PageSet,
     /// A page area (page template) with content areas.
-    PageArea { content_areas: Vec<ContentArea> },
+    PageArea {
+        /// Content areas.
+        content_areas: Vec<ContentArea>,
+    },
     /// A generic subform container.
     Subform,
     /// XFA `<area>` — a positioned container (XFA 3.3 Appendix B).
@@ -229,11 +269,19 @@ pub enum FormNodeType {
     /// containing subform (same data context).
     SubformSet,
     /// A form field (text field, checkbox, etc.).
-    Field { value: String },
+    Field {
+        /// Field value.
+        value: String,
+    },
     /// A static draw element (text, image, line, etc.).
     Draw(DrawContent),
     /// A static image draw element.
-    Image { data: Vec<u8>, mime_type: String },
+    Image {
+        /// Image data.
+        data: Vec<u8>,
+        /// Image MIME type.
+        mime_type: String,
+    },
 }
 
 /// Occurrence rules for repeating subforms (XFA S3.3 occur element).
@@ -294,10 +342,15 @@ impl Occur {
 /// A content area within a page area.
 #[derive(Debug, Clone)]
 pub struct ContentArea {
+    /// Content area name.
     pub name: String,
+    /// X coordinate.
     pub x: f64,
+    /// Y coordinate.
     pub y: f64,
+    /// Width.
     pub width: f64,
+    /// Height.
     pub height: f64,
     /// Leader (header) node placed at the top of each page's content area.
     pub leader: Option<FormNodeId>,
@@ -336,9 +389,13 @@ impl Default for ContentArea {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Presence {
     #[default]
+    /// Visible.
     Visible,
+    /// Hidden.
     Hidden,
+    /// Invisible.
     Invisible,
+    /// Inactive.
     Inactive,
 }
 
@@ -433,14 +490,23 @@ pub struct FormNodeMeta {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AnchorType {
     #[default]
+    /// Top-left anchor.
     TopLeft,
+    /// Top-center anchor.
     TopCenter,
+    /// Top-right anchor.
     TopRight,
+    /// Middle-left anchor.
     MiddleLeft,
+    /// Middle-center anchor.
     MiddleCenter,
+    /// Middle-right anchor.
     MiddleRight,
+    /// Bottom-left anchor.
     BottomLeft,
+    /// Bottom-center anchor.
     BottomCenter,
+    /// Bottom-right anchor.
     BottomRight,
 }
 
@@ -448,7 +514,9 @@ pub enum AnchorType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GroupKind {
     #[default]
+    /// No group.
     None,
+    /// Exclusive choice group.
     ExclusiveChoice,
 }
 
@@ -456,16 +524,27 @@ pub enum GroupKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FieldKind {
     #[default]
+    /// Text field.
     Text,
+    /// Checkbox field.
     Checkbox,
+    /// Radio button field.
     Radio,
+    /// Button field.
     Button,
+    /// Dropdown field.
     Dropdown,
+    /// Signature field.
     Signature,
+    /// Date/time picker field.
     DateTimePicker,
+    /// Numeric edit field.
     NumericEdit,
+    /// Password edit field.
     PasswordEdit,
+    /// Image edit field.
     ImageEdit,
+    /// Barcode field.
     Barcode,
 }
 
@@ -476,29 +555,45 @@ pub enum FieldKind {
 /// (font, color, weight, etc.) that overrides the node-level defaults.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RichTextSpan {
+    /// Text content.
     pub text: String,
+    /// Font size.
     pub font_size: Option<f64>,
+    /// Font family.
     pub font_family: Option<String>,
+    /// Font weight.
     pub font_weight: Option<String>,
+    /// Font style.
     pub font_style: Option<String>,
+    /// Text color.
     pub text_color: Option<(u8, u8, u8)>,
+    /// Underline flag.
     pub underline: bool,
+    /// Line-through flag.
     pub line_through: bool,
 }
 
 /// Visual style properties for a form node.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormNodeStyle {
+    /// Font family.
     pub font_family: Option<String>,
+    /// Font size.
     pub font_size: Option<f64>,
+    /// Font weight.
     pub font_weight: Option<String>,
+    /// Font style.
     pub font_style: Option<String>,
+    /// Text color.
     pub text_color: Option<(u8, u8, u8)>,
+    /// Background color.
     pub bg_color: Option<(u8, u8, u8)>,
+    /// Border color.
     pub border_color: Option<(u8, u8, u8)>,
     /// Per-edge border colors (top, right, bottom, left) in RGB 0-255.
     /// When set, overrides `border_color` for individual edges.
     pub border_colors: Option<[(u8, u8, u8); 4]>,
+    /// Border width in points.
     pub border_width_pt: Option<f64>,
     /// Per-edge border widths (top, right, bottom, left) in points.
     /// When set, overrides `border_width_pt` for individual edges.

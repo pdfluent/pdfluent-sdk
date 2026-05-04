@@ -8,20 +8,27 @@ use flate2::Compression;
 use image::GenericImageView;
 use lopdf::{dictionary, Object, ObjectId, Stream};
 use std::io::Write;
+/// ImageFormat.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
+    /// Jpeg.
     Jpeg,
+    /// Png.
     Png,
 }
+/// ImageXObjectResult.
 
 #[derive(Debug, Clone)]
 pub struct ImageXObjectResult {
+    /// object_id.
     pub object_id: ObjectId,
+    /// width.
     pub width: u32,
+    /// height.
     pub height: u32,
 }
-
+/// detect_image_format.
 pub fn detect_image_format(data: &[u8]) -> Option<ImageFormat> {
     if data.len() >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
         Some(ImageFormat::Jpeg)
@@ -31,7 +38,7 @@ pub fn detect_image_format(data: &[u8]) -> Option<ImageFormat> {
         None
     }
 }
-
+/// embed_jpeg.
 pub fn embed_jpeg(
     doc: &mut lopdf::Document,
     jpeg_data: &[u8],
@@ -66,7 +73,7 @@ pub fn embed_jpeg(
         height,
     })
 }
-
+/// embed_png.
 pub fn embed_png(doc: &mut lopdf::Document, png_data: &[u8]) -> Result<ImageXObjectResult, String> {
     let img = image::load_from_memory_with_format(png_data, image::ImageFormat::Png)
         .map_err(|e| format!("failed to decode PNG: {}", e))?;
@@ -128,7 +135,7 @@ pub fn embed_png(doc: &mut lopdf::Document, png_data: &[u8]) -> Result<ImageXObj
         height,
     })
 }
-
+/// embed_image.
 pub fn embed_image(
     doc: &mut lopdf::Document,
     data: &[u8],
@@ -168,7 +175,7 @@ fn embed_via_reencode(
     .map_err(|e| format!("re-encode to PNG failed: {e}"))?;
     embed_png(doc, &png_buf)
 }
-
+/// render_image_ops.
 pub fn render_image_ops(name: &str, x: f64, y: f64, w: f64, h: f64) -> Vec<u8> {
     let mut ops = Vec::new();
     ops.extend_from_slice(b"q\n");

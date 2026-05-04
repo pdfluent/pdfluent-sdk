@@ -1,6 +1,6 @@
 //! Integration tests for the new stream filter decoders.
 
-use lopdf::{Dictionary, Error, Object, Stream};
+use pdfluent_lopdf::{Dictionary, Error, Object, Stream};
 
 #[test]
 fn test_ascii_hex_decode_stream() {

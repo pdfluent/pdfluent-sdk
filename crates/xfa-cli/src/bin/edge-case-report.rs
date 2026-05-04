@@ -262,7 +262,7 @@ fn detect_edge_cases(
     }
 
     // Hybrid AcroForm + XFA
-    flags.is_hybrid = doc.map_or(false, detect_hybrid);
+    flags.is_hybrid = doc.is_some_and(detect_hybrid);
 
     // FormCalc scripts
     let formcalc_count = count_formcalc_scripts(template_xml);
@@ -632,7 +632,7 @@ fn build_summary(forms: &[FormEdgeCases]) -> EdgeCaseSummary {
 
     // Top complex forms (most edge cases)
     let mut sorted: Vec<&FormEdgeCases> = forms.iter().collect();
-    sorted.sort_by(|a, b| b.edge_case_count.cmp(&a.edge_case_count));
+    sorted.sort_by_key(|b| std::cmp::Reverse(b.edge_case_count));
     summary.top_complex_forms = sorted
         .iter()
         .take(10)

@@ -44,11 +44,14 @@ pub enum JsExecutionMode {
     /// roadmap.
     SandboxedRuntime,
 }
+/// OutputQuality.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputQuality {
+    /// Exact.
     #[default]
     Exact,
+    /// BestEffort.
     BestEffort,
     /// **M3-B Phase B.** All JavaScript scripts on the document executed
     /// inside the sandbox without runtime / timeout / OOM errors.
@@ -56,6 +59,7 @@ pub enum OutputQuality {
 }
 
 impl OutputQuality {
+    /// as_str.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Exact => "exact",
@@ -64,15 +68,23 @@ impl OutputQuality {
         }
     }
 }
+/// DynamicScriptOutcome.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DynamicScriptOutcome {
+    /// changes.
     pub changes: usize,
+    /// js_present.
     pub js_present: bool,
+    /// js_skipped.
     pub js_skipped: usize,
+    /// other_skipped.
     pub other_skipped: usize,
+    /// formcalc_run.
     pub formcalc_run: usize,
+    /// formcalc_errors.
     pub formcalc_errors: usize,
+    /// output_quality.
     pub output_quality: OutputQuality,
     /// **M3-B Phase B.** Scripts that ran to completion in the sandboxed
     /// runtime. Always 0 when mode != [`JsExecutionMode::SandboxedRuntime`]
@@ -187,7 +199,7 @@ fn should_rollback(
     }
     false
 }
-
+/// apply_dynamic_scripts.
 // XFA Spec 3.3 §9.3 — Dynamic Forms: after data binding, scripts run in
 // two phases: (1) initialize events fire once, (2) calculate events may
 // iterate until stable (convergence) or MAX_SCRIPT_PASSES is reached.
@@ -210,7 +222,7 @@ pub fn apply_dynamic_scripts(
 ) -> Result<DynamicScriptOutcome> {
     apply_dynamic_scripts_with_mode(form, root_id, JsExecutionMode::default())
 }
-
+/// apply_dynamic_scripts_with_mode.
 pub fn apply_dynamic_scripts_with_mode(
     form: &mut FormTree,
     root_id: FormNodeId,

@@ -141,24 +141,35 @@ fn create_minimal_pdf_document() -> Document {
 /// Layout metadata emitted only for CLI diagnostics.
 #[derive(Debug, Clone, Default)]
 pub struct LayoutDump {
+    /// pages.
     pub pages: Vec<LayoutDumpEntry>,
+    /// dynamic_scripts.
     pub dynamic_scripts: DynamicScriptOutcome,
+    /// output_quality.
     pub output_quality: OutputQuality,
 }
 
 /// One page entry in the optional layout dump.
 #[derive(Debug, Clone)]
 pub struct LayoutDumpEntry {
+    /// page_num.
     pub page_num: u32,
+    /// page_height.
     pub page_height: f64,
+    /// used_height.
     pub used_height: f64,
+    /// overflow_to_next.
     pub overflow_to_next: bool,
+    /// first_overflow_element.
     pub first_overflow_element: Option<String>,
 }
+/// FlattenMetadata.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FlattenMetadata {
+    /// dynamic_scripts.
     pub dynamic_scripts: DynamicScriptOutcome,
+    /// output_quality.
     pub output_quality: OutputQuality,
 }
 
@@ -323,19 +334,19 @@ fn page_has_field_data(nodes: &[LayoutNode], tree: &FormTree) -> bool {
 pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     flatten_xfa_to_pdf_internal(pdf_bytes, false).map(|out| out.pdf_bytes)
 }
-
+/// flatten_xfa_to_pdf_with_layout_dump.
 #[must_use = "flattened PDF bytes and layout dump must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_layout_dump(pdf_bytes: &[u8]) -> Result<(Vec<u8>, LayoutDump)> {
     let out = flatten_xfa_to_pdf_internal(pdf_bytes, true)?;
     Ok((out.pdf_bytes, out.layout_dump))
 }
-
+/// flatten_xfa_to_pdf_with_metadata.
 #[must_use = "flattened PDF bytes and metadata must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_metadata(pdf_bytes: &[u8]) -> Result<(Vec<u8>, FlattenMetadata)> {
     let out = flatten_xfa_to_pdf_internal(pdf_bytes, false)?;
     Ok((out.pdf_bytes, out.metadata))
 }
-
+/// flatten_xfa_to_pdf_with_layout_dump_and_metadata.
 #[must_use = "flattened PDF bytes, layout dump, and metadata must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_layout_dump_and_metadata(
     pdf_bytes: &[u8],
@@ -3984,6 +3995,7 @@ mod tests {
         out
     }
 
+    #[allow(dead_code)]
     fn find_last_content_stream<'a>(doc: &'a Document, page_id: ObjectId) -> &'a Stream {
         let page_dict = doc.get_dictionary(page_id).expect("page dict");
         match page_dict.get(b"Contents").expect("contents") {
@@ -4004,6 +4016,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn page_xobjects(doc: &Document, page_id: ObjectId) -> Dictionary {
         let page_dict = doc.get_dictionary(page_id).expect("page dict");
         let resources = page_dict
@@ -4863,7 +4876,7 @@ ET
             ]),
         ];
         let doc = build_pdf_with_cid_font(w, None);
-        let fonts = extract_embedded_fonts(&doc);
+        let _fonts = extract_embedded_fonts(&doc);
 
         // No font stream embedded, so extract_embedded_fonts won't find data.
         // Test the parser directly via the Type0 dict.

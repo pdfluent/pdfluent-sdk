@@ -122,23 +122,21 @@ impl<'a> Type3<'a> {
 
         // 2) /Encoding /Differences — a Type3-specific glyph name.
         //    Try the literal name first, then its normalized alias.
-        if let Some(name) = self.encodings.get(&code) {
-            if let Some(ch) = glyph_name_to_unicode(name)
+        if let Some(name) = self.encodings.get(&code)
+            && let Some(ch) = glyph_name_to_unicode(name)
                 .or_else(|| glyph_name_to_unicode(normalized_glyph_name(name)))
-            {
-                return Some(BfString::Char(ch));
-            }
+        {
+            return Some(BfString::Char(ch));
         }
 
         // 3) Base encoding (Standard / WinAnsi / MacRoman / MacExpert) →
         //    AGL. For `Encoding::BuiltIn` this returns None, so we fall
         //    through to the ASCII identity below.  Try normalized alias too.
-        if let Some(name) = self.encoding.map_code(code) {
-            if let Some(ch) = glyph_name_to_unicode(name)
+        if let Some(name) = self.encoding.map_code(code)
+            && let Some(ch) = glyph_name_to_unicode(name)
                 .or_else(|| glyph_name_to_unicode(normalized_glyph_name(name)))
-            {
-                return Some(BfString::Char(ch));
-            }
+        {
+            return Some(BfString::Char(ch));
         }
 
         // 4) Adobe Standard as last-resort encoding guess. Most legacy

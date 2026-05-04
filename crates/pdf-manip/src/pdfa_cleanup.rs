@@ -2587,10 +2587,8 @@ fn neutralize_filespec_by_structure(doc: &mut Document) {
                     }
                 }
             }
-            Some(Object::Stream(s)) => {
-                if is_filespec_by_structure(&s.dict) {
-                    strip_filespec_keys(&mut s.dict);
-                }
+            Some(Object::Stream(s)) if is_filespec_by_structure(&s.dict) => {
+                strip_filespec_keys(&mut s.dict);
             }
             _ => {}
         }
@@ -3395,14 +3393,11 @@ fn lookup_xobject_in_resources(
 ) -> Option<ObjectId> {
     let xobjects = match resources {
         Object::Dictionary(dict) => dict.get(b"XObject").ok().cloned(),
-        Object::Reference(r) => doc.objects.get(&r).cloned(),
+        Object::Reference(r) => doc.objects.get(r).cloned(),
         _ => None,
     };
 
-    let xobjects = match xobjects {
-        Some(o) => o,
-        None => return None,
-    };
+    let xobjects = xobjects?;
 
     match xobjects {
         Object::Dictionary(dict) => {
@@ -4887,13 +4882,11 @@ fn remove_file_attachment_annotations(doc: &mut Document) -> usize {
                 arr.retain(retain_fn);
                 count += before - arr.len();
             }
-        } else {
-            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
-                if let Ok(Object::Array(ref mut arr)) = dict.get_mut(b"Annots") {
-                    let before = arr.len();
-                    arr.retain(retain_fn);
-                    count += before - arr.len();
-                }
+        } else if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
+            if let Ok(Object::Array(ref mut arr)) = dict.get_mut(b"Annots") {
+                let before = arr.len();
+                arr.retain(retain_fn);
+                count += before - arr.len();
             }
         }
     }
@@ -4931,15 +4924,13 @@ fn fix_extgstate_smask_s(doc: &mut Document) -> usize {
                 let has_smask_dict = matches!(dict.get(b"SMask").ok(), Some(Object::Dictionary(_)));
                 if !has_smask_dict {
                     false
-                } else {
-                    if let Ok(Object::Dictionary(smask)) = dict.get(b"SMask") {
-                        match smask.get(b"S").ok() {
-                            Some(Object::Name(ref n)) => n != b"Alpha" && n != b"Luminosity",
-                            _ => false,
-                        }
-                    } else {
-                        false
+                } else if let Ok(Object::Dictionary(smask)) = dict.get(b"SMask") {
+                    match smask.get(b"S").ok() {
+                        Some(Object::Name(ref n)) => n != b"Alpha" && n != b"Luminosity",
+                        _ => false,
                     }
+                } else {
+                    false
                 }
             } else {
                 false
@@ -5236,7 +5227,7 @@ fn is_valid_bcp47(tag: &str) -> bool {
     }
 
     for part in &parts[1..] {
-        if part.len() == 1 && part.chars().next() == Some('X') {
+        if part.len() == 1 && part.starts_with('X') {
             continue;
         }
         if part.len() < 2 || part.len() > 8 {

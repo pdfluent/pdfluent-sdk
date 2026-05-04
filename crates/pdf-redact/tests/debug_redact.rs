@@ -130,7 +130,7 @@ fn debug_redact_gen881_are() {
 #[ignore]
 fn debug_redact_r3_501_are() {
     let data = std::fs::read("/tmp/r3-501.pdf").unwrap();
-    let mut doc = lopdf::Document::load_mem(&data).unwrap();
+    let doc = lopdf::Document::load_mem(&data).unwrap();
     let chars_before = pdf_extract::extract_positioned_chars(&doc, 1).unwrap();
     let text_before: String = chars_before.iter().map(|c| c.ch).collect();
     println!(
@@ -257,8 +257,8 @@ fn debug_r3_501_text_runs_vs_positioned() {
     let text: String = chars.iter().map(|c| c.ch).collect();
     println!("Text length: {}", text.len());
     for (pos, _) in text.match_indices("Are") {
-        let ch_start = pos; // byte offset in text
-                            // Find which char_index this corresponds to
+        let _ch_start = pos; // byte offset in text
+                             // Find which char_index this corresponds to
         let char_idx = text[..pos].chars().count();
         if char_idx + 3 <= chars.len() {
             let a = &chars[char_idx];

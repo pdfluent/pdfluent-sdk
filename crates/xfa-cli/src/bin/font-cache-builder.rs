@@ -208,7 +208,7 @@ fn extract_font_data_from_fd(doc: &Document, font_dict: &lopdf::Dictionary) -> O
     let fd = resolve_to_dict(doc, fd_ref)?;
 
     for key in &[b"FontFile2".as_slice(), b"FontFile3", b"FontFile"] {
-        if let Some(stream) = fd.get(*key).ok().and_then(|o| resolve_to_stream(doc, o)) {
+        if let Some(stream) = fd.get(key).ok().and_then(|o| resolve_to_stream(doc, o)) {
             return stream
                 .decompressed_content()
                 .ok()

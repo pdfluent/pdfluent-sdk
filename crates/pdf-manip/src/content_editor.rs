@@ -365,14 +365,12 @@ impl GraphicsStateTracker {
                 "ET" => {
                     state.in_text_object = false;
                 }
-                "Tf" => {
-                    if op.operands.len() >= 2 {
-                        if let Object::Name(ref name) = op.operands[0] {
-                            state.font_name = String::from_utf8_lossy(name).to_string();
-                        }
-                        if let Some(size) = as_number(&op.operands[1]) {
-                            state.font_size = size;
-                        }
+                "Tf" if op.operands.len() >= 2 => {
+                    if let Object::Name(ref name) = op.operands[0] {
+                        state.font_name = String::from_utf8_lossy(name).to_string();
+                    }
+                    if let Some(size) = as_number(&op.operands[1]) {
+                        state.font_size = size;
                     }
                 }
                 "Tm" => {
@@ -381,26 +379,22 @@ impl GraphicsStateTracker {
                         state.text_line_matrix = m;
                     }
                 }
-                "Td" => {
-                    if op.operands.len() >= 2 {
-                        let tx = as_number(&op.operands[0]).unwrap_or(0.0);
-                        let ty = as_number(&op.operands[1]).unwrap_or(0.0);
-                        let new_tlm =
-                            multiply_matrix(&state.text_line_matrix, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
-                        state.text_line_matrix = new_tlm;
-                        state.text_matrix = new_tlm;
-                    }
+                "Td" if op.operands.len() >= 2 => {
+                    let tx = as_number(&op.operands[0]).unwrap_or(0.0);
+                    let ty = as_number(&op.operands[1]).unwrap_or(0.0);
+                    let new_tlm =
+                        multiply_matrix(&state.text_line_matrix, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
+                    state.text_line_matrix = new_tlm;
+                    state.text_matrix = new_tlm;
                 }
-                "TD" => {
-                    if op.operands.len() >= 2 {
-                        let tx = as_number(&op.operands[0]).unwrap_or(0.0);
-                        let ty = as_number(&op.operands[1]).unwrap_or(0.0);
-                        state.leading = -ty;
-                        let new_tlm =
-                            multiply_matrix(&state.text_line_matrix, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
-                        state.text_line_matrix = new_tlm;
-                        state.text_matrix = new_tlm;
-                    }
+                "TD" if op.operands.len() >= 2 => {
+                    let tx = as_number(&op.operands[0]).unwrap_or(0.0);
+                    let ty = as_number(&op.operands[1]).unwrap_or(0.0);
+                    state.leading = -ty;
+                    let new_tlm =
+                        multiply_matrix(&state.text_line_matrix, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
+                    state.text_line_matrix = new_tlm;
+                    state.text_matrix = new_tlm;
                 }
                 "T*" => {
                     let new_tlm = multiply_matrix(
@@ -435,28 +429,24 @@ impl GraphicsStateTracker {
                         state.text_rise = v;
                     }
                 }
-                "rg" => {
-                    if op.operands.len() >= 3 {
-                        state.fill_color = [
-                            as_number(&op.operands[0]).unwrap_or(0.0),
-                            as_number(&op.operands[1]).unwrap_or(0.0),
-                            as_number(&op.operands[2]).unwrap_or(0.0),
-                        ];
-                    }
+                "rg" if op.operands.len() >= 3 => {
+                    state.fill_color = [
+                        as_number(&op.operands[0]).unwrap_or(0.0),
+                        as_number(&op.operands[1]).unwrap_or(0.0),
+                        as_number(&op.operands[2]).unwrap_or(0.0),
+                    ];
                 }
                 "g" => {
                     if let Some(v) = op.operands.first().and_then(as_number) {
                         state.fill_color = [v, v, v];
                     }
                 }
-                "RG" => {
-                    if op.operands.len() >= 3 {
-                        state.stroke_color = [
-                            as_number(&op.operands[0]).unwrap_or(0.0),
-                            as_number(&op.operands[1]).unwrap_or(0.0),
-                            as_number(&op.operands[2]).unwrap_or(0.0),
-                        ];
-                    }
+                "RG" if op.operands.len() >= 3 => {
+                    state.stroke_color = [
+                        as_number(&op.operands[0]).unwrap_or(0.0),
+                        as_number(&op.operands[1]).unwrap_or(0.0),
+                        as_number(&op.operands[2]).unwrap_or(0.0),
+                    ];
                 }
                 "G" => {
                     if let Some(v) = op.operands.first().and_then(as_number) {

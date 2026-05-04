@@ -15,7 +15,7 @@ color space, which can then be processed further according to your needs.
 
 # Example
 ```rust,no_run
-use hayro_jpeg2000::{Image, DecodeSettings};
+use pdfluent_jpeg2000::{Image, DecodeSettings};
 
 let data = std::fs::read("image.jp2").unwrap();
 let image = Image::new(&data, &DecodeSettings::default()).unwrap();
@@ -233,7 +233,7 @@ impl<'a> Image<'a> {
                         }),
                 )
                 .collect::<Vec<_>>();
-            components.sort_by(|c1, c2| c1.1.cmp(&c2.1));
+            components.sort_by_key(|c1| c1.1);
             decoded_image.decoded.components = components.into_iter().map(|c| c.0).collect();
         }
 

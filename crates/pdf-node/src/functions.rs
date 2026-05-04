@@ -1,3 +1,8 @@
+// Test-mode dead_code: these `pub fn`s are used by the Node binding via
+// the `#[napi]` macro, but `cargo test` compiles without that macro
+// generating callers, so the symbols look "never used".
+#![allow(dead_code)]
+
 //! Top-level convenience functions exposed to Node.js.
 //!
 //! These are module-level exports (not methods on a class) that cover the

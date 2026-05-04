@@ -40,10 +40,10 @@ pub fn run() -> Result<()> {
     let mut primary_font_dir = None;
 
     for dir in &font_dirs {
-        let path_str = if dir.starts_with("~/") {
+        let path_str = if let Some(stripped) = dir.strip_prefix("~/") {
             if let Some(home) = std::env::var_os("HOME") {
                 let mut p = PathBuf::from(home);
-                p.push(&dir[2..]);
+                p.push(stripped);
                 p
             } else {
                 continue;

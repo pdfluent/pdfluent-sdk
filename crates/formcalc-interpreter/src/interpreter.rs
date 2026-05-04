@@ -92,6 +92,7 @@ impl Default for Interpreter {
 }
 
 impl Interpreter {
+    /// Create a new interpreter.
     pub fn new() -> Self {
         Self {
             env: Env::new(),

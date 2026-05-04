@@ -28,6 +28,7 @@ fn add_node(tree: &mut FormTree, name: &str, node_type: FormNodeType) -> FormNod
     })
 }
 
+#[allow(dead_code)]
 fn field_value(tree: &FormTree, node_id: FormNodeId) -> &str {
     match &tree.get(node_id).node_type {
         FormNodeType::Field { value } => value,

@@ -97,21 +97,27 @@ pub struct LayoutNodeId(pub usize);
 /// The output of the layout engine: positioned rectangles on pages.
 #[derive(Debug)]
 pub struct LayoutDom {
+    /// Laid out pages.
     pub pages: Vec<LayoutPage>,
 }
 
 /// Per-page pagination diagnostics collected only on opt-in code paths.
 #[derive(Debug, Clone, Default)]
 pub struct LayoutProfile {
+    /// Per-page profile data.
     pub pages: Vec<LayoutProfilePage>,
 }
 
 /// Minimal vertical-space profiling metadata for one laid out page.
 #[derive(Debug, Clone)]
 pub struct LayoutProfilePage {
+    /// Page height.
     pub page_height: f64,
+    /// Used height.
     pub used_height: f64,
+    /// Whether content overflowed to the next page.
     pub overflow_to_next: bool,
+    /// First element that overflowed.
     pub first_overflow_element: Option<String>,
 }
 
@@ -178,8 +184,11 @@ const MAX_PAGES: usize = 500;
 /// A single page in the layout output.
 #[derive(Debug)]
 pub struct LayoutPage {
+    /// Page width.
     pub width: f64,
+    /// Page height.
     pub height: f64,
+    /// Layout nodes on this page.
     pub nodes: Vec<LayoutNode>,
 }
 
@@ -207,19 +216,28 @@ pub struct LayoutNode {
 /// Content type for layout leaf nodes.
 #[derive(Debug, Clone)]
 pub enum LayoutContent {
+    /// No content.
     None,
+    /// Text content.
     Text(String),
+    /// Field content.
     Field {
+        /// Field value.
         value: String,
+        /// Field kind.
         field_kind: crate::form::FieldKind,
+        /// Font size.
         font_size: f64,
+        /// Font family.
         font_family: FontFamily,
     },
     /// Pre-wrapped text lines for rendering.
     WrappedText {
+        /// Wrapped text lines.
         lines: Vec<String>,
         /// Per-line flag: `true` when the line is the first line of a paragraph.
         first_line_of_para: Vec<bool>,
+        /// Font size.
         font_size: f64,
         /// Horizontal text alignment (from XFA `<para hAlign>`).
         text_align: TextAlign,
@@ -234,7 +252,9 @@ pub enum LayoutContent {
     },
     /// A static image.
     Image {
+        /// Image data.
         data: Vec<u8>,
+        /// Image MIME type.
         mime_type: String,
     },
     /// A static draw element (line, rectangle, arc, text).
@@ -291,6 +311,7 @@ pub struct LayoutEngine<'a> {
 }
 
 impl<'a> LayoutEngine<'a> {
+    /// Create a new layout engine.
     pub fn new(form: &'a FormTree) -> Self {
         Self { form }
     }
@@ -3423,6 +3444,7 @@ impl<'a> LayoutEngine<'a> {
         self.compute_extent_with_available(id, None)
     }
 
+    /// Compute extent with optional children override.
     pub fn compute_extent_with_override(
         &self,
         id: FormNodeId,

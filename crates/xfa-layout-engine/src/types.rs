@@ -9,27 +9,36 @@ pub const DEFAULT_TEXT_PADDING: f64 = 0.0;
 /// A 2D point in layout coordinates (points, 1pt = 1/72 inch).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Point {
+    /// X coordinate.
     pub x: f64,
+    /// Y coordinate.
     pub y: f64,
 }
 
 /// A 2D size in points.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Size {
+    /// Width.
     pub width: f64,
+    /// Height.
     pub height: f64,
 }
 
 /// An axis-aligned rectangle in layout space.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Rect {
+    /// X coordinate.
     pub x: f64,
+    /// Y coordinate.
     pub y: f64,
+    /// Width.
     pub width: f64,
+    /// Height.
     pub height: f64,
 }
 
 impl Rect {
+    /// Create a new rectangle.
     pub fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
         Self {
             x,
@@ -39,10 +48,12 @@ impl Rect {
         }
     }
 
+    /// Right edge.
     pub fn right(&self) -> f64 {
         self.x + self.width
     }
 
+    /// Bottom edge.
     pub fn bottom(&self) -> f64 {
         self.y + self.height
     }
@@ -56,13 +67,18 @@ impl Rect {
 /// Inset values (margins, padding) for the four sides.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Insets {
+    /// Top inset.
     pub top: f64,
+    /// Right inset.
     pub right: f64,
+    /// Bottom inset.
     pub bottom: f64,
+    /// Left inset.
     pub left: f64,
 }
 
 impl Insets {
+    /// Create uniform insets.
     pub fn uniform(value: f64) -> Self {
         Self {
             top: value,
@@ -72,10 +88,12 @@ impl Insets {
         }
     }
 
+    /// Horizontal insets sum.
     pub fn horizontal(&self) -> f64 {
         self.left + self.right
     }
 
+    /// Vertical insets sum.
     pub fn vertical(&self) -> f64 {
         self.top + self.bottom
     }
@@ -89,7 +107,9 @@ impl Insets {
 ///   Note: bare numbers default to inches for dimensions but points for font sizes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Measurement {
+    /// Measurement value.
     pub value: f64,
+    /// Measurement unit.
     pub unit: MeasurementUnit,
 }
 
@@ -152,10 +172,15 @@ impl Default for Measurement {
 /// Relative (XFA 2.8+): em, % (percentage of space width in current font).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MeasurementUnit {
+    /// Inches.
     Inches,
+    /// Centimeters.
     Centimeters,
+    /// Millimeters.
     Millimeters,
+    /// Points.
     Points,
+    /// Em units.
     Em,
     /// Percentage of the width of a space (U+0020) in the current font.
     Percent,
@@ -202,8 +227,11 @@ pub enum LayoutStrategy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VerticalAlign {
     #[default]
+    /// Top alignment.
     Top,
+    /// Middle alignment.
     Middle,
+    /// Bottom alignment.
     Bottom,
 }
 
@@ -211,10 +239,15 @@ pub enum VerticalAlign {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CaptionPlacement {
     #[default]
+    /// Left placement.
     Left,
+    /// Top placement.
     Top,
+    /// Right placement.
     Right,
+    /// Bottom placement.
     Bottom,
+    /// Inline placement.
     Inline,
 }
 
@@ -264,9 +297,11 @@ pub struct BoxModel {
 /// A caption for a form field.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Caption {
+    /// Caption placement.
     pub placement: CaptionPlacement,
     /// Reserved space for the caption (None = auto).
     pub reserve: Option<f64>,
+    /// Caption text.
     pub text: String,
 }
 

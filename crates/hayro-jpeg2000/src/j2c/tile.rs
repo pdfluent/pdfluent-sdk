@@ -288,7 +288,7 @@ fn parse_tile_part<'a>(
         };
     };
 
-    ppt_headers.sort_by(|p1, p2| p1.sequence_idx.cmp(&p2.sequence_idx));
+    ppt_headers.sort_by_key(|p1| p1.sequence_idx);
     let mut headers: Vec<_> = ppt_headers.iter().map(|i| BitReader::new(i.data)).collect();
 
     if let Some(ppm_marker) = main_header.ppm_packets.get(tile_part_idx) {

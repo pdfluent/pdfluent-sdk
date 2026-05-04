@@ -242,7 +242,7 @@ fn build_truetype_cmap_inverse(font_data: &[u8]) -> HashMap<u32, char> {
         .into_iter()
         .filter(|s| s.is_unicode())
         .collect();
-    ranked.sort_by_key(|s| rank(&s));
+    ranked.sort_by_key(|s| rank(s));
 
     let mut inverse = HashMap::new();
 

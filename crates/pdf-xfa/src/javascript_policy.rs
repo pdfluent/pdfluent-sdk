@@ -21,20 +21,28 @@ pub enum JavaScriptPolicy {
     /// JavaScript-bearing actions are stripped from flattened/hardened output.
     StripOnFlatten,
 }
-
+/// ALLOW_PARSE.
 pub const ALLOW_PARSE: JavaScriptPolicy = JavaScriptPolicy::AllowParse;
+/// DENY_EXECUTION.
 pub const DENY_EXECUTION: JavaScriptPolicy = JavaScriptPolicy::DenyExecution;
+/// STRIP_ON_FLATTEN.
 pub const STRIP_ON_FLATTEN: JavaScriptPolicy = JavaScriptPolicy::StripOnFlatten;
+/// JavaScriptEntryPoint.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JavaScriptEntryPoint {
+    /// PdfOpenAction.
     PdfOpenAction,
+    /// AnnotationAdditionalAction.
     AnnotationAdditionalAction,
+    /// FieldAction.
     FieldAction,
+    /// XfaEventHook.
     XfaEventHook,
 }
 
 impl JavaScriptEntryPoint {
+    /// as_str.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::PdfOpenAction => "PDF /OpenAction JavaScript",
@@ -44,31 +52,31 @@ impl JavaScriptEntryPoint {
         }
     }
 }
-
+/// parse_policy.
 pub fn parse_policy() -> JavaScriptPolicy {
     ALLOW_PARSE
 }
-
+/// execution_policy.
 pub fn execution_policy(_entrypoint: JavaScriptEntryPoint) -> JavaScriptPolicy {
     DENY_EXECUTION
 }
-
+/// flatten_policy.
 pub fn flatten_policy(_entrypoint: JavaScriptEntryPoint) -> JavaScriptPolicy {
     STRIP_ON_FLATTEN
 }
-
+/// reject_execution.
 pub fn reject_execution(entrypoint: JavaScriptEntryPoint) -> XfaError {
     debug_assert_eq!(execution_policy(entrypoint), DENY_EXECUTION);
     XfaError::UnsupportedFeature("javascript".to_string())
 }
-
+/// execution_denied_message.
 pub fn execution_denied_message(entrypoint: JavaScriptEntryPoint) -> String {
     format!(
         "{} denied by policy: JavaScript is parsed for inspection but never executed",
         entrypoint.as_str()
     )
 }
-
+/// template_mentions_javascript.
 pub fn template_mentions_javascript(template_xml: &str) -> bool {
     let lower = template_xml.to_ascii_lowercase();
     lower.contains("text/javascript")
@@ -76,14 +84,14 @@ pub fn template_mentions_javascript(template_xml: &str) -> bool {
         || lower.contains("application/x-javascript")
         || lower.contains("/x-javascript")
 }
-
+/// is_javascript_action_dict.
 pub fn is_javascript_action_dict(dict: &lopdf::Dictionary) -> bool {
     matches!(
         dict.get(b"S").ok(),
         Some(Object::Name(name)) if name == b"JavaScript"
     )
 }
-
+/// catalog_has_javascript_open_action.
 pub fn catalog_has_javascript_open_action(doc: &Document) -> bool {
     let Some(catalog_id) = catalog_id(doc) else {
         return false;
@@ -96,13 +104,13 @@ pub fn catalog_has_javascript_open_action(doc: &Document) -> bool {
         .ok()
         .is_some_and(|action| object_is_javascript_action(doc, action))
 }
-
+/// dict_has_javascript_additional_actions.
 pub fn dict_has_javascript_additional_actions(doc: &Document, dict: &lopdf::Dictionary) -> bool {
     dict.get(b"AA")
         .ok()
         .is_some_and(|aa| additional_actions_contain_javascript(doc, aa))
 }
-
+/// dict_has_javascript_field_action.
 pub fn dict_has_javascript_field_action(doc: &Document, dict: &lopdf::Dictionary) -> bool {
     dict.get(b"A")
         .ok()

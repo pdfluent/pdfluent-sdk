@@ -466,7 +466,7 @@ impl Device<'_> for TextExtractionDevice {
         // pages with hundreds of thousands of glyphs.
         if self.glyph_widths.len() < 4096 {
             self.glyph_widths.push(glyph_width);
-            if self.glyph_widths.len() % MEDIAN_REFRESH == 0 {
+            if self.glyph_widths.len().is_multiple_of(MEDIAN_REFRESH) {
                 self.refresh_median_char_width();
             }
         }
@@ -694,7 +694,7 @@ fn compute_adaptive_column_gap(bands: &[TextBand]) -> f64 {
 
     // Fallback: median × multiplier.
     let mid = all_gaps.len() / 2;
-    let median = if all_gaps.len() % 2 == 0 {
+    let median = if all_gaps.len().is_multiple_of(2) {
         (all_gaps[mid - 1] + all_gaps[mid]) * 0.5
     } else {
         all_gaps[mid]
@@ -1269,9 +1269,7 @@ fn group_spans_into_bands_with_stats(mut spans: Vec<TextSpan>, stats: &PageStats
 }
 
 fn boundaries_match(boundaries: &[f64], gap_midpoints: &[f64], column_gap_threshold: f64) -> bool {
-    let tolerance = (column_gap_threshold * 1.5)
-        .max(COLUMN_GAP_MATCH_TOLERANCE)
-        .min(60.0);
+    let tolerance = (column_gap_threshold * 1.5).clamp(COLUMN_GAP_MATCH_TOLERANCE, 60.0);
     boundaries.len() == gap_midpoints.len()
         && boundaries
             .iter()
@@ -1518,14 +1516,9 @@ pub(crate) fn normalize_text_output(text: &str) -> String {
                 }
             }
         } else {
-            // Check if line starts with form-feed
-            if line.starts_with('\x0C') {
-                consecutive_empty = 0;
-                result.push_str(line);
-            } else {
-                consecutive_empty = 0;
-                result.push_str(line);
-            }
+            // Both form-feed-prefixed and regular lines are emitted as-is.
+            consecutive_empty = 0;
+            result.push_str(line);
             if i + 1 < lines.len() {
                 result.push('\n');
             }

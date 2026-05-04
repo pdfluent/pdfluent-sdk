@@ -415,17 +415,15 @@ impl fmt::Display for Error {
             let mut first = true;
             for line in help.lines() {
                 if first {
-                    write!(f, "{}\n", line)?;
+                    writeln!(f, "{}", line)?;
                     first = false;
+                } else if line.is_empty() {
+                    writeln!(f)?;
                 } else {
-                    if line.is_empty() {
-                        write!(f, "\n")?;
-                    } else {
-                        write!(f, "        {}\n", line)?;
-                    }
+                    writeln!(f, "        {}", line)?;
                 }
             }
-            write!(f, "\n")?;
+            writeln!(f)?;
         }
 
         write!(f, "  Docs: {}", self.docs_url())

@@ -1,3 +1,9 @@
+// `decode_zlib*` are only consumed by `downsample` and `font_subset`,
+// which are feature-gated; without those features cargo flags them as
+// dead code. The functions stay compiled so feature combinations don't
+// have to be plumbed in.
+#![allow(dead_code)]
+
 use crate::error::{ManipError, Result};
 use flate2::read::ZlibDecoder;
 use std::io::Read;

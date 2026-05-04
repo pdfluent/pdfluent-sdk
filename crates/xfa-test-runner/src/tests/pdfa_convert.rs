@@ -924,10 +924,10 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     // DEBUG: check Symbol widths after embed_fonts
     for (id, obj) in doc.objects.iter() {
         if let lopdf::Object::Dictionary(dict) = obj {
-            if let Some(lopdf::Object::Name(bf)) = dict.get(b"BaseFont").ok() {
+            if let Ok(lopdf::Object::Name(bf)) = dict.get(b"BaseFont") {
                 if bf == b"Symbol" {
                     let has_enc = dict.has(b"Encoding");
-                    if let Some(lopdf::Object::Array(w)) = dict.get(b"Widths").ok() {
+                    if let Ok(lopdf::Object::Array(w)) = dict.get(b"Widths") {
                         let sample: Vec<i64> = w
                             .iter()
                             .take(5)

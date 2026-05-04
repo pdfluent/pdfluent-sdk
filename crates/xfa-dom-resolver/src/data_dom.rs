@@ -30,28 +30,45 @@ pub enum NullType {
 /// text content of leaf elements maps to `Data`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataContains {
+    /// Actual data content.
     Data,
+    /// Metadata content (e.g., XML attributes).
     MetaData,
 }
 
 /// A node in the XFA Data DOM.
 #[derive(Debug, Clone)]
 pub enum DataNode {
+    /// Grouping element that contains child nodes.
     DataGroup {
+        /// Element name.
         name: String,
+        /// XML namespace, if any.
         namespace: Option<String>,
+        /// Child node IDs.
         children: Vec<DataNodeId>,
+        /// Whether this group represents a record.
         is_record: bool,
+        /// Parent node ID, if any.
         parent: Option<DataNodeId>,
     },
+    /// Leaf element or attribute containing a value.
     DataValue {
+        /// Element or attribute name.
         name: String,
+        /// XML namespace, if any.
         namespace: Option<String>,
+        /// String value of this node.
         value: String,
+        /// Whether this node holds data or metadata.
         contains: DataContains,
+        /// Content type hint, if any.
         content_type: Option<String>,
+        /// Whether the value is null.
         is_null: bool,
+        /// How null values are serialized on output.
         null_type: NullType,
+        /// Parent node ID, if any.
         parent: Option<DataNodeId>,
     },
 }

@@ -394,8 +394,8 @@ pub fn extract_text_runs(editor: &ContentEditor, fonts: &FontMap) -> Vec<TextRun
             "ET" => {
                 state.in_text = false;
             }
-            "Tf" => {
-                if op.operands.len() >= 2 {
+            "Tf"
+                if op.operands.len() >= 2 => {
                     if let Object::Name(ref name) = op.operands[0] {
                         state.font_name = String::from_utf8_lossy(name).to_string();
                     }
@@ -403,7 +403,6 @@ pub fn extract_text_runs(editor: &ContentEditor, fonts: &FontMap) -> Vec<TextRun
                         state.font_size = size;
                     }
                 }
-            }
             "Tc" => {
                 if let Some(v) = op.operands.first().and_then(as_number) {
                     state.tc = v;
@@ -429,17 +428,16 @@ pub fn extract_text_runs(editor: &ContentEditor, fonts: &FontMap) -> Vec<TextRun
                     state.ts = v;
                 }
             }
-            "Td" => {
-                if op.operands.len() >= 2 {
+            "Td"
+                if op.operands.len() >= 2 => {
                     let tx = as_number(&op.operands[0]).unwrap_or(0.0);
                     let ty = as_number(&op.operands[1]).unwrap_or(0.0);
                     let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, tx, ty]);
                     state.tlm = new_tlm;
                     state.tm = new_tlm;
                 }
-            }
-            "TD" => {
-                if op.operands.len() >= 2 {
+            "TD"
+                if op.operands.len() >= 2 => {
                     let tx = as_number(&op.operands[0]).unwrap_or(0.0);
                     let ty = as_number(&op.operands[1]).unwrap_or(0.0);
                     state.tl = -ty;
@@ -447,7 +445,6 @@ pub fn extract_text_runs(editor: &ContentEditor, fonts: &FontMap) -> Vec<TextRun
                     state.tlm = new_tlm;
                     state.tm = new_tlm;
                 }
-            }
             "Tm" => {
                 if let Some(m) = extract_matrix(&op.operands) {
                     state.tm = m;
@@ -479,9 +476,9 @@ pub fn extract_text_runs(editor: &ContentEditor, fonts: &FontMap) -> Vec<TextRun
                     runs.push(run);
                 }
             }
-            "\"" => {
+            "\""
                 // Set word/char spacing, move to next line, show text.
-                if op.operands.len() >= 3 {
+                if op.operands.len() >= 3 => {
                     if let Some(tw) = as_number(&op.operands[0]) {
                         state.tw = tw;
                     }
@@ -513,7 +510,6 @@ pub fn extract_text_runs(editor: &ContentEditor, fonts: &FontMap) -> Vec<TextRun
                         }
                     }
                 }
-            }
             _ => {}
         }
     }

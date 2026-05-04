@@ -12,12 +12,19 @@ use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutNode};
 /// Configuration for appearance stream generation.
 #[derive(Debug, Clone)]
 pub struct AppearanceConfig {
+    /// default_font.
     pub default_font: String,
+    /// default_font_size.
     pub default_font_size: f64,
+    /// border_width.
     pub border_width: f64,
+    /// border_color.
     pub border_color: [f64; 3],
+    /// background_color.
     pub background_color: Option<[f64; 3]>,
+    /// text_color.
     pub text_color: [f64; 3],
+    /// text_padding.
     pub text_padding: f64,
 }
 
@@ -38,8 +45,11 @@ impl Default for AppearanceConfig {
 /// A generated appearance stream.
 #[derive(Debug, Clone)]
 pub struct AppearanceStream {
+    /// content.
     pub content: Vec<u8>,
+    /// bbox.
     pub bbox: [f64; 4],
+    /// font_resources.
     pub font_resources: Vec<(String, String)>,
 }
 
@@ -49,12 +59,13 @@ pub struct AppearanceCache {
 }
 
 impl AppearanceCache {
+    /// new.
     pub fn new() -> Self {
         Self {
             cache: HashMap::new(),
         }
     }
-
+    /// get_or_generate.
     pub fn get_or_generate(
         &mut self,
         node_id: FormNodeId,
@@ -68,11 +79,11 @@ impl AppearanceCache {
             .entry(key)
             .or_insert_with(|| field_appearance(value, width, height, config))
     }
-
+    /// invalidate.
     pub fn invalidate(&mut self, node_id: FormNodeId) {
         self.cache.retain(|(id, _), _| *id != node_id.0);
     }
-
+    /// clear.
     pub fn clear(&mut self) {
         self.cache.clear();
     }
@@ -101,19 +112,28 @@ pub fn generate_appearances(
     }
     Ok(pages)
 }
+/// PageAppearances.
 
 #[derive(Debug)]
 pub struct PageAppearances {
+    /// width.
     pub width: f64,
+    /// height.
     pub height: f64,
+    /// entries.
     pub entries: Vec<AppearanceEntry>,
 }
+/// AppearanceEntry.
 
 #[derive(Debug)]
 pub struct AppearanceEntry {
+    /// name.
     pub name: String,
+    /// abs_x.
     pub abs_x: f64,
+    /// abs_y.
     pub abs_y: f64,
+    /// appearance.
     pub appearance: AppearanceStream,
 }
 
@@ -160,7 +180,7 @@ fn collect_appearances(
         }
     }
 }
-
+/// field_appearance.
 pub fn field_appearance(
     value: &str,
     width: f64,
@@ -216,7 +236,7 @@ pub fn field_appearance(
         }
     }
 }
-
+/// draw_appearance.
 pub fn draw_appearance(
     text: &str,
     width: f64,
@@ -258,7 +278,7 @@ pub fn draw_appearance(
         }
     }
 }
-
+/// multiline_appearance.
 pub fn multiline_appearance(
     lines: &[String],
     font_size: f64,
@@ -323,7 +343,7 @@ pub fn multiline_appearance(
         }
     }
 }
-
+/// checkbox_appearance.
 pub fn checkbox_appearance(checked: bool, width: f64, height: f64) -> AppearanceStream {
     let mut ops = Vec::new();
     let size = width.min(height);

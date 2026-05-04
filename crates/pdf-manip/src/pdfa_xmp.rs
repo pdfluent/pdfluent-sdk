@@ -469,7 +469,7 @@ pub fn normalize_lang_tag(lang: &str) -> String {
     }
 
     // Standard normalization: primary-subtag
-    let parts: Vec<&str> = lang.split(|c| c == '-' || c == '_').collect();
+    let parts: Vec<&str> = lang.split(['-', '_']).collect();
     if parts.len() >= 2 {
         let mut primary = parts[0].to_lowercase();
         let mut subtag = parts[1].to_uppercase();
@@ -658,11 +658,7 @@ fn parse_pdf_timezone(chars: &[char], offset: usize) -> Option<xmp_writer::Timez
         offset + 3
     };
     let tz_min = parse_two_digits(chars, min_offset).unwrap_or(0) as i8;
-    let h = if ch == '-' {
-        -(tz_hour as i8)
-    } else {
-        tz_hour as i8
-    };
+    let h = if ch == '-' { -tz_hour } else { tz_hour };
     Some(xmp_writer::Timezone::Local {
         hour: h,
         minute: tz_min,
@@ -684,11 +680,7 @@ fn parse_iso_timezone(chars: &[char], offset: usize) -> Option<xmp_writer::Timez
     } else {
         parse_two_digits(chars, offset + 3).unwrap_or(0) as i8
     };
-    let h = if ch == '-' {
-        -(tz_hour as i8)
-    } else {
-        tz_hour as i8
-    };
+    let h = if ch == '-' { -tz_hour } else { tz_hour };
     Some(xmp_writer::Timezone::Local {
         hour: h,
         minute: tz_min,
