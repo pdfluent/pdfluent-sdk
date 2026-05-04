@@ -29,7 +29,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use rquickjs::function::Opt;
-use rquickjs::{Coerced, Context, Function, Object, Persistent, Runtime};
+use rquickjs::{CatchResultExt, Coerced, Context, Function, Object, Persistent, Runtime};
 use xfa_layout_engine::form::{FormNodeId, FormTree};
 
 use super::{
@@ -209,6 +209,50 @@ impl QuickJsRuntime {
                 .set("currentNodeId", current_node)
                 .map_err(|e| format!("set currentNodeId: {e}"))?;
 
+            let implicit_host = Rc::clone(&host);
+            let resolve_implicit_node_id = Function::new(
+                ctx.clone(),
+                move |current_id: i32, name: Opt<Coerced<String>>| -> i32 {
+                    if current_id < 0 {
+                        return -1;
+                    }
+                    let Some(name) = name.0 else {
+                        return -1;
+                    };
+                    implicit_host
+                        .borrow_mut()
+                        .resolve_implicit(FormNodeId(current_id as usize), &name.0)
+                        .map(|node_id| node_id.0 as i32)
+                        .unwrap_or(-1)
+                },
+            )
+            .map_err(|e| format!("resolveImplicitNodeId: {e}"))?;
+            internal
+                .set("resolveImplicitNodeId", resolve_implicit_node_id)
+                .map_err(|e| format!("set resolveImplicitNodeId: {e}"))?;
+
+            let child_host = Rc::clone(&host);
+            let resolve_child_node_id = Function::new(
+                ctx.clone(),
+                move |parent_id: i32, name: Opt<Coerced<String>>| {
+                    if parent_id < 0 {
+                        return -1i32;
+                    }
+                    let Some(name) = name.0 else {
+                        return -1;
+                    };
+                    child_host
+                        .borrow_mut()
+                        .resolve_child(FormNodeId(parent_id as usize), &name.0)
+                        .map(|node_id| node_id.0 as i32)
+                        .unwrap_or(-1)
+                },
+            )
+            .map_err(|e| format!("resolveChildNodeId: {e}"))?;
+            internal
+                .set("resolveChildNodeId", resolve_child_node_id)
+                .map_err(|e| format!("set resolveChildNodeId: {e}"))?;
+
             let get_raw_host = Rc::clone(&host);
             let get_raw_value = Function::new(
                 ctx.clone(),
@@ -267,6 +311,7 @@ impl QuickJsRuntime {
                 .map_err(|e| format!("binding factory parse: {e}"))?;
             let bridge: Object = factory
                 .call((internal,))
+                .catch(&ctx)
                 .map_err(|e| format!("binding factory call: {e}"))?;
             let xfa: Object = bridge.get("xfa").map_err(|e| format!("get xfa: {e}"))?;
             let app: Object = bridge.get("app").map_err(|e| format!("get app: {e}"))?;
@@ -305,6 +350,64 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     return obj;
   }
 
+  function lookupObject() {
+    return Object.create(null);
+  }
+
+  var deferredGlobalNames = lookupObject();
+  [
+    "app", "arguments", "Array", "Boolean", "Bun", "console", "Date",
+    "decodeURI", "decodeURIComponent", "Deno", "encodeURI",
+    "encodeURIComponent", "Error", "eval", "EvalError", "fetch",
+    "Function", "globalThis", "Infinity", "isFinite", "isNaN", "JSON",
+    "Map", "Math", "NaN", "Number", "Object", "parseFloat", "parseInt",
+    "process", "RangeError", "ReferenceError", "RegExp", "require",
+    "Set", "String", "Symbol", "SyntaxError", "TypeError", "undefined",
+    "URIError", "WeakMap", "WeakSet", "WebSocket", "XMLHttpRequest",
+    "xfa", "event"
+  ].forEach(function(name) {
+    deferredGlobalNames[name] = true;
+  });
+
+  var reservedHandleProperties = lookupObject();
+  [
+    "__defineGetter__", "__defineSetter__", "__lookupGetter__",
+    "__lookupSetter__", "__proto__", "constructor", "hasOwnProperty",
+    "isPrototypeOf", "propertyIsEnumerable", "then", "toJSON",
+    "toLocaleString", "toString", "valueOf"
+  ].forEach(function(name) {
+    reservedHandleProperties[name] = true;
+  });
+
+  function shouldDeferGlobalName(name, localNames) {
+    return name.charAt(0) === "_" ||
+      localNames[name] === true ||
+      deferredGlobalNames[name] === true;
+  }
+
+  function shouldDeferHandleProperty(name) {
+    return name.charAt(0) === "_" || reservedHandleProperties[name] === true;
+  }
+
+  function collectLocalNames(body) {
+    var locals = lookupObject();
+    var match;
+    var decls = /\b(?:var|let|const)\s+([^;]+)/g;
+    while ((match = decls.exec(body)) !== null) {
+      match[1].split(",").forEach(function(part) {
+        var ident = /^\s*([A-Za-z_$][0-9A-Za-z_$]*)/.exec(part);
+        if (ident) {
+          locals[ident[1]] = true;
+        }
+      });
+    }
+    var funcs = /\bfunction\s+([A-Za-z_$][0-9A-Za-z_$]*)/g;
+    while ((match = funcs.exec(body)) !== null) {
+      locals[match[1]] = true;
+    }
+    return locals;
+  }
+
   function makeHandle(id, generation) {
     var obj = nullProtoObject();
     Object.defineProperty(obj, "rawValue", {
@@ -331,7 +434,43 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         return "xfa[0].form[0].placeholder";
       }
     });
-    return Object.freeze(obj);
+    return new Proxy(obj, {
+      get: function(target, prop, receiver) {
+        if (typeof prop !== "string") {
+          return Reflect.get(target, prop, receiver);
+        }
+        if (prop === "rawValue" || prop === "somExpression") {
+          return Reflect.get(target, prop, receiver);
+        }
+        if (prop === "isNull") {
+          var value = host.getRawValue(id, generation);
+          return value === undefined || value === null || value === "";
+        }
+        if (shouldDeferHandleProperty(prop)) {
+          return undefined;
+        }
+        var childId = host.resolveChildNodeId(id, prop);
+        if (childId < 0) {
+          return undefined;
+        }
+        return makeHandle(childId, generation);
+      },
+      set: function(_target, prop, value) {
+        if (prop === "rawValue") {
+          host.setRawValue(id, generation, value);
+        }
+        return true;
+      },
+      has: function(target, prop) {
+        if (typeof prop !== "string") {
+          return Reflect.has(target, prop);
+        }
+        return prop === "rawValue" ||
+          prop === "somExpression" ||
+          prop === "isNull" ||
+          Reflect.has(target, prop);
+      }
+    });
   }
 
   // Phase C-α: viewer-stub that absorbs property writes silently.
@@ -499,6 +638,64 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     });
   });
 
+  function makeImplicitGlobals(body) {
+    var currentId = host.currentNodeId();
+    var generation = host.generation();
+    var localNames = collectLocalNames(String(body));
+    var cachedHandles = lookupObject();
+    var dynamicLocals = lookupObject();
+
+    function lookup(name) {
+      if (cachedHandles[name] !== undefined) {
+        return cachedHandles[name];
+      }
+      var nodeId = host.resolveImplicitNodeId(currentId, name);
+      if (nodeId < 0) {
+        return undefined;
+      }
+      var handle = makeHandle(nodeId, generation);
+      cachedHandles[name] = handle;
+      return handle;
+    }
+
+    return new Proxy(Object.create(null), {
+      has: function(_target, prop) {
+        if (typeof prop !== "string") {
+          return false;
+        }
+        if (shouldDeferGlobalName(prop, localNames)) {
+          return false;
+        }
+        return true;
+      },
+      get: function(_target, prop) {
+        if (typeof prop !== "string") {
+          return undefined;
+        }
+        if (shouldDeferGlobalName(prop, localNames)) {
+          return undefined;
+        }
+        if (dynamicLocals[prop] !== undefined) {
+          return dynamicLocals[prop];
+        }
+        return lookup(prop);
+      },
+      set: function(_target, prop, value) {
+        if (typeof prop !== "string") {
+          return true;
+        }
+        if (shouldDeferGlobalName(prop, localNames)) {
+          return false;
+        }
+        if (cachedHandles[prop] !== undefined) {
+          return true;
+        }
+        dynamicLocals[prop] = value;
+        return true;
+      }
+    });
+  }
+
   return {
     xfa: Object.freeze(xfa),
     app: Object.freeze(app),
@@ -513,7 +710,13 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       // unrelated scripts).
       var ev = makeEvent();
       var consoleArg = consoleStub;
-      return (Function("event", "console", String(body))).call(thisArg, ev, consoleArg);
+      var globals = makeImplicitGlobals(body);
+      return (Function(
+        "event",
+        "console",
+        "__globals",
+        "with(__globals){\n" + String(body) + "\n}"
+      )).call(thisArg, ev, consoleArg, globals);
     }
   };
 })
