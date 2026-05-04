@@ -50,6 +50,7 @@ pub struct OpenOptions {
     pub(crate) repair: bool,
     pub(crate) memory_limit: Option<usize>,
     pub(crate) license_key: Option<String>,
+    pub(crate) processing_limits: Option<pdf_engine::ProcessingLimits>,
 }
 
 impl OpenOptions {
@@ -109,6 +110,43 @@ impl OpenOptions {
     /// environment variable.
     pub fn with_license_key(mut self, key: impl Into<String>) -> Self {
         self.license_key = Some(key.into());
+        self
+    }
+
+    /// Apply a [`ProcessingLimits`](pdf_engine::ProcessingLimits) policy
+    /// to the open path.
+    ///
+    /// Currently enforces the **file-size** cap
+    /// ([`ProcessingLimits::max_file_bytes`](pdf_engine::ProcessingLimits::max_file_bytes))
+    /// before any allocation occurs. The remaining caps in
+    /// `ProcessingLimits` (stream-size, image-pixels, object-depth,
+    /// operator-count, XFA / FormCalc nesting) require parser-internal
+    /// hooks and are tracked as follow-up work in issue #1429; today
+    /// they are accepted into the policy but only the file-size cap
+    /// fires. When the parser-side hooks land, those caps will start
+    /// firing without any caller change.
+    ///
+    /// If [`strict_memory_limit`](Self::strict_memory_limit) is also
+    /// set, the **smaller** of the two caps wins for the input-size
+    /// check. The two are kept as separate methods for backward
+    /// compatibility — `strict_memory_limit` predates this builder.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::{OpenOptions, PdfDocument, ProcessingLimits};
+    ///
+    /// // Stricter caps for a server-side intake pipeline:
+    /// let limits = ProcessingLimits::default()
+    ///     .max_file_bytes(50 * 1024 * 1024)   // 50 MB
+    ///     .max_stream_bytes(32 * 1024 * 1024); // 32 MB per stream
+    ///
+    /// let opts = OpenOptions::new().with_processing_limits(limits);
+    /// let doc = PdfDocument::open_with("invoice.pdf", opts).unwrap();
+    /// # drop(doc);
+    /// ```
+    pub fn with_processing_limits(mut self, limits: pdf_engine::ProcessingLimits) -> Self {
+        self.processing_limits = Some(limits);
         self
     }
 }
@@ -272,7 +310,16 @@ impl PdfDocument {
         // Enforce memory budget BEFORE reading the file into memory. Without
         // this, a malicious PDF could exhaust RAM before the limit check ever
         // ran (file already in `bytes` by then).
-        if let Some(limit) = opts.memory_limit {
+        //
+        // Two limit sources may be in play:
+        //   1. `strict_memory_limit` (predates with_processing_limits)
+        //   2. `with_processing_limits` (issue #1429, partial wiring)
+        // The smaller cap wins. We do a single stat and check both.
+        let processing_file_cap: Option<u64> = opts
+            .processing_limits
+            .as_ref()
+            .map(|l| l.max_file_bytes);
+        if opts.memory_limit.is_some() || processing_file_cap.is_some() {
             let metadata = fs::metadata(path_ref).map_err(|source| match source.kind() {
                 std::io::ErrorKind::NotFound => Error::FileNotFound {
                     path: path_ref.to_path_buf(),
@@ -282,12 +329,26 @@ impl PdfDocument {
                     path: Some(path_ref.to_path_buf()),
                 },
             })?;
-            let size = metadata.len() as usize;
-            if size > limit {
-                return Err(Error::MemoryBudgetExceeded {
-                    requested: size,
-                    limit,
-                });
+            let size_u64 = metadata.len();
+
+            if let Some(limit_bytes) = processing_file_cap {
+                if size_u64 > limit_bytes {
+                    return Err(Error::ResourceLimitExceeded {
+                        kind: crate::error::ResourceLimitKind::FileTooLarge,
+                        observed: size_u64,
+                        limit: limit_bytes,
+                    });
+                }
+            }
+
+            if let Some(limit) = opts.memory_limit {
+                let size = size_u64 as usize;
+                if size > limit {
+                    return Err(Error::MemoryBudgetExceeded {
+                        requested: size,
+                        limit,
+                    });
+                }
             }
         }
 
@@ -332,6 +393,20 @@ impl PdfDocument {
     pub fn from_bytes_with(bytes: &[u8], opts: OpenOptions) -> Result<Self> {
         license::require_capability(Capability::PdfParse)?;
 
+        // ProcessingLimits::max_file_bytes (issue #1429): typed
+        // ResourceLimitExceeded variant — preferred path.
+        if let Some(ref limits) = opts.processing_limits {
+            let len_u64 = bytes.len() as u64;
+            if len_u64 > limits.max_file_bytes {
+                return Err(Error::ResourceLimitExceeded {
+                    kind: crate::error::ResourceLimitKind::FileTooLarge,
+                    observed: len_u64,
+                    limit: limits.max_file_bytes,
+                });
+            }
+        }
+
+        // Legacy strict_memory_limit (predates with_processing_limits).
         if let Some(limit) = opts.memory_limit {
             if bytes.len() > limit {
                 return Err(Error::MemoryBudgetExceeded {
