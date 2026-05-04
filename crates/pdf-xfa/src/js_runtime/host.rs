@@ -227,6 +227,43 @@ impl HostBindings {
             .collect()
     }
 
+    /// Resolve an implicit JavaScript identifier from the current XFA scope.
+    ///
+    /// Adobe's XFA JavaScript environment makes sibling and ancestor-scoped
+    /// SOM nodes visible as bare identifiers. This method searches from the
+    /// supplied current node upward, returning the first descendant with the
+    /// requested name at each scope.
+    pub fn resolve_implicit(&mut self, current_id: FormNodeId, name: &str) -> Option<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        match self.resolve_implicit_inner(current_id, name) {
+            ResolveOutcome::Ok(nodes) => nodes.into_iter().next(),
+            ResolveOutcome::NoMatch => {
+                self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                None
+            }
+            ResolveOutcome::BindingError => {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                None
+            }
+        }
+    }
+
+    /// Resolve a direct child node for chained dotted JavaScript access.
+    pub fn resolve_child(&mut self, parent_id: FormNodeId, name: &str) -> Option<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        match self.resolve_child_inner(parent_id, name) {
+            ResolveOutcome::Ok(nodes) => nodes.into_iter().next(),
+            ResolveOutcome::NoMatch => {
+                self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                None
+            }
+            ResolveOutcome::BindingError => {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                None
+            }
+        }
+    }
+
     /// Read-only static page count visible to Phase C scripts.
     pub fn num_pages(&mut self) -> u32 {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
@@ -239,11 +276,18 @@ impl HostBindings {
         self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
     }
 
-    fn resolve_path(&mut self, path: &str) -> ResolveOutcome {
+    fn consume_resolve_call(&mut self) -> bool {
         if self.resolve_count_this_script >= MAX_RESOLVE_CALLS_PER_SCRIPT {
-            return ResolveOutcome::BindingError;
+            return false;
         }
         self.resolve_count_this_script = self.resolve_count_this_script.saturating_add(1);
+        true
+    }
+
+    fn resolve_path(&mut self, path: &str) -> ResolveOutcome {
+        if !self.consume_resolve_call() {
+            return ResolveOutcome::BindingError;
+        }
 
         let Some(form) = self.form_ref() else {
             return ResolveOutcome::BindingError;
@@ -281,6 +325,63 @@ impl HostBindings {
             Some(nodes) if !nodes.is_empty() => ResolveOutcome::Ok(nodes),
             _ => ResolveOutcome::NoMatch,
         }
+    }
+
+    fn resolve_implicit_inner(&mut self, current_id: FormNodeId, name: &str) -> ResolveOutcome {
+        let name = name.trim();
+        if name.is_empty() || !self.consume_resolve_call() {
+            return ResolveOutcome::BindingError;
+        }
+
+        let Some(form) = self.form_ref() else {
+            return ResolveOutcome::BindingError;
+        };
+        if current_id.0 >= form.nodes.len() || self.root_id.0 >= form.nodes.len() {
+            return ResolveOutcome::BindingError;
+        }
+
+        let parents = build_parent_map(form, self.root_id);
+        let mut scope = Some(current_id);
+        let mut depth = 0usize;
+        while let Some(scope_id) = scope {
+            if depth > MAX_SOM_DEPTH {
+                return ResolveOutcome::BindingError;
+            }
+            if scope_id.0 >= form.nodes.len() {
+                return ResolveOutcome::BindingError;
+            }
+            if let Some(node_id) = find_named_descendant(form, scope_id, name, MAX_SOM_DEPTH) {
+                return ResolveOutcome::Ok(vec![node_id]);
+            }
+            scope = parents.get(&scope_id).copied();
+            depth += 1;
+        }
+
+        ResolveOutcome::NoMatch
+    }
+
+    fn resolve_child_inner(&mut self, parent_id: FormNodeId, name: &str) -> ResolveOutcome {
+        let name = name.trim();
+        if name.is_empty() || !self.consume_resolve_call() {
+            return ResolveOutcome::BindingError;
+        }
+
+        let Some(form) = self.form_ref() else {
+            return ResolveOutcome::BindingError;
+        };
+        if parent_id.0 >= form.nodes.len() {
+            return ResolveOutcome::BindingError;
+        }
+
+        let found = form
+            .get(parent_id)
+            .children
+            .iter()
+            .copied()
+            .find(|child_id| form.get(*child_id).name == name);
+        found.map_or(ResolveOutcome::NoMatch, |node_id| {
+            ResolveOutcome::Ok(vec![node_id])
+        })
     }
 
     fn write_activity_allowed(&self) -> bool {
@@ -590,6 +691,37 @@ fn collect_descendants(form: &FormTree, node_id: FormNodeId, out: &mut Vec<FormN
     for &child_id in &form.get(node_id).children {
         collect_descendants(form, child_id, out);
     }
+}
+
+fn find_named_descendant(
+    form: &FormTree,
+    scope_id: FormNodeId,
+    name: &str,
+    max_depth: usize,
+) -> Option<FormNodeId> {
+    find_named_descendant_inner(form, scope_id, name, 0, max_depth)
+}
+
+fn find_named_descendant_inner(
+    form: &FormTree,
+    node_id: FormNodeId,
+    name: &str,
+    depth: usize,
+    max_depth: usize,
+) -> Option<FormNodeId> {
+    if depth >= max_depth {
+        return None;
+    }
+    for &child_id in &form.get(node_id).children {
+        if form.get(child_id).name == name {
+            return Some(child_id);
+        }
+        if let Some(found) = find_named_descendant_inner(form, child_id, name, depth + 1, max_depth)
+        {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn build_parent_map(form: &FormTree, root_id: FormNodeId) -> HashMap<FormNodeId, FormNodeId> {
