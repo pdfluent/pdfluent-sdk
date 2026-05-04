@@ -75,7 +75,10 @@ thread_local! {
     static FLATTEN_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
-use crate::dynamic::{apply_dynamic_scripts, DynamicScriptOutcome, OutputQuality};
+use crate::dynamic::{
+    apply_dynamic_scripts, apply_dynamic_scripts_with_mode, DynamicScriptOutcome, JsExecutionMode,
+    OutputQuality,
+};
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
 use crate::font_bridge::{
@@ -521,13 +524,35 @@ fn xfa_flatten_inner(
 
     log::debug!("XFA bind: {} form nodes created", tree.nodes.len());
 
-    let dynamic_scripts = apply_dynamic_scripts(&mut tree, root_id)?;
+    // M3-B Phase C validation hook (2026-05-03):
+    // Allow operators (CLI, integration tests, cohort runs) to engage the
+    // sandboxed JavaScript runtime by setting `XFA_JS_EXECUTION_MODE`.
+    // - unset / "default" / "best_effort_static" → existing default
+    //   (`BestEffortStatic`), no behaviour change for any existing user.
+    // - "strict" → `Strict` (M8 `DENY_EXECUTION`).
+    // - "sandboxed" / "sandboxed_runtime" → `SandboxedRuntime` (Phase B+C).
+    //   Only effective when the `xfa-js-sandboxed` Cargo feature is compiled
+    //   in; otherwise NullRuntime returns NotCompiledIn and the dispatch
+    //   path falls back to the same skip behaviour as `BestEffortStatic`.
+    let dynamic_scripts = match std::env::var("XFA_JS_EXECUTION_MODE")
+        .ok()
+        .map(|s| s.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("strict") => {
+            apply_dynamic_scripts_with_mode(&mut tree, root_id, JsExecutionMode::Strict)?
+        }
+        Some("sandboxed") | Some("sandboxed_runtime") => {
+            apply_dynamic_scripts_with_mode(&mut tree, root_id, JsExecutionMode::SandboxedRuntime)?
+        }
+        _ => apply_dynamic_scripts(&mut tree, root_id)?,
+    };
     if dynamic_scripts.output_quality != OutputQuality::Exact {
-        // M3-B Phase B (2026-05-03): added js_executed / js_runtime_errors /
-        // js_timeouts / js_oom. Defaulted to 0 in `BestEffortStatic` mode
-        // so existing log parsers stay backward-compatible.
+        // M3-B Phase C (2026-05-03): appended host-binding counters after
+        // the Phase B JS runtime counters. Defaults stay 0 in
+        // `BestEffortStatic` mode so existing log parsers remain compatible.
         log::warn!(
-            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={}",
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_binding_errors={} js_resolve_failures={}",
             dynamic_scripts.output_quality.as_str(),
             dynamic_scripts.js_present,
             dynamic_scripts.js_skipped,
@@ -538,9 +563,13 @@ fn xfa_flatten_inner(
             dynamic_scripts.js_runtime_errors,
             dynamic_scripts.js_timeouts,
             dynamic_scripts.js_oom,
+            dynamic_scripts.js_host_calls,
+            dynamic_scripts.js_mutations,
+            dynamic_scripts.js_binding_errors,
+            dynamic_scripts.js_resolve_failures,
         );
         eprintln!(
-            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={}",
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_binding_errors={} js_resolve_failures={}",
             dynamic_scripts.output_quality.as_str(),
             dynamic_scripts.js_present,
             dynamic_scripts.js_skipped,
@@ -551,6 +580,10 @@ fn xfa_flatten_inner(
             dynamic_scripts.js_runtime_errors,
             dynamic_scripts.js_timeouts,
             dynamic_scripts.js_oom,
+            dynamic_scripts.js_host_calls,
+            dynamic_scripts.js_mutations,
+            dynamic_scripts.js_binding_errors,
+            dynamic_scripts.js_resolve_failures,
         );
     }
 

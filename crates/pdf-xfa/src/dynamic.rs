@@ -87,6 +87,14 @@ pub struct DynamicScriptOutcome {
     pub js_timeouts: usize,
     /// **M3-B Phase B.** Per-document memory-budget exhaustions.
     pub js_oom: usize,
+    /// **M3-B Phase C.** Host-binding invocations.
+    pub js_host_calls: usize,
+    /// **M3-B Phase C.** Successful host-side `field.rawValue` writes.
+    pub js_mutations: usize,
+    /// **M3-B Phase C.** Binding-level failures.
+    pub js_binding_errors: usize,
+    /// **M3-B Phase C.** SOM resolution misses / failures.
+    pub js_resolve_failures: usize,
 }
 
 impl Default for DynamicScriptOutcome {
@@ -103,6 +111,10 @@ impl Default for DynamicScriptOutcome {
             js_runtime_errors: 0,
             js_timeouts: 0,
             js_oom: 0,
+            js_host_calls: 0,
+            js_mutations: 0,
+            js_binding_errors: 0,
+            js_resolve_failures: 0,
         }
     }
 }
@@ -204,6 +216,26 @@ pub fn apply_dynamic_scripts_with_mode(
     root_id: FormNodeId,
     mode: JsExecutionMode,
 ) -> Result<DynamicScriptOutcome> {
+    // M3-B Phase C-α (2026-05-03): when the caller asks for SandboxedRuntime
+    // and the `xfa-js-sandboxed` feature is compiled in, instantiate the
+    // real QuickJS-backed adapter. Without the feature, fall back to
+    // NullRuntime which surfaces `SandboxError::NotCompiledIn` per script
+    // (existing Phase B fallback semantics).
+    #[cfg(feature = "xfa-js-sandboxed")]
+    {
+        if mode == JsExecutionMode::SandboxedRuntime {
+            match crate::js_runtime::QuickJsRuntime::new() {
+                Ok(mut rt) => {
+                    return apply_dynamic_scripts_with_runtime(form, root_id, mode, &mut rt);
+                }
+                Err(_e) => {
+                    // QuickJS init failure is rare; fall through to NullRuntime
+                    // so the dispatch path can still record per-script errors
+                    // and the flatten succeeds in best-effort mode.
+                }
+            }
+        }
+    }
     apply_dynamic_scripts_with_runtime(form, root_id, mode, &mut NullRuntime::new())
 }
 
@@ -253,12 +285,14 @@ pub fn apply_dynamic_scripts_with_runtime(
     let mut sandbox_metadata = RuntimeMetadata::default();
     let mut scripts = Vec::new();
     let sandbox_active = mode == JsExecutionMode::SandboxedRuntime;
+    let snapshot = snapshot_form(form);
 
     if sandbox_active {
         // Best-effort init / reset; init failures are non-fatal — the
         // dispatch path will record them as runtime_errors per script.
         let _ = runtime.init();
         let _ = runtime.reset_for_new_document();
+        let _ = runtime.set_form_handle(form as *mut FormTree, root_id);
     }
 
     for (node_id, node_scripts) in all_scripts {
@@ -268,19 +302,33 @@ pub fn apply_dynamic_scripts_with_runtime(
                 ScriptLanguage::FormCalc => formcalc_scripts.push(script),
                 ScriptLanguage::JavaScript => {
                     if sandbox_active && activity_allowed_for_sandbox(script.activity.as_deref()) {
-                        // Phase B: route through the runtime. With no host
-                        // bindings registered, every well-formed script body
-                        // resolves to either `RuntimeOutcome { executed: true }`
-                        // (a side-effect-free script that ran to completion)
-                        // or a SandboxError class. The script is never
-                        // re-routed to FormCalc.
+                        let _ = runtime.reset_per_script(node_id, script.activity.as_deref());
                         match runtime.execute_script(script.activity.as_deref(), &script.script) {
                             Ok(_outcome) => {
                                 // Counter increment lives on `take_metadata()`.
                             }
                             Err(SandboxError::Timeout) => js_skipped += 1,
                             Err(SandboxError::OutOfMemory) => js_skipped += 1,
-                            Err(_) => js_skipped += 1,
+                            Err(e) => {
+                                // M3-B Phase C-α: surface the per-script error
+                                // class via `log::debug!` for normal builds and
+                                // also via stderr when `XFA_JS_DEBUG=1` is set
+                                // (operator triage aid; xfa-cli does not init
+                                // a logger that respects RUST_LOG).
+                                log::debug!(
+                                    "sandbox script error on activity={:?}: {}",
+                                    script.activity.as_deref(),
+                                    e
+                                );
+                                if std::env::var("XFA_JS_DEBUG").ok().as_deref() == Some("1") {
+                                    eprintln!(
+                                        "XFA_JS_DEBUG sandbox script error on activity={:?}: {}",
+                                        script.activity.as_deref(),
+                                        e
+                                    );
+                                }
+                                js_skipped += 1;
+                            }
                         }
                     } else {
                         js_skipped += 1;
@@ -295,31 +343,41 @@ pub fn apply_dynamic_scripts_with_runtime(
     }
 
     if sandbox_active {
+        let _ = runtime.set_form_handle(std::ptr::null_mut(), root_id);
         sandbox_metadata = runtime.take_metadata();
     }
 
-    let snapshot = snapshot_form(form);
     let mut stats = ScriptStats::default();
 
-    let mut changes = run_script_phase(
-        form,
-        root_id,
-        &parents,
-        &scripts,
-        ScriptPhase::Initialize,
-        1,
-        &mut stats,
-    )? + run_script_phase(
-        form,
-        root_id,
-        &parents,
-        &scripts,
-        ScriptPhase::Calculate,
-        MAX_SCRIPT_PASSES,
-        &mut stats,
-    )?;
+    let mut changes = sandbox_metadata.mutations
+        + run_script_phase(
+            form,
+            root_id,
+            &parents,
+            &scripts,
+            ScriptPhase::Initialize,
+            1,
+            &mut stats,
+        )?
+        + run_script_phase(
+            form,
+            root_id,
+            &parents,
+            &scripts,
+            ScriptPhase::Calculate,
+            MAX_SCRIPT_PASSES,
+            &mut stats,
+        )?;
 
-    if should_rollback(form, &snapshot, stats.errors, stats.successes) {
+    let sandbox_rollback_errors = sandbox_metadata
+        .runtime_errors
+        .saturating_add(sandbox_metadata.timeouts)
+        .saturating_add(sandbox_metadata.oom)
+        .saturating_add(sandbox_metadata.binding_errors);
+    let rollback_errors = stats.errors.saturating_add(sandbox_rollback_errors);
+    let rollback_successes = stats.successes.saturating_add(sandbox_metadata.executed);
+
+    if should_rollback(form, &snapshot, rollback_errors, rollback_successes) {
         restore_snapshot(form, &snapshot);
         changes = 0;
     }
@@ -328,7 +386,7 @@ pub fn apply_dynamic_scripts_with_runtime(
     let js_present = js_seen_count > 0;
     let output_quality = if sandbox_active && js_present && sandbox_metadata.is_clean() {
         OutputQuality::Sandboxed
-    } else if js_skipped > 0 || other_skipped > 0 {
+    } else if (sandbox_active && js_present) || js_skipped > 0 || other_skipped > 0 {
         OutputQuality::BestEffort
     } else {
         OutputQuality::Exact
@@ -346,6 +404,10 @@ pub fn apply_dynamic_scripts_with_runtime(
         js_runtime_errors: sandbox_metadata.runtime_errors,
         js_timeouts: sandbox_metadata.timeouts,
         js_oom: sandbox_metadata.oom,
+        js_host_calls: sandbox_metadata.host_calls,
+        js_mutations: sandbox_metadata.mutations,
+        js_binding_errors: sandbox_metadata.binding_errors,
+        js_resolve_failures: sandbox_metadata.resolve_failures,
     })
 }
 

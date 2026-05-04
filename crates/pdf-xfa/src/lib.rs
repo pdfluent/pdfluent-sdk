@@ -26,9 +26,10 @@ pub use flatten::{
     FlattenQualityMetrics, FlattenValidation, LayoutDump, LayoutDumpEntry, TextValidation,
 };
 pub use js_runtime::{
-    activity_allowed_for_sandbox, NullRuntime, RuntimeMetadata, RuntimeOutcome, SandboxError,
-    XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES,
-    SANDBOX_ACTIVITY_ALLOWLIST,
+    activity_allowed_for_sandbox, HostBindings, MutationLogEntry, NullRuntime, RuntimeMetadata,
+    RuntimeOutcome, SandboxError, XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES,
+    DEFAULT_TIME_BUDGET_MS, MAX_MUTATIONS_PER_DOC, MAX_RESOLVE_CALLS_PER_SCRIPT,
+    MAX_RESOLVE_RESULTS, MAX_SCRIPT_BODY_BYTES, MAX_SOM_DEPTH, SANDBOX_ACTIVITY_ALLOWLIST,
 };
 
 pub use formcalc_interpreter as formcalc;

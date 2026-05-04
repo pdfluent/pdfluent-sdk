@@ -19,31 +19,38 @@
 //!   never crosses into the parent flatten path
 //!   (`benchmarks/runs/M3B_RUNTIME_SECURITY_MODEL.md` §1 S-17).
 
+use std::cell::RefCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::rc::Rc;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, OnceLock,
 };
 use std::time::{Duration, Instant};
 
-use rquickjs::{Context, Function, Runtime};
+use rquickjs::function::Opt;
+use rquickjs::{CatchResultExt, Coerced, Context, Function, Object, Persistent, Runtime};
+use xfa_layout_engine::form::{FormNodeId, FormTree};
 
 use super::{
-    activity_allowed_for_sandbox, RuntimeMetadata, RuntimeOutcome, SandboxError, XfaJsRuntime,
-    DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES,
+    activity_allowed_for_sandbox, HostBindings, RuntimeMetadata, RuntimeOutcome, SandboxError,
+    XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES,
 };
 
 /// QuickJS-backed runtime adapter. One instance is reusable across many
 /// documents; callers MUST invoke [`XfaJsRuntime::reset_for_new_document`]
 /// at the start of each flatten.
 pub struct QuickJsRuntime {
-    runtime: Runtime,
+    eval_script: Option<Persistent<Function<'static>>>,
     context: Context,
+    runtime: Runtime,
     metadata: RuntimeMetadata,
     time_budget: Duration,
     memory_budget_bytes: usize,
     script_deadline: Arc<AtomicU64>,
     script_started: Arc<AtomicBool>,
+    host: Rc<RefCell<HostBindings>>,
+    bindings_registered: bool,
 }
 
 impl std::fmt::Debug for QuickJsRuntime {
@@ -90,13 +97,16 @@ impl QuickJsRuntime {
         })));
 
         Ok(Self {
-            runtime,
+            eval_script: None,
             context,
+            runtime,
             metadata: RuntimeMetadata::default(),
             time_budget: Duration::from_millis(DEFAULT_TIME_BUDGET_MS),
             memory_budget_bytes: DEFAULT_MEMORY_BUDGET_BYTES,
             script_deadline,
             script_started,
+            host: Rc::new(RefCell::new(HostBindings::new())),
+            bindings_registered: false,
         })
     }
 
@@ -129,7 +139,588 @@ impl QuickJsRuntime {
         self.script_started.store(false, Ordering::Release);
         self.script_deadline.store(0, Ordering::Release);
     }
+
+    fn register_host_bindings(&mut self) -> Result<(), String> {
+        if self.bindings_registered {
+            return Ok(());
+        }
+
+        let host = Rc::clone(&self.host);
+        let eval_script = self.context.with(|ctx| {
+            let globals = ctx.globals();
+            let internal =
+                Object::new(ctx.clone()).map_err(|e| format!("host internal object: {e}"))?;
+
+            let resolve_host = Rc::clone(&host);
+            let resolve_node_id = Function::new(ctx.clone(), move |path: Opt<Coerced<String>>| {
+                let Some(path) = path.0 else {
+                    let _ = resolve_host.borrow_mut().resolve_node("");
+                    return -1i32;
+                };
+                resolve_host
+                    .borrow_mut()
+                    .resolve_node(&path.0)
+                    .map(|node_id| node_id.0 as i32)
+                    .unwrap_or(-1)
+            })
+            .map_err(|e| format!("resolveNodeId: {e}"))?;
+            internal
+                .set("resolveNodeId", resolve_node_id)
+                .map_err(|e| format!("set resolveNodeId: {e}"))?;
+
+            let resolve_nodes_host = Rc::clone(&host);
+            let resolve_node_ids =
+                Function::new(ctx.clone(), move |path: Opt<Coerced<String>>| -> Vec<i32> {
+                    let Some(path) = path.0 else {
+                        let _ = resolve_nodes_host.borrow_mut().resolve_nodes("");
+                        return Vec::new();
+                    };
+                    resolve_nodes_host
+                        .borrow_mut()
+                        .resolve_nodes(&path.0)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                })
+                .map_err(|e| format!("resolveNodeIds: {e}"))?;
+            internal
+                .set("resolveNodeIds", resolve_node_ids)
+                .map_err(|e| format!("set resolveNodeIds: {e}"))?;
+
+            let generation_host = Rc::clone(&host);
+            let generation = Function::new(ctx.clone(), move || {
+                generation_host.borrow().generation() as i64
+            })
+            .map_err(|e| format!("generation: {e}"))?;
+            internal
+                .set("generation", generation)
+                .map_err(|e| format!("set generation: {e}"))?;
+
+            let current_host = Rc::clone(&host);
+            let current_node = Function::new(ctx.clone(), move || {
+                current_host
+                    .borrow()
+                    .current_node()
+                    .map(|node_id| node_id.0 as i32)
+                    .unwrap_or(-1)
+            })
+            .map_err(|e| format!("currentNodeId: {e}"))?;
+            internal
+                .set("currentNodeId", current_node)
+                .map_err(|e| format!("set currentNodeId: {e}"))?;
+
+            let implicit_host = Rc::clone(&host);
+            let resolve_implicit_node_id = Function::new(
+                ctx.clone(),
+                move |current_id: i32, name: Opt<Coerced<String>>| -> i32 {
+                    if current_id < 0 {
+                        return -1;
+                    }
+                    let Some(name) = name.0 else {
+                        return -1;
+                    };
+                    implicit_host
+                        .borrow_mut()
+                        .resolve_implicit(FormNodeId(current_id as usize), &name.0)
+                        .map(|node_id| node_id.0 as i32)
+                        .unwrap_or(-1)
+                },
+            )
+            .map_err(|e| format!("resolveImplicitNodeId: {e}"))?;
+            internal
+                .set("resolveImplicitNodeId", resolve_implicit_node_id)
+                .map_err(|e| format!("set resolveImplicitNodeId: {e}"))?;
+
+            let child_host = Rc::clone(&host);
+            let resolve_child_node_id = Function::new(
+                ctx.clone(),
+                move |parent_id: i32, name: Opt<Coerced<String>>| {
+                    if parent_id < 0 {
+                        return -1i32;
+                    }
+                    let Some(name) = name.0 else {
+                        return -1;
+                    };
+                    child_host
+                        .borrow_mut()
+                        .resolve_child(FormNodeId(parent_id as usize), &name.0)
+                        .map(|node_id| node_id.0 as i32)
+                        .unwrap_or(-1)
+                },
+            )
+            .map_err(|e| format!("resolveChildNodeId: {e}"))?;
+            internal
+                .set("resolveChildNodeId", resolve_child_node_id)
+                .map_err(|e| format!("set resolveChildNodeId: {e}"))?;
+
+            let get_raw_host = Rc::clone(&host);
+            let get_raw_value = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64| -> Option<String> {
+                    if id < 0 || generation < 0 {
+                        return None;
+                    }
+                    get_raw_host
+                        .borrow_mut()
+                        .get_raw_value(FormNodeId(id as usize), generation as u64)
+                },
+            )
+            .map_err(|e| format!("getRawValue: {e}"))?;
+            internal
+                .set("getRawValue", get_raw_value)
+                .map_err(|e| format!("set getRawValue: {e}"))?;
+
+            let set_raw_host = Rc::clone(&host);
+            let set_raw_value = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64, value: Coerced<String>| -> bool {
+                    if id < 0 || generation < 0 {
+                        return false;
+                    }
+                    set_raw_host.borrow_mut().set_raw_value(
+                        FormNodeId(id as usize),
+                        value.0,
+                        generation as u64,
+                    )
+                },
+            )
+            .map_err(|e| format!("setRawValue: {e}"))?;
+            internal
+                .set("setRawValue", set_raw_value)
+                .map_err(|e| format!("set setRawValue: {e}"))?;
+
+            let num_pages_host = Rc::clone(&host);
+            let num_pages =
+                Function::new(ctx.clone(), move || num_pages_host.borrow_mut().num_pages())
+                    .map_err(|e| format!("numPages: {e}"))?;
+            internal
+                .set("numPages", num_pages)
+                .map_err(|e| format!("set numPages: {e}"))?;
+
+            let binding_error_host = Rc::clone(&host);
+            let binding_error = Function::new(ctx.clone(), move || {
+                binding_error_host.borrow_mut().metadata_binding_error();
+            })
+            .map_err(|e| format!("bindingError: {e}"))?;
+            internal
+                .set("bindingError", binding_error)
+                .map_err(|e| format!("set bindingError: {e}"))?;
+
+            let factory: Function = ctx
+                .eval(PHASE_C_BINDINGS_JS.as_bytes())
+                .map_err(|e| format!("binding factory parse: {e}"))?;
+            let bridge: Object = factory
+                .call((internal,))
+                .catch(&ctx)
+                .map_err(|e| format!("binding factory call: {e}"))?;
+            let xfa: Object = bridge.get("xfa").map_err(|e| format!("get xfa: {e}"))?;
+            let app: Object = bridge.get("app").map_err(|e| format!("get app: {e}"))?;
+            let eval_script: Function = bridge
+                .get("evalScript")
+                .map_err(|e| format!("get evalScript: {e}"))?;
+            globals
+                .set("xfa", xfa)
+                .map_err(|e| format!("set xfa global: {e}"))?;
+            globals
+                .set("app", app)
+                .map_err(|e| format!("set app global: {e}"))?;
+            Ok::<Persistent<Function<'static>>, String>(Persistent::save(&ctx, eval_script))
+        })?;
+
+        self.eval_script = Some(eval_script);
+        self.bindings_registered = true;
+        Ok(())
+    }
 }
+
+const PHASE_C_BINDINGS_JS: &str = r#"
+(function(host) {
+  function protoGuard() {
+    return Object.freeze(Object.create(null));
+  }
+
+  function nullProtoObject() {
+    var obj = Object.create(null);
+    Object.defineProperty(obj, "__proto__", {
+      value: protoGuard(),
+      enumerable: false,
+      configurable: false,
+      writable: false
+    });
+    return obj;
+  }
+
+  function lookupObject() {
+    return Object.create(null);
+  }
+
+  var deferredGlobalNames = lookupObject();
+  [
+    "app", "arguments", "Array", "Boolean", "Bun", "console", "Date",
+    "decodeURI", "decodeURIComponent", "Deno", "encodeURI",
+    "encodeURIComponent", "Error", "eval", "EvalError", "fetch",
+    "Function", "globalThis", "Infinity", "isFinite", "isNaN", "JSON",
+    "Map", "Math", "NaN", "Number", "Object", "parseFloat", "parseInt",
+    "process", "RangeError", "ReferenceError", "RegExp", "require",
+    "Set", "String", "Symbol", "SyntaxError", "TypeError", "undefined",
+    "URIError", "WeakMap", "WeakSet", "WebSocket", "XMLHttpRequest",
+    "xfa", "event"
+  ].forEach(function(name) {
+    deferredGlobalNames[name] = true;
+  });
+
+  var reservedHandleProperties = lookupObject();
+  [
+    "__defineGetter__", "__defineSetter__", "__lookupGetter__",
+    "__lookupSetter__", "__proto__", "constructor", "hasOwnProperty",
+    "isPrototypeOf", "propertyIsEnumerable", "then", "toJSON",
+    "toLocaleString", "toString", "valueOf"
+  ].forEach(function(name) {
+    reservedHandleProperties[name] = true;
+  });
+
+  function shouldDeferGlobalName(name, localNames) {
+    return name.charAt(0) === "_" ||
+      localNames[name] === true ||
+      deferredGlobalNames[name] === true;
+  }
+
+  function shouldDeferHandleProperty(name) {
+    return name.charAt(0) === "_" || reservedHandleProperties[name] === true;
+  }
+
+  function collectLocalNames(body) {
+    var locals = lookupObject();
+    var match;
+    var decls = /\b(?:var|let|const)\s+([^;]+)/g;
+    while ((match = decls.exec(body)) !== null) {
+      match[1].split(",").forEach(function(part) {
+        var ident = /^\s*([A-Za-z_$][0-9A-Za-z_$]*)/.exec(part);
+        if (ident) {
+          locals[ident[1]] = true;
+        }
+      });
+    }
+    var funcs = /\bfunction\s+([A-Za-z_$][0-9A-Za-z_$]*)/g;
+    while ((match = funcs.exec(body)) !== null) {
+      locals[match[1]] = true;
+    }
+    return locals;
+  }
+
+  function makeHandle(id, generation) {
+    var obj = nullProtoObject();
+    Object.defineProperty(obj, "rawValue", {
+      enumerable: true,
+      configurable: false,
+      get: function() {
+        var value = host.getRawValue(id, generation);
+        return value === undefined ? null : value;
+      },
+      set: function(value) {
+        host.setRawValue(id, generation, value);
+      }
+    });
+    // Phase C-α: defensive stub. Real Adobe forms call
+    // `this.somExpression` to obtain the SOM path string. We don't expose
+    // the real SOM path (introspection capability), but returning a
+    // placeholder lets viewer-tweak scripts (e.g. acroSOM substr(15))
+    // proceed without ReferenceError. Mutations via this handle still
+    // require the rawValue setter, which is the only side-effect channel.
+    Object.defineProperty(obj, "somExpression", {
+      enumerable: false,
+      configurable: false,
+      get: function() {
+        return "xfa[0].form[0].placeholder";
+      }
+    });
+    return new Proxy(obj, {
+      get: function(target, prop, receiver) {
+        if (typeof prop !== "string") {
+          return Reflect.get(target, prop, receiver);
+        }
+        if (prop === "rawValue" || prop === "somExpression") {
+          return Reflect.get(target, prop, receiver);
+        }
+        if (prop === "isNull") {
+          var value = host.getRawValue(id, generation);
+          return value === undefined || value === null || value === "";
+        }
+        if (shouldDeferHandleProperty(prop)) {
+          return undefined;
+        }
+        var childId = host.resolveChildNodeId(id, prop);
+        if (childId < 0) {
+          return undefined;
+        }
+        return makeHandle(childId, generation);
+      },
+      set: function(_target, prop, value) {
+        if (prop === "rawValue") {
+          host.setRawValue(id, generation, value);
+        }
+        return true;
+      },
+      has: function(target, prop) {
+        if (typeof prop !== "string") {
+          return Reflect.has(target, prop);
+        }
+        return prop === "rawValue" ||
+          prop === "somExpression" ||
+          prop === "isNull" ||
+          Reflect.has(target, prop);
+      }
+    });
+  }
+
+  // Phase C-α: viewer-stub that absorbs property writes silently.
+  // Used as the return value of `event.target.getField()` so
+  // AcroForm widget-tweak scripts (`field.doNotScroll = true`,
+  // `field.required = false`, etc.) complete without error and
+  // without mutating any flatten-relevant state.
+  function makeViewerStub() {
+    return new Proxy({}, {
+      get: function(_t, _prop) { return undefined; },
+      set: function(_t, _prop, _val) {
+        
+        return true;
+      },
+      has: function() { return true; }
+    });
+  }
+
+  var xfaHost = nullProtoObject();
+  Object.defineProperty(xfaHost, "numPages", {
+    enumerable: true,
+    configurable: false,
+    get: function() {
+      return host.numPages();
+    }
+  });
+  Object.defineProperty(xfaHost, "messageBox", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function() {
+      host.bindingError();
+      return null;
+    }
+  });
+
+  var xfaLayout = nullProtoObject();
+  Object.defineProperty(xfaLayout, "pageCount", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function() {
+      return host.numPages();
+    }
+  });
+  Object.defineProperty(xfaLayout, "absPage", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function() {
+      host.bindingError();
+      return null;
+    }
+  });
+
+  var xfa = nullProtoObject();
+  Object.defineProperty(xfa, "host", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: Object.freeze(xfaHost)
+  });
+  Object.defineProperty(xfa, "layout", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: Object.freeze(xfaLayout)
+  });
+  Object.defineProperty(xfa, "resolveNode", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function(path) {
+      var id = host.resolveNodeId(path);
+      if (id < 0) {
+        return null;
+      }
+      return makeHandle(id, host.generation());
+    }
+  });
+  Object.defineProperty(xfa, "resolveNodes", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function(path) {
+      var generation = host.generation();
+      var ids = host.resolveNodeIds(path);
+      var out = [];
+      for (var i = 0; i < ids.length; i++) {
+        out.push(makeHandle(ids[i], generation));
+      }
+      return Object.freeze(out);
+    }
+  });
+
+  var app = nullProtoObject();
+  Object.defineProperty(app, "alert", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function() {
+      host.bindingError();
+      return null;
+    }
+  });
+  Object.defineProperty(app, "launchURL", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function() {
+      host.bindingError();
+      return null;
+    }
+  });
+
+  // Phase C-α: viewer-only `event` global. Real Adobe Reader populates
+  // this with the firing event; during static flatten there is no
+  // dispatched UI event, so the object is a defensive stub that:
+  // - exposes `target` resolving to the firing field handle (≈ `this`),
+  //   so scripts like `event.target.getField(somPath)` complete without
+  //   ReferenceError;
+  // - exposes `change` as an empty string (the spec default);
+  // - returns viewer-stubs from `target.getField()` so AcroForm widget
+  //   tweaks (`doNotScroll`, `required`, etc.) silently absorb.
+  function makeEvent() {
+    var id = host.currentNodeId();
+    var fieldHandle = id < 0 ? null : makeHandle(id, host.generation());
+    var target = nullProtoObject();
+    Object.defineProperty(target, "getField", {
+      enumerable: true, configurable: false, writable: false,
+      value: function() {
+        
+        return makeViewerStub();
+      }
+    });
+    Object.defineProperty(target, "name", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    Object.defineProperty(target, "self", {
+      enumerable: true, configurable: false,
+      get: function() { return fieldHandle; }
+    });
+    var ev = nullProtoObject();
+    Object.defineProperty(ev, "target", {
+      enumerable: true, configurable: false,
+      get: function() { return target; }
+    });
+    Object.defineProperty(ev, "change", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    return Object.freeze(ev);
+  }
+
+  // Phase C-α: minimal `console` no-op. Many forms guard with
+  // `if (typeof console !== "undefined") console.log(...)` and proceed
+  // when the symbol exists. Stub returns undefined; never writes
+  // anywhere observable to the script.
+  var consoleStub = nullProtoObject();
+  ["log","warn","error","info","debug","trace"].forEach(function(name) {
+    Object.defineProperty(consoleStub, name, {
+      enumerable: true, configurable: false, writable: false,
+      value: function() {  return undefined; }
+    });
+  });
+
+  function makeImplicitGlobals(body) {
+    var currentId = host.currentNodeId();
+    var generation = host.generation();
+    var localNames = collectLocalNames(String(body));
+    var cachedHandles = lookupObject();
+    var dynamicLocals = lookupObject();
+
+    function lookup(name) {
+      if (cachedHandles[name] !== undefined) {
+        return cachedHandles[name];
+      }
+      var nodeId = host.resolveImplicitNodeId(currentId, name);
+      if (nodeId < 0) {
+        return undefined;
+      }
+      var handle = makeHandle(nodeId, generation);
+      cachedHandles[name] = handle;
+      return handle;
+    }
+
+    return new Proxy(Object.create(null), {
+      has: function(_target, prop) {
+        if (typeof prop !== "string") {
+          return false;
+        }
+        if (shouldDeferGlobalName(prop, localNames)) {
+          return false;
+        }
+        return true;
+      },
+      get: function(_target, prop) {
+        if (typeof prop !== "string") {
+          return undefined;
+        }
+        if (shouldDeferGlobalName(prop, localNames)) {
+          return undefined;
+        }
+        if (dynamicLocals[prop] !== undefined) {
+          return dynamicLocals[prop];
+        }
+        return lookup(prop);
+      },
+      set: function(_target, prop, value) {
+        if (typeof prop !== "string") {
+          return true;
+        }
+        if (shouldDeferGlobalName(prop, localNames)) {
+          return false;
+        }
+        if (cachedHandles[prop] !== undefined) {
+          return true;
+        }
+        dynamicLocals[prop] = value;
+        return true;
+      }
+    });
+  }
+
+  return {
+    xfa: Object.freeze(xfa),
+    app: Object.freeze(app),
+    consoleStub: Object.freeze(consoleStub),
+    evalScript: function(body) {
+      var id = host.currentNodeId();
+      var thisArg = id < 0 ? undefined : makeHandle(id, host.generation());
+      // Phase C-α: install per-script `event` global in the function
+      // closure so `event.target` resolves to the current field. Wrapping
+      // body inside a function lets us pass `event` as a parameter
+      // without leaking it to globalThis (where it would persist across
+      // unrelated scripts).
+      var ev = makeEvent();
+      var consoleArg = consoleStub;
+      var globals = makeImplicitGlobals(body);
+      return (Function(
+        "event",
+        "console",
+        "__globals",
+        "with(__globals){\n" + String(body) + "\n}"
+      )).call(thisArg, ev, consoleArg, globals);
+    }
+  };
+})
+"#;
 
 // Process-wide reference epoch; used together with `Instant::now() - EPOCH`
 // to materialise a u64 nanosecond timestamp comparable across the interrupt
@@ -171,7 +762,9 @@ impl XfaJsRuntime for QuickJsRuntime {
                     let _ = math_ns.set("random", rquickjs::Undefined);
                 }
                 Ok::<(), String>(())
-            })
+            })?;
+            self.register_host_bindings()?;
+            Ok::<(), String>(())
         }));
         match result {
             Ok(Ok(())) => Ok(()),
@@ -184,9 +777,35 @@ impl XfaJsRuntime for QuickJsRuntime {
 
     fn reset_for_new_document(&mut self) -> Result<(), SandboxError> {
         self.metadata = RuntimeMetadata::default();
+        self.host.borrow_mut().reset_per_document();
         self.clear_deadline();
         // Memory limit is per-document; re-set to clear any prior accounting.
         self.runtime.set_memory_limit(self.memory_budget_bytes);
+        Ok(())
+    }
+
+    fn set_form_handle(
+        &mut self,
+        form: *mut FormTree,
+        root_id: FormNodeId,
+    ) -> Result<(), SandboxError> {
+        self.host.borrow_mut().set_form_handle(form, root_id);
+        Ok(())
+    }
+
+    fn reset_per_script(
+        &mut self,
+        current_id: FormNodeId,
+        activity: Option<&str>,
+    ) -> Result<(), SandboxError> {
+        self.host
+            .borrow_mut()
+            .reset_per_script(current_id, activity);
+        Ok(())
+    }
+
+    fn set_static_page_count(&mut self, page_count: u32) -> Result<(), SandboxError> {
+        self.host.borrow_mut().set_static_page_count(page_count);
         Ok(())
     }
 
@@ -209,7 +828,15 @@ impl XfaJsRuntime for QuickJsRuntime {
         let script_owned = body.to_string();
         let result = catch_unwind(AssertUnwindSafe(|| {
             self.context.with(|ctx| -> Result<(), rquickjs::Error> {
-                ctx.eval::<(), _>(script_owned.into_bytes())?;
+                let Some(eval_script) = self.eval_script.clone() else {
+                    return Err(rquickjs::Error::new_from_js_message(
+                        "host bindings",
+                        "Function",
+                        "Phase C eval bridge not registered",
+                    ));
+                };
+                let eval_script = eval_script.restore(&ctx)?;
+                eval_script.call::<_, ()>((script_owned,))?;
                 Ok(())
             })
         }));
@@ -226,12 +853,16 @@ impl XfaJsRuntime for QuickJsRuntime {
         match result {
             Ok(Ok(())) => {
                 self.metadata.executed = self.metadata.executed.saturating_add(1);
+                let host_metadata = self.host.borrow_mut().take_metadata();
+                self.metadata.accumulate(host_metadata);
                 Ok(RuntimeOutcome {
                     executed: true,
-                    mutated_field_count: 0,
+                    mutated_field_count: host_metadata.mutations,
                 })
             }
             Ok(Err(other)) => {
+                let host_metadata = self.host.borrow_mut().take_metadata();
+                self.metadata.accumulate(host_metadata);
                 // rquickjs ≤ 0.8 collapses interrupts, OOM, and thrown
                 // exceptions into a small set of Error variants. We
                 // distinguish a Timeout via the deadline snapshot captured
@@ -253,6 +884,8 @@ impl XfaJsRuntime for QuickJsRuntime {
                 }
             }
             Err(_) => {
+                let host_metadata = self.host.borrow_mut().take_metadata();
+                self.metadata.accumulate(host_metadata);
                 self.metadata.runtime_errors = self.metadata.runtime_errors.saturating_add(1);
                 Err(SandboxError::PanicCaptured(
                     "panic during sandboxed script execution".to_string(),
