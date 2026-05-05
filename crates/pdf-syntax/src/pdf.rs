@@ -38,18 +38,33 @@ pub const MAX_PAGES: usize = 50_000;
 /// that need stricter limits can set individual caps before loading.
 #[derive(Debug, Clone, Copy)]
 pub struct PdfLoadLimits {
-    max_object_depth: Option<u32>,
+    /// `u32::MAX` is the "no cap" sentinel (same pattern as `max_image_pixels`).
+    max_object_depth: u32,
+    /// `u32::MAX` is the "no cap" sentinel.
     max_image_pixels: u32,
+    /// Maximum decoded stream size in bytes.
+    ///
+    /// `u32::MAX` is the "no cap" sentinel (same pattern as `max_image_pixels`).
+    /// When set below `u32::MAX`, `Stream::decoded()` / `Stream::decoded_image()`
+    /// return `Err(DecodeFailure::StreamTooLarge { .. })` if the decoded payload
+    /// exceeds this threshold. The raw (compressed) bytes are not checked;
+    /// only the fully-decoded output is.
+    ///
+    /// Stored as `u32` (max ~4 GB) to keep `PdfLoadLimits` at 12 bytes, which
+    /// prevents it from inflating `Array<'a>` and therefore `Object<'a>`.
+    /// Caller-supplied `u64` values are clamped to `u32::MAX - 1` on conversion.
+    max_stream_bytes: u32,
 }
 
 impl Default for PdfLoadLimits {
     fn default() -> Self {
-        // `u32::MAX` is the "no cap" sentinel for `image_pixel_limit()`. A
-        // raw `Default::default()` would produce 0, which would reject every
-        // image and silently turn rendered pages into empty pixel buffers.
+        // `u32::MAX` is the "no cap" sentinel for all three limits. A raw
+        // `Default::default()` would produce 0 everywhere, which would reject
+        // every image / stream and silently break rendering.
         Self {
-            max_object_depth: None,
+            max_object_depth: u32::MAX,
             max_image_pixels: u32::MAX,
+            max_stream_bytes: u32::MAX,
         }
     }
 }
@@ -62,7 +77,7 @@ impl PdfLoadLimits {
 
     /// Set the maximum page-tree/object traversal depth.
     pub fn max_object_depth(mut self, depth: u32) -> Self {
-        self.max_object_depth = Some(depth);
+        self.max_object_depth = depth;
         self
     }
 
@@ -72,8 +87,27 @@ impl PdfLoadLimits {
         self
     }
 
+    /// Set the maximum decoded stream size in bytes.
+    ///
+    /// Values above ~4 GB are clamped to `u32::MAX - 1` (≈ 4 GB − 1) due to
+    /// internal storage as `u32`. For the intended use-case (decompression-bomb
+    /// protection at 32 MB–1 GB), the 4 GB ceiling is more than sufficient.
+    ///
+    /// Any call to [`Stream::decoded`] or [`Stream::decoded_image`] that
+    /// produces more bytes than `max_bytes` returns
+    /// `Err(DecodeFailure::StreamTooLarge { observed, limit })`.
+    pub fn max_stream_bytes(mut self, max_bytes: u64) -> Self {
+        // Clamp to u32::MAX - 1 to distinguish from the "no limit" sentinel.
+        self.max_stream_bytes = u32::try_from(max_bytes).unwrap_or(u32::MAX - 1);
+        self
+    }
+
     pub(crate) fn object_depth_limit(self) -> Option<u32> {
-        self.max_object_depth
+        if self.max_object_depth == u32::MAX {
+            None
+        } else {
+            Some(self.max_object_depth)
+        }
     }
 
     pub(crate) fn image_pixel_limit(self) -> Option<u32> {
@@ -81,6 +115,14 @@ impl PdfLoadLimits {
             None
         } else {
             Some(self.max_image_pixels)
+        }
+    }
+
+    pub(crate) fn stream_byte_limit(self) -> Option<u64> {
+        if self.max_stream_bytes == u32::MAX {
+            None
+        } else {
+            Some(u64::from(self.max_stream_bytes))
         }
     }
 }

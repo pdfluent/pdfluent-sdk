@@ -77,7 +77,8 @@ impl PdfDocument {
     ) -> Result<Self> {
         let syntax_limits = PdfLoadLimits::new()
             .max_object_depth(limits.max_object_depth)
-            .max_image_pixels(limits.max_image_pixels);
+            .max_image_pixels(limits.max_image_pixels)
+            .max_stream_bytes(limits.max_stream_bytes);
         let pdf = Pdf::new_with_limits(data, syntax_limits).map_err(|e| match e {
             pdf_render::pdf_syntax::LoadPdfError::Decryption(d) => {
                 EngineError::Encrypted(format!("{d:?}"))
@@ -116,7 +117,8 @@ impl PdfDocument {
     ) -> Result<Self> {
         let syntax_limits = PdfLoadLimits::new()
             .max_object_depth(limits.max_object_depth)
-            .max_image_pixels(limits.max_image_pixels);
+            .max_image_pixels(limits.max_image_pixels)
+            .max_stream_bytes(limits.max_stream_bytes);
         let pdf = Pdf::new_with_password_and_limits(data, password, syntax_limits).map_err(
             |e| match e {
                 pdf_render::pdf_syntax::LoadPdfError::Decryption(d) => {

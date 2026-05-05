@@ -294,7 +294,8 @@ impl<'a> Iterator for UntypedIter<'a> {
                         find_a85_inline_image_end(stream_data, &dict)
                     {
                         let image_data = &stream_data[..image_end];
-                        let stream = Stream::new(image_data, dict.clone());
+                        // Inline images in content streams are bounded by W×H×BPC, so no byte-limit applies.
+                        let stream = Stream::new(image_data, dict.clone(), u64::MAX);
                         self.stack.push(Object::Stream(stream));
                         self.reader.read_bytes(advance)?;
                         self.reader.skip_white_spaces();
@@ -314,7 +315,8 @@ impl<'a> Iterator for UntypedIter<'a> {
                         && stream_data.len() >= raw_size
                     {
                         let image_data = &stream_data[..raw_size];
-                        let stream = Stream::new(image_data, dict.clone());
+                        // Inline images in content streams are bounded by W×H×BPC, so no byte-limit applies.
+                        let stream = Stream::new(image_data, dict.clone(), u64::MAX);
                         self.stack.push(Object::Stream(stream));
                         // Skip past the raw data, then skip any whitespace before EI.
                         self.reader.read_bytes(raw_size)?;
@@ -334,7 +336,8 @@ impl<'a> Iterator for UntypedIter<'a> {
                             let end_offset = self.reader.offset() - start_offset;
                             let image_data = &stream_data[..end_offset];
 
-                            let stream = Stream::new(image_data, dict.clone());
+                            // Inline images in content streams are bounded by W×H×BPC, so no byte-limit applies.
+                            let stream = Stream::new(image_data, dict.clone(), u64::MAX);
 
                             // Note that there is a possibility that the encoded stream data
                             // contains the "EI" operator as part of the data, in which case we

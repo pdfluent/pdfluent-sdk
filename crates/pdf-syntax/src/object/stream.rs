@@ -24,6 +24,10 @@ struct StreamInner<'a> {
     filters: SmallVec<[Filter; 2]>,
     filter_params: SmallVec<[Dict<'a>; 2]>,
     data: &'a [u8],
+    /// Maximum decoded size enforced in `decoded()` / `decoded_image()`.
+    /// Comes from [`PdfLoadLimits::stream_byte_limit`] at parse time.
+    /// `u64::MAX` means no limit (same sentinel as [`PdfLoadLimits::max_stream_bytes`]).
+    stream_byte_limit: u64,
 }
 
 /// A stream of arbitrary data.
@@ -56,7 +60,7 @@ pub struct ImageDecodeParams {
 }
 
 impl<'a> Stream<'a> {
-    pub(crate) fn new(data: &'a [u8], dict: Dict<'a>) -> Self {
+    pub(crate) fn new(data: &'a [u8], dict: Dict<'a>, stream_byte_limit: u64) -> Self {
         let mut collected_filters = SmallVec::new();
         let mut collected_params = SmallVec::new();
 
@@ -101,6 +105,7 @@ impl<'a> Stream<'a> {
             filters: collected_filters,
             filter_params: collected_params,
             data,
+            stream_byte_limit,
         }))
     }
 
@@ -191,10 +196,21 @@ impl<'a> Stream<'a> {
             current = Some(new);
         }
 
-        Ok(current.unwrap_or(FilterResult {
+        let result = current.unwrap_or(FilterResult {
             data: data.to_vec(),
             image_data: None,
-        }))
+        });
+
+        let limit = self.0.stream_byte_limit;
+        if limit != u64::MAX {
+            let observed = result.data.len() as u64;
+            if observed > limit {
+                warn!("decoded stream size {observed} exceeds limit {limit}, stopping decode");
+                return Err(DecodeFailure::StreamTooLarge { observed, limit });
+            }
+        }
+
+        Ok(result)
     }
 }
 
@@ -223,13 +239,14 @@ impl<'a> Readable<'a> for Stream<'a> {
             return None;
         }
 
+        let stream_byte_limit = ctx.load_limits().stream_byte_limit().unwrap_or(u64::MAX);
         let offset = r.offset();
-        parse_proper(r, &dict)
+        parse_proper(r, &dict, stream_byte_limit)
             .or_else(|| {
                 warn!("failed to parse stream, trying to parse it manually");
 
                 r.jump(offset);
-                parse_fallback(r, &dict)
+                parse_fallback(r, &dict, stream_byte_limit)
             })
             .error_none("was unable to manually parse the stream")
     }
@@ -246,6 +263,18 @@ pub enum DecodeFailure {
     Decryption,
     /// An unknown failure occurred.
     Unknown,
+    /// The decoded stream exceeds the configured
+    /// [`PdfLoadLimits::max_stream_bytes`](crate::pdf::PdfLoadLimits) limit.
+    ///
+    /// Unlike the other variants, this is a **hard stop** — callers must not
+    /// silently discard it with `.ok()`. Propagate it as
+    /// `LimitError::StreamTooLarge` / `Error::ResourceLimitExceeded`.
+    StreamTooLarge {
+        /// Decoded byte count that triggered the limit.
+        observed: u64,
+        /// The configured limit.
+        limit: u64,
+    },
 }
 
 /// An image color space.
@@ -302,7 +331,11 @@ impl FilterResult {
     }
 }
 
-fn parse_proper<'a>(r: &mut Reader<'a>, dict: &Dict<'a>) -> Option<Stream<'a>> {
+fn parse_proper<'a>(
+    r: &mut Reader<'a>,
+    dict: &Dict<'a>,
+    stream_byte_limit: u64,
+) -> Option<Stream<'a>> {
     let length = dict.get::<u32>(LENGTH)?;
 
     r.skip_white_spaces_and_comments();
@@ -320,10 +353,14 @@ fn parse_proper<'a>(r: &mut Reader<'a>, dict: &Dict<'a>) -> Option<Stream<'a>> {
     r.skip_white_spaces();
     r.forward_tag(b"endstream")?;
 
-    Some(Stream::new(data, dict.clone()))
+    Some(Stream::new(data, dict.clone(), stream_byte_limit))
 }
 
-fn parse_fallback<'a>(r: &mut Reader<'a>, dict: &Dict<'a>) -> Option<Stream<'a>> {
+fn parse_fallback<'a>(
+    r: &mut Reader<'a>,
+    dict: &Dict<'a>,
+    stream_byte_limit: u64,
+) -> Option<Stream<'a>> {
     while r.forward_tag(b"stream").is_none() {
         r.read_byte()?;
     }
@@ -354,7 +391,7 @@ fn parse_fallback<'a>(r: &mut Reader<'a>, dict: &Dict<'a>) -> Option<Stream<'a>>
                 continue;
             }
 
-            let stream = Stream::new(data, dict.clone());
+            let stream = Stream::new(data, dict.clone(), stream_byte_limit);
 
             // Seems like we found the end!
             return Some(stream);
@@ -380,8 +417,11 @@ impl<'a> ObjectLike<'a> for Stream<'a> {}
 #[cfg(test)]
 mod tests {
     use crate::object::Stream;
+    use crate::pdf::PdfLoadLimits;
     use crate::reader::Reader;
     use crate::reader::{ReaderContext, ReaderExt};
+
+    use super::DecodeFailure;
 
     #[test]
     fn stream() {
@@ -392,5 +432,50 @@ mod tests {
             .unwrap();
 
         assert_eq!(stream.0.data, b"abcdefghij");
+    }
+
+    /// `decoded()` on an unfiltered stream succeeds when no byte limit is set.
+    #[test]
+    fn decoded_no_limit() {
+        let data = b"<< /Length 5 >> stream\nhello\nendstream";
+        let mut r = Reader::new(data);
+        let stream = r
+            .read_with_context::<Stream<'_>>(&ReaderContext::dummy())
+            .unwrap();
+
+        let decoded = stream.decoded().unwrap();
+        assert_eq!(decoded, b"hello");
+    }
+
+    /// `decoded()` returns `StreamTooLarge` when the decoded size exceeds the configured limit.
+    #[test]
+    fn decoded_exceeds_byte_limit() {
+        // 10-byte payload, limit of 5 bytes → should fail.
+        let data = b"<< /Length 10 >> stream\nabcdefghij\nendstream";
+        let limits = PdfLoadLimits::new().max_stream_bytes(5);
+        let ctx = ReaderContext::dummy_with_limits(limits);
+        let mut r = Reader::new(data);
+        let stream = r.read_with_context::<Stream<'_>>(&ctx).unwrap();
+
+        match stream.decoded() {
+            Err(DecodeFailure::StreamTooLarge { observed, limit }) => {
+                assert_eq!(observed, 10);
+                assert_eq!(limit, 5);
+            }
+            other => panic!("expected StreamTooLarge, got {other:?}"),
+        }
+    }
+
+    /// `decoded()` succeeds when the payload exactly equals the byte limit.
+    #[test]
+    fn decoded_at_byte_limit_succeeds() {
+        let data = b"<< /Length 10 >> stream\nabcdefghij\nendstream";
+        let limits = PdfLoadLimits::new().max_stream_bytes(10);
+        let ctx = ReaderContext::dummy_with_limits(limits);
+        let mut r = Reader::new(data);
+        let stream = r.read_with_context::<Stream<'_>>(&ctx).unwrap();
+
+        let decoded = stream.decoded().unwrap();
+        assert_eq!(decoded, b"abcdefghij");
     }
 }
