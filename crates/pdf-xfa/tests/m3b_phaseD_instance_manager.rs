@@ -309,3 +309,34 @@ fn node_index_reports_first_and_last_same_name_sibling() {
     assert_eq!(outcome.js_instance_writes, 0);
     assert_eq!(outcome.js_binding_errors, 0);
 }
+
+#[test]
+fn underscore_shorthand_resolves_before_handle_property_deferral() {
+    // Regression: the `_<child>` underscore shorthand on a subform proxy must
+    // run *before* `shouldDeferHandleProperty`, otherwise every underscore-
+    // prefixed access (e.g. `parent._Row.count`) returns `undefined` and
+    // throws on the next chained property read.
+    //
+    // Pre-fix, `Time_Confirmation._BodyRow.count` failed with
+    // "cannot read property 'count' of undefined" on real corpus docs even
+    // though the form tree had `Time_Confirmation.BodyRow` populated.
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let parent = add_child(&mut tree, root, "Parent", FormNodeType::Subform);
+    let row = add_child(&mut tree, parent, "Row", FormNodeType::Subform);
+    tree.get_mut(row).occur = Occur::repeating(1, Some(10), 1);
+    let _row_value = add_field(&mut tree, row, "Value", "");
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Parent._Row.count;",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "1");
+    assert_eq!(outcome.js_runtime_errors, 0);
+    assert_eq!(outcome.js_executed, 1);
+}

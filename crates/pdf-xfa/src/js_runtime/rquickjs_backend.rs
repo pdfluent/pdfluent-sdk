@@ -781,18 +781,21 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           if (recRaw < 0) return null;
           return makeDataHandle(recRaw);
         }
-        if (shouldDeferHandleProperty(prop)) {
-          return undefined;
-        }
         // XFA 3.3 §6.4.3.2 underscore shorthand: `_<name>` on a subform
         // refers to the instanceManager of the same-named child subform.
-        // Used in the wild as `parent._child.setInstances(N)`.
+        // Used in the wild as `parent._child.setInstances(N)`. This MUST
+        // run before `shouldDeferHandleProperty`, which otherwise returns
+        // `undefined` for every underscore-prefixed property and makes the
+        // shorthand unreachable for real bound subforms.
         if (prop.charAt(0) === "_" && prop.length > 1) {
           var bareName = prop.substring(1);
           var imChildId = host.resolveChildNodeId(id, bareName);
           if (imChildId >= 0) {
             return makeInstanceManager(imChildId, generation);
           }
+        }
+        if (shouldDeferHandleProperty(prop)) {
+          return undefined;
         }
         var childId = host.resolveChildNodeId(id, prop);
         if (childId < 0) {
