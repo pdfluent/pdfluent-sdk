@@ -117,20 +117,20 @@ xfa-json = { path = "crates/xfa-json", version = "=1.0.0-beta.3" }
 xfa-license = { path = "crates/xfa-license", version = "=1.0.0-beta.3" }
 
 # Forked crates from hayro (open-source: MIT OR Apache-2.0)
-pdf-syntax = { path = "crates/pdf-syntax", version = "=0.5.0" }
-pdf-interpret = { path = "crates/pdf-interpret", version = "=0.5.1" }
+pdf-syntax = { path = "crates/pdf-syntax", version = "=0.5.1" }
+pdf-interpret = { path = "crates/pdf-interpret", version = "=0.5.2" }
 
 # Forked crates from hayro (substantially extended; PDFluent Commercial License)
 pdf-font = { path = "crates/pdf-font", version = "=1.0.0-beta.3" }
-pdf-render = { path = "crates/pdf-render", version = "=1.0.0-beta.3" }
+pdf-render = { path = "crates/pdf-render", version = "=1.0.0-beta.4" }
 
 # Engine + feature crates (PDFluent Commercial License)
-pdf-forms = { package = "pdfluent-forms", path = "crates/pdf-forms", version = "=1.0.0-beta.3" }
+pdf-forms = { package = "pdfluent-forms", path = "crates/pdf-forms", version = "=1.0.0-beta.4" }
 pdf-annot = { path = "crates/pdf-annot", version = "=1.0.0-beta.3" }
 pdf-xfa = { path = "crates/pdf-xfa", version = "=1.0.0-beta.3" }
-pdf-sign = { package = "pdfluent-sign", path = "crates/pdf-sign", version = "=1.0.0-beta.3" }
-pdf-engine = { path = "crates/pdf-engine", version = "=1.0.0-beta.3" }
-pdf-compliance = { path = "crates/pdf-compliance", version = "=1.0.0-beta.3" }
+pdf-sign = { package = "pdfluent-sign", path = "crates/pdf-sign", version = "=1.0.0-beta.4" }
+pdf-engine = { path = "crates/pdf-engine", version = "=1.0.0-beta.4" }
+pdf-compliance = { path = "crates/pdf-compliance", version = "=1.0.0-beta.4" }
 pdf-manip = { path = "crates/pdf-manip", version = "=1.0.0-beta.3" }
 pdf-invoice = { path = "crates/pdf-invoice", version = "=1.0.0-beta.1" }
 pdf-extract = { package = "pdfluent-extract", path = "crates/pdf-extract", version = "=1.0.0-beta.3" }

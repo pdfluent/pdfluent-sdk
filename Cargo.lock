@@ -4101,7 +4101,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-compliance"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 dependencies = [
  "flate2",
  "log",
@@ -4150,7 +4150,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-engine"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 dependencies = [
  "base64 0.22.1",
  "dirs-sys 0.3.7",
@@ -4191,7 +4191,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-interpret"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "bitflags 2.11.0",
  "image",
@@ -4328,7 +4328,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-render"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 dependencies = [
  "bytemuck",
  "fast_image_resize",
@@ -4342,7 +4342,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-syntax"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "aes",
  "cbc",
@@ -4434,7 +4434,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-forms"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 dependencies = [
  "log",
  "pdf-syntax",
@@ -4499,7 +4499,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-sign"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 dependencies = [
  "der",
  "digest",
