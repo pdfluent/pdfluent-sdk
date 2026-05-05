@@ -77,10 +77,6 @@ See the `LICENSE` file in this crate, or read the full commercial terms at <http
 - **Commercial terms:** <https://pdfluent.com/terms>
 - **Source / issues:** <https://github.com/pdfluent>
 
-## A note on prior versions
-
-`1.0.0-beta.1` and `1.0.0-beta.2` were briefly published under MIT before the licensing model was finalized. Those versions have been yanked. Production use must be on `1.0.0-beta.3` or later under the PDFluent Commercial License. See the [changelog](CHANGELOG.md) for details.
-
 ---
 
 Built and maintained by [Innovation Trigger BV](https://pdfluent.com), operating as PDFluent.
