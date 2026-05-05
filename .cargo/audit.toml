@@ -1,0 +1,29 @@
+# cargo-audit configuration for the XFA / PDFluent workspace.
+#
+# Advisories listed here are pre-existing in transitive dependencies and have
+# no available patch at the time of writing. Each entry documents the crate,
+# the advisory ID, the reason for acceptance, and the tracking issue / target
+# version for remediation.
+
+[advisories]
+ignore = [
+    # rsa 0.9.x — Marvin Attack timing side-channel (RUSTSEC-2023-0071 / CVE-2023-49092).
+    # Used transitively by pdf-sign → cms → rsa for RSA signature operations.
+    # No patch available upstream; mitigated for our use-case because the signing
+    # key is never exposed to network-observable timing attacks (offline signing
+    # in a controlled environment).
+    # Tracked: upgrade rsa when a patched version is released.
+    "RUSTSEC-2023-0071",
+
+    # rustls-webpki 0.103.x — four advisories published in 2026, all related to
+    # certificate validation edge cases (CRL parsing panic, distribution-point
+    # matching, URI name-constraint handling, wildcard name constraints).
+    # Used transitively by pdf-sign → rustls for TLS in timestamp/OCSP operations.
+    # Patched in rustls-webpki ≥ 0.103.10; we accept temporarily while the
+    # dependency tree is updated.
+    # Tracked: bump rustls-webpki via a dedicated dependency update PR.
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0049",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+]

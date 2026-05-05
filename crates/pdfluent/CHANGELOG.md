@@ -6,10 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [1.0.0-beta.4] — Unreleased (M63 API stability hardening)
+## [1.0.0-beta.4] — 2026-05-05
 
 ### Documentation
 
+- Removed the "A note on prior versions" banner from the crate README.
+  The yanked beta.1/beta.2 licensing correction is documented in this
+  changelog (see `1.0.0-beta.3` entry) and does not need to be surfaced
+  on every crates.io visit indefinitely.
 - Fixed all 9 broken intra-doc links in `pdfluent` (paths in document.rs,
   encrypt.rs, error.rs). `cargo doc -p pdfluent` is now warning-free.
 - Documented the **determinism contract** explicitly on `SaveOptions` and
