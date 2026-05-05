@@ -21,6 +21,10 @@ on:
 jobs:
   drift-guard:
     name: Snippet extract output matches committed tests
+    # Advisory until #1488 is resolved: the website shows aspirational API
+    # not yet in the SDK, so regenerating produces non-compilable snippets.
+    # The check still runs and reports drift; it does not block merges.
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,9 +69,10 @@ jobs:
 
       - name: Verify no drift vs committed tests
         run: |
+          echo "::notice::Docs drift is advisory until #1488 is resolved — this check will not block merges."
           if ! git diff --exit-code --stat -- crates/pdfluent/tests/web_examples/; then
             echo ""
-            echo "::error::Drift detected: the extractor's output differs from the committed tests/web_examples/*.rs."
+            echo "::warning::Drift detected: the extractor's output differs from the committed tests/web_examples/*.rs."
             echo "Run locally:"
             echo "  cargo run -p pdfluent-snippet-extract -- --manifest tools/pdfluent-snippet-extract/manifest.toml --cache-dir tools/pdfluent-snippet-extract/cache --out-dir crates/pdfluent/tests/web_examples --fetched \$(cat tools/pdfluent-snippet-extract/cache/.last-fetched)"
             echo "Then commit the regenerated .rs files."
