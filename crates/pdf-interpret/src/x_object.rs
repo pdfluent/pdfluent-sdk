@@ -18,7 +18,7 @@ use pdf_syntax::object::Name;
 use pdf_syntax::object::Object;
 use pdf_syntax::object::Stream;
 use pdf_syntax::object::dict::keys::*;
-use pdf_syntax::object::stream::{ImageColorSpace, ImageDecodeParams};
+use pdf_syntax::object::stream::{DecodeFailure, ImageColorSpace, ImageDecodeParams};
 use pdf_syntax::page::Resources;
 use smallvec::{SmallVec, smallvec};
 use std::iter;
@@ -404,7 +404,17 @@ impl DecodedImageXObject {
         let mut decoded = obj
             .stream
             .decoded_image(&decode_params)
-            .map_err(|_| (obj.warning_sink)(InterpreterWarning::ImageDecodeFailure))
+            .map_err(|e| {
+                // #1467: discriminate StreamTooLarge so the pdf-engine warning
+                // collector can surface it as EngineError::LimitExceeded.
+                let warning = match e {
+                    DecodeFailure::StreamTooLarge { observed, limit } => {
+                        InterpreterWarning::StreamTooLarge { observed, limit }
+                    }
+                    _ => InterpreterWarning::ImageDecodeFailure,
+                };
+                (obj.warning_sink)(warning);
+            })
             .ok()?;
 
         let (mut scale_x, mut scale_y) = (1.0, 1.0);

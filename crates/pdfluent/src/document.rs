@@ -952,7 +952,15 @@ impl PdfDocument {
             let rendered = self
                 .engine
                 .render_page(page_idx_1b - 1, &render_opts)
-                .map_err(|e| internal_error(format!("render page {page_idx_1b} failed: {e}")))?;
+                .map_err(|e| {
+                    // #1467: LimitExceeded must surface as ResourceLimitExceeded,
+                    // not as an opaque Internal error.
+                    use pdf_engine::EngineError;
+                    if let EngineError::LimitExceeded(ref le) = e {
+                        return Error::from(le.clone());
+                    }
+                    internal_error(format!("render page {page_idx_1b} failed: {e}"))
+                })?;
 
             let path = build_image_path(pattern.as_ref(), page_idx_1b, opts.format.extension());
             encode_image(&rendered, opts.format, &path)?;
