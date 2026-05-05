@@ -103,10 +103,16 @@ pub struct DynamicScriptOutcome {
     pub js_host_calls: usize,
     /// **M3-B Phase C.** Successful host-side `field.rawValue` writes.
     pub js_mutations: usize,
+    /// **M3-B Phase D.** Successful host-side instanceManager writes.
+    pub js_instance_writes: usize,
+    /// **M3-B Phase D-β.** Successful host-side listbox clearItems / addItem writes.
+    pub js_list_writes: usize,
     /// **M3-B Phase C.** Binding-level failures.
     pub js_binding_errors: usize,
     /// **M3-B Phase C.** SOM resolution misses / failures.
     pub js_resolve_failures: usize,
+    /// **M3-B Phase D-γ.** Successful DataDom reads (children / value / child-by-name).
+    pub js_data_reads: usize,
 }
 
 impl Default for DynamicScriptOutcome {
@@ -125,8 +131,11 @@ impl Default for DynamicScriptOutcome {
             js_oom: 0,
             js_host_calls: 0,
             js_mutations: 0,
+            js_instance_writes: 0,
+            js_list_writes: 0,
             js_binding_errors: 0,
             js_resolve_failures: 0,
+            js_data_reads: 0,
         }
     }
 }
@@ -361,7 +370,9 @@ pub fn apply_dynamic_scripts_with_runtime(
 
     let mut stats = ScriptStats::default();
 
-    let mut changes = sandbox_metadata.mutations
+    let mut changes = sandbox_metadata
+        .mutations
+        .saturating_add(sandbox_metadata.instance_writes)
         + run_script_phase(
             form,
             root_id,
@@ -418,8 +429,11 @@ pub fn apply_dynamic_scripts_with_runtime(
         js_oom: sandbox_metadata.oom,
         js_host_calls: sandbox_metadata.host_calls,
         js_mutations: sandbox_metadata.mutations,
+        js_instance_writes: sandbox_metadata.instance_writes,
+        js_list_writes: sandbox_metadata.list_writes,
         js_binding_errors: sandbox_metadata.binding_errors,
         js_resolve_failures: sandbox_metadata.resolve_failures,
+        js_data_reads: sandbox_metadata.data_reads,
     })
 }
 

@@ -6,13 +6,20 @@
 
 use std::collections::HashMap;
 
-use xfa_dom_resolver::som::{parse_som, SomExpression, SomIndex, SomRoot, SomSelector};
+use xfa_dom_resolver::data_dom::{DataDom, DataNodeId};
+use xfa_dom_resolver::som::{
+    parse_som, resolve_data_path, SomExpression, SomIndex, SomRoot, SomSelector,
+};
 use xfa_layout_engine::form::{FormNodeId, FormNodeType, FormTree, GroupKind};
 
 use super::RuntimeMetadata;
 
 /// Maximum successful `rawValue` writes recorded for one document.
 pub const MAX_MUTATIONS_PER_DOC: usize = 4096;
+/// Maximum live instances allowed for one script-managed subform run.
+pub const MAX_INSTANCES_PER_SUBFORM: u32 = 256;
+/// Maximum items allowed in a single runtime-populated listbox.
+pub const MAX_ITEMS_PER_LISTBOX: u32 = 4096;
 /// Maximum SOM resolution calls a single script may perform.
 pub const MAX_RESOLVE_CALLS_PER_SCRIPT: u32 = 1024;
 /// Maximum handles returned from one `xfa.resolveNodes` call.
@@ -44,9 +51,14 @@ pub struct HostBindings {
     next_script_idx: usize,
     generation: u64,
     mutation_log: Vec<MutationLogEntry>,
+    mutation_count_this_doc: usize,
     resolve_count_this_script: u32,
     metadata: RuntimeMetadata,
     static_page_count: u32,
+    /// Phase D-γ: read-only pointer to the DataDom for the current document.
+    /// Set from a stack reference in `flatten.rs` that outlives script execution.
+    /// `None` when no data packet is present or the feature is inactive.
+    data_dom: Option<*const DataDom>,
 }
 
 impl Default for HostBindings {
@@ -60,9 +72,11 @@ impl Default for HostBindings {
             next_script_idx: 0,
             generation: 0,
             mutation_log: Vec::new(),
+            mutation_count_this_doc: 0,
             resolve_count_this_script: 0,
             metadata: RuntimeMetadata::default(),
             static_page_count: 0,
+            data_dom: None,
         }
     }
 }
@@ -85,6 +99,13 @@ impl HostBindings {
     }
 
     /// Reset counters and invalidate all existing handles for a new document.
+    ///
+    /// Note: `data_dom` is intentionally NOT cleared here. The caller sets it
+    /// explicitly via `set_data_handle` before calling
+    /// `apply_dynamic_scripts_with_runtime`, and `reset_for_new_document` (which
+    /// calls this) runs inside the dispatch function — after `set_data_handle`.
+    /// Clearing it here would wipe the pointer before any scripts execute.
+    /// The caller is responsible for managing DataDom lifetime.
     pub fn reset_per_document(&mut self) {
         self.form = std::ptr::null_mut();
         self.root_id = FormNodeId(0);
@@ -94,9 +115,18 @@ impl HostBindings {
         self.next_script_idx = 0;
         self.generation = self.generation.wrapping_add(1);
         self.mutation_log.clear();
+        self.mutation_count_this_doc = 0;
         self.resolve_count_this_script = 0;
         self.metadata = RuntimeMetadata::default();
         self.static_page_count = 0;
+        // data_dom is NOT reset here — see doc comment above.
+    }
+
+    /// Phase D-γ: install the DataDom pointer for the current document.
+    /// # Safety
+    /// `dom` must outlive all script execution for this document.
+    pub fn set_data_handle(&mut self, dom: *const DataDom) {
+        self.data_dom = Some(dom);
     }
 
     /// Reset per-script state and install the current event context.
@@ -141,7 +171,10 @@ impl HostBindings {
         if !self.handle_is_live(node_id, generation) {
             return None;
         }
-        let form = self.form_ref()?;
+        let Some(form) = self.form_ref() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return None;
+        };
         match &form.get(node_id).node_type {
             FormNodeType::Field { value } => Some(value.clone()),
             _ => None,
@@ -153,7 +186,7 @@ impl HostBindings {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
         if !self.write_activity_allowed()
             || !self.handle_is_live(node_id, generation)
-            || self.mutation_log.len() >= MAX_MUTATIONS_PER_DOC
+            || self.mutation_count_this_doc >= MAX_MUTATIONS_PER_DOC
         {
             self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
             return false;
@@ -171,6 +204,7 @@ impl HostBindings {
             after,
         });
         self.metadata.mutations = self.metadata.mutations.saturating_add(1);
+        self.mutation_count_this_doc = self.mutation_count_this_doc.saturating_add(1);
         true
     }
 
@@ -264,6 +298,116 @@ impl HostBindings {
         }
     }
 
+    /// Count live sibling instances with the same name as `parent_id`.
+    pub fn instance_count(&mut self, parent_id: FormNodeId) -> u32 {
+        self.instance_count_inner(parent_id, None)
+    }
+
+    /// Count live sibling instances for a JS handle with generation checking.
+    pub fn instance_count_for_handle(&mut self, parent_id: FormNodeId, generation: u64) -> u32 {
+        self.instance_count_inner(parent_id, Some(generation))
+    }
+
+    /// Return the zero-based sibling index among instances with the same name.
+    pub fn instance_index(&mut self, node_id: FormNodeId) -> u32 {
+        self.instance_index_inner(node_id, None)
+    }
+
+    /// Return the zero-based sibling index for a JS handle.
+    pub fn instance_index_for_handle(&mut self, node_id: FormNodeId, generation: u64) -> u32 {
+        self.instance_index_inner(node_id, Some(generation))
+    }
+
+    /// Replace the live same-name sibling run with exactly `n` instances,
+    /// clamped to the prototype's occur limits and the sandbox safety cap.
+    #[allow(clippy::result_unit_err)]
+    pub fn instance_set(&mut self, parent_id: FormNodeId, n: u32) -> Result<u32, ()> {
+        self.instance_set_inner(parent_id, None, n)
+    }
+
+    /// Generation-checked variant used by the QuickJS bridge.
+    #[allow(clippy::result_unit_err)]
+    pub fn instance_set_for_handle(
+        &mut self,
+        parent_id: FormNodeId,
+        generation: u64,
+        n: u32,
+    ) -> Result<u32, ()> {
+        self.instance_set_inner(parent_id, Some(generation), n)
+    }
+
+    /// Append one cloned instance to the end of the live same-name sibling run.
+    #[allow(clippy::result_unit_err)]
+    pub fn instance_add(&mut self, parent_id: FormNodeId) -> Result<FormNodeId, ()> {
+        self.instance_add_inner(parent_id, None)
+    }
+
+    /// Generation-checked variant used by the QuickJS bridge.
+    #[allow(clippy::result_unit_err)]
+    pub fn instance_add_for_handle(
+        &mut self,
+        parent_id: FormNodeId,
+        generation: u64,
+    ) -> Result<FormNodeId, ()> {
+        self.instance_add_inner(parent_id, Some(generation))
+    }
+
+    /// Remove one live same-name sibling instance by zero-based index.
+    #[allow(clippy::result_unit_err)]
+    pub fn instance_remove(&mut self, parent_id: FormNodeId, index: u32) -> Result<(), ()> {
+        self.instance_remove_inner(parent_id, None, index)
+    }
+
+    /// Generation-checked variant used by the QuickJS bridge.
+    #[allow(clippy::result_unit_err)]
+    pub fn instance_remove_for_handle(
+        &mut self,
+        parent_id: FormNodeId,
+        generation: u64,
+        index: u32,
+    ) -> Result<(), ()> {
+        self.instance_remove_inner(parent_id, Some(generation), index)
+    }
+
+    /// Clear all runtime-populated listbox items on a field.
+    #[allow(clippy::result_unit_err)]
+    pub fn list_clear(&mut self, field_id: FormNodeId) -> Result<(), ()> {
+        self.list_clear_inner(field_id, None)
+    }
+
+    /// Generation-checked variant used by the QuickJS bridge.
+    #[allow(clippy::result_unit_err)]
+    pub fn list_clear_for_handle(
+        &mut self,
+        field_id: FormNodeId,
+        generation: u64,
+    ) -> Result<(), ()> {
+        self.list_clear_inner(field_id, Some(generation))
+    }
+
+    /// Append one item to a field's runtime listbox options.
+    #[allow(clippy::result_unit_err)]
+    pub fn list_add(
+        &mut self,
+        field_id: FormNodeId,
+        display: String,
+        save: Option<String>,
+    ) -> Result<(), ()> {
+        self.list_add_inner(field_id, None, display, save)
+    }
+
+    /// Generation-checked variant used by the QuickJS bridge.
+    #[allow(clippy::result_unit_err)]
+    pub fn list_add_for_handle(
+        &mut self,
+        field_id: FormNodeId,
+        generation: u64,
+        display: String,
+        save: Option<String>,
+    ) -> Result<(), ()> {
+        self.list_add_inner(field_id, Some(generation), display, save)
+    }
+
     /// Read-only static page count visible to Phase C scripts.
     pub fn num_pages(&mut self) -> u32 {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
@@ -274,6 +418,12 @@ impl HostBindings {
     pub fn metadata_binding_error(&mut self) {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
         self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+    }
+
+    /// Record use of an intentionally approximate read-only stub.
+    pub fn metadata_resolve_failure(&mut self) {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
     }
 
     fn consume_resolve_call(&mut self) -> bool {
@@ -384,10 +534,373 @@ impl HostBindings {
         })
     }
 
+    fn instance_count_inner(&mut self, parent_id: FormNodeId, generation: Option<u64>) -> u32 {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        let Some(run) = self.read_instance_run(parent_id, generation) else {
+            return 0;
+        };
+        run.nodes.len() as u32
+    }
+
+    fn instance_index_inner(&mut self, node_id: FormNodeId, generation: Option<u64>) -> u32 {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        let Some(run) = self.read_instance_run(node_id, generation) else {
+            return 0;
+        };
+        run.nodes
+            .iter()
+            .position(|candidate| *candidate == node_id)
+            .unwrap_or(0) as u32
+    }
+
+    fn instance_set_inner(
+        &mut self,
+        parent_id: FormNodeId,
+        generation: Option<u64>,
+        n: u32,
+    ) -> Result<u32, ()> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.write_activity_allowed()
+            || self.mutation_count_this_doc >= MAX_MUTATIONS_PER_DOC
+            || !self.consume_resolve_call()
+        {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        }
+
+        let Some(run) = self.live_instance_run(parent_id, generation) else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
+        let Some(target_count) = self.clamped_instance_count(run.prototype_id, n) else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
+
+        let target_count = target_count as usize;
+        let prototype_id = run.prototype_id;
+        let parent_id = run.parent_id;
+        let first_pos = run.first_position;
+        let remove_ids = run.nodes;
+
+        let mut new_ids = Vec::with_capacity(target_count);
+        if target_count > 0 {
+            self.normalize_instance_occurrence(prototype_id);
+            new_ids.push(prototype_id);
+            for _ in 1..target_count {
+                let cloned_id = self.clone_subtree(prototype_id)?;
+                new_ids.push(cloned_id);
+            }
+        }
+
+        let Some(form) = self.form_mut() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
+        let parent = form.get_mut(parent_id);
+        parent
+            .children
+            .retain(|child_id| !remove_ids.contains(child_id));
+        let insert_pos = first_pos.min(parent.children.len());
+        for (offset, node_id) in new_ids.iter().copied().enumerate() {
+            parent.children.insert(insert_pos + offset, node_id);
+        }
+
+        self.record_instance_write();
+        Ok(target_count as u32)
+    }
+
+    fn instance_add_inner(
+        &mut self,
+        parent_id: FormNodeId,
+        generation: Option<u64>,
+    ) -> Result<FormNodeId, ()> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.write_activity_allowed()
+            || self.mutation_count_this_doc >= MAX_MUTATIONS_PER_DOC
+            || !self.consume_resolve_call()
+        {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        }
+
+        let Some(run) = self.live_instance_run(parent_id, generation) else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
+        let Some(max_allowed) = self.max_instances_for(run.prototype_id) else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
+        if run.nodes.len() as u32 >= max_allowed {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        }
+
+        let cloned_id = self.clone_subtree(run.prototype_id)?;
+        let Some(form) = self.form_mut() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
+        form.get_mut(run.parent_id)
+            .children
+            .insert(run.last_position + 1, cloned_id);
+
+        self.record_instance_write();
+        Ok(cloned_id)
+    }
+
+    fn instance_remove_inner(
+        &mut self,
+        parent_id: FormNodeId,
+        generation: Option<u64>,
+        index: u32,
+    ) -> Result<(), ()> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.write_activity_allowed()
+            || self.mutation_count_this_doc >= MAX_MUTATIONS_PER_DOC
+            || !self.consume_resolve_call()
+        {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        }
+
+        let Some(run) = self.live_instance_run(parent_id, generation) else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
+        let min_allowed = self
+            .form_ref()
+            .and_then(|form| form.nodes.get(run.prototype_id.0))
+            .map(|node| node.occur.min)
+            .unwrap_or(1);
+        if run.nodes.len() as u32 <= min_allowed {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        }
+        let Some(remove_position) = run.positions.get(index as usize).copied() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
+
+        let Some(form) = self.form_mut() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
+        form.get_mut(run.parent_id).children.remove(remove_position);
+
+        self.record_instance_write();
+        Ok(())
+    }
+
+    fn read_instance_run(
+        &mut self,
+        node_id: FormNodeId,
+        generation: Option<u64>,
+    ) -> Option<InstanceRun> {
+        if !self.consume_resolve_call() {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return None;
+        }
+        let Some(form) = self.form_ref() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return None;
+        };
+        if generation.is_some_and(|value| value != self.generation) {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return None;
+        }
+        if node_id.0 >= form.nodes.len() || self.root_id.0 >= form.nodes.len() {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return None;
+        }
+
+        let parents = build_parent_map(form, self.root_id);
+        if !parents.contains_key(&node_id) {
+            if node_id == self.root_id {
+                return Some(InstanceRun {
+                    parent_id: node_id,
+                    positions: vec![0],
+                    nodes: vec![node_id],
+                    prototype_id: node_id,
+                    first_position: 0,
+                    last_position: 0,
+                });
+            }
+            return None;
+        }
+
+        build_instance_run(form, &parents, node_id)
+    }
+
+    fn live_instance_run(
+        &self,
+        node_id: FormNodeId,
+        generation: Option<u64>,
+    ) -> Option<InstanceRun> {
+        let form = self.form_ref()?;
+        if generation.is_some_and(|value| value != self.generation)
+            || node_id.0 >= form.nodes.len()
+            || self.root_id.0 >= form.nodes.len()
+            || !is_instance_node(&form.get(node_id).node_type)
+        {
+            return None;
+        }
+        let parents = build_parent_map(form, self.root_id);
+        build_instance_run(form, &parents, node_id)
+    }
+
+    fn clamped_instance_count(&self, prototype_id: FormNodeId, requested: u32) -> Option<u32> {
+        let min_allowed = self.form_ref()?.get(prototype_id).occur.min;
+        let max_allowed = self.max_instances_for(prototype_id)?;
+        if min_allowed > max_allowed {
+            return None;
+        }
+        Some(requested.clamp(min_allowed, max_allowed))
+    }
+
+    fn max_instances_for(&self, prototype_id: FormNodeId) -> Option<u32> {
+        let occur = &self.form_ref()?.get(prototype_id).occur;
+        let max = occur.max.unwrap_or(u32::MAX);
+        Some(max.min(MAX_INSTANCES_PER_SUBFORM))
+    }
+
+    fn clone_subtree(&mut self, source_id: FormNodeId) -> Result<FormNodeId, ()> {
+        let (mut new_node, mut new_meta, child_ids) = {
+            let Some(form) = self.form_ref() else {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                return Err(());
+            };
+            if source_id.0 >= form.nodes.len() {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                return Err(());
+            }
+            (
+                form.get(source_id).clone(),
+                form.meta(source_id).clone(),
+                form.get(source_id).children.clone(),
+            )
+        };
+
+        let mut new_children = Vec::with_capacity(child_ids.len());
+        for child_id in child_ids {
+            new_children.push(self.clone_subtree(child_id)?);
+        }
+        new_node.children = new_children;
+        // Runtime-created instances are represented as concrete siblings, so
+        // each physical clone should lay out once while retaining min/max.
+        new_node.occur.initial = 1;
+        new_meta.xfa_id = None;
+
+        let Some(form) = self.form_mut() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
+        Ok(form.add_node_with_meta(new_node, new_meta))
+    }
+
+    fn normalize_instance_occurrence(&mut self, node_id: FormNodeId) {
+        if let Some(form) = self.form_mut() {
+            if let Some(node) = form.nodes.get_mut(node_id.0) {
+                // See clone_subtree: live instance count is encoded by
+                // sibling multiplicity after an instanceManager write.
+                node.occur.initial = 1;
+            }
+        }
+    }
+
+    fn record_instance_write(&mut self) {
+        self.metadata.instance_writes = self.metadata.instance_writes.saturating_add(1);
+        self.mutation_count_this_doc = self.mutation_count_this_doc.saturating_add(1);
+    }
+
+    fn record_list_write(&mut self) {
+        self.metadata.list_writes = self.metadata.list_writes.saturating_add(1);
+        self.mutation_count_this_doc = self.mutation_count_this_doc.saturating_add(1);
+    }
+
+    fn list_clear_inner(
+        &mut self,
+        field_id: FormNodeId,
+        generation: Option<u64>,
+    ) -> Result<(), ()> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.write_activity_allowed()
+            || self.mutation_count_this_doc >= MAX_MUTATIONS_PER_DOC
+            || !self.consume_resolve_call()
+        {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        }
+        let current_generation = self.generation;
+        let Some(form) = self.form_mut() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
+        if generation.is_some_and(|value| value != current_generation)
+            || field_id.0 >= form.nodes.len()
+        {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        }
+        if !matches!(form.get(field_id).node_type, FormNodeType::Field { .. }) {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        }
+        form.meta_mut(field_id).runtime_listbox_items.clear();
+        self.record_list_write();
+        Ok(())
+    }
+
+    fn list_add_inner(
+        &mut self,
+        field_id: FormNodeId,
+        generation: Option<u64>,
+        display: String,
+        save: Option<String>,
+    ) -> Result<(), ()> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.write_activity_allowed()
+            || self.mutation_count_this_doc >= MAX_MUTATIONS_PER_DOC
+            || !self.consume_resolve_call()
+        {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        }
+        let current_generation = self.generation;
+        let Some(form) = self.form_mut() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
+        if generation.is_some_and(|value| value != current_generation)
+            || field_id.0 >= form.nodes.len()
+        {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        }
+        if !matches!(form.get(field_id).node_type, FormNodeType::Field { .. }) {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        }
+        let meta = form.meta_mut(field_id);
+        if meta.runtime_listbox_items.len() >= MAX_ITEMS_PER_LISTBOX as usize {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        }
+        let save_value = save.unwrap_or_else(|| display.clone());
+        meta.runtime_listbox_items.push((display, save_value));
+        self.record_list_write();
+        Ok(())
+    }
+
     fn write_activity_allowed(&self) -> bool {
         matches!(
             self.current_activity.as_deref(),
-            Some("initialize") | Some("calculate")
+            Some("initialize")
+                | Some("calculate")
+                | Some("validate")
+                | Some("docReady")
+                | Some("layoutReady")
         )
     }
 
@@ -433,12 +946,187 @@ impl HostBindings {
             unsafe { self.form.as_mut() }
         }
     }
+
+    /// Phase D-γ: obtain a read-only reference to the DataDom.
+    fn data_dom_ref(&self) -> Option<&DataDom> {
+        // SAFETY: `data_dom` is set from `&data_dom` in flatten.rs where the
+        // DataDom lives on the stack and outlives all script execution. We only
+        // ever read through this pointer, never write.
+        self.data_dom.map(|ptr| unsafe { &*ptr })
+    }
+
+    /// Phase D-γ: children of a DataDom node, returned as raw indices.
+    /// Capped at `MAX_RESOLVE_RESULTS`. Returns empty vec on invalid input.
+    pub fn data_children(&mut self, raw_id: usize) -> Vec<usize> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        // Scope the borrow so we can increment metadata after.
+        let result = {
+            let Some(dom) = self.data_dom_ref() else {
+                return Vec::new();
+            };
+            let id = DataNodeId::from_raw(raw_id);
+            if dom.get(id).is_none() {
+                return Vec::new();
+            }
+            dom.children(id)
+                .iter()
+                .take(MAX_RESOLVE_RESULTS)
+                .map(|c| c.as_raw())
+                .collect::<Vec<_>>()
+        };
+        self.metadata.data_reads = self.metadata.data_reads.saturating_add(1);
+        result
+    }
+
+    /// Phase D-γ: text value of a DataValue node.
+    /// Returns `None` for DataGroup nodes or out-of-bounds indices.
+    pub fn data_value(&mut self, raw_id: usize) -> Option<String> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        let result = {
+            let dom = self.data_dom_ref()?;
+            let id = DataNodeId::from_raw(raw_id);
+            dom.get(id)?;
+            dom.value(id).ok().map(|s| s.to_owned())
+        };
+        if result.is_some() {
+            self.metadata.data_reads = self.metadata.data_reads.saturating_add(1);
+        }
+        result
+    }
+
+    /// Phase D-γ: first child of `parent_raw` whose name matches `name`.
+    /// Returns `None` if not found or parent is out-of-bounds.
+    pub fn data_child_by_name(&mut self, parent_raw: usize, name: &str) -> Option<usize> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        let result = {
+            let dom = self.data_dom_ref()?;
+            let parent = DataNodeId::from_raw(parent_raw);
+            dom.get(parent)?;
+            dom.children_by_name(parent, name)
+                .into_iter()
+                .next()
+                .map(|id| id.as_raw())
+        };
+        if result.is_some() {
+            self.metadata.data_reads = self.metadata.data_reads.saturating_add(1);
+        }
+        result
+    }
+
+    /// Phase D-γ: raw DataDom index bound to a FormTree node.
+    /// Returns `None` when the node is unbound or the handle is stale.
+    pub fn data_bound_record(
+        &mut self,
+        form_node_id: FormNodeId,
+        generation: u64,
+    ) -> Option<usize> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if generation != self.generation {
+            return None;
+        }
+        let form = self.form_ref()?;
+        if form_node_id.0 >= form.nodes.len() {
+            return None;
+        }
+        form.meta(form_node_id).bound_data_node
+    }
+
+    /// Phase D-γ: resolve a data SOM path to the first matching node.
+    /// Consumes one resolve-call budget slot. Returns `None` on budget
+    /// exhaustion, parse failure, or no match.
+    pub fn data_resolve_node(&mut self, path: &str) -> Option<usize> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.consume_resolve_call() {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return None;
+        }
+        // Scope borrow so we can use self after.
+        {
+            let dom = self.data_dom_ref()?;
+            resolve_data_path(dom, path, None)
+                .ok()?
+                .into_iter()
+                .next()
+                .map(|id| id.as_raw())
+        }
+    }
+
+    /// Phase D-γ: resolve a data SOM path to all matching nodes (capped).
+    /// Consumes one resolve-call budget slot.
+    pub fn data_resolve_nodes(&mut self, path: &str) -> Vec<usize> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.consume_resolve_call() {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Vec::new();
+        }
+        {
+            let Some(dom) = self.data_dom_ref() else {
+                return Vec::new();
+            };
+            resolve_data_path(dom, path, None)
+                .unwrap_or_default()
+                .into_iter()
+                .take(MAX_RESOLVE_RESULTS)
+                .map(|id| id.as_raw())
+                .collect()
+        }
+    }
 }
 
 enum ResolveOutcome {
     Ok(Vec<FormNodeId>),
     NoMatch,
     BindingError,
+}
+
+#[derive(Debug, Clone)]
+struct InstanceRun {
+    parent_id: FormNodeId,
+    positions: Vec<usize>,
+    nodes: Vec<FormNodeId>,
+    prototype_id: FormNodeId,
+    first_position: usize,
+    last_position: usize,
+}
+
+fn build_instance_run(
+    form: &FormTree,
+    parents: &HashMap<FormNodeId, FormNodeId>,
+    node_id: FormNodeId,
+) -> Option<InstanceRun> {
+    let parent_id = parents.get(&node_id).copied()?;
+    let name = form.get(node_id).name.clone();
+    let parent = form.get(parent_id);
+    let mut positions = Vec::new();
+    let mut nodes = Vec::new();
+    for (position, child_id) in parent.children.iter().copied().enumerate() {
+        if form.get(child_id).name == name {
+            positions.push(position);
+            nodes.push(child_id);
+        }
+    }
+    if !nodes.contains(&node_id) {
+        return None;
+    }
+    Some(InstanceRun {
+        parent_id,
+        prototype_id: nodes[0],
+        first_position: positions[0],
+        last_position: *positions.last()?,
+        positions,
+        nodes,
+    })
+}
+
+fn is_instance_node(node_type: &FormNodeType) -> bool {
+    matches!(
+        node_type,
+        FormNodeType::Root
+            | FormNodeType::Subform
+            | FormNodeType::Area
+            | FormNodeType::ExclGroup
+            | FormNodeType::SubformSet
+    )
 }
 
 fn normalize_resolve_path(path: &str) -> String {

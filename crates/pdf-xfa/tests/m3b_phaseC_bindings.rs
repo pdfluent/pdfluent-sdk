@@ -177,22 +177,22 @@ if (f.rawValue !== "hello") throw new Error("rawValue get failed");
     }
 
     #[test]
-    fn raw_value_set_under_validate_is_noop() {
+    fn raw_value_set_under_validate_mutates_form_tree() {
         let (mut tree, root, field) = basic_form("validate", "this.rawValue = 'bad';");
         let outcome = run_sandbox(&mut tree, root);
-        assert_eq!(field_value(&tree, field), "hello");
-        assert_eq!(outcome.js_mutations, 0);
-        assert_eq!(outcome.js_binding_errors, 1);
+        assert_eq!(field_value(&tree, field), "bad");
+        assert_eq!(outcome.js_mutations, 1);
+        assert_eq!(outcome.js_binding_errors, 0);
     }
 
     #[test]
-    fn raw_value_set_under_doc_ready_is_noop() {
+    fn raw_value_set_under_doc_ready_mutates_form_tree() {
         let (mut tree, root, field) = basic_form("docReady", "this.rawValue = 'bad';");
         let outcome = run_sandbox(&mut tree, root);
-        assert_eq!(field_value(&tree, field), "hello");
+        assert_eq!(field_value(&tree, field), "bad");
         assert_eq!(outcome.js_executed, 1);
-        assert_eq!(outcome.js_mutations, 0);
-        assert_eq!(outcome.js_binding_errors, 1);
+        assert_eq!(outcome.js_mutations, 1);
+        assert_eq!(outcome.js_binding_errors, 0);
     }
 
     #[test]
@@ -273,6 +273,40 @@ if (xfa.layout.pageCount() !== xfa.host.numPages) throw new Error("pageCount mis
     }
 
     #[test]
+    fn layout_page_stubs_mark_best_effort_without_rollback() {
+        let (mut tree, root, field) = basic_form(
+            "calculate",
+            r#"
+this.rawValue = String(xfa.layout.page(this)) + "/" + String(xfa.layout.pageSpan(this));
+"#,
+        );
+
+        let outcome = run_sandbox(&mut tree, root);
+        assert_eq!(field_value(&tree, field), "1/1");
+        assert_eq!(outcome.js_binding_errors, 0);
+        assert_eq!(outcome.js_resolve_failures, 2);
+        assert_eq!(outcome.output_quality, OutputQuality::BestEffort);
+        assert_eq!(outcome.changes, 1);
+    }
+
+    #[test]
+    fn util_date_subset_is_deterministic_and_safe() {
+        let (mut tree, root, field) = basic_form(
+            "calculate",
+            r#"
+var d = util.scand("yyyy-mm-dd HH:MM:SS", "2026-05-05 13:04:09");
+var bad = util.scand("yyyy-mm-dd", "2026-02-31");
+this.rawValue = util.printd("yyyy-mm-dd HH:MM:SS", d) + "|" +
+  (util.printd("yyyy", bad) === "" ? "invalid" : "bad");
+"#,
+        );
+
+        let outcome = run_sandbox(&mut tree, root);
+        assert_eq!(outcome.js_runtime_errors, 0);
+        assert_eq!(field_value(&tree, field), "2026-05-05 13:04:09|invalid");
+    }
+
+    #[test]
     fn field_handle_is_frozen_and_narrow() {
         let (mut tree, root, _field) = basic_form(
             "calculate",
@@ -304,12 +338,12 @@ if (xfa.bypass !== undefined) throw new Error("prototype pollution escaped");
     }
 
     #[test]
-    fn unsupported_instance_manager_is_undefined() {
+    fn instance_manager_count_is_available_on_handles() {
         let (mut tree, root, _field) = basic_form(
             "calculate",
             r#"
 var f = xfa.resolveNode("Field1");
-if (typeof f.instanceManager !== "undefined") throw new Error("instanceManager leaked");
+if (f.instanceManager.count !== 1) throw new Error("instanceManager count failed");
 "#,
         );
         let outcome = run_sandbox(&mut tree, root);
