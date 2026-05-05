@@ -439,6 +439,27 @@ impl<'a> FormMerger<'a> {
 
         let layout = area_layout(element);
         let bm = parse_box_model(element);
+
+        if count == 0 && occur.max.unwrap_or(u32::MAX) > 0 {
+            // Build a single Hidden skeleton instance so `parent._<name>` resolves
+            // to a usable InstanceManager. The skeleton is layout-skipped via
+            // presence=Hidden; the flag tells the host that count() should return 0.
+            let (inst_node, trailing) = self.build_subform_instance(
+                element,
+                None,
+                is_root,
+                Occur::once(),
+                name.clone(),
+                layout,
+                bm.clone(),
+            )?;
+            let mut meta = parse_node_meta(element);
+            meta.is_zero_instance_prototype = true;
+            meta.presence = Presence::Hidden;
+            let inst_id = self.form_tree.add_node_with_meta(inst_node, meta);
+            return Ok(vec![(inst_id, trailing)]);
+        }
+
         let mut instances = Vec::with_capacity(count as usize);
 
         for i in 0..count {
