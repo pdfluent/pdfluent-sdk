@@ -1,10 +1,10 @@
 # Feature Comparison
 
-XFA SDK vs. the most widely used PDF libraries.
+PDFluent vs. the most widely used PDF libraries.
 
 ## Feature Matrix
 
-| Feature | XFA SDK | iText 8 | PDFBox 3 | MuPDF | Foxit SDK |
+| Feature | PDFluent | iText 8 | PDFBox 3 | MuPDF | Foxit SDK |
 |---------|:-------:|:-------:|:--------:|:-----:|:---------:|
 | **Parse PDF** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Render to image** | ✅ pure Rust | ✅ Java | ✅ Java | ✅ C | ✅ C++ |
@@ -45,7 +45,7 @@ XFA SDK vs. the most widely used PDF libraries.
 
 ### Pure Rust — memory safe by construction
 
-XFA SDK has no C/C++ dependencies in the hot path. There are no buffer overflows,
+PDFluent has no C/C++ dependencies in the hot path. There are no buffer overflows,
 use-after-free, or data races — the Rust type system rules them out at compile time.
 This matters for server-side PDF processing where malformed inputs are a real attack
 surface.
@@ -64,7 +64,7 @@ wasm-pack build crates/xfa-wasm --target web --release
 ### XFA support without AGPL
 
 iText's XFA engine is only available under the AGPL, which requires open-sourcing
-your application. XFA SDK includes full XFA form extraction, layout, and rendering
+your application. PDFluent includes full XFA form extraction, layout, and rendering
 under a commercial license — no GPL propagation.
 
 ### Fastest parse — `pdf-syntax` 20× faster than lopdf
@@ -84,7 +84,7 @@ need to mutate objects.
 
 ### Integrated PDF/A pipeline
 
-Unlike PDFBox (no PDF/A support) and iText (requires an add-on), XFA SDK ships
+Unlike PDFBox (no PDF/A support) and iText (requires an add-on), PDFluent ships
 a complete PDF/A repair and validation pipeline:
 
 ```rust
@@ -108,7 +108,7 @@ assert!(report.compliant);
 
 | Library | License | XFA | Commercial use |
 |---------|---------|-----|----------------|
-| XFA SDK | Commercial | ✅ | ✅ |
+| PDFluent | Commercial | ✅ | ✅ |
 | iText 8 | AGPL / commercial | ✅ AGPL only | Paid licence |
 | PDFBox 3 | Apache 2 | ❌ | ✅ free |
 | MuPDF | AGPL / commercial | ❌ | Paid licence |

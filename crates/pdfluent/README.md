@@ -55,7 +55,7 @@ Default: `signing`, `pdfa`, `redaction`.
 | `redaction` (default) | Content redaction (search-based and region-based) |
 | `ocr-tesseract` | OCR via Tesseract |
 | `ocr-paddle` | OCR via PaddleOCR |
-| `html-to-pdf` | HTML / URL → PDF conversion |
+| `html-to-pdf` | HTML / URL → PDF conversion (**planned — not yet implemented**) |
 | `docx-export` | PDF → DOCX export |
 | `xfa-flatten` | XFA form → static PDF flattening (experimental) |
 | `wasm` | WebAssembly target |
