@@ -5,6 +5,12 @@ use crate::error::{EngineError, Result};
 use crate::geometry::{self, PageGeometry};
 use crate::limits::{LimitError, ProcessingLimits};
 use std::sync::{Arc, Mutex};
+
+/// Shared slot used by the limit-warning collector.
+///
+/// Stores `Some((observed_bytes, limit_bytes))` when a
+/// `StreamTooLarge` warning fires during rendering or extraction.
+type LimitSlot = Arc<Mutex<Option<(u64, u64)>>>;
 use crate::render::{self, ColorMode, RenderConfig, RenderOptions, RenderedPage};
 use crate::text::{TextBlock, TextExtractionDevice};
 use crate::thumbnail::ThumbnailOptions;
@@ -551,8 +557,8 @@ impl PdfDocument {
     /// called so no warnings are silently dropped.
     fn with_limit_collector(
         settings: &InterpreterSettings,
-    ) -> (InterpreterSettings, Arc<Mutex<Option<(u64, u64)>>>) {
-        let slot: Arc<Mutex<Option<(u64, u64)>>> = Arc::new(Mutex::new(None));
+    ) -> (InterpreterSettings, LimitSlot) {
+        let slot: LimitSlot = Arc::new(Mutex::new(None));
         let slot_clone = Arc::clone(&slot);
         let prev_sink = settings.warning_sink.clone();
         let mut new_settings = settings.clone();
@@ -572,7 +578,7 @@ impl PdfDocument {
     ///
     /// Returns `Err(EngineError::LimitExceeded(...))` if a
     /// `StreamTooLarge` warning was captured, `Ok(())` otherwise.
-    fn check_limit_slot(slot: &Arc<Mutex<Option<(u64, u64)>>>) -> Result<()> {
+    fn check_limit_slot(slot: &LimitSlot) -> Result<()> {
         if let Some((observed, limit)) = *slot.lock().unwrap_or_else(|e| e.into_inner()) {
             return Err(EngineError::LimitExceeded(LimitError::StreamTooLarge {
                 actual_bytes: observed,
