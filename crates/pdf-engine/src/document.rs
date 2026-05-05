@@ -555,9 +555,7 @@ impl PdfDocument {
     /// The returned slot is checked by [`Self::check_limit_slot`] after
     /// the operation completes. Any previously installed sink is still
     /// called so no warnings are silently dropped.
-    fn with_limit_collector(
-        settings: &InterpreterSettings,
-    ) -> (InterpreterSettings, LimitSlot) {
+    fn with_limit_collector(settings: &InterpreterSettings) -> (InterpreterSettings, LimitSlot) {
         let slot: LimitSlot = Arc::new(Mutex::new(None));
         let slot_clone = Arc::clone(&slot);
         let prev_sink = settings.warning_sink.clone();

@@ -489,6 +489,11 @@ pub struct FormNodeMeta {
     /// during the merge phase. `None` means unbound. Phase D-γ: populated by
     /// `FormMerger` and consumed by the JS runtime to resolve `$record`.
     pub bound_data_node: Option<usize>,
+    /// True when this node is a synthetic prototype for a repeating subform
+    /// whose live instance count is currently zero. Used by the JS runtime
+    /// to expose an InstanceManager via `parent._child` even when no data
+    /// bindings produced live rows. Layout treats this as `presence = Hidden`.
+    pub is_zero_instance_prototype: bool,
 }
 
 /// XFA `anchorType` attribute (XFA 3.3 §2.6, Appendix A p1510).
