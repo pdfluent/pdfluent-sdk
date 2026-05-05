@@ -168,6 +168,15 @@ impl<'a> ReaderContext<'a> {
         })
     }
 
+    /// Create a dummy context with specific load limits — for use in tests.
+    #[cfg(test)]
+    pub fn dummy_with_limits(load_limits: PdfLoadLimits) -> Self {
+        Self(ReaderContextInner::Dummy {
+            in_content_stream: false,
+            load_limits,
+        })
+    }
+
     pub(crate) fn dummy_in_content_stream() -> Self {
         Self(ReaderContextInner::Dummy {
             in_content_stream: true,
