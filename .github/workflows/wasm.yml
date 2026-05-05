@@ -16,6 +16,10 @@ jobs:
   wasm-build:
     name: Build WASM
     runs-on: ubuntu-latest
+    # Expose secret as a job-level env var so it's available in step `if` conditions.
+    # (secrets.* is not accessible in step-level if expressions.)
+    env:
+      WEBSITE_DEPLOY_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +45,7 @@ jobs:
           retention-days: 30
 
       - name: Trigger website rebuild
-        if: github.ref == 'refs/heads/master' && secrets.WEBSITE_DEPLOY_TOKEN != ''
+        if: github.ref == 'refs/heads/master' && env.WEBSITE_DEPLOY_TOKEN != ''
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}

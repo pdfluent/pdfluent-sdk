@@ -35,7 +35,10 @@ env:
 jobs:
   benchmark:
     name: Run Benchmarks
-    runs-on: ubuntu-latest
+    # Self-hosted runner: consistent hardware for reliable benchmark comparisons.
+    # Criterion baseline cache (target/criterion) persists between runs on self-hosted.
+    runs-on: [self-hosted, xfa-corpus]
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
