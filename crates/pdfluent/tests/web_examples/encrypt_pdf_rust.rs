@@ -5,7 +5,7 @@
 //! Auto-extracted by `tools/pdfluent-snippet-extract` (#1236).
 //! Do not edit by hand — re-run the extractor instead.
 
-use pdfluent::{EncryptOptions, PdfDocument, PdfPermissions};
+use pdfluent::{PdfDocument, EncryptOptions, PdfPermissions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut doc = PdfDocument::open("report.pdf")?;
