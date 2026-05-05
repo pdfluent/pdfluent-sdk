@@ -201,6 +201,17 @@ pub enum InterpreterWarning {
     UnsupportedFont,
     /// An image failed to decode.
     ImageDecodeFailure,
+    /// A stream exceeded the configured `max_stream_bytes` cap during
+    /// image decode.  Must not be silently discarded — propagate as
+    /// `LimitError::StreamTooLarge` / `Error::ResourceLimitExceeded`.
+    ///
+    /// Both fields are `u64` so the variant remains `Copy`.
+    StreamTooLarge {
+        /// Observed decompressed size in bytes.
+        observed: u64,
+        /// Configured limit in bytes.
+        limit: u64,
+    },
 }
 
 /// interpret the contents of the page and render them into the device.

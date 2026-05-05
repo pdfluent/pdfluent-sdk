@@ -462,6 +462,9 @@ impl From<pdf_engine::EngineError> for Error {
                 byte_offset: None,
                 reason,
             },
+            // #1467: LimitExceeded surfaces as ResourceLimitExceeded via the
+            // existing From<LimitError> impl — the full chain is now closed.
+            E::LimitExceeded(le) => Error::from(le),
             other => Error::InvalidPdf {
                 byte_offset: None,
                 reason: format!("{other:?}"),

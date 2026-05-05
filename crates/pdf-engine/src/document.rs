@@ -3,7 +3,8 @@
 
 use crate::error::{EngineError, Result};
 use crate::geometry::{self, PageGeometry};
-use crate::limits::ProcessingLimits;
+use crate::limits::{LimitError, ProcessingLimits};
+use std::sync::{Arc, Mutex};
 use crate::render::{self, ColorMode, RenderConfig, RenderOptions, RenderedPage};
 use crate::text::{TextBlock, TextExtractionDevice};
 use crate::thumbnail::ThumbnailOptions;
@@ -11,7 +12,7 @@ use crate::thumbnail::ThumbnailOptions;
 use pdf_forms::parse::parse_acroform;
 use pdf_forms::tree::{FieldType, FieldValue};
 use pdf_render::pdf_interpret::PageExt;
-use pdf_render::pdf_interpret::{interpret_page, Context, InterpreterSettings};
+use pdf_render::pdf_interpret::{interpret_page, Context, InterpreterSettings, InterpreterWarning};
 use pdf_render::pdf_syntax::object::dict::keys::{FIRST, NEXT, OUTLINES, TITLE};
 use pdf_render::pdf_syntax::object::Dict;
 use pdf_render::pdf_syntax::page::Page;
@@ -189,7 +190,10 @@ impl PdfDocument {
                 reason: "page too small to render (< 1pt)".into(),
             });
         }
-        Ok(render::render_page(page, options, &self.settings))
+        let (settings, slot) = Self::with_limit_collector(&self.settings);
+        let rendered = render::render_page(page, options, &settings);
+        Self::check_limit_slot(&slot)?;
+        Ok(rendered)
     }
 
     /// Render a single page using the high-level render config.
@@ -222,11 +226,10 @@ impl PdfDocument {
                 reason: "page too small to render (< 1pt)".into(),
             });
         }
-        Ok(render::render_page_with_config(
-            page,
-            config,
-            &self.settings,
-        ))
+        let (settings, slot) = Self::with_limit_collector(&self.settings);
+        let rendered = render::render_page_with_config(page, config, &settings);
+        Self::check_limit_slot(&slot)?;
+        Ok(rendered)
     }
 
     /// Render a single page to a CMYK buffer.
@@ -295,9 +298,11 @@ impl PdfDocument {
     /// Extract text from a page as a single string.
     pub fn extract_text(&self, index: usize) -> Result<String> {
         let page = self.get_page(index)?;
+        let (settings, slot) = Self::with_limit_collector(&self.text_extraction_settings());
         let mut device = TextExtractionDevice::new();
-        let mut ctx = self.create_context(page);
+        let mut ctx = Self::create_context_with_settings(page, settings);
         interpret_page(page, &mut ctx, &mut device);
+        Self::check_limit_slot(&slot)?;
         Ok(device.into_text())
     }
 
@@ -329,9 +334,11 @@ impl PdfDocument {
     /// Extract structured text blocks from a page.
     pub fn extract_text_blocks(&self, index: usize) -> Result<Vec<TextBlock>> {
         let page = self.get_page(index)?;
+        let (settings, slot) = Self::with_limit_collector(&self.text_extraction_settings());
         let mut device = TextExtractionDevice::new();
-        let mut ctx = self.create_context(page);
+        let mut ctx = Self::create_context_with_settings(page, settings);
         interpret_page(page, &mut ctx, &mut device);
+        Self::check_limit_slot(&slot)?;
         Ok(device.into_blocks())
     }
 
@@ -536,6 +543,45 @@ impl PdfDocument {
             .map_err(|e| crate::error::EngineError::RenderError(e.to_string()))
     }
 
+    /// Wrap `settings` with a warning sink that captures the first
+    /// `InterpreterWarning::StreamTooLarge` into a shared slot.
+    ///
+    /// The returned slot is checked by [`Self::check_limit_slot`] after
+    /// the operation completes. Any previously installed sink is still
+    /// called so no warnings are silently dropped.
+    fn with_limit_collector(
+        settings: &InterpreterSettings,
+    ) -> (InterpreterSettings, Arc<Mutex<Option<(u64, u64)>>>) {
+        let slot: Arc<Mutex<Option<(u64, u64)>>> = Arc::new(Mutex::new(None));
+        let slot_clone = Arc::clone(&slot);
+        let prev_sink = settings.warning_sink.clone();
+        let mut new_settings = settings.clone();
+        new_settings.warning_sink = Arc::new(move |w: InterpreterWarning| {
+            if let InterpreterWarning::StreamTooLarge { observed, limit } = w {
+                let mut guard = slot_clone.lock().unwrap_or_else(|e| e.into_inner());
+                if guard.is_none() {
+                    *guard = Some((observed, limit));
+                }
+            }
+            prev_sink(w);
+        });
+        (new_settings, slot)
+    }
+
+    /// Check the slot populated by [`Self::with_limit_collector`].
+    ///
+    /// Returns `Err(EngineError::LimitExceeded(...))` if a
+    /// `StreamTooLarge` warning was captured, `Ok(())` otherwise.
+    fn check_limit_slot(slot: &Arc<Mutex<Option<(u64, u64)>>>) -> Result<()> {
+        if let Some((observed, limit)) = *slot.lock().unwrap_or_else(|e| e.into_inner()) {
+            return Err(EngineError::LimitExceeded(LimitError::StreamTooLarge {
+                actual_bytes: observed,
+                limit_bytes: limit,
+            }));
+        }
+        Ok(())
+    }
+
     fn get_page(&self, index: usize) -> Result<&Page<'_>> {
         let pages = self.pdf.pages();
         if index >= pages.len() {
@@ -553,10 +599,6 @@ impl PdfDocument {
         // that rendering skips to match MuPDF visual output.
         settings.skip_signature_widgets = false;
         settings
-    }
-
-    fn create_context<'a>(&self, page: &Page<'a>) -> Context<'a> {
-        Self::create_context_with_settings(page, self.text_extraction_settings())
     }
 
     fn create_context_with_settings<'a>(

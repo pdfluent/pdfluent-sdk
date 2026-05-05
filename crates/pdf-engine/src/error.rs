@@ -44,6 +44,14 @@ pub enum EngineError {
     /// XFA flattening failed.
     #[error("XFA flatten failed: {0}")]
     XfaFlattenFailed(String),
+
+    /// A configured resource limit was exceeded during rendering or
+    /// text extraction.  Carries the [`LimitError`] so callers can
+    /// branch on the specific cap that fired.
+    ///
+    /// [`LimitError`]: crate::limits::LimitError
+    #[error("resource limit exceeded: {0}")]
+    LimitExceeded(crate::limits::LimitError),
 }
 
 impl PdfError for EngineError {
@@ -56,6 +64,7 @@ impl PdfError for EngineError {
             EngineError::Encrypted(_) => "ENCRYPTED",
             EngineError::InvalidPageGeometry { .. } => "INVALID_PAGE_GEOMETRY",
             EngineError::XfaFlattenFailed(_) => "XFA_FLATTEN_FAILED",
+            EngineError::LimitExceeded(_) => "LIMIT_EXCEEDED",
         }
     }
 
@@ -81,6 +90,9 @@ impl PdfError for EngineError {
             }
             EngineError::XfaFlattenFailed(_) => {
                 Some("XFA flattening produced an invalid PDF. The document may use unsupported XFA features.".to_string())
+            }
+            EngineError::LimitExceeded(_) => {
+                Some("A processing resource limit was exceeded. Raise the relevant cap in ProcessingLimits or check that the input is not adversarial.".to_string())
             }
         }
     }

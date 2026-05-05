@@ -310,6 +310,107 @@ fn processing_limits_takes_precedence_when_both_set() {
 }
 
 // ---------------------------------------------------------------------------
+// Stream-size limit — image XObject decode path (#1467)
+// ---------------------------------------------------------------------------
+
+/// Build a minimal PDF whose page references a raw (no-filter) image
+/// XObject.  The image data is `pixel_bytes` bytes of 0x20 (space), which
+/// is valid ASCII and decompresses to exactly `pixel_bytes` bytes.
+/// Tested against `max_stream_bytes` to trigger `DecodeFailure::StreamTooLarge`.
+fn stream_too_large_pdf_bytes(pixel_bytes: usize) -> Vec<u8> {
+    // Raw pixel data: `pixel_bytes` space characters (0x20).
+    // We embed them directly in the stream body.
+    let pixel_data = " ".repeat(pixel_bytes);
+
+    // Image XObject: raw RGB 1×pixel_bytes (dummy geometry; only the stream
+    // size matters for the limit check).
+    let image_obj = format!(
+        "<< /Type /XObject /Subtype /Image \
+          /Width 1 /Height 1 \
+          /ColorSpace /DeviceRGB /BitsPerComponent 8 \
+          /Length {pixel_bytes} >>\nstream\n{pixel_data}\nendstream"
+    );
+
+    // Content stream: q … Do … Q, well under any reasonable stream limit.
+    let content = "q /Im1 Do Q\n";
+    let content_obj = format!(
+        "<< /Length {} >>\nstream\n{}endstream",
+        content.len(),
+        content
+    );
+
+    let objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] \
+              /Resources << /XObject << /Im1 4 0 R >> >> \
+              /Contents 5 0 R >>"
+        ),
+        image_obj,
+        content_obj,
+    ];
+
+    pdf_from_objects(&objects)
+}
+
+/// `StreamTooLarge` captured during image XObject decode must surface all the
+/// way to `pdfluent::Error::ResourceLimitExceeded { kind: StreamTooLarge }`.
+///
+/// Chain under test (issue #1467):
+///   DecodeFailure::StreamTooLarge
+///   → InterpreterWarning::StreamTooLarge (x_object.rs warning_sink)
+///   → EngineError::LimitExceeded        (pdf-engine warning collector)
+///   → pdfluent::Error::ResourceLimitExceeded
+///
+/// Image decode is lazy (happens in the rendering device, not during
+/// `interpret_page`), so this test uses `to_images` to trigger a full
+/// render that decodes the image XObject.
+#[test]
+fn processing_limits_stream_too_large_surfaces_as_resource_limit_exceeded() {
+    // Image data: 300 bytes of raw pixels.
+    // Content stream is ~12 bytes — well under the 50-byte cap.
+    // Image stream is 300 bytes — exceeds the 50-byte cap.
+    const IMAGE_BYTES: usize = 300;
+    const STREAM_CAP: u64 = 50;
+
+    let bytes = stream_too_large_pdf_bytes(IMAGE_BYTES);
+    let limits = ProcessingLimits::default().max_stream_bytes(STREAM_CAP);
+    let opts = OpenOptions::new()
+        .with_license_key("tier:business")
+        .with_processing_limits(limits);
+    let doc = PdfDocument::from_bytes_with(&bytes, opts).expect("open should succeed");
+
+    // to_images triggers render_page → DecodedImageXObject::new → decoded_image
+    // → DecodeFailure::StreamTooLarge → InterpreterWarning → EngineError::LimitExceeded.
+    let dir = std::env::temp_dir().join("pdfluent-stream-too-large");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let pattern = dir.join("page_{page}.png");
+
+    let err = doc
+        .to_images(&pattern, ToImagesOptions::new().with_dpi(72))
+        .expect_err("stream-size limit breach must surface as Err");
+
+    let _ = std::fs::remove_dir_all(&dir);
+
+    match err {
+        Error::ResourceLimitExceeded {
+            kind: ResourceLimitKind::StreamTooLarge,
+            observed,
+            limit,
+        } => {
+            assert!(
+                observed >= IMAGE_BYTES as u64,
+                "observed {observed} should be >= {IMAGE_BYTES} bytes"
+            );
+            assert_eq!(limit, STREAM_CAP, "limit should match the configured cap");
+        }
+        other => panic!("expected ResourceLimitExceeded(StreamTooLarge), got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Display + error code stability
 // ---------------------------------------------------------------------------
 
