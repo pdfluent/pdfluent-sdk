@@ -20,7 +20,7 @@ pdf-interpret = { path = "../pdf-interpret", version = "=0.5.2" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, version = "=0.39.1" }
 pdf-render = { path = "../pdf-render", version = "=1.0.0-beta.4" }
 pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.4" }
-pdf-xfa = { path = "../pdf-xfa", optional = true, version = "=1.0.0-beta.3" }
+pdf-xfa = { path = "../pdf-xfa", optional = true, version = "=1.0.0-beta.4" }
 xfa-layout-engine = { path = "../xfa-layout-engine", optional = true, version = "=1.0.0-beta.3" }
 formcalc-interpreter = { path = "../formcalc-interpreter", optional = true, version = "=1.0.0-beta.3" }
 xfa-json = { path = "../xfa-json", optional = true, version = "=1.0.0-beta.3" }
