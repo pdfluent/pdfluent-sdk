@@ -22,13 +22,14 @@ pub mod null;
 pub mod rquickjs_backend;
 
 pub use host::{
-    HostBindings, MutationLogEntry, MAX_MUTATIONS_PER_DOC, MAX_RESOLVE_CALLS_PER_SCRIPT,
-    MAX_RESOLVE_RESULTS, MAX_SOM_DEPTH,
+    HostBindings, MutationLogEntry, MAX_INSTANCES_PER_SUBFORM, MAX_ITEMS_PER_LISTBOX,
+    MAX_MUTATIONS_PER_DOC, MAX_RESOLVE_CALLS_PER_SCRIPT, MAX_RESOLVE_RESULTS, MAX_SOM_DEPTH,
 };
 pub use null::NullRuntime;
 #[cfg(feature = "xfa-js-sandboxed")]
 pub use rquickjs_backend::QuickJsRuntime;
 
+use xfa_dom_resolver::data_dom::DataDom;
 use xfa_layout_engine::form::{FormNodeId, FormTree};
 
 /// Outcome of evaluating one script body inside the sandbox.
@@ -108,10 +109,16 @@ pub struct RuntimeMetadata {
     pub host_calls: usize,
     /// Phase C successful `field.rawValue` writes.
     pub mutations: usize,
+    /// Phase D successful instanceManager structure writes.
+    pub instance_writes: usize,
+    /// Phase D-β successful listbox clearItems / addItem writes.
+    pub list_writes: usize,
     /// Phase C binding-level failures (type, activity, cap, parse).
     pub binding_errors: usize,
     /// Phase C SOM resolution misses / failures.
     pub resolve_failures: usize,
+    /// Phase D-γ successful DataDom reads (children / value / child-by-name).
+    pub data_reads: usize,
 }
 
 impl RuntimeMetadata {
@@ -132,8 +139,11 @@ impl RuntimeMetadata {
         self.oom = self.oom.saturating_add(other.oom);
         self.host_calls = self.host_calls.saturating_add(other.host_calls);
         self.mutations = self.mutations.saturating_add(other.mutations);
+        self.instance_writes = self.instance_writes.saturating_add(other.instance_writes);
+        self.list_writes = self.list_writes.saturating_add(other.list_writes);
         self.binding_errors = self.binding_errors.saturating_add(other.binding_errors);
         self.resolve_failures = self.resolve_failures.saturating_add(other.resolve_failures);
+        self.data_reads = self.data_reads.saturating_add(other.data_reads);
     }
 }
 
@@ -188,6 +198,17 @@ pub trait XfaJsRuntime {
     ) -> Result<(), SandboxError> {
         Ok(())
     }
+
+    /// Phase D-γ: install a read-only view of the `DataDom` for the current
+    /// document. Called once per document after `set_form_handle`, before any
+    /// scripts run. Default: no-op (backends without DataDom support ignore it).
+    ///
+    /// # Safety
+    /// Callers **must** guarantee that `dom` outlives all script execution for
+    /// this document (i.e. it must remain alive until `set_form_handle(null)`
+    /// is called). The runtime stores the pointer read-only and never writes
+    /// through it.
+    fn set_data_handle(&mut self, _dom: *const DataDom) {}
 
     /// Phase C: reset per-script host counters and install the current script
     /// context node / activity. Backends without host bindings ignore it.

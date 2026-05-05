@@ -289,6 +289,136 @@ impl QuickJsRuntime {
                 .set("setRawValue", set_raw_value)
                 .map_err(|e| format!("set setRawValue: {e}"))?;
 
+            let instance_count_host = Rc::clone(&host);
+            let instance_count =
+                Function::new(ctx.clone(), move |id: i32, generation: i64| -> u32 {
+                    if id < 0 || generation < 0 {
+                        return 0;
+                    }
+                    instance_count_host
+                        .borrow_mut()
+                        .instance_count_for_handle(FormNodeId(id as usize), generation as u64)
+                })
+                .map_err(|e| format!("instanceCount: {e}"))?;
+            internal
+                .set("instanceCount", instance_count)
+                .map_err(|e| format!("set instanceCount: {e}"))?;
+
+            let node_index_host = Rc::clone(&host);
+            let node_index = Function::new(ctx.clone(), move |id: i32, generation: i64| -> u32 {
+                if id < 0 || generation < 0 {
+                    return 0;
+                }
+                node_index_host
+                    .borrow_mut()
+                    .instance_index_for_handle(FormNodeId(id as usize), generation as u64)
+            })
+            .map_err(|e| format!("nodeIndex: {e}"))?;
+            internal
+                .set("nodeIndex", node_index)
+                .map_err(|e| format!("set nodeIndex: {e}"))?;
+
+            let instance_set_host = Rc::clone(&host);
+            let instance_set = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64, n: Opt<i32>| -> i32 {
+                    if id < 0 || generation < 0 {
+                        return -1;
+                    }
+                    let n = n.0.unwrap_or(0).max(0) as u32;
+                    instance_set_host
+                        .borrow_mut()
+                        .instance_set_for_handle(FormNodeId(id as usize), generation as u64, n)
+                        .map(|count| count as i32)
+                        .unwrap_or(-1)
+                },
+            )
+            .map_err(|e| format!("instanceSet: {e}"))?;
+            internal
+                .set("instanceSet", instance_set)
+                .map_err(|e| format!("set instanceSet: {e}"))?;
+
+            let instance_add_host = Rc::clone(&host);
+            let instance_add = Function::new(ctx.clone(), move |id: i32, generation: i64| -> i32 {
+                if id < 0 || generation < 0 {
+                    return -1;
+                }
+                instance_add_host
+                    .borrow_mut()
+                    .instance_add_for_handle(FormNodeId(id as usize), generation as u64)
+                    .map(|node_id| node_id.0 as i32)
+                    .unwrap_or(-1)
+            })
+            .map_err(|e| format!("instanceAdd: {e}"))?;
+            internal
+                .set("instanceAdd", instance_add)
+                .map_err(|e| format!("set instanceAdd: {e}"))?;
+
+            let instance_remove_host = Rc::clone(&host);
+            let instance_remove = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64, index: Opt<i32>| -> bool {
+                    if id < 0 || generation < 0 {
+                        return false;
+                    }
+                    let index = index.0.unwrap_or(0).max(0) as u32;
+                    instance_remove_host
+                        .borrow_mut()
+                        .instance_remove_for_handle(
+                            FormNodeId(id as usize),
+                            generation as u64,
+                            index,
+                        )
+                        .is_ok()
+                },
+            )
+            .map_err(|e| format!("instanceRemove: {e}"))?;
+            internal
+                .set("instanceRemove", instance_remove)
+                .map_err(|e| format!("set instanceRemove: {e}"))?;
+
+            let list_clear_host = Rc::clone(&host);
+            let list_clear = Function::new(ctx.clone(), move |id: i32, generation: i64| -> bool {
+                if id < 0 || generation < 0 {
+                    return false;
+                }
+                list_clear_host
+                    .borrow_mut()
+                    .list_clear_for_handle(FormNodeId(id as usize), generation as u64)
+                    .is_ok()
+            })
+            .map_err(|e| format!("listClear: {e}"))?;
+            internal
+                .set("listClear", list_clear)
+                .map_err(|e| format!("set listClear: {e}"))?;
+
+            let list_add_host = Rc::clone(&host);
+            let list_add = Function::new(
+                ctx.clone(),
+                move |id: i32,
+                      generation: i64,
+                      display: Coerced<String>,
+                      save: Opt<Coerced<String>>|
+                      -> bool {
+                    if id < 0 || generation < 0 {
+                        return false;
+                    }
+                    list_add_host
+                        .borrow_mut()
+                        .list_add_for_handle(
+                            FormNodeId(id as usize),
+                            generation as u64,
+                            display.0,
+                            save.0.map(|s| s.0),
+                        )
+                        .is_ok()
+                },
+            )
+            .map_err(|e| format!("listAdd: {e}"))?;
+            internal
+                .set("listAdd", list_add)
+                .map_err(|e| format!("set listAdd: {e}"))?;
+
             let num_pages_host = Rc::clone(&host);
             let num_pages =
                 Function::new(ctx.clone(), move || num_pages_host.borrow_mut().num_pages())
@@ -305,6 +435,124 @@ impl QuickJsRuntime {
             internal
                 .set("bindingError", binding_error)
                 .map_err(|e| format!("set bindingError: {e}"))?;
+
+            let resolve_failure_host = Rc::clone(&host);
+            let resolve_failure = Function::new(ctx.clone(), move || {
+                resolve_failure_host.borrow_mut().metadata_resolve_failure();
+            })
+            .map_err(|e| format!("resolveFailure: {e}"))?;
+            internal
+                .set("resolveFailure", resolve_failure)
+                .map_err(|e| format!("set resolveFailure: {e}"))?;
+
+            // Phase D-γ: DataDom host bindings --------------------------------
+
+            let dc_host = Rc::clone(&host);
+            let data_children = Function::new(ctx.clone(), move |raw_id: i32| -> Vec<i32> {
+                if raw_id < 0 {
+                    return Vec::new();
+                }
+                dc_host
+                    .borrow_mut()
+                    .data_children(raw_id as usize)
+                    .into_iter()
+                    .map(|x| x as i32)
+                    .collect()
+            })
+            .map_err(|e| format!("dataChildren: {e}"))?;
+            internal
+                .set("dataChildren", data_children)
+                .map_err(|e| format!("set dataChildren: {e}"))?;
+
+            let dv_host = Rc::clone(&host);
+            let data_value = Function::new(ctx.clone(), move |raw_id: i32| -> Option<String> {
+                if raw_id < 0 {
+                    return None;
+                }
+                dv_host.borrow_mut().data_value(raw_id as usize)
+            })
+            .map_err(|e| format!("dataValue: {e}"))?;
+            internal
+                .set("dataValue", data_value)
+                .map_err(|e| format!("set dataValue: {e}"))?;
+
+            let dcbn_host = Rc::clone(&host);
+            let data_child_by_name = Function::new(
+                ctx.clone(),
+                move |parent_raw: i32, name: Opt<Coerced<String>>| -> i32 {
+                    if parent_raw < 0 {
+                        return -1;
+                    }
+                    let Some(name) = name.0 else {
+                        return -1;
+                    };
+                    dcbn_host
+                        .borrow_mut()
+                        .data_child_by_name(parent_raw as usize, &name.0)
+                        .map(|x| x as i32)
+                        .unwrap_or(-1)
+                },
+            )
+            .map_err(|e| format!("dataChildByName: {e}"))?;
+            internal
+                .set("dataChildByName", data_child_by_name)
+                .map_err(|e| format!("set dataChildByName: {e}"))?;
+
+            let dbr_host = Rc::clone(&host);
+            let data_bound_record = Function::new(
+                ctx.clone(),
+                move |form_node_id: i32, generation: i64| -> i32 {
+                    if form_node_id < 0 || generation < 0 {
+                        return -1;
+                    }
+                    dbr_host
+                        .borrow_mut()
+                        .data_bound_record(FormNodeId(form_node_id as usize), generation as u64)
+                        .map(|x| x as i32)
+                        .unwrap_or(-1)
+                },
+            )
+            .map_err(|e| format!("dataBoundRecord: {e}"))?;
+            internal
+                .set("dataBoundRecord", data_bound_record)
+                .map_err(|e| format!("set dataBoundRecord: {e}"))?;
+
+            let drn_host = Rc::clone(&host);
+            let data_resolve_node =
+                Function::new(ctx.clone(), move |path: Opt<Coerced<String>>| -> i32 {
+                    let Some(path) = path.0 else {
+                        return -1;
+                    };
+                    drn_host
+                        .borrow_mut()
+                        .data_resolve_node(&path.0)
+                        .map(|x| x as i32)
+                        .unwrap_or(-1)
+                })
+                .map_err(|e| format!("dataResolveNode: {e}"))?;
+            internal
+                .set("dataResolveNode", data_resolve_node)
+                .map_err(|e| format!("set dataResolveNode: {e}"))?;
+
+            let drns_host = Rc::clone(&host);
+            let data_resolve_nodes =
+                Function::new(ctx.clone(), move |path: Opt<Coerced<String>>| -> Vec<i32> {
+                    let Some(path) = path.0 else {
+                        return Vec::new();
+                    };
+                    drns_host
+                        .borrow_mut()
+                        .data_resolve_nodes(&path.0)
+                        .into_iter()
+                        .map(|x| x as i32)
+                        .collect()
+                })
+                .map_err(|e| format!("dataResolveNodes: {e}"))?;
+            internal
+                .set("dataResolveNodes", data_resolve_nodes)
+                .map_err(|e| format!("set dataResolveNodes: {e}"))?;
+
+            // End Phase D-γ host bindings -------------------------------------
 
             let factory: Function = ctx
                 .eval(PHASE_C_BINDINGS_JS.as_bytes())
@@ -385,7 +633,17 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       deferredGlobalNames[name] === true;
   }
 
+  // Properties that must NOT be deferred so their specific implementations run.
+  var handlePropertyExclusions = lookupObject();
+  ["rawValue", "somExpression", "isNull", "clearItems", "addItem", "$record",
+   "nodes", "value", "length", "item"].forEach(function(name) {
+    handlePropertyExclusions[name] = true;
+  });
+
   function shouldDeferHandleProperty(name) {
+    if (handlePropertyExclusions[name] === true) {
+      return false;
+    }
     return name.charAt(0) === "_" || reservedHandleProperties[name] === true;
   }
 
@@ -406,6 +664,43 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       locals[match[1]] = true;
     }
     return locals;
+  }
+
+  function makeInstanceManager(id, generation) {
+    var manager = nullProtoObject();
+    Object.defineProperty(manager, "count", {
+      enumerable: true,
+      configurable: false,
+      get: function() {
+        return host.instanceCount(id, generation);
+      }
+    });
+    Object.defineProperty(manager, "setInstances", {
+      enumerable: true,
+      configurable: false,
+      writable: false,
+      value: function(n) {
+        return host.instanceSet(id, generation, n);
+      }
+    });
+    Object.defineProperty(manager, "addInstance", {
+      enumerable: true,
+      configurable: false,
+      writable: false,
+      value: function() {
+        var newId = host.instanceAdd(id, generation);
+        return newId < 0 ? null : makeHandle(newId, generation);
+      }
+    });
+    Object.defineProperty(manager, "removeInstance", {
+      enumerable: true,
+      configurable: false,
+      writable: false,
+      value: function(idx) {
+        return host.instanceRemove(id, generation, idx);
+      }
+    });
+    return Object.freeze(manager);
   }
 
   function makeHandle(id, generation) {
@@ -442,12 +737,62 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "rawValue" || prop === "somExpression") {
           return Reflect.get(target, prop, receiver);
         }
+        if (prop === "instanceManager") {
+          return makeInstanceManager(id, generation);
+        }
+        if (prop === "index") {
+          return host.nodeIndex(id, generation);
+        }
+        if (prop === "setInstances") {
+          return function(n) {
+            return host.instanceSet(id, generation, n);
+          };
+        }
+        if (prop === "addInstance") {
+          return function() {
+            var newId = host.instanceAdd(id, generation);
+            return newId < 0 ? null : makeHandle(newId, generation);
+          };
+        }
+        if (prop === "removeInstance") {
+          return function(idx) {
+            return host.instanceRemove(id, generation, idx);
+          };
+        }
         if (prop === "isNull") {
           var value = host.getRawValue(id, generation);
           return value === undefined || value === null || value === "";
         }
+        if (prop === "clearItems") {
+          return function() {
+            return host.listClear(id, generation);
+          };
+        }
+        if (prop === "addItem") {
+          return function(display, save) {
+            if (save === undefined) {
+              return host.listAdd(id, generation, String(display));
+            }
+            return host.listAdd(id, generation, String(display), String(save));
+          };
+        }
+        if (prop === "$record") {
+          var recRaw = host.dataBoundRecord(id, generation);
+          if (recRaw < 0) return null;
+          return makeDataHandle(recRaw);
+        }
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
+        }
+        // XFA 3.3 §6.4.3.2 underscore shorthand: `_<name>` on a subform
+        // refers to the instanceManager of the same-named child subform.
+        // Used in the wild as `parent._child.setInstances(N)`.
+        if (prop.charAt(0) === "_" && prop.length > 1) {
+          var bareName = prop.substring(1);
+          var imChildId = host.resolveChildNodeId(id, bareName);
+          if (imChildId >= 0) {
+            return makeInstanceManager(imChildId, generation);
+          }
         }
         var childId = host.resolveChildNodeId(id, prop);
         if (childId < 0) {
@@ -467,7 +812,14 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         }
         return prop === "rawValue" ||
           prop === "somExpression" ||
+          prop === "instanceManager" ||
+          prop === "index" ||
+          prop === "setInstances" ||
+          prop === "addInstance" ||
+          prop === "removeInstance" ||
           prop === "isNull" ||
+          prop === "clearItems" ||
+          prop === "addItem" ||
           Reflect.has(target, prop);
       }
     });
@@ -486,6 +838,72 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         return true;
       },
       has: function() { return true; }
+    });
+  }
+
+  function toListIndex(value) {
+    var n = Number(value);
+    if (!isFinite(n) || n < 0) return -1;
+    return Math.floor(n);
+  }
+
+  // Phase D-γ: Data DOM handle — wraps a raw DataDom node index and exposes
+  // `.value`, `.nodes`, `.length`, `.item(i)`, and named child access via Proxy.
+  function makeDataHandle(rawId) {
+    if (rawId === undefined || rawId < 0) return null;
+    var handle = nullProtoObject();
+    Object.defineProperty(handle, "value", {
+      get: function() {
+        var v = host.dataValue(rawId);
+        return (v === undefined || v === null) ? null : v;
+      },
+      enumerable: true, configurable: false
+    });
+    // rawValue is an alias for value — scripts use both forms on data handles.
+    Object.defineProperty(handle, "rawValue", {
+      get: function() {
+        var v = host.dataValue(rawId);
+        return (v === undefined || v === null) ? null : v;
+      },
+      enumerable: true, configurable: false
+    });
+    Object.defineProperty(handle, "length", {
+      get: function() { return host.dataChildren(rawId).length; },
+      enumerable: true, configurable: false
+    });
+    Object.defineProperty(handle, "nodes", {
+      get: function() {
+        var ids = host.dataChildren(rawId);
+        var arr = [];
+        for (var i = 0; i < ids.length; i++) arr.push(makeDataHandle(ids[i]));
+        // Phase D-γ fix: XFA scripts call `nodeList.item(i)` on the array
+        // returned by `.nodes`. Plain JS arrays have no `.item()` method —
+        // add one that mirrors the W3C NodeList API. Out-of-bounds indices
+        // return a null-safe sentinel so `.value` access never throws.
+        var NULLNODE = Object.freeze({ value: null, rawValue: null });
+        arr.item = function(idx) {
+          var index = toListIndex(idx);
+          if (index < 0 || index >= arr.length) return NULLNODE;
+          return arr[index];
+        };
+        return Object.freeze(arr);
+      },
+      enumerable: true, configurable: false
+    });
+    handle.item = function(i) {
+      var ids = host.dataChildren(rawId);
+      var index = toListIndex(i);
+      if (index < 0 || index >= ids.length) return null;
+      return makeDataHandle(ids[index]);
+    };
+    return new Proxy(handle, {
+      get: function(target, prop) {
+        if (prop in target || typeof prop !== "string") return target[prop];
+        if (prop === "rawValue" || prop === "value") return target.value;
+        var childId = host.dataChildByName(rawId, prop);
+        if (childId < 0) return undefined;
+        return makeDataHandle(childId);
+      }
     });
   }
 
@@ -516,6 +934,29 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       return host.numPages();
     }
   });
+  // Phase D-γ: xfa.layout.page(node) — page number (1-based) of a form node.
+  // During static flatten the layout is not yet run, so return a bounded
+  // placeholder and mark the metadata as approximate.
+  Object.defineProperty(xfaLayout, "page", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function() {
+      host.resolveFailure();
+      return 1;
+    }
+  });
+  // Phase D-γ: xfa.layout.pageSpan(node) — number of pages a node spans.
+  // Always 1 during static flatten; metadata records the approximation.
+  Object.defineProperty(xfaLayout, "pageSpan", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: function() {
+      host.resolveFailure();
+      return 1;
+    }
+  });
   Object.defineProperty(xfaLayout, "absPage", {
     enumerable: true,
     configurable: false,
@@ -544,6 +985,14 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     configurable: false,
     writable: false,
     value: function(path) {
+      // Phase D-γ: data paths are routed to the DataDom, not the FormTree.
+      if (typeof path === "string" &&
+          (path.indexOf("data.") === 0 || path.indexOf("$data.") === 0 ||
+           path.indexOf("xfa.datasets.data.") === 0)) {
+        var rawId = host.dataResolveNode(path);
+        if (rawId < 0) return null;
+        return makeDataHandle(rawId);
+      }
       var id = host.resolveNodeId(path);
       if (id < 0) {
         return null;
@@ -556,6 +1005,15 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     configurable: false,
     writable: false,
     value: function(path) {
+      // Phase D-γ: data paths are routed to the DataDom, not the FormTree.
+      if (typeof path === "string" &&
+          (path.indexOf("data.") === 0 || path.indexOf("$data.") === 0 ||
+           path.indexOf("xfa.datasets.data.") === 0)) {
+        var rawIds = host.dataResolveNodes(path);
+        var out = [];
+        for (var i = 0; i < rawIds.length; i++) out.push(makeDataHandle(rawIds[i]));
+        return Object.freeze(out);
+      }
       var generation = host.generation();
       var ids = host.resolveNodeIds(path);
       var out = [];
@@ -626,6 +1084,138 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     return Object.freeze(ev);
   }
 
+  // Phase D-γ: XFA global `util` (Acrobat SDK §Util).  Provides date/number
+  // formatting helpers used by many XFA templates. Only the subset required
+  // by real-corpus scripts is implemented; unknown methods return "".
+  //
+  // util.printd(sFormat, dDate)  — format a Date per sFormat using UTC fields.
+  //   Supported tokens: yyyy (year), yy (two-digit year), mm (month 01-12),
+  //   m (1-12), dd (day 01-31), d (1-31), HH (hour 00-23),
+  //   MM (minute 00-59), SS (second 00-59).
+  // util.printx(cPicture, cValue) — picture format; returns cValue as-is.
+  // util.scand(sFormat, cDate)   — deterministic numeric parser for the same
+  //   token subset; unsupported or invalid input returns Invalid Date.
+  var xfaUtil = (function() {
+    var DateCtor = Date;
+    var dateUtc = Date.UTC;
+    function pad2(n) { return (n < 10 ? "0" : "") + n; }
+    function invalidDate() { return new DateCtor(NaN); }
+    function escapeRegex(text) {
+      return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+    function parseDate(fmt, input) {
+      var fmtText, text;
+      try {
+        fmtText = String(fmt);
+        text = String(input);
+      } catch (_e) {
+        return invalidDate();
+      }
+
+      var groups = [];
+      var pattern = "^";
+      for (var i = 0; i < fmtText.length;) {
+        var rest = fmtText.substring(i);
+        if (rest.indexOf("yyyy") === 0) {
+          pattern += "(\\d{4})";
+          groups.push("yyyy");
+          i += 4;
+        } else if (rest.indexOf("yy") === 0) {
+          pattern += "(\\d{2})";
+          groups.push("yy");
+          i += 2;
+        } else if (rest.indexOf("mm") === 0) {
+          pattern += "(\\d{2})";
+          groups.push("mm");
+          i += 2;
+        } else if (rest.indexOf("dd") === 0) {
+          pattern += "(\\d{2})";
+          groups.push("dd");
+          i += 2;
+        } else if (rest.indexOf("HH") === 0) {
+          pattern += "(\\d{2})";
+          groups.push("HH");
+          i += 2;
+        } else if (rest.indexOf("MM") === 0) {
+          pattern += "(\\d{2})";
+          groups.push("MM");
+          i += 2;
+        } else if (rest.indexOf("SS") === 0) {
+          pattern += "(\\d{2})";
+          groups.push("SS");
+          i += 2;
+        } else if (rest.indexOf("m") === 0) {
+          pattern += "(\\d{1,2})";
+          groups.push("m");
+          i += 1;
+        } else if (rest.indexOf("d") === 0) {
+          pattern += "(\\d{1,2})";
+          groups.push("d");
+          i += 1;
+        } else {
+          pattern += escapeRegex(fmtText.charAt(i));
+          i += 1;
+        }
+      }
+
+      var match = new RegExp(pattern + "$").exec(text);
+      if (!match) return invalidDate();
+
+      var year = NaN, month = 1, day = 1, hour = 0, minute = 0, second = 0;
+      for (var g = 0; g < groups.length; g++) {
+        var value = parseInt(match[g + 1], 10);
+        if (!isFinite(value)) return invalidDate();
+        if (groups[g] === "yyyy") year = value;
+        else if (groups[g] === "yy") year = 2000 + value;
+        else if (groups[g] === "mm" || groups[g] === "m") month = value;
+        else if (groups[g] === "dd" || groups[g] === "d") day = value;
+        else if (groups[g] === "HH") hour = value;
+        else if (groups[g] === "MM") minute = value;
+        else if (groups[g] === "SS") second = value;
+      }
+
+      if (!isFinite(year) || month < 1 || month > 12 || day < 1 || day > 31 ||
+          hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
+          second < 0 || second > 59) {
+        return invalidDate();
+      }
+      var out = new DateCtor(dateUtc(year, month - 1, day, hour, minute, second));
+      if (out.getUTCFullYear() !== year ||
+          out.getUTCMonth() + 1 !== month ||
+          out.getUTCDate() !== day ||
+          out.getUTCHours() !== hour ||
+          out.getUTCMinutes() !== minute ||
+          out.getUTCSeconds() !== second) {
+        return invalidDate();
+      }
+      return out;
+    }
+    var u = nullProtoObject();
+    u.printd = function(fmt, date) {
+      if (!(date instanceof DateCtor) || isNaN(date.getTime())) return "";
+      var y = date.getUTCFullYear();
+      var mo = date.getUTCMonth() + 1;
+      var d  = date.getUTCDate();
+      var h  = date.getUTCHours();
+      var mi = date.getUTCMinutes();
+      var s  = date.getUTCSeconds();
+      var result = String(fmt);
+      result = result.replace(/yyyy/g, y)
+                     .replace(/yy/g,   String(y).slice(-2))
+                     .replace(/mm/g,   pad2(mo))
+                     .replace(/m/g,    mo)
+                     .replace(/dd/g,   pad2(d))
+                     .replace(/d/g,    d)
+                     .replace(/HH/g,   pad2(h))
+                     .replace(/MM/g,   pad2(mi))
+                     .replace(/SS/g,   pad2(s));
+      return result;
+    };
+    u.printx = function(_fmt, val) { return val === null || val === undefined ? "" : String(val); };
+    u.scand  = function(fmt, str) { return parseDate(fmt, str); };
+    return Object.freeze(u);
+  }());
+
   // Phase C-α: minimal `console` no-op. Many forms guard with
   // `if (typeof console !== "undefined") console.log(...)` and proceed
   // when the symbol exists. Stub returns undefined; never writes
@@ -674,6 +1264,23 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         }
         if (shouldDeferGlobalName(prop, localNames)) {
           return undefined;
+        }
+        // Phase D-γ: $record as a script-level global refers to the data
+        // record bound to the current field's enclosing subform context.
+        // Scripts write `var addr = $record.SECTION.nodes;` — we intercept
+        // this here instead of letting resolveImplicitNodeId fail (-1).
+        if (prop === "$record") {
+          var recRaw = host.dataBoundRecord(currentId, generation);
+          if (recRaw < 0) return null;
+          return makeDataHandle(recRaw);
+        }
+        // Phase D-γ: `util` is an XFA global (Acrobat SDK §Util) that provides
+        // date/number formatting functions.  `util.printd(fmt, date)` is widely
+        // used by XFA templates to format Date objects.  We intercept it here so
+        // scripts can complete without a TypeError instead of throwing and
+        // aborting all later mutations in the same script body.
+        if (prop === "util") {
+          return xfaUtil;
         }
         if (dynamicLocals[prop] !== undefined) {
           return dynamicLocals[prop];
@@ -793,6 +1400,10 @@ impl XfaJsRuntime for QuickJsRuntime {
         Ok(())
     }
 
+    fn set_data_handle(&mut self, dom: *const xfa_dom_resolver::data_dom::DataDom) {
+        self.host.borrow_mut().set_data_handle(dom);
+    }
+
     fn reset_per_script(
         &mut self,
         current_id: FormNodeId,
@@ -826,6 +1437,9 @@ impl XfaJsRuntime for QuickJsRuntime {
 
         self.set_deadline();
         let script_owned = body.to_string();
+        // Phase D-γ: capture the actual JS exception message while still inside
+        // the QuickJS context, so we get "TypeError: foo is not a function"
+        // rather than the generic "Exception generated by QuickJS".
         let result = catch_unwind(AssertUnwindSafe(|| {
             self.context.with(|ctx| -> Result<(), rquickjs::Error> {
                 let Some(eval_script) = self.eval_script.clone() else {
@@ -836,7 +1450,25 @@ impl XfaJsRuntime for QuickJsRuntime {
                     ));
                 };
                 let eval_script = eval_script.restore(&ctx)?;
-                eval_script.call::<_, ()>((script_owned,))?;
+                if let Err(e) = eval_script.call::<_, ()>((script_owned,)) {
+                    // rquickjs stores the thrown value as a pending exception in
+                    // the context. `ctx.catch()` pops it and lets us stringify it
+                    // for much more useful diagnostic output.
+                    let exc_msg = if matches!(e, rquickjs::Error::Exception) {
+                        let val = ctx.catch();
+                        // Try to get a string representation of the exception.
+                        if let Some(exc) = val.as_exception() {
+                            exc.message().unwrap_or_else(|| exc.to_string())
+                        } else {
+                            e.to_string()
+                        }
+                    } else {
+                        e.to_string()
+                    };
+                    return Err(rquickjs::Error::new_from_js_message(
+                        "script", "Error", exc_msg,
+                    ));
+                }
                 Ok(())
             })
         }));

@@ -269,6 +269,9 @@ impl<'a> FormMerger<'a> {
                 meta.style.rich_text_spans = parse_exdata_rich_text_spans(elem);
             }
         }
+        // Phase D-γ: store the data binding so the JS runtime can resolve
+        // `$record` (the data record for the current subform's context).
+        meta.bound_data_node = data_context.map(|c| c.as_raw());
         let id = self.form_tree.add_node_with_meta(node, meta);
         Ok((id, trailing_info))
     }
@@ -328,18 +331,23 @@ impl<'a> FormMerger<'a> {
             }
         } else if let Some(root) = self.data_dom.root() {
             if self.data_dom.get(root).is_some_and(|n| n.name() == name) {
+                // Exact name match: the data root IS the subform's record.
                 child_context = Some(root);
             } else {
                 let matches = self.data_dom.children_by_name(root, &name);
                 if let Some(&first) = matches.first() {
+                    // Named child match (e.g. template "form1" → data <form1>).
                     child_context = Some(first);
                 } else {
-                    let children = self.data_dom.children(root);
-                    if let Some(&first_child) = children.first() {
-                        if self.data_dom.get(first_child).is_some_and(|n| n.is_group()) {
-                            child_context = Some(first_child);
-                        }
-                    }
+                    // No name match: bind the root subform to the data root so
+                    // that `$record.FIELD` paths in scripts resolve correctly.
+                    // XFA Spec 3.3 §4.4.3 p180: when the root subform has no
+                    // explicit bind element and its name doesn't match any data
+                    // node, the form context is the data DOM root — making
+                    // `$record` refer to the top-level data element (e.g.
+                    // `$record.COMPANY_ADDRESS.nodes` works when data root has
+                    // `<COMPANY_ADDRESS>` as a direct child).
+                    child_context = Some(root);
                 }
             }
         }
@@ -447,7 +455,9 @@ impl<'a> FormMerger<'a> {
             if element.tag_name().name() == "exclGroup" {
                 self.apply_exclusive_choice_value(element, instance_data_ctx, &inst_node.children);
             }
-            let meta = parse_node_meta(element);
+            let mut meta = parse_node_meta(element);
+            // Phase D-γ: bind each repeating instance to its own data record.
+            meta.bound_data_node = instance_data_ctx.map(|c| c.as_raw());
             let inst_id = self.form_tree.add_node_with_meta(inst_node, meta);
             instances.push((inst_id, trailing));
         }

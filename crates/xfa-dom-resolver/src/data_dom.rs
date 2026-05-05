@@ -10,6 +10,23 @@ use crate::error::{Result, XfaDomError};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DataNodeId(pub(crate) usize);
 
+impl DataNodeId {
+    /// Return the raw arena index for external storage (e.g. `FormNodeMeta`).
+    ///
+    /// The returned index is only meaningful for the specific [`DataDom`] it
+    /// came from. Reconstruct with [`DataNodeId::from_raw`] using the same dom.
+    pub fn as_raw(self) -> usize {
+        self.0
+    }
+
+    /// Reconstruct a `DataNodeId` from a raw index previously obtained via
+    /// [`DataNodeId::as_raw`].  The caller must ensure `idx` is valid for the
+    /// same `DataDom` instance (i.e. not out-of-bounds).
+    pub fn from_raw(idx: usize) -> Self {
+        Self(idx)
+    }
+}
+
 /// How null data values are serialized on output.
 ///
 /// XFA Spec 3.3 §4.1 p139 — null values may be represented as absent,

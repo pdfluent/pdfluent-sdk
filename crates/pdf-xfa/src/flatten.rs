@@ -75,6 +75,8 @@ thread_local! {
     static FLATTEN_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
+#[cfg(feature = "xfa-js-sandboxed")]
+use crate::dynamic::apply_dynamic_scripts_with_runtime;
 use crate::dynamic::{
     apply_dynamic_scripts, apply_dynamic_scripts_with_mode, DynamicScriptOutcome, JsExecutionMode,
     OutputQuality,
@@ -554,6 +556,31 @@ fn xfa_flatten_inner(
             apply_dynamic_scripts_with_mode(&mut tree, root_id, JsExecutionMode::Strict)?
         }
         Some("sandboxed") | Some("sandboxed_runtime") => {
+            // Phase D-γ: create the runtime manually so we can call
+            // `set_data_handle` before script execution, making the DataDom
+            // accessible from `$record` and `xfa.resolveNodes("data.*")`.
+            #[cfg(feature = "xfa-js-sandboxed")]
+            {
+                use crate::js_runtime::{NullRuntime, QuickJsRuntime, XfaJsRuntime};
+                match QuickJsRuntime::new() {
+                    Ok(mut rt) => {
+                        rt.set_data_handle(&data_dom as *const _);
+                        apply_dynamic_scripts_with_runtime(
+                            &mut tree,
+                            root_id,
+                            JsExecutionMode::SandboxedRuntime,
+                            &mut rt,
+                        )?
+                    }
+                    Err(_) => apply_dynamic_scripts_with_runtime(
+                        &mut tree,
+                        root_id,
+                        JsExecutionMode::SandboxedRuntime,
+                        &mut NullRuntime::new(),
+                    )?,
+                }
+            }
+            #[cfg(not(feature = "xfa-js-sandboxed"))]
             apply_dynamic_scripts_with_mode(&mut tree, root_id, JsExecutionMode::SandboxedRuntime)?
         }
         _ => apply_dynamic_scripts(&mut tree, root_id)?,
@@ -563,7 +590,7 @@ fn xfa_flatten_inner(
         // the Phase B JS runtime counters. Defaults stay 0 in
         // `BestEffortStatic` mode so existing log parsers remain compatible.
         log::warn!(
-            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_binding_errors={} js_resolve_failures={}",
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_instance_writes={} js_list_writes={} js_binding_errors={} js_resolve_failures={} js_data_reads={}",
             dynamic_scripts.output_quality.as_str(),
             dynamic_scripts.js_present,
             dynamic_scripts.js_skipped,
@@ -576,11 +603,14 @@ fn xfa_flatten_inner(
             dynamic_scripts.js_oom,
             dynamic_scripts.js_host_calls,
             dynamic_scripts.js_mutations,
+            dynamic_scripts.js_instance_writes,
+            dynamic_scripts.js_list_writes,
             dynamic_scripts.js_binding_errors,
             dynamic_scripts.js_resolve_failures,
+            dynamic_scripts.js_data_reads,
         );
         eprintln!(
-            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_binding_errors={} js_resolve_failures={}",
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_instance_writes={} js_list_writes={} js_binding_errors={} js_resolve_failures={} js_data_reads={}",
             dynamic_scripts.output_quality.as_str(),
             dynamic_scripts.js_present,
             dynamic_scripts.js_skipped,
@@ -593,8 +623,11 @@ fn xfa_flatten_inner(
             dynamic_scripts.js_oom,
             dynamic_scripts.js_host_calls,
             dynamic_scripts.js_mutations,
+            dynamic_scripts.js_instance_writes,
+            dynamic_scripts.js_list_writes,
             dynamic_scripts.js_binding_errors,
             dynamic_scripts.js_resolve_failures,
+            dynamic_scripts.js_data_reads,
         );
     }
 

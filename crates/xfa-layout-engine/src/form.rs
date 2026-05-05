@@ -479,8 +479,16 @@ pub struct FormNodeMeta {
     pub display_items: Vec<String>,
     /// Save items for choice list fields (XFA 3.3 §7.7).
     pub save_items: Vec<String>,
+    /// Runtime-populated choice list items from sandboxed script `addItem` calls.
+    /// Each tuple is `(display_value, save_value)`. Phase D-β only; layout does
+    /// not yet read this in default mode.
+    pub runtime_listbox_items: Vec<(String, String)>,
     /// XFA anchorType for positioned layout (XFA 3.3 §2.6, App A p1510).
     pub anchor_type: AnchorType,
+    /// Raw `DataDom` arena index of the data node this form node was bound to
+    /// during the merge phase. `None` means unbound. Phase D-γ: populated by
+    /// `FormMerger` and consumed by the JS runtime to resolve `$record`.
+    pub bound_data_node: Option<usize>,
 }
 
 /// XFA `anchorType` attribute (XFA 3.3 §2.6, Appendix A p1510).
