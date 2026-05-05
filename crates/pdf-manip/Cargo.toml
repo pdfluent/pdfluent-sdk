@@ -38,4 +38,4 @@ pdfa-convert = ["dep:xmp-writer", "dep:hayro-jbig2"]
 tempfile = "3"
 pdf-syntax.workspace = true
 pdf-compliance.workspace = true
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.3" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.4" }

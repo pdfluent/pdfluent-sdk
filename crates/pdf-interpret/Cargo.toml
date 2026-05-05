@@ -1,6 +1,6 @@
 [package]
 name = "pdf-interpret"
-version = "0.5.1"
+version = "0.5.2"
 description = "A crate for interpreting PDF files."
 edition = "2024"
 authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
@@ -12,7 +12,7 @@ readme = "README.md"
 
 [dependencies]
 pdf-font = { path = "../pdf-font", version = "=1.0.0-beta.3" }
-pdf-syntax = { path = "../pdf-syntax", features = ["std", "images"], version = "=0.5.0" }
+pdf-syntax = { path = "../pdf-syntax", features = ["std", "images"], version = "=0.5.1" }
 kurbo = "0.13.0"
 smallvec = "1"
 log = "0.4"

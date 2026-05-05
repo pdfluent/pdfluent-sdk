@@ -16,9 +16,9 @@ xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.3" }
 formcalc-interpreter = { path = "../formcalc-interpreter", version = "=1.0.0-beta.3" }
 xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.3" }
 xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.3" }
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.0" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.1" }
 pdf-font = { path = "../pdf-font", version = "=1.0.0-beta.3" }
-pdf-interpret = { path = "../pdf-interpret", version = "=0.5.1" }
+pdf-interpret = { path = "../pdf-interpret", version = "=0.5.2" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.1" }
 flate2 = "1"
 thiserror = "2"
