@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node: [20]
+        node: [24]
     defaults:
       run:
         working-directory: crates/pdf-node
