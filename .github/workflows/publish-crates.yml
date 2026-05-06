@@ -1,0 +1,110 @@
+name: Publish to crates.io
+
+# Manual-only workflow for releasing PDFluent SDK crates.
+# Requires CARGO_REGISTRY_TOKEN secret set in repository settings.
+#
+# Usage:
+#   gh workflow run publish-crates.yml -f version=1.0.0-beta.5
+#
+# The workflow runs the full pre-flight checks before any real publish.
+# If any check fails, it aborts before touching crates.io.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 1.0.0-beta.5). Must match workspace Cargo.toml.'
+        required: true
+      dry_run:
+        description: 'Dry run only (do not publish to crates.io)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+concurrency:
+  group: publish-crates
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+jobs:
+  preflight:
+    name: Pre-flight checks
+    runs-on: self-hosted
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify workspace version matches input
+        run: |
+          WS_VER=$(grep -A5 '\[workspace\.package\]' Cargo.toml | grep '^version' | sed 's/version = "\(.*\)"/\1/')
+          INPUT_VER="${{ inputs.version }}"
+          if [[ "$WS_VER" != "$INPUT_VER" ]]; then
+            echo "ERROR: Workspace version ($WS_VER) does not match requested version ($INPUT_VER)"
+            echo "Bump [workspace.package] version in Cargo.toml first."
+            exit 1
+          fi
+          echo "Version check: ✅ $WS_VER"
+
+      - name: Workspace compile check
+        run: cargo check --workspace --exclude pdf-desktop
+
+      - name: Key integration tests
+        run: |
+          cargo test -p pdfluent \
+            --test lifecycle \
+            --test processing_limits \
+            --test security \
+            -- --test-threads=4
+
+      - name: Release consistency check (local vs crates.io)
+        run: python3 scripts/check_release_consistency.py
+
+      - name: Dry-run all publishable crates
+        run: ./scripts/publish_ordered.sh
+        # publish_ordered.sh is dry-run by default
+
+  publish:
+    name: Publish (${{ inputs.dry_run == 'true' && 'DRY RUN' || 'LIVE' }})
+    needs: preflight
+    runs-on: self-hosted
+    timeout-minutes: 60
+    environment: crates-io-publish
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Configure crates.io token
+        run: cargo login "$CARGO_REGISTRY_TOKEN"
+
+      - name: Publish crates (ordered)
+        run: |
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            echo "DRY RUN — not publishing to crates.io"
+            ./scripts/publish_ordered.sh
+          else
+            ./scripts/publish_ordered.sh --live
+          fi
+
+      - name: Upload publish log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-log-${{ inputs.version }}
+          path: /tmp/publish_ordered_*.log
+          retention-days: 30
+          if-no-files-found: warn

@@ -2,6 +2,9 @@
 name = "pdf-python"
 version = "1.0.0-beta.1"
 edition = "2021"
+# publish = false: Python bindings are distributed via PyPI/maturin, not crates.io.
+# Also has stale MIT license — fix license-file before enabling publish.
+publish = false
 license = "MIT"
 description = "Python bindings for the PDF engine via PyO3."
 

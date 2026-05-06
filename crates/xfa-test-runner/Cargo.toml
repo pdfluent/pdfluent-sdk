@@ -2,6 +2,8 @@
 name = "xfa-test-runner"
 version.workspace = true
 edition.workspace = true
+# publish = false: internal corpus test runner, not part of public SDK.
+publish = false
 license.workspace = true
 repository.workspace = true
 description = "Corpus test runner for PDFluent — SSIM, text-diff and compliance checks."

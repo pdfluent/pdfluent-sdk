@@ -2,6 +2,9 @@
 name = "pdf-java"
 version = "1.0.0-beta.1"
 edition = "2021"
+# publish = false: Java JNI bindings are distributed via Maven/JVM ecosystem, not crates.io.
+# Also has stale MIT license — fix license-file before enabling publish.
+publish = false
 license = "MIT"
 description = "Java JNI bindings for the XFA PDF engine."
 
