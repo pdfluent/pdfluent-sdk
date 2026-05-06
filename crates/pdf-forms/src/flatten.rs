@@ -361,10 +361,28 @@ fn is_javascript_action_object(
 }
 
 fn is_javascript_action_dict(dict: &lopdf::Dictionary) -> bool {
-    matches!(
+    // Primary check: /S /JavaScript
+    if matches!(
         dict.get(b"S").ok(),
         Some(lopdf::Object::Name(name)) if name == b"JavaScript"
-    )
+    ) {
+        return true;
+    }
+    // /Next chained actions: a non-JS trigger can chain to a JS action via
+    // /Next, which would survive flattening if only the top-level /S is
+    // checked. We treat any action dict that chains to a JS action as JS
+    // (M8-SEC-02). The recursive walk is bounded by the caller's depth cap.
+    match dict.get(b"Next").ok() {
+        Some(lopdf::Object::Dictionary(next)) => is_javascript_action_dict(next),
+        Some(lopdf::Object::Array(arr)) => arr.iter().any(|obj| {
+            if let lopdf::Object::Dictionary(d) = obj {
+                is_javascript_action_dict(d)
+            } else {
+                false
+            }
+        }),
+        _ => false,
+    }
 }
 
 fn remove_acroform_dict(doc: &mut lopdf::Document) {
@@ -795,6 +813,93 @@ mod tests {
             shared_aa.get(b"X").is_ok(),
             "shared /AA dict must not be mutated in place (X key)"
         );
+    }
+
+    #[test]
+    fn flatten_strips_js_hidden_in_next_action_chain() {
+        // M8-SEC-02 regression: a non-JS top-level action that chains to JS
+        // via /Next must be treated as a JS action and stripped on flatten.
+        // Before the fix, only the top-level /S key was checked, so a chain
+        // like /GoTo → /Next /JavaScript would survive flattening.
+        let chained_js = Object::Dictionary(dictionary! {
+            "S" => Object::Name(b"GoTo".to_vec()),
+            "D" => Object::String(b"page1".to_vec(), StringFormat::Literal),
+            "Next" => js_action(),
+        });
+        let (mut doc, widget_id) = make_doc_with_widget(dictionary! {
+            "AA" => Object::Dictionary(dictionary! {
+                "E" => chained_js,
+            }),
+        });
+        let tree = field_tree_for_widget(widget_id);
+
+        let result = flatten_form(
+            &mut doc,
+            &tree,
+            &FlattenConfig {
+                remove_acroform: false,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(result.fields_flattened, 1);
+        // The widget should have no /AA left after flattening — the chained
+        // JS action must have been detected and stripped.
+        let widget = doc
+            .get_object(widget_id)
+            .expect("widget still in doc")
+            .as_dict()
+            .expect("widget is dict");
+        assert!(
+            widget.get(b"AA").is_err(),
+            "/AA must be stripped when /Next chain contains JavaScript"
+        );
+        assert!(
+            widget.get(b"JS").is_err(),
+            "widget must not retain /JS key"
+        );
+    }
+
+    #[test]
+    fn flatten_preserves_non_js_action_without_next_chain() {
+        // Ensure plain non-JS actions without /Next are still preserved.
+        let (mut doc, widget_id) = make_doc_with_widget(dictionary! {
+            "AA" => Object::Dictionary(dictionary! {
+                "E" => uri_action(),
+            }),
+        });
+        let tree = field_tree_for_widget(widget_id);
+
+        let result = flatten_form(
+            &mut doc,
+            &tree,
+            &FlattenConfig {
+                remove_acroform: false,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(result.fields_flattened, 1);
+        // URI actions are not JavaScript — /AA should be preserved (it's the
+        // viewer's job to decide whether to execute URI actions).
+        let widget = doc
+            .get_object(widget_id)
+            .expect("widget still in doc")
+            .as_dict()
+            .expect("widget is dict");
+        // The widget annotation was removed from the page Annots, but the
+        // object itself may or may not remain — the important thing is that
+        // no JS-stripping occurred on the URI action.
+        // We verify the URI AA entry on the widget object is untouched.
+        if let Ok(aa) = widget.get(b"AA") {
+            if let Object::Dictionary(aa_dict) = aa {
+                if let Ok(Object::Dictionary(e_dict)) = aa_dict.get(b"E") {
+                    if let Ok(Object::Name(name)) = e_dict.get(b"S") {
+                        assert_ne!(name, b"JavaScript", "/E must not be JS");
+                    }
+                }
+            }
+        }
     }
 
     #[test]

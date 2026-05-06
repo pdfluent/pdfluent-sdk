@@ -510,10 +510,18 @@ pub fn decode_xref_stream(mut stream: Stream) -> Result<(Xref, Dictionary)> {
             .and_then(parse_integer_array)
             .map_err(|_| ParseError::InvalidXref)?;
 
+        // ISO 32000-2 §7.5.8.2 Table 17: W widths are typically 1-4 bytes each.
+        // 8 bytes per field is a generous upper bound that covers every real-world
+        // xref stream while preventing multi-GB allocations from crafted PDFs
+        // (M8-PAR-02).
+        const MAX_XREF_FIELD_WIDTH: i64 = 8;
         if field_widths.len() < 3
             || field_widths[0].is_negative()
             || field_widths[1].is_negative()
             || field_widths[2].is_negative()
+            || field_widths[0] > MAX_XREF_FIELD_WIDTH
+            || field_widths[1] > MAX_XREF_FIELD_WIDTH
+            || field_widths[2] > MAX_XREF_FIELD_WIDTH
         {
             return Err(ParseError::InvalidXref.into());
         }
@@ -646,6 +654,53 @@ mod tests {
         let doc = create_document_with_texts(&[text1, text2]);
         let extracted_text = doc.extract_text(&[1, 2]);
         assert_eq!(extracted_text.unwrap(), format!("{text1}\n{text2}\n"));
+    }
+
+    #[test]
+    fn xref_stream_oversized_field_width_is_rejected() {
+        // M8-PAR-02: field_widths exceeding MAX_XREF_FIELD_WIDTH (8) must be
+        // rejected before allocation to prevent multi-GB heap requests from
+        // crafted PDFs.
+        use crate::{Dictionary, Object, Stream, xref::XrefType};
+        use super::decode_xref_stream;
+
+        let mut dict = Dictionary::new();
+        dict.set("Type", Object::Name(b"XRef".to_vec()));
+        dict.set("Size", Object::Integer(1));
+        // Field width of 999_999_999 would allocate ~1 GB without the guard.
+        dict.set(
+            "W",
+            Object::Array(vec![
+                Object::Integer(999_999_999),
+                Object::Integer(4),
+                Object::Integer(2),
+            ]),
+        );
+        let stream = Stream::new(dict, vec![]);
+        let result = decode_xref_stream(stream);
+        assert!(result.is_err(), "oversized W field must be rejected");
+    }
+
+    #[test]
+    fn xref_stream_negative_field_width_is_rejected() {
+        // Negative W values would cast to huge usize on most platforms.
+        use crate::{Dictionary, Object, Stream};
+        use super::decode_xref_stream;
+
+        let mut dict = Dictionary::new();
+        dict.set("Type", Object::Name(b"XRef".to_vec()));
+        dict.set("Size", Object::Integer(1));
+        dict.set(
+            "W",
+            Object::Array(vec![
+                Object::Integer(-1),
+                Object::Integer(4),
+                Object::Integer(2),
+            ]),
+        );
+        let stream = Stream::new(dict, vec![]);
+        let result = decode_xref_stream(stream);
+        assert!(result.is_err(), "negative W field must be rejected");
     }
 
     #[test]

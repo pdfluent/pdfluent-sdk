@@ -39,10 +39,20 @@ impl<'a> SigDict<'a> {
     }
 
     /// Return the /ByteRange array as `[offset1, len1, offset2, len2]`.
+    ///
+    /// Returns `None` if the array is missing, malformed, contains fewer than
+    /// four integers, or contains any negative value — a negative byte-range
+    /// entry cannot represent a valid file offset or length and would silently
+    /// wrap to a huge `usize` on most platforms (M8-SEC-01).
     pub fn byte_range(&self) -> Option<[usize; 4]> {
         let arr = self.dict.get::<Array<'_>>(BYTERANGE)?;
         let vals: Vec<i64> = arr.iter::<i64>().collect();
         if vals.len() != 4 {
+            return None;
+        }
+        // Reject negative offsets/lengths: they cannot be valid and would
+        // cast to huge usize values, corrupting byte-range verification.
+        if vals.iter().any(|&v| v < 0) {
             return None;
         }
         Some([
