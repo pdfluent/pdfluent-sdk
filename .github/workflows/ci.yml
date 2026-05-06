@@ -44,10 +44,14 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    # Linker `ld` runs out of memory on the 7 GB github-hosted runner when
-    # linking ~30 test binaries with full debug info in parallel
-    # (signal 7 / Bus error). Drop debug info for the test profile and
-    # serialize the link step.
+    # OOM workaround (issue #1481): the linker `ld` exhausts the 7 GB
+    # github-hosted runner when linking ~30 test binaries with full debug
+    # info in parallel (signal 7 / Bus error).
+    #
+    # Mitigation: disable debug info in test profile + serialize linking.
+    # Long-term: corpus-heavy and benchmark workflows run on the self-hosted
+    # VPS (30 GB RAM) where this workaround is not needed.  This job stays
+    # on ubuntu-latest to keep the feedback loop fast for pull requests.
     env:
       CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_BUILD_JOBS: "2"
