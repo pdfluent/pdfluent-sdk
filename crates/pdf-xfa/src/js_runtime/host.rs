@@ -535,6 +535,69 @@ impl HostBindings {
         }
 
         let parents = build_parent_map(form, self.root_id);
+
+        // Phase D-η resolution. The implicit-identifier scope walk has three
+        // passes; the first hit wins. Each pass walks scopes outward from
+        // `current_id` toward the form root. The split exists because real
+        // XFA forms can have multiple subforms sharing a name (e.g. an
+        // empty layout-stub copy plus the populated content copy, or an
+        // enclosing `F` whose script references its own name). A naïve
+        // first-DFS-hit returned the wrong copy in both directions.
+        //
+        // Pass 1: at each scope level, run children-biased descendant DFS
+        // (see `find_named_descendant`). If the chosen candidate has direct
+        // children, accept it — it is the "real" populated content node.
+        //
+        // Pass 2: if Pass 1 only ever yielded empty stubs, look for a
+        // same-name ancestor (including `current_id` itself). XFA's scope
+        // rules permit `F` inside `F` to resolve to the enclosing `F`; this
+        // pass catches that case without overriding the populated-descendant
+        // heuristic.
+        //
+        // Pass 3: if Passes 1 & 2 both turned up nothing, fall back to the
+        // first candidate at any scope — even an empty stub — so script
+        // chains that previously resolved to a stub still resolve. This
+        // preserves backward compatibility for forms that depend on the
+        // pre-D-η behaviour.
+        let mut scope = Some(current_id);
+        let mut depth = 0usize;
+        while let Some(scope_id) = scope {
+            if depth > MAX_SOM_DEPTH {
+                return ResolveOutcome::BindingError;
+            }
+            if scope_id.0 >= form.nodes.len() {
+                return ResolveOutcome::BindingError;
+            }
+            if let Some(node_id) = find_named_descendant(form, scope_id, name, MAX_SOM_DEPTH) {
+                if !form.get(node_id).children.is_empty() {
+                    return ResolveOutcome::Ok(vec![node_id]);
+                }
+            }
+            scope = parents.get(&scope_id).copied();
+            depth += 1;
+        }
+
+        // Pass 2: ancestor self-name walk. Only reached when no scope's
+        // children-biased descendant DFS produced a populated node.
+        let mut scope = Some(current_id);
+        let mut depth = 0usize;
+        while let Some(scope_id) = scope {
+            if depth > MAX_SOM_DEPTH {
+                return ResolveOutcome::BindingError;
+            }
+            if scope_id.0 >= form.nodes.len() {
+                return ResolveOutcome::BindingError;
+            }
+            if form.get(scope_id).name == name {
+                return ResolveOutcome::Ok(vec![scope_id]);
+            }
+            scope = parents.get(&scope_id).copied();
+            depth += 1;
+        }
+
+        // Pass 3: accept a stub descendant as last resort — the form may
+        // genuinely intend an empty-children node (e.g. for `.somExpression`
+        // or `.presence` reads on a placeholder).
         let mut scope = Some(current_id);
         let mut depth = 0usize;
         while let Some(scope_id) = scope {
@@ -1425,13 +1488,68 @@ fn collect_descendants(form: &FormTree, node_id: FormNodeId, out: &mut Vec<FormN
     }
 }
 
+/// Maximum same-name candidates collected during one bare-identifier
+/// resolution. XFA forms commonly include multiple subforms with the same
+/// `name` (e.g. layout-only stubs, signed-data placeholders, real content).
+/// 32 is far beyond any real corpus we have observed.
+const MAX_RESOLVE_CANDIDATES: usize = 32;
+
+/// Locate a same-name descendant of `scope_id`, biased toward the candidate
+/// most likely to be the script-meant target.
+///
+/// XFA Spec 3.3 §S15 implicit identifier resolution: when a script reads
+/// `Foo.Bar.Baz`, the leading `Foo` walks the scope chain upward and runs
+/// a depth-first search for a descendant named `Foo` at each scope. Real
+/// XFA templates frequently contain multiple subforms named `Foo` —
+/// typically one empty layout-stub plus one populated content node —
+/// because authoring tools split layout and data definitions. A naive
+/// first-hit DFS lands on whichever appears first in the merged form
+/// tree, which is usually the empty stub.
+///
+/// We collect up to [`MAX_RESOLVE_CANDIDATES`] same-name descendants and
+/// pick the one with the most direct children, breaking ties by encounter
+/// order (DFS preorder). This keeps single-candidate behaviour identical
+/// to the prior first-hit semantics while disambiguating the multi-stub
+/// case to the populated branch.
+///
+/// Phase D-η: name-collision tie-break for the implicit resolver.
 fn find_named_descendant(
     form: &FormTree,
     scope_id: FormNodeId,
     name: &str,
     max_depth: usize,
 ) -> Option<FormNodeId> {
-    find_named_descendant_inner(form, scope_id, name, 0, max_depth)
+    let mut candidates: Vec<FormNodeId> = Vec::new();
+    find_named_descendant_inner(form, scope_id, name, 0, max_depth, &mut candidates);
+    if candidates.is_empty() {
+        return None;
+    }
+    // Phase D-η refinement (Codex review feedback): when same-name
+    // candidates include a `Field` and a sibling subform/container,
+    // prefer the Field. Fields have zero children, so naïve children-
+    // bias would pick the container — but bare `Amount.rawValue` reads
+    // and writes mean the field, not the container. Picking the
+    // container would silently return null for reads and refuse writes
+    // via `set_raw_value`. Preserve first-DFS-hit semantics among
+    // Field candidates so the pre-D-η field-resolution behaviour is
+    // unchanged when a field candidate exists at all.
+    for &cand in &candidates {
+        if matches!(form.get(cand).node_type, FormNodeType::Field { .. }) {
+            return Some(cand);
+        }
+    }
+    // No Field candidates — apply children-bias among container nodes
+    // to disambiguate populated content from empty layout-stub siblings.
+    let mut best = candidates[0];
+    let mut best_count = form.get(best).children.len();
+    for &cand in &candidates[1..] {
+        let count = form.get(cand).children.len();
+        if count > best_count {
+            best = cand;
+            best_count = count;
+        }
+    }
+    Some(best)
 }
 
 fn find_named_descendant_inner(
@@ -1440,20 +1558,24 @@ fn find_named_descendant_inner(
     name: &str,
     depth: usize,
     max_depth: usize,
-) -> Option<FormNodeId> {
-    if depth >= max_depth {
-        return None;
+    candidates: &mut Vec<FormNodeId>,
+) {
+    if depth >= max_depth || candidates.len() >= MAX_RESOLVE_CANDIDATES {
+        return;
     }
     for &child_id in &form.get(node_id).children {
-        if form.get(child_id).name == name {
-            return Some(child_id);
+        if candidates.len() >= MAX_RESOLVE_CANDIDATES {
+            return;
         }
-        if let Some(found) = find_named_descendant_inner(form, child_id, name, depth + 1, max_depth)
-        {
-            return Some(found);
+        if form.get(child_id).name == name {
+            candidates.push(child_id);
+            // Mirror prior semantics: do not recurse INTO a matched node;
+            // continue scanning siblings so all top-level same-name hits
+            // at this scope are visible to the bias selection.
+        } else {
+            find_named_descendant_inner(form, child_id, name, depth + 1, max_depth, candidates);
         }
     }
-    None
 }
 
 fn build_parent_map(form: &FormTree, root_id: FormNodeId) -> HashMap<FormNodeId, FormNodeId> {
