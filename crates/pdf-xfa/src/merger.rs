@@ -140,9 +140,61 @@ impl<'a> FormMerger<'a> {
             self.apply_match_template_bindings(template_elem);
         }
 
+        // Phase D-ι: collect <variables> <script name="X"> blocks at the root
+        // subform level. XFA 3.3 §5.5 — these named scripts define
+        // form-level objects whose top-level `var`/`function` declarations
+        // are accessible from event/calculate scripts via `<scriptName>.X`.
+        // Sandboxed JS runtime evaluates these once per document.
+        self.collect_variables_scripts(template_elem);
         let (root_id, _trailing) = self.parse_node(template_elem, None, true)?;
 
         Ok((self.form_tree, root_id))
+    }
+
+    /// Phase D-ι: walk `<variables>` blocks below the template root and
+    /// store every named `<script>` body on the form tree. We scan the
+    /// root subform plus its direct children — XFA spec allows variables
+    /// at any subform level, but in practice form authors place them on
+    /// the form root, so deeper recursion is deferred until the corpus
+    /// shows otherwise.
+    fn collect_variables_scripts(&mut self, template_elem: Node<'_, '_>) {
+        // Find the root <subform> child of <template>.
+        let Some(root_subform) = find_first_child_by_name(template_elem, "subform") else {
+            return;
+        };
+        // Search root subform + one level of subform children for <variables>.
+        let mut subforms_to_scan = vec![root_subform];
+        for child in root_subform.children().filter(|n| n.is_element()) {
+            if child.tag_name().name() == "subform" {
+                subforms_to_scan.push(child);
+            }
+        }
+        for subform in subforms_to_scan {
+            for child in subform.children().filter(|n| n.is_element()) {
+                if child.tag_name().name() != "variables" {
+                    continue;
+                }
+                for var_child in child.children().filter(|n| n.is_element()) {
+                    if var_child.tag_name().name() != "script" {
+                        continue;
+                    }
+                    let Some(name) = attr(var_child, "name") else {
+                        continue;
+                    };
+                    let body: String = var_child
+                        .children()
+                        .filter(|n| n.is_text())
+                        .filter_map(|n| n.text())
+                        .collect::<String>();
+                    if body.trim().is_empty() {
+                        continue;
+                    }
+                    self.form_tree
+                        .variables_scripts
+                        .push((name.to_string(), body));
+                }
+            }
+        }
     }
 
     /// XFA Spec 3.3 §4.4 p176 — matchTemplate pre-pass.

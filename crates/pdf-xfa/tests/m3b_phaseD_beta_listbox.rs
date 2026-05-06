@@ -403,3 +403,152 @@ fn bound_item_does_not_mutate_listbox_items() {
     assert_eq!(meta.save_items, vec!["A".to_string()]);
     assert!(meta.runtime_listbox_items.is_empty());
 }
+
+#[test]
+fn variables_script_global_is_visible_to_event_scripts() {
+    // Phase D-ι regression: a <variables> <script name="X"> block's
+    // top-level var/function declarations must be visible to subsequent
+    // event/calculate scripts as `X.<topLevelDecl>`. Without D-ι, the
+    // namespace is undefined and chained access throws.
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    tree.variables_scripts.push((
+        "Helpers".into(),
+        r#"
+var STATES = ["AK","AL","AZ"];
+function greet() { return "hi"; }
+"#
+        .into(),
+    ));
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        r#"
+this.rawValue = Helpers.STATES[1] + ":" + Helpers.greet();
+"#,
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "AL:hi");
+    assert_eq!(outcome.js_runtime_errors, 0);
+    assert_eq!(outcome.js_executed, 1);
+}
+
+#[test]
+fn variables_script_globals_clear_between_documents() {
+    // Phase D-ι regression: registered <variables> namespaces must not
+    // survive `reset_per_document`. Otherwise a previous flatten could
+    // leak its `Helpers` object into the next.
+    let mut runtime = QuickJsRuntime::new().expect("quickjs runtime");
+
+    // Document 1: register `Helpers`, run a script that uses it.
+    {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        tree.variables_scripts
+            .push(("Helpers".into(), "var X = 42;".into()));
+        let out = add_field(&mut tree, root, "Out", "");
+        add_js_script(
+            &mut tree,
+            out,
+            "calculate",
+            "this.rawValue = String(Helpers.X);",
+        );
+        apply_dynamic_scripts_with_runtime(
+            &mut tree,
+            root,
+            JsExecutionMode::SandboxedRuntime,
+            &mut runtime,
+        )
+        .expect("doc1 dispatch");
+        assert_eq!(field_value(&tree, out), "42");
+    }
+
+    // Document 2: NO `Helpers` registered. Script reading `Helpers` must
+    // see undefined (D-ι globals from doc1 must have been cleared).
+    {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let out = add_field(&mut tree, root, "Out", "");
+        add_js_script(
+            &mut tree,
+            out,
+            "calculate",
+            "this.rawValue = (typeof Helpers === \"undefined\") ? \"clean\" : \"leaked\";",
+        );
+        apply_dynamic_scripts_with_runtime(
+            &mut tree,
+            root,
+            JsExecutionMode::SandboxedRuntime,
+            &mut runtime,
+        )
+        .expect("doc2 dispatch");
+        assert_eq!(field_value(&tree, out), "clean");
+    }
+}
+
+#[test]
+fn variables_script_runaway_body_does_not_hang_flatten() {
+    // Phase D-ι, Codex P1 review on PR #1499: a malicious or buggy
+    // `<variables>` body containing `while (true) {}` must not be able
+    // to hang flatten. The script-time deadline + interrupt handler
+    // applied to event scripts must also apply to variables-script
+    // registration in `set_form_handle`.
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    tree.variables_scripts
+        .push(("RogueScript".into(), "while (true) {}".into()));
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "this.rawValue = (typeof RogueScript === \"undefined\") ? \"absorbed\" : \"leaked\";",
+    );
+
+    let start = std::time::Instant::now();
+    let outcome = run_sandbox(&mut tree, root);
+    let elapsed = start.elapsed();
+
+    // Default per-script time budget is 250 ms; with a small overhead the
+    // entire dispatch should finish well under a few seconds. We assert a
+    // generous cap so noisy CI runners do not flake.
+    assert!(
+        elapsed.as_secs() < 10,
+        "flatten took too long despite runaway variables script: {:?}",
+        elapsed
+    );
+    // The runaway script timed out so its namespace was not registered;
+    // event scripts see `RogueScript === undefined` and the calculate
+    // script writes "absorbed".
+    assert_eq!(field_value(&tree, out), "absorbed");
+    // The interrupt may bubble up as a runtime error counted at
+    // registration time — what matters is no hang and no leak.
+    assert_eq!(outcome.js_executed, 1);
+}
+
+#[test]
+fn variables_script_oversized_body_is_rejected() {
+    // Phase D-ι, Codex P1 review on PR #1499: variables-script bodies
+    // exceeding MAX_SCRIPT_BODY_BYTES must be rejected, mirroring the
+    // execute_script path.
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let huge = "var x = 1;\n".repeat(64 * 1024);
+    tree.variables_scripts.push(("Huge".into(), huge));
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "this.rawValue = (typeof Huge === \"undefined\") ? \"absorbed\" : \"leaked\";",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "absorbed");
+    assert_eq!(outcome.js_executed, 1);
+}
