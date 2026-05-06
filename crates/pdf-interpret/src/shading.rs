@@ -3,9 +3,11 @@
 #![allow(clippy::needless_range_loop)]
 
 use crate::CacheKey;
+use crate::WarningSinkFn;
 use crate::cache::Cache;
 use crate::color::{ColorComponents, ColorSpace};
 use crate::function::{Function, Values, interpolate};
+use crate::util::decode_or_warn;
 use crate::util::{Float32Ext, PointExt, RectExt};
 use kurbo::{Affine, BezPath, CubicBez, ParamCurve, Point, Shape};
 use log::warn;
@@ -122,12 +124,12 @@ pub struct Shading {
 }
 
 impl Shading {
-    pub(crate) fn new(dict: &Dict<'_>, stream: Option<&Stream<'_>>, cache: &Cache) -> Option<Self> {
+    pub(crate) fn new(dict: &Dict<'_>, stream: Option<&Stream<'_>>, cache: &Cache, warning_sink: &WarningSinkFn) -> Option<Self> {
         let cache_key = dict.cache_key();
 
         let shading_num = dict.get::<u8>(SHADING_TYPE)?;
 
-        let color_space = ColorSpace::new(dict.get(COLORSPACE)?, cache)?;
+        let color_space = ColorSpace::new(dict.get(COLORSPACE)?, cache, warning_sink)?;
 
         let shading_type = match shading_num {
             1 => {
@@ -136,7 +138,7 @@ impl Shading {
                     .get::<[f64; 6]>(MATRIX)
                     .map(Affine::new)
                     .unwrap_or_default();
-                let function = read_function(dict, &color_space)?;
+                let function = read_function(dict, &color_space, warning_sink)?;
 
                 ShadingType::FunctionBased {
                     domain,
@@ -146,7 +148,7 @@ impl Shading {
             }
             2 | 3 => {
                 let domain = dict.get::<[f32; 2]>(DOMAIN).unwrap_or([0.0, 1.0]);
-                let function = read_function(dict, &color_space)?;
+                let function = read_function(dict, &color_space, warning_sink)?;
                 let extend = dict.get::<[bool; 2]>(EXTEND).unwrap_or([false, false]);
                 let (coords, invalid) = if shading_num == 2 {
                     let read = dict.get::<[f32; 4]>(COORDS)?;
@@ -177,11 +179,11 @@ impl Shading {
             }
             4 => {
                 let stream = stream?;
-                let stream_data = stream.decoded().ok()?;
+                let stream_data = decode_or_warn(stream, warning_sink)?;
                 let bp_coord = dict.get::<u8>(BITS_PER_COORDINATE)?;
                 let bp_comp = dict.get::<u8>(BITS_PER_COMPONENT)?;
                 let bpf = dict.get::<u8>(BITS_PER_FLAG)?;
-                let function = read_function(dict, &color_space);
+                let function = read_function(dict, &color_space, warning_sink);
                 let decode = dict
                     .get::<Array<'_>>(DECODE)?
                     .iter::<f32>()
@@ -203,10 +205,10 @@ impl Shading {
             }
             5 => {
                 let stream = stream?;
-                let stream_data = stream.decoded().ok()?;
+                let stream_data = decode_or_warn(stream, warning_sink)?;
                 let bp_coord = dict.get::<u8>(BITS_PER_COORDINATE)?;
                 let bp_comp = dict.get::<u8>(BITS_PER_COMPONENT)?;
-                let function = read_function(dict, &color_space);
+                let function = read_function(dict, &color_space, warning_sink);
                 let decode = dict
                     .get::<Array<'_>>(DECODE)?
                     .iter::<f32>()
@@ -229,11 +231,11 @@ impl Shading {
             }
             6 => {
                 let stream = stream?;
-                let stream_data = stream.decoded().ok()?;
+                let stream_data = decode_or_warn(stream, warning_sink)?;
                 let bp_coord = dict.get::<u8>(BITS_PER_COORDINATE)?;
                 let bp_comp = dict.get::<u8>(BITS_PER_COMPONENT)?;
                 let bpf = dict.get::<u8>(BITS_PER_FLAG)?;
-                let function = read_function(dict, &color_space);
+                let function = read_function(dict, &color_space, warning_sink);
                 let decode = dict
                     .get::<Array<'_>>(DECODE)?
                     .iter::<f32>()
@@ -252,11 +254,11 @@ impl Shading {
             }
             7 => {
                 let stream = stream?;
-                let stream_data = stream.decoded().ok()?;
+                let stream_data = decode_or_warn(stream, warning_sink)?;
                 let bp_coord = dict.get::<u8>(BITS_PER_COORDINATE)?;
                 let bp_comp = dict.get::<u8>(BITS_PER_COMPONENT)?;
                 let bpf = dict.get::<u8>(BITS_PER_FLAG)?;
-                let function = read_function(dict, &color_space);
+                let function = read_function(dict, &color_space, warning_sink);
                 let decode = dict
                     .get::<Array<'_>>(DECODE)?
                     .iter::<f32>()
@@ -1024,11 +1026,11 @@ fn read_tensor_product_patch_mesh(
     )
 }
 
-fn read_function(dict: &Dict<'_>, color_space: &ColorSpace) -> Option<ShadingFunction> {
+fn read_function(dict: &Dict<'_>, color_space: &ColorSpace, warning_sink: &WarningSinkFn) -> Option<ShadingFunction> {
     if let Some(arr) = dict.get::<Array<'_>>(FUNCTION) {
         let arr: Option<SmallVec<_>> = arr
             .iter::<Object<'_>>()
-            .map(|o| Function::new(&o))
+            .map(|o| Function::new_with_sink(&o, warning_sink))
             .collect();
         let arr = arr?;
 
@@ -1040,7 +1042,7 @@ fn read_function(dict: &Dict<'_>, color_space: &ColorSpace) -> Option<ShadingFun
 
         Some(ShadingFunction::Multiple(arr))
     } else if let Some(obj) = dict.get::<Object<'_>>(FUNCTION) {
-        Some(ShadingFunction::Single(Function::new(&obj)?))
+        Some(ShadingFunction::Single(Function::new_with_sink(&obj, warning_sink)?))
     } else {
         None
     }

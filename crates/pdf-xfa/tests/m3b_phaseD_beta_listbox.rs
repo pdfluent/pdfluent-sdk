@@ -74,6 +74,23 @@ fn one_field_form() -> (FormTree, FormNodeId, FormNodeId) {
     (tree, root, field)
 }
 
+fn field_value(tree: &FormTree, node_id: FormNodeId) -> &str {
+    match &tree.get(node_id).node_type {
+        FormNodeType::Field { value } => value,
+        _ => panic!("expected field"),
+    }
+}
+
+/// Form with a primary field plus a separate `Out` sink the test scripts
+/// write their result to. Returned tuple is `(tree, root, primary, out)`.
+fn one_field_with_out() -> (FormTree, FormNodeId, FormNodeId, FormNodeId) {
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let primary = add_field(&mut tree, root, "Primary", "");
+    let out = add_field(&mut tree, root, "Out", "");
+    (tree, root, primary, out)
+}
+
 #[test]
 fn clear_items_on_empty_list_succeeds() {
     let (mut tree, root, field) = one_field_form();
@@ -235,4 +252,157 @@ fn mutation_cap_blocks_add_item_at_max_mutations() {
     let metadata = host.take_metadata();
     assert_eq!(metadata.list_writes, MAX_MUTATIONS_PER_DOC);
     assert_eq!(metadata.binding_errors, 1);
+}
+
+#[test]
+fn xfa_event_newtext_defaults_to_empty_string() {
+    // Phase D-δ.2 regression: scripts that read xfa.event.newText (or
+    // event.newText, prevText, change, fullText, selStart, selEnd) on
+    // activities where no actual change event fired must see deterministic
+    // defaults instead of throwing "cannot read property 'X' of undefined".
+    let (mut tree, root, field) = one_field_form();
+    add_js_script(
+        &mut tree,
+        field,
+        "calculate",
+        r#"
+var nt  = xfa.event.newText;
+var pt  = xfa.event.prevText;
+var ch  = xfa.event.change;
+var ft  = xfa.event.fullText;
+var ss  = xfa.event.selStart;
+var se  = xfa.event.selEnd;
+this.rawValue = "[" + nt + "][" + pt + "][" + ch + "][" + ft + "][" + ss + "][" + se + "]";
+"#,
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, field), "[][][][][0][0]");
+    assert_eq!(outcome.js_runtime_errors, 0);
+    assert_eq!(outcome.js_executed, 1);
+}
+
+#[test]
+fn bound_item_returns_save_value_for_known_display() {
+    let (mut tree, root, _primary, out) = one_field_with_out();
+    let listbox = add_field(&mut tree, root, "Listbox", "");
+    {
+        let meta = tree.meta_mut(listbox);
+        meta.display_items = vec!["ALPHA".into(), "BETA".into(), "GAMMA".into()];
+        meta.save_items = vec!["A".into(), "B".into(), "G".into()];
+    }
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Listbox.boundItem(\"BETA\");",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "B");
+    assert_eq!(outcome.js_runtime_errors, 0);
+    assert_eq!(outcome.js_executed, 1);
+}
+
+#[test]
+fn bound_item_returns_passthrough_for_unknown_display() {
+    let (mut tree, root, _primary, out) = one_field_with_out();
+    let listbox = add_field(&mut tree, root, "Listbox", "");
+    {
+        let meta = tree.meta_mut(listbox);
+        meta.display_items = vec!["ALPHA".into(), "BETA".into()];
+        meta.save_items = vec!["A".into(), "B".into()];
+    }
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Listbox.boundItem(\"UNKNOWN\");",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "UNKNOWN");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn bound_item_handles_empty_input_safely() {
+    let (mut tree, root, _primary, out) = one_field_with_out();
+    let listbox = add_field(&mut tree, root, "Listbox", "");
+    {
+        let meta = tree.meta_mut(listbox);
+        meta.display_items = vec!["ALPHA".into()];
+        meta.save_items = vec!["A".into()];
+    }
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = String(Listbox.boundItem(xfa.event.newText));",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    // xfa.event.newText defaults to "" → boundItem("") returns "" passthrough.
+    assert_eq!(field_value(&tree, out), "");
+    assert_eq!(outcome.js_runtime_errors, 0);
+    assert_eq!(outcome.js_executed, 1);
+}
+
+#[test]
+fn bound_item_prefers_runtime_items_over_static() {
+    let (mut tree, root, _primary, out) = one_field_with_out();
+    let listbox = add_field(&mut tree, root, "Listbox", "");
+    {
+        let meta = tree.meta_mut(listbox);
+        meta.display_items = vec!["ALPHA".into()];
+        meta.save_items = vec!["A".into()];
+    }
+    add_js_script(
+        &mut tree,
+        listbox,
+        "calculate",
+        r#"
+this.clearItems();
+this.addItem("ALPHA", "RUNTIME_A");
+"#,
+    );
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Listbox.boundItem(\"ALPHA\");",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "RUNTIME_A");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn bound_item_does_not_mutate_listbox_items() {
+    let (mut tree, root, _primary, out) = one_field_with_out();
+    let listbox = add_field(&mut tree, root, "Listbox", "");
+    {
+        let meta = tree.meta_mut(listbox);
+        meta.display_items = vec!["ALPHA".into()];
+        meta.save_items = vec!["A".into()];
+    }
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Listbox.boundItem(\"ALPHA\");",
+    );
+
+    let _ = run_sandbox(&mut tree, root);
+
+    let meta = tree.meta(listbox);
+    assert_eq!(meta.display_items, vec!["ALPHA".to_string()]);
+    assert_eq!(meta.save_items, vec!["A".to_string()]);
+    assert!(meta.runtime_listbox_items.is_empty());
 }

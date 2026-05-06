@@ -6,7 +6,8 @@ use crate::font::{
     Encoding, FallbackFontQuery, UNITS_PER_EM, glyph_name_to_unicode, normalized_glyph_name,
     read_to_unicode, synthesize_unicode_map_from_encoding,
 };
-use crate::{CMapResolverFn, CacheKey, FontResolverFn};
+use crate::util::decode_or_warn;
+use crate::{CMapResolverFn, CacheKey, FontResolverFn, WarningSinkFn};
 use kurbo::BezPath;
 use log::warn;
 use pdf_font::cmap::{BfString, CMap};
@@ -25,10 +26,11 @@ impl Type1Font {
         dict: &Dict<'_>,
         resolver: &FontResolverFn,
         cmap_resolver: &CMapResolverFn,
+        warning_sink: &WarningSinkFn,
     ) -> Option<Self> {
         let cache_key = dict.cache_key();
 
-        let to_unicode = read_to_unicode(dict, cmap_resolver);
+        let to_unicode = read_to_unicode(dict, cmap_resolver, warning_sink);
         let encoding_unicode = to_unicode
             .is_none()
             .then(|| synthesize_unicode_map_from_encoding(dict))
@@ -61,13 +63,13 @@ impl Type1Font {
         };
 
         let inner = if is_cff(dict) {
-            if let Some(cff) = CffKind::new(dict) {
+            if let Some(cff) = CffKind::new(dict, warning_sink) {
                 Self(cache_key, Kind::Cff(cff), to_unicode, encoding_unicode)
             } else {
                 return fallback();
             }
         } else if is_type1(dict) {
-            if let Some(f) = Type1Kind::new(dict) {
+            if let Some(f) = Type1Kind::new(dict, warning_sink) {
                 Self(cache_key, Kind::Type1(f), to_unicode, encoding_unicode)
             } else {
                 return fallback();
@@ -216,10 +218,10 @@ struct Type1Kind {
 }
 
 impl Type1Kind {
-    fn new(dict: &Dict<'_>) -> Option<Self> {
+    fn new(dict: &Dict<'_>, warning_sink: &WarningSinkFn) -> Option<Self> {
         let descriptor = dict.get::<Dict<'_>>(FONT_DESC)?;
         let data = descriptor.get::<Stream<'_>>(FONT_FILE)?;
-        let font = Type1FontBlob::new(Arc::new(data.decoded().ok()?.to_vec()))?;
+        let font = Type1FontBlob::new(Arc::new(decode_or_warn(&data, warning_sink)?.to_vec()))?;
 
         let (encoding, encodings) = read_encoding(dict);
         let (widths, missing_width) = read_widths(dict, &descriptor)?;
@@ -327,10 +329,10 @@ struct CffKind {
 }
 
 impl CffKind {
-    fn new(dict: &Dict<'_>) -> Option<Self> {
+    fn new(dict: &Dict<'_>, warning_sink: &WarningSinkFn) -> Option<Self> {
         let descriptor = dict.get::<Dict<'_>>(FONT_DESC)?;
         let data = descriptor.get::<Stream<'_>>(FONT_FILE3)?;
-        let font = CffFontBlob::new(Arc::new(data.decoded().ok()?.to_vec()))?;
+        let font = CffFontBlob::new(Arc::new(decode_or_warn(&data, warning_sink)?.to_vec()))?;
 
         let (encoding, encodings) = read_encoding(dict);
         let (widths, missing_width) = read_widths(dict, &descriptor)?;

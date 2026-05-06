@@ -1,4 +1,6 @@
+use crate::WarningSinkFn;
 use crate::function::{Clamper, Values};
+use crate::util::decode_or_warn;
 use log::error;
 use pdf_syntax::content;
 use pdf_syntax::object::Number;
@@ -18,13 +20,13 @@ pub(crate) struct Type4 {
 
 impl Type4 {
     /// Create a new type 4 function.
-    pub(crate) fn new(stream: &Stream<'_>) -> Option<Self> {
+    pub(crate) fn new(stream: &Stream<'_>, warning_sink: &WarningSinkFn) -> Option<Self> {
         let dict = stream.dict().clone();
         let clamper = Clamper::new(&dict)?;
 
         Some(Self {
             clamper,
-            program: parse_procedure(&stream.decoded().ok()?)?,
+            program: parse_procedure(&decode_or_warn(stream, warning_sink)?)?,
         })
     }
 

@@ -1,4 +1,6 @@
+use crate::WarningSinkFn;
 use crate::function::{Clamper, TupleVec, Values, interpolate};
+use crate::util::decode_or_warn;
 use log::{error, warn};
 use pdf_syntax::bit_reader::BitReader;
 use pdf_syntax::object::Array;
@@ -21,7 +23,7 @@ pub(crate) struct Type0 {
 
 impl Type0 {
     /// Create a new type 0 function.
-    pub(crate) fn new(stream: &Stream<'_>) -> Option<Self> {
+    pub(crate) fn new(stream: &Stream<'_>, warning_sink: &WarningSinkFn) -> Option<Self> {
         let dict = stream.dict();
         let bits_per_sample = dict.get::<u8>(BITS_PER_SAMPLE)?;
 
@@ -52,7 +54,7 @@ impl Type0 {
         let decode = dict.get::<TupleVec>(DECODE).unwrap_or(range.clone());
 
         let mut data = {
-            let decoded = stream.decoded().ok()?;
+            let decoded = decode_or_warn(stream, warning_sink)?;
             let mut buf = vec![];
             let mut reader = BitReader::new(&decoded);
 

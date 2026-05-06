@@ -5,8 +5,8 @@ use crate::font::{
     Encoding, FallbackFontQuery, FontFlags, glyph_name_to_unicode, read_to_unicode,
     strip_subset_prefix, synthesize_unicode_map_from_encoding, unicode_from_name,
 };
-use crate::util::OptionLog;
-use crate::{CMapResolverFn, CacheKey, FontResolverFn};
+use crate::util::{OptionLog, decode_or_warn};
+use crate::{CMapResolverFn, CacheKey, FontResolverFn, WarningSinkFn};
 use kurbo::BezPath;
 use log::warn;
 use pdf_font::cmap::{BfString, CMap};
@@ -53,15 +53,16 @@ impl TrueTypeFont {
         dict: &Dict<'_>,
         font_resolver: &FontResolverFn,
         cmap_resolver: &CMapResolverFn,
+        warning_sink: &WarningSinkFn,
     ) -> Option<Self> {
         let cache_key = dict.cache_key();
-        let to_unicode = read_to_unicode(dict, cmap_resolver);
+        let to_unicode = read_to_unicode(dict, cmap_resolver, warning_sink);
         let encoding_unicode = to_unicode
             .is_none()
             .then(|| synthesize_unicode_map_from_encoding(dict))
             .flatten();
 
-        if let Some(embedded) = EmbeddedKind::new(dict) {
+        if let Some(embedded) = EmbeddedKind::new(dict, warning_sink) {
             return Some(Self {
                 cache_key,
                 kind: Kind::Embedded(embedded),
@@ -326,7 +327,7 @@ struct EmbeddedKind {
 }
 
 impl EmbeddedKind {
-    fn new(dict: &Dict<'_>) -> Option<Self> {
+    fn new(dict: &Dict<'_>, warning_sink: &WarningSinkFn) -> Option<Self> {
         let descriptor = dict.get::<Dict<'_>>(FONT_DESC).unwrap_or_default();
 
         let font_flags = descriptor.get::<u32>(FLAGS).and_then(FontFlags::from_bits);
@@ -335,7 +336,7 @@ impl EmbeddedKind {
         let (encoding, differences) = read_encoding(dict);
         let base_font = descriptor
             .get::<Stream<'_>>(FONT_FILE2)
-            .and_then(|s| s.decoded().ok())
+            .and_then(|s| decode_or_warn(&s, warning_sink))
             .and_then(|d| OpenTypeFontBlob::new(Arc::new(d.to_vec()), 0))?;
 
         let mut glyph_names = HashMap::new();

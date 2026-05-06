@@ -8,7 +8,8 @@ use crate::font::Glyph;
 use crate::interpret::state::{ActiveTransferFunction, State};
 use crate::shading::Shading;
 use crate::soft_mask::SoftMask;
-use crate::util::{Float32Ext, RectExt, hash128};
+use crate::util::{Float32Ext, RectExt, decode_or_warn, hash128};
+use crate::WarningSinkFn;
 use crate::{BlendMode, CacheKey, ClipPath, GlyphDrawMode, Image, PathDrawMode};
 use crate::{FillRule, InterpreterSettings, Paint, interpret};
 use kurbo::{Affine, BezPath, Rect, Shape};
@@ -45,6 +46,7 @@ impl<'a> Pattern<'a> {
                 &dict,
                 &ctx.object_cache,
                 ctx.get().graphics_state.non_stroke_alpha,
+                &ctx.settings.warning_sink,
             )?))
         } else if let Some(stream) = object.clone().into_stream() {
             Some(Self::Tiling(Box::new(TilingPattern::new(
@@ -96,11 +98,11 @@ pub struct ShadingPattern {
 }
 
 impl ShadingPattern {
-    pub(crate) fn new(dict: &Dict<'_>, cache: &Cache, opacity: f32) -> Option<Self> {
+    pub(crate) fn new(dict: &Dict<'_>, cache: &Cache, opacity: f32, warning_sink: &WarningSinkFn) -> Option<Self> {
         let shading = dict.get::<Object<'_>>(SHADING).and_then(|o| {
             let (dict, stream) = dict_or_stream(&o)?;
 
-            Shading::new(&dict, stream.as_ref(), cache)
+            Shading::new(&dict, stream.as_ref(), cache, warning_sink)
         })?;
         let matrix = dict
             .get::<[f64; 6]>(MATRIX)
@@ -255,7 +257,7 @@ impl<'a> TilingPattern<'a> {
             state,
         );
 
-        let decoded = self.stream.decoded().ok()?;
+        let decoded = decode_or_warn(&self.stream, &self.settings.warning_sink)?;
         let resources = Resources::from_parent(
             self.stream.dict().get(RESOURCES).unwrap_or_default(),
             self.parent_resources.clone(),

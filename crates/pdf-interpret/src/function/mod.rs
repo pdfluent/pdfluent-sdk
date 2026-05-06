@@ -8,6 +8,7 @@ mod type2;
 mod type3;
 mod type4;
 
+use crate::WarningSinkFn;
 use crate::function::type0::Type0;
 use crate::function::type2::Type2;
 use crate::function::type3::Type3;
@@ -38,13 +39,18 @@ pub struct Function(Arc<FunctionType>);
 impl Function {
     /// Create a new function.
     pub fn new(obj: &Object<'_>) -> Option<Self> {
+        let no_op: WarningSinkFn = std::sync::Arc::new(|_: crate::InterpreterWarning| {});
+        Self::new_with_sink(obj, &no_op)
+    }
+
+    pub(crate) fn new_with_sink(obj: &Object<'_>, warning_sink: &WarningSinkFn) -> Option<Self> {
         let (dict, stream) = dict_or_stream(obj)?;
 
         let function_type = match dict.get::<u8>(FUNCTION_TYPE)? {
-            0 => FunctionType::Type0(Type0::new(&stream?)?),
+            0 => FunctionType::Type0(Type0::new(&stream?, warning_sink)?),
             2 => FunctionType::Type2(Type2::new(&dict)?),
             3 => FunctionType::Type3(Type3::new(&dict)?),
-            4 => FunctionType::Type4(Type4::new(&stream?)?),
+            4 => FunctionType::Type4(Type4::new(&stream?, warning_sink)?),
             _ => return None,
         };
 

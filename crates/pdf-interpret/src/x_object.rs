@@ -6,6 +6,7 @@ use crate::function::{Function, interpolate};
 use crate::interpret::path::get_paint;
 use crate::interpret::state::ActiveTransferFunction;
 use crate::{BlendMode, CacheKey, ClipPath, CmykData, Image, RasterImage, StencilImage};
+use crate::util::decode_or_warn;
 use crate::{FillRule, InterpreterWarning, WarningSinkFn, interpret};
 use crate::{LumaData, RgbData};
 use kurbo::{Affine, Rect, Shape};
@@ -46,7 +47,7 @@ impl<'a> XObject<'a> {
                 false,
                 transfer_function,
             )?)),
-            FORM => Some(Self::FormXObject(FormXObject::new(stream)?)),
+            FORM => Some(Self::FormXObject(FormXObject::new(stream, warning_sink)?)),
             _ => None,
         }
     }
@@ -62,10 +63,10 @@ pub(crate) struct FormXObject<'a> {
 }
 
 impl<'a> FormXObject<'a> {
-    pub(crate) fn new(stream: &Stream<'a>) -> Option<Self> {
+    pub(crate) fn new(stream: &Stream<'a>, warning_sink: &WarningSinkFn) -> Option<Self> {
         let dict = stream.dict();
 
-        let decoded = stream.decoded().ok()?;
+        let decoded = decode_or_warn(stream, warning_sink)?;
         let resources = dict.get::<Dict<'_>>(RESOURCES).unwrap_or_default();
 
         let matrix = Affine::new(
@@ -314,7 +315,7 @@ impl<'a> ImageXObject<'a> {
 
             cs_obj
                 .clone()
-                .and_then(|c| ColorSpace::new(c, cache))
+                .and_then(|c| ColorSpace::new(c, cache, warning_sink))
                 // Inline images can also refer to color spaces by name.
                 .or_else(|| {
                     cs_obj

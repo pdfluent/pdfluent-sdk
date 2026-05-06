@@ -340,17 +340,17 @@ pub(crate) fn handle_gs_single<'a>(
                 Object::Array(array) => {
                     let mut iter = array.iter::<Object<'_>>();
                     let functions = [
-                        Function::new(&iter.next()?)?,
-                        Function::new(&iter.next()?)?,
-                        Function::new(&iter.next()?)?,
-                        Function::new(&iter.next()?)?,
+                        Function::new_with_sink(&iter.next()?, &context.settings.warning_sink)?,
+                        Function::new_with_sink(&iter.next()?, &context.settings.warning_sink)?,
+                        Function::new_with_sink(&iter.next()?, &context.settings.warning_sink)?,
+                        Function::new_with_sink(&iter.next()?, &context.settings.warning_sink)?,
                     ];
 
                     Some(ActiveTransferFunction::Four(functions))
                 }
                 // Only `Identity` and `Default` are valid, which both just reset it.
                 Object::Name(_) => None,
-                o => Some(ActiveTransferFunction::Single(Function::new(&o)?)),
+                o => Some(ActiveTransferFunction::Single(Function::new_with_sink(&o, &context.settings.warning_sink)?)),
             };
 
             context.get_mut().graphics_state.transfer_function = function;

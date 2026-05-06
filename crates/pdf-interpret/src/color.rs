@@ -1,6 +1,8 @@
 //! PDF colors and color spaces.
 
 use crate::cache::{Cache, CacheKey};
+use crate::util::decode_or_warn;
+use crate::WarningSinkFn;
 use crate::function::Function;
 use log::warn;
 use moxcms::{
@@ -111,11 +113,11 @@ pub(crate) enum ColorSpaceType {
 }
 
 impl ColorSpaceType {
-    fn new(object: Object<'_>, cache: &Cache) -> Option<Self> {
-        Self::new_inner(object, cache)
+    fn new(object: Object<'_>, cache: &Cache, warning_sink: &WarningSinkFn) -> Option<Self> {
+        Self::new_inner(object, cache, warning_sink)
     }
 
-    fn new_inner(object: Object<'_>, cache: &Cache) -> Option<Self> {
+    fn new_inner(object: Object<'_>, cache: &Cache, warning_sink: &WarningSinkFn) -> Option<Self> {
         if let Some(name) = object.clone().into_name() {
             return Self::new_from_name(name.clone());
         } else if let Some(color_array) = object.clone().into_array() {
@@ -137,7 +139,7 @@ impl ColorSpaceType {
                         // valid — without it we can't know how many channels
                         // to decode.
                         let from_icc = num_components.and_then(|n| {
-                            icc_stream.decoded().ok().as_ref().and_then(|decoded| {
+                            decode_or_warn(&icc_stream, warning_sink).as_ref().and_then(|decoded| {
                                 ICCProfile::new(decoded, n).map(|icc| {
                                     // TODO: For SVG and PNG we can assume that the output color space is
                                     // sRGB. If we ever implement PDF-to-PDF, we probably want to
@@ -155,7 +157,7 @@ impl ColorSpaceType {
                         from_icc
                             .or_else(|| {
                                 dict.get::<Object<'_>>(ALTERNATE)
-                                    .and_then(|o| Self::new(o, cache))
+                                    .and_then(|o| Self::new(o, cache, warning_sink))
                             })
                             .or_else(|| match num_components {
                                 Some(1) => Some(Self::DeviceGray),
@@ -182,20 +184,20 @@ impl ColorSpaceType {
                     return Some(Self::Lab(Lab::new(&lab_dict)?));
                 }
                 INDEXED | I => {
-                    return Some(Self::Indexed(Indexed::new(&color_array, cache)?));
+                    return Some(Self::Indexed(Indexed::new(&color_array, cache, warning_sink)?));
                 }
                 SEPARATION => {
-                    return Some(Self::Separation(Separation::new(&color_array, cache)?));
+                    return Some(Self::Separation(Separation::new(&color_array, cache, warning_sink)?));
                 }
                 DEVICE_N => {
-                    return Some(Self::DeviceN(DeviceN::new(&color_array, cache)?));
+                    return Some(Self::DeviceN(DeviceN::new(&color_array, cache, warning_sink)?));
                 }
                 PATTERN => {
                     // Base colorspace is the next element: [/Pattern /DeviceCMYK] or
                     // [/Pattern [/ICCBased ...]] etc. Do NOT skip an extra element here.
                     let cs = iter
                         .next::<Object<'_>>()
-                        .and_then(|o| ColorSpace::new(o, cache))
+                        .and_then(|o| ColorSpace::new(o, cache, warning_sink))
                         .unwrap_or(ColorSpace::device_rgb());
                     return Some(Self::Pattern(cs));
                 }
@@ -227,8 +229,8 @@ pub struct ColorSpace(Arc<ColorSpaceType>);
 
 impl ColorSpace {
     /// Create a new color space from the given object.
-    pub(crate) fn new(object: Object<'_>, cache: &Cache) -> Option<Self> {
-        Some(Self(Arc::new(ColorSpaceType::new(object, cache)?)))
+    pub(crate) fn new(object: Object<'_>, cache: &Cache, warning_sink: &WarningSinkFn) -> Option<Self> {
+        Some(Self(Arc::new(ColorSpaceType::new(object, cache, warning_sink)?)))
     }
 
     /// Create a new color space from the name.
@@ -756,17 +758,17 @@ pub(crate) struct Indexed {
 }
 
 impl Indexed {
-    fn new(array: &Array<'_>, cache: &Cache) -> Option<Self> {
+    fn new(array: &Array<'_>, cache: &Cache, warning_sink: &WarningSinkFn) -> Option<Self> {
         let mut iter = array.flex_iter();
         // Skip name
         let _ = iter.next::<Name>()?;
-        let base_color_space = ColorSpace::new(iter.next::<Object<'_>>()?, cache)?;
+        let base_color_space = ColorSpace::new(iter.next::<Object<'_>>()?, cache, warning_sink)?;
         let hival = iter.next::<u8>()?;
 
         let values = {
             let data = iter
                 .next::<Stream<'_>>()
-                .and_then(|s| s.decoded().ok())
+                .and_then(|s| decode_or_warn(&s, warning_sink))
                 .or_else(|| iter.next::<object::String>().map(|s| s.to_vec()))?;
 
             let num_components = base_color_space.num_components();
@@ -820,12 +822,12 @@ pub(crate) struct Separation {
 }
 
 impl Separation {
-    fn new(array: &Array<'_>, cache: &Cache) -> Option<Self> {
+    fn new(array: &Array<'_>, cache: &Cache, warning_sink: &WarningSinkFn) -> Option<Self> {
         let mut iter = array.flex_iter();
         // Skip `/Separation`
         let _ = iter.next::<Name>()?;
         let name = iter.next::<Name>()?;
-        let alternate_space = ColorSpace::new(iter.next::<Object<'_>>()?, cache)?;
+        let alternate_space = ColorSpace::new(iter.next::<Object<'_>>()?, cache, warning_sink)?;
         let tint_transform = Function::new(&iter.next::<Object<'_>>()?)?;
         // PDF spec §8.6.6.4: the special colourant name "None" means no ink —
         // painting in this colour space has no effect on the page.
@@ -870,7 +872,7 @@ pub(crate) struct DeviceN {
 }
 
 impl DeviceN {
-    fn new(array: &Array<'_>, cache: &Cache) -> Option<Self> {
+    fn new(array: &Array<'_>, cache: &Cache, warning_sink: &WarningSinkFn) -> Option<Self> {
         let mut iter = array.flex_iter();
         // Skip `/DeviceN`
         let _ = iter.next::<Name>()?;
@@ -882,7 +884,7 @@ impl DeviceN {
         // because the tint transform maps all components to the alternate space
         // simultaneously.
         let all_none = names.iter().all(|n| n.as_str() == "None");
-        let alternate_space = ColorSpace::new(iter.next::<Object<'_>>()?, cache)?;
+        let alternate_space = ColorSpace::new(iter.next::<Object<'_>>()?, cache, warning_sink)?;
         let tint_transform = Function::new(&iter.next::<Object<'_>>()?)?;
 
         if num_components == 0 {
@@ -1259,7 +1261,7 @@ mod tests {
         let bytes = separation_array(ink_name);
         let array = Array::from_bytes(&bytes)?;
         let cache = Cache::new();
-        Separation::new(&array, &cache)
+        { let sink: WarningSinkFn = std::sync::Arc::new(|_: crate::InterpreterWarning| {}); Separation::new(&array, &cache, &sink) }
     }
 
     /// PDF spec §8.6.6.4: only the literal name "None" suppresses paint.
