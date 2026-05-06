@@ -7,18 +7,14 @@ use crate::types::LineEnding;
 use pdf_syntax::object::dict::keys::*;
 use pdf_syntax::object::{Array, Dict, Name, Rect, Stream};
 
-/// Standard rubber-stamp names per ISO 32000-2 Table 181 — the
-/// **read** side of stamps (parser output).
+/// Standard rubber-stamp names per ISO 32000-2 Table 181.
 ///
-/// PDF viewers ship built-in appearances for the standard names; using a
-/// recognized name produces consistent visuals across viewers. A
+/// Used for both reading (parser output) and writing (annotation builder).
+/// PDF viewers ship built-in appearances for the standard variants; using
+/// a recognized name produces consistent visuals across viewers. A
 /// non-standard name is preserved verbatim in [`Self::Custom`] so it is
-/// never silently lost.
-///
-/// Note: there is a separate `StampName` enum in
-/// [`crate::builder::StampName`] for the **write** side (annotation
-/// creation). The read side adds the `Custom` variant for non-standard
-/// stamp names found in input documents.
+/// never silently lost.  [`Self::to_pdf_name`] converts back to the PDF
+/// name string for the write path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StampName {
     /// "APPROVED" — green check-style stamp.
@@ -57,6 +53,30 @@ pub enum StampName {
 }
 
 impl StampName {
+    /// Return the PDF `/Name` string for this stamp, e.g. `"Approved"`.
+    ///
+    /// Used by the write path (`AnnotationBuilder::stamp`) to embed the
+    /// correct name into the annotation dictionary.
+    pub fn to_pdf_name(&self) -> &str {
+        match self {
+            Self::Approved => "Approved",
+            Self::Experimental => "Experimental",
+            Self::NotApproved => "NotApproved",
+            Self::AsIs => "AsIs",
+            Self::Expired => "Expired",
+            Self::NotForPublicRelease => "NotForPublicRelease",
+            Self::Confidential => "Confidential",
+            Self::Final => "Final",
+            Self::Sold => "Sold",
+            Self::Departmental => "Departmental",
+            Self::ForComment => "ForComment",
+            Self::TopSecret => "TopSecret",
+            Self::Draft => "Draft",
+            Self::ForPublicRelease => "ForPublicRelease",
+            Self::Custom(s) => s.as_str(),
+        }
+    }
+
     /// Parse from a PDF name.
     pub fn from_name(name: &[u8]) -> Self {
         match name {
