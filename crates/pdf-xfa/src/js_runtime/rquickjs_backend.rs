@@ -42,6 +42,12 @@ use super::{
 /// at the start of each flatten.
 pub struct QuickJsRuntime {
     eval_script: Option<Persistent<Function<'static>>>,
+    /// Phase D-ι: hook that registers a `<variables>` `<script>` body as a
+    /// form-level global. Called once per named script at document load.
+    set_variables_script: Option<Persistent<Function<'static>>>,
+    /// Phase D-ι: clears all registered variables-script globals at
+    /// document boundary (`reset_per_document`).
+    clear_variables_scripts: Option<Persistent<Function<'static>>>,
     context: Context,
     runtime: Runtime,
     metadata: RuntimeMetadata,
@@ -98,6 +104,8 @@ impl QuickJsRuntime {
 
         Ok(Self {
             eval_script: None,
+            set_variables_script: None,
+            clear_variables_scripts: None,
             context,
             runtime,
             metadata: RuntimeMetadata::default(),
@@ -585,19 +593,230 @@ impl QuickJsRuntime {
             let eval_script: Function = bridge
                 .get("evalScript")
                 .map_err(|e| format!("get evalScript: {e}"))?;
+            let set_variables_script: Function = bridge
+                .get("setVariablesScript")
+                .map_err(|e| format!("get setVariablesScript: {e}"))?;
+            let clear_variables_scripts: Function = bridge
+                .get("clearVariablesScripts")
+                .map_err(|e| format!("get clearVariablesScripts: {e}"))?;
             globals
                 .set("xfa", xfa)
                 .map_err(|e| format!("set xfa global: {e}"))?;
             globals
                 .set("app", app)
                 .map_err(|e| format!("set app global: {e}"))?;
-            Ok::<Persistent<Function<'static>>, String>(Persistent::save(&ctx, eval_script))
+            Ok::<
+                (
+                    Persistent<Function<'static>>,
+                    Persistent<Function<'static>>,
+                    Persistent<Function<'static>>,
+                ),
+                String,
+            >((
+                Persistent::save(&ctx, eval_script),
+                Persistent::save(&ctx, set_variables_script),
+                Persistent::save(&ctx, clear_variables_scripts),
+            ))
         })?;
 
-        self.eval_script = Some(eval_script);
+        self.eval_script = Some(eval_script.0);
+        self.set_variables_script = Some(eval_script.1);
+        self.clear_variables_scripts = Some(eval_script.2);
         self.bindings_registered = true;
         Ok(())
     }
+
+    /// Phase D-ι: extract top-level `var X` and `function X(` identifiers
+    /// from a `<variables>` `<script>` body. Used to build the wrapper
+    /// IIFE that returns the form-level global object. Best-effort regex
+    /// scan — handles the common XFA authoring patterns; complex
+    /// destructuring would be missed and the corresponding identifier
+    /// would simply not appear in the namespace object.
+    fn extract_top_level_idents(body: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // Strip line and block comments to avoid extracting commented-out idents.
+        let stripped = strip_js_comments(body);
+        for token_kind in [
+            ("var", false),
+            ("let", false),
+            ("const", false),
+            ("function", true),
+        ] {
+            let kw = token_kind.0;
+            let is_fn = token_kind.1;
+            let mut search = stripped.as_str();
+            while let Some(idx) = search.find(kw) {
+                let (before, after) = search.split_at(idx);
+                let head_ok = before
+                    .chars()
+                    .last()
+                    .is_none_or(|c| !c.is_alphanumeric() && c != '_' && c != '$');
+                let tail_after_kw = &after[kw.len()..];
+                let tail_ok = tail_after_kw
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_whitespace());
+                if !(head_ok && tail_ok) {
+                    search = &after[1..];
+                    continue;
+                }
+                // Skip whitespace, then read an identifier.
+                let after_ws = tail_after_kw.trim_start();
+                let mut chars = after_ws.chars();
+                let ident: String = std::iter::once(chars.next())
+                    .chain(chars.map(Some))
+                    .map_while(|c| c.filter(|c| c.is_alphanumeric() || *c == '_' || *c == '$'))
+                    .collect();
+                if ident.is_empty() || ident.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                    search = &after[kw.len()..];
+                    continue;
+                }
+                if is_fn {
+                    let after_ident = after_ws
+                        .trim_start_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '$');
+                    if !after_ident.trim_start().starts_with('(') {
+                        search = &after[kw.len()..];
+                        continue;
+                    }
+                }
+                if seen.insert(ident.clone()) {
+                    out.push(ident);
+                }
+                search = &after[kw.len()..];
+            }
+        }
+        out
+    }
+
+    /// Phase D-ι: register a `<variables>` `<script name="name">` block
+    /// as a form-level global. Called by the dispatch layer after
+    /// `set_form_handle` so subsequent event/calculate scripts see the
+    /// namespace.
+    ///
+    /// Variables-script bodies are evaluated through the same QuickJS
+    /// context as event scripts, so they MUST run under the same
+    /// per-script time budget (`set_deadline` / interrupt handler) and
+    /// the same body-size cap (`MAX_SCRIPT_BODY_BYTES`). Without the
+    /// budget, an untrusted/malformed XFA template that contains
+    /// `while (true) {}` inside `<variables>` could hang flatten before
+    /// any normal event script runs (Codex P1 review on PR #1499).
+    fn register_variables_script(&self, name: &str, body: &str) -> Result<(), SandboxError> {
+        let Some(setter) = self.set_variables_script.clone() else {
+            return Ok(());
+        };
+        if body.len() > MAX_SCRIPT_BODY_BYTES {
+            return Err(SandboxError::BodyTooLarge);
+        }
+        let idents = Self::extract_top_level_idents(body);
+        self.set_deadline();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            self.context.with(|ctx| -> Result<(), rquickjs::Error> {
+                let setter = setter.restore(&ctx)?;
+                let _: bool = setter.call((name, body, idents))?;
+                Ok(())
+            })
+        }));
+        // Detect timeouts the same way `execute_script` does: if the
+        // deadline elapsed during evaluation, the interrupt handler aborts
+        // QuickJS with an error.
+        let deadline_now = self.script_deadline.load(Ordering::Acquire);
+        let now_nanos = Instant::now()
+            .checked_duration_since(epoch())
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let timed_out = deadline_now != 0 && now_nanos >= deadline_now;
+        self.clear_deadline();
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) if timed_out => Err(SandboxError::Timeout),
+            Ok(Err(e)) => Err(SandboxError::ScriptError(format!(
+                "variables-script `{name}` register: {e}"
+            ))),
+            Err(_) => Err(SandboxError::PanicCaptured(format!(
+                "panic registering variables-script `{name}`"
+            ))),
+        }
+    }
+
+    fn clear_variables_scripts_global(&self) -> Result<(), SandboxError> {
+        let Some(clearer) = self.clear_variables_scripts.clone() else {
+            return Ok(());
+        };
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            self.context.with(|ctx| -> Result<(), rquickjs::Error> {
+                let clearer = clearer.restore(&ctx)?;
+                let _: () = clearer.call(())?;
+                Ok(())
+            })
+        }));
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(SandboxError::ScriptError(format!(
+                "variables-script clear: {e}"
+            ))),
+            Err(_) => Err(SandboxError::PanicCaptured(
+                "panic clearing variables-scripts".to_string(),
+            )),
+        }
+    }
+}
+
+/// Phase D-ι: strip `//` and `/* */` comments from a JS source body so
+/// the regex scan for top-level `var` / `function` declarations does not
+/// match commented-out tokens. Conservative — preserves strings (so a
+/// `"//"` substring inside a string literal is left alone). XFA scripts
+/// almost never have comments inside string literals, but the guard
+/// matters for correctness.
+fn strip_js_comments(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let bytes = src.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'"' || b == b'\'' {
+            // Copy string literal verbatim.
+            let quote = b;
+            out.push(b as char);
+            i += 1;
+            while i < bytes.len() {
+                let c = bytes[i];
+                out.push(c as char);
+                if c == b'\\' && i + 1 < bytes.len() {
+                    out.push(bytes[i + 1] as char);
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+                if c == quote {
+                    break;
+                }
+            }
+            continue;
+        }
+        if b == b'/' && i + 1 < bytes.len() {
+            let n = bytes[i + 1];
+            if n == b'/' {
+                // Line comment.
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if n == b'*' {
+                // Block comment.
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(bytes.len());
+                continue;
+            }
+        }
+        out.push(b as char);
+        i += 1;
+    }
+    out
 }
 
 const PHASE_C_BINDINGS_JS: &str = r#"
@@ -1305,6 +1524,15 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     });
   });
 
+  // Phase D-ι: form-level globals registered from `<variables>` `<script>`
+  // blocks. Each entry is `name -> frozen object whose properties are the
+  // top-level `var` / `function` declarations from the variables-script
+  // body`. Populated by the host once per document via
+  // `setVariablesScript` and cleared via `clearVariablesScripts` at
+  // `reset_per_document`. Survives across event/calculate scripts within
+  // the same document but never leaks across documents.
+  var variablesScripts = lookupObject();
+
   function makeImplicitGlobals(body) {
     var currentId = host.currentNodeId();
     var generation = host.generation();
@@ -1362,6 +1590,13 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (dynamicLocals[prop] !== undefined) {
           return dynamicLocals[prop];
         }
+        // Phase D-ι: form-level named-script globals from <variables>
+        // outrank the form-tree implicit lookup. Adobe XFA spec §5.5
+        // exposes `<scriptName>.<topLevelDecl>` to all event/calculate
+        // scripts in the same document.
+        if (variablesScripts[prop] !== undefined) {
+          return variablesScripts[prop];
+        }
         return lookup(prop);
       },
       set: function(_target, prop, value) {
@@ -1384,6 +1619,44 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     xfa: Object.freeze(xfa),
     app: Object.freeze(app),
     consoleStub: Object.freeze(consoleStub),
+    // Phase D-ι: register a `<variables>` `<script name="X">…` block as a
+    // form-level global. Called by the host once per script body at
+    // document load. `body` is the raw script source; `identNames` is a
+    // pre-extracted array of top-level `var` / `function` identifiers
+    // (Rust-side regex). The body is wrapped in an IIFE that returns a
+    // frozen object whose properties are those identifiers. Variables
+    // scripts share the same time/memory budget enforcement as event
+    // scripts but emit no field mutations of their own. Errors during
+    // evaluation are absorbed: the namespace remains undefined and
+    // dependent event scripts will fail naturally at first use.
+    setVariablesScript: function(name, body, identNames) {
+      if (typeof name !== "string" || name.length === 0) return false;
+      if (typeof body !== "string") return false;
+      var idents = Array.isArray(identNames) ? identNames : [];
+      var props = "";
+      for (var i = 0; i < idents.length; i++) {
+        var id = idents[i];
+        if (typeof id !== "string" || id.length === 0) continue;
+        if (i > 0) props += ",";
+        props += JSON.stringify(id) + ": typeof " + id +
+                 " !== \"undefined\" ? " + id + " : undefined";
+      }
+      var wrapper = "(function(){\n" + body +
+                    "\nreturn Object.freeze({" + props + "});\n})()";
+      try {
+        variablesScripts[name] = (Function("return " + wrapper))();
+        return true;
+      } catch (_e) {
+        variablesScripts[name] = undefined;
+        return false;
+      }
+    },
+    clearVariablesScripts: function() {
+      var keys = Object.keys(variablesScripts);
+      for (var i = 0; i < keys.length; i++) {
+        delete variablesScripts[keys[i]];
+      }
+    },
     evalScript: function(body) {
       var id = host.currentNodeId();
       var thisArg = id < 0 ? undefined : makeHandle(id, host.generation());
@@ -1465,15 +1738,42 @@ impl XfaJsRuntime for QuickJsRuntime {
         self.clear_deadline();
         // Memory limit is per-document; re-set to clear any prior accounting.
         self.runtime.set_memory_limit(self.memory_budget_bytes);
+        // Phase D-ι: drop all `<variables>` namespace globals from the
+        // previous document so they do not leak into the next. Failure
+        // here is non-fatal — it just means a slightly polluted global
+        // namespace, never a correctness issue, but log via metadata.
+        if let Err(e) = self.clear_variables_scripts_global() {
+            log::debug!("D-ι clear failed: {e:?}");
+        }
         Ok(())
     }
 
+    // The `*mut FormTree` parameter is part of the existing
+    // `XfaJsRuntime` trait — the caller in `flatten.rs` already enforces
+    // that the pointer outlives this call. Clippy's
+    // `not_unsafe_ptr_arg_deref` would require this signature to be
+    // `unsafe fn`, which the trait does not allow.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn set_form_handle(
         &mut self,
         form: *mut FormTree,
         root_id: FormNodeId,
     ) -> Result<(), SandboxError> {
         self.host.borrow_mut().set_form_handle(form, root_id);
+        // Phase D-ι: register every `<variables>` `<script name="X">…` body
+        // collected during merge as a form-level JS global. Done here
+        // because by this point the form pointer is valid and the JS
+        // runtime is initialised. Errors registering one script do not
+        // block the others.
+        if !form.is_null() {
+            // SAFETY: caller guarantees `form` outlives this call.
+            let scripts: Vec<(String, String)> = unsafe { (*form).variables_scripts.clone() };
+            for (name, body) in scripts {
+                if let Err(e) = self.register_variables_script(&name, &body) {
+                    log::debug!("D-ι register `{name}` failed: {e:?}");
+                }
+            }
+        }
         Ok(())
     }
 
