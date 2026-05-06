@@ -244,7 +244,11 @@ impl<'a> Context<'a> {
         let cs_object = resources.get_color_space(name)?;
         self.object_cache
             .get_or_insert_with(cs_object.cache_key(), || {
-                ColorSpace::new(cs_object.clone(), &self.object_cache, &self.settings.warning_sink)
+                ColorSpace::new(
+                    cs_object.clone(),
+                    &self.object_cache,
+                    &self.settings.warning_sink,
+                )
             })
     }
 

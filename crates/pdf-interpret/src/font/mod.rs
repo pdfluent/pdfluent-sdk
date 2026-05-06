@@ -235,9 +235,12 @@ impl<'a> Font<'a> {
         warning_sink: &WarningSinkFn,
     ) -> Option<Self> {
         let f_type = match dict.get::<Name>(SUBTYPE)?.deref() {
-            TYPE1 | MM_TYPE1 => {
-                FontType::Type1(Rc::new(Type1Font::new(dict, font_resolver, cmap_resolver, warning_sink)?))
-            }
+            TYPE1 | MM_TYPE1 => FontType::Type1(Rc::new(Type1Font::new(
+                dict,
+                font_resolver,
+                cmap_resolver,
+                warning_sink,
+            )?)),
             // PDFBOX-5463: PDF viewers seem to accept OpenType as well.
             TRUE_TYPE | OPEN_TYPE => FontType::TrueType(Rc::new(TrueTypeFont::new(
                 dict,
@@ -245,7 +248,12 @@ impl<'a> Font<'a> {
                 cmap_resolver,
                 warning_sink,
             )?)),
-            TYPE0 => FontType::Type0(Rc::new(Type0Font::new(dict, font_resolver, cmap_resolver, warning_sink)?)),
+            TYPE0 => FontType::Type0(Rc::new(Type0Font::new(
+                dict,
+                font_resolver,
+                cmap_resolver,
+                warning_sink,
+            )?)),
             TYPE3 => FontType::Type3(Rc::new(Type3::new(dict, cmap_resolver, warning_sink)?)),
             f => {
                 warn!(
@@ -714,7 +722,11 @@ pub(crate) fn unicode_from_name(name: &str) -> Option<char> {
         .flatten()
 }
 
-pub(crate) fn read_to_unicode(dict: &Dict<'_>, cmap_resolver: &CMapResolverFn, warning_sink: &WarningSinkFn) -> Option<CMap> {
+pub(crate) fn read_to_unicode(
+    dict: &Dict<'_>,
+    cmap_resolver: &CMapResolverFn,
+    warning_sink: &WarningSinkFn,
+) -> Option<CMap> {
     dict.get::<Stream<'_>>(TO_UNICODE)
         .and_then(|s| decode_or_warn(&s, warning_sink))
         // See PDFJS-11915, where `Identity-H` is used for `ToUnicode`. I don't

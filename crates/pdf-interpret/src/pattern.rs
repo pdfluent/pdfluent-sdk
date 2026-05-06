@@ -1,5 +1,6 @@
 //! PDF patterns.
 
+use crate::WarningSinkFn;
 use crate::cache::Cache;
 use crate::color::{Color, ColorSpace};
 use crate::context::Context;
@@ -9,7 +10,6 @@ use crate::interpret::state::{ActiveTransferFunction, State};
 use crate::shading::Shading;
 use crate::soft_mask::SoftMask;
 use crate::util::{Float32Ext, RectExt, decode_or_warn, hash128};
-use crate::WarningSinkFn;
 use crate::{BlendMode, CacheKey, ClipPath, GlyphDrawMode, Image, PathDrawMode};
 use crate::{FillRule, InterpreterSettings, Paint, interpret};
 use kurbo::{Affine, BezPath, Rect, Shape};
@@ -98,7 +98,12 @@ pub struct ShadingPattern {
 }
 
 impl ShadingPattern {
-    pub(crate) fn new(dict: &Dict<'_>, cache: &Cache, opacity: f32, warning_sink: &WarningSinkFn) -> Option<Self> {
+    pub(crate) fn new(
+        dict: &Dict<'_>,
+        cache: &Cache,
+        opacity: f32,
+        warning_sink: &WarningSinkFn,
+    ) -> Option<Self> {
         let shading = dict.get::<Object<'_>>(SHADING).and_then(|o| {
             let (dict, stream) = dict_or_stream(&o)?;
 
