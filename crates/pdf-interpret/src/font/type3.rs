@@ -1,5 +1,3 @@
-use crate::util::decode_or_warn;
-use crate::{CMapResolverFn, WarningSinkFn};
 use crate::context::Context;
 use crate::device::Device;
 use crate::font::glyph_simulator::GlyphSimulator;
@@ -11,7 +9,9 @@ use crate::font::{
 use crate::interpret::state::TextState;
 use crate::soft_mask::SoftMask;
 use crate::util::RectExt;
+use crate::util::decode_or_warn;
 use crate::{BlendMode, interpret};
+use crate::{CMapResolverFn, WarningSinkFn};
 use crate::{CacheKey, ClipPath, GlyphDrawMode, PathDrawMode};
 use crate::{Image, Paint};
 use kurbo::{Affine, BezPath, Rect};
@@ -40,7 +40,11 @@ pub(crate) struct Type3<'a> {
 }
 
 impl<'a> Type3<'a> {
-    pub(crate) fn new(dict: &Dict<'a>, cmap_resolver: &CMapResolverFn, warning_sink: &WarningSinkFn) -> Option<Self> {
+    pub(crate) fn new(
+        dict: &Dict<'a>,
+        cmap_resolver: &CMapResolverFn,
+        warning_sink: &WarningSinkFn,
+    ) -> Option<Self> {
         let (encoding, encodings) = read_encoding(dict);
         let (widths, missing_width) = read_widths(dict, dict)?;
         let font_bbox = dict

@@ -350,7 +350,10 @@ pub(crate) fn handle_gs_single<'a>(
                 }
                 // Only `Identity` and `Default` are valid, which both just reset it.
                 Object::Name(_) => None,
-                o => Some(ActiveTransferFunction::Single(Function::new_with_sink(&o, &context.settings.warning_sink)?)),
+                o => Some(ActiveTransferFunction::Single(Function::new_with_sink(
+                    &o,
+                    &context.settings.warning_sink,
+                )?)),
             };
 
             context.get_mut().graphics_state.transfer_function = function;

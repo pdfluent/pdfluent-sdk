@@ -478,4 +478,76 @@ mod tests {
         let decoded = stream.decoded().unwrap();
         assert_eq!(decoded, b"abcdefghij");
     }
+
+    /// FlateDecode: a 12-byte compressed payload that expands to 50 bytes must
+    /// be rejected when the configured limit is below the expanded size.
+    ///
+    /// Enforcement happens in decoded_image() after the filter chain: the
+    /// decompressor runs to completion (up to MAX_DECODE_SIZE) and the
+    /// resulting size is compared against the configured limit.
+    #[test]
+    fn flate_decode_exceeds_limit() {
+        // zlib-compressed 50 zero bytes (12-byte compressed form).
+        let compressed: &[u8] = &[
+            0x78, 0x9c, 0x63, 0x60, 0x20, 0x15, 0x00, 0x00, 0x00, 0x32, 0x00, 0x01,
+        ];
+        let length = compressed.len();
+        let mut pdf = format!("<< /Length {length} /Filter /FlateDecode >> stream\n").into_bytes();
+        pdf.extend_from_slice(compressed);
+        pdf.extend_from_slice(b"\nendstream");
+
+        let limits = PdfLoadLimits::new().max_stream_bytes(20); // 50 > 20 → must fail
+        let ctx = ReaderContext::dummy_with_limits(limits);
+        let mut r = Reader::new(&pdf);
+        let stream = r.read_with_context::<Stream<'_>>(&ctx).unwrap();
+
+        match stream.decoded() {
+            Err(DecodeFailure::StreamTooLarge { .. }) => {}
+            other => panic!("expected StreamTooLarge, got {other:?}"),
+        }
+    }
+
+    /// FlateDecode: same stream succeeds when the limit is at or above the
+    /// expanded size (50 bytes).
+    #[test]
+    fn flate_decode_within_limit() {
+        let compressed: &[u8] = &[
+            0x78, 0x9c, 0x63, 0x60, 0x20, 0x15, 0x00, 0x00, 0x00, 0x32, 0x00, 0x01,
+        ];
+        let length = compressed.len();
+        let mut pdf = format!("<< /Length {length} /Filter /FlateDecode >> stream\n").into_bytes();
+        pdf.extend_from_slice(compressed);
+        pdf.extend_from_slice(b"\nendstream");
+
+        let limits = PdfLoadLimits::new().max_stream_bytes(50);
+        let ctx = ReaderContext::dummy_with_limits(limits);
+        let mut r = Reader::new(&pdf);
+        let stream = r.read_with_context::<Stream<'_>>(&ctx).unwrap();
+
+        let decoded = stream.decoded().unwrap();
+        assert_eq!(decoded.len(), 50);
+        assert!(decoded.iter().all(|&b| b == 0));
+    }
+
+    /// FlateDecode: limit exactly one byte below the expanded size must fail.
+    #[test]
+    fn flate_decode_limit_one_below() {
+        let compressed: &[u8] = &[
+            0x78, 0x9c, 0x63, 0x60, 0x20, 0x15, 0x00, 0x00, 0x00, 0x32, 0x00, 0x01,
+        ];
+        let length = compressed.len();
+        let mut pdf = format!("<< /Length {length} /Filter /FlateDecode >> stream\n").into_bytes();
+        pdf.extend_from_slice(compressed);
+        pdf.extend_from_slice(b"\nendstream");
+
+        let limits = PdfLoadLimits::new().max_stream_bytes(49); // 50 > 49 → must fail
+        let ctx = ReaderContext::dummy_with_limits(limits);
+        let mut r = Reader::new(&pdf);
+        let stream = r.read_with_context::<Stream<'_>>(&ctx).unwrap();
+
+        match stream.decoded() {
+            Err(DecodeFailure::StreamTooLarge { .. }) => {}
+            other => panic!("expected StreamTooLarge, got {other:?}"),
+        }
+    }
 }

@@ -124,7 +124,12 @@ pub struct Shading {
 }
 
 impl Shading {
-    pub(crate) fn new(dict: &Dict<'_>, stream: Option<&Stream<'_>>, cache: &Cache, warning_sink: &WarningSinkFn) -> Option<Self> {
+    pub(crate) fn new(
+        dict: &Dict<'_>,
+        stream: Option<&Stream<'_>>,
+        cache: &Cache,
+        warning_sink: &WarningSinkFn,
+    ) -> Option<Self> {
         let cache_key = dict.cache_key();
 
         let shading_num = dict.get::<u8>(SHADING_TYPE)?;
@@ -1026,7 +1031,11 @@ fn read_tensor_product_patch_mesh(
     )
 }
 
-fn read_function(dict: &Dict<'_>, color_space: &ColorSpace, warning_sink: &WarningSinkFn) -> Option<ShadingFunction> {
+fn read_function(
+    dict: &Dict<'_>,
+    color_space: &ColorSpace,
+    warning_sink: &WarningSinkFn,
+) -> Option<ShadingFunction> {
     if let Some(arr) = dict.get::<Array<'_>>(FUNCTION) {
         let arr: Option<SmallVec<_>> = arr
             .iter::<Object<'_>>()
@@ -1042,7 +1051,10 @@ fn read_function(dict: &Dict<'_>, color_space: &ColorSpace, warning_sink: &Warni
 
         Some(ShadingFunction::Multiple(arr))
     } else if let Some(obj) = dict.get::<Object<'_>>(FUNCTION) {
-        Some(ShadingFunction::Single(Function::new_with_sink(&obj, warning_sink)?))
+        Some(ShadingFunction::Single(Function::new_with_sink(
+            &obj,
+            warning_sink,
+        )?))
     } else {
         None
     }

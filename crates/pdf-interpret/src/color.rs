@@ -1,9 +1,9 @@
 //! PDF colors and color spaces.
 
-use crate::cache::{Cache, CacheKey};
-use crate::util::decode_or_warn;
 use crate::WarningSinkFn;
+use crate::cache::{Cache, CacheKey};
 use crate::function::Function;
+use crate::util::decode_or_warn;
 use log::warn;
 use moxcms::{
     ColorProfile, DataColorSpace, Layout, RenderingIntent, Transform8BitExecutor,
@@ -139,19 +139,21 @@ impl ColorSpaceType {
                         // valid — without it we can't know how many channels
                         // to decode.
                         let from_icc = num_components.and_then(|n| {
-                            decode_or_warn(&icc_stream, warning_sink).as_ref().and_then(|decoded| {
-                                ICCProfile::new(decoded, n).map(|icc| {
-                                    // TODO: For SVG and PNG we can assume that the output color space is
-                                    // sRGB. If we ever implement PDF-to-PDF, we probably want to
-                                    // let the user pass the native color type and don't make this optimization
-                                    // if it's not sRGB.
-                                    if icc.is_srgb() {
-                                        Self::DeviceRgb
-                                    } else {
-                                        Self::ICCBased(icc)
-                                    }
+                            decode_or_warn(&icc_stream, warning_sink)
+                                .as_ref()
+                                .and_then(|decoded| {
+                                    ICCProfile::new(decoded, n).map(|icc| {
+                                        // TODO: For SVG and PNG we can assume that the output color space is
+                                        // sRGB. If we ever implement PDF-to-PDF, we probably want to
+                                        // let the user pass the native color type and don't make this optimization
+                                        // if it's not sRGB.
+                                        if icc.is_srgb() {
+                                            Self::DeviceRgb
+                                        } else {
+                                            Self::ICCBased(icc)
+                                        }
+                                    })
                                 })
-                            })
                         });
 
                         from_icc
@@ -184,13 +186,25 @@ impl ColorSpaceType {
                     return Some(Self::Lab(Lab::new(&lab_dict)?));
                 }
                 INDEXED | I => {
-                    return Some(Self::Indexed(Indexed::new(&color_array, cache, warning_sink)?));
+                    return Some(Self::Indexed(Indexed::new(
+                        &color_array,
+                        cache,
+                        warning_sink,
+                    )?));
                 }
                 SEPARATION => {
-                    return Some(Self::Separation(Separation::new(&color_array, cache, warning_sink)?));
+                    return Some(Self::Separation(Separation::new(
+                        &color_array,
+                        cache,
+                        warning_sink,
+                    )?));
                 }
                 DEVICE_N => {
-                    return Some(Self::DeviceN(DeviceN::new(&color_array, cache, warning_sink)?));
+                    return Some(Self::DeviceN(DeviceN::new(
+                        &color_array,
+                        cache,
+                        warning_sink,
+                    )?));
                 }
                 PATTERN => {
                     // Base colorspace is the next element: [/Pattern /DeviceCMYK] or
@@ -229,8 +243,16 @@ pub struct ColorSpace(Arc<ColorSpaceType>);
 
 impl ColorSpace {
     /// Create a new color space from the given object.
-    pub(crate) fn new(object: Object<'_>, cache: &Cache, warning_sink: &WarningSinkFn) -> Option<Self> {
-        Some(Self(Arc::new(ColorSpaceType::new(object, cache, warning_sink)?)))
+    pub(crate) fn new(
+        object: Object<'_>,
+        cache: &Cache,
+        warning_sink: &WarningSinkFn,
+    ) -> Option<Self> {
+        Some(Self(Arc::new(ColorSpaceType::new(
+            object,
+            cache,
+            warning_sink,
+        )?)))
     }
 
     /// Create a new color space from the name.
@@ -1261,7 +1283,10 @@ mod tests {
         let bytes = separation_array(ink_name);
         let array = Array::from_bytes(&bytes)?;
         let cache = Cache::new();
-        { let sink: WarningSinkFn = std::sync::Arc::new(|_: crate::InterpreterWarning| {}); Separation::new(&array, &cache, &sink) }
+        {
+            let sink: WarningSinkFn = std::sync::Arc::new(|_: crate::InterpreterWarning| {});
+            Separation::new(&array, &cache, &sink)
+        }
     }
 
     /// PDF spec §8.6.6.4: only the literal name "None" suppresses paint.

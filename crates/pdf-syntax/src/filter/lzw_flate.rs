@@ -21,6 +21,11 @@ pub(crate) mod flate {
         use flate2::read::{DeflateDecoder, ZlibDecoder};
         use std::io::Read;
 
+        // Use MAX_DECODE_SIZE here, not byte_limit: when a predictor is active the
+        // decompressor emits predictor-encoded intermediate bytes that can be larger
+        // than the final output.  Capping at byte_limit would truncate valid streams.
+        // The actual byte_limit is enforced by decoded_image() after the full filter
+        // + predictor chain completes.
         fn zlib_stream(data: &[u8]) -> Option<Vec<u8>> {
             let mut decoder = ZlibDecoder::new(data).take(MAX_DECODE_SIZE);
             let mut result = Vec::new();
@@ -58,11 +63,10 @@ pub(crate) mod flate {
         use alloc::vec::Vec;
         use log::warn;
 
-        /// Maximum decompressed output from the no-std fallback flate decoder.
-        /// The `std` path uses `flate2::Read::take`, which already enforces
-        /// `MAX_DECODE_SIZE`. The fallback previously had no bound at all and
-        /// could grow without limit on zip-bomb or corrupt streams. (#498)
-        const MAX_FALLBACK_DECODE_SIZE: usize = 100 * 1024 * 1024; // 100 MB
+        /// Hard output cap for the pure-Rust fallback decoder. The primary flate2
+        /// decoder already enforces MAX_DECODE_SIZE; the fallback is only reached for
+        /// broken streams, so a tighter 64 MB cap is reasonable.
+        const MAX_FALLBACK_DECODE_SIZE: usize = 64 * 1024 * 1024;
 
         pub(crate) fn decode(data: &[u8]) -> Option<Vec<u8>> {
             flate_decode(data)
@@ -109,7 +113,6 @@ pub(crate) mod flate {
 
             fn decode(&mut self) -> Option<Vec<u8>> {
                 while !self.eof && self.pos < self.data.len() {
-                    // Abort if the output has grown beyond the budget. (#498)
                     if self.output.len() > MAX_FALLBACK_DECODE_SIZE {
                         warn!(
                             "fallback flate output exceeds {} bytes, aborting",
@@ -805,7 +808,7 @@ fn apply_predictor(data: Vec<u8>, params: &PredictorParams) -> Option<Vec<u8>> {
             let output_size = num_rows.checked_mul(row_len)?;
             if output_size > MAX_PREDICTOR_OUTPUT {
                 warn!(
-                    "predictor output size {} exceeds limit, skipping",
+                    "predictor output size {} exceeds limit {MAX_PREDICTOR_OUTPUT}, skipping",
                     output_size
                 );
                 return None;

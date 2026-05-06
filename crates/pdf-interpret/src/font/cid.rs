@@ -52,7 +52,11 @@ impl Type0Font {
         cmap_resolver: &CMapResolverFn,
         warning_sink: &WarningSinkFn,
     ) -> Option<Self> {
-        let cmap = read_encoding(&dict.get::<Object<'_>>(ENCODING)?, cmap_resolver, warning_sink)?;
+        let cmap = read_encoding(
+            &dict.get::<Object<'_>>(ENCODING)?,
+            cmap_resolver,
+            warning_sink,
+        )?;
 
         let horizontal = cmap.metadata().writing_mode != Some(WritingMode::Vertical);
 
@@ -734,7 +738,11 @@ mod tests {
     }
 }
 
-fn read_encoding(object: &Object<'_>, cmap_resolver: &CMapResolverFn, warning_sink: &WarningSinkFn) -> Option<CMap> {
+fn read_encoding(
+    object: &Object<'_>,
+    cmap_resolver: &CMapResolverFn,
+    warning_sink: &WarningSinkFn,
+) -> Option<CMap> {
     // TODO: Support fetching CMaps referenced via `usecmap` in the PDF.
     match object {
         Object::Name(n) => {
@@ -750,7 +758,7 @@ fn read_encoding(object: &Object<'_>, cmap_resolver: &CMapResolverFn, warning_si
             }
         }
         Object::Stream(s) => {
-            let decoded = decode_or_warn(&s, warning_sink)?;
+            let decoded = decode_or_warn(s, warning_sink)?;
             let resolver = cmap_resolver.clone();
             CMap::parse(&decoded, move |n| (resolver)(n))
         }
