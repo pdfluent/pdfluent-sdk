@@ -340,3 +340,119 @@ fn underscore_shorthand_resolves_before_handle_property_deferral() {
     assert_eq!(outcome.js_runtime_errors, 0);
     assert_eq!(outcome.js_executed, 1);
 }
+
+#[test]
+fn implicit_resolver_prefers_populated_sibling_over_empty_stub() {
+    // Phase D-η regression: when a form has multiple subforms with the
+    // same name (a common authoring pattern producing layout stubs +
+    // populated content), implicit identifier resolution must pick the
+    // populated one (children > 0) rather than the first DFS hit.
+    //
+    // Real-world repro: 13275420c3c9afbb has four subforms named "F",
+    // three of which are empty layout stubs and one (with 14 children)
+    // is the meaningful one with `pageSet`, `P1`, `P2`, … as direct
+    // children. Pre-D-η, `F.P1.X` chained through the stub and threw
+    // "cannot read property 'P1' of undefined".
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    // Empty F stub first — the position the pre-D-η resolver picked.
+    let _stub = add_child(&mut tree, root, "Container", FormNodeType::Subform);
+    // Populated F second — what scripts mean.
+    let populated = add_child(&mut tree, root, "Container", FormNodeType::Subform);
+    let _payload = add_field(&mut tree, populated, "Payload", "WANT");
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Container.Payload.rawValue;",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "WANT");
+    assert_eq!(outcome.js_runtime_errors, 0);
+    assert_eq!(outcome.js_executed, 1);
+}
+
+#[test]
+fn implicit_resolver_returns_self_when_script_node_matches_name() {
+    // Phase D-η regression: when a script inside subform `F` reads the
+    // bare identifier `F`, that must resolve to the enclosing `F`, not
+    // to an inner empty-stub same-named descendant. This is the case for
+    // 13275420c3c9afbb where node 1423 (the populated F) is itself the
+    // script's lexical `this` ancestor and contains stub `F` descendants.
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let outer_form = add_child(&mut tree, root, "F", FormNodeType::Subform);
+    let p1 = add_child(&mut tree, outer_form, "P1", FormNodeType::Subform);
+    let _payload = add_field(&mut tree, p1, "Payload", "FOUND");
+    // Inner stub also named F — must NOT win the resolution.
+    let _inner_stub = add_child(&mut tree, outer_form, "F", FormNodeType::Subform);
+    // Script anchored on a deep descendant of `outer_form`.
+    let trigger = add_field(&mut tree, p1, "Trigger", "");
+    add_js_script(
+        &mut tree,
+        trigger,
+        "calculate",
+        "this.rawValue = F.P1.Payload.rawValue;",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, trigger), "FOUND");
+    assert_eq!(outcome.js_runtime_errors, 0);
+    assert_eq!(outcome.js_executed, 1);
+}
+
+#[test]
+fn implicit_resolver_falls_back_to_stub_when_only_stubs_exist() {
+    // Phase D-η: if all same-name candidates are empty stubs and no
+    // ancestor matches, Pass 3 returns the first stub so that property
+    // reads like `.somExpression` or `.presence` still resolve to a
+    // valid handle (matching pre-D-η behaviour for stub-only forms).
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let _stub_a = add_child(&mut tree, root, "Placeholder", FormNodeType::Subform);
+    let _stub_b = add_child(&mut tree, root, "Placeholder", FormNodeType::Subform);
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = (Placeholder ? \"resolved\" : \"missing\");",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "resolved");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn implicit_resolver_prefers_field_over_sibling_container() {
+    // Phase D-η, Codex review feedback: when same-name candidates include
+    // a Field and a sibling subform/container, the Field must win.
+    // `Amount.rawValue` means the field's value, not a container that
+    // happens to share the name; picking the container would silently
+    // return null for reads and refuse writes via set_raw_value.
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let amount_subform = add_child(&mut tree, root, "Amount", FormNodeType::Subform);
+    let _filler = add_field(&mut tree, amount_subform, "Filler", "");
+    let amount_field = add_field(&mut tree, root, "Amount", "42");
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Amount.rawValue;",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "42");
+    assert_eq!(field_value(&tree, amount_field), "42");
+    assert_eq!(outcome.js_runtime_errors, 0);
+    assert_eq!(outcome.js_executed, 1);
+}

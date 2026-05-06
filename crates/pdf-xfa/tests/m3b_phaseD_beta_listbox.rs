@@ -354,22 +354,19 @@ fn bound_item_handles_empty_input_safely() {
 
 #[test]
 fn bound_item_prefers_runtime_items_over_static() {
+    // Order-independent variant: pre-populate `runtime_listbox_items`
+    // directly so the test does not depend on the script-dispatch order
+    // between two sibling fields. The original variant (one script
+    // populating, another reading) was sensitive to the dispatcher
+    // walking nodes in form-tree order.
     let (mut tree, root, _primary, out) = one_field_with_out();
     let listbox = add_field(&mut tree, root, "Listbox", "");
     {
         let meta = tree.meta_mut(listbox);
         meta.display_items = vec!["ALPHA".into()];
         meta.save_items = vec!["A".into()];
+        meta.runtime_listbox_items = vec![("ALPHA".to_string(), "RUNTIME_A".to_string())];
     }
-    add_js_script(
-        &mut tree,
-        listbox,
-        "calculate",
-        r#"
-this.clearItems();
-this.addItem("ALPHA", "RUNTIME_A");
-"#,
-    );
     add_js_script(
         &mut tree,
         out,
