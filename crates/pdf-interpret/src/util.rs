@@ -1,11 +1,25 @@
 //! A number of utility methods.
 
+use crate::{InterpreterWarning, WarningSinkFn};
 use kurbo::{Affine, BezPath, PathEl, Rect};
 use log::warn;
+use pdf_syntax::object::Stream;
+use pdf_syntax::object::stream::DecodeFailure;
 use pdf_syntax::page::{Page, Rotation};
 use siphasher::sip128::{Hasher128, SipHasher13};
 use std::hash::Hash;
 use std::ops::Sub;
+
+pub(crate) fn decode_or_warn(stream: &Stream<'_>, sink: &WarningSinkFn) -> Option<Vec<u8>> {
+    match stream.decoded() {
+        Ok(data) => Some(data),
+        Err(DecodeFailure::StreamTooLarge { observed, limit }) => {
+            sink(InterpreterWarning::StreamTooLarge { observed, limit });
+            None
+        }
+        Err(_) => None,
+    }
+}
 
 pub(crate) trait OptionLog {
     fn warn_none(self, f: &str) -> Self;

@@ -1,4 +1,5 @@
-use crate::CMapResolverFn;
+use crate::util::decode_or_warn;
+use crate::{CMapResolverFn, WarningSinkFn};
 use crate::context::Context;
 use crate::device::Device;
 use crate::font::glyph_simulator::GlyphSimulator;
@@ -39,7 +40,7 @@ pub(crate) struct Type3<'a> {
 }
 
 impl<'a> Type3<'a> {
-    pub(crate) fn new(dict: &Dict<'a>, cmap_resolver: &CMapResolverFn) -> Option<Self> {
+    pub(crate) fn new(dict: &Dict<'a>, cmap_resolver: &CMapResolverFn, warning_sink: &WarningSinkFn) -> Option<Self> {
         let (encoding, encodings) = read_encoding(dict);
         let (widths, missing_width) = read_widths(dict, dict)?;
         let font_bbox = dict
@@ -65,7 +66,7 @@ impl<'a> Type3<'a> {
             procs
         };
 
-        let to_unicode = read_to_unicode(dict, cmap_resolver);
+        let to_unicode = read_to_unicode(dict, cmap_resolver, warning_sink);
 
         Some(Self {
             glyph_simulator: GlyphSimulator::new(),
@@ -176,7 +177,7 @@ impl<'a> Type3<'a> {
 
         let name = self.glyph_simulator.glyph_to_string(glyph.glyph_id)?;
         let program = self.char_procs.get(&name)?;
-        let decoded = program.decoded().ok()?;
+        let decoded = decode_or_warn(program, &glyph.settings.warning_sink)?;
         let iter = TypedIter::new(decoded.as_ref());
 
         // Every valid Type3 glyph stream must begin with either:

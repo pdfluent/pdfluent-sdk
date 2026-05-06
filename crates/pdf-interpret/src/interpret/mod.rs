@@ -250,7 +250,7 @@ pub fn interpret_page<'a>(
             if let Some(apx) = annot
                 .get::<Dict<'_>>(AP)
                 .and_then(|ap| ap.get::<Stream<'_>>(N))
-                .and_then(|o| FormXObject::new(&o))
+                .and_then(|o| FormXObject::new(&o, &context.settings.warning_sink))
             {
                 let Some(rect) = annot.get::<Rect>(RECT) else {
                     continue;
@@ -797,7 +797,7 @@ pub fn interpret<'a, 'b>(
                 if let Some(sp) = resources
                     .get_shading(s.0)
                     .and_then(|o| dict_or_stream(&o))
-                    .and_then(|s| Shading::new(&s.0, s.1.as_ref(), &context.object_cache))
+                    .and_then(|s| Shading::new(&s.0, s.1.as_ref(), &context.object_cache, &context.settings.warning_sink))
                     .map(|s| {
                         Pattern::Shading(ShadingPattern {
                             shading: Arc::new(s),

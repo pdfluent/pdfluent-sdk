@@ -5,7 +5,8 @@ use crate::font::{
     FallbackFontQuery, FontFlags, FontQuery, glyph_name_to_string, read_to_unicode, stretch_glyph,
     strip_subset_prefix,
 };
-use crate::{CMapResolverFn, CacheKey, FontResolverFn};
+use crate::util::decode_or_warn;
+use crate::{CMapResolverFn, CacheKey, FontResolverFn, WarningSinkFn};
 use kurbo::{BezPath, Vec2};
 use log::warn;
 use pdf_font::cmap::{BfString, CMap, CidFamily, WritingMode};
@@ -49,8 +50,9 @@ impl Type0Font {
         dict: &Dict<'_>,
         font_resolver: &FontResolverFn,
         cmap_resolver: &CMapResolverFn,
+        warning_sink: &WarningSinkFn,
     ) -> Option<Self> {
-        let cmap = read_encoding(&dict.get::<Object<'_>>(ENCODING)?, cmap_resolver)?;
+        let cmap = read_encoding(&dict.get::<Object<'_>>(ENCODING)?, cmap_resolver, warning_sink)?;
 
         let horizontal = cmap.metadata().writing_mode != Some(WritingMode::Vertical);
 
@@ -110,10 +112,10 @@ impl Type0Font {
             .get::<Array<'_>>(W2)
             .and_then(|a| read_widths2(&a))
             .unwrap_or_default();
-        let cid_to_gid_map = CidToGIdMap::new(&descendant_font).unwrap_or_default();
+        let cid_to_gid_map = CidToGIdMap::new(&descendant_font, warning_sink).unwrap_or_default();
         let cache_key = dict.cache_key();
 
-        let mut to_unicode = read_to_unicode(dict, cmap_resolver);
+        let mut to_unicode = read_to_unicode(dict, cmap_resolver, warning_sink);
         let mut to_unicode_is_cid_indexed = false;
 
         // If there is no explicit ToUnicode map, try the predefined UCS2
@@ -562,7 +564,7 @@ enum CidToGIdMap {
 }
 
 impl CidToGIdMap {
-    fn new(dict: &Dict<'_>) -> Option<Self> {
+    fn new(dict: &Dict<'_>, warning_sink: &WarningSinkFn) -> Option<Self> {
         if let Some(name) = dict.get::<Name>(CID_TO_GID_MAP) {
             if name.deref() == IDENTITY {
                 Some(Self::Identity)
@@ -570,7 +572,7 @@ impl CidToGIdMap {
                 None
             }
         } else if let Some(stream) = dict.get::<Stream<'_>>(CID_TO_GID_MAP) {
-            let decoded = stream.decoded().ok()?;
+            let decoded = decode_or_warn(&stream, warning_sink)?;
             let mut forward = HashMap::new();
             let mut inverse = HashMap::new();
 
@@ -732,7 +734,7 @@ mod tests {
     }
 }
 
-fn read_encoding(object: &Object<'_>, cmap_resolver: &CMapResolverFn) -> Option<CMap> {
+fn read_encoding(object: &Object<'_>, cmap_resolver: &CMapResolverFn, warning_sink: &WarningSinkFn) -> Option<CMap> {
     // TODO: Support fetching CMaps referenced via `usecmap` in the PDF.
     match object {
         Object::Name(n) => {
@@ -748,7 +750,7 @@ fn read_encoding(object: &Object<'_>, cmap_resolver: &CMapResolverFn) -> Option<
             }
         }
         Object::Stream(s) => {
-            let decoded = s.decoded().ok()?;
+            let decoded = decode_or_warn(&s, warning_sink)?;
             let resolver = cmap_resolver.clone();
             CMap::parse(&decoded, move |n| (resolver)(n))
         }

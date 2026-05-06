@@ -103,10 +103,11 @@ impl<'a> SoftMask<'a> {
         // same xobject, the ID will be the same.
         let obj_id = dict.get_ref(G)?.into();
         let group_stream = dict.get::<Stream<'_>>(G)?;
-        let group = FormXObject::new(&group_stream)?;
+        let group = FormXObject::new(&group_stream, &context.settings.warning_sink)?;
         let cs = ColorSpace::new(
             group.dict.get::<Dict<'_>>(GROUP)?.get::<Object<'_>>(CS)?,
             &context.object_cache,
+            &context.settings.warning_sink,
         )?;
         let transfer_function = dict
             .get::<Object<'_>>(TR)

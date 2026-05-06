@@ -408,6 +408,50 @@ impl HostBindings {
         self.list_add_inner(field_id, Some(generation), display, save)
     }
 
+    /// XFA 3.3 §App A `boundItem` — listbox display→save lookup.
+    ///
+    /// Returns the save value associated with `display_value` for a listbox
+    /// or dropdown field. Lookup order:
+    /// 1. Runtime listbox items populated via D-β `addItem` (matched first).
+    /// 2. Static `<items>` parsed from the template at merge time.
+    ///
+    /// Adobe's documented behaviour returns the input unchanged when no
+    /// match exists (passthrough). Empty input returns empty string. Stale
+    /// or non-field handles return the input unchanged.
+    pub fn bound_item_for_handle(
+        &mut self,
+        field_id: FormNodeId,
+        generation: u64,
+        display_value: String,
+    ) -> String {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.handle_is_live(field_id, generation) {
+            return display_value;
+        }
+        let Some(form) = self.form_ref() else {
+            return display_value;
+        };
+        if !matches!(form.get(field_id).node_type, FormNodeType::Field { .. }) {
+            return display_value;
+        }
+        let meta = form.meta(field_id);
+        for (display, save) in &meta.runtime_listbox_items {
+            if display == &display_value {
+                return save.clone();
+            }
+        }
+        for (idx, display) in meta.display_items.iter().enumerate() {
+            if display == &display_value {
+                return meta
+                    .save_items
+                    .get(idx)
+                    .cloned()
+                    .unwrap_or_else(|| display_value.clone());
+            }
+        }
+        display_value
+    }
+
     /// Read-only static page count visible to Phase C scripts.
     pub fn num_pages(&mut self) -> u32 {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);

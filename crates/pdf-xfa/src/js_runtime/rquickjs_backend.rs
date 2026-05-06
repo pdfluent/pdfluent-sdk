@@ -419,6 +419,25 @@ impl QuickJsRuntime {
                 .set("listAdd", list_add)
                 .map_err(|e| format!("set listAdd: {e}"))?;
 
+            let bound_item_host = Rc::clone(&host);
+            let bound_item = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64, display: Coerced<String>| -> String {
+                    if id < 0 || generation < 0 {
+                        return display.0;
+                    }
+                    bound_item_host.borrow_mut().bound_item_for_handle(
+                        FormNodeId(id as usize),
+                        generation as u64,
+                        display.0,
+                    )
+                },
+            )
+            .map_err(|e| format!("boundItem: {e}"))?;
+            internal
+                .set("boundItem", bound_item)
+                .map_err(|e| format!("set boundItem: {e}"))?;
+
             let num_pages_host = Rc::clone(&host);
             let num_pages =
                 Function::new(ctx.clone(), move || num_pages_host.borrow_mut().num_pages())
@@ -635,8 +654,8 @@ const PHASE_C_BINDINGS_JS: &str = r#"
 
   // Properties that must NOT be deferred so their specific implementations run.
   var handlePropertyExclusions = lookupObject();
-  ["rawValue", "somExpression", "isNull", "clearItems", "addItem", "$record",
-   "nodes", "value", "length", "item"].forEach(function(name) {
+  ["rawValue", "somExpression", "isNull", "clearItems", "addItem", "boundItem",
+   "$record", "nodes", "value", "length", "item"].forEach(function(name) {
     handlePropertyExclusions[name] = true;
   });
 
@@ -776,6 +795,21 @@ const PHASE_C_BINDINGS_JS: &str = r#"
             return host.listAdd(id, generation, String(display), String(save));
           };
         }
+        // XFA 3.3 §App A `boundItem` — listbox display→save lookup. Used as
+        // `field.boundItem(xfa.event.newText)` to translate a user-visible
+        // option label into its underlying save value. Falls back to the
+        // input string when no match exists (Adobe behaviour).
+        if (prop === "boundItem") {
+          return function(displayValue) {
+            var coerced;
+            if (displayValue === null || displayValue === undefined) {
+              coerced = "";
+            } else {
+              coerced = String(displayValue);
+            }
+            return host.boundItem(id, generation, coerced);
+          };
+        }
         if (prop === "$record") {
           var recRaw = host.dataBoundRecord(id, generation);
           if (recRaw < 0) return null;
@@ -823,6 +857,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           prop === "isNull" ||
           prop === "clearItems" ||
           prop === "addItem" ||
+          prop === "boundItem" ||
           Reflect.has(target, prop);
       }
     });
@@ -1026,6 +1061,19 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       return Object.freeze(out);
     }
   });
+  // Phase D-δ.2: expose `xfa.event` as an alias for the per-script event
+  // global. Real Adobe Reader populates this with the firing event;
+  // during static flatten there is no dispatched UI event, so the
+  // accessor returns the same defensive event-stub that the per-script
+  // `event` parameter receives — newText/prevText/change default to
+  // empty strings, target resolves to the firing field handle.
+  Object.defineProperty(xfa, "event", {
+    enumerable: true,
+    configurable: false,
+    get: function() {
+      return makeEvent();
+    }
+  });
 
   var app = nullProtoObject();
   Object.defineProperty(app, "alert", {
@@ -1080,9 +1128,35 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       enumerable: true, configurable: false,
       get: function() { return target; }
     });
+    // Phase D-δ.2: stable empty-string defaults for the change-event property
+    // family so scripts that read `xfa.event.newText` / `prevText` /
+    // `change` on initialize/calculate (where no real change event occurred)
+    // do not throw `cannot read property 'X' of undefined`. Adobe populates
+    // these on actual `change`/`exit` events; we run those activities later
+    // (or never) and surface deterministic empty defaults instead.
     Object.defineProperty(ev, "change", {
       enumerable: true, configurable: false,
       get: function() { return ""; }
+    });
+    Object.defineProperty(ev, "newText", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    Object.defineProperty(ev, "prevText", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    Object.defineProperty(ev, "fullText", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    Object.defineProperty(ev, "selStart", {
+      enumerable: true, configurable: false,
+      get: function() { return 0; }
+    });
+    Object.defineProperty(ev, "selEnd", {
+      enumerable: true, configurable: false,
+      get: function() { return 0; }
     });
     return Object.freeze(ev);
   }
