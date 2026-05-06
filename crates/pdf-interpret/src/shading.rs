@@ -520,7 +520,10 @@ impl TensorProductPatch {
                 (3, 1) => 8,
                 (3, 2) => 7,
                 (3, 3) => 6,
-                _ => panic!("Invalid index"),
+                // All 16 combinations of i ∈ 0..4 × j ∈ 0..4 are
+                // explicitly matched above; this arm is unreachable as
+                // long as idx() is only called from the loops below.
+                _ => unreachable!("idx({i},{j}) outside 0..4 × 0..4"),
             }
         }
 

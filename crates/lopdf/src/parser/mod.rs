@@ -106,8 +106,11 @@ fn integer(input: ParserInput) -> NomResult<i64> {
     let (i, _) = pair(opt(one_of("+-")), digit1).parse(input)?;
 
     let int_input = &input[..input.len() - i.len()];
+    // nom's digit1 + opt(one_of("+-")) selects only ASCII bytes, so
+    // from_utf8 succeeds on valid input; propagate any failure as a parse
+    // error rather than panicking (M8-PAR-01).
     convert_result(
-        i64::from_str(str::from_utf8(int_input).unwrap()),
+        i64::from_str(str::from_utf8(int_input).unwrap_or("")),
         i,
         ErrorKind::Digit,
     )
@@ -124,8 +127,10 @@ fn real(input: ParserInput) -> NomResult<f32> {
     .parse(input)?;
 
     let float_input = &input[..input.len() - i.len()];
+    // nom predicates guarantee ASCII-only bytes in the slice; propagate
+    // utf8 failure as a parse error rather than panicking (M8-PAR-01).
     convert_result(
-        f32::from_str(str::from_utf8(float_input).unwrap()),
+        f32::from_str(str::from_utf8(float_input).unwrap_or("")),
         i,
         ErrorKind::Digit,
     )
@@ -136,7 +141,9 @@ pub(crate) fn hex_char(input: ParserInput) -> NomResult<u8> {
         verify(take(2usize), |h: &ParserInput| {
             h.as_bytes().iter().copied().all(AsChar::is_hex_digit)
         }),
-        |x: ParserInput| u8::from_str_radix(str::from_utf8(&x).unwrap(), 16),
+        // is_hex_digit guarantees ASCII; unwrap_or propagates failure as
+        // parse error instead of panic (M8-PAR-01).
+        |x: ParserInput| u8::from_str_radix(str::from_utf8(&x).unwrap_or(""), 16),
     )
     .parse(input)
 }
@@ -144,8 +151,10 @@ pub(crate) fn hex_char(input: ParserInput) -> NomResult<u8> {
 fn oct_char(input: ParserInput) -> NomResult<u8> {
     map_res(
         take_while_m_n(1, 3, AsChar::is_oct_digit),
-        // Spec requires us to ignore any overflow.
-        |x: ParserInput| u16::from_str_radix(str::from_utf8(&x).unwrap(), 8).map(|o| o as u8),
+        // Spec requires us to ignore any overflow; is_oct_digit guarantees
+        // ASCII bytes, so unwrap_or propagates utf8 failure as a parse
+        // error instead of panic (M8-PAR-01).
+        |x: ParserInput| u16::from_str_radix(str::from_utf8(&x).unwrap_or(""), 8).map(|o| o as u8),
     )
     .parse(input)
 }

@@ -156,7 +156,11 @@ pub fn verify_cms_signature(
         }
         SignatureAlgorithm::EcdsaP256Sha256 => verify_ecdsa_p256(signed_data, signature, spki_der),
         SignatureAlgorithm::EcdsaP384Sha384 => verify_ecdsa_p384(signed_data, signature, spki_der),
-        SignatureAlgorithm::Unknown => verify_by_spki_type(signed_data, signature, spki_der),
+        // Fail closed: an unrecognised signature-algorithm OID must not be
+        // guessed via SPKI key-type heuristics. Guessing SHA-256 for RSA
+        // when the actual OID is unknown could silently accept a signature
+        // computed with a different digest (M8-SEC-03).
+        SignatureAlgorithm::Unknown => Err("unknown signature algorithm OID".into()),
     }
 }
 
@@ -242,32 +246,6 @@ fn verify_ecdsa_p384(
     }
 }
 
-/// Fallback: determine algorithm from SPKI type.
-fn verify_by_spki_type(
-    signed_data: &[u8],
-    signature_bytes: &[u8],
-    spki_der: &[u8],
-) -> Result<bool, String> {
-    let (_, spki_seq) = parse_tlv(spki_der).ok_or("cannot parse SPKI")?;
-    let (_, algo_seq) = parse_tlv(spki_seq).ok_or("cannot parse SPKI algorithm")?;
-    let (rest, algo_oid) = parse_tlv(algo_seq).ok_or("cannot parse SPKI algorithm OID")?;
-    if algo_oid == OID_RSA_ENCRYPTION {
-        verify_rsa_pkcs1::<sha2::Sha256>(signed_data, signature_bytes, spki_der)
-    } else if algo_oid == OID_EC_PUBLIC_KEY {
-        let (_, curve_oid) = parse_tlv(rest).ok_or("no EC curve parameter in SPKI")?;
-        if curve_oid == OID_P256 {
-            verify_ecdsa_p256(signed_data, signature_bytes, spki_der)
-        } else if curve_oid == OID_P384 {
-            verify_ecdsa_p384(signed_data, signature_bytes, spki_der)
-        } else {
-            Err("unsupported EC curve".into())
-        }
-    } else {
-        Err(format!(
-            "unsupported public key algorithm OID: {algo_oid:02x?}"
-        ))
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -391,7 +369,10 @@ mod tests {
     }
 
     #[test]
-    fn verify_ec_spki_fallback_unsupported_curve() {
+    fn verify_unknown_sig_oid_fails_closed() {
+        // An unrecognised signature OID must fail closed (M8-SEC-03).
+        // Previously the code fell back to SPKI-based algorithm guessing,
+        // which could produce unexpected results for unknown OIDs.
         let unknown_curve: &[u8] = &[0x01, 0x02, 0x03];
         let algo_inner_len = 2 + OID_EC_PUBLIC_KEY.len() + 2 + unknown_curve.len();
         let mut spki = vec![0x30];
@@ -406,6 +387,6 @@ mod tests {
         spki.extend_from_slice(unknown_curve);
         let result = verify_cms_signature(b"test", b"sig", &spki, &[0xFF], &[]);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("unsupported EC curve"));
+        assert!(result.unwrap_err().contains("unknown signature algorithm OID"));
     }
 }
