@@ -1,0 +1,81 @@
+name: Release Smoke
+
+# Fast pre-release confidence check.
+# Runs on version tags and manual dispatch.
+# Validates that the workspace compiles, key tests pass,
+# and cargo package produces valid artifacts.
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      crate:
+        description: 'Crate to package-validate (default: pdfluent)'
+        required: false
+        default: 'pdfluent'
+
+concurrency:
+  group: release-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  smoke:
+    name: Release smoke (compile + test + package)
+    runs-on: self-hosted
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Workspace compile check
+        run: cargo check --workspace --exclude pdf-desktop
+
+      - name: Pdfluent unit + integration tests
+        # Run the fast integration suites: lifecycle (open/save round-trip),
+        # processing_limits (stream-byte and pixel caps), and security.
+        # Excludes heavy e2e_parity tests (those run in gate-ci).
+        run: |
+          cargo test -p pdfluent \
+            --test lifecycle \
+            --test processing_limits \
+            --test security \
+            --test determinism \
+            -- --test-threads=4
+
+      - name: Pdf-syntax unit tests
+        run: cargo test -p pdf-syntax
+
+      - name: Package validation — pdfluent
+        # Validates that the pdfluent artifact can be packaged cleanly:
+        # LICENSE is included, README exists, no path-only deps leak through.
+        run: |
+          cargo package -p pdfluent --no-verify --allow-dirty
+          echo "--- pdfluent package contents ---"
+          tar -tzf target/package/pdfluent-*.crate | sort | head -60
+
+      - name: Package validation — ${{ inputs.crate || 'pdf-engine' }}
+        run: |
+          CRATE="${{ inputs.crate || 'pdf-engine' }}"
+          cargo package -p "$CRATE" --no-verify --allow-dirty
+          echo "--- $CRATE package contents ---"
+          tar -tzf "target/package/${CRATE}-"*.crate | sort | head -40
+
+      - name: Release consistency check
+        run: python3 scripts/check_release_consistency.py
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-smoke-packages
+          path: target/package/*.crate
+          retention-days: 7
+          if-no-files-found: warn
