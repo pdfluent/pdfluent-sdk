@@ -1,6 +1,6 @@
 [package]
 name = "pdf-interpret"
-version = "0.5.2"
+version = "0.5.3"
 description = "A crate for interpreting PDF files."
 edition = "2024"
 authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]

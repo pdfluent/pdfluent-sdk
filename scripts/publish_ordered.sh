@@ -43,19 +43,18 @@ done
 log() { echo "[$(date -u '+%H:%M:%S')] $*" | tee -a "$LOGFILE"; }
 die() { log "ERROR: $*"; exit 1; }
 
-# Topological publish order: leaf → root
-# Format: "local-crate-name [--package published-name]"
-# The --package flag is needed when the local crate name differs from the
-# published name (e.g. pdf-sign publishes as pdfluent-sign).
+# Topological publish order: leaf → root.
+# Use the package name (from Cargo.toml `name =`), NOT the directory name.
+# cargo publish -p <name> looks up by package name, not by directory.
 CRATES=(
     # --- Image codec forks (no internal deps) ---
-    "hayro-ccitt --package pdfluent-ccitt"
-    "hayro-jbig2 --package pdfluent-jbig2"
-    "hayro-jpeg2000 --package pdfluent-jpeg2000"
+    "pdfluent-ccitt"
+    "pdfluent-jbig2"
+    "pdfluent-jpeg2000"
 
     # --- lopdf fork + CFF parser ---
-    "lopdf --package pdfluent-lopdf"
-    "cff-parser --package pdfluent-cff"
+    "pdfluent-lopdf"
+    "pdfluent-cff"
 
     # --- Core parse/interpret/font layer ---
     "pdf-syntax"
@@ -77,9 +76,9 @@ CRATES=(
     "pdf-engine"
 
     # --- Feature crates ---
-    "pdf-sign --package pdfluent-sign"
-    "pdf-forms --package pdfluent-forms"
-    "pdf-extract --package pdfluent-extract"
+    "pdfluent-sign"
+    "pdfluent-forms"
+    "pdfluent-extract"
     "pdf-ocr"
     "xfa-license"
 
@@ -107,59 +106,61 @@ SKIP=true
 PUBLISHED=()
 SKIPPED=()
 
-for ENTRY in "${CRATES[@]}"; do
-    # Parse crate name and optional --package flag
-    CRATE_DIR=$(echo "$ENTRY" | awk '{print $1}')
-    EXTRA_FLAGS=$(echo "$ENTRY" | cut -s -d' ' -f2-)
-
-    # Determine the published crate name
-    if echo "$EXTRA_FLAGS" | grep -q -- "--package"; then
-        PUB_NAME=$(echo "$EXTRA_FLAGS" | sed 's/.*--package //' | awk '{print $1}')
-    else
-        PUB_NAME="$CRATE_DIR"
-    fi
-
+for CRATE in "${CRATES[@]}"; do
     # Resume logic
     if [[ -n "$RESUME_FROM" ]] && $SKIP; then
-        if [[ "$PUB_NAME" == "$RESUME_FROM" ]] || [[ "$CRATE_DIR" == "$RESUME_FROM" ]]; then
+        if [[ "$CRATE" == "$RESUME_FROM" ]]; then
             SKIP=false
         else
-            log "SKIP  $PUB_NAME (before --from point)"
-            SKIPPED+=("$PUB_NAME")
+            log "SKIP  $CRATE (before --from point)"
+            SKIPPED+=("$CRATE")
             continue
         fi
     fi
 
-    log "--- $PUB_NAME ---"
+    log "--- $CRATE ---"
 
-    # Always dry-run first
-    log "  Dry-run validating $PUB_NAME..."
-    if ! cargo publish -p "$CRATE_DIR" $EXTRA_FLAGS --dry-run --allow-dirty \
-            >> "$LOGFILE" 2>&1; then
-        log "  Dry-run FAILED for $PUB_NAME — check $LOGFILE"
-        die "Dry-run failed for $PUB_NAME. Aborting before any publish."
+    # Package validation: --no-verify skips registry-compile.
+    # Compilation was already verified by 'cargo check --workspace' in pre-flight.
+    # This checks: file inclusion, no path-dep leaks, LICENSE present, metadata valid.
+    #
+    # Cascade note: for crates that depend on a new local version not yet on crates.io
+    # (e.g. pdf-interpret 0.5.3 in a beta.5 cascade), cargo package will fail with
+    # "failed to select a version for the requirement". This is expected — the publish
+    # order guarantees the dep will be live before the dependent crate is published.
+    # We treat this specific error as a WARNING, not a fatal failure.
+    log "  Packaging $CRATE..."
+    if cargo package -p "$CRATE" --no-verify --allow-dirty >> "$LOGFILE" 2>&1; then
+        log "  Package OK"
+    elif tail -5 "$LOGFILE" | grep -q "failed to select a version for the requirement"; then
+        # Expected during cascade dry-run: upstream dep has a new local version
+        # that isn't on crates.io yet. The topological publish order ensures
+        # the dep will be live before this crate is published.
+        log "  Package SKIP (cascade dep not yet on crates.io — OK, publish order handles this)"
+    else
+        log "  Package FAILED for $CRATE — check $LOGFILE"
+        die "Package failed for $CRATE. Aborting before any publish."
     fi
-    log "  Dry-run OK"
 
     if ! $LIVE; then
         log "  (dry-run only — skipping real publish)"
-        SKIPPED+=("$PUB_NAME")
+        SKIPPED+=("$CRATE")
         continue
     fi
 
     # Real publish
-    log "  Publishing $PUB_NAME..."
-    if cargo publish -p "$CRATE_DIR" $EXTRA_FLAGS --allow-dirty \
+    log "  Publishing $CRATE..."
+    if cargo publish -p "$CRATE" --allow-dirty \
             >> "$LOGFILE" 2>&1; then
-        log "  Published $PUB_NAME ✅"
-        PUBLISHED+=("$PUB_NAME")
+        log "  Published $CRATE ✅"
+        PUBLISHED+=("$CRATE")
     else
-        log "  FAILED to publish $PUB_NAME — check $LOGFILE"
-        die "Publish failed for $PUB_NAME. See RELEASE_PLAYBOOK.md §Recovery for next steps."
+        log "  FAILED to publish $CRATE — check $LOGFILE"
+        die "Publish failed for $CRATE. See RELEASE_PLAYBOOK.md §Recovery for next steps."
     fi
 
     # Wait for index propagation before publishing dependents
-    if [[ "${#CRATES[@]}" -gt 0 ]] && [[ "$ENTRY" != "${CRATES[-1]}" ]]; then
+    if [[ "${#CRATES[@]}" -gt 0 ]] && [[ "$CRATE" != "${CRATES[-1]}" ]]; then
         log "  Waiting ${WAIT_SECS}s for crates.io index propagation..."
         sleep "$WAIT_SECS"
     fi
