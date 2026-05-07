@@ -4,7 +4,7 @@ Pure Rust PDF/A SDK with XFA support and WASM bindings.
 
 ![Crates.io](https://img.shields.io/crates/v/pdfluent)
 ![License](https://img.shields.io/badge/license-PDFluent%20Commercial-blue)
-![Build](https://img.shields.io/github/actions/workflow/status/jasperdewinter/xfa-native-rust/ci.yml)
+![Build](https://img.shields.io/github/actions/workflow/status/pdfluent/pdfluent-sdk/ci.yml)
 
 See [SETUP.md](SETUP.md) for contributor onboarding.
 
@@ -13,11 +13,13 @@ use pdfluent::prelude::*;
 
 fn main() -> Result<()> {
     let doc = PdfDocument::open("input.pdf")?;
-    for i in 0..doc.page_count() {
-        println!("{}", doc.extract_text(i)?);
+    for page in doc.pages() {
+        println!("{}", page.text()?);
     }
-    let pdfa = doc.convert_to_pdfa("2b")?;
-    pdfa.save("output.pdf")?;
+    let report = doc.validate_pdfa(PdfAProfile::A2b)?;
+    if report.is_compliant() {
+        println!("PDF/A-2B ✓");
+    }
     Ok(())
 }
 ```
