@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the xfa-native-rust PDF engine are documented here.
+All notable changes to PDFluent are documented here.
 
 ## [1.0.0-beta.5] — 2026-05-07
 
@@ -119,7 +119,7 @@ manipulation, digital signing, content extraction, and multi-language bindings.
 ### Known limitations
 
 - Memory usage can spike above 1 GB on adversarial/malformed large PDFs (#499).
-- WASM build support is experimental; `xfa-wasm` compiles but browser integration
+- WASM build support is experimental; `@pdfluent/wasm` compiles but browser integration
   is untested end-to-end.
 
 ---
@@ -170,14 +170,14 @@ PDF/A validation and PDF manipulation hardening.
 
 Multi-language SDK surface for external consumers.
 
-- `pdf-python`: PyO3-based Python package (`xfa-pdf`) with maturin build; covers
+- `pdf-python`: PyO3-based Python package (`pdfluent` on PyPI) with maturin build; covers
   open/save, merge, text extraction, form fields, annotations, redact, encrypt/decrypt,
   PDF/A validate.
 - `pdf-node`: Node.js native addon (NAPI) with npm-ready `package.json`; covers the
   same API surface as the Python bindings.
 - `pdf-java`: JNI wrapper with Javadoc, Maven-ready POM, JUnit test scaffolding.
 - `pdf-capi`: C API (`pdf-capi`) with 12+ core operations for FFI consumers.
-- `xfa-wasm`: Rust→WASM target (wasm-pack); basic parse and text extract in browser.
+- `@pdfluent/wasm`: Rust→WASM target (wasm-pack); basic parse and text extract in browser.
 - CI matrix: Python (maturin), Node.js (napi-rs), Java (JNI) build verification.
 
 ---

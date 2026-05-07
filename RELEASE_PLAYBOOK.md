@@ -278,7 +278,7 @@ to crates.io:
 | `pdf-node` | Native Node.js binding (shipped via npm, not crates.io) |
 | `pdf-java` | Java JNI binding (shipped via Maven, not crates.io); stale MIT license |
 | `pdf-python` | Python binding (shipped via PyPI/maturin, not crates.io); stale MIT license |
-| `xfa-wasm` | WASM artifact (shipped via npm/wasm-pack, not crates.io) |
+| `xfa-wasm` | WASM artifact (`@pdfluent/wasm` on npm, shipped via wasm-pack, not crates.io) |
 | `xfa-api-server` | Internal API server (not SDK) |
 | `xfa-pdfrest-compare` | Oracle comparison tooling (internal) |
 | `xfa-license-gen` | Internal license token generator (not part of public SDK) |

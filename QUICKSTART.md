@@ -87,11 +87,11 @@ PDFLUENT_LICENSE_KEY=YOUR-KEY-HERE ./my-pdf-app
 **Requirements:** Python ≥ 3.8
 
 ```bash
-pip install xfa-pdf
+pip install pdfluent
 ```
 
 ```python
-from xfa_pdf import Document, merge_pdfs, validate_pdfa
+from pdfluent import Document, merge_pdfs, validate_pdfa
 
 # Open and inspect
 with Document("invoice.pdf") as doc:
@@ -102,7 +102,7 @@ doc = Document("report.pdf")
 for page in doc:
     print(page.extract_text())
 
-# Render to image (requires Pillow: pip install xfa-pdf[pillow])
+# Render to image (requires Pillow: pip install pdfluent[pillow])
 img = doc[0].render(dpi=150)
 img.save("page-0.png")
 
@@ -131,8 +131,8 @@ merge_pdfs(["a.pdf", "b.pdf"], "merged.pdf")
 **Optional extras:**
 
 ```bash
-pip install xfa-pdf[pillow]   # PIL Image support → page.render().to_pil()
-pip install xfa-pdf[numpy]    # NumPy array support → page.render().to_numpy()
+pip install pdfluent[pillow]   # PIL Image support → page.render().to_pil()
+pip install pdfluent[numpy]    # NumPy array support → page.render().to_numpy()
 ```
 
 **Platforms:** Linux x86_64/aarch64, macOS x86_64/arm64, Windows x86_64.
@@ -142,8 +142,8 @@ Pre-built wheels — no Rust toolchain required.
 
 ```bash
 pip install maturin
-git clone https://github.com/pdfluent/pdfluent-sdk
-cd pdfluent-sdk/crates/pdf-python
+git clone https://github.com/pdfluent/examples
+cd examples/rust
 maturin develop --release
 ```
 
@@ -154,12 +154,12 @@ maturin develop --release
 **Requirements:** Node.js ≥ 18
 
 ```bash
-npm install @xfa-engine/pdf-node
+npm install @pdfluent/node
 ```
 
 ```js
 const fs = require('fs');
-const { openPdf, mergePdfs } = require('@xfa-engine/pdf-node');
+const { openPdf, mergePdfs } = require('@pdfluent/node');
 
 // Open from file path
 const doc = openPdf('input.pdf');
@@ -177,7 +177,7 @@ const render = doc.renderPage(0, { dpi: 150 });
 // encode with sharp: await sharp(render.data, { raw: { width: render.width, height: render.height, channels: 4 } }).png().toFile('page-0.png')
 
 // Open from Buffer (e.g. HTTP response or fs.readFileSync)
-const { PdfDocument } = require('@xfa-engine/pdf-node');
+const { PdfDocument } = require('@pdfluent/node');
 const data = fs.readFileSync('other.pdf');
 const doc2 = PdfDocument.open(data);
 
@@ -188,7 +188,7 @@ mergePdfs(['a.pdf', 'b.pdf'], 'merged.pdf');
 **TypeScript:**
 
 ```ts
-import { openPdf } from '@xfa-engine/pdf-node';
+import { openPdf } from '@pdfluent/node';
 
 const doc = openPdf('input.pdf');
 const text: string = doc.extractText(0);
@@ -239,11 +239,11 @@ Native `.node` binaries — no Rust toolchain required.
 ### Via npm (bundler — Vite / webpack)
 
 ```bash
-npm install xfa-wasm
+npm install @pdfluent/wasm
 ```
 
 ```js
-import init, { PdfDoc } from 'xfa-wasm';
+import init, { PdfDoc } from '@pdfluent/wasm';
 
 await init();
 
@@ -327,5 +327,5 @@ automatic cleanup.
 - **Docs:** <https://pdfluent.com/docs>
 - **Trial license:** <https://pdfluent.com/trial>
 - **Pricing:** <https://pdfluent.com/pricing>
-- **Issues:** <https://github.com/pdfluent/pdfluent-sdk/issues>
+- **Issues:** <https://github.com/pdfluent/examples/issues>
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)
