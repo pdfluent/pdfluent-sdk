@@ -22,11 +22,11 @@ pub struct FormTree {
     /// Lookup table: XFA `id` attribute -> `FormNodeId`.
     pub node_ids: HashMap<String, FormNodeId>,
     /// XFA 3.3 §5.5 `<variables>` `<script name="X">…</script>` blocks
-    /// gathered at merge time. Each entry is `(name, body)`. The
-    /// sandboxed JS runtime evaluates these once per document and
-    /// exposes them as form-level globals so event/calculate scripts
-    /// can read `<scriptName>.<topLevelDecl>`. Empty in default mode.
-    pub variables_scripts: Vec<(String, String)>,
+    /// gathered at merge time. Each entry is `(subform_scope, name, body)`.
+    /// `subform_scope` is `None` for root-level scripts (globally accessible)
+    /// and `Some(subform_name)` for scripts scoped to a named subform
+    /// (accessible as `subform.variables.scriptName`). Empty in default mode.
+    pub variables_scripts: Vec<(Option<String>, String, String)>,
 }
 
 impl FormTree {

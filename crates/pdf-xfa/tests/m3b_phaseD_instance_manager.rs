@@ -670,6 +670,7 @@ fn resolver_preserves_variables_globals() {
     let mut tree = FormTree::new();
     let root = add_node(&mut tree, "root", FormNodeType::Root);
     tree.variables_scripts.push((
+        None,
         "Helpers".into(),
         r#"
 var VALUE = "from-vars";
@@ -709,5 +710,141 @@ fn resolver_preserves_clean_doc_333f4a55_path() {
     let outcome = run_sandbox(&mut tree, root);
 
     assert_eq!(field_value(&tree, out), "clean");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+// Phase D-ι.2 — subform-scoped <variables> tests
+
+#[test]
+fn subform_variables_accessible_via_variables_property() {
+    // `Page2.variables.ValidationScript.getCounty()` must resolve when
+    // ValidationScript is registered as a Page2-scoped variables entry.
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let _page2 = add_child(&mut tree, root, "Page2", FormNodeType::Subform);
+    let out = add_field(&mut tree, root, "Out", "");
+    tree.variables_scripts.push((
+        Some("Page2".into()),
+        "ValidationScript".into(),
+        r#"
+function getCounty() { return "Bavaria"; }
+var TAG = "page2-scoped";
+"#
+        .into(),
+    ));
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Page2.variables.ValidationScript.getCounty() + \
+         \"-\" + Page2.variables.ValidationScript.TAG;",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "Bavaria-page2-scoped");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn subform_variables_also_accessible_flat() {
+    // Root-level scripts registered without a subform scope remain accessible
+    // directly as `ScriptName.X` from any calculate script (D-ι behaviour
+    // unchanged by D-ι.2).
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let out = add_field(&mut tree, root, "Out", "");
+    tree.variables_scripts
+        .push((None, "Global".into(), r#"var ANSWER = "42";"#.into()));
+    add_js_script(&mut tree, out, "calculate", "Out.rawValue = Global.ANSWER;");
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "42");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn subform_variables_unknown_subform_returns_empty_object() {
+    // Accessing `.variables` on a subform that has no registered variables
+    // scripts must return an empty object rather than throwing.
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let _page1 = add_child(&mut tree, root, "Page1", FormNodeType::Subform);
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        // typeof check avoids TypeError; empty object has no .Missing property
+        "var ns = Page1.variables; \
+         Out.rawValue = (ns !== null && typeof ns === 'object') ? 'ok' : 'fail';",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "ok");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn multiple_subforms_variables_are_isolated() {
+    // Page2.variables and Page3.variables must each return their own
+    // namespace objects, not each other's. Same script name on two subforms
+    // must NOT collide in the flat global dict.
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let _page2 = add_child(&mut tree, root, "Page2", FormNodeType::Subform);
+    let _page3 = add_child(&mut tree, root, "Page3", FormNodeType::Subform);
+    let out = add_field(&mut tree, root, "Out", "");
+    tree.variables_scripts.push((
+        Some("Page2".into()),
+        "Util".into(),
+        r#"var ID = "p2";"#.into(),
+    ));
+    tree.variables_scripts.push((
+        Some("Page3".into()),
+        "Util".into(),
+        r#"var ID = "p3";"#.into(),
+    ));
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Page2.variables.Util.ID + \"-\" + Page3.variables.Util.ID;",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "p2-p3");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn subform_scoped_variables_not_in_flat_global() {
+    // Subform-scoped scripts must NOT be accessible via bare `ScriptName.X`
+    // — only via `subformHandle.variables.ScriptName.X`. This prevents
+    // silent shadowing when two subforms define the same script name.
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let _page2 = add_child(&mut tree, root, "Page2", FormNodeType::Subform);
+    let out = add_field(&mut tree, root, "Out", "");
+    tree.variables_scripts.push((
+        Some("Page2".into()),
+        "ScopedOnly".into(),
+        r#"var VAL = "scoped";"#.into(),
+    ));
+    // Access ScopedOnly directly (flat path) — must be undefined, not the
+    // scoped namespace.
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = (typeof ScopedOnly === 'undefined') ? 'not-flat' : 'leaked';",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "not-flat");
     assert_eq!(outcome.js_runtime_errors, 0);
 }
