@@ -26,8 +26,14 @@ fn main() -> Result<()> {
     let doc = PdfDocument::open("input.pdf")?;
     println!("Pages: {}", doc.page_count());
 
-    let text = doc.extract_text(0)?;
-    println!("First page: {text}");
+    // All pages combined:
+    let text = doc.extract_text()?;
+    println!("{text}");
+
+    // Per-page:
+    for page in doc.pages() {
+        println!("{}", page?.text()?);
+    }
 
     Ok(())
 }
@@ -55,7 +61,6 @@ Default: `signing`, `pdfa`, `redaction`.
 | `redaction` (default) | Content redaction (search-based and region-based) |
 | `ocr-tesseract` | OCR via Tesseract |
 | `ocr-paddle` | OCR via PaddleOCR |
-| `html-to-pdf` | HTML / URL → PDF conversion (**planned — not yet implemented**) |
 | `docx-export` | PDF → DOCX export |
 | `xfa-flatten` | XFA form → static PDF flattening (experimental) |
 | `wasm` | WebAssembly target |

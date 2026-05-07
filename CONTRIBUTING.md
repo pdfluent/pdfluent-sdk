@@ -1,4 +1,4 @@
-# Contributing to XFA-Native-Rust
+# Contributing to PDFluent
 
 ## Fix & Retest Workflow
 

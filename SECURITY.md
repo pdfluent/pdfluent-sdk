@@ -4,14 +4,14 @@
 
 | Version | Supported |
 |---------|-----------|
-| 1.0.0-beta.1 | Yes |
-| < 1.0.0 | No |
+| 1.0.0-beta.x | Yes |
+| < 1.0.0-beta.1 | No |
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in the XFA PDF SDK, please report it responsibly.
+If you discover a security vulnerability in PDFluent, please report it responsibly.
 
-**Email:** security@xfa.dev
+**Email:** security@pdfluent.com
 
 **Do NOT** open a public GitHub issue for security vulnerabilities.
 
@@ -88,7 +88,7 @@ Fuzzing runs nightly in CI (300 seconds per target) and on every PR (smoke test,
 
 ## Threat model
 
-The XFA PDF SDK processes untrusted PDF input. The security boundary is:
+PDFluent processes untrusted PDF input. The security boundary is:
 
 - **Trusted:** SDK API callers, configuration, font directories
 - **Untrusted:** PDF file contents, embedded fonts, JavaScript/FormCalc in XFA, XMP metadata, embedded file attachments
