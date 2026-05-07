@@ -2,6 +2,36 @@
 
 All notable changes to the xfa-native-rust PDF engine are documented here.
 
+## [1.0.0-beta.5] — 2026-05-07
+
+### Security
+
+- **LOPDF-ZBOMB-01** — `pdfluent-lopdf`: FlateDecode and LZWDecode decompression is now capped at 256 MiB per stream. Crafted zip-bomb PDFs that previously caused unbounded memory growth now return `Error::StreamTooLarge` at the cap. Commit `c9c7110`.
+- **JBIG2-HUF-01** — `pdfluent-jbig2`: Over-committed Huffman prefix trees (crafted JBIG2 streams where two length-1 codes fill the binary tree) previously caused an unreachable `panic!` in `set_child`. The path now returns `DecodeError::Huffman(HuffmanError::MalformedTable)` instead. Commit `9393410`.
+- **J2K-BUF-01** — `pdfluent-jpeg2000`: `Image::decode()` buffer-size arithmetic is now guarded with checked multiplication. Images with extreme dimensions that overflow `usize` return `DecodeError::Validation(ValidationError::ImageTooLarge)` instead of allocating an incorrect buffer. Commit `10b1bd6`.
+- **JPX-01/02/03** — `pdf-syntax`: Three integer-overflow paths in the JPX inline-image decoder are hardened. Commit `8174006`.
+- **PDFA-CS-DOS-01** — `pdf-manip`: PDF/A colour-space conversion no longer iterates a synthetic `1..=max_id` range but walks the live xref table, preventing a DoS on PDFs with sparse xref entries. Commit `97e623d`.
+
+### Added
+
+- **XFA DataDom / instanceManager / listbox** (`pdf-xfa`): Full M3-B Phase D integration — `instanceManager` API, listbox `boundItem` wiring, and `DataDom` traversal for dynamic XFA forms. Commit `7001108`.
+- **XFA form-level globals** (`pdf-xfa`): `<variables>` and `<script>` globals defined at the form level are now persisted across page renders. Commit `668994d`.
+- **XFA SOM disambiguation** (`pdf-xfa`): Ambiguous multi-segment SOM paths are now resolved deterministically; implicit and explicit form-node lookups use a consistent resolution strategy. Commits `f918276`, `8f3d153`, `f91827607`.
+
+### Changed
+
+- `pdf-annot` builder refactored into focused per-type modules; `StampName` variants unified. External API is unchanged. Commit `c03b89466`.
+- CI: GitHub Actions migrated to Node 24; continue-on-error audit + release smoke pipeline hardened. Commit `64b8d76`.
+- `pdf-sign`: signing is now fail-closed on certificate-chain errors; partial signatures are rejected rather than silently succeeding.
+
+### Fixed
+
+- `pdf-xfa`: `xfa.event.newText` and `boundItem` listbox lookup corrected. Commit `11ad7d2`.
+- `pdf-xfa`: Underscore shorthand handler ordering fixed (M3-B Phase D-δ.1). Commit `8efdad4`.
+- `pdf-xfa`: Flatten JS chain fix applied to best-effort static flatten path. Commit `f91827607`.
+
+---
+
 ## [Unreleased] — 2026-04-23
 
 ### Added
