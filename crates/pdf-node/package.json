@@ -56,11 +56,11 @@
   "licenseUrl": "https://pdfluent.com/terms",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pdfluent/pdfluent-sdk"
+    "url": "https://github.com/pdfluent/examples"
   },
   "homepage": "https://pdfluent.com",
   "bugs": {
-    "url": "https://github.com/pdfluent/pdfluent-sdk/issues"
+    "url": "https://pdfluent.com/support"
   },
   "publishConfig": {
     "access": "public"
