@@ -72,6 +72,9 @@ impl Env {
 /// Maximum instructions to execute before aborting (prevents infinite loops).
 const MAX_INSTRUCTIONS: u64 = 100_000;
 
+/// Maximum user-defined function call depth before aborting.
+const MAX_CALL_DEPTH: usize = 64;
+
 /// Maximum loop iterations before aborting.
 const MAX_LOOP_ITERATIONS: u64 = 10_000;
 
@@ -83,6 +86,8 @@ pub struct Interpreter {
     som_resolver: Option<*mut (dyn SomResolver + 'static)>,
     /// Instruction counter for timeout detection.
     instruction_count: u64,
+    /// User-defined function call depth.
+    call_depth: usize,
 }
 
 impl Default for Interpreter {
@@ -98,6 +103,7 @@ impl Interpreter {
             env: Env::new(),
             som_resolver: None,
             instruction_count: 0,
+            call_depth: 0,
         }
     }
 
@@ -335,11 +341,18 @@ impl Interpreter {
                             got: arg_vals.len(),
                         });
                     }
+                    if self.call_depth >= MAX_CALL_DEPTH {
+                        return Err(FormCalcError::CallDepthExceeded {
+                            max_depth: MAX_CALL_DEPTH,
+                        });
+                    }
                     self.env.push_scope();
                     for (param, val) in params.iter().zip(arg_vals) {
                         self.env.declare(param, val);
                     }
+                    self.call_depth += 1;
                     let result = self.exec(&body);
+                    self.call_depth -= 1;
                     self.env.pop_scope();
                     return Ok(Signal::Value(result?));
                 }
@@ -434,14 +447,18 @@ impl Interpreter {
                     self.env.declare(var, Value::Number(i));
                     iterations += 1;
 
-                    match self.exec_block(body)? {
-                        Signal::Value(v) => result = v,
-                        Signal::Return(v) => {
+                    match self.exec_block(body) {
+                        Ok(Signal::Value(v)) => result = v,
+                        Ok(Signal::Return(v)) => {
                             self.env.pop_scope();
                             return Ok(Signal::Return(v));
                         }
-                        Signal::Break => break,
-                        Signal::Continue => {}
+                        Ok(Signal::Break) => break,
+                        Ok(Signal::Continue) => {}
+                        Err(e) => {
+                            self.env.pop_scope();
+                            return Err(e);
+                        }
                     }
 
                     if *ascending {
@@ -480,14 +497,18 @@ impl Interpreter {
                 self.env.push_scope();
                 for item in &items {
                     self.env.declare(var, item.clone());
-                    match self.exec_block(body)? {
-                        Signal::Value(v) => result = v,
-                        Signal::Return(v) => {
+                    match self.exec_block(body) {
+                        Ok(Signal::Value(v)) => result = v,
+                        Ok(Signal::Return(v)) => {
                             self.env.pop_scope();
                             return Ok(Signal::Return(v));
                         }
-                        Signal::Break => break,
-                        Signal::Continue => continue,
+                        Ok(Signal::Break) => break,
+                        Ok(Signal::Continue) => continue,
+                        Err(e) => {
+                            self.env.pop_scope();
+                            return Err(e);
+                        }
                     }
                 }
                 self.env.pop_scope();
@@ -807,6 +828,13 @@ mod tests {
         interp.exec(&ast).unwrap()
     }
 
+    fn run_result(src: &str) -> crate::error::Result<Value> {
+        let tokens = crate::lexer::tokenize(src).unwrap();
+        let ast = crate::parser::parse(tokens).unwrap();
+        let mut interp = Interpreter::new();
+        interp.exec(&ast)
+    }
+
     #[test]
     fn arithmetic() {
         assert_eq!(run("1 + 2 * 3"), Value::Number(7.0));
@@ -867,6 +895,106 @@ mod tests {
 
     #[test]
     fn user_function() {
+        assert_eq!(
+            run("func double(x)\n  x * 2\nendfunc\ndouble(21)"),
+            Value::Number(42.0)
+        );
+    }
+
+    #[test]
+    fn recursion_direct_hits_limit() {
+        // func f() calls itself immediately -- must error, not crash
+        let result = run_result("func f()\n  f()\nendfunc\nf()");
+        assert!(
+            matches!(result, Err(FormCalcError::CallDepthExceeded { .. })),
+            "expected CallDepthExceeded, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn recursion_mutual_hits_limit() {
+        // f() -> g() -> f() -> ... must error, not crash
+        let result = run_result("func f()\n  g()\nendfunc\nfunc g()\n  f()\nendfunc\nf()");
+        assert!(
+            matches!(result, Err(FormCalcError::CallDepthExceeded { .. })),
+            "expected CallDepthExceeded, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn recursion_depth_error_is_recoverable() {
+        // After a recursion-limit error, the same Interpreter still evaluates normally.
+        let mut interp = Interpreter::new();
+        let tokens = crate::lexer::tokenize("func f()\n  f()\nendfunc\nf()").unwrap();
+        let ast = crate::parser::parse(tokens).unwrap();
+        let _ = interp.exec(&ast);
+        assert_eq!(interp.call_depth, 0);
+        assert_eq!(
+            interp.env.scopes.len(),
+            1,
+            "scope stack must be clean after direct recursion error"
+        );
+
+        let tokens2 = crate::lexer::tokenize("1 + 1").unwrap();
+        let ast2 = crate::parser::parse(tokens2).unwrap();
+        assert_eq!(interp.exec(&ast2).unwrap(), Value::Number(2.0));
+    }
+
+    #[test]
+    fn recursion_inside_for_loop_is_recoverable() {
+        // Recursion inside a for-loop body must not leak loop or param scopes.
+        // Without the fix, each recursion level leaks one function-param scope
+        // because the for-loop `?` propagation skips `pop_scope`.
+        //
+        // Spawned with a large stack: for-loop recursion uses ~5 Rust frames per
+        // FormCalc level (eval_signal → exec → eval_signal(For) → exec_block →
+        // eval_signal(FuncCall)), vs ~3 for direct recursion. At MAX_CALL_DEPTH=64
+        // that is ~320 frames; the extra stack keeps the guard firing before any
+        // native overflow in debug builds.
+        let handle = std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interpreter::new();
+                let script =
+                    "func f(x)\n  for i = 0 upto 1 do\n    f(x + 1)\n  endfor\nendfunc\nf(0)";
+                let tokens = crate::lexer::tokenize(script).unwrap();
+                let ast = crate::parser::parse(tokens).unwrap();
+                let result = interp.exec(&ast);
+                assert!(
+                    matches!(result, Err(FormCalcError::CallDepthExceeded { .. })),
+                    "expected CallDepthExceeded, got: {:?}",
+                    result
+                );
+                assert_eq!(interp.call_depth, 0);
+                assert_eq!(
+                    interp.env.scopes.len(),
+                    1,
+                    "scope stack must be clean after for-loop recursion error"
+                );
+                let tokens2 = crate::lexer::tokenize("1 + 1").unwrap();
+                let ast2 = crate::parser::parse(tokens2).unwrap();
+                assert_eq!(interp.exec(&ast2).unwrap(), Value::Number(2.0));
+            })
+            .expect("thread spawn failed");
+        handle
+            .join()
+            .expect("for-loop recursion recovery test failed");
+    }
+
+    #[test]
+    fn nested_calls_within_limit_still_work() {
+        // Normal nested calls (well under MAX_CALL_DEPTH) must continue to work.
+        assert_eq!(
+            run("func add(a, b)\n  a + b\nendfunc\nadd(add(1, 2), add(3, 4))"),
+            Value::Number(10.0)
+        );
+    }
+
+    #[test]
+    fn user_function_basic_still_works() {
+        // The simplest user function must still evaluate.
         assert_eq!(
             run("func double(x)\n  x * 2\nendfunc\ndouble(21)"),
             Value::Number(42.0)

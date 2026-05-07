@@ -48,6 +48,13 @@ pub enum FormCalcError {
         got: usize,
     },
 
+    #[error("call depth limit exceeded (max {max_depth} frames)")]
+    /// User-defined function call stack too deep.
+    CallDepthExceeded {
+        /// The depth limit that was reached.
+        max_depth: usize,
+    },
+
     #[error("Division by zero")]
     /// Division by zero.
     DivisionByZero,
