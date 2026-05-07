@@ -2149,8 +2149,12 @@ fn normalize_separation_colorspaces(doc: &mut Document) -> usize {
     // Materialize lazily-loaded objects (including objects inside object streams)
     // so Separation arrays referenced outside the currently loaded object set are
     // still considered for 6.2.4.4:2 consistency checks.
-    let max_id = doc.max_id;
-    for obj_num in 1..=max_id {
+    //
+    // Iterate over actual xref entry keys, NOT 1..=max_id. A crafted PDF can set
+    // trailer /Size to u32::MAX, which would cause ~4 billion HashMap lookups via the
+    // 1..=max_id range (PDFA-CS-DOS-01).
+    let xref_obj_nums: Vec<u32> = doc.reference_table.entries.keys().copied().collect();
+    for obj_num in xref_obj_nums {
         let id = (obj_num, 0);
         if doc.objects.contains_key(&id) {
             continue;
@@ -2592,9 +2596,10 @@ fn fix_iccbased_n_value(doc: &mut Document) -> usize {
                         _ => 3,
                     };
                     stream.dict.set("N", Object::Integer(new_n));
-                    stream
-                        .dict
-                        .set("Length", Object::Integer(stream.content.len() as i64));
+                    stream.dict.set(
+                        "Length",
+                        Object::Integer(stream.content.len().min(i64::MAX as usize) as i64),
+                    );
                     count += 1;
                 }
             }
@@ -3156,5 +3161,67 @@ mod tests {
 
         let count = fix_iccbased_n_value(&mut doc);
         assert_eq!(count, 0);
+    }
+
+    // Regression: PDFA-CS-DOS-01 — normalize_separation_colorspaces must not iterate
+    // 1..=max_id when max_id is huge. A crafted PDF sets max_id to u32::MAX via /Size;
+    // the old code would perform ~4 billion HashMap lookups.
+    #[test]
+    fn normalize_separation_colorspaces_with_huge_max_id_completes_fast() {
+        let mut doc = Document::with_version("1.7");
+        // Simulate a crafted PDF: set max_id to a large value while actual objects
+        // remain minimal (no xref entries for those phantom IDs).
+        doc.max_id = 1_000_000;
+
+        let pages_id = doc.new_object_id();
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Count" => Object::Integer(0),
+            "Kids" => Object::Array(vec![]),
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        // If this completes without hanging, the DoS fix is in effect.
+        // (The old 1..=max_id loop would iterate 1 million times on phantom IDs.)
+        let count = normalize_separation_colorspaces(&mut doc);
+        assert_eq!(count, 0);
+    }
+
+    // Regression: PDFA-CS-INFO-02 — Length cast for replaced ICC profile stream.
+    // Verifies that fix_iccbased_n_value sets /Length correctly after profile replacement.
+    #[test]
+    fn fix_iccbased_n_value_sets_length_after_replace() {
+        let mut doc = Document::with_version("1.7");
+        // A stream with /N but < 128 bytes — will be replaced.
+        let icc_dict = dictionary! {
+            "N" => Object::Integer(3),
+        };
+        let tiny_icc = vec![0u8; 10]; // too short to be a valid ICC header
+        let stream = Stream::new(icc_dict, tiny_icc);
+        let sid = doc.add_object(Object::Stream(stream));
+
+        let count = fix_iccbased_n_value(&mut doc);
+        assert_eq!(count, 1);
+
+        if let Some(Object::Stream(s)) = doc.objects.get(&sid) {
+            let len_obj = s
+                .dict
+                .get(b"Length")
+                .expect("/Length must be set after replace");
+            if let Object::Integer(len) = len_obj {
+                assert!(*len > 0, "/Length must be positive");
+                assert_eq!(*len as usize, s.content.len(), "/Length must match content");
+            } else {
+                panic!("/Length is not an Integer");
+            }
+        } else {
+            panic!("stream object not found");
+        }
     }
 }
