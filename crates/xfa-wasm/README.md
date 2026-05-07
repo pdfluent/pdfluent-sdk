@@ -16,10 +16,10 @@ WebAssembly bindings for XFA form processing and PDF analysis in the browser.
 cargo install wasm-pack
 
 # Build the WASM package
-wasm-pack build crates/xfa-wasm --target web
+wasm-pack build crates/@pdfluent/wasm --target web
 
 # Without rendering (smaller bundle)
-wasm-pack build crates/xfa-wasm --target web -- --no-default-features
+wasm-pack build crates/@pdfluent/wasm --target web -- --no-default-features
 ```
 
 ## Quick Start
@@ -133,7 +133,7 @@ const data = forms.exportJson();
 Build without optional features for a smaller WASM binary:
 
 ```bash
-wasm-pack build crates/xfa-wasm --target web -- --no-default-features
+wasm-pack build crates/@pdfluent/wasm --target web -- --no-default-features
 ```
 
 ## API Reference

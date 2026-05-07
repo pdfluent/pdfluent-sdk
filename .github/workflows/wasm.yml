@@ -84,7 +84,7 @@ jobs:
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
           cd crates/xfa-wasm/pkg
-          echo "Publishing xfa-wasm $(node -e "console.log(require('./package.json').version)") to npm..."
+          echo "Publishing @pdfluent/wasm $(node -e "console.log(require('./package.json').version)") to npm..."
           npm publish --access public
           echo "npm publish complete"
 

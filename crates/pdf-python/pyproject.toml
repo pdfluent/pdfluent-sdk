@@ -3,7 +3,7 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "xfa-pdf"
+name = "pdfluent"
 version = "1.0.0b5"
 description = "Enterprise PDF SDK — render, extract, annotate, sign, and validate PDFs. Pure Rust, zero system dependencies."
 readme = "README.md"
@@ -35,8 +35,8 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://pdfluent.com"
-Repository = "https://github.com/pdfluent/pdfluent-sdk"
-"Bug Tracker" = "https://github.com/pdfluent/pdfluent-sdk/issues"
+Repository = "https://github.com/pdfluent/examples"
+"Bug Tracker" = "https://pdfluent.com/support"
 Documentation = "https://pdfluent.com/docs"
 
 [project.optional-dependencies]
@@ -50,4 +50,4 @@ testpaths = ["tests"]
 [tool.maturin]
 features = ["pyo3/extension-module"]
 python-source = "python"
-module-name = "xfa_pdf._native"
+module-name = "pdfluent._native"

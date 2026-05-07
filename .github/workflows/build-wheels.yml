@@ -105,7 +105,7 @@ jobs:
     needs: [linux, macos, windows, sdist]
     environment:
       name: pypi
-      url: https://pypi.org/project/xfa-pdf/
+      url: https://pypi.org/project/pdfluent/
     permissions:
       id-token: write   # required for trusted publishing (OIDC)
     steps:

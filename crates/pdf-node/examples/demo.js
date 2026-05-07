@@ -1,5 +1,5 @@
 /**
- * @xfa-engine/pdf-node — JavaScript demo
+ * @pdfluent/node — JavaScript demo
  *
  * Run from the crates/pdf-node directory after `npm run build`:
  *   node examples/demo.js <path/to/file.pdf>

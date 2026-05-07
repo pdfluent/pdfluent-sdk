@@ -146,7 +146,7 @@ export declare function openPdf(path: string): PdfDocument
  * result to `output_path`. All input files must be valid, readable PDFs.
  *
  * ```js
- * const { mergePdfs } = require('@xfa-engine/pdf-node');
+ * const { mergePdfs } = require('@pdfluent/node');
  * await mergePdfs(['a.pdf', 'b.pdf'], 'merged.pdf');
  * ```
  */
@@ -160,7 +160,7 @@ export declare function mergePdfs(paths: Array<string>, outputPath: string): voi
  * `warningCount`, and a list of `issues`.
  *
  * ```js
- * const { validatePdfA } = require('@xfa-engine/pdf-node');
+ * const { validatePdfA } = require('@pdfluent/node');
  * const report = validatePdfA('document.pdf', '2b');
  * console.log(report.compliant, report.errorCount);
  * ```

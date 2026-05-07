@@ -32,7 +32,7 @@ pub fn open_pdf(path: String) -> Result<PdfDocument> {
 /// result to `output_path`. All input files must be valid, readable PDFs.
 ///
 /// ```js
-/// const { mergePdfs } = require('@xfa-engine/pdf-node');
+/// const { mergePdfs } = require('@pdfluent/node');
 /// await mergePdfs(['a.pdf', 'b.pdf'], 'merged.pdf');
 /// ```
 #[napi]
@@ -55,7 +55,7 @@ pub fn merge_pdfs(paths: Vec<String>, output_path: String) -> Result<()> {
 /// `warningCount`, and a list of `issues`.
 ///
 /// ```js
-/// const { validatePdfA } = require('@xfa-engine/pdf-node');
+/// const { validatePdfA } = require('@pdfluent/node');
 /// const report = validatePdfA('document.pdf', '2b');
 /// console.log(report.compliant, report.errorCount);
 /// ```

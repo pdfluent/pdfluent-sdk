@@ -11,7 +11,7 @@
 //! # Usage (JavaScript)
 //!
 //! ```js
-//! import init, { XfaEngine } from 'xfa-wasm';
+//! import init, { XfaEngine } from '@pdfluent/wasm';
 //! await init();
 //!
 //! // Create from a field definition

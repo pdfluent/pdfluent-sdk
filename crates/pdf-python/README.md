@@ -1,4 +1,4 @@
-# xfa-pdf
+# pdfluent
 
 **Enterprise PDF SDK for Python — built on a pure-Rust stack, zero system dependencies.**
 
@@ -7,11 +7,11 @@ Render pages, extract text, fill forms, annotate, redact, encrypt, merge, and va
 ## Installation
 
 ```bash
-pip install xfa-pdf
+pip install pdfluent
 
 # Optional extras
-pip install xfa-pdf[pillow]   # PIL Image support
-pip install xfa-pdf[numpy]    # NumPy array support
+pip install pdfluent[pillow]   # PIL Image support
+pip install pdfluent[numpy]    # NumPy array support
 ```
 
 > Requires Python ≥ 3.8. Pre-built wheels for Linux (x86_64, aarch64), macOS (x86_64, arm64), and Windows (x86_64).
@@ -19,7 +19,7 @@ pip install xfa-pdf[numpy]    # NumPy array support
 ## Quick Start
 
 ```python
-from xfa_pdf import Document
+from pdfluent import Document
 
 # Open, inspect, render
 with Document("invoice.pdf") as doc:
@@ -45,7 +45,7 @@ print(f"Redacted {report.areas_redacted} areas on {report.pages_affected} pages"
 doc.save("contract_redacted.pdf")
 
 # PDF/A validation
-from xfa_pdf import validate_pdfa
+from pdfluent import validate_pdfa
 
 report = validate_pdfa("archive.pdf")
 if report.is_compliant:
@@ -55,14 +55,14 @@ else:
         print(f"[{issue.severity}] {issue.rule}: {issue.message}")
 
 # Merge PDFs
-from xfa_pdf import merge_pdfs
+from pdfluent import merge_pdfs
 merge_pdfs(["a.pdf", "b.pdf", "c.pdf"], "merged.pdf")
 
 # Encrypt / decrypt
 doc = Document("sensitive.pdf")
 doc.encrypt("sensitive_enc.pdf", password="s3cr3t")
 
-from xfa_pdf import decrypt_pdf
+from pdfluent import decrypt_pdf
 decrypt_pdf("sensitive_enc.pdf", "sensitive_dec.pdf", password="s3cr3t")
 ```
 
@@ -124,7 +124,7 @@ doc = Document("encrypted.pdf", password="pw")
 
 ## Comparison
 
-| | xfa-pdf | pypdf | pdfminer | pdfplumber | pikepdf |
+| | pdfluent | pypdf | pdfminer | pdfplumber | pikepdf |
 |---|---|---|---|---|---|
 | Rendering | ✓ | – | – | ✓ (via pdfminer) | – |
 | Text extraction | ✓ | ✓ | ✓ | ✓ | – |
@@ -141,8 +141,8 @@ Requires a Rust toolchain and `maturin`.
 
 ```bash
 pip install maturin
-git clone https://github.com/xfa-sdk/xfa-pdf
-cd xfa-pdf/crates/pdf-python
+git clone https://github.com/xfa-sdk/pdfluent
+cd pdfluent/crates/pdf-python
 maturin develop --release          # install in current venv
 maturin build --release            # build wheel in ./dist/
 ```

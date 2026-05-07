@@ -1,5 +1,5 @@
 /**
- * @xfa-engine/pdf-node — TypeScript demo
+ * @pdfluent/node — TypeScript demo
  *
  * Run from the crates/pdf-node directory after `npm run build`:
  *   npx ts-node examples/demo.ts [path/to/file.pdf]

@@ -1,4 +1,4 @@
-"""Type stubs for xfa_pdf."""
+"""Type stubs for pdfluent."""
 
 from __future__ import annotations
 
