@@ -12,7 +12,7 @@ keywords = ["pdf", "editing", "manipulation", "merge"]
 license = "MIT"
 readme = "README.md"
 name = "pdfluent-lopdf"
-repository = "https://github.com/pdfluent"
+repository = "https://github.com/pdfluent/examples"
 version = "0.39.2"
 rust-version = "1.85"
 
