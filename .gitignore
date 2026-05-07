@@ -37,3 +37,18 @@ out/
 
 # M8-CLEANUP-04 (#1380): VPS/local expensive validation reports
 validation-reports/
+
+# Build artifacts: Python bindings (maturin/PyO3 compiled extensions).
+# Machine-specific, must never be committed.
+crates/pdf-python/python/**/*.so
+crates/pdf-python/python/**/*.pyd
+crates/pdf-python/dist/
+
+# Build artifacts: Node.js bindings (napi-rs compiled .node files).
+crates/pdf-node/index.*.node
+crates/pdf-node/artifacts/
+
+# Belt-and-suspenders for wasm-pack output within pkg/ (already covered by /crates/xfa-wasm/pkg/ above).
+crates/xfa-wasm/pkg/*.js
+crates/xfa-wasm/pkg/*.wasm
+crates/xfa-wasm/pkg/*.d.ts

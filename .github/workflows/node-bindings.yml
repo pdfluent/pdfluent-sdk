@@ -1,9 +1,27 @@
 name: Node.js Bindings
 
+# Build and smoke-test Node.js bindings on every commit to master.
+# Publish to npm on version tags (v*.*.*).
+#
+# napi-rs publish pattern:
+#   1. build-and-test: smoke test on ubuntu/macos/windows.
+#   2. build-release: cross-compile all platform targets, upload .node artifacts.
+#   3. publish-npm: download all artifacts, run napi prepublish, publish packages.
+#
+# Required secrets:
+#   NPM_TOKEN  — npmjs.org publish token with write access to @xfa-engine scope.
+
 on:
   push:
     tags: ['node/v*', 'v*.*.*']
+    branches: [master]
   workflow_dispatch:
+    inputs:
+      publish_npm:
+        description: 'Publish to npm'
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
 
 concurrency:
   group: node-bindings-${{ github.ref }}
@@ -12,6 +30,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+# ---------------------------------------------------------------------------
+# Smoke tests (fast, per-OS)
+# ---------------------------------------------------------------------------
 jobs:
   build-and-test:
     name: Node ${{ matrix.node }} / ${{ matrix.os }}
@@ -48,7 +69,112 @@ jobs:
       - name: Upload native binding
         uses: actions/upload-artifact@v4
         with:
-          name: pdf-node-${{ matrix.os }}-node${{ matrix.node }}
+          name: pdf-node-smoke-${{ matrix.os }}-node${{ matrix.node }}
           path: crates/pdf-node/index.*.node
           if-no-files-found: error
           retention-days: 30
+
+# ---------------------------------------------------------------------------
+# Release builds: all napi targets (only on v* tags or manual publish)
+# ---------------------------------------------------------------------------
+  build-release:
+    name: Build release / ${{ matrix.target }}
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_npm == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-13
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    defaults:
+      run:
+        working-directory: crates/pdf-node
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: node-release-${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build for ${{ matrix.target }}
+        run: npm run build -- --target ${{ matrix.target }}
+
+      - name: Upload platform binding
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-node-release-${{ matrix.target }}
+          path: crates/pdf-node/index.*.node
+          if-no-files-found: error
+          retention-days: 7
+
+# ---------------------------------------------------------------------------
+# npm publish (requires all release builds to succeed)
+# ---------------------------------------------------------------------------
+  publish-npm:
+    name: Publish to npm
+    needs: [build-and-test, build-release]
+    if: |
+      (startsWith(github.ref, 'refs/tags/v') || inputs.publish_npm == 'true') &&
+      secrets.NPM_TOKEN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: crates/pdf-node
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Download all platform bindings
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pdf-node-release-*
+          path: crates/pdf-node/artifacts
+          merge-multiple: true
+
+      - name: Move bindings into place
+        run: |
+          find artifacts -name 'index.*.node' -exec cp {} . \;
+          ls -la index.*.node
+
+      - name: Prepare npm packages
+        run: npm run prepublishOnly
+
+      - name: Publish platform packages and main package
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> ~/.npmrc
+          npx napi publish
+          echo "npm publish complete"

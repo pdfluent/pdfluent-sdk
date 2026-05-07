@@ -4,19 +4,19 @@ build-backend = "maturin"
 
 [project]
 name = "xfa-pdf"
-version = "0.1.0"
+version = "1.0.0b5"
 description = "Enterprise PDF SDK — render, extract, annotate, sign, and validate PDFs. Pure Rust, zero system dependencies."
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "PDFluent Commercial License" }
 authors = [
-    { name = "XFA SDK", email = "sdk@xfa-pdf.dev" },
+    { name = "Innovation Trigger BV", email = "team@pdfluent.com" },
 ]
 requires-python = ">=3.8"
-keywords = ["pdf", "render", "text-extraction", "forms", "pdf-a", "annotations", "redaction", "rust"]
+keywords = ["pdf", "render", "text-extraction", "forms", "pdf-a", "annotations", "redaction", "rust", "pdfluent"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: Other/Proprietary License",
     "Operating System :: OS Independent",
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -34,8 +34,10 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/xfa-sdk/xfa-pdf"
-"Bug Tracker" = "https://github.com/xfa-sdk/xfa-pdf/issues"
+Homepage = "https://pdfluent.com"
+Repository = "https://github.com/pdfluent/pdfluent-sdk"
+"Bug Tracker" = "https://github.com/pdfluent/pdfluent-sdk/issues"
+Documentation = "https://pdfluent.com/docs"
 
 [project.optional-dependencies]
 pillow = ["Pillow"]

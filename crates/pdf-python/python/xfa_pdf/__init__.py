@@ -52,4 +52,8 @@ __all__ = [
     "decrypt_pdf",
 ]
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("xfa-pdf")
+except Exception:
+    __version__ = "1.0.0b5"

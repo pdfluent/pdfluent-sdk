@@ -322,7 +322,9 @@ if $LIVE && [[ ${#PUBLISHED[@]} -gt 0 ]] || ( $LIVE && [[ ${#ALREADY_UP[@]} -gt 
         log "  WARNING: pdfluent $PDFLUENT_VER not yet visible on crates.io (index lag — retry in 60s)"
     fi
 
-    # Git tag (idempotent)
+    # Git tag (idempotent).
+    # NOTE: release-binaries.yml is the SOLE creator of GitHub Releases.
+    # It triggers automatically when this tag is pushed.
     if git rev-parse "$TAG" >/dev/null 2>&1; then
         log "  Tag $TAG already exists — skipping"
     else
@@ -331,25 +333,14 @@ if $LIVE && [[ ${#PUBLISHED[@]} -gt 0 ]] || ( $LIVE && [[ ${#ALREADY_UP[@]} -gt 
         log "  Pushing tag..."
         git push origin "$TAG"
         log "  Tag pushed: ✅ $TAG"
-    fi
-
-    # GitHub release (idempotent)
-    if gh release view "$TAG" >/dev/null 2>&1; then
-        log "  GitHub release $TAG already exists — skipping"
-    else
-        log "  Creating GitHub release $TAG..."
-        gh release create "$TAG" \
-            --title "PDFluent SDK $PDFLUENT_VER" \
-            --generate-notes \
-            >> "$LOGFILE" 2>&1
-        log "  GitHub release created: ✅ $TAG"
+        log "  → release-binaries.yml will build binaries and create the GitHub Release."
     fi
 
     log ""
     log "=== RELEASE COMPLETE ==="
     log "  Version:  $PDFLUENT_VER"
     log "  Tag:      $TAG (pushed)"
-    log "  Release:  $(gh release view "$TAG" --json url -q .url 2>/dev/null || echo 'see GitHub')"
+    log "  GitHub Release: created automatically by release-binaries.yml CI workflow."
     log "  Log:      $LOGFILE"
     log ""
     log "Verify install in a clean project:"

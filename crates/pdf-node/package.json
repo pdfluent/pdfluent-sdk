@@ -1,6 +1,6 @@
 {
   "name": "@xfa-engine/pdf-node",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.5",
   "description": "Enterprise PDF SDK for Node.js — rendering, text extraction, forms, annotations, redaction, encryption, and PDF/A compliance.",
   "main": "index.js",
   "types": "index.d.ts",
@@ -50,27 +50,28 @@
     "signature",
     "rust",
     "napi",
-    "high-performance"
+    "pdfluent"
   ],
-  "license": "MIT",
+  "license": "PDFluent Commercial License",
+  "licenseUrl": "https://pdfluent.com/terms",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jasperdew/xfa-native-rust"
+    "url": "https://github.com/pdfluent/pdfluent-sdk"
   },
-  "homepage": "https://github.com/jasperdew/xfa-native-rust#readme",
+  "homepage": "https://pdfluent.com",
   "bugs": {
-    "url": "https://github.com/jasperdew/xfa-native-rust/issues"
+    "url": "https://github.com/pdfluent/pdfluent-sdk/issues"
   },
   "publishConfig": {
     "access": "public"
   },
   "optionalDependencies": {
-    "@xfa-engine/pdf-node-darwin-arm64": "1.0.0-beta.1",
-    "@xfa-engine/pdf-node-darwin-x64": "1.0.0-beta.1",
-    "@xfa-engine/pdf-node-linux-arm64-gnu": "1.0.0-beta.1",
-    "@xfa-engine/pdf-node-linux-x64-gnu": "1.0.0-beta.1",
-    "@xfa-engine/pdf-node-linux-x64-musl": "1.0.0-beta.1",
-    "@xfa-engine/pdf-node-win32-x64-msvc": "1.0.0-beta.1"
+    "@xfa-engine/pdf-node-darwin-arm64": "1.0.0-beta.5",
+    "@xfa-engine/pdf-node-darwin-x64": "1.0.0-beta.5",
+    "@xfa-engine/pdf-node-linux-arm64-gnu": "1.0.0-beta.5",
+    "@xfa-engine/pdf-node-linux-x64-gnu": "1.0.0-beta.5",
+    "@xfa-engine/pdf-node-linux-x64-musl": "1.0.0-beta.5",
+    "@xfa-engine/pdf-node-win32-x64-msvc": "1.0.0-beta.5"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0",

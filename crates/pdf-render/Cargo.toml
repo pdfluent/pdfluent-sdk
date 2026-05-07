@@ -26,3 +26,7 @@ lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }
 default = ["embed-fonts", "embed-cmaps"]
 embed-fonts = ["pdf-interpret/embed-fonts"]
 embed-cmaps = ["pdf-interpret/embed-cmaps"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

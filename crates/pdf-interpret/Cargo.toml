@@ -34,3 +34,7 @@ default = ["embed-fonts", "embed-cmaps"]
 embed-fonts = []
 # Embed the 61 predefined cmaps into the binary. Adds about ~250KB of brotli-encoded data.
 embed-cmaps = ["pdf-font/embed-cmaps"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
