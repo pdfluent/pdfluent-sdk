@@ -424,6 +424,21 @@ impl QuickJsRuntime {
                 .set("nodeIndex", node_index)
                 .map_err(|e| format!("set nodeIndex: {e}"))?;
 
+            let node_name_host = Rc::clone(&host);
+            let node_name = Function::new(ctx.clone(), move |id: i32, generation: i64| -> String {
+                if id < 0 || generation < 0 {
+                    return String::new();
+                }
+                node_name_host
+                    .borrow()
+                    .node_name(FormNodeId(id as usize), generation as u64)
+                    .unwrap_or_default()
+            })
+            .map_err(|e| format!("nodeName: {e}"))?;
+            internal
+                .set("nodeName", node_name)
+                .map_err(|e| format!("set nodeName: {e}"))?;
+
             let instance_set_host = Rc::clone(&host);
             let instance_set = Function::new(
                 ctx.clone(),
@@ -799,7 +814,12 @@ impl QuickJsRuntime {
     /// budget, an untrusted/malformed XFA template that contains
     /// `while (true) {}` inside `<variables>` could hang flatten before
     /// any normal event script runs (Codex P1 review on PR #1499).
-    fn register_variables_script(&self, name: &str, body: &str) -> Result<(), SandboxError> {
+    fn register_variables_script(
+        &self,
+        name: &str,
+        body: &str,
+        subform_scope: Option<&str>,
+    ) -> Result<(), SandboxError> {
         let Some(setter) = self.set_variables_script.clone() else {
             return Ok(());
         };
@@ -807,11 +827,12 @@ impl QuickJsRuntime {
             return Err(SandboxError::BodyTooLarge);
         }
         let idents = Self::extract_top_level_idents(body);
+        let scope = subform_scope.unwrap_or("").to_string();
         self.set_deadline();
         let result = catch_unwind(AssertUnwindSafe(|| {
             self.context.with(|ctx| -> Result<(), rquickjs::Error> {
                 let setter = setter.restore(&ctx)?;
-                let _: bool = setter.call((name, body, idents))?;
+                let _: bool = setter.call((name, body, idents, scope))?;
                 Ok(())
             })
         }));
@@ -1172,6 +1193,14 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           if (recRaw < 0) return null;
           return makeDataHandle(recRaw);
         }
+        if (prop === "variables") {
+          var csNodeName = host.nodeName(firstId, generation);
+          if (typeof csNodeName === "string" && csNodeName.length > 0 &&
+              subformVariables[csNodeName] !== undefined) {
+            return subformVariables[csNodeName];
+          }
+          return Object.create(null);
+        }
         if (prop.charAt(0) === "_" && prop.length > 1) {
           var bareName = prop.substring(1);
           var imIds = uniqueNodeIds(host.resolveChildNodeIds(nodeIdListArg(candidates), bareName));
@@ -1307,6 +1336,17 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           var recRaw = host.dataBoundRecord(id, generation);
           if (recRaw < 0) return null;
           return makeDataHandle(recRaw);
+        }
+        // Phase D-ι.2: `subformHandle.variables` returns the namespace object
+        // holding all `<variables><script>` entries registered for this
+        // subform by name. Enables `Page2.variables.ValidationScript.fn()`.
+        if (prop === "variables") {
+          var nodeName = host.nodeName(id, generation);
+          if (typeof nodeName === "string" && nodeName.length > 0 &&
+              subformVariables[nodeName] !== undefined) {
+            return subformVariables[nodeName];
+          }
+          return Object.create(null);
         }
         // XFA 3.3 §6.4.3.2 underscore shorthand: `_<name>` on a subform
         // refers to the instanceManager of the same-named child subform.
@@ -1798,13 +1838,14 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   });
 
   // Phase D-ι: form-level globals registered from `<variables>` `<script>`
-  // blocks. Each entry is `name -> frozen object whose properties are the
-  // top-level `var` / `function` declarations from the variables-script
-  // body`. Populated by the host once per document via
-  // `setVariablesScript` and cleared via `clearVariablesScripts` at
-  // `reset_per_document`. Survives across event/calculate scripts within
-  // the same document but never leaks across documents.
+  // blocks. Each entry is `name -> frozen object`. Populated by the host
+  // once per document via `setVariablesScript`; cleared by
+  // `clearVariablesScripts` at `reset_per_document`.
   var variablesScripts = lookupObject();
+  // Phase D-ι.2: subform-scoped variables. Maps subform name -> namespace
+  // object containing that subform's named scripts. Enables
+  // `subformHandle.variables.ScriptName.method()` access paths.
+  var subformVariables = lookupObject();
 
   function makeImplicitGlobals(body) {
     var currentId = host.currentNodeId();
@@ -1902,7 +1943,20 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     // scripts but emit no field mutations of their own. Errors during
     // evaluation are absorbed: the namespace remains undefined and
     // dependent event scripts will fail naturally at first use.
-    setVariablesScript: function(name, body, identNames) {
+    // Phase D-ι / D-ι.2: register a named `<variables><script>` body.
+    // `subformName` (4th param, optional) is non-empty for subform-scoped
+    // scripts; omit or pass "" for root-level scripts.
+    //
+    // Root-level scripts (empty subformName) go into the flat
+    // `variablesScripts` dict only — accessible as `ScriptName.X` from
+    // any event script in the document.
+    //
+    // Subform-scoped scripts go into `subformVariables[subformName][name]`
+    // ONLY — accessible as `subformHandle.variables.ScriptName.X`. They
+    // are intentionally NOT written to the flat dict: two subforms may
+    // define the same script name, and writing both to the flat map would
+    // let the second registration silently shadow the first.
+    setVariablesScript: function(name, body, identNames, subformName) {
       if (typeof name !== "string" || name.length === 0) return false;
       if (typeof body !== "string") return false;
       var idents = Array.isArray(identNames) ? identNames : [];
@@ -1917,10 +1971,17 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       var wrapper = "(function(){\n" + body +
                     "\nreturn Object.freeze({" + props + "});\n})()";
       try {
-        variablesScripts[name] = (Function("return " + wrapper))();
+        var ns = (Function("return " + wrapper))();
+        if (typeof subformName === "string" && subformName.length > 0) {
+          if (subformVariables[subformName] === undefined) {
+            subformVariables[subformName] = lookupObject();
+          }
+          subformVariables[subformName][name] = ns;
+        } else {
+          variablesScripts[name] = ns;
+        }
         return true;
       } catch (_e) {
-        variablesScripts[name] = undefined;
         return false;
       }
     },
@@ -1928,6 +1989,10 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       var keys = Object.keys(variablesScripts);
       for (var i = 0; i < keys.length; i++) {
         delete variablesScripts[keys[i]];
+      }
+      var skeys = Object.keys(subformVariables);
+      for (var j = 0; j < skeys.length; j++) {
+        delete subformVariables[skeys[j]];
       }
     },
     evalScript: function(body) {
@@ -2040,9 +2105,12 @@ impl XfaJsRuntime for QuickJsRuntime {
         // block the others.
         if !form.is_null() {
             // SAFETY: caller guarantees `form` outlives this call.
-            let scripts: Vec<(String, String)> = unsafe { (*form).variables_scripts.clone() };
-            for (name, body) in scripts {
-                if let Err(e) = self.register_variables_script(&name, &body) {
+            let scripts: Vec<(Option<String>, String, String)> =
+                unsafe { (*form).variables_scripts.clone() };
+            for (subform_scope, name, body) in scripts {
+                if let Err(e) =
+                    self.register_variables_script(&name, &body, subform_scope.as_deref())
+                {
                     log::debug!("D-ι register `{name}` failed: {e:?}");
                 }
             }

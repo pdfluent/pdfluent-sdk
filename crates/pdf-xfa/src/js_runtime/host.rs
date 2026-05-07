@@ -185,6 +185,16 @@ impl HostBindings {
         }
     }
 
+    /// Return the `name` attribute of any live node. Used by D-ι.2 to expose
+    /// `subformHandle.variables` as the subform's own variables namespace.
+    pub fn node_name(&self, node_id: FormNodeId, generation: u64) -> Option<String> {
+        if !self.handle_is_live(node_id, generation) {
+            return None;
+        }
+        let form = self.form_ref()?;
+        Some(form.get(node_id).name.clone())
+    }
+
     /// Write `field.rawValue` when the activity and target are permitted.
     pub fn set_raw_value(&mut self, node_id: FormNodeId, value: String, generation: u64) -> bool {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);

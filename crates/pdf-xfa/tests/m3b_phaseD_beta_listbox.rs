@@ -413,6 +413,7 @@ fn variables_script_global_is_visible_to_event_scripts() {
     let mut tree = FormTree::new();
     let root = add_node(&mut tree, "root", FormNodeType::Root);
     tree.variables_scripts.push((
+        None,
         "Helpers".into(),
         r#"
 var STATES = ["AK","AL","AZ"];
@@ -449,7 +450,7 @@ fn variables_script_globals_clear_between_documents() {
         let mut tree = FormTree::new();
         let root = add_node(&mut tree, "root", FormNodeType::Root);
         tree.variables_scripts
-            .push(("Helpers".into(), "var X = 42;".into()));
+            .push((None, "Helpers".into(), "var X = 42;".into()));
         let out = add_field(&mut tree, root, "Out", "");
         add_js_script(
             &mut tree,
@@ -500,7 +501,7 @@ fn variables_script_runaway_body_does_not_hang_flatten() {
     let mut tree = FormTree::new();
     let root = add_node(&mut tree, "root", FormNodeType::Root);
     tree.variables_scripts
-        .push(("RogueScript".into(), "while (true) {}".into()));
+        .push((None, "RogueScript".into(), "while (true) {}".into()));
     let out = add_field(&mut tree, root, "Out", "");
     add_js_script(
         &mut tree,
@@ -538,7 +539,7 @@ fn variables_script_oversized_body_is_rejected() {
     let mut tree = FormTree::new();
     let root = add_node(&mut tree, "root", FormNodeType::Root);
     let huge = "var x = 1;\n".repeat(64 * 1024);
-    tree.variables_scripts.push(("Huge".into(), huge));
+    tree.variables_scripts.push((None, "Huge".into(), huge));
     let out = add_field(&mut tree, root, "Out", "");
     add_js_script(
         &mut tree,

@@ -151,48 +151,55 @@ impl<'a> FormMerger<'a> {
         Ok((self.form_tree, root_id))
     }
 
-    /// Phase D-ι: walk `<variables>` blocks below the template root and
-    /// store every named `<script>` body on the form tree. We scan the
-    /// root subform plus its direct children — XFA spec allows variables
-    /// at any subform level, but in practice form authors place them on
-    /// the form root, so deeper recursion is deferred until the corpus
-    /// shows otherwise.
+    /// Phase D-ι / D-ι.2: walk `<variables>` blocks at every subform level
+    /// below the template root (XFA 3.3 §5.5). Root-subform scripts get
+    /// `subform_scope = None` (globally accessible); named descendant-subform
+    /// scripts get `subform_scope = Some(subform_name)` so they are accessible
+    /// via `subformHandle.variables.scriptName`.
     fn collect_variables_scripts(&mut self, template_elem: Node<'_, '_>) {
-        // Find the root <subform> child of <template>.
         let Some(root_subform) = find_first_child_by_name(template_elem, "subform") else {
             return;
         };
-        // Search root subform + one level of subform children for <variables>.
-        let mut subforms_to_scan = vec![root_subform];
-        for child in root_subform.children().filter(|n| n.is_element()) {
-            if child.tag_name().name() == "subform" {
-                subforms_to_scan.push(child);
-            }
-        }
-        for subform in subforms_to_scan {
-            for child in subform.children().filter(|n| n.is_element()) {
-                if child.tag_name().name() != "variables" {
-                    continue;
-                }
-                for var_child in child.children().filter(|n| n.is_element()) {
-                    if var_child.tag_name().name() != "script" {
-                        continue;
+        self.collect_variables_scripts_recursive(root_subform, None);
+    }
+
+    fn collect_variables_scripts_recursive(
+        &mut self,
+        subform: Node<'_, '_>,
+        subform_scope: Option<String>,
+    ) {
+        for child in subform.children().filter(|n| n.is_element()) {
+            match child.tag_name().name() {
+                "variables" => {
+                    for var_child in child.children().filter(|n| n.is_element()) {
+                        if var_child.tag_name().name() != "script" {
+                            continue;
+                        }
+                        let Some(name) = attr(var_child, "name") else {
+                            continue;
+                        };
+                        let body: String = var_child
+                            .children()
+                            .filter(|n| n.is_text())
+                            .filter_map(|n| n.text())
+                            .collect::<String>();
+                        if body.trim().is_empty() {
+                            continue;
+                        }
+                        self.form_tree.variables_scripts.push((
+                            subform_scope.clone(),
+                            name.to_string(),
+                            body,
+                        ));
                     }
-                    let Some(name) = attr(var_child, "name") else {
-                        continue;
-                    };
-                    let body: String = var_child
-                        .children()
-                        .filter(|n| n.is_text())
-                        .filter_map(|n| n.text())
-                        .collect::<String>();
-                    if body.trim().is_empty() {
-                        continue;
-                    }
-                    self.form_tree
-                        .variables_scripts
-                        .push((name.to_string(), body));
                 }
+                "subform" | "area" | "exclGroup" => {
+                    let child_scope = attr(child, "name")
+                        .filter(|n| !n.is_empty())
+                        .map(|n| n.to_string());
+                    self.collect_variables_scripts_recursive(child, child_scope);
+                }
+                _ => {}
             }
         }
     }
