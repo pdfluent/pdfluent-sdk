@@ -1,6 +1,6 @@
 [package]
 name = "pdf-render"
-version = "1.0.0-beta.4"
+version = "1.0.0-beta.5"
 description = "A PDF rasterizer in pure Rust."
 edition = "2024"
 license-file = "LICENSE"
@@ -11,7 +11,7 @@ homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 
 [dependencies]
-pdf-interpret = { path = "../pdf-interpret", version = "=0.5.3" }
+pdf-interpret = { path = "../pdf-interpret", version = "=0.5.4" }
 kurbo = "0.13.0"
 image = { version = "0.25", features = ["png"] }
 bytemuck = { version = "1", features = ["bytemuck_derive"] }
@@ -20,7 +20,7 @@ fast_image_resize = { version = "6.0", default-features = false, features = ["st
 
 [dev-dependencies]
 log = "0.4"
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.1" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }
 
 [features]
 default = ["embed-fonts", "embed-cmaps"]

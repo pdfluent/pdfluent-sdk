@@ -13,7 +13,7 @@ license = "MIT"
 readme = "README.md"
 name = "pdfluent-lopdf"
 repository = "https://github.com/pdfluent"
-version = "0.39.1"
+version = "0.39.2"
 rust-version = "1.85"
 
 [dependencies]
@@ -28,8 +28,8 @@ ecb = "0.1.2"
 encoding_rs = "0.8.32"
 flate2 = "1.0"
 hayro-ccitt = { package = "pdfluent-ccitt", path = "../hayro-ccitt", optional = true, version = "=0.2.0" }
-hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.2.0" }
-hayro-jpeg2000 = { package = "pdfluent-jpeg2000", path = "../hayro-jpeg2000", optional = true, default-features = false, version = "=0.3.2" }
+hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.2.1" }
+hayro-jpeg2000 = { package = "pdfluent-jpeg2000", path = "../hayro-jpeg2000", optional = true, default-features = false, version = "=0.3.3" }
 image = { version = "0.25", optional = true }
 indexmap = "2.2.3"
 itoa = "1.0"

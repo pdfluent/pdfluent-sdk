@@ -1,6 +1,6 @@
 [package]
 name = "pdf-redact"
-version.workspace = true
+version = "1.0.0-beta.5"
 edition.workspace = true
 license-file = "LICENSE"
 readme = "README.md"
@@ -11,8 +11,8 @@ description = "GDPR-compliant PDF redaction: permanent content removal"
 
 [dependencies]
 lopdf.workspace = true
-pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.3" }
-pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.3" }
+pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.5" }
+pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.5" }
 regex = "1"
 thiserror.workspace = true
 flate2 = "1"

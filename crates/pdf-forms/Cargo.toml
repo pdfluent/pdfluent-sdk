@@ -1,6 +1,6 @@
 [package]
 name = "pdfluent-forms"
-version = "1.0.0-beta.4"
+version = "1.0.0-beta.5"
 edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
@@ -12,14 +12,14 @@ keywords = ["pdf", "forms", "acroform", "fields", "interactive"]
 categories = ["parser-implementations"]
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.1" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.2" }
 thiserror = { workspace = true }
 log = "0.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.1" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.1" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.2" }
 
 [dev-dependencies]

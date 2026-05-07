@@ -1,6 +1,6 @@
 [package]
 name = "pdf-annot"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
@@ -10,7 +10,7 @@ homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.1" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.2" }
 lopdf = { workspace = true, optional = true }
 log = "0.4"
 thiserror = { workspace = true }

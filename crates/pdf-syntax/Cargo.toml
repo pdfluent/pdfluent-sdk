@@ -1,6 +1,6 @@
 [package]
 name = "pdf-syntax"
-version = "0.5.1"
+version = "0.5.2"
 description = "A low-level crate for reading PDF files."
 authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
 edition = "2024"
@@ -23,8 +23,8 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"], opti
 
 zune-jpeg = { version = "0.5", default-features = false, features = ["neon", "x86"], optional = true }
 hayro-ccitt = { package = "pdfluent-ccitt", path = "../hayro-ccitt", optional = true, version = "=0.2.0" }
-hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.2.0" }
-hayro-jpeg2000 = { package = "pdfluent-jpeg2000", path = "../hayro-jpeg2000", optional = true, version = "=0.3.2" }
+hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.2.1" }
+hayro-jpeg2000 = { package = "pdfluent-jpeg2000", path = "../hayro-jpeg2000", optional = true, version = "=0.3.3" }
 
 [dev-dependencies]
 sha2 = "0.10"

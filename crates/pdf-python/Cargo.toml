@@ -15,13 +15,13 @@ crate-type = ["cdylib"]
 [workspace]
 
 [dependencies]
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.4" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.4" }
-pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.3" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.4" }
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.1" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.4" }
-pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.3" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.3" }
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.1" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.5" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.5" }
+pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.5" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.5" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.2" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.5" }
+pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.4" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.5" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }
 pyo3 = { version = "0.24", features = ["extension-module"] }
