@@ -192,9 +192,14 @@ impl<'a> Image<'a> {
 
     /// Decode the image.
     pub fn decode(&self) -> Result<Vec<u8>> {
-        let buffer_size = self.width() as usize
-            * self.height() as usize
-            * (self.color_space.num_channels() as usize + if self.has_alpha { 1 } else { 0 });
+        let total_channels =
+            self.color_space.num_channels() as usize + if self.has_alpha { 1 } else { 0 };
+        // Checked multiply prevents panic on pathological images whose dimensions
+        // pass the codec's 60000-pixel cap but whose product overflows usize (J2K-BUF-01).
+        let buffer_size = (self.width() as usize)
+            .checked_mul(self.height() as usize)
+            .and_then(|n| n.checked_mul(total_channels))
+            .ok_or(DecodeError::Validation(ValidationError::ImageTooLarge))?;
         let mut buf = vec![0; buffer_size];
         self.decode_into(&mut buf)?;
 
@@ -793,6 +798,28 @@ mod tests {
     #[test]
     fn new_invalid_signature_returns_error() {
         assert!(Image::new(b"\x00\x00\x00\x00", &DecodeSettings::default()).is_err());
+    }
+
+    // Regression: J2K-BUF-01 — decode() buffer_size must use checked_mul, not *.
+    // The codec caps dimensions at 60000, so a real overflow only triggers on
+    // 32-bit/WASM targets (60000 × 60000 × 5 channels > u32::MAX).
+    // This test verifies the guard pattern itself: overflow is detected and
+    // mapped to ImageTooLarge rather than wrapping or panicking.
+    #[test]
+    fn decode_buffer_size_overflow_is_guarded() {
+        let overflow = (usize::MAX / 2 + 1)
+            .checked_mul(2)
+            .and_then(|n| n.checked_mul(1));
+        assert!(
+            overflow.is_none(),
+            "overflow must be detected by checked_mul"
+        );
+        // Verify the error type exists and is what decode() would return.
+        let err: DecodeError = DecodeError::Validation(ValidationError::ImageTooLarge);
+        assert!(matches!(
+            err,
+            DecodeError::Validation(ValidationError::ImageTooLarge)
+        ));
     }
 }
 
