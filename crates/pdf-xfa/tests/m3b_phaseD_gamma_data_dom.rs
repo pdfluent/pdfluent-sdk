@@ -422,8 +422,9 @@ fn data_nodes_item_handles_non_finite_index() {
 }
 
 #[test]
-fn no_data_dom_returns_null_for_record() {
-    // When no DataDom is installed, $record should return null (no crash).
+fn no_data_dom_record_chains_safely() {
+    // When no DataDom is installed, $record returns a null-safe sentinel so that
+    // chained property access ($record.Section.nodes.length) does not throw.
     let mut tree = FormTree::new();
     let root_node = add_node(&mut tree, "root", FormNodeType::Root);
     let field = add_field(&mut tree, root_node, "Field", "initial");
@@ -433,8 +434,10 @@ fn no_data_dom_returns_null_for_record() {
         field,
         "calculate",
         r#"
-        var rec = $record;
-        this.rawValue = rec ? "HAS_RECORD" : "NO_RECORD";
+        var nodesLen = $record.Section.nodes.length;
+        var childVal = $record.Section.value;
+        var itemVal  = $record.Section.nodes.item(0).value;
+        this.rawValue = String(nodesLen) + "/" + String(childVal) + "/" + String(itemVal);
         "#,
     );
 
@@ -453,11 +456,7 @@ fn no_data_dom_returns_null_for_record() {
         FormNodeType::Field { value } => value.clone(),
         _ => panic!("not a field"),
     };
-    // $record should resolve to null when no dom/no bound node.
-    assert!(
-        value == "NO_RECORD" || value == "initial" || value.is_empty(),
-        "unexpected: {value:?}"
-    );
+    assert_eq!(value, "0/null/null", "unexpected: {value:?}");
 }
 
 #[test]
