@@ -17,7 +17,7 @@ use pdf_forms::{parse_acroform, FieldType, FieldValue};
 use pdf_manip::encrypt::remove_encryption;
 use pdf_redact::{search_and_redact, RedactSearchOptions};
 
-use pyo3::exceptions::{PyIOError, PyIndexError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyIOError, PyIndexError, PyPermissionError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -48,6 +48,18 @@ fn engine_err_to_py(e: EngineError) -> PyErr {
         }
         EngineError::RenderError(msg) => PyRuntimeError::new_err(format!("render error: {msg}")),
         EngineError::Io(e) => PyIOError::new_err(e.to_string()),
+        EngineError::Encrypted(msg) => {
+            PyPermissionError::new_err(format!("PDF is encrypted: {msg}"))
+        }
+        EngineError::InvalidPageGeometry { reason, .. } => {
+            PyValueError::new_err(format!("invalid page geometry: {reason}"))
+        }
+        EngineError::XfaFlattenFailed(msg) => {
+            PyRuntimeError::new_err(format!("XFA flatten failed: {msg}"))
+        }
+        EngineError::LimitExceeded(e) => {
+            PyRuntimeError::new_err(format!("processing limit exceeded: {e}"))
+        }
     }
 }
 
