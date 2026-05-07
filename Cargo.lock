@@ -1751,7 +1751,7 @@ dependencies = [
 
 [[package]]
 name = "formcalc-interpreter"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.5"
 dependencies = [
  "thiserror 2.0.18",
  "xfa-dom-resolver",
@@ -8728,7 +8728,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-json"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.5"
 dependencies = [
  "indexmap 2.13.0",
  "serde",

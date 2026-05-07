@@ -137,7 +137,7 @@ for CRATE in "${CRATES[@]}"; do
     log "  Packaging $CRATE..."
     if cargo package -p "$CRATE" --no-verify --allow-dirty >> "$LOGFILE" 2>&1; then
         log "  Package OK"
-    elif tail -5 "$LOGFILE" | grep -q "failed to select a version for the requirement"; then
+    elif tail -20 "$LOGFILE" | grep -q "failed to select a version for the requirement"; then
         # Expected during cascade dry-run: upstream dep has a new local version
         # that isn't on crates.io yet. The topological publish order ensures
         # the dep will be live before this crate is published.
