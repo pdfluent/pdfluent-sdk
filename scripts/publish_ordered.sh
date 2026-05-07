@@ -82,6 +82,11 @@ CRATES=(
     "pdf-ocr"
     "xfa-license"
 
+    # --- Manipulation + conversion + redaction (depend on extract/manip/xfa-license) ---
+    "pdf-manip"
+    "pdf-docx"
+    "pdf-redact"
+
     # --- XFA integration ---
     "pdf-xfa"
 

@@ -7,12 +7,12 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax", features = ["std", "images"], version = "=0.5.1" }
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.4" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.4" }
-pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.3" }
-pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.3" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.4" }
+pdf-syntax = { path = "../pdf-syntax", features = ["std", "images"], version = "=0.5.2" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.5" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.5" }
+pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.5" }
+pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.5" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.5" }
 pdf-xfa.workspace = true
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true

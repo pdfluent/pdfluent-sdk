@@ -1,6 +1,6 @@
 [package]
 name = "pdfluent-sign"
-version = "1.0.0-beta.4"
+version = "1.0.0-beta.5"
 edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
@@ -12,7 +12,7 @@ keywords = ["pdf", "signature", "pades", "cms", "pkcs7"]
 categories = ["authentication", "cryptography"]
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.1" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.2" }
 log = "0.4"
 sha2 = "0.10"
 sha1 = { version = "0.10", features = ["oid"] }
@@ -32,10 +32,10 @@ ureq = { version = "2", optional = true }
 # lopdf: full-featured on native, wasm_js backend (no rayon) on wasm32.
 # Direct path used (not workspace = true) to allow default-features = false override.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.1" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.1" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.2" }
 
 [features]
 default = []

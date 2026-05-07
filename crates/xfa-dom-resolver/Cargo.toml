@@ -1,6 +1,6 @@
 [package]
 name = "xfa-dom-resolver"
-version.workspace = true
+version = "1.0.0-beta.5"
 edition.workspace = true
 license-file = "LICENSE"
 readme = "README.md"
