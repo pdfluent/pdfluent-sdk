@@ -71,6 +71,10 @@ pub enum HuffmanError {
     MissingTables,
     /// Unexpected out-of-band value.
     UnexpectedOob,
+    /// Malformed Huffman table (JBIG2-HUF-01): a code path tries to branch
+    /// through a node that is already a leaf, indicating a collision in the
+    /// prefix-code assignment of a crafted JBIG2 stream.
+    MalformedTable,
 }
 
 /// Errors related to region parameters.
@@ -162,6 +166,10 @@ impl fmt::Display for HuffmanError {
             Self::InvalidSelection => write!(f, "invalid Huffman table selection"),
             Self::MissingTables => write!(f, "not enough referred Huffman tables"),
             Self::UnexpectedOob => write!(f, "unexpected out-of-band value"),
+            Self::MalformedTable => write!(
+                f,
+                "malformed Huffman table: code branches through a leaf node"
+            ),
         }
     }
 }

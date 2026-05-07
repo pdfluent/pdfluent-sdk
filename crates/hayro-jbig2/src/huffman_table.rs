@@ -5,7 +5,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::num::NonZeroU32;
 
-use crate::error::{HuffmanError, ParseError, Result, bail};
+use crate::error::{DecodeError, HuffmanError, ParseError, Result, bail};
 use crate::lazy::Lazy;
 use crate::reader::Reader;
 
@@ -50,7 +50,11 @@ impl HuffmanTable {
 
     /// Build a Huffman table from table line definitions (B.3 "Assigning
     /// the prefix codes").
-    pub(crate) fn build(lines: &[TableLine]) -> Self {
+    ///
+    /// Returns `Err(HuffmanError::MalformedTable)` if the prefix codes contain
+    /// a collision (a shorter code is a prefix of a longer one), which indicates
+    /// a crafted or corrupt JBIG2 stream (JBIG2-HUF-01).
+    pub(crate) fn build(lines: &[TableLine]) -> Result<Self> {
         // `NTEMP` - Number of table lines.
         let line_count = lines.len();
 
@@ -117,10 +121,10 @@ impl HuffmanTable {
                 line.range_length,
                 line.is_lower,
                 line.is_out_of_band,
-            );
+            )?;
         }
 
-        Self::from_dynamic(nodes)
+        Ok(Self::from_dynamic(nodes))
     }
 
     /// Build a uniform Huffman table where all symbols have the same code length.
@@ -132,10 +136,14 @@ impl HuffmanTable {
         let lines: Vec<TableLine> = (0..num_symbols)
             .map(|i| TableLine::new(i as i32, code_length as u8, 0))
             .collect();
-        Self::build(&lines)
+        // Uniform tables assign unique, non-overlapping prefix codes; build() cannot fail.
+        Self::build(&lines).expect("build_uniform always generates valid prefix codes")
     }
 
     /// Insert a code into the Huffman tree.
+    ///
+    /// Returns `Err(HuffmanError::MalformedTable)` if the tree is structurally
+    /// invalid (e.g. a prefix-code collision causes branching through a leaf).
     fn insert_code(
         nodes: &mut Vec<HuffmanNode>,
         node_index: u32,
@@ -145,12 +153,12 @@ impl HuffmanTable {
         range_length: u8,
         is_lower: bool,
         is_out_of_band: bool,
-    ) {
+    ) -> Result<()> {
         if prefix_length == 0 {
             // We've consumed all bits, this should be a leaf.
             nodes[node_index as usize] =
                 HuffmanNode::new_leaf(range_low, range_length, is_lower, is_out_of_band);
-            return;
+            return Ok(());
         }
 
         // Get the next bit (MSB first).
@@ -162,7 +170,7 @@ impl HuffmanTable {
             None => {
                 let new_idx = NonZeroU32::new(nodes.len() as u32).unwrap();
                 nodes.push(HuffmanNode::new_intermediate());
-                nodes[node_index as usize].set_child(bit == 0, new_idx);
+                nodes[node_index as usize].set_child(bit == 0, new_idx)?;
                 new_idx
             }
         };
@@ -176,7 +184,7 @@ impl HuffmanTable {
             range_length,
             is_lower,
             is_out_of_band,
-        );
+        )
     }
 
     /// Read a custom Huffman table from the bitstream (B.2 "Decoding a code table").
@@ -275,7 +283,7 @@ impl HuffmanTable {
         }
 
         // 11) "Create the prefix codes using the algorithm described in B.3."
-        Ok(Self::build(&lines))
+        Ok(Self::build(&lines)?)
     }
 }
 
@@ -387,7 +395,11 @@ impl HuffmanNode {
     }
 
     /// Set the child index for a given bit (0 or 1).
-    fn set_child(&mut self, child_zero: bool, index: NonZeroU32) {
+    ///
+    /// Returns `Err(HuffmanError::MalformedTable)` if called on a non-Intermediate
+    /// node, which indicates a prefix-code collision in a crafted JBIG2 stream
+    /// (JBIG2-HUF-01).
+    fn set_child(&mut self, child_zero: bool, index: NonZeroU32) -> Result<()> {
         match self {
             Self::Intermediate { zero, one } => {
                 if child_zero {
@@ -395,8 +407,9 @@ impl HuffmanNode {
                 } else {
                     *one = Some(index);
                 }
+                Ok(())
             }
-            _ => panic!("set_child called on non-intermediate node"),
+            _ => Err(DecodeError::Huffman(HuffmanError::MalformedTable)),
         }
     }
 
@@ -595,5 +608,49 @@ impl StandardHuffmanTables {
     /// Get Table B.15 (`TABLE_O`).
     pub(crate) fn table_o(&self) -> &HuffmanTable {
         self.table_o.get(|| HuffmanTable::from_inline(TABLE_O))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression: JBIG2-HUF-01 — build() must return Err(MalformedTable) when a
+    // prefix-code collision causes set_child() to be called on a Leaf node.
+    //
+    // An over-committed Huffman table (more prefix-code lines than the binary tree
+    // can hold) triggers this: with two length-1 lines the tree is full ("0" and "1"),
+    // so the canonical assignment gives the length-2 line code=4, whose tree path
+    // leads through the already-set leaf at the root's zero-child.
+    #[test]
+    fn build_prefix_collision_returns_malformed_table() {
+        // 2 length-1 lines fill the entire 1-bit code space.
+        // The length-2 line gets canonical code 4 (binary "100" mod 2-bit = path 0→0),
+        // which tries to branch through the already-committed Leaf at root.zero.
+        let lines = [
+            TableLine::new(0, 1, 0), // code "0" → Leaf (fills root.zero)
+            TableLine::new(1, 1, 0), // code "1" → Leaf (fills root.one)
+            TableLine::new(2, 2, 0), // canonical code 4; path 0→0 branches through Leaf
+        ];
+        let result = HuffmanTable::build(&lines);
+        assert!(
+            matches!(
+                result,
+                Err(DecodeError::Huffman(HuffmanError::MalformedTable))
+            ),
+            "expected MalformedTable, got: {:?}",
+            result
+        );
+    }
+
+    // Sanity: a well-formed table (no prefix collisions) must build successfully.
+    #[test]
+    fn build_valid_table_succeeds() {
+        let lines = [
+            TableLine::new(0, 1, 0), // code "0"
+            TableLine::new(1, 2, 0), // code "10"
+            TableLine::new(2, 2, 0), // code "11"
+        ];
+        assert!(HuffmanTable::build(&lines).is_ok());
     }
 }
