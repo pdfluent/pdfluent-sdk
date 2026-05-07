@@ -125,6 +125,12 @@ pub enum Error {
     /// An ObjStm stream could not be decompressed during lazy resolution.
     #[error("failed to decompress ObjStm object {container_id}")]
     ObjStmDecompress { container_id: u32 },
+    /// Decompressed stream exceeds the per-stream size limit (LOPDF-ZBOMB-01).
+    ///
+    /// Returned when a FlateDecode or LZWDecode stream expands beyond
+    /// `MAX_DECOMPRESSED_BYTES`, preventing zip-bomb DoS attacks.
+    #[error("decompressed stream too large: exceeds {limit} bytes")]
+    StreamTooLarge { limit: usize },
 }
 
 #[derive(Error, Debug)]
