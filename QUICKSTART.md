@@ -38,20 +38,20 @@ fn main() -> Result<()> {
     doc.save("form-filled.pdf")?;
 
     // Validate PDF/A compliance
-    let report = doc.validate_pdfa(PdfAProfile::Pdf2b)?;
-    if report.is_conformant() {
+    let report = doc.validate_pdfa(PdfAProfile::A2b)?;
+    if report.is_compliant() {
         println!("PDF/A-2B ✓");
     }
 
     // Render pages to images (PNG/JPEG)
-    let images = doc.to_images(Default::default())?;
-    images[0].save("page-0.png")?;
+    let report = doc.to_images("page-{n}.png", Default::default())?;
+    println!("Saved {} page image(s)", report.paths.len());
 
     // Merge two PDFs
     let merged = PdfMerger::new()
-        .add("a.pdf")?
-        .add("b.pdf")?
-        .merge()?;
+        .add(PdfDocument::open("a.pdf")?)
+        .add(PdfDocument::open("b.pdf")?)
+        .build()?;
     merged.save("merged.pdf")?;
 
     Ok(())
@@ -158,38 +158,40 @@ npm install @xfa-engine/pdf-node
 ```
 
 ```js
-const { PdfDocument } = require('@xfa-engine/pdf-node');
+const fs = require('fs');
+const { openPdf, mergePdfs } = require('@xfa-engine/pdf-node');
 
-// Open + inspect
-const doc = PdfDocument.open('input.pdf');
-console.log(`${doc.pageCount()} pages`);
+// Open from file path
+const doc = openPdf('input.pdf');
+console.log(`${doc.pageCount} pages`);
 
 // Extract text
 console.log(doc.extractText(0));  // page 0
 
 // Fill form field
-doc.setFormField('Name', 'Jane Doe');
+doc.setFieldValue('Name', 'Jane Doe');
 doc.save('form-filled.pdf');
 
-// Render to PNG buffer
-const png = doc.renderPage(0, 150);  // page 0, 150 DPI
-require('fs').writeFileSync('page-0.png', png);
+// Render page — returns { data: Buffer (RGBA), width, height }
+const render = doc.renderPage(0, { dpi: 150 });
+// encode with sharp: await sharp(render.data, { raw: { width: render.width, height: render.height, channels: 4 } }).png().toFile('page-0.png')
 
-// Merge
-const merged = PdfDocument.merge(['a.pdf', 'b.pdf']);
-merged.save('merged.pdf');
+// Open from Buffer (e.g. HTTP response or fs.readFileSync)
+const { PdfDocument } = require('@xfa-engine/pdf-node');
+const data = fs.readFileSync('other.pdf');
+const doc2 = PdfDocument.open(data);
 
-doc.close();
+// Merge two PDFs into a new file
+mergePdfs(['a.pdf', 'b.pdf'], 'merged.pdf');
 ```
 
 **TypeScript:**
 
 ```ts
-import { PdfDocument } from '@xfa-engine/pdf-node';
+import { openPdf } from '@xfa-engine/pdf-node';
 
-const doc = PdfDocument.open('input.pdf');
+const doc = openPdf('input.pdf');
 const text: string = doc.extractText(0);
-doc.close();
 ```
 
 **Platforms:** Linux x86_64/x64-musl/arm64, macOS x86_64/arm64, Windows x86_64.
