@@ -713,6 +713,97 @@ fn resolver_preserves_clean_doc_333f4a55_path() {
     assert_eq!(outcome.js_runtime_errors, 0);
 }
 
+// Gap B: $record null-coalesce regression tests (XFA §8.5)
+// When no bound data node exists, $record must return a safe sentinel that
+// chains without TypeError instead of returning null.
+
+#[test]
+fn record_no_binding_nodes_length_is_zero() {
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = String($record.Section.nodes.length);",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "0");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn record_no_binding_chained_value_is_null() {
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = String($record.Podmiot1.value);",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "null");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn record_no_binding_nodes_item_chains_safely() {
+    // nodes.item(0) must return a chainable sentinel so that
+    // $record.Section.nodes.item(0).value does not throw TypeError.
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = String($record.Section.nodes.item(0).value);",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "null");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn record_real_data_binding_still_resolves() {
+    // Regression guard: when a DataDom IS present and bound, $record.Podmiot1.value
+    // must still return the real bound value (not the null sentinel).
+    let dom = data_dom_from_xml(
+        r#"<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+             <xfa:data>
+               <Root><Podmiot1>real-value</Podmiot1></Root>
+             </xfa:data>
+           </xfa:datasets>"#,
+    );
+    let data_root = dom.root().expect("root");
+    let bound = find_group_named(&dom, data_root, "Root").unwrap_or(data_root);
+
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let out = add_field(&mut tree, root, "Out", "");
+    tree.meta_mut(out).bound_data_node = Some(bound.as_raw());
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = String($record.Podmiot1.value);",
+    );
+
+    let outcome = run_sandbox_with_data(&mut tree, root, &dom);
+
+    assert_eq!(field_value(&tree, out), "real-value");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
 // Phase D-ι.2 — subform-scoped <variables> tests
 
 #[test]

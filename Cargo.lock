@@ -4191,7 +4191,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-interpret"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "bitflags 2.11.0",
  "image",

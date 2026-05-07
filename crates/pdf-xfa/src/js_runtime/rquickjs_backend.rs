@@ -1190,7 +1190,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         }
         if (prop === "$record") {
           var recRaw = host.dataBoundRecord(firstId, generation);
-          if (recRaw < 0) return null;
+          if (recRaw < 0) return makeNullDataHandle();
           return makeDataHandle(recRaw);
         }
         if (prop === "variables") {
@@ -1334,7 +1334,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         }
         if (prop === "$record") {
           var recRaw = host.dataBoundRecord(id, generation);
-          if (recRaw < 0) return null;
+          if (recRaw < 0) return makeNullDataHandle();
           return makeDataHandle(recRaw);
         }
         // Phase D-ι.2: `subformHandle.variables` returns the namespace object
@@ -1417,6 +1417,32 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     return Math.floor(n);
   }
 
+  // XFA §8.5: a `$record` reference when there is no bound data node must return
+  // an empty object that chains safely (`.value` → null, `.nodes.length` → 0)
+  // rather than null, which would throw TypeError on any property access.
+  function makeNullDataHandle() {
+    var emptyNodes = [];
+    emptyNodes.item = function() { return makeNullDataHandle(); };
+    Object.freeze(emptyNodes);
+    var sentinel = nullProtoObject();
+    Object.defineProperty(sentinel, "value",
+      { get: function() { return null; }, enumerable: true, configurable: false });
+    Object.defineProperty(sentinel, "rawValue",
+      { get: function() { return null; }, enumerable: true, configurable: false });
+    Object.defineProperty(sentinel, "length",
+      { get: function() { return 0; }, enumerable: true, configurable: false });
+    Object.defineProperty(sentinel, "nodes",
+      { get: function() { return emptyNodes; }, enumerable: true, configurable: false });
+    sentinel.item = function() { return makeNullDataHandle(); };
+    return new Proxy(sentinel, {
+      get: function(target, prop) {
+        if (prop in target) return target[prop];
+        if (typeof prop !== "string") return undefined;
+        return makeNullDataHandle();
+      }
+    });
+  }
+
   // Phase D-γ: Data DOM handle — wraps a raw DataDom node index and exposes
   // `.value`, `.nodes`, `.length`, `.item(i)`, and named child access via Proxy.
   function makeDataHandle(rawId) {
@@ -1471,7 +1497,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop in target || typeof prop !== "string") return target[prop];
         if (prop === "rawValue" || prop === "value") return target.value;
         var childId = host.dataChildByName(rawId, prop);
-        if (childId < 0) return undefined;
+        if (childId < 0) return makeNullDataHandle();
         return makeDataHandle(childId);
       }
     });
@@ -1890,7 +1916,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         // this here instead of letting resolveImplicitNodeId fail (-1).
         if (prop === "$record") {
           var recRaw = host.dataBoundRecord(currentId, generation);
-          if (recRaw < 0) return null;
+          if (recRaw < 0) return makeNullDataHandle();
           return makeDataHandle(recRaw);
         }
         // Phase D-γ: `util` is an XFA global (Acrobat SDK §Util) that provides
