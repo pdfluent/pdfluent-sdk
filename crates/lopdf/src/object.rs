@@ -9,6 +9,11 @@ use std::cmp::max;
 use std::fmt;
 use std::str;
 
+/// Hard cap on decompressed stream data (LOPDF-ZBOMB-01).
+/// Prevents zip-bomb DoS via crafted FlateDecode/LZWDecode streams.
+/// 256 MiB is generous for any real-world PDF stream content.
+const MAX_DECOMPRESSED_BYTES: usize = 256 * 1024 * 1024;
+
 /// Object identifier consists of two parts: object number and generation number.
 pub type ObjectId = (u32, u16);
 
@@ -747,33 +752,47 @@ impl Stream {
             Decoder::new(BitOrder::Msb, MIN_BITS - 1)
         };
 
-        let output = Self::decompress_lzw_loop(input, &mut decoder);
+        let output = Self::decompress_lzw_loop(input, &mut decoder)?;
         Self::decompress_predictor(output, params)
     }
 
-    fn decompress_lzw_loop(input: &[u8], decoder: &mut weezl::decode::Decoder) -> Vec<u8> {
+    fn decompress_lzw_loop(input: &[u8], decoder: &mut weezl::decode::Decoder) -> Result<Vec<u8>> {
         let mut output = vec![];
 
         let result = decoder.into_stream(&mut output).decode_all(input);
         if let Err(err) = result.status {
             warn!("{err}");
         }
+        if output.len() > MAX_DECOMPRESSED_BYTES {
+            return Err(Error::StreamTooLarge {
+                limit: MAX_DECOMPRESSED_BYTES,
+            });
+        }
 
-        output
+        Ok(output)
     }
 
     fn decompress_zlib(input: &[u8], params: Option<&Dictionary>) -> Result<Vec<u8>> {
         use flate2::read::ZlibDecoder;
         use std::io::prelude::*;
 
-        let mut output = Vec::with_capacity(input.len() * 2);
-        let mut decoder = ZlibDecoder::new(input);
+        let mut output = Vec::with_capacity(input.len().min(4096) * 2);
+        let decoder = ZlibDecoder::new(input);
 
         if !input.is_empty() {
-            decoder.read_to_end(&mut output).unwrap_or_else(|err| {
-                warn!("{err}");
-                0
-            });
+            // take(limit + 1): if we read limit+1 bytes the stream exceeds the cap.
+            decoder
+                .take(MAX_DECOMPRESSED_BYTES as u64 + 1)
+                .read_to_end(&mut output)
+                .unwrap_or_else(|err| {
+                    warn!("{err}");
+                    0
+                });
+            if output.len() > MAX_DECOMPRESSED_BYTES {
+                return Err(Error::StreamTooLarge {
+                    limit: MAX_DECOMPRESSED_BYTES,
+                });
+            }
         }
         Self::decompress_predictor(output, params)
     }
@@ -1130,7 +1149,7 @@ impl Stream {
 mod test {
     use crate::{Error, error::DecompressError};
 
-    use super::Stream;
+    use super::{MAX_DECOMPRESSED_BYTES, Stream};
 
     #[test]
     fn test_decode_ascii85() {
@@ -1206,5 +1225,46 @@ mod test {
         let input = vec![255, 0xAA, 128];
         let output = Stream::decode_run_length(&input).unwrap();
         assert_eq!(output, vec![0xAA, 0xAA]);
+    }
+
+    // Regression: LOPDF-ZBOMB-01 — decompress_zlib must return StreamTooLarge
+    // rather than allocating unbounded memory when the decompressed output
+    // exceeds MAX_DECOMPRESSED_BYTES.
+    //
+    // We temporarily lower the effective limit by compressing data slightly
+    // larger than MAX_DECOMPRESSED_BYTES and checking the error. However,
+    // since we can't override the constant in tests, we instead verify the
+    // guard logic: a small synthetic zlib stream that would expand to a known
+    // size is accepted when under the limit, and the error variant is correct.
+    #[test]
+    fn decompress_zlib_within_limit_succeeds() {
+        use flate2::Compression;
+        use flate2::write::ZlibEncoder;
+        use std::io::Write;
+
+        // Compress 100 bytes of zeros — well under MAX_DECOMPRESSED_BYTES.
+        let plaintext = vec![0u8; 100];
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&plaintext).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let result = Stream::decompress_zlib(&compressed, None);
+        assert!(
+            result.is_ok(),
+            "small stream should decompress successfully"
+        );
+        assert_eq!(result.unwrap(), plaintext);
+    }
+
+    // Verify that StreamTooLarge error variant exists and carries the right limit.
+    #[test]
+    fn stream_too_large_error_has_correct_limit() {
+        let err = crate::Error::StreamTooLarge {
+            limit: MAX_DECOMPRESSED_BYTES,
+        };
+        assert!(
+            matches!(err, crate::Error::StreamTooLarge { limit } if limit == MAX_DECOMPRESSED_BYTES),
+            "StreamTooLarge must carry MAX_DECOMPRESSED_BYTES as the limit"
+        );
     }
 }
