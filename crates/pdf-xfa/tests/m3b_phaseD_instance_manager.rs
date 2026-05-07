@@ -4,9 +4,10 @@
 
 use pdf_xfa::dynamic::apply_dynamic_scripts_with_runtime;
 use pdf_xfa::js_runtime::{
-    HostBindings, QuickJsRuntime, MAX_INSTANCES_PER_SUBFORM, MAX_MUTATIONS_PER_DOC,
+    HostBindings, QuickJsRuntime, XfaJsRuntime, MAX_INSTANCES_PER_SUBFORM, MAX_MUTATIONS_PER_DOC,
 };
 use pdf_xfa::JsExecutionMode;
+use xfa_dom_resolver::data_dom::{DataDom, DataNodeId};
 use xfa_layout_engine::form::{
     EventScript, FormNode, FormNodeId, FormNodeType, FormTree, Occur, ScriptLanguage,
 };
@@ -93,6 +94,36 @@ fn run_sandbox(tree: &mut FormTree, root: FormNodeId) -> pdf_xfa::DynamicScriptO
     let mut runtime = QuickJsRuntime::new().expect("quickjs runtime");
     apply_dynamic_scripts_with_runtime(tree, root, JsExecutionMode::SandboxedRuntime, &mut runtime)
         .expect("sandbox dispatch")
+}
+
+fn run_sandbox_with_data(
+    tree: &mut FormTree,
+    root: FormNodeId,
+    data_dom: &DataDom,
+) -> pdf_xfa::DynamicScriptOutcome {
+    let mut runtime = QuickJsRuntime::new().expect("quickjs runtime");
+    runtime.set_data_handle(data_dom as *const DataDom);
+    apply_dynamic_scripts_with_runtime(tree, root, JsExecutionMode::SandboxedRuntime, &mut runtime)
+        .expect("sandbox dispatch")
+}
+
+fn data_dom_from_xml(xml: &str) -> DataDom {
+    DataDom::from_xml(xml).expect("data dom parse")
+}
+
+fn find_group_named(dom: &DataDom, start: DataNodeId, name: &str) -> Option<DataNodeId> {
+    if dom
+        .get(start)
+        .is_some_and(|node| node.name() == name && node.is_group())
+    {
+        return Some(start);
+    }
+    for &child in dom.children(start) {
+        if let Some(found) = find_group_named(dom, child, name) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn one_row_form(min: u32, max: Option<u32>) -> (FormTree, FormNodeId, FormNodeId, FormNodeId) {
@@ -455,4 +486,228 @@ fn implicit_resolver_prefers_field_over_sibling_container() {
     assert_eq!(field_value(&tree, amount_field), "42");
     assert_eq!(outcome.js_runtime_errors, 0);
     assert_eq!(outcome.js_executed, 1);
+}
+
+#[test]
+fn resolver_ambiguous_first_segment_picks_candidate_matching_second_segment() {
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let _empty = add_child(&mut tree, root, "A", FormNodeType::Subform);
+    let populated = add_child(&mut tree, root, "A", FormNodeType::Subform);
+    let _b = add_field(&mut tree, populated, "B", "lookahead");
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(&mut tree, out, "calculate", "Out.rawValue = A.B.rawValue;");
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "lookahead");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn resolver_two_populated_candidates_lookahead_picks_correct_branch() {
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let wrong = add_child(&mut tree, root, "A", FormNodeType::Subform);
+    let _wrong_child = add_field(&mut tree, wrong, "C", "wrong");
+    let right = add_child(&mut tree, root, "A", FormNodeType::Subform);
+    let _right_child = add_field(&mut tree, right, "B", "right");
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(&mut tree, out, "calculate", "Out.rawValue = A.B.rawValue;");
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "right");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn resolver_duplicate_child_candidates_survive_until_next_segment() {
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let parent = add_child(&mut tree, root, "Parent", FormNodeType::Subform);
+    let wrong = add_child(&mut tree, parent, "Row", FormNodeType::Subform);
+    let _wrong_child = add_field(&mut tree, wrong, "Other", "wrong");
+    let right = add_child(&mut tree, parent, "Row", FormNodeType::Subform);
+    let _right_child = add_field(&mut tree, right, "Value", "right");
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Parent.Row.Value.rawValue;",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "right");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn resolver_chain_one_token_unchanged_when_no_lookahead() {
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let amount_container = add_child(&mut tree, root, "Amount", FormNodeType::Subform);
+    let _nested = add_field(&mut tree, amount_container, "Nested", "wrong");
+    let _amount = add_field(&mut tree, root, "Amount", "42");
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Amount.rawValue;",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "42");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn resolver_unresolvable_chain_fails_soft() {
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let _a = add_child(&mut tree, root, "A", FormNodeType::Subform);
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        r#"
+var b = A.B;
+Out.rawValue = (b === undefined ? "undefined" : b.C.rawValue);
+"#,
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "undefined");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn resolver_scoped_fallback_handles_ancestor_segment_inside_chain() {
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let parent = add_child(&mut tree, root, "Parent", FormNodeType::Subform);
+    let child = add_child(&mut tree, parent, "Child", FormNodeType::Subform);
+    let _target = add_field(&mut tree, parent, "Target", "ancestor");
+    let out = add_field(&mut tree, root, "Out", "");
+    let trigger = add_field(&mut tree, child, "Trigger", "");
+    add_js_script(
+        &mut tree,
+        trigger,
+        "calculate",
+        "Out.rawValue = Child.Parent.Target.rawValue;",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "ancestor");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn resolver_preserves_underscore_shorthand() {
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let parent = add_child(&mut tree, root, "Parent", FormNodeType::Subform);
+    let child = add_child(&mut tree, parent, "Child", FormNodeType::Subform);
+    tree.get_mut(child).occur = Occur::repeating(0, Some(10), 1);
+    let _value = add_field(&mut tree, child, "Value", "");
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        r#"
+Parent._Child.setInstances(0);
+Out.rawValue = Parent._Child.count;
+"#,
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "0");
+    assert_eq!(outcome.js_runtime_errors, 0);
+    assert_eq!(outcome.js_instance_writes, 1);
+}
+
+#[test]
+fn resolver_preserves_dollar_record() {
+    let dom = data_dom_from_xml(
+        r#"<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+             <xfa:data>
+               <Root><X>from-data</X></Root>
+             </xfa:data>
+           </xfa:datasets>"#,
+    );
+    let data_root = dom.root().expect("root");
+    let bound = find_group_named(&dom, data_root, "Root").unwrap_or(data_root);
+
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let out = add_field(&mut tree, root, "Out", "");
+    tree.meta_mut(out).bound_data_node = Some(bound.as_raw());
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = $record.X.value;",
+    );
+
+    let outcome = run_sandbox_with_data(&mut tree, root, &dom);
+
+    assert_eq!(field_value(&tree, out), "from-data");
+    assert_eq!(outcome.js_runtime_errors, 0);
+    assert!(outcome.js_data_reads > 0);
+}
+
+#[test]
+fn resolver_preserves_variables_globals() {
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    tree.variables_scripts.push((
+        "Helpers".into(),
+        r#"
+var VALUE = "from-vars";
+function suffix() { return "-ok"; }
+"#
+        .into(),
+    ));
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Helpers.VALUE + Helpers.suffix();",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "from-vars-ok");
+    assert_eq!(outcome.js_runtime_errors, 0);
+}
+
+#[test]
+fn resolver_preserves_clean_doc_333f4a55_path() {
+    let mut tree = FormTree::new();
+    let root = add_node(&mut tree, "root", FormNodeType::Root);
+    let clean = add_child(&mut tree, root, "Clean", FormNodeType::Subform);
+    let section = add_child(&mut tree, clean, "Section", FormNodeType::Subform);
+    let _value = add_field(&mut tree, section, "Value", "clean");
+    let out = add_field(&mut tree, root, "Out", "");
+    add_js_script(
+        &mut tree,
+        out,
+        "calculate",
+        "Out.rawValue = Clean.Section.Value.rawValue;",
+    );
+
+    let outcome = run_sandbox(&mut tree, root);
+
+    assert_eq!(field_value(&tree, out), "clean");
+    assert_eq!(outcome.js_runtime_errors, 0);
 }
