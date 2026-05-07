@@ -1,4 +1,4 @@
-# @xfa-engine/pdf-node
+# @pdfluent/node
 
 Enterprise PDF SDK for Node.js, powered by a native Rust engine via [napi-rs](https://napi.rs).
 Supports rendering, text extraction, forms, annotations, redaction, encryption, digital signatures,
@@ -7,7 +7,7 @@ and PDF/A compliance validation.
 ## Installation
 
 ```sh
-npm install @xfa-engine/pdf-node
+npm install @pdfluent/node
 ```
 
 Pre-built binaries are provided for:
@@ -22,7 +22,7 @@ Pre-built binaries are provided for:
 ## Quick start
 
 ```js
-const { PdfDocument } = require('@xfa-engine/pdf-node');
+const { PdfDocument } = require('@pdfluent/node');
 const fs = require('fs');
 
 const data = fs.readFileSync('document.pdf');
@@ -53,7 +53,7 @@ const render = await doc.renderPageAsync(0, { dpi: 150 });
 ### Open from file path
 
 ```js
-const { openPdf } = require('@xfa-engine/pdf-node');
+const { openPdf } = require('@pdfluent/node');
 const doc = openPdf('/path/to/document.pdf');
 ```
 
@@ -178,7 +178,7 @@ const report = doc.validatePdfa('2b');
 // report → { compliant, errorCount, warningCount, issues[] }
 
 // Or as a module-level function (opens the file internally)
-const { validatePdfa } = require('@xfa-engine/pdf-node');
+const { validatePdfa } = require('@pdfluent/node');
 const report = validatePdfa('document.pdf', '2b');
 ```
 
@@ -201,7 +201,7 @@ const annots = page.annotations();
 ### Module-level functions
 
 ```js
-const { openPdf, mergePdfs, validatePdfa } = require('@xfa-engine/pdf-node');
+const { openPdf, mergePdfs, validatePdfa } = require('@pdfluent/node');
 
 // Open from path
 const doc = openPdf('/path/to/file.pdf');

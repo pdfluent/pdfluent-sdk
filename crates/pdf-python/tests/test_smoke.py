@@ -18,15 +18,15 @@ SIGNED_PDF = os.path.join(FIXTURES, "signed.pdf")
 MULTI_PDF = os.path.join(FIXTURES, "multi-page.pdf")
 
 # Import the native module — skip all if not built
-xfa_pdf = pytest.importorskip("xfa_pdf._native")
-Document = xfa_pdf.Document
-open_pdf = xfa_pdf.open_pdf
-merge_pdfs = xfa_pdf.merge_pdfs
-validate_pdfa = xfa_pdf.validate_pdfa
-decrypt_pdf = xfa_pdf.decrypt_pdf
-FormField = xfa_pdf.FormField
-Annotation = xfa_pdf.Annotation
-RedactReport = xfa_pdf.RedactReport
+pdfluent_native = pytest.importorskip("pdfluent._native")
+Document = pdfluent_native.Document
+open_pdf = pdfluent_native.open_pdf
+merge_pdfs = pdfluent_native.merge_pdfs
+validate_pdfa = pdfluent_native.validate_pdfa
+decrypt_pdf = pdfluent_native.decrypt_pdf
+FormField = pdfluent_native.FormField
+Annotation = pdfluent_native.Annotation
+RedactReport = pdfluent_native.RedactReport
 
 
 # ---------- Scenario 1: Open PDF, count pages ----------

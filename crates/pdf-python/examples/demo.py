@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-xfa-pdf — demo of core PDF operations.
+pdfluent — demo of core PDF operations.
 
 Run:
     cd crates/pdf-python
@@ -13,7 +13,7 @@ import os
 import tempfile
 
 try:
-    from xfa_pdf import (
+    from pdfluent import (
         Document,
         open_pdf,
         merge_pdfs,
@@ -21,12 +21,12 @@ try:
         decrypt_pdf,
     )
 except ImportError:
-    print("xfa_pdf not installed. Run: maturin develop")
+    print("pdfluent not installed. Run: maturin develop")
     sys.exit(1)
 
 
 def main(pdf_path: str) -> None:
-    print(f"\n=== xfa_pdf demo ===\nFile: {pdf_path}\n")
+    print(f"\n=== pdfluent demo ===\nFile: {pdf_path}\n")
 
     # ------------------------------------------------------------------ #
     # 1. open_pdf() convenience function                                   #
@@ -118,7 +118,7 @@ def main(pdf_path: str) -> None:
             text_fields = [f for f in fields if f.field_type == "text"]
             if text_fields:
                 name = text_fields[0].name
-                ok = form_doc.set_form_field(name, "Hello from xfa_pdf")
+                ok = form_doc.set_form_field(name, "Hello from pdfluent")
                 print(f"   set_form_field({name!r}) → {ok}")
                 with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
                     filled_path = tf.name

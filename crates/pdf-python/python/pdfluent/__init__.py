@@ -1,10 +1,10 @@
-"""xfa-pdf — Enterprise PDF SDK for Python.
+"""pdfluent — Enterprise PDF SDK for Python.
 
 Built on a pure-Rust PDF stack via PyO3. Zero system dependencies.
 
 Usage
 -----
->>> from xfa_pdf import Document
+>>> from pdfluent import Document
 >>> with Document("invoice.pdf") as doc:
 ...     print(f"{doc.page_count} pages")
 ...     for page in doc:
@@ -12,7 +12,7 @@ Usage
 ...         img.save(f"page_{page.index}.png")
 """
 
-from xfa_pdf._native import (
+from pdfluent._native import (
     Document,
     Page,
     RenderedImage,
@@ -54,6 +54,6 @@ __all__ = [
 
 try:
     from importlib.metadata import version as _pkg_version
-    __version__ = _pkg_version("xfa-pdf")
+    __version__ = _pkg_version("pdfluent")
 except Exception:
     __version__ = "1.0.0b5"

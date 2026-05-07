@@ -9,7 +9,7 @@ name: Node.js Bindings
 #   3. publish-npm: download all artifacts, run napi prepublish, publish packages.
 #
 # Required secrets:
-#   NPM_TOKEN  — npmjs.org publish token with write access to @xfa-engine scope.
+#   NPM_TOKEN  — npmjs.org publish token with write access to @pdfluent scope.
 
 on:
   push:
