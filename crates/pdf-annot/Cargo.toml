@@ -18,3 +18,7 @@ thiserror = { workspace = true }
 [features]
 default = ["write"]
 write = ["dep:lopdf"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

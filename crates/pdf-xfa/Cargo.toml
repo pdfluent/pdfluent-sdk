@@ -39,3 +39,7 @@ default = []
 # `JsExecutionMode::SandboxedRuntime`. Default behaviour and tests are
 # unaffected; the runtime registers no host bindings in this phase.
 xfa-js-sandboxed = ["dep:rquickjs"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

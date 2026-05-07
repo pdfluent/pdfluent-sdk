@@ -9,14 +9,17 @@ Pure Rust PDF/A SDK with XFA support and WASM bindings.
 See [SETUP.md](SETUP.md) for contributor onboarding.
 
 ```rust
-use pdfluent::Document;
+use pdfluent::prelude::*;
 
-let doc = Document::from_path("input.pdf")?;
-for page in doc.pages() {
-    println!("{}", page.text()?);
+fn main() -> Result<()> {
+    let doc = PdfDocument::open("input.pdf")?;
+    for i in 0..doc.page_count() {
+        println!("{}", doc.extract_text(i)?);
+    }
+    let pdfa = doc.convert_to_pdfa("2b")?;
+    pdfa.save("output.pdf")?;
+    Ok(())
 }
-let pdfa = doc.convert_to_pdf_a()?;
-pdfa.save("output.pdf")?;
 ```
 
 ---

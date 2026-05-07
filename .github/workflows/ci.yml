@@ -81,3 +81,46 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all --check
+
+  artifact-guard:
+    name: No compiled build artifacts committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for committed .so / .pyd / .node / .wasm artifacts
+        run: |
+          FOUND=$(git ls-files \
+            '*.so' '*.pyd' '*.node' \
+            'crates/xfa-wasm/pkg/*.js' \
+            'crates/xfa-wasm/pkg/*.wasm' \
+            'crates/xfa-wasm/pkg/*.d.ts' \
+            2>/dev/null)
+          if [ -n "$FOUND" ]; then
+            echo "ERROR: committed build artifact(s) found — remove them and add to .gitignore:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "OK: no compiled build artifacts found in the repository."
+
+  license-metadata-guard:
+    name: No MIT/Apache license on commercial npm packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify commercial packages declare correct license
+        run: |
+          FAIL=0
+          for PKG in \
+            crates/xfa-wasm/pkg/package.json \
+            crates/pdf-node/package.json; do
+            if [ -f "$PKG" ]; then
+              LICENSE=$(python3 -c "import json; print(json.load(open('$PKG')).get('license',''))")
+              if [ "$LICENSE" = "MIT" ] || [ "$LICENSE" = "Apache-2.0" ] || [ "$LICENSE" = "MIT OR Apache-2.0" ]; then
+                echo "ERROR: $PKG has permissive license '$LICENSE' — must be PDFluent Commercial License"
+                FAIL=1
+              else
+                echo "OK: $PKG license = '$LICENSE'"
+              fi
+            fi
+          done
+          if [ "$FAIL" = "1" ]; then exit 1; fi

@@ -25,3 +25,7 @@ lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.2" }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

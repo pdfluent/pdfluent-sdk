@@ -4,9 +4,6 @@ This repository does not currently pin a toolchain with `rust-toolchain.toml`.
 The commands below were checked against `cargo 1.93.1 (083ac5135 2025-12-15)`
 on a local checkout.
 
-The current checkout also has a stale `Cargo.lock`, so the working commands
-below use plain `cargo ...` rather than `--locked`.
-
 ## Prereqs
 
 Install a current stable Rust toolchain plus the formatter and linter used in
@@ -28,8 +25,8 @@ Optional tools for specific parts of the workspace:
 ## Clone + Initial Build
 
 ```sh
-git clone https://github.com/jasperdew/xfa-native-rust.git
-cd xfa-native-rust
+git clone https://github.com/pdfluent/pdfluent-sdk.git
+cd pdfluent-sdk
 cargo build --workspace
 ```
 
@@ -62,18 +59,10 @@ The workspace includes `crates/pdf-bench`, and CI runs it with `cargo bench`:
 cargo bench -p pdf-bench
 ```
 
-## Docs
-
-This checkout has a `docs/` tree, but it does not currently include an
-`mdBook` config (`book.toml`). Edit the Markdown files directly; there is no
-repo-wired docs build step yet.
-
 ## Platform-Specific Gotchas
 
 - macOS: the baseline Rust workspace build does not require extra Homebrew
-  packages in CI. If you run legacy PDFium-based scripts under `scripts/`,
-  make sure your PDFium install is available through
-  `PDFIUM_DYNAMIC_LIB_PATH`.
+  packages in CI.
 - Linux: the baseline workspace builds in CI on `ubuntu-latest` with the Rust
   toolchain. Ops and benchmark scripts such as `scripts/vps-setup.sh` install
   additional packages like `build-essential`, `pkg-config`, `libssl-dev`,

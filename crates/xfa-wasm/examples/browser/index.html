@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDFluent WASM — Browser Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
+    .controls { display: flex; gap: 1rem; align-items: center; margin: 1rem 0; flex-wrap: wrap; }
+    label { font-size: 0.9rem; color: #555; }
+    input[type="file"] { font-size: 0.9rem; }
+    input[type="range"] { width: 120px; }
+    button { padding: 0.4rem 1rem; background: #0070f3; color: white; border: none;
+             border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
+    button:disabled { background: #ccc; cursor: default; }
+    #status { font-size: 0.85rem; color: #555; min-height: 1.2em; }
+    #info { font-size: 0.85rem; background: #f5f5f5; padding: 0.75rem; border-radius: 4px;
+            margin: 0.5rem 0; display: none; }
+    #text-output { font-size: 0.8rem; white-space: pre-wrap; background: #f9f9f9;
+                   padding: 0.75rem; border-radius: 4px; max-height: 200px; overflow-y: auto;
+                   display: none; border: 1px solid #e0e0e0; }
+    canvas { border: 1px solid #e0e0e0; border-radius: 4px; max-width: 100%; display: block; }
+    .nav { display: flex; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
+    .nav span { font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>PDFluent WASM Demo</h1>
+  <p id="status">Loading WASM…</p>
+
+  <div class="controls">
+    <label>PDF file: <input type="file" id="file-input" accept=".pdf" disabled></label>
+    <label>Scale: <input type="range" id="scale" min="0.5" max="3" step="0.25" value="1.5" disabled>
+      <span id="scale-val">1.5×</span></label>
+  </div>
+
+  <div id="info"></div>
+
+  <div class="nav">
+    <button id="prev" disabled>← Prev</button>
+    <span id="page-indicator"></span>
+    <button id="next" disabled>→ Next</button>
+    <button id="extract-text" disabled>Extract Text</button>
+  </div>
+
+  <canvas id="canvas"></canvas>
+  <pre id="text-output"></pre>
+
+  <!--
+    Copy the wasm-pack output (xfa_wasm.js, xfa_wasm_bg.wasm) next to this file,
+    or adjust the import path to point to your pkg/ directory.
+
+    Build instructions:
+      wasm-pack build crates/xfa-wasm --target web --release
+      cp crates/xfa-wasm/pkg/xfa_wasm.js crates/xfa-wasm/examples/browser/
+      cp crates/xfa-wasm/pkg/xfa_wasm_bg.wasm crates/xfa-wasm/examples/browser/
+
+    Then serve this directory with any static file server:
+      npx serve crates/xfa-wasm/examples/browser
+  -->
+  <script type="module">
+    import init, { PdfDoc } from './xfa_wasm.js';
+
+    let doc = null;
+    let currentPage = 0;
+    let totalPages = 0;
+
+    const status = document.getElementById('status');
+    const fileInput = document.getElementById('file-input');
+    const scaleInput = document.getElementById('scale');
+    const scaleVal = document.getElementById('scale-val');
+    const canvas = document.getElementById('canvas');
+    const info = document.getElementById('info');
+    const textOutput = document.getElementById('text-output');
+    const pageIndicator = document.getElementById('page-indicator');
+    const prevBtn = document.getElementById('prev');
+    const nextBtn = document.getElementById('next');
+    const extractTextBtn = document.getElementById('extract-text');
+
+    // Initialize WASM
+    try {
+      await init();
+      status.textContent = 'Ready — select a PDF file.';
+      fileInput.disabled = false;
+    } catch (e) {
+      status.textContent = `Failed to load WASM: ${e.message}`;
+      console.error(e);
+    }
+
+    function setControls(enabled) {
+      scaleInput.disabled = !enabled;
+      prevBtn.disabled = !enabled || currentPage === 0;
+      nextBtn.disabled = !enabled || currentPage >= totalPages - 1;
+      extractTextBtn.disabled = !enabled;
+    }
+
+    function renderCurrentPage() {
+      const scale = parseFloat(scaleInput.value);
+      status.textContent = `Rendering page ${currentPage + 1}…`;
+      try {
+        doc.renderPageToCanvas(canvas, currentPage, scale);
+        pageIndicator.textContent = `Page ${currentPage + 1} / ${totalPages}`;
+        status.textContent = `Page ${currentPage + 1} rendered.`;
+      } catch (e) {
+        status.textContent = `Render error: ${e.message}`;
+        console.error(e);
+      }
+      textOutput.style.display = 'none';
+      prevBtn.disabled = currentPage === 0;
+      nextBtn.disabled = currentPage >= totalPages - 1;
+    }
+
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      if (doc) { doc.free(); doc = null; }
+      info.style.display = 'none';
+      textOutput.style.display = 'none';
+      setControls(false);
+      status.textContent = `Loading ${file.name}…`;
+
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        doc = PdfDoc.open(bytes);
+        totalPages = doc.pageCount();
+        currentPage = 0;
+
+        // Show metadata
+        const meta = JSON.parse(doc.metadata());
+        info.innerHTML = [
+          `<strong>${file.name}</strong>`,
+          `Pages: ${totalPages}`,
+          meta.title ? `Title: ${meta.title}` : null,
+          meta.author ? `Author: ${meta.author}` : null,
+          meta.producer ? `Producer: ${meta.producer}` : null,
+        ].filter(Boolean).join(' &nbsp;·&nbsp; ');
+        info.style.display = 'block';
+
+        setControls(true);
+        renderCurrentPage();
+      } catch (e) {
+        status.textContent = `Error opening PDF: ${e.message}`;
+        console.error(e);
+      }
+    });
+
+    scaleInput.addEventListener('input', () => {
+      scaleVal.textContent = `${scaleInput.value}×`;
+      if (doc) renderCurrentPage();
+    });
+
+    prevBtn.addEventListener('click', () => {
+      if (currentPage > 0) { currentPage--; renderCurrentPage(); }
+    });
+
+    nextBtn.addEventListener('click', () => {
+      if (currentPage < totalPages - 1) { currentPage++; renderCurrentPage(); }
+    });
+
+    extractTextBtn.addEventListener('click', () => {
+      if (!doc) return;
+      const text = doc.text(currentPage);
+      textOutput.textContent = text || '(no text on this page)';
+      textOutput.style.display = 'block';
+    });
+  </script>
+</body>
+</html>

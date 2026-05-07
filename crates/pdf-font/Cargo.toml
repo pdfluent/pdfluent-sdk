@@ -19,3 +19,7 @@ embed-cmaps = ["std", "dep:brotli"]
 log = "0.4"
 phf = { version = "0.13.1", features = ["macros"] }
 brotli = { version = "8", default-features = false, features = ["std"], optional = true }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

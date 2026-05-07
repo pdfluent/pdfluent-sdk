@@ -23,3 +23,7 @@ tempfile = "3"
 # Used only in tests to verify that the stub /ToUnicode CMap we produce on
 # redacted pages is accepted by the same parser pdf-extract / pdf-manip use.
 pdf-font = { path = "../pdf-font", version = "=1.0.0-beta.3" }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

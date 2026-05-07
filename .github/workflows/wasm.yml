@@ -1,5 +1,7 @@
 name: WASM Build
 
+# Branch pushes: build + trigger website rebuild (paths-filtered).
+# Version tags (v*.*.*): build + publish to npm.
 on:
   push:
     branches: [master]
@@ -7,7 +9,15 @@ on:
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      publish_npm:
+        description: 'Publish to npm (requires NPM_TOKEN secret)'
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,8 +26,6 @@ jobs:
   wasm-build:
     name: Build WASM
     runs-on: ubuntu-latest
-    # Expose secret as a job-level env var so it's available in step `if` conditions.
-    # (secrets.* is not accessible in step-level if expressions.)
     env:
       WEBSITE_DEPLOY_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
     steps:
@@ -37,12 +45,48 @@ jobs:
       - name: Build WASM package
         run: wasm-pack build crates/xfa-wasm --target web --release
 
+      - name: Patch npm package metadata
+        # wasm-pack regenerates package.json from Cargo.toml metadata.
+        # Post-process to inject correct license, version, and repository URLs.
+        run: |
+          PDFLUENT_VER=$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c "import json,sys; pkgs=json.load(sys.stdin)['packages']; \
+              print(next(p['version'] for p in pkgs if p['name']=='pdfluent'))")
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('crates/xfa-wasm/pkg/package.json', 'utf8'));
+            pkg.version = process.env.PDFLUENT_VER;
+            pkg.license = 'PDFluent Commercial License';
+            pkg.licenseUrl = 'https://pdfluent.com/terms';
+            pkg.homepage = 'https://pdfluent.com';
+            pkg.repository = { type: 'git', url: 'https://github.com/pdfluent/pdfluent-sdk' };
+            pkg.bugs = { url: 'https://github.com/pdfluent/pdfluent-sdk/issues' };
+            pkg.publishConfig = { access: 'public' };
+            fs.writeFileSync('crates/xfa-wasm/pkg/package.json', JSON.stringify(pkg, null, 2) + '\n');
+            console.log('patched package.json: version=' + pkg.version + ' license=' + pkg.license);
+          " env PDFLUENT_VER=$PDFLUENT_VER
+
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
         with:
           name: wasm-pkg
           path: crates/xfa-wasm/pkg/
           retention-days: 30
+
+      - name: Publish to npm
+        # Publish when: a v* tag is pushed, OR workflow_dispatch with publish_npm=true.
+        # Requires NPM_TOKEN secret set in repository settings.
+        if: |
+          (startsWith(github.ref, 'refs/tags/v') || inputs.publish_npm == 'true') &&
+          secrets.NPM_TOKEN != ''
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          cd crates/xfa-wasm/pkg
+          echo "Publishing xfa-wasm $(node -e "console.log(require('./package.json').version)") to npm..."
+          npm publish --access public
+          echo "npm publish complete"
 
       - name: Trigger website rebuild
         if: github.ref == 'refs/heads/master' && env.WEBSITE_DEPLOY_TOKEN != ''

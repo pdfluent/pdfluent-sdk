@@ -117,6 +117,13 @@ export class XfaForms {
 // @ts-ignore
 import { PdfDoc as RawPdf } from '../pkg/xfa_wasm';
 
+export interface RenderedPage {
+  /** RGBA pixels as a flat Uint8Array (4 bytes per pixel, row-major). */
+  data: Uint8Array;
+  width: number;
+  height: number;
+}
+
 export class PdfDocument {
   private doc: InstanceType<typeof RawPdf>;
 
@@ -129,8 +136,24 @@ export class PdfDocument {
     return new PdfDocument(raw);
   }
 
+  free(): void {
+    this.doc.free();
+  }
+
+  [Symbol.dispose](): void {
+    this.free();
+  }
+
   get pageCount(): number {
     return this.doc.pageCount();
+  }
+
+  pageWidth(index: number): number {
+    return this.doc.pageWidth(index);
+  }
+
+  pageHeight(index: number): number {
+    return this.doc.pageHeight(index);
   }
 
   get metadata(): PdfMetadata {
@@ -145,12 +168,77 @@ export class PdfDocument {
     return this.doc.hasSignatures();
   }
 
-  validatePdfA(level: string = 'pdf-a2b'): ComplianceReport {
+  validatePdfA(level: string = '2b'): ComplianceReport {
     return JSON.parse(this.doc.validatePdfA(level));
   }
 
   get dssInfo(): DssInfo | null {
     const json = this.doc.dssInfo();
     return json ? JSON.parse(json) : null;
+  }
+
+  text(pageIndex: number): string {
+    return this.doc.text(pageIndex);
+  }
+
+  /**
+   * Render a page and return decoded pixel data.
+   *
+   * `renderPage` returns a binary buffer with a 4-byte little-endian width,
+   * a 4-byte little-endian height, then RGBA pixels. This helper decodes that
+   * format into a plain `RenderedPage` object.
+   *
+   * ```ts
+   * const { data, width, height } = doc.renderPageDecoded(0, 1.5);
+   * const imageData = new ImageData(new Uint8ClampedArray(data), width, height);
+   * ctx.putImageData(imageData, 0, 0);
+   * ```
+   */
+  renderPageDecoded(pageIndex: number, scale: number): RenderedPage {
+    const raw = this.doc.renderPage(pageIndex, scale);
+    const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    const width = view.getUint32(0, /* littleEndian */ true);
+    const height = view.getUint32(4, true);
+    return { data: raw.slice(8), width, height };
+  }
+
+  /**
+   * Render a page directly onto an `HTMLCanvasElement`.
+   *
+   * Resizes the canvas to the rendered pixel dimensions and calls
+   * `putImageData`. Only available in a browser context (wasm32 target).
+   */
+  renderPageToCanvas(canvas: HTMLCanvasElement, pageIndex: number, scale: number): void {
+    this.doc.renderPageToCanvas(canvas, pageIndex, scale);
+  }
+
+  /**
+   * Create an `ImageData` object for a rendered page.
+   *
+   * Convenience wrapper around `renderPageDecoded` for use with the Canvas 2D
+   * API without needing to own the canvas element.
+   *
+   * ```ts
+   * const imageData = doc.renderPageToImageData(0, 1.5);
+   * canvas.width = imageData.width;
+   * canvas.height = imageData.height;
+   * ctx.putImageData(imageData, 0, 0);
+   * ```
+   */
+  renderPageToImageData(pageIndex: number, scale: number): ImageData {
+    const { data, width, height } = this.renderPageDecoded(pageIndex, scale);
+    return new ImageData(new Uint8ClampedArray(data), width, height);
+  }
+
+  merge(other: Uint8Array): Uint8Array {
+    return this.doc.merge(other);
+  }
+
+  convertToPdfa(level: string): Uint8Array {
+    return this.doc.convertToPdfa(level);
+  }
+
+  flattenXfa(): Uint8Array {
+    return this.doc.flattenXfa();
   }
 }

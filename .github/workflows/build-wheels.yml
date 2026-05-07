@@ -1,10 +1,21 @@
 name: Build wheels
 
+# Triggered by:
+#   - python/v* tags: Python-specific release (legacy).
+#   - v*.*.* tags:    SDK version release — build and publish wheels to PyPI.
+#   - workflow_dispatch: manual build (dry-run by default; set publish=true to upload).
 on:
   push:
     tags:
       - 'python/v*'
+      - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish wheels to PyPI'
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
 
 jobs:
   linux:
@@ -90,7 +101,7 @@ jobs:
   release:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || inputs.publish == 'true'
     needs: [linux, macos, windows, sdist]
     environment:
       name: pypi

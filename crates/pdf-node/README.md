@@ -226,4 +226,16 @@ await sharp(result.data, {
 
 ## License
 
-MIT
+**PDFluent Commercial License** — free for evaluation; a valid license is required for production use.
+
+- **30-day trial:** <https://pdfluent.com/trial>
+- **Pricing:** <https://pdfluent.com/pricing>
+- **Commercial terms:** <https://pdfluent.com/terms>
+
+Without a license key the SDK is fully functional; output PDFs carry an evaluation marker in `/Producer` metadata.
+
+## Links
+
+- **Documentation:** <https://pdfluent.com/docs>
+- **Issues:** <https://github.com/pdfluent/pdfluent-sdk/issues>
+- Built by [Innovation Trigger BV](https://pdfluent.com)
