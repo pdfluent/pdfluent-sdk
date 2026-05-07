@@ -55,6 +55,7 @@ pub struct HostBindings {
     resolve_count_this_script: u32,
     metadata: RuntimeMetadata,
     static_page_count: u32,
+    zero_instance_runs: HashMap<(FormNodeId, String), u64>,
     /// Phase D-γ: read-only pointer to the DataDom for the current document.
     /// Set from a stack reference in `flatten.rs` that outlives script execution.
     /// `None` when no data packet is present or the feature is inactive.
@@ -76,6 +77,7 @@ impl Default for HostBindings {
             resolve_count_this_script: 0,
             metadata: RuntimeMetadata::default(),
             static_page_count: 0,
+            zero_instance_runs: HashMap::new(),
             data_dom: None,
         }
     }
@@ -95,6 +97,7 @@ impl HostBindings {
             self.current_id = None;
             self.current_activity = None;
             self.current_script_idx = 0;
+            self.zero_instance_runs.clear();
         }
     }
 
@@ -119,6 +122,7 @@ impl HostBindings {
         self.resolve_count_this_script = 0;
         self.metadata = RuntimeMetadata::default();
         self.static_page_count = 0;
+        self.zero_instance_runs.clear();
         // data_dom is NOT reset here — see doc comment above.
     }
 
@@ -282,6 +286,30 @@ impl HostBindings {
         }
     }
 
+    /// Resolve all viable implicit JavaScript identifier candidates from the
+    /// current XFA scope. The first candidate is identical to
+    /// [`resolve_implicit`]; later candidates preserve same-name alternatives
+    /// so the JS proxy can filter them when a chained property supplies the
+    /// next SOM segment.
+    pub fn resolve_implicit_candidates(
+        &mut self,
+        current_id: FormNodeId,
+        name: &str,
+    ) -> Vec<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        match self.resolve_implicit_inner(current_id, name) {
+            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::NoMatch => {
+                self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                Vec::new()
+            }
+            ResolveOutcome::BindingError => {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                Vec::new()
+            }
+        }
+    }
+
     /// Resolve a direct child node for chained dotted JavaScript access.
     pub fn resolve_child(&mut self, parent_id: FormNodeId, name: &str) -> Option<FormNodeId> {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
@@ -294,6 +322,55 @@ impl HostBindings {
             ResolveOutcome::BindingError => {
                 self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
                 None
+            }
+        }
+    }
+
+    /// Resolve chained child candidates from an ordered parent candidate set.
+    ///
+    /// Direct children are preferred. If none match, this uses the same
+    /// bounded descendant heuristic as the implicit resolver inside each
+    /// parent, which matches the historical permissiveness of XFA SOM dotted
+    /// access without inventing handles when the form structure is absent.
+    pub fn resolve_child_candidates(
+        &mut self,
+        parent_ids: &[FormNodeId],
+        name: &str,
+    ) -> Vec<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        match self.resolve_child_candidates_inner(parent_ids, name) {
+            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::NoMatch => {
+                self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                Vec::new()
+            }
+            ResolveOutcome::BindingError => {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Resolve a property name from each candidate's own implicit scope.
+    ///
+    /// This is the last fallback used by JS-side candidate filtering, covering
+    /// forms that author a later segment as an ancestor-scoped implicit name
+    /// rather than as a direct child of the previous segment.
+    pub fn resolve_scoped_candidates(
+        &mut self,
+        scope_ids: &[FormNodeId],
+        name: &str,
+    ) -> Vec<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        match self.resolve_scoped_candidates_inner(scope_ids, name) {
+            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::NoMatch => {
+                self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                Vec::new()
+            }
+            ResolveOutcome::BindingError => {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                Vec::new()
             }
         }
     }
@@ -316,6 +393,34 @@ impl HostBindings {
     /// Return the zero-based sibling index for a JS handle.
     pub fn instance_index_for_handle(&mut self, node_id: FormNodeId, generation: u64) -> u32 {
         self.instance_index_inner(node_id, Some(generation))
+    }
+
+    /// Whether `parent_id._name` refers to an instance run that was explicitly
+    /// set to zero during this document. This lets the JS shorthand return a
+    /// read-only empty manager only for a real prior instance run, while
+    /// keeping unrelated private-looking `_id` properties hidden.
+    pub fn has_zero_instance_run(
+        &mut self,
+        parent_id: FormNodeId,
+        generation: u64,
+        name: &str,
+    ) -> bool {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        let name = name.trim();
+        if name.is_empty() || !self.consume_resolve_call() {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return false;
+        }
+        let Some(form) = self.form_ref() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return false;
+        };
+        if generation != self.generation || parent_id.0 >= form.nodes.len() {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return false;
+        }
+        self.zero_instance_runs
+            .contains_key(&(parent_id, name.to_string()))
     }
 
     /// Replace the live same-name sibling run with exactly `n` instances,
@@ -535,89 +640,18 @@ impl HostBindings {
         }
 
         let parents = build_parent_map(form, self.root_id);
-
-        // Phase D-η resolution. The implicit-identifier scope walk has three
-        // passes; the first hit wins. Each pass walks scopes outward from
-        // `current_id` toward the form root. The split exists because real
-        // XFA forms can have multiple subforms sharing a name (e.g. an
-        // empty layout-stub copy plus the populated content copy, or an
-        // enclosing `F` whose script references its own name). A naïve
-        // first-DFS-hit returned the wrong copy in both directions.
-        //
-        // Pass 1: at each scope level, run children-biased descendant DFS
-        // (see `find_named_descendant`). If the chosen candidate has direct
-        // children, accept it — it is the "real" populated content node.
-        //
-        // Pass 2: if Pass 1 only ever yielded empty stubs, look for a
-        // same-name ancestor (including `current_id` itself). XFA's scope
-        // rules permit `F` inside `F` to resolve to the enclosing `F`; this
-        // pass catches that case without overriding the populated-descendant
-        // heuristic.
-        //
-        // Pass 3: if Passes 1 & 2 both turned up nothing, fall back to the
-        // first candidate at any scope — even an empty stub — so script
-        // chains that previously resolved to a stub still resolve. This
-        // preserves backward compatibility for forms that depend on the
-        // pre-D-η behaviour.
-        let mut scope = Some(current_id);
-        let mut depth = 0usize;
-        while let Some(scope_id) = scope {
-            if depth > MAX_SOM_DEPTH {
-                return ResolveOutcome::BindingError;
-            }
-            if scope_id.0 >= form.nodes.len() {
-                return ResolveOutcome::BindingError;
-            }
-            if let Some(node_id) = find_named_descendant(form, scope_id, name, MAX_SOM_DEPTH) {
-                if !form.get(node_id).children.is_empty() {
-                    return ResolveOutcome::Ok(vec![node_id]);
-                }
-            }
-            scope = parents.get(&scope_id).copied();
-            depth += 1;
-        }
-
-        // Pass 2: ancestor self-name walk. Only reached when no scope's
-        // children-biased descendant DFS produced a populated node.
-        let mut scope = Some(current_id);
-        let mut depth = 0usize;
-        while let Some(scope_id) = scope {
-            if depth > MAX_SOM_DEPTH {
-                return ResolveOutcome::BindingError;
-            }
-            if scope_id.0 >= form.nodes.len() {
-                return ResolveOutcome::BindingError;
-            }
-            if form.get(scope_id).name == name {
-                return ResolveOutcome::Ok(vec![scope_id]);
-            }
-            scope = parents.get(&scope_id).copied();
-            depth += 1;
-        }
-
-        // Pass 3: accept a stub descendant as last resort — the form may
-        // genuinely intend an empty-children node (e.g. for `.somExpression`
-        // or `.presence` reads on a placeholder).
-        let mut scope = Some(current_id);
-        let mut depth = 0usize;
-        while let Some(scope_id) = scope {
-            if depth > MAX_SOM_DEPTH {
-                return ResolveOutcome::BindingError;
-            }
-            if scope_id.0 >= form.nodes.len() {
-                return ResolveOutcome::BindingError;
-            }
-            if let Some(node_id) = find_named_descendant(form, scope_id, name, MAX_SOM_DEPTH) {
-                return ResolveOutcome::Ok(vec![node_id]);
-            }
-            scope = parents.get(&scope_id).copied();
-            depth += 1;
-        }
-
-        ResolveOutcome::NoMatch
+        resolve_implicit_candidates_in_scope(form, &parents, current_id, name)
     }
 
     fn resolve_child_inner(&mut self, parent_id: FormNodeId, name: &str) -> ResolveOutcome {
+        self.resolve_child_candidates_inner(&[parent_id], name)
+    }
+
+    fn resolve_child_candidates_inner(
+        &mut self,
+        parent_ids: &[FormNodeId],
+        name: &str,
+    ) -> ResolveOutcome {
         let name = name.trim();
         if name.is_empty() || !self.consume_resolve_call() {
             return ResolveOutcome::BindingError;
@@ -626,19 +660,89 @@ impl HostBindings {
         let Some(form) = self.form_ref() else {
             return ResolveOutcome::BindingError;
         };
-        if parent_id.0 >= form.nodes.len() {
+        if parent_ids.is_empty()
+            || parent_ids
+                .iter()
+                .any(|node_id| node_id.0 >= form.nodes.len())
+        {
             return ResolveOutcome::BindingError;
         }
 
-        let found = form
-            .get(parent_id)
-            .children
-            .iter()
-            .copied()
-            .find(|child_id| form.get(*child_id).name == name);
-        found.map_or(ResolveOutcome::NoMatch, |node_id| {
-            ResolveOutcome::Ok(vec![node_id])
-        })
+        let mut direct = Vec::new();
+        for &parent_id in parent_ids {
+            for &child_id in &form.get(parent_id).children {
+                if form.get(child_id).name == name {
+                    push_unique_candidate(&mut direct, child_id);
+                    if direct.len() >= MAX_RESOLVE_CANDIDATES {
+                        return ResolveOutcome::Ok(direct);
+                    }
+                }
+            }
+        }
+        if !direct.is_empty() {
+            return ResolveOutcome::Ok(direct);
+        }
+
+        let mut descendants = Vec::new();
+        for &parent_id in parent_ids {
+            let mut local =
+                collect_named_descendant_candidates(form, parent_id, name, MAX_SOM_DEPTH);
+            order_candidates(form, &mut local);
+            for node_id in local {
+                push_unique_candidate(&mut descendants, node_id);
+                if descendants.len() >= MAX_RESOLVE_CANDIDATES {
+                    return ResolveOutcome::Ok(descendants);
+                }
+            }
+        }
+        if descendants.is_empty() {
+            ResolveOutcome::NoMatch
+        } else {
+            ResolveOutcome::Ok(descendants)
+        }
+    }
+
+    fn resolve_scoped_candidates_inner(
+        &mut self,
+        scope_ids: &[FormNodeId],
+        name: &str,
+    ) -> ResolveOutcome {
+        let name = name.trim();
+        if name.is_empty() || !self.consume_resolve_call() {
+            return ResolveOutcome::BindingError;
+        }
+
+        let Some(form) = self.form_ref() else {
+            return ResolveOutcome::BindingError;
+        };
+        if scope_ids.is_empty()
+            || self.root_id.0 >= form.nodes.len()
+            || scope_ids
+                .iter()
+                .any(|node_id| node_id.0 >= form.nodes.len())
+        {
+            return ResolveOutcome::BindingError;
+        }
+
+        let parents = build_parent_map(form, self.root_id);
+        let mut out = Vec::new();
+        for &scope_id in scope_ids {
+            if let ResolveOutcome::Ok(nodes) =
+                resolve_implicit_candidates_in_scope(form, &parents, scope_id, name)
+            {
+                for node_id in nodes {
+                    push_unique_candidate(&mut out, node_id);
+                    if out.len() >= MAX_RESOLVE_CANDIDATES {
+                        return ResolveOutcome::Ok(out);
+                    }
+                }
+            }
+        }
+        if out.is_empty() {
+            ResolveOutcome::NoMatch
+        } else {
+            ResolveOutcome::Ok(out)
+        }
     }
 
     fn instance_count_inner(&mut self, parent_id: FormNodeId, generation: Option<u64>) -> u32 {
@@ -688,6 +792,14 @@ impl HostBindings {
         let prototype_id = run.prototype_id;
         let parent_id = run.parent_id;
         let first_pos = run.first_position;
+        let Some(prototype_name) = self
+            .form_ref()
+            .and_then(|form| form.nodes.get(prototype_id.0))
+            .map(|node| node.name.clone())
+        else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Err(());
+        };
         let remove_ids = run.nodes;
 
         let mut new_ids = Vec::with_capacity(target_count);
@@ -713,6 +825,12 @@ impl HostBindings {
             parent.children.insert(insert_pos + offset, node_id);
         }
 
+        let key = (parent_id, prototype_name);
+        if target_count == 0 {
+            self.zero_instance_runs.insert(key, self.generation);
+        } else {
+            self.zero_instance_runs.remove(&key);
+        }
         self.record_instance_write();
         Ok(target_count as u32)
     }
@@ -735,6 +853,10 @@ impl HostBindings {
             self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
             return Err(());
         };
+        let zero_key = self
+            .form_ref()
+            .and_then(|form| form.nodes.get(run.prototype_id.0))
+            .map(|node| (run.parent_id, node.name.clone()));
         let Some(max_allowed) = self.max_instances_for(run.prototype_id) else {
             self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
             return Err(());
@@ -753,6 +875,9 @@ impl HostBindings {
             .children
             .insert(run.last_position + 1, cloned_id);
 
+        if let Some(key) = zero_key {
+            self.zero_instance_runs.remove(&key);
+        }
         self.record_instance_write();
         Ok(cloned_id)
     }
@@ -776,6 +901,10 @@ impl HostBindings {
             self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
             return Err(());
         };
+        let zero_key = self
+            .form_ref()
+            .and_then(|form| form.nodes.get(run.prototype_id.0))
+            .map(|node| (run.parent_id, node.name.clone()));
         let min_allowed = self
             .form_ref()
             .and_then(|form| form.nodes.get(run.prototype_id.0))
@@ -796,6 +925,13 @@ impl HostBindings {
         };
         form.get_mut(run.parent_id).children.remove(remove_position);
 
+        if let Some(key) = zero_key {
+            if run.nodes.len() == 1 {
+                self.zero_instance_runs.insert(key, self.generation);
+            } else {
+                self.zero_instance_runs.remove(&key);
+            }
+        }
         self.record_instance_write();
         Ok(())
     }
@@ -1513,17 +1649,18 @@ const MAX_RESOLVE_CANDIDATES: usize = 32;
 /// case to the populated branch.
 ///
 /// Phase D-η: name-collision tie-break for the implicit resolver.
-fn find_named_descendant(
+fn collect_named_descendant_candidates(
     form: &FormTree,
     scope_id: FormNodeId,
     name: &str,
     max_depth: usize,
-) -> Option<FormNodeId> {
+) -> Vec<FormNodeId> {
     let mut candidates: Vec<FormNodeId> = Vec::new();
     find_named_descendant_inner(form, scope_id, name, 0, max_depth, &mut candidates);
-    if candidates.is_empty() {
-        return None;
-    }
+    candidates
+}
+
+fn order_candidates(form: &FormTree, candidates: &mut [FormNodeId]) {
     // Phase D-η refinement (Codex review feedback): when same-name
     // candidates include a `Field` and a sibling subform/container,
     // prefer the Field. Fields have zero children, so naïve children-
@@ -1533,23 +1670,98 @@ fn find_named_descendant(
     // via `set_raw_value`. Preserve first-DFS-hit semantics among
     // Field candidates so the pre-D-η field-resolution behaviour is
     // unchanged when a field candidate exists at all.
-    for &cand in &candidates {
-        if matches!(form.get(cand).node_type, FormNodeType::Field { .. }) {
-            return Some(cand);
+    candidates.sort_by(|left, right| {
+        let left_is_field = matches!(form.get(*left).node_type, FormNodeType::Field { .. });
+        let right_is_field = matches!(form.get(*right).node_type, FormNodeType::Field { .. });
+        match (left_is_field, right_is_field) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            (true, true) => std::cmp::Ordering::Equal,
+            (false, false) => form
+                .get(*right)
+                .children
+                .len()
+                .cmp(&form.get(*left).children.len()),
         }
+    });
+}
+
+fn push_unique_candidate(candidates: &mut Vec<FormNodeId>, node_id: FormNodeId) {
+    if candidates.len() < MAX_RESOLVE_CANDIDATES && !candidates.contains(&node_id) {
+        candidates.push(node_id);
     }
-    // No Field candidates — apply children-bias among container nodes
-    // to disambiguate populated content from empty layout-stub siblings.
-    let mut best = candidates[0];
-    let mut best_count = form.get(best).children.len();
-    for &cand in &candidates[1..] {
-        let count = form.get(cand).children.len();
-        if count > best_count {
-            best = cand;
-            best_count = count;
+}
+
+fn resolve_implicit_candidates_in_scope(
+    form: &FormTree,
+    parents: &HashMap<FormNodeId, FormNodeId>,
+    current_id: FormNodeId,
+    name: &str,
+) -> ResolveOutcome {
+    // Phase D-η resolution. The implicit-identifier scope walk has three
+    // passes; the first hit wins. Phase D-κ keeps that first candidate
+    // byte-for-byte compatible for one-token reads, but returns same-scope
+    // alternatives after it so the JS proxy can filter chained SOM access.
+    let mut scope = Some(current_id);
+    let mut depth = 0usize;
+    while let Some(scope_id) = scope {
+        if depth > MAX_SOM_DEPTH {
+            return ResolveOutcome::BindingError;
         }
+        if scope_id.0 >= form.nodes.len() {
+            return ResolveOutcome::BindingError;
+        }
+        let mut candidates =
+            collect_named_descendant_candidates(form, scope_id, name, MAX_SOM_DEPTH);
+        if !candidates.is_empty() {
+            order_candidates(form, &mut candidates);
+            if !form.get(candidates[0]).children.is_empty() {
+                return ResolveOutcome::Ok(candidates);
+            }
+        }
+        scope = parents.get(&scope_id).copied();
+        depth += 1;
     }
-    Some(best)
+
+    // Pass 2: ancestor self-name walk. Only reached when no scope's
+    // children-biased descendant DFS produced a populated node.
+    let mut scope = Some(current_id);
+    let mut depth = 0usize;
+    while let Some(scope_id) = scope {
+        if depth > MAX_SOM_DEPTH {
+            return ResolveOutcome::BindingError;
+        }
+        if scope_id.0 >= form.nodes.len() {
+            return ResolveOutcome::BindingError;
+        }
+        if form.get(scope_id).name == name {
+            return ResolveOutcome::Ok(vec![scope_id]);
+        }
+        scope = parents.get(&scope_id).copied();
+        depth += 1;
+    }
+
+    // Pass 3: accept a stub descendant as last resort.
+    let mut scope = Some(current_id);
+    let mut depth = 0usize;
+    while let Some(scope_id) = scope {
+        if depth > MAX_SOM_DEPTH {
+            return ResolveOutcome::BindingError;
+        }
+        if scope_id.0 >= form.nodes.len() {
+            return ResolveOutcome::BindingError;
+        }
+        let mut candidates =
+            collect_named_descendant_candidates(form, scope_id, name, MAX_SOM_DEPTH);
+        if !candidates.is_empty() {
+            order_candidates(form, &mut candidates);
+            return ResolveOutcome::Ok(candidates);
+        }
+        scope = parents.get(&scope_id).copied();
+        depth += 1;
+    }
+
+    ResolveOutcome::NoMatch
 }
 
 fn find_named_descendant_inner(

@@ -69,6 +69,13 @@ impl std::fmt::Debug for QuickJsRuntime {
     }
 }
 
+fn parse_node_id_csv(raw: &str) -> Vec<FormNodeId> {
+    raw.split(',')
+        .filter_map(|part| part.trim().parse::<usize>().ok())
+        .map(FormNodeId)
+        .collect()
+}
+
 impl QuickJsRuntime {
     /// Construct a new sandboxed runtime with default budgets.
     pub fn new() -> Result<Self, SandboxError> {
@@ -239,6 +246,29 @@ impl QuickJsRuntime {
                 .set("resolveImplicitNodeId", resolve_implicit_node_id)
                 .map_err(|e| format!("set resolveImplicitNodeId: {e}"))?;
 
+            let implicit_candidates_host = Rc::clone(&host);
+            let resolve_implicit_node_ids = Function::new(
+                ctx.clone(),
+                move |current_id: i32, name: Opt<Coerced<String>>| -> Vec<i32> {
+                    if current_id < 0 {
+                        return Vec::new();
+                    }
+                    let Some(name) = name.0 else {
+                        return Vec::new();
+                    };
+                    implicit_candidates_host
+                        .borrow_mut()
+                        .resolve_implicit_candidates(FormNodeId(current_id as usize), &name.0)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveImplicitNodeIds: {e}"))?;
+            internal
+                .set("resolveImplicitNodeIds", resolve_implicit_node_ids)
+                .map_err(|e| format!("set resolveImplicitNodeIds: {e}"))?;
+
             let child_host = Rc::clone(&host);
             let resolve_child_node_id = Function::new(
                 ctx.clone(),
@@ -260,6 +290,52 @@ impl QuickJsRuntime {
             internal
                 .set("resolveChildNodeId", resolve_child_node_id)
                 .map_err(|e| format!("set resolveChildNodeId: {e}"))?;
+
+            let child_candidates_host = Rc::clone(&host);
+            let resolve_child_node_ids = Function::new(
+                ctx.clone(),
+                move |parent_ids: Opt<Coerced<String>>, name: Opt<Coerced<String>>| -> Vec<i32> {
+                    let Some(parent_ids) = parent_ids.0 else {
+                        return Vec::new();
+                    };
+                    let Some(name) = name.0 else {
+                        return Vec::new();
+                    };
+                    child_candidates_host
+                        .borrow_mut()
+                        .resolve_child_candidates(&parse_node_id_csv(&parent_ids.0), &name.0)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveChildNodeIds: {e}"))?;
+            internal
+                .set("resolveChildNodeIds", resolve_child_node_ids)
+                .map_err(|e| format!("set resolveChildNodeIds: {e}"))?;
+
+            let scoped_candidates_host = Rc::clone(&host);
+            let resolve_scoped_node_ids = Function::new(
+                ctx.clone(),
+                move |scope_ids: Opt<Coerced<String>>, name: Opt<Coerced<String>>| -> Vec<i32> {
+                    let Some(scope_ids) = scope_ids.0 else {
+                        return Vec::new();
+                    };
+                    let Some(name) = name.0 else {
+                        return Vec::new();
+                    };
+                    scoped_candidates_host
+                        .borrow_mut()
+                        .resolve_scoped_candidates(&parse_node_id_csv(&scope_ids.0), &name.0)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveScopedNodeIds: {e}"))?;
+            internal
+                .set("resolveScopedNodeIds", resolve_scoped_node_ids)
+                .map_err(|e| format!("set resolveScopedNodeIds: {e}"))?;
 
             let get_raw_host = Rc::clone(&host);
             let get_raw_value = Function::new(
@@ -311,6 +387,28 @@ impl QuickJsRuntime {
             internal
                 .set("instanceCount", instance_count)
                 .map_err(|e| format!("set instanceCount: {e}"))?;
+
+            let zero_instance_host = Rc::clone(&host);
+            let has_zero_instance_run = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64, name: Opt<Coerced<String>>| -> bool {
+                    if id < 0 || generation < 0 {
+                        return false;
+                    }
+                    let Some(name) = name.0 else {
+                        return false;
+                    };
+                    zero_instance_host.borrow_mut().has_zero_instance_run(
+                        FormNodeId(id as usize),
+                        generation as u64,
+                        &name.0,
+                    )
+                },
+            )
+            .map_err(|e| format!("hasZeroInstanceRun: {e}"))?;
+            internal
+                .set("hasZeroInstanceRun", has_zero_instance_run)
+                .map_err(|e| format!("set hasZeroInstanceRun: {e}"))?;
 
             let node_index_host = Rc::clone(&host);
             let node_index = Function::new(ctx.clone(), move |id: i32, generation: i64| -> u32 {
@@ -941,6 +1039,182 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     return Object.freeze(manager);
   }
 
+  function makeEmptyInstanceManager() {
+    var manager = nullProtoObject();
+    Object.defineProperty(manager, "count", {
+      enumerable: true,
+      configurable: false,
+      value: 0
+    });
+    Object.defineProperty(manager, "setInstances", {
+      enumerable: true,
+      configurable: false,
+      writable: false,
+      value: function() { return 0; }
+    });
+    Object.defineProperty(manager, "addInstance", {
+      enumerable: true,
+      configurable: false,
+      writable: false,
+      value: function() { return null; }
+    });
+    Object.defineProperty(manager, "removeInstance", {
+      enumerable: true,
+      configurable: false,
+      writable: false,
+      value: function() { return false; }
+    });
+    return Object.freeze(manager);
+  }
+
+  function uniqueNodeIds(ids) {
+    var out = [];
+    if (!ids) return out;
+    for (var i = 0; i < ids.length; i++) {
+      var id = ids[i] | 0;
+      if (id < 0) continue;
+      var seen = false;
+      for (var j = 0; j < out.length; j++) {
+        if (out[j] === id) {
+          seen = true;
+          break;
+        }
+      }
+      if (!seen) out.push(id);
+    }
+    return out;
+  }
+
+  function nodeIdListArg(ids) {
+    return uniqueNodeIds(ids).join(",");
+  }
+
+  function resolveHandleChildIds(ids, prop) {
+    var list = nodeIdListArg(ids);
+    if (list.length === 0) return [];
+    var childIds = uniqueNodeIds(host.resolveChildNodeIds(list, prop));
+    if (childIds.length > 0) return childIds;
+    return uniqueNodeIds(host.resolveScopedNodeIds(list, prop));
+  }
+
+  function makeNodeHandleFromIds(ids, generation) {
+    var unique = uniqueNodeIds(ids);
+    if (unique.length === 0) return undefined;
+    if (unique.length === 1) return makeHandle(unique[0], generation);
+    return makeCandidateSet(unique, generation);
+  }
+
+  function makeCandidateSet(ids, generation) {
+    var candidates = uniqueNodeIds(ids);
+    if (candidates.length === 0) return undefined;
+    var firstId = candidates[0];
+    var obj = nullProtoObject();
+    return new Proxy(obj, {
+      get: function(target, prop, receiver) {
+        if (typeof prop !== "string") {
+          return Reflect.get(target, prop, receiver);
+        }
+        if (prop === "rawValue") {
+          var value = host.getRawValue(firstId, generation);
+          return value === undefined ? null : value;
+        }
+        if (prop === "somExpression") {
+          return "xfa[0].form[0].placeholder";
+        }
+        if (prop === "instanceManager") {
+          return makeInstanceManager(firstId, generation);
+        }
+        if (prop === "index") {
+          return host.nodeIndex(firstId, generation);
+        }
+        if (prop === "setInstances") {
+          return function(n) {
+            return host.instanceSet(firstId, generation, n);
+          };
+        }
+        if (prop === "addInstance") {
+          return function() {
+            var newId = host.instanceAdd(firstId, generation);
+            return newId < 0 ? null : makeHandle(newId, generation);
+          };
+        }
+        if (prop === "removeInstance") {
+          return function(idx) {
+            return host.instanceRemove(firstId, generation, idx);
+          };
+        }
+        if (prop === "isNull") {
+          var raw = host.getRawValue(firstId, generation);
+          return raw === undefined || raw === null || raw === "";
+        }
+        if (prop === "clearItems") {
+          return function() {
+            return host.listClear(firstId, generation);
+          };
+        }
+        if (prop === "addItem") {
+          return function(display, save) {
+            if (save === undefined) {
+              return host.listAdd(firstId, generation, String(display));
+            }
+            return host.listAdd(firstId, generation, String(display), String(save));
+          };
+        }
+        if (prop === "boundItem") {
+          return function(displayValue) {
+            var coerced = displayValue === null || displayValue === undefined ?
+              "" : String(displayValue);
+            return host.boundItem(firstId, generation, coerced);
+          };
+        }
+        if (prop === "$record") {
+          var recRaw = host.dataBoundRecord(firstId, generation);
+          if (recRaw < 0) return null;
+          return makeDataHandle(recRaw);
+        }
+        if (prop.charAt(0) === "_" && prop.length > 1) {
+          var bareName = prop.substring(1);
+          var imIds = uniqueNodeIds(host.resolveChildNodeIds(nodeIdListArg(candidates), bareName));
+          if (imIds.length > 0) {
+            return makeInstanceManager(imIds[0], generation);
+          }
+          for (var imIdx = 0; imIdx < candidates.length; imIdx++) {
+            if (host.hasZeroInstanceRun(candidates[imIdx], generation, bareName)) {
+              return makeEmptyInstanceManager();
+            }
+          }
+        }
+        if (shouldDeferHandleProperty(prop)) {
+          return undefined;
+        }
+        return makeNodeHandleFromIds(resolveHandleChildIds(candidates, prop), generation);
+      },
+      set: function(_target, prop, value) {
+        if (prop === "rawValue") {
+          host.setRawValue(firstId, generation, value);
+        }
+        return true;
+      },
+      has: function(target, prop) {
+        if (typeof prop !== "string") {
+          return Reflect.has(target, prop);
+        }
+        return prop === "rawValue" ||
+          prop === "somExpression" ||
+          prop === "instanceManager" ||
+          prop === "index" ||
+          prop === "setInstances" ||
+          prop === "addInstance" ||
+          prop === "removeInstance" ||
+          prop === "isNull" ||
+          prop === "clearItems" ||
+          prop === "addItem" ||
+          prop === "boundItem" ||
+          Reflect.has(target, prop);
+      }
+    });
+  }
+
   function makeHandle(id, generation) {
     var obj = nullProtoObject();
     Object.defineProperty(obj, "rawValue", {
@@ -1042,19 +1316,18 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         // shorthand unreachable for real bound subforms.
         if (prop.charAt(0) === "_" && prop.length > 1) {
           var bareName = prop.substring(1);
-          var imChildId = host.resolveChildNodeId(id, bareName);
-          if (imChildId >= 0) {
-            return makeInstanceManager(imChildId, generation);
+          var imChildIds = uniqueNodeIds(host.resolveChildNodeIds(String(id), bareName));
+          if (imChildIds.length > 0) {
+            return makeInstanceManager(imChildIds[0], generation);
+          }
+          if (host.hasZeroInstanceRun(id, generation, bareName)) {
+            return makeEmptyInstanceManager();
           }
         }
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
         }
-        var childId = host.resolveChildNodeId(id, prop);
-        if (childId < 0) {
-          return undefined;
-        }
-        return makeHandle(childId, generation);
+        return makeNodeHandleFromIds(resolveHandleChildIds([id], prop), generation);
       },
       set: function(_target, prop, value) {
         if (prop === "rawValue") {
@@ -1544,11 +1817,11 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       if (cachedHandles[name] !== undefined) {
         return cachedHandles[name];
       }
-      var nodeId = host.resolveImplicitNodeId(currentId, name);
-      if (nodeId < 0) {
+      var nodeIds = host.resolveImplicitNodeIds(currentId, name);
+      if (!nodeIds || nodeIds.length === 0) {
         return undefined;
       }
-      var handle = makeHandle(nodeId, generation);
+      var handle = makeNodeHandleFromIds(nodeIds, generation);
       cachedHandles[name] = handle;
       return handle;
     }
