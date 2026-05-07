@@ -111,9 +111,9 @@ xmp-writer = "0.3"
 
 # XFA proprietary crates (PDFluent Commercial License)
 xfa-dom-resolver = { path = "crates/xfa-dom-resolver", version = "=1.0.0-beta.5" }
-formcalc-interpreter = { path = "crates/formcalc-interpreter", version = "=1.0.0-beta.3" }
+formcalc-interpreter = { path = "crates/formcalc-interpreter", version = "=1.0.0-beta.5" }
 xfa-layout-engine = { path = "crates/xfa-layout-engine", version = "=1.0.0-beta.5" }
-xfa-json = { path = "crates/xfa-json", version = "=1.0.0-beta.3" }
+xfa-json = { path = "crates/xfa-json", version = "=1.0.0-beta.5" }
 xfa-license = { path = "crates/xfa-license", version = "=1.0.0-beta.3" }
 
 # Forked crates from hayro (open-source: MIT OR Apache-2.0)
