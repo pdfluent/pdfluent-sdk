@@ -4093,6 +4093,7 @@ dependencies = [
  "pdf-engine",
  "pdf-manip",
  "pdf-redact",
+ "pdfluent",
  "pdfluent-extract",
  "pdfluent-forms",
  "pdfluent-lopdf",
@@ -4235,6 +4236,7 @@ dependencies = [
  "pdf-manip",
  "pdf-redact",
  "pdf-syntax",
+ "pdfluent",
  "pdfluent-forms",
  "pdfluent-lopdf",
 ]
@@ -8842,6 +8844,7 @@ dependencies = [
  "pdf-manip",
  "pdf-render",
  "pdf-syntax",
+ "pdfluent",
  "pdfluent-lopdf",
  "pdfluent-sign",
  "serde",

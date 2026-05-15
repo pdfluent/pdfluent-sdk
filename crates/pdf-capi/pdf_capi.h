@@ -30,6 +30,9 @@ typedef enum {
     PDF_STATUS_ERROR_SPLIT = 13,
     PDF_STATUS_ERROR_WATERMARK = 14,
     PDF_STATUS_ERROR_COMPRESS = 15,
+    PDF_STATUS_ERROR_INVALID_LICENSE = 16,
+    PDF_STATUS_ERROR_LICENSE_ALREADY_SET = 17,
+    PDF_STATUS_ERROR_LICENSE_FILE = 18,
     PDF_STATUS_ERROR_UNKNOWN = 99,
 } PdfStatus;
 
@@ -275,6 +278,46 @@ PdfStatus pdf_document_compress(
 
 const char *pdf_get_last_error(void);
 void pdf_clear_error(void);
+
+// ---- License activation ----
+
+// Effective tier values returned by pdfluent_license_effective_tier and the
+// tier field of PdfluentLicenseStatus.
+//   0 = Trial       1 = Developer    2 = Team
+//   3 = Business    4 = Enterprise   (-1 reserved for future variants)
+//
+// Source values for PdfluentLicenseStatus.source:
+//   0 = Default (no key configured; running in Trial)
+//   1 = EnvVar  (resolved from PDFLUENT_LICENSE_KEY)
+//   2 = Explicit (set via pdfluent_license_activate_*)
+typedef struct {
+    int tier;
+    int source;
+    int output_is_marked;
+} PdfluentLicenseStatus;
+
+// Activate the process-global license from a key string. The expected format
+// is documented in the Rust crate (`tier:<name>` for the 1.0 evaluation
+// pipeline). Returns PDF_STATUS_OK on success, otherwise a status code.
+// On failure, pdf_get_last_error() returns a human-readable message.
+//
+// Calling twice with the same effective tier is idempotent. Calling with a
+// different tier after a tier is already set returns
+// PDF_STATUS_ERROR_LICENSE_ALREADY_SET.
+PdfStatus pdfluent_license_activate_key(const char *key);
+
+// Activate the license by reading the key from a UTF-8 text file.
+// The file's contents (trimmed) are passed to pdfluent_license_activate_key.
+// Returns PDF_STATUS_ERROR_LICENSE_FILE if the file cannot be read.
+PdfStatus pdfluent_license_activate_file(const char *path);
+
+// Return the effective tier as an integer. Reads PDFLUENT_LICENSE_KEY env
+// var if no key has been explicitly activated.
+int pdfluent_license_effective_tier(void);
+
+// Fill *out with the current license status. Returns
+// PDF_STATUS_ERROR_INVALID_ARGUMENT if out is NULL.
+PdfStatus pdfluent_license_status(PdfluentLicenseStatus *out);
 
 #ifdef __cplusplus
 }

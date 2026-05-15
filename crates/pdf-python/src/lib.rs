@@ -1337,6 +1337,109 @@ fn validate_pdfa(path: &str) -> PyResult<PyComplianceReport> {
 // Module
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// License activation
+// ---------------------------------------------------------------------------
+
+fn tier_str(t: pdfluent::Tier) -> &'static str {
+    match t {
+        pdfluent::Tier::Trial => "Trial",
+        pdfluent::Tier::Developer => "Developer",
+        pdfluent::Tier::Team => "Team",
+        pdfluent::Tier::Business => "Business",
+        pdfluent::Tier::Enterprise => "Enterprise",
+        _ => "Unknown",
+    }
+}
+
+/// Status of the currently-active license.
+#[pyclass(name = "LicenseStatus", frozen)]
+struct PyLicenseStatus {
+    #[pyo3(get)]
+    tier: String,
+    #[pyo3(get)]
+    source: String,
+    #[pyo3(get)]
+    output_is_marked: bool,
+}
+
+#[pymethods]
+impl PyLicenseStatus {
+    fn __repr__(&self) -> String {
+        format!(
+            "LicenseStatus(tier={:?}, source={:?}, output_is_marked={})",
+            self.tier, self.source, self.output_is_marked,
+        )
+    }
+}
+
+fn map_license_error(e: pdfluent::Error) -> PyErr {
+    match e {
+        pdfluent::Error::InvalidLicense { reason } => {
+            if reason.contains("already set") {
+                PyRuntimeError::new_err(format!("license already set: {reason}"))
+            } else {
+                PyValueError::new_err(format!("invalid license: {reason}"))
+            }
+        }
+        other => PyRuntimeError::new_err(format!("license error: {other}")),
+    }
+}
+
+static LICENSE_SOURCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+fn record_explicit() {
+    LICENSE_SOURCE.store(2, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn current_source_str() -> &'static str {
+    match LICENSE_SOURCE.load(std::sync::atomic::Ordering::Relaxed) {
+        2 => "Explicit",
+        _ => {
+            if let Ok(key) = std::env::var("PDFLUENT_LICENSE_KEY") {
+                if !key.is_empty() && pdfluent::license_info().tier != pdfluent::Tier::Trial {
+                    return "EnvVar";
+                }
+            }
+            "Default"
+        }
+    }
+}
+
+/// Activate the process-global license from a key string.
+///
+/// Raises ``ValueError`` for an invalid key, ``RuntimeError`` when a
+/// different tier is already active. Restart Python to switch tiers.
+#[pyfunction]
+fn activate_license_key(key: &str) -> PyResult<()> {
+    pdfluent::set_license_key(key).map_err(map_license_error)?;
+    record_explicit();
+    Ok(())
+}
+
+/// Activate the license by reading a key from a UTF-8 text file.
+#[pyfunction]
+fn activate_license_file(path: &str) -> PyResult<()> {
+    let contents = std::fs::read_to_string(path)
+        .map_err(|e| PyIOError::new_err(format!("could not read license file: {e}")))?;
+    activate_license_key(contents.trim())
+}
+
+/// Return the current license status. Always succeeds — Trial when no key.
+#[pyfunction]
+fn license_status() -> PyLicenseStatus {
+    let info = pdfluent::license_info();
+    PyLicenseStatus {
+        tier: tier_str(info.tier).to_string(),
+        source: current_source_str().to_string(),
+        output_is_marked: info.output_is_marked,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Module
+// ---------------------------------------------------------------------------
+
 /// High-performance PDF engine — rendering, text extraction, forms, signatures.
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -1353,9 +1456,13 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFormField>()?;
     m.add_class::<PyAnnotation>()?;
     m.add_class::<PyRedactReport>()?;
+    m.add_class::<PyLicenseStatus>()?;
     m.add_function(wrap_pyfunction!(open_pdf, m)?)?;
     m.add_function(wrap_pyfunction!(merge_pdfs, m)?)?;
     m.add_function(wrap_pyfunction!(validate_pdfa, m)?)?;
     m.add_function(wrap_pyfunction!(decrypt_pdf, m)?)?;
+    m.add_function(wrap_pyfunction!(activate_license_key, m)?)?;
+    m.add_function(wrap_pyfunction!(activate_license_file, m)?)?;
+    m.add_function(wrap_pyfunction!(license_status, m)?)?;
     Ok(())
 }
