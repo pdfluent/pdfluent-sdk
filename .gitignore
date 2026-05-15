@@ -61,3 +61,6 @@ bindings/java/target/
 # .NET runtime-specific native bundles (regenerated at release time)
 bindings/dotnet/**/runtimes/
 
+
+# Java JNA native bundles (built by release pipeline, not committed)
+bindings/java/src/main/resources/native/

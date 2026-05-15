@@ -3,7 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
-namespace XfaPdf
+namespace PDFluent
 {
     /// <summary>
     /// A PDF document backed by the native XFA PDF engine.

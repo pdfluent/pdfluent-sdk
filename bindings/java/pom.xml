@@ -9,63 +9,65 @@
     <version>1.0.0-beta.6</version>
     <packaging>jar</packaging>
 
-    <name>PDFluent — Java bindings</name>
-    <description>Enterprise PDF SDK — render, extract, forms, signatures, PDF/A.
-        Pure-Rust core via JNI. Supports XFA forms and FormCalc.</description>
+    <name>PDFluent</name>
+    <description>Java bindings for the PDFluent PDF engine. Supports PDF rendering, text extraction, and license activation via JNA over a native Rust library.</description>
     <url>https://pdfluent.com</url>
-
-    <organization>
-        <name>Innovation Trigger BV</name>
-        <url>https://pdfluent.com</url>
-    </organization>
 
     <licenses>
         <license>
-            <name>PDFluent Commercial License</name>
+            <name>PDFluent Commercial License v1.0</name>
             <url>https://pdfluent.com/license</url>
             <distribution>repo</distribution>
         </license>
     </licenses>
 
+    <scm>
+        <url>https://github.com/pdfluent/PDFluent-project</url>
+        <connection>scm:git:https://github.com/pdfluent/PDFluent-project.git</connection>
+    </scm>
+
     <developers>
         <developer>
-            <name>Innovation Trigger BV</name>
-            <email>team@pdfluent.com</email>
+            <name>PDFluent</name>
+            <email>hello@pdfluent.com</email>
             <organization>Innovation Trigger BV</organization>
             <organizationUrl>https://pdfluent.com</organizationUrl>
         </developer>
     </developers>
 
-    <scm>
-        <url>https://pdfluent.com/source</url>
-        <connection>scm:git:https://pdfluent.com/source.git</connection>
-        <developerConnection>scm:git:https://pdfluent.com/source.git</developerConnection>
-    </scm>
-
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <jna.version>5.14.0</jna.version>
+        <junit.version>5.10.2</junit.version>
     </properties>
 
     <dependencies>
         <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+            <version>${jna.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
-            <version>5.10.2</version>
+            <version>${junit.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
 
     <build>
-        <!-- Bundle LICENSE / NOTICE from src/main/resources/META-INF -->
         <resources>
             <resource>
                 <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <!-- Bundle LICENSE in JAR root -->
+                <directory>${project.basedir}</directory>
                 <includes>
-                    <include>META-INF/LICENSE</include>
-                    <include>META-INF/NOTICE</include>
+                    <include>LICENSE</include>
+                    <include>README.md</include>
                 </includes>
             </resource>
         </resources>
@@ -76,26 +78,11 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
             </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <version>3.4.1</version>
-                <configuration>
-                    <archive>
-                        <manifestEntries>
-                            <Implementation-Title>PDFluent</Implementation-Title>
-                            <Implementation-Version>1.0.0-beta.6</Implementation-Version>
-                            <Implementation-Vendor>Innovation Trigger BV</Implementation-Vendor>
-                            <Specification-Title>PDFluent — Java bindings</Specification-Title>
-                            <Specification-Vendor>Innovation Trigger BV</Specification-Vendor>
-                        </manifestEntries>
-                    </archive>
-                </configuration>
-            </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
-                <version>3.3.1</version>
+                <version>3.3.0</version>
                 <executions>
                     <execution>
                         <id>attach-sources</id>
@@ -105,6 +92,7 @@
                     </execution>
                 </executions>
             </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
@@ -123,4 +111,48 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.4</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <keyname>hello@pdfluent.com</keyname>
+                            <gpgArguments>
+                                <arg>--pinentry-mode</arg>
+                                <arg>loopback</arg>
+                                <arg>--batch</arg>
+                            </gpgArguments>
+                        </configuration>
+                    </plugin>
+
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.6.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                            <waitUntil>published</waitUntil>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

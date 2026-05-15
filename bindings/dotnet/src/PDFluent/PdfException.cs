@@ -1,6 +1,6 @@
 using System;
 
-namespace XfaPdf
+namespace PDFluent
 {
     /// <summary>
     /// Exception thrown when a PDF operation fails.

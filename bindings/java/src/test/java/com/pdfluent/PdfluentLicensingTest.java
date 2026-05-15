@@ -1,4 +1,4 @@
-package com.xfa.pdf;
+package com.pdfluent;
 
 import org.junit.jupiter.api.Test;
 
@@ -11,9 +11,8 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * JUnit tests for {@link PdfluentLicensing}.
  *
- * <p>Requires libpdf_java to be loadable; see PdfDocumentTest for setup.
- * Tests use only fake-format keys. The Rust core's process-global tier means
- * lifecycle tests tolerate the case where another test activated first.
+ * <p>Requires {@code libpdf_capi} to be loadable; classpath bundles it
+ * via {@code /native/<arch>/}. Tests use fake-format keys only.
  */
 class PdfluentLicensingTest {
 
@@ -22,11 +21,10 @@ class PdfluentLicensingTest {
         PdfluentLicensing.LicenseStatus s = PdfluentLicensing.status();
         assertNotNull(s.tier);
         assertNotNull(s.source);
-        // outputIsMarked is bool — nothing to assert beyond shape.
     }
 
     @Test
-    void effectiveTierIsInRange() {
+    void effectiveTierIsAnEnum() {
         PdfluentLicensing.Tier t = PdfluentLicensing.effectiveTier();
         assertNotNull(t);
     }
@@ -38,14 +36,14 @@ class PdfluentLicensingTest {
     }
 
     @Test
-    void activateKeyInvalidThrowsPdfException() {
-        assertThrows(PdfException.class,
+    void activateKeyInvalidThrowsPdfluentException() {
+        assertThrows(PdfluentException.class,
             () -> PdfluentLicensing.activateKey("totally-not-a-license"));
     }
 
     @Test
     void activateKeyUnknownTierThrows() {
-        assertThrows(PdfException.class,
+        assertThrows(PdfluentException.class,
             () -> PdfluentLicensing.activateKey("tier:platinum"));
     }
 
@@ -83,10 +81,7 @@ class PdfluentLicensingTest {
             try {
                 PdfluentLicensing.activateFile(tmp.toString());
                 PdfluentLicensing.Tier t = PdfluentLicensing.effectiveTier();
-                assertTrue(t == PdfluentLicensing.Tier.TEAM
-                        || t == PdfluentLicensing.Tier.DEVELOPER
-                        || t == PdfluentLicensing.Tier.BUSINESS
-                        || t == PdfluentLicensing.Tier.ENTERPRISE);
+                assertNotEquals(PdfluentLicensing.Tier.TRIAL, t);
             } catch (IllegalStateException ignored) {
                 // Already activated — ok.
             }

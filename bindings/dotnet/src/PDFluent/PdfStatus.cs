@@ -1,4 +1,4 @@
-namespace XfaPdf
+namespace PDFluent
 {
     /// <summary>
     /// Status codes returned by native PDF operations. Mirrors the C API PdfStatus enum.

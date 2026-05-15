@@ -1,4 +1,4 @@
-namespace XfaPdf
+namespace PDFluent
 {
     /// <summary>
     /// A PDF page boundary box (MediaBox, CropBox, etc.) in PDF points.
