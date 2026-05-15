@@ -57,3 +57,7 @@ crates/xfa-wasm/pkg/*.d.ts
 bindings/dotnet/**/bin/
 bindings/dotnet/**/obj/
 bindings/java/target/
+
+# .NET runtime-specific native bundles (regenerated at release time)
+bindings/dotnet/**/runtimes/
+
