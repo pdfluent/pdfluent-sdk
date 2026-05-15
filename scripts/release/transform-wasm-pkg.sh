@@ -33,11 +33,11 @@ version  = sys.argv[2]
 d = json.loads(pkg_path.read_text(encoding="utf-8"))
 
 # Identity
-d["name"]    = "@pdfluent/xfa-wasm"
+d["name"]    = "@pdfluent/sdk-wasm"
 d["version"] = version
 d["license"] = "SEE LICENSE IN LICENSE"
 d["homepage"] = "https://pdfluent.com"
-d["description"] = "Enterprise PDF SDK — XFA / forms / rendering — pure-Rust core via WASM."
+d["description"] = "PDFluent browser SDK — read, edit, annotate, redact, sign, and validate PDFs (including XFA) entirely client-side via WASM."
 d["author"] = "Innovation Trigger BV <team@pdfluent.com>"
 
 # Strip GitHub or any external repo reference
@@ -45,7 +45,7 @@ d.pop("repository", None)
 d.pop("bugs", None)
 
 # Cleaner keyword set
-d["keywords"] = ["pdf", "xfa", "wasm", "pdfluent", "forms", "render"]
+d["keywords"] = ["pdf", "wasm", "pdfluent", "browser", "sdk", "xfa", "forms", "annotate", "redact"]
 
 pkg_path.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 print(json.dumps({k: d.get(k) for k in ("name", "version", "license", "homepage", "author")}, indent=2))
@@ -53,8 +53,8 @@ PY
 
 # Verify expected fields are present and absent
 ok=1
-required='"@pdfluent/xfa-wasm" '"$VERSION"' SEE LICENSE IN LICENSE pdfluent.com'
-for s in "@pdfluent/xfa-wasm" "$VERSION" "SEE LICENSE IN LICENSE" "https://pdfluent.com"; do
+required='"@pdfluent/sdk-wasm" '"$VERSION"' SEE LICENSE IN LICENSE pdfluent.com'
+for s in "@pdfluent/sdk-wasm" "$VERSION" "SEE LICENSE IN LICENSE" "https://pdfluent.com"; do
     if ! grep -q -F "$s" "$PKG_JSON"; then
         echo "  MISSING: $s" >&2
         ok=0
