@@ -13,13 +13,16 @@ in-browser PDF editor.)
 - **XFA Forms**: Parse, calculate, import/export XFA form data
 - **PDF Analysis**: Metadata, signatures, PDF/A compliance validation
 - **Page Rendering** (feature `render`): Render pages to RGBA pixels or Canvas2D
-- **Page Manipulation** (Wave 2): delete, rotate, reorder, extract, split via re-extract, merge
+- **Page Manipulation**: delete, rotate, reorder, extract, split via re-extract, merge
 - **Forms write-back**: set AcroForm field values, save modified PDF bytes
 - **Annotations** (feature `annotate`): highlight, sticky note, free text
 - **Text watermark**: diagonal text watermark with configurable opacity
 - **Redaction**: by region (rectangle) or by search query (GDPR-safe permanent removal)
 - **Stream compression**: re-deflate content streams for smaller file size
 - **License activation**: process-global tier activation via key string or file
+- **`PdfDocMut`** (Wave 3): stateful editing handle — open once, mutate in
+  place, save once. 2.7× faster than the stateless `PdfDoc` chain for
+  multi-step edits, identical output bytes.
 
 ## Building
 
@@ -243,32 +246,68 @@ Invalid keys throw `Error`. The key string is never logged.
 | `redactSearch(query)` | Find all literal matches of `query` and redact each |
 | `compress()` | Re-deflate content streams; returns optimised bytes |
 
-### Wave 2 example: editor flow
+### PdfDocMut (Wave 3) — **recommended for editor workflows**
+
+`PdfDocMut` is a stateful editing handle. Open once, mutate in place,
+save once. The `PdfDoc` class above is great for inspection and
+single-shot transformations, but for an editor that applies multiple
+operations to the same document, **`PdfDocMut` is dramatically faster**:
+9-step sessions go from ~16 parse passes to **1 parse + 1 serialise**
+(measured 2.7× wall-clock speedup; bigger on larger documents).
+
+| Method | Description |
+|--------|-------------|
+| `PdfDocMut.open(bytes)` | Open for editing |
+| `pageCount()` | Live page count after any mutations so far |
+| `save()` | Serialise current state to `Uint8Array`. Non-consuming — keep editing after |
+| `free()` | Release the WASM-side memory deterministically |
+| `deletePages(pages)` | In place |
+| `rotatePage(pageIndex, degrees)` | In place |
+| `reorderPages(newOrder)` | In place |
+| `extractPages(pages)` | Returns bytes for a NEW subdocument; current editor unchanged |
+| `setFormField(path, value)` | In place |
+| `setFormFields(jsonObject)` | In place, bulk |
+| `addHighlight(pageIndex, x, y, w, h, colorHex?)` | In place (feature: annotate) |
+| `addStickyNote(pageIndex, x, y, contents)` | In place (feature: annotate) |
+| `addFreeText(pageIndex, x, y, w, h, contents)` | In place (feature: annotate) |
+| `addTextWatermark(text, opacity)` | In place |
+| `redactRegion(pageIndex, x, y, w, h)` | In place (GDPR-safe permanent removal) |
+| `redactSearch(query)` | In place |
+| `compress()` | In place |
+
+#### Editor flow with PdfDocMut
+
+```js
+import init, { PdfDocMut } from '@pdfluent/xfa-wasm';
+
+await init();
+const bytes  = new Uint8Array(await (await fetch('/document.pdf')).arrayBuffer());
+const editor = PdfDocMut.open(bytes);
+
+// All edits operate on the same internal lopdf::Document — no re-parse.
+editor.reorderPages(new Uint32Array([1, 0, 2]));
+editor.addTextWatermark('CONCEPT', 0.3);
+editor.addHighlight(0, 100, 700, 200, 20, '#ffeb3b');
+editor.redactSearch('John Doe');
+editor.compress();
+
+// Save once at the end.
+const out = editor.save();
+editor.free();
+const blob = new Blob([out], { type: 'application/pdf' });
+```
+
+#### One-shot helpers on PdfDoc (kept for compatibility)
+
+For a workflow with a single mutation, the stateless `PdfDoc` methods
+are equally fine. They are kept for backward compatibility but the
+recommended path for any multi-step edit is `PdfDocMut`.
 
 ```js
 import init, { PdfDoc } from '@pdfluent/xfa-wasm';
-
 await init();
-let bytes = await fetch('/document.pdf').then(r => r.arrayBuffer());
-let doc   = PdfDoc.open(new Uint8Array(bytes));
-
-// Reorder pages — page 2 first, then 1, then 3
-bytes = doc.reorderPages(new Uint32Array([1, 0, 2]));
-doc   = PdfDoc.open(bytes);
-
-// Watermark
-bytes = doc.addTextWatermark('CONCEPT', 0.3);
-doc   = PdfDoc.open(bytes);
-
-// Highlight on page 0
-bytes = doc.addHighlight(0, 100, 700, 200, 20, '#ffeb3b');
-doc   = PdfDoc.open(bytes);
-
-// Redact by search
-bytes = doc.redactSearch('John Doe');
-
-// Save
-const blob = new Blob([bytes], { type: 'application/pdf' });
+const doc = PdfDoc.open(bytes);
+const merged = doc.merge(otherBytes);   // single op, one-shot
 ```
 
 ## Bundle size

@@ -5,6 +5,37 @@ All notable changes to the `@pdfluent/xfa-wasm` package.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this package adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] — 1.0.0-beta.10
+
+### Added — Wave 3: `PdfDocMut`
+
+- **`PdfDocMut` — stateful editing handle.** New top-level class
+  alongside `PdfDoc`. Holds one mutable `lopdf::Document` for the
+  lifetime of the session. All 13 mutation methods are mirrored with
+  `&mut self` semantics; final `save()` returns `Uint8Array`.
+- Methods: `open`, `pageCount`, `save`, `free` (auto), `deletePages`,
+  `rotatePage`, `reorderPages`, `extractPages`, `setFormField`,
+  `setFormFields`, `addHighlight`, `addStickyNote`, `addFreeText`,
+  `addTextWatermark`, `redactRegion`, `redactSearch`, `compress`.
+- `save()` is non-consuming — take intermediate snapshots and keep editing.
+- `extractPages` returns bytes for a NEW subdocument; current editor unchanged.
+- Performance benchmark demonstrates **2.7× wall-clock speedup** vs.
+  the stateless `PdfDoc` chain for a 4-mutation editor session
+  (12 parse/serialise cycles → 2). Output bytes byte-identical.
+- 14 new native tests + 6 wasm-bindgen-test error-path tests for
+  `PdfDocMut`.
+
+### Documentation
+
+- README: PdfDocMut section recommended for editor workflows; existing
+  stateless `PdfDoc` mutations kept as one-shot helpers.
+- `docs/wasm-capability-matrix.md`: PdfDocMut entries added.
+
+### Compatibility
+
+- `PdfDoc` and all its stateless Wave 2 mutations are unchanged. No
+  breaking changes to any existing API.
+
 ## [Unreleased] — 1.0.0-beta.9
 
 ### Added

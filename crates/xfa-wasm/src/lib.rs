@@ -32,6 +32,7 @@ pub mod canvas2d_device;
 
 pub mod license;
 pub mod edits;
+pub mod edit_handle;
 
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use crate::canvas2d_device::Canvas2DDevice;
