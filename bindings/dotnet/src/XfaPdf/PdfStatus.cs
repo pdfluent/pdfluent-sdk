@@ -12,6 +12,9 @@ namespace XfaPdf
         ErrorCorruptPdf = 4,
         ErrorPageRange = 5,
         ErrorRender = 6,
+        ErrorInvalidLicense = 16,
+        ErrorLicenseAlreadySet = 17,
+        ErrorLicenseFile = 18,
         ErrorUnknown = 99,
     }
 }

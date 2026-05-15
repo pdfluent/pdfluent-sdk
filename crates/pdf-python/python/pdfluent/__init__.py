@@ -26,10 +26,14 @@ from pdfluent._native import (
     FormField,
     Annotation,
     RedactReport,
+    LicenseStatus,
     open_pdf,
     merge_pdfs,
     validate_pdfa,
     decrypt_pdf,
+    activate_license_key,
+    activate_license_file,
+    license_status,
 )
 
 __all__ = [
@@ -46,10 +50,14 @@ __all__ = [
     "FormField",
     "Annotation",
     "RedactReport",
+    "LicenseStatus",
     "open_pdf",
     "merge_pdfs",
     "validate_pdfa",
     "decrypt_pdf",
+    "activate_license_key",
+    "activate_license_file",
+    "license_status",
 ]
 
 try:

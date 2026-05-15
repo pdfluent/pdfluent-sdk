@@ -122,5 +122,30 @@ namespace XfaPdf
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void pdf_clear_error();
+
+        // ---- License activation ----
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct PdfluentLicenseStatusNative
+        {
+            public int Tier;
+            public int Source;
+            public int OutputIsMarked;
+        }
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        internal static extern PdfStatus pdfluent_license_activate_key(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string key);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        internal static extern PdfStatus pdfluent_license_activate_file(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int pdfluent_license_effective_tier();
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdfluent_license_status(
+            out PdfluentLicenseStatusNative status);
     }
 }
