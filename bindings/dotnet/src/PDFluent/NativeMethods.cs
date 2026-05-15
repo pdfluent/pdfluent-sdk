@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace XfaPdf
+namespace PDFluent
 {
     /// <summary>
     /// Raw P/Invoke declarations for the pdf-capi native library.

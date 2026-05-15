@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace XfaPdf
+namespace PDFluent
 {
     /// <summary>
     /// SafeHandle for the native PdfDocument pointer.

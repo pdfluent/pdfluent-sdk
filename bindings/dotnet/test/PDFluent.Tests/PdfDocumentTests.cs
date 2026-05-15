@@ -2,7 +2,7 @@ using System;
 using System.Text;
 using Xunit;
 
-namespace XfaPdf.Tests
+namespace PDFluent.Tests
 {
     /// <summary>
     /// xUnit tests for PdfDocument P/Invoke bindings.
@@ -12,7 +12,7 @@ namespace XfaPdf.Tests
     ///   cargo build -p pdf-capi --release
     ///
     /// Then run:
-    ///   dotnet test bindings/dotnet/test/XfaPdf.Tests/
+    ///   dotnet test bindings/dotnet/test/PDFluent.Tests/
     ///
     /// On macOS, set DYLD_LIBRARY_PATH to the Rust target directory:
     ///   export DYLD_LIBRARY_PATH=target/release

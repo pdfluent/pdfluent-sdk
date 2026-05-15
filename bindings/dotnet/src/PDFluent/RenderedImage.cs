@@ -1,6 +1,6 @@
 using System;
 
-namespace XfaPdf
+namespace PDFluent
 {
     /// <summary>
     /// An RGBA-rendered page image.

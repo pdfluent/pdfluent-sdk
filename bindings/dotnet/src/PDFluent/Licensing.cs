@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 
-namespace XfaPdf
+namespace PDFluent
 {
     /// <summary>
     /// Commercial tier granted by the active license.
@@ -54,8 +54,8 @@ namespace XfaPdf
     ///
     /// <example>
     /// <code>
-    /// XfaPdf.Licensing.ActivateKey("tier:enterprise");
-    /// var status = XfaPdf.Licensing.Status;
+    /// PDFluent.Licensing.ActivateKey("tier:enterprise");
+    /// var status = PDFluent.Licensing.Status;
     /// Console.WriteLine(status.Tier); // Enterprise
     /// </code>
     /// </example>

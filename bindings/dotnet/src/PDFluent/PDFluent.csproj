@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <AssemblyName>PDFluent</AssemblyName>
+    <RootNamespace>PDFluent</RootNamespace>
 
     <!-- NuGet package metadata -->
     <PackageId>PDFluent</PackageId>

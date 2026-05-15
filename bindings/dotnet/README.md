@@ -20,7 +20,7 @@ cargo build -p pdf-capi --release
 ## Quick Start
 
 ```csharp
-using XfaPdf;
+using PDFluent;
 
 // Open a PDF
 using var doc = PdfDocument.Open("input.pdf");
@@ -94,7 +94,7 @@ The SDK runs in Trial mode by default; output is marked via `/Producer`
 metadata. Activate a license to unlock the paid-tier capability set.
 
 ```csharp
-using XfaPdf;
+using PDFluent;
 
 // Activate from a key string
 Licensing.ActivateKey("tier:enterprise");

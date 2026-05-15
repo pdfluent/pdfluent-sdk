@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using Xunit;
 
-namespace XfaPdf.Tests
+namespace PDFluent.Tests
 {
     /// <summary>
     /// xUnit tests for the Licensing P/Invoke surface.
