@@ -31,6 +31,7 @@
 pub mod canvas2d_device;
 
 pub mod license;
+pub mod edits;
 
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use crate::canvas2d_device::Canvas2DDevice;
@@ -441,8 +442,8 @@ fn set_field_value_by_path(tree: &mut FormTree, root: FormNodeId, path: &str, va
 /// `pdf-engine` for text extraction so the WASM path matches native decoding.
 #[wasm_bindgen]
 pub struct PdfDoc {
-    pdf: pdf_syntax::Pdf,
-    engine: PdfDocument,
+    pub(crate) pdf: pdf_syntax::Pdf,
+    pub(crate) engine: PdfDocument,
 }
 
 #[derive(serde::Serialize)]
@@ -844,103 +845,6 @@ impl PdfDoc {
 
     // ---- Annotation creation (feature: annotate) ----
 
-    /// Add a highlight annotation to a page.
-    ///
-    /// Takes the PDF bytes and returns new PDF bytes with the annotation added.
-    #[cfg(feature = "annotate")]
-    #[wasm_bindgen(js_name = "addHighlight")]
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_highlight(
-        data: &[u8],
-        page_index: u32,
-        x0: f64,
-        y0: f64,
-        x1: f64,
-        y1: f64,
-        r: f64,
-        g: f64,
-        b: f64,
-    ) -> Result<Vec<u8>, JsError> {
-        let mut doc = lopdf::Document::load_mem(data).map_err(|e| JsError::new(&format!("{e}")))?;
-        let rect = pdf_annot::builder::AnnotRect { x0, y0, x1, y1 };
-        let annot_id = pdf_annot::builder::AnnotationBuilder::highlight(rect)
-            .color(r, g, b)
-            .quad_points_from_rect(&rect)
-            .build(&mut doc)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        pdf_annot::builder::add_annotation_to_page(&mut doc, page_index, annot_id)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        let mut buf = Vec::new();
-        doc.save_to(&mut buf)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        Ok(buf)
-    }
-
-    /// Add a sticky note (text annotation) to a page.
-    ///
-    /// Returns new PDF bytes with the annotation.
-    #[cfg(feature = "annotate")]
-    #[wasm_bindgen(js_name = "addStickyNote")]
-    pub fn add_sticky_note(
-        data: &[u8],
-        page_index: u32,
-        x: f64,
-        y: f64,
-        text: &str,
-    ) -> Result<Vec<u8>, JsError> {
-        let mut doc = lopdf::Document::load_mem(data).map_err(|e| JsError::new(&format!("{e}")))?;
-        let rect = pdf_annot::builder::AnnotRect {
-            x0: x,
-            y0: y,
-            x1: x + 24.0,
-            y1: y + 24.0,
-        };
-        let annot_id = pdf_annot::builder::AnnotationBuilder::sticky_note(
-            rect,
-            pdf_annot::builder::TextIcon::Note,
-        )
-        .contents(text)
-        .color(1.0, 0.95, 0.0)
-        .build(&mut doc)
-        .map_err(|e| JsError::new(&format!("{e}")))?;
-        pdf_annot::builder::add_annotation_to_page(&mut doc, page_index, annot_id)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        let mut buf = Vec::new();
-        doc.save_to(&mut buf)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        Ok(buf)
-    }
-
-    /// Add a free text annotation to a page.
-    ///
-    /// Returns new PDF bytes with the annotation.
-    #[cfg(feature = "annotate")]
-    #[wasm_bindgen(js_name = "addFreeText")]
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_free_text(
-        data: &[u8],
-        page_index: u32,
-        x0: f64,
-        y0: f64,
-        x1: f64,
-        y1: f64,
-        text: &str,
-        font_size: f64,
-    ) -> Result<Vec<u8>, JsError> {
-        let mut doc = lopdf::Document::load_mem(data).map_err(|e| JsError::new(&format!("{e}")))?;
-        let rect = pdf_annot::builder::AnnotRect { x0, y0, x1, y1 };
-        let annot_id = pdf_annot::builder::AnnotationBuilder::free_text(rect, text, font_size)
-            .build(&mut doc)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        pdf_annot::builder::add_annotation_to_page(&mut doc, page_index, annot_id)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        let mut buf = Vec::new();
-        doc.save_to(&mut buf)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        Ok(buf)
-    }
-
-    // ---- Signature verification ----
 
     /// Verify all digital signatures in the document.
     ///

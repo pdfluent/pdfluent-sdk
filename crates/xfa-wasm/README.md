@@ -1,13 +1,25 @@
-# XFA WASM SDK
+# PDFluent browser SDK (WASM)
 
-WebAssembly bindings for XFA form processing and PDF analysis in the browser.
+WebAssembly distribution of the PDFluent PDF engine. Read, edit, annotate,
+redact, sign, and validate PDFs (including XFA) entirely in the browser —
+zero bytes go to a server.
+
+Published as `@pdfluent/xfa-wasm` on npm. (Crate name reflects historical
+XFA roots; the package now covers the full SDK surface needed for an
+in-browser PDF editor.)
 
 ## Features
 
 - **XFA Forms**: Parse, calculate, import/export XFA form data
 - **PDF Analysis**: Metadata, signatures, PDF/A compliance validation
-- **Page Rendering** (feature `render`): Render pages to RGBA pixels for Canvas
-- **Annotations** (feature `annotate`): Read and create highlights, sticky notes, free text
+- **Page Rendering** (feature `render`): Render pages to RGBA pixels or Canvas2D
+- **Page Manipulation** (Wave 2): delete, rotate, reorder, extract, split via re-extract, merge
+- **Forms write-back**: set AcroForm field values, save modified PDF bytes
+- **Annotations** (feature `annotate`): highlight, sticky note, free text
+- **Text watermark**: diagonal text watermark with configurable opacity
+- **Redaction**: by region (rectangle) or by search query (GDPR-safe permanent removal)
+- **Stream compression**: re-deflate content streams for smaller file size
+- **License activation**: process-global tier activation via key string or file
 
 ## Building
 
@@ -201,7 +213,70 @@ Invalid keys throw `Error`. The key string is never logged.
 | `dssInfo()` | Document Security Store info |
 | `renderPage(index, scale)` | Render page to RGBA (feature: render) |
 | `renderThumbnail(index, maxDim)` | Render thumbnail (feature: render) |
+| `renderPageToCanvas(canvas, index, scale)` | Render page directly to a Canvas2D (feature: render) |
 | `getAnnotations(index)` | Read annotations as JSON (feature: annotate) |
-| `PdfDoc.addHighlight(...)` | Add highlight annotation (feature: annotate) |
-| `PdfDoc.addStickyNote(...)` | Add sticky note (feature: annotate) |
-| `PdfDoc.addFreeText(...)` | Add free text annotation (feature: annotate) |
+| `getTextPositions(index)` | Per-glyph text positions as JSON |
+| `merge(other)` | Append another PDF, returns merged bytes |
+| `flattenXfa()` | Flatten XFA form fields into static PDF content |
+| `convertToPdfa(level)` | Convert to PDF/A 1b/2b/3b, returns bytes |
+
+### Page manipulation (Wave 2)
+
+| Method | Description |
+|--------|-------------|
+| `deletePages(pages: Uint32Array)` | Remove the listed 0-based pages; returns new bytes |
+| `rotatePage(pageIndex, degrees)` | Rotate one page by 90/180/270 (or negative); returns new bytes |
+| `reorderPages(newOrder: Uint32Array)` | Permute pages; returns new bytes |
+| `extractPages(pages: Uint32Array)` | Extract the listed pages into a new PDF (use for split) |
+
+### Edit, annotate, redact, optimise (Wave 2)
+
+| Method | Description |
+|--------|-------------|
+| `setFormField(path, value)` | Set a single AcroForm text field; returns new bytes |
+| `setFormFields(jsonObject)` | Bulk-set form fields from a JSON `{path: value}` map |
+| `addHighlight(pageIndex, x, y, w, h, colorHex?)` | Highlight annotation (feature: annotate) |
+| `addStickyNote(pageIndex, x, y, contents)` | Sticky note annotation (feature: annotate) |
+| `addFreeText(pageIndex, x, y, w, h, contents)` | Free-text annotation (feature: annotate) |
+| `addTextWatermark(text, opacity)` | Diagonal text watermark on all pages |
+| `redactRegion(pageIndex, x, y, w, h)` | Permanently remove content in a rectangle (GDPR-safe) |
+| `redactSearch(query)` | Find all literal matches of `query` and redact each |
+| `compress()` | Re-deflate content streams; returns optimised bytes |
+
+### Wave 2 example: editor flow
+
+```js
+import init, { PdfDoc } from '@pdfluent/xfa-wasm';
+
+await init();
+let bytes = await fetch('/document.pdf').then(r => r.arrayBuffer());
+let doc   = PdfDoc.open(new Uint8Array(bytes));
+
+// Reorder pages — page 2 first, then 1, then 3
+bytes = doc.reorderPages(new Uint32Array([1, 0, 2]));
+doc   = PdfDoc.open(bytes);
+
+// Watermark
+bytes = doc.addTextWatermark('CONCEPT', 0.3);
+doc   = PdfDoc.open(bytes);
+
+// Highlight on page 0
+bytes = doc.addHighlight(0, 100, 700, 200, 20, '#ffeb3b');
+doc   = PdfDoc.open(bytes);
+
+// Redact by search
+bytes = doc.redactSearch('John Doe');
+
+// Save
+const blob = new Blob([bytes], { type: 'application/pdf' });
+```
+
+## Bundle size
+
+| Build | Tarball | Unpacked |
+|-------|---------|----------|
+| 1.0.0-beta.8 (pre-Wave 2) | 3.6 MB | 10.2 MB |
+| **1.0.0-beta.9 (Wave 2)** | **3.8 MB** | **~11 MB** |
+
+Wave 2 added 13 new methods for ~0.2 MB of binary growth. Well under the
+15 MB hard limit and well under the 5 MB gzipped soft target.
