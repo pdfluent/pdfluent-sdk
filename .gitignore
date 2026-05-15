@@ -52,3 +52,8 @@ crates/pdf-node/artifacts/
 crates/xfa-wasm/pkg/*.js
 crates/xfa-wasm/pkg/*.wasm
 crates/xfa-wasm/pkg/*.d.ts
+
+# .NET and Java build outputs (added wave1-release)
+bindings/dotnet/**/bin/
+bindings/dotnet/**/obj/
+bindings/java/target/

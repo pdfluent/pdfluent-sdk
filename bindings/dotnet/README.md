@@ -4,7 +4,11 @@ C# bindings for the XFA PDF engine via P/Invoke over the C API.
 
 ## Requirements
 
-- .NET 6.0+ (or .NET Framework 4.7+ for netstandard2.0)
+- **.NET targeting:** the assembly targets `netstandard2.1`. Consumer
+  frameworks must be netstandard2.1-compatible:
+  .NET Core 3.0+, .NET 5/6/7/8/9/10, Mono 6.4+, Xamarin.iOS 12.16+,
+  Xamarin.Android 10.0+, Unity 2021.2+. Earlier .NET Framework versions
+  (4.7.x) are no longer supported on the SDK side.
 - The native library (`libpdf_capi.dylib` / `libpdf_capi.so` / `pdf_capi.dll`)
 
 ## Building the Native Library
@@ -83,6 +87,42 @@ catch (PdfException ex)
     Console.WriteLine($"Message: {ex.Message}");
 }
 ```
+
+## License Activation
+
+The SDK runs in Trial mode by default; output is marked via `/Producer`
+metadata. Activate a license to unlock the paid-tier capability set.
+
+```csharp
+using XfaPdf;
+
+// Activate from a key string
+Licensing.ActivateKey("tier:enterprise");
+
+// Or read the key from a UTF-8 text file
+Licensing.ActivateFile("/path/to/key.lic");
+
+// Inspect the current status (always succeeds; defaults to Trial)
+LicenseStatus s = Licensing.Status;
+Console.WriteLine(s.Tier);            // LicenseTier.Enterprise
+Console.WriteLine(s.Source);          // LicenseSource.Explicit / EnvVar / Default
+Console.WriteLine(s.OutputIsMarked);  // false
+
+LicenseTier t = Licensing.EffectiveTier;  // shortcut
+```
+
+The `PDFLUENT_LICENSE_KEY` environment variable is honoured automatically.
+
+**Behavior to be aware of:**
+
+- The active tier is **process-global and set-once**. Re-activating with
+  the same key is a no-op. Re-activating with a different tier raises
+  `InvalidOperationException`; restart the process to switch tiers.
+- Invalid keys raise `PdfException` with
+  `PdfStatus.ErrorInvalidLicense`.
+- Missing license files raise `FileNotFoundException` /
+  `IOException`.
+- The key string is never logged or stored beyond the call.
 
 ## NuGet Package
 
