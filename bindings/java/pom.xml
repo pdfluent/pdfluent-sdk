@@ -4,18 +4,49 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.xfa</groupId>
-    <artifactId>pdf-sdk</artifactId>
-    <version>0.1.0</version>
+    <groupId>com.pdfluent</groupId>
+    <artifactId>pdfluent</artifactId>
+    <version>1.0.0-beta.6</version>
     <packaging>jar</packaging>
 
-    <name>XFA PDF SDK for Java</name>
-    <description>Java bindings for the XFA PDF engine via JNI.</description>
+    <name>PDFluent — Java bindings</name>
+    <description>Enterprise PDF SDK — render, extract, forms, signatures, PDF/A.
+        Pure-Rust core via JNI. Supports XFA forms and FormCalc.</description>
+    <url>https://pdfluent.com</url>
+
+    <organization>
+        <name>Innovation Trigger BV</name>
+        <url>https://pdfluent.com</url>
+    </organization>
+
+    <licenses>
+        <license>
+            <name>PDFluent Commercial License</name>
+            <url>https://pdfluent.com/license</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>Innovation Trigger BV</name>
+            <email>team@pdfluent.com</email>
+            <organization>Innovation Trigger BV</organization>
+            <organizationUrl>https://pdfluent.com</organizationUrl>
+        </developer>
+    </developers>
+
+    <scm>
+        <url>https://pdfluent.com/source</url>
+        <connection>scm:git:https://pdfluent.com/source.git</connection>
+        <developerConnection>scm:git:https://pdfluent.com/source.git</developerConnection>
+    </scm>
 
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     </properties>
 
     <dependencies>
@@ -28,11 +59,67 @@
     </dependencies>
 
     <build>
+        <!-- Bundle LICENSE / NOTICE from src/main/resources/META-INF -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <includes>
+                    <include>META-INF/LICENSE</include>
+                    <include>META-INF/NOTICE</include>
+                </includes>
+            </resource>
+        </resources>
+
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <Implementation-Title>PDFluent</Implementation-Title>
+                            <Implementation-Version>1.0.0-beta.6</Implementation-Version>
+                            <Implementation-Vendor>Innovation Trigger BV</Implementation-Vendor>
+                            <Specification-Title>PDFluent — Java bindings</Specification-Title>
+                            <Specification-Vendor>Innovation Trigger BV</Specification-Vendor>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar-no-fork</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.6.3</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <doclint>none</doclint>
+                </configuration>
             </plugin>
         </plugins>
     </build>
