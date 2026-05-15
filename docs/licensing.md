@@ -98,6 +98,10 @@ console.log(s.outputIsMarked);  // false
 
 ### .NET
 
+The .NET assembly targets `netstandard2.1`. Consumer frameworks must be
+netstandard2.1-compatible: .NET Core 3.0+, .NET 5/6/7/8/9/10, Mono 6.4+,
+Xamarin / MAUI / Unity 2021.2+. .NET Framework 4.x is no longer supported.
+
 ```csharp
 using XfaPdf;
 

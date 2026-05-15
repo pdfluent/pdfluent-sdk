@@ -5,7 +5,7 @@ edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
 description = "XFA engine — extraction, layout rendering, font resolution. Experimental and under active development."
-repository = "https://github.com/pdfluent/examples"
+repository = "https://pdfluent.com/source"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 

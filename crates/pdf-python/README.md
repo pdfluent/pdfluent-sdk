@@ -135,18 +135,55 @@ doc = Document("encrypted.pdf", password="pw")
 | Native deps | **none** | none | none | none | libqpdf |
 | Language | **Rust** | Python | Python | Python | C++ |
 
+## License Activation
+
+The SDK runs in Trial mode by default; output is marked via `/Producer`
+metadata. Activate a license to unlock the paid-tier capability set.
+
+```python
+import pdfluent
+
+# Activate from a key string
+pdfluent.activate_license_key("tier:enterprise")
+
+# Or read the key from a UTF-8 text file
+pdfluent.activate_license_file("/path/to/key.lic")
+
+# Inspect the current status (always succeeds; defaults to Trial)
+status = pdfluent.license_status()
+print(status.tier)              # "Enterprise"
+print(status.source)            # "Explicit" | "EnvVar" | "Default"
+print(status.output_is_marked)  # False
+```
+
+The `PDFLUENT_LICENSE_KEY` environment variable is honoured automatically
+on process start when no explicit activation has happened.
+
+**Behavior to be aware of:**
+
+- The active tier is **process-global and set-once**. Re-activating with the
+  same key is a no-op. Re-activating with a different tier raises
+  `RuntimeError`; restart Python to switch tiers.
+- Invalid keys raise `ValueError`; missing license files raise `OSError`.
+- The key string is never logged or stored beyond the call to
+  `activate_license_key`.
+
+The 1.0 release accepts the simple evaluation format `tier:<name>`
+(`trial`/`developer`/`team`/`business`/`enterprise`). Cryptographically
+signed payloads will be accepted by the same functions in 1.1 without
+breaking the API.
+
 ## Building from Source
 
 Requires a Rust toolchain and `maturin`.
 
 ```bash
 pip install maturin
-git clone https://github.com/xfa-sdk/pdfluent
-cd pdfluent/crates/pdf-python
+cd crates/pdf-python
 maturin develop --release          # install in current venv
 maturin build --release            # build wheel in ./dist/
 ```
 
 ## License
 
-MIT
+PDFluent Commercial License. See LICENSE.
