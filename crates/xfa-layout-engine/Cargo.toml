@@ -12,5 +12,6 @@ description = "Box-model and pagination layout engine for XFA forms. Experimenta
 [dependencies]
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
+xfa-js-sandboxed.workspace = true
 thiserror.workspace = true
 log = "0.4"
