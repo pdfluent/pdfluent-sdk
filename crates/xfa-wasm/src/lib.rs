@@ -30,9 +30,9 @@
 #[cfg(feature = "render")]
 pub mod canvas2d_device;
 
-pub mod license;
-pub mod edits;
 pub mod edit_handle;
+pub mod edits;
+pub mod license;
 
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use crate::canvas2d_device::Canvas2DDevice;
@@ -471,6 +471,16 @@ struct TextRun {
     /// pattern/shading or color could not be resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     color: Option<[u8; 4]>,
+
+    // ---- G2 glyph-level metrics (additive) ----
+    /// `"Metric"` when widths come from real font advance data; `"Estimate"` otherwise.
+    #[serde(rename = "widthSource")]
+    width_source: &'static str,
+    /// Per-glyph bounding boxes as `[[x0,y0,x1,y1], …]`, one entry per source
+    /// glyph.  Coordinates are in the same CSS-pixel space as `x`/`y` (y=0 at
+    /// top-left, y increasing downward).  Omitted from JSON when empty.
+    #[serde(rename = "charBounds", skip_serializing_if = "Vec::is_empty")]
+    char_bounds: Vec<[f64; 4]>,
 }
 
 #[wasm_bindgen]
@@ -798,14 +808,17 @@ impl PdfDoc {
     /// //   x: 72.0, y: 100.0, width: 96.0, height: 12.0, fontSize: 12.0,
     /// //   fontName: "Helvetica-Bold", // G1: omitted when unknown
     /// //   isBold: true, isItalic: false,
-    /// //   color: [0, 0, 0, 255]       // G1: omitted when unknown
+    /// //   color: [0, 0, 0, 255],      // G1: omitted when unknown
+    /// //   widthSource: "Metric",      // G2: "Metric" | "Estimate"
+    /// //   charBounds: [[72,100,80,112], …] // G2: per-glyph bounds (omitted when empty)
     /// // }
     /// ```
     ///
     /// `fontName` and `color` are omitted from the JSON when the source
     /// metadata is unavailable (Type1/standard-14 fonts, Pattern paints,
     /// or unsupported color spaces). `isBold`/`isItalic` are always present
-    /// so editor toolbars can render unconditionally.
+    /// so editor toolbars can render unconditionally. `widthSource` is always
+    /// present; `charBounds` is omitted only when the span is empty.
     #[wasm_bindgen(js_name = "getTextPositions")]
     pub fn get_text_positions(&self, page_index: usize) -> Result<String, JsError> {
         let text_engine = self.open_flattened_xfa_engine();
@@ -820,17 +833,35 @@ impl PdfDoc {
             .into_iter()
             .flat_map(|block| block.spans.into_iter())
             .filter(|span| !span.text.is_empty())
-            .map(|span| TextRun {
-                text: span.text,
-                x: span.x.max(0.0),
-                y: (page_height - span.y - span.height).max(0.0),
-                width: span.width.max(1.0),
-                height: span.height.max(1.0),
-                font_size: span.font_size.max(1.0),
-                font_name: span.font_name,
-                is_bold: span.is_bold,
-                is_italic: span.is_italic,
-                color: span.color,
+            .map(|span| {
+                use pdf_engine::WidthSource;
+                // Flip char_bounds Y from PDF space (y-up) to CSS space (y-down).
+                let char_bounds: Vec<[f64; 4]> = span
+                    .char_bounds
+                    .into_iter()
+                    .map(|[x0, y0, x1, y1]| {
+                        let css_y0 = (page_height - y1).max(0.0);
+                        let css_y1 = (page_height - y0).max(0.0);
+                        [x0.max(0.0), css_y0, x1.max(0.0), css_y1]
+                    })
+                    .collect();
+                TextRun {
+                    text: span.text,
+                    x: span.x.max(0.0),
+                    y: (page_height - span.y - span.height).max(0.0),
+                    width: span.width.max(1.0),
+                    height: span.height.max(1.0),
+                    font_size: span.font_size.max(1.0),
+                    font_name: span.font_name,
+                    is_bold: span.is_bold,
+                    is_italic: span.is_italic,
+                    color: span.color,
+                    width_source: match span.width_source {
+                        WidthSource::Metric => "Metric",
+                        WidthSource::Estimate => "Estimate",
+                    },
+                    char_bounds,
+                }
             })
             .collect();
         serde_json::to_string(&runs).map_err(|e| JsError::new(&format!("serialize text runs: {e}")))
@@ -875,7 +906,6 @@ impl PdfDoc {
     }
 
     // ---- Annotation creation (feature: annotate) ----
-
 
     /// Verify all digital signatures in the document.
     ///
@@ -1361,6 +1391,8 @@ mod tests {
             is_bold: true,
             is_italic: false,
             color: Some([255, 0, 0, 255]),
+            width_source: "Metric",
+            char_bounds: vec![[72.0, 100.0, 80.0, 112.0]],
         };
         let json = serde_json::to_string(&run).expect("serialize");
         let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
@@ -1374,6 +1406,8 @@ mod tests {
         assert_eq!(v["isBold"], true);
         assert_eq!(v["isItalic"], false);
         assert_eq!(v["color"], serde_json::json!([255, 0, 0, 255]));
+        assert_eq!(v["widthSource"], "Metric");
+        assert!(v["charBounds"].is_array());
     }
 
     #[test]
@@ -1391,10 +1425,15 @@ mod tests {
             is_bold: false,
             is_italic: false,
             color: None,
+            width_source: "Estimate",
+            char_bounds: vec![],
         };
         let json = serde_json::to_string(&run).expect("serialize");
         let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
-        assert!(v.get("fontName").is_none(), "fontName must be omitted when None");
+        assert!(
+            v.get("fontName").is_none(),
+            "fontName must be omitted when None"
+        );
         assert!(v.get("color").is_none(), "color must be omitted when None");
         // isBold/isItalic always present (default false) so toolbars render.
         assert_eq!(v["isBold"], false);
@@ -1402,5 +1441,61 @@ mod tests {
         // All legacy fields still present.
         assert_eq!(v["text"], "Hi");
         assert_eq!(v["fontSize"], 12.0);
+        // G2: widthSource always present; charBounds omitted when empty.
+        assert_eq!(v["widthSource"], "Estimate");
+        assert!(
+            v.get("charBounds").is_none(),
+            "empty charBounds must be omitted"
+        );
+    }
+
+    // ---- G2: TextRun JSON shape tests ----
+
+    #[test]
+    fn g2_text_run_metric_width_source_serializes() {
+        let run = TextRun {
+            text: "ABC".into(),
+            x: 10.0,
+            y: 20.0,
+            width: 21.66,
+            height: 10.0,
+            font_size: 10.0,
+            font_name: Some("TestFont".into()),
+            is_bold: false,
+            is_italic: false,
+            color: None,
+            width_source: "Metric",
+            char_bounds: vec![[10.0, 20.0, 17.22, 30.0], [17.22, 20.0, 23.89, 30.0]],
+        };
+        let json = serde_json::to_string(&run).expect("serialize");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert_eq!(v["widthSource"], "Metric");
+        assert!(v["charBounds"].is_array());
+        assert_eq!(v["charBounds"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn g2_empty_char_bounds_omitted_from_json() {
+        let run = TextRun {
+            text: "X".into(),
+            x: 0.0,
+            y: 0.0,
+            width: 5.0,
+            height: 10.0,
+            font_size: 10.0,
+            font_name: None,
+            is_bold: false,
+            is_italic: false,
+            color: None,
+            width_source: "Estimate",
+            char_bounds: vec![],
+        };
+        let json = serde_json::to_string(&run).expect("serialize");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert!(
+            v.get("charBounds").is_none(),
+            "empty charBounds must be omitted"
+        );
+        assert_eq!(v["widthSource"], "Estimate");
     }
 }

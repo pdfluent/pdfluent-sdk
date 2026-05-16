@@ -79,9 +79,7 @@ fn compress_returns_valid_pdf() {
 fn add_text_watermark_increases_or_keeps_size() {
     let doc = PdfDoc::open(SIMPLE_PDF).expect("open");
     let original_size = SIMPLE_PDF.len();
-    let bytes = doc
-        .add_text_watermark("CONCEPT", 0.3)
-        .expect("watermark");
+    let bytes = doc.add_text_watermark("CONCEPT", 0.3).expect("watermark");
     assert!(bytes.len() >= original_size / 2, "result PDF too small");
     let reloaded = PdfDoc::open(&bytes).expect("reload watermarked");
     assert_eq!(reloaded.page_count(), doc.page_count());

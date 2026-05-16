@@ -80,7 +80,7 @@ pub use geometry::{PageBox, PageGeometry, PageRotation};
 pub use limits::{LimitError, ProcessingLimits};
 pub use ocr::{OcrBackend, OcrError, OcrResult, OcrWord};
 pub use render::{ColorMode, PixelFormat, RenderConfig, RenderOptions, RenderedPage};
-pub use text::{TextBlock, TextSpan};
+pub use text::{TextBlock, TextSpan, WidthSource};
 pub use thumbnail::ThumbnailOptions;
 
 #[cfg(not(target_arch = "wasm32"))]
