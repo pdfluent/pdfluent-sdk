@@ -106,7 +106,8 @@ namespace XfaPdf.Tests
         [Fact]
         public void InvalidPdfThrows()
         {
-            Assert.Throws<PdfException>(() => PdfDocument.Open(new byte[] { 1, 2, 3 }));
+            // Any PdfluentException subtype is acceptable for a corrupt input.
+            Assert.Throws<PdfluentParseException>(() => PdfDocument.Open(new byte[] { 1, 2, 3 }));
         }
 
         [Fact]
@@ -128,7 +129,7 @@ namespace XfaPdf.Tests
         {
             var doc = PdfDocument.Open(CreateTestPdf());
             doc.Dispose();
-            doc.Dispose(); // should not throw
+            doc.Dispose(); // must not throw
         }
 
         [Fact]
@@ -167,17 +168,26 @@ namespace XfaPdf.Tests
         }
 
         [Fact]
-        public void PdfExceptionHasStatus()
+        public void PdfluentExceptionHasNativeStatus()
         {
             try
             {
                 PdfDocument.Open(new byte[] { 1, 2, 3 });
                 Assert.Fail("Should have thrown");
             }
-            catch (PdfException ex)
+            catch (PdfluentParseException ex)
             {
-                Assert.Equal(PdfStatus.ErrorCorruptPdf, ex.Status);
+                Assert.Equal(PdfStatus.ErrorCorruptPdf, ex.NativeStatus);
             }
+        }
+
+        [Fact]
+        public void PdfluentExceptionIsBaseForParseException()
+        {
+            // Verify the hierarchy: PdfluentParseException is-a PdfluentException.
+            var ex = Assert.Throws<PdfluentParseException>(
+                () => PdfDocument.Open(new byte[] { 1, 2, 3 }));
+            Assert.IsAssignableFrom<PdfluentException>(ex);
         }
 
         // ---------- Scenario 5: Read AcroForm fields ----------

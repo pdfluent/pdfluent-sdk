@@ -1,20 +1,64 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFrameworks>net8.0;netstandard2.1</TargetFrameworks>
     <LangVersion>12.0</LangVersion>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
 
+    <!-- Documentation — CS1591 fires for any undocumented public member -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- Roslyn analyzers -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- CS1591 is disabled by default even with GenerateDocumentationFile;
+         add it explicitly so the build fails on missing XML docs. -->
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>
+
+    <!--
+      Justified suppressions for multi-targeting (net8.0 + netstandard2.1):
+        CA1419 — internal SafeHandle subclass; not exposed to COM or late-binding callers.
+        CA1510 — ArgumentNullException.ThrowIfNull requires .NET 6+; not on netstandard2.1.
+        CA1513 — ObjectDisposedException.ThrowIf requires .NET 7+; not on netstandard2.1.
+        CA2101 — false positive: CA2101 predates MarshalAs(LPUTF8Str) and only accepts
+                 LPWStr/CharSet.Unicode. Our P/Invoke explicitly uses LPUTF8Str, which is
+                 the correct marshaling for the UTF-8 C ABI. Changing to LPWStr would
+                 corrupt non-ASCII paths on native entry.
+        NU5124 — LicenseRef-PDFluent-Commercial is valid SPDX; the local NuGet toolset
+                 does not carry a third-party license list, so it cannot verify custom
+                 LicenseRef-* identifiers. This is expected for proprietary/commercial
+                 licenses — NuGet.org accepts LicenseRef-* expressions at publish time.
+    -->
+    <NoWarn>$(NoWarn);CA1419;CA1510;CA1513;CA2101;NU5124</NoWarn>
+
     <!-- NuGet package metadata -->
-    <PackageId>XfaPdf</PackageId>
-    <Version>0.1.0</Version>
-    <Authors>XFA</Authors>
-    <Description>C# bindings for the XFA PDF engine via P/Invoke.</Description>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/jasperdew/xfa-native-rust</RepositoryUrl>
-    <PackageTags>pdf;xfa;render;extract</PackageTags>
+    <PackageId>PDFluent</PackageId>
+    <Version>1.0.0-beta.5</Version>
+    <Authors>PDFluent</Authors>
+    <Company>PDFluent</Company>
+    <Product>PDFluent .NET SDK</Product>
+    <Description>
+      PDFluent .NET SDK — enterprise-grade PDF processing built on a pure-Rust engine.
+      Supports text extraction, page rendering, XFA form flattening, AcroForm field
+      read/write, annotations, PDF/A validation, and document merge. Zero unmanaged
+      dependencies required at runtime (native library bundled per RID).
+    </Description>
+    <PackageLicenseExpression>LicenseRef-PDFluent-Commercial</PackageLicenseExpression>
+    <PackageProjectUrl>https://pdfluent.com</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/pdfluent/PDFluent-project</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>pdf;xfa;render;extract;forms;acroform;pdfa;annotation;pure-rust;dotnet</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Copyright>Copyright © 2026 PDFluent. All rights reserved.</Copyright>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
   </PropertyGroup>
+
+  <!-- README bundled into the NuGet package -->
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Condition="Exists('..\..\README.md')" />
+  </ItemGroup>
 
   <!-- Native library bundling per RID -->
   <ItemGroup>

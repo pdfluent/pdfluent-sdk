@@ -1,0 +1,193 @@
+{
+  "format": 1,
+  "restore": {
+    "/Users/jasperdewinter/Documents/XFA/.claude/worktrees/charming-almeida-89a3ec/pdfluent-examples/dotnet/StrictApi/StrictApi.csproj": {}
+  },
+  "projects": {
+    "/Users/jasperdewinter/Documents/XFA/.claude/worktrees/charming-almeida-89a3ec/bindings/dotnet/src/XfaPdf/XfaPdf.csproj": {
+      "version": "1.0.0-beta.5",
+      "restore": {
+        "projectUniqueName": "/Users/jasperdewinter/Documents/XFA/.claude/worktrees/charming-almeida-89a3ec/bindings/dotnet/src/XfaPdf/XfaPdf.csproj",
+        "projectName": "PDFluent",
+        "projectPath": "/Users/jasperdewinter/Documents/XFA/.claude/worktrees/charming-almeida-89a3ec/bindings/dotnet/src/XfaPdf/XfaPdf.csproj",
+        "packagesPath": "/Users/jasperdewinter/.nuget/packages/",
+        "outputPath": "/Users/jasperdewinter/Documents/XFA/.claude/worktrees/charming-almeida-89a3ec/bindings/dotnet/src/XfaPdf/obj/",
+        "projectStyle": "PackageReference",
+        "crossTargeting": true,
+        "configFilePaths": [
+          "/Users/jasperdewinter/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0",
+          "netstandard2.1"
+        ],
+        "sources": {
+          "/usr/local/Cellar/dotnet/10.0.107/libexec/library-packs": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {}
+          },
+          "netstandard2.1": {
+            "targetAlias": "netstandard2.1",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "allWarningsAsErrors": true,
+          "noWarn": [
+            "NU5124"
+          ],
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.100"
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[8.0.26, 8.0.26]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[8.0.26, 8.0.26]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/local/Cellar/dotnet/10.0.107/libexec/sdk/10.0.107/PortableRuntimeIdentifierGraph.json"
+        },
+        "netstandard2.1": {
+          "targetAlias": "netstandard2.1",
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "NETStandard.Library.Ref",
+              "version": "[2.1.0, 2.1.0]"
+            }
+          ],
+          "frameworkReferences": {
+            "NETStandard.Library": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/local/Cellar/dotnet/10.0.107/libexec/sdk/10.0.107/RuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "/Users/jasperdewinter/Documents/XFA/.claude/worktrees/charming-almeida-89a3ec/pdfluent-examples/dotnet/StrictApi/StrictApi.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/Users/jasperdewinter/Documents/XFA/.claude/worktrees/charming-almeida-89a3ec/pdfluent-examples/dotnet/StrictApi/StrictApi.csproj",
+        "projectName": "StrictApi",
+        "projectPath": "/Users/jasperdewinter/Documents/XFA/.claude/worktrees/charming-almeida-89a3ec/pdfluent-examples/dotnet/StrictApi/StrictApi.csproj",
+        "packagesPath": "/Users/jasperdewinter/.nuget/packages/",
+        "outputPath": "/Users/jasperdewinter/Documents/XFA/.claude/worktrees/charming-almeida-89a3ec/pdfluent-examples/dotnet/StrictApi/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/Users/jasperdewinter/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0"
+        ],
+        "sources": {
+          "/usr/local/Cellar/dotnet/10.0.107/libexec/library-packs": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0": {
+            "targetAlias": "net8.0",
+            "projectReferences": {
+              "/Users/jasperdewinter/Documents/XFA/.claude/worktrees/charming-almeida-89a3ec/bindings/dotnet/src/XfaPdf/XfaPdf.csproj": {
+                "projectPath": "/Users/jasperdewinter/Documents/XFA/.claude/worktrees/charming-almeida-89a3ec/bindings/dotnet/src/XfaPdf/XfaPdf.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "allWarningsAsErrors": true,
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.100"
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[8.0.26, 8.0.26]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Host.osx-x64",
+              "version": "[8.0.26, 8.0.26]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[8.0.26, 8.0.26]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/local/Cellar/dotnet/10.0.107/libexec/sdk/10.0.107/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}
