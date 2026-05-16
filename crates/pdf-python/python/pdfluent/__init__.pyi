@@ -1,12 +1,122 @@
-"""Type stubs for pdfluent."""
+"""Type stubs for the pdfluent public API.
+
+These stubs cover every symbol re-exported from ``pdfluent.__init__`` and are
+designed to pass ``mypy --strict``.  They are hand-written (not auto-generated)
+to ensure G1 font-metadata fields and the exception hierarchy are typed
+precisely.
+"""
 
 from __future__ import annotations
 
-from typing import Iterator, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Iterator, List, Optional, Tuple, Type, Union
 
 __version__: str
 
-def open_pdf(path: str, password: Optional[str] = None) -> "Document":
+# ---------------------------------------------------------------------------
+# Exception hierarchy
+# ---------------------------------------------------------------------------
+
+class PdfluentError(Exception):
+    """Base exception for all PDFluent errors.
+
+    Catch this class to handle any library-specific error::
+
+        try:
+            doc = Document("broken.pdf")
+        except PdfluentError as exc:
+            print(f"PDF error: {exc}")
+    """
+
+class PdfluentParseError(PdfluentError):
+    """Raised when a PDF cannot be parsed (corrupt, truncated, or not a PDF)."""
+
+class PdfluentValidationError(PdfluentError):
+    """Raised when a document fails schema or compliance validation."""
+
+class PdfluentRenderError(PdfluentError):
+    """Raised when page rendering or XFA flattening fails."""
+
+class PdfluentEncryptedError(PdfluentError):
+    """Raised when an operation is blocked by PDF encryption."""
+
+class PdfluentPageRangeError(PdfluentError):
+    """Raised when a page index is out of range."""
+
+class PdfluentIoError(PdfluentError):
+    """Raised on file-system I/O errors."""
+
+class PdfluentLicenseError(PdfluentError):
+    """Raised on license validation errors (invalid key, expired, quota exceeded)."""
+
+class PdfluentGeometryError(PdfluentError):
+    """Raised when a page has an invalid or unsupported geometry."""
+
+class PdfluentLimitError(PdfluentError):
+    """Raised when a processing limit (page count, file size, etc.) is exceeded."""
+
+# ---------------------------------------------------------------------------
+# License
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LicenseInfo:
+    """Validated license information returned by :func:`activate_license`.
+
+    Attributes
+    ----------
+    licensee:
+        Name of the license holder.
+    company:
+        Company or organisation name.
+    tier:
+        License tier string: ``"trial"``, ``"basic"``, ``"professional"``,
+        ``"enterprise"``, or ``"archival"``.
+    expires_at:
+        Unix timestamp (seconds) at which the license expires.
+        ``0`` indicates no expiry (perpetual license).
+    seats:
+        Number of concurrent developer seats.
+    """
+
+    licensee: str
+    company: str
+    tier: str
+    expires_at: int
+    seats: int
+
+def activate_license(license_key: str) -> LicenseInfo:
+    """Activate a PDFluent license and return the validated license information.
+
+    The key may be supplied as:
+
+    - A JSON string (the raw license file contents).
+    - A base64-encoded JSON string (as distributed in ``PDFLUENT_LICENSE_KEY``).
+    - A file path — if ``license_key`` ends with ``.json`` or ``.license`` and
+      the path exists, the file is read automatically.
+
+    Parameters
+    ----------
+    license_key:
+        Raw license JSON, base64-encoded JSON, or a path to a license file.
+
+    Returns
+    -------
+    LicenseInfo
+        The parsed and format-validated license payload.
+
+    Raises
+    ------
+    PdfluentLicenseError
+        If the key is empty, malformed, or cannot be parsed.
+    """
+    ...
+
+# ---------------------------------------------------------------------------
+# Module-level functions
+# ---------------------------------------------------------------------------
+
+def open_pdf(path: str, password: Optional[str] = None) -> Document:
     """Open a PDF from a file path, returning a Document.
 
     Parameters
@@ -15,6 +125,15 @@ def open_pdf(path: str, password: Optional[str] = None) -> "Document":
         File-system path to the PDF.
     password:
         Password for encrypted PDFs.
+
+    Raises
+    ------
+    PdfluentParseError
+        If the file is not a valid PDF.
+    PdfluentEncryptedError
+        If the PDF is encrypted and no password is provided.
+    PdfluentIoError
+        If the file cannot be read.
     """
     ...
 
@@ -27,10 +146,19 @@ def merge_pdfs(input_paths: List[str], output_path: str) -> None:
         Ordered list of PDF paths to merge.
     output_path:
         Destination path for the merged PDF.
+
+    Raises
+    ------
+    PdfluentValidationError
+        If ``input_paths`` is empty.
+    PdfluentError
+        On merge failures.
+    PdfluentIoError
+        If any input cannot be read or the output cannot be written.
     """
     ...
 
-def validate_pdfa(path: str) -> "ComplianceReport":
+def validate_pdfa(path: str) -> ComplianceReport:
     """Validate a PDF file against PDF/A conformance requirements.
 
     Auto-detects the declared PDF/A level from XMP metadata.
@@ -40,6 +168,13 @@ def validate_pdfa(path: str) -> "ComplianceReport":
     ----------
     path:
         Path to the PDF file to validate.
+
+    Raises
+    ------
+    PdfluentParseError
+        If the file is not a valid PDF.
+    PdfluentIoError
+        If the file cannot be read.
     """
     ...
 
@@ -54,8 +189,19 @@ def decrypt_pdf(input_path: str, output_path: str, password: str) -> None:
         Destination path for the decrypted PDF.
     password:
         User or owner password.
+
+    Raises
+    ------
+    PdfluentEncryptedError
+        If the password is incorrect.
+    PdfluentIoError
+        On read/write failures.
     """
     ...
+
+# ---------------------------------------------------------------------------
+# Document
+# ---------------------------------------------------------------------------
 
 class Document:
     """A PDF document.
@@ -70,6 +216,15 @@ class Document:
     password:
         Password for encrypted PDFs.
 
+    Raises
+    ------
+    PdfluentParseError
+        If ``source`` is not a valid PDF.
+    PdfluentEncryptedError
+        If the PDF is encrypted and no password is provided.
+    PdfluentIoError
+        If a file path is given and the file cannot be read.
+
     Examples
     --------
     >>> with Document("invoice.pdf") as doc:
@@ -80,25 +235,35 @@ class Document:
     def __init__(
         self, source: Union[str, bytes], password: Optional[str] = None
     ) -> None: ...
+
     @property
     def page_count(self) -> int:
         """Number of pages."""
         ...
+
     @property
-    def metadata(self) -> "DocumentInfo":
+    def metadata(self) -> DocumentInfo:
         """Document metadata (title, author, …)."""
         ...
+
     @property
-    def bookmarks(self) -> List["Bookmark"]:
+    def bookmarks(self) -> List[Bookmark]:
         """Document outline / bookmarks."""
         ...
-    def __getitem__(self, index: int) -> "Page": ...
+
+    def __getitem__(self, index: int) -> Page: ...
     def __len__(self) -> int: ...
-    def __iter__(self) -> Iterator["Page"]: ...
-    def __enter__(self) -> "Document": ...
-    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> bool: ...
+    def __iter__(self) -> Iterator[Page]: ...
+    def __enter__(self) -> Document: ...
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: object,
+    ) -> bool: ...
     def __repr__(self) -> str: ...
-    def render_all(self, dpi: float = 150.0) -> List["RenderedImage"]:
+
+    def render_all(self, dpi: float = 150.0) -> List[RenderedImage]:
         """Render all pages in parallel.
 
         Parameters
@@ -107,25 +272,41 @@ class Document:
             Resolution (default 150).
         """
         ...
+
     def search(self, query: str) -> List[int]:
         """Search for text across all pages.
 
         Returns a list of 0-based page indices containing the query.
         """
         ...
+
     def extract_text(self, page_num: int) -> str:
-        """Extract all text from a specific page (0-based index)."""
+        """Extract all text from a specific page (0-based index).
+
+        Raises
+        ------
+        PdfluentPageRangeError
+            If ``page_num`` is out of range.
+        """
         ...
+
     def save(self, path: str) -> None:
         """Save the PDF to a file path.
 
         If the document has been mutated (form fill, annotations, redactions)
         the mutated state is written; otherwise the original bytes are copied.
+
+        Raises
+        ------
+        PdfluentIoError
+            If the file cannot be written.
         """
         ...
-    def get_form_fields(self) -> List["FormField"]:
+
+    def get_form_fields(self) -> List[FormField]:
         """Return all interactive form fields in the document."""
         ...
+
     def set_form_field(self, name: str, value: str) -> bool:
         """Set the value of a form field by its fully-qualified name.
 
@@ -142,9 +323,17 @@ class Document:
             ``True`` if the field was found and updated.
         """
         ...
-    def get_annotations(self, page: int) -> List["Annotation"]:
-        """Return all annotations on the given page (0-based)."""
+
+    def get_annotations(self, page: int) -> List[Annotation]:
+        """Return all annotations on the given page (0-based).
+
+        Raises
+        ------
+        PdfluentPageRangeError
+            If ``page`` is out of range.
+        """
         ...
+
     def add_annotation(
         self,
         page: int,
@@ -164,11 +353,19 @@ class Document:
             Bounding box as ``(x0, y0, x1, y1)`` in PDF user-space points.
         content:
             Text content of the annotation.
+
+        Raises
+        ------
+        PdfluentValidationError
+            If ``annot_type`` is not supported.
+        PdfluentPageRangeError
+            If ``page`` is out of range.
         """
         ...
+
     def redact_text(
         self, search_term: str, page: Optional[int] = None
-    ) -> "RedactReport":
+    ) -> RedactReport:
         """Search for text and redact all occurrences.
 
         Parameters
@@ -179,6 +376,7 @@ class Document:
             0-based page index to limit search to. ``None`` searches all pages.
         """
         ...
+
     def encrypt(
         self, output_path: str, password: str, owner_password: Optional[str] = None
     ) -> None:
@@ -192,8 +390,16 @@ class Document:
             User password (required to open).
         owner_password:
             Owner password (for permissions). Defaults to ``password``.
+
+        Raises
+        ------
+        PdfluentError
+            On encryption failures.
+        PdfluentIoError
+            If the file cannot be written.
         """
         ...
+
     def decrypt(self, output_path: str, password: str) -> None:
         """Save a decrypted copy of an encrypted document.
 
@@ -203,8 +409,19 @@ class Document:
             Destination file path for the decrypted PDF.
         password:
             User or owner password.
+
+        Raises
+        ------
+        PdfluentEncryptedError
+            If the password is incorrect.
+        PdfluentIoError
+            If the file cannot be written.
         """
         ...
+
+# ---------------------------------------------------------------------------
+# Page
+# ---------------------------------------------------------------------------
 
 class Page:
     """A single page in a PDF document.
@@ -216,29 +433,52 @@ class Page:
     def index(self) -> int:
         """Page index (0-based)."""
         ...
+
     @property
     def width(self) -> float:
-        """Page width in points."""
+        """Page width in points.
+
+        Raises
+        ------
+        PdfluentGeometryError
+            If the page geometry is invalid.
+        """
         ...
+
     @property
     def height(self) -> float:
-        """Page height in points."""
+        """Page height in points.
+
+        Raises
+        ------
+        PdfluentGeometryError
+            If the page geometry is invalid.
+        """
         ...
+
     @property
     def rotation(self) -> int:
         """Page rotation in degrees (0, 90, 180, or 270)."""
         ...
+
     @property
-    def geometry(self) -> "PageGeometry":
-        """Full page geometry (media box, crop box, rotation)."""
+    def geometry(self) -> PageGeometry:
+        """Full page geometry (media box, crop box, rotation).
+
+        Raises
+        ------
+        PdfluentGeometryError
+            If the page geometry is invalid.
+        """
         ...
+
     def render(
         self,
         dpi: float = 150.0,
         width: Optional[int] = None,
         height: Optional[int] = None,
         background: Optional[Tuple[float, float, float, float]] = None,
-    ) -> "RenderedImage":
+    ) -> RenderedImage:
         """Render this page to a RenderedImage.
 
         Parameters
@@ -251,18 +491,37 @@ class Page:
             Force output height in pixels.
         background:
             RGBA background color (0.0–1.0). Default: opaque white.
+
+        Raises
+        ------
+        PdfluentRenderError
+            If rendering fails.
         """
         ...
-    def thumbnail(self, max_dimension: int = 256) -> "RenderedImage":
-        """Generate a thumbnail (longest side ≤ max_dimension pixels)."""
+
+    def thumbnail(self, max_dimension: int = 256) -> RenderedImage:
+        """Generate a thumbnail (longest side ≤ max_dimension pixels).
+
+        Raises
+        ------
+        PdfluentRenderError
+            If rendering fails.
+        """
         ...
+
     def extract_text(self) -> str:
         """Extract all text from this page as a string."""
         ...
-    def extract_text_blocks(self) -> List["TextBlock"]:
+
+    def extract_text_blocks(self) -> List[TextBlock]:
         """Extract structured text blocks with position information."""
         ...
+
     def __repr__(self) -> str: ...
+
+# ---------------------------------------------------------------------------
+# RenderedImage
+# ---------------------------------------------------------------------------
 
 class RenderedImage:
     """A rendered page as RGBA pixel data.
@@ -274,24 +533,46 @@ class RenderedImage:
     def width(self) -> int:
         """Image width in pixels."""
         ...
+
     @property
     def height(self) -> int:
         """Image height in pixels."""
         ...
+
     @property
     def pixels(self) -> bytes:
         """Raw RGBA pixel data (4 bytes per pixel, row-major)."""
         ...
-    def to_pil(self) -> "PIL.Image.Image":  # type: ignore[name-defined]
-        """Convert to a PIL/Pillow Image (requires Pillow)."""
+
+    def to_pil(self) -> object:
+        """Convert to a PIL/Pillow Image (requires Pillow).
+
+        Returns
+        -------
+        PIL.Image.Image
+            RGBA image.
+        """
         ...
-    def to_numpy(self) -> "numpy.ndarray":  # type: ignore[name-defined]
-        """Convert to a NumPy array, shape (H, W, 4) uint8 (requires numpy)."""
+
+    def to_numpy(self) -> object:
+        """Convert to a NumPy array, shape (H, W, 4) uint8 (requires numpy).
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(height, width, 4)``, dtype uint8.
+        """
         ...
+
     def save(self, path: str) -> None:
         """Save to a file via PIL (requires Pillow)."""
         ...
+
     def __repr__(self) -> str: ...
+
+# ---------------------------------------------------------------------------
+# TextBlock / TextSpan
+# ---------------------------------------------------------------------------
 
 class TextBlock:
     """A block of text from a page (grouped by vertical proximity)."""
@@ -300,65 +581,117 @@ class TextBlock:
     def text(self) -> str:
         """Concatenated text of all spans in this block."""
         ...
+
     @property
-    def spans(self) -> List["TextSpan"]:
+    def spans(self) -> List[TextSpan]:
         """Individual text spans with position data."""
         ...
+
     def __repr__(self) -> str: ...
     def __str__(self) -> str: ...
 
 class TextSpan:
-    """A single text span at a specific position."""
+    """A single text span at a specific position.
+
+    G1 font-metadata fields (``font_name``, ``is_bold``, ``is_italic``,
+    ``color``) return ``None`` until the text-extraction pipeline is upgraded
+    to emit font attributes.  Always check for ``None`` before using.
+    """
 
     @property
     def text(self) -> str:
         """The text content."""
         ...
+
     @property
     def x(self) -> float:
         """X position in PDF user space."""
         ...
+
     @property
     def y(self) -> float:
         """Y position in PDF user space."""
         ...
+
     @property
     def font_size(self) -> float:
         """Approximate font size."""
         ...
+
+    @property
+    def font_name(self) -> Optional[str]:
+        """Font name (e.g. ``"Helvetica"``), or ``None`` if not yet available (G1)."""
+        ...
+
+    @property
+    def is_bold(self) -> Optional[bool]:
+        """``True`` if the span is bold, ``None`` if not yet available (G1)."""
+        ...
+
+    @property
+    def is_italic(self) -> Optional[bool]:
+        """``True`` if the span is italic, ``None`` if not yet available (G1)."""
+        ...
+
+    @property
+    def color(self) -> Optional[Tuple[float, float, float]]:
+        """Foreground color as ``(r, g, b)`` floats 0.0–1.0, or ``None`` (G1)."""
+        ...
+
     def __repr__(self) -> str: ...
+
+# ---------------------------------------------------------------------------
+# DocumentInfo
+# ---------------------------------------------------------------------------
 
 class DocumentInfo:
     """Document metadata (title, author, subject, etc.)."""
 
     @property
     def title(self) -> Optional[str]: ...
+
     @property
     def author(self) -> Optional[str]: ...
+
     @property
     def subject(self) -> Optional[str]: ...
+
     @property
     def keywords(self) -> Optional[str]: ...
+
     @property
     def creator(self) -> Optional[str]: ...
+
     @property
     def producer(self) -> Optional[str]: ...
+
     def __repr__(self) -> str: ...
+
+# ---------------------------------------------------------------------------
+# Bookmark
+# ---------------------------------------------------------------------------
 
 class Bookmark:
     """A bookmark (outline item) in the document."""
 
     @property
     def title(self) -> str: ...
+
     @property
     def page(self) -> Optional[int]:
         """Target page index (0-based), or None."""
         ...
+
     @property
-    def children(self) -> List["Bookmark"]:
+    def children(self) -> List[Bookmark]:
         """Child bookmarks."""
         ...
+
     def __repr__(self) -> str: ...
+
+# ---------------------------------------------------------------------------
+# PageGeometry
+# ---------------------------------------------------------------------------
 
 class PageGeometry:
     """Full page geometry (boxes, rotation)."""
@@ -367,26 +700,36 @@ class PageGeometry:
     def media_box(self) -> Tuple[float, float, float, float]:
         """MediaBox as (x0, y0, x1, y1)."""
         ...
+
     @property
     def crop_box(self) -> Tuple[float, float, float, float]:
         """CropBox as (x0, y0, x1, y1)."""
         ...
+
     @property
     def rotation(self) -> int:
         """Rotation in degrees."""
         ...
+
     @property
     def width(self) -> float:
         """Effective width in points (accounting for rotation)."""
         ...
+
     @property
     def height(self) -> float:
         """Effective height in points (accounting for rotation)."""
         ...
+
     def pixel_dimensions(self, dpi: float) -> Tuple[int, int]:
         """Pixel dimensions (width, height) at the given DPI."""
         ...
+
     def __repr__(self) -> str: ...
+
+# ---------------------------------------------------------------------------
+# ComplianceIssue / ComplianceReport
+# ---------------------------------------------------------------------------
 
 class ComplianceIssue:
     """A single compliance issue found during PDF/A validation."""
@@ -395,18 +738,22 @@ class ComplianceIssue:
     def rule(self) -> str:
         """Rule identifier (e.g. ``"6.1.2"`` for PDF/A clause)."""
         ...
+
     @property
     def severity(self) -> str:
         """Severity: ``"error"``, ``"warning"``, or ``"info"``."""
         ...
+
     @property
     def message(self) -> str:
         """Human-readable description of the issue."""
         ...
+
     @property
     def location(self) -> Optional[str]:
         """Location in the document (object number, page, etc.)."""
         ...
+
     def __repr__(self) -> str: ...
 
 class ComplianceReport:
@@ -416,19 +763,28 @@ class ComplianceReport:
     def is_compliant(self) -> bool:
         """True if no conformance errors were found."""
         ...
+
     @property
     def error_count(self) -> int: ...
+
     @property
     def warning_count(self) -> int: ...
+
     @property
     def issues(self) -> List[ComplianceIssue]:
         """All issues found during validation."""
         ...
+
     @property
     def pdfa_level(self) -> Optional[str]:
         """Detected PDF/A level string (e.g. ``"PDF/A-2B"``), or None."""
         ...
+
     def __repr__(self) -> str: ...
+
+# ---------------------------------------------------------------------------
+# FormField
+# ---------------------------------------------------------------------------
 
 class FormField:
     """An interactive form field (AcroForm widget)."""
@@ -437,19 +793,27 @@ class FormField:
     def name(self) -> str:
         """Fully-qualified field name."""
         ...
+
     @property
     def field_type(self) -> str:
         """Field type: ``"text"``, ``"button"``, ``"choice"``, or ``"signature"``."""
         ...
+
     @property
     def value(self) -> Optional[str]:
         """Current field value, or None if empty."""
         ...
+
     @property
     def page(self) -> Optional[int]:
         """0-based page index the field appears on, or None."""
         ...
+
     def __repr__(self) -> str: ...
+
+# ---------------------------------------------------------------------------
+# Annotation
+# ---------------------------------------------------------------------------
 
 class Annotation:
     """A PDF annotation (highlight, freetext, etc.)."""
@@ -458,27 +822,39 @@ class Annotation:
     def page(self) -> int:
         """0-based page index."""
         ...
+
     @property
     def annot_type(self) -> str:
         """Annotation type string."""
         ...
+
     @property
     def rect(self) -> Tuple[float, float, float, float]:
         """Bounding box as (x0, y0, x1, y1) in PDF user-space points."""
         ...
+
     @property
     def contents(self) -> Optional[str]: ...
+
     @property
     def author(self) -> Optional[str]: ...
+
     def __repr__(self) -> str: ...
+
+# ---------------------------------------------------------------------------
+# RedactReport
+# ---------------------------------------------------------------------------
 
 class RedactReport:
     """Result of a search-and-redact operation."""
 
     @property
     def matches_found(self) -> int: ...
+
     @property
     def areas_redacted(self) -> int: ...
+
     @property
     def pages_affected(self) -> int: ...
+
     def __repr__(self) -> str: ...
