@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 const APPROX_CHAR_WIDTH: f64 = 0.5;
 
 /// A block of text extracted from a page.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TextBlock {
     /// The extracted text content.
     pub text: String,
@@ -21,7 +21,7 @@ pub struct TextBlock {
     pub page: u32,
     /// Bounding box [x0, y0, x1, y1] in PDF coordinates.
     pub bbox: [f64; 4],
-    /// Font name used for this text block.
+    /// Font resource name (e.g. "F1") — preserved for backward compatibility.
     pub font_name: String,
     /// Font size in points.
     pub font_size: f64,
@@ -30,6 +30,26 @@ pub struct TextBlock {
     /// reading-order text for ligatures or other glyph clusters whose visual
     /// `text` does not match the intended characters.
     pub actual_text: Option<String>,
+
+    // ---- G1 read-only metadata (added 2026-05; backward-compatible) ----
+    /// `BaseFont` of the active font dict with any 6-character subset prefix
+    /// stripped (e.g. `Helvetica-Bold`). `None` when the font dict has no
+    /// `BaseFont` entry or could not be resolved.
+    pub base_font: Option<String>,
+    /// Inferred bold style. Set when any of:
+    ///   - `FontDescriptor /FontWeight >= 700`
+    ///   - `FontDescriptor /Flags` ForceBold bit (bit 19) is set
+    ///   - the (subset-stripped) BaseFont name contains "bold", "demi",
+    ///     "semibold", "heavy", or "black"
+    pub is_bold: bool,
+    /// Inferred italic style. Set when any of:
+    ///   - `FontDescriptor /Flags` Italic bit (bit 7) is set
+    ///   - the BaseFont name contains "italic", "oblique", or "slant"
+    pub is_italic: bool,
+    /// Active non-stroking fill color as sRGB RGBA at the moment the show
+    /// operator emitted this block. `None` for color spaces we cannot map
+    /// without rendering (ICC, Lab, Pattern, Separation, DeviceN).
+    pub color: Option<[u8; 4]>,
 }
 
 /// A single character with its position on the page.
@@ -47,6 +67,8 @@ pub struct PositionedChar {
 #[derive(Debug, Clone)]
 struct GraphicsState {
     ctm: [f64; 6],
+    /// G1: snapshot of the non-stroking fill color at `q`.
+    fill_color: Option<[u8; 4]>,
 }
 
 /// Internal text state tracker.
@@ -74,6 +96,12 @@ struct TextState {
     gs_stack: Vec<GraphicsState>,
     /// Current transformation matrix.
     ctm: [f64; 6],
+    /// G1: active non-stroking fill color as sRGB RGBA.
+    /// PDF §8.6.5.3 initial value: DeviceGray 0.0 (black, fully opaque).
+    /// `None` once an unsupported color space takes over (ICC, Lab,
+    /// Pattern, Separation, DeviceN) until a supported setter re-establishes
+    /// a concrete value.
+    fill_color: Option<[u8; 4]>,
 }
 
 impl Default for TextState {
@@ -90,6 +118,7 @@ impl Default for TextState {
             ts: 0.0,
             gs_stack: Vec::new(),
             ctm: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            fill_color: Some([0, 0, 0, 255]),
         }
     }
 }
@@ -113,6 +142,117 @@ struct FontInfo {
     /// to "ct" only in the ligature-decomposition layer, avoiding clobbering
     /// legitimate U+E007 values that arrive through ToUnicode CMaps.
     ct_codes: [bool; 256],
+    /// G1: `BaseFont` of the font dict with subset prefix stripped.
+    base_font: Option<String>,
+    /// G1: Inferred bold style — from FontDescriptor (Flags ForceBold bit 19,
+    /// FontWeight ≥ 700) or BaseFont name heuristics.
+    is_bold: bool,
+    /// G1: Inferred italic style — from FontDescriptor (Flags Italic bit 7)
+    /// or BaseFont name heuristics.
+    is_italic: bool,
+}
+
+/// Strip a 6-character subset prefix (e.g. `AAAAAA+Helvetica` → `Helvetica`).
+fn strip_subset_prefix(name: &str) -> &str {
+    match name.split_once('+') {
+        Some((prefix, rest)) if prefix.len() == 6 => rest,
+        _ => name,
+    }
+}
+
+/// PDF Font Descriptor `/Flags` field. Per PDF 1.7 §9.8.2 the relevant bits
+/// for style inference are bit 7 (Italic) and bit 19 (ForceBold), 1-indexed —
+/// i.e. mask 0x40 and 0x40000 in a 0-indexed u32.
+const FONT_FLAG_ITALIC: u32 = 1 << 6;
+const FONT_FLAG_FORCE_BOLD: u32 = 1 << 18;
+
+/// Derive `(base_font, is_bold, is_italic)` from a font dict + its descriptor.
+/// All three values are best-effort; missing data is the documented fallback
+/// per ROUND1_API_DESIGN.md.
+fn derive_font_style(
+    doc: &Document,
+    font: &lopdf::Dictionary,
+) -> (Option<String>, bool, bool) {
+    let base_font_raw = font.get(b"BaseFont").ok().and_then(|o| match o {
+        Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()),
+        _ => None,
+    });
+    let base_font = base_font_raw
+        .as_deref()
+        .map(|s| strip_subset_prefix(s).to_string());
+
+    let (name_bold, name_italic) = base_font
+        .as_deref()
+        .map(name_style_hints)
+        .unwrap_or((false, false));
+
+    let descriptor = resolve_dict(doc, font, b"FontDescriptor");
+    let (desc_bold, desc_italic) = descriptor
+        .as_ref()
+        .map(|d| {
+            let weight_bold = d
+                .get(b"FontWeight")
+                .ok()
+                .and_then(|o| match o {
+                    Object::Integer(i) => Some(*i as u32),
+                    Object::Real(r) => Some(*r as u32),
+                    _ => None,
+                })
+                .is_some_and(|w| w >= 700);
+            let flags = d
+                .get(b"Flags")
+                .ok()
+                .and_then(|o| match o {
+                    Object::Integer(i) => Some(*i as u32),
+                    Object::Real(r) => Some(*r as u32),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            let flag_italic = (flags & FONT_FLAG_ITALIC) != 0;
+            let flag_force_bold = (flags & FONT_FLAG_FORCE_BOLD) != 0;
+            (weight_bold || flag_force_bold, flag_italic)
+        })
+        .unwrap_or((false, false));
+
+    (base_font, desc_bold || name_bold, desc_italic || name_italic)
+}
+
+/// Convert a [0.0, 1.0] PDF color component to a u8 channel, clamping.
+fn clamp_unit_to_u8(v: f64) -> u8 {
+    (v.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// Convert DeviceCMYK to sRGB via the standard non-color-managed formula.
+/// Accurate enough for editor UI; full ICC-managed paths render through
+/// the engine and use `moxcms`.
+fn cmyk_to_rgba(c: f64, m: f64, y: f64, k: f64) -> [u8; 4] {
+    let c = c.clamp(0.0, 1.0);
+    let m = m.clamp(0.0, 1.0);
+    let y = y.clamp(0.0, 1.0);
+    let k = k.clamp(0.0, 1.0);
+    let r = (1.0 - c) * (1.0 - k);
+    let g = (1.0 - m) * (1.0 - k);
+    let b = (1.0 - y) * (1.0 - k);
+    [
+        clamp_unit_to_u8(r),
+        clamp_unit_to_u8(g),
+        clamp_unit_to_u8(b),
+        255,
+    ]
+}
+
+/// Heuristic style hints from a PostScript / BaseFont name. Matches
+/// `pdf-interpret::FallbackFontQuery::new` rules.
+fn name_style_hints(name: &str) -> (bool, bool) {
+    let lower = name.to_ascii_lowercase();
+    let italic =
+        lower.contains("italic") || lower.contains("oblique") || lower.contains("slant");
+    let bold = lower.contains("bold")
+        || lower.contains("demi")
+        || lower.contains("semibold")
+        || lower.contains("heavy")
+        || lower.contains("black");
+    (bold, italic)
 }
 
 /// Build a map from font resource name (e.g. "F1") to FontInfo for a page.
@@ -196,6 +336,8 @@ fn build_font_map(doc: &Document, page_id: ObjectId) -> HashMap<String, FontInfo
             ([None; 256], [false; 256])
         };
 
+        let (base_font, is_bold, is_italic) = derive_font_style(doc, &font);
+
         map.insert(
             font_name,
             FontInfo {
@@ -203,6 +345,9 @@ fn build_font_map(doc: &Document, page_id: ObjectId) -> HashMap<String, FontInfo
                 to_unicode,
                 encoding_map,
                 ct_codes,
+                base_font,
+                is_bold,
+                is_italic,
             },
         );
     }
@@ -1473,17 +1618,96 @@ fn extract_blocks_from_ops_inner(
     for op in ops {
         match op.operator.as_str() {
             "q" => {
-                state.gs_stack.push(GraphicsState { ctm: state.ctm });
+                state.gs_stack.push(GraphicsState {
+                    ctm: state.ctm,
+                    fill_color: state.fill_color,
+                });
             }
             "Q" => {
                 if let Some(gs) = state.gs_stack.pop() {
                     state.ctm = gs.ctm;
+                    state.fill_color = gs.fill_color;
                 }
             }
             "cm" => {
                 if let Some(m) = extract_matrix(&op.operands) {
                     state.ctm = multiply_matrix(&state.ctm, &m);
                 }
+            }
+            // G1: non-stroking fill color setters. PDF §8.6.5: `rg` r g b;
+            // `g` gray; `k` c m y k. Stroking variants (RG/G/K) don't
+            // affect text fill so we accept and ignore them. `sc`/`scn` are
+            // honored when operand count makes the device space unambiguous
+            // (1 = Gray, 3 = RGB, 4 = CMYK). `cs`/`CS` mark color unknown
+            // because ICC/Lab/Pattern can't be converted from operands alone.
+            "rg" if op.operands.len() >= 3 => {
+                if let (Some(r), Some(g), Some(b)) = (
+                    op.operands.first().and_then(as_number),
+                    op.operands.get(1).and_then(as_number),
+                    op.operands.get(2).and_then(as_number),
+                ) {
+                    state.fill_color = Some([
+                        clamp_unit_to_u8(r),
+                        clamp_unit_to_u8(g),
+                        clamp_unit_to_u8(b),
+                        255,
+                    ]);
+                }
+            }
+            "g" => {
+                if let Some(v) = op.operands.first().and_then(as_number) {
+                    let byte = clamp_unit_to_u8(v);
+                    state.fill_color = Some([byte, byte, byte, 255]);
+                }
+            }
+            "k" if op.operands.len() >= 4 => {
+                if let (Some(c), Some(m), Some(y), Some(kk)) = (
+                    op.operands.first().and_then(as_number),
+                    op.operands.get(1).and_then(as_number),
+                    op.operands.get(2).and_then(as_number),
+                    op.operands.get(3).and_then(as_number),
+                ) {
+                    state.fill_color = Some(cmyk_to_rgba(c, m, y, kk));
+                }
+            }
+            "RG" | "G" | "K" => {}
+            "sc" | "scn" => {
+                state.fill_color = match op.operands.len() {
+                    1 => op.operands.first().and_then(as_number).map(|v| {
+                        let b = clamp_unit_to_u8(v);
+                        [b, b, b, 255]
+                    }),
+                    3 => {
+                        let r = op.operands.first().and_then(as_number);
+                        let g = op.operands.get(1).and_then(as_number);
+                        let b = op.operands.get(2).and_then(as_number);
+                        match (r, g, b) {
+                            (Some(r), Some(g), Some(b)) => Some([
+                                clamp_unit_to_u8(r),
+                                clamp_unit_to_u8(g),
+                                clamp_unit_to_u8(b),
+                                255,
+                            ]),
+                            _ => None,
+                        }
+                    }
+                    4 => {
+                        let c = op.operands.first().and_then(as_number);
+                        let m = op.operands.get(1).and_then(as_number);
+                        let y = op.operands.get(2).and_then(as_number);
+                        let kk = op.operands.get(3).and_then(as_number);
+                        match (c, m, y, kk) {
+                            (Some(c), Some(m), Some(y), Some(kk)) => {
+                                Some(cmyk_to_rgba(c, m, y, kk))
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+            }
+            "cs" | "CS" => {
+                state.fill_color = None;
             }
             "BT" => {
                 state.tm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
@@ -1571,6 +1795,16 @@ fn extract_blocks_from_ops_inner(
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
                             actual_text: current_actual_text(&mc_stack, inherited_actual_text),
+                            base_font: font_map
+                                .get(&state.font_name)
+                                .and_then(|fi| fi.base_font.clone()),
+                            is_bold: font_map
+                                .get(&state.font_name)
+                                .is_some_and(|fi| fi.is_bold),
+                            is_italic: font_map
+                                .get(&state.font_name)
+                                .is_some_and(|fi| fi.is_italic),
+                            color: state.fill_color,
                         });
                     }
 
@@ -1615,6 +1849,16 @@ fn extract_blocks_from_ops_inner(
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
                             actual_text: current_actual_text(&mc_stack, inherited_actual_text),
+                            base_font: font_map
+                                .get(&state.font_name)
+                                .and_then(|fi| fi.base_font.clone()),
+                            is_bold: font_map
+                                .get(&state.font_name)
+                                .is_some_and(|fi| fi.is_bold),
+                            is_italic: font_map
+                                .get(&state.font_name)
+                                .is_some_and(|fi| fi.is_italic),
+                            color: state.fill_color,
                         });
                     }
                 }
@@ -1643,6 +1887,16 @@ fn extract_blocks_from_ops_inner(
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
                             actual_text: current_actual_text(&mc_stack, inherited_actual_text),
+                            base_font: font_map
+                                .get(&state.font_name)
+                                .and_then(|fi| fi.base_font.clone()),
+                            is_bold: font_map
+                                .get(&state.font_name)
+                                .is_some_and(|fi| fi.is_bold),
+                            is_italic: font_map
+                                .get(&state.font_name)
+                                .is_some_and(|fi| fi.is_italic),
+                            color: state.fill_color,
                         });
                     }
 
@@ -1683,6 +1937,16 @@ fn extract_blocks_from_ops_inner(
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
                             actual_text: current_actual_text(&mc_stack, inherited_actual_text),
+                            base_font: font_map
+                                .get(&state.font_name)
+                                .and_then(|fi| fi.base_font.clone()),
+                            is_bold: font_map
+                                .get(&state.font_name)
+                                .is_some_and(|fi| fi.is_bold),
+                            is_italic: font_map
+                                .get(&state.font_name)
+                                .is_some_and(|fi| fi.is_italic),
+                            color: state.fill_color,
                         });
                     }
 
@@ -1882,11 +2146,16 @@ fn build_font_info_from_value(doc: &Document, value: &Object) -> Option<FontInfo
         ([None; 256], [false; 256])
     };
 
+    let (base_font, is_bold, is_italic) = derive_font_style(doc, &font);
+
     Some(FontInfo {
         is_cid,
         to_unicode,
         encoding_map,
         ct_codes,
+        base_font,
+        is_bold,
+        is_italic,
     })
 }
 
@@ -1960,17 +2229,96 @@ fn extract_chars_from_ops(
     for op in ops {
         match op.operator.as_str() {
             "q" => {
-                state.gs_stack.push(GraphicsState { ctm: state.ctm });
+                state.gs_stack.push(GraphicsState {
+                    ctm: state.ctm,
+                    fill_color: state.fill_color,
+                });
             }
             "Q" => {
                 if let Some(gs) = state.gs_stack.pop() {
                     state.ctm = gs.ctm;
+                    state.fill_color = gs.fill_color;
                 }
             }
             "cm" => {
                 if let Some(m) = extract_matrix(&op.operands) {
                     state.ctm = multiply_matrix(&state.ctm, &m);
                 }
+            }
+            // G1: non-stroking fill color setters. PDF §8.6.5: `rg` r g b;
+            // `g` gray; `k` c m y k. Stroking variants (RG/G/K) don't
+            // affect text fill so we accept and ignore them. `sc`/`scn` are
+            // honored when operand count makes the device space unambiguous
+            // (1 = Gray, 3 = RGB, 4 = CMYK). `cs`/`CS` mark color unknown
+            // because ICC/Lab/Pattern can't be converted from operands alone.
+            "rg" if op.operands.len() >= 3 => {
+                if let (Some(r), Some(g), Some(b)) = (
+                    op.operands.first().and_then(as_number),
+                    op.operands.get(1).and_then(as_number),
+                    op.operands.get(2).and_then(as_number),
+                ) {
+                    state.fill_color = Some([
+                        clamp_unit_to_u8(r),
+                        clamp_unit_to_u8(g),
+                        clamp_unit_to_u8(b),
+                        255,
+                    ]);
+                }
+            }
+            "g" => {
+                if let Some(v) = op.operands.first().and_then(as_number) {
+                    let byte = clamp_unit_to_u8(v);
+                    state.fill_color = Some([byte, byte, byte, 255]);
+                }
+            }
+            "k" if op.operands.len() >= 4 => {
+                if let (Some(c), Some(m), Some(y), Some(kk)) = (
+                    op.operands.first().and_then(as_number),
+                    op.operands.get(1).and_then(as_number),
+                    op.operands.get(2).and_then(as_number),
+                    op.operands.get(3).and_then(as_number),
+                ) {
+                    state.fill_color = Some(cmyk_to_rgba(c, m, y, kk));
+                }
+            }
+            "RG" | "G" | "K" => {}
+            "sc" | "scn" => {
+                state.fill_color = match op.operands.len() {
+                    1 => op.operands.first().and_then(as_number).map(|v| {
+                        let b = clamp_unit_to_u8(v);
+                        [b, b, b, 255]
+                    }),
+                    3 => {
+                        let r = op.operands.first().and_then(as_number);
+                        let g = op.operands.get(1).and_then(as_number);
+                        let b = op.operands.get(2).and_then(as_number);
+                        match (r, g, b) {
+                            (Some(r), Some(g), Some(b)) => Some([
+                                clamp_unit_to_u8(r),
+                                clamp_unit_to_u8(g),
+                                clamp_unit_to_u8(b),
+                                255,
+                            ]),
+                            _ => None,
+                        }
+                    }
+                    4 => {
+                        let c = op.operands.first().and_then(as_number);
+                        let m = op.operands.get(1).and_then(as_number);
+                        let y = op.operands.get(2).and_then(as_number);
+                        let kk = op.operands.get(3).and_then(as_number);
+                        match (c, m, y, kk) {
+                            (Some(c), Some(m), Some(y), Some(kk)) => {
+                                Some(cmyk_to_rgba(c, m, y, kk))
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+            }
+            "cs" | "CS" => {
+                state.fill_color = None;
             }
             "BT" => {
                 state.tm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
@@ -2857,5 +3205,248 @@ mod tests {
             tj_w,
             tj_arr_w,
         );
+    }
+
+    // ---- G1: text-run metadata extraction tests ----
+
+    /// Build a doc with a single /F1 font resource carrying the given
+    /// BaseFont and an optional FontDescriptor /Flags value.
+    fn make_doc_with_font(content: &[u8], base_font: &str, desc_flags: Option<u32>) -> Document {
+        let mut doc = Document::with_version("1.7");
+
+        let mut font_dict = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => Object::Name(base_font.as_bytes().to_vec()),
+        };
+        if let Some(flags) = desc_flags {
+            let descriptor = dictionary! {
+                "Type" => "FontDescriptor",
+                "FontName" => Object::Name(base_font.as_bytes().to_vec()),
+                "Flags" => Object::Integer(flags as i64),
+            };
+            let desc_id = doc.add_object(Object::Dictionary(descriptor));
+            font_dict.set("FontDescriptor", Object::Reference(desc_id));
+        }
+        let font_id = doc.add_object(Object::Dictionary(font_dict));
+
+        let resources = dictionary! {
+            "Font" => dictionary! { "F1" => Object::Reference(font_id) },
+        };
+        let resources_id = doc.add_object(Object::Dictionary(resources));
+
+        let content_stream = Stream::new(dictionary! {}, content.to_vec());
+        let content_id = doc.add_object(Object::Stream(content_stream));
+
+        let page_dict = dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Reference(resources_id),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+        let pages_dict = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        };
+        let pages_id = doc.add_object(Object::Dictionary(pages_dict));
+
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        doc
+    }
+
+    #[test]
+    fn g1_tj_carries_basefont_metadata() {
+        let doc = make_doc_with_font(b"BT /F1 12 Tf (Hello) Tj ET", "Helvetica", None);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].text, "Hello");
+        assert_eq!(blocks[0].base_font.as_deref(), Some("Helvetica"));
+        assert!(!blocks[0].is_bold);
+        assert!(!blocks[0].is_italic);
+    }
+
+    #[test]
+    fn g1_tj_array_carries_basefont_metadata() {
+        let doc = make_doc_with_font(
+            b"BT /F1 12 Tf [(He) -100 (llo)] TJ ET",
+            "Helvetica",
+            None,
+        );
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].text, "Hello");
+        assert_eq!(blocks[0].base_font.as_deref(), Some("Helvetica"));
+    }
+
+    #[test]
+    fn g1_bold_inferred_from_basefont_name() {
+        let doc = make_doc_with_font(b"BT /F1 12 Tf (Bold) Tj ET", "Helvetica-Bold", None);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].is_bold);
+        assert!(!blocks[0].is_italic);
+        assert_eq!(blocks[0].base_font.as_deref(), Some("Helvetica-Bold"));
+    }
+
+    #[test]
+    fn g1_italic_inferred_from_basefont_name() {
+        let doc = make_doc_with_font(b"BT /F1 12 Tf (Slanted) Tj ET", "Times-Italic", None);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].is_italic);
+        assert!(!blocks[0].is_bold);
+    }
+
+    #[test]
+    fn g1_subset_prefix_stripped_from_basefont() {
+        let doc = make_doc_with_font(b"BT /F1 12 Tf (Subset) Tj ET", "ABCDEF+Helvetica-Bold", None);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].base_font.as_deref(), Some("Helvetica-Bold"));
+        assert!(blocks[0].is_bold);
+    }
+
+    #[test]
+    fn g1_italic_inferred_from_descriptor_flag() {
+        // Flags bit 7 (1<<6 = 0x40) = Italic.
+        let doc = make_doc_with_font(b"BT /F1 12 Tf (X) Tj ET", "Custom-Roman", Some(0x40));
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].is_italic);
+        // Name has no "italic" hint; only the flag signals it.
+        assert_eq!(blocks[0].base_font.as_deref(), Some("Custom-Roman"));
+    }
+
+    #[test]
+    fn g1_rg_color_propagates_to_block() {
+        // 1 0 0 rg → solid red. Blocks emitted after the setter carry it.
+        let doc = make_doc_with_font(
+            b"1 0 0 rg BT /F1 12 Tf (Red) Tj ET",
+            "Helvetica",
+            None,
+        );
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].color, Some([255, 0, 0, 255]));
+    }
+
+    #[test]
+    fn g1_gray_color_via_g_operator() {
+        // 0.5 g → mid-gray broadcast to RGBA.
+        let doc = make_doc_with_font(
+            b"0.5 g BT /F1 12 Tf (Gray) Tj ET",
+            "Helvetica",
+            None,
+        );
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        let c = blocks[0].color.expect("expected gray color");
+        // Round-trip tolerance: 0.5 * 255 ≈ 128.
+        assert_eq!(c[3], 255);
+        assert_eq!(c[0], c[1]);
+        assert_eq!(c[1], c[2]);
+        assert!((c[0] as i32 - 128).abs() <= 1);
+    }
+
+    #[test]
+    fn g1_default_color_is_black_for_compliant_initial_state() {
+        // No color setter — PDF §8.6.5.3 initial fill = DeviceGray 0 = black.
+        let doc = make_doc_with_font(b"BT /F1 12 Tf (Default) Tj ET", "Helvetica", None);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].color, Some([0, 0, 0, 255]));
+    }
+
+    #[test]
+    fn g1_cmyk_color_via_k_operator() {
+        // Pure cyan: 1 0 0 0 k → (1-c)*(1-k)=0, (1-m)*(1-k)=1, (1-y)*(1-k)=1
+        let doc = make_doc_with_font(
+            b"1 0 0 0 k BT /F1 12 Tf (Cyan) Tj ET",
+            "Helvetica",
+            None,
+        );
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        let c = blocks[0].color.expect("k should set color");
+        assert_eq!(c, [0, 255, 255, 255]);
+    }
+
+    #[test]
+    fn g1_tj_and_tj_array_emit_same_metadata() {
+        // Identical font/color setup; differ only in show operator.
+        let tj_doc = make_doc_with_font(
+            b"1 0 0 rg BT /F1 12 Tf (Hi) Tj ET",
+            "Helvetica-Bold",
+            None,
+        );
+        let tj_array_doc = make_doc_with_font(
+            b"1 0 0 rg BT /F1 12 Tf [(Hi)] TJ ET",
+            "Helvetica-Bold",
+            None,
+        );
+        let a = extract_text(&tj_doc);
+        let b = extract_text(&tj_array_doc);
+        assert_eq!(a.len(), 1);
+        assert_eq!(b.len(), 1);
+        assert_eq!(a[0].base_font, b[0].base_font);
+        assert_eq!(a[0].is_bold, b[0].is_bold);
+        assert_eq!(a[0].is_italic, b[0].is_italic);
+        assert_eq!(a[0].color, b[0].color);
+    }
+
+    #[test]
+    fn g1_color_restored_across_q_capital_q() {
+        // Color set inside q/Q must not leak out.
+        let doc = make_doc_with_font(
+            b"q 1 0 0 rg Q BT /F1 12 Tf (Outside) Tj ET",
+            "Helvetica",
+            None,
+        );
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        // Outside the saved scope, the initial black is what we see.
+        assert_eq!(blocks[0].color, Some([0, 0, 0, 255]));
+    }
+
+    #[test]
+    fn g1_no_font_resource_means_no_base_font() {
+        // Existing helper doesn't add a Font resource — confirms the
+        // documented fallback path: base_font None, flags false.
+        let doc = make_doc_with_text(b"BT /F1 12 Tf (NoFont) Tj ET");
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].base_font, None);
+        assert!(!blocks[0].is_bold);
+        assert!(!blocks[0].is_italic);
+        // Color still tracks: default initial black.
+        assert_eq!(blocks[0].color, Some([0, 0, 0, 255]));
+        // Legacy resource alias preserved.
+        assert_eq!(blocks[0].font_name, "F1");
+    }
+
+    #[test]
+    fn g1_unknown_color_space_marks_color_none() {
+        // /DeviceN cs followed by scn with 5 operands → can't safely map.
+        let doc = make_doc_with_font(
+            b"/Cs1 cs 0.5 0.5 0.5 0.5 0.5 scn BT /F1 12 Tf (X) Tj ET",
+            "Helvetica",
+            None,
+        );
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].color, None);
     }
 }
