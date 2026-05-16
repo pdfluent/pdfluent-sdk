@@ -40,6 +40,7 @@ use crate::canvas2d_device::Canvas2DDevice;
 use kurbo::{Affine, Rect, Shape};
 use pdf_engine::api_error::PdfError;
 use pdf_engine::PdfDocument;
+use pdf_text_format::{StateIsolationStrategy, TextRunLocator};
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use pdf_render::pdf_interpret::util::PageExt;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
@@ -906,6 +907,181 @@ impl PdfDoc {
     }
 
     // ---- Annotation creation (feature: annotate) ----
+
+    /// Add a highlight annotation to a page.
+    ///
+    /// Takes the PDF bytes and returns new PDF bytes with the annotation added.
+    #[cfg(feature = "annotate")]
+    #[wasm_bindgen(js_name = "addHighlight")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_highlight(
+        data: &[u8],
+        page_index: u32,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+        r: f64,
+        g: f64,
+        b: f64,
+    ) -> Result<Vec<u8>, JsError> {
+        let mut doc = lopdf::Document::load_mem(data).map_err(|e| JsError::new(&format!("{e}")))?;
+        let rect = pdf_annot::builder::AnnotRect { x0, y0, x1, y1 };
+        let annot_id = pdf_annot::builder::AnnotationBuilder::highlight(rect)
+            .color(r, g, b)
+            .quad_points_from_rect(&rect)
+            .build(&mut doc)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        pdf_annot::builder::add_annotation_to_page(&mut doc, page_index, annot_id)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        Ok(buf)
+    }
+
+    /// Add a sticky note (text annotation) to a page.
+    ///
+    /// Returns new PDF bytes with the annotation.
+    #[cfg(feature = "annotate")]
+    #[wasm_bindgen(js_name = "addStickyNote")]
+    pub fn add_sticky_note(
+        data: &[u8],
+        page_index: u32,
+        x: f64,
+        y: f64,
+        text: &str,
+    ) -> Result<Vec<u8>, JsError> {
+        let mut doc = lopdf::Document::load_mem(data).map_err(|e| JsError::new(&format!("{e}")))?;
+        let rect = pdf_annot::builder::AnnotRect {
+            x0: x,
+            y0: y,
+            x1: x + 24.0,
+            y1: y + 24.0,
+        };
+        let annot_id = pdf_annot::builder::AnnotationBuilder::sticky_note(
+            rect,
+            pdf_annot::builder::TextIcon::Note,
+        )
+        .contents(text)
+        .color(1.0, 0.95, 0.0)
+        .build(&mut doc)
+        .map_err(|e| JsError::new(&format!("{e}")))?;
+        pdf_annot::builder::add_annotation_to_page(&mut doc, page_index, annot_id)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        Ok(buf)
+    }
+
+    /// Add a free text annotation to a page.
+    ///
+    /// Returns new PDF bytes with the annotation.
+    #[cfg(feature = "annotate")]
+    #[wasm_bindgen(js_name = "addFreeText")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_free_text(
+        data: &[u8],
+        page_index: u32,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+        text: &str,
+        font_size: f64,
+    ) -> Result<Vec<u8>, JsError> {
+        let mut doc = lopdf::Document::load_mem(data).map_err(|e| JsError::new(&format!("{e}")))?;
+        let rect = pdf_annot::builder::AnnotRect { x0, y0, x1, y1 };
+        let annot_id = pdf_annot::builder::AnnotationBuilder::free_text(rect, text, font_size)
+            .build(&mut doc)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        pdf_annot::builder::add_annotation_to_page(&mut doc, page_index, annot_id)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        Ok(buf)
+    }
+
+    // ---- Text formatting ----
+
+    /// Change the font size and/or fill color of a single text run.
+    ///
+    /// `page_index` is **0-based** (matches other WASM methods).
+    /// `op_index` is the zero-based operator index from `getTextPositions`.
+    /// `font_size` — pass a negative value (e.g. `-1.0`) to leave unchanged.
+    /// `color_r/g/b` — pass negative values (e.g. `-1.0`) to leave color unchanged.
+    ///
+    /// Returns the modified PDF bytes, or an error if the locator is invalid.
+    #[wasm_bindgen(js_name = "formatTextRun")]
+    pub fn format_text_run(
+        data: &[u8],
+        page_index: u32,
+        op_index: usize,
+        font_size: f32,
+        color_r: f32,
+        color_g: f32,
+        color_b: f32,
+    ) -> Result<Vec<u8>, JsError> {
+        let mut doc = lopdf::Document::load_mem(data)
+            .map_err(|e| JsError::new(&format!("load: {e}")))?;
+
+        let page_num = page_index + 1; // convert 0-based → 1-based
+        let locator = TextRunLocator::new(op_index);
+
+        let size_opt = if font_size >= 0.0 { Some(font_size) } else { None };
+        let color_opt = if color_r >= 0.0 && color_g >= 0.0 && color_b >= 0.0 {
+            Some([color_r, color_g, color_b])
+        } else {
+            None
+        };
+
+        pdf_text_format::format_text_run(&mut doc, page_num, locator, size_opt, color_opt)
+            .map_err(|e| JsError::new(&format!("formatTextRun: {e}")))?;
+
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf)
+            .map_err(|e| JsError::new(&format!("save: {e}")))?;
+        Ok(buf)
+    }
+
+    /// Inspect font size and color state at a text run without modifying the document.
+    ///
+    /// Returns a JSON string: `{ "originalSize": f32|null, "originalColor": [r,g,b]|null,
+    /// "strategy": "NoIsolation"|"AddQGroup"|"ReuseExistingQGroup" }`.
+    #[wasm_bindgen(js_name = "inspectTextRun")]
+    pub fn inspect_text_run(
+        data: &[u8],
+        page_index: u32,
+        op_index: usize,
+    ) -> Result<String, JsError> {
+        let mut doc = lopdf::Document::load_mem(data)
+            .map_err(|e| JsError::new(&format!("load: {e}")))?;
+
+        let page_num = page_index + 1;
+        let locator = TextRunLocator::new(op_index);
+
+        let result =
+            pdf_text_format::format_text_run(&mut doc, page_num, locator, None, None)
+                .map_err(|e| JsError::new(&format!("inspectTextRun: {e}")))?;
+
+        let strategy_str = match result.state_isolation_strategy {
+            StateIsolationStrategy::NoIsolation => "NoIsolation",
+            StateIsolationStrategy::AddQGroup => "AddQGroup",
+            StateIsolationStrategy::ReuseExistingQGroup => "ReuseExistingQGroup",
+        };
+
+        let json = serde_json::json!({
+            "originalSize": result.original_size,
+            "originalColor": result.original_color,
+            "strategy": strategy_str,
+        });
+        serde_json::to_string(&json)
+            .map_err(|e| JsError::new(&format!("json: {e}")))
+    }
+
+    // ---- Signature verification ----
 
     /// Verify all digital signatures in the document.
     ///
