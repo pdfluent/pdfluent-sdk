@@ -1,0 +1,14 @@
+{
+  "name": "@pdfluent/example-strict-ts",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Strict TypeScript example for @pdfluent/node — tsc --strict --noEmit must pass.",
+  "scripts": {
+    "typecheck": "tsc --strict --noEmit"
+  },
+  "devDependencies": {
+    "@pdfluent/node": "*",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
