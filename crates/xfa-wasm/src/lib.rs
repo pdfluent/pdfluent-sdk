@@ -36,6 +36,7 @@ use crate::canvas2d_device::Canvas2DDevice;
 use kurbo::{Affine, Rect, Shape};
 use pdf_engine::api_error::PdfError;
 use pdf_engine::PdfDocument;
+use pdf_text_format::{StateIsolationStrategy, TextRunLocator};
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use pdf_render::pdf_interpret::util::PageExt;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
@@ -936,6 +937,83 @@ impl PdfDoc {
         doc.save_to(&mut buf)
             .map_err(|e| JsError::new(&format!("{e}")))?;
         Ok(buf)
+    }
+
+    // ---- Text formatting ----
+
+    /// Change the font size and/or fill color of a single text run.
+    ///
+    /// `page_index` is **0-based** (matches other WASM methods).
+    /// `op_index` is the zero-based operator index from `getTextPositions`.
+    /// `font_size` — pass a negative value (e.g. `-1.0`) to leave unchanged.
+    /// `color_r/g/b` — pass negative values (e.g. `-1.0`) to leave color unchanged.
+    ///
+    /// Returns the modified PDF bytes, or an error if the locator is invalid.
+    #[wasm_bindgen(js_name = "formatTextRun")]
+    pub fn format_text_run(
+        data: &[u8],
+        page_index: u32,
+        op_index: usize,
+        font_size: f32,
+        color_r: f32,
+        color_g: f32,
+        color_b: f32,
+    ) -> Result<Vec<u8>, JsError> {
+        let mut doc = lopdf::Document::load_mem(data)
+            .map_err(|e| JsError::new(&format!("load: {e}")))?;
+
+        let page_num = page_index + 1; // convert 0-based → 1-based
+        let locator = TextRunLocator::new(op_index);
+
+        let size_opt = if font_size >= 0.0 { Some(font_size) } else { None };
+        let color_opt = if color_r >= 0.0 && color_g >= 0.0 && color_b >= 0.0 {
+            Some([color_r, color_g, color_b])
+        } else {
+            None
+        };
+
+        pdf_text_format::format_text_run(&mut doc, page_num, locator, size_opt, color_opt)
+            .map_err(|e| JsError::new(&format!("formatTextRun: {e}")))?;
+
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf)
+            .map_err(|e| JsError::new(&format!("save: {e}")))?;
+        Ok(buf)
+    }
+
+    /// Inspect font size and color state at a text run without modifying the document.
+    ///
+    /// Returns a JSON string: `{ "originalSize": f32|null, "originalColor": [r,g,b]|null,
+    /// "strategy": "NoIsolation"|"AddQGroup"|"ReuseExistingQGroup" }`.
+    #[wasm_bindgen(js_name = "inspectTextRun")]
+    pub fn inspect_text_run(
+        data: &[u8],
+        page_index: u32,
+        op_index: usize,
+    ) -> Result<String, JsError> {
+        let mut doc = lopdf::Document::load_mem(data)
+            .map_err(|e| JsError::new(&format!("load: {e}")))?;
+
+        let page_num = page_index + 1;
+        let locator = TextRunLocator::new(op_index);
+
+        let result =
+            pdf_text_format::format_text_run(&mut doc, page_num, locator, None, None)
+                .map_err(|e| JsError::new(&format!("inspectTextRun: {e}")))?;
+
+        let strategy_str = match result.state_isolation_strategy {
+            StateIsolationStrategy::NoIsolation => "NoIsolation",
+            StateIsolationStrategy::AddQGroup => "AddQGroup",
+            StateIsolationStrategy::ReuseExistingQGroup => "ReuseExistingQGroup",
+        };
+
+        let json = serde_json::json!({
+            "originalSize": result.original_size,
+            "originalColor": result.original_color,
+            "strategy": strategy_str,
+        });
+        serde_json::to_string(&json)
+            .map_err(|e| JsError::new(&format!("json: {e}")))
     }
 
     // ---- Signature verification ----
