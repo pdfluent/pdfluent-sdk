@@ -38,6 +38,8 @@ members = [
 
     # --- PDF manipulation ---
     "crates/pdf-manip",
+    # --- G3: Content stream parser foundation ---
+    "crates/pdf-content-stream",
 
     # --- Desktop application (Fase 4) ---
     "crates/pdf-desktop",
@@ -136,6 +138,7 @@ pdf-invoice = { path = "crates/pdf-invoice", version = "=1.0.0-beta.1" }
 pdf-extract = { package = "pdfluent-extract", path = "crates/pdf-extract", version = "=1.0.0-beta.5" }
 pdf-redact = { path = "crates/pdf-redact", version = "=1.0.0-beta.5" }
 pdf-ocr = { path = "crates/pdf-ocr", version = "=1.0.0-beta.3" }
+pdf-content-stream = { path = "crates/pdf-content-stream", version = "=0.1.0" }
 
 [profile.release]
 lto = "fat"

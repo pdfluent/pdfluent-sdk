@@ -1,0 +1,16 @@
+[package]
+name = "pdf-content-stream"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+description = "PDF content stream parser, state machine, and text-run locator (G3 foundation)"
+repository = "https://github.com/pdfluent/PDFluent-project"
+homepage = "https://pdfluent.com"
+documentation = "https://pdfluent.com/docs"
+publish = false
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
