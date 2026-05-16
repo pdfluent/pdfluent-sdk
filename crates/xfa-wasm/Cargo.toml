@@ -65,4 +65,22 @@ wasm = ["render", "annotate"]
 wasm-bindgen-test = "0.3"
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = false
+# B3 — wasm-opt -O3 enabled after evaluation. See
+# benchmarks/runs/post_beta_execution/B3_FINAL_REPORT.md for the gates
+# and measurements (cold init -13.3%, median key-op runtime -7.9%,
+# raw .wasm -7.0%, golden byte-identical across 34/34 outputs).
+#
+# The --enable-* flags below are validator allowances, not new
+# optimization passes: rustc 1.95 already emits bulk-memory and SIMD ops
+# on wasm32-unknown-unknown, and wasm-opt v117 refuses to parse them
+# without the matching enable flags. They do not synthesize new SIMD or
+# threading code.
+wasm-opt = [
+    "-O3",
+    "--enable-bulk-memory",
+    "--enable-mutable-globals",
+    "--enable-nontrapping-float-to-int",
+    "--enable-sign-ext",
+    "--enable-reference-types",
+    "--enable-simd",
+]
