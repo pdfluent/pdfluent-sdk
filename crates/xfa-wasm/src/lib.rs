@@ -27,6 +27,8 @@
 //! engine.importJson('{"form1.Name": "Bob"}');
 //! ```
 
+pub mod edit_handle;
+
 #[cfg(feature = "render")]
 pub mod canvas2d_device;
 
@@ -38,14 +40,14 @@ pub mod license;
 use crate::canvas2d_device::Canvas2DDevice;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use kurbo::{Affine, Rect, Shape};
-use pdf_engine::api_error::PdfError;
 use pdf_engine::PdfDocument;
 use pdf_text_format::{StateIsolationStrategy, TextRunLocator};
+use pdf_engine::api_error::PdfError;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use pdf_render::pdf_interpret::util::PageExt;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use pdf_render::pdf_interpret::{
-    interpret_page, BlendMode, ClipPath, Context, Device, FillRule, InterpreterSettings,
+    BlendMode, ClipPath, Context, Device, FillRule, InterpreterSettings, interpret_page,
 };
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
@@ -568,7 +570,7 @@ impl PdfDoc {
             other => {
                 return Err(JsError::new(&format!(
                     "unknown PDF/A level: {other:?} — expected e.g. \"2b\", \"3b\", \"1b\""
-                )))
+                )));
             }
         };
         let report = pdf_compliance::validate_pdfa(&self.pdf, pdfa_level);
@@ -1147,7 +1149,7 @@ impl PdfDoc {
             other => {
                 return Err(JsError::new(&format!(
                     "unknown PDF/A level: {other:?} — expected \"1b\", \"2b\", or \"3b\""
-                )))
+                )));
             }
         };
         let self_bytes = self.pdf.data().as_ref();

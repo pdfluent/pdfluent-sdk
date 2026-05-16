@@ -80,6 +80,7 @@ pub mod pdfa_xmp;
 pub mod pdfua;
 pub mod text_replace;
 pub mod text_run;
+pub mod text_style;
 pub mod watermark;
 
 pub use content_editor::{ContentEditor, GraphicsSnapshot, GraphicsStateTracker};
