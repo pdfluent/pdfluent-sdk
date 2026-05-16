@@ -7,6 +7,7 @@
 pub mod error;
 pub mod form;
 pub mod layout;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod scripting;
 pub mod text;
 pub mod types;

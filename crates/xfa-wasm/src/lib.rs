@@ -50,6 +50,7 @@ use pdf_render::pdf_interpret::{
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use xfa_layout_engine::form::{FormNode, FormNodeId, FormNodeType, FormTree, Occur};
+#[cfg(not(target_arch = "wasm32"))]
 use xfa_layout_engine::scripting;
 use xfa_layout_engine::text::FontMetrics;
 use xfa_layout_engine::types::{BoxModel, LayoutStrategy};
@@ -244,6 +245,7 @@ impl XfaEngine {
     /// Run FormCalc calculate scripts to compute derived field values.
     #[wasm_bindgen(js_name = "runCalculations")]
     pub fn run_calculations(&mut self) -> Result<(), JsError> {
+        #[cfg(not(target_arch = "wasm32"))]
         scripting::run_calculations(&mut self.tree)
             .map_err(|e| JsError::new(&format!("scripting error: {e}")))?;
         Ok(())
