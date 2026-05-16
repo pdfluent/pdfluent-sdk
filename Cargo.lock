@@ -4113,6 +4113,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdf-content-stream"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "pdf-desktop"
 version = "1.0.0-beta.3"
 dependencies = [
