@@ -7,11 +7,13 @@
   "exports": {
     ".": {
       "types": "./index.d.ts",
-      "default": "./index.js"
+      "import": "./index.mjs",
+      "require": "./index.js"
     }
   },
   "files": [
     "index.js",
+    "index.mjs",
     "index.d.ts",
     "*.node"
   ],
