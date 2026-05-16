@@ -5434,6 +5434,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "relative-path"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
+
+[[package]]
 name = "reqwest"
 version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5582,6 +5588,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d16661bff09e9ed8e01094a188b463de45ec0693ade55b92ed54027d7ba7c40c"
 dependencies = [
  "rquickjs-core",
+ "rquickjs-macro",
 ]
 
 [[package]]
@@ -5590,7 +5597,25 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c8db6379e204ef84c0811e90e7cc3e3e4d7688701db68a00d14a6db6849087b"
 dependencies = [
+ "relative-path",
  "rquickjs-sys",
+]
+
+[[package]]
+name = "rquickjs-macro"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6041104330c019fcd936026ae05e2446f5e8a2abef329d924f25424b7052a2f3"
+dependencies = [
+ "convert_case 0.6.0",
+ "fnv",
+ "ident_case",
+ "indexmap 2.13.0",
+ "proc-macro-crate 1.3.1",
+ "proc-macro2",
+ "quote",
+ "rquickjs-core",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -8847,6 +8872,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "xfa-js-sandboxed"
+version = "1.0.0-beta.5"
+dependencies = [
+ "rquickjs",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "xfa-json"
 version = "1.0.0-beta.5"
 dependencies = [
@@ -8864,6 +8897,7 @@ dependencies = [
  "log",
  "thiserror 2.0.18",
  "xfa-dom-resolver",
+ "xfa-js-sandboxed",
 ]
 
 [[package]]

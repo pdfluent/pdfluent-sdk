@@ -22,6 +22,7 @@ members = [
     "crates/xfa-dom-resolver",
     "crates/formcalc-interpreter",
     "crates/xfa-layout-engine",
+    "crates/xfa-js-sandboxed",
     "crates/xfa-json",
 
     # --- Bindings & tools ---
@@ -116,6 +117,7 @@ xmp-writer = "0.3"
 xfa-dom-resolver = { path = "crates/xfa-dom-resolver", version = "=1.0.0-beta.5" }
 formcalc-interpreter = { path = "crates/formcalc-interpreter", version = "=1.0.0-beta.5" }
 xfa-layout-engine = { path = "crates/xfa-layout-engine", version = "=1.0.0-beta.5" }
+xfa-js-sandboxed = { path = "crates/xfa-js-sandboxed", version = "=1.0.0-beta.5" }
 xfa-json = { path = "crates/xfa-json", version = "=1.0.0-beta.5" }
 xfa-license = { path = "crates/xfa-license", version = "=1.0.0-beta.3" }
 
