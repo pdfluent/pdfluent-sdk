@@ -80,15 +80,10 @@ if [[ -z "${PKGID}" ]]; then
     echo "error: cargo pkgid -p ${CRATE_NAME} returned nothing; is the package name correct?" >&2
     exit 1
 fi
-# pkgid forms cargo emits:
-#   path+file:///…/crates/pdf-forms#pdfluent-forms@1.0.0-beta.6   (renamed)
-#   path+file:///…/crates/pdf-manip#1.0.0-beta.5                  (non-renamed)
+# pkgid form examples:
+#   path+file:///…/crates/pdf-forms#pdfluent-forms@1.0.0-beta.6
 #   registry+https://github.com/rust-lang/crates.io-index#serde@1.0.218
-if [[ "${PKGID}" == *@* ]]; then
-    CRATE_VERSION="${PKGID##*@}"
-else
-    CRATE_VERSION="${PKGID##*#}"
-fi
+CRATE_VERSION=$(printf '%s\n' "${PKGID}" | sed -E 's/.*@([^#]+)$/\1/')
 if [[ -z "${CRATE_VERSION}" || "${CRATE_VERSION}" == "${PKGID}" ]]; then
     echo "error: could not parse version from pkgid: ${PKGID}" >&2
     exit 1

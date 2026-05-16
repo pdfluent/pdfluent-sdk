@@ -4527,6 +4527,10 @@ const PREDEFINED_CMAPS: &[&str] = &[
 
 /// Directories where CMap files may be found.
 const CMAP_SEARCH_DIRS: &[&str] = &[
+    // Development-local path: valid only on the build machine; excluded from
+    // WASM targets (no filesystem) to prevent private paths leaking into the
+    // published binary.
+    #[cfg(not(target_arch = "wasm32"))]
     concat!(env!("CARGO_MANIFEST_DIR"), "/resources/cmap"),
     "/usr/share/poppler/cMap",
     "/usr/share/fonts/cmap",

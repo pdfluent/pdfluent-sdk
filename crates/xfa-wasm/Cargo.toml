@@ -65,6 +65,12 @@ wasm = ["render", "annotate"]
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 
+# npm package identity — set by scripts/release/transform-wasm-pkg.sh at
+# publish time. Cargo workspace version and npm version are independent.
+[package.metadata.npm]
+name = "@pdfluent/sdk-wasm"
+version = "1.0.0-beta.11"
+
 [package.metadata.wasm-pack.profile.release]
 # B3 — wasm-opt -O3 enabled after evaluation. See
 # benchmarks/runs/post_beta_execution/B3_FINAL_REPORT.md for the gates
