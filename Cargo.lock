@@ -4359,6 +4359,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdf-text-format"
+version = "1.0.0-beta.5"
+dependencies = [
+ "pdf-manip",
+ "pdfluent-lopdf",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "pdf-xfa"
 version = "1.0.0-beta.5"
 dependencies = [
@@ -8842,6 +8851,7 @@ dependencies = [
  "pdf-manip",
  "pdf-render",
  "pdf-syntax",
+ "pdf-text-format",
  "pdfluent-lopdf",
  "pdfluent-sign",
  "serde",
