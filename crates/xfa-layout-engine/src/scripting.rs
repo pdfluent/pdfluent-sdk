@@ -9,7 +9,10 @@
 //! SOM-based field resolution, presence toggling) lives in
 //! `pdf-xfa/src/dynamic.rs` which uses the full FormTree SOM resolver.
 
+use std::sync::{atomic::AtomicBool, Arc};
+
 use crate::form::{FormNodeId, FormNodeType, FormTree};
+use xfa_js_sandboxed::{ExecCtx, FieldValues, XfaJsRuntime};
 
 use formcalc_interpreter::interpreter::Interpreter;
 use formcalc_interpreter::lexer::tokenize;
@@ -162,6 +165,87 @@ fn is_truthy(val: &Value) -> bool {
         Value::String(s) => !s.is_empty(),
         Value::Null => false,
     }
+}
+
+/// Execute JavaScript calculate scripts on specific form fields.
+///
+/// This is the `application/x-javascript` dispatch path. Callers provide an
+/// explicit list of `(target_field_id, js_script_body)` pairs — the language
+/// detection happens at a higher layer (the template parser / XFA merger)
+/// which knows the `contentType` of each `<script>` element.
+///
+/// For each pair the function:
+/// 1. Snapshots all field raw-values into a [`FieldValues`] store.
+/// 2. Executes the JS script body via the sandboxed [`XfaJsRuntime`].
+/// 3. Flushes any `rawValue` mutations back into the `FormTree`.
+///
+/// Errors from individual scripts are swallowed (best-effort, matching Adobe
+/// behaviour). Use the returned [`ScriptResult`] to inspect which fields were
+/// updated.
+pub fn run_js_calculations(
+    form: &mut FormTree,
+    scripts: &[(FormNodeId, &str)],
+    runtime: &mut XfaJsRuntime,
+    cancel: Arc<AtomicBool>,
+) -> Result<ScriptResult, ScriptError> {
+    let mut result = ScriptResult::default();
+
+    for (target_id, script) in scripts {
+        // Snapshot all field values.
+        let mut field_values = FieldValues::new();
+        for node in &form.nodes {
+            if let FormNodeType::Field { value } = &node.node_type {
+                if !node.name.is_empty() {
+                    field_values.set(&node.name, value.as_str());
+                }
+            }
+        }
+
+        let ctx = ExecCtx {
+            fields: &mut field_values,
+            cancel: Arc::clone(&cancel),
+            event_new_text: None,
+        };
+
+        if let Ok(js_val) = runtime.execute_calculate(script, ctx) {
+            // If the script returned a non-null/undefined value AND the
+            // target field exists, use it as the new rawValue (same
+            // semantics as FormCalc calculate).
+            let raw = js_val.to_raw_string();
+            let mut wrote_via_return = false;
+            if !raw.is_empty() {
+                let node = &mut form.nodes[target_id.0];
+                if let FormNodeType::Field { value } = &mut node.node_type {
+                    if *value != raw {
+                        *value = raw;
+                        result.updated_fields.push(*target_id);
+                        wrote_via_return = true;
+                    }
+                }
+            }
+
+            // Also apply explicit xfa.form.<field>.rawValue writes.
+            for (i, node) in form.nodes.iter_mut().enumerate() {
+                if let FormNodeType::Field { value } = &mut node.node_type {
+                    if let Some(new_val) = field_values.get(&node.name) {
+                        if new_val != value.as_str() {
+                            let id = FormNodeId(i);
+                            // Don't double-count if we already wrote this via return.
+                            if !(wrote_via_return && id == *target_id) {
+                                *value = new_val.to_string();
+                                if !result.updated_fields.contains(&id) {
+                                    result.updated_fields.push(id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Errors are swallowed; the script is skipped (best-effort).
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
