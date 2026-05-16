@@ -59,5 +59,5 @@ pub use search::{
 };
 pub use text::{
     extract_blocks_from_page_id, extract_page_blocks, extract_page_text, extract_positioned_chars,
-    extract_text, PositionedChar, TextBlock,
+    extract_text, PositionedChar, TextBlock, WidthSource,
 };

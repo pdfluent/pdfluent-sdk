@@ -91,7 +91,9 @@ fn extract_pages_returns_subdocument_without_mutating_self() {
 #[test]
 fn watermark_then_save_includes_text() {
     let mut editor = PdfDocMut::open(SIMPLE_PDF).expect("open");
-    editor.add_text_watermark("CONCEPT", 0.3).expect("watermark");
+    editor
+        .add_text_watermark("CONCEPT", 0.3)
+        .expect("watermark");
     let bytes = editor.save().expect("save");
     assert!(bytes.starts_with(b"%PDF-"));
 }
@@ -137,7 +139,9 @@ fn free_text_then_save() {
 #[test]
 fn redact_region_then_save() {
     let mut editor = PdfDocMut::open(SIMPLE_PDF).expect("open");
-    editor.redact_region(0, 50.0, 50.0, 100.0, 20.0).expect("redact");
+    editor
+        .redact_region(0, 50.0, 50.0, 100.0, 20.0)
+        .expect("redact");
     let bytes = editor.save().expect("save");
     assert!(bytes.starts_with(b"%PDF-"));
 }
@@ -146,7 +150,9 @@ fn redact_region_then_save() {
 #[test]
 fn redact_search_no_match_gracefully() {
     let mut editor = PdfDocMut::open(SIMPLE_PDF).expect("open");
-    editor.redact_search("UNLIKELY_STRING_12345").expect("no match");
+    editor
+        .redact_search("UNLIKELY_STRING_12345")
+        .expect("no match");
     let bytes = editor.save().expect("save");
     assert!(bytes.starts_with(b"%PDF-"));
 }
@@ -171,7 +177,9 @@ fn multi_step_session_save_once() {
     let original_count = editor.page_count();
 
     editor.rotate_page(0, 90).expect("rotate");
-    editor.add_text_watermark("CONCEPT", 0.3).expect("watermark");
+    editor
+        .add_text_watermark("CONCEPT", 0.3)
+        .expect("watermark");
     editor
         .add_highlight(0, 100.0, 700.0, 200.0, 20.0, Some("#ffeb3b".into()))
         .expect("highlight");
