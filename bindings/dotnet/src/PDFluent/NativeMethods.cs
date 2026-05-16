@@ -29,7 +29,9 @@ namespace PDFluent
             UIntPtr len,
             out IntPtr doc);
 
-        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        // CharSet is intentionally omitted; LPUTF8Str on each parameter provides the
+        // explicit UTF-8 marshaling that satisfies CA2101.
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern PdfStatus pdf_document_open(
             [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
             [MarshalAs(UnmanagedType.LPUTF8Str)] string? password,
@@ -85,7 +87,7 @@ namespace PDFluent
 
         // ---- Metadata ----
 
-        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr pdf_document_get_meta(
             IntPtr doc,
             [MarshalAs(UnmanagedType.LPUTF8Str)] string key);
