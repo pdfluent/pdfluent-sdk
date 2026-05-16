@@ -20,6 +20,10 @@ All targets are measured on the benchmark hardware: **Hetzner EX42 — Xeon E-21
 | XFA form flatten — complex (10 pages) | Native | **< 500 ms** | Multi-page with data binding |
 | XFA form flatten — complex (10 pages) | WASM | **< 1000 ms** | Chrome/Chromium, same form |
 | Render A4 page — text-only | WASM | **< 200 ms** | 96 DPI, Chromium |
+| WASM cold init (Node 22, M-class CPU) | WASM | **≤ 20 ms p90** | New in B3 — `-O3` measured 12.4 ms p90 |
+| WASM `PdfDoc.open` on ≤ 5 MiB doc | WASM | **≤ 60 ms p90** | New in B3 — `-O3` measured 44 ms p90 on 5.7 MiB |
+| WASM `renderPage` on f1040 (2p, scale 1) | WASM | **≤ 700 ms p90** | New in B3 — `-O3` measured 552 ms p90 |
+| WASM `validatePdfA('2b')` on 5.7 MiB / 95p | WASM | **≤ 18,000 ms p90** | New in B3 — `-O3` measured 13.7 s; PdfA is currently the worst-case op |
 
 ## Memory SLA
 
@@ -98,6 +102,7 @@ set `BENCHMARK_STRESS_LARGE=1` when including them in a bench run.
 | Date | Render text p95 | Render mixed p95 | XFA simple p95 | Notes |
 |---|---|---|---|---|
 | 2026-04-18 | GATE #60: 948/974 = 97.3% pass (1k corpus) | r19 branch post CMYK/shading/tiling fixes | — | First baseline; 5k corpus: 91.7% (pre-r19) |
+| 2026-05-16 | (WASM track only) | (WASM track only) | (WASM track only) | B3: enable `wasm-opt = ["-O3", …]`. Cold init 13.66 → 11.85 ms (-13.3%). Median key-op runtime -7.9%. Raw .wasm -7.0%. Brotli/gzip wire +~4% (-O3 trade-off). Golden gate 34/34 byte-identical. |
 
 ---
 
