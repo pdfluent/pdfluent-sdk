@@ -2,6 +2,30 @@
 
 All notable changes to PDFluent are documented here.
 
+## [@pdfluent/sdk-wasm@1.0.0-beta.11] — 2026-05-16
+
+### Changed
+
+- **Build hygiene — no API change.** Rebuilt `@pdfluent/sdk-wasm` with path
+  remapping active (`--remap-path-prefix` in `.cargo/config.toml`) so that
+  dependency source paths from the build machine are replaced by neutral
+  prefixes (`/registry`, `/git`, `/src`) in the published `.wasm` binary.
+  Beta.10 contained 493 embedded private filesystem paths
+  (`/Users/jasperdewinter/.cargo/registry/...`); beta.11 contains zero.
+
+- **wasm-opt -O3 enabled** (B3). Cold init -13.3%, median key-op -7.9%,
+  raw `.wasm` -7.0%. Wire size slightly larger (+3% gzip) as expected for
+  speed-optimised builds.
+
+- **Runtime path fix** (`pdf-manip`). `CMAP_SEARCH_DIRS` and
+  `PREDEFINED_CMAP_SEARCH_DIRS` now exclude the `CARGO_MANIFEST_DIR`-based
+  entry when building for `target_arch = "wasm32"`. That entry is a
+  development-local path unreachable at WASM runtime and was the last
+  remaining private-path string in the binary.
+
+Deprecation notice: `@pdfluent/sdk-wasm@1.0.0-beta.10` is deprecated; see
+npm registry for the deprecation message.
+
 ## [1.0.0-beta.5] — 2026-05-07
 
 ### Security

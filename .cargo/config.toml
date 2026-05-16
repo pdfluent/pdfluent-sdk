@@ -1,3 +1,26 @@
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/xfa-cli-{ target }-v{ version }.tar.gz"
 bin-dir = "xfa-cli{ binary-ext }"
+
+# Path-prefix remapping — strips developer filesystem paths from all build
+# artefacts (WASM debug sections, rlib symbol tables, etc.).
+#
+# rustc uses last-match-wins semantics: when a path matches multiple prefix
+# rules, the LAST matching rule in this list wins. Therefore:
+#   - catch-all "/Users/jasperdewinter=/buildenv" is listed FIRST so it can
+#     be overridden by the more-specific rules that follow;
+#   - the most-specific rules (registry, git, source) are listed LAST so
+#     they take precedence over the catch-all.
+#
+# Target "/buildenv" is intentionally not a real path and does not match
+# the audit patterns for /Users/... or /home/... leakage.
+#
+# Required by the publish constitution: zero private-path strings in any
+# published artefact.
+[build]
+rustflags = [
+  "--remap-path-prefix", "/Users/jasperdewinter=/buildenv",
+  "--remap-path-prefix", "/Users/jasperdewinter/Documents/XFA=/src",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/git=/git",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/registry=/registry",
+]

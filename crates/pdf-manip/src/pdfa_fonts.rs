@@ -10378,6 +10378,9 @@ fn lookup_mac_cmap(face: &ttf_parser::Face, code: u32) -> Option<ttf_parser::Gly
 }
 
 const PREDEFINED_CMAP_SEARCH_DIRS: &[&str] = &[
+    // Development-local path: excluded from WASM targets (no filesystem) to
+    // prevent private paths leaking into the published binary.
+    #[cfg(not(target_arch = "wasm32"))]
     concat!(env!("CARGO_MANIFEST_DIR"), "/resources/cmap"),
     "/usr/share/poppler/cMap",
     "/usr/share/fonts/cmap",
