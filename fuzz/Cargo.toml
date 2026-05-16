@@ -20,6 +20,7 @@ pdf-forms = { path = "../crates/pdf-forms" }
 pdf-sign = { path = "../crates/pdf-sign" }
 pdf-compliance = { path = "../crates/pdf-compliance" }
 pdf-extract = { path = "../crates/pdf-extract" }
+pdf-content-stream = { path = "../crates/pdf-content-stream" }
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -116,4 +117,9 @@ doc = false
 [[bin]]
 name = "fuzz_sign_document"
 path = "fuzz_targets/fuzz_sign_document.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_g3_content_stream"
+path = "fuzz_targets/fuzz_g3_content_stream.rs"
 doc = false
