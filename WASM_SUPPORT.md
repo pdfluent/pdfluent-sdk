@@ -212,8 +212,126 @@ wasm32 surface entirely.
 
 ---
 
+## 8. Memory lifecycle
+
+`PdfDoc` and `XfaEngine` are Rust structs exposed via wasm-bindgen. Each instance
+allocates memory on the WASM heap. The JavaScript garbage collector does **not** free
+WASM heap memory automatically.
+
+### 8.1 Options
+
+**Option A — `using` keyword (TypeScript 5.2+ / ES2026)**
+
+```ts
+// tsconfig: "lib": ["ES2022", "ESNext.Disposable"]
+using doc = PdfDoc.open(bytes);
+// doc.free() is called automatically when the block exits
+```
+
+**Option B — explicit `free()`**
+
+```ts
+const doc = PdfDoc.open(bytes);
+try {
+  const count = doc.pageCount();
+} finally {
+  doc.free(); // must always be called
+}
+```
+
+### 8.2 Contract
+
+| Behaviour | Guarantee |
+|---|---|
+| After `free()`, all method calls throw | `OPERATION_FAILED` |
+| Calling `free()` twice | Safe — no-op |
+| `[Symbol.dispose]()` | Alias for `free()`; called by `using` |
+
+### 8.3 Worker pattern
+
+In a Worker, the WASM module is initialised per-thread. The lifecycle contract is
+unchanged: call `free()` (or `using`) before the Worker exits.
+
+---
+
+## 9. Error model
+
+All fallible WASM methods throw an `XfaWasmError` — a standard `Error` (name:
+`"XfaWasmError"`) with three additional properties:
+
+| Property | Type | Description |
+|---|---|---|
+| `message` | `string` | Human-readable description (inherited from `Error`) |
+| `code` | `string` | Stable `SCREAMING_SNAKE_CASE` identifier — use for programmatic dispatch |
+| `help` | `string` | Actionable hint for the developer (may be empty) |
+| `docsUrl` | `string` | Deep-link to `https://docs.pdfluent.dev/errors/<slug>` |
+
+### 9.1 Catching errors
+
+```ts
+try {
+  using doc = PdfDoc.open(bytes);
+} catch (e: unknown) {
+  if (e instanceof Error && 'code' in e) {
+    const err = e as XfaWasmError; // see pkg-types/xfa_wasm.augment.d.ts
+    switch (err.code) {
+      case 'INVALID_PDF':
+        showUserMessage('File is not a valid PDF');
+        break;
+      case 'PAGE_OUT_OF_RANGE':
+        showUserMessage('Page does not exist');
+        break;
+      default:
+        console.error(`[${err.code}] ${err.message}\nHelp: ${err.help}`);
+    }
+  }
+}
+```
+
+### 9.2 Error code catalogue (WASM binding layer)
+
+| Code | Thrown by |
+|---|---|
+| `INVALID_PDF` | `PdfDoc.open` — bytes are not a valid PDF |
+| `PAGE_OUT_OF_RANGE` | Any page-indexed method |
+| `TEXT_EXTRACT_FAILED` | `getTextPositions` |
+| `XFA_FLATTEN_FAILED` | `flattenXfa` |
+| `INVALID_ARGUMENT` | `validatePdfA`, `convertToPdfa` |
+| `INVALID_JSON` | `XfaEngine.fromFields`, `fromJson`, `importJson` |
+| `FORMCALC_ERROR` | `XfaEngine.runCalculations` |
+| `MERGE_FAILED` | `PdfDoc.merge` |
+| `RENDER_ERROR` | `renderPage`, `renderPageToCanvas`, canvas API failures |
+| `RENDER_FALLBACK` | `renderPageToCanvasVector` — unsupported PDF feature |
+| `OPERATION_FAILED` | Internal operations (annotation builder, lopdf) |
+| `SERIALIZE_ERROR` | Internal JSON serialisation failures |
+| `PDFA_CLEANUP_FAILED` | `convertToPdfa` — cleanup step |
+| `COLORSPACE_ERROR` | `convertToPdfa` — colorspace normalisation |
+| `XMP_REPAIR_FAILED` | `convertToPdfa` — XMP metadata repair |
+
+Engine-level errors (from `pdf-engine`) carry their `PdfError::code()` directly —
+consult `https://docs.pdfluent.dev/errors/<code-in-kebab-case>` for full descriptions.
+
+### 9.3 TypeScript declarations
+
+The hand-maintained file `crates/xfa-wasm/pkg-types/xfa_wasm.augment.d.ts` declares
+the `XfaWasmError` class and the `WasmLifecycle` interface. Projects that need strict
+error types should include this file via `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "paths": {
+      "@pdfluent/xfa-wasm/augment": ["node_modules/@pdfluent/xfa-wasm/pkg-types/xfa_wasm.augment"]
+    }
+  }
+}
+```
+
+---
+
 ## Appendix A — History
 
 | Date | Change |
 |---|---|
 | 2026-04-21 | Initial matrix at 1.0 GA prep (Epic 4 #1233). Matches master `696143b4e`. Follows Slag 1 merges (capability enforcement #1261, error system #1262, form mutation #1264, parity methods #1269, DX consolidation #1270). |
+| 2026-05-16 | C3 DX audit: added §8 (memory lifecycle — `free()` / `using`) and §9 (error model — `XfaWasmError`, `code` property, full code catalogue). All fallible WASM methods now throw `XfaWasmError` with machine-inspectable `code`, `help`, `docsUrl`. Updated: `crates/xfa-wasm/src/lib.rs`, `pkg-types/xfa_wasm.augment.d.ts`. |
