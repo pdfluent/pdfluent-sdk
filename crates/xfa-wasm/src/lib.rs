@@ -456,6 +456,21 @@ struct TextRun {
     height: f64,
     #[serde(rename = "fontSize")]
     font_size: f64,
+
+    // ---- G1 read-only metadata (additive; old consumers ignore unknown keys) ----
+    /// PostScript name (subset prefix stripped). Omitted from JSON when `None`.
+    #[serde(rename = "fontName", skip_serializing_if = "Option::is_none")]
+    font_name: Option<String>,
+    /// Inferred bold style. Always emitted (boolean, default `false`).
+    #[serde(rename = "isBold")]
+    is_bold: bool,
+    /// Inferred italic style. Always emitted (boolean, default `false`).
+    #[serde(rename = "isItalic")]
+    is_italic: bool,
+    /// Fill color as `[r, g, b, a]` 0–255. Omitted when source paint is a
+    /// pattern/shading or color could not be resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color: Option<[u8; 4]>,
 }
 
 #[wasm_bindgen]
@@ -778,8 +793,19 @@ impl PdfDoc {
     ///
     /// ```js
     /// const runs = JSON.parse(doc.getTextPositions(0));
-    /// // runs[i] = { text: "Hello world", x: 72.0, y: 100.0, width: 96.0, height: 12.0, fontSize: 12.0 }
+    /// // runs[i] = {
+    /// //   text: "Hello world",
+    /// //   x: 72.0, y: 100.0, width: 96.0, height: 12.0, fontSize: 12.0,
+    /// //   fontName: "Helvetica-Bold", // G1: omitted when unknown
+    /// //   isBold: true, isItalic: false,
+    /// //   color: [0, 0, 0, 255]       // G1: omitted when unknown
+    /// // }
     /// ```
+    ///
+    /// `fontName` and `color` are omitted from the JSON when the source
+    /// metadata is unavailable (Type1/standard-14 fonts, Pattern paints,
+    /// or unsupported color spaces). `isBold`/`isItalic` are always present
+    /// so editor toolbars can render unconditionally.
     #[wasm_bindgen(js_name = "getTextPositions")]
     pub fn get_text_positions(&self, page_index: usize) -> Result<String, JsError> {
         let text_engine = self.open_flattened_xfa_engine();
@@ -801,6 +827,10 @@ impl PdfDoc {
                 width: span.width.max(1.0),
                 height: span.height.max(1.0),
                 font_size: span.font_size.max(1.0),
+                font_name: span.font_name,
+                is_bold: span.is_bold,
+                is_italic: span.is_italic,
+                color: span.color,
             })
             .collect();
         serde_json::to_string(&runs).map_err(|e| JsError::new(&format!("serialize text runs: {e}")))
@@ -1314,5 +1344,63 @@ mod tests {
     fn bytes_to_pdf_string_latin1() {
         let bytes = &[0xC4, 0xD6, 0xDC]; // ÄÖÜ
         assert_eq!(bytes_to_pdf_string(bytes), "ÄÖÜ");
+    }
+
+    // ---- G1: getTextPositions JSON shape ----
+
+    #[test]
+    fn g1_text_run_serializes_with_metadata() {
+        let run = TextRun {
+            text: "Hello".into(),
+            x: 72.0,
+            y: 100.0,
+            width: 30.0,
+            height: 12.0,
+            font_size: 12.0,
+            font_name: Some("Helvetica-Bold".into()),
+            is_bold: true,
+            is_italic: false,
+            color: Some([255, 0, 0, 255]),
+        };
+        let json = serde_json::to_string(&run).expect("serialize");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert_eq!(v["text"], "Hello");
+        assert_eq!(v["x"], 72.0);
+        assert_eq!(v["y"], 100.0);
+        assert_eq!(v["width"], 30.0);
+        assert_eq!(v["height"], 12.0);
+        assert_eq!(v["fontSize"], 12.0);
+        assert_eq!(v["fontName"], "Helvetica-Bold");
+        assert_eq!(v["isBold"], true);
+        assert_eq!(v["isItalic"], false);
+        assert_eq!(v["color"], serde_json::json!([255, 0, 0, 255]));
+    }
+
+    #[test]
+    fn g1_text_run_omits_unknown_fontname_and_color() {
+        // Fallback case: Type1/standard-14 + pattern paint. JSON must elide
+        // the unknown keys so editor consumers can `'fontName' in run` test.
+        let run = TextRun {
+            text: "Hi".into(),
+            x: 1.0,
+            y: 2.0,
+            width: 10.0,
+            height: 12.0,
+            font_size: 12.0,
+            font_name: None,
+            is_bold: false,
+            is_italic: false,
+            color: None,
+        };
+        let json = serde_json::to_string(&run).expect("serialize");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert!(v.get("fontName").is_none(), "fontName must be omitted when None");
+        assert!(v.get("color").is_none(), "color must be omitted when None");
+        // isBold/isItalic always present (default false) so toolbars render.
+        assert_eq!(v["isBold"], false);
+        assert_eq!(v["isItalic"], false);
+        // All legacy fields still present.
+        assert_eq!(v["text"], "Hi");
+        assert_eq!(v["fontSize"], 12.0);
     }
 }
