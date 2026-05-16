@@ -1,0 +1,60 @@
+# GitLab CI lane for wasm-opt parity gate.
+# Include from .gitlab-ci.yml via `include:` once the GitLab pipeline is
+# stood up. This file is the contract; it is intentionally a standalone
+# fragment so it does not change pipeline behaviour until included.
+
+wasm-opt-parity:
+  stage: test
+  image: rust:1.95-bookworm
+  rules:
+    - changes:
+        - crates/xfa-wasm/**/*
+        - scripts/bench/wasm-golden-compare.mjs
+        - scripts/bench/wasm-bench.mjs
+        - .gitlab-ci-wasm-opt-parity.yml
+  timeout: 30m
+  variables:
+    CARGO_TERM_COLOR: always
+    RUST_BACKTRACE: '1'
+  before_script:
+    - rustup target add wasm32-unknown-unknown
+    - curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+    - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    - apt-get install -y nodejs jq python3
+  script:
+    - |
+      cp crates/xfa-wasm/Cargo.toml crates/xfa-wasm/Cargo.toml.bak
+      python3 -c "
+      import re, pathlib
+      p = pathlib.Path('crates/xfa-wasm/Cargo.toml')
+      t = p.read_text()
+      t = re.sub(r'^wasm-opt = .*$', 'wasm-opt = false', t, count=1, flags=re.M)
+      p.write_text(t)
+      "
+    - wasm-pack build --release --target web --out-dir /tmp/ref/pkg
+        crates/xfa-wasm -- --no-default-features --features wasm
+    - mv crates/xfa-wasm/Cargo.toml.bak crates/xfa-wasm/Cargo.toml
+    - wasm-pack build --release --target web --out-dir /tmp/cand/pkg
+        crates/xfa-wasm -- --no-default-features --features wasm
+    - node scripts/bench/wasm-golden-compare.mjs
+        --ref /tmp/ref/pkg
+        --cand /tmp/cand/pkg
+        --fixtures benchmarks/fixtures/wasm_perf/manifest.json
+        --out /tmp/golden.json
+    - jq '{pass:.pass, fail:.fail, error:.error}' /tmp/golden.json
+    - |
+      REF=$(stat -c %s /tmp/ref/pkg/xfa_wasm_bg.wasm)
+      CAND=$(stat -c %s /tmp/cand/pkg/xfa_wasm_bg.wasm)
+      python3 -c "
+      ref=$REF; cand=$CAND
+      ratio=(cand/ref - 1)*100
+      print(f'raw .wasm delta: {ratio:+.2f}%')
+      assert ratio <= 5.0, f'raw .wasm regressed > 5%: {ratio:+.2f}%'
+      "
+  artifacts:
+    when: always
+    expire_in: 14d
+    paths:
+      - /tmp/golden.json
+      - /tmp/ref/pkg/xfa_wasm_bg.wasm
+      - /tmp/cand/pkg/xfa_wasm_bg.wasm
