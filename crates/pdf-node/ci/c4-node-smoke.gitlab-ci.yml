@@ -1,0 +1,106 @@
+# C4 — Node.js native binary smoke matrix
+#
+# DORMANT: this file is ready but not yet included from the root
+# .gitlab-ci.yml.  Wire it up by adding:
+#
+#   include:
+#     - local: crates/pdf-node/ci/c4-node-smoke.gitlab-ci.yml
+#
+# Each job downloads the pre-built .node binary from the package registry,
+# installs the package from the local path, and runs scripts/smoke-native.js.
+#
+# Node matrix: 18, 20, 24
+# Platform matrix: darwin-arm64, linux-x64-gnu, linux-x64-musl (others dormant)
+
+.node-smoke-base:
+  stage: test
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^program\/C4/'
+    - if: '$CI_COMMIT_BRANCH == "master"'
+      when: never
+  script:
+    - cd crates/pdf-node
+    - npm ci --ignore-scripts
+    - node scripts/smoke-native.js
+  artifacts:
+    when: on_failure
+    paths:
+      - crates/pdf-node/scripts/smoke-native.js
+
+# ── darwin-arm64 ──────────────────────────────────────────────────────────────
+
+node-smoke:darwin-arm64:node18:
+  extends: .node-smoke-base
+  tags: [darwin, arm64]
+  image: ~
+  variables:
+    NODE_VERSION: "18"
+  before_script:
+    - node --version
+
+node-smoke:darwin-arm64:node20:
+  extends: .node-smoke-base
+  tags: [darwin, arm64]
+  variables:
+    NODE_VERSION: "20"
+  before_script:
+    - node --version
+
+node-smoke:darwin-arm64:node24:
+  extends: .node-smoke-base
+  tags: [darwin, arm64]
+  variables:
+    NODE_VERSION: "24"
+  before_script:
+    - node --version
+
+# ── linux-x64-gnu ─────────────────────────────────────────────────────────────
+
+node-smoke:linux-x64-gnu:node18:
+  extends: .node-smoke-base
+  image: node:18-bookworm-slim
+  tags: [linux, x86_64]
+
+node-smoke:linux-x64-gnu:node20:
+  extends: .node-smoke-base
+  image: node:20-bookworm-slim
+  tags: [linux, x86_64]
+
+node-smoke:linux-x64-gnu:node24:
+  extends: .node-smoke-base
+  image: node:24-bookworm-slim
+  tags: [linux, x86_64]
+
+# ── linux-x64-musl ────────────────────────────────────────────────────────────
+
+node-smoke:linux-x64-musl:node18:
+  extends: .node-smoke-base
+  image: node:18-alpine
+  tags: [linux, x86_64]
+
+node-smoke:linux-x64-musl:node20:
+  extends: .node-smoke-base
+  image: node:20-alpine
+  tags: [linux, x86_64]
+
+node-smoke:linux-x64-musl:node24:
+  extends: .node-smoke-base
+  image: node:24-alpine
+  tags: [linux, x86_64]
+
+# ── linux-arm64-gnu (dormant — no arm64 runner yet) ──────────────────────────
+
+.node-smoke:linux-arm64-gnu:
+  extends: .node-smoke-base
+  image: node:20-bookworm-slim
+  tags: [linux, arm64]
+  rules:
+    - when: never  # remove this line once arm64 runner is available
+
+# ── win32-x64-msvc (dormant — no Windows runner yet) ─────────────────────────
+
+.node-smoke:win32-x64-msvc:
+  extends: .node-smoke-base
+  tags: [windows, x86_64]
+  rules:
+    - when: never  # remove this line once Windows runner is available
