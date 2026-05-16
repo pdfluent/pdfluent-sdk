@@ -68,6 +68,16 @@ const MIN_COLUMN_GAP_SUPPORT: f64 = 0.80;
 /// Minimum fraction of non-empty column slices that must look like prose.
 const MIN_DENSE_SLICE_RATIO: f64 = 0.35;
 
+/// Whether a text span's width was computed from real font metrics or estimated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WidthSource {
+    /// Width derived from the font's actual glyph advance (hmtx, CFF, Type1 charstring).
+    Metric,
+    /// Width estimated at 50 % of font size — no glyph metric was available.
+    #[default]
+    Estimate,
+}
+
 /// A single text span at a specific position.
 #[derive(Debug, Clone, Default)]
 pub struct TextSpan {
@@ -102,6 +112,13 @@ pub struct TextSpan {
     /// at the moment of glyph paint. `None` for `Paint::Pattern` (tiling /
     /// shading) — the editor falls back to "auto" in that case.
     pub color: Option<[u8; 4]>,
+
+    // ---- G2 glyph-level metrics (added 2026-05) ----
+    /// Whether glyph widths were measured from real font advance data or estimated.
+    pub width_source: WidthSource,
+    /// Per-glyph bounding boxes in user-space, one entry per source glyph.
+    /// `[x0, y0, x1, y1]` with y0 < y1 (PDF coordinate frame).
+    pub char_bounds: Vec<[f64; 4]>,
 }
 
 impl TextSpan {
@@ -477,8 +494,11 @@ impl Device<'_> for TextExtractionDevice {
         let y = coeffs[5];
         let glyph_scale = (coeffs[0].powi(2) + coeffs[1].powi(2)).sqrt().abs();
         let font_size = glyph_scale * 1000.0;
-        let glyph_width = estimate_glyph_width(glyph, font_size).max(font_size * 0.25);
+
+        // G2: distinguish real advance (Metric) from estimate (Estimate).
+        let (glyph_width, glyph_ws) = glyph_width_and_source(glyph, font_size);
         let glyph_end_x = x + glyph_width;
+        let glyph_bound = [x, y, glyph_end_x, y + font_size];
 
         let style = derive_glyph_style(glyph);
         let color = paint_to_rgba(paint);
@@ -532,6 +552,11 @@ impl Device<'_> for TextExtractionDevice {
             last.text.push_str(&text);
             last.width = last.width.max(glyph_end_x - last.x);
             last.height = last.height.max(font_size);
+            // G2: append char_bound; downgrade width_source if this glyph is Estimate.
+            last.char_bounds.push(glyph_bound);
+            if glyph_ws == WidthSource::Estimate {
+                last.width_source = WidthSource::Estimate;
+            }
             self.last_y = y;
             self.last_end_x = glyph_end_x;
             // ANN[r17/TEX1] Consume the TJ signal: it only counts for
@@ -558,6 +583,8 @@ impl Device<'_> for TextExtractionDevice {
             is_bold: style.is_bold,
             is_italic: style.is_italic,
             color,
+            width_source: glyph_ws,
+            char_bounds: vec![glyph_bound],
         });
     }
 
@@ -591,8 +618,7 @@ fn strip_subset_prefix(name: &str) -> &str {
 /// `FallbackFontQuery::new`.
 fn name_style_hints(name: &str) -> (bool, bool) {
     let lower = name.to_ascii_lowercase();
-    let italic =
-        lower.contains("italic") || lower.contains("oblique") || lower.contains("slant");
+    let italic = lower.contains("italic") || lower.contains("oblique") || lower.contains("slant");
     let bold = lower.contains("bold")
         || lower.contains("demi")
         || lower.contains("semibold")
@@ -630,13 +656,23 @@ fn paint_to_rgba(paint: &Paint<'_>) -> Option<[u8; 4]> {
     }
 }
 
-fn estimate_glyph_width(glyph: &Glyph<'_>, font_size: f64) -> f64 {
+/// Returns `(advance_in_user_space, WidthSource)` for a glyph.
+///
+/// Uses the real advance from `OutlineGlyph::advance_width()` when available
+/// (returns `WidthSource::Metric`); falls back to 50% em otherwise
+/// (`WidthSource::Estimate`). The result is clamped to at least 25% em so
+/// invisible-glyph outliers do not collapse spans.
+fn glyph_width_and_source(glyph: &Glyph<'_>, font_size: f64) -> (f64, WidthSource) {
     match glyph {
-        Glyph::Outline(outline) => outline
-            .advance_width()
-            .map(|width| width as f64 / 1000.0 * font_size)
-            .unwrap_or(font_size * 0.5),
-        Glyph::Type3(_) => font_size * 0.5,
+        Glyph::Outline(outline) => {
+            if let Some(w) = outline.advance_width() {
+                let advance = (w as f64 / 1000.0 * font_size).max(font_size * 0.25);
+                (advance, WidthSource::Metric)
+            } else {
+                (font_size * 0.5, WidthSource::Estimate)
+            }
+        }
+        Glyph::Type3(_) => (font_size * 0.5, WidthSource::Estimate),
     }
 }
 
@@ -2333,5 +2369,60 @@ mod tests {
         // Oblique / slant variants → italic.
         assert_eq!(name_style_hints("Roboto-Oblique"), (false, true));
         assert_eq!(name_style_hints("MyFont-Slanted"), (false, true));
+    }
+
+    // ---- G2: widthSource + char_bounds on TextSpan ----
+
+    #[test]
+    fn g2_default_text_span_has_estimate_width_source() {
+        let s = TextSpan::default();
+        assert_eq!(s.width_source, WidthSource::Estimate);
+        assert!(s.char_bounds.is_empty());
+    }
+
+    /// Verify that a single-glyph span has exactly one char_bound entry
+    /// and that the bound matches the span's x / width.
+    #[test]
+    fn g2_single_glyph_span_has_one_char_bound() {
+        let mut s = TextSpan::default();
+        s.text = "A".into();
+        s.x = 10.0;
+        s.y = 100.0;
+        s.width = 7.22;
+        s.height = 10.0;
+        s.font_size = 10.0;
+        s.width_source = WidthSource::Metric;
+        s.char_bounds = vec![[10.0, 100.0, 17.22, 110.0]];
+
+        assert_eq!(s.char_bounds.len(), 1);
+        let [x0, y0, x1, y1] = s.char_bounds[0];
+        assert!((x0 - 10.0).abs() < 0.001);
+        assert!((x1 - 17.22).abs() < 0.001);
+        assert!((y1 - y0 - s.font_size).abs() < 0.001);
+    }
+
+    /// When merging glyphs into a span the width_source degrades to Estimate
+    /// if any glyph was estimated.
+    #[test]
+    fn g2_merged_span_degrades_width_source_on_estimate() {
+        let mut s = TextSpan::default();
+        s.width_source = WidthSource::Metric;
+        s.char_bounds = vec![[0.0, 0.0, 7.0, 10.0]];
+
+        // Simulate what draw_glyph does on merge: push bound + downgrade.
+        s.char_bounds.push([7.0, 0.0, 12.0, 10.0]);
+        s.width_source = WidthSource::Estimate; // second glyph had no advance
+
+        assert_eq!(s.width_source, WidthSource::Estimate);
+        assert_eq!(s.char_bounds.len(), 2);
+    }
+
+    /// Verify WidthSource enum serialises to the two expected string literals.
+    #[test]
+    fn g2_width_source_variants_are_correct() {
+        assert_eq!(format!("{:?}", WidthSource::Metric), "Metric");
+        assert_eq!(format!("{:?}", WidthSource::Estimate), "Estimate");
+        assert_ne!(WidthSource::Metric, WidthSource::Estimate);
+        assert_eq!(WidthSource::default(), WidthSource::Estimate);
     }
 }
