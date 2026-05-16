@@ -33,7 +33,7 @@ use crate::form::{FormField, PdfFormMut};
 use crate::license;
 use crate::metadata::{Metadata, MetadataMut};
 use crate::parity::{
-    CompressOptions, CompressReport, FontSubsetReport, ImageInsert, ImageInsertReport,
+    CompressOptions, CompressReport, FontSubsetReport, ImageFormat, ImageInsert, ImageInsertReport,
     InsertImageFormat, ToImagesOptions, ToImagesReport,
 };
 use crate::watermark::{Rotation, WatermarkOptions};
@@ -302,6 +302,15 @@ impl PdfDocument {
     /// - [`Error::InvalidPdf`] if the file is not a valid PDF.
     /// - [`Error::DecryptionFailed`] if the file is encrypted and no
     ///   password was provided via [`OpenOptions::with_password`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::PdfDocument;
+    ///
+    /// let doc = PdfDocument::open("invoice.pdf").unwrap();
+    /// println!("{} pages", doc.page_count());
+    /// ```
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::open_with(path, OpenOptions::new())
     }
@@ -516,6 +525,19 @@ impl PdfDocument {
     /// Uses the underlying engine's `extract_all_text`, which concatenates
     /// per-page content streams with `\f` page separators (pdftotext
     /// convention) and appends any AcroForm field values.
+    ///
+    /// For per-page text with a double-newline separator see
+    /// [`extract_text`](Self::extract_text).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::PdfDocument;
+    ///
+    /// let doc = PdfDocument::open("report.pdf").unwrap();
+    /// let raw = doc.text().unwrap();
+    /// println!("Characters extracted: {}", raw.len());
+    /// ```
     pub fn text(&self) -> Result<String> {
         self.require_capability(Capability::TextExtract)?;
         Ok(self.engine.extract_all_text())
@@ -759,6 +781,17 @@ impl PdfDocument {
     /// required/read-only flags. Richer field introspection (kid hierarchy,
     /// widget appearances, javascript actions) lands with the form-mutation
     /// wiring in follow-up issues.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::PdfDocument;
+    ///
+    /// let doc = PdfDocument::open("form.pdf").unwrap();
+    /// for field in doc.form_fields().unwrap() {
+    ///     println!("{}: {:?} = {:?}", field.name, field.field_type, field.value);
+    /// }
+    /// ```
     pub fn form_fields(&self) -> Result<Vec<FormField>> {
         self.require_capability(Capability::AcroFormRead)?;
         Ok(crate::form::read_acroform_fields(&self.lopdf))
@@ -979,6 +1012,113 @@ impl PdfDocument {
     ) -> Result<ToImagesReport> {
         Err(Error::UnsupportedOnWasm {
             operation: "to_images",
+        })
+    }
+
+    /// Render a single page to image bytes in memory.
+    ///
+    /// Returns encoded image bytes (PNG or JPEG) without writing to disk.
+    /// Prefer this over [`to_images`](Self::to_images) when you need the
+    /// bytes directly — e.g. in an HTTP handler or test — rather than
+    /// writing a file.
+    ///
+    /// `page` is 1-based.  `dpi` controls render resolution.  `format`
+    /// selects [`ImageFormat::Png`] (lossless) or [`ImageFormat::Jpeg`]
+    /// (smaller, lossy).
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::FeatureNotInTier`] if the active license does not grant
+    ///   [`crate::capability::Capability::RenderRaster`].
+    /// - [`Error::Internal`] if `page` is 0, exceeds [`page_count`](Self::page_count),
+    ///   or the render / encode step fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::{PdfDocument, ImageFormat};
+    ///
+    /// let doc = PdfDocument::open("report.pdf").unwrap();
+    /// let png_bytes = doc.render_page(1, 150, ImageFormat::Png).unwrap();
+    /// assert!(!png_bytes.is_empty());
+    /// ```
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn render_page(&self, page: usize, dpi: u32, format: ImageFormat) -> Result<Vec<u8>> {
+        use pdf_engine::render::{PixelFormat, RenderOptions};
+
+        self.require_capability(Capability::RenderRaster)?;
+        let total = self.engine.page_count();
+        if page == 0 || page > total {
+            return Err(internal_error(format!(
+                "page index {page} out of range (document has {total} pages)",
+            )));
+        }
+
+        let render_opts = RenderOptions {
+            dpi: dpi as f64,
+            ..Default::default()
+        };
+
+        let rendered = self
+            .engine
+            .render_page(page - 1, &render_opts)
+            .map_err(|e| {
+                use pdf_engine::EngineError;
+                if let EngineError::LimitExceeded(ref le) = e {
+                    return Error::from(le.clone());
+                }
+                internal_error(format!("render page {page} failed: {e}"))
+            })?;
+
+        if !matches!(rendered.pixel_format, PixelFormat::Rgba8) {
+            return Err(internal_error(format!(
+                "unexpected pixel format {:?} from renderer",
+                rendered.pixel_format,
+            )));
+        }
+
+        match format {
+            ImageFormat::Png => {
+                let mut buf: Vec<u8> = Vec::new();
+                {
+                    let mut encoder = png::Encoder::new(&mut buf, rendered.width, rendered.height);
+                    encoder.set_color(png::ColorType::Rgba);
+                    encoder.set_depth(png::BitDepth::Eight);
+                    let mut writer = encoder
+                        .write_header()
+                        .map_err(|e| internal_error(format!("png header failed: {e}")))?;
+                    writer
+                        .write_image_data(&rendered.pixels)
+                        .map_err(|e| internal_error(format!("png write failed: {e}")))?;
+                }
+                Ok(buf)
+            }
+            ImageFormat::Jpeg => {
+                let mut rgb = Vec::with_capacity(rendered.pixels.len() / 4 * 3);
+                for chunk in rendered.pixels.chunks_exact(4) {
+                    rgb.extend_from_slice(&chunk[..3]);
+                }
+                let mut buf: Vec<u8> = Vec::new();
+                use image::ImageEncoder;
+                let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 90);
+                encoder
+                    .write_image(
+                        &rgb,
+                        rendered.width,
+                        rendered.height,
+                        image::ExtendedColorType::Rgb8,
+                    )
+                    .map_err(|e| internal_error(format!("jpeg encoding failed: {e}")))?;
+                Ok(buf)
+            }
+        }
+    }
+
+    /// Render a single page to image bytes in memory — wasm stub.
+    #[cfg(target_arch = "wasm32")]
+    pub fn render_page(&self, _page: usize, _dpi: u32, _format: ImageFormat) -> Result<Vec<u8>> {
+        Err(Error::UnsupportedOnWasm {
+            operation: "render_page",
         })
     }
 
@@ -1539,6 +1679,21 @@ impl PdfDocument {
     }
 
     /// Serialise the document to a byte vector.
+    ///
+    /// Useful when you need the PDF bytes in memory rather than on disk —
+    /// e.g. to return them from an HTTP handler or to pass them to another
+    /// library.  For disk output prefer [`save`](Self::save).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::PdfDocument;
+    ///
+    /// let doc = PdfDocument::open("input.pdf").unwrap();
+    /// let bytes = doc.to_bytes().unwrap();
+    /// // bytes can be written to an HTTP response, stored in a database, etc.
+    /// assert!(!bytes.is_empty());
+    /// ```
     #[cfg_attr(
         feature = "tracing",
         tracing::instrument(target = "pdfluent", skip(self))
