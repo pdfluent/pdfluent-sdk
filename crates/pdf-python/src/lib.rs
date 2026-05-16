@@ -17,7 +17,6 @@ use pdf_forms::{parse_acroform, FieldType, FieldValue};
 use pdf_manip::encrypt::remove_encryption;
 use pdf_redact::{search_and_redact, RedactSearchOptions};
 
-use pyo3::exceptions::{PyIOError, PyIndexError, PyPermissionError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -33,32 +32,63 @@ use pdf_engine::{
 };
 
 // ---------------------------------------------------------------------------
+// Exception hierarchy
+// ---------------------------------------------------------------------------
+
+pyo3::create_exception!(pdfluent, PdfluentError, pyo3::exceptions::PyException,
+    "Base exception for all PDFluent errors.");
+pyo3::create_exception!(pdfluent, PdfluentParseError, PdfluentError,
+    "Raised when a PDF cannot be parsed (corrupt, truncated, or not a PDF).");
+pyo3::create_exception!(pdfluent, PdfluentValidationError, PdfluentError,
+    "Raised when a document fails schema or compliance validation.");
+pyo3::create_exception!(pdfluent, PdfluentRenderError, PdfluentError,
+    "Raised when page rendering or XFA flattening fails.");
+pyo3::create_exception!(pdfluent, PdfluentEncryptedError, PdfluentError,
+    "Raised when an operation is blocked by PDF encryption.");
+pyo3::create_exception!(pdfluent, PdfluentPageRangeError, PdfluentError,
+    "Raised when a page index is out of range.");
+pyo3::create_exception!(pdfluent, PdfluentIoError, PdfluentError,
+    "Raised on file-system I/O errors.");
+pyo3::create_exception!(pdfluent, PdfluentLicenseError, PdfluentError,
+    "Raised on license validation errors (invalid key, expired, quota exceeded).");
+pyo3::create_exception!(pdfluent, PdfluentGeometryError, PdfluentError,
+    "Raised when a page has an invalid or unsupported geometry.");
+pyo3::create_exception!(pdfluent, PdfluentLimitError, PdfluentError,
+    "Raised when a processing limit (page count, file size, etc.) is exceeded.");
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 fn manip_err_to_py(e: pdf_manip::error::ManipError) -> PyErr {
-    PyRuntimeError::new_err(e.to_string())
+    PdfluentError::new_err(e.to_string())
 }
 
 fn engine_err_to_py(e: EngineError) -> PyErr {
     match e {
-        EngineError::InvalidPdf(msg) => PyValueError::new_err(format!("invalid PDF: {msg}")),
-        EngineError::PageOutOfRange { index, count } => {
-            PyIndexError::new_err(format!("page {index} out of range ({count} pages)"))
+        EngineError::InvalidPdf(msg) => {
+            PdfluentParseError::new_err(format!("invalid PDF: {msg}"))
         }
-        EngineError::RenderError(msg) => PyRuntimeError::new_err(format!("render error: {msg}")),
-        EngineError::Io(e) => PyIOError::new_err(e.to_string()),
+        EngineError::PageOutOfRange { index, count } => {
+            PdfluentPageRangeError::new_err(format!(
+                "page {index} out of range ({count} pages)"
+            ))
+        }
+        EngineError::RenderError(msg) => {
+            PdfluentRenderError::new_err(format!("render error: {msg}"))
+        }
+        EngineError::Io(e) => PdfluentIoError::new_err(e.to_string()),
         EngineError::Encrypted(msg) => {
-            PyPermissionError::new_err(format!("PDF is encrypted: {msg}"))
+            PdfluentEncryptedError::new_err(format!("PDF is encrypted: {msg}"))
         }
         EngineError::InvalidPageGeometry { reason, .. } => {
-            PyValueError::new_err(format!("invalid page geometry: {reason}"))
+            PdfluentGeometryError::new_err(format!("invalid page geometry: {reason}"))
         }
         EngineError::XfaFlattenFailed(msg) => {
-            PyRuntimeError::new_err(format!("XFA flatten failed: {msg}"))
+            PdfluentRenderError::new_err(format!("XFA flatten failed: {msg}"))
         }
         EngineError::LimitExceeded(e) => {
-            PyRuntimeError::new_err(format!("processing limit exceeded: {e}"))
+            PdfluentLimitError::new_err(format!("processing limit exceeded: {e}"))
         }
     }
 }
@@ -95,16 +125,25 @@ impl PyDocument {
     ///     File path or raw PDF bytes.
     /// password : str, optional
     ///     Password for encrypted PDFs.
+    ///
+    /// Raises
+    /// ------
+    /// PdfluentParseError
+    ///     If the bytes are not a valid PDF.
+    /// PdfluentEncryptedError
+    ///     If the PDF is encrypted and no password is provided.
+    /// PdfluentIoError
+    ///     If the file cannot be read.
     #[new]
     #[pyo3(signature = (source, password=None))]
     fn new(source: &Bound<'_, PyAny>, password: Option<&str>) -> PyResult<Self> {
         let data: Vec<u8> = if let Ok(path_str) = source.extract::<String>() {
             let path = PathBuf::from(&path_str);
-            std::fs::read(&path).map_err(|e| PyIOError::new_err(format!("{path_str}: {e}")))?
+            std::fs::read(&path).map_err(|e| PdfluentIoError::new_err(format!("{path_str}: {e}")))?
         } else if let Ok(bytes) = source.extract::<Vec<u8>>() {
             bytes
         } else {
-            return Err(PyValueError::new_err(
+            return Err(PdfluentParseError::new_err(
                 "source must be a file path (str) or bytes",
             ));
         };
@@ -148,7 +187,7 @@ impl PyDocument {
         let count = self.inner.page_count() as isize;
         let idx = if index < 0 { count + index } else { index };
         if idx < 0 || idx >= count {
-            return Err(PyIndexError::new_err(format!(
+            return Err(PdfluentPageRangeError::new_err(format!(
                 "page index {index} out of range ({count} pages)"
             )));
         }
@@ -233,11 +272,11 @@ impl PyDocument {
         if let Some(ref mut doc) = *guard {
             let mut buf = Vec::new();
             doc.save_to(&mut buf)
-                .map_err(|e| PyIOError::new_err(format!("save failed: {e}")))?;
-            std::fs::write(path, &buf).map_err(|e| PyIOError::new_err(e.to_string()))
+                .map_err(|e| PdfluentIoError::new_err(format!("save failed: {e}")))?;
+            std::fs::write(path, &buf).map_err(|e| PdfluentIoError::new_err(e.to_string()))
         } else {
             std::fs::write(path, self.raw_bytes.as_ref())
-                .map_err(|e| PyIOError::new_err(e.to_string()))
+                .map_err(|e| PdfluentIoError::new_err(e.to_string()))
         }
     }
 
@@ -355,7 +394,7 @@ impl PyDocument {
     fn get_annotations(&self, page: usize) -> PyResult<Vec<PyAnnotation>> {
         let pages = self.inner.pdf().pages();
         if page >= pages.len() {
-            return Err(PyIndexError::new_err(format!(
+            return Err(PdfluentPageRangeError::new_err(format!(
                 "page {page} out of range ({} pages)",
                 pages.len()
             )));
@@ -418,7 +457,7 @@ impl PyDocument {
                 AnnotationBuilder::free_text(ar, text, 12.0)
             }
             other => {
-                return Err(PyValueError::new_err(format!(
+                return Err(PdfluentValidationError::new_err(format!(
                     "unsupported annotation type {other:?}; use 'highlight' or 'freetext'"
                 )));
             }
@@ -429,10 +468,10 @@ impl PyDocument {
 
         let annot_id = builder
             .build(doc)
-            .map_err(|e| PyRuntimeError::new_err(format!("annotation build failed: {e:?}")))?;
+            .map_err(|e| PdfluentRenderError::new_err(format!("annotation build failed: {e:?}")))?;
 
         add_annotation_to_page(doc, page_1based, annot_id)
-            .map_err(|e| PyRuntimeError::new_err(format!("add to page failed: {e:?}")))?;
+            .map_err(|e| PdfluentRenderError::new_err(format!("add to page failed: {e:?}")))?;
 
         Ok(())
     }
@@ -464,7 +503,7 @@ impl PyDocument {
         let doc = guard.as_mut().unwrap();
 
         let report = search_and_redact(doc, search_term, &options)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            .map_err(|e| PdfluentError::new_err(e.to_string()))?;
 
         Ok(PyRedactReport {
             matches_found: report.matches_found,
@@ -500,13 +539,13 @@ impl PyDocument {
 
         // AES-256 (PDF 2.0, V=5, R=6) — random key generated internally.
         let state = lopdf::aes256_encryption_state(owner_pw, password, LopdfPermissions::all())
-            .map_err(|e| PyRuntimeError::new_err(format!("encryption setup failed: {e}")))?;
+            .map_err(|e| PdfluentError::new_err(format!("encryption setup failed: {e}")))?;
 
         doc.encrypt(&state)
-            .map_err(|e| PyRuntimeError::new_err(format!("encryption failed: {e}")))?;
+            .map_err(|e| PdfluentError::new_err(format!("encryption failed: {e}")))?;
 
         doc.save(output_path)
-            .map_err(|e| PyIOError::new_err(e.to_string()))?;
+            .map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
         Ok(())
     }
 
@@ -522,11 +561,11 @@ impl PyDocument {
         let mut doc =
             LopdfDocument::load_mem_with_password(self.raw_bytes.as_ref(), password)
                 .map_err(|e| {
-                    PyValueError::new_err(format!("failed to open with password: {e}"))
+                    PdfluentEncryptedError::new_err(format!("failed to open with password: {e}"))
                 })?;
         remove_encryption(&mut doc);
         doc.save(output_path)
-            .map_err(|e| PyIOError::new_err(e.to_string()))?;
+            .map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
         Ok(())
     }
 
@@ -547,7 +586,7 @@ impl PyDocument {
             match LopdfDocument::load_mem(self.raw_bytes.as_ref()) {
                 Ok(doc) => *guard = Some(doc),
                 Err(e) => {
-                    return Err(PyRuntimeError::new_err(format!(
+                    return Err(PdfluentError::new_err(format!(
                         "failed to load PDF for mutation: {e}"
                     )))
                 }
@@ -846,6 +885,10 @@ impl PyTextBlock {
 }
 
 /// A single text span at a specific position.
+///
+/// G1 font-metadata fields (``font_name``, ``is_bold``, ``is_italic``, ``color``)
+/// are ``None`` until the text-extraction pipeline is upgraded to emit font
+/// attributes (G1 milestone). Check for ``None`` before using.
 #[pyclass(name = "TextSpan")]
 #[derive(Clone)]
 struct PyTextSpan(TextSpan);
@@ -874,6 +917,30 @@ impl PyTextSpan {
     #[getter]
     fn font_size(&self) -> f64 {
         self.0.font_size
+    }
+
+    /// Font name (e.g. ``"Helvetica"``), or ``None`` if not yet available (G1).
+    #[getter]
+    fn font_name(&self) -> Option<String> {
+        None
+    }
+
+    /// ``True`` if the span is bold, ``None`` if not yet available (G1).
+    #[getter]
+    fn is_bold(&self) -> Option<bool> {
+        None
+    }
+
+    /// ``True`` if the span is italic, ``None`` if not yet available (G1).
+    #[getter]
+    fn is_italic(&self) -> Option<bool> {
+        None
+    }
+
+    /// Foreground color as ``(r, g, b)`` floats in 0.0–1.0, or ``None`` if not yet available (G1).
+    #[getter]
+    fn color(&self) -> Option<(f32, f32, f32)> {
+        None
     }
 
     fn __repr__(&self) -> String {
@@ -1235,11 +1302,18 @@ impl PyRedactReport {
 /// Returns
 /// -------
 /// Document
+///
+/// Raises
+/// ------
+/// PdfluentParseError
+///     If the file is not a valid PDF.
+/// PdfluentIoError
+///     If the file cannot be read.
 #[pyfunction]
 #[pyo3(signature = (path, password=None))]
 fn open_pdf(path: &str, password: Option<&str>) -> PyResult<PyDocument> {
     let data =
-        std::fs::read(path).map_err(|e| PyIOError::new_err(format!("{path}: {e}")))?;
+        std::fs::read(path).map_err(|e| PdfluentIoError::new_err(format!("{path}: {e}")))?;
     let raw_bytes = Arc::new(data);
     let doc = match password {
         Some(pw) => {
@@ -1270,11 +1344,11 @@ fn open_pdf(path: &str, password: Option<&str>) -> PyResult<PyDocument> {
 #[pyfunction]
 fn merge_pdfs(input_paths: Vec<String>, output_path: &str) -> PyResult<()> {
     if input_paths.is_empty() {
-        return Err(PyValueError::new_err("input_paths must not be empty"));
+        return Err(PdfluentValidationError::new_err("input_paths must not be empty"));
     }
     let mut doc = pages::merge(&input_paths).map_err(manip_err_to_py)?;
     doc.save(output_path)
-        .map_err(|e| PyIOError::new_err(e.to_string()))?;
+        .map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
     Ok(())
 }
 
@@ -1291,12 +1365,12 @@ fn merge_pdfs(input_paths: Vec<String>, output_path: &str) -> PyResult<()> {
 #[pyfunction]
 fn decrypt_pdf(input_path: &str, output_path: &str, password: &str) -> PyResult<()> {
     let data = std::fs::read(input_path)
-        .map_err(|e| PyIOError::new_err(format!("{input_path}: {e}")))?;
+        .map_err(|e| PdfluentIoError::new_err(format!("{input_path}: {e}")))?;
     let mut doc = LopdfDocument::load_mem_with_password(&data, password)
-        .map_err(|e| PyValueError::new_err(format!("failed to open with password: {e}")))?;
+        .map_err(|e| PdfluentEncryptedError::new_err(format!("failed to open with password: {e}")))?;
     remove_encryption(&mut doc);
     doc.save(output_path)
-        .map_err(|e| PyIOError::new_err(e.to_string()))?;
+        .map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
     Ok(())
 }
 
@@ -1325,9 +1399,9 @@ fn decrypt_pdf(input_path: &str, output_path: &str, password: &str) -> PyResult<
 #[pyfunction]
 fn validate_pdfa(path: &str) -> PyResult<PyComplianceReport> {
     let data =
-        std::fs::read(path).map_err(|e| PyIOError::new_err(e.to_string()))?;
+        std::fs::read(path).map_err(|e| PdfluentIoError::new_err(e.to_string()))?;
     let pdf = Pdf::new(Arc::new(data))
-        .map_err(|e| PyValueError::new_err(format!("invalid PDF: {e:?}")))?;
+        .map_err(|e| PdfluentParseError::new_err(format!("invalid PDF: {e:?}")))?;
     let level = detect_pdfa_level(&pdf).unwrap_or(PdfALevel::A2b);
     let report = compliance_validate_pdfa(&pdf, level);
     Ok(PyComplianceReport(report))
@@ -1337,112 +1411,21 @@ fn validate_pdfa(path: &str) -> PyResult<PyComplianceReport> {
 // Module
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// License activation
-// ---------------------------------------------------------------------------
-
-fn tier_str(t: pdfluent::Tier) -> &'static str {
-    match t {
-        pdfluent::Tier::Trial => "Trial",
-        pdfluent::Tier::Developer => "Developer",
-        pdfluent::Tier::Team => "Team",
-        pdfluent::Tier::Business => "Business",
-        pdfluent::Tier::Enterprise => "Enterprise",
-        _ => "Unknown",
-    }
-}
-
-/// Status of the currently-active license.
-#[pyclass(name = "LicenseStatus", frozen)]
-struct PyLicenseStatus {
-    #[pyo3(get)]
-    tier: String,
-    #[pyo3(get)]
-    source: String,
-    #[pyo3(get)]
-    output_is_marked: bool,
-}
-
-#[pymethods]
-impl PyLicenseStatus {
-    fn __repr__(&self) -> String {
-        format!(
-            "LicenseStatus(tier={:?}, source={:?}, output_is_marked={})",
-            self.tier, self.source, self.output_is_marked,
-        )
-    }
-}
-
-fn map_license_error(e: pdfluent::Error) -> PyErr {
-    match e {
-        pdfluent::Error::InvalidLicense { reason } => {
-            if reason.contains("already set") {
-                PyRuntimeError::new_err(format!("license already set: {reason}"))
-            } else {
-                PyValueError::new_err(format!("invalid license: {reason}"))
-            }
-        }
-        other => PyRuntimeError::new_err(format!("license error: {other}")),
-    }
-}
-
-static LICENSE_SOURCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-
-fn record_explicit() {
-    LICENSE_SOURCE.store(2, std::sync::atomic::Ordering::Relaxed);
-}
-
-fn current_source_str() -> &'static str {
-    match LICENSE_SOURCE.load(std::sync::atomic::Ordering::Relaxed) {
-        2 => "Explicit",
-        _ => {
-            if let Ok(key) = std::env::var("PDFLUENT_LICENSE_KEY") {
-                if !key.is_empty() && pdfluent::license_info().tier != pdfluent::Tier::Trial {
-                    return "EnvVar";
-                }
-            }
-            "Default"
-        }
-    }
-}
-
-/// Activate the process-global license from a key string.
-///
-/// Raises ``ValueError`` for an invalid key, ``RuntimeError`` when a
-/// different tier is already active. Restart Python to switch tiers.
-#[pyfunction]
-fn activate_license_key(key: &str) -> PyResult<()> {
-    pdfluent::set_license_key(key).map_err(map_license_error)?;
-    record_explicit();
-    Ok(())
-}
-
-/// Activate the license by reading a key from a UTF-8 text file.
-#[pyfunction]
-fn activate_license_file(path: &str) -> PyResult<()> {
-    let contents = std::fs::read_to_string(path)
-        .map_err(|e| PyIOError::new_err(format!("could not read license file: {e}")))?;
-    activate_license_key(contents.trim())
-}
-
-/// Return the current license status. Always succeeds — Trial when no key.
-#[pyfunction]
-fn license_status() -> PyLicenseStatus {
-    let info = pdfluent::license_info();
-    PyLicenseStatus {
-        tier: tier_str(info.tier).to_string(),
-        source: current_source_str().to_string(),
-        output_is_marked: info.output_is_marked,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Module
-// ---------------------------------------------------------------------------
-
 /// High-performance PDF engine — rendering, text extraction, forms, signatures.
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Exception hierarchy
+    m.add("PdfluentError", m.py().get_type::<PdfluentError>())?;
+    m.add("PdfluentParseError", m.py().get_type::<PdfluentParseError>())?;
+    m.add("PdfluentValidationError", m.py().get_type::<PdfluentValidationError>())?;
+    m.add("PdfluentRenderError", m.py().get_type::<PdfluentRenderError>())?;
+    m.add("PdfluentEncryptedError", m.py().get_type::<PdfluentEncryptedError>())?;
+    m.add("PdfluentPageRangeError", m.py().get_type::<PdfluentPageRangeError>())?;
+    m.add("PdfluentIoError", m.py().get_type::<PdfluentIoError>())?;
+    m.add("PdfluentLicenseError", m.py().get_type::<PdfluentLicenseError>())?;
+    m.add("PdfluentGeometryError", m.py().get_type::<PdfluentGeometryError>())?;
+    m.add("PdfluentLimitError", m.py().get_type::<PdfluentLimitError>())?;
+    // Classes
     m.add_class::<PyDocument>()?;
     m.add_class::<PyPage>()?;
     m.add_class::<PyRenderedImage>()?;
@@ -1456,13 +1439,10 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFormField>()?;
     m.add_class::<PyAnnotation>()?;
     m.add_class::<PyRedactReport>()?;
-    m.add_class::<PyLicenseStatus>()?;
+    // Functions
     m.add_function(wrap_pyfunction!(open_pdf, m)?)?;
     m.add_function(wrap_pyfunction!(merge_pdfs, m)?)?;
     m.add_function(wrap_pyfunction!(validate_pdfa, m)?)?;
     m.add_function(wrap_pyfunction!(decrypt_pdf, m)?)?;
-    m.add_function(wrap_pyfunction!(activate_license_key, m)?)?;
-    m.add_function(wrap_pyfunction!(activate_license_file, m)?)?;
-    m.add_function(wrap_pyfunction!(license_status, m)?)?;
     Ok(())
 }

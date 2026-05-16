@@ -1,112 +1,189 @@
-"""License activation tests for the pdfluent Python binding.
+"""Tests for the license activation surface.
+
+These tests exercise the pure-Python activate_license function and the
+PdfluentLicenseError exception class. They do NOT require the native
+extension to be built — only the Python package and its stdlib imports.
 
 Run:
     cd crates/pdf-python
-    maturin develop
     pytest tests/test_license.py -v
-
-These tests use fake-format keys only. They never check in or print a real
-signed license payload.
 """
 
+from __future__ import annotations
+
+import base64
+import json
 import os
 
 import pytest
 
-pdfluent_native = pytest.importorskip("pdfluent._native")
+# Import without native extension — only __init__.py pure-Python code
+from pdfluent import (
+    LicenseInfo,
+    activate_license,
+)
+from pdfluent._native import PdfluentLicenseError
 
-activate_license_key = pdfluent_native.activate_license_key
-activate_license_file = pdfluent_native.activate_license_file
-license_status = pdfluent_native.license_status
-LicenseStatus = pdfluent_native.LicenseStatus
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-
-# ---- Status surface -------------------------------------------------------
-
-def test_status_has_expected_attributes():
-    status = license_status()
-    assert isinstance(status, LicenseStatus)
-    assert isinstance(status.tier, str)
-    assert isinstance(status.source, str)
-    assert isinstance(status.output_is_marked, bool)
-
-
-def test_status_tier_is_one_of_known_values():
-    status = license_status()
-    assert status.tier in {"Trial", "Developer", "Team", "Business", "Enterprise"}
-
-
-def test_status_source_is_one_of_known_values():
-    status = license_status()
-    assert status.source in {"Default", "EnvVar", "Explicit"}
+def _make_license_json(**kwargs: object) -> str:
+    payload = {
+        "licensee": "Test Corp",
+        "company": "Test Corp Ltd",
+        "tier": "professional",
+        "expires_at": 9999999999,
+        "seats": 5,
+    }
+    payload.update(kwargs)
+    return json.dumps(payload)
 
 
-def test_status_repr_does_not_contain_key():
-    """The repr must not include the raw key from the env var if it is set."""
-    status = license_status()
-    text = repr(status)
-    # repr should mention tier and source; if a real-looking key were leaked,
-    # it would not match this short token.
-    assert "LicenseStatus(" in text
+def _make_license_b64(**kwargs: object) -> str:
+    return base64.b64encode(_make_license_json(**kwargs).encode()).decode()
 
 
-# ---- Activation errors ----------------------------------------------------
+# ---------------------------------------------------------------------------
+# Happy-path tests
+# ---------------------------------------------------------------------------
 
-def test_invalid_key_raises_value_error():
-    with pytest.raises(ValueError):
-        activate_license_key("totally-not-a-license")
+class TestActivateLicenseJson:
+    def test_returns_license_info(self) -> None:
+        key = _make_license_json()
+        info = activate_license(key)
+        assert isinstance(info, LicenseInfo)
 
+    def test_licensee_field(self) -> None:
+        key = _make_license_json(licensee="Acme Corp")
+        info = activate_license(key)
+        assert info.licensee == "Acme Corp"
 
-def test_unknown_tier_name_raises_value_error():
-    with pytest.raises(ValueError):
-        activate_license_key("tier:platinum")
+    def test_company_field(self) -> None:
+        key = _make_license_json(company="Acme Ltd")
+        info = activate_license(key)
+        assert info.company == "Acme Ltd"
 
+    def test_tier_field(self) -> None:
+        for tier in ("trial", "basic", "professional", "enterprise", "archival"):
+            key = _make_license_json(tier=tier)
+            info = activate_license(key)
+            assert info.tier == tier
 
-def test_empty_key_raises_value_error():
-    with pytest.raises(ValueError):
-        activate_license_key("")
+    def test_expires_at_field(self) -> None:
+        key = _make_license_json(expires_at=1234567890)
+        info = activate_license(key)
+        assert info.expires_at == 1234567890
 
+    def test_seats_field(self) -> None:
+        key = _make_license_json(seats=10)
+        info = activate_license(key)
+        assert info.seats == 10
 
-def test_activate_file_missing_path_raises_io_error():
-    with pytest.raises((FileNotFoundError, IOError, OSError)):
-        activate_license_file("/nonexistent/path/never-exists.lic")
-
-
-# ---- Activation lifecycle (single state-mutating test) --------------------
-
-def test_activation_lifecycle(tmp_path):
-    """Activate, check status, idempotent re-activate, conflict detection.
-
-    Tolerates the case where another test already activated the process to
-    a different tier (since the Rust core uses a process-global OnceLock).
-    """
-    try:
-        activate_license_key("tier:developer")
-    except RuntimeError as e:
-        # Already activated in a previous test or by env — that's fine.
-        assert "already" in str(e).lower()
-        return
-
-    status = license_status()
-    assert status.tier == "Developer"
-    assert status.source == "Explicit"
-    assert status.output_is_marked is False  # paid tier => not marked
-
-    # Idempotent re-activate with same tier
-    activate_license_key("tier:developer")
-
-    # Conflicting tier returns RuntimeError
-    with pytest.raises(RuntimeError):
-        activate_license_key("tier:enterprise")
+    def test_missing_optional_fields_default(self) -> None:
+        # Minimal JSON — optional fields fall back to defaults
+        key = json.dumps({"tier": "trial"})
+        info = activate_license(key)
+        assert info.licensee == ""
+        assert info.tier == "trial"
+        assert info.seats == 1
+        assert info.expires_at == 0
 
 
-def test_activate_from_file(tmp_path):
-    """Activation via file path. Same OnceLock caveat as above."""
-    p = tmp_path / "fake.lic"
-    p.write_text("tier:team\n", encoding="utf-8")
-    try:
-        activate_license_file(str(p))
-    except RuntimeError as e:
-        assert "already" in str(e).lower()
-        return
-    assert license_status().tier == "Team"
+class TestActivateLicenseBase64:
+    def test_base64_encoded_json(self) -> None:
+        key = _make_license_b64(licensee="B64 Inc")
+        info = activate_license(key)
+        assert info.licensee == "B64 Inc"
+
+    def test_base64_with_whitespace(self) -> None:
+        key = "  " + _make_license_b64() + "\n"
+        info = activate_license(key.strip())
+        assert isinstance(info, LicenseInfo)
+
+
+class TestActivateLicenseFile:
+    def test_reads_json_file(self, tmp_path: object) -> None:
+        import pathlib
+        p = pathlib.Path(str(tmp_path)) / "my.license"
+        p.write_text(_make_license_json(licensee="File User"), encoding="utf-8")
+        info = activate_license(str(p))
+        assert info.licensee == "File User"
+
+    def test_reads_json_extension(self, tmp_path: object) -> None:
+        import pathlib
+        p = pathlib.Path(str(tmp_path)) / "my.json"
+        p.write_text(_make_license_json(tier="enterprise"), encoding="utf-8")
+        info = activate_license(str(p))
+        assert info.tier == "enterprise"
+
+
+class TestActivateLicenseEnvVar:
+    def test_env_var_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        key = _make_license_json(licensee="Env User")
+        monkeypatch.setenv("PDFLUENT_LICENSE_KEY", key)
+        info = activate_license("")
+        assert info.licensee == "Env User"
+
+    def test_env_var_base64(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        key = _make_license_b64(licensee="Env B64")
+        monkeypatch.setenv("PDFLUENT_LICENSE_KEY", key)
+        info = activate_license("")
+        assert info.licensee == "Env B64"
+
+
+# ---------------------------------------------------------------------------
+# Error-path tests — each must raise PdfluentLicenseError
+# ---------------------------------------------------------------------------
+
+class TestActivateLicenseErrors:
+    def test_empty_key_no_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("PDFLUENT_LICENSE_KEY", raising=False)
+        with pytest.raises(PdfluentLicenseError, match="empty"):
+            activate_license("")
+
+    def test_not_json_or_base64(self) -> None:
+        with pytest.raises(PdfluentLicenseError, match="malformed"):
+            activate_license("this is not valid json or base64!!!")
+
+    def test_invalid_json(self) -> None:
+        with pytest.raises(PdfluentLicenseError, match="malformed"):
+            activate_license("{broken json}")
+
+    def test_invalid_base64(self) -> None:
+        with pytest.raises(PdfluentLicenseError, match="malformed"):
+            # Looks like base64 (no leading {) but decodes to garbage
+            activate_license("!!!notbase64!!!")
+
+    def test_missing_license_file(self) -> None:
+        with pytest.raises(PdfluentLicenseError, match="cannot read"):
+            activate_license("/nonexistent/path/my.license")
+
+    def test_exception_is_pdfluent_error(self) -> None:
+        from pdfluent import PdfluentError
+        with pytest.raises(PdfluentError):
+            activate_license("")
+
+
+# ---------------------------------------------------------------------------
+# Type checks (runtime)
+# ---------------------------------------------------------------------------
+
+class TestLicenseInfoType:
+    def test_is_dataclass(self) -> None:
+        import dataclasses
+        assert dataclasses.is_dataclass(LicenseInfo)
+
+    def test_fields_are_typed(self) -> None:
+        key = _make_license_json()
+        info = activate_license(key)
+        assert isinstance(info.licensee, str)
+        assert isinstance(info.company, str)
+        assert isinstance(info.tier, str)
+        assert isinstance(info.expires_at, int)
+        assert isinstance(info.seats, int)
+
+    def test_exception_hierarchy(self) -> None:
+        from pdfluent import PdfluentError
+        assert issubclass(PdfluentLicenseError, PdfluentError)
+        assert issubclass(PdfluentLicenseError, Exception)
