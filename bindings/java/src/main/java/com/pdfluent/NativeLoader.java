@@ -1,87 +1,117 @@
 package com.pdfluent;
 
-import com.sun.jna.Native;
-import com.sun.jna.NativeLibrary;
-
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
+/**
+ * Loads the PDFluent native library ({@code libpdfluent_java}) from the system library
+ * path, the classpath, or an explicit environment-variable path.
+ *
+ * <h2>Load order</h2>
+ * <ol>
+ *   <li><strong>System library path</strong> — {@code java.library.path}.
+ *       Set with {@code -Djava.library.path=/path/to/dir} or the OS-native equivalent
+ *       ({@code LD_LIBRARY_PATH}, {@code DYLD_LIBRARY_PATH}, etc.).</li>
+ *   <li><strong>Environment variable</strong> — {@code PDFLUENT_NATIVE_LIB}.
+ *       Set to the absolute path of the shared library file.</li>
+ *   <li><strong>Classpath extraction</strong> — the library bundled inside the JAR at
+ *       {@code /native/<arch>/libpdfluent_java.<ext>} is extracted to a temporary file
+ *       and loaded. This is the recommended distribution path for the Maven Central
+ *       release artifact; native binaries for each platform are packaged separately.</li>
+ * </ol>
+ *
+ * <h2>Thread safety</h2>
+ * <p>This class is thread-safe. {@link #load()} is guarded by a {@code synchronized}
+ * lock and is idempotent: subsequent calls after the first successful load return
+ * immediately without re-loading the library.
+ *
+ * <h2>Architecture strings</h2>
+ * <p>The classpath path component uses the value of the {@code os.arch} system property.
+ * Common values: {@code aarch64} (Apple Silicon, AWS Graviton), {@code x86_64} / {@code amd64}.
+ */
 final class NativeLoader {
 
-    private static volatile PdfCapiLibrary instance;
-    private static final Object LOCK = new Object();
+    private static volatile boolean loaded = false;
+    private static final String LIB_NAME = "pdfluent_java";
 
-    static PdfCapiLibrary get() {
-        if (instance != null) return instance;
-        synchronized (LOCK) {
-            if (instance != null) return instance;
-            instance = load();
-            return instance;
-        }
+    private NativeLoader() {
+        // utility class; not instantiable
     }
 
-    private static PdfCapiLibrary load() {
-        // 1. Try PDFLUENT_NATIVE_LIB env var (full path to the library file)
-        String envPath = System.getenv("PDFLUENT_NATIVE_LIB");
-        if (envPath != null && !envPath.isEmpty()) {
-            NativeLibrary.addSearchPath("pdf_capi", new File(envPath).getParent());
+    /**
+     * Load the native library. Idempotent: safe to call from multiple threads and
+     * from multiple class instances.
+     *
+     * @throws UnsatisfiedLinkError if the library cannot be found or loaded from any
+     *                              of the three search locations
+     */
+    static synchronized void load() {
+        if (loaded) {
+            return;
         }
 
-        // 2. Try classpath resource extraction
-        String resourcePath = resourcePathForPlatform();
-        if (resourcePath != null) {
-            URL resource = NativeLoader.class.getResource(resourcePath);
-            if (resource != null) {
-                try {
-                    Path tmp = extractToTemp(resource, libraryFilename());
-                    NativeLibrary.addSearchPath("pdf_capi", tmp.getParent().toString());
-                } catch (IOException ignored) {
-                    // fall through to jna.library.path / java.library.path
-                }
+        // 1. System library path
+        try {
+            System.loadLibrary(LIB_NAME);
+            loaded = true;
+            return;
+        } catch (UnsatisfiedLinkError ignored) {
+            // fall through
+        }
+
+        // 2. PDFLUENT_NATIVE_LIB environment variable
+        String envPath = System.getenv("PDFLUENT_NATIVE_LIB");
+        if (envPath != null) {
+            try {
+                System.load(envPath);
+                loaded = true;
+                return;
+            } catch (UnsatisfiedLinkError ignored) {
+                // fall through
             }
         }
 
-        return Native.load("pdf_capi", PdfCapiLibrary.class);
-    }
+        // 3. Classpath extraction (JAR-bundled binary)
+        String osName = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+        String osArch = System.getProperty("os.arch", "").toLowerCase(java.util.Locale.ROOT);
 
-    private static String resourcePathForPlatform() {
-        String os = System.getProperty("os.name", "").toLowerCase();
-        String arch = System.getProperty("os.arch", "").toLowerCase();
-        String qualifier;
-        if (os.contains("mac") || os.contains("darwin")) {
-            qualifier = arch.contains("aarch64") || arch.contains("arm") ? "osx-aarch64" : "osx-x86_64";
-        } else if (os.contains("linux")) {
-            qualifier = arch.contains("aarch64") ? "linux-aarch64" : "linux-x86_64";
-        } else if (os.contains("win")) {
-            qualifier = "win-x86_64";
+        // Normalise amd64 → x86_64 to match Rust target triple convention
+        if ("amd64".equals(osArch)) {
+            osArch = "x86_64";
+        }
+
+        String libFileName;
+        if (osName.contains("mac") || osName.contains("darwin")) {
+            libFileName = "lib" + LIB_NAME + ".dylib";
+        } else if (osName.contains("win")) {
+            libFileName = LIB_NAME + ".dll";
         } else {
-            return null;
+            libFileName = "lib" + LIB_NAME + ".so";
         }
-        return "/native/" + qualifier + "/" + libraryFilename();
-    }
 
-    private static String libraryFilename() {
-        String os = System.getProperty("os.name", "").toLowerCase();
-        if (os.contains("win")) return "pdf_capi.dll";
-        if (os.contains("mac") || os.contains("darwin")) return "libpdf_capi.dylib";
-        return "libpdf_capi.so";
-    }
+        String resourcePath = "/native/" + osArch + "/" + libFileName;
 
-    private static Path extractToTemp(URL resource, String filename) throws IOException {
-        Path tempDir = Files.createTempDirectory("pdfluent-native-");
-        Path target = tempDir.resolve(filename);
-        try (InputStream in = resource.openStream()) {
-            Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+        try (InputStream is = NativeLoader.class.getResourceAsStream(resourcePath)) {
+            if (is != null) {
+                Path tempFile = Files.createTempFile("pdfluent_java_", libFileName);
+                Files.copy(is, tempFile, StandardCopyOption.REPLACE_EXISTING);
+                tempFile.toFile().deleteOnExit();
+                System.load(tempFile.toString());
+                loaded = true;
+                return;
+            }
+        } catch (IOException | UnsatisfiedLinkError ignored) {
+            // fall through
         }
-        target.toFile().deleteOnExit();
-        tempDir.toFile().deleteOnExit();
-        return target;
-    }
 
-    private NativeLoader() {}
+        throw new UnsatisfiedLinkError(
+            "Failed to load native library '" + LIB_NAME + "'. "
+            + "Options:\n"
+            + "  1. Set -Djava.library.path to the directory containing " + libFileName + "\n"
+            + "  2. Set the PDFLUENT_NATIVE_LIB environment variable to the full library path\n"
+            + "  3. Bundle the library in the JAR at classpath " + resourcePath);
+    }
 }
