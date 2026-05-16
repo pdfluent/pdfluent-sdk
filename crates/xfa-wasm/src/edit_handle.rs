@@ -71,11 +71,9 @@ impl PdfDocMut {
     /// Rotate a single page by 90/180/270 (or negative). Multiples of 90 only.
     #[wasm_bindgen(js_name = "rotatePage")]
     pub fn rotate_page(&mut self, page_index: u32, degrees: i32) -> Result<(), JsError> {
-        let normalised = ((degrees % 360) + 360) % 360;
+        let normalised = degrees.rem_euclid(360);
         if normalised % 90 != 0 {
-            return Err(JsError::new(
-                "rotatePage: degrees must be a multiple of 90",
-            ));
+            return Err(JsError::new("rotatePage: degrees must be a multiple of 90"));
         }
         pdf_manip::pages::rotate_page(
             &mut self.doc,
@@ -258,10 +256,8 @@ impl PdfDocMut {
         w: f64,
         h: f64,
     ) -> Result<(), JsError> {
-        let area = pdf_redact::RedactionArea::new(
-            page_index.saturating_add(1),
-            [x, y, x + w, y + h],
-        );
+        let area =
+            pdf_redact::RedactionArea::new(page_index.saturating_add(1), [x, y, x + w, y + h]);
         let mut redactor = pdf_redact::Redactor::new();
         redactor.mark(area);
         redactor
@@ -345,14 +341,18 @@ fn set_text_field_inplace(
         let catalog_dict = catalog
             .as_dict()
             .map_err(|e| JsError::new(&format!("setFormField: catalog not a dict: {e}")))?;
-        let af = catalog_dict
-            .get(b"AcroForm")
-            .map_err(|_| JsError::new(&format!("setFormField: field '{name}' not found (no AcroForm)")))?;
+        let af = catalog_dict.get(b"AcroForm").map_err(|_| {
+            JsError::new(&format!(
+                "setFormField: field '{name}' not found (no AcroForm)"
+            ))
+        })?;
         match af {
             Object::Reference(id) => *id,
-            _ => return Err(JsError::new(
-                "setFormField: inline /AcroForm not supported (use indirect)",
-            )),
+            _ => {
+                return Err(JsError::new(
+                    "setFormField: inline /AcroForm not supported (use indirect)",
+                ))
+            }
         }
     };
 
@@ -363,9 +363,11 @@ fn set_text_field_inplace(
         let af_dict = acroform
             .as_dict()
             .map_err(|e| JsError::new(&format!("setFormField: AcroForm not a dict: {e}")))?;
-        let fields = af_dict
-            .get(b"Fields")
-            .map_err(|_| JsError::new(&format!("setFormField: field '{name}' not found (no /Fields)")))?;
+        let fields = af_dict.get(b"Fields").map_err(|_| {
+            JsError::new(&format!(
+                "setFormField: field '{name}' not found (no /Fields)"
+            ))
+        })?;
         let arr = match fields {
             Object::Array(a) => a.clone(),
             Object::Reference(id) => {
@@ -374,16 +376,10 @@ fn set_text_field_inplace(
                     .map_err(|e| JsError::new(&format!("setFormField: /Fields ref: {e}")))?;
                 match obj {
                     Object::Array(a) => a.clone(),
-                    _ => {
-                        return Err(JsError::new(
-                            "setFormField: /Fields is not an array",
-                        ))
-                    }
+                    _ => return Err(JsError::new("setFormField: /Fields is not an array")),
                 }
             }
-            _ => {
-                return Err(JsError::new("setFormField: /Fields is not an array"))
-            }
+            _ => return Err(JsError::new("setFormField: /Fields is not an array")),
         };
         arr.into_iter()
             .filter_map(|o| match o {

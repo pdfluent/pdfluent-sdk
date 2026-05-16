@@ -9,8 +9,18 @@ use lopdf::{Document, Object, ObjectId};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-/// Approximate character width as a fraction of font size.
+/// Approximate character width as a fraction of font size. Used when no font metric is available.
 const APPROX_CHAR_WIDTH: f64 = 0.5;
+
+/// Whether a text span's width was computed from real font metrics or estimated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WidthSource {
+    /// Width derived from the font's actual glyph advance data (`/Widths`, hmtx, CFF).
+    Metric,
+    /// Width estimated at `APPROX_CHAR_WIDTH × font_size` — no glyph metric available.
+    #[default]
+    Estimate,
+}
 
 /// A block of text extracted from a page.
 #[derive(Debug, Clone, Default)]
@@ -50,6 +60,14 @@ pub struct TextBlock {
     /// operator emitted this block. `None` for color spaces we cannot map
     /// without rendering (ICC, Lab, Pattern, Separation, DeviceN).
     pub color: Option<[u8; 4]>,
+
+    // ---- G2 glyph-level metrics ----
+    /// Whether glyph widths were measured from real font advance data or estimated.
+    pub width_source: WidthSource,
+    /// Per-glyph bounding boxes in PDF user-space coordinates, one entry per
+    /// source glyph (not per Unicode scalar — ligatures count as one).
+    /// `[x0, y0, x1, y1]` where y0 < y1 (PDF coordinate system, y increasing up).
+    pub char_bounds: Vec<[f64; 4]>,
 }
 
 /// A single character with its position on the page.
@@ -150,6 +168,18 @@ struct FontInfo {
     /// G1: Inferred italic style — from FontDescriptor (Flags Italic bit 7)
     /// or BaseFont name heuristics.
     is_italic: bool,
+
+    // ---- G2: per-code advance widths (in 1/1000 em units) ----
+    /// For simple fonts: maps char_code (0–255) to advance width in glyph
+    /// units (1/1000 em). Built from `FirstChar` + `/Widths` array.
+    /// Empty when the font dict has no `/Widths` or the data is malformed.
+    simple_widths: Box<[Option<f32>; 256]>,
+    /// Default width for CID glyphs (PDF §9.7.4.3). Used when no explicit
+    /// entry is found in `cid_widths`. PDF default = 1000.
+    cid_default_width: f32,
+    /// For Type0 fonts: maps CID → advance width (glyph units).
+    /// Built from the `/W` array of the first DescendantFont.
+    cid_widths: HashMap<u32, f32>,
 }
 
 /// Strip a 6-character subset prefix (e.g. `AAAAAA+Helvetica` → `Helvetica`).
@@ -169,10 +199,7 @@ const FONT_FLAG_FORCE_BOLD: u32 = 1 << 18;
 /// Derive `(base_font, is_bold, is_italic)` from a font dict + its descriptor.
 /// All three values are best-effort; missing data is the documented fallback
 /// per ROUND1_API_DESIGN.md.
-fn derive_font_style(
-    doc: &Document,
-    font: &lopdf::Dictionary,
-) -> (Option<String>, bool, bool) {
+fn derive_font_style(doc: &Document, font: &lopdf::Dictionary) -> (Option<String>, bool, bool) {
     let base_font_raw = font.get(b"BaseFont").ok().and_then(|o| match o {
         Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()),
         _ => None,
@@ -214,7 +241,11 @@ fn derive_font_style(
         })
         .unwrap_or((false, false));
 
-    (base_font, desc_bold || name_bold, desc_italic || name_italic)
+    (
+        base_font,
+        desc_bold || name_bold,
+        desc_italic || name_italic,
+    )
 }
 
 /// Convert a [0.0, 1.0] PDF color component to a u8 channel, clamping.
@@ -245,14 +276,186 @@ fn cmyk_to_rgba(c: f64, m: f64, y: f64, k: f64) -> [u8; 4] {
 /// `pdf-interpret::FallbackFontQuery::new` rules.
 fn name_style_hints(name: &str) -> (bool, bool) {
     let lower = name.to_ascii_lowercase();
-    let italic =
-        lower.contains("italic") || lower.contains("oblique") || lower.contains("slant");
+    let italic = lower.contains("italic") || lower.contains("oblique") || lower.contains("slant");
     let bold = lower.contains("bold")
         || lower.contains("demi")
         || lower.contains("semibold")
         || lower.contains("heavy")
         || lower.contains("black");
     (bold, italic)
+}
+
+/// Look up the glyph advance width for `char_code` in `fi`, returning
+/// `Some(width_in_glyph_units)` (1/1000 em) when font metric data is
+/// present, or `None` when only the 50%-em estimate is available.
+///
+/// For CID fonts the 2-byte char code is passed as-is (big-endian u32).
+fn font_glyph_advance(fi: &FontInfo, char_code: u32) -> Option<f32> {
+    if fi.is_cid {
+        fi.cid_widths
+            .get(&char_code)
+            .copied()
+            .or(if fi.cid_default_width > 0.0 {
+                Some(fi.cid_default_width)
+            } else {
+                None
+            })
+    } else {
+        fi.simple_widths.get(char_code as usize).and_then(|w| *w)
+    }
+}
+
+/// Returns `true` when `fi` has at least one real glyph-width entry so we
+/// can set `WidthSource::Metric` on the resulting block.
+fn fi_has_metrics(fi: &FontInfo) -> bool {
+    if fi.is_cid {
+        // DW is always a real value from the PDF (default 1000 when missing).
+        true
+    } else {
+        fi.simple_widths.iter().any(|w| w.is_some())
+    }
+}
+
+/// Compute per-glyph advance widths (in user space) for a raw PDF byte string.
+///
+/// Returns `(advances, width_source)` where `advances` contains one entry per
+/// source glyph (1-byte for simple fonts, 2-byte pairs for CID).  Each entry
+/// already factors in `Tz` (horizontal scaling) and `Tc`/`Tw` spacing.
+///
+/// The caller is responsible for applying TJ kerning offsets *between* calls.
+fn compute_glyph_advances(
+    bytes: &[u8],
+    fi: &FontInfo,
+    font_size: f64,
+    tc: f64,
+    tw: f64,
+    th: f64,
+) -> (Vec<f64>, WidthSource) {
+    let has_metrics = fi_has_metrics(fi);
+    let width_source = if has_metrics {
+        WidthSource::Metric
+    } else {
+        WidthSource::Estimate
+    };
+    let approx = APPROX_CHAR_WIDTH * 1000.0; // fallback in glyph units
+
+    let mut advances = Vec::new();
+
+    if fi.is_cid {
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            let code = u16::from_be_bytes([bytes[i], bytes[i + 1]]) as u32;
+            i += 2;
+            let glyph_w = font_glyph_advance(fi, code).unwrap_or(approx as f32);
+            let adv = glyph_w as f64 / 1000.0 * font_size * (th / 100.0) + tc;
+            advances.push(adv);
+        }
+    } else {
+        for &b in bytes {
+            let glyph_w = if has_metrics {
+                font_glyph_advance(fi, b as u32).unwrap_or(approx as f32)
+            } else {
+                approx as f32
+            };
+            let extra_word = if b == 0x20 { tw } else { 0.0 };
+            let adv = glyph_w as f64 / 1000.0 * font_size * (th / 100.0) + tc + extra_word;
+            advances.push(adv);
+        }
+    }
+
+    (advances, width_source)
+}
+
+/// Compact text-state parameters passed into the char-bounds helpers.
+struct GlyphCtx {
+    font_size: f64,
+    tc: f64,
+    tw: f64,
+    th: f64,
+}
+
+/// Build char bounds for a Tj string. Returns `(char_bounds, width_source, total_advance)`.
+fn char_bounds_from_bytes(
+    bytes: &[u8],
+    fi: &FontInfo,
+    x: f64,
+    y: f64,
+    ctx: &GlyphCtx,
+) -> (Vec<[f64; 4]>, WidthSource, f64) {
+    let (advances, ws) = compute_glyph_advances(bytes, fi, ctx.font_size, ctx.tc, ctx.tw, ctx.th);
+    let mut cx = x;
+    let mut bounds = Vec::with_capacity(advances.len());
+    for adv in &advances {
+        bounds.push([cx, y, cx + adv, y + ctx.font_size]);
+        cx += adv;
+    }
+    (bounds, ws, cx - x)
+}
+
+/// Build char bounds for a TJ array, returning `(char_bounds, width_source, x_end)`.
+///
+/// TJ items are either strings (glyph runs) or numbers (kerning offsets in
+/// thousandths of an em).  Kerning offsets shift the current position and are
+/// NOT included as separate char_bounds entries.
+fn char_bounds_from_tj_array(
+    arr: &[Object],
+    fi: &FontInfo,
+    x_start: f64,
+    y: f64,
+    ctx: &GlyphCtx,
+) -> (Vec<[f64; 4]>, WidthSource, f64) {
+    let font_size = ctx.font_size;
+    let tc = ctx.tc;
+    let tw = ctx.tw;
+    let th = ctx.th;
+    let has_metrics = fi_has_metrics(fi);
+    let width_source = if has_metrics {
+        WidthSource::Metric
+    } else {
+        WidthSource::Estimate
+    };
+    let approx = APPROX_CHAR_WIDTH * 1000.0_f64;
+
+    let mut bounds = Vec::new();
+    let mut cx = x_start;
+
+    for item in arr {
+        match item {
+            Object::String(bytes, _) => {
+                if fi.is_cid {
+                    let mut i = 0;
+                    while i + 1 < bytes.len() {
+                        let code = u16::from_be_bytes([bytes[i], bytes[i + 1]]) as u32;
+                        i += 2;
+                        let glyph_w = font_glyph_advance(fi, code).unwrap_or(approx as f32) as f64;
+                        let adv = glyph_w / 1000.0 * font_size * (th / 100.0) + tc;
+                        bounds.push([cx, y, cx + adv, y + font_size]);
+                        cx += adv;
+                    }
+                } else {
+                    for &b in bytes.iter() {
+                        let glyph_w = if has_metrics {
+                            font_glyph_advance(fi, b as u32).unwrap_or(approx as f32) as f64
+                        } else {
+                            approx
+                        };
+                        let extra_word = if b == 0x20 { tw } else { 0.0 };
+                        let adv = glyph_w / 1000.0 * font_size * (th / 100.0) + tc + extra_word;
+                        bounds.push([cx, y, cx + adv, y + font_size]);
+                        cx += adv;
+                    }
+                }
+            }
+            _ => {
+                if let Some(adj) = as_number(item) {
+                    // Negative shifts right (standard kerning), positive shifts left.
+                    cx -= adj / 1000.0 * font_size * (th / 100.0);
+                }
+            }
+        }
+    }
+
+    (bounds, width_source, cx)
 }
 
 /// Build a map from font resource name (e.g. "F1") to FontInfo for a page.
@@ -338,6 +541,8 @@ fn build_font_map(doc: &Document, page_id: ObjectId) -> HashMap<String, FontInfo
 
         let (base_font, is_bold, is_italic) = derive_font_style(doc, &font);
 
+        let (simple_widths, cid_default_width, cid_widths) = parse_font_widths(doc, &font, is_cid);
+
         map.insert(
             font_name,
             FontInfo {
@@ -348,11 +553,155 @@ fn build_font_map(doc: &Document, page_id: ObjectId) -> HashMap<String, FontInfo
                 base_font,
                 is_bold,
                 is_italic,
+                simple_widths,
+                cid_default_width,
+                cid_widths,
             },
         );
     }
 
     map
+}
+
+/// Parse glyph advance widths from a font dictionary.
+///
+/// Returns `(simple_widths, cid_default_width, cid_widths)`.
+/// - `simple_widths`: per-code widths for simple fonts (1/1000 em; code 0–255).
+/// - `cid_default_width`: `/DW` from the DescendantFont (default 1000).
+/// - `cid_widths`: CID→width map from `/W` array of the DescendantFont.
+fn parse_font_widths(
+    doc: &Document,
+    font: &lopdf::Dictionary,
+    is_cid: bool,
+) -> (Box<[Option<f32>; 256]>, f32, HashMap<u32, f32>) {
+    if is_cid {
+        let (dw, cid_map) = parse_cid_widths(doc, font);
+        return (Box::new([None; 256]), dw, cid_map);
+    }
+
+    // Simple font: /FirstChar + /Widths
+    let first_char = match font.get(b"FirstChar").ok() {
+        Some(Object::Integer(n)) => *n as usize,
+        _ => return (Box::new([None; 256]), 1000.0, HashMap::new()),
+    };
+
+    let widths_arr = match font.get(b"Widths").ok() {
+        Some(Object::Array(a)) => a.clone(),
+        Some(Object::Reference(r)) => match doc.get_object(*r).ok() {
+            Some(Object::Array(a)) => a.clone(),
+            _ => return (Box::new([None; 256]), 1000.0, HashMap::new()),
+        },
+        _ => return (Box::new([None; 256]), 1000.0, HashMap::new()),
+    };
+
+    let mut simple_widths = Box::new([None::<f32>; 256]);
+    for (i, obj) in widths_arr.iter().enumerate() {
+        let code = first_char + i;
+        if code > 255 {
+            break;
+        }
+        let w = match obj {
+            Object::Integer(n) => *n as f32,
+            Object::Real(n) => *n,
+            _ => continue,
+        };
+        simple_widths[code] = Some(w);
+    }
+
+    (simple_widths, 1000.0, HashMap::new())
+}
+
+/// Parse the `/W` array (run-length CID width encoding) and `/DW` from a
+/// Type0 font's DescendantFonts array.
+fn parse_cid_widths(doc: &Document, font: &lopdf::Dictionary) -> (f32, HashMap<u32, f32>) {
+    let descendants = match font.get(b"DescendantFonts").ok() {
+        Some(Object::Array(a)) => a.clone(),
+        Some(Object::Reference(r)) => match doc.get_object(*r).ok() {
+            Some(Object::Array(a)) => a.clone(),
+            _ => return (1000.0, HashMap::new()),
+        },
+        _ => return (1000.0, HashMap::new()),
+    };
+
+    let desc_dict = match descendants.first() {
+        Some(Object::Reference(r)) => match doc.get_object(*r).ok() {
+            Some(Object::Dictionary(d)) => d.clone(),
+            _ => return (1000.0, HashMap::new()),
+        },
+        Some(Object::Dictionary(d)) => d.clone(),
+        _ => return (1000.0, HashMap::new()),
+    };
+
+    let dw = match desc_dict.get(b"DW").ok() {
+        Some(Object::Integer(n)) => *n as f32,
+        Some(Object::Real(n)) => *n,
+        _ => 1000.0,
+    };
+
+    let w_arr = match desc_dict.get(b"W").ok() {
+        Some(Object::Array(a)) => a.clone(),
+        Some(Object::Reference(r)) => match doc.get_object(*r).ok() {
+            Some(Object::Array(a)) => a.clone(),
+            _ => return (dw, HashMap::new()),
+        },
+        _ => return (dw, HashMap::new()),
+    };
+
+    // PDF §9.7.4.3  /W: [ c [w1 w2 …] | c1 c2 w | … ]
+    let mut map = HashMap::new();
+    let mut idx = 0;
+    while idx < w_arr.len() {
+        let cid_start = match &w_arr[idx] {
+            Object::Integer(n) => *n as u32,
+            _ => {
+                idx += 1;
+                continue;
+            }
+        };
+        idx += 1;
+        if idx >= w_arr.len() {
+            break;
+        }
+        match &w_arr[idx] {
+            Object::Array(widths) => {
+                // [ cid [w1 w2 …] ] — one width per consecutive CID
+                for (i, wobj) in widths.iter().enumerate() {
+                    let w = match wobj {
+                        Object::Integer(n) => *n as f32,
+                        Object::Real(n) => *n,
+                        _ => continue,
+                    };
+                    map.insert(cid_start + i as u32, w);
+                }
+                idx += 1;
+            }
+            Object::Integer(c2) => {
+                // [ cid_first cid_last w ] — same width for a range
+                let cid_end = *c2 as u32;
+                idx += 1;
+                if idx >= w_arr.len() {
+                    break;
+                }
+                let w = match &w_arr[idx] {
+                    Object::Integer(n) => *n as f32,
+                    Object::Real(n) => *n,
+                    _ => {
+                        idx += 1;
+                        continue;
+                    }
+                };
+                for cid in cid_start..=cid_end {
+                    map.insert(cid, w);
+                }
+                idx += 1;
+            }
+            _ => {
+                idx += 1;
+            }
+        }
+    }
+
+    (dw, map)
 }
 
 /// Parse the ToUnicode CMap from a font dictionary.
@@ -1775,73 +2124,118 @@ fn extract_blocks_from_ops_inner(
             "Tj" => {
                 let fi = font_map.get(&state.font_name);
                 if let Some(text) = extract_decoded_string_operand_with_font(&op.operands, fi) {
-                    let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
+                    let raw = op.operands.iter().find_map(|o| {
+                        if let Object::String(b, _) = o {
+                            Some(b.as_slice())
+                        } else {
+                            None
+                        }
+                    });
 
-                    // Skip empty text blocks (consistent with TJ handler) — empty
-                    // blocks carry position but no data, causing phantom table
+                    // G2: compute char_bounds + width_source from raw bytes.
+                    let x = state.tm[4];
+                    let y = state.tm[5];
+                    let gctx = GlyphCtx {
+                        font_size: state.font_size,
+                        tc: state.tc,
+                        tw: state.tw,
+                        th: state.th,
+                    };
+                    let (char_bounds, width_source, total_adv) = match (raw, fi) {
+                        (Some(raw), Some(fi)) => {
+                            let (cb, ws, adv) = char_bounds_from_bytes(raw, fi, x, y, &gctx);
+                            (cb, ws, adv)
+                        }
+                        _ => {
+                            let cw = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
+                            let n = text.glyph_count();
+                            let cb = (0..n)
+                                .map(|i| {
+                                    let cx = x + i as f64 * cw;
+                                    [cx, y, cx + cw, y + state.font_size]
+                                })
+                                .collect();
+                            (cb, WidthSource::Estimate, n as f64 * cw)
+                        }
+                    };
+
+                    // Skip empty text blocks — empty blocks cause phantom table
                     // detection with all-empty cells (#651).
                     if !text.is_empty() {
-                        let x = state.tm[4];
-                        let y = state.tm[5];
-                        // Bbox width tracks the *rendered* glyph footprint
-                        // (one char_w per source glyph), not the byte- or
-                        // char-length of the decomposed display string.
-                        let text_width = text.glyph_count() as f64 * char_w;
                         let display_text = maybe_decompose_decoded(&text);
                         blocks.push(TextBlock {
                             text: display_text,
                             page,
-                            bbox: [x, y, x + text_width, y + state.font_size],
+                            bbox: [x, y, x + total_adv, y + state.font_size],
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
                             actual_text: current_actual_text(&mc_stack, inherited_actual_text),
                             base_font: font_map
                                 .get(&state.font_name)
                                 .and_then(|fi| fi.base_font.clone()),
-                            is_bold: font_map
-                                .get(&state.font_name)
-                                .is_some_and(|fi| fi.is_bold),
+                            is_bold: font_map.get(&state.font_name).is_some_and(|fi| fi.is_bold),
                             is_italic: font_map
                                 .get(&state.font_name)
                                 .is_some_and(|fi| fi.is_italic),
                             color: state.fill_color,
+                            width_source,
+                            char_bounds,
                         });
                     }
 
-                    // Advance text position.
-                    for _ in text.iter() {
-                        state.tm[4] += char_w + state.tc;
-                    }
+                    state.tm[4] = x + total_adv;
                 }
             }
             "TJ" => {
                 if let Some(Object::Array(ref arr)) = op.operands.first() {
                     let x_start = state.tm[4];
                     let y = state.tm[5];
-                    let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
-                    let mut combined_text = DecodedPdfString::default();
                     let fi = font_map.get(&state.font_name);
 
+                    // G2: compute char_bounds + width_source from the raw TJ array.
+                    let gctx = GlyphCtx {
+                        font_size: state.font_size,
+                        tc: state.tc,
+                        tw: state.tw,
+                        th: state.th,
+                    };
+                    let (char_bounds, width_source, x_end) = match fi {
+                        Some(fi) => char_bounds_from_tj_array(arr, fi, x_start, y, &gctx),
+                        None => {
+                            let cw = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
+                            // Estimate: count glyphs from string items only.
+                            let mut cx = x_start;
+                            let mut cb = Vec::new();
+                            for item in arr {
+                                if let Object::String(bytes, _) = item {
+                                    let n = if fi.map(|f| f.is_cid).unwrap_or(false) {
+                                        bytes.len() / 2
+                                    } else {
+                                        bytes.len()
+                                    };
+                                    for _ in 0..n {
+                                        cb.push([cx, y, cx + cw, y + state.font_size]);
+                                        cx += cw + state.tc;
+                                    }
+                                } else if let Some(adj) = as_number(item) {
+                                    cx -= adj / 1000.0 * state.font_size;
+                                }
+                            }
+                            (cb, WidthSource::Estimate, cx)
+                        }
+                    };
+
+                    // Decode combined text for the block.
+                    let mut combined_text = DecodedPdfString::default();
                     for item in arr {
-                        match item {
-                            Object::String(bytes, _) => {
-                                let text = decode_pdf_string_with_font_marked(bytes, fi);
-                                for _ in text.iter() {
-                                    state.tm[4] += char_w + state.tc;
-                                }
-                                combined_text.extend(text);
-                            }
-                            _ => {
-                                if let Some(adj) = as_number(item) {
-                                    // Negative values move right, positive move left.
-                                    state.tm[4] -= adj / 1000.0 * state.font_size;
-                                }
-                            }
+                        if let Object::String(bytes, _) = item {
+                            combined_text.extend(decode_pdf_string_with_font_marked(bytes, fi));
                         }
                     }
 
+                    state.tm[4] = x_end;
+
                     if !combined_text.is_empty() {
-                        let x_end = state.tm[4];
                         blocks.push(TextBlock {
                             text: maybe_decompose_decoded(&combined_text),
                             page,
@@ -1852,13 +2246,13 @@ fn extract_blocks_from_ops_inner(
                             base_font: font_map
                                 .get(&state.font_name)
                                 .and_then(|fi| fi.base_font.clone()),
-                            is_bold: font_map
-                                .get(&state.font_name)
-                                .is_some_and(|fi| fi.is_bold),
+                            is_bold: font_map.get(&state.font_name).is_some_and(|fi| fi.is_bold),
                             is_italic: font_map
                                 .get(&state.font_name)
                                 .is_some_and(|fi| fi.is_italic),
                             color: state.fill_color,
+                            width_source,
+                            char_bounds,
                         });
                     }
                 }
@@ -1871,38 +2265,62 @@ fn extract_blocks_from_ops_inner(
 
                 let fi = font_map.get(&state.font_name);
                 if let Some(text) = extract_decoded_string_operand_with_font(&op.operands, fi) {
-                    let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
+                    let raw = op.operands.iter().find_map(|o| {
+                        if let Object::String(b, _) = o {
+                            Some(b.as_slice())
+                        } else {
+                            None
+                        }
+                    });
+                    let x = state.tm[4];
+                    let y = state.tm[5];
+                    let gctx = GlyphCtx {
+                        font_size: state.font_size,
+                        tc: state.tc,
+                        tw: state.tw,
+                        th: state.th,
+                    };
+                    let (char_bounds, width_source, total_adv) = match (raw, fi) {
+                        (Some(raw), Some(fi)) => {
+                            let (cb, ws, adv) = char_bounds_from_bytes(raw, fi, x, y, &gctx);
+                            (cb, ws, adv)
+                        }
+                        _ => {
+                            let cw = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
+                            let n = text.glyph_count();
+                            let cb = (0..n)
+                                .map(|i| {
+                                    let cx = x + i as f64 * cw;
+                                    [cx, y, cx + cw, y + state.font_size]
+                                })
+                                .collect();
+                            (cb, WidthSource::Estimate, n as f64 * cw)
+                        }
+                    };
 
                     if !text.is_empty() {
-                        let x = state.tm[4];
-                        let y = state.tm[5];
-                        // Bbox width tracks rendered glyph footprint (one
-                        // char_w per source glyph) — match the Tj path.
-                        let text_width = text.glyph_count() as f64 * char_w;
                         let display_text = maybe_decompose_decoded(&text);
                         blocks.push(TextBlock {
                             text: display_text,
                             page,
-                            bbox: [x, y, x + text_width, y + state.font_size],
+                            bbox: [x, y, x + total_adv, y + state.font_size],
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
                             actual_text: current_actual_text(&mc_stack, inherited_actual_text),
                             base_font: font_map
                                 .get(&state.font_name)
                                 .and_then(|fi| fi.base_font.clone()),
-                            is_bold: font_map
-                                .get(&state.font_name)
-                                .is_some_and(|fi| fi.is_bold),
+                            is_bold: font_map.get(&state.font_name).is_some_and(|fi| fi.is_bold),
                             is_italic: font_map
                                 .get(&state.font_name)
                                 .is_some_and(|fi| fi.is_italic),
                             color: state.fill_color,
+                            width_source,
+                            char_bounds,
                         });
                     }
 
-                    for _ in text.iter() {
-                        state.tm[4] += char_w + state.tc;
-                    }
+                    state.tm[4] = x + total_adv;
                 }
             }
             "\"" if op.operands.len() >= 3 => {
@@ -1921,38 +2339,62 @@ fn extract_blocks_from_ops_inner(
                 let fi = font_map.get(&state.font_name);
                 if let Some(text) = extract_decoded_string_operand_with_font(&op.operands[2..], fi)
                 {
-                    let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
+                    let raw = op.operands[2..].iter().find_map(|o| {
+                        if let Object::String(b, _) = o {
+                            Some(b.as_slice())
+                        } else {
+                            None
+                        }
+                    });
+                    let x = state.tm[4];
+                    let y = state.tm[5];
+                    let gctx = GlyphCtx {
+                        font_size: state.font_size,
+                        tc: state.tc,
+                        tw: state.tw,
+                        th: state.th,
+                    };
+                    let (char_bounds, width_source, total_adv) = match (raw, fi) {
+                        (Some(raw), Some(fi)) => {
+                            let (cb, ws, adv) = char_bounds_from_bytes(raw, fi, x, y, &gctx);
+                            (cb, ws, adv)
+                        }
+                        _ => {
+                            let cw = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
+                            let n = text.glyph_count();
+                            let cb = (0..n)
+                                .map(|i| {
+                                    let cx = x + i as f64 * cw;
+                                    [cx, y, cx + cw, y + state.font_size]
+                                })
+                                .collect();
+                            (cb, WidthSource::Estimate, n as f64 * cw)
+                        }
+                    };
 
                     if !text.is_empty() {
-                        let x = state.tm[4];
-                        let y = state.tm[5];
-                        // Bbox width tracks rendered glyph footprint
-                        // (one char_w per source glyph) — match Tj path.
-                        let text_width = text.glyph_count() as f64 * char_w;
                         let display_text = maybe_decompose_decoded(&text);
                         blocks.push(TextBlock {
                             text: display_text,
                             page,
-                            bbox: [x, y, x + text_width, y + state.font_size],
+                            bbox: [x, y, x + total_adv, y + state.font_size],
                             font_name: state.font_name.clone(),
                             font_size: state.font_size,
                             actual_text: current_actual_text(&mc_stack, inherited_actual_text),
                             base_font: font_map
                                 .get(&state.font_name)
                                 .and_then(|fi| fi.base_font.clone()),
-                            is_bold: font_map
-                                .get(&state.font_name)
-                                .is_some_and(|fi| fi.is_bold),
+                            is_bold: font_map.get(&state.font_name).is_some_and(|fi| fi.is_bold),
                             is_italic: font_map
                                 .get(&state.font_name)
                                 .is_some_and(|fi| fi.is_italic),
                             color: state.fill_color,
+                            width_source,
+                            char_bounds,
                         });
                     }
 
-                    for _ in text.iter() {
-                        state.tm[4] += char_w + state.tc;
-                    }
+                    state.tm[4] = x + total_adv;
                 }
             }
             "BMC" => {
@@ -2147,6 +2589,7 @@ fn build_font_info_from_value(doc: &Document, value: &Object) -> Option<FontInfo
     };
 
     let (base_font, is_bold, is_italic) = derive_font_style(doc, &font);
+    let (simple_widths, cid_default_width, cid_widths) = parse_font_widths(doc, &font, is_cid);
 
     Some(FontInfo {
         is_cid,
@@ -2156,6 +2599,9 @@ fn build_font_info_from_value(doc: &Document, value: &Object) -> Option<FontInfo
         base_font,
         is_bold,
         is_italic,
+        simple_widths,
+        cid_default_width,
+        cid_widths,
     })
 }
 
@@ -3280,11 +3726,7 @@ mod tests {
 
     #[test]
     fn g1_tj_array_carries_basefont_metadata() {
-        let doc = make_doc_with_font(
-            b"BT /F1 12 Tf [(He) -100 (llo)] TJ ET",
-            "Helvetica",
-            None,
-        );
+        let doc = make_doc_with_font(b"BT /F1 12 Tf [(He) -100 (llo)] TJ ET", "Helvetica", None);
         let blocks = extract_text(&doc);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].text, "Hello");
@@ -3312,7 +3754,11 @@ mod tests {
 
     #[test]
     fn g1_subset_prefix_stripped_from_basefont() {
-        let doc = make_doc_with_font(b"BT /F1 12 Tf (Subset) Tj ET", "ABCDEF+Helvetica-Bold", None);
+        let doc = make_doc_with_font(
+            b"BT /F1 12 Tf (Subset) Tj ET",
+            "ABCDEF+Helvetica-Bold",
+            None,
+        );
         let blocks = extract_text(&doc);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].base_font.as_deref(), Some("Helvetica-Bold"));
@@ -3333,11 +3779,7 @@ mod tests {
     #[test]
     fn g1_rg_color_propagates_to_block() {
         // 1 0 0 rg → solid red. Blocks emitted after the setter carry it.
-        let doc = make_doc_with_font(
-            b"1 0 0 rg BT /F1 12 Tf (Red) Tj ET",
-            "Helvetica",
-            None,
-        );
+        let doc = make_doc_with_font(b"1 0 0 rg BT /F1 12 Tf (Red) Tj ET", "Helvetica", None);
         let blocks = extract_text(&doc);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].color, Some([255, 0, 0, 255]));
@@ -3346,11 +3788,7 @@ mod tests {
     #[test]
     fn g1_gray_color_via_g_operator() {
         // 0.5 g → mid-gray broadcast to RGBA.
-        let doc = make_doc_with_font(
-            b"0.5 g BT /F1 12 Tf (Gray) Tj ET",
-            "Helvetica",
-            None,
-        );
+        let doc = make_doc_with_font(b"0.5 g BT /F1 12 Tf (Gray) Tj ET", "Helvetica", None);
         let blocks = extract_text(&doc);
         assert_eq!(blocks.len(), 1);
         let c = blocks[0].color.expect("expected gray color");
@@ -3373,11 +3811,7 @@ mod tests {
     #[test]
     fn g1_cmyk_color_via_k_operator() {
         // Pure cyan: 1 0 0 0 k → (1-c)*(1-k)=0, (1-m)*(1-k)=1, (1-y)*(1-k)=1
-        let doc = make_doc_with_font(
-            b"1 0 0 0 k BT /F1 12 Tf (Cyan) Tj ET",
-            "Helvetica",
-            None,
-        );
+        let doc = make_doc_with_font(b"1 0 0 0 k BT /F1 12 Tf (Cyan) Tj ET", "Helvetica", None);
         let blocks = extract_text(&doc);
         assert_eq!(blocks.len(), 1);
         let c = blocks[0].color.expect("k should set color");
@@ -3387,11 +3821,8 @@ mod tests {
     #[test]
     fn g1_tj_and_tj_array_emit_same_metadata() {
         // Identical font/color setup; differ only in show operator.
-        let tj_doc = make_doc_with_font(
-            b"1 0 0 rg BT /F1 12 Tf (Hi) Tj ET",
-            "Helvetica-Bold",
-            None,
-        );
+        let tj_doc =
+            make_doc_with_font(b"1 0 0 rg BT /F1 12 Tf (Hi) Tj ET", "Helvetica-Bold", None);
         let tj_array_doc = make_doc_with_font(
             b"1 0 0 rg BT /F1 12 Tf [(Hi)] TJ ET",
             "Helvetica-Bold",
@@ -3448,5 +3879,182 @@ mod tests {
         let blocks = extract_text(&doc);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].color, None);
+    }
+
+    // ---- G2: widths and char_bounds tests ----
+
+    /// Build a doc where font F1 has a /Widths array starting at FirstChar 65 ('A').
+    fn make_doc_with_widths(content: &[u8], first_char: i64, widths: Vec<i64>) -> Document {
+        let mut doc = Document::with_version("1.7");
+
+        let widths_obj = Object::Array(widths.iter().map(|w| Object::Integer(*w)).collect());
+
+        let font_dict = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => Object::Name(b"TestFont".to_vec()),
+            "FirstChar" => Object::Integer(first_char),
+            "LastChar" => Object::Integer(first_char + widths.len() as i64 - 1),
+            "Widths" => widths_obj,
+        };
+        let font_id = doc.add_object(Object::Dictionary(font_dict));
+
+        let resources = dictionary! {
+            "Font" => dictionary! { "F1" => Object::Reference(font_id) },
+        };
+        let resources_id = doc.add_object(Object::Dictionary(resources));
+
+        let content_stream = Stream::new(dictionary! {}, content.to_vec());
+        let content_id = doc.add_object(Object::Stream(content_stream));
+
+        let page_dict = dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Reference(resources_id),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+        let pages_dict = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        };
+        let pages_id = doc.add_object(Object::Dictionary(pages_dict));
+
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        doc
+    }
+
+    #[test]
+    fn g2_no_widths_gives_estimate_source() {
+        // Font dict with no /Widths → WidthSource::Estimate.
+        let doc = make_doc_with_font(b"BT /F1 10 Tf (A) Tj ET", "Helvetica", None);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].width_source, WidthSource::Estimate);
+    }
+
+    #[test]
+    fn g2_widths_array_gives_metric_source() {
+        // 'A' = 0x41 = 65; single-char string 'A', width 722 glyph units.
+        // advance = 722/1000 * 10pt = 7.22 user units.
+        let doc = make_doc_with_widths(b"BT /F1 10 Tf (A) Tj ET", 65, vec![722]);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].width_source, WidthSource::Metric);
+        // char_bounds should have exactly one entry.
+        assert_eq!(blocks[0].char_bounds.len(), 1);
+        let [x0, _y0, x1, _y1] = blocks[0].char_bounds[0];
+        // advance = 722/1000 * 10 = 7.22; x0 should be at origin (0).
+        let advance = x1 - x0;
+        assert!((advance - 7.22).abs() < 0.01, "advance={advance:.4}");
+    }
+
+    #[test]
+    fn g2_monospace_uniform_char_bounds() {
+        // Courier-like: all glyphs width 600. Five chars → five equal-width bounds.
+        // 'A'=65,'B'=66,'C'=67,'D'=68,'E'=69 — widths all 600.
+        let widths: Vec<i64> = vec![600, 600, 600, 600, 600];
+        let doc = make_doc_with_widths(b"BT /F1 12 Tf (ABCDE) Tj ET", 65, widths);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].width_source, WidthSource::Metric);
+        assert_eq!(blocks[0].char_bounds.len(), 5);
+        let expected_adv = 600.0 / 1000.0 * 12.0; // 7.2
+        for i in 0..5 {
+            let [x0, _, x1, _] = blocks[0].char_bounds[i];
+            let adv = x1 - x0;
+            assert!(
+                (adv - expected_adv).abs() < 0.01,
+                "char {i}: advance={adv:.4} expected={expected_adv:.4}"
+            );
+        }
+    }
+
+    #[test]
+    fn g2_proportional_char_bounds_are_contiguous() {
+        // Proportional font: 'A'=722, 'B'=667, 'C'=667.
+        let widths: Vec<i64> = vec![722, 667, 667];
+        let doc = make_doc_with_widths(b"BT /F1 10 Tf (ABC) Tj ET", 65, widths);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].char_bounds.len(), 3);
+        // Bounds must be contiguous: x1 of char[i] == x0 of char[i+1]
+        // (tc=0, tw=0 default → no spacing gaps).
+        for i in 0..2 {
+            let x1_prev = blocks[0].char_bounds[i][2];
+            let x0_next = blocks[0].char_bounds[i + 1][0];
+            assert!(
+                (x1_prev - x0_next).abs() < 0.001,
+                "gap between char {i} and {}: {:.4}",
+                i + 1,
+                x0_next - x1_prev
+            );
+        }
+    }
+
+    #[test]
+    fn g2_tj_kerning_shifts_subsequent_bounds() {
+        // TJ: [(A) -200 (B)] — 'A' then 200 units kern then 'B'.
+        // 'A'=722, 'B'=667 (font size 10 → /1000).
+        // After 'A': x = 722/1000*10 = 7.22.
+        // Kerning: -200/1000*10 = +2.0 (negative kern shifts right: x -= -2 = x += 2).
+        // Wait: TJ negative = move RIGHT. adj = -200 → x -= -200/1000*10 = x += 2.0.
+        // 'B' starts at 7.22 + 2.0 = 9.22.
+        let widths: Vec<i64> = vec![722, 667];
+        let doc = make_doc_with_widths(b"BT /F1 10 Tf [(A) -200 (B)] TJ ET", 65, widths);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].char_bounds.len(), 2);
+        let [x0_a, _, x1_a, _] = blocks[0].char_bounds[0];
+        let [x0_b, _, _, _] = blocks[0].char_bounds[1];
+        // 'A' advance
+        assert!(
+            (x1_a - x0_a - 7.22).abs() < 0.01,
+            "A advance={:.4}",
+            x1_a - x0_a
+        );
+        // Gap includes kerning: x0_b should be further right than x1_a.
+        assert!(x0_b > x1_a, "B should start after A ends");
+        let gap = x0_b - x1_a;
+        assert!(
+            (gap - 2.0).abs() < 0.01,
+            "kerning gap={gap:.4} expected=2.0"
+        );
+    }
+
+    #[test]
+    fn g2_subset_font_prefix_does_not_affect_widths() {
+        // Subset prefix on BaseFont should not prevent width lookup.
+        let widths: Vec<i64> = vec![722];
+        let doc = make_doc_with_widths(b"BT /F1 10 Tf (A) Tj ET", 65, widths);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        // With widths present, source is always Metric.
+        assert_eq!(blocks[0].width_source, WidthSource::Metric);
+        assert_eq!(blocks[0].char_bounds.len(), 1);
+    }
+
+    #[test]
+    fn g2_char_bounds_count_equals_glyph_count_not_unicode_len() {
+        // A ligature encoded as a single byte but decomposed to 2 Unicode chars.
+        // char_bounds must have ONE entry (source glyph), not two.
+        // We rely on the APPROX path for this test (no /Widths → Estimate).
+        let doc = make_doc_with_font(b"BT /F1 12 Tf (A) Tj ET", "TestFont", None);
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        // Single source byte → exactly one char_bound.
+        assert_eq!(blocks[0].char_bounds.len(), 1);
     }
 }

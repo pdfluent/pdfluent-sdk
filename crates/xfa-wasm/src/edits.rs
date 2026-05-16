@@ -60,7 +60,7 @@ impl PdfDoc {
     /// `degrees` may be negative; values are normalised modulo 360.
     #[wasm_bindgen(js_name = "rotatePage")]
     pub fn rotate_page(&self, page_index: u32, degrees: i32) -> Result<Vec<u8>, JsError> {
-        let normalised = ((degrees % 360) + 360) % 360;
+        let normalised = degrees.rem_euclid(360);
         if normalised % 90 != 0 {
             return Err(JsError::new(
                 "rotatePage: degrees must be a multiple of 90 (received non-orthogonal value)",
@@ -104,7 +104,9 @@ impl PdfDoc {
             return Err(JsError::new("addTextWatermark: text must be non-empty"));
         }
         if !(0.0..=1.0).contains(&opacity) {
-            return Err(JsError::new("addTextWatermark: opacity must be in 0.0..=1.0"));
+            return Err(JsError::new(
+                "addTextWatermark: opacity must be in 0.0..=1.0",
+            ));
         }
         use pdf_manip::watermark::{
             apply_text_watermark, Color, Layer, PageSelection, Position, TextWatermark,
@@ -146,9 +148,8 @@ impl PdfDoc {
     /// `{"field.path": "value", ...}`. Returns the new PDF bytes.
     #[wasm_bindgen(js_name = "setFormFields")]
     pub fn set_form_fields(&self, fields_json: &str) -> Result<Vec<u8>, JsError> {
-        let parsed: std::collections::BTreeMap<String, String> =
-            serde_json::from_str(fields_json)
-                .map_err(|e| JsError::new(&format!("setFormFields: invalid JSON: {e}")))?;
+        let parsed: std::collections::BTreeMap<String, String> = serde_json::from_str(fields_json)
+            .map_err(|e| JsError::new(&format!("setFormFields: invalid JSON: {e}")))?;
         let bytes = self.pdf.data().as_ref().to_vec();
         let mut doc = pdfluent::PdfDocument::from_bytes(&bytes)
             .map_err(|e| JsError::new(&format!("open failed: {e}")))?;
@@ -204,9 +205,7 @@ impl PdfDoc {
         y: f64,
         contents: &str,
     ) -> Result<Vec<u8>, JsError> {
-        use pdf_annot::builder::{
-            add_annotation_to_page, AnnotRect, AnnotationBuilder, TextIcon,
-        };
+        use pdf_annot::builder::{add_annotation_to_page, AnnotRect, AnnotationBuilder, TextIcon};
 
         // Sticky-notes are conventionally rendered as a 24x24pt icon. We give
         // the underlying rect the same dimensions; the icon decides the look.
@@ -259,10 +258,8 @@ impl PdfDoc {
         h: f64,
     ) -> Result<Vec<u8>, JsError> {
         let mut doc = load_doc(self)?;
-        let area = pdf_redact::RedactionArea::new(
-            page_index.saturating_add(1),
-            [x, y, x + w, y + h],
-        );
+        let area =
+            pdf_redact::RedactionArea::new(page_index.saturating_add(1), [x, y, x + w, y + h]);
         let mut redactor = pdf_redact::Redactor::new();
         redactor.mark(area);
         redactor
