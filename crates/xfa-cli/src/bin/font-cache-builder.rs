@@ -10,6 +10,7 @@
 use anyhow::{Context, Result};
 use lopdf::Document;
 use std::collections::HashSet;
+use std::fs;
 use std::path::PathBuf;
 
 fn main() -> Result<()> {
@@ -132,7 +133,9 @@ fn extract_fonts_from_pdf(
     output_dir: &std::path::Path,
     seen_names: &mut HashSet<String>,
 ) -> Result<(usize, usize)> {
-    let doc = Document::load(pdf_path)
+    let pdf_bytes = fs::read(pdf_path)
+        .with_context(|| format!("cannot read PDF: {}", pdf_path.display()))?;
+    let doc = Document::load_mem(&pdf_bytes)
         .with_context(|| format!("cannot load PDF: {}", pdf_path.display()))?;
 
     let mut extracted = 0usize;
