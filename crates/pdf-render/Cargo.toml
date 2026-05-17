@@ -6,7 +6,7 @@ edition = "2024"
 license-file = "LICENSE"
 readme = "README.md"
 authors = ["PDFluent Contributors <team@pdfluent.com>", "Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
-repository = "https://github.com/pdfluent/examples"
+repository = "https://pdfluent.com/source"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 

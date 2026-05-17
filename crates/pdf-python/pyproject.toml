@@ -4,10 +4,11 @@ build-backend = "maturin"
 
 [project]
 name = "pdfluent"
-version = "1.0.0b5"
+version = "1.0.0b7"
 description = "Enterprise PDF SDK — render, extract, annotate, sign, and validate PDFs. Pure Rust, zero system dependencies."
 readme = "README.md"
 license = { text = "PDFluent Commercial License" }
+license-files = ["LICENSE"]
 authors = [
     { name = "Innovation Trigger BV", email = "team@pdfluent.com" },
 ]
@@ -35,7 +36,6 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://pdfluent.com"
-Repository = "https://github.com/pdfluent/examples"
 "Bug Tracker" = "https://pdfluent.com/support"
 Documentation = "https://pdfluent.com/docs"
 

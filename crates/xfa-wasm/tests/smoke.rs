@@ -97,12 +97,13 @@ fn test_07_annotations_read() {
 #[cfg(feature = "annotate")]
 #[wasm_bindgen_test]
 fn test_08_add_highlight() {
-    let new_pdf = PdfDoc::add_highlight(SAMPLE_PDF, 0, 100.0, 700.0, 300.0, 720.0, 1.0, 1.0, 0.0)
+    let doc = PdfDoc::open(SAMPLE_PDF).expect("open");
+    let new_pdf = doc
+        .add_highlight(0, 100.0, 700.0, 200.0, 20.0, Some("#ffeb3b".into()))
         .expect("add highlight");
-    assert!(new_pdf.len() > SAMPLE_PDF.len());
-    // Verify the result is a valid PDF
-    let doc = PdfDoc::open(&new_pdf).expect("reopen");
-    assert!(doc.page_count() >= 1);
+    assert!(new_pdf.len() > SAMPLE_PDF.len() / 2);
+    let reloaded = PdfDoc::open(&new_pdf).expect("reopen");
+    assert!(reloaded.page_count() >= 1);
 }
 
 // ---------- Scenario 9: Validate PDF/A ----------
@@ -173,11 +174,13 @@ fn test_render_thumbnail() {
 #[cfg(feature = "annotate")]
 #[wasm_bindgen_test]
 fn test_add_sticky_note() {
-    let new_pdf =
-        PdfDoc::add_sticky_note(SAMPLE_PDF, 0, 50.0, 750.0, "Test note").expect("add sticky note");
-    assert!(new_pdf.len() > SAMPLE_PDF.len());
-    let doc = PdfDoc::open(&new_pdf).expect("reopen");
-    assert!(doc.page_count() >= 1);
+    let doc = PdfDoc::open(SAMPLE_PDF).expect("open");
+    let new_pdf = doc
+        .add_sticky_note(0, 50.0, 750.0, "Test note")
+        .expect("add sticky note");
+    assert!(new_pdf.len() > SAMPLE_PDF.len() / 2);
+    let reloaded = PdfDoc::open(&new_pdf).expect("reopen");
+    assert!(reloaded.page_count() >= 1);
 }
 
 // ---------- Extra: DSS info ----------

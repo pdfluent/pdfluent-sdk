@@ -532,6 +532,8 @@ fn write_bookmark_siblings(
 
     Ok((
         ids[0],
+        // SAFETY: ids mirrors bookmarks (one entry per bm), and this function is
+        // only called when bookmarks is non-empty (guarded by caller).
         *ids.last()
             .expect("ids mirrors bookmarks which is non-empty"),
     ))

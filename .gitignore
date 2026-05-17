@@ -52,3 +52,17 @@ crates/pdf-node/artifacts/
 crates/xfa-wasm/pkg/*.js
 crates/xfa-wasm/pkg/*.wasm
 crates/xfa-wasm/pkg/*.d.ts
+
+# .NET and Java build outputs (added wave1-release)
+bindings/dotnet/**/bin/
+bindings/dotnet/**/obj/
+bindings/java/target/
+
+# .NET runtime-specific native bundles (regenerated at release time)
+bindings/dotnet/**/runtimes/
+
+# Java JNA native bundles (built by release pipeline, not committed)
+bindings/java/src/main/resources/native/
+
+# .NET NuGet packages
+*.nupkg

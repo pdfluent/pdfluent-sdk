@@ -22,6 +22,7 @@ members = [
     "crates/xfa-dom-resolver",
     "crates/formcalc-interpreter",
     "crates/xfa-layout-engine",
+    "crates/xfa-js-sandboxed",
     "crates/xfa-json",
 
     # --- Bindings & tools ---
@@ -38,6 +39,9 @@ members = [
 
     # --- PDF manipulation ---
     "crates/pdf-manip",
+    # --- G3: Content stream parser foundation ---
+    "crates/pdf-content-stream",
+    "crates/pdf-text-format",
 
     # --- Desktop application (Fase 4) ---
     "crates/pdf-desktop",
@@ -87,7 +91,7 @@ rust-version = "1.80.0"
 #   - `license = "MIT"`                    (forked from upstream MIT)
 # See NOTICE in repository root for the per-crate license matrix.
 license = "MIT"
-repository = "https://github.com/pdfluent/examples"
+repository = "https://pdfluent.com/source"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 
@@ -113,6 +117,7 @@ xmp-writer = "0.3"
 xfa-dom-resolver = { path = "crates/xfa-dom-resolver", version = "=1.0.0-beta.5" }
 formcalc-interpreter = { path = "crates/formcalc-interpreter", version = "=1.0.0-beta.5" }
 xfa-layout-engine = { path = "crates/xfa-layout-engine", version = "=1.0.0-beta.5" }
+xfa-js-sandboxed = { path = "crates/xfa-js-sandboxed", version = "=1.0.0-beta.5" }
 xfa-json = { path = "crates/xfa-json", version = "=1.0.0-beta.5" }
 xfa-license = { path = "crates/xfa-license", version = "=1.0.0-beta.3" }
 
@@ -132,10 +137,12 @@ pdf-sign = { package = "pdfluent-sign", path = "crates/pdf-sign", version = "=1.
 pdf-engine = { path = "crates/pdf-engine", version = "=1.0.0-beta.5" }
 pdf-compliance = { path = "crates/pdf-compliance", version = "=1.0.0-beta.5" }
 pdf-manip = { path = "crates/pdf-manip", version = "=1.0.0-beta.5" }
+pdf-text-format = { path = "crates/pdf-text-format", version = "=1.0.0-beta.5" }
 pdf-invoice = { path = "crates/pdf-invoice", version = "=1.0.0-beta.1" }
 pdf-extract = { package = "pdfluent-extract", path = "crates/pdf-extract", version = "=1.0.0-beta.5" }
 pdf-redact = { path = "crates/pdf-redact", version = "=1.0.0-beta.5" }
 pdf-ocr = { path = "crates/pdf-ocr", version = "=1.0.0-beta.3" }
+pdf-content-stream = { path = "crates/pdf-content-stream", version = "=0.1.0" }
 
 [profile.release]
 lto = "fat"

@@ -346,6 +346,12 @@ mod tests {
             font_name: "F1".to_string(),
             font_size,
             actual_text: None,
+            base_font: None,
+            is_bold: false,
+            is_italic: false,
+            color: None,
+            width_source: Default::default(),
+            char_bounds: vec![],
         }
     }
 

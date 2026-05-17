@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "ESNext.Disposable", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@pdfluent/xfa-wasm": ["../../../crates/xfa-wasm/pkg/xfa_wasm"],
+      "@pdfluent/xfa-wasm/augment": ["../../../crates/xfa-wasm/pkg-types/xfa_wasm.augment"]
+    },
+    "verbatimModuleSyntax": false
+  },
+  "include": ["*.ts"]
+}

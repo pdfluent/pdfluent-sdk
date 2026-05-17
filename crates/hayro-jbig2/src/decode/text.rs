@@ -701,7 +701,7 @@ fn decode_symbol_id_huffman_table(
         .enumerate()
         .map(|(symbol_idx, &prefix_length)| TableLine::new(symbol_idx as i32, prefix_length, 0))
         .collect();
-    Ok(HuffmanTable::build(&symbol_lines)?)
+    HuffmanTable::build(&symbol_lines)
 }
 
 pub(crate) struct TextRegionHuffmanTables<'a> {

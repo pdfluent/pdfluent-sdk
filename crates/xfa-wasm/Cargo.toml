@@ -4,10 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "WASM bindings for XFA form processing — parse, extract, and convert XFA PDFs in the browser"
+description = "PDFluent browser SDK — read, edit, annotate, redact, sign, and validate PDFs (including XFA) entirely client-side via WASM"
 publish = false
 
-keywords = ["pdf", "xfa", "wasm", "browser", "forms"]
+keywords = ["pdf", "xfa", "wasm", "pdfluent", "browser"]
 categories = ["wasm"]
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -30,6 +30,10 @@ indexmap.workspace = true
 js-sys = "0.3"
 kurbo = "0.13"
 pdf-manip = { path = "../pdf-manip", features = ["pdfa-convert"], version = "=1.0.0-beta.5" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.5" }
+pdf-forms = { workspace = true }
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.5" }
+pdf-text-format = { path = "../pdf-text-format", version = "=1.0.0-beta.5" }
 
 # lopdf: required for text extraction; annotate uses lopdf for mutation.
 # Direct path (not workspace = true) to allow per-target default-features override.
@@ -52,12 +56,38 @@ web-sys = { version = "0.3", features = [
 default = ["render", "annotate"]
 render = ["dep:pdf-render"]
 annotate = ["dep:pdf-annot"]
-# wasm: browser build — includes vello_cpu render (wasm32-safe), excludes annotate (native-only).
+# wasm: browser build — includes vello_cpu render AND annotations. The
+# lopdf wasm_js feature (set per-target above) carries the mutation paths
+# needed by pdf-annot, pdf-manip, pdf-redact, pdf-forms.
 # Use: wasm-pack build --target web --no-default-features --features wasm
-wasm = ["render"]
+wasm = ["render", "annotate"]
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 
+# npm package identity — set by scripts/release/transform-wasm-pkg.sh at
+# publish time. Cargo workspace version and npm version are independent.
+[package.metadata.npm]
+name = "@pdfluent/sdk-wasm"
+version = "1.0.0-beta.11"
+
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = false
+# B3 — wasm-opt -O3 enabled after evaluation. See
+# benchmarks/runs/post_beta_execution/B3_FINAL_REPORT.md for the gates
+# and measurements (cold init -13.3%, median key-op runtime -7.9%,
+# raw .wasm -7.0%, golden byte-identical across 34/34 outputs).
+#
+# The --enable-* flags below are validator allowances, not new
+# optimization passes: rustc 1.95 already emits bulk-memory and SIMD ops
+# on wasm32-unknown-unknown, and wasm-opt v117 refuses to parse them
+# without the matching enable flags. They do not synthesize new SIMD or
+# threading code.
+wasm-opt = [
+    "-O3",
+    "--enable-bulk-memory",
+    "--enable-mutable-globals",
+    "--enable-nontrapping-float-to-int",
+    "--enable-sign-ext",
+    "--enable-reference-types",
+    "--enable-simd",
+]

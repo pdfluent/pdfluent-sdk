@@ -7097,7 +7097,8 @@ pub fn fix_simple_truetype_widths(doc: &mut Document) -> usize {
             };
             let enc = match enc.as_deref() {
                 Some("WinAnsiEncoding") | Some("MacRomanEncoding") => {
-                    enc.expect("matched arm guarantees enc is Some")
+                    // SAFETY: this arm only matches when enc is Some("WinAnsiEncoding"|"MacRomanEncoding").
+                    enc.expect("match arm guarantees enc is Some")
                 }
                 // Treat StandardEncoding as WinAnsi for width lookup — they're
                 // identical for codes 32-126 (the common range).
@@ -10378,6 +10379,9 @@ fn lookup_mac_cmap(face: &ttf_parser::Face, code: u32) -> Option<ttf_parser::Gly
 }
 
 const PREDEFINED_CMAP_SEARCH_DIRS: &[&str] = &[
+    // Development-local path: excluded from WASM targets (no filesystem) to
+    // prevent private paths leaking into the published binary.
+    #[cfg(not(target_arch = "wasm32"))]
     concat!(env!("CARGO_MANIFEST_DIR"), "/resources/cmap"),
     "/usr/share/poppler/cMap",
     "/usr/share/fonts/cmap",
@@ -11956,8 +11960,9 @@ fn decrypt_charstring_width(
                 // div: pop two values, push quotient (a b div → a/b).
                 pos += 2;
                 if values.len() >= 2 {
-                    let divisor = values.pop().expect("guarded by values.len() >= 2");
-                    let dividend = values.pop().expect("guarded by values.len() >= 2");
+                    // SAFETY: values.len() >= 2 checked on the line above.
+                    let divisor = values.pop().expect("values.len() >= 2 checked above");
+                    let dividend = values.pop().expect("values.len() >= 2 checked above");
                     if divisor != 0 {
                         values.push(dividend / divisor);
                     } else {
@@ -17680,7 +17685,10 @@ pub fn fix_remaining_tt_width_mismatches(doc: &mut Document) -> usize {
                 _ => None,
             };
             let enc = match enc.as_deref() {
-                Some("WinAnsiEncoding") | Some("MacRomanEncoding") => enc.unwrap(),
+                Some("WinAnsiEncoding") | Some("MacRomanEncoding") => {
+                    // SAFETY: this arm only matches when enc is Some("WinAnsiEncoding"|"MacRomanEncoding").
+                    enc.expect("match arm guarantees enc is Some")
+                }
                 Some("StandardEncoding") => "WinAnsiEncoding".to_string(),
                 _ => continue,
             };
@@ -20890,6 +20898,7 @@ fn fix_notdef_in_type1(
         }
         return fix_notdef_control_chars_fallback(doc, font_id, enc_info, first_char, last_char);
     }
+    // SAFETY: the `cff.is_none()` branch returns early before this point.
     let cff = cff.expect("cff.is_none() branch returns above");
 
     // Build set of available glyph names.
