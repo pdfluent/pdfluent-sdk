@@ -122,6 +122,11 @@ pub struct DynamicScriptOutcome {
     /// such a touch happened so callers can distinguish "would-have-been
     /// interactive" from genuine runtime errors.
     pub js_unsupported_host_calls: usize,
+    /// **M3-B Phase D-θ.2.** Strict probe calls skipped because
+    /// `parentIds.length == 1 && chain.length == 1` (no same-name
+    /// sibling ambiguity possible). Each skipped call saves one
+    /// `resolveWithFullChainStrict` host round-trip.
+    pub js_probe_skips: usize,
 }
 
 impl Default for DynamicScriptOutcome {
@@ -146,6 +151,7 @@ impl Default for DynamicScriptOutcome {
             js_resolve_failures: 0,
             js_data_reads: 0,
             js_unsupported_host_calls: 0,
+            js_probe_skips: 0,
         }
     }
 }
@@ -445,6 +451,7 @@ pub fn apply_dynamic_scripts_with_runtime(
         js_resolve_failures: sandbox_metadata.resolve_failures,
         js_data_reads: sandbox_metadata.data_reads,
         js_unsupported_host_calls: sandbox_metadata.unsupported_host_calls,
+        js_probe_skips: sandbox_metadata.probe_skips,
     })
 }
 
