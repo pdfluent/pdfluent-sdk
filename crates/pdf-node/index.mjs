@@ -10,6 +10,10 @@ const {
   openPdf,
   mergePdfs,
   validatePdfa,
+  activate,
+  setLicenseKey,
+  status,
+  licenseStatus,
   PdfluentError,
   PdfluentIoError,
   PdfluentParseError,
@@ -17,6 +21,7 @@ const {
   PdfluentPageError,
   PdfluentFormError,
   PdfluentOperationError,
+  PdfluentLicenseError,
 } = require('./index.js')
 
 export {
@@ -25,6 +30,10 @@ export {
   openPdf,
   mergePdfs,
   validatePdfa,
+  activate,
+  setLicenseKey,
+  status,
+  licenseStatus,
   PdfluentError,
   PdfluentIoError,
   PdfluentParseError,
@@ -32,4 +41,5 @@ export {
   PdfluentPageError,
   PdfluentFormError,
   PdfluentOperationError,
+  PdfluentLicenseError,
 }
