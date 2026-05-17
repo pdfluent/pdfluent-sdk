@@ -292,8 +292,23 @@ pub fn validate_xfa_packets(packets: &XfaPackets) -> PacketValidation {
         warnings,
     }
 }
-/// extract_embedded_fonts.
 // ─── Embedded font extraction ────────────────────────────────────────────────
+
+/// Extract embedded font programs from a PDF parsed with pdf-syntax.
+///
+/// Returns a list of `(name, raw_font_bytes)` pairs for every `FontDescriptor`
+/// object that carries a `FontFile`, `FontFile2`, or `FontFile3` stream.
+///
+/// # Relationship to the flatten pipeline
+///
+/// The flattening pipeline (`crate::flatten`) uses a separate lopdf-based
+/// variant (internal, `#[doc(hidden)]`) that additionally captures `/Widths`
+/// arrays and encoding metadata needed for text measurement. That variant
+/// returns [`crate::font_bridge::EmbeddedFontData`] structs and is not part
+/// of the public extraction API.
+///
+/// Use this function when you only need the raw font bytes for inspection,
+/// subsetting, or external embedding outside the flatten pipeline.
 pub fn extract_embedded_fonts(pdf: &Pdf) -> Vec<(String, Vec<u8>)> {
     use pdf_syntax::object::dict::keys::{FONT_FILE, FONT_FILE2, FONT_FILE3, FONT_NAME, TYPE};
     use pdf_syntax::object::Name;

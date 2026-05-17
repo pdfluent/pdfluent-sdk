@@ -224,7 +224,6 @@ fn should_rollback(
     }
     false
 }
-/// apply_dynamic_scripts.
 // XFA Spec 3.3 §9.3 — Dynamic Forms: after data binding, scripts run in
 // two phases: (1) initialize events fire once, (2) calculate events may
 // iterate until stable (convergence) or MAX_SCRIPT_PASSES is reached.
@@ -241,13 +240,28 @@ fn should_rollback(
 // JavaScript and unsupported-language scripts are skipped and reported, while
 // FormCalc continues to run. Use `apply_dynamic_scripts_with_mode(..., Strict)`
 // when callers need the legacy whole-form JavaScript policy gate.
+
+/// Convenience entry point: runs the script pipeline with the default
+/// [`JsExecutionMode`] (currently [`JsExecutionMode::BestEffortStatic`]).
+///
+/// Prefer [`apply_dynamic_scripts_with_runtime`] when you need explicit
+/// runtime injection (e.g. in tests or when using the sandboxed runtime).
+#[doc(hidden)]
 pub fn apply_dynamic_scripts(
     form: &mut FormTree,
     root_id: FormNodeId,
 ) -> Result<DynamicScriptOutcome> {
     apply_dynamic_scripts_with_mode(form, root_id, JsExecutionMode::default())
 }
-/// apply_dynamic_scripts_with_mode.
+
+/// Runs the script pipeline with an explicit [`JsExecutionMode`], using the
+/// internal [`NullRuntime`] (or the compiled-in QuickJS runtime for
+/// [`JsExecutionMode::SandboxedRuntime`]).
+///
+/// This is an intermediate convenience wrapper. The canonical low-level entry
+/// point is [`apply_dynamic_scripts_with_runtime`], which accepts any
+/// [`XfaJsRuntime`] implementation.
+#[doc(hidden)]
 pub fn apply_dynamic_scripts_with_mode(
     form: &mut FormTree,
     root_id: FormNodeId,
