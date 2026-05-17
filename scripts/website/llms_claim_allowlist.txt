@@ -1,0 +1,50 @@
+# PDFluent — llms.txt claim allowlist
+#
+# Curated list of feature/capability claims that are approved for the live
+# llms{,-full}.txt manifest. The validator flags any "supports X" / "works
+# with Y" / "compatible with Z" phrase that doesn't match an entry here.
+#
+# Adding to this file requires evidence (changelog entry, gate result, or a
+# linked product doc). Keep entries short — substring/contains matching is
+# applied, case-insensitive, whitespace-normalised.
+#
+# Lines beginning with # are comments. One claim per line.
+
+# Channel/platform support
+supports .NET 6
+supports .NET 6 and newer
+supports python
+supports rust
+supports java
+supports wasm
+supports javascript
+supports webassembly
+compatible with .NET 6
+compatible with Maven
+compatible with Gradle
+compatible with Spring
+compatible with Quarkus
+works with crates.io
+works with PyPI
+works with npm
+works with NuGet
+works with Maven Central
+
+# Document/feature areas — only those with shipped capability in 1.0.0-beta.5
+supports PDF parsing
+supports text extraction
+supports rendering
+supports AcroForm fill
+supports XFA flatten
+supports PDF/A-1b
+supports PDF/A-2b
+supports PDF/A-3b
+supports redaction
+supports merge
+supports split
+supports PAdES digital signatures
+
+# Hosting / runtime
+compatible with cross-origin-isolation
+works with Cross-Origin-Opener-Policy
+works with Cross-Origin-Embedder-Policy
