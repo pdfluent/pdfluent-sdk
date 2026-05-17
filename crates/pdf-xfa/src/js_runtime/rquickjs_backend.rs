@@ -993,7 +993,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   // Properties that must NOT be deferred so their specific implementations run.
   var handlePropertyExclusions = lookupObject();
   ["rawValue", "somExpression", "isNull", "clearItems", "addItem", "boundItem",
-   "$record", "nodes", "value", "length", "item"].forEach(function(name) {
+   "$record", "nodes", "value", "length", "item", "choiceList"].forEach(function(name) {
     handlePropertyExclusions[name] = true;
   });
 
@@ -1213,13 +1213,19 @@ const PHASE_C_BINDINGS_JS: &str = r#"
             }
           }
         }
+        // WP-3: choiceList is a listbox/combobox property not surfaced through
+        // the FormTree. Return an empty frozen array.
+        if (prop === "choiceList") {
+          return Object.freeze([]);
+        }
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
         }
         return makeNodeHandleFromIds(resolveHandleChildIds(candidates, prop), generation);
       },
       set: function(_target, prop, value) {
-        if (prop === "rawValue") {
+        // WP-3: `value` is an alias for rawValue on the set side.
+        if (prop === "rawValue" || prop === "value") {
           host.setRawValue(firstId, generation, value);
         }
         return true;
@@ -1364,13 +1370,19 @@ const PHASE_C_BINDINGS_JS: &str = r#"
             return makeEmptyInstanceManager();
           }
         }
+        // WP-3: choiceList is a listbox/combobox property not surfaced through
+        // the FormTree. Return an empty frozen array.
+        if (prop === "choiceList") {
+          return Object.freeze([]);
+        }
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
         }
         return makeNodeHandleFromIds(resolveHandleChildIds([id], prop), generation);
       },
       set: function(_target, prop, value) {
-        if (prop === "rawValue") {
+        // WP-3: `value` is an alias for rawValue on the set side.
+        if (prop === "rawValue" || prop === "value") {
           host.setRawValue(id, generation, value);
         }
         return true;
@@ -1422,23 +1434,34 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   // rather than null, which would throw TypeError on any property access.
   function makeNullDataHandle() {
     var emptyNodes = [];
+    // XFA null-safe: item() on an empty sentinel list returns a chainable null handle,
+    // not native null, so callers can do nodes.item(0).value without TypeError.
     emptyNodes.item = function() { return makeNullDataHandle(); };
     Object.freeze(emptyNodes);
     var sentinel = nullProtoObject();
+    // WP-3: configurable:true so the Proxy set-trap can return true without
+    // triggering the ECMAScript "non-configurable accessor without setter" invariant.
     Object.defineProperty(sentinel, "value",
-      { get: function() { return null; }, enumerable: true, configurable: false });
+      { get: function() { return null; }, enumerable: true, configurable: true });
     Object.defineProperty(sentinel, "rawValue",
-      { get: function() { return null; }, enumerable: true, configurable: false });
+      { get: function() { return null; }, enumerable: true, configurable: true });
     Object.defineProperty(sentinel, "length",
-      { get: function() { return 0; }, enumerable: true, configurable: false });
+      { get: function() { return 0; }, enumerable: true, configurable: true });
     Object.defineProperty(sentinel, "nodes",
-      { get: function() { return emptyNodes; }, enumerable: true, configurable: false });
+      { get: function() { return emptyNodes; }, enumerable: true, configurable: true });
+    // WP-3: instance.index on an unbound node → 0
+    Object.defineProperty(sentinel, "index",
+      { get: function() { return 0; }, enumerable: true, configurable: true });
     sentinel.item = function() { return makeNullDataHandle(); };
     return new Proxy(sentinel, {
       get: function(target, prop) {
         if (prop in target) return target[prop];
         if (typeof prop !== "string") return undefined;
         return makeNullDataHandle();
+      },
+      // WP-3: absorb all writes — null data handles are read-only sentinels.
+      set: function(_target, _prop, _value) {
+        return true;
       }
     });
   }
@@ -1446,7 +1469,8 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   // Phase D-γ: Data DOM handle — wraps a raw DataDom node index and exposes
   // `.value`, `.nodes`, `.length`, `.item(i)`, and named child access via Proxy.
   function makeDataHandle(rawId) {
-    if (rawId === undefined || rawId < 0) return null;
+    // WP-3: return null-safe sentinel so callers can chain .value / .nodes safely.
+    if (rawId === undefined || rawId < 0) return makeNullDataHandle();
     var handle = nullProtoObject();
     Object.defineProperty(handle, "value", {
       get: function() {
@@ -2392,5 +2416,39 @@ mod tests {
         // Subsequent script should still run.
         rt.execute_script(Some("calculate"), "var ok = 1;")
             .expect("recovered");
+    }
+
+    #[test]
+    fn null_receiver_silent_setter() {
+        let mut rt = fresh_runtime();
+        rt.execute_script(
+            Some("calculate"),
+            r#"
+$record.NONEXISTENT_FIELD.rawValue = "hello";
+$record.NONEXISTENT_FIELD.value = "world";
+"#,
+        )
+        .expect("WP-3 null_receiver_silent_setter: set on null DataHandle must not throw");
+    }
+
+    #[test]
+    fn null_record_returns_empty_nodelist() {
+        let mut rt = fresh_runtime();
+        rt.execute_script(
+            Some("calculate"),
+            r#"
+var nodes = $record.FIELD.nodes;
+if (nodes.length !== 0) {
+  throw new Error("expected nodes.length == 0, got " + nodes.length);
+}
+// item() on an empty null-sentinel NodeList returns a chainable null handle (not
+// native null) so callers can safely do .item(0).value without TypeError.
+var itemVal = nodes.item(0).value;
+if (itemVal !== null) {
+  throw new Error("expected nodes.item(0).value == null, got " + itemVal);
+}
+"#,
+        )
+        .expect("WP-3 null_record_returns_empty_nodelist: $record.FIELD.nodes must be empty and chainable");
     }
 }
