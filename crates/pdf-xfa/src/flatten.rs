@@ -1166,6 +1166,19 @@ fn extract_embedded_images(doc: &Document) -> HashMap<String, Vec<u8>> {
 // Font extraction, resolution, and embedding
 // ---------------------------------------------------------------------------
 
+/// Extract embedded font programs from a lopdf `Document`, including `/Widths`
+/// arrays and encoding metadata.
+///
+/// This is the flatten-pipeline-internal variant. It differs from the public
+/// `extract::extract_embedded_fonts` in three ways:
+/// - Input type: `lopdf::Document` (lopdf object model) vs `pdf_syntax::Pdf`.
+/// - Return type: [`EmbeddedFontData`] structs (with widths + encoding) vs
+///   plain `(name, bytes)` tuples.
+/// - Purpose: metric capture for layout + font embedding inside flatten.
+///   Not intended for external callers; use `pdf_xfa::extract_embedded_fonts`
+///   for inspection-only use cases.
+///
+/// Canonical public API: [`crate::extract::extract_embedded_fonts`].
 #[doc(hidden)]
 pub fn extract_embedded_fonts(doc: &Document) -> Vec<EmbeddedFontData> {
     let mut fonts = Vec::new();
