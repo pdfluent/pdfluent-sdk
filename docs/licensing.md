@@ -78,11 +78,37 @@ printf("tier=%d source=%d marked=%d\n",
 ```python
 import pdfluent
 
-pdfluent.activate_license_key("tier:enterprise")
-status = pdfluent.license_status()
-print(status.tier)    # "Enterprise"
-print(status.source)  # "Explicit"
+# JSON license file format (tier maps to canonical Rust tier internally)
+info = pdfluent.activate_license('{"tier": "enterprise", "licensee": "Acme", "seats": 5}')
+print(info.tier)             # "enterprise"
+print(info.output_is_marked) # False
+print(pdfluent.license_status())  # "enterprise"
 ```
+
+The `activate_license` function accepts a JSON string, a base64-encoded JSON string,
+a file path ending in `.json` or `.license`, or reads the `PDFLUENT_LICENSE_KEY`
+environment variable when called with an empty string.
+
+JSON tier names are mapped to canonical Rust tiers:
+
+| JSON `tier` | Canonical Rust tier |
+|---|---|
+| `"trial"` | `"trial"` |
+| `"basic"` | `"developer"` |
+| `"professional"` | `"team"` |
+| `"enterprise"` | `"enterprise"` |
+| `"archival"` | `"business"` |
+
+`LicenseInfo` shape (post-1.0 fix):
+
+| Field | Type | Source |
+|---|---|---|
+| `tier` | `str` | Rust core canonical tier |
+| `expires_at` | `Optional[str]` | ISO 8601 / `None` (always `None` in 1.0) |
+| `output_is_marked` | `bool` | Rust core |
+| `licensee` | `str` | JSON payload |
+| `company` | `str` | JSON payload |
+| `seats` | `int` | JSON payload |
 
 ### WASM (JavaScript / TypeScript)
 
@@ -134,9 +160,9 @@ All bindings expose the same three fields:
 
 | Failure | Rust | C ABI | Python | WASM | .NET | Java |
 |---------|------|-------|--------|------|------|------|
-| Invalid key | `Error::InvalidLicense` | `ErrorInvalidLicense=16` | `ValueError` | `Error` | `PdfException` | `PdfException` |
-| Already set | `Error::InvalidLicense` | `ErrorLicenseAlreadySet=17` | `RuntimeError` | `Error` | `InvalidOperationException` | `IllegalStateException` |
-| File read failed | — (manual) | `ErrorLicenseFile=18` | `OSError` | not exposed | `FileNotFoundException` | `IOException` |
+| Invalid key | `Error::InvalidLicense` | `ErrorInvalidLicense=16` | `PdfluentLicenseError` | `Error` | `PdfException` | `PdfException` |
+| Already set | `Error::InvalidLicense` | `ErrorLicenseAlreadySet=17` | `PdfluentLicenseError` | `Error` | `InvalidOperationException` | `IllegalStateException` |
+| File read failed | — (manual) | `ErrorLicenseFile=18` | `PdfluentLicenseError` | not exposed | `FileNotFoundException` | `IOException` |
 
 The C ABI thread-local last-error string (via `pdf_get_last_error()`)
 carries a human-readable message. Bindings translate this into idiomatic
