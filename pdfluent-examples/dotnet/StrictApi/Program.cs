@@ -37,6 +37,26 @@ Console.WriteLine(new string('─', 50));
 
 try
 {
+    // ── G0: License activation ──────────────────────────────────────────────
+    // Optional in Trial mode. Reads PDFLUENT_LICENSE_KEY from env when set, or
+    // falls back to a Developer-tier demo key for this offline example.
+    string envKey = Environment.GetEnvironmentVariable("PDFLUENT_LICENSE_KEY") ?? string.Empty;
+    string demoKey = envKey.Length > 0 ? envKey : "tier:developer";
+    try
+    {
+        Licensing.ActivateKey(demoKey);
+    }
+    catch (PdfluentLicenseException ex) when (ex.NativeStatus == PdfStatus.ErrorLicenseAlreadySet)
+    {
+        // Another component already activated this process — fine, continue.
+    }
+
+    LicenseStatus license = Licensing.GetStatus();
+    Console.WriteLine($"License : tier={license.Tier} source={license.Source} " +
+                      $"active={license.Active}");
+    Console.WriteLine($"EffectiveTier (int): {Licensing.EffectiveTier}");
+    Console.WriteLine();
+
     // ── G1: Open ─────────────────────────────────────────────────────────────
     using PdfDocument doc = useFile
         ? PdfDocument.Open(inputPath)
@@ -112,9 +132,16 @@ catch (PdfluentRenderException ex)
     Console.Error.WriteLine($"Render error [{ex.NativeStatus}]: {ex.Message}");
     Environment.Exit(6);
 }
+catch (PdfluentLicenseException ex)
+{
+    Console.Error.WriteLine($"License error [{ex.Code}] [{ex.NativeStatus}]: {ex.Message}");
+    Console.Error.WriteLine("Tip: set PDFLUENT_LICENSE_KEY or call Licensing.ActivateKey first.");
+    Environment.Exit(7);
+}
 catch (PdfluentException ex)
 {
     // Catch-all for any other PDFluent error.
-    Console.Error.WriteLine($"PDFluent error [{ex.NativeStatus}]: {ex.Message}");
+    string code = ex.Code is null ? string.Empty : $" [{ex.Code}]";
+    Console.Error.WriteLine($"PDFluent error{code} [{ex.NativeStatus}]: {ex.Message}");
     Environment.Exit(1);
 }
