@@ -57,15 +57,18 @@ extern "C" {
  * |   5   | PDF_STATUS_ERROR_PAGE_RANGE    | ErrorPageRange            |
  * |   6   | PDF_STATUS_ERROR_RENDER        | ErrorRender               |
  * |   7   | PDF_STATUS_ERROR_CONVERT       | ErrorConvert              |
- * |   8   | PDF_STATUS_ERROR_REDACT        | ErrorRedact               |
- * |   9   | PDF_STATUS_ERROR_SIGN          | ErrorSign                 |
- * |  10   | PDF_STATUS_ERROR_ANNOTATION    | ErrorAnnotation           |
- * |  11   | PDF_STATUS_ERROR_MERGE         | ErrorMerge                |
- * |  12   | PDF_STATUS_ERROR_EXTRACT       | ErrorExtract              |
- * |  13   | PDF_STATUS_ERROR_SPLIT         | ErrorSplit                |
- * |  14   | PDF_STATUS_ERROR_WATERMARK     | ErrorWatermark            |
- * |  15   | PDF_STATUS_ERROR_COMPRESS      | ErrorCompress             |
- * |  99   | PDF_STATUS_ERROR_UNKNOWN       | ErrorUnknown              |
+ * |   8   | PDF_STATUS_ERROR_REDACT             | ErrorRedact               |
+ * |   9   | PDF_STATUS_ERROR_SIGN               | ErrorSign                 |
+ * |  10   | PDF_STATUS_ERROR_ANNOTATION         | ErrorAnnotation           |
+ * |  11   | PDF_STATUS_ERROR_MERGE              | ErrorMerge                |
+ * |  12   | PDF_STATUS_ERROR_EXTRACT            | ErrorExtract              |
+ * |  13   | PDF_STATUS_ERROR_SPLIT              | ErrorSplit                |
+ * |  14   | PDF_STATUS_ERROR_WATERMARK          | ErrorWatermark            |
+ * |  15   | PDF_STATUS_ERROR_COMPRESS           | ErrorCompress             |
+ * |  16   | PDF_STATUS_ERROR_LICENSE_INVALID    | ErrorInvalidLicense       |
+ * |  17   | PDF_STATUS_ERROR_LICENSE_ALREADY_SET| ErrorLicenseAlreadySet    |
+ * |  18   | PDF_STATUS_ERROR_LICENSE_FILE       | ErrorLicenseFile          |
+ * |  99   | PDF_STATUS_ERROR_UNKNOWN            | ErrorUnknown              |
  *
  * See @c docs/c_abi_stability.md §3 for the full error catalogue with
  * recovery hints and cross-binding mapping.
@@ -195,13 +198,38 @@ typedef enum {
      *
      * Recovery: check @ref pdf_get_last_error.
      */
-    PDF_STATUS_ERROR_COMPRESS        = 15,
+    PDF_STATUS_ERROR_COMPRESS             = 15,
+
+    /**
+     * The license key string is malformed or names an unrecognised tier.
+     *
+     * Recovery: verify the key string matches the documented format
+     * (@c "tier:<name>").  See @c docs/licensing.md for the accepted values.
+     */
+    PDF_STATUS_ERROR_LICENSE_INVALID      = 16,
+
+    /**
+     * The process-global license has already been set to a different tier
+     * in this run.  Restart the process to switch tiers.
+     *
+     * Recovery: restart the process, then activate with the desired tier
+     * before calling any other API.
+     */
+    PDF_STATUS_ERROR_LICENSE_ALREADY_SET  = 17,
+
+    /**
+     * The license file could not be opened or read from disk (permission
+     * denied, path not found, or I/O error).
+     *
+     * Recovery: verify the path exists and is readable.
+     */
+    PDF_STATUS_ERROR_LICENSE_FILE         = 18,
 
     /**
      * An internal error with no specific code.  Always accompanied by a
      * message from @ref pdf_get_last_error.
      */
-    PDF_STATUS_ERROR_UNKNOWN         = 99,
+    PDF_STATUS_ERROR_UNKNOWN              = 99,
 } PdfStatus;
 
 /* =========================================================================
@@ -1080,6 +1108,142 @@ PdfStatus pdf_document_add_watermark(
 PdfStatus pdf_document_compress(
     const PdfDocument *doc,
     PdfDocument **out);
+
+/* =========================================================================
+ * License activation
+ * =========================================================================
+ * Process-global, set-once.  Re-activating with the same tier is idempotent.
+ * Re-activating with a different tier returns
+ * @ref PDF_STATUS_ERROR_LICENSE_ALREADY_SET — restart the process to switch.
+ *
+ * Key format (1.0): @c "tier:<name>" where @c <name> is one of
+ * @c trial, @c developer, @c team, @c business, @c enterprise.
+ * Cryptographically-signed payloads (Ed25519) are accepted by the same
+ * functions from release 1.1 onward.
+ *
+ * Error messages (available via @ref pdf_get_last_error) report parse
+ * failure modes only; the raw key string is never logged.
+ */
+
+/**
+ * @brief Current license status snapshot.
+ *
+ * Populated by @ref pdfluent_license_status.  All three fields are plain
+ * integers so the struct has a stable, padding-free layout on all supported
+ * platforms.
+ *
+ * @par Tier values
+ * | Value | Tier       |
+ * |-------|-----------|
+ * |   0   | Trial      |
+ * |   1   | Developer  |
+ * |   2   | Team       |
+ * |   3   | Business   |
+ * |   4   | Enterprise |
+ * |  -1   | Unknown (future variant not yet mapped by this binding) |
+ *
+ * @par Source values
+ * | Value | Source   | Meaning                                            |
+ * |-------|----------|----------------------------------------------------|
+ * |   0   | Default  | No key supplied; active tier is Trial              |
+ * |   1   | EnvVar   | Key resolved from @c PDFLUENT_LICENSE_KEY env var  |
+ * |   2   | Explicit | Key set via @ref pdfluent_license_activate_key or  |
+ * |       |          | @ref pdfluent_license_activate_file                |
+ */
+typedef struct {
+    /** Effective tier (see table above). */
+    int tier;
+    /** Activation source (see table above). */
+    int source;
+    /**
+     * 1 if the current tier marks PDF output via the @c /Producer metadata
+     * field, 0 otherwise.  Only @c Trial sets this flag.
+     */
+    int output_is_marked;
+} PdfluentLicenseStatus;
+
+/**
+ * @brief Activate the process-global license from a key string.
+ *
+ * The key is consumed immediately and never stored locally.  On success the
+ * process-global tier is updated to the tier encoded in @c key.
+ *
+ * @par Ownership
+ * @c key is BORROWED — the library does not retain it after the call returns.
+ *
+ * @param key  Null-terminated UTF-8 license key string.  Must not be NULL.
+ *             BORROWED.
+ *
+ * @return @ref PDF_STATUS_OK on success.
+ * @return @ref PDF_STATUS_ERROR_INVALID_ARG if @c key is NULL or not valid
+ *         UTF-8.
+ * @return @ref PDF_STATUS_ERROR_LICENSE_INVALID if the key is malformed or
+ *         names an unknown tier.
+ * @return @ref PDF_STATUS_ERROR_LICENSE_ALREADY_SET if the process has already
+ *         been activated to a different tier this run.
+ *
+ * @note Use @ref pdf_get_last_error for a human-readable failure message.
+ */
+PdfStatus pdfluent_license_activate_key(const char *key);
+
+/**
+ * @brief Activate the process-global license by reading a key from a file.
+ *
+ * The file must contain a single UTF-8 license key string (leading/trailing
+ * whitespace is stripped).  Internally calls @ref pdfluent_license_activate_key.
+ *
+ * @par Ownership
+ * @c path is BORROWED — the library does not retain it after the call returns.
+ *
+ * @param path  Null-terminated UTF-8 file system path to the license key file.
+ *              Must not be NULL.  BORROWED.
+ *
+ * @return @ref PDF_STATUS_OK on success.
+ * @return @ref PDF_STATUS_ERROR_INVALID_ARG if @c path is NULL or not valid
+ *         UTF-8.
+ * @return @ref PDF_STATUS_ERROR_LICENSE_FILE if the file cannot be opened or
+ *         read.
+ * @return @ref PDF_STATUS_ERROR_LICENSE_INVALID if the file contents are not a
+ *         valid key.
+ * @return @ref PDF_STATUS_ERROR_LICENSE_ALREADY_SET if the process has already
+ *         been activated to a different tier this run.
+ *
+ * @note Use @ref pdf_get_last_error for a human-readable failure message.
+ */
+PdfStatus pdfluent_license_activate_file(const char *path);
+
+/**
+ * @brief Return the effective tier as a plain integer.
+ *
+ * Convenience shorthand for callers that only need the tier number.  Equivalent
+ * to calling @ref pdfluent_license_status and reading the @c tier field.
+ *
+ * @par Ownership
+ * No pointers involved.
+ *
+ * @return Tier value in [0, 4] (see @ref PdfluentLicenseStatus).
+ *         Returns -1 for a future tier variant not yet mapped by this binding.
+ */
+int pdfluent_license_effective_tier(void);
+
+/**
+ * @brief Fill @c out with a snapshot of the current license status.
+ *
+ * The snapshot is consistent within the call but may be superseded by a
+ * concurrent activation on another thread.
+ *
+ * @par Ownership
+ * @c out is a BORROWED write-target.  The caller allocates the struct (on the
+ * stack or heap) and the library fills it.  The struct does not need to be
+ * freed with any free function.
+ *
+ * @param out  Pointer to a caller-allocated @ref PdfluentLicenseStatus to
+ *             receive the current status.  Must not be NULL.  BORROWED.
+ *
+ * @return @ref PDF_STATUS_OK on success.
+ * @return @ref PDF_STATUS_ERROR_INVALID_ARG if @c out is NULL.
+ */
+PdfStatus pdfluent_license_status(PdfluentLicenseStatus *out);
 
 /* =========================================================================
  * G-track text-editing extensions (future / opt-in)
