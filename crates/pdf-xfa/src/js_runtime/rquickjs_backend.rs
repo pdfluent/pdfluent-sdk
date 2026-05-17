@@ -348,7 +348,10 @@ impl QuickJsRuntime {
             )
             .map_err(|e| format!("resolveImplicitNodeIdsHinted: {e}"))?;
             internal
-                .set("resolveImplicitNodeIdsHinted", resolve_implicit_node_ids_hinted)
+                .set(
+                    "resolveImplicitNodeIdsHinted",
+                    resolve_implicit_node_ids_hinted,
+                )
                 .map_err(|e| format!("set resolveImplicitNodeIdsHinted: {e}"))?;
 
             let child_hinted_host = Rc::clone(&host);
@@ -404,6 +407,85 @@ impl QuickJsRuntime {
             internal
                 .set("resolveScopedNodeIds", resolve_scoped_node_ids)
                 .map_err(|e| format!("set resolveScopedNodeIds: {e}"))?;
+
+            // Phase D-θ.2: full-chain SOM resolution with backtracking. The
+            // JS proxy accumulates property names (the SOM chain) until a
+            // terminal property is read, then asks the host to walk the
+            // entire chain in one shot. `chain_csv` is a comma-separated
+            // list of property names; commas are illegal in SOM names so the
+            // delimiter is unambiguous. Passing a `current_id` of -1 + an
+            // empty `parent_ids_csv` is invalid and yields an empty result;
+            // callers must supply either explicit parents OR a current id.
+            let full_chain_host = Rc::clone(&host);
+            let resolve_with_full_chain = Function::new(
+                ctx.clone(),
+                move |parent_ids_csv: Opt<Coerced<String>>,
+                      current_id: i32,
+                      chain_csv: Opt<Coerced<String>>|
+                      -> Vec<i32> {
+                    let parents: Vec<FormNodeId> = parent_ids_csv
+                        .0
+                        .map(|s| parse_node_id_csv(&s.0))
+                        .unwrap_or_default();
+                    let chain: Vec<String> = chain_csv
+                        .0
+                        .map(|s| s.0.split(',').map(|part| part.trim().to_string()).collect())
+                        .unwrap_or_default();
+                    let implicit_origin = if current_id >= 0 {
+                        Some(FormNodeId(current_id as usize))
+                    } else {
+                        None
+                    };
+                    full_chain_host
+                        .borrow_mut()
+                        .resolve_with_full_chain(&parents, &chain, implicit_origin)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveWithFullChain: {e}"))?;
+            internal
+                .set("resolveWithFullChain", resolve_with_full_chain)
+                .map_err(|e| format!("set resolveWithFullChain: {e}"))?;
+
+            // Strict full-chain probe: returns empty when the chain cannot
+            // be completed at full depth. Used by the JS chain proxy during
+            // accumulation to surface `undefined` for unreachable paths
+            // (so `A.B === undefined` keeps the byte-for-byte D-θ.1
+            // behaviour for forms that test dead-end chains).
+            let full_chain_strict_host = Rc::clone(&host);
+            let resolve_with_full_chain_strict = Function::new(
+                ctx.clone(),
+                move |parent_ids_csv: Opt<Coerced<String>>,
+                      current_id: i32,
+                      chain_csv: Opt<Coerced<String>>|
+                      -> Vec<i32> {
+                    let parents: Vec<FormNodeId> = parent_ids_csv
+                        .0
+                        .map(|s| parse_node_id_csv(&s.0))
+                        .unwrap_or_default();
+                    let chain: Vec<String> = chain_csv
+                        .0
+                        .map(|s| s.0.split(',').map(|part| part.trim().to_string()).collect())
+                        .unwrap_or_default();
+                    let implicit_origin = if current_id >= 0 {
+                        Some(FormNodeId(current_id as usize))
+                    } else {
+                        None
+                    };
+                    full_chain_strict_host
+                        .borrow_mut()
+                        .resolve_with_full_chain_strict(&parents, &chain, implicit_origin)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveWithFullChainStrict: {e}"))?;
+            internal
+                .set("resolveWithFullChainStrict", resolve_with_full_chain_strict)
+                .map_err(|e| format!("set resolveWithFullChainStrict: {e}"))?;
 
             let get_raw_host = Rc::clone(&host);
             let get_raw_value = Function::new(
@@ -1300,7 +1382,107 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       // common path keeps its original Proxy identity and resolve budget.
       return makeHandle(eagerChildIds[0], generation);
     }
-    return makeChildDeferred(parentIds, childName, eagerChildIds, generation);
+    // Phase D-θ.2: same-name siblings exist; defer through the full-chain
+    // accumulator so a deeper segment (still unread) can disambiguate.
+    return makeChainProxy(parentIds, [childName], eagerChildIds, generation, -1);
+  }
+
+  // Phase D-θ.2: lazy chain proxy. Accumulates a SOM chain (string[]) as the
+  // script walks property access; on the first terminal property read it
+  // asks the host to resolve the FULL accumulated chain in one call,
+  // letting the host backtrack and pick the same-name candidate at any
+  // depth whose subtree actually completes the chain.
+  //
+  // Compared to D-θ.1 (single-segment hint), this lets `A.B.C.D.rawValue`
+  // pick the correct same-name `A` not only when one is the parent of `B`
+  // but specifically the one whose subtree contains the full B.C.D chain.
+  //
+  // Parameters:
+  //   parentIds            — entry parent set; empty array means implicit walk.
+  //   chain                — string[] of segments accumulated so far (>=1).
+  //   eagerIds             — fallback ids returned if the host's full-chain
+  //                          resolve produces no candidate at any depth
+  //                          (preserves D-θ.1 byte-for-byte behaviour for
+  //                          chains the host cannot improve on).
+  //   generation           — handle generation to bind to.
+  //   currentId            — implicit-walk anchor (used when parentIds is empty).
+  //
+  // Terminal property names trigger immediate resolution. Non-terminal
+  // string property names return a NEW chain proxy with the property name
+  // appended; no host call happens at that point.
+  function makeChainProxy(parentIds, chain, eagerIds, generation, currentId) {
+    var sentinel = nullProtoObject();
+    function fullChain(extraSeg) {
+      var parentCsv = nodeIdListArg(parentIds);
+      var chainArr = chain;
+      if (extraSeg !== undefined) {
+        chainArr = chain.slice();
+        chainArr.push(extraSeg);
+      }
+      var chainCsv = chainArr.join(",");
+      var resolved = uniqueNodeIds(
+        host.resolveWithFullChain(parentCsv, currentId | 0, chainCsv)
+      );
+      if (resolved.length === 0) return eagerIds;
+      return resolved;
+    }
+    return new Proxy(sentinel, {
+      get: function(target, prop, receiver) {
+        if (typeof prop !== "string") {
+          // Symbol.toPrimitive and similar non-string keys must force
+          // terminal resolution so coercion (e.g. via Number(handle)) sees
+          // the resolved candidate's primitive view rather than the proxy
+          // sentinel itself.
+          var primIds = fullChain();
+          var primHandle = makeNodeHandleFromIds(primIds, generation);
+          if (primHandle === undefined) {
+            return Reflect.get(target, prop, receiver);
+          }
+          return primHandle[prop];
+        }
+        if (isTerminalHandleProp(prop)) {
+          var ids = fullChain();
+          var handle = makeNodeHandleFromIds(ids, generation);
+          if (handle === undefined) return undefined;
+          return handle[prop];
+        }
+        // Non-terminal: probe the extended chain in STRICT mode. If the
+        // host cannot complete `[chain..., prop]` at full depth anywhere
+        // in the form, return `undefined` — mirroring the eager D-θ.1
+        // behaviour where `A.B` resolved to `undefined` when no `A.B`
+        // existed. When the probe succeeds, return a new chain proxy
+        // with the segment appended; the lazy accumulation lets a
+        // deeper segment still disambiguate which same-name `A` to keep.
+        var probe = host.resolveWithFullChainStrict(
+          nodeIdListArg(parentIds),
+          currentId | 0,
+          chain.concat([prop]).join(",")
+        );
+        if (!probe || probe.length === 0) {
+          return undefined;
+        }
+        var nextChain = chain.slice();
+        nextChain.push(prop);
+        // The probe result becomes the new eager-fallback so future
+        // probes that the host cannot improve on still degrade
+        // gracefully. We must NOT collapse to a single makeHandle here:
+        // the chain may continue to grow and disambiguate further.
+        var nextEager = uniqueNodeIds(probe);
+        return makeChainProxy(parentIds, nextChain, nextEager, generation, currentId);
+      },
+      set: function(_target, prop, value) {
+        // Writes are always terminal: resolve the full chain and forward.
+        var ids = fullChain();
+        var handle = makeNodeHandleFromIds(ids, generation);
+        if (handle === undefined) return true;
+        handle[prop] = value;
+        return true;
+      },
+      has: function(_target, prop) {
+        if (typeof prop !== "string") return Reflect.has(sentinel, prop);
+        return true;
+      }
+    });
   }
 
   function makeCandidateSet(ids, generation) {
@@ -2090,14 +2272,16 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       if (nodeIds.length === 0) {
         return undefined;
       }
-      // Phase D-θ: always wrap an implicit hit in the lookahead Proxy. Even
-      // when the un-hinted walk returns a singleton, the next-segment hint
-      // may let the host widen the search across higher scopes and surface
-      // an alternative same-named node whose subtree actually contains the
-      // chained segment. The wrapper still degrades to byte-for-byte
-      // identical reads for terminal properties (rawValue, somExpression,
-      // …) so single-token access keeps the existing semantics.
-      var handle = makeImplicitDeferred(currentId, name, nodeIds, generation);
+      // Phase D-θ.2: wrap an implicit hit in the full-chain accumulator. The
+      // resulting proxy accumulates SOM property names without contacting
+      // the host until a terminal property is read; only then is the full
+      // chain resolved with backtracking. This lets `A.B.C.D.rawValue`
+      // disambiguate the same-name `A` whose subtree completes the chain,
+      // rather than relying on a single-segment hint as in D-θ.1. Terminal
+      // properties still resolve byte-for-byte identically to the
+      // un-hinted walk so single-token reads keep their existing
+      // semantics.
+      var handle = makeChainProxy([], [name], nodeIds, generation, currentId);
       cachedHandles[name] = handle;
       return handle;
     }
