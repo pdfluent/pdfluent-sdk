@@ -1,0 +1,33 @@
+# Build / dependency artefacts produced by the example projects.
+# These are regenerated on demand and should never be committed.
+
+# Rust
+rust/target/
+rust/Cargo.lock
+
+# Node / TypeScript
+node/strict-ts/node_modules/
+node/strict-ts/package-lock.json
+node/strict-ts/dist/
+
+# WASM
+wasm/strict-ts-edit/node_modules/
+wasm/strict-ts-edit/package-lock.json
+
+# .NET
+dotnet/StrictApi/bin/
+dotnet/StrictApi/obj/
+
+# Java
+java/StrictApi/target/
+
+# Python
+python/__pycache__/
+python/.mypy_cache/
+
+# C
+c/strict-api/hello_world
+c/strict-api/extract_text
+c/strict-api/fill_form
+c/strict-api/g_track
+c/strict-api/*.o
