@@ -143,35 +143,35 @@ fn create_minimal_pdf_document() -> Document {
 /// Layout metadata emitted only for CLI diagnostics.
 #[derive(Debug, Clone, Default)]
 pub struct LayoutDump {
-    /// pages.
+    /// Per-page layout entries (one per rendered page).
     pub pages: Vec<LayoutDumpEntry>,
-    /// dynamic_scripts.
+    /// Outcome of any dynamic script processing applied before layout.
     pub dynamic_scripts: DynamicScriptOutcome,
-    /// output_quality.
+    /// Overall quality level of the flattened output.
     pub output_quality: OutputQuality,
 }
 
 /// One page entry in the optional layout dump.
 #[derive(Debug, Clone)]
 pub struct LayoutDumpEntry {
-    /// page_num.
+    /// 1-based page number.
     pub page_num: u32,
-    /// page_height.
+    /// Total height of the page area in points.
     pub page_height: f64,
-    /// used_height.
+    /// Height consumed by laid-out content on this page, in points.
     pub used_height: f64,
-    /// overflow_to_next.
+    /// True when content overflowed and continued on the next page.
     pub overflow_to_next: bool,
-    /// first_overflow_element.
+    /// Name of the first element that triggered overflow, if any.
     pub first_overflow_element: Option<String>,
 }
-/// FlattenMetadata.
 
+/// Lightweight metadata returned alongside the flattened PDF bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FlattenMetadata {
-    /// dynamic_scripts.
+    /// Outcome of dynamic script processing applied during flattening.
     pub dynamic_scripts: DynamicScriptOutcome,
-    /// output_quality.
+    /// Overall output quality level of the flattened result.
     pub output_quality: OutputQuality,
 }
 
@@ -265,14 +265,30 @@ fn try_decrypt_pdf(pdf_bytes: &[u8]) -> DecryptResult {
     DecryptResult::NotEncrypted
 }
 
-/// Returns `true` if the layout nodes contain at least one field node.
+/// Returns `true` if the layout nodes contain at least one data-bearing field.
+///
 /// Checks the FormTree source node because the layout engine may emit
 /// `WrappedText` instead of `Field` for fields with content.
+///
+/// Non-data-bearing widgets are excluded so pages whose only interactive
+/// elements are decorative or structural are treated as static-only pages
+/// and are never suppressed by the page-drop heuristic:
+///
+/// * `Draw` elements are purely static content — text labels, images, lines.
+/// * `FieldKind::Signature` — a signature box carries no user-typed value.
+/// * `FieldKind::Button` — a push-button carries no data value by design.
+/// * `FieldKind::Barcode` — barcodes are presentation-only.
 fn page_has_fields(nodes: &[LayoutNode], tree: &FormTree) -> bool {
-    use xfa_layout_engine::form::FormNodeType;
+    use xfa_layout_engine::form::{FieldKind, FormNodeType};
     nodes.iter().any(|n| {
-        matches!(tree.get(n.form_node).node_type, FormNodeType::Field { .. })
-            || page_has_fields(&n.children, tree)
+        // Draw nodes (text labels, lines, images) are static content; they
+        // must never count as data fields for the page-suppression heuristic.
+        let is_data_field = matches!(tree.get(n.form_node).node_type, FormNodeType::Field { .. })
+            && !matches!(
+                tree.meta(n.form_node).field_kind,
+                FieldKind::Signature | FieldKind::Button | FieldKind::Barcode
+            );
+        is_data_field || page_has_fields(&n.children, tree)
     })
 }
 
@@ -336,19 +352,41 @@ fn page_has_field_data(nodes: &[LayoutNode], tree: &FormTree) -> bool {
 pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     flatten_xfa_to_pdf_internal(pdf_bytes, false).map(|out| out.pdf_bytes)
 }
-/// flatten_xfa_to_pdf_with_layout_dump.
+/// Flatten XFA content and return the PDF bytes together with a per-page layout dump.
+///
+/// The [`LayoutDump`] is useful for CLI diagnostics and automated testing; use
+/// [`flatten_xfa_to_pdf`] when you only need the output bytes.
+///
+/// # Errors
+///
+/// Returns [`XfaError`] on parse, layout, or render failures.
 #[must_use = "flattened PDF bytes and layout dump must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_layout_dump(pdf_bytes: &[u8]) -> Result<(Vec<u8>, LayoutDump)> {
     let out = flatten_xfa_to_pdf_internal(pdf_bytes, true)?;
     Ok((out.pdf_bytes, out.layout_dump))
 }
-/// flatten_xfa_to_pdf_with_metadata.
+
+/// Flatten XFA content and return the PDF bytes together with [`FlattenMetadata`].
+///
+/// Metadata includes the dynamic-script outcome and overall output quality level.
+///
+/// # Errors
+///
+/// Returns [`XfaError`] on parse, layout, or render failures.
 #[must_use = "flattened PDF bytes and metadata must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_metadata(pdf_bytes: &[u8]) -> Result<(Vec<u8>, FlattenMetadata)> {
     let out = flatten_xfa_to_pdf_internal(pdf_bytes, false)?;
     Ok((out.pdf_bytes, out.metadata))
 }
-/// flatten_xfa_to_pdf_with_layout_dump_and_metadata.
+
+/// Flatten XFA content and return the PDF bytes, a layout dump, and metadata in one call.
+///
+/// Combines [`flatten_xfa_to_pdf_with_layout_dump`] and
+/// [`flatten_xfa_to_pdf_with_metadata`] without running the pipeline twice.
+///
+/// # Errors
+///
+/// Returns [`XfaError`] on parse, layout, or render failures.
 #[must_use = "flattened PDF bytes, layout dump, and metadata must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_layout_dump_and_metadata(
     pdf_bytes: &[u8],
@@ -1303,8 +1341,17 @@ fn extract_cid_font_widths(
         return None;
     }
 
-    let min_cid = entries.iter().map(|(c, _)| *c).min().unwrap();
-    let max_cid = entries.iter().map(|(c, _)| *c).max().unwrap();
+    // SAFETY: entries is non-empty (guarded above), so min/max always yield Some.
+    let min_cid = entries
+        .iter()
+        .map(|(c, _)| *c)
+        .min()
+        .expect("entries is non-empty");
+    let max_cid = entries
+        .iter()
+        .map(|(c, _)| *c)
+        .max()
+        .expect("entries is non-empty");
     let len = (max_cid - min_cid + 1) as usize;
     let mut widths = vec![default_width; len];
     for (cid, w) in &entries {
@@ -2220,8 +2267,9 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
             // If the form DOM has more instances than the FormTree, clone to match.
             if xml_count > existing_count && existing_count > 0 {
                 let template_id = existing[0].1;
-                // Find insertion position: after the last existing sibling
-                let last_existing_idx = existing.last().unwrap().0;
+                // Find insertion position: after the last existing sibling.
+                // SAFETY: existing_count > 0 is guarded by the enclosing `if`.
+                let last_existing_idx = existing.last().expect("existing_count > 0").0;
                 let insert_pos = last_existing_idx + 1;
                 let clones_needed = xml_count - existing_count;
                 let mut new_ids = Vec::new();
@@ -2964,7 +3012,8 @@ fn append_to_page_content(doc: &mut Document, page_id: ObjectId, data: &[u8]) {
             flatten_page_contents_entries(doc, existing, &mut flattened);
             flattened.push(Object::Reference(new_stream_id));
             if flattened.len() == 1 {
-                flattened.pop().unwrap()
+                // SAFETY: len == 1 is checked on the line above.
+                flattened.pop().expect("flattened.len() == 1")
             } else {
                 Object::Array(flattened)
             }
