@@ -6,6 +6,7 @@
 
 use crate::error::{ManipError, Result};
 use lopdf::{Document, EncryptionState, EncryptionVersion, Object, Permissions as LopdfPerms};
+use std::fs;
 use std::io::Write;
 use std::path::Path;
 
@@ -188,7 +189,8 @@ pub fn decrypt(doc: &mut Document, password: &str) -> Result<()> {
 
 /// Load and decrypt a PDF from a file path.
 pub fn open_encrypted<P: AsRef<Path>>(path: P, password: &str) -> Result<Document> {
-    let mut doc = Document::load(path.as_ref())?;
+    let bytes = fs::read(path.as_ref())?;
+    let mut doc = Document::load_mem(&bytes)?;
     decrypt(&mut doc, password)?;
     Ok(doc)
 }

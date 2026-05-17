@@ -662,7 +662,7 @@ mod tests {
         // rejected before allocation to prevent multi-GB heap requests from
         // crafted PDFs.
         use super::decode_xref_stream;
-        use crate::{Dictionary, Object, Stream, xref::XrefType};
+        use crate::{Dictionary, Object, Stream};
 
         let mut dict = Dictionary::new();
         dict.set("Type", Object::Name(b"XRef".to_vec()));
