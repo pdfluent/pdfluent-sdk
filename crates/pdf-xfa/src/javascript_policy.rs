@@ -21,12 +21,6 @@ pub enum JavaScriptPolicy {
     /// JavaScript-bearing actions are stripped from flattened/hardened output.
     StripOnFlatten,
 }
-/// ALLOW_PARSE.
-pub const ALLOW_PARSE: JavaScriptPolicy = JavaScriptPolicy::AllowParse;
-/// DENY_EXECUTION.
-pub const DENY_EXECUTION: JavaScriptPolicy = JavaScriptPolicy::DenyExecution;
-/// STRIP_ON_FLATTEN.
-pub const STRIP_ON_FLATTEN: JavaScriptPolicy = JavaScriptPolicy::StripOnFlatten;
 /// JavaScriptEntryPoint.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,21 +46,36 @@ impl JavaScriptEntryPoint {
         }
     }
 }
-/// parse_policy.
+/// Returns the JavaScript parse policy: [`JavaScriptPolicy::AllowParse`].
+///
+/// JavaScript syntax and payloads may be parsed or inspected for audit or strip
+/// operations, but must never be executed.
 pub fn parse_policy() -> JavaScriptPolicy {
-    ALLOW_PARSE
+    JavaScriptPolicy::AllowParse
 }
-/// execution_policy.
+
+/// Returns the JavaScript execution policy for a given entry point:
+/// always [`JavaScriptPolicy::DenyExecution`].
+///
+/// Document-supplied JavaScript is never executed regardless of entry point.
 pub fn execution_policy(_entrypoint: JavaScriptEntryPoint) -> JavaScriptPolicy {
-    DENY_EXECUTION
+    JavaScriptPolicy::DenyExecution
 }
-/// flatten_policy.
+
+/// Returns the flatten-time JavaScript policy for a given entry point:
+/// always [`JavaScriptPolicy::StripOnFlatten`].
+///
+/// JavaScript-bearing actions are stripped from hardened/flattened output.
 pub fn flatten_policy(_entrypoint: JavaScriptEntryPoint) -> JavaScriptPolicy {
-    STRIP_ON_FLATTEN
+    JavaScriptPolicy::StripOnFlatten
 }
-/// reject_execution.
+
+/// Construct an [`XfaError`] that signals a denied JavaScript execution request.
 pub fn reject_execution(entrypoint: JavaScriptEntryPoint) -> XfaError {
-    debug_assert_eq!(execution_policy(entrypoint), DENY_EXECUTION);
+    debug_assert_eq!(
+        execution_policy(entrypoint),
+        JavaScriptPolicy::DenyExecution
+    );
     XfaError::UnsupportedFeature("javascript".to_string())
 }
 /// execution_denied_message.
@@ -124,7 +133,7 @@ pub fn dict_has_javascript_field_action(doc: &Document, dict: &lopdf::Dictionary
 pub fn strip_javascript_for_flatten(doc: &mut Document) -> usize {
     debug_assert_eq!(
         flatten_policy(JavaScriptEntryPoint::PdfOpenAction),
-        STRIP_ON_FLATTEN
+        JavaScriptPolicy::StripOnFlatten
     );
 
     let mut count = 0;
@@ -437,15 +446,15 @@ mod tests {
     }
 
     #[test]
-    fn policy_constants_are_explicit() {
-        assert_eq!(parse_policy(), ALLOW_PARSE);
+    fn policy_functions_return_expected_variants() {
+        assert_eq!(parse_policy(), JavaScriptPolicy::AllowParse);
         assert_eq!(
             execution_policy(JavaScriptEntryPoint::XfaEventHook),
-            DENY_EXECUTION
+            JavaScriptPolicy::DenyExecution
         );
         assert_eq!(
             flatten_policy(JavaScriptEntryPoint::AnnotationAdditionalAction),
-            STRIP_ON_FLATTEN
+            JavaScriptPolicy::StripOnFlatten
         );
     }
 
