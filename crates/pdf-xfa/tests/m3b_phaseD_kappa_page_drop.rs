@@ -295,17 +295,19 @@ fn two_data_pages_both_kept() {
 // Corpus doc gate tests (skipped when test-workspace is absent)
 // ---------------------------------------------------------------------------
 
-/// 13275420 — regression guard for the draw-exclusion fix.
+/// 13275420 — pageArea-expansion fidelity guard.
 ///
-/// Oracle is 10 pages.  The draw-exclusion fix (XFA-01) addresses static
-/// draw-only separator pages; it does not fix 13275420 because its dropped
-/// pages contain real (but empty) interactive fields (Radio, Text, Dropdown).
-/// That root cause is tracked as XFA-05 (occur over-instantiation).
+/// Oracle (pdfRest reference and Adobe Reader runtime) emits 10 pages
+/// because the form-DOM packet records 10 `<pageArea name="Page1">`
+/// instances.  The pageArea-expansion fix (XFA 3.3 §8.6 / §3.1) mirrors
+/// those runtime-allocated instances into the FormTree and prevents the
+/// data-empty page-drop heuristic from removing them.
 ///
-/// This guard verifies the engine does not regress below the current
-/// stable output of 5 pages while the XFA-05 fix is pending.
+/// This guard pins page-count fidelity at ≥ 8 (target 10) so any future
+/// regression in form-DOM walking or runtime-instantiated semantics will
+/// surface immediately.
 #[test]
-fn corpus_13275420_regression_guard_five_pages() {
+fn corpus_13275420_at_least_eight_pages() {
     let path = "/Users/jasperdewinter/xfa_analysis/input/13275420.pdf";
     if !std::path::Path::new(path).exists() {
         return;
@@ -316,11 +318,9 @@ fn corpus_13275420_regression_guard_five_pages() {
         .expect("reload 13275420 output")
         .get_pages()
         .len();
-    // Regression guard: must not drop below current stable output.
-    // Full oracle parity (10 pages) requires XFA-05 (occur fix).
     assert!(
-        pages >= 5,
-        "13275420 regression: must produce ≥5 pages (current stable), got {pages}"
+        pages >= 8,
+        "13275420 fidelity: pageArea expansion must produce ≥8 pages (oracle 10), got {pages}"
     );
 }
 
