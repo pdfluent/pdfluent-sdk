@@ -3399,6 +3399,7 @@ mod tests {
             width: 612.0,
             height: 792.0,
             nodes,
+            runtime_instantiated: false,
         }
     }
 
@@ -4553,6 +4554,7 @@ mod tests {
                 width: 612.0,
                 height: 792.0,
                 nodes: vec![node],
+                runtime_instantiated: false,
             }],
         };
         let tree = layout_dom_to_render_tree(&layout, &XfaRenderConfig::default());
