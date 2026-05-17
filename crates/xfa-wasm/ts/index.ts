@@ -10,6 +10,77 @@
 export { default as init, XfaEngine as RawXfaEngine, PdfDoc as RawPdfDoc } from '../pkg/xfa_wasm';
 export type { InitOutput, InitInput, SyncInitInput } from '../pkg/xfa_wasm';
 
+// --- Typed error class ---
+// PdfluentError is registered on globalThis by the WASM module on first load,
+// so it is always available at runtime once `await init()` has resolved. The
+// type declaration lives in pkg-types/xfa_wasm.augment.d.ts; here we provide a
+// runtime accessor + the public type re-export.
+
+import type { PdfluentError as _PdfluentErrorType } from '../pkg-types/xfa_wasm.augment';
+
+/** Re-exported typed error class. See `pkg-types/xfa_wasm.augment.d.ts`. */
+export type PdfluentError = _PdfluentErrorType;
+
+/**
+ * Runtime accessor for the `PdfluentError` class.
+ *
+ * Returns the constructor used to create errors thrown from the WASM module.
+ * The class is installed on `globalThis.__PdfluentError` on first error
+ * throw / first access via this helper.
+ */
+export function getPdfluentError(): {
+  new (message: string): PdfluentError;
+  prototype: PdfluentError;
+} {
+  const g = globalThis as unknown as {
+    __PdfluentError?: { new (message: string): PdfluentError; prototype: PdfluentError };
+  };
+  if (g.__PdfluentError) return g.__PdfluentError;
+  // Fallback shim if WASM hasn't been initialised yet.
+  class PdfluentErrorShim extends Error {
+    public readonly code: string = 'E-INTERNAL';
+    public readonly operation: string = '';
+    public readonly help: string = '';
+    public readonly docsUrl: string = 'https://pdfluent.com/errors/E-INTERNAL';
+    public readonly legacyCode: string = 'OPERATION_FAILED';
+    public constructor(message: string) {
+      super(message);
+      this.name = 'PdfluentError';
+    }
+  }
+  return PdfluentErrorShim as unknown as {
+    new (message: string): PdfluentError;
+    prototype: PdfluentError;
+  };
+}
+
+/**
+ * Type guard: `true` when `e` is a `PdfluentError` thrown from the WASM module.
+ *
+ * ```ts
+ * try { using doc = PdfDoc.open(bytes); }
+ * catch (e) {
+ *   if (isPdfluentError(e)) {
+ *     console.error(e.code, e.message, e.operation);
+ *   }
+ * }
+ * ```
+ */
+export function isPdfluentError(e: unknown): e is PdfluentError {
+  if (!(e instanceof Error)) return false;
+  // Tolerate the case where init() hasn't run yet: name + code field is enough.
+  const hasShape =
+    typeof (e as { code?: unknown }).code === 'string' &&
+    typeof (e as { operation?: unknown }).operation === 'string';
+  if (e.name === 'PdfluentError' && hasShape) return true;
+  const g = globalThis as unknown as { __PdfluentError?: Function };
+  return g.__PdfluentError != null && e instanceof (g.__PdfluentError as Function);
+}
+
+/** Legacy alias for {@link isPdfluentError}. @deprecated */
+export const isXfaWasmError = isPdfluentError;
+
+
 // --- Type definitions ---
 
 export interface FieldDef {

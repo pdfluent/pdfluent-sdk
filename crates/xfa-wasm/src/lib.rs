@@ -34,6 +34,7 @@ pub mod canvas2d_device;
 
 pub mod edits;
 pub mod license;
+pub mod pdfluent_error;
 
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use crate::canvas2d_device::Canvas2DDevice;
@@ -55,39 +56,68 @@ use xfa_layout_engine::scripting;
 use xfa_layout_engine::text::FontMetrics;
 use xfa_layout_engine::types::{BoxModel, LayoutStrategy};
 
-/// Build a structured JS error with machine-inspectable `code`, `help`, and `docsUrl` properties.
+/// Lift a `PdfError` into a `PdfluentError` JS instance.
 ///
-/// The thrown object is a standard JS `Error` (name = `"XfaWasmError"`) so existing
-/// `catch (e)` / `instanceof Error` handlers continue to work. The extra properties
-/// allow programmatic dispatch without string-parsing the message.
-fn make_xfa_error(code: &str, msg: &str, help: &str, docs_url: &str) -> JsValue {
-    use js_sys::Reflect;
-    let first_line = msg.lines().next().unwrap_or(msg);
-    let err = js_sys::Error::new(&format!("[{code}] {first_line}"));
-    err.set_name("XfaWasmError");
-    let val: &JsValue = err.as_ref();
-    let _ = Reflect::set(val, &JsValue::from_str("code"), &JsValue::from_str(code));
-    let _ = Reflect::set(val, &JsValue::from_str("help"), &JsValue::from_str(help));
-    let _ = Reflect::set(
-        val,
-        &JsValue::from_str("docsUrl"),
-        &JsValue::from_str(docs_url),
-    );
-    err.into()
-}
-
+/// Equivalent to the legacy `wasm_err` helper — preserved as a thin alias so
+/// internal call sites read naturally.
 fn wasm_err<E: PdfError>(e: E) -> JsValue {
-    let help = e.help().unwrap_or_default();
-    make_xfa_error(e.code(), &e.to_string(), &help, &e.docs_url())
+    pdfluent_error::pdf_engine_error("PdfDoc", e)
 }
 
-/// Build a structured error for call sites that don't have a `PdfError`.
-fn wasm_err_simple(code: &str, msg: &str) -> JsValue {
-    let docs_url = format!(
-        "https://docs.pdfluent.dev/errors/{}",
-        code.to_lowercase().replace('_', "-")
-    );
-    make_xfa_error(code, msg, "", &docs_url)
+/// Build a `PdfluentError` from a legacy SCREAMING_SNAKE_CASE code + message.
+///
+/// Maps the legacy WASM error codes to the C8 `E-<CATEGORY>-<SPECIFIC>`
+/// catalogue. The thrown JS object exposes BOTH:
+/// - `.code` — new C8 code (canonical going forward)
+/// - `.legacyCode` — original SCREAMING_SNAKE_CASE identifier (stable for
+///   existing consumer code)
+fn wasm_err_simple(legacy: &str, msg: &str) -> JsValue {
+    wasm_err_with_op(legacy, msg, infer_operation(legacy))
+}
+
+fn wasm_err_with_op(legacy: &str, msg: &str, operation: &str) -> JsValue {
+    use pdfluent_error::{code, legacy_code};
+    let c8 = match legacy {
+        legacy_code::INVALID_PDF => code::PARSE_INVALID_PDF,
+        legacy_code::INVALID_JSON => code::WASM_INVALID_JSON,
+        legacy_code::INVALID_ARGUMENT => code::WASM_INVALID_ARGUMENT,
+        legacy_code::PAGE_OUT_OF_RANGE => code::WASM_PAGE_OUT_OF_RANGE,
+        legacy_code::FORMCALC_ERROR => code::WASM_FORMCALC_FAILED,
+        legacy_code::SERIALIZE_ERROR => code::WASM_INVALID_JSON,
+        legacy_code::RENDER_ERROR => code::WASM_RENDER_FAILED,
+        legacy_code::RENDER_FALLBACK => code::WASM_RENDER_FALLBACK,
+        legacy_code::TEXT_EXTRACT_FAILED => code::WASM_TEXT_EXTRACT_FAILED,
+        legacy_code::XFA_FLATTEN_FAILED => code::WASM_XFA_FAILED,
+        legacy_code::MERGE_FAILED => code::WASM_MERGE_FAILED,
+        legacy_code::SAVE_FAILED => code::WASM_SAVE_FAILED,
+        legacy_code::OPERATION_FAILED => code::INTERNAL,
+        legacy_code::PDFA_CLEANUP_FAILED => code::COMPLIANCE_PDFA_INVALID,
+        legacy_code::COLORSPACE_ERROR => code::COMPLIANCE_PDFA_INVALID,
+        legacy_code::XMP_REPAIR_FAILED => code::COMPLIANCE_PDFA_INVALID,
+        _ => code::INTERNAL,
+    };
+    pdfluent_error::pdfluent_error(operation, c8, legacy, msg, "")
+}
+
+fn infer_operation(legacy: &str) -> &'static str {
+    use pdfluent_error::legacy_code;
+    match legacy {
+        legacy_code::INVALID_PDF => "PdfDoc.open",
+        legacy_code::INVALID_JSON => "XfaEngine.parseJson",
+        legacy_code::INVALID_ARGUMENT => "PdfDoc.validate",
+        legacy_code::PAGE_OUT_OF_RANGE => "PdfDoc.page",
+        legacy_code::FORMCALC_ERROR => "XfaEngine.runCalculations",
+        legacy_code::SERIALIZE_ERROR => "PdfDoc.serialize",
+        legacy_code::RENDER_ERROR | legacy_code::RENDER_FALLBACK => "PdfDoc.renderPage",
+        legacy_code::TEXT_EXTRACT_FAILED => "PdfDoc.getTextPositions",
+        legacy_code::XFA_FLATTEN_FAILED => "PdfDoc.flattenXfa",
+        legacy_code::MERGE_FAILED => "PdfDoc.merge",
+        legacy_code::SAVE_FAILED => "PdfDoc.save",
+        legacy_code::PDFA_CLEANUP_FAILED
+        | legacy_code::COLORSPACE_ERROR
+        | legacy_code::XMP_REPAIR_FAILED => "PdfDoc.convertToPdfa",
+        _ => "PdfDoc",
+    }
 }
 
 /// The main XFA processing engine for WASM.
@@ -108,10 +138,18 @@ fn wasm_err_simple(code: &str, msg: &str) -> JsValue {
 ///
 /// # Errors
 ///
-/// All fallible methods throw an `XfaWasmError` — a standard `Error` with extra
-/// properties: `code` (stable `SCREAMING_SNAKE_CASE` identifier), `help` (actionable
-/// hint), and `docsUrl` (documentation deep-link). Use `error.code` for programmatic
-/// dispatch without parsing `error.message`.
+/// All fallible methods throw a `PdfluentError` — a standard `Error` subclass with
+/// these properties:
+/// - `code`: stable C8 catalogue identifier in `E-<CATEGORY>-<SPECIFIC>` format
+///   (e.g. `"E-PARSE-INVALID-PDF"`). Use this for programmatic dispatch.
+/// - `message`: human-readable description (stable for backwards compatibility).
+/// - `operation`: short identifier of the API call that failed.
+/// - `help`: optional actionable hint (may be empty string).
+/// - `docsUrl`: deep-link into `https://pdfluent.com/errors/<code>`.
+/// - `legacyCode`: the original SCREAMING_SNAKE_CASE identifier from the
+///   pre-1.0 WASM binding, preserved so older user code keeps working.
+///
+/// JavaScript callers can use `error instanceof PdfluentError` to discriminate.
 #[wasm_bindgen]
 pub struct XfaEngine {
     tree: FormTree,
@@ -502,10 +540,18 @@ fn set_field_value_by_path(tree: &mut FormTree, root: FormNodeId, path: &str, va
 ///
 /// # Errors
 ///
-/// All fallible methods throw an `XfaWasmError` — a standard `Error` with extra
-/// properties: `code` (stable `SCREAMING_SNAKE_CASE` identifier), `help` (actionable
-/// hint), and `docsUrl` (documentation deep-link). Use `error.code` for programmatic
-/// dispatch without parsing `error.message`.
+/// All fallible methods throw a `PdfluentError` — a standard `Error` subclass with
+/// these properties:
+/// - `code`: stable C8 catalogue identifier in `E-<CATEGORY>-<SPECIFIC>` format
+///   (e.g. `"E-PARSE-INVALID-PDF"`). Use this for programmatic dispatch.
+/// - `message`: human-readable description (stable for backwards compatibility).
+/// - `operation`: short identifier of the API call that failed.
+/// - `help`: optional actionable hint (may be empty string).
+/// - `docsUrl`: deep-link into `https://pdfluent.com/errors/<code>`.
+/// - `legacyCode`: the original SCREAMING_SNAKE_CASE identifier from the
+///   pre-1.0 WASM binding, preserved so older user code keeps working.
+///
+/// JavaScript callers can use `error instanceof PdfluentError` to discriminate.
 #[wasm_bindgen]
 pub struct PdfDoc {
     pub(crate) pdf: pdf_syntax::Pdf,
@@ -554,8 +600,9 @@ impl PdfDoc {
     pub fn open(data: &[u8]) -> Result<PdfDoc, JsValue> {
         let raw = Arc::new(data.to_vec());
         let pdf = pdf_syntax::Pdf::new(raw.clone())
-            .map_err(|e| wasm_err_simple("INVALID_PDF", &format!("{e:?}")))?;
-        let engine = PdfDocument::open(raw).map_err(wasm_err)?;
+            .map_err(|e| wasm_err_with_op("INVALID_PDF", &format!("{e:?}"), "PdfDoc.open"))?;
+        let engine = PdfDocument::open(raw)
+            .map_err(|e| pdfluent_error::pdf_engine_error("PdfDoc.open", e))?;
         Ok(PdfDoc { pdf, engine })
     }
 
@@ -1519,6 +1566,89 @@ mod tests {
             v.get("charBounds").is_none(),
             "empty charBounds must be omitted"
         );
+    }
+
+    // ---- PdfluentError: code constants + legacy mapping ----
+
+    #[test]
+    fn pdfluent_error_codes_use_c8_format() {
+        use crate::pdfluent_error::code;
+        for c in [
+            code::PARSE_INVALID_PDF,
+            code::IO_GENERIC,
+            code::PARSE_UNSUPPORTED_VERSION,
+            code::COMPLIANCE_PDFA_INVALID,
+            code::LICENSE_INVALID,
+            code::LICENSE_FEATURE_NOT_IN_TIER,
+            code::ENV_UNSUPPORTED_ON_WASM,
+            code::INTERNAL,
+            code::WASM_INVALID_ARGUMENT,
+            code::WASM_PAGE_OUT_OF_RANGE,
+            code::WASM_RENDER_FAILED,
+            code::WASM_RENDER_FALLBACK,
+            code::WASM_TEXT_EXTRACT_FAILED,
+            code::WASM_XFA_FAILED,
+            code::WASM_MERGE_FAILED,
+            code::WASM_SAVE_FAILED,
+            code::WASM_INVALID_JSON,
+            code::WASM_FORMCALC_FAILED,
+        ] {
+            assert!(c.starts_with("E-"), "code {c:?} must start with E-");
+            assert!(!c.contains('_'), "code {c:?} must use dashes, not underscores");
+        }
+    }
+
+    #[test]
+    fn pdfluent_error_reuses_existing_catalogue_codes() {
+        use crate::pdfluent_error::code;
+        assert_eq!(code::PARSE_INVALID_PDF, "E-PARSE-INVALID-PDF");
+        assert_eq!(code::IO_GENERIC, "E-IO-GENERIC");
+        assert_eq!(code::COMPLIANCE_PDFA_INVALID, "E-COMPLIANCE-PDFA-INVALID");
+        assert_eq!(code::LICENSE_INVALID, "E-LICENSE-INVALID");
+        assert_eq!(code::LICENSE_FEATURE_NOT_IN_TIER, "E-LICENSE-FEATURE-NOT-IN-TIER");
+        assert_eq!(code::ENV_UNSUPPORTED_ON_WASM, "E-ENV-UNSUPPORTED-ON-WASM");
+    }
+
+    #[test]
+    fn legacy_codes_preserved_for_backward_compat() {
+        use crate::pdfluent_error::legacy_code;
+        for s in [
+            legacy_code::INVALID_PDF,
+            legacy_code::INVALID_JSON,
+            legacy_code::INVALID_ARGUMENT,
+            legacy_code::PAGE_OUT_OF_RANGE,
+            legacy_code::FORMCALC_ERROR,
+            legacy_code::SERIALIZE_ERROR,
+            legacy_code::RENDER_ERROR,
+            legacy_code::RENDER_FALLBACK,
+            legacy_code::TEXT_EXTRACT_FAILED,
+            legacy_code::XFA_FLATTEN_FAILED,
+            legacy_code::MERGE_FAILED,
+            legacy_code::SAVE_FAILED,
+            legacy_code::OPERATION_FAILED,
+            legacy_code::PDFA_CLEANUP_FAILED,
+            legacy_code::COLORSPACE_ERROR,
+            legacy_code::XMP_REPAIR_FAILED,
+            legacy_code::LICENSE_ERROR,
+            legacy_code::LICENSE_ALREADY_SET,
+        ] {
+            assert!(
+                s.chars().all(|c| c.is_ascii_uppercase() || c == '_'),
+                "legacy code {s:?} must be SCREAMING_SNAKE_CASE"
+            );
+        }
+        assert_eq!(legacy_code::INVALID_PDF, "INVALID_PDF");
+        assert_eq!(legacy_code::PAGE_OUT_OF_RANGE, "PAGE_OUT_OF_RANGE");
+    }
+
+    #[test]
+    fn infer_operation_covers_common_legacy_codes() {
+        use crate::pdfluent_error::legacy_code;
+        assert_eq!(super::infer_operation(legacy_code::INVALID_PDF), "PdfDoc.open");
+        assert_eq!(super::infer_operation(legacy_code::PAGE_OUT_OF_RANGE), "PdfDoc.page");
+        assert_eq!(super::infer_operation(legacy_code::XFA_FLATTEN_FAILED), "PdfDoc.flattenXfa");
+        assert_eq!(super::infer_operation(legacy_code::RENDER_ERROR), "PdfDoc.renderPage");
+        assert_eq!(super::infer_operation("UNKNOWN_CODE_XYZ"), "PdfDoc");
     }
 
     // ---- G2: TextRun JSON shape tests ----

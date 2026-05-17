@@ -75,15 +75,44 @@ impl LicenseStatus {
 }
 
 fn map_license_error(e: pdfluent::Error) -> JsValue {
+    use crate::pdfluent_error::{code, legacy_code, pdfluent_error};
+    let c8 = e.code();
+    let message = e.to_string();
+    let operation = "license.activate";
     match e {
         pdfluent::Error::InvalidLicense { reason } => {
             if reason.contains("already set") {
-                JsValue::from_str(&format!("license already set: {reason}"))
+                pdfluent_error(
+                    operation,
+                    c8,
+                    legacy_code::LICENSE_ALREADY_SET,
+                    &format!("license already set: {reason}"),
+                    "License has already been activated this process — restart the worker/page to switch tiers.",
+                )
             } else {
-                JsValue::from_str(&format!("invalid license: {reason}"))
+                pdfluent_error(
+                    operation,
+                    c8,
+                    legacy_code::LICENSE_ERROR,
+                    &format!("invalid license: {reason}"),
+                    "Verify the license key string was copied correctly and matches the issued payload.",
+                )
             }
         }
-        other => JsValue::from_str(&format!("license error: {other}")),
+        pdfluent::Error::FeatureNotInTier { .. } => pdfluent_error(
+            operation,
+            code::LICENSE_FEATURE_NOT_IN_TIER,
+            legacy_code::LICENSE_ERROR,
+            &message,
+            "Upgrade your tier — see https://pdfluent.com/pricing.",
+        ),
+        _ => pdfluent_error(
+            operation,
+            c8,
+            legacy_code::LICENSE_ERROR,
+            &format!("license error: {message}"),
+            "",
+        ),
     }
 }
 
