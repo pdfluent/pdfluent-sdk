@@ -735,6 +735,18 @@ impl QuickJsRuntime {
                 .set("resolveFailure", resolve_failure)
                 .map_err(|e| format!("set resolveFailure: {e}"))?;
 
+            // Phase D-θ.2 probe-skip telemetry: JS calls this when the strict
+            // probe is elided because parentIds.length == 1 && chain.length == 1
+            // (no same-name sibling ambiguity is possible in that case).
+            let probe_skip_host = Rc::clone(&host);
+            let probe_skip = Function::new(ctx.clone(), move || {
+                probe_skip_host.borrow_mut().metadata_probe_skip();
+            })
+            .map_err(|e| format!("probeSkip: {e}"))?;
+            internal
+                .set("probeSkip", probe_skip)
+                .map_err(|e| format!("set probeSkip: {e}"))?;
+
             // Phase D-γ: DataDom host bindings --------------------------------
 
             let dc_host = Rc::clone(&host);
@@ -1453,16 +1465,30 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         // existed. When the probe succeeds, return a new chain proxy
         // with the segment appended; the lazy accumulation lets a
         // deeper segment still disambiguate which same-name `A` to keep.
+        //
+        // D-θ.2 probe-skip: when there is exactly one parent and the chain
+        // so far has exactly one segment, no same-name sibling ambiguity is
+        // possible — the parent uniquely identifies the node, and there are
+        // no alternative subtrees for the host to choose between.  In that
+        // case the strict probe would always return the same set as eagerIds,
+        // so we skip the host round-trip and immediately build the next proxy
+        // using eagerIds as the fallback.  The host-call budget is preserved
+        // and disambiguation is unaffected because a single-parent / single-
+        // segment chain cannot be disambiguated further by the host anyway.
+        var nextChain = chain.slice();
+        nextChain.push(prop);
+        if (parentIds.length === 1 && chain.length === 1) {
+          host.probeSkip();
+          return makeChainProxy(parentIds, nextChain, eagerIds, generation, currentId);
+        }
         var probe = host.resolveWithFullChainStrict(
           nodeIdListArg(parentIds),
           currentId | 0,
-          chain.concat([prop]).join(",")
+          nextChain.join(",")
         );
         if (!probe || probe.length === 0) {
           return undefined;
         }
-        var nextChain = chain.slice();
-        nextChain.push(prop);
         // The probe result becomes the new eager-fallback so future
         // probes that the host cannot improve on still degrade
         // gracefully. We must NOT collapse to a single makeHandle here:

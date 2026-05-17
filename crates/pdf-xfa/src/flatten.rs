@@ -628,7 +628,7 @@ fn xfa_flatten_inner(
         // the Phase B JS runtime counters. Defaults stay 0 in
         // `BestEffortStatic` mode so existing log parsers remain compatible.
         log::warn!(
-            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_instance_writes={} js_list_writes={} js_binding_errors={} js_resolve_failures={} js_data_reads={}",
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_instance_writes={} js_list_writes={} js_binding_errors={} js_resolve_failures={} js_data_reads={} js_probe_skips={}",
             dynamic_scripts.output_quality.as_str(),
             dynamic_scripts.js_present,
             dynamic_scripts.js_skipped,
@@ -646,9 +646,10 @@ fn xfa_flatten_inner(
             dynamic_scripts.js_binding_errors,
             dynamic_scripts.js_resolve_failures,
             dynamic_scripts.js_data_reads,
+            dynamic_scripts.js_probe_skips,
         );
         eprintln!(
-            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_instance_writes={} js_list_writes={} js_binding_errors={} js_resolve_failures={} js_data_reads={}",
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_instance_writes={} js_list_writes={} js_binding_errors={} js_resolve_failures={} js_data_reads={} js_probe_skips={}",
             dynamic_scripts.output_quality.as_str(),
             dynamic_scripts.js_present,
             dynamic_scripts.js_skipped,
@@ -666,6 +667,7 @@ fn xfa_flatten_inner(
             dynamic_scripts.js_binding_errors,
             dynamic_scripts.js_resolve_failures,
             dynamic_scripts.js_data_reads,
+            dynamic_scripts.js_probe_skips,
         );
     }
 
