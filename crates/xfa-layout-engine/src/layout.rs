@@ -2325,7 +2325,12 @@ impl<'a> LayoutEngine<'a> {
                         && partial_child.rect.height <= child_remaining + 0.5
                     {
                         placed_children.push(partial_child);
-                        child_y += placed_children.last().unwrap().rect.height;
+                        // SAFETY: we just pushed partial_child above, so last() is always Some.
+                        child_y += placed_children
+                            .last()
+                            .expect("just pushed above")
+                            .rect
+                            .height;
                         split_idx = i + 1;
 
                         let mut rest: Vec<QueuedNode> = child_rest;
@@ -2372,7 +2377,12 @@ impl<'a> LayoutEngine<'a> {
 
                     if split_productive {
                         placed_children.push(partial_child);
-                        child_y += placed_children.last().unwrap().rect.height;
+                        // SAFETY: we just pushed partial_child above, so last() is always Some.
+                        child_y += placed_children
+                            .last()
+                            .expect("just pushed above")
+                            .rect
+                            .height;
                         split_idx = i + 1;
 
                         // When the recursive split returns a single QueuedNode
@@ -2394,7 +2404,11 @@ impl<'a> LayoutEngine<'a> {
                             && child_rest[0].id == child_id
                             && child_rest[0].children_override.is_some()
                         {
-                            let qn = child_rest.into_iter().next().unwrap();
+                            // SAFETY: child_rest.len() == 1 is checked on the line above.
+                            let qn = child_rest
+                                .into_iter()
+                                .next()
+                                .expect("child_rest.len() == 1");
                             (qn.children_override, qn.nested_child_overrides)
                         } else {
                             let mut ids = Vec::new();
