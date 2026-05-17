@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    PDFluent Java SDK — golden-path example.
+
+    Pinned to com.pdfluent:pdfluent:0.1.0 (the binding version declared in
+    bindings/java/pom.xml). When the artifact is on Maven Central the
+    <dependency> below switches to the registry by simply removing the
+    <scope>system</scope> and <systemPath> elements.
+
+    During beta development you must build the binding first:
+
+        cd bindings/java && mvn install -DskipTests
+
+    Then build this example:
+
+        cd pdfluent-examples/java/StrictApi && mvn package -DskipTests
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.pdfluent.examples</groupId>
+    <artifactId>strict-api-example</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <name>PDFluent Java — StrictApi golden-path example</name>
+
+    <properties>
+        <maven.compiler.release>11</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <pdfluent.version>0.1.0</pdfluent.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.pdfluent</groupId>
+            <artifactId>pdfluent</artifactId>
+            <version>${pdfluent.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <sourceDirectory>.</sourceDirectory>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <compilerArgs>
+                        <arg>-Werror</arg>
+                        <arg>-Xlint:all,-options,-path</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
