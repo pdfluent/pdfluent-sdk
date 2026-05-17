@@ -314,6 +314,74 @@ impl QuickJsRuntime {
                 .set("resolveChildNodeIds", resolve_child_node_ids)
                 .map_err(|e| format!("set resolveChildNodeIds: {e}"))?;
 
+            // Phase D-θ: lookahead-hinted variants of the implicit and child
+            // resolvers. The JS proxy carries the next-segment property name
+            // and asks the host to keep only candidates whose subtree
+            // contains a descendant matching that hint. Falls back to the
+            // un-hinted candidate list when the hint disambiguates nothing,
+            // so single-token reads remain byte-for-byte compatible.
+            let implicit_hinted_host = Rc::clone(&host);
+            let resolve_implicit_node_ids_hinted = Function::new(
+                ctx.clone(),
+                move |current_id: i32,
+                      name: Opt<Coerced<String>>,
+                      hint: Opt<Coerced<String>>|
+                      -> Vec<i32> {
+                    if current_id < 0 {
+                        return Vec::new();
+                    }
+                    let Some(name) = name.0 else {
+                        return Vec::new();
+                    };
+                    let hint = hint.0.map(|s| s.0).unwrap_or_default();
+                    implicit_hinted_host
+                        .borrow_mut()
+                        .resolve_implicit_candidates_hinted(
+                            FormNodeId(current_id as usize),
+                            &name.0,
+                            &hint,
+                        )
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveImplicitNodeIdsHinted: {e}"))?;
+            internal
+                .set("resolveImplicitNodeIdsHinted", resolve_implicit_node_ids_hinted)
+                .map_err(|e| format!("set resolveImplicitNodeIdsHinted: {e}"))?;
+
+            let child_hinted_host = Rc::clone(&host);
+            let resolve_child_node_ids_hinted = Function::new(
+                ctx.clone(),
+                move |parent_ids: Opt<Coerced<String>>,
+                      name: Opt<Coerced<String>>,
+                      hint: Opt<Coerced<String>>|
+                      -> Vec<i32> {
+                    let Some(parent_ids) = parent_ids.0 else {
+                        return Vec::new();
+                    };
+                    let Some(name) = name.0 else {
+                        return Vec::new();
+                    };
+                    let hint = hint.0.map(|s| s.0).unwrap_or_default();
+                    child_hinted_host
+                        .borrow_mut()
+                        .resolve_child_candidates_hinted(
+                            &parse_node_id_csv(&parent_ids.0),
+                            &name.0,
+                            &hint,
+                        )
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveChildNodeIdsHinted: {e}"))?;
+            internal
+                .set("resolveChildNodeIdsHinted", resolve_child_node_ids_hinted)
+                .map_err(|e| format!("set resolveChildNodeIdsHinted: {e}"))?;
+
             let scoped_candidates_host = Rc::clone(&host);
             let resolve_scoped_node_ids = Function::new(
                 ctx.clone(),
@@ -1125,6 +1193,116 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     return makeCandidateSet(unique, generation);
   }
 
+  // Phase D-θ: single-segment SOM lookahead. The proxy chain `F.P1.X.rawValue`
+  // can resolve the leading `F.P1` correctly yet pick the wrong `P1` when
+  // multiple same-named siblings exist — the resolver lacks the next-segment
+  // context needed to disambiguate. These helpers return a one-step deferred
+  // wrapper that, on its next property access, asks the host's hinted
+  // resolver to drop candidates whose subtree does not contain the lookahead
+  // name. Terminal properties (rawValue, instanceManager, …) bypass the hint
+  // path entirely so single-token reads remain byte-for-byte identical.
+  function isTerminalHandleProp(name) {
+    if (handlePropertyExclusions[name] === true) return true;
+    if (reservedHandleProperties[name] === true) return true;
+    if (name.charAt(0) === "_") return true;
+    switch (name) {
+      case "rawValue":
+      case "somExpression":
+      case "instanceManager":
+      case "index":
+      case "setInstances":
+      case "addInstance":
+      case "removeInstance":
+      case "isNull":
+      case "clearItems":
+      case "addItem":
+      case "boundItem":
+      case "$record":
+      case "variables":
+      case "nodes":
+      case "length":
+      case "value":
+      case "item":
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  function makeImplicitDeferred(currentId, name, eagerIds, generation) {
+    function realize(hint) {
+      if (!hint) return eagerIds;
+      var refined = uniqueNodeIds(host.resolveImplicitNodeIdsHinted(currentId, name, hint));
+      return refined.length > 0 ? refined : eagerIds;
+    }
+    var sentinel = nullProtoObject();
+    return new Proxy(sentinel, {
+      get: function(target, prop, receiver) {
+        if (typeof prop !== "string") {
+          return Reflect.get(target, prop, receiver);
+        }
+        var ids = isTerminalHandleProp(prop) ? eagerIds : realize(prop);
+        var handle = makeNodeHandleFromIds(ids, generation);
+        if (handle === undefined) return undefined;
+        return handle[prop];
+      },
+      set: function(_target, prop, value) {
+        var handle = makeNodeHandleFromIds(eagerIds, generation);
+        if (handle === undefined) return true;
+        handle[prop] = value;
+        return true;
+      },
+      has: function(_target, prop) {
+        if (typeof prop !== "string") return Reflect.has(sentinel, prop);
+        return true;
+      }
+    });
+  }
+
+  function makeChildDeferred(parentIds, childName, eagerChildIds, generation) {
+    var parentList = nodeIdListArg(parentIds);
+    function realize(hint) {
+      if (!hint || parentList.length === 0) return eagerChildIds;
+      var refined = uniqueNodeIds(host.resolveChildNodeIdsHinted(parentList, childName, hint));
+      return refined.length > 0 ? refined : eagerChildIds;
+    }
+    var sentinel = nullProtoObject();
+    return new Proxy(sentinel, {
+      get: function(target, prop, receiver) {
+        if (typeof prop !== "string") {
+          return Reflect.get(target, prop, receiver);
+        }
+        var ids = isTerminalHandleProp(prop) ? eagerChildIds : realize(prop);
+        var handle = makeNodeHandleFromIds(ids, generation);
+        if (handle === undefined) return undefined;
+        return handle[prop];
+      },
+      set: function(_target, prop, value) {
+        var handle = makeNodeHandleFromIds(eagerChildIds, generation);
+        if (handle === undefined) return true;
+        handle[prop] = value;
+        return true;
+      },
+      has: function(_target, prop) {
+        if (typeof prop !== "string") return Reflect.has(sentinel, prop);
+        return true;
+      }
+    });
+  }
+
+  function makeChainHandle(parentIds, childName, generation) {
+    var eagerChildIds = resolveHandleChildIds(parentIds, childName);
+    if (eagerChildIds.length === 0) return undefined;
+    if (eagerChildIds.length === 1) {
+      // Singleton child with a single parent leaves the host resolver no
+      // alternatives to filter even when a hint is provided — same-name
+      // sibling disambiguation is impossible. Skip the wrapper so the
+      // common path keeps its original Proxy identity and resolve budget.
+      return makeHandle(eagerChildIds[0], generation);
+    }
+    return makeChildDeferred(parentIds, childName, eagerChildIds, generation);
+  }
+
   function makeCandidateSet(ids, generation) {
     var candidates = uniqueNodeIds(ids);
     if (candidates.length === 0) return undefined;
@@ -1216,7 +1394,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
         }
-        return makeNodeHandleFromIds(resolveHandleChildIds(candidates, prop), generation);
+        return makeChainHandle(candidates, prop, generation);
       },
       set: function(_target, prop, value) {
         if (prop === "rawValue") {
@@ -1367,7 +1545,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
         }
-        return makeNodeHandleFromIds(resolveHandleChildIds([id], prop), generation);
+        return makeChainHandle([id], prop, generation);
       },
       set: function(_target, prop, value) {
         if (prop === "rawValue") {
@@ -1884,11 +2062,18 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       if (cachedHandles[name] !== undefined) {
         return cachedHandles[name];
       }
-      var nodeIds = host.resolveImplicitNodeIds(currentId, name);
-      if (!nodeIds || nodeIds.length === 0) {
+      var nodeIds = uniqueNodeIds(host.resolveImplicitNodeIds(currentId, name));
+      if (nodeIds.length === 0) {
         return undefined;
       }
-      var handle = makeNodeHandleFromIds(nodeIds, generation);
+      // Phase D-θ: always wrap an implicit hit in the lookahead Proxy. Even
+      // when the un-hinted walk returns a singleton, the next-segment hint
+      // may let the host widen the search across higher scopes and surface
+      // an alternative same-named node whose subtree actually contains the
+      // chained segment. The wrapper still degrades to byte-for-byte
+      // identical reads for terminal properties (rawValue, somExpression,
+      // …) so single-token access keeps the existing semantics.
+      var handle = makeImplicitDeferred(currentId, name, nodeIds, generation);
       cachedHandles[name] = handle;
       return handle;
     }
