@@ -39,13 +39,13 @@ pub mod license;
 use crate::canvas2d_device::Canvas2DDevice;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use kurbo::{Affine, Rect, Shape};
-use pdf_engine::PdfDocument;
 use pdf_engine::api_error::PdfError;
+use pdf_engine::PdfDocument;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use pdf_render::pdf_interpret::util::PageExt;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use pdf_render::pdf_interpret::{
-    BlendMode, ClipPath, Context, Device, FillRule, InterpreterSettings, interpret_page,
+    interpret_page, BlendMode, ClipPath, Context, Device, FillRule, InterpreterSettings,
 };
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
@@ -633,7 +633,9 @@ impl PdfDoc {
             other => {
                 return Err(wasm_err_simple(
                     "INVALID_ARGUMENT",
-                    &format!("unknown PDF/A level: {other:?} — expected e.g. \"2b\", \"3b\", \"1b\""),
+                    &format!(
+                        "unknown PDF/A level: {other:?} — expected e.g. \"2b\", \"3b\", \"1b\""
+                    ),
                 ))
             }
         };

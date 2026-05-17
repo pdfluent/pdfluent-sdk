@@ -12,9 +12,9 @@
 use std::collections::BTreeMap;
 
 use lopdf::Document as LopdfDocument;
-use wasm_bindgen::prelude::*;
 use pdf_manip::text_run::extract_page_text_runs;
-use pdf_manip::text_style::{StateIsolationStrategy, StyleResult, set_text_run_style};
+use pdf_manip::text_style::{set_text_run_style, StateIsolationStrategy, StyleResult};
+use wasm_bindgen::prelude::*;
 
 // ---------- the handle -----------------------------------------------------
 
@@ -28,7 +28,6 @@ use pdf_manip::text_style::{StateIsolationStrategy, StyleResult, set_text_run_st
 pub struct PdfDocMut {
     doc: LopdfDocument,
 }
-
 
 // ---- G6: Text style result type -------------------------------------------
 
@@ -365,7 +364,6 @@ impl PdfDocMut {
         handle.set_text_run_style_js(page_num, "[]", run_index, bold, italic)?;
         handle.save()
     }
-
 }
 
 // ---------- helpers --------------------------------------------------------
