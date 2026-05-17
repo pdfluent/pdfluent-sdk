@@ -5,6 +5,7 @@
 
 use lopdf::Document;
 use std::env;
+use std::fs;
 use std::process::ExitCode;
 use std::time::Instant;
 
@@ -17,7 +18,14 @@ fn main() -> ExitCode {
         }
     };
 
-    let doc = match Document::load(&path) {
+    let pdf_bytes = match fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("read {path}: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let doc = match Document::load_mem(&pdf_bytes) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("load {path}: {e}");

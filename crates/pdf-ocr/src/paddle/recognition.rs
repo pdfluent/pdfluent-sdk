@@ -12,7 +12,9 @@ use super::utils;
 /// Error type for recognition operations.
 #[derive(Debug)]
 pub enum RecognitionError {
+    /// ONNX runtime inference failed; contains the error description.
     Inference(String),
+    /// Input tensor has an unexpected shape; contains the shape mismatch description.
     InvalidShape(String),
 }
 
@@ -30,7 +32,9 @@ impl std::error::Error for RecognitionError {}
 /// Result of recognizing text in a single cropped region.
 #[derive(Debug, Clone)]
 pub struct RecognizedText {
+    /// Decoded text string from the recognition model.
     pub text: String,
+    /// Mean CTC confidence score in the range [0.0, 1.0].
     pub confidence: f32,
 }
 

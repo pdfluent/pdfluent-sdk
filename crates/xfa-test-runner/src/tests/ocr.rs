@@ -76,6 +76,9 @@ fn get_best_engine() -> Option<&'static dyn pdf_engine::OcrBackend> {
 // ── PaddleOCR backend init (legacy) ──────────────────────────────────────────
 
 #[cfg(feature = "paddle-ocr")]
+// JUSTIFICATION: used only when paddle-ocr is active without the higher-priority
+// ocr-mistral/ocr-onnx/ocr features; appears dead when all features are compiled together.
+#[allow(dead_code)]
 fn get_paddle_engine() -> Option<&'static pdf_ocr::PaddleOcrEngine> {
     use std::sync::OnceLock;
     static ENGINE: OnceLock<Option<pdf_ocr::PaddleOcrEngine>> = OnceLock::new();
@@ -228,6 +231,9 @@ fn run_ocr_inference(
             }
         };
         metadata.insert("ocr_engine".into(), engine.name().into());
+        // JUSTIFICATION: `return` is required here to prevent fall-through to the
+        // `paddle-ocr` cfg block below when both feature sets are compiled together.
+        #[allow(clippy::needless_return)]
         return run_with_engine_new(pdf, target_page, engine, metadata, elapsed);
     }
 

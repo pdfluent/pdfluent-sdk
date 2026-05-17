@@ -15,7 +15,9 @@ const STD: [f32; 3] = [0.229, 0.224, 0.225];
 /// Error type for detection operations.
 #[derive(Debug)]
 pub enum DetectionError {
+    /// ONNX runtime inference failed; contains the error description.
     Inference(String),
+    /// Input tensor has an unexpected shape; contains the shape mismatch description.
     InvalidShape(String),
 }
 
