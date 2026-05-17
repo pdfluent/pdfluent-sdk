@@ -17,18 +17,27 @@ namespace PDFluent.Tests
         [Fact]
         public void Status_HasKnownShape()
         {
-            LicenseStatus s = Licensing.Status;
+            LicenseStatus s = Licensing.GetStatus();
             Assert.True(Enum.IsDefined(typeof(LicenseTier), s.Tier));
             Assert.True(Enum.IsDefined(typeof(LicenseSource), s.Source));
             // OutputIsMarked is bool — nothing to validate beyond shape.
             Assert.IsType<bool>(s.OutputIsMarked);
+            // Active is computed: true iff tier > Trial.
+            Assert.Equal(s.Tier != LicenseTier.Trial, s.Active);
         }
 
         [Fact]
-        public void EffectiveTier_IsInRange()
+        public void EffectiveTier_IsNonNegativeInt()
         {
-            LicenseTier t = Licensing.EffectiveTier;
-            Assert.True((int)t >= 0 && (int)t <= 4);
+            int t = Licensing.EffectiveTier;
+            Assert.True(t >= 0);
+            Assert.True(t <= 4);
+        }
+
+        [Fact]
+        public void EffectiveTierEnum_MatchesEffectiveTier()
+        {
+            Assert.Equal(Licensing.EffectiveTier, (int)Licensing.EffectiveTierEnum);
         }
 
         [Fact]
@@ -38,26 +47,52 @@ namespace PDFluent.Tests
         }
 
         [Fact]
-        public void ActivateKey_InvalidThrowsPdfException()
+        public void ActivateFile_NullThrowsArgumentNull()
         {
-            var ex = Assert.Throws<PdfException>(() => Licensing.ActivateKey("totally-not-a-license"));
-            Assert.Equal(PdfStatus.ErrorInvalidLicense, ex.Status);
+            Assert.Throws<ArgumentNullException>(() => Licensing.ActivateFile(null!));
         }
 
         [Fact]
-        public void ActivateKey_UnknownTierThrowsPdfException()
+        public void ActivateKey_InvalidThrowsTypedLicenseException()
         {
-            Assert.Throws<PdfException>(() => Licensing.ActivateKey("tier:platinum"));
+            var ex = Assert.Throws<PdfluentLicenseException>(
+                () => Licensing.ActivateKey("totally-not-a-license"));
+            Assert.Equal(PdfStatus.ErrorInvalidLicense, ex.NativeStatus);
+            Assert.Equal("E-LICENSE-INVALID", ex.Code);
         }
 
         [Fact]
-        public void ActivateFile_MissingPathThrows()
+        public void ActivateKey_UnknownTierThrowsTypedLicenseException()
         {
-            // Could throw PdfException (with ErrorLicenseFile -> rewrapped FileNotFound)
-            // or FileNotFoundException depending on the exact mapping.
-            var ex = Assert.ThrowsAny<Exception>(() =>
+            var ex = Assert.Throws<PdfluentLicenseException>(
+                () => Licensing.ActivateKey("tier:platinum"));
+            Assert.Equal("E-LICENSE-INVALID", ex.Code);
+        }
+
+        [Fact]
+        public void ActivateFile_MissingPathThrowsIo()
+        {
+            // ErrorLicenseFile (18) maps to PdfluentIoException via FromStatus.
+            var ex = Assert.Throws<PdfluentIoException>(() =>
                 Licensing.ActivateFile("/nonexistent/never-exists.lic"));
-            Assert.True(ex is FileNotFoundException || ex is IOException || ex is PdfException);
+            Assert.Equal(PdfStatus.ErrorLicenseFile, ex.NativeStatus);
+        }
+
+        [Fact]
+        public void StatusBeforeActivation_IsTrialOrPaid()
+        {
+            // Status must always succeed and produce a well-formed snapshot,
+            // regardless of whether another test has activated a tier earlier.
+            LicenseStatus s = Licensing.GetStatus();
+            if (s.Tier == LicenseTier.Trial)
+            {
+                Assert.False(s.Active);
+                Assert.True(s.OutputIsMarked); // Trial output is marked
+            }
+            else
+            {
+                Assert.True(s.Active);
+            }
         }
 
         [Fact]
@@ -67,21 +102,24 @@ namespace PDFluent.Tests
             try
             {
                 Licensing.ActivateKey("tier:developer");
-                LicenseStatus s = Licensing.Status;
+                LicenseStatus s = Licensing.GetStatus();
                 Assert.Equal(LicenseTier.Developer, s.Tier);
                 Assert.Equal(LicenseSource.Explicit, s.Source);
                 Assert.False(s.OutputIsMarked);
+                Assert.True(s.Active);
 
-                // Idempotent re-activate
+                // Idempotent re-activate to the same tier is OK.
                 Licensing.ActivateKey("tier:developer");
 
-                // Conflict
-                Assert.Throws<InvalidOperationException>(() =>
+                // Conflicting tier: typed license exception with C8 code.
+                var ex = Assert.Throws<PdfluentLicenseException>(() =>
                     Licensing.ActivateKey("tier:enterprise"));
+                Assert.Equal(PdfStatus.ErrorLicenseAlreadySet, ex.NativeStatus);
+                Assert.Equal("E-LICENSE-INVALID", ex.Code);
             }
-            catch (InvalidOperationException)
+            catch (PdfluentLicenseException ex) when (ex.NativeStatus == PdfStatus.ErrorLicenseAlreadySet)
             {
-                // Another test activated to a different tier first; ok.
+                // Another test activated to a different tier first; OK.
             }
         }
 
@@ -95,15 +133,12 @@ namespace PDFluent.Tests
                 try
                 {
                     Licensing.ActivateFile(tmp);
-                    LicenseTier t = Licensing.EffectiveTier;
-                    Assert.True(t == LicenseTier.Team
-                                || t == LicenseTier.Developer
-                                || t == LicenseTier.Business
-                                || t == LicenseTier.Enterprise);
+                    int t = Licensing.EffectiveTier;
+                    Assert.InRange(t, (int)LicenseTier.Developer, (int)LicenseTier.Enterprise);
                 }
-                catch (InvalidOperationException)
+                catch (PdfluentLicenseException ex) when (ex.NativeStatus == PdfStatus.ErrorLicenseAlreadySet)
                 {
-                    // Already activated — ok.
+                    // Already activated to a different tier — OK.
                 }
             }
             finally
