@@ -59,6 +59,9 @@ from pdfluent._native import (
     merge_pdfs,
     validate_pdfa,
     decrypt_pdf,
+    # License activation — wired to the Rust core
+    set_license_key as _native_set_license_key,
+    native_license_info as _native_license_info,
     # Exception hierarchy from Rust
     PdfluentError,
     PdfluentParseError,
@@ -73,30 +76,56 @@ from pdfluent._native import (
 )
 
 
+# JSON tier name → canonical Rust tier name used by set_license_key.
+#
+# The 1.0 evaluation format accepted by the Rust core is "tier:<name>".
+# Python license JSON files use a different tier taxonomy, so we map here.
+_TIER_MAP: dict[str, str] = {
+    "trial": "trial",
+    "basic": "developer",
+    "professional": "team",
+    "enterprise": "enterprise",
+    "archival": "business",
+}
+
+
 @dataclass
 class LicenseInfo:
     """Validated license information returned by :func:`activate_license`.
 
     Attributes
     ----------
-    licensee:
-        Name of the license holder.
-    company:
-        Company or organisation name.
     tier:
-        License tier string: ``"trial"``, ``"basic"``, ``"professional"``,
-        ``"enterprise"``, or ``"archival"``.
+        Canonical license tier as reported by the Rust core:
+        ``"trial"``, ``"developer"``, ``"team"``, ``"business"``,
+        or ``"enterprise"``.
     expires_at:
-        Unix timestamp (seconds) at which the license expires.
-        ``0`` indicates no expiry (perpetual license).
+        Expiration date in ISO 8601 format, or ``None`` for perpetual
+        licenses.  Always ``None`` in 1.0 — time-bound keys require the
+        signed-payload format shipping in 1.1.
+    output_is_marked:
+        ``True`` when the Rust core marks output via the ``/Producer``
+        metadata field (Trial tier only).
+    licensee:
+        Name of the license holder (from the JSON payload).
+    company:
+        Company or organisation name (from the JSON payload).
     seats:
-        Number of concurrent developer seats.
+        Number of concurrent developer seats (from the JSON payload).
+
+    Migration note (1.0 → post-1.0)
+    --------------------------------
+    ``tier`` now reflects the **canonical Rust tier** (e.g. ``"team"``)
+    rather than the raw JSON value (e.g. ``"professional"``).
+    ``expires_at`` changed from ``int`` (Unix timestamp) to
+    ``Optional[str]`` (ISO 8601 / ``None``).
     """
 
+    tier: str
+    expires_at: Optional[str]
+    output_is_marked: bool
     licensee: str
     company: str
-    tier: str
-    expires_at: int
     seats: int
 
 
@@ -114,6 +143,10 @@ def activate_license(license_key: str) -> LicenseInfo:
     this function is called without an argument (pass an empty string to skip
     the env check and raise immediately).
 
+    On success the Rust core's process-global tier is set. Re-activating with
+    the same tier is idempotent; re-activating with a different tier raises
+    :exc:`PdfluentLicenseError` — restart the process to switch tiers.
+
     Parameters
     ----------
     license_key:
@@ -122,12 +155,13 @@ def activate_license(license_key: str) -> LicenseInfo:
     Returns
     -------
     LicenseInfo
-        The parsed and (format-)validated license payload.
+        License information reflecting the canonical Rust core state.
 
     Raises
     ------
     PdfluentLicenseError
-        If the key is empty, malformed, or cannot be parsed.
+        If the key is empty, malformed, has an unknown tier, or the Rust
+        core rejects it (e.g. conflicts with an already-set tier).
     """
     if not license_key:
         # Fall back to environment variable
@@ -138,8 +172,10 @@ def activate_license(license_key: str) -> LicenseInfo:
             )
         license_key = env_key
 
-    # File path shortcut
-    if license_key.endswith((".json", ".license")) and os.path.isfile(license_key):
+    # File path shortcut — if the key looks like a file path, read it.
+    # Any OSError (file not found, permission denied, etc.) is reported as
+    # "cannot read" rather than falling through to JSON/base64 parsing.
+    if license_key.endswith((".json", ".license")):
         try:
             with open(license_key, encoding="utf-8") as f:
                 license_key = f.read()
@@ -156,16 +192,44 @@ def activate_license(license_key: str) -> LicenseInfo:
     except Exception as exc:
         raise PdfluentLicenseError(f"malformed license key: {exc}") from exc
 
+    # Map JSON tier to canonical Rust tier format
+    json_tier = str(payload.get("tier", "trial")).lower()
+    rust_tier = _TIER_MAP.get(json_tier)
+    if rust_tier is None:
+        raise PdfluentLicenseError(
+            f"unknown license tier {json_tier!r}; "
+            f"expected one of: {', '.join(_TIER_MAP)}"
+        )
+
+    # Activate in the Rust core — raises PdfluentLicenseError on failure
+    _native_set_license_key(f"tier:{rust_tier}")
+
+    # Read back the canonical state from the Rust core
+    native_info = _native_license_info()
+
     try:
         return LicenseInfo(
+            tier=native_info.tier,
+            expires_at=native_info.expires_at,
+            output_is_marked=native_info.output_is_marked,
             licensee=str(payload.get("licensee", "")),
             company=str(payload.get("company", "")),
-            tier=str(payload.get("tier", "trial")),
-            expires_at=int(payload.get("expires_at", 0)),
             seats=int(payload.get("seats", 1)),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise PdfluentLicenseError(f"invalid license payload: {exc}") from exc
+
+
+def license_status() -> str:
+    """Return the current canonical license tier as reported by the Rust core.
+
+    Returns
+    -------
+    str
+        One of ``"trial"``, ``"developer"``, ``"team"``, ``"business"``,
+        or ``"enterprise"``. Returns ``"trial"`` when no key has been set.
+    """
+    return _native_license_info().tier
 
 
 __all__ = [
@@ -191,6 +255,7 @@ __all__ = [
     "validate_pdfa",
     "decrypt_pdf",
     "activate_license",
+    "license_status",
     # Exception hierarchy
     "PdfluentError",
     "PdfluentParseError",
