@@ -729,7 +729,13 @@ fn xfa_flatten_inner(
             .pages
             .iter()
             .map(|p| {
-                if page_has_fields(&p.nodes, &tree) {
+                // XFA 3.3 §3.1 / §8.6: pages emitted onto runtime-allocated
+                // pageAreas (recorded in the form-DOM packet) are an explicit
+                // commitment by Adobe's runtime — never drop them on a
+                // data-empty heuristic.
+                if p.runtime_instantiated {
+                    true
+                } else if page_has_fields(&p.nodes, &tree) {
                     page_has_field_data(&p.nodes, &tree)
                 } else {
                     true
@@ -2206,6 +2212,24 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
         inner.text().map(|t| t.to_string())
     }
 
+    /// Return true when a FormTree node semantically matches an XML form-DOM
+    /// child.  Subform/field/draw match by name; pageSet matches by node type
+    /// (unnamed in the XFA spec); pageArea matches by name within a pageSet.
+    fn child_matches(tree: &FormTree, fid: FormNodeId, xml_tag: &str, xml_name: &str) -> bool {
+        use xfa_layout_engine::form::FormNodeType;
+        let node = tree.get(fid);
+        match (xml_tag, &node.node_type) {
+            ("pageSet", FormNodeType::PageSet) => true,
+            ("pageArea", FormNodeType::PageArea { .. }) => node.name == xml_name,
+            ("subform", FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup) => {
+                node.name == xml_name
+            }
+            ("field", FormNodeType::Field { .. }) => node.name == xml_name,
+            ("draw", FormNodeType::Draw(_) | FormNodeType::Image { .. }) => node.name == xml_name,
+            _ => false,
+        }
+    }
+
     /// Apply presence, values, and child expansion from the form DOM to a
     /// FormTree node.
     fn apply_recursive(
@@ -2214,12 +2238,15 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
         xml_node: roxmltree::Node<'_, '_>,
     ) {
         let xml_tag = xml_node.tag_name().name();
-        if xml_tag != "subform" && xml_tag != "field" && xml_tag != "form" {
+        if !matches!(
+            xml_tag,
+            "subform" | "field" | "form" | "pageSet" | "pageArea"
+        ) {
             return;
         }
 
         // Apply presence override.
-        if xml_tag == "subform" || xml_tag == "field" {
+        if xml_tag == "subform" || xml_tag == "field" || xml_tag == "pageArea" {
             if let Some(pres) = xml_node.attribute("presence") {
                 if pres == "hidden" {
                     tree.meta_mut(form_node_id).presence = Presence::Hidden;
@@ -2240,49 +2267,102 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
             return; // fields have no structural children to recurse into
         }
 
-        // Collect XML children (subforms and fields), skipping instanceManagers.
+        // Collect XML children we walk through.
+        //
+        // - `subform`, `field`, `draw` are the canonical content children.
+        // - `pageSet` and `pageArea` carry runtime-allocated page instances
+        //   that must be mirrored in the FormTree so the layout engine can
+        //   emit one page per runtime instance (XFA 3.3 §8.6 / §3.1).
         let xml_children: Vec<roxmltree::Node<'_, '_>> = xml_node
             .children()
             .filter(|c| {
                 c.is_element()
-                    && (c.tag_name().name() == "subform"
-                        || c.tag_name().name() == "field"
-                        || c.tag_name().name() == "draw")
+                    && matches!(
+                        c.tag_name().name(),
+                        "subform" | "field" | "draw" | "pageSet" | "pageArea"
+                    )
             })
             .collect();
 
-        // Group consecutive XML children by name to detect repeating instances.
-        // E.g., [Activity, Activity, Activity, Activity] → ("Activity", 4)
-        let mut xml_groups: Vec<(&str, Vec<roxmltree::Node<'_, '_>>)> = Vec::new();
+        // Within a `pageSet`, only allow pageArea expansion when the form-DOM
+        // enumerates a SINGLE pageArea name repeated multiple times — the
+        // classic "uniform template" pattern recorded by Adobe's runtime when
+        // it allocates more instances than the template declared (XFA 3.3
+        // §8.6 / §3.1, e.g. 13275420c3c9afbb: 10× `<pageArea name="Page1">`).
+        //
+        // When the pageSet enumerates multiple distinct pageArea names
+        // (e.g. IRCC forms with `Page1` + `OverFlowPage`), Adobe pre-allocates
+        // pageAreas as a *menu* of available templates — not every instance is
+        // actually rendered.  Expanding clones in that case over-paginates.
+        //
+        // Implementation: when inside a pageSet AND the pageArea-name set has
+        // more than one distinct entry, suppress cloning by setting the
+        // per-group `expansion_allowed` flag to false later.
+        let inside_page_set = xml_tag == "pageSet";
+        let uniform_page_area_template = if inside_page_set {
+            let mut names: Vec<&str> = xml_children
+                .iter()
+                .filter(|c| c.tag_name().name() == "pageArea")
+                .map(|c| c.attribute("name").unwrap_or(""))
+                .collect();
+            names.sort_unstable();
+            names.dedup();
+            names.len() == 1
+        } else {
+            false
+        };
+
+        // Group consecutive XML children by (tag, name) to detect repeating
+        // instances.  pageSet is unnamed in XFA, so a single `pageSet` group
+        // is keyed by tag alone; pageArea siblings share `name="Page1"` for
+        // runtime-allocated pages.
+        let mut xml_groups: Vec<((&str, &str), Vec<roxmltree::Node<'_, '_>>)> = Vec::new();
         for &xc in &xml_children {
+            let xtag = xc.tag_name().name();
             let xname = xc.attribute("name").unwrap_or("");
+            let key = (xtag, xname);
             if let Some(last) = xml_groups.last_mut() {
-                if last.0 == xname {
+                if last.0 == key {
                     last.1.push(xc);
                     continue;
                 }
             }
-            xml_groups.push((xname, vec![xc]));
+            xml_groups.push((key, vec![xc]));
         }
 
         // For each group, match against FormTree children, cloning when needed.
         let mut form_children = tree.get(form_node_id).children.clone();
         let mut used = vec![false; form_children.len()];
 
-        for (gname, group_xml_nodes) in &xml_groups {
+        for (gkey, group_xml_nodes) in &xml_groups {
+            let (gtag, gname) = *gkey;
             let xml_count = group_xml_nodes.len();
 
-            // Count existing FormTree children with this name
+            // Count existing FormTree children matching this XML group.
             let existing: Vec<(usize, FormNodeId)> = form_children
                 .iter()
                 .enumerate()
-                .filter(|(i, &fid)| !used[*i] && tree.get(fid).name == *gname)
+                .filter(|(i, &fid)| !used[*i] && child_matches(tree, fid, gtag, gname))
                 .map(|(i, &fid)| (i, fid))
                 .collect();
             let existing_count = existing.len();
 
+            // Gate per-group cloning:
+            //
+            // * pageArea clones may only be created inside a `pageSet` that
+            //   enumerates a single uniform pageArea template (see comment
+            //   above).  Otherwise pre-allocated "menu" pageAreas would be
+            //   replicated and inflate the rendered page count.
+            // * Other tags (subform/field/draw) follow the existing
+            //   instance-replication behaviour.
+            let expansion_allowed = if gtag == "pageArea" {
+                inside_page_set && uniform_page_area_template
+            } else {
+                true
+            };
+
             // If the form DOM has more instances than the FormTree, clone to match.
-            if xml_count > existing_count && existing_count > 0 {
+            if expansion_allowed && xml_count > existing_count && existing_count > 0 {
                 let template_id = existing[0].1;
                 // Find insertion position: after the last existing sibling.
                 // SAFETY: existing_count > 0 is guarded by the enclosing `if`.
@@ -2303,9 +2383,26 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
                 tree.get_mut(form_node_id).children = form_children.clone();
             }
 
+            // Mark expanded pageAreas as runtime-instantiated so the layout
+            // engine emits a page per instance and the page-drop filter does
+            // not discard them.  Only applies when the pageArea expansion is
+            // active (uniform template inside a pageSet) AND clones were
+            // actually created — single-template forms (no expansion) keep
+            // their existing layout semantics.
+            if gtag == "pageArea" && expansion_allowed && xml_count > existing_count {
+                let to_mark: Vec<FormNodeId> = form_children
+                    .iter()
+                    .copied()
+                    .filter(|&fid| child_matches(tree, fid, gtag, gname))
+                    .collect();
+                for fid in to_mark {
+                    tree.meta_mut(fid).runtime_instantiated_page = true;
+                }
+            }
+
             // Now match each XML node in the group to a FormTree child
             for (group_idx, &xc) in group_xml_nodes.iter().enumerate() {
-                // Find next unmatched FormTree child with this name
+                // Find next unmatched FormTree child with the same shape.
                 let matched = form_children
                     .iter()
                     .enumerate()
@@ -2314,13 +2411,13 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
                         form_children
                             .iter()
                             .enumerate()
-                            .rfind(|(i, &fid)| used[*i] && tree.get(fid).name == *gname)
+                            .rfind(|(i, &fid)| used[*i] && child_matches(tree, fid, gtag, gname))
                             .map(|(i, _)| i + 1)
                             .unwrap_or(0)
                     } else {
                         0
                     })
-                    .find(|(i, &fid)| !used[*i] && tree.get(fid).name == *gname);
+                    .find(|(i, &fid)| !used[*i] && child_matches(tree, fid, gtag, gname));
                 if let Some((idx, &fid)) = matched {
                     used[idx] = true;
                     apply_recursive(tree, fid, xc);
@@ -5401,6 +5498,135 @@ ET
             })
             .collect();
         assert_eq!(values, vec!["Alpha", "Beta", "Gamma"]);
+    }
+
+    /// XFA 3.3 §8.6 / §3.1 — pageArea expansion from form-DOM.
+    ///
+    /// When the form-DOM packet records multiple instances of a *single*
+    /// pageArea template, the FormTree must clone the template once per
+    /// recorded instance and tag the clones as `runtime_instantiated_page`.
+    /// This guards against the regression that produced 5 pages instead of
+    /// 10 on corpus doc 13275420c3c9afbb.
+    #[test]
+    fn form_dom_expands_uniform_page_area_template() {
+        use xfa_layout_engine::form::FormNodeType;
+
+        let template = r#"<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+          <subform name="root" layout="tb">
+            <pageSet>
+              <pageArea name="Page1">
+                <contentArea w="200mm" h="280mm"/>
+                <medium short="210mm" long="297mm"/>
+              </pageArea>
+            </pageSet>
+          </subform>
+        </template>"#;
+
+        let form_xml = r#"<form xmlns="http://www.xfa.org/schema/xfa-form/2.8/">
+          <subform name="root">
+            <pageSet>
+              <pageArea name="Page1"/>
+              <pageArea name="Page1"/>
+              <pageArea name="Page1"/>
+              <pageArea name="Page1"/>
+              <pageArea name="Page1"/>
+            </pageSet>
+          </subform>
+        </form>"#;
+
+        let data_dom = xfa_dom_resolver::data_dom::DataDom::new();
+        let merger = crate::merger::FormMerger::new(&data_dom);
+        let (mut tree, root_id) = merger.merge(template).unwrap();
+
+        apply_form_dom_presence(&mut tree, root_id, form_xml);
+
+        fn collect_page_areas(tree: &FormTree, id: FormNodeId, out: &mut Vec<FormNodeId>) {
+            if matches!(tree.get(id).node_type, FormNodeType::PageArea { .. }) {
+                out.push(id);
+            }
+            for &c in &tree.get(id).children {
+                collect_page_areas(tree, c, out);
+            }
+        }
+
+        let mut page_areas = Vec::new();
+        collect_page_areas(&tree, root_id, &mut page_areas);
+        assert_eq!(
+            page_areas.len(),
+            5,
+            "uniform pageArea expansion: 5 form-DOM instances must clone the template"
+        );
+        for &pa_id in &page_areas {
+            assert!(
+                tree.meta(pa_id).runtime_instantiated_page,
+                "every expanded pageArea must be flagged as runtime-instantiated"
+            );
+        }
+    }
+
+    /// Multi-template pageSets (e.g. `Page1` + `OverFlowPage`) MUST NOT
+    /// trigger pageArea expansion — those pageAreas are a pre-allocated
+    /// menu, not a uniform repetition pattern, and replicating them would
+    /// over-paginate.
+    #[test]
+    fn form_dom_skips_multi_template_page_area_expansion() {
+        use xfa_layout_engine::form::FormNodeType;
+
+        let template = r#"<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+          <subform name="root" layout="tb">
+            <pageSet>
+              <pageArea name="Page1">
+                <contentArea w="200mm" h="280mm"/>
+                <medium short="210mm" long="297mm"/>
+              </pageArea>
+              <pageArea name="OverFlowPage">
+                <contentArea w="200mm" h="280mm"/>
+                <medium short="210mm" long="297mm"/>
+              </pageArea>
+            </pageSet>
+          </subform>
+        </template>"#;
+
+        let form_xml = r#"<form xmlns="http://www.xfa.org/schema/xfa-form/2.8/">
+          <subform name="root">
+            <pageSet>
+              <pageArea name="Page1"/>
+              <pageArea name="OverFlowPage"/>
+              <pageArea name="OverFlowPage"/>
+              <pageArea name="OverFlowPage"/>
+              <pageArea name="OverFlowPage"/>
+            </pageSet>
+          </subform>
+        </form>"#;
+
+        let data_dom = xfa_dom_resolver::data_dom::DataDom::new();
+        let merger = crate::merger::FormMerger::new(&data_dom);
+        let (mut tree, root_id) = merger.merge(template).unwrap();
+
+        apply_form_dom_presence(&mut tree, root_id, form_xml);
+
+        fn collect_page_areas(tree: &FormTree, id: FormNodeId, out: &mut Vec<FormNodeId>) {
+            if matches!(tree.get(id).node_type, FormNodeType::PageArea { .. }) {
+                out.push(id);
+            }
+            for &c in &tree.get(id).children {
+                collect_page_areas(tree, c, out);
+            }
+        }
+
+        let mut page_areas = Vec::new();
+        collect_page_areas(&tree, root_id, &mut page_areas);
+        assert_eq!(
+            page_areas.len(),
+            2,
+            "multi-template pageSet must not clone pageAreas (kept original 2)"
+        );
+        for &pa_id in &page_areas {
+            assert!(
+                !tree.meta(pa_id).runtime_instantiated_page,
+                "non-expansion case must not set runtime_instantiated_page flag"
+            );
+        }
     }
 
     // GL-QA36: verify the re-entrance guard prevents infinite recursion.

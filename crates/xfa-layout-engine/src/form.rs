@@ -501,6 +501,17 @@ pub struct FormNodeMeta {
     /// to expose an InstanceManager via `parent._child` even when no data
     /// bindings produced live rows. Layout treats this as `presence = Hidden`.
     pub is_zero_instance_prototype: bool,
+    /// True when this pageArea was allocated by the XFA runtime (recorded in
+    /// the form-DOM packet of an Adobe-Reader-saved PDF) rather than declared
+    /// once in the template.
+    ///
+    /// XFA 3.3 §8.6 / §3.1: the form DOM enumerates the runtime page-tree
+    /// state.  When the form DOM lists more `<pageArea>` siblings than the
+    /// template defines, those extra instances were created by the
+    /// `pageSet`/`occur` machinery and each one must emit a layout page even
+    /// when the flowing-body queue is exhausted (it is the runtime's record
+    /// of an already-paginated page).
+    pub runtime_instantiated_page: bool,
 }
 
 /// XFA `anchorType` attribute (XFA 3.3 §2.6, Appendix A p1510).
