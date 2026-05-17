@@ -978,6 +978,7 @@ fn fix_optional_content(doc: &mut Document) -> usize {
         return count;
     }
 
+    // SAFETY: the `ocprops_id.is_none()` branch returns early before this point.
     let ocprops_id = ocprops_id.expect("ocprops_id.is_none() branch returns above");
 
     // Get OCGs list for Order fixing.
@@ -5034,7 +5035,9 @@ fn truncate_long_strings_in_content(content: &[u8]) -> Vec<u8> {
             }
             let str_len = i - start;
             if str_len > MAX_STRING_LEN * 2 {
-                result.extend_from_slice(&content[start..(start + MAX_STRING_LEN * 2).min(content.len())]);
+                result.extend_from_slice(
+                    &content[start..(start + MAX_STRING_LEN * 2).min(content.len())],
+                );
                 result.push(b'>');
             } else {
                 result.extend_from_slice(&content[start..i.min(content.len())]);
@@ -5175,7 +5178,8 @@ fn fix_lang_in_content_stream(content: &[u8]) -> Vec<u8> {
                             i += 1; // skip past ')'
                         }
                         let lang_end = i.min(content.len());
-                        let lang = &content[str_start + 1..lang_end.saturating_sub(1).max(str_start + 1)];
+                        let lang =
+                            &content[str_start + 1..lang_end.saturating_sub(1).max(str_start + 1)];
                         let lang_str = String::from_utf8_lossy(lang);
 
                         if !is_valid_bcp47(&lang_str) {
