@@ -38,7 +38,7 @@
 //! ```
 
 use crate::content_editor::{
-    GraphicsStateTracker, as_number, editor_for_page, write_editor_to_page,
+    as_number, editor_for_page, write_editor_to_page, GraphicsStateTracker,
 };
 use crate::error::{ManipError, Result};
 use crate::text_run::TextRun;
@@ -600,9 +600,7 @@ fn add_font_to_page_resources(
     let new_name = generate_font_resource_name(&existing);
 
     // Mutate the page Resources/Font dict.
-    let page_obj = doc
-        .get_object_mut(page_id)
-        .map_err(ManipError::Pdf)?;
+    let page_obj = doc.get_object_mut(page_id).map_err(ManipError::Pdf)?;
 
     if let Object::Dictionary(ref mut page_dict) = page_obj {
         match page_dict.get_mut(b"Resources") {
@@ -813,7 +811,7 @@ fn get_font_map_for_page_id(doc: &Document, page_id: ObjectId) -> HashMap<String
 mod tests {
     use super::*;
     use crate::text_run::extract_page_text_runs;
-    use lopdf::{Document, Object, Stream, dictionary};
+    use lopdf::{dictionary, Document, Object, Stream};
 
     // -----------------------------------------------------------------------
     // Test fixture builders
@@ -1150,12 +1148,10 @@ mod tests {
         );
 
         let result = set_text_run_style(&mut doc, 1, &runs[0], Some(true), None).unwrap();
-        assert!(
-            result
-                .requested_font_name
-                .to_lowercase()
-                .contains("georgia")
-        );
+        assert!(result
+            .requested_font_name
+            .to_lowercase()
+            .contains("georgia"));
     }
 
     // -----------------------------------------------------------------------
