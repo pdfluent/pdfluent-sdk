@@ -66,3 +66,9 @@ bindings/java/src/main/resources/native/
 
 # .NET NuGet packages
 *.nupkg
+
+# Doxygen generated output
+crates/pdf-capi/doxygen-out/
+
+# Compiled C example binaries (built by examples/Makefile)
+crates/pdf-capi/examples/license_activate
