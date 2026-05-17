@@ -44,22 +44,22 @@ pub enum JsExecutionMode {
     /// roadmap.
     SandboxedRuntime,
 }
-/// OutputQuality.
-
+/// Fidelity level of the flattened output relative to the source XFA data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputQuality {
-    /// Exact.
+    /// All data was bound and rendered without skipping any scripts or content.
     #[default]
     Exact,
-    /// BestEffort.
+    /// Some scripts were skipped (e.g. JavaScript with `BestEffortStatic` mode);
+    /// output may differ from a full Adobe Reader render.
     BestEffort,
-    /// **M3-B Phase B.** All JavaScript scripts on the document executed
-    /// inside the sandbox without runtime / timeout / OOM errors.
+    /// All JavaScript scripts on the document executed inside the sandbox
+    /// without runtime / timeout / OOM errors (requires `xfa-js-sandboxed` feature).
     Sandboxed,
 }
 
 impl OutputQuality {
-    /// as_str.
+    /// Return a short lowercase string label suitable for logging and metrics.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Exact => "exact",
@@ -68,23 +68,25 @@ impl OutputQuality {
         }
     }
 }
-/// DynamicScriptOutcome.
-
+/// Aggregate outcome of the dynamic script processing pass.
+///
+/// Returned by [`flatten_xfa_to_pdf_with_metadata`](crate::flatten_xfa_to_pdf_with_metadata)
+/// and embedded in [`FlattenMetadata`](crate::FlattenMetadata).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DynamicScriptOutcome {
-    /// changes.
+    /// Number of form field values that were mutated by scripts.
     pub changes: usize,
-    /// js_present.
+    /// True when the document contains at least one JavaScript event hook.
     pub js_present: bool,
-    /// js_skipped.
+    /// Number of JavaScript scripts that were skipped (not executed).
     pub js_skipped: usize,
-    /// other_skipped.
+    /// Number of scripts in unsupported languages (not FormCalc, not JavaScript) skipped.
     pub other_skipped: usize,
-    /// formcalc_run.
+    /// Number of FormCalc scripts that ran successfully.
     pub formcalc_run: usize,
-    /// formcalc_errors.
+    /// Number of FormCalc scripts that produced an error.
     pub formcalc_errors: usize,
-    /// output_quality.
+    /// Overall output quality after script processing.
     pub output_quality: OutputQuality,
     /// **M3-B Phase B.** Scripts that ran to completion in the sandboxed
     /// runtime. Always 0 when mode != [`JsExecutionMode::SandboxedRuntime`]
