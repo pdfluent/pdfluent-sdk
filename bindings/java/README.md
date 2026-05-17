@@ -27,8 +27,8 @@ mvn package -f bindings/java/pom.xml
 ## Quick Start
 
 ```java
-import com.xfa.pdf.PdfDocument;
-import com.xfa.pdf.RenderedImage;
+import com.pdfluent.PdfDocument;
+import com.pdfluent.RenderedImage;
 
 // Open a PDF
 try (PdfDocument doc = PdfDocument.open(Path.of("input.pdf"))) {
@@ -68,10 +68,16 @@ try (PdfDocument doc = PdfDocument.openWithPassword(data, "secret")) {
 
 ## Native Library Loading
 
-The SDK loads the native library in this order:
-1. `System.loadLibrary("pdf_java")` via `java.library.path`
-2. `PDF_NATIVE_LIB` environment variable (full path)
+The SDK loads its native libraries (`libpdfluent_java` for the JNI
+`PdfluentDocument` path and `libpdf_capi` for the JNA-based
+`PdfDocument` + `PdfluentLicensing` path) in this order:
+1. `java.library.path` (e.g. `-Djava.library.path=/path/to/dir`)
+2. `PDFLUENT_NATIVE_LIB` env var (JNI lib) or `PDFLUENT_CAPI_LIB` env var (C ABI lib)
 3. Classpath extraction (bundled in JAR at `/native/<arch>/`)
+
+A failure to locate either library throws
+`com.pdfluent.PdfluentNativeLoadException` (code
+`E-ENV-MISSING-DEPENDENCY`) with every search location that was tried.
 
 ## License Activation
 
@@ -79,7 +85,7 @@ The SDK runs in Trial mode by default; output is marked via `/Producer`
 metadata. Activate a license to unlock the paid-tier capability set.
 
 ```java
-import com.xfa.pdf.PdfluentLicensing;
+import com.pdfluent.PdfluentLicensing;
 
 // Activate from a key string
 PdfluentLicensing.activateKey("tier:enterprise");
@@ -103,7 +109,7 @@ The `PDFLUENT_LICENSE_KEY` environment variable is honoured automatically.
 - The active tier is **process-global and set-once**. Re-activating with
   the same key is a no-op. Re-activating with a different tier throws
   `IllegalStateException`; restart the JVM to switch tiers.
-- Invalid keys throw `com.xfa.pdf.PdfException`.
+- Invalid keys throw `com.pdfluent.PdfException`.
 - Missing license files throw `java.io.IOException`.
 - The key string is never logged or stored beyond the call.
 

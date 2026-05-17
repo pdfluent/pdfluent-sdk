@@ -68,8 +68,18 @@
 
     <!-- ================================================================
          Dependencies
+
+         JNA is required for the libpdf_capi (C ABI) loader path used by
+         PdfDocument and PdfluentLicensing. The raw-JNI path used by
+         PdfluentDocument loads libpdfluent_java via System.loadLibrary
+         and does not require JNA at runtime.
          ================================================================ -->
     <dependencies>
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+            <version>5.14.0</version>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
