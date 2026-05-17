@@ -1,6 +1,6 @@
 using System;
 
-namespace XfaPdf
+namespace PDFluent
 {
     /// <summary>
     /// Base exception for all PDFluent operations.
