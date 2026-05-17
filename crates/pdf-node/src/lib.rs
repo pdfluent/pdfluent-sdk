@@ -8,4 +8,5 @@ mod document;
 mod error;
 mod form;
 mod functions;
+mod license;
 mod page;
