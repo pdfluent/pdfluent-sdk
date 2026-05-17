@@ -936,6 +936,18 @@ impl HostBindings {
         self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
     }
 
+    /// XFA-JS-HOST-STUBS — Record a call into a host capability that
+    /// requires genuine viewer / user interaction (UI dialog, signature
+    /// panel, document submit, etc.). The sandbox returned a safe default
+    /// value to keep the script running; this counter exists so the dispatch
+    /// site can surface a "would-have-been-interactive" signal without
+    /// inflating `runtime_errors`.
+    pub fn metadata_unsupported_host_call(&mut self) {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        self.metadata.unsupported_host_calls =
+            self.metadata.unsupported_host_calls.saturating_add(1);
+    }
+
     fn consume_resolve_call(&mut self) -> bool {
         if self.resolve_count_this_script >= MAX_RESOLVE_CALLS_PER_SCRIPT {
             return false;
