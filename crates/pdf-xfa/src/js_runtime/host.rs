@@ -1039,6 +1039,14 @@ impl HostBindings {
             self.metadata.unsupported_host_calls.saturating_add(1);
     }
 
+    /// Record a D-θ.2 probe call that was skipped because
+    /// `parentIds.length == 1 && chain.length == 1` (no same-name
+    /// ambiguity is possible with a single parent and a single-segment
+    /// chain — the host would return the same eagerIds regardless).
+    pub fn metadata_probe_skip(&mut self) {
+        self.metadata.probe_skips = self.metadata.probe_skips.saturating_add(1);
+    }
+
     fn consume_resolve_call(&mut self) -> bool {
         if self.resolve_count_this_script >= MAX_RESOLVE_CALLS_PER_SCRIPT {
             return false;

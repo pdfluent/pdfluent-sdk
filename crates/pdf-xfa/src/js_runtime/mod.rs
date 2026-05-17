@@ -132,6 +132,10 @@ pub struct RuntimeMetadata {
     /// the sandbox did not error; embedders that care about UI gaps should
     /// inspect this field explicitly.
     pub unsupported_host_calls: usize,
+    /// Phase D-θ.2 probe calls skipped because `parentIds.length == 1 &&
+    /// chain.length == 1` (no same-name ambiguity possible).  Every skipped
+    /// call saves one `resolveWithFullChainStrict` host round-trip.
+    pub probe_skips: usize,
 }
 
 impl RuntimeMetadata {
@@ -160,6 +164,7 @@ impl RuntimeMetadata {
         self.unsupported_host_calls = self
             .unsupported_host_calls
             .saturating_add(other.unsupported_host_calls);
+        self.probe_skips = self.probe_skips.saturating_add(other.probe_skips);
     }
 }
 
