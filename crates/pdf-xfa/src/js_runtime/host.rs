@@ -158,6 +158,41 @@ impl HostBindings {
         self.current_id
     }
 
+    /// XFA-DATA-M3C: true when `node_id` is a container (root, subform,
+    /// area, subformSet, exclGroup) — the node types for which the
+    /// underscore-shorthand instanceManager pattern is well-defined per
+    /// XFA 3.3 §6.4.3.2. Fields and draws should return `undefined` for
+    /// `_<NAME>` access rather than an empty-manager sentinel.
+    pub fn node_is_container(&mut self, node_id: FormNodeId, generation: u64) -> bool {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.handle_is_live(node_id, generation) {
+            return false;
+        }
+        let Some(form) = self.form_ref() else {
+            return false;
+        };
+        is_instance_node(&form.get(node_id).node_type)
+    }
+
+    /// XFA 3.3 §5.4 / Adobe SDK: form-tree parent of an arbitrary node.
+    ///
+    /// Used by the JS proxy to materialise the bare global `parent` (and the
+    /// `<handle>.parent` chain segment) without exposing the internal
+    /// parent-map representation to scripts. Returns `None` for the root, for
+    /// stale handles, and when no `FormTree` is installed.
+    pub fn parent_of_node(&mut self, node_id: FormNodeId, generation: u64) -> Option<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.handle_is_live(node_id, generation) {
+            return None;
+        }
+        let form = self.form_ref()?;
+        if self.root_id.0 >= form.nodes.len() {
+            return None;
+        }
+        let parents = build_parent_map(form, self.root_id);
+        parents.get(&node_id).copied()
+    }
+
     /// Read and clear host metadata counters.
     pub fn take_metadata(&mut self) -> RuntimeMetadata {
         std::mem::take(&mut self.metadata)
@@ -229,10 +264,12 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes,
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_node:NoMatch", path);
                 return None;
             }
             ResolveOutcome::BindingError => {
                 self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                debug_log_resolve_miss("resolve_node:BindingError", path);
                 return None;
             }
         };
@@ -246,6 +283,7 @@ impl HostBindings {
             .find(|node_id| matches!(form.get(*node_id).node_type, FormNodeType::Field { .. }));
         if found.is_none() {
             self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+            debug_log_resolve_miss("resolve_node:NoField", path);
         }
         found
     }
@@ -256,10 +294,14 @@ impl HostBindings {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
         let nodes = match self.resolve_path(path) {
             ResolveOutcome::Ok(nodes) => nodes,
-            ResolveOutcome::NoMatch => return Vec::new(),
+            ResolveOutcome::NoMatch => {
+                debug_log_resolve_miss("resolve_nodes:NoMatch", path);
+                return Vec::new();
+            }
             ResolveOutcome::BindingError => {
                 self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_nodes:BindingError", path);
                 return Vec::new();
             }
         };
@@ -287,6 +329,7 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes.into_iter().next(),
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_implicit:NoMatch", name);
                 None
             }
             ResolveOutcome::BindingError => {
@@ -311,8 +354,31 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes,
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_implicit_candidates:NoMatch", name);
                 Vec::new()
             }
+            ResolveOutcome::BindingError => {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                Vec::new()
+            }
+        }
+    }
+
+    /// XFA-DATA-M3C: quiet probe variant of [`resolve_implicit_candidates`].
+    /// Same lookup semantics, but a miss does not bump `resolve_failures`.
+    /// Used by the JS proxy when checking the existence of a bare
+    /// underscore-shorthand global (`_<Name>`) before deciding whether to
+    /// surface an instance-manager sentinel; a miss is the expected
+    /// schema-optional path and would otherwise inflate the metric.
+    pub fn resolve_implicit_candidates_quiet(
+        &mut self,
+        current_id: FormNodeId,
+        name: &str,
+    ) -> Vec<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        match self.resolve_implicit_inner(current_id, name) {
+            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::NoMatch => Vec::new(),
             ResolveOutcome::BindingError => {
                 self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
                 Vec::new()
@@ -327,6 +393,7 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes.into_iter().next(),
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_child:NoMatch", name);
                 None
             }
             ResolveOutcome::BindingError => {
@@ -352,8 +419,30 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes,
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_child_candidates:NoMatch", name);
                 Vec::new()
             }
+            ResolveOutcome::BindingError => {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                Vec::new()
+            }
+        }
+    }
+
+    /// XFA-DATA-M3C: quiet variant of [`resolve_child_candidates`] that does
+    /// not bump the `resolve_failures` counter on a no-match. Used by the JS
+    /// proxy when an expected-to-miss probe (e.g. underscore-shorthand for an
+    /// optional schema-bound subform) should not be reported as a script
+    /// failure. Misses still surface to the caller as an empty vector.
+    pub fn resolve_child_candidates_quiet(
+        &mut self,
+        parent_ids: &[FormNodeId],
+        name: &str,
+    ) -> Vec<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        match self.resolve_child_candidates_inner(parent_ids, name) {
+            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::NoMatch => Vec::new(),
             ResolveOutcome::BindingError => {
                 self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
                 Vec::new()
@@ -376,6 +465,7 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes,
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_scoped_candidates:NoMatch", name);
                 Vec::new()
             }
             ResolveOutcome::BindingError => {
@@ -424,6 +514,7 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes,
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_implicit_candidates_hinted:NoMatch", name);
                 return Vec::new();
             }
             ResolveOutcome::BindingError => {
@@ -1731,6 +1822,15 @@ fn is_instance_node(node_type: &FormNodeType) -> bool {
             | FormNodeType::ExclGroup
             | FormNodeType::SubformSet
     )
+}
+
+/// XFA-DATA-M3C diagnostic: log the SOM path that failed to resolve when the
+/// `XFA_JS_DEBUG` env var is set to `1`. Off by default so the dispatch path
+/// stays silent in normal operation.
+fn debug_log_resolve_miss(kind: &str, path: &str) {
+    if std::env::var("XFA_JS_DEBUG").ok().as_deref() == Some("1") {
+        eprintln!("XFA_JS_DEBUG {kind} path={path:?}");
+    }
 }
 
 fn normalize_resolve_path(path: &str) -> String {

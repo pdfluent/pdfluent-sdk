@@ -269,6 +269,37 @@ impl QuickJsRuntime {
                 .set("resolveImplicitNodeIds", resolve_implicit_node_ids)
                 .map_err(|e| format!("set resolveImplicitNodeIds: {e}"))?;
 
+            // XFA-DATA-M3C: quiet probe for implicit identifier resolution.
+            // Same scope walk as `resolveImplicitNodeIds`; a miss returns an
+            // empty array without bumping `resolve_failures`. The JS proxy
+            // uses this when probing schema-optional underscore-shorthand
+            // globals (`_<Name>`).
+            let implicit_quiet_host = Rc::clone(&host);
+            let resolve_implicit_node_ids_quiet = Function::new(
+                ctx.clone(),
+                move |current_id: i32, name: Opt<Coerced<String>>| -> Vec<i32> {
+                    if current_id < 0 {
+                        return Vec::new();
+                    }
+                    let Some(name) = name.0 else {
+                        return Vec::new();
+                    };
+                    implicit_quiet_host
+                        .borrow_mut()
+                        .resolve_implicit_candidates_quiet(FormNodeId(current_id as usize), &name.0)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveImplicitNodeIdsQuiet: {e}"))?;
+            internal
+                .set(
+                    "resolveImplicitNodeIdsQuiet",
+                    resolve_implicit_node_ids_quiet,
+                )
+                .map_err(|e| format!("set resolveImplicitNodeIdsQuiet: {e}"))?;
+
             let child_host = Rc::clone(&host);
             let resolve_child_node_id = Function::new(
                 ctx.clone(),
@@ -313,6 +344,34 @@ impl QuickJsRuntime {
             internal
                 .set("resolveChildNodeIds", resolve_child_node_ids)
                 .map_err(|e| format!("set resolveChildNodeIds: {e}"))?;
+
+            // XFA-DATA-M3C: quiet variant of resolveChildNodeIds. Returns the
+            // same ids on success and an empty array on miss, but does not
+            // bump the `resolve_failures` metric — used by underscore-shorthand
+            // probes where a miss is the expected schema-optional path and
+            // would otherwise inflate the resolve-failure budget.
+            let child_quiet_host = Rc::clone(&host);
+            let resolve_child_node_ids_quiet = Function::new(
+                ctx.clone(),
+                move |parent_ids: Opt<Coerced<String>>, name: Opt<Coerced<String>>| -> Vec<i32> {
+                    let Some(parent_ids) = parent_ids.0 else {
+                        return Vec::new();
+                    };
+                    let Some(name) = name.0 else {
+                        return Vec::new();
+                    };
+                    child_quiet_host
+                        .borrow_mut()
+                        .resolve_child_candidates_quiet(&parse_node_id_csv(&parent_ids.0), &name.0)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveChildNodeIdsQuiet: {e}"))?;
+            internal
+                .set("resolveChildNodeIdsQuiet", resolve_child_node_ids_quiet)
+                .map_err(|e| format!("set resolveChildNodeIdsQuiet: {e}"))?;
 
             // Phase D-θ: lookahead-hinted variants of the implicit and child
             // resolvers. The JS proxy carries the next-segment property name
@@ -588,6 +647,46 @@ impl QuickJsRuntime {
             internal
                 .set("nodeName", node_name)
                 .map_err(|e| format!("set nodeName: {e}"))?;
+
+            // XFA-DATA-M3C: container test used by the JS proxy to decide
+            // whether `<handle>._<Name>` should fall back to an empty
+            // instance-manager sentinel (containers) or stay `undefined`
+            // (fields/draws). Mirrors XFA 3.3 §6.4.3.2.
+            let is_container_host = Rc::clone(&host);
+            let node_is_container =
+                Function::new(ctx.clone(), move |id: i32, generation: i64| -> bool {
+                    if id < 0 || generation < 0 {
+                        return false;
+                    }
+                    is_container_host
+                        .borrow_mut()
+                        .node_is_container(FormNodeId(id as usize), generation as u64)
+                })
+                .map_err(|e| format!("nodeIsContainer: {e}"))?;
+            internal
+                .set("nodeIsContainer", node_is_container)
+                .map_err(|e| format!("set nodeIsContainer: {e}"))?;
+
+            // XFA-DATA-M3C: form-tree parent lookup used by the JS proxy to
+            // materialise the bare global `parent` identifier and `<handle>.
+            // parent` chain access. Returns -1 when no parent exists, when
+            // the handle is stale, or when no form is installed.
+            let parent_node_host = Rc::clone(&host);
+            let parent_of_node =
+                Function::new(ctx.clone(), move |id: i32, generation: i64| -> i32 {
+                    if id < 0 || generation < 0 {
+                        return -1;
+                    }
+                    parent_node_host
+                        .borrow_mut()
+                        .parent_of_node(FormNodeId(id as usize), generation as u64)
+                        .map(|node_id| node_id.0 as i32)
+                        .unwrap_or(-1)
+                })
+                .map_err(|e| format!("parentOfNode: {e}"))?;
+            internal
+                .set("parentOfNode", parent_of_node)
+                .map_err(|e| format!("set parentOfNode: {e}"))?;
 
             let instance_set_host = Rc::clone(&host);
             let instance_set = Function::new(
@@ -1173,6 +1272,44 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     return locals;
   }
 
+  // XFA-DATA-M3C: `<handle>.ui` returns the ui-config sub-object that
+  // Adobe templates expose for choiceList / textEdit / checkButton widget
+  // tweaking. During static flatten the widget tree is not materialised, so
+  // we hand back a minimal stub whose `choiceList` is an empty frozen
+  // array (matching the bare `handle.choiceList` fallback). Property
+  // writes are absorbed silently so scripts like
+  // `field.ui.choiceList.commitOn = "exit"` complete without TypeError.
+  function makeUiStub() {
+    var stub = nullProtoObject();
+    Object.defineProperty(stub, "choiceList", {
+      enumerable: true,
+      configurable: false,
+      get: function() { return Object.freeze([]); }
+    });
+    Object.defineProperty(stub, "textEdit", {
+      enumerable: true,
+      configurable: false,
+      get: function() { return Object.freeze({}); }
+    });
+    Object.defineProperty(stub, "checkButton", {
+      enumerable: true,
+      configurable: false,
+      get: function() { return Object.freeze({}); }
+    });
+    return new Proxy(stub, {
+      get: function(target, prop) {
+        if (typeof prop !== "string") return undefined;
+        if (prop in target) return target[prop];
+        // Sub-property writes / reads are absorbed: scripts walking
+        // unknown widget config (e.g. `ui.imageEdit.<x>`) get a chainable
+        // viewer-stub rather than crashing on undefined.
+        return makeViewerStub();
+      },
+      set: function(_t, _p, _v) { return true; },
+      has: function(_t, _p) { return true; }
+    });
+  }
+
   function makeInstanceManager(id, generation) {
     var manager = nullProtoObject();
     Object.defineProperty(manager, "count", {
@@ -1508,6 +1645,14 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "index") {
           return host.nodeIndex(firstId, generation);
         }
+        // XFA-DATA-M3C: `<candidateSet>.parent` walks one form-tree level up
+        // from the leading candidate. Same semantics as `<handle>.parent`;
+        // see makeHandle for rationale.
+        if (prop === "parent") {
+          var parentId = host.parentOfNode(firstId, generation);
+          if (parentId < 0) return undefined;
+          return makeHandle(parentId, generation);
+        }
         if (prop === "setInstances") {
           return function(n) {
             return host.instanceSet(firstId, generation, n);
@@ -1567,7 +1712,9 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         }
         if (prop.charAt(0) === "_" && prop.length > 1) {
           var bareName = prop.substring(1);
-          var imIds = uniqueNodeIds(host.resolveChildNodeIds(nodeIdListArg(candidates), bareName));
+          var imIds = uniqueNodeIds(
+            host.resolveChildNodeIdsQuiet(nodeIdListArg(candidates), bareName)
+          );
           if (imIds.length > 0) {
             return makeInstanceManager(imIds[0], generation);
           }
@@ -1576,11 +1723,32 @@ const PHASE_C_BINDINGS_JS: &str = r#"
               return makeEmptyInstanceManager();
             }
           }
+          // XFA-DATA-M3C: same fallthrough as makeHandle underscore branch —
+          // expose an empty instanceManager for schema-optional same-named
+          // siblings that the merged tree omits, keeping schema-bound
+          // scripts chainable. Restricted to container candidates so
+          // field/draw candidate sets keep the original `undefined`
+          // semantics for underscored property reads.
+          if (host.nodeIsContainer(firstId, generation)) {
+            return makeEmptyInstanceManager();
+          }
         }
         // WP-3: choiceList is a listbox/combobox property not surfaced through
         // the FormTree. Return an empty frozen array.
         if (prop === "choiceList") {
           return Object.freeze([]);
+        }
+        // XFA-DATA-M3C: `<candidateSet>.ui` returns the widget-config stub.
+        // See makeUiStub on makeHandle for rationale.
+        if (prop === "ui") {
+          return makeUiStub();
+        }
+        if (prop === "formattedValue") {
+          var fvc = host.getRawValue(firstId, generation);
+          return fvc === undefined || fvc === null ? "" : String(fvc);
+        }
+        if (prop === "execEvent") {
+          return function() { return undefined; };
         }
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
@@ -1602,6 +1770,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           prop === "somExpression" ||
           prop === "instanceManager" ||
           prop === "index" ||
+          prop === "parent" ||
           prop === "setInstances" ||
           prop === "addInstance" ||
           prop === "removeInstance" ||
@@ -1653,6 +1822,16 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         }
         if (prop === "index") {
           return host.nodeIndex(id, generation);
+        }
+        // XFA-DATA-M3C: `<handle>.parent` returns the form-tree parent.
+        // Adobe scripts commonly chain `parent.somExpression`,
+        // `parent.index`, or `parent._Sibling.setInstances(...)` to walk
+        // one level up from a field or subform without authoring an
+        // explicit SOM path.
+        if (prop === "parent") {
+          var parentId = host.parentOfNode(id, generation);
+          if (parentId < 0) return undefined;
+          return makeHandle(parentId, generation);
         }
         if (prop === "setInstances") {
           return function(n) {
@@ -1727,11 +1906,24 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         // shorthand unreachable for real bound subforms.
         if (prop.charAt(0) === "_" && prop.length > 1) {
           var bareName = prop.substring(1);
-          var imChildIds = uniqueNodeIds(host.resolveChildNodeIds(String(id), bareName));
+          var imChildIds = uniqueNodeIds(host.resolveChildNodeIdsQuiet(String(id), bareName));
           if (imChildIds.length > 0) {
             return makeInstanceManager(imChildIds[0], generation);
           }
           if (host.hasZeroInstanceRun(id, generation, bareName)) {
+            return makeEmptyInstanceManager();
+          }
+          // XFA-DATA-M3C: when the same-named child subform is absent from
+          // the merged form tree (occur.initial=0, optional bind, or
+          // never-instantiated schema option), Adobe still hands the
+          // script an empty instanceManager so `parent._Foo.setInstances(N)`
+          // is a chainable no-op. This sentinel is ONLY safe on container
+          // handles (root, subform, area, subformSet, exclGroup) — XFA
+          // 3.3 §6.4.3.2 limits the underscore-shorthand to those node
+          // classes. Fields and draws stay `undefined` so existing
+          // narrow-handle tests (m3b_phaseC_bindings::field_handle_is_frozen_and_narrow)
+          // keep their property-isolation contract.
+          if (host.nodeIsContainer(id, generation)) {
             return makeEmptyInstanceManager();
           }
         }
@@ -1739,6 +1931,26 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         // the FormTree. Return an empty frozen array.
         if (prop === "choiceList") {
           return Object.freeze([]);
+        }
+        // XFA-DATA-M3C: `<handle>.ui` exposes the widget-config sub-object.
+        // We materialise a chainable stub (see makeUiStub) so scripts like
+        // `field.ui.choiceList.commitOn = "exit"` complete without throwing.
+        if (prop === "ui") {
+          return makeUiStub();
+        }
+        // XFA-DATA-M3C: `<handle>.formattedValue` (Adobe SDK §JS A) reads
+        // the field value formatted by its picture clause. Static flatten
+        // has no live picture-clause formatter; return the raw value so
+        // scripts can compare-and-branch without TypeError.
+        if (prop === "formattedValue") {
+          var fv = host.getRawValue(id, generation);
+          return fv === undefined || fv === null ? "" : String(fv);
+        }
+        // XFA-DATA-M3C: `<handle>.execEvent("activity")` (Adobe SDK) fires
+        // an event handler. Static flatten cannot dispatch new events
+        // mid-script; absorb the call as a no-op returning undefined.
+        if (prop === "execEvent") {
+          return function() { return undefined; };
         }
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
@@ -1760,6 +1972,10 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           prop === "somExpression" ||
           prop === "instanceManager" ||
           prop === "index" ||
+          prop === "parent" ||
+          prop === "ui" ||
+          prop === "formattedValue" ||
+          prop === "execEvent" ||
           prop === "setInstances" ||
           prop === "addInstance" ||
           prop === "removeInstance" ||
@@ -2320,6 +2536,25 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (typeof prop !== "string") {
           return false;
         }
+        // XFA-DATA-M3C: `_<Name>` and `parent` are XFA-defined globals that
+        // must be visible to `with()` lookup even when the local-names
+        // collector treats them as locals (they shadow no real var/let).
+        if (prop === "parent") {
+          return true;
+        }
+        if (prop.charAt(0) === "_" && prop.length > 1 &&
+            localNames[prop] !== true) {
+          // Probe — only claim presence when the bare-name resolves to a
+          // real subform/container; otherwise fall through to the standard
+          // defer rules so unrelated underscored locals stay undefined.
+          // Quiet probe: a miss here is the schema-optional path and must
+          // not count as a script-level resolve failure.
+          var bare = prop.substring(1);
+          if (uniqueNodeIds(host.resolveImplicitNodeIdsQuiet(currentId, bare)).length > 0 ||
+              host.hasZeroInstanceRun(currentId, generation, bare)) {
+            return true;
+          }
+        }
         if (shouldDeferGlobalName(prop, localNames)) {
           return false;
         }
@@ -2328,6 +2563,44 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       get: function(_target, prop) {
         if (typeof prop !== "string") {
           return undefined;
+        }
+        // XFA-DATA-M3C: bare `parent` resolves to the form-tree parent of
+        // the current script node. Common in calculate/initialize scripts
+        // for `parent.index`, `parent.rawValue`, and chain navigation that
+        // mirrors Adobe's implicit-scope walk one step upward.
+        if (prop === "parent") {
+          var parentId = host.parentOfNode(currentId, generation);
+          if (parentId < 0) return undefined;
+          return makeHandle(parentId, generation);
+        }
+        // XFA 3.3 §6.4.3.2 underscore shorthand at the global scope:
+        // `_<Name>` referenced as a bare identifier denotes the
+        // instanceManager of a same-named subform reachable from the
+        // current implicit scope. Adobe Reader exposes this both as a
+        // child property (`parent._Foo`) and as a bare global. Without
+        // this branch the `shouldDeferGlobalName` rule below returns
+        // `undefined` for every underscored bare ident and the calling
+        // script throws `ReferenceError: _Foo is not defined`.
+        //
+        // Only triggers when the target subform actually exists; otherwise
+        // fall through so unrelated underscored locals keep their
+        // existing deferred-undefined semantics.
+        if (prop.charAt(0) === "_" && prop.length > 1 &&
+            localNames[prop] !== true) {
+          var bareName = prop.substring(1);
+          // Quiet probe: schema-optional misses are NOT a script-level
+          // resolve failure. We surface either a live manager, an empty
+          // manager (zero-instance run or never-instantiated optional
+          // subform), or fall through to the defer rules.
+          var imIds = uniqueNodeIds(
+            host.resolveImplicitNodeIdsQuiet(currentId, bareName)
+          );
+          if (imIds.length > 0) {
+            return makeInstanceManager(imIds[0], generation);
+          }
+          if (host.hasZeroInstanceRun(currentId, generation, bareName)) {
+            return makeEmptyInstanceManager();
+          }
         }
         if (shouldDeferGlobalName(prop, localNames)) {
           return undefined;
