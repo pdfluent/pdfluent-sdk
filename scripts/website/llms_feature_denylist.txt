@@ -1,0 +1,43 @@
+# PDFluent — llms.txt feature DENYLIST
+#
+# Phrases that MUST NOT appear in the live llms{,-full}.txt manifest because
+# the SDK does not currently ship the capability. Presence is treated as an
+# ERROR (non-zero exit) — this protects against false-advertising drift.
+#
+# Substring match, case-insensitive. One phrase per line. Comments start `#`.
+#
+# When the SDK actually ships one of these capabilities, remove the line and
+# add a matching entry to llms_claim_allowlist.txt with evidence reference.
+
+# Compliance claims we do NOT yet ship
+PDF/A compliance certified
+PDF/A-4 support
+PDF/UA support
+PDF/X compliance
+ISO 32000-2 certified
+WCAG certified
+
+# AI / ML features we don't ship
+AI-summarisation built in
+AI summarization built in
+built-in AI summarization
+LLM-powered extraction
+embedded LLM
+ChatGPT integration
+GPT-4 integration
+
+# Adobe parity over-claims
+drop-in Adobe Reader replacement
+full Adobe rendering parity
+100% Adobe parity
+Adobe-compatible rendering parity
+
+# Performance over-claims (numbers are directional only per public beta)
+fastest PDF SDK
+fastest PDF library
+benchmark-leading performance
+
+# Form features we don't ship in 1.0.0-beta.5
+dynamic XFA editing
+XFA scripting runtime
+live FormCalc execution in browser
