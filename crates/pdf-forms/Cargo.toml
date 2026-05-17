@@ -12,7 +12,7 @@ keywords = ["pdf", "forms", "acroform", "fields", "interactive"]
 categories = ["parser-implementations"]
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.2" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.4" }
 thiserror = { workspace = true }
 log = "0.4"
 

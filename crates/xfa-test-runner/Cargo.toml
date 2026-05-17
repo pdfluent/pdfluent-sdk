@@ -22,7 +22,7 @@ ocr-onnx = ["pdf-engine/ocr-onnx"]
 
 [dependencies]
 # Workspace crates
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.2" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.4" }
 pdf-xfa = { path = "../pdf-xfa", version = "=1.0.0-beta.5" }
 pdf-docx = { path = "../pdf-docx", version = "=1.0.0-beta.5" }
 pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0-beta.3" }
