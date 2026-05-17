@@ -385,6 +385,149 @@ impl HostBindings {
         }
     }
 
+    /// Phase D-θ: implicit-scope resolution with single-segment lookahead.
+    ///
+    /// First runs the standard implicit walk. When `next_hint` is non-empty
+    /// it filters those candidates to ones whose subtree contains the hint
+    /// name; if at least one survives that becomes the result. If the
+    /// nearest-scope candidate set is hint-empty, the search is **widened**:
+    /// every ancestor scope is rescanned for same-name candidates and only
+    /// those satisfying the hint are kept. This is what unlocks chains like
+    /// `F.P1.X.rawValue` where the nearest `F` lacks a `P1.X` descendant but
+    /// an `F` higher in the tree does. When even the widened search finds
+    /// nothing, the un-hinted baseline is returned so single-token reads
+    /// behave identically to [`resolve_implicit_candidates`].
+    pub fn resolve_implicit_candidates_hinted(
+        &mut self,
+        current_id: FormNodeId,
+        name: &str,
+        next_hint: &str,
+    ) -> Vec<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        let name = name.trim();
+        let hint = next_hint.trim();
+        if name.is_empty() || !self.consume_resolve_call() {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Vec::new();
+        }
+        let Some(form) = self.form_ref() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Vec::new();
+        };
+        if current_id.0 >= form.nodes.len() || self.root_id.0 >= form.nodes.len() {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Vec::new();
+        }
+        let parents = build_parent_map(form, self.root_id);
+        let baseline =
+            match resolve_implicit_candidates_in_scope(form, &parents, current_id, name) {
+                ResolveOutcome::Ok(nodes) => nodes,
+                ResolveOutcome::NoMatch => {
+                    self.metadata.resolve_failures =
+                        self.metadata.resolve_failures.saturating_add(1);
+                    return Vec::new();
+                }
+                ResolveOutcome::BindingError => {
+                    self.metadata.binding_errors =
+                        self.metadata.binding_errors.saturating_add(1);
+                    return Vec::new();
+                }
+            };
+        if hint.is_empty() {
+            return baseline;
+        }
+        let baseline_hit: Vec<FormNodeId> = baseline
+            .iter()
+            .copied()
+            .filter(|n| subtree_contains_name(form, *n, hint, MAX_SOM_DEPTH))
+            .collect();
+        if !baseline_hit.is_empty() {
+            return baseline_hit;
+        }
+        // Widen: walk every ancestor scope, collect same-name candidates,
+        // keep only those whose subtree contains the hint. Bounded by
+        // MAX_SOM_DEPTH and MAX_RESOLVE_CANDIDATES.
+        let mut widened: Vec<FormNodeId> = Vec::new();
+        let mut scope = Some(current_id);
+        let mut depth = 0usize;
+        while let Some(scope_id) = scope {
+            if depth > MAX_SOM_DEPTH || scope_id.0 >= form.nodes.len() {
+                break;
+            }
+            let mut candidates =
+                collect_named_descendant_candidates(form, scope_id, name, MAX_SOM_DEPTH);
+            order_candidates(form, &mut candidates);
+            for node_id in candidates {
+                if !widened.contains(&node_id)
+                    && subtree_contains_name(form, node_id, hint, MAX_SOM_DEPTH)
+                {
+                    widened.push(node_id);
+                    if widened.len() >= MAX_RESOLVE_CANDIDATES {
+                        return widened;
+                    }
+                }
+            }
+            scope = parents.get(&scope_id).copied();
+            depth += 1;
+        }
+        if widened.is_empty() {
+            baseline
+        } else {
+            widened
+        }
+    }
+
+    /// Phase D-θ: child resolution with single-segment lookahead.
+    ///
+    /// Returns the same candidates as [`resolve_child_candidates`] but,
+    /// when `next_hint` is non-empty, keeps only candidates whose subtree
+    /// contains a node named `next_hint`. Falls back to the un-hinted list
+    /// when the filter would empty the result.
+    pub fn resolve_child_candidates_hinted(
+        &mut self,
+        parent_ids: &[FormNodeId],
+        name: &str,
+        next_hint: &str,
+    ) -> Vec<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        let candidates = match self.resolve_child_candidates_inner(parent_ids, name) {
+            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::NoMatch => {
+                self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                return Vec::new();
+            }
+            ResolveOutcome::BindingError => {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                return Vec::new();
+            }
+        };
+        self.apply_lookahead_filter(candidates, next_hint)
+    }
+
+    fn apply_lookahead_filter(
+        &self,
+        candidates: Vec<FormNodeId>,
+        next_hint: &str,
+    ) -> Vec<FormNodeId> {
+        let hint = next_hint.trim();
+        if hint.is_empty() || candidates.len() <= 1 {
+            return candidates;
+        }
+        let Some(form) = self.form_ref() else {
+            return candidates;
+        };
+        let filtered: Vec<FormNodeId> = candidates
+            .iter()
+            .copied()
+            .filter(|node_id| subtree_contains_name(form, *node_id, hint, MAX_SOM_DEPTH))
+            .collect();
+        if filtered.is_empty() {
+            candidates
+        } else {
+            filtered
+        }
+    }
+
     /// Count live sibling instances with the same name as `parent_id`.
     pub fn instance_count(&mut self, parent_id: FormNodeId) -> u32 {
         self.instance_count_inner(parent_id, None)
@@ -1774,6 +1917,45 @@ fn resolve_implicit_candidates_in_scope(
     ResolveOutcome::NoMatch
 }
 
+/// Phase D-θ: bounded subtree check used by lookahead disambiguation.
+///
+/// Returns true when `node_id`'s subtree contains a descendant named `name`
+/// (or a direct child) within `MAX_SOM_DEPTH` levels. The starting node
+/// itself is excluded — only descendants count. Recursion is bounded by
+/// [`MAX_SOM_DEPTH`] so malformed templates cannot starve the sandbox.
+fn subtree_contains_name(
+    form: &FormTree,
+    node_id: FormNodeId,
+    name: &str,
+    max_depth: usize,
+) -> bool {
+    if node_id.0 >= form.nodes.len() {
+        return false;
+    }
+    subtree_contains_name_inner(form, node_id, name, 0, max_depth)
+}
+
+fn subtree_contains_name_inner(
+    form: &FormTree,
+    node_id: FormNodeId,
+    name: &str,
+    depth: usize,
+    max_depth: usize,
+) -> bool {
+    if depth >= max_depth {
+        return false;
+    }
+    for &child_id in &form.get(node_id).children {
+        if form.get(child_id).name == name {
+            return true;
+        }
+        if subtree_contains_name_inner(form, child_id, name, depth + 1, max_depth) {
+            return true;
+        }
+    }
+    false
+}
+
 fn find_named_descendant_inner(
     form: &FormTree,
     node_id: FormNodeId,
@@ -1871,6 +2053,72 @@ mod tests {
 
         host.reset_per_document();
         assert_eq!(host.get_raw_value(field, generation), None);
+    }
+
+    #[test]
+    fn multi_segment_som_chain_lookahead() {
+        // Phase D-θ: when two same-named siblings exist (`P1` × 2) but only
+        // one contains a child called `X`, hinted child resolution must
+        // collapse onto the P1 that owns `X`. Without lookahead the proxy
+        // chain may pick the empty P1 (D-η ordering ties) and lose access
+        // to `X.rawValue`.
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let f = add_node(
+            &mut tree,
+            "F",
+            FormNodeType::Subform,
+        );
+        let p1_empty = add_node(
+            &mut tree,
+            "P1",
+            FormNodeType::Subform,
+        );
+        let stub = add_node(
+            &mut tree,
+            "Stub",
+            FormNodeType::Subform,
+        );
+        let p1_rich = add_node(
+            &mut tree,
+            "P1",
+            FormNodeType::Subform,
+        );
+        let x = add_node(
+            &mut tree,
+            "X",
+            FormNodeType::Field {
+                value: "answer".to_string(),
+            },
+        );
+        tree.get_mut(p1_empty).children = vec![stub];
+        tree.get_mut(p1_rich).children = vec![x];
+        tree.get_mut(f).children = vec![p1_empty, p1_rich];
+        tree.get_mut(root).children = vec![f];
+
+        let mut host = HostBindings::new();
+        host.reset_per_document();
+        host.set_form_handle(&mut tree as *mut FormTree, root);
+        host.reset_per_script(root, Some("calculate"));
+
+        // Without a hint, both P1's are returned in scope order.
+        let plain = host.resolve_child_candidates(&[f], "P1");
+        assert!(plain.contains(&p1_empty) && plain.contains(&p1_rich));
+
+        // With the hint "X" the lookahead must keep ONLY the P1 that
+        // actually has an X descendant.
+        let hinted = host.resolve_child_candidates_hinted(&[f], "P1", "X");
+        assert_eq!(hinted, vec![p1_rich]);
+
+        // Hint that no candidate satisfies must fall back to the un-hinted
+        // candidate set so chained access still has something to walk.
+        let hinted_none = host.resolve_child_candidates_hinted(&[f], "P1", "Nope");
+        assert!(hinted_none.contains(&p1_empty) && hinted_none.contains(&p1_rich));
+
+        // Implicit-scope variant: from root the hint must still pin to the
+        // populated P1 branch.
+        let implicit = host.resolve_implicit_candidates_hinted(root, "P1", "X");
+        assert_eq!(implicit, vec![p1_rich]);
     }
 
     #[test]
