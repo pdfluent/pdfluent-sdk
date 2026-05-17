@@ -265,6 +265,20 @@ impl std::fmt::Display for DecryptionFailureReason {
 
 impl Error {
     /// Stable error code (`E-<CATEGORY>-<SPECIFIC>`), frozen per snapshot test.
+    ///
+    /// # Append-only policy
+    ///
+    /// Codes are **frozen** once assigned. You may:
+    /// - Add a new variant with a new code.
+    ///
+    /// You must **never**:
+    /// - Remove a code.
+    /// - Rename an existing code.
+    /// - Reassign a code to a different variant.
+    ///
+    /// Violating this policy breaks any consumer that stores or compares codes
+    /// (logs, analytics, downstream SDKs, client-side switch statements).
+    /// See `scripts/release/error_catalogue_sync.sh` for the CI gate.
     pub const fn code(&self) -> &'static str {
         match self {
             Error::Io { .. } => "E-IO-GENERIC",
@@ -526,5 +540,118 @@ impl From<pdf_redact::RedactError> for Error {
             byte_offset: None,
             reason: e.to_string(),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// Every Error variant must produce a unique stable code string.
+    ///
+    /// This test is the freeze-gate for RFC 0001 §5: if two variants share a
+    /// code the catalogue is broken by definition.
+    #[test]
+    fn error_codes_are_unique() {
+        use std::path::PathBuf;
+
+        // One representative instance per variant.
+        let variants: Vec<Error> = vec![
+            Error::Io {
+                source: std::io::Error::new(std::io::ErrorKind::Other, "test"),
+                path: None,
+            },
+            Error::FileNotFound {
+                path: PathBuf::from("/tmp/test.pdf"),
+            },
+            Error::InvalidPdf {
+                byte_offset: None,
+                reason: "test".into(),
+            },
+            Error::UnsupportedPdfVersion {
+                found: "2.1".into(),
+                supported_up_to: "2.0".into(),
+            },
+            Error::PdfaValidationFailed {
+                profile: crate::compliance::PdfAProfile::A1b,
+                violations: vec![],
+            },
+            Error::DecryptionFailed {
+                reason: DecryptionFailureReason::WrongPassword,
+            },
+            Error::InvalidSignature {
+                field: "sig1".into(),
+                reason: "bad cert".into(),
+            },
+            Error::FeatureNotInTier {
+                capability: crate::capability::Capability::XfaFlatten,
+                current_tier: crate::tier::Tier::Trial,
+                required_tier: crate::tier::Tier::Developer,
+            },
+            Error::CapabilityNotCompiled {
+                capability: crate::capability::Capability::XfaFlatten,
+                feature_flag: "xfa",
+            },
+            Error::InvalidLicense {
+                reason: "expired".into(),
+            },
+            Error::UnsupportedOnWasm {
+                operation: "sign",
+            },
+            Error::MissingDependency {
+                dep: "pdfium",
+                install_hint: "see README",
+            },
+            Error::MemoryBudgetExceeded {
+                requested: 1024,
+                limit: 512,
+            },
+            Error::ResourceLimitExceeded {
+                kind: ResourceLimitKind::FileTooLarge,
+                observed: 2000,
+                limit: 1000,
+            },
+            Error::Internal {
+                message: "test".into(),
+                crate_version: "0.0.0",
+            },
+        ];
+
+        let mut seen: HashSet<&'static str> = HashSet::new();
+        for v in &variants {
+            let code = v.code();
+            assert!(
+                seen.insert(code),
+                "Duplicate error code detected: {code}"
+            );
+        }
+
+        // Confirm every variant is covered (count guard).
+        assert_eq!(
+            variants.len(),
+            15,
+            "Update this test when new Error variants are added"
+        );
+    }
+
+    /// docs_url must be consistent with code() — both must use the same slug.
+    #[test]
+    fn docs_url_matches_code() {
+        use std::path::PathBuf;
+
+        let sample = Error::FileNotFound {
+            path: PathBuf::from("/tmp/x.pdf"),
+        };
+        let code = sample.code();
+        let url = sample.docs_url();
+        assert!(
+            url.ends_with(code),
+            "docs_url {url:?} must end with code {code:?}"
+        );
     }
 }
