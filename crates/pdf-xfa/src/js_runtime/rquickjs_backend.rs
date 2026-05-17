@@ -834,6 +834,24 @@ impl QuickJsRuntime {
                 .set("resolveFailure", resolve_failure)
                 .map_err(|e| format!("set resolveFailure: {e}"))?;
 
+            // Phase E (XFA-JS-HOST-STUBS) — sandbox-safe accounting hook for
+            // host capabilities that require viewer / user interaction. JS
+            // callers pass an optional capability identifier purely for log
+            // forensics; the host only increments the unsupported counter.
+            // No filesystem / network / process access ever runs through
+            // this path — see benchmarks/JS_SANDBOX_SECURITY_AUDIT.md.
+            let unsupported_host_call_host = Rc::clone(&host);
+            let unsupported_host_call =
+                Function::new(ctx.clone(), move |_capability: Opt<Coerced<String>>| {
+                    unsupported_host_call_host
+                        .borrow_mut()
+                        .metadata_unsupported_host_call();
+                })
+                .map_err(|e| format!("unsupportedHostCall: {e}"))?;
+            internal
+                .set("unsupportedHostCall", unsupported_host_call)
+                .map_err(|e| format!("set unsupportedHostCall: {e}"))?;
+
             // Phase D-γ: DataDom host bindings --------------------------------
 
             let dc_host = Rc::clone(&host);
@@ -2108,22 +2126,117 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     });
   }
 
-  var xfaHost = nullProtoObject();
-  Object.defineProperty(xfaHost, "numPages", {
-    enumerable: true,
-    configurable: false,
-    get: function() {
-      return host.numPages();
-    }
-  });
-  Object.defineProperty(xfaHost, "messageBox", {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: function() {
-      host.bindingError();
-      return null;
-    }
+  // Phase E (XFA-JS-HOST-STUBS): `xfa.host` is the most heavily used Adobe
+  // Reader viewer namespace. The previous frozen stub only exposed
+  // `numPages` + `messageBox`, so initializer scripts that touch
+  // `xfa.host.title = "..."`, `xfa.host.openList(...)`, `xfa.host.beep()`,
+  // etc. raised TypeError on the very first property access and inflated
+  // `runtime_errors`. We expose a Proxy that:
+  //   * resolves known read-only viewer properties to deterministic defaults
+  //     (numPages, version, language, platform, name, title, validationsEnabled,
+  //     calculationsEnabled, currentPage, pageCount);
+  //   * absorbs every other write silently (viewer-only state has no flatten
+  //     side-effects);
+  //   * returns a null-safe sentinel for unknown reads so chains like
+  //     `xfa.host.someVendorExt.message` don't TypeError;
+  //   * exposes the interactive function family (messageBox, openList, beep,
+  //     response, print, gotoURL, setFocus, exportData, importData,
+  //     resetData) as safe-default thunks that ALSO bump the
+  //     `unsupported_host_calls` counter so dispatch keeps observability
+  //     without claiming a fake success (no "user clicked OK" lies).
+  // No filesystem / network / process syscalls reach the host — every
+  // interactive thunk is a pure JS no-op that delegates to host.unsupported
+  // for accounting only. See benchmarks/JS_SANDBOX_SECURITY_AUDIT.md.
+  var XFA_HOST_INTERACTIVE_CALLS = {
+    "messageBox":   { kind: "ret", value: 0 },
+    "openList":     { kind: "ret", value: -1 },
+    "beep":         { kind: "ret", value: undefined },
+    "response":     { kind: "ret", value: "" },
+    "print":        { kind: "ret", value: undefined },
+    "gotoURL":      { kind: "ret", value: undefined },
+    "setFocus":     { kind: "ret", value: undefined },
+    "exportData":   { kind: "ret", value: undefined },
+    "importData":   { kind: "ret", value: undefined },
+    "resetData":    { kind: "ret", value: undefined },
+    "documentCountInBatch": { kind: "ret", value: 1 },
+    "documentInBatch":      { kind: "ret", value: 0 }
+  };
+
+  // Read-side defaults for viewer-readable host properties. These are pure
+  // accessors — no host call leaves the sandbox. The values mirror Adobe
+  // Reader behaviour during static, non-interactive rendering.
+  function makeXfaHostBase() {
+    var base = nullProtoObject();
+    Object.defineProperty(base, "numPages", {
+      enumerable: true, configurable: false,
+      get: function() { return host.numPages(); }
+    });
+    Object.defineProperty(base, "currentPage", {
+      enumerable: true, configurable: true,
+      get: function() { return 0; },
+      set: function(_v) { /* viewer-only */ }
+    });
+    Object.defineProperty(base, "pageCount", {
+      enumerable: true, configurable: false,
+      get: function() { return host.numPages(); }
+    });
+    // Static deterministic identity strings. We deliberately avoid claiming
+    // Acrobat compatibility — scripts that branch on `xfa.host.name` for
+    // Adobe-specific behaviour should fall through to a non-Acrobat path.
+    var SCALAR_DEFAULTS = {
+      "version":    "PDFluent-XFA",
+      "language":   "ENU",
+      "platform":   "PDFluent",
+      "name":       "PDFluent",
+      "title":      "",
+      "appType":    "Reader",
+      "variation":  "Reader",
+      "calculationsEnabled": true,
+      "validationsEnabled":  true,
+      "runtimeHighlight":    false,
+      "runtimeHighlightColor": "",
+      "viewerType":          "PDFluent",
+      "fullScreen":          false
+    };
+    Object.keys(SCALAR_DEFAULTS).forEach(function(k) {
+      var v = SCALAR_DEFAULTS[k];
+      Object.defineProperty(base, k, {
+        enumerable: true, configurable: true,
+        get: function() { return v; },
+        set: function(_v) { /* viewer-only, silently absorb */ }
+      });
+    });
+    return base;
+  }
+
+  // Install interactive function thunks. Each thunk increments the
+  // unsupported-host-call counter and returns a deterministic safe default.
+  function installXfaHostInteractive(base) {
+    Object.keys(XFA_HOST_INTERACTIVE_CALLS).forEach(function(name) {
+      var spec = XFA_HOST_INTERACTIVE_CALLS[name];
+      Object.defineProperty(base, name, {
+        enumerable: true, configurable: false, writable: false,
+        value: function() {
+          host.unsupportedHostCall(name);
+          return spec.value;
+        }
+      });
+    });
+  }
+
+  var xfaHostBase = makeXfaHostBase();
+  installXfaHostInteractive(xfaHostBase);
+  // Wrap in a Proxy so unknown property reads return a null-safe sentinel
+  // and unknown writes silently absorb. This is the "no TypeError" guarantee
+  // for vendor-specific xfa.host extensions referenced by templated scripts.
+  var xfaHost = new Proxy(xfaHostBase, {
+    get: function(target, prop) {
+      if (prop in target || typeof prop !== "string") return target[prop];
+      // Unknown read — never throw, never claim a value. Sentinel only.
+      return makeNullDataHandle();
+    },
+    set: function(_t, _p, _v) { return true; },
+    has: function() { return true; }
   });
 
   var xfaLayout = nullProtoObject();
@@ -2173,13 +2286,127 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     enumerable: true,
     configurable: false,
     writable: false,
-    value: Object.freeze(xfaHost)
+    // Note: deliberately NOT Object.freeze'd. `xfaHost` is already a Proxy
+    // with sealed semantics (writes absorbed, unknown reads return sentinels).
+    // Freezing would force every Set trap to throw under strict-mode scripts.
+    value: xfaHost
   });
   Object.defineProperty(xfa, "layout", {
     enumerable: true,
     configurable: false,
     writable: false,
     value: Object.freeze(xfaLayout)
+  });
+
+  // Phase E (XFA-JS-HOST-STUBS): viewer / interaction sub-namespaces. Each
+  // is a Proxy that silently absorbs writes and returns chainable sentinels
+  // on read so scripts can complete:
+  //
+  //   xfa.viewer        — Reader UI state (zoom, scrollbar, toolbar, ...)
+  //   xfa.appState      — Reader-wide preference cache
+  //   xfa.appearanceFilter — accessibility / high-contrast hints
+  //   xfa.connection    — `<connection>` outbound data binding stubs
+  //   xfa.signature     — interactive digital-signature panel
+  //   xfa.aliasNode     — script-time DOM alias rebinding
+  //   xfa.form          — top-level FormDOM root reference (we expose the
+  //                       same resolveNode/resolveNodes pair so the script
+  //                       feels uniform; legacy property reads sentinel)
+  //
+  // These never call out to the host other than for accounting; no
+  // filesystem / network / process syscalls reach the host bindings. Reads
+  // for known property names return spec-conforming defaults; everything
+  // else falls back to the null-safe sentinel chain.
+  function makeViewerStubNamespace(staticReads) {
+    var base = nullProtoObject();
+    if (staticReads) {
+      Object.keys(staticReads).forEach(function(k) {
+        var v = staticReads[k];
+        Object.defineProperty(base, k, {
+          enumerable: true, configurable: true,
+          get: function() { return v; },
+          set: function(_v) { /* viewer-only — silent absorb */ }
+        });
+      });
+    }
+    return new Proxy(base, {
+      get: function(target, prop) {
+        if (prop in target || typeof prop !== "string") return target[prop];
+        return makeNullDataHandle();
+      },
+      set: function(_t, _p, _v) { return true; },
+      has: function() { return true; }
+    });
+  }
+
+  function makeInteractiveStubNamespace(funcs) {
+    // funcs: { "sign": defaultRet, "verify": defaultRet, ... }
+    var base = nullProtoObject();
+    Object.keys(funcs).forEach(function(name) {
+      var def = funcs[name];
+      Object.defineProperty(base, name, {
+        enumerable: true, configurable: false, writable: false,
+        value: function() {
+          host.unsupportedHostCall(name);
+          return def;
+        }
+      });
+    });
+    return new Proxy(base, {
+      get: function(target, prop) {
+        if (prop in target || typeof prop !== "string") return target[prop];
+        return makeNullDataHandle();
+      },
+      set: function(_t, _p, _v) { return true; },
+      has: function() { return true; }
+    });
+  }
+
+  Object.defineProperty(xfa, "viewer", {
+    enumerable: true, configurable: false, writable: false,
+    value: makeViewerStubNamespace({
+      "zoomType":  "FitWidth",
+      "zoom":      100,
+      "scrollbar": "auto",
+      "toolbar":   true,
+      "menubar":   true,
+      "statusbar": true
+    })
+  });
+  Object.defineProperty(xfa, "appState", {
+    enumerable: true, configurable: false, writable: false,
+    value: makeViewerStubNamespace({
+      "highlightRequiredFields": false,
+      "fieldHighlightColor":     "",
+      "ariaEnabled":             false
+    })
+  });
+  Object.defineProperty(xfa, "appearanceFilter", {
+    enumerable: true, configurable: false, writable: false,
+    value: makeViewerStubNamespace(null)
+  });
+  Object.defineProperty(xfa, "aliasNode", {
+    enumerable: true, configurable: false, writable: false,
+    value: makeViewerStubNamespace(null)
+  });
+  Object.defineProperty(xfa, "connection", {
+    enumerable: true, configurable: false, writable: false,
+    // `<connection>` calls hit a real service endpoint in Adobe Reader.
+    // Static flatten cannot honour that — every method is unsupported.
+    value: makeInteractiveStubNamespace({
+      "execute":   null,
+      "open":      null,
+      "close":     null,
+      "send":      null
+    })
+  });
+  Object.defineProperty(xfa, "signature", {
+    enumerable: true, configurable: false, writable: false,
+    // Digital signatures require an interactive certificate picker.
+    value: makeInteractiveStubNamespace({
+      "sign":     false,
+      "verify":   "unknown",
+      "enumerate": ""
+    })
   });
   // WP-3 F3: `xfa.validate` is a viewer-only namespace controlling form-wide
   // validation behaviour (Reader UI prompts on field constraint violations).
@@ -2262,24 +2489,88 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     }
   });
 
-  var app = nullProtoObject();
-  Object.defineProperty(app, "alert", {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: function() {
-      host.bindingError();
-      return null;
-    }
-  });
-  Object.defineProperty(app, "launchURL", {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: function() {
-      host.bindingError();
-      return null;
-    }
+  // Phase E (XFA-JS-HOST-STUBS): Acrobat / Reader `app` global. Adobe
+  // initializer scripts commonly do:
+  //   app.calculate.override = true;       // viewer-only flag — silent absorb
+  //   app.runtimeHighlight   = false;      // viewer-only flag — silent absorb
+  //   app.alert("submitted"); app.launchURL("…")  // interactive — counted
+  //
+  // The previous frozen `app` only stubbed two functions; every other
+  // property touch surfaced as TypeError. Wrap the whole namespace in a
+  // Proxy with the same semantics as `xfa.host`:
+  //   * known viewer properties resolve to deterministic defaults;
+  //   * known interactive functions return a safe default + bump
+  //     unsupported_host_calls (NOT runtime_errors);
+  //   * unknown reads return a null-safe sentinel chain;
+  //   * unknown writes are absorbed.
+  //
+  // `app.calculate` is itself an absorbing sub-Proxy — every assignment
+  // (`app.calculate.override = true`, `app.calculate.suspend = false`, ...)
+  // is viewer-only and has no flatten side-effect. We document this as an
+  // explicit silent no-op (not UnsupportedHostCapability) because
+  // suppressing the viewer's calculation cascade is the script author's
+  // ASKING the viewer to stop, not a UI prompt to the user. See
+  // benchmarks/JS_SANDBOX_SECURITY_AUDIT.md for the full classification.
+  var APP_INTERACTIVE_CALLS = {
+    "alert":       { kind: "ret", value: 0 },     // dialog OK pressed = 0
+    "launchURL":   { kind: "ret", value: undefined },
+    "execMenuItem":{ kind: "ret", value: undefined },
+    "beep":        { kind: "ret", value: undefined },
+    "openDoc":     { kind: "ret", value: null },
+    "response":    { kind: "ret", value: "" },
+    "mailMsg":     { kind: "ret", value: undefined }
+  };
+  function makeAppBase() {
+    var base = nullProtoObject();
+    // Read-side static defaults — never call out, never lie about identity.
+    var SCALAR_DEFAULTS = {
+      "viewerType":     "PDFluent",
+      "viewerVariation":"Reader",
+      "viewerVersion":  0,
+      "language":       "ENU",
+      "platform":       "PDFluent",
+      "fs":             null,  // file system gateway — explicitly null
+      "media":          null,  // multimedia controller — explicitly null
+      "fullscreen":     false,
+      "runtimeHighlight": false,
+      "runtimeHighlightColor": ""
+    };
+    Object.keys(SCALAR_DEFAULTS).forEach(function(k) {
+      var v = SCALAR_DEFAULTS[k];
+      Object.defineProperty(base, k, {
+        enumerable: true, configurable: true,
+        get: function() { return v; },
+        set: function(_v) { /* viewer-only, silently absorb */ }
+      });
+    });
+    // app.calculate sub-namespace: writes absorb, reads return defaults.
+    Object.defineProperty(base, "calculate", {
+      enumerable: true, configurable: false, writable: false,
+      value: makeViewerStubNamespace({
+        "override": true,
+        "suspend":  false
+      })
+    });
+    // Install interactive function thunks (same pattern as xfa.host).
+    Object.keys(APP_INTERACTIVE_CALLS).forEach(function(name) {
+      var spec = APP_INTERACTIVE_CALLS[name];
+      Object.defineProperty(base, name, {
+        enumerable: true, configurable: false, writable: false,
+        value: function() {
+          host.unsupportedHostCall(name);
+          return spec.value;
+        }
+      });
+    });
+    return base;
+  }
+  var app = new Proxy(makeAppBase(), {
+    get: function(target, prop) {
+      if (prop in target || typeof prop !== "string") return target[prop];
+      return makeNullDataHandle();
+    },
+    set: function(_t, _p, _v) { return true; },
+    has: function() { return true; }
   });
 
   // Phase C-α: viewer-only `event` global. Real Adobe Reader populates
@@ -2651,8 +2942,17 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   }
 
   return {
+    // Phase E (XFA-JS-HOST-STUBS): `xfa` itself is still frozen because all
+    // of its properties were installed with `configurable: false` and writes
+    // go through inner-Proxy `set` traps that we control. `app` is a Proxy
+    // whose underlying target is non-extensible after we install the
+    // function thunks; freezing the Proxy itself would force the absorbing
+    // `set` trap to throw a TypeError (proxy invariants: writes to
+    // non-extensible targets must reject), defeating the whole point of the
+    // silent-absorb design. We therefore expose `app` unfrozen — its safety
+    // is enforced by the Proxy traps, not by Object.freeze.
     xfa: Object.freeze(xfa),
-    app: Object.freeze(app),
+    app: app,
     consoleStub: Object.freeze(consoleStub),
     // Phase D-ι: register a `<variables>` `<script name="X">…` block as a
     // form-level global. Called by the host once per script body at
