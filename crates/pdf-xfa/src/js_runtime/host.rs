@@ -297,8 +297,8 @@ impl HostBindings {
     }
 
     /// Resolve all viable implicit JavaScript identifier candidates from the
-    /// current XFA scope. The first candidate is identical to
-    /// [`resolve_implicit`]; later candidates preserve same-name alternatives
+    /// current XFA scope. The first candidate is identical to the result of
+    /// `resolve_implicit`; later candidates preserve same-name alternatives
     /// so the JS proxy can filter them when a chained property supplies the
     /// next SOM segment.
     pub fn resolve_implicit_candidates(
