@@ -43,7 +43,7 @@
 //! Breaking changes require a new RFC.
 
 #![deny(unsafe_code)]
-#![warn(missing_docs)]
+#![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 /// Async I/O wrappers via Tokio's blocking pool.

@@ -73,6 +73,40 @@ The SDK loads the native library in this order:
 2. `PDF_NATIVE_LIB` environment variable (full path)
 3. Classpath extraction (bundled in JAR at `/native/<arch>/`)
 
+## License Activation
+
+The SDK runs in Trial mode by default; output is marked via `/Producer`
+metadata. Activate a license to unlock the paid-tier capability set.
+
+```java
+import com.xfa.pdf.PdfluentLicensing;
+
+// Activate from a key string
+PdfluentLicensing.activateKey("tier:enterprise");
+
+// Or read the key from a UTF-8 text file (may throw IOException)
+PdfluentLicensing.activateFile("/path/to/key.lic");
+
+// Inspect the current status (always succeeds; defaults to Trial)
+PdfluentLicensing.LicenseStatus s = PdfluentLicensing.status();
+System.out.println(s.tier);            // Tier.ENTERPRISE
+System.out.println(s.source);          // Source.EXPLICIT / ENV_VAR / DEFAULT
+System.out.println(s.outputIsMarked);  // false
+
+PdfluentLicensing.Tier t = PdfluentLicensing.effectiveTier();  // shortcut
+```
+
+The `PDFLUENT_LICENSE_KEY` environment variable is honoured automatically.
+
+**Behavior to be aware of:**
+
+- The active tier is **process-global and set-once**. Re-activating with
+  the same key is a no-op. Re-activating with a different tier throws
+  `IllegalStateException`; restart the JVM to switch tiers.
+- Invalid keys throw `com.xfa.pdf.PdfException`.
+- Missing license files throw `java.io.IOException`.
+- The key string is never logged or stored beyond the call.
+
 ## API Reference
 
 | Method | Description |

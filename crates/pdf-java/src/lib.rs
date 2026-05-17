@@ -1152,3 +1152,145 @@ pub extern "system" fn Java_com_xfa_pdf_PdfUtils_nativeValidatePdfa<'a>(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// License activation — JNI surface for com.xfa.pdf.PdfluentLicensing
+// ---------------------------------------------------------------------------
+
+use std::sync::atomic::{AtomicU8, Ordering as AtomicOrdering};
+
+static JAVA_LICENSE_SOURCE: AtomicU8 = AtomicU8::new(0);
+
+fn java_record_explicit() {
+    JAVA_LICENSE_SOURCE.store(2, AtomicOrdering::Relaxed);
+}
+
+fn java_current_source() -> &'static str {
+    match JAVA_LICENSE_SOURCE.load(AtomicOrdering::Relaxed) {
+        2 => "Explicit",
+        _ => {
+            if let Ok(key) = std::env::var("PDFLUENT_LICENSE_KEY") {
+                if !key.is_empty() && pdfluent::license_info().tier != pdfluent::Tier::Trial {
+                    return "EnvVar";
+                }
+            }
+            "Default"
+        }
+    }
+}
+
+fn java_tier_to_int(t: pdfluent::Tier) -> jint {
+    match t {
+        pdfluent::Tier::Trial => 0,
+        pdfluent::Tier::Developer => 1,
+        pdfluent::Tier::Team => 2,
+        pdfluent::Tier::Business => 3,
+        pdfluent::Tier::Enterprise => 4,
+        _ => -1,
+    }
+}
+
+fn java_source_to_int(s: &str) -> jint {
+    match s {
+        "EnvVar" => 1,
+        "Explicit" => 2,
+        _ => 0,
+    }
+}
+
+fn map_license_error_for_java(env: &mut JNIEnv<'_>, e: pdfluent::Error) {
+    match e {
+        pdfluent::Error::InvalidLicense { reason } => {
+            if reason.contains("already set") {
+                let _ = env.throw_new(
+                    "java/lang/IllegalStateException",
+                    format!("license already set: {reason}"),
+                );
+            } else {
+                throw_pdf_exception(env, &format!("invalid license: {reason}"));
+            }
+        }
+        other => throw_pdf_exception(env, &format!("license error: {other}")),
+    }
+}
+
+/// `static native void nativeActivateKey(String key)`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_xfa_pdf_PdfluentLicensing_nativeActivateKey<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    key: JString<'a>,
+) {
+    let key_str: String = match env.get_string(&key) {
+        Ok(s) => s.into(),
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("failed to read key: {e}"));
+            return;
+        }
+    };
+    match pdfluent::set_license_key(&key_str) {
+        Ok(()) => java_record_explicit(),
+        Err(e) => map_license_error_for_java(&mut env, e),
+    }
+}
+
+/// `static native void nativeActivateFile(String path)`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_xfa_pdf_PdfluentLicensing_nativeActivateFile<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    path: JString<'a>,
+) {
+    let path_str: String = match env.get_string(&path) {
+        Ok(s) => s.into(),
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("failed to read path: {e}"));
+            return;
+        }
+    };
+    let contents = match std::fs::read_to_string(&path_str) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = env.throw_new(
+                "java/io/IOException",
+                format!("could not read license file: {e}"),
+            );
+            return;
+        }
+    };
+    match pdfluent::set_license_key(contents.trim()) {
+        Ok(()) => java_record_explicit(),
+        Err(e) => map_license_error_for_java(&mut env, e),
+    }
+}
+
+/// `static native int nativeEffectiveTier()`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_xfa_pdf_PdfluentLicensing_nativeEffectiveTier(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    java_tier_to_int(pdfluent::license_info().tier)
+}
+
+/// `static native int[] nativeStatus()` — returns `[tier, source, outputIsMarked]`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_xfa_pdf_PdfluentLicensing_nativeStatus<'a>(
+    env: JNIEnv<'a>,
+    _class: JClass<'a>,
+) -> jobject {
+    let info = pdfluent::license_info();
+    let arr = match env.new_int_array(3) {
+        Ok(a) => a,
+        Err(_) => return JObject::null().into_raw(),
+    };
+    let values: [jint; 3] = [
+        java_tier_to_int(info.tier),
+        java_source_to_int(java_current_source()),
+        if info.output_is_marked { 1 } else { 0 },
+    ];
+    if env.set_int_array_region(&arr, 0, &values).is_err() {
+        return JObject::null().into_raw();
+    }
+    arr.into_raw()
+}

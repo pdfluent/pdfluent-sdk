@@ -854,10 +854,7 @@ mod tests {
             widget.get(b"AA").is_err(),
             "/AA must be stripped when /Next chain contains JavaScript"
         );
-        assert!(
-            widget.get(b"JS").is_err(),
-            "widget must not retain /JS key"
-        );
+        assert!(widget.get(b"JS").is_err(), "widget must not retain /JS key");
     }
 
     #[test]

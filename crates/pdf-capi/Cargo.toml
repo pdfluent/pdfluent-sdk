@@ -19,4 +19,5 @@ pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.5" }
 pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.5" }
 pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.5" }
 pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.5" }
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.5" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }

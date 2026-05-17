@@ -27,45 +27,91 @@
 //! engine.importJson('{"form1.Name": "Bob"}');
 //! ```
 
+pub mod edit_handle;
+
 #[cfg(feature = "render")]
 pub mod canvas2d_device;
+
+pub mod edits;
+pub mod license;
 
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use crate::canvas2d_device::Canvas2DDevice;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use kurbo::{Affine, Rect, Shape};
-use pdf_engine::api_error::PdfError;
 use pdf_engine::PdfDocument;
+use pdf_engine::api_error::PdfError;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use pdf_render::pdf_interpret::util::PageExt;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use pdf_render::pdf_interpret::{
-    interpret_page, BlendMode, ClipPath, Context, Device, FillRule, InterpreterSettings,
+    BlendMode, ClipPath, Context, Device, FillRule, InterpreterSettings, interpret_page,
 };
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use xfa_layout_engine::form::{FormNode, FormNodeId, FormNodeType, FormTree, Occur};
+#[cfg(not(target_arch = "wasm32"))]
 use xfa_layout_engine::scripting;
 use xfa_layout_engine::text::FontMetrics;
 use xfa_layout_engine::types::{BoxModel, LayoutStrategy};
 
-fn wasm_err<E: PdfError>(e: E) -> JsError {
-    let code = e.code();
-    let msg = e.to_string();
+/// Build a structured JS error with machine-inspectable `code`, `help`, and `docsUrl` properties.
+///
+/// The thrown object is a standard JS `Error` (name = `"XfaWasmError"`) so existing
+/// `catch (e)` / `instanceof Error` handlers continue to work. The extra properties
+/// allow programmatic dispatch without string-parsing the message.
+fn make_xfa_error(code: &str, msg: &str, help: &str, docs_url: &str) -> JsValue {
+    use js_sys::Reflect;
+    let first_line = msg.lines().next().unwrap_or(msg);
+    let err = js_sys::Error::new(&format!("[{code}] {first_line}"));
+    err.set_name("XfaWasmError");
+    let val: &JsValue = err.as_ref();
+    let _ = Reflect::set(val, &JsValue::from_str("code"), &JsValue::from_str(code));
+    let _ = Reflect::set(val, &JsValue::from_str("help"), &JsValue::from_str(help));
+    let _ = Reflect::set(
+        val,
+        &JsValue::from_str("docsUrl"),
+        &JsValue::from_str(docs_url),
+    );
+    err.into()
+}
+
+fn wasm_err<E: PdfError>(e: E) -> JsValue {
     let help = e.help().unwrap_or_default();
-    let docs = e.docs_url();
-    JsError::new(&format!(
-        "[{}] {} — Fix: {} — Docs: {}",
-        code,
-        msg.lines().next().unwrap_or(&msg),
-        help.lines().next().unwrap_or(&help),
-        docs
-    ))
+    make_xfa_error(e.code(), &e.to_string(), &help, &e.docs_url())
+}
+
+/// Build a structured error for call sites that don't have a `PdfError`.
+fn wasm_err_simple(code: &str, msg: &str) -> JsValue {
+    let docs_url = format!(
+        "https://docs.pdfluent.dev/errors/{}",
+        code.to_lowercase().replace('_', "-")
+    );
+    make_xfa_error(code, msg, "", &docs_url)
 }
 
 /// The main XFA processing engine for WASM.
 ///
 /// Holds a parsed FormTree and provides methods to extract/import data.
+///
+/// # Memory lifecycle
+///
+/// `XfaEngine` holds native WASM memory. Call [`XfaEngine.free()`] when done,
+/// or use the `using` keyword (TypeScript 5.2+, TC39 Explicit Resource Management):
+///
+/// ```js
+/// using engine = XfaEngine.fromFields(fields);
+/// // engine.free() is called automatically at end of block
+/// ```
+///
+/// After `free()`, all method calls throw. Do not keep references across blocks.
+///
+/// # Errors
+///
+/// All fallible methods throw an `XfaWasmError` — a standard `Error` with extra
+/// properties: `code` (stable `SCREAMING_SNAKE_CASE` identifier), `help` (actionable
+/// hint), and `docsUrl` (documentation deep-link). Use `error.code` for programmatic
+/// dispatch without parsing `error.message`.
 #[wasm_bindgen]
 pub struct XfaEngine {
     tree: FormTree,
@@ -84,9 +130,9 @@ impl XfaEngine {
     /// ]
     /// ```
     #[wasm_bindgen(js_name = "fromFields")]
-    pub fn from_fields(fields_json: &str) -> Result<XfaEngine, JsError> {
+    pub fn from_fields(fields_json: &str) -> Result<XfaEngine, JsValue> {
         let fields: Vec<FieldDef> = serde_json::from_str(fields_json)
-            .map_err(|e| JsError::new(&format!("JSON parse error: {e}")))?;
+            .map_err(|e| wasm_err_simple("INVALID_JSON", &format!("JSON parse error: {e}")))?;
 
         let mut tree = FormTree::new();
         let mut child_ids = Vec::new();
@@ -131,9 +177,9 @@ impl XfaEngine {
     ///
     /// Rebuilds the form tree from a flat field map.
     #[wasm_bindgen(js_name = "fromJson")]
-    pub fn from_json(json_str: &str) -> Result<XfaEngine, JsError> {
+    pub fn from_json(json_str: &str) -> Result<XfaEngine, JsValue> {
         let form_data: xfa_json::FormData = serde_json::from_str(json_str)
-            .map_err(|e| JsError::new(&format!("JSON parse error: {e}")))?;
+            .map_err(|e| wasm_err_simple("INVALID_JSON", &format!("JSON parse error: {e}")))?;
 
         let mut tree = FormTree::new();
         let mut child_ids = Vec::new();
@@ -238,9 +284,10 @@ impl XfaEngine {
 
     /// Run FormCalc calculate scripts to compute derived field values.
     #[wasm_bindgen(js_name = "runCalculations")]
-    pub fn run_calculations(&mut self) -> Result<(), JsError> {
+    pub fn run_calculations(&mut self) -> Result<(), JsValue> {
+        #[cfg(not(target_arch = "wasm32"))]
         scripting::run_calculations(&mut self.tree)
-            .map_err(|e| JsError::new(&format!("scripting error: {e}")))?;
+            .map_err(|e| wasm_err_simple("FORMCALC_ERROR", &format!("scripting error: {e}")))?;
         Ok(())
     }
 
@@ -248,18 +295,20 @@ impl XfaEngine {
     ///
     /// Returns `{"form1.FieldName": "value", ...}`.
     #[wasm_bindgen(js_name = "exportJson")]
-    pub fn export_json(&self) -> Result<String, JsError> {
+    pub fn export_json(&self) -> Result<String, JsValue> {
         let data = xfa_json::form_tree_to_json(&self.tree, self.root);
-        serde_json::to_string(&data).map_err(|e| JsError::new(&format!("JSON serialize: {e}")))
+        serde_json::to_string(&data)
+            .map_err(|e| wasm_err_simple("SERIALIZE_ERROR", &format!("JSON serialize: {e}")))
     }
 
     /// Export the form schema as a JSON string.
     ///
     /// Returns metadata about each field (name, type, constraints).
     #[wasm_bindgen(js_name = "exportSchema")]
-    pub fn export_schema(&self) -> Result<String, JsError> {
+    pub fn export_schema(&self) -> Result<String, JsValue> {
         let schema = xfa_json::export_schema(&self.tree, self.root);
-        serde_json::to_string(&schema).map_err(|e| JsError::new(&format!("JSON serialize: {e}")))
+        serde_json::to_string(&schema)
+            .map_err(|e| wasm_err_simple("SERIALIZE_ERROR", &format!("JSON serialize: {e}")))
     }
 
     /// Import field values from a JSON string.
@@ -268,8 +317,9 @@ impl XfaEngine {
     /// - `{"fields": {"form1.Name": "value"}}` (FormData format)
     /// - `{"form1.Name": "value"}` (flat format)
     #[wasm_bindgen(js_name = "importJson")]
-    pub fn import_json(&mut self, json_str: &str) -> Result<(), JsError> {
-        let form_data = parse_import_json(json_str).map_err(|e| JsError::new(&e))?;
+    pub fn import_json(&mut self, json_str: &str) -> Result<(), JsValue> {
+        let form_data =
+            parse_import_json(json_str).map_err(|e| wasm_err_simple("INVALID_JSON", &e))?;
         xfa_json::json_to_form_tree(&form_data, &mut self.tree, self.root);
         Ok(())
     }
@@ -437,10 +487,29 @@ fn set_field_value_by_path(tree: &mut FormTree, root: FormNodeId, path: &str, va
 ///
 /// Uses `pdf-syntax` for metadata/geometry/signatures/compliance and
 /// `pdf-engine` for text extraction so the WASM path matches native decoding.
+///
+/// # Memory lifecycle
+///
+/// `PdfDoc` holds native WASM memory. Call [`PdfDoc.free()`] when done,
+/// or use the `using` keyword (TypeScript 5.2+):
+///
+/// ```js
+/// using doc = PdfDoc.open(bytes);
+/// // doc.free() is called automatically at end of block
+/// ```
+///
+/// After `free()`, all method calls throw. Do not hold references across `free()`.
+///
+/// # Errors
+///
+/// All fallible methods throw an `XfaWasmError` — a standard `Error` with extra
+/// properties: `code` (stable `SCREAMING_SNAKE_CASE` identifier), `help` (actionable
+/// hint), and `docsUrl` (documentation deep-link). Use `error.code` for programmatic
+/// dispatch without parsing `error.message`.
 #[wasm_bindgen]
 pub struct PdfDoc {
-    pdf: pdf_syntax::Pdf,
-    engine: PdfDocument,
+    pub(crate) pdf: pdf_syntax::Pdf,
+    pub(crate) engine: PdfDocument,
 }
 
 #[derive(serde::Serialize)]
@@ -452,14 +521,40 @@ struct TextRun {
     height: f64,
     #[serde(rename = "fontSize")]
     font_size: f64,
+
+    // ---- G1 read-only metadata (additive; old consumers ignore unknown keys) ----
+    /// PostScript name (subset prefix stripped). Omitted from JSON when `None`.
+    #[serde(rename = "fontName", skip_serializing_if = "Option::is_none")]
+    font_name: Option<String>,
+    /// Inferred bold style. Always emitted (boolean, default `false`).
+    #[serde(rename = "isBold")]
+    is_bold: bool,
+    /// Inferred italic style. Always emitted (boolean, default `false`).
+    #[serde(rename = "isItalic")]
+    is_italic: bool,
+    /// Fill color as `[r, g, b, a]` 0–255. Omitted when source paint is a
+    /// pattern/shading or color could not be resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color: Option<[u8; 4]>,
+
+    // ---- G2 glyph-level metrics (additive) ----
+    /// `"Metric"` when widths come from real font advance data; `"Estimate"` otherwise.
+    #[serde(rename = "widthSource")]
+    width_source: &'static str,
+    /// Per-glyph bounding boxes as `[[x0,y0,x1,y1], …]`, one entry per source
+    /// glyph.  Coordinates are in the same CSS-pixel space as `x`/`y` (y=0 at
+    /// top-left, y increasing downward).  Omitted from JSON when empty.
+    #[serde(rename = "charBounds", skip_serializing_if = "Vec::is_empty")]
+    char_bounds: Vec<[f64; 4]>,
 }
 
 #[wasm_bindgen]
 impl PdfDoc {
     /// Open a PDF from raw bytes.
-    pub fn open(data: &[u8]) -> Result<PdfDoc, JsError> {
+    pub fn open(data: &[u8]) -> Result<PdfDoc, JsValue> {
         let raw = Arc::new(data.to_vec());
-        let pdf = pdf_syntax::Pdf::new(raw.clone()).map_err(|e| JsError::new(&format!("{e:?}")))?;
+        let pdf = pdf_syntax::Pdf::new(raw.clone())
+            .map_err(|e| wasm_err_simple("INVALID_PDF", &format!("{e:?}")))?;
         let engine = PdfDocument::open(raw).map_err(wasm_err)?;
         Ok(PdfDoc { pdf, engine })
     }
@@ -518,7 +613,7 @@ impl PdfDoc {
 
     /// Validate against a PDF/A level. Returns compliance report as JSON.
     #[wasm_bindgen(js_name = "validatePdfA")]
-    pub fn validate_pdfa(&self, level: &str) -> Result<String, JsError> {
+    pub fn validate_pdfa(&self, level: &str) -> Result<String, JsValue> {
         let pdfa_level = match level
             .to_lowercase()
             .replace(['-', '/', '_', ' '], "")
@@ -536,9 +631,10 @@ impl PdfDoc {
             "pdfa4f" | "a4f" | "4f" => pdf_compliance::PdfALevel::A4f,
             "pdfa4e" | "a4e" | "4e" => pdf_compliance::PdfALevel::A4e,
             other => {
-                return Err(JsError::new(&format!(
-                    "unknown PDF/A level: {other:?} — expected e.g. \"2b\", \"3b\", \"1b\""
-                )))
+                return Err(wasm_err_simple(
+                    "INVALID_ARGUMENT",
+                    &format!("unknown PDF/A level: {other:?} — expected e.g. \"2b\", \"3b\", \"1b\""),
+                ))
             }
         };
         let report = pdf_compliance::validate_pdfa(&self.pdf, pdfa_level);
@@ -552,7 +648,8 @@ impl PdfDoc {
                 "message": i.message,
             })).collect::<Vec<_>>(),
         });
-        serde_json::to_string(&result).map_err(|e| JsError::new(&e.to_string()))
+        serde_json::to_string(&result)
+            .map_err(|e| wasm_err_simple("SERIALIZE_ERROR", &e.to_string()))
     }
 
     /// Check if the document has any signatures.
@@ -580,9 +677,9 @@ impl PdfDoc {
     /// Returns the flattened PDF as a `Uint8Array`.
     /// Throws if the document has no XFA stream or flattening fails.
     #[wasm_bindgen(js_name = "flattenXfa")]
-    pub fn flatten_xfa(&self) -> Result<Vec<u8>, JsError> {
+    pub fn flatten_xfa(&self) -> Result<Vec<u8>, JsValue> {
         pdf_engine::xfa::flatten(&self.engine)
-            .map_err(|e| JsError::new(&format!("XFA flatten failed: {e}")))
+            .map_err(|e| wasm_err_simple("XFA_FLATTEN_FAILED", &format!("XFA flatten failed: {e}")))
     }
 
     // ---- Page geometry ----
@@ -622,7 +719,7 @@ impl PdfDoc {
     /// ```
     #[cfg(feature = "render")]
     #[wasm_bindgen(js_name = "renderPage")]
-    pub fn render_page(&self, page_index: usize, scale: f32) -> Result<Vec<u8>, JsError> {
+    pub fn render_page(&self, page_index: usize, scale: f32) -> Result<Vec<u8>, JsValue> {
         let page = Self::render_engine_page(&self.engine, page_index, scale)?;
         let mut buf = Vec::with_capacity(8 + page.pixels.len());
         buf.extend_from_slice(&page.width.to_le_bytes());
@@ -640,12 +737,13 @@ impl PdfDoc {
         &self,
         page_index: usize,
         max_dimension: u32,
-    ) -> Result<Vec<u8>, JsError> {
+    ) -> Result<Vec<u8>, JsValue> {
         let page_count = self.engine.page_count();
         if page_index >= page_count {
-            return Err(JsError::new(&format!(
-                "page index {page_index} out of range (0..{page_count})"
-            )));
+            return Err(wasm_err_simple(
+                "PAGE_OUT_OF_RANGE",
+                &format!("page index {page_index} out of range (0..{page_count})"),
+            ));
         }
         let geom = self.engine.page_geometry(page_index).map_err(wasm_err)?;
         let pw = geom.media_box.width().abs() as f32;
@@ -676,7 +774,7 @@ impl PdfDoc {
         canvas: &web_sys::HtmlCanvasElement,
         page_index: usize,
         scale: f32,
-    ) -> Result<(), JsError> {
+    ) -> Result<(), JsValue> {
         let has_xfa = pdf_engine::xfa::has_xfa(&self.engine);
         web_sys::console::log_1(&format!("has_xfa: {has_xfa}").into());
 
@@ -724,7 +822,7 @@ impl PdfDoc {
         canvas: &web_sys::HtmlCanvasElement,
         page_index: usize,
         scale: f32,
-    ) -> Result<(), JsError> {
+    ) -> Result<(), JsValue> {
         let has_xfa = pdf_engine::xfa::has_xfa(&self.engine);
         web_sys::console::log_1(&format!("has_xfa: {has_xfa}").into());
 
@@ -774,10 +872,24 @@ impl PdfDoc {
     ///
     /// ```js
     /// const runs = JSON.parse(doc.getTextPositions(0));
-    /// // runs[i] = { text: "Hello world", x: 72.0, y: 100.0, width: 96.0, height: 12.0, fontSize: 12.0 }
+    /// // runs[i] = {
+    /// //   text: "Hello world",
+    /// //   x: 72.0, y: 100.0, width: 96.0, height: 12.0, fontSize: 12.0,
+    /// //   fontName: "Helvetica-Bold", // G1: omitted when unknown
+    /// //   isBold: true, isItalic: false,
+    /// //   color: [0, 0, 0, 255],      // G1: omitted when unknown
+    /// //   widthSource: "Metric",      // G2: "Metric" | "Estimate"
+    /// //   charBounds: [[72,100,80,112], …] // G2: per-glyph bounds (omitted when empty)
+    /// // }
     /// ```
+    ///
+    /// `fontName` and `color` are omitted from the JSON when the source
+    /// metadata is unavailable (Type1/standard-14 fonts, Pattern paints,
+    /// or unsupported color spaces). `isBold`/`isItalic` are always present
+    /// so editor toolbars can render unconditionally. `widthSource` is always
+    /// present; `charBounds` is omitted only when the span is empty.
     #[wasm_bindgen(js_name = "getTextPositions")]
-    pub fn get_text_positions(&self, page_index: usize) -> Result<String, JsError> {
+    pub fn get_text_positions(&self, page_index: usize) -> Result<String, JsValue> {
         let text_engine = self.open_flattened_xfa_engine();
         let engine = text_engine.as_ref().unwrap_or(&self.engine);
         let page_height = engine
@@ -786,20 +898,43 @@ impl PdfDoc {
             .unwrap_or(0.0);
         let runs: Vec<TextRun> = engine
             .extract_text_blocks(page_index)
-            .map_err(|e| JsError::new(&format!("text extract: {e}")))?
+            .map_err(|e| wasm_err_simple("TEXT_EXTRACT_FAILED", &format!("text extract: {e}")))?
             .into_iter()
             .flat_map(|block| block.spans.into_iter())
             .filter(|span| !span.text.is_empty())
-            .map(|span| TextRun {
-                text: span.text,
-                x: span.x.max(0.0),
-                y: (page_height - span.y - span.height).max(0.0),
-                width: span.width.max(1.0),
-                height: span.height.max(1.0),
-                font_size: span.font_size.max(1.0),
+            .map(|span| {
+                use pdf_engine::WidthSource;
+                // Flip char_bounds Y from PDF space (y-up) to CSS space (y-down).
+                let char_bounds: Vec<[f64; 4]> = span
+                    .char_bounds
+                    .into_iter()
+                    .map(|[x0, y0, x1, y1]| {
+                        let css_y0 = (page_height - y1).max(0.0);
+                        let css_y1 = (page_height - y0).max(0.0);
+                        [x0.max(0.0), css_y0, x1.max(0.0), css_y1]
+                    })
+                    .collect();
+                TextRun {
+                    text: span.text,
+                    x: span.x.max(0.0),
+                    y: (page_height - span.y - span.height).max(0.0),
+                    width: span.width.max(1.0),
+                    height: span.height.max(1.0),
+                    font_size: span.font_size.max(1.0),
+                    font_name: span.font_name,
+                    is_bold: span.is_bold,
+                    is_italic: span.is_italic,
+                    color: span.color,
+                    width_source: match span.width_source {
+                        WidthSource::Metric => "Metric",
+                        WidthSource::Estimate => "Estimate",
+                    },
+                    char_bounds,
+                }
             })
             .collect();
-        serde_json::to_string(&runs).map_err(|e| JsError::new(&format!("serialize text runs: {e}")))
+        serde_json::to_string(&runs)
+            .map_err(|e| wasm_err_simple("SERIALIZE_ERROR", &format!("serialize text runs: {e}")))
     }
 
     // ---- Annotation reading ----
@@ -809,13 +944,13 @@ impl PdfDoc {
     /// Returns a JSON array of annotation objects.
     #[cfg(feature = "annotate")]
     #[wasm_bindgen(js_name = "getAnnotations")]
-    pub fn get_annotations(&self, page_index: usize) -> Result<String, JsError> {
+    pub fn get_annotations(&self, page_index: usize) -> Result<String, JsValue> {
         let pages = self.pdf.pages();
         if page_index >= pages.len() {
-            return Err(JsError::new(&format!(
-                "page index {page_index} out of range (0..{})",
-                pages.len()
-            )));
+            return Err(wasm_err_simple(
+                "PAGE_OUT_OF_RANGE",
+                &format!("page index {page_index} out of range (0..{})", pages.len()),
+            ));
         }
         let page = &pages[page_index];
         let annots = pdf_annot::Annotation::from_page(page);
@@ -837,107 +972,8 @@ impl PdfDoc {
                 })
             })
             .collect();
-        serde_json::to_string(&arr).map_err(|e| JsError::new(&e.to_string()))
+        serde_json::to_string(&arr).map_err(|e| wasm_err_simple("SERIALIZE_ERROR", &e.to_string()))
     }
-
-    // ---- Annotation creation (feature: annotate) ----
-
-    /// Add a highlight annotation to a page.
-    ///
-    /// Takes the PDF bytes and returns new PDF bytes with the annotation added.
-    #[cfg(feature = "annotate")]
-    #[wasm_bindgen(js_name = "addHighlight")]
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_highlight(
-        data: &[u8],
-        page_index: u32,
-        x0: f64,
-        y0: f64,
-        x1: f64,
-        y1: f64,
-        r: f64,
-        g: f64,
-        b: f64,
-    ) -> Result<Vec<u8>, JsError> {
-        let mut doc = lopdf::Document::load_mem(data).map_err(|e| JsError::new(&format!("{e}")))?;
-        let rect = pdf_annot::builder::AnnotRect { x0, y0, x1, y1 };
-        let annot_id = pdf_annot::builder::AnnotationBuilder::highlight(rect)
-            .color(r, g, b)
-            .quad_points_from_rect(&rect)
-            .build(&mut doc)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        pdf_annot::builder::add_annotation_to_page(&mut doc, page_index, annot_id)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        let mut buf = Vec::new();
-        doc.save_to(&mut buf)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        Ok(buf)
-    }
-
-    /// Add a sticky note (text annotation) to a page.
-    ///
-    /// Returns new PDF bytes with the annotation.
-    #[cfg(feature = "annotate")]
-    #[wasm_bindgen(js_name = "addStickyNote")]
-    pub fn add_sticky_note(
-        data: &[u8],
-        page_index: u32,
-        x: f64,
-        y: f64,
-        text: &str,
-    ) -> Result<Vec<u8>, JsError> {
-        let mut doc = lopdf::Document::load_mem(data).map_err(|e| JsError::new(&format!("{e}")))?;
-        let rect = pdf_annot::builder::AnnotRect {
-            x0: x,
-            y0: y,
-            x1: x + 24.0,
-            y1: y + 24.0,
-        };
-        let annot_id = pdf_annot::builder::AnnotationBuilder::sticky_note(
-            rect,
-            pdf_annot::builder::TextIcon::Note,
-        )
-        .contents(text)
-        .color(1.0, 0.95, 0.0)
-        .build(&mut doc)
-        .map_err(|e| JsError::new(&format!("{e}")))?;
-        pdf_annot::builder::add_annotation_to_page(&mut doc, page_index, annot_id)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        let mut buf = Vec::new();
-        doc.save_to(&mut buf)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        Ok(buf)
-    }
-
-    /// Add a free text annotation to a page.
-    ///
-    /// Returns new PDF bytes with the annotation.
-    #[cfg(feature = "annotate")]
-    #[wasm_bindgen(js_name = "addFreeText")]
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_free_text(
-        data: &[u8],
-        page_index: u32,
-        x0: f64,
-        y0: f64,
-        x1: f64,
-        y1: f64,
-        text: &str,
-        font_size: f64,
-    ) -> Result<Vec<u8>, JsError> {
-        let mut doc = lopdf::Document::load_mem(data).map_err(|e| JsError::new(&format!("{e}")))?;
-        let rect = pdf_annot::builder::AnnotRect { x0, y0, x1, y1 };
-        let annot_id = pdf_annot::builder::AnnotationBuilder::free_text(rect, text, font_size)
-            .build(&mut doc)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        pdf_annot::builder::add_annotation_to_page(&mut doc, page_index, annot_id)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        let mut buf = Vec::new();
-        doc.save_to(&mut buf)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
-        Ok(buf)
-    }
-
     // ---- Signature verification ----
 
     /// Verify all digital signatures in the document.
@@ -970,19 +1006,19 @@ impl PdfDoc {
     ///
     /// Returns the merged PDF as a `Uint8Array`.
     #[wasm_bindgen(js_name = "merge")]
-    pub fn merge(&self, other: &[u8]) -> Result<Vec<u8>, JsError> {
+    pub fn merge(&self, other: &[u8]) -> Result<Vec<u8>, JsValue> {
         let self_bytes = self.pdf.data().as_ref();
-        let mut self_doc =
-            lopdf::Document::load_mem(self_bytes).map_err(|e| JsError::new(&format!("{e}")))?;
-        let other_doc =
-            lopdf::Document::load_mem(other).map_err(|e| JsError::new(&format!("{e}")))?;
+        let mut self_doc = lopdf::Document::load_mem(self_bytes)
+            .map_err(|e| wasm_err_simple("OPERATION_FAILED", &format!("{e}")))?;
+        let other_doc = lopdf::Document::load_mem(other)
+            .map_err(|e| wasm_err_simple("OPERATION_FAILED", &format!("{e}")))?;
         let page_count = self_doc.get_pages().len() as u32;
         pdf_manip::pages::insert_pages(&mut self_doc, &other_doc, page_count + 1)
-            .map_err(|e| JsError::new(&format!("merge failed: {e}")))?;
+            .map_err(|e| wasm_err_simple("MERGE_FAILED", &format!("merge failed: {e}")))?;
         let mut buf = Vec::new();
         self_doc
             .save_to(&mut buf)
-            .map_err(|e| JsError::new(&format!("save failed: {e}")))?;
+            .map_err(|e| wasm_err_simple("SAVE_FAILED", &format!("save failed: {e}")))?;
         Ok(buf)
     }
 
@@ -991,7 +1027,7 @@ impl PdfDoc {
     /// `level` must be "1b", "2b", or "3b".
     /// Returns the converted PDF as a `Uint8Array`.
     #[wasm_bindgen(js_name = "convertToPdfa")]
-    pub fn convert_to_pdfa(&self, level: &str) -> Result<Vec<u8>, JsError> {
+    pub fn convert_to_pdfa(&self, level: &str) -> Result<Vec<u8>, JsValue> {
         use pdf_manip::pdfa_xmp::PdfAConformance;
         let conformance = match level
             .to_lowercase()
@@ -1002,26 +1038,27 @@ impl PdfDoc {
             "pdfa2b" | "a2b" | "2b" => PdfAConformance::A2b,
             "pdfa3b" | "a3b" | "3b" => PdfAConformance::A3b,
             other => {
-                return Err(JsError::new(&format!(
-                    "unknown PDF/A level: {other:?} — expected \"1b\", \"2b\", or \"3b\""
-                )))
+                return Err(wasm_err_simple(
+                    "INVALID_ARGUMENT",
+                    &format!("unknown PDF/A level: {other:?} — expected \"1b\", \"2b\", or \"3b\""),
+                ))
             }
         };
         let self_bytes = self.pdf.data().as_ref();
-        let mut doc =
-            lopdf::Document::load_mem(self_bytes).map_err(|e| JsError::new(&format!("{e}")))?;
+        let mut doc = lopdf::Document::load_mem(self_bytes)
+            .map_err(|e| wasm_err_simple("OPERATION_FAILED", &format!("{e}")))?;
         let is_pdfa1 = matches!(conformance, PdfAConformance::A1b);
         let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, is_pdfa1)
-            .map_err(|e| JsError::new(&format!("pdfa cleanup: {e}")))?;
+            .map_err(|e| wasm_err_simple("PDFA_CLEANUP_FAILED", &format!("pdfa cleanup: {e}")))?;
         let _ = pdf_manip::pdfa_fonts::enforce_pdfa_font_compliance(&mut doc);
         let _ = pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc)
-            .map_err(|e| JsError::new(&format!("colorspace: {e}")))?;
+            .map_err(|e| wasm_err_simple("COLORSPACE_ERROR", &format!("colorspace: {e}")))?;
         pdf_manip::pdfa_fixups::run_fixups(&mut doc);
         let _ = pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, conformance, None)
-            .map_err(|e| JsError::new(&format!("xmp repair: {e}")))?;
+            .map_err(|e| wasm_err_simple("XMP_REPAIR_FAILED", &format!("xmp repair: {e}")))?;
         let mut buf = Vec::new();
         doc.save_to(&mut buf)
-            .map_err(|e| JsError::new(&format!("save: {e}")))?;
+            .map_err(|e| wasm_err_simple("SAVE_FAILED", &format!("save: {e}")))?;
         pdf_manip::pdfa_cleanup::fix_pdf_header(&mut buf);
         pdf_manip::pdfa_cleanup::fix_startxref(&mut buf);
         Ok(buf)
@@ -1043,7 +1080,7 @@ impl PdfDoc {
         engine: &PdfDocument,
         page_index: usize,
         scale: f32,
-    ) -> Result<pdf_engine::RenderedPage, JsError> {
+    ) -> Result<pdf_engine::RenderedPage, JsValue> {
         let options = pdf_engine::RenderOptions {
             dpi: (scale * 72.0) as f64,
             ..Default::default()
@@ -1058,7 +1095,7 @@ impl PdfDoc {
         canvas: &web_sys::HtmlCanvasElement,
         page_index: usize,
         scale: f32,
-    ) -> Result<(), JsError> {
+    ) -> Result<(), JsValue> {
         use wasm_bindgen::JsCast;
 
         let rendered = Self::render_engine_page(engine, page_index, scale)?;
@@ -1066,19 +1103,19 @@ impl PdfDoc {
         canvas.set_height(rendered.height);
         let ctx = canvas
             .get_context("2d")
-            .map_err(|e| JsError::new(&format!("getContext: {e:?}")))?
-            .ok_or_else(|| JsError::new("no 2d context"))?;
-        let ctx: web_sys::CanvasRenderingContext2d = ctx
-            .dyn_into()
-            .map_err(|_| JsError::new("context is not CanvasRenderingContext2d"))?;
+            .map_err(|e| wasm_err_simple("RENDER_ERROR", &format!("getContext: {e:?}")))?
+            .ok_or_else(|| wasm_err_simple("RENDER_ERROR", "no 2d context"))?;
+        let ctx: web_sys::CanvasRenderingContext2d = ctx.dyn_into().map_err(|_| {
+            wasm_err_simple("RENDER_ERROR", "context is not CanvasRenderingContext2d")
+        })?;
         let image_data = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
             wasm_bindgen::Clamped(&rendered.pixels),
             rendered.width,
             rendered.height,
         )
-        .map_err(|e| JsError::new(&format!("ImageData: {e:?}")))?;
+        .map_err(|e| wasm_err_simple("RENDER_ERROR", &format!("ImageData: {e:?}")))?;
         ctx.put_image_data(&image_data, 0.0, 0.0)
-            .map_err(|e| JsError::new(&format!("putImageData: {e:?}")))?;
+            .map_err(|e| wasm_err_simple("RENDER_ERROR", &format!("putImageData: {e:?}")))?;
         Ok(())
     }
 
@@ -1089,15 +1126,15 @@ impl PdfDoc {
         canvas: &web_sys::HtmlCanvasElement,
         page_index: usize,
         scale: f32,
-    ) -> Result<(), JsError> {
+    ) -> Result<(), JsValue> {
         use wasm_bindgen::JsCast;
 
         let pages = engine.pdf().pages();
         if page_index >= pages.len() {
-            return Err(JsError::new(&format!(
-                "page index {page_index} out of range (0..{})",
-                pages.len()
-            )));
+            return Err(wasm_err_simple(
+                "PAGE_OUT_OF_RANGE",
+                &format!("page index {page_index} out of range (0..{})", pages.len()),
+            ));
         }
 
         let page = &pages[page_index];
@@ -1110,17 +1147,19 @@ impl PdfDoc {
 
         let ctx = canvas
             .get_context("2d")
-            .map_err(|e| JsError::new(&format!("getContext: {e:?}")))?
-            .ok_or_else(|| JsError::new("no 2d context"))?;
-        let ctx: web_sys::CanvasRenderingContext2d = ctx
-            .dyn_into()
-            .map_err(|_| JsError::new("context is not CanvasRenderingContext2d"))?;
+            .map_err(|e| wasm_err_simple("RENDER_ERROR", &format!("getContext: {e:?}")))?
+            .ok_or_else(|| wasm_err_simple("RENDER_ERROR", "no 2d context"))?;
+        let ctx: web_sys::CanvasRenderingContext2d = ctx.dyn_into().map_err(|_| {
+            wasm_err_simple("RENDER_ERROR", "context is not CanvasRenderingContext2d")
+        })?;
 
         ctx.reset_transform()
-            .map_err(|e| JsError::new(&format!("resetTransform: {e:?}")))?;
+            .map_err(|e| wasm_err_simple("RENDER_ERROR", &format!("resetTransform: {e:?}")))?;
         ctx.set_global_alpha(1.0);
         ctx.set_global_composite_operation("source-over")
-            .map_err(|e| JsError::new(&format!("globalCompositeOperation: {e:?}")))?;
+            .map_err(|e| {
+                wasm_err_simple("RENDER_ERROR", &format!("globalCompositeOperation: {e:?}"))
+            })?;
         ctx.clear_rect(0.0, 0.0, width as f64, height as f64);
         ctx.set_fill_style_str("rgba(255, 255, 255, 1)");
         ctx.fill_rect(0.0, 0.0, width as f64, height as f64);
@@ -1146,7 +1185,7 @@ impl PdfDoc {
         device.pop_clip_path();
 
         if let Some(reason) = device.fallback_reason() {
-            return Err(JsError::new(reason));
+            return Err(wasm_err_simple("RENDER_FALLBACK", reason));
         }
 
         Ok(())
@@ -1407,5 +1446,128 @@ mod tests {
     fn bytes_to_pdf_string_latin1() {
         let bytes = &[0xC4, 0xD6, 0xDC]; // ÄÖÜ
         assert_eq!(bytes_to_pdf_string(bytes), "ÄÖÜ");
+    }
+
+    // ---- G1: getTextPositions JSON shape ----
+
+    #[test]
+    fn g1_text_run_serializes_with_metadata() {
+        let run = TextRun {
+            text: "Hello".into(),
+            x: 72.0,
+            y: 100.0,
+            width: 30.0,
+            height: 12.0,
+            font_size: 12.0,
+            font_name: Some("Helvetica-Bold".into()),
+            is_bold: true,
+            is_italic: false,
+            color: Some([255, 0, 0, 255]),
+            width_source: "Metric",
+            char_bounds: vec![[72.0, 100.0, 80.0, 112.0]],
+        };
+        let json = serde_json::to_string(&run).expect("serialize");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert_eq!(v["text"], "Hello");
+        assert_eq!(v["x"], 72.0);
+        assert_eq!(v["y"], 100.0);
+        assert_eq!(v["width"], 30.0);
+        assert_eq!(v["height"], 12.0);
+        assert_eq!(v["fontSize"], 12.0);
+        assert_eq!(v["fontName"], "Helvetica-Bold");
+        assert_eq!(v["isBold"], true);
+        assert_eq!(v["isItalic"], false);
+        assert_eq!(v["color"], serde_json::json!([255, 0, 0, 255]));
+        assert_eq!(v["widthSource"], "Metric");
+        assert!(v["charBounds"].is_array());
+    }
+
+    #[test]
+    fn g1_text_run_omits_unknown_fontname_and_color() {
+        // Fallback case: Type1/standard-14 + pattern paint. JSON must elide
+        // the unknown keys so editor consumers can `'fontName' in run` test.
+        let run = TextRun {
+            text: "Hi".into(),
+            x: 1.0,
+            y: 2.0,
+            width: 10.0,
+            height: 12.0,
+            font_size: 12.0,
+            font_name: None,
+            is_bold: false,
+            is_italic: false,
+            color: None,
+            width_source: "Estimate",
+            char_bounds: vec![],
+        };
+        let json = serde_json::to_string(&run).expect("serialize");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert!(
+            v.get("fontName").is_none(),
+            "fontName must be omitted when None"
+        );
+        assert!(v.get("color").is_none(), "color must be omitted when None");
+        // isBold/isItalic always present (default false) so toolbars render.
+        assert_eq!(v["isBold"], false);
+        assert_eq!(v["isItalic"], false);
+        // All legacy fields still present.
+        assert_eq!(v["text"], "Hi");
+        assert_eq!(v["fontSize"], 12.0);
+        // G2: widthSource always present; charBounds omitted when empty.
+        assert_eq!(v["widthSource"], "Estimate");
+        assert!(
+            v.get("charBounds").is_none(),
+            "empty charBounds must be omitted"
+        );
+    }
+
+    // ---- G2: TextRun JSON shape tests ----
+
+    #[test]
+    fn g2_text_run_metric_width_source_serializes() {
+        let run = TextRun {
+            text: "ABC".into(),
+            x: 10.0,
+            y: 20.0,
+            width: 21.66,
+            height: 10.0,
+            font_size: 10.0,
+            font_name: Some("TestFont".into()),
+            is_bold: false,
+            is_italic: false,
+            color: None,
+            width_source: "Metric",
+            char_bounds: vec![[10.0, 20.0, 17.22, 30.0], [17.22, 20.0, 23.89, 30.0]],
+        };
+        let json = serde_json::to_string(&run).expect("serialize");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert_eq!(v["widthSource"], "Metric");
+        assert!(v["charBounds"].is_array());
+        assert_eq!(v["charBounds"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn g2_empty_char_bounds_omitted_from_json() {
+        let run = TextRun {
+            text: "X".into(),
+            x: 0.0,
+            y: 0.0,
+            width: 5.0,
+            height: 10.0,
+            font_size: 10.0,
+            font_name: None,
+            is_bold: false,
+            is_italic: false,
+            color: None,
+            width_source: "Estimate",
+            char_bounds: vec![],
+        };
+        let json = serde_json::to_string(&run).expect("serialize");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert!(
+            v.get("charBounds").is_none(),
+            "empty charBounds must be omitted"
+        );
+        assert_eq!(v["widthSource"], "Estimate");
     }
 }

@@ -4,6 +4,7 @@
 //! Mirrors PDFium-style patterns: opaque handles, status codes, free functions.
 
 mod error;
+mod license;
 mod types;
 
 use std::ffi::CStr;
@@ -12,6 +13,7 @@ use std::ptr;
 use std::slice;
 
 pub use error::*;
+pub use license::*;
 pub use types::*;
 
 // ---- Library lifecycle ---------------------------------------------------

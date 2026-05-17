@@ -1,0 +1,70 @@
+# Doxyfile for pdf-capi / PDFluent C API
+# Generated for Doxygen 1.x
+
+#---------------------------------------------------------------------------
+# Project metadata
+#---------------------------------------------------------------------------
+PROJECT_NAME           = "PDFluent C API"
+PROJECT_NUMBER         = "1.0.0-beta.1"
+PROJECT_BRIEF          = "Stable C ABI for embedding the PDF engine"
+OUTPUT_DIRECTORY       = doxygen-out
+CREATE_SUBDIRS         = NO
+
+#---------------------------------------------------------------------------
+# Input
+#---------------------------------------------------------------------------
+INPUT                  = include/pdfluent.h
+FILE_PATTERNS          = *.h
+RECURSIVE              = NO
+STRIP_FROM_PATH        = .
+
+#---------------------------------------------------------------------------
+# Output formats
+#---------------------------------------------------------------------------
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_COLORSTYLE        = LIGHT
+GENERATE_LATEX         = NO
+GENERATE_XML           = NO
+
+#---------------------------------------------------------------------------
+# Extraction settings — document only what is explicitly documented
+#---------------------------------------------------------------------------
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+HIDE_UNDOC_MEMBERS     = YES
+HIDE_UNDOC_CLASSES     = YES
+
+#---------------------------------------------------------------------------
+# Language / markup
+#---------------------------------------------------------------------------
+OPTIMIZE_OUTPUT_FOR_C  = YES
+JAVADOC_AUTOBRIEF      = NO
+MARKDOWN_SUPPORT       = YES
+AUTOLINK_SUPPORT       = YES
+ALIASES                =
+
+#---------------------------------------------------------------------------
+# Warnings — treat all warnings as errors for the quality gate
+#---------------------------------------------------------------------------
+QUIET                  = NO
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = YES
+WARN_AS_ERROR          = YES
+
+#---------------------------------------------------------------------------
+# Preprocessing — expand the PDFLUENT_TEXT_EDITING block so the G-track
+# symbols are documented as well
+#---------------------------------------------------------------------------
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = PDFLUENT_TEXT_EDITING=1
+
+#---------------------------------------------------------------------------
+# Diagrams — disable to avoid requiring graphviz
+#---------------------------------------------------------------------------
+HAVE_DOT               = NO

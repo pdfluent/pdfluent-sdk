@@ -1,9 +1,16 @@
 #![warn(missing_docs)]
 //! XFA engine — extraction, layout rendering, font resolution.
+//!
+//! This crate's public API is panic-free. Errors are returned as `Result<T, XfaError>`.
+//!
+//! ## JavaScript policy
+//!
+//! XFA forms that require JavaScript execution produce static-layout output by default.
+//! Full JavaScript execution requires the `xfa-js-sandboxed` feature flag.
 
 pub mod appearance_bridge;
 pub mod classify;
-/// dynamic.
+/// Dynamic XFA script processing — binding, mode selection, and outcome reporting.
 pub mod dynamic;
 pub mod error;
 pub mod extract;

@@ -1,13 +1,28 @@
-# XFA WASM SDK
+# PDFluent browser SDK (WASM)
 
-WebAssembly bindings for XFA form processing and PDF analysis in the browser.
+WebAssembly distribution of the PDFluent PDF engine. Read, edit, annotate,
+redact, sign, and validate PDFs (including XFA) entirely in the browser —
+zero bytes go to a server.
+
+Published as `@pdfluent/xfa-wasm` on npm. (Crate name reflects historical
+XFA roots; the package now covers the full SDK surface needed for an
+in-browser PDF editor.)
 
 ## Features
 
 - **XFA Forms**: Parse, calculate, import/export XFA form data
 - **PDF Analysis**: Metadata, signatures, PDF/A compliance validation
-- **Page Rendering** (feature `render`): Render pages to RGBA pixels for Canvas
-- **Annotations** (feature `annotate`): Read and create highlights, sticky notes, free text
+- **Page Rendering** (feature `render`): Render pages to RGBA pixels or Canvas2D
+- **Page Manipulation**: delete, rotate, reorder, extract, split via re-extract, merge
+- **Forms write-back**: set AcroForm field values, save modified PDF bytes
+- **Annotations** (feature `annotate`): highlight, sticky note, free text
+- **Text watermark**: diagonal text watermark with configurable opacity
+- **Redaction**: by region (rectangle) or by search query (GDPR-safe permanent removal)
+- **Stream compression**: re-deflate content streams for smaller file size
+- **License activation**: process-global tier activation via key string or file
+- **`PdfDocMut`** (Wave 3): stateful editing handle — open once, mutate in
+  place, save once. 2.7× faster than the stateless `PdfDoc` chain for
+  multi-step edits, identical output bytes.
 
 ## Building
 
@@ -153,6 +168,38 @@ wasm-pack build crates/@pdfluent/wasm --target web -- --no-default-features
 | `nodeCount()` | Number of form nodes |
 | `version()` | Engine version string |
 
+### License Activation
+
+The WASM build runs in Trial mode by default. Output produced by the engine
+is marked via `/Producer` metadata in Trial. Activate a license to remove
+the mark and unlock paid capabilities.
+
+```js
+import init, { activateLicenseKey, licenseStatus } from '@pdfluent/xfa-wasm';
+
+await init();
+activateLicenseKey('tier:enterprise');
+
+const s = licenseStatus();
+console.log(s.tier);            // "Enterprise"
+console.log(s.source);          // "Explicit" | "EnvVar" | "Default"
+console.log(s.outputIsMarked);  // false
+```
+
+**Browser-specific caveats:**
+
+- `activateLicenseFile` is intentionally **not** exposed. Browsers and
+  Workers have no synchronous filesystem access. Fetch the key text
+  yourself (`await fetch(...).then(r => r.text())`) and pass it to
+  `activateLicenseKey`.
+- The `PDFLUENT_LICENSE_KEY` environment variable is honoured only when a
+  Node host provides it; browsers do not expose process env vars.
+- The active tier is **process-global and set-once** within a single WASM
+  instance. Activating a second time with a different tier throws; reload
+  the page or re-initialise the WASM module to switch tiers.
+
+Invalid keys throw `Error`. The key string is never logged.
+
 ### PdfDoc
 
 | Method | Description |
@@ -169,7 +216,106 @@ wasm-pack build crates/@pdfluent/wasm --target web -- --no-default-features
 | `dssInfo()` | Document Security Store info |
 | `renderPage(index, scale)` | Render page to RGBA (feature: render) |
 | `renderThumbnail(index, maxDim)` | Render thumbnail (feature: render) |
+| `renderPageToCanvas(canvas, index, scale)` | Render page directly to a Canvas2D (feature: render) |
 | `getAnnotations(index)` | Read annotations as JSON (feature: annotate) |
-| `PdfDoc.addHighlight(...)` | Add highlight annotation (feature: annotate) |
-| `PdfDoc.addStickyNote(...)` | Add sticky note (feature: annotate) |
-| `PdfDoc.addFreeText(...)` | Add free text annotation (feature: annotate) |
+| `getTextPositions(index)` | Per-glyph text positions as JSON |
+| `merge(other)` | Append another PDF, returns merged bytes |
+| `flattenXfa()` | Flatten XFA form fields into static PDF content |
+| `convertToPdfa(level)` | Convert to PDF/A 1b/2b/3b, returns bytes |
+
+### Page manipulation (Wave 2)
+
+| Method | Description |
+|--------|-------------|
+| `deletePages(pages: Uint32Array)` | Remove the listed 0-based pages; returns new bytes |
+| `rotatePage(pageIndex, degrees)` | Rotate one page by 90/180/270 (or negative); returns new bytes |
+| `reorderPages(newOrder: Uint32Array)` | Permute pages; returns new bytes |
+| `extractPages(pages: Uint32Array)` | Extract the listed pages into a new PDF (use for split) |
+
+### Edit, annotate, redact, optimise (Wave 2)
+
+| Method | Description |
+|--------|-------------|
+| `setFormField(path, value)` | Set a single AcroForm text field; returns new bytes |
+| `setFormFields(jsonObject)` | Bulk-set form fields from a JSON `{path: value}` map |
+| `addHighlight(pageIndex, x, y, w, h, colorHex?)` | Highlight annotation (feature: annotate) |
+| `addStickyNote(pageIndex, x, y, contents)` | Sticky note annotation (feature: annotate) |
+| `addFreeText(pageIndex, x, y, w, h, contents)` | Free-text annotation (feature: annotate) |
+| `addTextWatermark(text, opacity)` | Diagonal text watermark on all pages |
+| `redactRegion(pageIndex, x, y, w, h)` | Permanently remove content in a rectangle (GDPR-safe) |
+| `redactSearch(query)` | Find all literal matches of `query` and redact each |
+| `compress()` | Re-deflate content streams; returns optimised bytes |
+
+### PdfDocMut (Wave 3) — **recommended for editor workflows**
+
+`PdfDocMut` is a stateful editing handle. Open once, mutate in place,
+save once. The `PdfDoc` class above is great for inspection and
+single-shot transformations, but for an editor that applies multiple
+operations to the same document, **`PdfDocMut` is dramatically faster**:
+9-step sessions go from ~16 parse passes to **1 parse + 1 serialise**
+(measured 2.7× wall-clock speedup; bigger on larger documents).
+
+| Method | Description |
+|--------|-------------|
+| `PdfDocMut.open(bytes)` | Open for editing |
+| `pageCount()` | Live page count after any mutations so far |
+| `save()` | Serialise current state to `Uint8Array`. Non-consuming — keep editing after |
+| `free()` | Release the WASM-side memory deterministically |
+| `deletePages(pages)` | In place |
+| `rotatePage(pageIndex, degrees)` | In place |
+| `reorderPages(newOrder)` | In place |
+| `extractPages(pages)` | Returns bytes for a NEW subdocument; current editor unchanged |
+| `setFormField(path, value)` | In place |
+| `setFormFields(jsonObject)` | In place, bulk |
+| `addHighlight(pageIndex, x, y, w, h, colorHex?)` | In place (feature: annotate) |
+| `addStickyNote(pageIndex, x, y, contents)` | In place (feature: annotate) |
+| `addFreeText(pageIndex, x, y, w, h, contents)` | In place (feature: annotate) |
+| `addTextWatermark(text, opacity)` | In place |
+| `redactRegion(pageIndex, x, y, w, h)` | In place (GDPR-safe permanent removal) |
+| `redactSearch(query)` | In place |
+| `compress()` | In place |
+
+#### Editor flow with PdfDocMut
+
+```js
+import init, { PdfDocMut } from '@pdfluent/xfa-wasm';
+
+await init();
+const bytes  = new Uint8Array(await (await fetch('/document.pdf')).arrayBuffer());
+const editor = PdfDocMut.open(bytes);
+
+// All edits operate on the same internal lopdf::Document — no re-parse.
+editor.reorderPages(new Uint32Array([1, 0, 2]));
+editor.addTextWatermark('CONCEPT', 0.3);
+editor.addHighlight(0, 100, 700, 200, 20, '#ffeb3b');
+editor.redactSearch('John Doe');
+editor.compress();
+
+// Save once at the end.
+const out = editor.save();
+editor.free();
+const blob = new Blob([out], { type: 'application/pdf' });
+```
+
+#### One-shot helpers on PdfDoc (kept for compatibility)
+
+For a workflow with a single mutation, the stateless `PdfDoc` methods
+are equally fine. They are kept for backward compatibility but the
+recommended path for any multi-step edit is `PdfDocMut`.
+
+```js
+import init, { PdfDoc } from '@pdfluent/xfa-wasm';
+await init();
+const doc = PdfDoc.open(bytes);
+const merged = doc.merge(otherBytes);   // single op, one-shot
+```
+
+## Bundle size
+
+| Build | Tarball | Unpacked |
+|-------|---------|----------|
+| 1.0.0-beta.8 (pre-Wave 2) | 3.6 MB | 10.2 MB |
+| **1.0.0-beta.9 (Wave 2)** | **3.8 MB** | **~11 MB** |
+
+Wave 2 added 13 new methods for ~0.2 MB of binary growth. Well under the
+15 MB hard limit and well under the 5 MB gzipped soft target.
