@@ -1,6 +1,6 @@
 [package]
 name = "pdfluent-jbig2"
-version = "0.2.1"
+version = "0.2.3"
 description = "A memory-safe, pure-Rust JBIG2 decoder."
 authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
 edition = "2024"
@@ -17,7 +17,7 @@ default = ["std"]
 std = []
 
 [dependencies]
-hayro-ccitt = { package = "pdfluent-ccitt", path = "../hayro-ccitt", version = "=0.2.0" }
+hayro-ccitt = { package = "pdfluent-ccitt", path = "../hayro-ccitt", version = "=0.2.2" }
 
 [lints.clippy]
 too_many_arguments = "allow"
