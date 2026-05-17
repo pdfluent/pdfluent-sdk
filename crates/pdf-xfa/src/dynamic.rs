@@ -156,19 +156,38 @@ impl Default for DynamicScriptOutcome {
     }
 }
 
-/// Snapshot of field values and presence states, used for rollback.
-/// NOTE: This rollback mechanism is our own heuristic — the XFA spec does not
-/// define a rollback model.  It protects against scripts that blank out all
-/// fields (broken SOM resolution, etc.).
+/// Snapshot of field values, presence states, and structural shape used for
+/// rollback after a failed script pass.
+///
+/// XFA-INST-MGR (2026-05-17): the snapshot now also captures every node's
+/// children list plus the total node count. When `restore_snapshot` runs it
+/// truncates any clones added by `instanceManager.addInstance` /
+/// `setInstances` and restores the original child ordering, so a rollback is
+/// structurally consistent end-to-end — not just at the field-value layer.
+/// This keeps the layout pass from seeing half-applied script mutations when
+/// scripts produced enough errors to invalidate the pass.
+///
+/// NOTE: The rollback policy itself is our own heuristic — the XFA spec does
+/// not define one. It protects against scripts that blank out all fields
+/// (broken SOM resolution, etc.) or that add structural clones we cannot
+/// safely keep after rejecting the pass.
 struct FormSnapshot {
     field_values: Vec<(usize, String)>,
     presences: Vec<(usize, Presence)>,
+    /// Per-node children list at snapshot time.  Indexed by `form.nodes`
+    /// position; `children[i]` is the saved `children` vec for node `i`.
+    children: Vec<Vec<FormNodeId>>,
+    /// Total node count at snapshot time.  On rollback `form.nodes` and
+    /// `form.metadata` are truncated back to this length, evicting any
+    /// runtime-created clones from the form tree.
+    node_count: usize,
     populated_count: usize,
 }
 
 fn snapshot_form(form: &FormTree) -> FormSnapshot {
     let mut field_values = Vec::new();
     let mut presences = Vec::new();
+    let mut children = Vec::with_capacity(form.nodes.len());
     let mut populated_count = 0usize;
     for (idx, node) in form.nodes.iter().enumerate() {
         if let FormNodeType::Field { value } = &node.node_type {
@@ -178,10 +197,13 @@ fn snapshot_form(form: &FormTree) -> FormSnapshot {
             }
         }
         presences.push((idx, form.metadata[idx].presence));
+        children.push(node.children.clone());
     }
     FormSnapshot {
         field_values,
         presences,
+        children,
+        node_count: form.nodes.len(),
         populated_count,
     }
 }
@@ -194,6 +216,20 @@ fn restore_snapshot(form: &mut FormTree, snapshot: &FormSnapshot) {
     }
     for (idx, presence) in &snapshot.presences {
         form.metadata[*idx].presence = *presence;
+    }
+    // XFA-INST-MGR: drop any runtime-created clones first, THEN restore the
+    // original children lists.  Truncating must happen before assignment
+    // because the saved children vec may reference indices that the snapshot
+    // already covers (clones never receive an `xfa_id`, so `node_ids` does
+    // not need pruning — see `host::clone_subtree`).
+    if form.nodes.len() > snapshot.node_count {
+        form.nodes.truncate(snapshot.node_count);
+        form.metadata.truncate(snapshot.node_count);
+    }
+    for (idx, saved_children) in snapshot.children.iter().enumerate() {
+        if let Some(node) = form.nodes.get_mut(idx) {
+            node.children = saved_children.clone();
+        }
     }
 }
 
