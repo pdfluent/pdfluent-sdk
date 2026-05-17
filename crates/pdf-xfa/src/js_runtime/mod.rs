@@ -119,6 +119,10 @@ pub struct RuntimeMetadata {
     pub resolve_failures: usize,
     /// Phase D-γ successful DataDom reads (children / value / child-by-name).
     pub data_reads: usize,
+    /// Phase D-θ.2 probe calls skipped because `parentIds.length == 1 &&
+    /// chain.length == 1` (no same-name ambiguity possible).  Every skipped
+    /// call saves one `resolveWithFullChainStrict` host round-trip.
+    pub probe_skips: usize,
 }
 
 impl RuntimeMetadata {
@@ -144,6 +148,7 @@ impl RuntimeMetadata {
         self.binding_errors = self.binding_errors.saturating_add(other.binding_errors);
         self.resolve_failures = self.resolve_failures.saturating_add(other.resolve_failures);
         self.data_reads = self.data_reads.saturating_add(other.data_reads);
+        self.probe_skips = self.probe_skips.saturating_add(other.probe_skips);
     }
 }
 
