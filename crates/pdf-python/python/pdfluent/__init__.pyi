@@ -13,6 +13,9 @@ from typing import Iterator, List, Optional, Tuple, Type, Union
 
 __version__: str
 
+# Mapping from JSON license-payload tier names to canonical Rust tier names.
+_TIER_MAP: dict[str, str]
+
 # ---------------------------------------------------------------------------
 # Exception hierarchy
 # ---------------------------------------------------------------------------
@@ -65,24 +68,29 @@ class LicenseInfo:
 
     Attributes
     ----------
-    licensee:
-        Name of the license holder.
-    company:
-        Company or organisation name.
     tier:
-        License tier string: ``"trial"``, ``"basic"``, ``"professional"``,
-        ``"enterprise"``, or ``"archival"``.
+        Canonical license tier as reported by the Rust core:
+        ``"trial"``, ``"developer"``, ``"team"``, ``"business"``,
+        or ``"enterprise"``.
     expires_at:
-        Unix timestamp (seconds) at which the license expires.
-        ``0`` indicates no expiry (perpetual license).
+        Expiration date in ISO 8601 format, or ``None`` for perpetual
+        licenses.  Always ``None`` in 1.0.
+    output_is_marked:
+        ``True`` when the Rust core marks output via ``/Producer``
+        (Trial tier only).
+    licensee:
+        Name of the license holder (from the JSON payload).
+    company:
+        Company or organisation name (from the JSON payload).
     seats:
-        Number of concurrent developer seats.
+        Number of concurrent developer seats (from the JSON payload).
     """
 
+    tier: str
+    expires_at: Optional[str]
+    output_is_marked: bool
     licensee: str
     company: str
-    tier: str
-    expires_at: int
     seats: int
 
 def activate_license(license_key: str) -> LicenseInfo:
@@ -103,12 +111,24 @@ def activate_license(license_key: str) -> LicenseInfo:
     Returns
     -------
     LicenseInfo
-        The parsed and format-validated license payload.
+        License information reflecting the canonical Rust core state.
 
     Raises
     ------
     PdfluentLicenseError
-        If the key is empty, malformed, or cannot be parsed.
+        If the key is empty, malformed, has an unknown tier, or the Rust
+        core rejects it.
+    """
+    ...
+
+def license_status() -> str:
+    """Return the current canonical license tier as reported by the Rust core.
+
+    Returns
+    -------
+    str
+        One of ``"trial"``, ``"developer"``, ``"team"``, ``"business"``,
+        or ``"enterprise"``.
     """
     ...
 
