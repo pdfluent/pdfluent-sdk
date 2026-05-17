@@ -48,6 +48,49 @@ class PdfluentLimitError(PdfluentError):
 # Module-level functions
 # ---------------------------------------------------------------------------
 
+class _NativeLicenseInfo:
+    """Canonical license state snapshot from the Rust core.
+
+    Returned by :func:`native_license_info`. Prefer importing
+    :class:`pdfluent.LicenseInfo` from the top-level package.
+    """
+
+    @property
+    def tier(self) -> str:
+        """Canonical tier: ``"trial"``, ``"developer"``, ``"team"``,
+        ``"business"``, or ``"enterprise"``."""
+        ...
+
+    @property
+    def expires_at(self) -> Optional[str]:
+        """Expiration in ISO 8601 format, or ``None`` (always ``None`` in 1.0)."""
+        ...
+
+    @property
+    def output_is_marked(self) -> bool:
+        """``True`` when Trial-tier output watermarking is active."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+def set_license_key(key: str) -> None:
+    """Activate the process-global license key in the Rust core.
+
+    Accepts the simple 1.0 evaluation format ``"tier:<name>"``.
+    First call locks the tier; subsequent calls with the same tier are
+    idempotent.  A different tier raises :exc:`PdfluentLicenseError`.
+
+    Raises
+    ------
+    PdfluentLicenseError
+        On invalid format or tier conflict.
+    """
+    ...
+
+def native_license_info() -> _NativeLicenseInfo:
+    """Return the current canonical license state from the Rust core."""
+    ...
+
 def open_pdf(path: str, password: Optional[str] = None) -> Document:
     """Open a PDF from a file path, returning a ``Document``."""
     ...

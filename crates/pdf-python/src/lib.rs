@@ -31,6 +31,8 @@ use pdf_engine::{
     RenderedPage, TextBlock, TextSpan, ThumbnailOptions,
 };
 
+use pdfluent::{license_info as pdfl_license_info, set_license_key as pdfl_set_license_key, Tier};
+
 // ---------------------------------------------------------------------------
 // Exception hierarchy
 // ---------------------------------------------------------------------------
@@ -90,6 +92,62 @@ fn engine_err_to_py(e: EngineError) -> PyErr {
         EngineError::LimitExceeded(e) => {
             PdfluentLimitError::new_err(format!("processing limit exceeded: {e}"))
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// License helpers
+// ---------------------------------------------------------------------------
+
+fn tier_to_str(tier: Tier) -> &'static str {
+    match tier {
+        Tier::Trial => "trial",
+        Tier::Developer => "developer",
+        Tier::Team => "team",
+        Tier::Business => "business",
+        Tier::Enterprise => "enterprise",
+        _ => "unknown",
+    }
+}
+
+fn pdfluent_license_err_to_py(e: pdfluent::Error) -> PyErr {
+    match e {
+        pdfluent::Error::InvalidLicense { reason } => {
+            PdfluentLicenseError::new_err(format!("invalid license: {reason}"))
+        }
+        pdfluent::Error::FeatureNotInTier {
+            capability,
+            current_tier,
+            required_tier,
+        } => PdfluentLicenseError::new_err(format!(
+            "capability {capability:?} not available in {current_tier:?}; requires {required_tier:?}"
+        )),
+        other => PdfluentError::new_err(other.to_string()),
+    }
+}
+
+/// Canonical license state snapshot from the Rust core.
+///
+/// Returned by :func:`native_license_info`. Consumers should access the
+/// higher-level :class:`pdfluent.LicenseInfo` returned by
+/// :func:`pdfluent.activate_license` instead.
+#[pyclass(name = "_NativeLicenseInfo")]
+struct PyNativeLicenseInfo {
+    #[pyo3(get)]
+    tier: String,
+    #[pyo3(get)]
+    expires_at: Option<String>,
+    #[pyo3(get)]
+    output_is_marked: bool,
+}
+
+#[pymethods]
+impl PyNativeLicenseInfo {
+    fn __repr__(&self) -> String {
+        format!(
+            "_NativeLicenseInfo(tier={:?}, output_is_marked={})",
+            self.tier, self.output_is_marked
+        )
     }
 }
 
@@ -1408,6 +1466,45 @@ fn validate_pdfa(path: &str) -> PyResult<PyComplianceReport> {
 }
 
 // ---------------------------------------------------------------------------
+// License functions
+// ---------------------------------------------------------------------------
+
+/// Activate the process-global license key in the Rust core.
+///
+/// Accepts the simple 1.0 evaluation format: ``"tier:<name>"`` where
+/// ``<name>`` is one of ``trial``, ``developer``, ``team``, ``business``,
+/// or ``enterprise``.
+///
+/// The first call locks the resolved tier for the process lifetime. Subsequent
+/// calls with the **same** tier are idempotent no-ops. Calls with a
+/// **different** tier raise :exc:`PdfluentLicenseError`.
+///
+/// Raises
+/// ------
+/// PdfluentLicenseError
+///     If the key format is invalid or a conflicting tier is already set.
+#[pyfunction]
+fn set_license_key(key: &str) -> PyResult<()> {
+    pdfl_set_license_key(key).map_err(pdfluent_license_err_to_py)
+}
+
+/// Return the current canonical license state from the Rust core.
+///
+/// Returns
+/// -------
+/// _NativeLicenseInfo
+///     Snapshot of the active tier, expiry, and output-marking flag.
+#[pyfunction]
+fn native_license_info() -> PyNativeLicenseInfo {
+    let info = pdfl_license_info();
+    PyNativeLicenseInfo {
+        tier: tier_to_str(info.tier).to_owned(),
+        expires_at: info.expires_at,
+        output_is_marked: info.output_is_marked,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Module
 // ---------------------------------------------------------------------------
 
@@ -1439,10 +1536,13 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFormField>()?;
     m.add_class::<PyAnnotation>()?;
     m.add_class::<PyRedactReport>()?;
+    m.add_class::<PyNativeLicenseInfo>()?;
     // Functions
     m.add_function(wrap_pyfunction!(open_pdf, m)?)?;
     m.add_function(wrap_pyfunction!(merge_pdfs, m)?)?;
     m.add_function(wrap_pyfunction!(validate_pdfa, m)?)?;
     m.add_function(wrap_pyfunction!(decrypt_pdf, m)?)?;
+    m.add_function(wrap_pyfunction!(set_license_key, m)?)?;
+    m.add_function(wrap_pyfunction!(native_license_info, m)?)?;
     Ok(())
 }
