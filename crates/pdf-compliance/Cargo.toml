@@ -10,7 +10,7 @@ homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.2" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.4" }
 thiserror = "2"
 log = "0.4"
 cff-parser.workspace = true
