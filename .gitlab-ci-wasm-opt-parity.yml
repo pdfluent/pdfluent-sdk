@@ -1,26 +1,29 @@
 # GitLab CI lane for wasm-opt parity gate.
-# Include from .gitlab-ci.yml via `include:` once the GitLab pipeline is
-# stood up. This file is the contract; it is intentionally a standalone
-# fragment so it does not change pipeline behaviour until included.
+# Runs on the operator's self-hosted VPS runner with wasm-pack pre-installed.
+# Manual trigger only — heavy gate, not for every push.
 
 wasm-opt-parity:
-  stage: test
-  image: rust:1.95-bookworm
+  stage: quality_manual
+  tags: [pdfluent-vps, pdfluent-wasm, pdfluent-rust]
   rules:
-    - changes:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
         - crates/xfa-wasm/**/*
         - scripts/bench/wasm-golden-compare.mjs
         - scripts/bench/wasm-bench.mjs
         - .gitlab-ci-wasm-opt-parity.yml
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_TAG'
+      when: manual
+  allow_failure: false
   timeout: 30m
   variables:
     CARGO_TERM_COLOR: always
     RUST_BACKTRACE: '1'
-  before_script:
-    - rustup target add wasm32-unknown-unknown
-    - curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-    - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-    - apt-get install -y nodejs jq python3
+  # No before_script install chain — the VPS runner pre-installs:
+  #   rustup + wasm32-unknown-unknown target, wasm-pack, nodejs 22.x, jq, python3.
+  # See benchmarks/runs/ga_hardening_plan/ci/CI2_VPS_RUNNER_DESIGN.md §3.
   script:
     - |
       cp crates/xfa-wasm/Cargo.toml crates/xfa-wasm/Cargo.toml.bak
