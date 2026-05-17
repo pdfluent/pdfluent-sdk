@@ -10,8 +10,6 @@ use pdf_engine::ocr::PaddleOnnxBackend;
 use pdf_engine::OcrsBackend;
 #[cfg(any(feature = "ocr", feature = "ocr-onnx"))]
 use pdf_engine::{OcrBackend, PdfDocument};
-#[cfg(feature = "ocr-onnx")]
-use pdf_ocr::paddle::{DetectionModel, Language, PaddleOcrConfig};
 #[cfg(any(feature = "ocr", feature = "ocr-onnx"))]
 use std::fs;
 #[cfg(any(feature = "ocr", feature = "ocr-onnx"))]
@@ -132,32 +130,7 @@ fn default_backend_name() -> &'static str {
 
 #[cfg(feature = "ocr-onnx")]
 fn build_paddle_backend() -> Result<PaddleOnnxBackend, Box<dyn std::error::Error>> {
-    let mut config = PaddleOcrConfig::default();
-
-    if matches!(
-        std::env::var("PADDLE_DET").ok().as_deref(),
-        Some("v5") | Some("V5")
-    ) {
-        config.detection_model = DetectionModel::V5;
-    }
-
-    config.languages = match std::env::var("PADDLE_LANG").ok().as_deref() {
-        Some("english") | Some("en") => vec![Language::English],
-        Some("latin") => vec![Language::Latin],
-        Some("japanese") | Some("jp") => vec![Language::Japanese],
-        Some("korean") | Some("ko") => vec![Language::Korean],
-        Some("arabic") | Some("ar") => vec![Language::Arabic],
-        _ => config.languages,
-    };
-
-    if matches!(
-        std::env::var("PADDLE_CLS").ok().as_deref(),
-        Some("1") | Some("true") | Some("yes")
-    ) {
-        config.use_angle_classifier = true;
-    }
-
-    Ok(PaddleOnnxBackend::with_config(config)?)
+    Ok(PaddleOnnxBackend::from_env()?)
 }
 
 #[cfg(any(feature = "ocr", feature = "ocr-onnx"))]
