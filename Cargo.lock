@@ -4328,7 +4328,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-interpret"
-version = "0.5.4"
+version = "0.5.6"
 dependencies = [
  "bitflags 2.11.1",
  "image",
@@ -4480,7 +4480,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-syntax"
-version = "0.5.2"
+version = "0.5.4"
 dependencies = [
  "aes",
  "cbc",
@@ -4562,7 +4562,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-ccitt"
-version = "0.2.0"
+version = "0.2.2"
 
 [[package]]
 name = "pdfluent-cff"
@@ -4591,7 +4591,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-jbig2"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "pdfluent-ccitt",
 ]
