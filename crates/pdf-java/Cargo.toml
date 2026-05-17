@@ -9,6 +9,7 @@ license = "MIT"
 description = "Java JNI bindings for the XFA PDF engine."
 
 [lib]
+name = "pdfluent_java"
 crate-type = ["cdylib"]
 
 [dependencies]

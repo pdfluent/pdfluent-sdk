@@ -137,7 +137,7 @@ fn parse_pdfa_level(level: &str) -> PdfALevel {
 
 /// `native long nativeOpen(byte[] data)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeOpen(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeOpen(
     mut env: JNIEnv,
     _class: JClass,
     data: JByteArray,
@@ -161,7 +161,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeOpen(
 
 /// `native long nativeOpenWithPassword(byte[] data, String password)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeOpenWithPassword(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeOpenWithPassword(
     mut env: JNIEnv,
     _class: JClass,
     data: JByteArray,
@@ -194,7 +194,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeOpenWithPassword(
 
 /// `native void nativeClose(long handle)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeClose(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeClose(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -206,7 +206,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeClose(
 
 /// `native int nativePageCount(long handle)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageCount(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativePageCount(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -220,7 +220,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageCount(
 
 /// `native double nativePageWidth(long handle, int pageIndex)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageWidth(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativePageWidth(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -244,7 +244,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageWidth(
 
 /// `native double nativePageHeight(long handle, int pageIndex)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageHeight(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativePageHeight(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -268,7 +268,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageHeight(
 
 /// `native int nativePageRotation(long handle, int pageIndex)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageRotation(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativePageRotation(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -289,7 +289,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageRotation(
 
 /// `native String nativeExtractText(long handle, int pageIndex)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeExtractText<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeExtractText<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -319,7 +319,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeExtractText<'a>(
 ///
 /// Returns `[width:4 bytes BE][height:4 bytes BE][RGBA pixels…]`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeRenderPage<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeRenderPage<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -360,7 +360,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeRenderPage<'a>(
 
 /// `native byte[] nativeRenderThumbnail(long handle, int pageIndex, int maxDimension)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeRenderThumbnail<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeRenderThumbnail<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -400,7 +400,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeRenderThumbnail<'a>(
 
 /// `native String nativeGetMetadata(long handle, String key)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeGetMetadata<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeGetMetadata<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -444,7 +444,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeGetMetadata<'a>(
 
 /// `native int nativeBookmarkCount(long handle)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeBookmarkCount(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeBookmarkCount(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -460,7 +460,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeBookmarkCount(
 ///
 /// Returns 0-based page indices of pages containing the query.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeSearchText<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeSearchText<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -500,7 +500,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeSearchText<'a>(
 
 /// `native void nativeSave(long handle, String path)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeSave<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeSave<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -550,7 +550,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeSave<'a>(
 /// Returns a flat String[] with stride 4: [name, type, value, page] per field.
 /// `value` is "" if absent.  `page` is "-1" if unknown.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeGetFormFields<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeGetFormFields<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -613,7 +613,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeGetFormFields<'a>(
 
 /// `native boolean nativeSetFormField(long handle, String name, String value)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeSetFormField<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeSetFormField<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -705,7 +705,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeSetFormField<'a>(
 /// [type, x0, y0, x1, y1, contents, author].
 /// Coordinates are in PDF user-space points.  Missing values are "".
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeGetAnnotations<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeGetAnnotations<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -760,7 +760,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeGetAnnotations<'a>(
 /// `type` must be `"highlight"` or `"freetext"`.
 /// `page` is 0-based.  Rect coordinates in PDF user-space points.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeAddAnnotation<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeAddAnnotation<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -844,7 +844,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeAddAnnotation<'a>(
 /// Returns int[3]: [matchesFound, areasRedacted, pagesAffected].
 /// Pass `page = -1` to search all pages.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeRedactText<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeRedactText<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -912,7 +912,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeRedactText<'a>(
 ///
 /// Saves an RC4-128-encrypted copy of the document to `outputPath`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeEncrypt<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeEncrypt<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -997,7 +997,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeEncrypt<'a>(
 /// Loads the document with the given password, strips encryption, and saves
 /// to `outputPath` as a plain (unencrypted) PDF.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeDecrypt<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeDecrypt<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
