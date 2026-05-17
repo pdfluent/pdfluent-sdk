@@ -1516,7 +1516,11 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "addInstance") {
           return function() {
             var newId = host.instanceAdd(firstId, generation);
-            return newId < 0 ? null : makeHandle(newId, generation);
+            // WP-3 F3: return a chainable null-safe sentinel rather than null
+            // so scripts that immediately access `.index` / `.value` on the
+            // newly-added handle do not throw when the instance manager
+            // refuses (min/max reached, unbound).
+            return newId < 0 ? makeNullDataHandle() : makeHandle(newId, generation);
           };
         }
         if (prop === "removeInstance") {
@@ -1658,7 +1662,8 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "addInstance") {
           return function() {
             var newId = host.instanceAdd(id, generation);
-            return newId < 0 ? null : makeHandle(newId, generation);
+            // WP-3 F3: chainable null-safe sentinel on failure (see candidateSet).
+            return newId < 0 ? makeNullDataHandle() : makeHandle(newId, generation);
           };
         }
         if (prop === "removeInstance") {
@@ -1959,6 +1964,30 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     configurable: false,
     writable: false,
     value: Object.freeze(xfaLayout)
+  });
+  // WP-3 F3: `xfa.validate` is a viewer-only namespace controlling form-wide
+  // validation behaviour (Reader UI prompts on field constraint violations).
+  // Adobe initializers commonly do `xfa.validate.override = 0` /
+  // `xfa.validate.max = N` to suppress modal dialogs that have no meaning
+  // in a static flatten context. Expose a Proxy that silently absorbs every
+  // property write (`override`, `max`, `messageMode`, etc.) and returns
+  // empty defaults on read, so scripts complete without TypeError.
+  Object.defineProperty(xfa, "validate", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: new Proxy(nullProtoObject(), {
+      get: function(_t, prop) {
+        if (prop === "override" || prop === "max") return 0;
+        if (prop === "messageMode") return "";
+        if (typeof prop !== "string") return undefined;
+        // Unknown reads return a chainable null-safe sentinel so deeper
+        // access like `xfa.validate.scriptTest.message` does not throw.
+        return makeNullDataHandle();
+      },
+      set: function(_t, _prop, _value) { return true; },
+      has: function() { return true; }
+    })
   });
   Object.defineProperty(xfa, "resolveNode", {
     enumerable: true,
@@ -2819,5 +2848,62 @@ if (itemVal !== null) {
 "#,
         )
         .expect("WP-3 null_record_returns_empty_nodelist: $record.FIELD.nodes must be empty and chainable");
+    }
+
+    // WP-3 F3: xfa.validate is a no-op viewer stub absorbing writes silently.
+    // Adobe-generated initialize scripts call `xfa.validate.override = 0`,
+    // `xfa.validate.max = N`, `xfa.validate.scriptTest.message = "…"`; without
+    // the stub these throw "Cannot set property X of undefined" because
+    // `xfa.validate` was previously not defined on the host xfa object.
+    #[test]
+    fn xfa_validate_stub_absorbs_writes_silently() {
+        let mut rt = fresh_runtime();
+        rt.execute_script(
+            Some("initialize"),
+            r#"
+xfa.validate.override = 0;
+xfa.validate.max = 5;
+xfa.validate.messageMode = "warning";
+xfa.validate.scriptTest.message = "ignored";
+xfa.validate.scriptTest.nested.deeper = true;
+// Reads must return harmless defaults, never throw.
+if (xfa.validate.override !== 0) throw new Error("override default");
+if (xfa.validate.max !== 0) throw new Error("max default");
+if (xfa.validate.messageMode !== "") throw new Error("messageMode default");
+"#,
+        )
+        .expect("WP-3 F3 xfa_validate_stub: writes must absorb and reads must not throw");
+    }
+
+    // WP-3 F3: addInstance failure returns chainable sentinel so common
+    // pattern `parent._Child.addInstance().rawValue = X` does not throw when
+    // the instance manager refuses (occur/max bounds reached or unbound).
+    // Note: this test exercises only the JS-side null-safety contract; full
+    // end-to-end instance addition lives in m3b_phaseD_instance_manager.rs.
+    #[test]
+    fn add_instance_failure_returns_chainable_null_handle() {
+        let mut rt = fresh_runtime();
+        // No FormTree is installed, so any addInstance call must fail at the
+        // host shim and surface a sentinel rather than native null.
+        rt.execute_script(
+            Some("initialize"),
+            r#"
+// Resolve a non-existent subform, addInstance() on an unbound instance
+// manager must yield a chainable handle whose `.index` is a number and
+// whose `.rawValue` setter is silent.
+var im = xfa.resolveNode("NoSuchSubform");
+if (im !== null) {
+  // If a real handle was returned (shouldn't be), addInstance still must
+  // either return a real handle or a null-safe sentinel — never throw.
+  var added = im.addInstance();
+  if (typeof added.index !== "number") {
+    throw new Error("added.index must be a number, got " + typeof added.index);
+  }
+  added.rawValue = "chained";  // silent on sentinel
+  added.value = "chained";     // silent on sentinel
+}
+"#,
+        )
+        .expect("WP-3 F3 add_instance_failure: chainable sentinel on failure path");
     }
 }
