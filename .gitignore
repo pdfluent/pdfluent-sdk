@@ -1,4 +1,6 @@
 /target
+pdfluent-examples/dotnet/**/bin/
+pdfluent-examples/dotnet/**/obj/
 .env
 .env.*
 *.pem
