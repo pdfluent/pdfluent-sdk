@@ -8,12 +8,18 @@
 #
 # Exit codes:
 #   0 — both root and storagebox have enough free space
-#   2 — root <30 GB free OR storagebox not writable: HARD FAIL
-#   3 — root <50 GB free: WARN (does not fail; printed loudly)
+#   2 — root < HARD_FAIL_GB free OR storagebox not writable: HARD FAIL
+#   3 — root < WARN_GB free: WARN (does not fail; printed loudly)
+#
+# Thresholds (defaults are tuned for the transition phase while
+# /opt/xfa-corpus (216 GB) is still on root):
+#   - HARD_FAIL_GB = 5  : enough for /tmp + GitLab clone + log spill
+#   - WARN_GB      = 15 : healthy headroom
+# Post corpus migration these should be raised to 30 / 50 respectively.
 #
 # Usage:
 #   bash scripts/ci/runner_disk_guard.sh         # default thresholds
-#   bash scripts/ci/runner_disk_guard.sh 40 60   # custom (hard, warn) GB
+#   bash scripts/ci/runner_disk_guard.sh 30 50   # post-corpus-migration
 #
 # Reports the top 10 disk consumers on root and on the storagebox so a
 # triager can see at a glance what's eating space.
@@ -22,8 +28,8 @@
 
 set -euo pipefail
 
-HARD_FAIL_GB="${1:-30}"
-WARN_GB="${2:-50}"
+HARD_FAIL_GB="${1:-5}"
+WARN_GB="${2:-15}"
 
 STORAGEBOX_MOUNT="/mnt/storagebox"
 STORAGEBOX_CI_ROOT="${STORAGEBOX_MOUNT}/pdfluent/ci"
