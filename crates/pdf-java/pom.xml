@@ -19,7 +19,7 @@
     redaction, encryption, and PDF/A compliance via a native Rust engine
     accessed through JNI.
   </description>
-  <url>https://github.com/jasperdew/xfa-native-rust</url>
+  <url>https://github.com/pdfluent/PDFluent-project</url>
 
   <!-- =========================================================== -->
   <!-- License                                                      -->
@@ -39,7 +39,7 @@
     <developer>
       <id>jasperdew</id>
       <name>Jasper de Winter</name>
-      <url>https://github.com/jasperdew</url>
+      <url>https://gitlab.com/jasperdew</url>
     </developer>
   </developers>
 
@@ -47,9 +47,9 @@
   <!-- Source control                                               -->
   <!-- =========================================================== -->
   <scm>
-    <connection>scm:git:git://github.com/jasperdew/xfa-native-rust.git</connection>
-    <developerConnection>scm:git:ssh://github.com/jasperdew/xfa-native-rust.git</developerConnection>
-    <url>https://github.com/jasperdew/xfa-native-rust</url>
+    <connection>scm:git:git://github.com/pdfluent/PDFluent-project.git</connection>
+    <developerConnection>scm:git:ssh://github.com/pdfluent/PDFluent-project.git</developerConnection>
+    <url>https://github.com/pdfluent/PDFluent-project</url>
     <tag>HEAD</tag>
   </scm>
 

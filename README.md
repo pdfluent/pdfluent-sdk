@@ -54,7 +54,7 @@ fn main() -> Result<()> {
 - **Watermarks** — text and image overlay
 
 ### WASM & Bindings
-- **WebAssembly** — runs in browser via xfa-wasm
+- **WebAssembly** — runs in browser via the `@pdfluent/sdk-wasm` npm package
 - **Node.js** — napi-rs bindings
 - **Python** — PyO3 bindings (separate crate)
 - **C FFI** — pdf-capi for C/C++ integration

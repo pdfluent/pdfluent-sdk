@@ -143,8 +143,8 @@ manipulation, digital signing, content extraction, and multi-language bindings.
 ### Known limitations
 
 - Memory usage can spike above 1 GB on adversarial/malformed large PDFs (#499).
-- WASM build support is experimental; `@pdfluent/wasm` compiles but browser integration
-  is untested end-to-end.
+- WASM build support is experimental; `@pdfluent/sdk-wasm` (previously
+  `@pdfluent/wasm`) compiles but browser integration is untested end-to-end.
 
 ---
 
@@ -201,7 +201,7 @@ Multi-language SDK surface for external consumers.
   same API surface as the Python bindings.
 - `pdf-java`: JNI wrapper with Javadoc, Maven-ready POM, JUnit test scaffolding.
 - `pdf-capi`: C API (`pdf-capi`) with 12+ core operations for FFI consumers.
-- `@pdfluent/wasm`: Rust→WASM target (wasm-pack); basic parse and text extract in browser.
+- `@pdfluent/sdk-wasm` (previously `@pdfluent/wasm`): Rust→WASM target (wasm-pack); basic parse and text extract in browser.
 - CI matrix: Python (maturin), Node.js (napi-rs), Java (JNI) build verification.
 
 ---

@@ -321,7 +321,7 @@ error types should include this file via `tsconfig.json`:
 {
   "compilerOptions": {
     "paths": {
-      "@pdfluent/xfa-wasm/augment": ["node_modules/@pdfluent/xfa-wasm/pkg-types/xfa_wasm.augment"]
+      "@pdfluent/sdk-wasm/augment": ["node_modules/@pdfluent/sdk-wasm/pkg-types/xfa_wasm.augment"]
     }
   }
 }

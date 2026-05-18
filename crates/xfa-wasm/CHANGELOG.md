@@ -1,6 +1,7 @@
 # Changelog
 
-All notable changes to the `@pdfluent/xfa-wasm` package.
+All notable changes to the `@pdfluent/sdk-wasm` npm package (previously
+published as `@pdfluent/xfa-wasm`; renamed to `@pdfluent/sdk-wasm`).
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this package adheres to [Semantic Versioning](https://semver.org/).
