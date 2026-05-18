@@ -324,3 +324,147 @@ class TestTierMapping:
     def test_archival_maps_to_business(self) -> None:
         from pdfluent import _TIER_MAP
         assert _TIER_MAP["archival"] == "business"
+
+
+# ---------------------------------------------------------------------------
+# .code attribute — parity with Node, WASM, .NET surfaces
+# Closes the documented PYTHON_LICENSE_ERROR_CODE_ATTRIBUTE gap.
+# ---------------------------------------------------------------------------
+
+# Canonical C8 codes mirrored from `crates/pdfluent/src/error.rs::Error::code()`.
+_CANONICAL_LICENSE_CODES = {
+    "E-LICENSE-INVALID",
+    "E-LICENSE-FEATURE-NOT-IN-TIER",
+    "E-LICENSE-CAPABILITY-NOT-COMPILED",
+}
+
+
+class TestLicenseErrorCode:
+    """``e.code`` exposes the canonical C8 error code so callers can branch
+    on the failure class without parsing ``str(e)``.
+
+    All raise-sites in the public Python license surface MUST attach a
+    canonical code — both the pure-Python pre-validation paths
+    (file-not-found, malformed-JSON, unknown tier) and Rust-originated
+    errors propagated through ``pdfluent_license_err_to_py``.
+    """
+
+    def test_invalid_key_raises_with_code(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("PDFLUENT_LICENSE_KEY", raising=False)
+        with pytest.raises(PdfluentLicenseError) as exc_info:
+            activate_license("")
+        assert exc_info.value.code == "E-LICENSE-INVALID"  # type: ignore[attr-defined]
+
+    def test_code_is_canonical_c8(self) -> None:
+        with pytest.raises(PdfluentLicenseError) as exc_info:
+            activate_license("!!!notbase64!!!")
+        assert exc_info.value.code in _CANONICAL_LICENSE_CODES  # type: ignore[attr-defined]
+
+    def test_code_set_for_malformed_json(self) -> None:
+        with pytest.raises(PdfluentLicenseError) as exc_info:
+            activate_license("{broken json}")
+        assert exc_info.value.code == "E-LICENSE-INVALID"  # type: ignore[attr-defined]
+
+    def test_code_set_for_missing_file(self) -> None:
+        with pytest.raises(PdfluentLicenseError) as exc_info:
+            activate_license("/nonexistent/path/my.license")
+        assert exc_info.value.code in _CANONICAL_LICENSE_CODES  # type: ignore[attr-defined]
+
+    def test_code_set_for_unparseable_file(self, tmp_path: object) -> None:
+        # File exists with the right extension but contains garbage —
+        # exercises file-read success then malformed-key parse failure.
+        import pathlib
+        p = pathlib.Path(str(tmp_path)) / "broken.license"
+        p.write_text("not json and not base64!!!", encoding="utf-8")
+        with pytest.raises(PdfluentLicenseError) as exc_info:
+            activate_license(str(p))
+        assert exc_info.value.code == "E-LICENSE-INVALID"  # type: ignore[attr-defined]
+
+    def test_code_set_for_unknown_tier(self) -> None:
+        bad_key = json.dumps({"tier": "platinum"})
+        with pytest.raises(PdfluentLicenseError) as exc_info:
+            activate_license(bad_key)
+        assert exc_info.value.code == "E-LICENSE-INVALID"  # type: ignore[attr-defined]
+
+    def test_code_attribute_is_string(self) -> None:
+        with pytest.raises(PdfluentLicenseError) as exc_info:
+            activate_license("{broken")
+        assert isinstance(exc_info.value.code, str)  # type: ignore[attr-defined]
+        assert exc_info.value.code.startswith("E-LICENSE-")  # type: ignore[attr-defined]
+
+    def test_message_attribute_present(self) -> None:
+        with pytest.raises(PdfluentLicenseError) as exc_info:
+            activate_license("{broken")
+        assert isinstance(exc_info.value.message, str)  # type: ignore[attr-defined]
+        assert "malformed" in exc_info.value.message  # type: ignore[attr-defined]
+
+    def test_code_is_stable_across_call_sites(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: object
+    ) -> None:
+        """All pure-Python license raise-sites attach ``.code``.
+
+        Today every pre-validation failure maps to ``E-LICENSE-INVALID``
+        (the Rust core uses the same code for every ``Error::InvalidLicense``
+        variant — different reasons, same canonical code).  This test exists
+        so any future regression that drops the ``.code`` attribute on any
+        raise-site fails loudly.
+        """
+        import pathlib
+
+        codes: list[str] = []
+
+        monkeypatch.delenv("PDFLUENT_LICENSE_KEY", raising=False)
+        try:
+            activate_license("")
+        except PdfluentLicenseError as exc:
+            codes.append(exc.code)  # type: ignore[attr-defined]
+
+        try:
+            activate_license("{not json")
+        except PdfluentLicenseError as exc:
+            codes.append(exc.code)  # type: ignore[attr-defined]
+
+        try:
+            activate_license("!!!neither!!!")
+        except PdfluentLicenseError as exc:
+            codes.append(exc.code)  # type: ignore[attr-defined]
+
+        try:
+            activate_license("/no/such/file.license")
+        except PdfluentLicenseError as exc:
+            codes.append(exc.code)  # type: ignore[attr-defined]
+
+        p = pathlib.Path(str(tmp_path)) / "junk.license"
+        p.write_text("garbage", encoding="utf-8")
+        try:
+            activate_license(str(p))
+        except PdfluentLicenseError as exc:
+            codes.append(exc.code)  # type: ignore[attr-defined]
+
+        try:
+            activate_license(json.dumps({"tier": "no_such_tier_xyz"}))
+        except PdfluentLicenseError as exc:
+            codes.append(exc.code)  # type: ignore[attr-defined]
+
+        assert len(codes) == 6
+        for c in codes:
+            assert c in _CANONICAL_LICENSE_CODES, (
+                f"non-canonical license code: {c!r}"
+            )
+
+    def test_rust_originated_error_carries_code(self) -> None:
+        """Errors that bubble up from the Rust core (e.g. tier-conflict via
+        ``set_license_key``) also carry ``.code`` thanks to
+        ``pdfluent_license_err_to_py``.
+
+        The autouse fixture has already locked the OnceLock to ``enterprise``,
+        so activating a different tier (``trial``) will trigger the Rust core
+        to raise ``E-LICENSE-INVALID`` ("license already set").
+        """
+        with pytest.raises(PdfluentLicenseError) as exc_info:
+            activate_license(_make_license_json(tier="trial"))
+        # Rust-originated license errors must also carry a code attribute.
+        assert hasattr(exc_info.value, "code")
+        assert exc_info.value.code in _CANONICAL_LICENSE_CODES  # type: ignore[attr-defined]
