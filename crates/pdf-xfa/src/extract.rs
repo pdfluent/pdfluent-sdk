@@ -2,7 +2,25 @@
 use crate::error::{Result, XfaError};
 use pdf_syntax::object::dict::keys::{ACRO_FORM, XFA};
 use pdf_syntax::object::{Array, Dict, Object, Stream};
-use pdf_syntax::Pdf;
+use pdf_syntax::{Filter, Pdf};
+
+/// Return `true` when a stream's filters indicate that it is an image or other
+/// binary blob that cannot contain XFA XML text.
+///
+/// XFA `<xdp:xdp>` packets are stored as plain XML (optionally `/FlateDecode`
+/// compressed). They are never wrapped with image codecs such as JPEG, JPEG
+/// 2000, JBIG2 or CCITT fax. Detecting these filters before invoking
+/// [`Stream::decoded`] avoids expensive image decoding during the XFA scan
+/// fallback (see PERF2-01: JPEG 2000 decode accounted for ~45% of wall-time
+/// on `edd_DE44.pdf`).
+fn is_image_only_stream(stream: &Stream<'_>) -> bool {
+    stream.filters().iter().any(|f| {
+        matches!(
+            f,
+            Filter::JpxDecode | Filter::DctDecode | Filter::Jbig2Decode | Filter::CcittFaxDecode
+        )
+    })
+}
 /// XfaPackets.
 
 #[derive(Debug, Clone, Default)]
@@ -70,6 +88,10 @@ fn scan_for_datasets(pdf: &Pdf, min_len: usize) -> Option<String> {
     let mut best: Option<String> = None;
     for obj in pdf.objects() {
         if let Object::Stream(s) = obj {
+            // Skip image streams — they never contain XFA datasets XML.
+            if is_image_only_stream(&s) {
+                continue;
+            }
             if let Some(d) = decode_stream(&s) {
                 if d.len() > min_len
                     && d.contains("<xfa:datasets")
@@ -132,9 +154,18 @@ fn scan_for_xfa(pdf: &Pdf) -> Result<XfaPackets> {
     // Cap the number of streams we decompress to avoid multi-second stalls on
     // large non-XFA PDFs. XFA XDP streams are typically among the first few
     // hundred objects. If we haven't found one after 2000 streams, give up.
+    //
+    // PERF (PERF2-02): skip image streams (`/JPXDecode`, `/DCTDecode`,
+    // `/JBIG2Decode`, `/CCITTFaxDecode`) entirely. XFA packets are XML text
+    // wrapped at most by `/FlateDecode`; they never use image codecs. Decoding
+    // a JPEG 2000 image costs hundreds of milliseconds and dominated the
+    // wall-time on `edd_DE44.pdf` (PERF2-01 hotspot report).
     let mut streams_checked = 0u32;
     for obj in pdf.objects() {
         if let Object::Stream(s) = obj {
+            if is_image_only_stream(&s) {
+                continue;
+            }
             streams_checked += 1;
             if streams_checked > 2000 {
                 break;
