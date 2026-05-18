@@ -4,7 +4,7 @@ version = "1.0.0-beta.5"
 edition = "2021"
 license-file = "LICENSE"
 description = "Sandboxed QuickJS runtime for XFA JavaScript calculate scripts. Part of the PDFluent XFA stack."
-repository = "https://github.com/pdfluent/examples"
+repository = "https://pdfluent.com/source"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 
