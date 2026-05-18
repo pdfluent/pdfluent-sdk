@@ -10,7 +10,7 @@
 # Options:
 #   --dry-run         Run packaging steps but do not write audit reports (default: off).
 #   --channel NAME    Run only the specified channel(s). Repeatable.
-#                     Valid names: rust, python, wasm, dotnet, java
+#                     Valid names: rust, python, wasm, dotnet, java, cabi
 #   --crate NAME      (rust channel) Audit a specific crate; repeatable.
 #                     If omitted, reads PUBLISH_CRATES from the environment or
 #                     uses the full publish list from publish_ordered.sh.
@@ -18,6 +18,7 @@
 #   --wasm-pkg DIR    (wasm channel) Path to the wasm-pack output directory.
 #   --nupkg PATH      (dotnet channel) Path to the built .nupkg file.
 #   --jar PATH        (java channel) Path to the built .jar file.
+#   --cabi-tarball PATH (cabi channel) Path to the built pdfluent-capi-*.tar.gz.
 #   --out DIR         Override output directory for audit reports
 #                     (default: benchmarks/runs/prepublish_audits).
 #   -h, --help        Show this help.
@@ -66,6 +67,7 @@ WHEEL_PATH=""
 WASM_PKG_DIR=""
 NUPKG_PATH=""
 JAR_PATH=""
+CABI_TARBALL=""
 OUTPUT_DIR=""
 
 # ---------------------------------------------------------------------------
@@ -80,6 +82,7 @@ while [[ $# -gt 0 ]]; do
         --wasm-pkg)       WASM_PKG_DIR="$2"; shift 2 ;;
         --nupkg)          NUPKG_PATH="$2"; shift 2 ;;
         --jar)            JAR_PATH="$2"; shift 2 ;;
+        --cabi-tarball)   CABI_TARBALL="$2"; shift 2 ;;
         --out)            OUTPUT_DIR="$2"; shift 2 ;;
         -h|--help)        sed -n 's/^# //p' "$0" | head -40; exit 0 ;;
         --)               shift; break ;;
@@ -92,7 +95,7 @@ done
 
 # Default: all channels
 if [[ ${#CHANNELS[@]} -eq 0 ]]; then
-    CHANNELS=(rust python wasm dotnet java)
+    CHANNELS=(rust python wasm dotnet java cabi)
 fi
 
 # ---------------------------------------------------------------------------
@@ -464,27 +467,15 @@ audit_dotnet() {
         fail "  No .nuspec found inside .nupkg"
         identity_ok=false
     else
-        # Portable XML tag extraction (BSD grep on macOS lacks -P; use sed instead).
-        # Returns first <tag>...</tag> inner text, or empty if not present.
-        _extract_xml_tag() {
-            local tag="$1" file="$2"
-            sed -n "s/.*<${tag}>\\([^<]*\\)<\\/${tag}>.*/\\1/p" "$file" 2>/dev/null | head -1
-        }
-        local pkg_id; pkg_id=$(_extract_xml_tag "id" "$nuspec")
-        local pkg_ver; pkg_ver=$(_extract_xml_tag "version" "$nuspec")
-        local pkg_url; pkg_url=$(_extract_xml_tag "projectUrl" "$nuspec")
-        # Normalise to lowercase for case-insensitive identity check (NuGet PackageIds
-        # are case-insensitive per spec — PDFluent, pdfluent, PDFluent.Core all valid).
-        local pkg_id_lc; pkg_id_lc=$(printf '%s' "$pkg_id" | tr '[:upper:]' '[:lower:]')
-        log "  PackageId: ${pkg_id:-<empty>} @ ${pkg_ver:-<empty>} | projectUrl: ${pkg_url:-<empty>}"
-        if [[ -z "$pkg_id" ]]; then
-            fail "  PackageId could not be extracted from .nuspec (missing <id> tag)"
-            identity_ok=false
-        elif [[ "$pkg_id_lc" != *pdfluent* ]]; then
-            fail "  PackageId '${pkg_id}' does not contain 'pdfluent' (case-insensitive)"
+        local pkg_id; pkg_id=$(grep -oPm1 '(?<=<id>)[^<]+' "$nuspec" 2>/dev/null || echo "?")
+        local pkg_ver; pkg_ver=$(grep -oPm1 '(?<=<version>)[^<]+' "$nuspec" 2>/dev/null || echo "?")
+        local pkg_url; pkg_url=$(grep -oPm1 '(?<=<projectUrl>)[^<]+' "$nuspec" 2>/dev/null || echo "?")
+        log "  PackageId: ${pkg_id} @ ${pkg_ver} | projectUrl: ${pkg_url}"
+        if ! echo "$pkg_id" | grep -qi "pdfluent"; then
+            fail "  PackageId '${pkg_id}' does not contain 'pdfluent'"
             identity_ok=false
         fi
-        if [[ -n "$pkg_url" ]] && printf '%s' "$pkg_url" | grep -qi "github"; then
+        if echo "$pkg_url" | grep -qi "github"; then
             fail "  projectUrl contains github.com: ${pkg_url}"
             identity_ok=false
         fi
@@ -493,8 +484,8 @@ audit_dotnet() {
     log "  Step 4: leakage scan via audit_package_tree.py"
     local scan_exit=0
     if ! $DRY_RUN; then
-        local pkg_name="${pkg_id:-pdfluent-dotnet}"
-        local pkg_ver_s="${pkg_ver:-unknown}"
+        local pkg_name; pkg_name=$(grep -oPm1 '(?<=<id>)[^<]+' "${nuspec:-/dev/null}" 2>/dev/null || echo "pdfluent-dotnet")
+        local pkg_ver_s; pkg_ver_s=$(grep -oPm1 '(?<=<version>)[^<]+' "${nuspec:-/dev/null}" 2>/dev/null || echo "unknown")
         python3 "${AUDIT_TREE}" \
             --tree "${tmpdir}/unpacked" \
             --out "${REPORTS_DIR}" \
@@ -525,9 +516,9 @@ audit_java() {
         local candidates=()
         while IFS= read -r -d '' f; do
             candidates+=("$f")
-        done < <(find "${REPO_ROOT}/crates/pdf-java" -name "*.jar" -not -name "*javadoc*" -not -name "*sources*" -print0 2>/dev/null)
+        done < <(find "${REPO_ROOT}/bindings/java/target" -maxdepth 1 -name "*.jar" -not -name "*javadoc*" -not -name "*sources*" -print0 2>/dev/null)
         if [[ ${#candidates[@]} -eq 0 ]]; then
-            warn "  No .jar found under crates/pdf-java/. Build with 'mvn package -DskipTests' first."
+            warn "  No .jar found under bindings/java/target/. Build with 'cd bindings/java && mvn package -DskipTests' first."
             warn "  Skipping Java channel (no artefact). Document as artifact gap."
             echo "JAVA_CHANNEL=NO_ARTIFACT" >> "${REPORTS_DIR}/.e1_gaps.txt" 2>/dev/null || true
             return 0
@@ -601,15 +592,128 @@ audit_java() {
 }
 
 # ---------------------------------------------------------------------------
+# Channel: C ABI / standalone tarball
+# ---------------------------------------------------------------------------
+audit_cabi() {
+    sep
+    log "=== CHANNEL: C ABI / tarball ==="
+
+    local tarball="${CABI_TARBALL}"
+
+    if [[ -z "$tarball" ]]; then
+        # Try common output locations.
+        local candidates=()
+        while IFS= read -r -d '' f; do
+            candidates+=("$f")
+        done < <(find "${REPO_ROOT}/target/release" -maxdepth 1 -name "pdfluent-capi-*.tar.gz" -print0 2>/dev/null)
+        if [[ ${#candidates[@]} -eq 0 ]]; then
+            warn "  No pdfluent-capi-*.tar.gz found under target/release/. Build with 'bash scripts/release/package_cabi.sh' first."
+            warn "  Skipping C ABI channel (no artefact). Document as artifact gap."
+            echo "CABI_CHANNEL=NO_ARTIFACT" >> "${REPORTS_DIR}/.e1_gaps.txt" 2>/dev/null || true
+            return 0
+        fi
+        tarball="${candidates[0]}"
+        log "  Found C ABI tarball: $tarball"
+    fi
+
+    if [[ ! -f "$tarball" ]]; then
+        fail "  Tarball not found: $tarball"
+        return 1
+    fi
+
+    local tarball_name; tarball_name=$(basename "$tarball" .tar.gz)
+    local tmpdir; tmpdir=$(mktemp -d -t cabi_audit_XXXXXX)
+    trap 'rm -rf "${tmpdir}"' RETURN
+
+    log "  Step 1: unpack tarball"
+    if ! tar -xzf "$tarball" -C "${tmpdir}" 2>&1; then
+        fail "  Could not extract tarball: $tarball"
+        return 1
+    fi
+
+    # The tarball root dir is pdfluent-capi-<version>.
+    local root_dir; root_dir=$(find "${tmpdir}" -mindepth 1 -maxdepth 1 -type d | head -1)
+    if [[ -z "$root_dir" ]]; then
+        fail "  Tarball did not contain a root directory"
+        return 1
+    fi
+
+    log "  Step 2: identity check"
+    local identity_ok=true
+    local version_file="${root_dir}/VERSION"
+    local pkg_ver="unknown"
+    if [[ ! -f "$version_file" ]]; then
+        fail "  No VERSION file in tarball"
+        identity_ok=false
+    else
+        pkg_ver=$(tr -d '[:space:]' < "$version_file")
+        log "  Version: ${pkg_ver}"
+    fi
+
+    # Cross-check with Cargo.toml.
+    local cargo_ver
+    cargo_ver=$(grep -m1 '^version = ' "${REPO_ROOT}/crates/pdf-capi/Cargo.toml" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/' || echo "")
+    if [[ -n "$cargo_ver" && "$pkg_ver" != "$cargo_ver" ]]; then
+        fail "  VERSION ($pkg_ver) does not match crates/pdf-capi/Cargo.toml version ($cargo_ver)"
+        identity_ok=false
+    fi
+
+    log "  Step 3: structure check"
+    local structure_ok=true
+    if [[ ! -d "${root_dir}/include" ]]; then
+        fail "  Missing include/ directory"
+        structure_ok=false
+    elif ! ls "${root_dir}/include/"*.h >/dev/null 2>&1; then
+        fail "  No header files in include/"
+        structure_ok=false
+    fi
+    if [[ ! -d "${root_dir}/lib" ]]; then
+        fail "  Missing lib/ directory"
+        structure_ok=false
+    elif [[ -z "$(ls -A "${root_dir}/lib" 2>/dev/null)" ]]; then
+        fail "  lib/ directory is empty"
+        structure_ok=false
+    fi
+    if [[ ! -f "${root_dir}/README.md" ]]; then
+        fail "  Missing README.md"
+        structure_ok=false
+    fi
+
+    log "  Step 4: license check"
+    local lic_file="${root_dir}/LICENSE"
+    local license_ok=true
+    if [[ ! -f "$lic_file" ]]; then
+        fail "  No LICENSE file in tarball"
+        license_ok=false
+    elif ! grep -q "PDFluent Commercial License" "$lic_file" 2>/dev/null; then
+        fail "  LICENSE file does not contain PDFluent Commercial License"
+        license_ok=false
+    else
+        ok "  LICENSE file present with correct content"
+    fi
+
+    log "  Step 5: leakage scan via audit_package_tree.py"
+    local scan_exit=0
+    if ! $DRY_RUN; then
+        python3 "${AUDIT_TREE}" \
+            --tree "${root_dir}" \
+            --out "${REPORTS_DIR}" \
+            --package-name "pdfluent-capi" \
+            --package-version "${pkg_ver}" \
+            --channel generic 2>&1 || scan_exit=$?
+    fi
+
+    if [[ $identity_ok == false ]] || [[ $structure_ok == false ]] || [[ $license_ok == false ]] || [[ $scan_exit -ne 0 ]]; then
+        fail "  C ABI channel FAIL (P0)"
+        return 1
+    fi
+    ok "  C ABI channel PASS"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-# Allow this script to be sourced (e.g. by regression tests) without executing
-# Main. Tests source the file and call the per-channel functions directly,
-# bypassing Gate 0 (clean tree) and the global arg parser.
-if [[ "${AUDIT_ALL_PACKAGES_SOURCED:-0}" == "1" ]]; then
-    return 0 2>/dev/null || exit 0
-fi
-
 cd "${REPO_ROOT}"
 
 log "audit-all-packages.sh — PDFluent release gate runner"
@@ -644,8 +748,9 @@ for ch in "${CHANNELS[@]}"; do
         wasm)   audit_wasm   || ch_exit=$? ;;
         dotnet) audit_dotnet || ch_exit=$? ;;
         java)   audit_java   || ch_exit=$? ;;
+        cabi)   audit_cabi   || ch_exit=$? ;;
         *)
-            warn "Unknown channel: $ch (valid: rust python wasm dotnet java)"
+            warn "Unknown channel: $ch (valid: rust python wasm dotnet java cabi)"
             CHANNELS_SKIPPED+=("$ch")
             continue
             ;;
