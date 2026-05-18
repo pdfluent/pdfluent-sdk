@@ -82,12 +82,7 @@ fn throw_pdf_parse_exception(env: &mut JNIEnv, msg: &str) {
 /// Falls back to the no-code constructor via `env.throw_new` if anything
 /// goes wrong while building the typed throwable, so a missing code never
 /// degrades into a silently-swallowed JNI error.
-fn throw_pdf_exception_with_code(
-    env: &mut JNIEnv,
-    class_name: &str,
-    msg: &str,
-    code: &str,
-) {
+fn throw_pdf_exception_with_code(env: &mut JNIEnv, class_name: &str, msg: &str, code: &str) {
     // Try the (String, String) constructor introduced in 0.2 first.
     let class = match env.find_class(class_name) {
         Ok(c) => c,

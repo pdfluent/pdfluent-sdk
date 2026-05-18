@@ -1596,7 +1596,10 @@ mod tests {
             code::WASM_FORMCALC_FAILED,
         ] {
             assert!(c.starts_with("E-"), "code {c:?} must start with E-");
-            assert!(!c.contains('_'), "code {c:?} must use dashes, not underscores");
+            assert!(
+                !c.contains('_'),
+                "code {c:?} must use dashes, not underscores"
+            );
         }
     }
 
@@ -1607,7 +1610,10 @@ mod tests {
         assert_eq!(code::IO_GENERIC, "E-IO-GENERIC");
         assert_eq!(code::COMPLIANCE_PDFA_INVALID, "E-COMPLIANCE-PDFA-INVALID");
         assert_eq!(code::LICENSE_INVALID, "E-LICENSE-INVALID");
-        assert_eq!(code::LICENSE_FEATURE_NOT_IN_TIER, "E-LICENSE-FEATURE-NOT-IN-TIER");
+        assert_eq!(
+            code::LICENSE_FEATURE_NOT_IN_TIER,
+            "E-LICENSE-FEATURE-NOT-IN-TIER"
+        );
         assert_eq!(code::ENV_UNSUPPORTED_ON_WASM, "E-ENV-UNSUPPORTED-ON-WASM");
     }
 
@@ -1646,10 +1652,22 @@ mod tests {
     #[test]
     fn infer_operation_covers_common_legacy_codes() {
         use crate::pdfluent_error::legacy_code;
-        assert_eq!(super::infer_operation(legacy_code::INVALID_PDF), "PdfDoc.open");
-        assert_eq!(super::infer_operation(legacy_code::PAGE_OUT_OF_RANGE), "PdfDoc.page");
-        assert_eq!(super::infer_operation(legacy_code::XFA_FLATTEN_FAILED), "PdfDoc.flattenXfa");
-        assert_eq!(super::infer_operation(legacy_code::RENDER_ERROR), "PdfDoc.renderPage");
+        assert_eq!(
+            super::infer_operation(legacy_code::INVALID_PDF),
+            "PdfDoc.open"
+        );
+        assert_eq!(
+            super::infer_operation(legacy_code::PAGE_OUT_OF_RANGE),
+            "PdfDoc.page"
+        );
+        assert_eq!(
+            super::infer_operation(legacy_code::XFA_FLATTEN_FAILED),
+            "PdfDoc.flattenXfa"
+        );
+        assert_eq!(
+            super::infer_operation(legacy_code::RENDER_ERROR),
+            "PdfDoc.renderPage"
+        );
         assert_eq!(super::infer_operation("UNKNOWN_CODE_XYZ"), "PdfDoc");
     }
 
