@@ -109,13 +109,7 @@ pub mod legacy_code {
     pub const LICENSE_ALREADY_SET: &str = "LICENSE_ALREADY_SET";
 }
 
-fn build(
-    code: &str,
-    message: &str,
-    operation: &str,
-    help: &str,
-    legacy_code: &str,
-) -> JsValue {
+fn build(code: &str, message: &str, operation: &str, help: &str, legacy_code: &str) -> JsValue {
     let docs_url = format!("https://pdfluent.com/errors/{code}");
     let ctor_val = pdfluent_error_ctor();
 
@@ -124,10 +118,22 @@ fn build(
         err.set_name("PdfluentError");
         let val: &JsValue = err.as_ref();
         let _ = Reflect::set(val, &JsValue::from_str("code"), &JsValue::from_str(code));
-        let _ = Reflect::set(val, &JsValue::from_str("operation"), &JsValue::from_str(operation));
+        let _ = Reflect::set(
+            val,
+            &JsValue::from_str("operation"),
+            &JsValue::from_str(operation),
+        );
         let _ = Reflect::set(val, &JsValue::from_str("help"), &JsValue::from_str(help));
-        let _ = Reflect::set(val, &JsValue::from_str("docsUrl"), &JsValue::from_str(&docs_url));
-        let _ = Reflect::set(val, &JsValue::from_str("legacyCode"), &JsValue::from_str(legacy_code));
+        let _ = Reflect::set(
+            val,
+            &JsValue::from_str("docsUrl"),
+            &JsValue::from_str(&docs_url),
+        );
+        let _ = Reflect::set(
+            val,
+            &JsValue::from_str("legacyCode"),
+            &JsValue::from_str(legacy_code),
+        );
         return err.into();
     }
 
@@ -165,7 +171,9 @@ pub fn pdf_engine_error<E: PdfError>(operation: &str, e: E) -> JsValue {
         "CORRUPT_PDF" => (code::PARSE_INVALID_PDF, legacy_code::INVALID_PDF),
         "INVALID_PAGE_NUMBER" => (code::WASM_PAGE_OUT_OF_RANGE, legacy_code::PAGE_OUT_OF_RANGE),
         "UNSUPPORTED_PDF_VERSION" => (code::PARSE_UNSUPPORTED_VERSION, "UNSUPPORTED_PDF_VERSION"),
-        "LICENSE_EXPIRED" | "LICENSE_INVALID" => (code::LICENSE_INVALID, legacy_code::LICENSE_ERROR),
+        "LICENSE_EXPIRED" | "LICENSE_INVALID" => {
+            (code::LICENSE_INVALID, legacy_code::LICENSE_ERROR)
+        }
         _ => (code::INTERNAL, legacy_code::OPERATION_FAILED),
     };
     let help = e.help().unwrap_or_default();
