@@ -109,7 +109,22 @@ The `PDFLUENT_LICENSE_KEY` environment variable is honoured automatically.
 - The active tier is **process-global and set-once**. Re-activating with
   the same key is a no-op. Re-activating with a different tier throws
   `IllegalStateException`; restart the JVM to switch tiers.
-- Invalid keys throw `com.pdfluent.PdfException`.
+- Invalid keys throw `com.pdfluent.PdfluentLicenseException`. The exception
+  carries the canonical C8 error code via `getCode()` — one of
+  `E-LICENSE-INVALID`, `E-LICENSE-FEATURE-NOT-IN-TIER`, or
+  `E-LICENSE-CAPABILITY-NOT-COMPILED`. Branch on the code instead of parsing
+  the message string:
+
+  ```java
+  try {
+      PdfluentLicensing.activateKey(badKey);
+  } catch (PdfluentLicenseException e) {
+      if ("E-LICENSE-INVALID".equals(e.getCode())) {
+          // tell the user the key is malformed
+      }
+  }
+  ```
+
 - Missing license files throw `java.io.IOException`.
 - The key string is never logged or stored beyond the call.
 
