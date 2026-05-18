@@ -467,15 +467,26 @@ audit_dotnet() {
         fail "  No .nuspec found inside .nupkg"
         identity_ok=false
     else
-        local pkg_id; pkg_id=$(grep -oPm1 '(?<=<id>)[^<]+' "$nuspec" 2>/dev/null || echo "?")
-        local pkg_ver; pkg_ver=$(grep -oPm1 '(?<=<version>)[^<]+' "$nuspec" 2>/dev/null || echo "?")
-        local pkg_url; pkg_url=$(grep -oPm1 '(?<=<projectUrl>)[^<]+' "$nuspec" 2>/dev/null || echo "?")
-        log "  PackageId: ${pkg_id} @ ${pkg_ver} | projectUrl: ${pkg_url}"
-        if ! echo "$pkg_id" | grep -qi "pdfluent"; then
-            fail "  PackageId '${pkg_id}' does not contain 'pdfluent'"
+        # Portable XML tag extraction — `grep -P` (PCRE lookbehind) is a
+        # GNU extension and BSD grep on macOS rejects it, causing every
+        # field to fall back to "?". Use sed for cross-platform reliability.
+        _extract_xml_tag() {
+            local tag="$1" file="$2"
+            sed -n "s/.*<${tag}>\\([^<]*\\)<\\/${tag}>.*/\\1/p" "$file" 2>/dev/null | head -1
+        }
+        local pkg_id; pkg_id=$(_extract_xml_tag "id" "$nuspec")
+        local pkg_ver; pkg_ver=$(_extract_xml_tag "version" "$nuspec")
+        local pkg_url; pkg_url=$(_extract_xml_tag "projectUrl" "$nuspec")
+        local pkg_id_lc; pkg_id_lc=$(printf '%s' "$pkg_id" | tr '[:upper:]' '[:lower:]')
+        log "  PackageId: ${pkg_id:-<empty>} @ ${pkg_ver:-<empty>} | projectUrl: ${pkg_url:-<empty>}"
+        if [[ -z "$pkg_id" ]]; then
+            fail "  PackageId could not be extracted from .nuspec (missing <id> tag)"
+            identity_ok=false
+        elif [[ "$pkg_id_lc" != *pdfluent* ]]; then
+            fail "  PackageId '${pkg_id}' does not contain 'pdfluent' (case-insensitive)"
             identity_ok=false
         fi
-        if echo "$pkg_url" | grep -qi "github"; then
+        if [[ -n "$pkg_url" ]] && printf '%s' "$pkg_url" | tr '[:upper:]' '[:lower:]' | grep -q "github"; then
             fail "  projectUrl contains github.com: ${pkg_url}"
             identity_ok=false
         fi
@@ -484,8 +495,10 @@ audit_dotnet() {
     log "  Step 4: leakage scan via audit_package_tree.py"
     local scan_exit=0
     if ! $DRY_RUN; then
-        local pkg_name; pkg_name=$(grep -oPm1 '(?<=<id>)[^<]+' "${nuspec:-/dev/null}" 2>/dev/null || echo "pdfluent-dotnet")
-        local pkg_ver_s; pkg_ver_s=$(grep -oPm1 '(?<=<version>)[^<]+' "${nuspec:-/dev/null}" 2>/dev/null || echo "unknown")
+        local pkg_name; pkg_name=$(_extract_xml_tag "id" "${nuspec:-/dev/null}")
+        [[ -z "$pkg_name" ]] && pkg_name="pdfluent-dotnet"
+        local pkg_ver_s; pkg_ver_s=$(_extract_xml_tag "version" "${nuspec:-/dev/null}")
+        [[ -z "$pkg_ver_s" ]] && pkg_ver_s="unknown"
         python3 "${AUDIT_TREE}" \
             --tree "${tmpdir}/unpacked" \
             --out "${REPORTS_DIR}" \
@@ -548,12 +561,24 @@ audit_java() {
     local identity_ok=true
 
     if [[ -n "$pom" ]]; then
-        local group_id; group_id=$(grep -oPm1 '(?<=<groupId>)[^<]+' "$pom" 2>/dev/null || echo "?")
-        local artifact_id; artifact_id=$(grep -oPm1 '(?<=<artifactId>)[^<]+' "$pom" 2>/dev/null || echo "?")
-        local pkg_ver; pkg_ver=$(grep -oPm1 '(?<=<version>)[^<]+' "$pom" 2>/dev/null || echo "?")
-        log "  groupId: ${group_id} | artifactId: ${artifact_id} | version: ${pkg_ver}"
-        if ! echo "$group_id" | grep -qi "pdfluent"; then
-            fail "  groupId '${group_id}' does not contain 'pdfluent'"
+        # Portable XML tag extraction — `grep -P` is GNU-only; BSD grep
+        # on macOS rejects it. Reuse audit_dotnet's _extract_xml_tag.
+        if ! declare -F _extract_xml_tag >/dev/null; then
+            _extract_xml_tag() {
+                local tag="$1" file="$2"
+                sed -n "s/.*<${tag}>\\([^<]*\\)<\\/${tag}>.*/\\1/p" "$file" 2>/dev/null | head -1
+            }
+        fi
+        local group_id; group_id=$(_extract_xml_tag "groupId" "$pom")
+        local artifact_id; artifact_id=$(_extract_xml_tag "artifactId" "$pom")
+        local pkg_ver; pkg_ver=$(_extract_xml_tag "version" "$pom")
+        local group_id_lc; group_id_lc=$(printf '%s' "$group_id" | tr '[:upper:]' '[:lower:]')
+        log "  groupId: ${group_id:-<empty>} | artifactId: ${artifact_id:-<empty>} | version: ${pkg_ver:-<empty>}"
+        if [[ -z "$group_id" ]]; then
+            fail "  groupId could not be extracted from pom.xml (missing <groupId> tag)"
+            identity_ok=false
+        elif [[ "$group_id_lc" != *pdfluent* ]]; then
+            fail "  groupId '${group_id}' does not contain 'pdfluent' (case-insensitive)"
             identity_ok=false
         fi
     else
