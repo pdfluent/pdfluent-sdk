@@ -237,5 +237,5 @@ Without a license key the SDK is fully functional; output PDFs carry an evaluati
 ## Links
 
 - **Documentation:** <https://pdfluent.com/docs>
-- **Issues:** <https://github.com/pdfluent/pdfluent-sdk/issues>
+- **Issues:** <https://pdfluent.com/support>
 - Built by [Innovation Trigger BV](https://pdfluent.com)
