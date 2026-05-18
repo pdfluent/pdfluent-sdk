@@ -50,7 +50,17 @@ class PdfluentIoError(PdfluentError):
     """Raised on file-system I/O errors."""
 
 class PdfluentLicenseError(PdfluentError):
-    """Raised on license validation errors (invalid key, expired, quota exceeded)."""
+    """Raised on license validation errors (invalid key, expired, quota exceeded).
+
+    Carries a canonical C8 error code as ``code`` (e.g. ``"E-LICENSE-INVALID"``,
+    ``"E-LICENSE-FEATURE-NOT-IN-TIER"``, ``"E-LICENSE-CAPABILITY-NOT-COMPILED"``)
+    plus a ``message`` attribute mirroring the human-readable detail.  This
+    matches the Node, WASM, and .NET parity surfaces: callers can branch on
+    ``e.code`` without parsing ``str(e)``.
+    """
+
+    code: str
+    message: str
 
 class PdfluentGeometryError(PdfluentError):
     """Raised when a page has an invalid or unsupported geometry."""
