@@ -74,3 +74,6 @@ crates/pdf-capi/doxygen-out/
 
 # Compiled C example binaries (built by examples/Makefile)
 crates/pdf-capi/examples/license_activate
+
+# XFA Sprint 2 — visual evidence heatmaps (uncommitted; retention 14 days)
+benchmarks/runs/xfa_enterprise_plan/sprint2/heatmaps_demo/
