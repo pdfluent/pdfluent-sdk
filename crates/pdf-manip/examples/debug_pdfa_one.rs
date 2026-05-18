@@ -1,4 +1,5 @@
 use lopdf::Document;
+use std::fs;
 
 fn run_pipeline(doc: &mut Document, mode: &str) {
     let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(doc, false);
@@ -47,7 +48,8 @@ fn main() {
     let output = &args[2];
     let mode = &args[3];
 
-    let mut doc = Document::load(input).expect("load");
+    let pdf_bytes = fs::read(input).expect("read");
+    let mut doc = Document::load_mem(&pdf_bytes).expect("load");
     run_pipeline(&mut doc, mode);
 
     let mut out = Vec::new();

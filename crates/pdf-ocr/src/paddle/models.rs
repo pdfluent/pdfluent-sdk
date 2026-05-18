@@ -13,9 +13,13 @@ const HF_BASE_URL: &str = "https://huggingface.co/monkt/paddleocr-onnx/resolve/m
 /// Error type for model operations.
 #[derive(Debug)]
 pub enum ModelError {
+    /// File system I/O error while reading or writing model files.
     Io(std::io::Error),
+    /// HTTP download of the model file failed; contains the error description.
     Download(String),
+    /// Creating the ONNX runtime session failed; contains the error description.
     Session(String),
+    /// Loading the character dictionary failed; contains the error description.
     Dictionary(String),
 }
 
@@ -40,9 +44,13 @@ impl From<std::io::Error> for ModelError {
 
 /// Loaded ONNX sessions and dictionary for PaddleOCR inference.
 pub struct ModelSessions {
+    /// ONNX session for the DBNet text detection model.
     pub detection: Session,
+    /// ONNX session for the SVTR text recognition model.
     pub recognition: Session,
+    /// Optional ONNX session for the angle classifier (180° rotation detection).
     pub classifier: Option<Session>,
+    /// Character dictionary mapping label indices to Unicode strings.
     pub dictionary: Dictionary,
 }
 
@@ -58,11 +66,17 @@ pub enum DetectionModel {
 /// Recognition language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
+    /// English language recognition model (`en`).
     English,
+    /// Latin-script language recognition model (`latin`).
     Latin,
+    /// Simplified Chinese recognition model (`ch`).
     Chinese,
+    /// Japanese recognition model (`japan`).
     Japanese,
+    /// Korean recognition model (`korean`).
     Korean,
+    /// Arabic-script recognition model (`arabic`).
     Arabic,
 }
 

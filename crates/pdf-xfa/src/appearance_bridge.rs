@@ -6,7 +6,7 @@
 use crate::error::Result;
 use std::collections::HashMap;
 use std::io::Write as _;
-use xfa_layout_engine::form::FormNodeId;
+use xfa_layout_engine::form::{FieldKind, FormNodeId};
 use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutNode};
 
 /// Configuration for appearance stream generation.
@@ -151,6 +151,14 @@ fn collect_appearances(
         let h = node.rect.height;
 
         let ap = match &node.content {
+            LayoutContent::Field {
+                value,
+                field_kind: FieldKind::Checkbox | FieldKind::Radio,
+                ..
+            } => {
+                let checked = checkbox_raw_value_is_checked(value);
+                Some(checkbox_appearance(checked, w, h))
+            }
             LayoutContent::Field { value, .. } => Some(field_appearance(value, w, h, config)),
             LayoutContent::Text(text) => Some(draw_appearance(text, w, h, config)),
             LayoutContent::WrappedText {
@@ -343,6 +351,21 @@ pub fn multiline_appearance(
         }
     }
 }
+/// Resolve whether a checkbox or radio rawValue string represents a checked state.
+///
+/// Adobe XFA semantics (XFA 3.3 §11.2.1 / §17.8):
+/// - rawValue `"1"` → checked.
+/// - rawValue `"0"`, `""`, or absent (empty string from unbound field) → unchecked.
+/// - Any other non-empty, non-`"0"` value is treated as checked (custom on-value).
+///
+/// This function encodes the **default** Adobe binding contract used when no explicit
+/// `<items>` list is present on the template node.  When an explicit on/off value pair
+/// is available callers should compare against those values directly (see
+/// `render_bridge::is_check_button_checked`).
+pub fn checkbox_raw_value_is_checked(raw_value: &str) -> bool {
+    !raw_value.is_empty() && raw_value != "0"
+}
+
 /// checkbox_appearance.
 pub fn checkbox_appearance(checked: bool, width: f64, height: f64) -> AppearanceStream {
     let mut ops = Vec::new();

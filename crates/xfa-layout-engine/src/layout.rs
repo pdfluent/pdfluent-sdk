@@ -182,7 +182,7 @@ impl LayoutDom {
 const MAX_PAGES: usize = 500;
 
 /// A single page in the layout output.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct LayoutPage {
     /// Page width.
     pub width: f64,
@@ -190,6 +190,11 @@ pub struct LayoutPage {
     pub height: f64,
     /// Layout nodes on this page.
     pub nodes: Vec<LayoutNode>,
+    /// True when this page was emitted onto a pageArea that the XFA runtime
+    /// recorded in the form-DOM packet (XFA 3.3 §8.6 / §3.1).  Downstream
+    /// pipelines must NOT drop such pages on data-empty heuristics — the
+    /// runtime already committed to emitting them.
+    pub runtime_instantiated: bool,
 }
 
 /// A positioned element on a page.
@@ -742,6 +747,7 @@ impl<'a> LayoutEngine<'a> {
                     None
                 };
                 self.prepend_fixed_nodes(&pa.fixed_nodes, &mut page)?;
+                page.runtime_instantiated = pa.runtime_instantiated;
                 if Self::has_visible_content(&page.nodes) {
                     if let (Some(profile), Some(page_profile)) =
                         (profile.as_deref_mut(), page_profile)
@@ -795,6 +801,7 @@ impl<'a> LayoutEngine<'a> {
                     remaining = rest;
                 } else if Self::has_visible_content(&placed.nodes) {
                     self.prepend_fixed_nodes(&pa.fixed_nodes, &mut placed)?;
+                    placed.runtime_instantiated = pa.runtime_instantiated;
                     if let (Some(profile), Some(page_profile)) =
                         (profile.as_deref_mut(), page_profile)
                     {
@@ -810,6 +817,7 @@ impl<'a> LayoutEngine<'a> {
                     // matches Adobe's behavior for explicit page areas
                     // whose flowing content is blank/hidden.
                     self.prepend_fixed_nodes(&pa.fixed_nodes, &mut placed)?;
+                    placed.runtime_instantiated = pa.runtime_instantiated;
                     if Self::has_visible_content(&placed.nodes) {
                         if let (Some(profile), Some(page_profile)) =
                             (profile.as_deref_mut(), page_profile)
@@ -833,6 +841,16 @@ impl<'a> LayoutEngine<'a> {
                         remaining.first(),
                     );
                 }
+            }
+
+            // XFA 3.3 §3.1 — when ALL pageAreas are runtime-instantiated
+            // (i.e. the form DOM recorded an explicit page-tree allocation),
+            // overflow beyond the recorded count is suppressed.  The runtime
+            // already committed to N pages; emitting more is over-pagination
+            // relative to the saved form state.  Excess body content is
+            // dropped from the visible output.
+            if !page_areas.is_empty() && page_areas.iter().all(|pa| pa.runtime_instantiated) {
+                remaining.clear();
             }
 
             // Overflow: repeat page templates until all content is placed.
@@ -889,6 +907,7 @@ impl<'a> LayoutEngine<'a> {
                                 None
                             };
                             self.prepend_fixed_nodes(&pa.fixed_nodes, &mut forced)?;
+                            forced.runtime_instantiated = pa.runtime_instantiated;
                             if let (Some(profile), Some(page_profile)) =
                                 (profile.as_deref_mut(), forced_profile)
                             {
@@ -902,6 +921,7 @@ impl<'a> LayoutEngine<'a> {
                     } else {
                         if Self::has_visible_content(&page.nodes) {
                             self.prepend_fixed_nodes(&pa.fixed_nodes, &mut page)?;
+                            page.runtime_instantiated = pa.runtime_instantiated;
                             if !rest.is_empty() {
                                 self.trace_commit_page_boundary(
                                     pages.len() + 1,
@@ -1329,6 +1349,7 @@ impl<'a> LayoutEngine<'a> {
                                 page_width: pa_node.box_model.width.unwrap_or(612.0),
                                 page_height: pa_node.box_model.height.unwrap_or(792.0),
                                 fixed_nodes: fixed,
+                                runtime_instantiated: pa_meta.runtime_instantiated_page,
                             });
                         }
                     }
@@ -1356,6 +1377,7 @@ impl<'a> LayoutEngine<'a> {
                         page_width: child.box_model.width.unwrap_or(612.0),
                         page_height: child.box_model.height.unwrap_or(792.0),
                         fixed_nodes: fixed,
+                        runtime_instantiated: pa_meta.runtime_instantiated_page,
                     });
                 }
                 // XFA's canonical nesting: <subform layout="paginate"> wraps
@@ -1427,6 +1449,7 @@ impl<'a> LayoutEngine<'a> {
             width: page_width,
             height: page_height,
             nodes: Vec::new(),
+            runtime_instantiated: false,
         };
 
         let available = Size {
@@ -1503,6 +1526,7 @@ impl<'a> LayoutEngine<'a> {
             width: page_width,
             height: page_height,
             nodes: Vec::new(),
+            runtime_instantiated: false,
         };
 
         // XFA Spec 3.3 §8.10 — Leaders and Trailers (p314-326).
@@ -2325,7 +2349,12 @@ impl<'a> LayoutEngine<'a> {
                         && partial_child.rect.height <= child_remaining + 0.5
                     {
                         placed_children.push(partial_child);
-                        child_y += placed_children.last().unwrap().rect.height;
+                        // SAFETY: we just pushed partial_child above, so last() is always Some.
+                        child_y += placed_children
+                            .last()
+                            .expect("just pushed above")
+                            .rect
+                            .height;
                         split_idx = i + 1;
 
                         let mut rest: Vec<QueuedNode> = child_rest;
@@ -2372,7 +2401,12 @@ impl<'a> LayoutEngine<'a> {
 
                     if split_productive {
                         placed_children.push(partial_child);
-                        child_y += placed_children.last().unwrap().rect.height;
+                        // SAFETY: we just pushed partial_child above, so last() is always Some.
+                        child_y += placed_children
+                            .last()
+                            .expect("just pushed above")
+                            .rect
+                            .height;
                         split_idx = i + 1;
 
                         // When the recursive split returns a single QueuedNode
@@ -2394,7 +2428,11 @@ impl<'a> LayoutEngine<'a> {
                             && child_rest[0].id == child_id
                             && child_rest[0].children_override.is_some()
                         {
-                            let qn = child_rest.into_iter().next().unwrap();
+                            // SAFETY: child_rest.len() == 1 is checked on the line above.
+                            let qn = child_rest
+                                .into_iter()
+                                .next()
+                                .expect("child_rest.len() == 1");
                             (qn.children_override, qn.nested_child_overrides)
                         } else {
                             let mut ids = Vec::new();
@@ -3700,6 +3738,12 @@ struct PageAreaInfo {
     /// Fixed-position nodes (e.g., page-level headers/footers) placed on every
     /// page that uses this page area.
     fixed_nodes: Vec<FormNodeId>,
+    /// XFA 3.3 §8.6 / §3.1 — this pageArea was instantiated at runtime
+    /// (recorded in the form-DOM packet) rather than declared once in the
+    /// template.  Such instances always emit a layout page, even when the
+    /// flowing body queue is exhausted, because they record an already-
+    /// paginated runtime state.
+    runtime_instantiated: bool,
 }
 
 #[cfg(test)]

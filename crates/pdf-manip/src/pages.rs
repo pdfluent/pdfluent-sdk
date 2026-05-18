@@ -5,6 +5,7 @@
 use crate::error::{ManipError, Result};
 use lopdf::{Document, Object, ObjectId};
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
 
 /// Extract specific pages from a document into a new document.
@@ -189,10 +190,12 @@ pub fn merge<P: AsRef<Path>>(paths: &[P]) -> Result<Document> {
     if paths.is_empty() {
         return Err(ManipError::EmptyPageRange);
     }
-    let first = Document::load(paths[0].as_ref())?;
+    let first_bytes = fs::read(paths[0].as_ref())?;
+    let first = Document::load_mem(&first_bytes)?;
     let mut merged = first;
     for path in &paths[1..] {
-        let doc = Document::load(path.as_ref())?;
+        let bytes = fs::read(path.as_ref())?;
+        let doc = Document::load_mem(&bytes)?;
         let page_count = merged.get_pages().len() as u32;
         insert_pages(&mut merged, &doc, page_count + 1)?;
     }

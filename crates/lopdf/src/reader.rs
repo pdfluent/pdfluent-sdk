@@ -299,6 +299,23 @@ impl Document {
         buffer.try_into()
     }
 
+    /// Load a PDF document from a memory slice with a password for encrypted PDFs.
+    ///
+    /// This is a synchronous helper available in both sync and async builds so
+    /// that callers that already have the PDF in memory do not need to branch on
+    /// the `async` feature flag.
+    pub fn load_mem_with_password(buffer: &[u8], password: &str) -> Result<Document> {
+        Reader {
+            buffer,
+            document: Document::new(),
+            encryption_state: None,
+            raw_objects: BTreeMap::new(),
+            password: Some(password.to_string()),
+            options: LoadOptions::default(),
+        }
+        .read(None)
+    }
+
     /// Load PDF metadata (title and page count) without loading the entire document.
     /// This is much faster for large PDFs when you only need basic information.
     #[inline]
@@ -1608,7 +1625,7 @@ fn search_substring_finds_last_occurrence() {
 
 /// A minimal but valid PDF containing a single page with no objects in ObjStm.
 /// Used as a fixture for LoadOptions tests.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "async")))]
 fn minimal_pdf_bytes() -> &'static [u8] {
     include_bytes!("../assets/example.pdf")
 }
