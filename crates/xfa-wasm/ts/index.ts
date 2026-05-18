@@ -129,6 +129,27 @@ export interface DssInfo {
   vri_entries: number;
 }
 
+/**
+ * Source of `width` and `charBounds` coordinates.
+ *
+ * - `"Metric"`: derived from real font advance metrics (FreeType/HarfBuzz
+ *   reference). Widths are physically accurate.
+ * - `"Estimate"`: derived from PDF content-stream displacement only.
+ *   Width may differ from the rendered glyph advance for variable-width
+ *   fonts; treat as approximate.
+ */
+export type TextRunWidthSource = 'Metric' | 'Estimate';
+
+/**
+ * One glyph's bounding box `[x0, y0, x1, y1]` in CSS-pixel space
+ * (y=0 at top-left, y increasing downward).
+ */
+export type GlyphBox = [number, number, number, number];
+
+/**
+ * One run of contiguous text on a page. Schema is additive — older
+ * consumers can ignore unknown keys; new fields default to safe values.
+ */
 export interface TextRun {
   text: string;
   x: number;
@@ -136,6 +157,72 @@ export interface TextRun {
   width: number;
   height: number;
   fontSize: number;
+
+  /** PostScript font name (subset prefix stripped). Omitted when unknown. */
+  fontName?: string;
+  /** Inferred bold style. Always present (defaults to `false`). */
+  isBold: boolean;
+  /** Inferred italic style. Always present (defaults to `false`). */
+  isItalic: boolean;
+  /** Fill color as `[r, g, b, a]` 0–255. Omitted for patterns/shadings. */
+  color?: [number, number, number, number];
+
+  /** `"Metric"` when widths come from real font advance data; `"Estimate"` otherwise. */
+  widthSource: TextRunWidthSource;
+  /**
+   * Per-glyph bounding boxes, one entry per source glyph.
+   * Coordinates share the same `x`/`y` CSS-pixel space.
+   * Omitted when no glyph metrics are available.
+   */
+  charBounds?: GlyphBox[];
+}
+
+/**
+ * Strategy used to isolate a formatting mutation from neighbouring runs.
+ *
+ * - `"NoIsolation"`: no `q`/`Q` group injected (size-only change OR run is
+ *   already inside a single-run group).
+ * - `"AddQGroup"`: a new `q … Q` block was added around the target run to
+ *   confine fill-color state.
+ * - `"ReuseExistingQGroup"`: the run sits alone inside a pre-existing
+ *   `q … Q`; no new group was added.
+ */
+export type FormatIsolationStrategy =
+  | 'NoIsolation'
+  | 'AddQGroup'
+  | 'ReuseExistingQGroup';
+
+/**
+ * Result of `PdfDocMut.formatTextSpan`.
+ *
+ * Returned both for successful formatting and for no-op invocations
+ * (`fontSize=undefined && color=undefined`). When `formatted` is `false`,
+ * the document was not modified.
+ */
+export interface FormatTextSpanResult {
+  /** `true` if any operators were injected into the content stream. */
+  formatted: boolean;
+  /** Bytes added to the content stream by injected operators. */
+  bytesChanged: number;
+  /** State-isolation strategy chosen for this run. */
+  isolationStrategy: FormatIsolationStrategy;
+  /** Pre-format font size (points) when a preceding `Tf` was detected. */
+  originalSize?: number;
+  /** Pre-format fill color `[r, g, b]` in `0.0..=1.0` when resolvable. */
+  originalColor?: [number, number, number];
+}
+
+/**
+ * Options accepted by `PdfDocMut.formatTextSpan`.
+ *
+ * At least one of `fontSize` / `colorHex` should be set; otherwise the
+ * call is a no-op and `formatted=false` is returned.
+ */
+export interface FormatTextSpanOptions {
+  /** New font size in points. */
+  fontSize?: number;
+  /** New fill color as a `"#RRGGBB"` hex string. */
+  colorHex?: string;
 }
 
 // --- XFA Forms wrapper ---
