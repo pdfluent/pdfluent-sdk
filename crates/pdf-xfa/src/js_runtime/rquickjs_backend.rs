@@ -982,6 +982,10 @@ impl QuickJsRuntime {
                 .map_err(|e| format!("binding factory call: {e}"))?;
             let xfa: Object = bridge.get("xfa").map_err(|e| format!("get xfa: {e}"))?;
             let app: Object = bridge.get("app").map_err(|e| format!("get app: {e}"))?;
+            // JS2-01 (Sprint 2 Batch B): `form` is a top-level alias of
+            // `xfa.form`. Adobe Reader exposes both spellings; templates
+            // such as 60df78fe_pdf_0012 reference bare `form.X`.
+            let form: Object = bridge.get("form").map_err(|e| format!("get form: {e}"))?;
             let eval_script: Function = bridge
                 .get("evalScript")
                 .map_err(|e| format!("get evalScript: {e}"))?;
@@ -997,6 +1001,9 @@ impl QuickJsRuntime {
             globals
                 .set("app", app)
                 .map_err(|e| format!("set app global: {e}"))?;
+            globals
+                .set("form", form)
+                .map_err(|e| format!("set form global: {e}"))?;
             Ok::<
                 (
                     Persistent<Function<'static>>,
@@ -1248,7 +1255,11 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     "process", "RangeError", "ReferenceError", "RegExp", "require",
     "Set", "String", "Symbol", "SyntaxError", "TypeError", "undefined",
     "URIError", "WeakMap", "WeakSet", "WebSocket", "XMLHttpRequest",
-    "xfa", "event"
+    // JS2-01 (Sprint 2 Batch B): `form` is a top-level alias of `xfa.form`.
+    // It must defer to globalThis so the host SOM resolver does not first
+    // try to resolve `form` as a form-tree node, find nothing, and then
+    // surface a `js_resolve_failure` for what is really a viewer global.
+    "xfa", "event", "form"
   ].forEach(function(name) {
     deferredGlobalNames[name] = true;
   });
@@ -2325,7 +2336,13 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     "importData":   { kind: "ret", value: undefined },
     "resetData":    { kind: "ret", value: undefined },
     "documentCountInBatch": { kind: "ret", value: 1 },
-    "documentInBatch":      { kind: "ret", value: 0 }
+    "documentInBatch":      { kind: "ret", value: 0 },
+    // JS2-01 (Sprint 2 Batch B): closeDoc is referenced by Canadian IMM
+    // and Quebec dol4n templates as an interactive viewer entry point.
+    // Static flatten cannot dismiss a document; safe-default undefined
+    // with `unsupported_host_calls` accounting keeps observability without
+    // a TypeError. Pure JS no-op — no filesystem / network reach the host.
+    "closeDoc":     { kind: "ret", value: undefined }
   };
 
   // Read-side defaults for viewer-readable host properties. These are pure
@@ -2618,6 +2635,65 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       return makeHandle(id, host.generation());
     }
   });
+  // JS2-01 (Sprint 2 Batch B): `xfa.form` is the FormDOM root surface
+  // Adobe Reader exposes (XFA 3.3 §6.1.4 — the result of merging template
+  // + datasets). The previous build only commented that it should be
+  // exposed (rquickjs_backend.rs:2477) but no actual binding existed —
+  // scripts that did `xfa.form.resolveNode("Form1.Subform1")` or
+  // `form.resolveNode(...)` ran into "cannot read property of undefined"
+  // or "form is not defined". We expose a Proxy that:
+  //   * forwards `resolveNode` / `resolveNodes` to the existing
+  //     `xfa.resolveNode` / `xfa.resolveNodes` pair (cluster C contract
+  //     preserved — missing paths still return `null`, not a sentinel);
+  //   * absorbs unknown property writes (viewer-only flags) silently;
+  //   * returns a chainable null-safe sentinel for unknown reads.
+  // No new Rust closure is registered; the binding is pure JS routing.
+  function makeFormNamespace() {
+    var base = nullProtoObject();
+    Object.defineProperty(base, "resolveNode", {
+      enumerable: true, configurable: false, writable: false,
+      value: function(path) { return xfa.resolveNode(path); }
+    });
+    Object.defineProperty(base, "resolveNodes", {
+      enumerable: true, configurable: false, writable: false,
+      value: function(path) { return xfa.resolveNodes(path); }
+    });
+    // Adobe's `form` exposes `recalculate(true/false)` as a no-op trigger
+    // for the calculation cascade. Templates pass `1` (force) commonly.
+    // Static flatten already ran calculate scripts — accept the call,
+    // return undefined, no counter (it is not an interactive prompt).
+    Object.defineProperty(base, "recalculate", {
+      enumerable: true, configurable: false, writable: false,
+      value: function() { return undefined; }
+    });
+    Object.defineProperty(base, "execValidate", {
+      enumerable: true, configurable: false, writable: false,
+      value: function() { return true; }
+    });
+    Object.defineProperty(base, "execInitialize", {
+      enumerable: true, configurable: false, writable: false,
+      value: function() { return undefined; }
+    });
+    Object.defineProperty(base, "execCalculate", {
+      enumerable: true, configurable: false, writable: false,
+      value: function() { return undefined; }
+    });
+    return new Proxy(base, {
+      get: function(target, prop) {
+        if (prop in target || typeof prop !== "string") return target[prop];
+        return makeNullDataHandle();
+      },
+      set: function(_t, _p, _v) { return true; },
+      has: function() { return true; }
+    });
+  }
+  var formNamespace = makeFormNamespace();
+  Object.defineProperty(xfa, "form", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: formNamespace
+  });
   Object.defineProperty(xfa, "resolveNodes", {
     enumerable: true,
     configurable: false,
@@ -2684,7 +2760,16 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     "beep":        { kind: "ret", value: undefined },
     "openDoc":     { kind: "ret", value: null },
     "response":    { kind: "ret", value: "" },
-    "mailMsg":     { kind: "ret", value: undefined }
+    "mailMsg":     { kind: "ret", value: undefined },
+    // JS2-01 (Sprint 2 Batch B): Adobe Acrobat SDK exposes `app.messageBox`
+    // as a richer alias of `app.alert` (modal dialog, returns the pressed
+    // button index — 0 = OK). Safe default mirrors `app.alert`. No new
+    // capability surface; pure JS no-op with counter accounting.
+    "messageBox":  { kind: "ret", value: 0 },
+    // JS2-01: `app.closeDoc` is the Acrobat alias of `xfa.host.closeDoc`.
+    // Templates targeting both Reader and Acrobat reference both spellings;
+    // we counter-bump on each call and return undefined.
+    "closeDoc":    { kind: "ret", value: undefined }
   };
   function makeAppBase() {
     var base = nullProtoObject();
@@ -2801,6 +2886,75 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     Object.defineProperty(ev, "selEnd", {
       enumerable: true, configurable: false,
       get: function() { return 0; }
+    });
+    // JS2-01 (Sprint 2 Batch B): the Phase E security audit §3.9 promised
+    // that `event` exposes the full Adobe Acrobat SDK event surface
+    // (`target`, `change`, `newText`, `prevText`, `fullText`, `selStart`,
+    // `selEnd`, plus `name`, `type`, `shift`, `modifier`, `commitKey`,
+    // `willCommit`, `rc`, `keyDown`, `value`, `reenter`). Only the first
+    // seven were implemented; scripts that probe `event.name` for the
+    // firing activity (`if (event.name === "calculate") {...}`) silently
+    // saw `undefined`, and scripts that chained off `event.X` could trip
+    // a "not a function" if `X` was expected to be callable.
+    //
+    // All values are deterministic spec defaults that match Adobe's
+    // behaviour during a non-interactive flatten (no firing event):
+    //   name       — current activity if known, else ""
+    //   type       — event type label (Adobe ≈ "Field"), "" if unknown
+    //   shift      — modifier-key state (false)
+    //   modifier   — modifier-key state (false)
+    //   commitKey  — 0 (no commit key pressed)
+    //   willCommit — false (no commit pending)
+    //   rc         — true (accept-by-default — same as Adobe's validate)
+    //   keyDown    — false (no key pressed)
+    //   value      — "" (current widget value, unknown during static flatten)
+    //   reenter    — false (Acrobat re-entry flag)
+    //
+    // Read-only via getter, like the existing seven. The frozen ev object
+    // means writes to these from scripts running in strict mode would throw
+    // a TypeError — but no real script writes event scalars (the only
+    // observed pattern is `event.value = ...` on a stale `event` reference
+    // which is undefined, not the frozen object). If we ever observe
+    // legitimate writes, swap getter for configurable getter+setter.
+    Object.defineProperty(ev, "name", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    Object.defineProperty(ev, "type", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    Object.defineProperty(ev, "shift", {
+      enumerable: true, configurable: false,
+      get: function() { return false; }
+    });
+    Object.defineProperty(ev, "modifier", {
+      enumerable: true, configurable: false,
+      get: function() { return false; }
+    });
+    Object.defineProperty(ev, "commitKey", {
+      enumerable: true, configurable: false,
+      get: function() { return 0; }
+    });
+    Object.defineProperty(ev, "willCommit", {
+      enumerable: true, configurable: false,
+      get: function() { return false; }
+    });
+    Object.defineProperty(ev, "rc", {
+      enumerable: true, configurable: false,
+      get: function() { return true; }
+    });
+    Object.defineProperty(ev, "keyDown", {
+      enumerable: true, configurable: false,
+      get: function() { return false; }
+    });
+    Object.defineProperty(ev, "value", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    Object.defineProperty(ev, "reenter", {
+      enumerable: true, configurable: false,
+      get: function() { return false; }
     });
     return Object.freeze(ev);
   }
@@ -3119,6 +3273,12 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     // is enforced by the Proxy traps, not by Object.freeze.
     xfa: Object.freeze(xfa),
     app: app,
+    // JS2-01 (Sprint 2 Batch B): top-level `form` global alias for
+    // `xfa.form`. Adobe Reader exposes both spellings; templates such as
+    // 60df78fe_pdf_0012 reference bare `form.X`. The alias is identity-equal
+    // to `xfa.form` (same Proxy), so cluster C contract preservation is
+    // shared between the two surfaces. No new Rust closure introduced.
+    form: formNamespace,
     consoleStub: Object.freeze(consoleStub),
     // Phase D-ι: register a `<variables>` `<script name="X">…` block as a
     // form-level global. Called by the host once per script body at
