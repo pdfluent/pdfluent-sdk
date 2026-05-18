@@ -26,4 +26,27 @@ public class PdfluentGeometryException extends PdfluentException {
     public PdfluentGeometryException(String message, Throwable cause) {
         super(message, cause);
     }
+
+    /**
+     * Constructs a {@code PdfluentGeometryException} with a detail message and a
+     * canonical C8 error code (see {@link PdfluentException#getCode()}).
+     *
+     * @param message the detail message
+     * @param code    canonical C8 catalogue code
+     */
+    public PdfluentGeometryException(String message, String code) {
+        super(message, code);
+    }
+
+    /**
+     * Constructs a {@code PdfluentGeometryException} with a detail message, a
+     * canonical C8 error code, and a cause.
+     *
+     * @param message the detail message
+     * @param code    canonical C8 catalogue code
+     * @param cause   the cause
+     */
+    public PdfluentGeometryException(String message, String code, Throwable cause) {
+        super(message, code, cause);
+    }
 }
