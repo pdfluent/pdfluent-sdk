@@ -69,8 +69,18 @@
 
     <!-- ================================================================
          Dependencies
+
+         JNA is required for the libpdf_capi (C ABI) loader path used by
+         PdfDocument and PdfluentLicensing. The raw-JNI path used by
+         PdfluentDocument loads libpdfluent_java via System.loadLibrary
+         and does not require JNA at runtime.
          ================================================================ -->
     <dependencies>
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+            <version>5.14.0</version>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
@@ -113,6 +123,10 @@
                         <!-- Suppress "system modules path not set" when building
                              with a JDK newer than 11 but targeting Java 11. -->
                         <arg>-Xlint:-options</arg>
+                        <!-- Suppress JEP 472 "restricted method" lint emitted by
+                             JDK 22+ for System.load{,Library}; native loading is
+                             the explicit purpose of NativeLoader. -->
+                        <arg>-Xlint:-restricted</arg>
                         <arg>-Werror</arg>
                     </compilerArgs>
                 </configuration>
