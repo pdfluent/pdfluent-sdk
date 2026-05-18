@@ -110,21 +110,67 @@ fn tier_to_str(tier: Tier) -> &'static str {
     }
 }
 
+/// Convert a `pdfluent::Error` into a typed Python exception and attach
+/// canonical C8 metadata (`code`, `message`) to the resulting exception
+/// instance.
+///
+/// Parity surface: Node, WASM, and .NET expose `.code` directly on
+/// license errors. By setting attributes on the `PyErr` value here we
+/// match that contract — users can branch on
+/// `e.code == "E-LICENSE-INVALID"` without parsing the message string.
 fn pdfluent_license_err_to_py(e: pdfluent::Error) -> PyErr {
-    match e {
+    // Canonical C8 code from the Rust core (see crates/pdfluent/src/error.rs).
+    let code = e.code();
+    let (py_err, message) = match e {
         pdfluent::Error::InvalidLicense { reason } => {
-            PdfluentLicenseError::new_err(format!("invalid license: {reason}"))
+            let msg = format!("invalid license: {reason}");
+            (PdfluentLicenseError::new_err(msg.clone()), msg)
         }
         pdfluent::Error::FeatureNotInTier {
             capability,
             current_tier,
             required_tier,
-        } => PdfluentLicenseError::new_err(format!(
-            "capability {capability:?} not available in {current_tier:?}; requires {required_tier:?}"
-        )),
-        other => PdfluentError::new_err(other.to_string()),
-    }
+        } => {
+            let msg = format!(
+                "capability {capability:?} not available in {current_tier:?}; requires {required_tier:?}"
+            );
+            (PdfluentLicenseError::new_err(msg.clone()), msg)
+        }
+        pdfluent::Error::CapabilityNotCompiled {
+            capability,
+            feature_flag,
+        } => {
+            let msg = format!(
+                "capability {capability:?} is not compiled into this build \
+                 (enable the {feature_flag:?} cargo feature)"
+            );
+            (PdfluentLicenseError::new_err(msg.clone()), msg)
+        }
+        other => {
+            let msg = other.to_string();
+            // Non-license errors keep the canonical code on the base class so
+            // every typed PdfluentError carries a `code` if the Rust side has
+            // one — but only license errors are exposed via this helper.
+            (PdfluentError::new_err(msg.clone()), msg)
+        }
+    };
+    attach_code_attrs(&py_err, code, &message);
+    py_err
 }
+
+/// Attach `code` and `message` attributes to a `PyErr` instance so the
+/// raised Python exception carries the canonical C8 metadata directly,
+/// matching the Node/WASM/.NET surface contract.
+fn attach_code_attrs(err: &PyErr, code: &str, message: &str) {
+    Python::with_gil(|py| {
+        let value = err.value(py);
+        // Best-effort: failures to set attributes (e.g. read-only base class)
+        // are silently ignored — the message is still available via `args[0]`.
+        let _ = value.setattr("code", code);
+        let _ = value.setattr("message", message);
+    });
+}
+
 
 /// Canonical license state snapshot from the Rust core.
 ///
