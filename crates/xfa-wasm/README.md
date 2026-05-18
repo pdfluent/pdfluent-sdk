@@ -4,9 +4,10 @@ WebAssembly distribution of the PDFluent PDF engine. Read, edit, annotate,
 redact, sign, and validate PDFs (including XFA) entirely in the browser —
 zero bytes go to a server.
 
-Published as `@pdfluent/xfa-wasm` on npm. (Crate name reflects historical
-XFA roots; the package now covers the full SDK surface needed for an
-in-browser PDF editor.)
+Published as `@pdfluent/sdk-wasm` on npm. (The crate directory is named
+`xfa-wasm` for historical XFA roots — the published npm package covers the
+full SDK surface needed for an in-browser PDF editor. Previously known as
+`@pdfluent/xfa-wasm`; renamed to `@pdfluent/sdk-wasm`.)
 
 ## Features
 
@@ -31,10 +32,10 @@ in-browser PDF editor.)
 cargo install wasm-pack
 
 # Build the WASM package
-wasm-pack build crates/@pdfluent/wasm --target web
+wasm-pack build crates/xfa-wasm --target web
 
 # Without rendering (smaller bundle)
-wasm-pack build crates/@pdfluent/wasm --target web -- --no-default-features
+wasm-pack build crates/xfa-wasm --target web -- --no-default-features
 ```
 
 ## Quick Start
@@ -148,7 +149,7 @@ const data = forms.exportJson();
 Build without optional features for a smaller WASM binary:
 
 ```bash
-wasm-pack build crates/@pdfluent/wasm --target web -- --no-default-features
+wasm-pack build crates/xfa-wasm --target web -- --no-default-features
 ```
 
 ## API Reference
@@ -175,7 +176,7 @@ is marked via `/Producer` metadata in Trial. Activate a license to remove
 the mark and unlock paid capabilities.
 
 ```js
-import init, { activateLicenseKey, licenseStatus } from '@pdfluent/xfa-wasm';
+import init, { activateLicenseKey, licenseStatus } from '@pdfluent/sdk-wasm';
 
 await init();
 activateLicenseKey('tier:enterprise');
@@ -278,7 +279,7 @@ operations to the same document, **`PdfDocMut` is dramatically faster**:
 #### Editor flow with PdfDocMut
 
 ```js
-import init, { PdfDocMut } from '@pdfluent/xfa-wasm';
+import init, { PdfDocMut } from '@pdfluent/sdk-wasm';
 
 await init();
 const bytes  = new Uint8Array(await (await fetch('/document.pdf')).arrayBuffer());
@@ -304,7 +305,7 @@ are equally fine. They are kept for backward compatibility but the
 recommended path for any multi-step edit is `PdfDocMut`.
 
 ```js
-import init, { PdfDoc } from '@pdfluent/xfa-wasm';
+import init, { PdfDoc } from '@pdfluent/sdk-wasm';
 await init();
 const doc = PdfDoc.open(bytes);
 const merged = doc.merge(otherBytes);   // single op, one-shot
