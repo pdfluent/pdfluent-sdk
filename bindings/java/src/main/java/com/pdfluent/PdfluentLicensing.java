@@ -109,7 +109,9 @@ public final class PdfluentLicensing {
     /**
      * Activate the process-global license from a key string.
      *
-     * @throws PdfluentException if the key is malformed or names an unknown tier
+     * @throws PdfluentLicenseException if the key is malformed or names an unknown tier
+     *         ({@link PdfluentException#getCode()} returns the canonical C8 code,
+     *         e.g. {@code "E-LICENSE-INVALID"})
      * @throws IllegalStateException if a different tier is already active
      */
     public static void activateKey(String key) {
@@ -122,7 +124,8 @@ public final class PdfluentLicensing {
      * Activate the license by reading the key from a UTF-8 text file.
      *
      * @throws IOException if the file cannot be read
-     * @throws PdfluentException if the file contents are not a valid key
+     * @throws PdfluentLicenseException if the file contents are not a valid key
+     *         ({@link PdfluentException#getCode()} returns the canonical C8 code)
      * @throws IllegalStateException if a different tier is already active
      */
     public static void activateFile(String path) throws IOException {
@@ -163,13 +166,19 @@ public final class PdfluentLicensing {
             case STATUS_OK:
                 return;
             case STATUS_INVALID_LICENSE:
-                throw new PdfluentException("invalid license: " + lastError());
+                // Canonical C8 catalogue: E-LICENSE-INVALID
+                throw new PdfluentLicenseException(
+                    "invalid license: " + lastError(), "E-LICENSE-INVALID");
             case STATUS_LICENSE_ALREADY_SET:
+                // Process-global tier conflict; mirror .NET behavior — surface
+                // as IllegalStateException for the caller, since the JVM must
+                // be restarted to switch tiers.
                 throw new IllegalStateException(
                     "license already set; restart the JVM to switch tiers: " + lastError());
             default:
-                throw new PdfluentException(
-                    "license operation failed (status " + status + "): " + lastError());
+                throw new PdfluentLicenseException(
+                    "license operation failed (status " + status + "): " + lastError(),
+                    "E-LICENSE-INVALID");
         }
     }
 

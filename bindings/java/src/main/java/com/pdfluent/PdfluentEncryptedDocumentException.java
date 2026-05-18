@@ -38,4 +38,27 @@ public class PdfluentEncryptedDocumentException extends PdfluentException {
     public PdfluentEncryptedDocumentException(String message, Throwable cause) {
         super(message, cause);
     }
+
+    /**
+     * Constructs a {@code PdfluentEncryptedDocumentException} with a detail message and a
+     * canonical C8 error code (see {@link PdfluentException#getCode()}).
+     *
+     * @param message the detail message
+     * @param code    canonical C8 catalogue code
+     */
+    public PdfluentEncryptedDocumentException(String message, String code) {
+        super(message, code);
+    }
+
+    /**
+     * Constructs a {@code PdfluentEncryptedDocumentException} with a detail message, a
+     * canonical C8 error code, and a cause.
+     *
+     * @param message the detail message
+     * @param code    canonical C8 catalogue code
+     * @param cause   the cause
+     */
+    public PdfluentEncryptedDocumentException(String message, String code, Throwable cause) {
+        super(message, code, cause);
+    }
 }
