@@ -36,7 +36,14 @@ class PdfluentIoError(PdfluentError):
     """Raised on file-system I/O errors."""
 
 class PdfluentLicenseError(PdfluentError):
-    """Raised on license validation errors (invalid key, expired, quota exceeded)."""
+    """Raised on license validation errors (invalid key, expired, quota exceeded).
+
+    Instances raised through the public ``pdfluent`` API carry canonical C8
+    metadata: ``code`` (e.g. ``"E-LICENSE-INVALID"``) and ``message``.
+    """
+
+    code: str
+    message: str
 
 class PdfluentGeometryError(PdfluentError):
     """Raised when a page has an invalid or unsupported geometry."""

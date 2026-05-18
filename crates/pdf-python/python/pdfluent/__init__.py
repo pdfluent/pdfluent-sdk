@@ -39,7 +39,7 @@ import base64
 import json
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import NoReturn, Optional
 
 from pdfluent._native import (
     Document,
@@ -87,6 +87,38 @@ _TIER_MAP: dict[str, str] = {
     "enterprise": "enterprise",
     "archival": "business",
 }
+
+
+# Canonical C8 license error codes — mirror the Rust `Error::code()` strings
+# defined in `crates/pdfluent/src/error.rs`. The Python wrapper layer
+# pre-validation raise-sites map to `E-LICENSE-INVALID` since they cover the
+# format / parse / IO failure class that the Rust core would also code as
+# `E-LICENSE-INVALID`. Errors that originate inside the Rust core
+# (`set_license_key`, capability checks) already carry the correct code via
+# `pdfluent_license_err_to_py` in src/lib.rs.
+LICENSE_CODE_INVALID = "E-LICENSE-INVALID"
+LICENSE_CODE_FEATURE_NOT_IN_TIER = "E-LICENSE-FEATURE-NOT-IN-TIER"
+LICENSE_CODE_CAPABILITY_NOT_COMPILED = "E-LICENSE-CAPABILITY-NOT-COMPILED"
+
+
+def _raise_license_error(
+    message: str,
+    code: str = LICENSE_CODE_INVALID,
+    cause: Optional[BaseException] = None,
+) -> NoReturn:
+    """Raise ``PdfluentLicenseError`` with a canonical C8 ``code`` attribute attached.
+
+    Sets ``code`` and ``message`` on the exception instance so callers can
+    branch on the canonical error class without parsing the human-readable
+    message string — matching the Node, WASM, and .NET parity surfaces.
+    """
+    err = PdfluentLicenseError(message)
+    # Set on the instance so ``except PdfluentLicenseError as e: e.code`` works.
+    err.code = code  # type: ignore[attr-defined]
+    err.message = message  # type: ignore[attr-defined]
+    if cause is not None:
+        raise err from cause
+    raise err
 
 
 @dataclass
@@ -161,13 +193,20 @@ def activate_license(license_key: str) -> LicenseInfo:
     ------
     PdfluentLicenseError
         If the key is empty, malformed, has an unknown tier, or the Rust
-        core rejects it (e.g. conflicts with an already-set tier).
+        core rejects it (e.g. conflicts with an already-set tier). The
+        raised exception carries a ``code`` attribute holding the canonical
+        C8 error code (e.g. ``"E-LICENSE-INVALID"``,
+        ``"E-LICENSE-FEATURE-NOT-IN-TIER"``,
+        ``"E-LICENSE-CAPABILITY-NOT-COMPILED"``) and a ``message``
+        attribute mirroring the human-readable detail.  This matches the
+        Node, WASM, and .NET surfaces — callers can branch on the canonical
+        failure class without parsing the message string.
     """
     if not license_key:
         # Fall back to environment variable
         env_key = os.environ.get("PDFLUENT_LICENSE_KEY", "")
         if not env_key:
-            raise PdfluentLicenseError(
+            _raise_license_error(
                 "license_key is empty and PDFLUENT_LICENSE_KEY is not set"
             )
         license_key = env_key
@@ -180,7 +219,9 @@ def activate_license(license_key: str) -> LicenseInfo:
             with open(license_key, encoding="utf-8") as f:
                 license_key = f.read()
         except OSError as exc:
-            raise PdfluentLicenseError(f"cannot read license file: {exc}") from exc
+            _raise_license_error(
+                f"cannot read license file: {exc}", cause=exc
+            )
 
     # Parse: JSON directly or base64-encoded JSON
     try:
@@ -190,18 +231,19 @@ def activate_license(license_key: str) -> LicenseInfo:
             decoded = base64.b64decode(license_key.strip())
             payload = json.loads(decoded)
     except Exception as exc:
-        raise PdfluentLicenseError(f"malformed license key: {exc}") from exc
+        _raise_license_error(f"malformed license key: {exc}", cause=exc)
 
     # Map JSON tier to canonical Rust tier format
     json_tier = str(payload.get("tier", "trial")).lower()
     rust_tier = _TIER_MAP.get(json_tier)
     if rust_tier is None:
-        raise PdfluentLicenseError(
+        _raise_license_error(
             f"unknown license tier {json_tier!r}; "
             f"expected one of: {', '.join(_TIER_MAP)}"
         )
 
-    # Activate in the Rust core — raises PdfluentLicenseError on failure
+    # Activate in the Rust core — raises PdfluentLicenseError on failure.
+    # Rust-originated errors already carry .code via pdfluent_license_err_to_py.
     _native_set_license_key(f"tier:{rust_tier}")
 
     # Read back the canonical state from the Rust core
@@ -217,7 +259,7 @@ def activate_license(license_key: str) -> LicenseInfo:
             seats=int(payload.get("seats", 1)),
         )
     except (KeyError, TypeError, ValueError) as exc:
-        raise PdfluentLicenseError(f"invalid license payload: {exc}") from exc
+        _raise_license_error(f"invalid license payload: {exc}", cause=exc)
 
 
 def license_status() -> str:
