@@ -800,8 +800,8 @@ fn xfa_flatten_inner(
         embed_resolved_fonts(&mut doc, &resolved_fonts, &layout);
 
     let config = XfaRenderConfig {
-        font_map,
-        font_metrics_data: metrics_data,
+        font_map: std::sync::Arc::new(font_map),
+        font_metrics_data: std::sync::Arc::new(metrics_data),
         ..Default::default()
     };
 
