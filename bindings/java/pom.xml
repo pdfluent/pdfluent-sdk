@@ -61,25 +61,16 @@
          Properties
          ================================================================ -->
     <properties>
-        <maven.compiler.release>11</maven.compiler.release>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     </properties>
 
     <!-- ================================================================
          Dependencies
-
-         JNA is required for the libpdf_capi (C ABI) loader path used by
-         PdfDocument and PdfluentLicensing. The raw-JNI path used by
-         PdfluentDocument loads libpdfluent_java via System.loadLibrary
-         and does not require JNA at runtime.
          ================================================================ -->
     <dependencies>
-        <dependency>
-            <groupId>net.java.dev.jna</groupId>
-            <artifactId>jna</artifactId>
-            <version>5.14.0</version>
-        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
@@ -92,6 +83,21 @@
          Build
          ================================================================ -->
     <build>
+        <!-- Bundle LICENSE into the jar at META-INF/LICENSE so downstream
+             consumers always have the commercial-license text available. -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>${project.basedir}</directory>
+                <includes>
+                    <include>LICENSE</include>
+                </includes>
+                <targetPath>META-INF</targetPath>
+            </resource>
+        </resources>
+
         <plugins>
             <!-- Compiler: -Werror equivalent via failOnWarning -->
             <plugin>
@@ -99,10 +105,14 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
                 <configuration>
-                    <release>11</release>
+                    <source>11</source>
+                    <target>11</target>
                     <compilerArgs>
                         <arg>-Xlint:all</arg>
                         <arg>-Xlint:-processing</arg>
+                        <!-- Suppress "system modules path not set" when building
+                             with a JDK newer than 11 but targeting Java 11. -->
+                        <arg>-Xlint:-options</arg>
                         <arg>-Werror</arg>
                     </compilerArgs>
                 </configuration>

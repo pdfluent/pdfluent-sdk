@@ -15,7 +15,9 @@
     "index.js",
     "index.mjs",
     "index.d.ts",
-    "*.node"
+    "*.node",
+    "LICENSE",
+    "README.md"
   ],
   "napi": {
     "binaryName": "pdf-node",
@@ -58,7 +60,7 @@
   "licenseUrl": "https://pdfluent.com/terms",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pdfluent/PDFluent-project"
+    "url": "https://github.com/pdfluent/examples"
   },
   "homepage": "https://pdfluent.com",
   "bugs": {
