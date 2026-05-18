@@ -76,6 +76,60 @@ fn throw_pdf_parse_exception(env: &mut JNIEnv, msg: &str) {
     let _ = env.throw_new("com/pdfluent/PdfluentParseException", msg);
 }
 
+/// Construct and throw a PDFluent exception subclass that carries a canonical
+/// C8 error code via the `(String message, String code)` constructor.
+///
+/// Falls back to the no-code constructor via `env.throw_new` if anything
+/// goes wrong while building the typed throwable, so a missing code never
+/// degrades into a silently-swallowed JNI error.
+fn throw_pdf_exception_with_code(
+    env: &mut JNIEnv,
+    class_name: &str,
+    msg: &str,
+    code: &str,
+) {
+    // Try the (String, String) constructor introduced in 0.2 first.
+    let class = match env.find_class(class_name) {
+        Ok(c) => c,
+        Err(_) => {
+            let _ = env.throw_new(class_name, msg);
+            return;
+        }
+    };
+    let msg_obj = match env.new_string(msg) {
+        Ok(s) => s,
+        Err(_) => {
+            let _ = env.throw_new(class_name, msg);
+            return;
+        }
+    };
+    let code_obj = match env.new_string(code) {
+        Ok(s) => s,
+        Err(_) => {
+            let _ = env.throw_new(class_name, msg);
+            return;
+        }
+    };
+    let throwable = env.new_object(
+        &class,
+        "(Ljava/lang/String;Ljava/lang/String;)V",
+        &[
+            jni::objects::JValue::Object(&msg_obj),
+            jni::objects::JValue::Object(&code_obj),
+        ],
+    );
+    match throwable {
+        Ok(obj) => {
+            // SAFETY: obj is a freshly-constructed Throwable subclass; the
+            // JVM accepts the raw JObject and takes ownership.
+            let _ = env.throw(jni::objects::JThrowable::from(obj));
+        }
+        Err(_) => {
+            let _ = env.throw_new(class_name, msg);
+        }
+    }
+}
+
 /// Lazily initialize lopdf from the document's raw bytes.
 fn ensure_lopdf(
     handle: &'static Arc<JniDocument>,
@@ -1203,6 +1257,12 @@ fn java_source_to_int(s: &str) -> jint {
 }
 
 fn map_license_error_for_java(env: &mut JNIEnv<'_>, e: pdfluent::Error) {
+    // Canonical C8 codes — see docs/error_catalogue.md and Rust
+    // `pdfluent::Error::code()` for the source of truth.
+    const E_LICENSE_INVALID: &str = "E-LICENSE-INVALID";
+    const E_LICENSE_FEATURE_NOT_IN_TIER: &str = "E-LICENSE-FEATURE-NOT-IN-TIER";
+    const E_LICENSE_CAPABILITY_NOT_COMPILED: &str = "E-LICENSE-CAPABILITY-NOT-COMPILED";
+
     match e {
         pdfluent::Error::InvalidLicense { reason } => {
             if reason.contains("already set") {
@@ -1211,8 +1271,29 @@ fn map_license_error_for_java(env: &mut JNIEnv<'_>, e: pdfluent::Error) {
                     format!("license already set: {reason}"),
                 );
             } else {
-                throw_pdf_exception(env, &format!("invalid license: {reason}"));
+                throw_pdf_exception_with_code(
+                    env,
+                    "com/pdfluent/PdfluentLicenseException",
+                    &format!("invalid license: {reason}"),
+                    E_LICENSE_INVALID,
+                );
             }
+        }
+        pdfluent::Error::FeatureNotInTier { .. } => {
+            throw_pdf_exception_with_code(
+                env,
+                "com/pdfluent/PdfluentLicenseException",
+                &format!("license error: {e}"),
+                E_LICENSE_FEATURE_NOT_IN_TIER,
+            );
+        }
+        pdfluent::Error::CapabilityNotCompiled { .. } => {
+            throw_pdf_exception_with_code(
+                env,
+                "com/pdfluent/PdfluentLicenseException",
+                &format!("license error: {e}"),
+                E_LICENSE_CAPABILITY_NOT_COMPILED,
+            );
         }
         other => throw_pdf_exception(env, &format!("license error: {other}")),
     }

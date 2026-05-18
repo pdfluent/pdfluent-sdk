@@ -39,15 +39,10 @@ public final class PdfluentNativeLoadException extends PdfluentException {
      *                           order
      */
     public PdfluentNativeLoadException(String libName, List<String> attemptedLocations) {
-        super(buildMessage(libName, attemptedLocations));
+        super(buildMessage(libName, attemptedLocations), CODE);
         this.libName = libName;
         this.attemptedLocations = Collections.unmodifiableList(
             new java.util.ArrayList<>(attemptedLocations));
-    }
-
-    /** Error catalogue code; equal to {@link #CODE}. */
-    public String getCode() {
-        return CODE;
     }
 
     /** Short library stem that failed to load (no {@code lib} prefix, no extension). */
