@@ -464,15 +464,27 @@ audit_dotnet() {
         fail "  No .nuspec found inside .nupkg"
         identity_ok=false
     else
-        local pkg_id; pkg_id=$(grep -oPm1 '(?<=<id>)[^<]+' "$nuspec" 2>/dev/null || echo "?")
-        local pkg_ver; pkg_ver=$(grep -oPm1 '(?<=<version>)[^<]+' "$nuspec" 2>/dev/null || echo "?")
-        local pkg_url; pkg_url=$(grep -oPm1 '(?<=<projectUrl>)[^<]+' "$nuspec" 2>/dev/null || echo "?")
-        log "  PackageId: ${pkg_id} @ ${pkg_ver} | projectUrl: ${pkg_url}"
-        if ! echo "$pkg_id" | grep -qi "pdfluent"; then
-            fail "  PackageId '${pkg_id}' does not contain 'pdfluent'"
+        # Portable XML tag extraction (BSD grep on macOS lacks -P; use sed instead).
+        # Returns first <tag>...</tag> inner text, or empty if not present.
+        _extract_xml_tag() {
+            local tag="$1" file="$2"
+            sed -n "s/.*<${tag}>\\([^<]*\\)<\\/${tag}>.*/\\1/p" "$file" 2>/dev/null | head -1
+        }
+        local pkg_id; pkg_id=$(_extract_xml_tag "id" "$nuspec")
+        local pkg_ver; pkg_ver=$(_extract_xml_tag "version" "$nuspec")
+        local pkg_url; pkg_url=$(_extract_xml_tag "projectUrl" "$nuspec")
+        # Normalise to lowercase for case-insensitive identity check (NuGet PackageIds
+        # are case-insensitive per spec — PDFluent, pdfluent, PDFluent.Core all valid).
+        local pkg_id_lc; pkg_id_lc=$(printf '%s' "$pkg_id" | tr '[:upper:]' '[:lower:]')
+        log "  PackageId: ${pkg_id:-<empty>} @ ${pkg_ver:-<empty>} | projectUrl: ${pkg_url:-<empty>}"
+        if [[ -z "$pkg_id" ]]; then
+            fail "  PackageId could not be extracted from .nuspec (missing <id> tag)"
+            identity_ok=false
+        elif [[ "$pkg_id_lc" != *pdfluent* ]]; then
+            fail "  PackageId '${pkg_id}' does not contain 'pdfluent' (case-insensitive)"
             identity_ok=false
         fi
-        if echo "$pkg_url" | grep -qi "github"; then
+        if [[ -n "$pkg_url" ]] && printf '%s' "$pkg_url" | grep -qi "github"; then
             fail "  projectUrl contains github.com: ${pkg_url}"
             identity_ok=false
         fi
@@ -481,8 +493,8 @@ audit_dotnet() {
     log "  Step 4: leakage scan via audit_package_tree.py"
     local scan_exit=0
     if ! $DRY_RUN; then
-        local pkg_name; pkg_name=$(grep -oPm1 '(?<=<id>)[^<]+' "${nuspec:-/dev/null}" 2>/dev/null || echo "pdfluent-dotnet")
-        local pkg_ver_s; pkg_ver_s=$(grep -oPm1 '(?<=<version>)[^<]+' "${nuspec:-/dev/null}" 2>/dev/null || echo "unknown")
+        local pkg_name="${pkg_id:-pdfluent-dotnet}"
+        local pkg_ver_s="${pkg_ver:-unknown}"
         python3 "${AUDIT_TREE}" \
             --tree "${tmpdir}/unpacked" \
             --out "${REPORTS_DIR}" \
@@ -591,6 +603,13 @@ audit_java() {
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+# Allow this script to be sourced (e.g. by regression tests) without executing
+# Main. Tests source the file and call the per-channel functions directly,
+# bypassing Gate 0 (clean tree) and the global arg parser.
+if [[ "${AUDIT_ALL_PACKAGES_SOURCED:-0}" == "1" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 cd "${REPO_ROOT}"
 
 log "audit-all-packages.sh — PDFluent release gate runner"
