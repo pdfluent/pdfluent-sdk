@@ -117,8 +117,7 @@ pub struct LicenseStatus {
 ///     or process already activated to a different tier.
 #[napi]
 pub fn activate(license_key: String) -> Result<()> {
-    pdfl_set_license_key(&license_key)
-        .map_err(|e| pdfluent_err_to_napi(e, "activate"))?;
+    pdfl_set_license_key(&license_key).map_err(|e| pdfluent_err_to_napi(e, "activate"))?;
     record_source_explicit();
     Ok(())
 }

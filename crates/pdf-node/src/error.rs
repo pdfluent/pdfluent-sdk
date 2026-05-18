@@ -64,18 +64,14 @@ pub fn pdfluent_err_to_napi(err: pdfluent::Error, operation: &str) -> napi::Erro
     // detailed human-readable form goes in `cause` so callers that want it
     // can render it but typed callers branch on `code` instead.
     let (message, cause): (&'static str, String) = match &err {
-        pdfluent::Error::InvalidLicense { reason } => {
-            ("license key is invalid", reason.clone())
-        }
+        pdfluent::Error::InvalidLicense { reason } => ("license key is invalid", reason.clone()),
         pdfluent::Error::FeatureNotInTier {
             capability,
             current_tier,
             required_tier,
         } => (
             "feature not available in current license tier",
-            format!(
-                "{capability:?} requires {required_tier:?}; current tier is {current_tier:?}"
-            ),
+            format!("{capability:?} requires {required_tier:?}; current tier is {current_tier:?}"),
         ),
         pdfluent::Error::CapabilityNotCompiled {
             capability,

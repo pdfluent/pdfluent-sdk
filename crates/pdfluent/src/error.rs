@@ -600,9 +600,7 @@ mod tests {
             Error::InvalidLicense {
                 reason: "expired".into(),
             },
-            Error::UnsupportedOnWasm {
-                operation: "sign",
-            },
+            Error::UnsupportedOnWasm { operation: "sign" },
             Error::MissingDependency {
                 dep: "pdfium",
                 install_hint: "see README",
@@ -625,10 +623,7 @@ mod tests {
         let mut seen: HashSet<&'static str> = HashSet::new();
         for v in &variants {
             let code = v.code();
-            assert!(
-                seen.insert(code),
-                "Duplicate error code detected: {code}"
-            );
+            assert!(seen.insert(code), "Duplicate error code detected: {code}");
         }
 
         // Confirm every variant is covered (count guard).
