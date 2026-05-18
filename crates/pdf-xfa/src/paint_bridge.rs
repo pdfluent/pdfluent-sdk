@@ -793,6 +793,7 @@ mod tests {
             nodes: vec![field_node_with_border(
                 "name", 10.0, 10.0, 200.0, 20.0, "Hello",
             )],
+            runtime_instantiated: false,
         };
         let cmds = layout_to_commands(&page, &test_config());
         assert_eq!(cmds.len(), 3); // FillRect + StrokeRect + DrawText
@@ -807,6 +808,7 @@ mod tests {
             width: 612.0,
             height: 792.0,
             nodes: vec![field_node("name", 10.0, 10.0, 200.0, 20.0, "Hello")],
+            runtime_instantiated: false,
         };
         let cmds = layout_to_commands(&page, &test_config());
         // Default FormNodeStyle has no border_width_pt → no StrokeRect
@@ -821,6 +823,7 @@ mod tests {
             width: 612.0,
             height: 792.0,
             nodes: vec![field_node("name", 10.0, 10.0, 200.0, 20.0, "")],
+            runtime_instantiated: false,
         };
         let cmds = layout_to_commands(&page, &test_config());
         assert_eq!(cmds.len(), 1); // FillRect only, no border, no text
@@ -834,6 +837,7 @@ mod tests {
             width: 612.0,
             height: 792.0,
             nodes: vec![field_node("name", 10.0, 10.0, 200.0, 20.0, "Hi")],
+            runtime_instantiated: false,
         };
         let cmds = layout_to_commands(&page, &config);
         assert_eq!(cmds.len(), 1); // DrawText only, no FillRect, no border
@@ -869,6 +873,7 @@ mod tests {
                 display_items: vec![],
                 save_items: vec![],
             }],
+            runtime_instantiated: false,
         };
         let cmds = layout_to_commands(&page, &test_config());
         // FillRect (from bg) + DrawMultilineText
@@ -886,6 +891,7 @@ mod tests {
                 field_node("a", 10.0, 10.0, 100.0, 20.0, "A"),
                 field_node("b", 10.0, 40.0, 100.0, 20.0, "B"),
             ],
+            runtime_instantiated: false,
         };
         let cmds = layout_to_commands(&page, &test_config());
         // 2 fields × 2 commands each = 4 (FillRect + DrawText, no borders)
@@ -926,6 +932,7 @@ mod tests {
                 display_items: vec![],
                 save_items: vec![],
             }],
+            runtime_instantiated: false,
         };
         let cmds = layout_to_commands(&page, &test_config());
         assert_eq!(cmds.len(), 1);
@@ -990,6 +997,7 @@ mod tests {
                 display_items: vec![],
                 save_items: vec![],
             }],
+            runtime_instantiated: false,
         };
         let config = XfaRenderConfig::default();
         let cmds = layout_to_commands(&page, &config);

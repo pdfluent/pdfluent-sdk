@@ -1241,15 +1241,24 @@ fn base_encoding_tables() -> &'static PdfBaseEncodingTables {
 }
 
 fn parse_base_encoding_table(const_name: &str) -> [Option<u16>; 256] {
+    // The data parsed here is embedded at compile time via `include_str!`.
+    // All three invariants below (marker present, bracket closed, 256 entries)
+    // are structural properties of the checked-in encodings/mappings.rs file.
+    // A failure here is an unrecoverable programmer error (wrong source file),
+    // not a runtime error, so `expect` with an explanatory message is appropriate.
     let src = include_str!("encodings/mappings.rs");
     let marker = format!("pub const {const_name}: CodedCharacterSet = [");
     let start = src
         .find(&marker)
-        .unwrap_or_else(|| panic!("missing {const_name} in lopdf mappings"));
+        // INFALLIBLE: const_name must exist in the compile-time-embedded mappings.rs
+        .unwrap_or_else(|| panic!("missing {const_name} in compile-time-embedded lopdf mappings"));
     let body = &src[start + marker.len()..];
     let end = body
         .find("];")
-        .unwrap_or_else(|| panic!("unterminated {const_name} in lopdf mappings"));
+        // INFALLIBLE: every table opened by the marker above has a closing `];`
+        .unwrap_or_else(|| {
+            panic!("unterminated {const_name} in compile-time-embedded lopdf mappings")
+        });
 
     let mut entries = Vec::with_capacity(256);
     for line in body[..end].lines() {
@@ -1272,7 +1281,8 @@ fn parse_base_encoding_table(const_name: &str) -> [Option<u16>; 256] {
     let entry_count = entries.len();
     entries
         .try_into()
-        .unwrap_or_else(|_| panic!("expected 256 entries in {const_name}, got {entry_count}"))
+        // INFALLIBLE: every CodedCharacterSet table in mappings.rs has exactly 256 entries
+        .unwrap_or_else(|_| panic!("expected 256 entries in {const_name}, got {entry_count}; compile-time data invariant violated"))
 }
 
 fn scan_system_fonts() -> HashMap<String, PathBuf> {

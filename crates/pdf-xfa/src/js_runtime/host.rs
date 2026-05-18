@@ -158,6 +158,41 @@ impl HostBindings {
         self.current_id
     }
 
+    /// XFA-DATA-M3C: true when `node_id` is a container (root, subform,
+    /// area, subformSet, exclGroup) — the node types for which the
+    /// underscore-shorthand instanceManager pattern is well-defined per
+    /// XFA 3.3 §6.4.3.2. Fields and draws should return `undefined` for
+    /// `_<NAME>` access rather than an empty-manager sentinel.
+    pub fn node_is_container(&mut self, node_id: FormNodeId, generation: u64) -> bool {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.handle_is_live(node_id, generation) {
+            return false;
+        }
+        let Some(form) = self.form_ref() else {
+            return false;
+        };
+        is_instance_node(&form.get(node_id).node_type)
+    }
+
+    /// XFA 3.3 §5.4 / Adobe SDK: form-tree parent of an arbitrary node.
+    ///
+    /// Used by the JS proxy to materialise the bare global `parent` (and the
+    /// `<handle>.parent` chain segment) without exposing the internal
+    /// parent-map representation to scripts. Returns `None` for the root, for
+    /// stale handles, and when no `FormTree` is installed.
+    pub fn parent_of_node(&mut self, node_id: FormNodeId, generation: u64) -> Option<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.handle_is_live(node_id, generation) {
+            return None;
+        }
+        let form = self.form_ref()?;
+        if self.root_id.0 >= form.nodes.len() {
+            return None;
+        }
+        let parents = build_parent_map(form, self.root_id);
+        parents.get(&node_id).copied()
+    }
+
     /// Read and clear host metadata counters.
     pub fn take_metadata(&mut self) -> RuntimeMetadata {
         std::mem::take(&mut self.metadata)
@@ -229,10 +264,12 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes,
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_node:NoMatch", path);
                 return None;
             }
             ResolveOutcome::BindingError => {
                 self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                debug_log_resolve_miss("resolve_node:BindingError", path);
                 return None;
             }
         };
@@ -246,6 +283,7 @@ impl HostBindings {
             .find(|node_id| matches!(form.get(*node_id).node_type, FormNodeType::Field { .. }));
         if found.is_none() {
             self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+            debug_log_resolve_miss("resolve_node:NoField", path);
         }
         found
     }
@@ -256,10 +294,14 @@ impl HostBindings {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
         let nodes = match self.resolve_path(path) {
             ResolveOutcome::Ok(nodes) => nodes,
-            ResolveOutcome::NoMatch => return Vec::new(),
+            ResolveOutcome::NoMatch => {
+                debug_log_resolve_miss("resolve_nodes:NoMatch", path);
+                return Vec::new();
+            }
             ResolveOutcome::BindingError => {
                 self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_nodes:BindingError", path);
                 return Vec::new();
             }
         };
@@ -287,6 +329,7 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes.into_iter().next(),
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_implicit:NoMatch", name);
                 None
             }
             ResolveOutcome::BindingError => {
@@ -297,8 +340,8 @@ impl HostBindings {
     }
 
     /// Resolve all viable implicit JavaScript identifier candidates from the
-    /// current XFA scope. The first candidate is identical to
-    /// [`resolve_implicit`]; later candidates preserve same-name alternatives
+    /// current XFA scope. The first candidate is identical to the result of
+    /// `resolve_implicit`; later candidates preserve same-name alternatives
     /// so the JS proxy can filter them when a chained property supplies the
     /// next SOM segment.
     pub fn resolve_implicit_candidates(
@@ -311,8 +354,31 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes,
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_implicit_candidates:NoMatch", name);
                 Vec::new()
             }
+            ResolveOutcome::BindingError => {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                Vec::new()
+            }
+        }
+    }
+
+    /// XFA-DATA-M3C: quiet probe variant of [`resolve_implicit_candidates`].
+    /// Same lookup semantics, but a miss does not bump `resolve_failures`.
+    /// Used by the JS proxy when checking the existence of a bare
+    /// underscore-shorthand global (`_<Name>`) before deciding whether to
+    /// surface an instance-manager sentinel; a miss is the expected
+    /// schema-optional path and would otherwise inflate the metric.
+    pub fn resolve_implicit_candidates_quiet(
+        &mut self,
+        current_id: FormNodeId,
+        name: &str,
+    ) -> Vec<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        match self.resolve_implicit_inner(current_id, name) {
+            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::NoMatch => Vec::new(),
             ResolveOutcome::BindingError => {
                 self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
                 Vec::new()
@@ -327,6 +393,7 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes.into_iter().next(),
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_child:NoMatch", name);
                 None
             }
             ResolveOutcome::BindingError => {
@@ -352,8 +419,30 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes,
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_child_candidates:NoMatch", name);
                 Vec::new()
             }
+            ResolveOutcome::BindingError => {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                Vec::new()
+            }
+        }
+    }
+
+    /// XFA-DATA-M3C: quiet variant of [`resolve_child_candidates`] that does
+    /// not bump the `resolve_failures` counter on a no-match. Used by the JS
+    /// proxy when an expected-to-miss probe (e.g. underscore-shorthand for an
+    /// optional schema-bound subform) should not be reported as a script
+    /// failure. Misses still surface to the caller as an empty vector.
+    pub fn resolve_child_candidates_quiet(
+        &mut self,
+        parent_ids: &[FormNodeId],
+        name: &str,
+    ) -> Vec<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        match self.resolve_child_candidates_inner(parent_ids, name) {
+            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::NoMatch => Vec::new(),
             ResolveOutcome::BindingError => {
                 self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
                 Vec::new()
@@ -376,6 +465,7 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes,
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_scoped_candidates:NoMatch", name);
                 Vec::new()
             }
             ResolveOutcome::BindingError => {
@@ -383,6 +473,358 @@ impl HostBindings {
                 Vec::new()
             }
         }
+    }
+
+    /// Phase D-θ: implicit-scope resolution with single-segment lookahead.
+    ///
+    /// First runs the standard implicit walk. When `next_hint` is non-empty
+    /// it filters those candidates to ones whose subtree contains the hint
+    /// name; if at least one survives that becomes the result. If the
+    /// nearest-scope candidate set is hint-empty, the search is **widened**:
+    /// every ancestor scope is rescanned for same-name candidates and only
+    /// those satisfying the hint are kept. This is what unlocks chains like
+    /// `F.P1.X.rawValue` where the nearest `F` lacks a `P1.X` descendant but
+    /// an `F` higher in the tree does. When even the widened search finds
+    /// nothing, the un-hinted baseline is returned so single-token reads
+    /// behave identically to [`resolve_implicit_candidates`].
+    pub fn resolve_implicit_candidates_hinted(
+        &mut self,
+        current_id: FormNodeId,
+        name: &str,
+        next_hint: &str,
+    ) -> Vec<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        let name = name.trim();
+        let hint = next_hint.trim();
+        if name.is_empty() || !self.consume_resolve_call() {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Vec::new();
+        }
+        let Some(form) = self.form_ref() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Vec::new();
+        };
+        if current_id.0 >= form.nodes.len() || self.root_id.0 >= form.nodes.len() {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Vec::new();
+        }
+        let parents = build_parent_map(form, self.root_id);
+        let baseline = match resolve_implicit_candidates_in_scope(form, &parents, current_id, name)
+        {
+            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::NoMatch => {
+                self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                debug_log_resolve_miss("resolve_implicit_candidates_hinted:NoMatch", name);
+                return Vec::new();
+            }
+            ResolveOutcome::BindingError => {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                return Vec::new();
+            }
+        };
+        if hint.is_empty() {
+            return baseline;
+        }
+        let baseline_hit: Vec<FormNodeId> = baseline
+            .iter()
+            .copied()
+            .filter(|n| subtree_contains_name(form, *n, hint, MAX_SOM_DEPTH))
+            .collect();
+        if !baseline_hit.is_empty() {
+            return baseline_hit;
+        }
+        // Widen: walk every ancestor scope, collect same-name candidates,
+        // keep only those whose subtree contains the hint. Bounded by
+        // MAX_SOM_DEPTH and MAX_RESOLVE_CANDIDATES.
+        let mut widened: Vec<FormNodeId> = Vec::new();
+        let mut scope = Some(current_id);
+        let mut depth = 0usize;
+        while let Some(scope_id) = scope {
+            if depth > MAX_SOM_DEPTH || scope_id.0 >= form.nodes.len() {
+                break;
+            }
+            let mut candidates =
+                collect_named_descendant_candidates(form, scope_id, name, MAX_SOM_DEPTH);
+            order_candidates(form, &mut candidates);
+            for node_id in candidates {
+                if !widened.contains(&node_id)
+                    && subtree_contains_name(form, node_id, hint, MAX_SOM_DEPTH)
+                {
+                    widened.push(node_id);
+                    if widened.len() >= MAX_RESOLVE_CANDIDATES {
+                        return widened;
+                    }
+                }
+            }
+            scope = parents.get(&scope_id).copied();
+            depth += 1;
+        }
+        if widened.is_empty() {
+            baseline
+        } else {
+            widened
+        }
+    }
+
+    /// Phase D-θ: child resolution with single-segment lookahead.
+    ///
+    /// Returns the same candidates as [`resolve_child_candidates`] but,
+    /// when `next_hint` is non-empty, keeps only candidates whose subtree
+    /// contains a node named `next_hint`. Falls back to the un-hinted list
+    /// when the filter would empty the result.
+    pub fn resolve_child_candidates_hinted(
+        &mut self,
+        parent_ids: &[FormNodeId],
+        name: &str,
+        next_hint: &str,
+    ) -> Vec<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        let candidates = match self.resolve_child_candidates_inner(parent_ids, name) {
+            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::NoMatch => {
+                self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                return Vec::new();
+            }
+            ResolveOutcome::BindingError => {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                return Vec::new();
+            }
+        };
+        self.apply_lookahead_filter(candidates, next_hint)
+    }
+
+    fn apply_lookahead_filter(
+        &self,
+        candidates: Vec<FormNodeId>,
+        next_hint: &str,
+    ) -> Vec<FormNodeId> {
+        let hint = next_hint.trim();
+        if hint.is_empty() || candidates.len() <= 1 {
+            return candidates;
+        }
+        let Some(form) = self.form_ref() else {
+            return candidates;
+        };
+        let filtered: Vec<FormNodeId> = candidates
+            .iter()
+            .copied()
+            .filter(|node_id| subtree_contains_name(form, *node_id, hint, MAX_SOM_DEPTH))
+            .collect();
+        if filtered.is_empty() {
+            candidates
+        } else {
+            filtered
+        }
+    }
+
+    /// Phase D-θ.2: full-chain resolution with backtracking.
+    ///
+    /// Walks `chain` segment-by-segment starting from `parent_ids` (or the
+    /// implicit scope of `implicit_origin` when `parent_ids` is empty), and
+    /// returns the candidate set that resolves the deepest into the chain.
+    ///
+    /// Rules:
+    /// - Entry: `parent_ids` non-empty → child resolution (direct child first,
+    ///   then bounded descendant DFS). `parent_ids` empty → implicit scope
+    ///   walk anchored at `implicit_origin` (mirrors `resolve_implicit_*`).
+    /// - Per step (k ≥ 1): for the running candidate set, prefer direct
+    ///   children whose name matches; if none, fall back to scoped-implicit
+    ///   resolution inside each candidate. Drop candidates that cannot
+    ///   advance and keep the survivors as the next layer.
+    /// - When the chain runs out of survivors mid-way and `strict` is
+    ///   false, the function returns the layer reached at the previous step
+    ///   (best-effort) so callers resolving a terminal property can still
+    ///   degrade gracefully. When `strict` is true, dead-end chains return
+    ///   an empty vec — used by the JS chain proxy to decide whether to
+    ///   expose a proxy for `A.B` when `A.B` cannot be reached at all.
+    /// - When `chain` is empty, the function returns the entry layer as-is.
+    /// - Costs exactly one `consume_resolve_call` slot for the whole chain so
+    ///   long terminal chains do not exhaust per-script budgets faster than
+    ///   the existing single-hop hinted resolvers.
+    /// - Returns at most [`MAX_RESOLVE_CANDIDATES`] candidates per layer.
+    pub fn resolve_with_full_chain(
+        &mut self,
+        parent_ids: &[FormNodeId],
+        chain: &[String],
+        implicit_origin: Option<FormNodeId>,
+    ) -> Vec<FormNodeId> {
+        self.resolve_with_full_chain_impl(parent_ids, chain, implicit_origin, false)
+    }
+
+    /// Phase D-θ.2: strict variant — return empty when the chain cannot be
+    /// completed at full depth. See [`resolve_with_full_chain`] for the
+    /// non-strict (best-effort) semantics.
+    pub fn resolve_with_full_chain_strict(
+        &mut self,
+        parent_ids: &[FormNodeId],
+        chain: &[String],
+        implicit_origin: Option<FormNodeId>,
+    ) -> Vec<FormNodeId> {
+        self.resolve_with_full_chain_impl(parent_ids, chain, implicit_origin, true)
+    }
+
+    fn resolve_with_full_chain_impl(
+        &mut self,
+        parent_ids: &[FormNodeId],
+        chain: &[String],
+        implicit_origin: Option<FormNodeId>,
+        strict: bool,
+    ) -> Vec<FormNodeId> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.consume_resolve_call() {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Vec::new();
+        }
+        let Some(form) = self.form_ref() else {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Vec::new();
+        };
+        if self.root_id.0 >= form.nodes.len() {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Vec::new();
+        }
+        if parent_ids
+            .iter()
+            .any(|node_id| node_id.0 >= form.nodes.len())
+        {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Vec::new();
+        }
+        if chain.is_empty() {
+            return parent_ids.to_vec();
+        }
+        if chain.len() > MAX_SOM_DEPTH {
+            self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+            return Vec::new();
+        }
+        for seg in chain {
+            if seg.trim().is_empty() {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                return Vec::new();
+            }
+        }
+
+        let parents = build_parent_map(form, self.root_id);
+
+        // Step 0: entry layer.
+        let entry_name = chain[0].trim();
+        let initial: Vec<FormNodeId> = if parent_ids.is_empty() {
+            let Some(origin) = implicit_origin else {
+                return Vec::new();
+            };
+            if origin.0 >= form.nodes.len() {
+                self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                return Vec::new();
+            }
+            match resolve_implicit_candidates_in_scope(form, &parents, origin, entry_name) {
+                ResolveOutcome::Ok(nodes) => nodes,
+                ResolveOutcome::NoMatch => return Vec::new(),
+                ResolveOutcome::BindingError => {
+                    self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
+                    return Vec::new();
+                }
+            }
+        } else {
+            // Entry from a known parent set: prefer direct children, fall back
+            // to bounded descendant DFS — same shape as
+            // `resolve_child_candidates_inner` but inline to avoid double
+            // resolve-call accounting.
+            let mut direct = Vec::new();
+            for &parent_id in parent_ids {
+                for &child_id in &form.get(parent_id).children {
+                    if form.get(child_id).name == entry_name {
+                        push_unique_candidate(&mut direct, child_id);
+                        if direct.len() >= MAX_RESOLVE_CANDIDATES {
+                            break;
+                        }
+                    }
+                }
+                if direct.len() >= MAX_RESOLVE_CANDIDATES {
+                    break;
+                }
+            }
+            if !direct.is_empty() {
+                direct
+            } else {
+                let mut descendants = Vec::new();
+                for &parent_id in parent_ids {
+                    let mut local = collect_named_descendant_candidates(
+                        form,
+                        parent_id,
+                        entry_name,
+                        MAX_SOM_DEPTH,
+                    );
+                    order_candidates(form, &mut local);
+                    for node_id in local {
+                        push_unique_candidate(&mut descendants, node_id);
+                        if descendants.len() >= MAX_RESOLVE_CANDIDATES {
+                            break;
+                        }
+                    }
+                    if descendants.len() >= MAX_RESOLVE_CANDIDATES {
+                        break;
+                    }
+                }
+                descendants
+            }
+        };
+
+        if initial.is_empty() {
+            return Vec::new();
+        }
+
+        // Walk the remaining segments. At each step, advance every candidate
+        // by its named child/scoped-implicit, keeping the survivors. If no
+        // candidate advances, return the previous layer (best-effort).
+        let mut layer = initial;
+        for seg in chain.iter().skip(1) {
+            let seg_name = seg.trim();
+            let mut next_layer: Vec<FormNodeId> = Vec::new();
+            for &node_id in &layer {
+                // Direct children first.
+                let mut found_any = false;
+                for &child_id in &form.get(node_id).children {
+                    if form.get(child_id).name == seg_name {
+                        push_unique_candidate(&mut next_layer, child_id);
+                        found_any = true;
+                        if next_layer.len() >= MAX_RESOLVE_CANDIDATES {
+                            break;
+                        }
+                    }
+                }
+                if !found_any {
+                    // Scoped-implicit fallback within this subtree only — same
+                    // behaviour as `resolve_scoped_candidates` per-anchor pass.
+                    if let ResolveOutcome::Ok(scoped) =
+                        resolve_implicit_candidates_in_scope(form, &parents, node_id, seg_name)
+                    {
+                        for cand in scoped {
+                            push_unique_candidate(&mut next_layer, cand);
+                            if next_layer.len() >= MAX_RESOLVE_CANDIDATES {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if next_layer.len() >= MAX_RESOLVE_CANDIDATES {
+                    break;
+                }
+            }
+            if next_layer.is_empty() {
+                // Dead end: in strict mode, return empty — the chain cannot
+                // be completed and the JS proxy must surface `undefined`.
+                // In non-strict mode, return the previous layer untouched
+                // so terminal-property access still has something to read
+                // off (graceful degradation, mirrors D-θ.1's
+                // `apply_lookahead_filter`).
+                if strict {
+                    return Vec::new();
+                }
+                return layer;
+            }
+            layer = next_layer;
+        }
+        layer
     }
 
     /// Count live sibling instances with the same name as `parent_id`.
@@ -583,6 +1025,26 @@ impl HostBindings {
     pub fn metadata_resolve_failure(&mut self) {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
         self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+    }
+
+    /// XFA-JS-HOST-STUBS — Record a call into a host capability that
+    /// requires genuine viewer / user interaction (UI dialog, signature
+    /// panel, document submit, etc.). The sandbox returned a safe default
+    /// value to keep the script running; this counter exists so the dispatch
+    /// site can surface a "would-have-been-interactive" signal without
+    /// inflating `runtime_errors`.
+    pub fn metadata_unsupported_host_call(&mut self) {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        self.metadata.unsupported_host_calls =
+            self.metadata.unsupported_host_calls.saturating_add(1);
+    }
+
+    /// Record a D-θ.2 probe call that was skipped because
+    /// `parentIds.length == 1 && chain.length == 1` (no same-name
+    /// ambiguity is possible with a single parent and a single-segment
+    /// chain — the host would return the same eagerIds regardless).
+    pub fn metadata_probe_skip(&mut self) {
+        self.metadata.probe_skips = self.metadata.probe_skips.saturating_add(1);
     }
 
     fn consume_resolve_call(&mut self) -> bool {
@@ -1382,6 +1844,15 @@ fn is_instance_node(node_type: &FormNodeType) -> bool {
     )
 }
 
+/// XFA-DATA-M3C diagnostic: log the SOM path that failed to resolve when the
+/// `XFA_JS_DEBUG` env var is set to `1`. Off by default so the dispatch path
+/// stays silent in normal operation.
+fn debug_log_resolve_miss(kind: &str, path: &str) {
+    if std::env::var("XFA_JS_DEBUG").ok().as_deref() == Some("1") {
+        eprintln!("XFA_JS_DEBUG {kind} path={path:?}");
+    }
+}
+
 fn normalize_resolve_path(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("this.") {
         format!("$.{rest}")
@@ -1774,6 +2245,45 @@ fn resolve_implicit_candidates_in_scope(
     ResolveOutcome::NoMatch
 }
 
+/// Phase D-θ: bounded subtree check used by lookahead disambiguation.
+///
+/// Returns true when `node_id`'s subtree contains a descendant named `name`
+/// (or a direct child) within `MAX_SOM_DEPTH` levels. The starting node
+/// itself is excluded — only descendants count. Recursion is bounded by
+/// [`MAX_SOM_DEPTH`] so malformed templates cannot starve the sandbox.
+fn subtree_contains_name(
+    form: &FormTree,
+    node_id: FormNodeId,
+    name: &str,
+    max_depth: usize,
+) -> bool {
+    if node_id.0 >= form.nodes.len() {
+        return false;
+    }
+    subtree_contains_name_inner(form, node_id, name, 0, max_depth)
+}
+
+fn subtree_contains_name_inner(
+    form: &FormTree,
+    node_id: FormNodeId,
+    name: &str,
+    depth: usize,
+    max_depth: usize,
+) -> bool {
+    if depth >= max_depth {
+        return false;
+    }
+    for &child_id in &form.get(node_id).children {
+        if form.get(child_id).name == name {
+            return true;
+        }
+        if subtree_contains_name_inner(form, child_id, name, depth + 1, max_depth) {
+            return true;
+        }
+    }
+    false
+}
+
 fn find_named_descendant_inner(
     form: &FormTree,
     node_id: FormNodeId,
@@ -1874,6 +2384,56 @@ mod tests {
     }
 
     #[test]
+    fn multi_segment_som_chain_lookahead() {
+        // Phase D-θ: when two same-named siblings exist (`P1` × 2) but only
+        // one contains a child called `X`, hinted child resolution must
+        // collapse onto the P1 that owns `X`. Without lookahead the proxy
+        // chain may pick the empty P1 (D-η ordering ties) and lose access
+        // to `X.rawValue`.
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let f = add_node(&mut tree, "F", FormNodeType::Subform);
+        let p1_empty = add_node(&mut tree, "P1", FormNodeType::Subform);
+        let stub = add_node(&mut tree, "Stub", FormNodeType::Subform);
+        let p1_rich = add_node(&mut tree, "P1", FormNodeType::Subform);
+        let x = add_node(
+            &mut tree,
+            "X",
+            FormNodeType::Field {
+                value: "answer".to_string(),
+            },
+        );
+        tree.get_mut(p1_empty).children = vec![stub];
+        tree.get_mut(p1_rich).children = vec![x];
+        tree.get_mut(f).children = vec![p1_empty, p1_rich];
+        tree.get_mut(root).children = vec![f];
+
+        let mut host = HostBindings::new();
+        host.reset_per_document();
+        host.set_form_handle(&mut tree as *mut FormTree, root);
+        host.reset_per_script(root, Some("calculate"));
+
+        // Without a hint, both P1's are returned in scope order.
+        let plain = host.resolve_child_candidates(&[f], "P1");
+        assert!(plain.contains(&p1_empty) && plain.contains(&p1_rich));
+
+        // With the hint "X" the lookahead must keep ONLY the P1 that
+        // actually has an X descendant.
+        let hinted = host.resolve_child_candidates_hinted(&[f], "P1", "X");
+        assert_eq!(hinted, vec![p1_rich]);
+
+        // Hint that no candidate satisfies must fall back to the un-hinted
+        // candidate set so chained access still has something to walk.
+        let hinted_none = host.resolve_child_candidates_hinted(&[f], "P1", "Nope");
+        assert!(hinted_none.contains(&p1_empty) && hinted_none.contains(&p1_rich));
+
+        // Implicit-scope variant: from root the hint must still pin to the
+        // populated P1 branch.
+        let implicit = host.resolve_implicit_candidates_hinted(root, "P1", "X");
+        assert_eq!(implicit, vec![p1_rich]);
+    }
+
+    #[test]
     fn resolve_node_rejects_over_depth() {
         let mut tree = FormTree::new();
         let root = add_node(&mut tree, "root", FormNodeType::Root);
@@ -1897,5 +2457,168 @@ mod tests {
 
         assert_eq!(host.resolve_node(&long_path), None);
         assert_eq!(host.take_metadata().binding_errors, 1);
+    }
+
+    /// Build a tree that exercises θ.2's backtracking:
+    ///   root
+    ///     A1 (subform with B1 only, no C)
+    ///     A2 (subform with B2 -> C -> X field)
+    ///     A3 (subform with B3 -> Z field)
+    /// Both A1 and A3 contain a B but neither has B.C.X. Only A2 does.
+    /// A single-segment hint on "B" cannot prefer A2 over A3 because both
+    /// have a B child; only the full chain ["A","B","C","X"] can.
+    fn build_chain_disambiguation_tree() -> (
+        FormTree,
+        FormNodeId, // root
+        FormNodeId, // A2 (the winning branch)
+        FormNodeId, // X field (terminal)
+    ) {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+
+        let a1 = add_node(&mut tree, "A", FormNodeType::Subform);
+        let b1 = add_node(&mut tree, "B", FormNodeType::Subform);
+        tree.get_mut(b1).children = vec![];
+        tree.get_mut(a1).children = vec![b1];
+
+        let a2 = add_node(&mut tree, "A", FormNodeType::Subform);
+        let b2 = add_node(&mut tree, "B", FormNodeType::Subform);
+        let c2 = add_node(&mut tree, "C", FormNodeType::Subform);
+        let x2 = add_node(
+            &mut tree,
+            "X",
+            FormNodeType::Field {
+                value: "winner".to_string(),
+            },
+        );
+        tree.get_mut(c2).children = vec![x2];
+        tree.get_mut(b2).children = vec![c2];
+        tree.get_mut(a2).children = vec![b2];
+
+        let a3 = add_node(&mut tree, "A", FormNodeType::Subform);
+        let b3 = add_node(&mut tree, "B", FormNodeType::Subform);
+        let z3 = add_node(
+            &mut tree,
+            "Z",
+            FormNodeType::Field {
+                value: "decoy".to_string(),
+            },
+        );
+        tree.get_mut(b3).children = vec![z3];
+        tree.get_mut(a3).children = vec![b3];
+
+        tree.get_mut(root).children = vec![a1, a2, a3];
+        (tree, root, a2, x2)
+    }
+
+    #[test]
+    fn full_chain_implicit_pins_winning_branch() {
+        // Phase D-θ.2: full-chain implicit resolution must pick the only A
+        // whose subtree completes A.B.C.X — neither A1 (no C) nor A3 (no C)
+        // can satisfy the chain, so the result must equal the winning x2.
+        let (mut tree, root, _a2, x2) = build_chain_disambiguation_tree();
+        let mut host = HostBindings::new();
+        host.reset_per_document();
+        host.set_form_handle(&mut tree as *mut FormTree, root);
+        host.reset_per_script(root, Some("calculate"));
+
+        let chain = vec![
+            "A".to_string(),
+            "B".to_string(),
+            "C".to_string(),
+            "X".to_string(),
+        ];
+        let result = host.resolve_with_full_chain(&[], &chain, Some(root));
+        assert_eq!(result, vec![x2], "chain must pin onto the X under A2");
+    }
+
+    #[test]
+    fn full_chain_child_entry_uses_parent_ids() {
+        // When parent_ids is provided, the entry segment must perform child
+        // resolution from those parents (not an implicit walk). The chain
+        // disambiguates the same way as the implicit variant.
+        let (mut tree, root, _a2, x2) = build_chain_disambiguation_tree();
+        let mut host = HostBindings::new();
+        host.reset_per_document();
+        host.set_form_handle(&mut tree as *mut FormTree, root);
+        host.reset_per_script(root, Some("calculate"));
+
+        let chain = vec![
+            "A".to_string(),
+            "B".to_string(),
+            "C".to_string(),
+            "X".to_string(),
+        ];
+        let result = host.resolve_with_full_chain(&[root], &chain, None);
+        assert_eq!(result, vec![x2]);
+    }
+
+    #[test]
+    fn full_chain_dead_end_returns_deepest_layer() {
+        // If the chain runs into a dead end mid-way (e.g. "Bogus" at depth
+        // 2) the function returns the previous (deepest reachable) layer so
+        // the JS proxy still has something to resolve terminal props on.
+        let (mut tree, root, _a2, _x2) = build_chain_disambiguation_tree();
+        let mut host = HostBindings::new();
+        host.reset_per_document();
+        host.set_form_handle(&mut tree as *mut FormTree, root);
+        host.reset_per_script(root, Some("calculate"));
+
+        let chain = vec![
+            "A".to_string(),
+            "B".to_string(),
+            "C".to_string(),
+            "Bogus".to_string(),
+        ];
+        let result = host.resolve_with_full_chain(&[], &chain, Some(root));
+        // We expect to reach C under A2 (only branch that has C). The dead
+        // end at "Bogus" returns that layer unchanged.
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn full_chain_no_match_returns_empty() {
+        // When the entry segment itself has no candidate, return empty.
+        let (mut tree, root, _a2, _x2) = build_chain_disambiguation_tree();
+        let mut host = HostBindings::new();
+        host.reset_per_document();
+        host.set_form_handle(&mut tree as *mut FormTree, root);
+        host.reset_per_script(root, Some("calculate"));
+
+        let chain = vec!["Nope".to_string(), "X".to_string()];
+        let result = host.resolve_with_full_chain(&[], &chain, Some(root));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn full_chain_rejects_overdepth_and_empty_segments() {
+        let (mut tree, root, _a2, _x2) = build_chain_disambiguation_tree();
+        let mut host = HostBindings::new();
+        host.reset_per_document();
+        host.set_form_handle(&mut tree as *mut FormTree, root);
+        host.reset_per_script(root, Some("calculate"));
+
+        let overlong: Vec<String> = (0..=MAX_SOM_DEPTH).map(|i| format!("S{i}")).collect();
+        let result = host.resolve_with_full_chain(&[], &overlong, Some(root));
+        assert!(result.is_empty());
+        // Empty segment in the middle.
+        let with_empty = vec!["A".to_string(), "".to_string()];
+        let result = host.resolve_with_full_chain(&[], &with_empty, Some(root));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn full_chain_empty_chain_returns_parents() {
+        // A zero-length chain trivially returns the entry layer (parent_ids).
+        // This lets the JS proxy resolve terminal props on the entry handle
+        // before any property accumulator has been pushed.
+        let (mut tree, root, _a2, _x2) = build_chain_disambiguation_tree();
+        let mut host = HostBindings::new();
+        host.reset_per_document();
+        host.set_form_handle(&mut tree as *mut FormTree, root);
+        host.reset_per_script(root, Some("calculate"));
+
+        let result = host.resolve_with_full_chain(&[root], &[], None);
+        assert_eq!(result, vec![root]);
     }
 }

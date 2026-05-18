@@ -149,7 +149,9 @@ pub fn format_text_run(
 
     // Capture state snapshot before the target op.
     let tracker = editor.track_state();
-    let snap = tracker.state_at(op_index).expect("snapshot index in bounds");
+    let snap = tracker
+        .state_at(op_index)
+        .expect("snapshot index in bounds");
     let original_size = if snap.font_size > 0.0 {
         Some(snap.font_size as f32)
     } else {
@@ -466,7 +468,11 @@ mod tests {
 
     /// Assert that every run on the page *except* the one at `skip_op_index`
     /// has the same text as in `original_runs`.
-    fn assert_other_runs_unchanged(doc: &Document, original_runs: &[TextRun], skip_op_index: usize) {
+    fn assert_other_runs_unchanged(
+        doc: &Document,
+        original_runs: &[TextRun],
+        skip_op_index: usize,
+    ) {
         let after = page_runs(doc);
         for orig in original_runs {
             if orig.ops_range.start == skip_op_index {
@@ -496,7 +502,10 @@ mod tests {
         let loc = TextRunLocator::from_run(&runs[0]);
 
         let result = format_text_run(&mut doc, 1, loc, Some(24.0), None).unwrap();
-        assert_eq!(result.state_isolation_strategy, StateIsolationStrategy::NoIsolation);
+        assert_eq!(
+            result.state_isolation_strategy,
+            StateIsolationStrategy::NoIsolation
+        );
         assert!(result.original_size.is_some());
         assert!((result.original_size.unwrap() - 12.0).abs() < 0.01);
         assert_eq!(result.original_color, Some([0.0, 0.0, 0.0]));
@@ -515,7 +524,10 @@ mod tests {
         let original = runs.clone();
 
         let result = format_text_run(&mut doc, 1, loc, None, Some([1.0, 0.0, 0.0])).unwrap();
-        assert_eq!(result.state_isolation_strategy, StateIsolationStrategy::AddQGroup);
+        assert_eq!(
+            result.state_isolation_strategy,
+            StateIsolationStrategy::AddQGroup
+        );
         assert!(result.bytes_changed > 0);
         assert_other_runs_unchanged(&doc, &original, loc.op_index);
     }
@@ -530,7 +542,10 @@ mod tests {
         let loc = TextRunLocator::from_run(&runs[0]);
 
         let result = format_text_run(&mut doc, 1, loc, Some(18.0), Some([0.0, 1.0, 0.0])).unwrap();
-        assert_eq!(result.state_isolation_strategy, StateIsolationStrategy::AddQGroup);
+        assert_eq!(
+            result.state_isolation_strategy,
+            StateIsolationStrategy::AddQGroup
+        );
         assert!((result.original_size.unwrap() - 10.0).abs() < 0.01);
         assert!(result.bytes_changed > 0);
     }
@@ -547,7 +562,10 @@ mod tests {
         let original = runs.clone();
 
         let result = format_text_run(&mut doc, 1, loc, Some(20.0), None).unwrap();
-        assert_eq!(result.state_isolation_strategy, StateIsolationStrategy::NoIsolation);
+        assert_eq!(
+            result.state_isolation_strategy,
+            StateIsolationStrategy::NoIsolation
+        );
         assert!((result.original_size.unwrap() - 14.0).abs() < 0.01);
         assert_other_runs_unchanged(&doc, &original, loc.op_index);
     }
@@ -563,7 +581,10 @@ mod tests {
         let original = runs.clone();
 
         let result = format_text_run(&mut doc, 1, loc, None, Some([0.0, 0.0, 1.0])).unwrap();
-        assert_eq!(result.state_isolation_strategy, StateIsolationStrategy::AddQGroup);
+        assert_eq!(
+            result.state_isolation_strategy,
+            StateIsolationStrategy::AddQGroup
+        );
         assert_other_runs_unchanged(&doc, &original, loc.op_index);
     }
 
@@ -577,7 +598,10 @@ mod tests {
         let loc = TextRunLocator::from_run(&runs[0]);
 
         let result = format_text_run(&mut doc, 1, loc, Some(16.0), Some([0.5, 0.5, 0.0])).unwrap();
-        assert_eq!(result.state_isolation_strategy, StateIsolationStrategy::AddQGroup);
+        assert_eq!(
+            result.state_isolation_strategy,
+            StateIsolationStrategy::AddQGroup
+        );
         assert!(result.bytes_changed > 0);
     }
 
@@ -618,7 +642,10 @@ mod tests {
 
         // Even though inside a q/Q, there are two runs — must AddQGroup.
         let result = format_text_run(&mut doc, 1, loc, None, Some([1.0, 0.0, 0.0])).unwrap();
-        assert_eq!(result.state_isolation_strategy, StateIsolationStrategy::AddQGroup);
+        assert_eq!(
+            result.state_isolation_strategy,
+            StateIsolationStrategy::AddQGroup
+        );
         assert_other_runs_unchanged(&doc, &original, loc.op_index);
     }
 
@@ -636,7 +663,10 @@ mod tests {
         let original = runs.clone();
 
         let result = format_text_run(&mut doc, 1, loc0, Some(18.0), Some([1.0, 0.0, 0.0])).unwrap();
-        assert_eq!(result.state_isolation_strategy, StateIsolationStrategy::AddQGroup);
+        assert_eq!(
+            result.state_isolation_strategy,
+            StateIsolationStrategy::AddQGroup
+        );
         assert_other_runs_unchanged(&doc, &original, loc0.op_index);
     }
 
@@ -654,7 +684,10 @@ mod tests {
         let original = runs.clone();
 
         let result = format_text_run(&mut doc, 1, loc1, Some(8.0), Some([0.0, 1.0, 0.0])).unwrap();
-        assert_eq!(result.state_isolation_strategy, StateIsolationStrategy::AddQGroup);
+        assert_eq!(
+            result.state_isolation_strategy,
+            StateIsolationStrategy::AddQGroup
+        );
         assert_other_runs_unchanged(&doc, &original, loc1.op_index);
     }
 
@@ -750,7 +783,10 @@ mod tests {
         let mut doc = make_doc(b"BT /F1 12 Tf (Hello) Tj ET");
         // Op 0 = BT, which is not a text-showing op.
         let err = format_text_run(&mut doc, 1, TextRunLocator::new(0), Some(14.0), None);
-        assert!(matches!(err, Err(FormatError::NotTextShowingOperator(0, _))));
+        assert!(matches!(
+            err,
+            Err(FormatError::NotTextShowingOperator(0, _))
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -758,8 +794,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn f17_three_runs_format_middle() {
-        let content =
-            b"BT /F1 12 Tf 100 700 Td (AAA) Tj 0 -20 Td (BBB) Tj 0 -20 Td (CCC) Tj ET";
+        let content = b"BT /F1 12 Tf 100 700 Td (AAA) Tj 0 -20 Td (BBB) Tj 0 -20 Td (CCC) Tj ET";
         let mut doc = make_doc(content);
         let runs = page_runs(&doc);
         assert_eq!(runs.len(), 3);
@@ -767,7 +802,10 @@ mod tests {
         let original = runs.clone();
 
         let result = format_text_run(&mut doc, 1, loc, Some(20.0), Some([0.0, 0.0, 1.0])).unwrap();
-        assert_eq!(result.state_isolation_strategy, StateIsolationStrategy::AddQGroup);
+        assert_eq!(
+            result.state_isolation_strategy,
+            StateIsolationStrategy::AddQGroup
+        );
         assert_other_runs_unchanged(&doc, &original, loc.op_index);
     }
 
@@ -829,7 +867,10 @@ mod tests {
             Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), Object::Real(12.0)]),
             Operation::new(
                 "'",
-                vec![Object::String(b"Hello".to_vec(), lopdf::StringFormat::Literal)],
+                vec![Object::String(
+                    b"Hello".to_vec(),
+                    lopdf::StringFormat::Literal,
+                )],
             ),
             Operation::new("ET", vec![]),
         ]);
@@ -841,7 +882,10 @@ mod tests {
         let result = format_text_run(&mut doc, 1, loc, Some(14.0), Some([0.2, 0.4, 0.6]));
         assert!(result.is_ok());
         let r = result.unwrap();
-        assert_eq!(r.state_isolation_strategy, StateIsolationStrategy::AddQGroup);
+        assert_eq!(
+            r.state_isolation_strategy,
+            StateIsolationStrategy::AddQGroup
+        );
     }
 
     // -----------------------------------------------------------------------

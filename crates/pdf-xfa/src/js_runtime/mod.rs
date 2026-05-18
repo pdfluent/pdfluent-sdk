@@ -119,6 +119,23 @@ pub struct RuntimeMetadata {
     pub resolve_failures: usize,
     /// Phase D-γ successful DataDom reads (children / value / child-by-name).
     pub data_reads: usize,
+    /// Phase E (XFA-JS-HOST-STUBS): Calls into host capabilities that require
+    /// genuine viewer / user interaction (UI dialogs, signature panels,
+    /// network submit). The sandbox cannot honestly satisfy these during a
+    /// non-interactive flatten; instead of raising a `TypeError` (which would
+    /// abort the script and inflate [`runtime_errors`](Self::runtime_errors))
+    /// the stubs return a safe default value and increment this counter so
+    /// the dispatch site keeps observability of "would-have-been-interactive"
+    /// touch points. Note: this counter is intentionally NOT folded into
+    /// [`is_clean`](Self::is_clean) — a script that touched
+    /// `xfa.host.messageBox` is still considered to have run cleanly because
+    /// the sandbox did not error; embedders that care about UI gaps should
+    /// inspect this field explicitly.
+    pub unsupported_host_calls: usize,
+    /// Phase D-θ.2 probe calls skipped because `parentIds.length == 1 &&
+    /// chain.length == 1` (no same-name ambiguity possible).  Every skipped
+    /// call saves one `resolveWithFullChainStrict` host round-trip.
+    pub probe_skips: usize,
 }
 
 impl RuntimeMetadata {
@@ -144,6 +161,10 @@ impl RuntimeMetadata {
         self.binding_errors = self.binding_errors.saturating_add(other.binding_errors);
         self.resolve_failures = self.resolve_failures.saturating_add(other.resolve_failures);
         self.data_reads = self.data_reads.saturating_add(other.data_reads);
+        self.unsupported_host_calls = self
+            .unsupported_host_calls
+            .saturating_add(other.unsupported_host_calls);
+        self.probe_skips = self.probe_skips.saturating_add(other.probe_skips);
     }
 }
 

@@ -44,22 +44,22 @@ pub enum JsExecutionMode {
     /// roadmap.
     SandboxedRuntime,
 }
-/// OutputQuality.
-
+/// Fidelity level of the flattened output relative to the source XFA data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputQuality {
-    /// Exact.
+    /// All data was bound and rendered without skipping any scripts or content.
     #[default]
     Exact,
-    /// BestEffort.
+    /// Some scripts were skipped (e.g. JavaScript with `BestEffortStatic` mode);
+    /// output may differ from a full Adobe Reader render.
     BestEffort,
-    /// **M3-B Phase B.** All JavaScript scripts on the document executed
-    /// inside the sandbox without runtime / timeout / OOM errors.
+    /// All JavaScript scripts on the document executed inside the sandbox
+    /// without runtime / timeout / OOM errors (requires `xfa-js-sandboxed` feature).
     Sandboxed,
 }
 
 impl OutputQuality {
-    /// as_str.
+    /// Return a short lowercase string label suitable for logging and metrics.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Exact => "exact",
@@ -68,23 +68,25 @@ impl OutputQuality {
         }
     }
 }
-/// DynamicScriptOutcome.
-
+/// Aggregate outcome of the dynamic script processing pass.
+///
+/// Returned by [`flatten_xfa_to_pdf_with_metadata`](crate::flatten_xfa_to_pdf_with_metadata)
+/// and embedded in [`FlattenMetadata`](crate::FlattenMetadata).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DynamicScriptOutcome {
-    /// changes.
+    /// Number of form field values that were mutated by scripts.
     pub changes: usize,
-    /// js_present.
+    /// True when the document contains at least one JavaScript event hook.
     pub js_present: bool,
-    /// js_skipped.
+    /// Number of JavaScript scripts that were skipped (not executed).
     pub js_skipped: usize,
-    /// other_skipped.
+    /// Number of scripts in unsupported languages (not FormCalc, not JavaScript) skipped.
     pub other_skipped: usize,
-    /// formcalc_run.
+    /// Number of FormCalc scripts that ran successfully.
     pub formcalc_run: usize,
-    /// formcalc_errors.
+    /// Number of FormCalc scripts that produced an error.
     pub formcalc_errors: usize,
-    /// output_quality.
+    /// Overall output quality after script processing.
     pub output_quality: OutputQuality,
     /// **M3-B Phase B.** Scripts that ran to completion in the sandboxed
     /// runtime. Always 0 when mode != [`JsExecutionMode::SandboxedRuntime`]
@@ -113,6 +115,18 @@ pub struct DynamicScriptOutcome {
     pub js_resolve_failures: usize,
     /// **M3-B Phase D-γ.** Successful DataDom reads (children / value / child-by-name).
     pub js_data_reads: usize,
+    /// **M3-B Phase E (XFA-JS-HOST-STUBS).** Scripts touched a host capability
+    /// that requires real viewer / user interaction (UI dialogs, signature,
+    /// submit, openList, beep, ...). The stub returned a deterministic safe
+    /// default so the script kept running; this counter records how often
+    /// such a touch happened so callers can distinguish "would-have-been
+    /// interactive" from genuine runtime errors.
+    pub js_unsupported_host_calls: usize,
+    /// **M3-B Phase D-θ.2.** Strict probe calls skipped because
+    /// `parentIds.length == 1 && chain.length == 1` (no same-name
+    /// sibling ambiguity possible). Each skipped call saves one
+    /// `resolveWithFullChainStrict` host round-trip.
+    pub js_probe_skips: usize,
 }
 
 impl Default for DynamicScriptOutcome {
@@ -136,23 +150,44 @@ impl Default for DynamicScriptOutcome {
             js_binding_errors: 0,
             js_resolve_failures: 0,
             js_data_reads: 0,
+            js_unsupported_host_calls: 0,
+            js_probe_skips: 0,
         }
     }
 }
 
-/// Snapshot of field values and presence states, used for rollback.
-/// NOTE: This rollback mechanism is our own heuristic — the XFA spec does not
-/// define a rollback model.  It protects against scripts that blank out all
-/// fields (broken SOM resolution, etc.).
+/// Snapshot of field values, presence states, and structural shape used for
+/// rollback after a failed script pass.
+///
+/// XFA-INST-MGR (2026-05-17): the snapshot now also captures every node's
+/// children list plus the total node count. When `restore_snapshot` runs it
+/// truncates any clones added by `instanceManager.addInstance` /
+/// `setInstances` and restores the original child ordering, so a rollback is
+/// structurally consistent end-to-end — not just at the field-value layer.
+/// This keeps the layout pass from seeing half-applied script mutations when
+/// scripts produced enough errors to invalidate the pass.
+///
+/// NOTE: The rollback policy itself is our own heuristic — the XFA spec does
+/// not define one. It protects against scripts that blank out all fields
+/// (broken SOM resolution, etc.) or that add structural clones we cannot
+/// safely keep after rejecting the pass.
 struct FormSnapshot {
     field_values: Vec<(usize, String)>,
     presences: Vec<(usize, Presence)>,
+    /// Per-node children list at snapshot time.  Indexed by `form.nodes`
+    /// position; `children[i]` is the saved `children` vec for node `i`.
+    children: Vec<Vec<FormNodeId>>,
+    /// Total node count at snapshot time.  On rollback `form.nodes` and
+    /// `form.metadata` are truncated back to this length, evicting any
+    /// runtime-created clones from the form tree.
+    node_count: usize,
     populated_count: usize,
 }
 
 fn snapshot_form(form: &FormTree) -> FormSnapshot {
     let mut field_values = Vec::new();
     let mut presences = Vec::new();
+    let mut children = Vec::with_capacity(form.nodes.len());
     let mut populated_count = 0usize;
     for (idx, node) in form.nodes.iter().enumerate() {
         if let FormNodeType::Field { value } = &node.node_type {
@@ -162,10 +197,13 @@ fn snapshot_form(form: &FormTree) -> FormSnapshot {
             }
         }
         presences.push((idx, form.metadata[idx].presence));
+        children.push(node.children.clone());
     }
     FormSnapshot {
         field_values,
         presences,
+        children,
+        node_count: form.nodes.len(),
         populated_count,
     }
 }
@@ -178,6 +216,20 @@ fn restore_snapshot(form: &mut FormTree, snapshot: &FormSnapshot) {
     }
     for (idx, presence) in &snapshot.presences {
         form.metadata[*idx].presence = *presence;
+    }
+    // XFA-INST-MGR: drop any runtime-created clones first, THEN restore the
+    // original children lists.  Truncating must happen before assignment
+    // because the saved children vec may reference indices that the snapshot
+    // already covers (clones never receive an `xfa_id`, so `node_ids` does
+    // not need pruning — see `host::clone_subtree`).
+    if form.nodes.len() > snapshot.node_count {
+        form.nodes.truncate(snapshot.node_count);
+        form.metadata.truncate(snapshot.node_count);
+    }
+    for (idx, saved_children) in snapshot.children.iter().enumerate() {
+        if let Some(node) = form.nodes.get_mut(idx) {
+            node.children = saved_children.clone();
+        }
     }
 }
 
@@ -208,7 +260,6 @@ fn should_rollback(
     }
     false
 }
-/// apply_dynamic_scripts.
 // XFA Spec 3.3 §9.3 — Dynamic Forms: after data binding, scripts run in
 // two phases: (1) initialize events fire once, (2) calculate events may
 // iterate until stable (convergence) or MAX_SCRIPT_PASSES is reached.
@@ -225,13 +276,28 @@ fn should_rollback(
 // JavaScript and unsupported-language scripts are skipped and reported, while
 // FormCalc continues to run. Use `apply_dynamic_scripts_with_mode(..., Strict)`
 // when callers need the legacy whole-form JavaScript policy gate.
+
+/// Convenience entry point: runs the script pipeline with the default
+/// [`JsExecutionMode`] (currently [`JsExecutionMode::BestEffortStatic`]).
+///
+/// Prefer [`apply_dynamic_scripts_with_runtime`] when you need explicit
+/// runtime injection (e.g. in tests or when using the sandboxed runtime).
+#[doc(hidden)]
 pub fn apply_dynamic_scripts(
     form: &mut FormTree,
     root_id: FormNodeId,
 ) -> Result<DynamicScriptOutcome> {
     apply_dynamic_scripts_with_mode(form, root_id, JsExecutionMode::default())
 }
-/// apply_dynamic_scripts_with_mode.
+
+/// Runs the script pipeline with an explicit [`JsExecutionMode`], using the
+/// internal [`NullRuntime`] (or the compiled-in QuickJS runtime for
+/// [`JsExecutionMode::SandboxedRuntime`]).
+///
+/// This is an intermediate convenience wrapper. The canonical low-level entry
+/// point is [`apply_dynamic_scripts_with_runtime`], which accepts any
+/// [`XfaJsRuntime`] implementation.
+#[doc(hidden)]
 pub fn apply_dynamic_scripts_with_mode(
     form: &mut FormTree,
     root_id: FormNodeId,
@@ -434,6 +500,8 @@ pub fn apply_dynamic_scripts_with_runtime(
         js_binding_errors: sandbox_metadata.binding_errors,
         js_resolve_failures: sandbox_metadata.resolve_failures,
         js_data_reads: sandbox_metadata.data_reads,
+        js_unsupported_host_calls: sandbox_metadata.unsupported_host_calls,
+        js_probe_skips: sandbox_metadata.probe_skips,
     })
 }
 

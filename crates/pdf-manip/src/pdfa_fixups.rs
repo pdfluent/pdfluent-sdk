@@ -6641,7 +6641,12 @@ fn fix_jbig2_globals(doc: &mut Document) -> usize {
                     self.row_buf.push(0);
                 }
                 if black {
-                    let last = self.row_buf.last_mut().unwrap();
+                    // SAFETY: bit_in_byte == 0 branch above just pushed a new byte,
+                    // so row_buf is non-empty when bit_in_byte > 0 as well.
+                    let last = self
+                        .row_buf
+                        .last_mut()
+                        .expect("pushed in bit_in_byte==0 branch");
                     *last |= 1 << (7 - bit_in_byte);
                 }
                 self.pixel_count += 1;
@@ -6770,7 +6775,14 @@ fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
                     (xl, 16usize)
                 } else if lbox == 0 {
                     // Box extends to end of file.
-                    (*box_stack.last().unwrap() - pos, 8usize)
+                    // SAFETY: box_stack is initialized with one element and never emptied.
+                    (
+                        *box_stack
+                            .last()
+                            .expect("box_stack always has at least one element")
+                            - pos,
+                        8usize,
+                    )
                 } else {
                     (lbox as usize, 8usize)
                 };
@@ -6818,7 +6830,14 @@ fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
                     pos += box_len;
 
                     // Pop from stack if we've reached the end of a container box.
-                    while pos >= *box_stack.last().unwrap() && box_stack.len() > 1 {
+                    // SAFETY: box_stack is initialized with one element and the loop guard
+                    // `box_stack.len() > 1` ensures we never pop the last element.
+                    while pos
+                        >= *box_stack
+                            .last()
+                            .expect("box_stack always has at least one element")
+                        && box_stack.len() > 1
+                    {
                         box_stack.pop();
                     }
                 }
@@ -9184,7 +9203,14 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
                 if broken {
                     uses_transparency
                 } else {
-                    let grp = doc.objects.get(grp_id).unwrap().as_dict().unwrap();
+                    // SAFETY: `broken` was set to false above only when
+                    // `doc.objects.get(grp_id)` matches `Some(Object::Dictionary(_))`.
+                    let grp = doc
+                        .objects
+                        .get(grp_id)
+                        .expect("object present: broken=false branch")
+                        .as_dict()
+                        .expect("object is Dictionary: broken=false branch");
                     group_dict_needs_fix(grp, cs_value.as_ref())
                 }
             }

@@ -3,6 +3,8 @@
 //!
 //! Implements the FormCalc scripting language from XFA 3.3 §25,
 //! including all built-in functions and SOM integration.
+//!
+//! This crate's public API is panic-free. Errors are returned as `Result<T, FormCalcError>`.
 
 /// Abstract syntax tree for FormCalc expressions.
 pub mod ast;
