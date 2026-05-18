@@ -721,8 +721,8 @@ mod tests {
             text_color: [0.0, 0.0, 0.0],
             background_color: Some([1.0, 1.0, 1.0]),
             text_padding: 2.0,
-            font_map: std::collections::HashMap::new(),
-            font_metrics_data: std::collections::HashMap::new(),
+            font_map: std::sync::Arc::new(std::collections::HashMap::new()),
+            font_metrics_data: std::sync::Arc::new(std::collections::HashMap::new()),
             check_button_mark: None,
             field_values_only: false,
         }
