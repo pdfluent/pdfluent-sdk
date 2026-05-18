@@ -1490,6 +1490,11 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (typeof prop !== "string") {
           return Reflect.get(target, prop, receiver);
         }
+        // XFA-DATA2-02: short-circuit caption / resolveNode pair before any
+        // host call. See captionSentinel + handleResolveNode definitions.
+        if (prop === "caption") { return captionSentinel; }
+        if (prop === "resolveNode") { return handleResolveNode; }
+        if (prop === "resolveNodes") { return handleResolveNodes; }
         var ids = isTerminalHandleProp(prop) ? eagerIds : realize(prop);
         var handle = makeNodeHandleFromIds(ids, generation);
         if (handle === undefined) return undefined;
@@ -1521,6 +1526,11 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (typeof prop !== "string") {
           return Reflect.get(target, prop, receiver);
         }
+        // XFA-DATA2-02: short-circuit caption / resolveNode pair before any
+        // host call. See captionSentinel + handleResolveNode definitions.
+        if (prop === "caption") { return captionSentinel; }
+        if (prop === "resolveNode") { return handleResolveNode; }
+        if (prop === "resolveNodes") { return handleResolveNodes; }
         var ids = isTerminalHandleProp(prop) ? eagerChildIds : realize(prop);
         var handle = makeNodeHandleFromIds(ids, generation);
         if (handle === undefined) return undefined;
@@ -1606,6 +1616,21 @@ const PHASE_C_BINDINGS_JS: &str = r#"
             return Reflect.get(target, prop, receiver);
           }
           return primHandle[prop];
+        }
+        // XFA-DATA2-02: caption / resolveNode / resolveNodes short-circuit on
+        // the chain proxy. Without this branch the chain accumulator would
+        // append "caption" as a non-terminal segment, call
+        // resolveWithFullChainStrict, miss, and return `undefined` —
+        // `field.caption.value` then TypeErrors. Same null/empty-list
+        // contract as the global pair.
+        if (prop === "caption") {
+          return captionSentinel;
+        }
+        if (prop === "resolveNode") {
+          return handleResolveNode;
+        }
+        if (prop === "resolveNodes") {
+          return handleResolveNodes;
         }
         if (isTerminalHandleProp(prop)) {
           var ids = fullChain();
@@ -1794,6 +1819,19 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "execEvent") {
           return function() { return undefined; };
         }
+        // XFA-DATA2-02: caption / resolveNode / resolveNodes intercept on the
+        // candidate-set path. Same rationale as makeHandle: skip the child
+        // resolver host call and its resolve_failures bump, return a frozen
+        // sentinel + the chainable method pair. Null contract preserved.
+        if (prop === "caption") {
+          return captionSentinel;
+        }
+        if (prop === "resolveNode") {
+          return handleResolveNode;
+        }
+        if (prop === "resolveNodes") {
+          return handleResolveNodes;
+        }
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
         }
@@ -1825,6 +1863,91 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           Reflect.has(target, prop);
       }
     });
+  }
+
+  // XFA-DATA2-02: shared caption sentinel — singleton, frozen, null-safe.
+  //
+  // XFA templates commonly inspect `field.caption.value` or
+  // `field.caption.text` to drive labels and conditional formatting. The
+  // merged FormTree does not carry the optional `<caption>` sub-element, so
+  // looking up `caption` as a normal child name would call
+  // `resolve_child_candidates` → NoMatch → bump `resolve_failures`, return
+  // `undefined`, and the very next `.value` access would throw TypeError
+  // ("cannot read property 'value' of undefined") and abort the rest of the
+  // script's initializers.
+  //
+  // We intercept `caption` BEFORE the child-resolver call and return a
+  // chainable sentinel whose terminal reads are empty strings and whose
+  // deeper reads keep chaining via `makeNullDataHandle`. This is purely
+  // read-side: writes are silently absorbed (caption sub-element is a
+  // viewer-only field, never a flatten mutation channel). The sentinel is
+  // allocated once at factory build-time and frozen, so per-call access is
+  // an `Object.freeze`d Proxy hit with no heap allocation.
+  var captionSentinel = (function() {
+    var base = nullProtoObject();
+    Object.defineProperty(base, "value",   { enumerable: true, configurable: false,
+      get: function() { return ""; }, set: function(_v) { /* viewer-only */ } });
+    Object.defineProperty(base, "text",    { enumerable: true, configurable: false,
+      get: function() { return ""; }, set: function(_v) { /* viewer-only */ } });
+    Object.defineProperty(base, "name",    { enumerable: true, configurable: false,
+      get: function() { return "caption"; } });
+    Object.defineProperty(base, "rawValue",{ enumerable: true, configurable: false,
+      get: function() { return ""; }, set: function(_v) { /* viewer-only */ } });
+    Object.defineProperty(base, "isNull",  { enumerable: true, configurable: false,
+      get: function() { return true; } });
+    return new Proxy(base, {
+      get: function(target, prop) {
+        if (prop in target || typeof prop !== "string") return target[prop];
+        // Unknown reads stay chainable so `caption.font.typeface` etc. do
+        // not throw. The sentinel is read-only and write-absorbing.
+        return makeNullDataHandle();
+      },
+      set: function(_t, _p, _v) { return true; },
+      has: function() { return true; }
+    });
+  })();
+
+  // XFA-DATA2-02: shared `resolveNode` / `resolveNodes` instance methods.
+  //
+  // Beyond the global `xfa.resolveNode(path)`, XFA scripts also call these
+  // as methods on individual handles (`field.resolveNode("Subform.X")`,
+  // `subform.resolveNodes("$.field[*]")`). Without an explicit shortcut these
+  // property reads would fall through to `makeChainHandle`, miss in the
+  // child resolver and inflate `js_resolve_failures` — the very pattern the
+  // 60df78fe corpus replay flagged.
+  //
+  // Behaviour mirrors the global pair, including the data-path routing for
+  // `data.`, `$data.`, and `xfa.datasets.data.` prefixes. The Cluster C
+  // null-return contract is preserved: a miss in the host returns native
+  // `null` for the singular form and a frozen empty array for the plural.
+  function handleResolveNode(path) {
+    if (typeof path === "string" &&
+        (path.indexOf("data.") === 0 || path.indexOf("$data.") === 0 ||
+         path.indexOf("xfa.datasets.data.") === 0)) {
+      var rawId = host.dataResolveNode(path);
+      if (rawId < 0) return null;
+      return makeDataHandle(rawId);
+    }
+    var nid = host.resolveNodeId(path);
+    if (nid < 0) return null;
+    return makeHandle(nid, host.generation());
+  }
+  function handleResolveNodes(path) {
+    if (typeof path === "string" &&
+        (path.indexOf("data.") === 0 || path.indexOf("$data.") === 0 ||
+         path.indexOf("xfa.datasets.data.") === 0)) {
+      var rawIds = host.dataResolveNodes(path);
+      var out = [];
+      for (var i = 0; i < rawIds.length; i++) out.push(makeDataHandle(rawIds[i]));
+      return Object.freeze(out);
+    }
+    var generation = host.generation();
+    var ids = host.resolveNodeIds(path);
+    var out2 = [];
+    for (var j = 0; j < ids.length; j++) {
+      out2.push(makeHandle(ids[j], generation));
+    }
+    return Object.freeze(out2);
   }
 
   function makeHandle(id, generation) {
@@ -1996,6 +2119,20 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "execEvent") {
           return function() { return undefined; };
         }
+        // XFA-DATA2-02: caption sub-element + resolveNode/resolveNodes
+        // instance methods. Intercepted BEFORE shouldDeferHandleProperty +
+        // makeChainHandle so the child-resolver host call (and its
+        // resolve_failures bump) never happens. See captionSentinel /
+        // handleResolveNode/Nodes definitions above for rationale.
+        if (prop === "caption") {
+          return captionSentinel;
+        }
+        if (prop === "resolveNode") {
+          return handleResolveNode;
+        }
+        if (prop === "resolveNodes") {
+          return handleResolveNodes;
+        }
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
         }
@@ -2027,6 +2164,9 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           prop === "clearItems" ||
           prop === "addItem" ||
           prop === "boundItem" ||
+          prop === "caption" ||
+          prop === "resolveNode" ||
+          prop === "resolveNodes" ||
           Reflect.has(target, prop);
       }
     });
@@ -3015,10 +3155,18 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         props += JSON.stringify(id) + ": typeof " + id +
                  " !== \"undefined\" ? " + id + " : undefined";
       }
-      var wrapper = "(function(){\n" + body +
-                    "\nreturn Object.freeze({" + props + "});\n})()";
+      // XFA-DATA2-02: inject `console` and `util` into the variables-script
+      // closure so the form-level helper functions registered here can
+      // reference them lexically and the dependent event scripts that call
+      // those helpers do not blow up with `console is not defined` /
+      // `util is not defined`. Both are the same sandbox-safe singletons
+      // exposed to event scripts (silent no-op console, deterministic util).
+      var wrapper = "(function(__console, __util){\n" +
+                    "var console = __console; var util = __util;\n" +
+                    body +
+                    "\nreturn Object.freeze({" + props + "});\n})";
       try {
-        var ns = (Function("return " + wrapper))();
+        var ns = (Function("return " + wrapper))()(consoleStub, xfaUtil);
         if (typeof subformName === "string" && subformName.length > 0) {
           if (subformVariables[subformName] === undefined) {
             subformVariables[subformName] = lookupObject();
