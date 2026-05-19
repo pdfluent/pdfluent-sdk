@@ -2,7 +2,7 @@
 name = "xfa-wasm"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file = "LICENSE"
 repository.workspace = true
 description = "PDFluent browser SDK — read, edit, annotate, redact, sign, and validate PDFs (including XFA) entirely client-side via WASM"
 publish = false
