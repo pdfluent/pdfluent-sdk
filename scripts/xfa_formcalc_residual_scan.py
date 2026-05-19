@@ -292,6 +292,8 @@ def write_json(
     wave2: list[dict[str, Any]],
     corpus_dirs: list[str],
     baseline_commit: str,
+    json_name: str = 'QF1_C_FORMCALC_RESIDUAL_MAP.json',
+    agent_tag: str = 'QF1-C',
 ) -> Path:
     """Emit the machine-readable residual map."""
     summary = {
@@ -302,7 +304,7 @@ def write_json(
         'total_formcalc_errors': sum(d['formcalc_errors'] for d in doc_results),
     }
     payload = {
-        'agent': 'QF1-C',
+        'agent': agent_tag,
         'measurement': 'FormCalc residual scan (first automated)',
         'baseline_commit': baseline_commit,
         'corpus_dirs': corpus_dirs,
@@ -331,7 +333,7 @@ def write_json(
                             key=lambda x: (-x['formcalc_errors'], x['doc_sha256']))
         ],
     }
-    out = output_dir / 'QF1_C_FORMCALC_RESIDUAL_MAP.json'
+    out = output_dir / json_name
     out.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
     return out
 
@@ -343,6 +345,8 @@ def write_report(
     wave2: list[dict[str, Any]],
     corpus_dirs: list[str],
     baseline_commit: str,
+    md_name: str = 'QF1_C_FORMCALC_RESIDUAL_REPORT.md',
+    report_title: str = 'QF1-C',
 ) -> tuple[Path, str]:
     """Emit the human-readable markdown report and return (path, verdict)."""
     n_docs = len(doc_results)
@@ -352,17 +356,18 @@ def write_report(
     total_err = sum(d['formcalc_errors'] for d in doc_results)
     total_events = sum(len(d['events']) for d in doc_results)
 
+    verdict_tag = report_title.replace('-', '_').upper()
     if n_docs < 15:
-        verdict = f'XFA_QF1_C_BLOCKED_corpus_too_small ({n_docs} docs)'
+        verdict = f'XFA_{verdict_tag}_BLOCKED_corpus_too_small ({n_docs} docs)'
     elif total_err == 0 and total_events == 0:
-        verdict = 'XFA_QF1_C_NO_RESIDUAL'
+        verdict = f'XFA_{verdict_tag}_NO_RESIDUAL'
     else:
-        verdict = 'XFA_QF1_C_FORMCALC_SCAN_READY'
+        verdict = f'XFA_{verdict_tag}_FORMCALC_SCAN_READY'
 
     lines: list[str] = [
-        '# XFA-QF1-C — FormCalc Residual Scan Report',
+        f'# XFA-{report_title} — FormCalc Residual Scan Report',
         '',
-        '**Agent:** QF1-C  **Cluster:** FC-01 (FormCalc residual scan unmapped)',
+        f'**Agent:** {report_title}  **Cluster:** FC-01 (FormCalc residual scan unmapped)',
         f'**Baseline:** `{baseline_commit}`',
         '**Mode:** `XFA_FORMCALC_DEBUG=1 XFA_JS_EXECUTION_MODE=sandboxed`',
         '',
@@ -500,7 +505,7 @@ def write_report(
         '',
     ]
 
-    report = output_dir / 'QF1_C_FORMCALC_RESIDUAL_REPORT.md'
+    report = output_dir / md_name
     report.write_text('\n'.join(lines))
     return report, verdict
 
@@ -515,6 +520,26 @@ def main() -> int:
     parser.add_argument('--corpus-dir', default='crates/xfa-golden-tests/golden')
     parser.add_argument('--extra-corpus-dir', default=None)
     parser.add_argument(
+        '--corpus-list',
+        default=None,
+        help=(
+            'Optional path to a newline-separated list of PDF paths. '
+            'When supplied, --corpus-dir / --extra-corpus-dir are ignored '
+            'and the listed PDFs are scanned in order (still capped by '
+            '--max-docs). Added in QF2-D to support VPS-side scans of '
+            'corpora with many subdirectories.'
+        ),
+    )
+    parser.add_argument(
+        '--corpus-label',
+        default=None,
+        help=(
+            'Optional label string recorded as the corpus_dirs entry when '
+            '--corpus-list is used. Avoids leaking host filesystem paths '
+            'into committed JSON / Markdown reports.'
+        ),
+    )
+    parser.add_argument(
         '--output-dir',
         default='benchmarks/runs/xfa_enterprise_plan/quality_factory_v1',
     )
@@ -523,6 +548,21 @@ def main() -> int:
         '--baseline-commit',
         default='c70c2a308ad5a81da7b2f98c5bb53c5321c808a7',
         help='Baseline commit hash recorded in the JSON output.',
+    )
+    parser.add_argument(
+        '--json-name',
+        default='QF1_C_FORMCALC_RESIDUAL_MAP.json',
+        help='Filename for the JSON output (relative to --output-dir).',
+    )
+    parser.add_argument(
+        '--md-name',
+        default='QF1_C_FORMCALC_RESIDUAL_REPORT.md',
+        help='Filename for the markdown report (relative to --output-dir).',
+    )
+    parser.add_argument(
+        '--report-title',
+        default='QF1-C',
+        help='Short tag used in the markdown title / verdict prefix.',
     )
     args = parser.parse_args()
 
@@ -537,21 +577,34 @@ def main() -> int:
     pdf_paths: list[str] = []
     corpus_dirs: list[str] = []
 
-    corpus_dir = Path(args.corpus_dir)
-    if corpus_dir.exists():
-        pdfs = sorted(corpus_dir.glob('*.pdf'))
-        pdf_paths.extend(str(p) for p in pdfs)
-        corpus_dirs.append(args.corpus_dir)
+    if args.corpus_list:
+        list_path = Path(args.corpus_list)
+        if not list_path.is_file():
+            print(f'ERROR: --corpus-list not found: {list_path}', file=sys.stderr)
+            return 1
+        with list_path.open() as fh:
+            for line in fh:
+                p = line.strip()
+                if p and not p.startswith('#'):
+                    pdf_paths.append(p)
+        label = args.corpus_label or '<corpus-list>'
+        corpus_dirs.append(f'{label} ({len(pdf_paths)} listed)')
+    else:
+        corpus_dir = Path(args.corpus_dir)
+        if corpus_dir.exists():
+            pdfs = sorted(corpus_dir.glob('*.pdf'))
+            pdf_paths.extend(str(p) for p in pdfs)
+            corpus_dirs.append(args.corpus_dir)
 
-    if args.extra_corpus_dir:
-        extra = Path(args.extra_corpus_dir)
-        if extra.exists():
-            extra_pdfs = sorted(extra.glob('*.pdf'))
-            sample = extra_pdfs[: max(0, args.max_docs - len(pdf_paths))]
-            pdf_paths.extend(str(p) for p in sample)
-            corpus_dirs.append(
-                f'{args.extra_corpus_dir} (sampled {len(sample)} of {len(extra_pdfs)})'
-            )
+        if args.extra_corpus_dir:
+            extra = Path(args.extra_corpus_dir)
+            if extra.exists():
+                extra_pdfs = sorted(extra.glob('*.pdf'))
+                sample = extra_pdfs[: max(0, args.max_docs - len(pdf_paths))]
+                pdf_paths.extend(str(p) for p in sample)
+                corpus_dirs.append(
+                    f'{args.extra_corpus_dir} (sampled {len(sample)} of {len(extra_pdfs)})'
+                )
 
     pdf_paths = pdf_paths[: args.max_docs]
     if not pdf_paths:
@@ -585,10 +638,14 @@ def main() -> int:
     json_path = write_json(
         output_dir, doc_results, clusters, wave2,
         corpus_dirs, args.baseline_commit,
+        json_name=args.json_name,
+        agent_tag=args.report_title,
     )
     md_path, verdict = write_report(
         output_dir, doc_results, clusters, wave2,
         corpus_dirs, args.baseline_commit,
+        md_name=args.md_name,
+        report_title=args.report_title,
     )
 
     print()
