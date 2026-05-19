@@ -44,6 +44,12 @@ WARMUP = 2
 MEASURE = 5
 TIMEOUT_S = 300
 
+# QF4-A additive: allow overriding via CLI flags --warmup / --measure / --timeout-s
+# without changing the QF3-C default behaviour. Original constants above remain
+# the defaults; argparse overrides them via globals at run-time. These flags are
+# additive (no removal / rename), so existing QF3-C reproduction commands keep
+# working unchanged.
+
 
 def parse_rss_kb(text: str):
     """Parse peak RSS from either GNU time -v ("Maximum resident set size
@@ -133,6 +139,10 @@ def count_objstm(pdf: Path):
 
 
 def main():
+    # QF4-A additive: hoisted to the top of main() so the assignments at the
+    # end of arg parsing are legal. Default values (WARMUP/MEASURE/TIMEOUT_S
+    # constants) remain unchanged.
+    global WARMUP, MEASURE, TIMEOUT_S
     ap = argparse.ArgumentParser(description="QF3-C ObjectStream cache real-world impact")
     ap.add_argument("rundir", help="Output dir for JSON/MD")
     ap.add_argument("--pre-binary", required=True, help="Path to pre-QF2-B pdfluent")
@@ -148,7 +158,30 @@ def main():
         action="store_true",
         help="Disable /usr/bin/time -v even if available (e.g. on macOS BSD)",
     )
+    # QF4-A additive overrides — keep QF3-C defaults if omitted.
+    ap.add_argument(
+        "--warmup",
+        type=int,
+        default=WARMUP,
+        help=f"Warm-up iterations per (doc, binary). Default={WARMUP}.",
+    )
+    ap.add_argument(
+        "--measure",
+        type=int,
+        default=MEASURE,
+        help=f"Measured iterations per (doc, binary). Default={MEASURE}.",
+    )
+    ap.add_argument(
+        "--timeout-s",
+        type=int,
+        default=TIMEOUT_S,
+        help=f"Per-iteration subprocess timeout in seconds. Default={TIMEOUT_S}.",
+    )
     args = ap.parse_args()
+    # Apply CLI overrides to module globals so `measure()` / `run_once()` use them.
+    WARMUP = args.warmup
+    MEASURE = args.measure
+    TIMEOUT_S = args.timeout_s
 
     rundir = Path(args.rundir)
     rundir.mkdir(parents=True, exist_ok=True)
