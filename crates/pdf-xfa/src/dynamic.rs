@@ -625,6 +625,22 @@ fn execute_event_script(
     }
 }
 
+/// Emit a stderr line when `XFA_FORMCALC_DEBUG=1` is set so that residual-scan
+/// tooling can aggregate FormCalc failures by stage (`lexer` / `parser` /
+/// `interpreter`) and message. Off by default; emits nothing otherwise.
+///
+/// Mirrors the `XFA_JS_DEBUG` opt-in pattern used by the sandbox JS runtime.
+fn formcalc_debug_emit(stage: &str, message: &str, script: &EventScript) {
+    if std::env::var("XFA_FORMCALC_DEBUG").ok().as_deref() != Some("1") {
+        return;
+    }
+    let activity = script.activity.as_deref().unwrap_or("?");
+    // Single-line, double-quoted message so the scan script's regex can parse
+    // it like `XFA_JS_DEBUG resolve_*` lines. Newlines collapsed defensively.
+    let one_line = message.replace(['\n', '\r'], " ");
+    eprintln!("XFA_FORMCALC_DEBUG stage={stage} activity=\"{activity}\" message=\"{one_line}\"");
+}
+
 fn execute_formcalc_script(
     form: &mut FormTree,
     root_id: FormNodeId,
@@ -633,26 +649,38 @@ fn execute_formcalc_script(
     script: &EventScript,
     phase: ScriptPhase,
 ) -> ScriptResult {
-    let Ok(tokens) = tokenize(&script.script) else {
-        return ScriptResult {
-            changes: 0,
-            error: true,
-        };
+    let tokens = match tokenize(&script.script) {
+        Ok(t) => t,
+        Err(err) => {
+            formcalc_debug_emit("lexer", &format!("{err}"), script);
+            return ScriptResult {
+                changes: 0,
+                error: true,
+            };
+        }
     };
-    let Ok(ast) = parser::parse(tokens) else {
-        return ScriptResult {
-            changes: 0,
-            error: true,
-        };
+    let ast = match parser::parse(tokens) {
+        Ok(a) => a,
+        Err(err) => {
+            formcalc_debug_emit("parser", &format!("{err}"), script);
+            return ScriptResult {
+                changes: 0,
+                error: true,
+            };
+        }
     };
 
     let mut interpreter = Interpreter::new();
     let mut resolver = FormTreeSomResolver::new(form, root_id, parents, current_id);
-    let Ok(result) = interpreter.exec_with_resolver(&ast, &mut resolver) else {
-        return ScriptResult {
-            changes: resolver.changes,
-            error: true,
-        };
+    let result = match interpreter.exec_with_resolver(&ast, &mut resolver) {
+        Ok(r) => r,
+        Err(err) => {
+            formcalc_debug_emit("interpreter", &format!("{err}"), script);
+            return ScriptResult {
+                changes: resolver.changes,
+                error: true,
+            };
+        }
     };
 
     if matches!(phase, ScriptPhase::Calculate) {
@@ -1968,5 +1996,37 @@ Details.presence = "visible"
             FormNodeType::Field { value } => assert_eq!(value, "42"),
             _ => panic!("expected field"),
         }
+    }
+
+    /// QF1-C regression: `formcalc_errors` counter MUST tick when a FormCalc
+    /// script invokes an unknown function. This is the canonical signal the
+    /// QF1-C residual scan (`scripts/xfa_formcalc_residual_scan.py`) aggregates
+    /// off the `XFA script metadata:` stderr line.
+    #[test]
+    fn formcalc_unknown_function_increments_error_counter() {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let total = add_node(
+            &mut tree,
+            "Total",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+
+        tree.get_mut(root).children = vec![total];
+        // `definitelyNotAFormCalcBuiltin(1)` triggers `FormCalcError::UnknownFunction`
+        // in `crates/formcalc-interpreter/src/interpreter.rs`.
+        tree.meta_mut(total).event_scripts = vec![formcalc_script(
+            "definitelyNotAFormCalcBuiltin(1)",
+            "calculate",
+        )];
+
+        let outcome = apply_dynamic_scripts(&mut tree, root).unwrap();
+        assert_eq!(outcome.formcalc_run, 1, "the script must be attempted");
+        assert_eq!(
+            outcome.formcalc_errors, 1,
+            "unknown-function failure must increment formcalc_errors"
+        );
     }
 }
