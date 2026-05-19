@@ -35,6 +35,7 @@ use xfa_layout_engine::form::{FormNodeId, FormTree};
 use super::{
     activity_allowed_for_sandbox, HostBindings, RuntimeMetadata, RuntimeOutcome, SandboxError,
     XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES,
+    MAX_VARIABLES_SCRIPT_BODY_BYTES,
 };
 
 /// QuickJS-backed runtime adapter. One instance is reusable across many
@@ -1109,7 +1110,16 @@ impl QuickJsRuntime {
         let Some(setter) = self.set_variables_script.clone() else {
             return Ok(());
         };
-        if body.len() > MAX_SCRIPT_BODY_BYTES {
+        // W2-B: variables-scripts use a higher body-size cap than event
+        // scripts because they are form-level helper libraries (XFA 3.3
+        // §5.5). The time- and memory-budgets still apply via the
+        // QuickJS interrupt handler + runtime memory limit; the larger
+        // body cap simply lets real-world government XFA libraries (e.g.
+        // `validateForm` ≈ 125 KB, `LOV` ≈ 507 KB, `CoreFunctions` ≈ 115
+        // KB) register so dependent event scripts can resolve
+        // `<scriptName>.<top_level_decl>(...)` rather than failing as
+        // `js_resolve_failure` (W1-B `implicit_function` cluster).
+        if body.len() > MAX_VARIABLES_SCRIPT_BODY_BYTES {
             return Err(SandboxError::BodyTooLarge);
         }
         let idents = Self::extract_top_level_idents(body);
