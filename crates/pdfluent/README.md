@@ -80,7 +80,7 @@ See the `LICENSE` file in this crate, or read the full commercial terms at <http
 - **30-day clean trial key:** <https://pdfluent.com/trial>
 - **Pricing:** <https://pdfluent.com/pricing>
 - **Commercial terms:** <https://pdfluent.com/terms>
-- **Source / issues:** <https://github.com/pdfluent>
+- **Support:** <https://pdfluent.com/support>
 
 ---
 

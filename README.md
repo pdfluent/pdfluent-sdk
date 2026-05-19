@@ -4,7 +4,7 @@ Pure Rust PDF/A SDK with XFA support and WASM bindings.
 
 ![Crates.io](https://img.shields.io/crates/v/pdfluent)
 ![License](https://img.shields.io/badge/license-PDFluent%20Commercial-blue)
-![Build](https://img.shields.io/github/actions/workflow/status/pdfluent/pdfluent-sdk/ci.yml)
+![Build](https://github.com/pdfluent/PDFluent-project/badges/master/pipeline.svg)
 
 See [SETUP.md](SETUP.md) for contributor onboarding.
 

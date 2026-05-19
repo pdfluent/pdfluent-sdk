@@ -315,4 +315,4 @@ try:
     from importlib.metadata import version as _pkg_version
     __version__ = _pkg_version("pdfluent")
 except Exception:
-    __version__ = "1.0.0b5"
+    __version__ = "1.0.0b7"

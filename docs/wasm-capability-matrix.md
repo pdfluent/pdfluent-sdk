@@ -1,10 +1,12 @@
 # PDFluent WASM Capability Matrix
 
-Status of each SDK capability in the `@pdfluent/xfa-wasm` browser build,
+Status of each SDK capability in the `@pdfluent/sdk-wasm` browser build,
 versus the native Rust crates / Tauri-side bindings.
 
-Versions: `1.0.0-beta.10` of `@pdfluent/xfa-wasm`; corresponding Rust crates
-at `1.0.0-beta.5` (engine) / `1.0.0-beta.4` (pdf-annot).
+Versions: `1.0.0-beta.11` of `@pdfluent/sdk-wasm`; corresponding Rust crates
+at `1.0.0-beta.5` (engine) / `1.0.0-beta.4` (pdf-annot). (Package was
+previously published as `@pdfluent/xfa-wasm`; renamed to `@pdfluent/sdk-wasm`
+in `1.0.0-beta.11`.)
 
 Wave 3 adds the stateful `PdfDocMut` editing handle. All mutating
 methods are available on **both** classes:
@@ -15,7 +17,7 @@ methods are available on **both** classes:
 `PdfDocMut` is **2.7× faster** than the stateless chain for a 4-mutation
 editor session. See `benchmarks/runs/wasm_sdk_dx/ROUND3_PERFORMANCE_BENCHMARK.md`.
 
-| # | Capability | Rust crate | WASM (1.0.0-beta.10) | Native | Notes |
+| # | Capability | Rust crate | WASM (1.0.0-beta.11) | Native | Notes |
 |---|------------|------------|---------------------|--------|-------|
 | 1 | Open PDF from bytes | `pdf-engine` + `pdf-syntax` | ✅ | ✅ | `PdfDoc.open(bytes)` |
 | 2 | Page count, dimensions | `pdf-engine` | ✅ | ✅ | `pageCount()`, `pageWidth()`, `pageHeight()` |
@@ -66,6 +68,8 @@ The bold rows above (rows 10, 14–22, 24–26) are the additions in
 ## Bundle size
 
 - 1.0.0-beta.8 (before Wave 2): 3.6 MB tarball / 10.2 MB unpacked
-- 1.0.0-beta.9 (this matrix):  **3.8 MB tarball / ~11 MB unpacked**
+- 1.0.0-beta.9 (post-Wave 2):   3.8 MB tarball / ~11 MB unpacked
+- **1.0.0-beta.11 (current)**:  see `crates/xfa-wasm/CHANGELOG.md` for the
+  current bundle size after the B3 wasm-opt -O3 pass.
 
 Under the soft target of 5 MB gzipped. Hard limit 15 MB.
