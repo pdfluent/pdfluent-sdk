@@ -132,6 +132,21 @@ namespace PDFluent
         ErrorLicenseFile = 18,
 
         /// <summary>
+        /// A signed license payload has expired (its <c>expires_at</c> is in
+        /// the past). Maps to <see cref="PdfluentLicenseException"/> with
+        /// <c>Code = "E-LICENSE-EXPIRED"</c>.
+        /// </summary>
+        ErrorLicenseExpired = 19,
+
+        /// <summary>
+        /// A signed license payload's Ed25519 signature does not verify
+        /// against the configured public key (tampered or wrong-key
+        /// payload). Maps to <see cref="PdfluentLicenseException"/> with
+        /// <c>Code = "E-LICENSE-INVALID-SIGNATURE"</c>.
+        /// </summary>
+        ErrorLicenseInvalidSignature = 20,
+
+        /// <summary>
         /// An unclassified error occurred. Maps to <see cref="PdfluentException"/>.
         /// </summary>
         ErrorUnknown = 99,
