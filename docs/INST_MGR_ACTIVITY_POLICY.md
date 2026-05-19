@@ -1,8 +1,8 @@
 # XFA instanceManager / JS Runtime Activity Policy
 
-**Version:** v3 (consolidated)
-**Status:** Active — describes CURRENT engine behaviour. No behaviour change introduced by this document.
-**Sprint:** XFA Product Quality Wave 1, Track C (JS Runtime Semantics)
+**Version:** v4 (Wave 3 closure)
+**Status:** Active — describes CURRENT engine behaviour. **No behaviour change introduced by this document.** v4 promotes v3's "operator-pending" notes for D1/D2/D3 into an explicit closure decision (status quo confirmed pending operator commit), pins the deny contract with W3-B tests, and documents the gated-allow plan for D1.B that an operator may commit later WITHOUT a silent default change.
+**Sprint:** XFA Product Quality Wave 3, Track B (Event Policy Closure)
 **Owner:** XFA JS runtime + layout engine
 **Date:** 2026-05-19
 
@@ -36,11 +36,17 @@ host-binding layer is intentional.
 |---------|------------|--------------------------------------------------------------------|-------------|
 | v1      | 2026-05-17 | `instanceManager.{add,remove,set}Instance` × 5 lifecycle events    | Superseded  |
 | v2      | (skipped)  | reserved for first operator decision on D1–D5 in JS2_02 matrix     | Pending     |
-| **v3**  | 2026-05-19 | Consolidated policy + cross-ref to JS2-02 matrix; no behaviour change | **Active** |
+| v3      | 2026-05-19 | Consolidated policy + cross-ref to JS2-02 matrix; no behaviour change | Superseded |
+| **v4**  | 2026-05-19 | Wave 3 W3-B closure: explicit status-quo confirmation for D1/D2/D3, FINAL policy table (§1.3), W3-B regression tests (§8); **no behaviour change** | **Active** |
 
 The intentional gap at v2 mirrors the JS2-02 matrix's "v2 = operator-decision
-committed". When the operator commits decisions D1–D5 (see §6), the policy
-must be re-issued as v4 with the chosen options inlined.
+committed". v4 supersedes v3 by **explicitly closing** D1/D2/D3 against the
+current engine semantics (status quo: deny during flatten). Closure means
+the deny contract is now load-bearing and regression-pinned (§8). It does
+NOT mean the operator has committed to a permanent decision: if the operator
+later commits D1.B (gated allow for `preSave`) per §6.1, the policy must be
+re-issued as v5 with the feature flag wired up; that change is **opt-in**
+behind `XFA_PRESAVE_DURING_FLATTEN`, default off, never a silent flip.
 
 ## 1. Current state — allowlist & denylist (descriptive)
 
@@ -92,6 +98,66 @@ pub const SANDBOX_ACTIVITY_ALLOWLIST: &[&str] = &[
     "layoutReady",
 ];
 ```
+
+### 1.3 FINAL policy table (v4 closure — current build)
+
+This is the canonical allow / deny / sandboxed-host-call decision for every
+event activity Adobe defines in XFA 3.3 §9.3, projected against the seven
+host method classes from `JS2_02_EVENT_POLICY_MATRIX.md`. Cells reflect the
+**current** engine. No code change is implied by this table; W3-B promotes
+the status-quo into the regression suite (see §8).
+
+Column legend mirrors `JS2_02_EVENT_POLICY_MATRIX.md` §2:
+C1 instance mutations, C2 value reads, C3 value writes, C4 validation hooks,
+C5 data binding (read), C6 SOM resolve, C7 host application calls.
+
+Cell legend:
+- **allow** — script body runs; host call performs effect.
+- **deny** — dispatch layer skips the entire script body (`js_skipped`);
+  no host call ever runs. Read columns marked allow are unreachable when
+  the row is denied at dispatch.
+- **sandboxed-host** (`sb-host`) — script body runs; the specific host call
+  returns a safe default (`messageBox → 0`, `closeDoc → undefined`, …) and
+  bumps `js_unsupported_host_calls`. Pending D4 commit, the behaviour is a
+  silent no-op; once D4.A lands, the bump is a catch-able `XfaActivityError`.
+
+| Activity     | Phase     | Flatten? | C1 inst mut | C2 reads | C3 val writes | C4 validate hook | C5 data bind | C6 SOM | C7 host calls | Policy doc cross-ref |
+|--------------|-----------|---------|-------------|----------|---------------|------------------|--------------|--------|---------------|----------------------|
+| initialize   | lifecycle | yes     | allow       | allow    | allow         | allow            | allow        | allow  | sb-host       | §1.1, §6 D0          |
+| calculate    | lifecycle | yes     | allow       | allow    | allow         | allow            | allow        | allow  | sb-host       | §1.1, §6 D0          |
+| validate     | lifecycle | yes     | allow       | allow    | allow         | allow            | allow        | allow  | sb-host       | §1.1, §6 D0          |
+| docReady     | lifecycle | yes     | allow       | allow    | allow         | allow            | allow        | allow  | sb-host       | §1.1, §6 D0          |
+| layoutReady  | lifecycle | yes     | allow       | allow    | allow         | allow            | allow        | allow  | sb-host       | §1.1, §6 D0          |
+| **preSave**  | save      | **no**  | **deny**    | n/a      | **deny**      | n/a              | n/a          | n/a    | n/a           | §1.2, §6.1 (D1.A)    |
+| **preSubmit**| submit    | **no**  | **deny**    | n/a      | **deny**      | n/a              | n/a          | n/a    | n/a           | §1.2, §6.2 (D2.A)    |
+| postSave     | save      | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2, §6 R08         |
+| postSubmit   | submit    | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+| postOpen     | open      | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2 R09             |
+| **click**    | UI        | **no**  | **deny**    | n/a      | **deny**      | n/a              | n/a          | n/a    | n/a           | §1.2, §6.3 (D3.A)    |
+| change       | UI        | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+| enter        | UI        | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+| exit         | UI        | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+| mouseEnter   | UI        | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+| mouseExit    | UI        | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+| mouseDown    | UI        | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+| mouseUp      | UI        | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+| prePrint     | print     | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+| postPrint    | print     | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+| preOpen      | open      | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+| ready        | open      | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+| full         | data      | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
+
+**Bolded rows** are the W3-B closure trio (`preSave`, `preSubmit`, `click`).
+W3-B does NOT change the cell values; it pins them with regression tests
+(see §8) so a silent default flip is no longer possible at the dispatch
+layer or the host-binding layer.
+
+**Read-column entries marked `n/a` for denied rows.** A denied row never
+executes its script body, so the read-column distinction (C2 / C4 / C5 / C6
+/ C7) is unreachable in practice. The matrix retains the columns for
+forward-compatibility with the gated-allow path described in §6.1 — if
+D1.B is committed for `preSave`, the `n/a` cells become `allow` (reads) and
+`sb-host` (C7) while C1 / C3 acquire the new per-method-class gate.
 
 ## 2. Defence-in-depth
 
@@ -183,26 +249,52 @@ captures five operator decisions:
 
 ### 6.1 D1 — preSave during flatten
 
-- **Status quo (current):** deny.
+- **Status quo (current, v4 closed):** deny. **Pinned by W3-B tests** in
+  `crates/pdf-xfa/tests/m3b_phasePQ_event_policy_closure_w3b.rs`
+  (`w3b_closure_presave_script_is_skipped_at_dispatch`,
+  `w3b_closure_host_layer_refuses_mutations_for_all_three_activities`).
 - **Recommended:** D1.B (gated allow + feature flag + per-class host policy).
-- **Risk delta if approved:** +1 feature flag in public Cargo surface, +18
-  tests; no semantic change unless flag flipped; reversible.
+- **Operator commit status:** **not yet committed.** Until operator commits
+  D1.B, the current deny contract is the FINAL contract.
+- **Risk delta if approved later:** +1 feature flag in public Cargo surface
+  (`XFA_PRESAVE_DURING_FLATTEN`, default OFF), +18 tests; no semantic change
+  unless the flag is flipped; reversible by removing the flag.
+- **Implementation plan (deferred — only if D1.B is committed):**
+  1. Extend `SANDBOX_ACTIVITY_ALLOWLIST` behind a Cargo feature `presave-during-flatten`, default OFF.
+  2. Generalise `write_activity_allowed` → `host_call_allowed(class)` so C7 keeps `sb-host` semantics even when C1/C3 are opened up.
+  3. Add `xfa.event.target == "flatten"` marker so scripts can branch.
+  4. Re-issue this document as v5 with the new row/column cells.
+  5. Corpus replay required before flipping the flag default.
 
-**Until D1 is committed, `preSave` remains in the denylist.** Track C
-(this sprint) does NOT change behaviour. See JS2-02 §6.1 for the option
+**Until D1.B is committed, `preSave` remains in the denylist.** v4 (this
+document) does NOT change behaviour. See JS2-02 §6.1 for the option
 comparison.
 
 ### 6.2 D2 — preSubmit during flatten
 
-- **Status quo (current):** deny.
+- **Status quo (current, v4 closed):** deny. **Pinned by W3-B tests**
+  (`w3b_closure_presubmit_script_is_skipped_at_dispatch`,
+  `w3b_closure_host_layer_refuses_mutations_for_all_three_activities`).
 - **Recommended:** D2.A (confirm deny). Flatten is not transport.
+- **Operator commit status:** D2.A treated as **permanent** in v4 — there
+  is no corpus evidence for the alternative and Adobe's transport semantics
+  are out of scope for static flatten. No re-issue planned unless evidence
+  arrives.
 - **Action:** no change.
 
 ### 6.3 D3 — click / UI events during flatten
 
-- **Status quo (current):** deny.
+- **Status quo (current, v4 closed):** deny. **Pinned by W3-B tests**
+  (`w3b_closure_click_script_is_skipped_at_dispatch`,
+  `w3b_closure_host_layer_refuses_mutations_for_all_three_activities`,
+  `w3b_closure_activity_helper_denies_w3b_trio_under_all_casings`) and by
+  the existing `inst_mgr_real_mutations::click_activity_instance_mutation_*`
+  pair.
 - **Recommended:** D3.A (confirm deny). Non-reproducible click ordering;
   exclusive-state collapse.
+- **Operator commit status:** D3.A treated as **permanent** in v4 —
+  `13275420.pdf` (10 pages with all click handlers skipped) is the
+  load-bearing corpus evidence that the deny path produces correct output.
 - **Action:** no change.
 
 ### 6.4 D4 — C7 host-call typed-error policy
@@ -250,10 +342,11 @@ Target-doc preservation invariants enforced by every Wave 1 agent:
 | Host stub gap closure  | `crates/pdf-xfa/tests/m3b_phaseE_js2_01.rs`                 | 17    |
 | DATA2-02 cluster fixes | `crates/pdf-xfa/tests/m3b_phaseE_data2_02.rs`               | 5+    |
 | Host interactive thunks| `crates/pdf-xfa/tests/m3b_phaseE_host_stubs.rs`             | 13+   |
-| **Track C event semantics** | `crates/pdf-xfa/tests/m3b_phasePQ_event_semantics.rs`  | **9** |
-| **Track C host object** | `crates/pdf-xfa/tests/m3b_phasePQ_host_object_semantics.rs`| **10**|
+| Track C event semantics | `crates/pdf-xfa/tests/m3b_phasePQ_event_semantics.rs`      | 9     |
+| Track C host object     | `crates/pdf-xfa/tests/m3b_phasePQ_host_object_semantics.rs`| 10    |
+| **W3-B policy closure** | `crates/pdf-xfa/tests/m3b_phasePQ_event_policy_closure_w3b.rs` | **7** |
 
-The Track C suite (this sprint) adds 19 net-new tests that pin
+The Track C suite (Wave 1) adds 19 net-new tests that pin
 - the canonical allowlist constant,
 - every allowlist activity executing,
 - every denylist activity silently skipping,
@@ -272,6 +365,31 @@ The Track C suite (this sprint) adds 19 net-new tests that pin
 - per-document counter reset,
 - the no-forbidden-globals invariant,
 - and `xfa.event` deterministic defaults.
+
+The **W3-B closure suite** (Wave 3, this document's v4 promotion) adds 7
+net-new tests that pin the FINAL policy table (§1.3) against silent
+default-drift:
+
+- `w3b_closure_presave_presubmit_click_are_not_in_allowlist` — pins the
+  closure invariant: the three controversial activities are NOT in
+  `SANDBOX_ACTIVITY_ALLOWLIST` and the helper rejects them.
+- `w3b_closure_presave_script_is_skipped_at_dispatch` — pins D1.A deny at
+  the dispatch gate (throw body never reaches QuickJS).
+- `w3b_closure_presubmit_script_is_skipped_at_dispatch` — pins D2.A deny
+  (mutation attempt never lands on the field).
+- `w3b_closure_click_script_is_skipped_at_dispatch` — pins D3.A deny
+  (mutation + throw body skipped together).
+- `w3b_closure_host_layer_refuses_mutations_for_all_three_activities` —
+  defence-in-depth: even bypassing dispatch, the host refuses
+  `instance_add` / `instance_remove` / `instance_set` for preSave /
+  preSubmit / click (and bumps `binding_errors`).
+- `w3b_closure_mixed_three_denied_plus_one_allowed_partitions_correctly`
+  — three denied + one allowed on the same node partitions cleanly; throws
+  never count because denied bodies never execute.
+- `w3b_closure_activity_helper_denies_w3b_trio_under_all_casings` — pins
+  case-sensitivity of `activity_allowed_for_sandbox`; any "tolerant"
+  rewrite (case-insensitive, trim, alias-table) would constitute a silent
+  default change and trip this test first.
 
 ## 9. Stop-rules (this document)
 
@@ -306,3 +424,9 @@ Edits forbidden without operator decision commit:
 - `benchmarks/runs/xfa_enterprise_plan/sprint2_batchB/JS2_01_HOST_STUB_GAP_REPORT.md`
   — host stub gap closure inventory.
 - `benchmarks/JS_SANDBOX_SECURITY_AUDIT.md` — sandbox capability inventory.
+- `crates/pdf-xfa/tests/m3b_phasePQ_event_policy_closure_w3b.rs` — W3-B
+  regression suite that pins the §1.3 FINAL policy table.
+- `benchmarks/runs/xfa_enterprise_plan/product_quality_track/WAVE3_EXECUTION_PLAN.md`
+  §W3-B — track brief.
+- `benchmarks/runs/xfa_enterprise_plan/product_quality_track/W3_B_REPORT.md`
+  — Wave 3 closure report (this document's promotion evidence).
