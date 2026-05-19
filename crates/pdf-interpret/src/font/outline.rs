@@ -148,6 +148,25 @@ impl OutlineFont {
         }
     }
 
+    /// PostScript name, if determinable.
+    ///
+    /// Unlike [`font_data`](Self::font_data) — which only returns
+    /// metadata for fonts whose program bytes are embedded —
+    /// `postscript_name` works for every variant where a name is
+    /// known, including non-embedded Type1 standard-14 fonts.
+    ///
+    /// This is the source for the WASM `getTextPositions()`
+    /// `fontName` field; it lets the editor render a stable font
+    /// label for standard-14 runs that don't carry an embedded
+    /// program.
+    pub(crate) fn postscript_name(&self) -> Option<String> {
+        match self {
+            Self::Type1(t) => t.postscript_name().map(|s| s.to_string()),
+            Self::TrueType(t) => t.postscript_name().map(|s| s.to_string()),
+            Self::Type0(t) => t.postscript_name().map(|s| s.to_string()),
+        }
+    }
+
     /// Get raw font bytes and metadata.
     ///
     /// Returns None for Type1 fonts and non-embedded TrueType fonts.

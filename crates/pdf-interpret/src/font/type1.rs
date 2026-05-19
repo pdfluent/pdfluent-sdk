@@ -119,6 +119,26 @@ impl Type1Font {
         }
     }
 
+    /// PostScript name of the font, if determinable.
+    ///
+    /// - `Kind::Standard` always knows its name (one of the 14
+    ///   standard fonts).
+    /// - `Kind::Type1` exposes its standard-font fallback name
+    ///   (when the embedded Type1 was resolved against a known
+    ///   standard font).
+    /// - `Kind::Cff` defers to the underlying CFF top-level
+    ///   FontName when available; otherwise returns `None`.
+    ///
+    /// Returns the raw name without subset-prefix stripping; callers
+    /// (`pdf-engine::text`) are responsible for normalising.
+    pub(crate) fn postscript_name(&self) -> Option<&str> {
+        match &self.1 {
+            Kind::Standard(s) => Some(s.postscript_name()),
+            Kind::Type1(t) => t.postscript_name(),
+            Kind::Cff(c) => c.postscript_name(),
+        }
+    }
+
     pub(crate) fn char_code_to_unicode(&self, char_code: u32) -> Option<BfString> {
         if let Some(to_unicode) = &self.2
             && let Some(c) = to_unicode.lookup_bf_string(char_code)
@@ -316,6 +336,17 @@ impl Type1Kind {
     fn char_code_to_unicode(&self, code: u8) -> Option<char> {
         self.code_to_ps_name(code).and_then(glyph_name_to_unicode)
     }
+
+    /// PostScript name fallback for embedded Type1 fonts.
+    ///
+    /// Embedded Type1 streams do not carry an explicit PostScript
+    /// name in our blob representation. We surface the standard-font
+    /// fallback that `select_standard_font` resolved during
+    /// construction, which matches how the renderer chose metrics
+    /// for missing glyphs.
+    fn postscript_name(&self) -> Option<&'static str> {
+        self.standard_font.map(|f| f.postscript_name())
+    }
 }
 
 #[derive(Debug)]
@@ -417,6 +448,19 @@ impl CffKind {
 
     fn char_code_to_unicode(&self, code: u8) -> Option<char> {
         self.code_to_ps_name(code).and_then(glyph_name_to_unicode)
+    }
+
+    /// PostScript name fallback for embedded CFF Type1C fonts.
+    ///
+    /// We do not currently parse the CFF top-level FontName; instead
+    /// we expose the standard-font fallback that
+    /// `select_standard_font` resolved during construction. This
+    /// covers the most common case (non-embedded standard-14 CFF
+    /// equivalents) and matches how the renderer chose metrics for
+    /// missing glyphs. Returns `None` when no standard fallback was
+    /// matched.
+    fn postscript_name(&self) -> Option<&'static str> {
+        self.standard_font.map(|f| f.postscript_name())
     }
 }
 
