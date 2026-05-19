@@ -85,9 +85,7 @@ impl PdfStatusForLicense for crate::types::PdfStatus {
                 }
             }
             pdfluent::Error::LicenseExpired { expires_at } => {
-                set_last_error_str(&format!(
-                    "license expired at unix timestamp {expires_at}"
-                ));
+                set_last_error_str(&format!("license expired at unix timestamp {expires_at}"));
                 crate::types::PdfStatus::ErrorLicenseExpired
             }
             pdfluent::Error::LicenseInvalidSignature => {

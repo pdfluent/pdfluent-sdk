@@ -18,7 +18,8 @@ const SAMPLE_PDF: &[u8] = include_bytes!("../../../fixtures/sample.pdf");
 /// Open the shared fixture or fail the test with a descriptive panic.
 fn open_sample() -> *mut PdfDocument {
     let mut doc: *mut PdfDocument = ptr::null_mut();
-    let rc = unsafe { pdf_document_open_from_bytes(SAMPLE_PDF.as_ptr(), SAMPLE_PDF.len(), &mut doc) };
+    let rc =
+        unsafe { pdf_document_open_from_bytes(SAMPLE_PDF.as_ptr(), SAMPLE_PDF.len(), &mut doc) };
     assert_eq!(rc, PdfStatus::Ok, "open_from_bytes(sample.pdf) failed");
     assert!(!doc.is_null());
     doc
@@ -28,8 +29,7 @@ fn open_sample() -> *mut PdfDocument {
 fn null_doc_returns_invalid_argument() {
     let mut blocks: *mut PdfTextBlock = ptr::null_mut();
     let mut count: usize = 999;
-    let rc =
-        unsafe { pdf_page_extract_text_blocks(ptr::null(), 0, &mut blocks, &mut count) };
+    let rc = unsafe { pdf_page_extract_text_blocks(ptr::null(), 0, &mut blocks, &mut count) };
     assert_eq!(rc, PdfStatus::ErrorInvalidArgument);
     // Out args must always be reset on failure.
     assert!(blocks.is_null());
@@ -40,8 +40,7 @@ fn null_doc_returns_invalid_argument() {
 fn null_out_blocks_returns_invalid_argument() {
     let doc = open_sample();
     let mut count: usize = 999;
-    let rc =
-        unsafe { pdf_page_extract_text_blocks(doc, 0, ptr::null_mut(), &mut count) };
+    let rc = unsafe { pdf_page_extract_text_blocks(doc, 0, ptr::null_mut(), &mut count) };
     assert_eq!(rc, PdfStatus::ErrorInvalidArgument);
     assert_eq!(count, 0);
     unsafe { pdf_document_free(doc) };
@@ -51,8 +50,7 @@ fn null_out_blocks_returns_invalid_argument() {
 fn null_out_count_returns_invalid_argument() {
     let doc = open_sample();
     let mut blocks: *mut PdfTextBlock = ptr::null_mut();
-    let rc =
-        unsafe { pdf_page_extract_text_blocks(doc, 0, &mut blocks, ptr::null_mut()) };
+    let rc = unsafe { pdf_page_extract_text_blocks(doc, 0, &mut blocks, ptr::null_mut()) };
     assert_eq!(rc, PdfStatus::ErrorInvalidArgument);
     assert!(blocks.is_null());
     unsafe { pdf_document_free(doc) };
@@ -98,13 +96,22 @@ fn valid_page_returns_blocks_with_documented_shape() {
     // Walk the array.
     let slice = unsafe { std::slice::from_raw_parts(blocks, count) };
     for (i, b) in slice.iter().enumerate() {
-        assert!(b.width >= 0.0, "block {i} width must be >= 0, got {}", b.width);
-        assert!(b.height >= 0.0, "block {i} height must be >= 0, got {}", b.height);
+        assert!(
+            b.width >= 0.0,
+            "block {i} width must be >= 0, got {}",
+            b.width
+        );
+        assert!(
+            b.height >= 0.0,
+            "block {i} height must be >= 0, got {}",
+            b.height
+        );
         assert!(b.x.is_finite(), "block {i} x must be finite");
         assert!(b.y.is_finite(), "block {i} y must be finite");
         assert!(!b.text.is_null(), "block {i} text must not be null");
-        let text =
-            unsafe { CStr::from_ptr(b.text) }.to_str().expect("text must be UTF-8");
+        let text = unsafe { CStr::from_ptr(b.text) }
+            .to_str()
+            .expect("text must be UTF-8");
         let _ = text; // shape-only check; we don't pin content
     }
 
@@ -118,8 +125,7 @@ fn double_extract_then_free_is_safe() {
     for _ in 0..3 {
         let mut blocks: *mut PdfTextBlock = ptr::null_mut();
         let mut count: usize = 0;
-        let rc =
-            unsafe { pdf_page_extract_text_blocks(doc, 0, &mut blocks, &mut count) };
+        let rc = unsafe { pdf_page_extract_text_blocks(doc, 0, &mut blocks, &mut count) };
         assert_eq!(rc, PdfStatus::Ok);
         unsafe { pdf_text_blocks_free(blocks, count) };
     }

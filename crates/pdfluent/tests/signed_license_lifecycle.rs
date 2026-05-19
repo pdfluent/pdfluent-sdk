@@ -43,11 +43,7 @@ fn payload(tier: XfaTier, expires_at: u64) -> LicensePayload {
 }
 
 fn assert_code(err: &Error, expected: &str) {
-    assert_eq!(
-        err.code(),
-        expected,
-        "wrong typed code on error: {err:?}",
-    );
+    assert_eq!(err.code(), expected, "wrong typed code on error: {err:?}",);
 }
 
 #[test]
@@ -109,8 +105,8 @@ fn signed_license_lifecycle_e2e() {
     // ─── Scenario F1 — valid signed payload ────────────────────────────
     // Sign a Basic-tier payload. The umbrella maps Basic → Developer per
     // SIGNED_LICENSE_PAYLOAD_ARCHITECTURE.md Q5.
-    let valid = sign_license(&private_key, &payload(XfaTier::Basic, FUTURE_EXPIRY))
-        .expect("sign valid");
+    let valid =
+        sign_license(&private_key, &payload(XfaTier::Basic, FUTURE_EXPIRY)).expect("sign valid");
     set_license_payload(&valid).expect("valid payload activates");
 
     let info = license_info();
@@ -120,7 +116,10 @@ fn signed_license_lifecycle_e2e() {
         "xfa-license Basic → pdfluent Developer mapping"
     );
     assert!(
-        info.expires_at.as_deref().map(|s| s.starts_with("3000-")).unwrap_or(false),
+        info.expires_at
+            .as_deref()
+            .map(|s| s.starts_with("3000-"))
+            .unwrap_or(false),
         "expires_at must be ISO 8601 in year 3000, got {:?}",
         info.expires_at
     );
