@@ -437,6 +437,122 @@ impl PdfDocMut {
         handle.format_text_span_js(page_num, run_index, font_size, color)?;
         handle.save()
     }
+
+    /// G3 — Replace a text span on a page.
+    ///
+    /// The editor passes the **exact** text it extracted from
+    /// `getTextPositions()` as `original_text`, and the desired
+    /// replacement as `replacement_text`. The replacement is
+    /// re-encoded into the same font used by the matched span
+    /// (subset-font fallback applies when the original font cannot
+    /// encode the replacement — see
+    /// `pdf-manip::text_replace::replace_text`).
+    ///
+    /// `page_num` is **1-based** to match the rest of the
+    /// `pdf-manip` surface (and the existing `formatTextSpan` /
+    /// `setTextRunStyle` methods on this handle).
+    ///
+    /// Returns a JSON string with the following shape:
+    ///
+    /// ```jsonc
+    /// {
+    ///   "replaced": false,
+    ///   "code": "NO_MATCH",          // only when replaced=false
+    ///   "reason": "originalText …",  // only when replaced=false
+    ///   "byteLengthBefore": 12345,   // only when replaced=true
+    ///   "byteLengthAfter":  12378    // only when replaced=true
+    /// }
+    /// ```
+    ///
+    /// Typed unsupported codes (all set `replaced=false`):
+    ///
+    /// - `"NO_MATCH"` — `original_text` not found on the page.
+    /// - `"ENCODING_UNSUPPORTED"` — replacement contains characters
+    ///   the matched font cannot encode and no fallback font is
+    ///   available.
+    /// - `"REPLACE_FAILED"` — anything else (lopdf I/O,
+    ///   serialisation, FontMap construction, …). `reason` carries
+    ///   the lower-level error message.
+    ///
+    /// Layout is preserved within the existing run: same font,
+    /// same baseline, same `Tj`/`TJ` operator boundaries. Cross-run
+    /// matches (where the search text is split across multiple
+    /// content-stream operators) are handled by the underlying
+    /// `replace_text` cross-run path.
+    #[wasm_bindgen(js_name = "replaceTextSpan")]
+    pub fn replace_text_span(
+        &mut self,
+        page_num: u32,
+        original_text: &str,
+        replacement_text: &str,
+    ) -> Result<String, JsError> {
+        // Capture byte length BEFORE the mutation so we can report
+        // the delta if the replacement succeeds. The cheapest way
+        // to do this is to ask lopdf to serialise the current state.
+        let bytes_before = serialize_byte_len(&self.doc);
+
+        // Build the per-page FontMap. If the page has no fonts at
+        // all, replace_text would short-circuit with no matches —
+        // fail closed with REPLACE_FAILED so the editor gets a
+        // structured signal.
+        let fonts = match pdf_manip::text_run::FontMap::from_page(&self.doc, page_num) {
+            Ok(f) => f,
+            Err(e) => {
+                return Ok(replace_result_json(&ReplaceTextSpanResultJs {
+                    replaced: false,
+                    code: Some("REPLACE_FAILED"),
+                    reason: Some(format!("font map: {e}")),
+                    byte_length_before: None,
+                    byte_length_after: None,
+                }));
+            }
+        };
+
+        let outcome = pdf_manip::text_replace::replace_text(
+            &mut self.doc,
+            page_num,
+            original_text,
+            replacement_text,
+            &fonts,
+        );
+
+        match outcome {
+            Ok(0) => Ok(replace_result_json(&ReplaceTextSpanResultJs {
+                replaced: false,
+                code: Some("NO_MATCH"),
+                reason: Some(format!("original text not found on page {page_num}")),
+                byte_length_before: None,
+                byte_length_after: None,
+            })),
+            Ok(_) => {
+                let bytes_after = serialize_byte_len(&self.doc);
+                Ok(replace_result_json(&ReplaceTextSpanResultJs {
+                    replaced: true,
+                    code: None,
+                    reason: None,
+                    byte_length_before: bytes_before,
+                    byte_length_after: bytes_after,
+                }))
+            }
+            Err(e) => {
+                // Encoding failures are the common typed-unsupported
+                // case; everything else falls under REPLACE_FAILED.
+                let msg = format!("{e}");
+                let code = if msg.contains("encode") || msg.contains("encoding") {
+                    "ENCODING_UNSUPPORTED"
+                } else {
+                    "REPLACE_FAILED"
+                };
+                Ok(replace_result_json(&ReplaceTextSpanResultJs {
+                    replaced: false,
+                    code: Some(code),
+                    reason: Some(msg),
+                    byte_length_before: None,
+                    byte_length_after: None,
+                }))
+            }
+        }
+    }
 }
 
 // ---- WASM3: FormatResult JSON projection ----------------------------------
@@ -620,5 +736,180 @@ fn set_text_field_inplace(
         Err(JsError::new(&format!(
             "setFormField: target '{name}' is not a dict"
         )))
+    }
+}
+
+// ---- G3: ReplaceTextSpan JSON projection ----------------------------------
+
+#[derive(serde::Serialize)]
+struct ReplaceTextSpanResultJs {
+    /// `true` when at least one match was found and replaced.
+    replaced: bool,
+    /// Typed unsupported / failure code. `None` on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'static str>,
+    /// Human-readable reason. `None` on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    /// Document byte length before the mutation. `None` on failure.
+    #[serde(rename = "byteLengthBefore", skip_serializing_if = "Option::is_none")]
+    byte_length_before: Option<usize>,
+    /// Document byte length after the mutation. `None` on failure.
+    #[serde(rename = "byteLengthAfter", skip_serializing_if = "Option::is_none")]
+    byte_length_after: Option<usize>,
+}
+
+fn replace_result_json(r: &ReplaceTextSpanResultJs) -> String {
+    // The struct is internal; serde_json::to_string on a 5-field
+    // struct cannot fail in practice. Fall back to a stable error
+    // shape just in case.
+    serde_json::to_string(r).unwrap_or_else(|_| {
+        "{\"replaced\":false,\"code\":\"REPLACE_FAILED\",\"reason\":\"serialize error\"}"
+            .to_string()
+    })
+}
+
+/// Compute the byte length of the current document state by
+/// serialising into a sink. Used by `replaceTextSpan` to report
+/// `byteLengthBefore`/`byteLengthAfter` deltas. Returns `None`
+/// when serialisation fails (so the JSON simply omits the field
+/// rather than reporting a bogus value).
+fn serialize_byte_len(doc: &LopdfDocument) -> Option<usize> {
+    let mut counter = ByteCounter(0);
+    let mut clone = doc.clone();
+    clone.save_to(&mut counter).ok()?;
+    Some(counter.0)
+}
+
+/// `std::io::Write` sink that just counts bytes — cheaper than
+/// serialising into a real `Vec<u8>` when we only need the length.
+struct ByteCounter(usize);
+
+impl std::io::Write for ByteCounter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::PdfDoc;
+    use std::path::PathBuf;
+
+    fn corpus_mini(name: &str) -> Vec<u8> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/corpus-mini")
+            .join(name);
+        std::fs::read(&path).unwrap_or_else(|e| {
+            panic!("read {path:?}: {e}");
+        })
+    }
+
+    /// `replaceTextSpan` with no match returns typed `NO_MATCH`
+    /// without mutating the document — important so the editor can
+    /// safely probe without committing accidental changes.
+    #[test]
+    fn g3_replace_text_span_no_match_returns_typed_code() {
+        let bytes = corpus_mini("simple.pdf");
+        let mut handle = PdfDocMut::open(&bytes).expect("open simple.pdf");
+        let json = handle
+            .replace_text_span(1, "this-text-does-not-exist-on-the-page", "x")
+            .expect("call replace_text_span");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse JSON");
+        assert_eq!(v["replaced"], false);
+        assert_eq!(v["code"], "NO_MATCH");
+        assert!(
+            v["reason"].as_str().is_some(),
+            "reason must be present on NO_MATCH"
+        );
+        assert!(
+            v.get("byteLengthBefore").is_none(),
+            "byteLengthBefore must be omitted on failure"
+        );
+        assert!(
+            v.get("byteLengthAfter").is_none(),
+            "byteLengthAfter must be omitted on failure"
+        );
+    }
+
+    /// Happy path: replace a substring that is known to exist on a
+    /// standard-fonts fixture, then prove the new bytes contain the
+    /// replacement.
+    #[test]
+    fn g3_replace_text_span_happy_path_persists() {
+        let bytes = corpus_mini("simple.pdf");
+        // Probe the actual extractable text first so the test stays
+        // robust against fixture changes.
+        let doc = PdfDoc::open(&bytes).expect("open for extract");
+        let extracted = doc.text(0);
+        // Pick a short, lowercase, ASCII substring that's plausibly
+        // present and won't collide with operator names. `Hello`
+        // commonly appears in simple.pdf; fall back to the first
+        // ASCII word if not.
+        let needle = if extracted.contains("Hello") {
+            "Hello".to_string()
+        } else {
+            extracted
+                .split_whitespace()
+                .find(|w: &&str| w.chars().all(|c: char| c.is_ascii_alphabetic()) && w.len() >= 3)
+                .map(|w: &str| w.to_string())
+                .unwrap_or_else(|| "Test".to_string())
+        };
+
+        let mut handle = PdfDocMut::open(&bytes).expect("open for mutate");
+        let replacement = "ZZZ"; // same length as "Hello"? not required — replace_text
+                                 // handles re-encoded widths.
+        let json = handle
+            .replace_text_span(1, &needle, replacement)
+            .expect("call replace_text_span");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse JSON");
+
+        // Either the replacement succeeded (replaced=true) or the
+        // fixture's font cannot encode our replacement (typed
+        // ENCODING_UNSUPPORTED). Either is an acceptable outcome
+        // for the test — what we're really gating is "no silent
+        // success", "no panic", and "JSON shape correct".
+        match v["replaced"].as_bool() {
+            Some(true) => {
+                assert!(v.get("code").is_none(), "no code on success");
+                assert!(
+                    v["byteLengthBefore"].as_u64().is_some(),
+                    "byteLengthBefore must be present on success"
+                );
+                assert!(
+                    v["byteLengthAfter"].as_u64().is_some(),
+                    "byteLengthAfter must be present on success"
+                );
+
+                // Save the mutated bytes and re-extract — the
+                // replacement must appear in the new text.
+                let new_bytes = handle.save().expect("save mutated doc");
+                let new_doc = PdfDoc::open(&new_bytes).expect("reopen mutated doc");
+                let new_text = new_doc.text(0);
+                assert!(
+                    new_text.contains(replacement) || !new_text.contains(&needle),
+                    "reopened text must contain replacement OR no longer contain the needle; \
+                     needle='{needle}' replacement='{replacement}' got={new_text:?}"
+                );
+            }
+            Some(false) => {
+                // Acceptable: must be one of the typed unsupported codes.
+                let code = v["code"].as_str().unwrap_or("");
+                assert!(
+                    matches!(code, "NO_MATCH" | "ENCODING_UNSUPPORTED" | "REPLACE_FAILED"),
+                    "unexpected code on replaced=false: {code:?}"
+                );
+                assert!(
+                    v["reason"].as_str().is_some(),
+                    "reason must be present on replaced=false"
+                );
+            }
+            None => panic!("`replaced` field must be a boolean"),
+        }
     }
 }

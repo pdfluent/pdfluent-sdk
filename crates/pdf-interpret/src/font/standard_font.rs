@@ -616,6 +616,16 @@ impl StandardKind {
     pub(crate) fn is_monospace(&self) -> bool {
         self.base_font.is_monospace()
     }
+
+    /// PostScript name of the underlying standard-14 font.
+    ///
+    /// Always available because every `StandardKind` was constructed
+    /// against a known [`StandardFont`].  Surfaced for the WASM
+    /// `getTextPositions()` `fontName` field on non-embedded Type1
+    /// runs (see `pdf-engine`).
+    pub(crate) fn postscript_name(&self) -> &'static str {
+        self.base_font.postscript_name()
+    }
 }
 
 #[cfg(test)]
