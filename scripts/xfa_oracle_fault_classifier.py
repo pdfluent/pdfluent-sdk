@@ -12,6 +12,17 @@ and assigns each case to one of:
   - ``both_fail``                   — both sides appear blank/errored.
   - ``high_fidelity_no_action``     — SSIM >= 0.94, no investigation needed.
 
+For ``oracle_mismatch_rendering`` cases the classifier also assigns a
+``fine_category`` subcategory (Wave 1 Agent D extension):
+
+  - ``antialias_variant``  — pure sub-pixel AA difference; text strokes only.
+  - ``font_metric``        — systematic font size / leading / tracking difference
+                             that distributes diff uniformly across all text.
+  - ``element_position``   — one or more elements are geometrically shifted
+                             (localized dense diff block, not global).
+  - ``clipping``           — diff concentrated at page/element boundary edges.
+  - ``mixed_rendering``    — combination of the above; no dominant subcategory.
+
 Heuristics are best-effort signals over the per-page panel PNGs already written
 by OV2-01 (``*_ours.png``, ``*_oracle.png``). The classifier does NOT call any
 paid API and does NOT generate new oracles.
@@ -62,6 +73,32 @@ HIGH_DIFF_PIXEL_THRESHOLD = 32   # abs grayscale delta considered "significant" 
 TEXT_ANTIALIAS_DIFF_CEILING = 6.0  # mean_abs_diff <= this with high stroke density -> AA.
 GEOMETRIC_SHIFT_FRACTION = 0.18  # fraction of high-diff pixels indicating bulk shift.
 
+# Wave 1 Agent D — fine-category thresholds for oracle_mismatch_rendering subcategory.
+#
+# Font-metric signature: diff is distributed nearly uniformly across all text
+# columns/rows (low column-mean variance); blank fraction of ours is LOWER than
+# oracle (ours renders denser); mean_abs_diff is moderate (10–18).
+FONT_METRIC_BLANK_GAP = 0.02     # oracle_blank - ours_blank >= this -> font-metric gap.
+FONT_METRIC_MEAN_ABS_LOW = 8.0   # mean_abs_diff range low end.
+FONT_METRIC_MEAN_ABS_HIGH = 22.0 # mean_abs_diff range high end.
+FONT_METRIC_COL_VAR_CEILING = 0.35  # normalised column-mean std <= this -> uniform diff.
+# Clipping signature: high-diff pixels concentrated at row/column extremes (edges).
+CLIPPING_EDGE_FRACTION = 0.30    # fraction of high-diff pixels in outer 10% of image.
+# Element-position signature: localised dense diff block (not global); high column
+# variance + isolated peak.
+ELEMENT_POSITION_COL_VAR_FLOOR = 0.50
+# Antialias-variant signature: only at stroke edges (handled by existing text_antialiasing
+# band); mean_abs_diff very low.
+ANTIALIAS_MEAN_ABS_CEILING = 8.0
+
+FINE_CATEGORIES = (
+    "antialias_variant",
+    "font_metric",
+    "element_position",
+    "clipping",
+    "mixed_rendering",
+)
+
 CATEGORIES = (
     "engine_bug",
     "oracle_mismatch_acroform_xfa",
@@ -99,9 +136,25 @@ def probe_pdf_form_entries(pdf_path: Path) -> tuple[bool, bool]:
 
 
 def detect_oracle_source_kind(oracle_path: str) -> str:
-    """Classify oracle path provenance based on filename/path conventions."""
+    """Classify oracle path provenance based on filename/path conventions.
+
+    Handles both local filesystem paths and VPS-prefixed logical paths
+    (``oracle:pdfrest/...``, ``vps:t2-visual-140/...``).
+    """
+    if not oracle_path:
+        return "missing"
     p = oracle_path.lower()
-    if not oracle_path or not Path(oracle_path).exists():
+    # Logical VPS paths used in T2 SSIM JSONs (oracle:pdfrest/...).
+    # These are always pdfRest-rendered XFA pages (not AcroForm flattened).
+    if p.startswith("oracle:pdfrest/") or p.startswith("oracle:pdfrest_xfa"):
+        if "pdfrest_flat" in p or "xfa-golden" in p:
+            return "vps_xfa_golden"
+        return "pdfrest_xfa"
+    if p.startswith("oracle:"):
+        # Generic oracle: prefix without pdfrest sub-path.
+        return "unknown_external"
+    # Local filesystem paths.
+    if not Path(oracle_path).exists():
         return "missing"
     if "pdfrest_flat" in p or "xfa-golden" in p:
         return "vps_xfa_golden"
@@ -223,6 +276,169 @@ def compute_diff_stats(
     }
 
 
+def compute_fine_category(
+    ours_path: str,
+    oracle_path: str,
+    diff_stats: dict[str, Any] | None,
+    band: str,
+) -> tuple[str, str]:
+    """Return (fine_category, fine_rationale) for an oracle_mismatch_rendering case.
+
+    Wave 1 Agent D extension: produces a finer subcategory classification
+    (font_metric / element_position / clipping / antialias_variant / mixed_rendering).
+
+    This function performs additional image analysis beyond what diff_band_correlation
+    captures: column-mean variance (uniformity proxy) and edge-concentration analysis.
+    When panel images are unavailable it falls back to diff_stats signals alone.
+    """
+    mean_abs = diff_stats.get("mean_abs_diff", 0.0) if diff_stats else 0.0
+    blank_ours = diff_stats.get("image_blank_fraction_ours", 0.0) if diff_stats else 0.0
+    blank_oracle = diff_stats.get("image_blank_fraction_oracle", 0.0) if diff_stats else 0.0
+    blank_gap = blank_oracle - blank_ours  # positive -> oracle renders more white (sparser)
+
+    # Fast path: existing band already resolved to text_antialiasing.
+    if band == "text_antialiasing":
+        if mean_abs <= ANTIALIAS_MEAN_ABS_CEILING:
+            return (
+                "antialias_variant",
+                (
+                    f"Band is text_antialiasing and mean_abs_diff={mean_abs:.2f} is very low; "
+                    "pure sub-pixel AA difference at stroke edges."
+                ),
+            )
+        return (
+            "mixed_rendering",
+            (
+                f"Band is text_antialiasing but mean_abs_diff={mean_abs:.2f} is elevated; "
+                "AA + secondary signal present."
+            ),
+        )
+
+    # Load panels for additional spatial analysis.
+    ours_gray = load_gray_panel(ours_path)
+    oracle_gray = load_gray_panel(oracle_path)
+
+    col_var_norm: float | None = None
+    edge_high_frac: float | None = None
+
+    if ours_gray is not None and oracle_gray is not None:
+        if ours_gray.shape != oracle_gray.shape:
+            target_h, target_w = ours_gray.shape
+            oracle_img = Image.fromarray(oracle_gray).resize(
+                (target_w, target_h), Image.LANCZOS
+            )
+            oracle_gray = np.array(oracle_img, dtype=np.uint8)
+
+        diff_arr = np.abs(
+            ours_gray.astype(np.int32) - oracle_gray.astype(np.int32)
+        ).astype(np.float32)
+
+        h, w = diff_arr.shape
+
+        # Column-mean uniformity: low variance -> diff spread uniformly (font-metric).
+        col_means = diff_arr.mean(axis=0)
+        col_mean_global = float(col_means.mean()) if col_means.size > 0 else 1.0
+        if col_mean_global > 0:
+            col_var_norm = float(col_means.std()) / col_mean_global
+        else:
+            col_var_norm = 0.0
+
+        # Edge concentration: fraction of high-diff pixels in outer 10% rows/cols.
+        if h > 10 and w > 10:
+            edge_rows = max(1, h // 10)
+            edge_cols = max(1, w // 10)
+            high_mask = (diff_arr >= HIGH_DIFF_PIXEL_THRESHOLD)
+            total_high = float(high_mask.sum())
+            if total_high > 0:
+                edge_mask = np.zeros_like(high_mask)
+                edge_mask[:edge_rows, :] = True
+                edge_mask[-edge_rows:, :] = True
+                edge_mask[:, :edge_cols] = True
+                edge_mask[:, -edge_cols:] = True
+                edge_high_frac = float(np.logical_and(high_mask, edge_mask).sum()) / total_high
+            else:
+                edge_high_frac = 0.0
+
+    # --- Decision tree ---
+
+    # Clipping: diff concentrated at image edges.
+    if edge_high_frac is not None and edge_high_frac >= CLIPPING_EDGE_FRACTION:
+        return (
+            "clipping",
+            (
+                f"Edge-concentration of high-diff pixels: {edge_high_frac:.2%} of high-diff "
+                f"pixels are in outer 10% margin (threshold {CLIPPING_EDGE_FRACTION:.0%}). "
+                "Diff pattern consistent with a clipping boundary or page-margin offset."
+            ),
+        )
+
+    # Element-position: high column-mean variance -> localised block.
+    if (
+        col_var_norm is not None
+        and col_var_norm >= ELEMENT_POSITION_COL_VAR_FLOOR
+        and band == "geometric_shift"
+    ):
+        return (
+            "element_position",
+            (
+                f"Column-mean normalised std={col_var_norm:.3f} >= "
+                f"{ELEMENT_POSITION_COL_VAR_FLOOR} and band=geometric_shift; "
+                "diff is localised to a specific element or region (position offset)."
+            ),
+        )
+
+    # Font-metric: uniform diff (low col_var_norm) + moderate mean_abs + oracle renders
+    # more white (blank_gap positive, meaning oracle font is sparser/larger).
+    font_metric_mean_ok = FONT_METRIC_MEAN_ABS_LOW <= mean_abs <= FONT_METRIC_MEAN_ABS_HIGH
+    font_metric_uniform = col_var_norm is not None and col_var_norm <= FONT_METRIC_COL_VAR_CEILING
+    font_metric_blank_gap_ok = blank_gap >= FONT_METRIC_BLANK_GAP
+
+    if font_metric_mean_ok and font_metric_blank_gap_ok:
+        confidence_detail = ""
+        if font_metric_uniform:
+            confidence_detail = f"; col_var_norm={col_var_norm:.3f} confirms uniform spread"
+        return (
+            "font_metric",
+            (
+                f"Systematic font-metric difference: mean_abs_diff={mean_abs:.2f} (range "
+                f"{FONT_METRIC_MEAN_ABS_LOW}–{FONT_METRIC_MEAN_ABS_HIGH}), "
+                f"blank_gap={blank_gap:.4f} >= {FONT_METRIC_BLANK_GAP} (oracle renders "
+                f"sparser/larger than ours){confidence_detail}. "
+                "Root cause: font size, line-height, or tracking difference between "
+                "PDFluent and pdfRest renderer. Not an engine layout bug."
+            ),
+        )
+
+    # Font-metric without blank-gap signal (same magnitude, no density difference).
+    if font_metric_mean_ok and font_metric_uniform:
+        return (
+            "font_metric",
+            (
+                f"Uniform diff spread (col_var_norm={col_var_norm:.3f} <= "
+                f"{FONT_METRIC_COL_VAR_CEILING}) with mean_abs_diff={mean_abs:.2f}; "
+                "likely font-metric difference (size/tracking) without significant "
+                "density gap. Oracle-gap rather than engine bug."
+            ),
+        )
+
+    # Fallback: mixed rendering.
+    detail_parts = []
+    if col_var_norm is not None:
+        detail_parts.append(f"col_var_norm={col_var_norm:.3f}")
+    if edge_high_frac is not None:
+        detail_parts.append(f"edge_high_frac={edge_high_frac:.3f}")
+    detail_parts.append(f"blank_gap={blank_gap:.4f}")
+    detail_parts.append(f"mean_abs={mean_abs:.2f}")
+    return (
+        "mixed_rendering",
+        (
+            "No dominant fine-category signal; signals: "
+            + ", ".join(detail_parts)
+            + ". Classified as mixed_rendering oracle-gap."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Classifier
 # ---------------------------------------------------------------------------
@@ -235,7 +451,11 @@ def classify(
     oracle_source_kind: str,
     diff_stats: dict[str, Any] | None,
 ) -> tuple[str, str, str, bool]:
-    """Return (category, confidence, rationale, manual_review_recommended)."""
+    """Return (category, confidence, rationale, manual_review_recommended).
+
+    Note: fine_category subcategory for oracle_mismatch_rendering is computed
+    separately via compute_fine_category() and merged in classify_one().
+    """
 
     # Both-fail check: near-blank on BOTH sides AND SSIM also low (rendering
     # truly failed). High SSIM means the two blank pages still agree — that
@@ -363,6 +583,31 @@ def classify(
             True,
         )
 
+    # Mixed pattern below 0.85 threshold with moderate uniform diff:
+    # Wave 1 Agent D extended rule — font-metric signal takes precedence over
+    # generic ambiguous when blank_gap and mean_abs_diff are in the font-metric
+    # range. These cases are NOT engine bugs; they are systematic font-rendering
+    # differences between PDFluent and the pdfRest oracle renderer.
+    if (
+        band == "mixed"
+        and FONT_METRIC_MEAN_ABS_LOW <= mean_abs <= FONT_METRIC_MEAN_ABS_HIGH
+        and diff_stats is not None
+        and (diff_stats.get("image_blank_fraction_oracle", 0.0)
+             - diff_stats.get("image_blank_fraction_ours", 0.0)) >= FONT_METRIC_BLANK_GAP
+    ):
+        return (
+            "oracle_mismatch_rendering",
+            "medium",
+            (
+                f"Mixed diff with font-metric signature: mean_abs_diff={mean_abs:.2f}, "
+                f"blank_gap={diff_stats['image_blank_fraction_oracle'] - diff_stats['image_blank_fraction_ours']:.4f} "
+                f">= {FONT_METRIC_BLANK_GAP}, SSIM {ssim_mean:.4f}. "
+                "Oracle renders sparser/larger than ours; root cause is font size / "
+                "line-height / tracking difference. Fine-category: font_metric."
+            ),
+            True,
+        )
+
     # Geometric shift on a non-flattened oracle -> engine bug.
     if band == "geometric_shift":
         return (
@@ -461,6 +706,19 @@ def classify_one(
         diff_stats=diff_stats,
     )
 
+    # Wave 1 Agent D: compute fine_category for rendering-mismatch cases.
+    fine_category: str | None = None
+    fine_rationale: str | None = None
+    if category == "oracle_mismatch_rendering" and per_page:
+        paths = per_page[0].get("image_paths", {})
+        band = diff_stats.get("diff_band_correlation", "mixed") if diff_stats else "mixed"
+        fine_category, fine_rationale = compute_fine_category(
+            ours_path=paths.get("ours", ""),
+            oracle_path=paths.get("oracle", ""),
+            diff_stats=diff_stats,
+            band=band,
+        )
+
     signals: dict[str, Any] = {
         "pdf_has_acroform_entry": has_acroform,
         "pdf_has_xfa_entry": has_xfa,
@@ -468,6 +726,15 @@ def classify_one(
     }
     if diff_stats is not None:
         signals["diff_stats"] = diff_stats
+
+    classification_block: dict[str, Any] = {
+        "category": category,
+        "confidence": confidence,
+        "rationale": rationale,
+    }
+    if fine_category is not None:
+        classification_block["fine_category"] = fine_category
+        classification_block["fine_rationale"] = fine_rationale
 
     return {
         "doc_sha256": doc_sha,
@@ -479,11 +746,7 @@ def classify_one(
             "max_ssim": max_ssim if max_ssim is not None else 0.0,
             "page_count": int(page_count),
         },
-        "classification": {
-            "category": category,
-            "confidence": confidence,
-            "rationale": rationale,
-        },
+        "classification": classification_block,
         "heuristic_signals": signals,
         "manual_review_recommended": manual_review,
     }
