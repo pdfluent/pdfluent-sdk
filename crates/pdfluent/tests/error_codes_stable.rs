@@ -92,7 +92,10 @@ fn variant_samples() -> Vec<(Error, &'static str)> {
             },
             "E-LICENSE-EXPIRED",
         ),
-        (Error::LicenseInvalidSignature, "E-LICENSE-INVALID-SIGNATURE"),
+        (
+            Error::LicenseInvalidSignature,
+            "E-LICENSE-INVALID-SIGNATURE",
+        ),
         (
             Error::LicenseRateLimited {
                 resource: "api_calls".into(),
