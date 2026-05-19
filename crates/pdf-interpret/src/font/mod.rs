@@ -161,6 +161,19 @@ impl OutlineGlyph {
         self.font.font_data()
     }
 
+    /// PostScript name of the underlying font, if determinable.
+    ///
+    /// Works even when [`font_data`](Self::font_data) returns
+    /// `None` — e.g. non-embedded standard-14 Type1 fonts still
+    /// expose their canonical PostScript name through this
+    /// accessor. Returns `None` when no name source is available.
+    ///
+    /// Surfaced to support the WASM `getTextPositions()` `fontName`
+    /// field for the editor contract.
+    pub fn postscript_name(&self) -> Option<String> {
+        self.font.postscript_name()
+    }
+
     /// Get the glyph ID within the font.
     pub fn glyph_id(&self) -> GlyphId {
         self.id

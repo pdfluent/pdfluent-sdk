@@ -569,8 +569,13 @@ struct TextRun {
     font_size: f64,
 
     // ---- G1 read-only metadata (additive; old consumers ignore unknown keys) ----
-    /// PostScript name (subset prefix stripped). Omitted from JSON when `None`.
-    #[serde(rename = "fontName", skip_serializing_if = "Option::is_none")]
+    /// PostScript name (subset prefix stripped). Always present in
+    /// JSON: a known name is emitted as a string; an unknown name
+    /// (Type3 glyphs, Type1 without a resolved standard-font
+    /// fallback) is emitted as `null`. The editor contract relies
+    /// on stable field presence so `'fontName' in run` and
+    /// `run.fontName ?? "Unknown"` both work.
+    #[serde(rename = "fontName")]
     font_name: Option<String>,
     /// Inferred bold style. Always emitted (boolean, default `false`).
     #[serde(rename = "isBold")]
@@ -924,7 +929,7 @@ impl PdfDoc {
     /// // runs[i] = {
     /// //   text: "Hello world",
     /// //   x: 72.0, y: 100.0, width: 96.0, height: 12.0, fontSize: 12.0,
-    /// //   fontName: "Helvetica-Bold", // G1: omitted when unknown
+    /// //   fontName: "Helvetica-Bold", // G1: stable presence; null when unknown
     /// //   isBold: true, isItalic: false,
     /// //   color: [0, 0, 0, 255],      // G1: omitted when unknown
     /// //   widthSource: "Metric",      // G2: "Metric" | "Estimate"
@@ -932,10 +937,18 @@ impl PdfDoc {
     /// // }
     /// ```
     ///
-    /// `fontName` and `color` are omitted from the JSON when the source
-    /// metadata is unavailable (Type1/standard-14 fonts, Pattern paints,
-    /// or unsupported color spaces). `isBold`/`isItalic` are always present
-    /// so editor toolbars can render unconditionally. `widthSource` is always
+    /// `fontName` is always present in the JSON: a known PostScript
+    /// name (embedded font, or resolved standard-14 fallback for
+    /// non-embedded Type1) emits a string; an unknown name (Type3
+    /// glyphs, embedded Type1 without a standard-font fallback)
+    /// emits `null`. This stable presence matches the editor
+    /// contract; the editor can call `run.fontName ?? "Unknown"`
+    /// or do `'fontName' in run` tests without conditional logic.
+    ///
+    /// `color` is still omitted from the JSON when the source paint
+    /// is a pattern/shading or the color space could not be
+    /// resolved. `isBold`/`isItalic` are always present so editor
+    /// toolbars can render unconditionally. `widthSource` is always
     /// present; `charBounds` is omitted only when the span is empty.
     #[wasm_bindgen(js_name = "getTextPositions")]
     pub fn get_text_positions(&self, page_index: usize) -> Result<String, JsValue> {
@@ -1481,6 +1494,44 @@ mod tests {
     }
 
     #[test]
+    fn g1_get_text_positions_populates_fontname_for_standard14() {
+        // tests/corpus-mini/simple.pdf uses non-embedded Helvetica
+        // (Type1 /BaseFont /Helvetica). Before this fix, the
+        // outline glyph had no `font_data` and `fontName` was
+        // omitted from JSON. After the fix it must surface as
+        // "Helvetica" via the standard-font fallback path.
+        let pdf_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus-mini/simple.pdf");
+        let data = std::fs::read(&pdf_path).expect("read simple.pdf fixture");
+        let doc = PdfDoc::open(&data).expect("open simple.pdf");
+        let json = doc
+            .get_text_positions(0)
+            .expect("getTextPositions(0) succeeds");
+        let runs: serde_json::Value = serde_json::from_str(&json).expect("parse JSON");
+        let arr = runs.as_array().expect("runs is array");
+        assert!(!arr.is_empty(), "simple.pdf must have at least one run");
+        // Stable presence: every run has `fontName` key.
+        for (i, r) in arr.iter().enumerate() {
+            assert!(
+                r.get("fontName").is_some(),
+                "run {i} missing `fontName` key (must be present, may be null)"
+            );
+        }
+        // At least one run on this fixture exposes the standard-14
+        // PostScript name.
+        let helvetica_count = arr
+            .iter()
+            .filter(|r| r["fontName"].as_str() == Some("Helvetica"))
+            .count();
+        assert!(
+            helvetica_count > 0,
+            "expected at least one run with fontName == \"Helvetica\"; \
+             got first run = {:?}",
+            arr.first()
+        );
+    }
+
+    #[test]
     fn bytes_to_pdf_string_utf8() {
         assert_eq!(bytes_to_pdf_string(b"hello"), "hello");
     }
@@ -1532,9 +1583,11 @@ mod tests {
     }
 
     #[test]
-    fn g1_text_run_omits_unknown_fontname_and_color() {
-        // Fallback case: Type1/standard-14 + pattern paint. JSON must elide
-        // the unknown keys so editor consumers can `'fontName' in run` test.
+    fn g1_text_run_fontname_null_when_unknown() {
+        // Fallback case: Type3 glyph or embedded Type1 with no
+        // standard-font fallback. The JSON must EXPOSE `fontName`
+        // as `null` (stable field presence per editor contract);
+        // `color` may still be omitted for pattern/shading paints.
         let run = TextRun {
             text: "Hi".into(),
             x: 1.0,
@@ -1552,8 +1605,12 @@ mod tests {
         let json = serde_json::to_string(&run).expect("serialize");
         let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
         assert!(
-            v.get("fontName").is_none(),
-            "fontName must be omitted when None"
+            v.get("fontName").is_some(),
+            "fontName must be present (key in object) even when value is null"
+        );
+        assert!(
+            v["fontName"].is_null(),
+            "fontName value must be JSON null when source name is unknown"
         );
         assert!(v.get("color").is_none(), "color must be omitted when None");
         // isBold/isItalic always present (default false) so toolbars render.
