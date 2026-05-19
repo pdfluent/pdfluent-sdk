@@ -321,6 +321,84 @@ impl<'a> LayoutEngine<'a> {
         Self { form }
     }
 
+    /// Resolve a SOM-string reference (typically a subform name) to a
+    /// `FormNodeId` by walking from `anchor` up through parents and looking
+    /// for a sibling whose `name` matches.  Falls back to a `find_by_xfa_id`
+    /// lookup for templates that addressed the target by its `id` attribute.
+    ///
+    /// XFA Spec 3.3 §17 — overflow leader/trailer attributes are SOM
+    /// references to subforms.  The canonical form is a sibling subform
+    /// of the overflowing subform; matching by simple name + ancestor
+    /// walk covers the cases observed in the parsed templates without
+    /// pulling in the full SOM resolver.
+    fn lookup_overflow_target(&self, anchor: FormNodeId, name: &str) -> Option<FormNodeId> {
+        if name.is_empty() {
+            return None;
+        }
+        if let Some(id) = self.form.find_by_xfa_id(name) {
+            return Some(id);
+        }
+        // Walk up the parent chain; at each level search siblings (and the
+        // root node's children when no parent is found).
+        let mut cursor = Some(anchor);
+        while let Some(node_id) = cursor {
+            let parent = self.trace_parent_id(node_id);
+            let scope = parent.map(|p| self.form.get(p).children.as_slice());
+            let candidates = scope.unwrap_or_else(|| self.form.get(node_id).children.as_slice());
+            for &candidate in candidates {
+                if candidate != node_id && self.form.get(candidate).name == name {
+                    return Some(candidate);
+                }
+            }
+            cursor = parent;
+        }
+        None
+    }
+
+    /// Resolve `<overflow leader trailer>` SOM-string references attached to
+    /// `node_id`'s `FormNodeMeta` into concrete `FormNodeId`s.
+    ///
+    /// Returns `(leader, trailer)` — either may be `None` either because the
+    /// meta did not declare a reference or because the reference did not
+    /// resolve to any node in the form tree (the unresolved case is silently
+    /// ignored, matching the engine's prior behavior).
+    fn resolve_overflow_refs(
+        &self,
+        node_id: FormNodeId,
+    ) -> (Option<FormNodeId>, Option<FormNodeId>) {
+        let meta = self.form.meta(node_id);
+        let leader = meta
+            .overflow_leader
+            .as_deref()
+            .and_then(|name| self.lookup_overflow_target(node_id, name));
+        let trailer = meta
+            .overflow_trailer
+            .as_deref()
+            .and_then(|name| self.lookup_overflow_target(node_id, name));
+        (leader, trailer)
+    }
+
+    /// Return a `ContentArea` clone with overflow leader/trailer applied.
+    /// `refs` take precedence over any existing `leader`/`trailer` already
+    /// declared on the area (this is the overflow-page path; the base area
+    /// values represent per-page leaders/trailers which the overflow refs
+    /// override on continuation pages per XFA §8.10 + §17).
+    fn content_area_with_overflow(
+        ca: &ContentArea,
+        refs: (Option<FormNodeId>, Option<FormNodeId>),
+    ) -> ContentArea {
+        let (leader, trailer) = refs;
+        ContentArea {
+            name: ca.name.clone(),
+            x: ca.x,
+            y: ca.y,
+            width: ca.width,
+            height: ca.height,
+            leader: leader.or(ca.leader),
+            trailer: trailer.or(ca.trailer),
+        }
+    }
+
     fn trace_node_id(&self, id: FormNodeId) -> String {
         let node = self.form.get(id);
         self.form
@@ -537,6 +615,12 @@ impl<'a> LayoutEngine<'a> {
         let root_node = self.form.get(root);
         let collect_profile = profile.is_some();
 
+        // XFA Spec 3.3 §17 — `<overflow leader trailer>` SOM-references on a
+        // subform that overflows pages.  Resolve once for the root so that
+        // overflow continuation pages can render the declared leader at the
+        // top of the content area and the trailer at the bottom.
+        let root_overflow_refs = self.resolve_overflow_refs(root);
+
         let (page_areas, raw_content_nodes) = self.extract_page_structure(root_node)?;
         self.trace_vertical_state(
             "layout_internal",
@@ -549,6 +633,13 @@ impl<'a> LayoutEngine<'a> {
                 raw_content_nodes.len()
             ),
         );
+        // XFA §17: subforms that are resolved as overflow leaders or trailers
+        // must not also be rendered in the regular content flow — they would
+        // double-render (once as content, once as the per-page decoration).
+        let raw_content_nodes: Vec<FormNodeId> = raw_content_nodes
+            .into_iter()
+            .filter(|id| root_overflow_refs.0 != Some(*id) && root_overflow_refs.1 != Some(*id))
+            .collect();
         // Build queued nodes with break_before flags and occur expansion.
         let content_queued = self.queue_content(&raw_content_nodes);
 
@@ -572,6 +663,10 @@ impl<'a> LayoutEngine<'a> {
                 // TB layout supports pagination: split content across pages
                 let mut remaining = content_queued;
                 let page_limit = self.estimate_page_limit(&remaining, page_h);
+                // XFA §17: overflow leader/trailer apply to continuation
+                // pages (page 2 onwards).  Cache the augmented area once so
+                // we re-use it for every continuation iteration.
+                let overflow_area = Self::content_area_with_overflow(&area, root_overflow_refs);
                 while !remaining.is_empty() {
                     if pages.len() >= page_limit {
                         eprintln!(
@@ -580,9 +675,14 @@ impl<'a> LayoutEngine<'a> {
                         );
                         break;
                     }
+                    let area_for_page = if pages.is_empty() {
+                        &area
+                    } else {
+                        &overflow_area
+                    };
                     let (page, rest, consumed_break_only, _, page_profile) = self
                         .layout_content_fitting(
-                            &area,
+                            area_for_page,
                             &remaining,
                             page_w,
                             page_h,
@@ -591,7 +691,7 @@ impl<'a> LayoutEngine<'a> {
                     if page.nodes.is_empty() && !consumed_break_only {
                         // Force place one item to prevent infinite loop
                         let forced = self.layout_content_on_page(
-                            &area,
+                            area_for_page,
                             page_w,
                             page_h,
                             &[remaining[0].id],
@@ -607,8 +707,8 @@ impl<'a> LayoutEngine<'a> {
                             profile.pages.push(
                                 self.profile_page_from_nodes(
                                     &forced,
-                                    area.y,
-                                    area.height,
+                                    area_for_page.y,
+                                    area_for_page.height,
                                     !next_remaining.is_empty(),
                                     next_remaining
                                         .first()
@@ -856,7 +956,12 @@ impl<'a> LayoutEngine<'a> {
             // Overflow: repeat page templates until all content is placed.
             if !remaining.is_empty() {
                 let last_idx = page_areas.len() - 1;
-                let overflow_ca = primary_content_area(&page_areas[last_idx]);
+                let overflow_ca_ref = primary_content_area(&page_areas[last_idx]);
+                // XFA §17: apply the root subform's overflow leader/trailer to
+                // the continuation pages.  When neither resolves, this is a
+                // no-op clone preserving the prior behaviour.
+                let overflow_ca =
+                    Self::content_area_with_overflow(overflow_ca_ref, root_overflow_refs);
                 // Dynamic page limit: estimated pages for remaining content + already placed.
                 let page_limit =
                     self.estimate_page_limit(&remaining, overflow_ca.height) + pages.len();
@@ -870,7 +975,10 @@ impl<'a> LayoutEngine<'a> {
                     }
                     let pa_idx = last_idx;
                     let pa = &page_areas[pa_idx];
-                    let ca = primary_content_area(pa);
+                    // Use the overflow-augmented content area for every page
+                    // in this loop — XFA §17 says the leader/trailer apply
+                    // to overflow continuation pages.
+                    let ca = &overflow_ca;
 
                     let (mut page, rest, consumed_break_only, _, page_profile) = self
                         .layout_content_fitting(
