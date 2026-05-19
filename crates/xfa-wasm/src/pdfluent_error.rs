@@ -61,6 +61,14 @@ pub mod code {
     pub const LICENSE_INVALID: &str = "E-LICENSE-INVALID";
     /// Required feature not in tier.
     pub const LICENSE_FEATURE_NOT_IN_TIER: &str = "E-LICENSE-FEATURE-NOT-IN-TIER";
+    /// Signed payload has expired.
+    pub const LICENSE_EXPIRED: &str = "E-LICENSE-EXPIRED";
+    /// Signed payload's Ed25519 signature does not verify.
+    pub const LICENSE_INVALID_SIGNATURE: &str = "E-LICENSE-INVALID-SIGNATURE";
+    /// Runtime rate / usage limit exceeded.
+    pub const LICENSE_RATE_LIMITED: &str = "E-LICENSE-RATE-LIMITED";
+    /// Capability requires a feature flag not compiled into this build.
+    pub const LICENSE_CAPABILITY_NOT_COMPILED: &str = "E-LICENSE-CAPABILITY-NOT-COMPILED";
     /// Operation is unsupported on the WebAssembly target.
     pub const ENV_UNSUPPORTED_ON_WASM: &str = "E-ENV-UNSUPPORTED-ON-WASM";
     /// Internal safety-net.
