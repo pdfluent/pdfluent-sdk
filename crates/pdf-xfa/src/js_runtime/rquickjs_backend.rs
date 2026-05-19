@@ -50,6 +50,12 @@ pub struct QuickJsRuntime {
     /// Phase D-ι: clears all registered variables-script globals at
     /// document boundary (`reset_per_document`).
     clear_variables_scripts: Option<Persistent<Function<'static>>>,
+    /// W3-D RETRY: hook that registers a `<variables>` `<text>` data item
+    /// (XFA 3.3 §5.5.2) as a form-level mutable string container. Called
+    /// once per named data item at document load. Sibling to
+    /// [`Self::set_variables_script`] — the `clear_variables_scripts` hook
+    /// also drops the data-item namespace.
+    set_variables_data_item: Option<Persistent<Function<'static>>>,
     context: Context,
     runtime: Runtime,
     metadata: RuntimeMetadata,
@@ -115,6 +121,7 @@ impl QuickJsRuntime {
             eval_script: None,
             set_variables_script: None,
             clear_variables_scripts: None,
+            set_variables_data_item: None,
             context,
             runtime,
             metadata: RuntimeMetadata::default(),
@@ -997,6 +1004,9 @@ impl QuickJsRuntime {
             let clear_variables_scripts: Function = bridge
                 .get("clearVariablesScripts")
                 .map_err(|e| format!("get clearVariablesScripts: {e}"))?;
+            let set_variables_data_item: Function = bridge
+                .get("setVariablesDataItem")
+                .map_err(|e| format!("get setVariablesDataItem: {e}"))?;
             globals
                 .set("xfa", xfa)
                 .map_err(|e| format!("set xfa global: {e}"))?;
@@ -1011,18 +1021,21 @@ impl QuickJsRuntime {
                     Persistent<Function<'static>>,
                     Persistent<Function<'static>>,
                     Persistent<Function<'static>>,
+                    Persistent<Function<'static>>,
                 ),
                 String,
             >((
                 Persistent::save(&ctx, eval_script),
                 Persistent::save(&ctx, set_variables_script),
                 Persistent::save(&ctx, clear_variables_scripts),
+                Persistent::save(&ctx, set_variables_data_item),
             ))
         })?;
 
         self.eval_script = Some(eval_script.0);
         self.set_variables_script = Some(eval_script.1);
         self.clear_variables_scripts = Some(eval_script.2);
+        self.set_variables_data_item = Some(eval_script.3);
         self.bindings_registered = true;
         Ok(())
     }
@@ -1158,6 +1171,41 @@ impl QuickJsRuntime {
             ))),
             Err(_) => Err(SandboxError::PanicCaptured(format!(
                 "panic registering variables-script `{name}`"
+            ))),
+        }
+    }
+
+    /// W3-D RETRY: register one `<variables>` `<text name="X">value</text>`
+    /// data item (XFA 3.3 §5.5.2) as a form-level mutable string container.
+    /// Sister of [`Self::register_variables_script`] but with no body cap,
+    /// no REDOS scan, and no time budget — data items carry text payloads,
+    /// not JavaScript code. Idempotent per `(subform_scope, name)`.
+    fn register_variables_data_item(
+        &self,
+        name: &str,
+        initial: &str,
+        subform_scope: Option<&str>,
+    ) -> Result<(), SandboxError> {
+        let Some(setter) = self.set_variables_data_item.clone() else {
+            return Ok(());
+        };
+        let initial_owned = initial.to_string();
+        let scope = subform_scope.unwrap_or("").to_string();
+        let name_owned = name.to_string();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            self.context.with(|ctx| -> Result<(), rquickjs::Error> {
+                let setter = setter.restore(&ctx)?;
+                let _: bool = setter.call((name_owned, initial_owned, scope))?;
+                Ok(())
+            })
+        }));
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(SandboxError::ScriptError(format!(
+                "variables data item `{name}` register: {e}"
+            ))),
+            Err(_) => Err(SandboxError::PanicCaptured(format!(
+                "panic registering variables data item `{name}`"
             ))),
         }
     }
@@ -3130,6 +3178,20 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   // object containing that subform's named scripts. Enables
   // `subformHandle.variables.ScriptName.method()` access paths.
   var subformVariables = lookupObject();
+  // W3-D RETRY: form-level mutable string data items registered from
+  // `<variables>` `<text name="X">value</text>` blocks (XFA 3.3 §5.5.2).
+  // Each entry is `name -> { value: <string> }`. Adobe Reader exposes these
+  // as global mutable string containers — the canonical IMM5709 pattern
+  // is `<text name="globValidatePressed"/>` referenced from event scripts
+  // as `globValidatePressed.value = "true";`. Populated by
+  // `setVariablesDataItem`; cleared by `clearVariablesScripts` (shared
+  // teardown — same per-document lifecycle).
+  var variablesDataItems = lookupObject();
+  // W3-D RETRY: subform-scoped variant of `variablesDataItems`, parallel to
+  // `subformVariables` for scripts. Reserved for future subform-level data
+  // items; currently populated only at root scope but the structure is
+  // here so an upcoming pass can light it up without further refactor.
+  var subformVariablesDataItems = lookupObject();
 
   function makeImplicitGlobals(body) {
     var currentId = host.currentNodeId();
@@ -3261,6 +3323,17 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (variablesScripts[prop] !== undefined) {
           return variablesScripts[prop];
         }
+        // W3-D RETRY: form-level data items (XFA 3.3 §5.5.2) outrank the
+        // form-tree implicit lookup, same as scripts. This lets templates
+        // like Canadian IMM5709 reference `globValidatePressed.value`
+        // without the bare ident falling through to the SOM resolver as a
+        // `js_resolve_failure`. Scripts take precedence over data items in
+        // the unlikely case both share a name (spec-undefined; we follow
+        // declaration order, which is `setVariablesScript` first in the
+        // host loop).
+        if (variablesDataItems[prop] !== undefined) {
+          return variablesDataItems[prop];
+        }
         return lookup(prop);
       },
       set: function(_target, prop, value) {
@@ -3367,6 +3440,61 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       for (var j = 0; j < skeys.length; j++) {
         delete subformVariables[skeys[j]];
       }
+      // W3-D RETRY: data items share the same per-document lifecycle as
+      // scripts. Dropping them here keeps a single bridge entry-point at
+      // `reset_for_new_document` and prevents per-document drift.
+      var dkeys = Object.keys(variablesDataItems);
+      for (var k = 0; k < dkeys.length; k++) {
+        delete variablesDataItems[dkeys[k]];
+      }
+      var sdkeys = Object.keys(subformVariablesDataItems);
+      for (var m = 0; m < sdkeys.length; m++) {
+        delete subformVariablesDataItems[sdkeys[m]];
+      }
+    },
+    // W3-D RETRY: register a `<variables>` `<text name="X">value</text>`
+    // data item (XFA 3.3 §5.5.2) as a form-level mutable string container.
+    // Idempotent per (subformName?, name): a later registration overwrites
+    // the earlier one, mirroring Adobe Reader's last-wins template merge.
+    //
+    // The returned shape is `{ value: <string> }` — minimal because real
+    // templates only read/write `.value`. Writes coerce non-string inputs
+    // to string (matching Adobe Reader's text-field semantics) so a
+    // calculate script that does `globValidatePressed.value = true` does
+    // not silently store a boolean.
+    setVariablesDataItem: function(name, initial, subformName) {
+      if (typeof name !== "string" || name.length === 0) return false;
+      var initialStr = (typeof initial === "string") ? initial : "";
+      // Use a closure-bound private slot so the `value` getter / setter
+      // can coerce on write without exposing a plain-object property that
+      // would let `delete item.value` succeed.
+      var item = (function(initStr) {
+        var current = initStr;
+        var holder = Object.create(null);
+        Object.defineProperty(holder, "value", {
+          enumerable: true,
+          configurable: false,
+          get: function() { return current; },
+          set: function(v) {
+            current = (v === undefined || v === null) ? "" : String(v);
+          }
+        });
+        // XFA 3.3 §5.5.2: data items also expose `.name`. Read-only.
+        Object.defineProperty(holder, "name", {
+          enumerable: true, configurable: false, writable: false,
+          value: name
+        });
+        return holder;
+      })(initialStr);
+      if (typeof subformName === "string" && subformName.length > 0) {
+        if (subformVariablesDataItems[subformName] === undefined) {
+          subformVariablesDataItems[subformName] = lookupObject();
+        }
+        subformVariablesDataItems[subformName][name] = item;
+      } else {
+        variablesDataItems[name] = item;
+      }
+      return true;
     },
     evalScript: function(body) {
       var id = host.currentNodeId();
@@ -3485,6 +3613,20 @@ impl XfaJsRuntime for QuickJsRuntime {
                     self.register_variables_script(&name, &body, subform_scope.as_deref())
                 {
                     log::debug!("D-ι register `{name}` failed: {e:?}");
+                }
+            }
+            // W3-D RETRY: register `<variables><text name="X">…</text>`
+            // data items after scripts so a same-named script (declaration
+            // order) keeps precedence — matches the JS-side `get` trap
+            // which consults `variablesScripts` before `variablesDataItems`.
+            // SAFETY: same lifetime guarantee as above.
+            let data_items: Vec<(Option<String>, String, String)> =
+                unsafe { (*form).variables_data_items.clone() };
+            for (subform_scope, name, initial) in data_items {
+                if let Err(e) =
+                    self.register_variables_data_item(&name, &initial, subform_scope.as_deref())
+                {
+                    log::debug!("W3-D register data item `{name}` failed: {e:?}");
                 }
             }
         }

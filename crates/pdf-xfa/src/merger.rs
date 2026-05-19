@@ -172,25 +172,60 @@ impl<'a> FormMerger<'a> {
             match child.tag_name().name() {
                 "variables" => {
                     for var_child in child.children().filter(|n| n.is_element()) {
-                        if var_child.tag_name().name() != "script" {
-                            continue;
+                        match var_child.tag_name().name() {
+                            "script" => {
+                                let Some(name) = attr(var_child, "name") else {
+                                    continue;
+                                };
+                                let body: String = var_child
+                                    .children()
+                                    .filter(|n| n.is_text())
+                                    .filter_map(|n| n.text())
+                                    .collect::<String>();
+                                if body.trim().is_empty() {
+                                    continue;
+                                }
+                                self.form_tree.variables_scripts.push((
+                                    subform_scope.clone(),
+                                    name.to_string(),
+                                    body,
+                                ));
+                            }
+                            // W3-D RETRY: XFA 3.3 §5.5.2 — `<variables>` may
+                            // contain `<text name="X">value</text>` data items
+                            // alongside `<script>` blocks. Adobe Reader
+                            // exposes these to event scripts as form-level
+                            // mutable string containers (`X.value` reads /
+                            // writes the data item). Canonical residual:
+                            // IMM5709/IMM5257/IMM5710 declare
+                            // `<text name="globValidatePressed"/>` and event
+                            // scripts call `globValidatePressed.value = "true";`.
+                            // Pre-fix this surfaced as the post-W2-B
+                            // `implicit_function` cluster residual.
+                            //
+                            // We treat an absent / whitespace-only body as
+                            // the empty string (per spec, an empty `<text/>`
+                            // is a valid empty data item).
+                            "text" => {
+                                let Some(name) = attr(var_child, "name") else {
+                                    continue;
+                                };
+                                if name.is_empty() {
+                                    continue;
+                                }
+                                let initial: String = var_child
+                                    .children()
+                                    .filter(|n| n.is_text())
+                                    .filter_map(|n| n.text())
+                                    .collect::<String>();
+                                self.form_tree.variables_data_items.push((
+                                    subform_scope.clone(),
+                                    name.to_string(),
+                                    initial,
+                                ));
+                            }
+                            _ => {}
                         }
-                        let Some(name) = attr(var_child, "name") else {
-                            continue;
-                        };
-                        let body: String = var_child
-                            .children()
-                            .filter(|n| n.is_text())
-                            .filter_map(|n| n.text())
-                            .collect::<String>();
-                        if body.trim().is_empty() {
-                            continue;
-                        }
-                        self.form_tree.variables_scripts.push((
-                            subform_scope.clone(),
-                            name.to_string(),
-                            body,
-                        ));
                     }
                 }
                 "subform" | "area" | "exclGroup" => {
