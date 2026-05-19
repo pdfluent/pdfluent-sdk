@@ -221,6 +221,67 @@ public class PdfluentDocument implements AutoCloseable {
         return text;
     }
 
+    /**
+     * Extract the structured text blocks of a page.
+     *
+     * <p>Returns an ordered list of {@link TextBlock}s for the given page.
+     * Each block carries its bounding box in PDF user-space points (origin
+     * = bottom-left) plus the concatenated UTF-8 text. The native array is
+     * freed inside this method; the returned objects are pure Java values.
+     *
+     * @param pageIndex zero-based page index; must be in {@code [0, getPageCount())}
+     * @return an ordered list (may be empty) of {@link TextBlock}
+     * @throws IllegalStateException      if the document has been closed
+     * @throws PdfluentPageRangeException if {@code pageIndex} is out of range
+     * @throws PdfluentException          for engine extraction failures
+     */
+    public java.util.List<TextBlock> extractTextBlocks(int pageIndex) {
+        ensureOpen();
+        checkPageIndex(pageIndex);
+
+        com.sun.jna.Pointer docPtr = new com.sun.jna.Pointer(handle);
+        com.sun.jna.ptr.PointerByReference outBlocks = new com.sun.jna.ptr.PointerByReference();
+        com.sun.jna.ptr.NativeLongByReference outCount = new com.sun.jna.ptr.NativeLongByReference();
+        int rc = NativeLoader.get().pdf_page_extract_text_blocks(
+            docPtr, pageIndex, outBlocks, outCount);
+
+        if (rc != 0) {
+            // 1 ErrorInvalidArgument · 5 ErrorPageRange · 12 ErrorExtract.
+            // Defensive: ErrorPageRange maps to the existing typed exception.
+            if (rc == 5) {
+                throw new PdfluentPageRangeException(
+                    "page index " + pageIndex + " out of range");
+            }
+            throw new PdfluentException(
+                "text-block extraction failed (status " + rc + ")");
+        }
+
+        com.sun.jna.Pointer blocksPtr = outBlocks.getValue();
+        long count = outCount.getValue().longValue();
+        if (count <= 0L || blocksPtr == null) {
+            // Free is still safe with (null, 0).
+            NativeLoader.get().pdf_text_blocks_free(blocksPtr, new com.sun.jna.NativeLong(0));
+            return java.util.Collections.emptyList();
+        }
+
+        try {
+            // Materialise the array via JNA's Structure helpers.
+            PdfCapiLibrary.PdfTextBlock prototype =
+                new PdfCapiLibrary.PdfTextBlock(blocksPtr);
+            PdfCapiLibrary.PdfTextBlock[] array =
+                (PdfCapiLibrary.PdfTextBlock[]) prototype.toArray((int) count);
+            java.util.List<TextBlock> result = new java.util.ArrayList<>((int) count);
+            for (PdfCapiLibrary.PdfTextBlock nb : array) {
+                String text = nb.text == null ? "" : nb.text.getString(0, "UTF-8");
+                result.add(new TextBlock(nb.x, nb.y, nb.width, nb.height, text));
+            }
+            return java.util.Collections.unmodifiableList(result);
+        } finally {
+            NativeLoader.get().pdf_text_blocks_free(
+                blocksPtr, new com.sun.jna.NativeLong(count));
+        }
+    }
+
     // =========================================================================
     // Rendering
     // =========================================================================

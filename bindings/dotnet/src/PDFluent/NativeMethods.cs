@@ -85,6 +85,36 @@ namespace PDFluent
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void pdf_string_free(IntPtr s);
 
+        // ---- Structured text-block extraction ----
+
+        /// <summary>
+        /// Native layout of <c>PdfTextBlock</c> — must match the C struct
+        /// in <c>include/pdfluent.h</c>. Five fields: <c>(double, double,
+        /// double, double, const char*)</c>. Sequential layout so P/Invoke
+        /// marshals it as a packed struct over the FFI boundary.
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct PdfTextBlockNative
+        {
+            public double X;
+            public double Y;
+            public double Width;
+            public double Height;
+            public IntPtr Text;   // const char* — caller does NOT free this
+                                  // pointer individually; the whole array
+                                  // is released via pdf_text_blocks_free.
+        }
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdf_page_extract_text_blocks(
+            IntPtr doc,
+            int pageIndex,
+            out IntPtr outBlocks,
+            out UIntPtr outCount);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void pdf_text_blocks_free(IntPtr blocks, UIntPtr count);
+
         // ---- Metadata ----
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
