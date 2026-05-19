@@ -60,6 +60,25 @@
           "type": "string",
           "description": "Human-readable explanation referencing heuristic signals.",
           "minLength": 1
+        },
+        "fine_category": {
+          "type": "string",
+          "enum": [
+            "antialias_variant",
+            "font_metric",
+            "element_position",
+            "clipping",
+            "border_rendering_delta",
+            "oracle_artifact",
+            "candidate_engine_bug",
+            "mixed_rendering"
+          ],
+          "description": "Optional sub-category for oracle_mismatch_rendering cases. Wave 1 Agent D + QF2-E + QF4-F extensions. oracle_artifact generalises border_rendering_delta; candidate_engine_bug is a conservative engine-suspect triage flag (never a confirmed engine bug)."
+        },
+        "fine_rationale": {
+          "type": "string",
+          "description": "Human-readable explanation for the fine_category assignment.",
+          "minLength": 1
         }
       }
     },

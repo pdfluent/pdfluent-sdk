@@ -13,7 +13,7 @@ and assigns each case to one of:
   - ``high_fidelity_no_action``     — SSIM >= 0.94, no investigation needed.
 
 For ``oracle_mismatch_rendering`` cases the classifier also assigns a
-``fine_category`` subcategory (Wave 1 Agent D extension; QF2-E additions):
+``fine_category`` subcategory (Wave 1 Agent D extension; QF2-E + QF4-F additions):
 
   - ``antialias_variant``        — pure sub-pixel AA difference; text strokes only.
   - ``font_metric``              — systematic font size / leading / tracking difference
@@ -26,6 +26,19 @@ For ``oracle_mismatch_rendering`` cases the classifier also assigns a
                                    by very high column-mean variance, specific hot columns,
                                    and oracle being darker than ours (negative blank_gap).
                                    (QF2-E — added from gen-854_854654 corpus pattern.)
+  - ``oracle_artifact``          — generalised oracle-side rendering artifact: oracle
+                                   adds visible content that our output lacks (blank_gap
+                                   negative), but the spatial signature does not match the
+                                   strict border_rendering_delta hot-column pattern.
+                                   Borders, AA rasterisation widths, anti-aliased fills.
+                                   (QF4-F — formal generalisation of border_rendering_delta;
+                                   see QF3_A_BORDER_RENDERING_REPORT.md and
+                                   QF4_F_CLASSIFIER_HARDENING_REPORT.md.)
+  - ``candidate_engine_bug``     — bulk geometric shift NOT explained by font-metric,
+                                   element-position, clipping or oracle-side artifact.
+                                   Conservative flag: marks the case for follow-up engine
+                                   review; never a confirmed engine bug on its own.
+                                   (QF4-F — placeholder for future engine-suspect signals.)
   - ``mixed_rendering``          — combination of the above; no dominant subcategory.
 
 Heuristics are best-effort signals over the per-page panel PNGs already written
@@ -112,12 +125,35 @@ BORDER_MEAN_ABS_CEILING = 10.0     # mean_abs_diff < this (globally low but spik
 BORDER_BLANK_GAP_STATS_FLOOR = -0.005   # blank_gap <= this in stats-only mode.
 BORDER_MEAN_ABS_STATS_CEILING = 8.0     # mean_abs_diff < this in stats-only mode.
 
+# QF4-F — oracle_artifact thresholds (generalises border_rendering_delta).
+#
+# Oracle-side rendering artifact: oracle adds visible content the engine does not
+# (negative blank_gap), but the spatial signature is broader than the strict
+# border_rendering_delta hot-column pattern. Examples: anti-aliased fills, wider
+# rasterised stroke widths, oracle-specific decoration. Applied AFTER border check
+# so border cases keep their existing label.
+ORACLE_ARTIFACT_BLANK_GAP_CEILING = -0.01   # oracle clearly darker (more strict than border stats floor).
+ORACLE_ARTIFACT_MEAN_ABS_LOW = 3.0          # mean_abs window low end.
+ORACLE_ARTIFACT_MEAN_ABS_HIGH = 30.0        # mean_abs window high end (broad).
+ORACLE_ARTIFACT_COL_VAR_CEILING = 1.5       # col_var_norm < BORDER_COL_VAR_FLOOR to avoid border overlap.
+
+# QF4-F — candidate_engine_bug thresholds (conservative engine-suspect signal).
+#
+# Marks geometric-shift cases that are NOT explained by any oracle-side signal
+# (font_metric, element_position, clipping, oracle_artifact, border) for follow-up
+# engine review. Never a confirmed engine bug on its own; the top-level
+# ``engine_bug`` category remains the strong verdict path. This fine_category is a
+# triage placeholder for cases that warrant manual engine-side investigation.
+CANDIDATE_ENGINE_BUG_MEAN_ABS_FLOOR = 10.0  # mean_abs >= this to consider engine-suspect.
+
 FINE_CATEGORIES = (
     "antialias_variant",
     "font_metric",
     "element_position",
     "clipping",
     "border_rendering_delta",
+    "oracle_artifact",
+    "candidate_engine_bug",
     "mixed_rendering",
 )
 
@@ -488,6 +524,67 @@ def compute_fine_category(
                 f"{FONT_METRIC_COL_VAR_CEILING}) with mean_abs_diff={mean_abs:.2f}; "
                 "likely font-metric difference (size/tracking) without significant "
                 "density gap. Oracle-gap rather than engine bug."
+            ),
+        )
+
+    # QF4-F: oracle_artifact — generalised oracle-side artifact.
+    # Oracle is clearly darker (blank_gap very negative) but signature does NOT match
+    # the strict border_rendering_delta hot-column pattern. Examples: anti-aliased
+    # fills, wider rasterised strokes, oracle-side decoration. Placed AFTER border to
+    # preserve existing border classifications.
+    oracle_artifact_blank_gap_ok = blank_gap <= ORACLE_ARTIFACT_BLANK_GAP_CEILING
+    oracle_artifact_mean_ok = (
+        ORACLE_ARTIFACT_MEAN_ABS_LOW <= mean_abs <= ORACLE_ARTIFACT_MEAN_ABS_HIGH
+    )
+    oracle_artifact_not_border = (
+        col_var_norm is None or col_var_norm < ORACLE_ARTIFACT_COL_VAR_CEILING
+    )
+    if (
+        oracle_artifact_blank_gap_ok
+        and oracle_artifact_mean_ok
+        and oracle_artifact_not_border
+    ):
+        col_var_detail = (
+            f"col_var_norm={col_var_norm:.3f}" if col_var_norm is not None else "col_var_norm=n/a"
+        )
+        return (
+            "oracle_artifact",
+            (
+                f"Oracle adds visible content not present in our output: "
+                f"blank_gap={blank_gap:.4f} <= {ORACLE_ARTIFACT_BLANK_GAP_CEILING} "
+                f"(oracle darker); mean_abs_diff={mean_abs:.2f} in "
+                f"[{ORACLE_ARTIFACT_MEAN_ABS_LOW}, {ORACLE_ARTIFACT_MEAN_ABS_HIGH}]; "
+                f"{col_var_detail} below border-hot-column threshold "
+                f"{ORACLE_ARTIFACT_COL_VAR_CEILING}. "
+                "Generalised oracle-side rendering artifact (not border-specific). "
+                "(QF4-F — formal generalisation of border_rendering_delta.)"
+            ),
+        )
+
+    # QF4-F: candidate_engine_bug — conservative engine-suspect flag.
+    # Bulk geometric shift NOT explained by oracle-side signals (font_metric, element_
+    # position, clipping, oracle_artifact, border). Mean_abs is substantial. This is
+    # a triage placeholder; the top-level ``engine_bug`` category remains the strong
+    # verdict path for confirmed engine bugs.
+    if (
+        band == "geometric_shift"
+        and mean_abs >= CANDIDATE_ENGINE_BUG_MEAN_ABS_FLOOR
+        and not font_metric_blank_gap_ok
+    ):
+        col_var_detail = (
+            f"col_var_norm={col_var_norm:.3f}" if col_var_norm is not None else "col_var_norm=n/a"
+        )
+        edge_detail = (
+            f"edge_high_frac={edge_high_frac:.3f}" if edge_high_frac is not None else "edge_high_frac=n/a"
+        )
+        return (
+            "candidate_engine_bug",
+            (
+                f"Bulk geometric shift with mean_abs_diff={mean_abs:.2f} >= "
+                f"{CANDIDATE_ENGINE_BUG_MEAN_ABS_FLOOR}; no oracle-side signal matched "
+                f"(blank_gap={blank_gap:.4f}, {col_var_detail}, {edge_detail}). "
+                "Conservative engine-suspect flag for manual follow-up; NOT a confirmed "
+                "engine bug. (QF4-F — placeholder for future engine-suspect signals.)"
             ),
         )
 
