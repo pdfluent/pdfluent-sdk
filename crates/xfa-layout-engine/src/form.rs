@@ -27,6 +27,19 @@ pub struct FormTree {
     /// and `Some(subform_name)` for scripts scoped to a named subform
     /// (accessible as `subform.variables.scriptName`). Empty in default mode.
     pub variables_scripts: Vec<(Option<String>, String, String)>,
+    /// XFA 3.3 §5.5.2 `<variables>` `<text name="X">value</text>` data items
+    /// gathered at merge time. Each entry is `(subform_scope, name, initial)`.
+    /// `subform_scope` follows the same convention as
+    /// [`Self::variables_scripts`]. Data items are form-level mutable string
+    /// containers — the canonical Canadian IMM template pattern is
+    /// `<variables><text name="globValidatePressed"/></variables>` referenced
+    /// from event scripts as `globValidatePressed.value = "true";`. Empty in
+    /// default mode.
+    ///
+    /// W3-D RETRY: registering these alongside variables-scripts eliminates
+    /// the post-W2-B `implicit_function` residual for the IMM5709/IMM5257/
+    /// IMM5710 family.
+    pub variables_data_items: Vec<(Option<String>, String, String)>,
 }
 
 impl FormTree {
@@ -37,6 +50,7 @@ impl FormTree {
             metadata: Vec::new(),
             node_ids: HashMap::new(),
             variables_scripts: Vec::new(),
+            variables_data_items: Vec::new(),
         }
     }
 
