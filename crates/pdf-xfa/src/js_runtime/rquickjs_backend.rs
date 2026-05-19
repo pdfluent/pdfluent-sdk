@@ -20,11 +20,11 @@
 //!   (`benchmarks/runs/M3B_RUNTIME_SECURITY_MODEL.md` §1 S-17).
 
 use std::cell::RefCell;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use std::sync::{
-    Arc, OnceLock,
     atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc, OnceLock,
 };
 use std::time::{Duration, Instant};
 
@@ -32,11 +32,11 @@ use rquickjs::function::Opt;
 use rquickjs::{CatchResultExt, Coerced, Context, Function, Object, Persistent, Runtime};
 use xfa_layout_engine::form::{FormNodeId, FormTree};
 
-use super::regex_guard::{RegexScanVerdict, scan_script_for_redos};
+use super::regex_guard::{scan_script_for_redos, RegexScanVerdict};
 use super::{
-    DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, HostBindings, MAX_SCRIPT_BODY_BYTES,
-    MAX_VARIABLES_SCRIPT_BODY_BYTES, RuntimeMetadata, RuntimeOutcome, SandboxError, XfaJsRuntime,
-    activity_allowed_for_sandbox,
+    activity_allowed_for_sandbox, HostBindings, RuntimeMetadata, RuntimeOutcome, SandboxError,
+    XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES,
+    MAX_VARIABLES_SCRIPT_BODY_BYTES,
 };
 
 /// QuickJS-backed runtime adapter. One instance is reusable across many
