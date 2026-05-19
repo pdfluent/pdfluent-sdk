@@ -107,6 +107,8 @@ public final class PdfluentLicensing {
     private static final int STATUS_INVALID_LICENSE = 16;
     private static final int STATUS_LICENSE_ALREADY_SET = 17;
     private static final int STATUS_LICENSE_FILE = 18;
+    private static final int STATUS_LICENSE_EXPIRED = 19;
+    private static final int STATUS_LICENSE_INVALID_SIGNATURE = 20;
 
     /**
      * Activate the process-global license from a key string.
@@ -183,6 +185,13 @@ public final class PdfluentLicensing {
                 throw new PdfluentLicenseException(
                     "license already set; restart the JVM to switch tiers: " + lastError(),
                     "E-LICENSE-INVALID");
+            case STATUS_LICENSE_EXPIRED:
+                throw new PdfluentLicenseException(
+                    "license expired: " + lastError(), "E-LICENSE-EXPIRED");
+            case STATUS_LICENSE_INVALID_SIGNATURE:
+                throw new PdfluentLicenseException(
+                    "license signature does not verify: " + lastError(),
+                    "E-LICENSE-INVALID-SIGNATURE");
             default:
                 throw new PdfluentLicenseException(
                     "license operation failed (status " + status + "): " + lastError(),

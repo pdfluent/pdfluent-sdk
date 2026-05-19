@@ -106,6 +106,40 @@ fn map_license_error(e: pdfluent::Error) -> JsValue {
             &message,
             "Upgrade your tier — see https://pdfluent.com/pricing.",
         ),
+        pdfluent::Error::CapabilityNotCompiled { feature_flag, .. } => pdfluent_error(
+            operation,
+            code::LICENSE_CAPABILITY_NOT_COMPILED,
+            legacy_code::LICENSE_ERROR,
+            &message,
+            &format!(
+                "Rebuild with the `{feature_flag}` Cargo feature enabled, or use a pre-built binary that includes the capability."
+            ),
+        ),
+        pdfluent::Error::LicenseExpired { expires_at } => pdfluent_error(
+            operation,
+            code::LICENSE_EXPIRED,
+            legacy_code::LICENSE_ERROR,
+            &format!("license expired at unix timestamp {expires_at}"),
+            "Renew the license — visit https://pdfluent.com/pricing or contact sales.",
+        ),
+        pdfluent::Error::LicenseInvalidSignature => pdfluent_error(
+            operation,
+            code::LICENSE_INVALID_SIGNATURE,
+            legacy_code::LICENSE_ERROR,
+            "license signature does not verify against the configured public key",
+            "Re-download the license file from PDFluent; if the issue persists, contact support.",
+        ),
+        pdfluent::Error::LicenseRateLimited {
+            resource,
+            used,
+            limit,
+        } => pdfluent_error(
+            operation,
+            code::LICENSE_RATE_LIMITED,
+            legacy_code::LICENSE_ERROR,
+            &format!("rate limit exceeded: {used}/{limit} {resource}"),
+            "Either upgrade the tier or wait for the metering window to reset.",
+        ),
         _ => pdfluent_error(
             operation,
             c8,
