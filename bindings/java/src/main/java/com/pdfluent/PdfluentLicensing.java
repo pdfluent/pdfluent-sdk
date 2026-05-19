@@ -26,8 +26,10 @@ import java.util.Objects;
  *
  * <p><b>Behavior:</b> the active tier is process-global and set-once.
  * Re-activating with the same tier is a no-op. Re-activating with a
- * different tier throws {@link IllegalStateException}; restart the JVM
- * to switch tiers.
+ * different tier throws {@link PdfluentLicenseException} with
+ * {@code getCode() == "E-LICENSE-INVALID"}; restart the JVM to switch
+ * tiers. This matches the typed-code surface of the .NET, Node, Python
+ * and WASM bindings.
  */
 public final class PdfluentLicensing {
 
@@ -109,10 +111,10 @@ public final class PdfluentLicensing {
     /**
      * Activate the process-global license from a key string.
      *
-     * @throws PdfluentLicenseException if the key is malformed or names an unknown tier
-     *         ({@link PdfluentException#getCode()} returns the canonical C8 code,
-     *         e.g. {@code "E-LICENSE-INVALID"})
-     * @throws IllegalStateException if a different tier is already active
+     * @throws PdfluentLicenseException if the key is malformed, names an
+     *         unknown tier, or a different tier is already active in this
+     *         JVM ({@link PdfluentException#getCode()} returns
+     *         {@code "E-LICENSE-INVALID"} in every case)
      */
     public static void activateKey(String key) {
         Objects.requireNonNull(key, "key");
@@ -124,9 +126,10 @@ public final class PdfluentLicensing {
      * Activate the license by reading the key from a UTF-8 text file.
      *
      * @throws IOException if the file cannot be read
-     * @throws PdfluentLicenseException if the file contents are not a valid key
-     *         ({@link PdfluentException#getCode()} returns the canonical C8 code)
-     * @throws IllegalStateException if a different tier is already active
+     * @throws PdfluentLicenseException if the file contents are not a
+     *         valid key, or a different tier is already active in this
+     *         JVM ({@link PdfluentException#getCode()} returns
+     *         {@code "E-LICENSE-INVALID"} in every case)
      */
     public static void activateFile(String path) throws IOException {
         Objects.requireNonNull(path, "path");
@@ -170,11 +173,16 @@ public final class PdfluentLicensing {
                 throw new PdfluentLicenseException(
                     "invalid license: " + lastError(), "E-LICENSE-INVALID");
             case STATUS_LICENSE_ALREADY_SET:
-                // Process-global tier conflict; mirror .NET behavior — surface
-                // as IllegalStateException for the caller, since the JVM must
-                // be restarted to switch tiers.
-                throw new IllegalStateException(
-                    "license already set; restart the JVM to switch tiers: " + lastError());
+                // Canonical C8 catalogue: E-LICENSE-INVALID
+                //
+                // Process-global tier conflict; surface as a typed
+                // PdfluentLicenseException so callers can route on
+                // getCode() === "E-LICENSE-INVALID" — same surface as
+                // the .NET / Node / Python / WASM bindings. The message
+                // distinguishes the sub-case for diagnostic UI.
+                throw new PdfluentLicenseException(
+                    "license already set; restart the JVM to switch tiers: " + lastError(),
+                    "E-LICENSE-INVALID");
             default:
                 throw new PdfluentLicenseException(
                     "license operation failed (status " + status + "): " + lastError(),
