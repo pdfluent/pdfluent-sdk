@@ -104,6 +104,38 @@ namespace PDFluent.Tests
         }
 
         [Fact]
+        public void ExtractTextBlocksFromEmptyPage()
+        {
+            // The 1-page in-memory fixture has no content stream, so we
+            // expect zero blocks but never a null list.
+            using var doc = PdfDocument.Open(CreateTestPdf());
+            var blocks = doc.ExtractTextBlocks(0);
+            Assert.NotNull(blocks);
+            // Shape check on every (potential) entry.
+            foreach (var b in blocks)
+            {
+                Assert.True(b.Width >= 0.0, $"width {b.Width} must be >= 0");
+                Assert.True(b.Height >= 0.0, $"height {b.Height} must be >= 0");
+                Assert.NotNull(b.Text);
+            }
+        }
+
+        [Fact]
+        public void ExtractTextBlocksOutOfRangeThrows()
+        {
+            using var doc = PdfDocument.Open(CreateTestPdf());
+            Assert.Throws<PdfluentPageRangeException>(() => doc.ExtractTextBlocks(9999));
+        }
+
+        [Fact]
+        public void ExtractTextBlocksNegativePageThrows()
+        {
+            using var doc = PdfDocument.Open(CreateTestPdf());
+            // Negative page maps to ErrorInvalidArgument → PdfluentValidationException.
+            Assert.Throws<PdfluentValidationException>(() => doc.ExtractTextBlocks(-1));
+        }
+
+        [Fact]
         public void InvalidPdfThrows()
         {
             // Any PdfluentException subtype is acceptable for a corrupt input.
