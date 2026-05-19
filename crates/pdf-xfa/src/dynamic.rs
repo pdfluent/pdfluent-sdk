@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use crate::error::{Result, XfaError};
 use crate::javascript_policy::{self, JavaScriptEntryPoint};
 use crate::js_runtime::{
-    activity_allowed_for_sandbox, NullRuntime, RuntimeMetadata, SandboxError, XfaJsRuntime,
+    activity_allowed_for_sandbox_with_gate, presave_during_flatten_enabled, NullRuntime,
+    RuntimeMetadata, SandboxError, XfaJsRuntime,
 };
 use formcalc_interpreter::{
     interpreter::Interpreter, lexer::tokenize, parser, som_bridge::SomResolver,
@@ -374,12 +375,21 @@ pub fn apply_dynamic_scripts_with_runtime(
     let sandbox_active = mode == JsExecutionMode::SandboxedRuntime;
     let snapshot = snapshot_form(form);
 
+    // D1.B (XFA Product Quality Wave 3 — preSave gated allow). The env-var
+    // gate is read ONCE per flatten so all scripts in this document see the
+    // same decision. Default OFF; flipping requires
+    // `XFA_PRESAVE_DURING_FLATTEN=1`. The host-binding layer is informed via
+    // `set_presave_gate` so dispatch and host stay in lock-step (defence-
+    // in-depth §2 of the policy doc).
+    let presave_gate = sandbox_active && presave_during_flatten_enabled();
+
     if sandbox_active {
         // Best-effort init / reset; init failures are non-fatal — the
         // dispatch path will record them as runtime_errors per script.
         let _ = runtime.init();
         let _ = runtime.reset_for_new_document();
         let _ = runtime.set_form_handle(form as *mut FormTree, root_id);
+        runtime.set_presave_gate(presave_gate);
     }
 
     for (node_id, node_scripts) in all_scripts {
@@ -388,7 +398,12 @@ pub fn apply_dynamic_scripts_with_runtime(
             match script.language {
                 ScriptLanguage::FormCalc => formcalc_scripts.push(script),
                 ScriptLanguage::JavaScript => {
-                    if sandbox_active && activity_allowed_for_sandbox(script.activity.as_deref()) {
+                    if sandbox_active
+                        && activity_allowed_for_sandbox_with_gate(
+                            script.activity.as_deref(),
+                            presave_gate,
+                        )
+                    {
                         let _ = runtime.reset_per_script(node_id, script.activity.as_deref());
                         match runtime.execute_script(script.activity.as_deref(), &script.script) {
                             Ok(_outcome) => {
