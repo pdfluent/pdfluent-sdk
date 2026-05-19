@@ -520,6 +520,13 @@ if (matched !== false) throw new Error('unexpected match result: ' + matched);
             // Acceptable in slow CI; the input is short but the machine may be under load.
         }
         Err(SandboxError::ScriptError(_)) => {}
+        // W3-A: with the static ReDoS guard installed, the `(a+)+$` shape
+        // is rejected before reaching QuickJS. This is the preferred
+        // outcome — short inputs only ran fast accidentally; the same
+        // pattern with a longer input would have hung the engine. The
+        // earlier outcomes (Ok / Timeout / ScriptError) remain accepted
+        // for backwards compatibility with any future guard relaxation.
+        Err(SandboxError::RegexRejected(_)) => {}
         Err(other) => panic!("Unexpected SandboxError for short ReDoS test: {other:?}"),
     }
 
@@ -578,11 +585,15 @@ count;
             // Ok it means count was somehow finite — unexpected but non-fatal.
         }
         Err(SandboxError::Timeout) => {
-            // Expected: interrupt fired between loop iterations.
+            // Expected pre-W3-A: interrupt fired between loop iterations.
         }
         Err(SandboxError::ScriptError(_)) => {
             // Some JS engines raise an error on interrupted loops.
         }
+        // W3-A: the regex literal `/^(a+)+b$/` matches the nested-quantifier
+        // guard; the entire script is now rejected before the loop is
+        // entered. The host survives, which is the original test intent.
+        Err(SandboxError::RegexRejected(_)) => {}
         Err(other) => panic!("Unexpected SandboxError for looped ReDoS: {other:?}"),
     }
 

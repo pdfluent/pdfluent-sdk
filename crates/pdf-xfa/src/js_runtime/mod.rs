@@ -17,13 +17,14 @@
 
 pub mod host;
 pub mod null;
+pub mod regex_guard;
 
 #[cfg(feature = "xfa-js-sandboxed")]
 pub mod rquickjs_backend;
 
 pub use host::{
-    HostBindings, MutationLogEntry, MAX_INSTANCES_PER_SUBFORM, MAX_ITEMS_PER_LISTBOX,
-    MAX_MUTATIONS_PER_DOC, MAX_RESOLVE_CALLS_PER_SCRIPT, MAX_RESOLVE_RESULTS, MAX_SOM_DEPTH,
+    HostBindings, MAX_INSTANCES_PER_SUBFORM, MAX_ITEMS_PER_LISTBOX, MAX_MUTATIONS_PER_DOC,
+    MAX_RESOLVE_CALLS_PER_SCRIPT, MAX_RESOLVE_RESULTS, MAX_SOM_DEPTH, MutationLogEntry,
 };
 pub use null::NullRuntime;
 #[cfg(feature = "xfa-js-sandboxed")]
@@ -90,6 +91,15 @@ pub enum SandboxError {
     /// Generic script-level error: parse, runtime, or thrown JS error.
     #[error("script error: {0}")]
     ScriptError(String),
+
+    /// W3-A — REDOS-01 mitigation: the script body contains a regex
+    /// pattern shape known to cause catastrophic backtracking in QuickJS's
+    /// NFA-based engine (e.g. `(a+)+$`). The body is rejected before
+    /// reaching the sandbox to bound CPU time. See
+    /// `crates/pdf-xfa/src/js_runtime/regex_guard.rs` for the heuristic
+    /// catalogue.
+    #[error("regex rejected by ReDoS guard: {0}")]
+    RegexRejected(String),
 }
 
 /// Cumulative metadata for a single document's flatten. The runtime
