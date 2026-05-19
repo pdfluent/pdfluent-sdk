@@ -1,81 +1,87 @@
 # Forms Recipes
 
-## Fill a Form Field
+> All snippets use the canonical, RFC 0001-frozen public API
+> (`use pdfluent::prelude::*;` + `PdfDocument::open(...)`).
+
+## Fill AcroForm Fields
 
 ```rust
-use pdfluent::Sdk;
+use pdfluent::prelude::*;
 
-let sdk = Sdk::init_with_license("license.json")?;
-let mut doc = sdk.open("form.pdf")?;
+fn main() -> Result<()> {
+    let mut doc = PdfDocument::open("form.pdf")?;
 
-// Fill by field name
-doc.set_field_value("name", "John Doe")?;
-doc.set_field_value("email", "john@example.com")?;
-doc.set_field_value("amount", "199.99")?;
+    {
+        // Pending-changes pattern: a single mutable borrow that
+        // holds the form open while we set fields, dropped at the
+        // end of this scope.
+        let mut form = doc.form_mut();
+        form.set_text("name",   "John Doe")?
+            .set_text("email",  "john@example.com")?
+            .set_text("amount", "199.99")?
+            .set_checkbox("paid", true)?;
+    }
 
-// Save filled form (still editable)
-doc.save("form_filled.pdf")?;
-```
-
----
-
-## Flatten an XFA Form
-
-```rust
-use pdfluent::Sdk;
-
-let sdk = Sdk::init_with_license("license.json")?;
-let mut doc = sdk.open("xfa_form.xdp")?;
-
-// Pre-fill with data if needed
-let xml_data = std::fs::read("form_data.xml")?;
-doc.import_xfa_data(&xml_data)?;
-
-// Flatten — converts dynamic form to static PDF
-let flat = doc.flatten_xfa()?;
-flat.save("form_flat.pdf")?;
-
-println!("Flattened {} pages", flat.page_count());
-```
-
----
-
-## Extract XFA Form Data
-
-```rust
-use pdfluent::Sdk;
-
-let sdk = Sdk::init_with_license("license.json")?;
-let doc = sdk.open("xfa_form.pdf")?;
-
-let form_data = doc.extract_xfa_data()?;
-
-for (key, value) in form_data.fields {
-    println!("{}: {}", key, value);
+    doc.save("form_filled.pdf")?;
+    Ok(())
 }
-
-// Or export as XML
-let xml = doc.export_xfa_data_xml()?;
-std::fs::write("form_data.xml", &xml)?;
 ```
+
+`PdfFormMut` exposes typed setters per field kind:
+`set_text`, `set_checkbox`, `set_radio`, `set_dropdown`. The chain
+returns `&mut Self` so multiple setters compose naturally.
 
 ---
 
-## Execute FormCalc Expressions
+## Read Form Fields
 
 ```rust
-use pdfluent::Sdk;
+use pdfluent::prelude::*;
 
-let sdk = Sdk::init_with_license("license.json")?;
-let doc = sdk.open("calculator.xfa")?;
-
-// Evaluate FormCalc expressions
-let result = doc.evaluate_formcalc("SUM(field1, field2, field3)")?;
-println!("Sum: {}", result);
-
-let tax = doc.evaluate_formcalc("Subtotal * 0.21")?;
-println!("Tax: {}", tax);
-
-// Set the calculated value back to a field
-doc.set_field_value("total", &tax.to_string())?;
+fn main() -> Result<()> {
+    let doc = PdfDocument::open("form.pdf")?;
+    for field in doc.form_fields()? {
+        println!(
+            "{:?}: {} = {:?}",
+            field.field_type, field.name, field.value
+        );
+    }
+    Ok(())
+}
 ```
+
+`FormField { name, field_type: FieldType, value: String }`.
+`FieldType` covers text, checkbox, radio, dropdown, list-box,
+signature, and button.
+
+---
+
+## Flatten All Forms (AcroForm + XFA)
+
+```rust
+use pdfluent::prelude::*;
+
+fn main() -> Result<()> {
+    let mut doc = PdfDocument::open("form.pdf")?;
+
+    // Fill any values first, then flatten:
+    {
+        let mut form = doc.form_mut();
+        form.set_text("name", "John Doe")?;
+    }
+
+    doc.flatten_forms()?;
+    doc.save("form_flat.pdf")?;
+    Ok(())
+}
+```
+
+`flatten_forms()` finalises field appearances and removes the
+interactive form dictionary so the output is a fixed PDF.
+
+For XFA-specific extraction (`xfa-json` round-trip) and FormCalc
+evaluation, see the lower-level workspace crates
+`xfa-json`, `xfa-dom-resolver`, and `formcalc-interpreter`.
+The high-level `pdfluent` facade exposes the common case
+(fill + flatten); XFA-specific scripting hooks remain in the
+specialised crates.
