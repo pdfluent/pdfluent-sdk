@@ -1317,6 +1317,85 @@ PdfStatus pdfluent_license_set_public_key(const unsigned char *public_key, size_
 PdfStatus pdfluent_license_activate_payload(const char *payload_json);
 
 /* =========================================================================
+ * Structured text-block extraction
+ * =========================================================================
+ * Returns the per-block bounding boxes + concatenated text for a page.
+ * Stable since 1.x; the struct layout below is frozen for the 1.x line.
+ */
+
+/**
+ * @brief A single text block with a bounding box and concatenated text.
+ *
+ * Memory ownership: every block pointer returned by
+ * @ref pdf_page_extract_text_blocks is part of one heap allocation that
+ * the caller MUST release via @ref pdf_text_blocks_free. The embedded
+ * @c text pointer points into Rust-owned storage that is freed together
+ * with the block array. Do NOT call @c free() on individual @c text
+ * pointers, and do NOT mix allocators.
+ */
+typedef struct {
+    /** PDF user-space X of the block's bottom-left corner (1/72 inch). */
+    double x;
+    /** PDF user-space Y of the block's bottom-left corner (1/72 inch). */
+    double y;
+    /** Block width in PDF points.  Always >= 0; 0 for empty blocks. */
+    double width;
+    /** Block height in PDF points. Always >= 0; 0 for empty blocks. */
+    double height;
+    /** UTF-8, null-terminated. Lifetime tied to the block array. */
+    const char *text;
+} PdfTextBlock;
+
+/**
+ * @brief Extract the structured text blocks of a single page.
+ *
+ * On success: <tt>*out_blocks</tt> is set to a heap-allocated array of
+ * @ref PdfTextBlock (or @c NULL when the page is text-empty),
+ * <tt>*out_count</tt> holds the number of elements. The caller MUST
+ * release the array via <tt>pdf_text_blocks_free(*out_blocks,
+ * *out_count)</tt> when finished.
+ *
+ * On failure: <tt>*out_blocks</tt> is set to @c NULL,
+ * <tt>*out_count</tt> to @c 0, and the function returns a non-Ok
+ * @ref PdfStatus. Inspect @ref pdf_get_last_error for the message.
+ *
+ * @param doc        Document handle. Must not be NULL.
+ * @param page_index Zero-based page index.
+ * @param out_blocks Pointer to a caller-owned @c PdfTextBlock* slot.
+ *                   MUST not be NULL.
+ * @param out_count  Pointer to a caller-owned size_t slot. MUST not be
+ *                   NULL.
+ *
+ * @return @ref PDF_STATUS_OK on success (possibly with zero blocks).
+ * @return @ref PDF_STATUS_ERROR_INVALID_ARG when any argument is NULL
+ *         or @c page_index is negative.
+ * @return @ref PDF_STATUS_ERROR_PAGE_RANGE when @c page_index is
+ *         outside @c [0, page_count).
+ * @return @ref PDF_STATUS_ERROR_EXTRACT for engine-side extraction
+ *         failures (message in @c pdf_get_last_error).
+ */
+PdfStatus pdf_page_extract_text_blocks(
+    const PdfDocument *doc,
+    int                page_index,
+    PdfTextBlock     **out_blocks,
+    size_t            *out_count
+);
+
+/**
+ * @brief Release an array of @ref PdfTextBlock previously returned by
+ *        @ref pdf_page_extract_text_blocks.
+ *
+ * <tt>pdf_text_blocks_free(NULL, 0)</tt> is a no-op. The @c count
+ * argument MUST match the value written by
+ * @ref pdf_page_extract_text_blocks into @c *out_count.
+ *
+ * @param blocks Pointer previously returned by
+ *               @ref pdf_page_extract_text_blocks (or NULL).
+ * @param count  Number of elements in @c blocks (or 0).
+ */
+void pdf_text_blocks_free(PdfTextBlock *blocks, size_t count);
+
+/* =========================================================================
  * G-track text-editing extensions (future / opt-in)
  * =========================================================================
  * These symbols are only declared when PDFLUENT_TEXT_EDITING is defined.

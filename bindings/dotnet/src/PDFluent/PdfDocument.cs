@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -212,6 +213,63 @@ namespace PDFluent
         public Task<string> ExtractTextAsync(int pageIndex)
         {
             return Task.Run(() => ExtractText(pageIndex));
+        }
+
+        /// <summary>
+        /// Extracts the structured text blocks for a single page.
+        /// </summary>
+        /// <remarks>
+        /// Each block carries its bounding box in PDF user-space points
+        /// (origin = bottom-left) plus the concatenated UTF-8 text. The
+        /// native array is freed automatically inside this method; the
+        /// returned <see cref="TextBlock"/> values are pure managed
+        /// objects and remain valid for the lifetime of the GC.
+        /// </remarks>
+        /// <param name="pageIndex">Zero-based page index.</param>
+        /// <returns>An ordered list of <see cref="TextBlock"/> for the page.</returns>
+        /// <exception cref="PdfluentValidationException">If a null pointer is passed (defensive).</exception>
+        /// <exception cref="PdfluentPageRangeException">If <paramref name="pageIndex"/> is outside [0, page_count).</exception>
+        /// <exception cref="PdfluentException">For engine extraction failures.</exception>
+        public IReadOnlyList<TextBlock> ExtractTextBlocks(int pageIndex)
+        {
+            ThrowIfDisposed();
+            IntPtr blocksPtr;
+            UIntPtr count;
+            PdfStatus rc = NativeMethods.pdf_page_extract_text_blocks(
+                _handle.DangerousGetHandle(),
+                pageIndex,
+                out blocksPtr,
+                out count);
+            if (rc != PdfStatus.Ok)
+            {
+                string err = GetLastErrorMessage() ?? "text-block extraction failed";
+                throw PdfluentException.FromStatus(rc, err);
+            }
+            ulong n = (ulong)count;
+            if (n == 0UL || blocksPtr == IntPtr.Zero)
+            {
+                return Array.Empty<TextBlock>();
+            }
+            try
+            {
+                var result = new TextBlock[(int)n];
+                int stride = Marshal.SizeOf<NativeMethods.PdfTextBlockNative>();
+                for (int i = 0; i < (int)n; i++)
+                {
+                    IntPtr slot = IntPtr.Add(blocksPtr, i * stride);
+                    NativeMethods.PdfTextBlockNative native =
+                        Marshal.PtrToStructure<NativeMethods.PdfTextBlockNative>(slot);
+                    string text = native.Text == IntPtr.Zero
+                        ? string.Empty
+                        : MarshalUtf8String(native.Text);
+                    result[i] = new TextBlock(native.X, native.Y, native.Width, native.Height, text);
+                }
+                return result;
+            }
+            finally
+            {
+                NativeMethods.pdf_text_blocks_free(blocksPtr, count);
+            }
         }
 
         // ---- Rendering ----
