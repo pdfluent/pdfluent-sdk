@@ -302,3 +302,31 @@ def test_invalid_pdf():
 def test_file_not_found():
     with pytest.raises(Exception):
         Document("/nonexistent.pdf")
+
+
+# ---------- Capability-matrix parity smoke (GAP-003) ----------
+
+
+def test_extract_text_blocks_runtime():
+    """Runtime smoke for ``Page.extract_text_blocks()``.
+
+    The typing test in ``test_pdfluent_typing.py`` only asserts the
+    return type. This test pins the documented public shape at runtime so
+    any refactor that drops a field on ``TextBlock`` or ``TextSpan`` fails
+    a binding-level CI gate, not only the typing one.
+    """
+    doc = Document(SAMPLE_PDF)
+    blocks = doc[0].extract_text_blocks()
+    assert isinstance(blocks, list)
+    for block in blocks:
+        # TextBlock public surface
+        assert isinstance(block.text, str)
+        assert isinstance(block.spans, list)
+        for span in block.spans:
+            # TextSpan public surface (font_size present; G1 metadata
+            # fields may be None until G1 lands — they are optional by
+            # design and that is documented on PyTextSpan).
+            assert isinstance(span.text, str)
+            assert isinstance(span.x, float)
+            assert isinstance(span.y, float)
+            assert isinstance(span.font_size, float)
