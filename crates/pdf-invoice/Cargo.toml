@@ -2,7 +2,7 @@
 name = "pdf-invoice"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file = "LICENSE"
 repository.workspace = true
 description = "Form data exchange (FDF/XFDF) and ZUGFeRD/Factur-X e-invoicing"
 
