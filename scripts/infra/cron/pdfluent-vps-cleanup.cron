@@ -1,0 +1,41 @@
+# PDFluent VPS — scheduled cleanup cron.
+#
+# Operator install:
+#   sudo install -m 0644 scripts/infra/cron/pdfluent-vps-cleanup.cron \
+#        /etc/cron.d/pdfluent-vps-cleanup
+#   sudo systemctl reload cron
+#
+# Operator UN-install:
+#   sudo rm /etc/cron.d/pdfluent-vps-cleanup
+#
+# Notes:
+# - All jobs run as root so they can write the log + reach gitlab-runner
+#   files under /var/lib/gitlab-runner. Adjust the user column if the
+#   operator prefers a non-root cron user.
+# - Apply variants do real deletions. Dry-run variants are recommended
+#   for first install; flip to --apply after a week of clean dry-run
+#   logs.
+# - Logs land in /var/log/pdfluent-cleanup/. Rotate via logrotate if the
+#   directory grows too large (a logrotate snippet ships alongside as
+#   pdfluent-cleanup.logrotate).
+# - PATH includes /root/.cargo/bin so cargo-based scripts work; remove
+#   if not required.
+
+PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+SHELL=/bin/bash
+MAILTO=""
+
+# Daily disk guard at 06:00 UTC — fail-fast alarm, exit 1 if any mount
+# is under threshold. Run BEFORE the cleanup jobs so the operator sees
+# the trend in the logs.
+0 6 * * *   root  /tmp/pdfluent-cleanup/disk_guard.sh >> /var/log/pdfluent-cleanup/disk_guard.log 2>&1
+
+# Daily storage snapshot at 06:05 UTC — read-only.
+5 6 * * *   root  /tmp/pdfluent-cleanup/storage_report.sh --json >> /var/log/pdfluent-cleanup/storage_report.log 2>&1
+
+# Weekly VPS runner cache cleanup — Sunday 03:00 UTC. Dry-run first;
+# flip --apply after a week of clean dry-run output.
+0 3 * * 0   root  /tmp/pdfluent-cleanup/cleanup_vps_runner_cache.sh >> /var/log/pdfluent-cleanup/runner_cleanup.log 2>&1
+
+# (Optional, commented out — flip on after first apply succeeds)
+# 0 3 * * 0   root  /tmp/pdfluent-cleanup/cleanup_vps_runner_cache.sh --apply >> /var/log/pdfluent-cleanup/runner_cleanup.log 2>&1

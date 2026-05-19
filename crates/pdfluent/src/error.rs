@@ -360,7 +360,9 @@ impl Error {
             Error::LicenseInvalidSignature => {
                 "https://pdfluent.com/errors/E-LICENSE-INVALID-SIGNATURE"
             }
-            Error::LicenseRateLimited { .. } => "https://pdfluent.com/errors/E-LICENSE-RATE-LIMITED",
+            Error::LicenseRateLimited { .. } => {
+                "https://pdfluent.com/errors/E-LICENSE-RATE-LIMITED"
+            }
             Error::UnsupportedOnWasm { .. } => {
                 "https://pdfluent.com/errors/E-ENV-UNSUPPORTED-ON-WASM"
             }

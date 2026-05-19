@@ -1,0 +1,17 @@
+# PDFluent cleanup log rotation.
+#
+# Operator install:
+#   sudo install -m 0644 scripts/infra/cron/pdfluent-cleanup.logrotate \
+#        /etc/logrotate.d/pdfluent-cleanup
+#
+# Rotates weekly, keeps 8 generations (~2 months), compresses with gzip.
+
+/var/log/pdfluent-cleanup/*.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+}

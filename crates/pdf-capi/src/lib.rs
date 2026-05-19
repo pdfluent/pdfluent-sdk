@@ -1627,7 +1627,8 @@ fn register_backing(array_ptr: *mut PdfTextBlock, backing_ptr: *mut TextBlockBac
 
 fn take_backing(array_ptr: *mut PdfTextBlock) -> Option<*mut TextBlockBacking> {
     let mut g = backing_table().lock().ok()?;
-    g.remove(&(array_ptr as usize)).map(|v| v as *mut TextBlockBacking)
+    g.remove(&(array_ptr as usize))
+        .map(|v| v as *mut TextBlockBacking)
 }
 
 // ---- Tests ---------------------------------------------------------------

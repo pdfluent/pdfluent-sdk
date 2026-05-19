@@ -82,6 +82,12 @@ fn status_after_failed_activation_is_unchanged() {
     // Status must be unchanged.
     let rc = unsafe { pdfluent_license_status(&mut s) };
     assert_eq!(rc, PdfStatus::Ok);
-    assert_eq!(s.tier, tier_before, "tier must NOT change after failed activation");
-    assert_eq!(s.source, source_before, "source must NOT change after failed activation");
+    assert_eq!(
+        s.tier, tier_before,
+        "tier must NOT change after failed activation"
+    );
+    assert_eq!(
+        s.source, source_before,
+        "source must NOT change after failed activation"
+    );
 }
