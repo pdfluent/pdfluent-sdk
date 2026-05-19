@@ -399,6 +399,84 @@ impl<'a> LayoutEngine<'a> {
         }
     }
 
+    /// QF1-F — Per-subform overflow extension (XFA Spec 3.3 §17).
+    ///
+    /// Collect every (leader, trailer) `FormNodeId` referenced by any
+    /// subform anywhere in the form tree.  The result is used to exclude
+    /// those subforms from the regular content flow (preventing
+    /// double-render — same logic as W2-A applies, but extended to every
+    /// subform's refs, not just the root's).
+    ///
+    /// W2-A only filtered the root subform's overflow refs.  Per-subform
+    /// extension must filter every subform's refs because any of them may
+    /// produce a leader/trailer rendering on a continuation page.
+    fn collect_all_overflow_subform_ids(&self) -> Vec<FormNodeId> {
+        let mut ids = Vec::new();
+        for (idx, _node) in self.form.nodes.iter().enumerate() {
+            let node_id = FormNodeId(idx);
+            let meta = self.form.meta(node_id);
+            if meta.overflow_leader.is_none() && meta.overflow_trailer.is_none() {
+                continue;
+            }
+            if let Some(name) = meta.overflow_leader.as_deref() {
+                if let Some(target) = self.lookup_overflow_target(node_id, name) {
+                    if !ids.contains(&target) {
+                        ids.push(target);
+                    }
+                }
+            }
+            if let Some(name) = meta.overflow_trailer.as_deref() {
+                if let Some(target) = self.lookup_overflow_target(node_id, name) {
+                    if !ids.contains(&target) {
+                        ids.push(target);
+                    }
+                }
+            }
+        }
+        ids
+    }
+
+    /// QF1-F — Per-subform overflow resolution at break time.
+    ///
+    /// Given the first queued node about to be placed on a continuation
+    /// page (i.e. the "next item" returned in `rest` from the previous
+    /// page's `layout_content_fitting`), walk up the parent chain from
+    /// that node looking for the closest ancestor subform whose
+    /// `FormNodeMeta` declares an `overflow_leader` or `overflow_trailer`.
+    /// Resolve those refs using the same `lookup_overflow_target` logic
+    /// as W2-A.
+    ///
+    /// Returns the per-subform refs when found; otherwise falls back to
+    /// `root_refs` (preserving W2-A bounded MVP semantics for documents
+    /// that only declare overflow at the root subform).
+    ///
+    /// XFA §17 — `<overflow>` on a subform applies to continuation pages
+    /// where that subform's content overflows. The closest ancestor wins
+    /// because it represents the most specific overflow context.
+    fn resolve_active_overflow_refs(
+        &self,
+        active_node: Option<FormNodeId>,
+        root_refs: (Option<FormNodeId>, Option<FormNodeId>),
+    ) -> (Option<FormNodeId>, Option<FormNodeId>) {
+        let Some(start) = active_node else {
+            return root_refs;
+        };
+        // Walk up the parent chain looking for any ancestor (or the node
+        // itself) that declares overflow refs.
+        let mut cursor: Option<FormNodeId> = Some(start);
+        while let Some(node_id) = cursor {
+            let meta = self.form.meta(node_id);
+            if meta.overflow_leader.is_some() || meta.overflow_trailer.is_some() {
+                let refs = self.resolve_overflow_refs(node_id);
+                if refs.0.is_some() || refs.1.is_some() {
+                    return refs;
+                }
+            }
+            cursor = self.trace_parent_id(node_id);
+        }
+        root_refs
+    }
+
     fn trace_node_id(&self, id: FormNodeId) -> String {
         let node = self.form.get(id);
         self.form
@@ -636,9 +714,18 @@ impl<'a> LayoutEngine<'a> {
         // XFA §17: subforms that are resolved as overflow leaders or trailers
         // must not also be rendered in the regular content flow — they would
         // double-render (once as content, once as the per-page decoration).
+        //
+        // QF1-F per-subform extension: the W2-A bounded MVP only filtered
+        // the root subform's overflow refs.  Per-subform overflow refs may
+        // also surface on continuation pages, so any subform's resolved
+        // leader/trailer ids are filtered out here as well.  This keeps
+        // the no-refs branch identical to baseline (the collected list is
+        // empty), and the root-only case identical to W2-A (only the root
+        // refs are in the list).
+        let all_overflow_ids = self.collect_all_overflow_subform_ids();
         let raw_content_nodes: Vec<FormNodeId> = raw_content_nodes
             .into_iter()
-            .filter(|id| root_overflow_refs.0 != Some(*id) && root_overflow_refs.1 != Some(*id))
+            .filter(|id| !all_overflow_ids.contains(id))
             .collect();
         // Build queued nodes with break_before flags and occur expansion.
         let content_queued = self.queue_content(&raw_content_nodes);
@@ -664,9 +751,11 @@ impl<'a> LayoutEngine<'a> {
                 let mut remaining = content_queued;
                 let page_limit = self.estimate_page_limit(&remaining, page_h);
                 // XFA §17: overflow leader/trailer apply to continuation
-                // pages (page 2 onwards).  Cache the augmented area once so
-                // we re-use it for every continuation iteration.
-                let overflow_area = Self::content_area_with_overflow(&area, root_overflow_refs);
+                // pages (page 2 onwards).  QF1-F: per-subform refs win
+                // over root refs when the next queued node sits inside a
+                // subform that declares its own overflow.  The continuation
+                // area is recomputed per-page since the active subform may
+                // change as pagination advances.
                 while !remaining.is_empty() {
                     if pages.len() >= page_limit {
                         eprintln!(
@@ -675,6 +764,11 @@ impl<'a> LayoutEngine<'a> {
                         );
                         break;
                     }
+                    let active_refs = self.resolve_active_overflow_refs(
+                        remaining.first().map(|qn| qn.id),
+                        root_overflow_refs,
+                    );
+                    let overflow_area = Self::content_area_with_overflow(&area, active_refs);
                     let area_for_page = if pages.is_empty() {
                         &area
                     } else {
@@ -957,14 +1051,14 @@ impl<'a> LayoutEngine<'a> {
             if !remaining.is_empty() {
                 let last_idx = page_areas.len() - 1;
                 let overflow_ca_ref = primary_content_area(&page_areas[last_idx]);
-                // XFA §17: apply the root subform's overflow leader/trailer to
-                // the continuation pages.  When neither resolves, this is a
-                // no-op clone preserving the prior behaviour.
-                let overflow_ca =
-                    Self::content_area_with_overflow(overflow_ca_ref, root_overflow_refs);
+                // XFA §17: apply the active subform's overflow leader/trailer
+                // to each continuation page.  QF1-F per-subform extension:
+                // the active refs are recomputed per-page from the first
+                // remaining queued node's ancestor chain; the root refs are
+                // the W2-A fallback when no nested subform declares its own.
                 // Dynamic page limit: estimated pages for remaining content + already placed.
                 let page_limit =
-                    self.estimate_page_limit(&remaining, overflow_ca.height) + pages.len();
+                    self.estimate_page_limit(&remaining, overflow_ca_ref.height) + pages.len();
                 while !remaining.is_empty() {
                     if pages.len() >= page_limit {
                         eprintln!(
@@ -978,6 +1072,12 @@ impl<'a> LayoutEngine<'a> {
                     // Use the overflow-augmented content area for every page
                     // in this loop — XFA §17 says the leader/trailer apply
                     // to overflow continuation pages.
+                    let active_refs = self.resolve_active_overflow_refs(
+                        remaining.first().map(|qn| qn.id),
+                        root_overflow_refs,
+                    );
+                    let overflow_ca =
+                        Self::content_area_with_overflow(overflow_ca_ref, active_refs);
                     let ca = &overflow_ca;
 
                     let (mut page, rest, consumed_break_only, _, page_profile) = self
