@@ -137,6 +137,42 @@ class PdfluentDocumentTest {
     }
 
     // -------------------------------------------------------------------------
+    // Structured text-block extraction (BINDING_API_PARITY_TEXT_BLOCKS round)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void extractTextBlocksFromEmptyPageReturnsList() {
+        try (PdfluentDocument doc = PdfluentDocument.open(minimalPdf())) {
+            java.util.List<TextBlock> blocks = doc.extractTextBlocks(0);
+            assertNotNull(blocks);
+            for (TextBlock b : blocks) {
+                assertTrue(b.getWidth() >= 0.0);
+                assertTrue(b.getHeight() >= 0.0);
+                assertNotNull(b.getText());
+            }
+        }
+    }
+
+    @Test
+    void extractTextBlocksOutOfRangeThrowsPageRangeException() {
+        try (PdfluentDocument doc = PdfluentDocument.open(minimalPdf())) {
+            assertThrows(PdfluentPageRangeException.class,
+                () -> doc.extractTextBlocks(99));
+        }
+    }
+
+    @Test
+    void textBlockEqualityIsFieldwise() {
+        TextBlock a = new TextBlock(10.0, 20.0, 100.0, 12.0, "hello");
+        TextBlock b = new TextBlock(10.0, 20.0, 100.0, 12.0, "hello");
+        TextBlock c = new TextBlock(11.0, 20.0, 100.0, 12.0, "hello");
+        assertEquals(a, b);
+        assertNotEquals(a, c);
+        assertEquals(a.hashCode(), b.hashCode());
+        assertTrue(a.toString().contains("hello"));
+    }
+
+    // -------------------------------------------------------------------------
     // G3 — Rendering
     // -------------------------------------------------------------------------
 
