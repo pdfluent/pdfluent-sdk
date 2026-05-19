@@ -65,10 +65,12 @@ extern "C" {
  * |  13   | PDF_STATUS_ERROR_SPLIT              | ErrorSplit                |
  * |  14   | PDF_STATUS_ERROR_WATERMARK          | ErrorWatermark            |
  * |  15   | PDF_STATUS_ERROR_COMPRESS           | ErrorCompress             |
- * |  16   | PDF_STATUS_ERROR_LICENSE_INVALID    | ErrorInvalidLicense       |
- * |  17   | PDF_STATUS_ERROR_LICENSE_ALREADY_SET| ErrorLicenseAlreadySet    |
- * |  18   | PDF_STATUS_ERROR_LICENSE_FILE       | ErrorLicenseFile          |
- * |  99   | PDF_STATUS_ERROR_UNKNOWN            | ErrorUnknown              |
+ * |  16   | PDF_STATUS_ERROR_LICENSE_INVALID            | ErrorInvalidLicense          |
+ * |  17   | PDF_STATUS_ERROR_LICENSE_ALREADY_SET        | ErrorLicenseAlreadySet       |
+ * |  18   | PDF_STATUS_ERROR_LICENSE_FILE               | ErrorLicenseFile             |
+ * |  19   | PDF_STATUS_ERROR_LICENSE_EXPIRED            | ErrorLicenseExpired          |
+ * |  20   | PDF_STATUS_ERROR_LICENSE_INVALID_SIGNATURE  | ErrorLicenseInvalidSignature |
+ * |  99   | PDF_STATUS_ERROR_UNKNOWN                    | ErrorUnknown                 |
  *
  * See @c docs/c_abi_stability.md §3 for the full error catalogue with
  * recovery hints and cross-binding mapping.
@@ -224,6 +226,26 @@ typedef enum {
      * Recovery: verify the path exists and is readable.
      */
     PDF_STATUS_ERROR_LICENSE_FILE         = 18,
+
+    /**
+     * A signed license payload has expired — its @c expires_at field is
+     * a unix timestamp in the past.
+     *
+     * Recovery: renew the license, then call
+     * @ref pdfluent_license_activate_payload again with the refreshed JSON.
+     */
+    PDF_STATUS_ERROR_LICENSE_EXPIRED            = 19,
+
+    /**
+     * A signed license payload's Ed25519 signature does not verify against
+     * the public key set via @ref pdfluent_license_set_public_key.  Either
+     * the payload was tampered, or it was signed with a different private
+     * key than this build expects.
+     *
+     * Recovery: re-download the license file and try again; if the issue
+     * persists, contact PDFluent support.
+     */
+    PDF_STATUS_ERROR_LICENSE_INVALID_SIGNATURE  = 20,
 
     /**
      * An internal error with no specific code.  Always accompanied by a
@@ -1244,6 +1266,55 @@ int pdfluent_license_effective_tier(void);
  * @return @ref PDF_STATUS_ERROR_INVALID_ARG if @c out is NULL.
  */
 PdfStatus pdfluent_license_status(PdfluentLicenseStatus *out);
+
+/**
+ * @brief Inject the public Ed25519 verification key.
+ *
+ * Must be called once at process startup before any
+ * @ref pdfluent_license_activate_payload call.  Calling twice with the
+ * SAME key is idempotent; calling with a DIFFERENT key returns
+ * @ref PDF_STATUS_ERROR_LICENSE_INVALID.
+ *
+ * @param public_key  Pointer to a 32-byte buffer holding the raw Ed25519
+ *                    verifying key.  BORROWED.
+ * @param key_len     Length of @c public_key in bytes.  Must equal 32.
+ *
+ * @return @ref PDF_STATUS_OK on success.
+ * @return @ref PDF_STATUS_ERROR_INVALID_ARG if @c public_key is NULL or
+ *         @c key_len is not 32.
+ * @return @ref PDF_STATUS_ERROR_LICENSE_INVALID if a different key was
+ *         already injected this process.
+ */
+PdfStatus pdfluent_license_set_public_key(const unsigned char *public_key, size_t key_len);
+
+/**
+ * @brief Activate the process-global license from a signed JSON payload.
+ *
+ * The payload must be a null-terminated UTF-8 string containing the full
+ * signed license JSON: @c {"payload": {...}, "signature": "..."}, where
+ * @c signature is the base64-encoded Ed25519 signature over the
+ * canonical payload JSON.
+ *
+ * @ref pdfluent_license_set_public_key must have been called first.
+ *
+ * @param payload_json  Null-terminated UTF-8 string containing the
+ *                      signed payload.  BORROWED.
+ *
+ * @return @ref PDF_STATUS_OK on success.
+ * @return @ref PDF_STATUS_ERROR_INVALID_ARG if @c payload_json is NULL.
+ * @return @ref PDF_STATUS_ERROR_LICENSE_INVALID_SIGNATURE if the
+ *         Ed25519 signature does not verify (tampered or wrong-key
+ *         payload).
+ * @return @ref PDF_STATUS_ERROR_LICENSE_EXPIRED if @c expires_at is in
+ *         the past.
+ * @return @ref PDF_STATUS_ERROR_LICENSE_ALREADY_SET if the process is
+ *         already activated to a different tier.
+ * @return @ref PDF_STATUS_ERROR_LICENSE_INVALID for malformed JSON,
+ *         unknown tier names, or missing public key.
+ *
+ * On any error the process-global tier is NOT modified.
+ */
+PdfStatus pdfluent_license_activate_payload(const char *payload_json);
 
 /* =========================================================================
  * G-track text-editing extensions (future / opt-in)

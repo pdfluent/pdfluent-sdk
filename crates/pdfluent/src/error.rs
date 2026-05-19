@@ -100,6 +100,35 @@ pub enum Error {
         /// Human-readable reason.
         reason: String,
     },
+    /// License key is well-formed and signed, but its `expires_at` is in
+    /// the past.
+    ///
+    /// Surfaced by the signed-payload pathway only — mock `tier:X` keys
+    /// have no expiry and never produce this variant.
+    LicenseExpired {
+        /// Unix timestamp from the payload's `expires_at` field.
+        expires_at: u64,
+    },
+    /// License key is structurally a signed JSON payload but the Ed25519
+    /// signature does not verify against the configured public key.
+    ///
+    /// Indicates either a tampered payload or a payload signed by a
+    /// different private key. Treat as a hard failure — never fall
+    /// through to Trial.
+    LicenseInvalidSignature,
+    /// A license-enforced rate or usage limit was exceeded at runtime.
+    ///
+    /// Returned by `LicenseGuard::record_*` calls during operation; not
+    /// an activation-time error. Carries the metered resource, used
+    /// value, and configured cap.
+    LicenseRateLimited {
+        /// Metered resource name, e.g. `"api_calls"` or `"pages"`.
+        resource: String,
+        /// How many units have been consumed in the current window.
+        used: u64,
+        /// The license's hard cap for this resource in the current window.
+        limit: u64,
+    },
 
     // ---------- Environment ----------
     /// Operation is not supported in WebAssembly builds.
@@ -291,6 +320,9 @@ impl Error {
             Error::FeatureNotInTier { .. } => "E-LICENSE-FEATURE-NOT-IN-TIER",
             Error::CapabilityNotCompiled { .. } => "E-LICENSE-CAPABILITY-NOT-COMPILED",
             Error::InvalidLicense { .. } => "E-LICENSE-INVALID",
+            Error::LicenseExpired { .. } => "E-LICENSE-EXPIRED",
+            Error::LicenseInvalidSignature => "E-LICENSE-INVALID-SIGNATURE",
+            Error::LicenseRateLimited { .. } => "E-LICENSE-RATE-LIMITED",
             Error::UnsupportedOnWasm { .. } => "E-ENV-UNSUPPORTED-ON-WASM",
             Error::MissingDependency { .. } => "E-ENV-MISSING-DEPENDENCY",
             Error::MemoryBudgetExceeded { .. } => "E-BUDGET-MEMORY-EXCEEDED",
@@ -324,6 +356,11 @@ impl Error {
                 "https://pdfluent.com/errors/E-LICENSE-CAPABILITY-NOT-COMPILED"
             }
             Error::InvalidLicense { .. } => "https://pdfluent.com/errors/E-LICENSE-INVALID",
+            Error::LicenseExpired { .. } => "https://pdfluent.com/errors/E-LICENSE-EXPIRED",
+            Error::LicenseInvalidSignature => {
+                "https://pdfluent.com/errors/E-LICENSE-INVALID-SIGNATURE"
+            }
+            Error::LicenseRateLimited { .. } => "https://pdfluent.com/errors/E-LICENSE-RATE-LIMITED",
             Error::UnsupportedOnWasm { .. } => {
                 "https://pdfluent.com/errors/E-ENV-UNSUPPORTED-ON-WASM"
             }
@@ -386,6 +423,25 @@ impl std::fmt::Display for Error {
             Error::InvalidLicense { reason } => {
                 write!(f, "Invalid license: {reason}\n  Docs: {}", self.docs_url())
             }
+            Error::LicenseExpired { expires_at } => write!(
+                f,
+                "License expired at unix timestamp {expires_at}.\n  Renew: https://pdfluent.com/pricing\n  Docs: {}",
+                self.docs_url()
+            ),
+            Error::LicenseInvalidSignature => write!(
+                f,
+                "License signature does not verify against the configured public key — tampered or wrong-key payload.\n  Docs: {}",
+                self.docs_url()
+            ),
+            Error::LicenseRateLimited {
+                resource,
+                used,
+                limit,
+            } => write!(
+                f,
+                "Rate limit exceeded: {used}/{limit} {resource} in the current window.\n  Upgrade or wait for window reset.\n  Docs: {}",
+                self.docs_url()
+            ),
             Error::UnsupportedOnWasm { operation } => write!(
                 f,
                 "Operation `{operation}` is not supported on wasm32 targets.\n  Docs: {}",
@@ -600,6 +656,15 @@ mod tests {
             Error::InvalidLicense {
                 reason: "expired".into(),
             },
+            Error::LicenseExpired {
+                expires_at: 1_700_000_000,
+            },
+            Error::LicenseInvalidSignature,
+            Error::LicenseRateLimited {
+                resource: "api_calls".into(),
+                used: 1100,
+                limit: 1000,
+            },
             Error::UnsupportedOnWasm { operation: "sign" },
             Error::MissingDependency {
                 dep: "pdfium",
@@ -629,7 +694,7 @@ mod tests {
         // Confirm every variant is covered (count guard).
         assert_eq!(
             variants.len(),
-            15,
+            18,
             "Update this test when new Error variants are added"
         );
     }

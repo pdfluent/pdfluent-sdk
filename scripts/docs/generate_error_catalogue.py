@@ -27,7 +27,9 @@ OUT_FILE = REPO_ROOT / "docs" / "error_catalogue.md"
 # Matches a code() arm such as:
 #   Error::Foo { .. } => "E-CATEGORY-SPECIFIC",
 CODE_ARM_RE = re.compile(
-    r'Error::(\w+)\s*\{[^}]*\}\s*=>\s*"(E-[A-Z0-9\-]+)"'
+    # Match both struct-style variants `Error::Foo { .. } => "E-..."` AND
+    # unit variants `Error::Foo => "E-..."`.
+    r'Error::(\w+)(?:\s*\{[^}]*\})?\s*=>\s*"(E-[A-Z0-9\-]+)"'
 )
 
 # Matches variant doc comments (/// lines) immediately preceding a variant.
@@ -67,10 +69,11 @@ def parse_error_rs(path: Path) -> list[dict]:
         sys.exit(1)
     enum_body = m.group(1)
 
-    # Variant declaration: starts with an identifier followed by { or ,
-    # preceded by optional doc comments.
+    # Variant declaration: starts with an identifier followed by `{`
+    # (struct variant) OR `,` / `\s*$` (unit variant), preceded by
+    # optional doc comments.
     variant_re = re.compile(
-        r"((?:^\s*///[^\n]*\n)+)?\s*^\s*([\w]+)\s*\{",
+        r"((?:^\s*///[^\n]*\n)+)?\s*^\s*([A-Z][\w]*)\s*(?:\{|,|$)",
         re.MULTILINE,
     )
 
@@ -160,6 +163,23 @@ HOW_TO_FIX: dict[str, str] = {
     "E-LICENSE-INVALID": (
         "Re-issue the license key or call `activate_license()` again with a "
         "valid key. Check `reason` for the specific parse failure."
+    ),
+    "E-LICENSE-EXPIRED": (
+        "Renew the license — the `expires_at` unix timestamp in the payload "
+        "is in the past. Visit https://pdfluent.com/pricing or contact "
+        "sales for a refreshed key."
+    ),
+    "E-LICENSE-INVALID-SIGNATURE": (
+        "The signed payload does not verify against the configured public "
+        "key. Either the payload was tampered, or it was signed with a "
+        "different private key than the verifier expects. Re-download the "
+        "license file from PDFluent and try again; if the issue persists, "
+        "contact support."
+    ),
+    "E-LICENSE-RATE-LIMITED": (
+        "A licence-enforced rate or usage cap was reached. Inspect "
+        "`resource`, `used`, and `limit` to identify which cap fired. "
+        "Either upgrade the tier or wait for the metering window to reset."
     ),
     "E-ENV-UNSUPPORTED-ON-WASM": (
         "This operation (`operation`) cannot run in a WASM32 environment. Use "
@@ -269,6 +289,30 @@ BINDING_STATUS: dict[str, dict[str, str]] = {
         "dotnet":  "PdfluentLicenseException (.Code = E-LICENSE-INVALID)",
         "java":    "PdfluentLicenseException (getCode() = E-LICENSE-INVALID)",
         "c_abi":   "PDF_STATUS_ERROR_INVALID_LICENSE (=16) + PDF_STATUS_ERROR_LICENSE_ALREADY_SET (=17) + PDF_STATUS_ERROR_LICENSE_FILE (=18); upstream bindings consolidate all three under .code = E-LICENSE-INVALID",
+    },
+    "E-LICENSE-EXPIRED": {
+        "python":  "PdfluentLicenseError (.code = E-LICENSE-EXPIRED)",
+        "wasm_ts": "PdfluentError (.code = E-LICENSE-EXPIRED)",
+        "node":    "PdfluentLicenseError (.code = E-LICENSE-EXPIRED)",
+        "dotnet":  "PdfluentLicenseException (.Code = E-LICENSE-EXPIRED)",
+        "java":    "PdfluentLicenseException (getCode() = E-LICENSE-EXPIRED)",
+        "c_abi":   "PDF_STATUS_ERROR_LICENSE_EXPIRED (=19)",
+    },
+    "E-LICENSE-INVALID-SIGNATURE": {
+        "python":  "PdfluentLicenseError (.code = E-LICENSE-INVALID-SIGNATURE)",
+        "wasm_ts": "PdfluentError (.code = E-LICENSE-INVALID-SIGNATURE)",
+        "node":    "PdfluentLicenseError (.code = E-LICENSE-INVALID-SIGNATURE)",
+        "dotnet":  "PdfluentLicenseException (.Code = E-LICENSE-INVALID-SIGNATURE)",
+        "java":    "PdfluentLicenseException (getCode() = E-LICENSE-INVALID-SIGNATURE)",
+        "c_abi":   "PDF_STATUS_ERROR_LICENSE_INVALID_SIGNATURE (=20)",
+    },
+    "E-LICENSE-RATE-LIMITED": {
+        "python":  "PdfluentLicenseError (.code = E-LICENSE-RATE-LIMITED)",
+        "wasm_ts": "PdfluentError (.code = E-LICENSE-RATE-LIMITED)",
+        "node":    "PdfluentLicenseError (.code = E-LICENSE-RATE-LIMITED)",
+        "dotnet":  "PdfluentLicenseException (.Code = E-LICENSE-RATE-LIMITED)",
+        "java":    "PdfluentLicenseException (getCode() = E-LICENSE-RATE-LIMITED)",
+        "c_abi":   "PDF_STATUS_ERROR_UNKNOWN (gap — runtime-metering surface not yet exposed via C ABI in 1.0)",
     },
     "E-ENV-UNSUPPORTED-ON-WASM": {
         "python":  "N/A (Python binding is not WASM)",

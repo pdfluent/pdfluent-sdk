@@ -194,6 +194,39 @@ def check(verbose: bool = False, strict_catalogue: bool = False) -> tuple[int, d
                         {"binding": binding, "status": cell.get("status")}
                     )
 
+    # 7b: signed-payload rule — F15 (expired), F18 (valid signed payload),
+    # F19 (tampered signature) MUST be supported on every binding.
+    # If any of these flows is missing from the matrix, that is itself
+    # a violation (the matrix is incomplete).
+    signed_payload_violations: list[dict[str, Any]] = []
+    REQUIRED_SIGNED_FLOWS = (
+        "F15_expired_license_typed",
+        "F18_signed_payload_valid_activates_tier",
+        "F19_signed_payload_tampered_signature_typed",
+    )
+    flow_by_id = {f["id"]: f for f in flows}
+    for required_flow in REQUIRED_SIGNED_FLOWS:
+        flow = flow_by_id.get(required_flow)
+        if flow is None:
+            signed_payload_violations.append(
+                {
+                    "flow": required_flow,
+                    "binding": "*",
+                    "kind": "flow_missing_from_matrix",
+                }
+            )
+            continue
+        for binding, cell in flow["per_binding"].items():
+            if cell.get("status") != "supported":
+                signed_payload_violations.append(
+                    {
+                        "flow": required_flow,
+                        "binding": binding,
+                        "kind": "non_supported_cell",
+                        "status": cell.get("status"),
+                    }
+                )
+
     # 8: F03 / F04 evidence must include a test-file path token
     for flow_id in ("F03_no_silent_fallback_on_invalid", "F04_unknown_tier_typed_error"):
         flow = next((f for f in flows if f["id"] == flow_id), None)
@@ -269,12 +302,17 @@ def check(verbose: bool = False, strict_catalogue: bool = False) -> tuple[int, d
         rc = max(rc, 2)
     if typed_code_violations:
         rc = max(rc, 3)
+    if signed_payload_violations:
+        rc = max(rc, 5)
     if strict_catalogue and catalogue_warnings:
         rc = max(rc, 4)
 
     verdict = (
-        "COMMERCIAL_LICENSE_E2E_100_PERCENT_GREEN"
-        if rc == 0 and not silent_fallback_violations and not typed_code_violations
+        "COMMERCIAL_LICENSE_E2E_TRUE_100_PERCENT_GREEN"
+        if rc == 0
+        and not silent_fallback_violations
+        and not typed_code_violations
+        and not signed_payload_violations
         else "COMMERCIAL_LICENSE_E2E_BLOCKED"
     )
 
@@ -287,6 +325,7 @@ def check(verbose: bool = False, strict_catalogue: bool = False) -> tuple[int, d
         "structural_issues": issues,
         "silent_fallback_violations": silent_fallback_violations,
         "typed_code_violations": typed_code_violations,
+        "signed_payload_violations": signed_payload_violations,
         "catalogue_warnings": catalogue_warnings,
         "closure_violation": closure_violation,
         "verdict": verdict,
@@ -312,6 +351,13 @@ def check(verbose: bool = False, strict_catalogue: bool = False) -> tuple[int, d
             print("\ntyped-code violations:")
             for v in typed_code_violations:
                 print(f"  binding={v['binding']} status={v['status']}")
+        if signed_payload_violations:
+            print("\nsigned-payload violations:")
+            for v in signed_payload_violations:
+                print(
+                    f"  flow={v['flow']} binding={v['binding']} "
+                    f"kind={v['kind']} status={v.get('status', 'n/a')}"
+                )
         if catalogue_warnings:
             print(f"\ncatalogue warnings ({len(catalogue_warnings)}):")
             for w in catalogue_warnings:
@@ -356,6 +402,11 @@ def main(argv: list[str]) -> int:
             print(
                 f"typed-code violations: {len(result['typed_code_violations'])} "
                 "(blocks closure)"
+            )
+        if result.get("signed_payload_violations"):
+            print(
+                f"signed-payload violations: {len(result['signed_payload_violations'])} "
+                "(blocks TRUE 100% closure — F15/F18/F19 must be supported per binding)"
             )
         if result["catalogue_warnings"]:
             print(

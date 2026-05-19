@@ -46,6 +46,11 @@ pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.5" }
 pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.5" }
 pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.5" }
 pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.5", optional = true }
+
+# Signed-payload activation: Ed25519 verification + payload parsing live
+# in the xfa-license crate. The umbrella consumes the verifier API only
+# (no signing key dependency at runtime).
+xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.3" }
 tokio = { version = "1", features = ["rt", "fs"], optional = true }
 tracing = { version = "0.1", optional = true }
 
@@ -78,6 +83,12 @@ getrandom = { version = "0.2", features = ["js"] }
 # for every field-type permutation.
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2", default-features = false }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+# Signed-payload tests need the `signing` feature of xfa-license so the
+# integration test can build test fixtures (keypair generation + payload
+# signing) at runtime, in-memory, without committing private key bytes
+# to the repo.
+xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.3", features = ["signing"] }
 
 [[bench]]
 name = "facade"

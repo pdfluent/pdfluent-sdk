@@ -146,6 +146,22 @@ fn pdfluent_license_err_to_py(e: pdfluent::Error) -> PyErr {
             );
             (PdfluentLicenseError::new_err(msg.clone()), msg)
         }
+        pdfluent::Error::LicenseExpired { expires_at } => {
+            let msg = format!("license expired at unix timestamp {expires_at}");
+            (PdfluentLicenseError::new_err(msg.clone()), msg)
+        }
+        pdfluent::Error::LicenseInvalidSignature => {
+            let msg = "license signature does not verify against the configured public key".to_string();
+            (PdfluentLicenseError::new_err(msg.clone()), msg)
+        }
+        pdfluent::Error::LicenseRateLimited {
+            resource,
+            used,
+            limit,
+        } => {
+            let msg = format!("rate limit exceeded: {used}/{limit} {resource}");
+            (PdfluentLicenseError::new_err(msg.clone()), msg)
+        }
         other => {
             let msg = other.to_string();
             // Non-license errors keep the canonical code on the base class so
