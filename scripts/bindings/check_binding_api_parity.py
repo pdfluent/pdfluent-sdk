@@ -213,11 +213,20 @@ def check(verbose: bool = False, strict_readme: bool = False) -> tuple[int, dict
         "readme_warnings": readme_warnings,
         "closure_violation": closure_violation,
         "domain_closure_state": (
-            "BINDING_API_PARITY_100_PERCENT_GREEN"
+            # TRUE 100% only when there is exactly zero beta_limitation,
+            # bug, or missing — no soft-deferred cells allowed.
+            "BINDING_API_PARITY_TRUE_100_PERCENT_GREEN"
             if not closure_violation
             and not any(i["severity"] == "error" for i in issues)
             and (not strict_readme or not readme_warnings)
-            else "BINDING_API_PARITY_BLOCKED"
+            and counts.get("beta_limitation", 0) == 0
+            else (
+                "BINDING_API_PARITY_100_PERCENT_GREEN"
+                if not closure_violation
+                and not any(i["severity"] == "error" for i in issues)
+                and (not strict_readme or not readme_warnings)
+                else "BINDING_API_PARITY_BLOCKED"
+            )
         ),
     }
 

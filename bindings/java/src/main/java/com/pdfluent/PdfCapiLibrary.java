@@ -102,4 +102,61 @@ interface PdfCapiLibrary extends Library {
 
     /** Fill the output struct with the current license status. */
     int pdfluent_license_status(PdfluentLicenseStatus.ByReference out);
+
+    // ---- Structured text-block extraction ----------------------------------
+
+    /**
+     * Native layout of {@code PdfTextBlock} — must match the C struct in
+     * {@code include/pdfluent.h}. Five fields: {@code (double, double,
+     * double, double, const char*)}.
+     *
+     * <p>The {@code text} pointer points into Rust-owned memory that is
+     * released together with the parent array via
+     * {@link #pdf_text_blocks_free}; do <b>not</b> free it individually.
+     */
+    class PdfTextBlock extends Structure {
+        public double x;
+        public double y;
+        public double width;
+        public double height;
+        public Pointer text;
+
+        public PdfTextBlock() {}
+
+        public PdfTextBlock(Pointer p) {
+            super(p);
+            read();
+        }
+
+        @Override
+        protected List<String> getFieldOrder() {
+            return Arrays.asList("x", "y", "width", "height", "text");
+        }
+
+        public static class ByReference extends PdfTextBlock implements Structure.ByReference {}
+    }
+
+    /**
+     * Extract structured text blocks for a page.
+     *
+     * <p>On success: writes a heap-allocated PdfTextBlock array pointer
+     * to {@code outBlocks} and the element count to {@code outCount}.
+     * The caller MUST release the array via {@link #pdf_text_blocks_free}
+     * passing the same pointer + count.
+     *
+     * @return 0 OK · 1 ErrorInvalidArgument · 5 ErrorPageRange · 12 ErrorExtract.
+     */
+    int pdf_page_extract_text_blocks(
+        Pointer doc,
+        int pageIndex,
+        PointerByReference outBlocks,
+        com.sun.jna.ptr.NativeLongByReference outCount);
+
+    /**
+     * Free an array previously returned by
+     * {@link #pdf_page_extract_text_blocks}.
+     *
+     * <p>{@code pdf_text_blocks_free(null, 0)} is a no-op.
+     */
+    void pdf_text_blocks_free(Pointer blocks, NativeLong count);
 }
