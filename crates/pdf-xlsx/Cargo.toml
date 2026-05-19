@@ -2,7 +2,7 @@
 name = "pdf-xlsx"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file = "LICENSE"
 repository.workspace = true
 description = "PDF table extraction and XLSX conversion"
 

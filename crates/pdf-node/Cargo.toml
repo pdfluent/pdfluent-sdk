@@ -2,7 +2,7 @@
 name = "pdf-node"
 version = "1.0.0-beta.1"
 edition = "2021"
-license = "MIT"
+license-file = "LICENSE"
 description = "Node.js bindings for the PDF engine via napi-rs."
 publish = false
 
