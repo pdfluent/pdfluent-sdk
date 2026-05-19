@@ -63,10 +63,48 @@ impl XfaPackets {
         self.get_packet("localeSet")
     }
 }
+/// Outcome of probing the catalog/AcroForm structure for an XFA entry.
+///
+/// Distinguishes "AcroForm is readable but carries no XFA" from "the AcroForm
+/// structure itself was unreadable". This lets [`extract_xfa`] skip the
+/// expensive whole-document [`scan_for_xfa`] fallback when we can prove from
+/// the spec-compliant location (catalog → /AcroForm → /XFA, XFA 3.3 §3) that
+/// no XFA is present.
+///
+/// QF1-A (L-01 long-form hotspot): documents like California EDD `DE 44` carry
+/// `/AcroForm` (widget-based interactive form) without `/XFA`. The byte
+/// pre-check in `flatten_xfa_to_pdf_internal` (looking for `/AcroForm` or
+/// `xdp:xdp`) is permissive on purpose, so it falls through to
+/// `extract_xfa_from_bytes`, which previously had to walk every compressed
+/// object stream looking for `<xdp:xdp` before giving up (~775 ms / ~56 % of
+/// wall time on `edd_DE44.pdf`). With this probe we early-return
+/// [`XfaError::PacketNotFound`] for the pure-AcroForm case, leaving the
+/// `scan_for_xfa` fallback only for genuinely broken catalog/AcroForm
+/// structures.
+#[derive(Debug)]
+enum AcroformProbe {
+    /// AcroForm exists, has /XFA, and packets were successfully extracted.
+    XfaFound(XfaPackets),
+    /// Catalog read OK; no AcroForm dictionary in catalog. Per XFA 3.3 §3 the
+    /// XFA packets live inside the AcroForm dictionary, so no AcroForm =
+    /// no XFA. (A document MAY in principle carry an orphaned XFA stream
+    /// outside the spec layout; that pathology still hits the fallback via
+    /// [`AcroformProbe::Unreadable`] when the catalog itself fails.)
+    NoAcroform,
+    /// AcroForm exists and is readable, but the dictionary has no /XFA entry.
+    /// Spec-compliant pure-AcroForm form — `scan_for_xfa` would just burn
+    /// time walking every object stream and return PacketNotFound anyway.
+    AcroformNoXfa,
+    /// The catalog or AcroForm dictionary could not be read at all (truncated
+    /// PDF, repaired xref still broken, etc.). Fall through to the
+    /// best-effort whole-document scan.
+    Unreadable,
+}
+
 /// extract_xfa.
 pub fn extract_xfa(pdf: &Pdf) -> Result<XfaPackets> {
-    if let Some(mut p) = extract_xfa_from_acroform(pdf) {
-        if !p.packets.is_empty() || p.full_xml.is_some() {
+    match probe_acroform_for_xfa(pdf) {
+        AcroformProbe::XfaFound(mut p) => {
             // If the datasets packet is empty/tiny (common with incremental saves
             // where Adobe Reader writes a new datasets object but doesn't update
             // the XFA array reference), scan all objects for a larger one.
@@ -76,10 +114,52 @@ pub fn extract_xfa(pdf: &Pdf) -> Result<XfaPackets> {
                     p.packets.push(("datasets".to_string(), better_ds));
                 }
             }
-            return Ok(p);
+            Ok(p)
+        }
+        AcroformProbe::NoAcroform | AcroformProbe::AcroformNoXfa => {
+            // QF1-A: skip the expensive whole-document object scan. Per XFA 3.3 §3
+            // the XFA packets live inside the AcroForm dictionary, so a
+            // spec-compliant document without /AcroForm /XFA cannot carry XFA.
+            // The caller (`flatten_xfa_to_pdf_internal`) will route to
+            // `static_fallback`, preserving correctness while eliminating
+            // ~775 ms of wasted scan time on pure-AcroForm long-form docs like
+            // `edd_DE44.pdf`.
+            Err(XfaError::PacketNotFound("no XFA content found".to_string()))
+        }
+        AcroformProbe::Unreadable => {
+            // Best-effort fallback: the catalog/AcroForm structure could not be
+            // read, but the byte-level pre-check found XFA-like markers. Scan
+            // every non-image stream for a `<xdp:xdp` packet.
+            scan_for_xfa(pdf)
         }
     }
-    scan_for_xfa(pdf)
+}
+
+/// Probe the catalog/AcroForm structure for the presence of `/XFA`.
+///
+/// Returns the strongest outcome we can determine from a small number of
+/// xref hits, so [`extract_xfa`] can avoid the expensive whole-document
+/// fallback when we have positive evidence that no XFA can be present.
+fn probe_acroform_for_xfa(pdf: &Pdf) -> AcroformProbe {
+    let xref = pdf.xref();
+    let Some(catalog): Option<Dict<'_>> = xref.get(xref.root_id()) else {
+        return AcroformProbe::Unreadable;
+    };
+    let Some(acroform): Option<Dict<'_>> = catalog.get(ACRO_FORM) else {
+        return AcroformProbe::NoAcroform;
+    };
+    if let Some(stream) = acroform.get::<Stream<'_>>(XFA) {
+        if let Some(decoded) = decode_stream(&stream) {
+            return AcroformProbe::XfaFound(parse_xfa_xml(&decoded));
+        }
+        // /XFA stream object existed but could not be decoded — treat as
+        // unreadable so the scan fallback gets a chance.
+        return AcroformProbe::Unreadable;
+    }
+    if let Some(array) = acroform.get::<Array<'_>>(XFA) {
+        return AcroformProbe::XfaFound(extract_from_array(&array));
+    }
+    AcroformProbe::AcroformNoXfa
 }
 
 /// Scan all PDF stream objects for a datasets packet larger than `min_len`.
