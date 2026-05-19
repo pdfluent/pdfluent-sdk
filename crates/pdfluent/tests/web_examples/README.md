@@ -1,6 +1,7 @@
 # web_examples
 
-Bootstrap test suite for [issue #1240](https://github.com/jasperdew/xfa-native-rust/issues/1240).
+Bootstrap test suite that locks the public API surface against the
+how-to snippets shipped at <https://pdfluent.com/how-to>.
 
 ## Purpose
 

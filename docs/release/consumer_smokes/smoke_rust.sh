@@ -18,10 +18,12 @@
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
-VERSION="${1:-}"
-LOCAL_CRATE_PATH="${2:-}"
+VERSION=""
+LOCAL_CRATE_PATH=""
 
-# Parse named flags.
+# Parse named flags. Initial values are intentionally empty so that
+# `--local-crate PATH` (or `--version X.Y.Z`) sets the right field
+# regardless of positional order.
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --version)     VERSION="$2"; shift 2 ;;
@@ -57,11 +59,14 @@ pdfluent = { version = "${VERSION}" }
 TOML
 
 # If local crate provided, add a [patch.crates-io] override.
+# `${SMOKE_DIR}` is a tmp dir, so the patch path must be absolute — a
+# relative path would resolve against the tmp dir and not find the crate.
 if [[ -n "$LOCAL_CRATE_PATH" && -d "$LOCAL_CRATE_PATH" ]]; then
+    LOCAL_CRATE_PATH_ABS="$(cd -- "$LOCAL_CRATE_PATH" && pwd)"
     cat >> "${SMOKE_DIR}/Cargo.toml" <<TOML
 
 [patch.crates-io]
-pdfluent = { path = "${LOCAL_CRATE_PATH}" }
+pdfluent = { path = "${LOCAL_CRATE_PATH_ABS}" }
 TOML
 fi
 

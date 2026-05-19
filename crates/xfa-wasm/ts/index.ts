@@ -6,7 +6,7 @@
 
 // Re-export WASM init and raw classes.
 // The pkg/ directory is produced by `wasm-pack build --target web --no-default-features --features wasm`.
-// At development time, resolve via tsconfig.json paths or the published @pdfluent/xfa-wasm package.
+// At development time, resolve via tsconfig.json paths or the published @pdfluent/sdk-wasm package.
 export { default as init, XfaEngine as RawXfaEngine, PdfDoc as RawPdfDoc } from '../pkg/xfa_wasm';
 export type { InitOutput, InitInput, SyncInitInput } from '../pkg/xfa_wasm';
 
