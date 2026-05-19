@@ -34,9 +34,9 @@ use xfa_layout_engine::form::{FormNodeId, FormTree};
 
 use super::regex_guard::{scan_script_for_redos, RegexScanVerdict};
 use super::{
-    activity_allowed_for_sandbox_with_gate, HostBindings, RuntimeMetadata, RuntimeOutcome,
-    SandboxError, XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS,
-    MAX_SCRIPT_BODY_BYTES, MAX_VARIABLES_SCRIPT_BODY_BYTES,
+    activity_allowed_for_sandbox_with_gate, walltime_fallback_multiplier, HostBindings,
+    RuntimeMetadata, RuntimeOutcome, SandboxError, XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES,
+    DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES, MAX_VARIABLES_SCRIPT_BODY_BYTES,
 };
 
 /// QuickJS-backed runtime adapter. One instance is reusable across many
@@ -63,6 +63,19 @@ pub struct QuickJsRuntime {
     memory_budget_bytes: usize,
     script_deadline: Arc<AtomicU64>,
     script_started: Arc<AtomicBool>,
+    /// QF1-E / SEC-01 — start-time of the currently executing script in
+    /// nanoseconds since [`epoch`]. Set by [`Self::set_deadline`] before
+    /// QuickJS is invoked and read by the post-execution classification
+    /// branch to compute elapsed wall-clock and decide whether to surface
+    /// [`SandboxError::WallTimeExceeded`] instead of
+    /// [`SandboxError::Timeout`]. Cleared back to 0 by
+    /// [`Self::clear_deadline`].
+    script_start_nanos: Arc<AtomicU64>,
+    /// QF1-E / SEC-01 — multiplier on `time_budget` used by the wall-time
+    /// fallback. Snapshotted at construction time from
+    /// [`super::walltime_fallback_multiplier`] so tests can toggle the env
+    /// var per-instance without racing other tests.
+    walltime_fallback_multiplier: u32,
     host: Rc<RefCell<HostBindings>>,
     bindings_registered: bool,
 }
@@ -95,6 +108,10 @@ impl QuickJsRuntime {
 
         let script_deadline = Arc::new(AtomicU64::new(0));
         let script_started = Arc::new(AtomicBool::new(false));
+        // QF1-E: independent of the deadline atomic — start-time is needed
+        // for the post-execution elapsed comparison even when the deadline
+        // has been cleared.
+        let script_start_nanos = Arc::new(AtomicU64::new(0));
 
         // Interrupt handler: poll the deadline. When the started flag is set
         // and the wall-clock has crossed the deadline, return `true` to abort
@@ -129,6 +146,8 @@ impl QuickJsRuntime {
             memory_budget_bytes: DEFAULT_MEMORY_BUDGET_BYTES,
             script_deadline,
             script_started,
+            script_start_nanos,
+            walltime_fallback_multiplier: walltime_fallback_multiplier(),
             host: Rc::new(RefCell::new(HostBindings::new())),
             bindings_registered: false,
         })
@@ -149,19 +168,77 @@ impl QuickJsRuntime {
         self
     }
 
+    /// QF1-E / SEC-01 — override the wall-time fallback multiplier. The
+    /// default is read from
+    /// [`super::ENV_WALLTIME_FALLBACK_MULTIPLIER`] / falls back to
+    /// [`super::WALLTIME_FALLBACK_MULTIPLIER_DEFAULT`]. Values below `2`
+    /// are clamped to `2` so a clean timeout cannot be re-labelled as
+    /// `WallTimeExceeded` by accident. Tests use this to deterministically
+    /// pin the multiplier without racing the process-global env var.
+    pub fn with_walltime_fallback_multiplier(mut self, multiplier: u32) -> Self {
+        self.walltime_fallback_multiplier = multiplier.max(2);
+        self
+    }
+
     fn set_deadline(&self) {
-        let deadline = Instant::now()
+        let now = Instant::now()
             .checked_duration_since(epoch())
-            .map(|d| d + self.time_budget)
-            .unwrap_or(self.time_budget);
+            .unwrap_or(Duration::ZERO);
+        let deadline = now + self.time_budget;
         self.script_deadline
             .store(deadline.as_nanos() as u64, Ordering::Release);
+        // QF1-E: capture start-time before flagging the script as started so
+        // the post-execution branch can compute elapsed wall-clock even if
+        // `clear_deadline` runs first.
+        self.script_start_nanos
+            .store(now.as_nanos() as u64, Ordering::Release);
         self.script_started.store(true, Ordering::Release);
     }
 
     fn clear_deadline(&self) {
         self.script_started.store(false, Ordering::Release);
         self.script_deadline.store(0, Ordering::Release);
+        // Intentionally keep `script_start_nanos` populated until the next
+        // `set_deadline` so the caller's elapsed-snapshot is stable.
+    }
+
+    /// QF1-E / SEC-01 — classify a timeout-shaped error as either the
+    /// primary [`SandboxError::Timeout`] (interrupt fired within multiplier
+    /// × budget) or the defence-in-depth [`SandboxError::WallTimeExceeded`]
+    /// (elapsed ≥ multiplier × budget at error-classification time).
+    ///
+    /// This is intentionally a no-op in the common case: the rquickjs
+    /// interrupt callback fires within a few opcodes of the deadline for
+    /// any reasonable JS source, so the elapsed time at this point is
+    /// ≈ `time_budget`, well below `multiplier × time_budget`. The
+    /// fallback variant only surfaces when execution was trapped inside a
+    /// non-interruptible C-level call long enough that the elapsed
+    /// wall-clock crossed the multiplier threshold.
+    ///
+    /// `now_nanos` is the wall-clock at the moment the post-execution
+    /// branch captured the deadline; passed in so the caller can reuse a
+    /// single `Instant::now()` snapshot for both checks.
+    fn classify_timeout_or_walltime(&self, now_nanos: u64) -> SandboxError {
+        let start = self.script_start_nanos.load(Ordering::Acquire);
+        if start == 0 || now_nanos <= start {
+            // Defensive: if the start was never set or the snapshot went
+            // backwards (impossible barring monotonic clock issues), keep
+            // the primary classification.
+            return SandboxError::Timeout;
+        }
+        let elapsed_nanos = now_nanos - start;
+        let threshold_nanos = (self.time_budget.as_nanos() as u64)
+            .saturating_mul(self.walltime_fallback_multiplier as u64);
+        if elapsed_nanos >= threshold_nanos {
+            let elapsed_ms = elapsed_nanos / 1_000_000;
+            let budget_ms = self.time_budget.as_millis();
+            SandboxError::WallTimeExceeded(format!(
+                "{elapsed_ms} ms ≥ {mult}× budget ({budget_ms} ms)",
+                mult = self.walltime_fallback_multiplier
+            ))
+        } else {
+            SandboxError::Timeout
+        }
     }
 
     fn register_host_bindings(&mut self) -> Result<(), String> {
@@ -1165,7 +1242,11 @@ impl QuickJsRuntime {
         self.clear_deadline();
         match result {
             Ok(Ok(())) => Ok(()),
-            Ok(Err(_)) if timed_out => Err(SandboxError::Timeout),
+            // QF1-E / SEC-01: defence-in-depth wall-time fallback also
+            // covers `<variables>` `<script>` registration. The same
+            // classifier upgrades a `Timeout` to `WallTimeExceeded` when
+            // elapsed ≥ multiplier × budget.
+            Ok(Err(_)) if timed_out => Err(self.classify_timeout_or_walltime(now_nanos)),
             Ok(Err(e)) => Err(SandboxError::ScriptError(format!(
                 "variables-script `{name}` register: {e}"
             ))),
@@ -3757,8 +3838,14 @@ impl XfaJsRuntime for QuickJsRuntime {
                 // before clear_deadline() above; OOM via a substring scan of
                 // the error message; everything else is ScriptError.
                 if timed_out {
+                    // QF1-E / SEC-01: defence-in-depth wall-time fallback.
+                    // The interrupt fired (so this *is* a timeout shape);
+                    // re-label as `WallTimeExceeded` only if elapsed
+                    // crossed `multiplier × budget`. Both classifications
+                    // bump the same `timeouts` counter — observability of
+                    // the typed variant is via error type, not metrics.
                     self.metadata.timeouts = self.metadata.timeouts.saturating_add(1);
-                    Err(SandboxError::Timeout)
+                    Err(self.classify_timeout_or_walltime(captured_now))
                 } else {
                     let msg = other.to_string();
                     if msg.to_ascii_lowercase().contains("memory") {
