@@ -20,11 +20,11 @@
 //!   (`benchmarks/runs/M3B_RUNTIME_SECURITY_MODEL.md` §1 S-17).
 
 use std::cell::RefCell;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, OnceLock,
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -32,10 +32,11 @@ use rquickjs::function::Opt;
 use rquickjs::{CatchResultExt, Coerced, Context, Function, Object, Persistent, Runtime};
 use xfa_layout_engine::form::{FormNodeId, FormTree};
 
+use super::regex_guard::{RegexScanVerdict, scan_script_for_redos};
 use super::{
-    activity_allowed_for_sandbox, HostBindings, RuntimeMetadata, RuntimeOutcome, SandboxError,
-    XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES,
-    MAX_VARIABLES_SCRIPT_BODY_BYTES,
+    DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, HostBindings, MAX_SCRIPT_BODY_BYTES,
+    MAX_VARIABLES_SCRIPT_BODY_BYTES, RuntimeMetadata, RuntimeOutcome, SandboxError, XfaJsRuntime,
+    activity_allowed_for_sandbox,
 };
 
 /// QuickJS-backed runtime adapter. One instance is reusable across many
@@ -1121,6 +1122,13 @@ impl QuickJsRuntime {
         // `js_resolve_failure` (W1-B `implicit_function` cluster).
         if body.len() > MAX_VARIABLES_SCRIPT_BODY_BYTES {
             return Err(SandboxError::BodyTooLarge);
+        }
+        // W3-A — REDOS-01 mitigation also gates variables-scripts.
+        // A library-level helper that defines a global function whose
+        // body contains `/(a+)+$/` would be evaluated by QuickJS at
+        // registration time, and the interrupt cannot bound it.
+        if let RegexScanVerdict::Reject { reason } = scan_script_for_redos(body) {
+            return Err(SandboxError::RegexRejected(reason));
         }
         let idents = Self::extract_top_level_idents(body);
         let scope = subform_scope.unwrap_or("").to_string();
@@ -3516,6 +3524,16 @@ impl XfaJsRuntime for QuickJsRuntime {
         if body.len() > MAX_SCRIPT_BODY_BYTES {
             self.metadata.runtime_errors = self.metadata.runtime_errors.saturating_add(1);
             return Err(SandboxError::BodyTooLarge);
+        }
+
+        // W3-A — REDOS-01 mitigation. Reject script bodies containing
+        // catastrophic-backtracking regex shapes BEFORE handing them to
+        // QuickJS, because QuickJS's interrupt handler is polled at JS
+        // opcode boundaries — not inside the regex C code — and cannot
+        // bound a single pathological `test()` call.
+        if let RegexScanVerdict::Reject { reason } = scan_script_for_redos(body) {
+            self.metadata.runtime_errors = self.metadata.runtime_errors.saturating_add(1);
+            return Err(SandboxError::RegexRejected(reason));
         }
 
         self.set_deadline();
