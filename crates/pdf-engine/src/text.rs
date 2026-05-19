@@ -641,8 +641,17 @@ fn derive_glyph_style(glyph: &Glyph<'_>) -> GlyphStyle {
                     is_italic: data.is_italic || name_italic,
                 }
             } else {
-                // Type1 / non-embedded font — descriptor not surfaced.
-                GlyphStyle::default()
+                // Type1 / non-embedded font — descriptor not surfaced
+                // via font_data(). Fall back to the name-only
+                // accessor which works for standard-14 fallbacks.
+                let raw = outline.postscript_name().unwrap_or_default();
+                let name = strip_subset_prefix(&raw).to_string();
+                let (name_bold, name_italic) = name_style_hints(&name);
+                GlyphStyle {
+                    font_name: if name.is_empty() { None } else { Some(name) },
+                    is_bold: name_bold,
+                    is_italic: name_italic,
+                }
             }
         }
         Glyph::Type3(_) => GlyphStyle::default(),
