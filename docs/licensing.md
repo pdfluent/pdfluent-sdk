@@ -113,7 +113,7 @@ JSON tier names are mapped to canonical Rust tiers:
 ### WASM (JavaScript / TypeScript)
 
 ```javascript
-import init, { activateLicenseKey, licenseStatus } from '@pdfluent/xfa-wasm';
+import init, { activateLicenseKey, licenseStatus } from '@pdfluent/sdk-wasm';
 
 await init();
 activateLicenseKey('tier:enterprise');

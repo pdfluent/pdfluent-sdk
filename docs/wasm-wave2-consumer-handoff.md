@@ -1,8 +1,14 @@
-# Wave 2 consumer-side handoff
+# Wave 2 consumer-side handoff (HISTORICAL — superseded)
 
-The SDK side of Wave 2 is complete: 13 new methods on `PdfDoc`,
+> **Status:** Historical handoff document for Wave 2 (`1.0.0-beta.9`).
+> The current canonical wasm package is **`@pdfluent/sdk-wasm @
+> 1.0.0-beta.11`** (renamed from `@pdfluent/xfa-wasm`). References below
+> to `@pdfluent/xfa-wasm` and `1.0.0-beta.8`/`1.0.0-beta.9` are preserved
+> for historical context.
+
+The SDK side of Wave 2 was complete: 13 new methods on `PdfDoc`,
 `@pdfluent/xfa-wasm@1.0.0-beta.9` ready (in `pkg/` — not yet published to
-npm). This document is what the PDFluent editor app + website need to do
+npm). This document is what the PDFluent editor app + website needed to do
 to consume the new capabilities.
 
 ---

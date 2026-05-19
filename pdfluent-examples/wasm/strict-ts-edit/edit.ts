@@ -10,8 +10,8 @@
  * Compile check: tsc --strict --noEmit (must exit 0)
  */
 
-import init, { PdfDoc } from '@pdfluent/xfa-wasm';
-import type { XfaWasmError } from '@pdfluent/xfa-wasm/augment';
+import init, { PdfDoc } from '@pdfluent/sdk-wasm';
+import type { XfaWasmError } from '@pdfluent/sdk-wasm/augment';
 
 /* ─── Typed text run (matches WASM JSON output schema) ──────────────────── */
 

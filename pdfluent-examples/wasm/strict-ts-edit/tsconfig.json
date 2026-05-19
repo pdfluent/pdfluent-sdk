@@ -7,8 +7,8 @@
     "moduleResolution": "bundler",
     "lib": ["ES2022", "ESNext.Disposable", "DOM", "DOM.Iterable"],
     "paths": {
-      "@pdfluent/xfa-wasm": ["../../../crates/xfa-wasm/pkg/xfa_wasm"],
-      "@pdfluent/xfa-wasm/augment": ["../../../crates/xfa-wasm/pkg-types/xfa_wasm.augment"]
+      "@pdfluent/sdk-wasm": ["../../../crates/xfa-wasm/pkg/xfa_wasm"],
+      "@pdfluent/sdk-wasm/augment": ["../../../crates/xfa-wasm/pkg-types/xfa_wasm.augment"]
     },
     "verbatimModuleSyntax": false
   },

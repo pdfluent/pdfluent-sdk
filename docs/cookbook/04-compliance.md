@@ -1,78 +1,114 @@
 # Compliance Recipes
 
+> All snippets use the canonical, RFC 0001-frozen public API
+> (`use pdfluent::prelude::*;` + `PdfDocument::open(...)`). PDF/A
+> validation is gated behind the `pdfa` feature (enabled by default
+> in the `pdfluent` crate).
+
 ## Validate PDF/A Compliance
 
 ```rust
-use pdfluent::{Sdk, PdfaLevel};
+use pdfluent::prelude::*;
 
-let sdk = Sdk::init_with_license("license.json")?;
-let doc = sdk.open("document.pdf")?;
+fn main() -> Result<()> {
+    let doc = PdfDocument::open("invoice.pdf")?;
+    let report = doc.validate_pdfa(PdfAProfile::A2b)?;
 
-let report = doc.validate_pdfa(PdfaLevel::A2b)?;
-
-if report.is_compliant() {
-    println!("Document is PDF/A-2b compliant");
-} else {
-    println!("Violations found: {}", report.violation_count());
-    for v in report.violations() {
-        eprintln!("[§{}] {}", v.clause, v.message);
+    if report.is_compliant() {
+        println!("PDF/A-2B compliant ✓");
+    } else {
+        println!("{} violation(s):", report.violations.len());
+        for v in &report.violations {
+            println!("  [{:?}] {} — {}", v.severity, v.rule, v.message);
+        }
     }
+    Ok(())
 }
 ```
 
+Supported profiles: `PdfAProfile::{A1b, A2b, A3b}`.
+
+`Violation { rule: String, message: String, severity: Severity }`.
+`Severity::{Error, Warning}` — info-level findings are filtered out
+of the report.
+
 ---
 
-## Convert to PDF/A
+## Inspect Embedded Signatures
 
 ```rust
-use pdfluent::{Sdk, PdfaLevel};
+use pdfluent::prelude::*;
 
-let sdk = Sdk::init_with_license("license.json")?;
-let doc = sdk.open("legacy_invoice.pdf")?;
+fn main() -> Result<()> {
+    let doc = PdfDocument::open("signed.pdf")?;
 
-let archived = doc.convert_to_pdfa(PdfaLevel::A2b)?;
-archived.save("invoice_pdfa.pdf")?;
+    for sig in doc.signatures()? {
+        println!(
+            "- field={} signer={} profile={:?}",
+            sig.field_name, sig.signer_name, sig.profile
+        );
+    }
 
-println!("Converted to PDF/A-2b");
+    let report = doc.verify_signatures()?;
+    if report.is_signed() && report.all_valid() {
+        println!("All {} signatures pass.", report.validations().len());
+    } else {
+        for v in report.validations() {
+            println!(
+                "{}: {:?}",
+                v.info.field_name, v.status
+            );
+        }
+    }
+    Ok(())
+}
 ```
 
+`SignatureValidationReport::all_valid()` is **vacuously true** for
+an unsigned document; combine with `is_signed()` if presence is
+required.
+
 ---
 
-## Create ZUGFeRD Invoice
+## Read Document Metadata for Audit
 
 ```rust
-use pdfluent::{Sdk, ZugferdProfile};
-use pdfluent::invoice::InvoiceBuilder;
+use pdfluent::prelude::*;
 
-let sdk = Sdk::init_with_license("license.json")?;
+fn main() -> Result<()> {
+    let doc = PdfDocument::open("evidence.pdf")?;
+    let meta = doc.metadata();
 
-let invoice = InvoiceBuilder::new()
-    .seller("Acme Corp", "BE0123456789")
-    .buyer("Customer BV", "NL123456789B01")
-    .line_item("Consulting", 1500.00, 21) // VAT %
-    .line_item("Software license", 500.00, 21)
-    .build()?;
-
-let pdf = sdk.create_zugferd_invoice(&invoice, ZugferdProfile::Extended)?;
-pdf.save("invoice_zugferd.pdf")?;
+    println!("Title:     {}", meta.title.as_deref().unwrap_or(""));
+    println!("Author:    {}", meta.author.as_deref().unwrap_or(""));
+    println!("Producer:  {}", meta.producer.as_deref().unwrap_or(""));
+    println!("Created:   {}", meta.creation_date.as_deref().unwrap_or(""));
+    println!("Modified:  {}", meta.modification_date.as_deref().unwrap_or(""));
+    Ok(())
+}
 ```
 
+The `producer` field is automatically marked by the SDK in
+[`Tier::Trial`](https://pdfluent.com/pricing) mode; activate
+a commercial license via [`set_license_key`](https://pdfluent.com/docs)
+to remove the trial mark.
+
 ---
 
-## Verify Digital Signature
+## Strict Open for Audit / E-Invoicing Flows
 
 ```rust
-use pdfluent::Sdk;
+use pdfluent::prelude::*;
 
-let sdk = Sdk::init_with_license("license.json")?;
-let doc = sdk.open("signed_contract.pdf")?;
+fn main() -> Result<()> {
+    let doc = PdfDocument::open_with(
+        "incoming.pdf",
+        OpenOptions::new().with_repair(false),
+    )?;
 
-let signatures = doc.verify_signatures()?;
-
-for sig in signatures {
-    println!("Signer: {}", sig.signer());
-    println!("  Valid: {}", sig.is_valid());
-    println!("  Timestamp: {}", sig.timestamp().unwrap_or_default());
-    println!("  Hash: {}", sig.certificate_hash());
+    // Continue with validate_pdfa, metadata audit, signature
+    // verification, etc.
+    let _ = doc.validate_pdfa(PdfAProfile::A3b)?;
+    Ok(())
 }
 ```

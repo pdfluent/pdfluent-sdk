@@ -38,5 +38,4 @@
 
 ---
 
-*Last updated: April 2026*
-*Tracking issue: https://github.com/jasperdew/xfa-native-rust/issues/611*
+*Last updated: May 2026*
