@@ -100,6 +100,27 @@ pub enum SandboxError {
     /// catalogue.
     #[error("regex rejected by ReDoS guard: {0}")]
     RegexRejected(String),
+
+    /// QF1-E / SEC-01 — defence-in-depth wall-time fallback. The primary
+    /// per-script time budget is enforced via the rquickjs interrupt
+    /// handler that polls at JS opcode boundaries (see
+    /// [`SandboxError::Timeout`]). When the interrupt callback fails to
+    /// fire for an extended period — for example because execution is
+    /// trapped inside a single C-level call (regex, JSON.parse on a
+    /// pathological input, host binding routine) that does not yield
+    /// opcode boundaries — the wall-clock can drift well beyond the
+    /// configured budget. This variant is emitted when total elapsed
+    /// time crossed the fallback threshold
+    /// ([`WALLTIME_FALLBACK_MULTIPLIER_DEFAULT`] × the configured
+    /// time budget). It is strictly a *post-hoc classification*:
+    /// the primary interrupt path remains in charge of actually aborting
+    /// script execution; this variant simply re-labels the error so
+    /// observability can distinguish "clean stop at budget" from
+    /// "stop dragged past 5×". See
+    /// `crates/pdf-xfa/src/js_runtime/rquickjs_backend.rs` and the
+    /// QF1_E report under `benchmarks/runs/xfa_enterprise_plan/quality_factory_v1/`.
+    #[error("wall-time fallback fired: elapsed {0}")]
+    WallTimeExceeded(String),
 }
 
 /// Cumulative metadata for a single document's flatten. The runtime
@@ -182,6 +203,52 @@ impl RuntimeMetadata {
 /// backend (S-9). Exposed as a constant so tests can reason about it
 /// without depending on the runtime backend module.
 pub const DEFAULT_TIME_BUDGET_MS: u64 = 100;
+
+/// QF1-E / SEC-01 — default multiplier for the worker-level wall-time
+/// fallback. The primary timeout enforcement is the rquickjs interrupt
+/// callback (polled at JS opcode boundaries); when the script's elapsed
+/// wall-clock exceeds this multiplier × the configured time budget, the
+/// backend re-labels the resulting error as
+/// [`SandboxError::WallTimeExceeded`] (instead of [`SandboxError::Timeout`]).
+///
+/// The default of `5` means: if the interrupt callback fires within ≤ 5×
+/// the configured budget (the normal case for `while(true){}`), behaviour
+/// is byte-identical to v1: `SandboxError::Timeout` is emitted.
+///
+/// Only when the abort drags past 5× the budget — indicating the primary
+/// interrupt mechanism was unable to fire at the budget boundary, e.g.
+/// because execution was trapped inside a single C-level call — does the
+/// fallback variant surface. This is observable telemetry, not a new
+/// kill switch: the interrupt still does the actual aborting.
+///
+/// The multiplier is generous on purpose: small CI scheduling jitter on
+/// a 50 ms budget (1× = 50 ms; 5× = 250 ms) must never accidentally
+/// trip the fallback for a script the interrupt aborted cleanly.
+pub const WALLTIME_FALLBACK_MULTIPLIER_DEFAULT: u32 = 5;
+
+/// QF1-E / SEC-01 — environment variable that overrides the wall-time
+/// fallback multiplier ([`WALLTIME_FALLBACK_MULTIPLIER_DEFAULT`]). Only
+/// values that parse as a positive `u32` ≥ 2 are honoured; anything else
+/// (absent, empty, `"0"`, `"1"`, non-numeric) keeps the default. The
+/// minimum of 2 prevents an operator from accidentally collapsing the
+/// fallback onto the primary timeout boundary, which would re-classify
+/// every clean timeout as a wall-time fallback and corrupt observability.
+pub const ENV_WALLTIME_FALLBACK_MULTIPLIER: &str = "XFA_JS_WALLTIME_FALLBACK_MULTIPLIER";
+
+/// QF1-E / SEC-01 — read the wall-time fallback multiplier from the
+/// environment, clamped to a sane range. Returns
+/// [`WALLTIME_FALLBACK_MULTIPLIER_DEFAULT`] when the env var is absent,
+/// not a valid `u32`, or below the safety minimum of `2`.
+///
+/// Reads the env var once per call; the backend snapshots the result at
+/// construction time so per-test toggling is deterministic.
+pub fn walltime_fallback_multiplier() -> u32 {
+    std::env::var(ENV_WALLTIME_FALLBACK_MULTIPLIER)
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .filter(|&n| n >= 2)
+        .unwrap_or(WALLTIME_FALLBACK_MULTIPLIER_DEFAULT)
+}
 
 /// Default per-document memory budget enforced by the rquickjs backend
 /// (S-10).
@@ -480,6 +547,34 @@ mod tests {
         assert!(MAX_SCRIPT_BODY_BYTES >= 4096);
         assert!(DEFAULT_TIME_BUDGET_MS >= 25);
         assert!(DEFAULT_MEMORY_BUDGET_BYTES >= 1024 * 1024);
+    }
+
+    // QF1-E: the wall-time fallback multiplier must be strictly > 1 so a
+    // clean interrupt at the budget boundary cannot be reclassified as
+    // WallTimeExceeded. 5 is the documented default; this test pins it as
+    // a contract between this module and the backend.
+    // Compile-time const-assert avoids `clippy::assertions_on_constants`
+    // while still failing the build if the safety floor is broken.
+    const _WALLTIME_SAFE_MIN: () = assert!(
+        WALLTIME_FALLBACK_MULTIPLIER_DEFAULT >= 2,
+        "multiplier < 2 would re-label normal Timeouts as WallTimeExceeded"
+    );
+
+    #[test]
+    fn walltime_fallback_multiplier_default_is_safe() {
+        // The compile-time `_WALLTIME_SAFE_MIN` const above is the real
+        // contract; this runtime test pins the concrete value so a
+        // refactor that changes the default but leaves the floor intact
+        // is still caught here.
+        assert_eq!(WALLTIME_FALLBACK_MULTIPLIER_DEFAULT, 5);
+    }
+
+    #[test]
+    fn walltime_fallback_env_var_name_is_canonical() {
+        assert_eq!(
+            ENV_WALLTIME_FALLBACK_MULTIPLIER,
+            "XFA_JS_WALLTIME_FALLBACK_MULTIPLIER"
+        );
     }
 
     // W2-B: variables-script body cap must be strictly higher than the
