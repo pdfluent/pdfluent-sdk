@@ -5,7 +5,7 @@ edition = "2021"
 # publish = false: license field is stale (MIT) and the crate has never been
 # published. Fix license-file + metadata before enabling publish.
 publish = false
-license = "MIT"
+license-file = "LICENSE"
 description = "C-compatible API for the PDF engine (PDFium-compatible interface)."
 
 [lib]
