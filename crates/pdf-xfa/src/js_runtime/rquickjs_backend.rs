@@ -34,9 +34,9 @@ use xfa_layout_engine::form::{FormNodeId, FormTree};
 
 use super::regex_guard::{scan_script_for_redos, RegexScanVerdict};
 use super::{
-    activity_allowed_for_sandbox, HostBindings, RuntimeMetadata, RuntimeOutcome, SandboxError,
-    XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES,
-    MAX_VARIABLES_SCRIPT_BODY_BYTES,
+    activity_allowed_for_sandbox_with_gate, HostBindings, RuntimeMetadata, RuntimeOutcome,
+    SandboxError, XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS,
+    MAX_SCRIPT_BODY_BYTES, MAX_VARIABLES_SCRIPT_BODY_BYTES,
 };
 
 /// QuickJS-backed runtime adapter. One instance is reusable across many
@@ -3511,12 +3511,25 @@ impl XfaJsRuntime for QuickJsRuntime {
         Ok(())
     }
 
+    fn set_presave_gate(&mut self, enabled: bool) {
+        // D1.B: mirror the dispatch decision into the host-binding layer so
+        // mutating host calls see the same gate.
+        self.host.borrow_mut().set_presave_gate(enabled);
+    }
+
     fn execute_script(
         &mut self,
         activity: Option<&str>,
         body: &str,
     ) -> Result<RuntimeOutcome, SandboxError> {
-        if !activity_allowed_for_sandbox(activity) {
+        // D1.B: when the per-flatten gate is ON, the QuickJS backend's
+        // defence-in-depth check accepts `preSave` exactly like the dispatch
+        // gate. Without the gate, behaviour is byte-identical to v4 (W3-B
+        // closure). Hard-stop: only `preSave` is unlocked; every other
+        // denylist activity stays denied. The gate value is owned by the
+        // host bindings (set via `set_presave_gate` from dispatch).
+        let presave_gate = self.host.borrow().presave_gate();
+        if !activity_allowed_for_sandbox_with_gate(activity, presave_gate) {
             return Err(SandboxError::PhaseDenied(
                 activity.unwrap_or("None").to_string(),
             ));

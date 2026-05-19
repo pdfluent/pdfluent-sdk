@@ -52,11 +52,13 @@ pub use flatten::{
     FlattenQualityMetrics, FlattenValidation, LayoutDump, LayoutDumpEntry, TextValidation,
 };
 pub use js_runtime::{
-    activity_allowed_for_sandbox, HostBindings, MutationLogEntry, NullRuntime, RuntimeMetadata,
+    activity_allowed_for_sandbox, activity_allowed_for_sandbox_with_gate,
+    presave_during_flatten_enabled, HostBindings, MutationLogEntry, NullRuntime, RuntimeMetadata,
     RuntimeOutcome, SandboxError, XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES,
-    DEFAULT_TIME_BUDGET_MS, MAX_INSTANCES_PER_SUBFORM, MAX_MUTATIONS_PER_DOC,
-    MAX_RESOLVE_CALLS_PER_SCRIPT, MAX_RESOLVE_RESULTS, MAX_SCRIPT_BODY_BYTES, MAX_SOM_DEPTH,
-    MAX_VARIABLES_SCRIPT_BODY_BYTES, SANDBOX_ACTIVITY_ALLOWLIST,
+    DEFAULT_TIME_BUDGET_MS, ENV_PRESAVE_DURING_FLATTEN, MAX_INSTANCES_PER_SUBFORM,
+    MAX_MUTATIONS_PER_DOC, MAX_RESOLVE_CALLS_PER_SCRIPT, MAX_RESOLVE_RESULTS,
+    MAX_SCRIPT_BODY_BYTES, MAX_SOM_DEPTH, MAX_VARIABLES_SCRIPT_BODY_BYTES,
+    SANDBOX_ACTIVITY_ALLOWLIST,
 };
 
 pub use formcalc_interpreter as formcalc;

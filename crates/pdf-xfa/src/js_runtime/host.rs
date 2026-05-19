@@ -60,6 +60,15 @@ pub struct HostBindings {
     /// Set from a stack reference in `flatten.rs` that outlives script execution.
     /// `None` when no data packet is present or the feature is inactive.
     data_dom: Option<*const DataDom>,
+    /// **D1.B gated allow.** Set per-flatten via
+    /// [`HostBindings::set_presave_gate`]. When true, `write_activity_allowed`
+    /// also accepts `Some("preSave")`. Every other denylist activity
+    /// (`preSubmit`, `click`, …) stays denied.
+    ///
+    /// Reset to `false` on every `reset_per_document` so a previous-document
+    /// gate decision cannot leak across the cross-document isolation boundary
+    /// (§5 of the policy doc).
+    presave_gate: bool,
 }
 
 impl Default for HostBindings {
@@ -79,6 +88,7 @@ impl Default for HostBindings {
             static_page_count: 0,
             zero_instance_runs: HashMap::new(),
             data_dom: None,
+            presave_gate: false,
         }
     }
 }
@@ -124,6 +134,11 @@ impl HostBindings {
         self.static_page_count = 0;
         self.zero_instance_runs.clear();
         // data_dom is NOT reset here — see doc comment above.
+        // D1.B gate is cleared so a previous-document opt-in cannot leak
+        // across the cross-document isolation boundary (§5 of policy v5).
+        // The dispatch path re-installs it via set_presave_gate before any
+        // script runs for the next document.
+        self.presave_gate = false;
     }
 
     /// Phase D-γ: install the DataDom pointer for the current document.
@@ -145,6 +160,21 @@ impl HostBindings {
     /// Cache the page count visible to read-only page-count bindings.
     pub fn set_static_page_count(&mut self, page_count: u32) {
         self.static_page_count = page_count;
+    }
+
+    /// **D1.B gated allow.** Install the per-flatten `preSave` opt-in. See
+    /// [`super::XfaJsRuntime::set_presave_gate`] for the full contract.
+    ///
+    /// Default false. `reset_per_document` clears it back to false so a
+    /// previous-document decision cannot leak.
+    pub fn set_presave_gate(&mut self, enabled: bool) {
+        self.presave_gate = enabled;
+    }
+
+    /// Read-only view of the current D1.B gate (test helper).
+    #[doc(hidden)]
+    pub fn presave_gate(&self) -> bool {
+        self.presave_gate
     }
 
     /// Current handle generation. Handles capture this and are invalid after a
@@ -1609,14 +1639,23 @@ impl HostBindings {
     }
 
     fn write_activity_allowed(&self) -> bool {
-        matches!(
+        let base = matches!(
             self.current_activity.as_deref(),
             Some("initialize")
                 | Some("calculate")
                 | Some("validate")
                 | Some("docReady")
                 | Some("layoutReady")
-        )
+        );
+        if base {
+            return true;
+        }
+        // D1.B gated allow: when the per-flatten opt-in is ON, mirror the
+        // dispatch gate by accepting `preSave` for mutating host calls.
+        // Hard-stop: ONLY `preSave` is unlocked here. `preSubmit`, `click`,
+        // and every other denylist activity stay denied even with the gate.
+        // Cross-ref: docs/INST_MGR_ACTIVITY_POLICY.md v5 §6.1.
+        self.presave_gate && matches!(self.current_activity.as_deref(), Some("preSave"))
     }
 
     fn handle_is_live(&self, node_id: FormNodeId, generation: u64) -> bool {

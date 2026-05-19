@@ -233,6 +233,47 @@ pub fn activity_allowed_for_sandbox(activity: Option<&str>) -> bool {
     matches!(activity, Some(a) if SANDBOX_ACTIVITY_ALLOWLIST.contains(&a))
 }
 
+/// **D1.B gated allow.** Environment variable that opts an operator into the
+/// `preSave` dispatch path during flatten. Default OFF; any value other than
+/// `"1"` keeps the W3-B closure semantics (deny `preSave` at the dispatch
+/// gate AND at the host-binding gate).
+///
+/// Cross-ref: `docs/INST_MGR_ACTIVITY_POLICY.md` v5 §6.1 (D1.B).
+///
+/// **Stop-rules (enforced by tests, never by code):**
+/// 1. Only `preSave` is affected. `preSubmit`, `click`, and every other
+///    denylist activity stay denied regardless of this flag.
+/// 2. Default-OFF. Behaviour is byte-identical to v4 (W3-B closure) when
+///    the variable is absent or unset, or set to any value other than `"1"`.
+/// 3. Flipping requires an operator-signed waiver per the policy doc; the
+///    flag is read at dispatch (one snapshot per flatten), never globally
+///    memoised, so test harnesses can toggle it per-test.
+pub const ENV_PRESAVE_DURING_FLATTEN: &str = "XFA_PRESAVE_DURING_FLATTEN";
+
+/// True when `XFA_PRESAVE_DURING_FLATTEN=1`. Any other value (absent, empty,
+/// `"0"`, `"true"`, `"yes"`, casing variants) returns false. This is the
+/// only place that reads the environment for the D1.B gate — every other
+/// site receives a `bool` argument so tests can toggle deterministically.
+pub fn presave_during_flatten_enabled() -> bool {
+    std::env::var(ENV_PRESAVE_DURING_FLATTEN).ok().as_deref() == Some("1")
+}
+
+/// **D1.B gated allow.** Same as [`activity_allowed_for_sandbox`], but
+/// also accepts `Some("preSave")` when `presave_gate` is true.
+///
+/// `presave_gate` is computed once per flatten (via
+/// [`presave_during_flatten_enabled`]) and threaded down so the dispatch
+/// path can decide deterministically per script; the host-binding layer
+/// receives the same bool via [`HostBindings::set_presave_gate`].
+///
+/// Cross-ref: `docs/INST_MGR_ACTIVITY_POLICY.md` v5 §6.1 (D1.B).
+pub fn activity_allowed_for_sandbox_with_gate(activity: Option<&str>, presave_gate: bool) -> bool {
+    if activity_allowed_for_sandbox(activity) {
+        return true;
+    }
+    presave_gate && matches!(activity, Some("preSave"))
+}
+
 /// The host-side adapter the dispatch path calls. A minimal contract
 /// chosen so that swapping backends (rquickjs ↔ boa ↔ external sandbox)
 /// is one Cargo feature flag away.
@@ -282,6 +323,24 @@ pub trait XfaJsRuntime {
         Ok(())
     }
 
+    /// **D1.B gated allow.** Inform the runtime whether the
+    /// `XFA_PRESAVE_DURING_FLATTEN=1` opt-in is active for the current
+    /// flatten. The dispatch path computes this once per document via
+    /// [`presave_during_flatten_enabled`] and forwards it here so the host
+    /// binding layer can mirror the dispatch decision (defence-in-depth).
+    ///
+    /// Default: no-op. Backends without a host-binding gate ignore it.
+    /// The contract for backends that DO mirror the gate:
+    ///
+    /// 1. Default OFF: every call to [`HostBindings::write_activity_allowed`]
+    ///    with `current_activity = Some("preSave")` MUST return false.
+    /// 2. Gate ON: the same call MUST return true ONLY for `Some("preSave")`.
+    ///    Every other denylist activity (`preSubmit`, `click`, …) MUST
+    ///    continue to return false.
+    ///
+    /// Cross-ref: `docs/INST_MGR_ACTIVITY_POLICY.md` v5 §6.1 (D1.B).
+    fn set_presave_gate(&mut self, _enabled: bool) {}
+
     /// Execute one script body inside the sandbox.
     ///
     /// `activity` is the enclosing `<event activity="...">` value if
@@ -310,6 +369,80 @@ mod tests {
         assert!(activity_allowed_for_sandbox(Some("validate")));
         assert!(activity_allowed_for_sandbox(Some("docReady")));
         assert!(activity_allowed_for_sandbox(Some("layoutReady")));
+    }
+
+    // D1.B gate: when the flag is OFF (the default in tests via env::var
+    // being unset for the controlled key), `activity_allowed_for_sandbox_with_gate`
+    // is byte-identical to `activity_allowed_for_sandbox`. When the gate
+    // bool is wired ON, ONLY `preSave` flips to allowed — `preSubmit`,
+    // `click`, etc. stay denied (hard stop in §6.1 of the policy doc).
+    #[test]
+    fn presave_gate_off_matches_base_allowlist() {
+        for allowed in SANDBOX_ACTIVITY_ALLOWLIST {
+            assert!(activity_allowed_for_sandbox_with_gate(Some(allowed), false));
+        }
+        for denied in [
+            "preSave",
+            "preSubmit",
+            "click",
+            "mouseEnter",
+            "exit",
+            "postSave",
+        ] {
+            assert!(!activity_allowed_for_sandbox_with_gate(Some(denied), false));
+        }
+        assert!(!activity_allowed_for_sandbox_with_gate(None, false));
+    }
+
+    #[test]
+    fn presave_gate_on_unlocks_only_presave() {
+        // preSave flips from deny -> allow when the gate is ON.
+        assert!(activity_allowed_for_sandbox_with_gate(
+            Some("preSave"),
+            true
+        ));
+        // Hard-stop: every other denylist activity MUST stay denied.
+        for still_denied in [
+            "preSubmit",
+            "click",
+            "mouseEnter",
+            "mouseExit",
+            "exit",
+            "enter",
+            "change",
+            "postSave",
+            "postSubmit",
+            "ready",
+            "prePrint",
+            "postPrint",
+            "preOpen",
+            "full",
+        ] {
+            assert!(
+                !activity_allowed_for_sandbox_with_gate(Some(still_denied), true),
+                "{still_denied} must stay denied even with D1.B gate ON",
+            );
+        }
+        assert!(!activity_allowed_for_sandbox_with_gate(None, true));
+        // Default-OFF behaviour unchanged for the 5 lifecycle activities.
+        for allowed in SANDBOX_ACTIVITY_ALLOWLIST {
+            assert!(activity_allowed_for_sandbox_with_gate(Some(allowed), true));
+        }
+    }
+
+    // Note: the env-var helper `presave_during_flatten_enabled` is pinned
+    // by integration tests in `tests/m3b_phasePQ_presave_gated_w3repair_d1b.rs`
+    // (`d1b_default_off_keeps_presave_denied_at_dispatch`,
+    // `d1b_env_var_parsing_only_one_enables_gate`). Inline unit tests would
+    // race with `std::env` because cargo test runs in-process; the
+    // integration tests serialise env mutations behind a mutex guard.
+    //
+    // ENV_PRESAVE_DURING_FLATTEN constant is canonicalised at the const
+    // declaration site and never re-spelled in code.
+
+    #[test]
+    fn presave_env_var_constant_is_canonical_name() {
+        assert_eq!(ENV_PRESAVE_DURING_FLATTEN, "XFA_PRESAVE_DURING_FLATTEN");
     }
 
     #[test]

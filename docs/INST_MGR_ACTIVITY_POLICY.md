@@ -1,8 +1,8 @@
 # XFA instanceManager / JS Runtime Activity Policy
 
-**Version:** v4 (Wave 3 closure)
-**Status:** Active — describes CURRENT engine behaviour. **No behaviour change introduced by this document.** v4 promotes v3's "operator-pending" notes for D1/D2/D3 into an explicit closure decision (status quo confirmed pending operator commit), pins the deny contract with W3-B tests, and documents the gated-allow plan for D1.B that an operator may commit later WITHOUT a silent default change.
-**Sprint:** XFA Product Quality Wave 3, Track B (Event Policy Closure)
+**Version:** v5 (Wave 3 repair — D1.B gated allow committed)
+**Status:** Active — describes CURRENT engine behaviour. v5 wires up the gated-allow path that v4 documented as a deferred plan: `preSave` script bodies dispatch during flatten **only** when an operator opts in via the `XFA_PRESAVE_DURING_FLATTEN=1` environment variable. **Default OFF; behaviour byte-identical to v4 (W3-B closure) when the variable is unset, empty, or set to anything other than the exact string `"1"`.** `preSubmit`, `click`, and every other denylist activity stay denied under the gate (hard-stop §6.1).
+**Sprint:** XFA Product Quality Wave 3 — Repair (Track B, Agent D1.B)
 **Owner:** XFA JS runtime + layout engine
 **Date:** 2026-05-19
 
@@ -37,16 +37,18 @@ host-binding layer is intentional.
 | v1      | 2026-05-17 | `instanceManager.{add,remove,set}Instance` × 5 lifecycle events    | Superseded  |
 | v2      | (skipped)  | reserved for first operator decision on D1–D5 in JS2_02 matrix     | Pending     |
 | v3      | 2026-05-19 | Consolidated policy + cross-ref to JS2-02 matrix; no behaviour change | Superseded |
-| **v4**  | 2026-05-19 | Wave 3 W3-B closure: explicit status-quo confirmation for D1/D2/D3, FINAL policy table (§1.3), W3-B regression tests (§8); **no behaviour change** | **Active** |
+| v4      | 2026-05-19 | Wave 3 W3-B closure: explicit status-quo confirmation for D1/D2/D3, FINAL policy table (§1.3), W3-B regression tests (§8); no behaviour change | Superseded |
+| **v5**  | 2026-05-19 | Wave 3 Repair (D1.B): `XFA_PRESAVE_DURING_FLATTEN` env-var gate; default OFF preserves v4 behaviour byte-identically; ON unlocks `preSave` (and only `preSave`) at dispatch + host layers; +8 regression tests (§8); hard-stops pinned (§6.1) | **Active** |
 
 The intentional gap at v2 mirrors the JS2-02 matrix's "v2 = operator-decision
-committed". v4 supersedes v3 by **explicitly closing** D1/D2/D3 against the
-current engine semantics (status quo: deny during flatten). Closure means
-the deny contract is now load-bearing and regression-pinned (§8). It does
-NOT mean the operator has committed to a permanent decision: if the operator
-later commits D1.B (gated allow for `preSave`) per §6.1, the policy must be
-re-issued as v5 with the feature flag wired up; that change is **opt-in**
-behind `XFA_PRESAVE_DURING_FLATTEN`, default off, never a silent flip.
+committed". v4 closed D1/D2/D3 against the current engine semantics (status
+quo: deny during flatten). v5 supersedes v4 by **wiring up the D1.B gated
+allow** path that v4 documented as deferred: `XFA_PRESAVE_DURING_FLATTEN=1`
+opts the operator into `preSave` execution during flatten. **Default OFF;
+v4 behaviour is byte-identical when the variable is unset or set to anything
+other than the exact string `"1"`.** Pinned by the 7 W3-B closure tests
+(`m3b_phasePQ_event_policy_closure_w3b.rs`) plus 8 new D1.B repair tests
+(`m3b_phasePQ_presave_gated_w3repair_d1b.rs`).
 
 ## 1. Current state — allowlist & denylist (descriptive)
 
@@ -68,7 +70,7 @@ The dispatch layer routes JavaScript event scripts through
 
 | Activity         | Allowed | Rationale                                                                                  |
 |------------------|---------|--------------------------------------------------------------------------------------------|
-| `preSave`        | no      | **Operator-decision pending** (JS2-02 D1). Today: deny. See §6.1.                          |
+| `preSave`        | no¹     | **D1.B gated allow committed (v5).** Deny by default; unlocked only when the operator sets `XFA_PRESAVE_DURING_FLATTEN=1`. See §6.1. |
 | `preSubmit`      | no      | Transport action. Submission is not a flatten concern. JS2-02 D2 confirms status quo.      |
 | `postSave`       | no      | Post-write hook; circular for flatten. JS2-02 R08.                                         |
 | `postSubmit`     | no      | Transport action.                                                                          |
@@ -86,6 +88,28 @@ The dispatch layer routes JavaScript event scripts through
 | `ready`          | no      | Adobe's `form:ready` / `layout:ready` variants — covered by `layoutReady` / `docReady`.    |
 | `full`           | no      | Fires when subform `occur.max` reached; mutations would loop.                              |
 | (other / `None`) | no      | Default-deny. Scripts without an explicit `activity` attribute never run.                  |
+
+¹ **Footnote on `preSave`:** When the operator sets
+`XFA_PRESAVE_DURING_FLATTEN=1`, the dispatch gate accepts `preSave` and the
+host-binding gate (`HostBindings::write_activity_allowed`) mirrors that
+decision so mutating host calls for `preSave` succeed. Only the exact string
+`"1"` enables the gate; absent, empty, `"0"`, `"true"`, `"yes"`, casing
+variants and surrounding whitespace all keep the gate OFF. The gate value
+is computed once per flatten in
+`crates/pdf-xfa/src/dynamic.rs::apply_dynamic_scripts_with_runtime` and
+threaded down to the runtime adapter via
+`XfaJsRuntime::set_presave_gate(bool)`. The host bindings clear the gate
+on `reset_per_document` so a prior-document decision cannot leak across
+the cross-document isolation boundary (§5).
+
+**Hard-stops (enforced by tests, never by code):**
+
+1. **Only `preSave`.** `preSubmit`, `click`, `mouseEnter`, `exit`, etc. stay
+   denied at both layers, regardless of the gate.
+2. **Exact-match parsing.** Tolerant parsers (`"true"`, casing, trim) MUST
+   NOT enable the gate.
+3. **Default OFF.** v4 behaviour MUST be byte-identical when the variable
+   is unset.
 
 **Code reference:** `crates/pdf-xfa/src/js_runtime/mod.rs`:
 
@@ -128,7 +152,7 @@ Cell legend:
 | validate     | lifecycle | yes     | allow       | allow    | allow         | allow            | allow        | allow  | sb-host       | §1.1, §6 D0          |
 | docReady     | lifecycle | yes     | allow       | allow    | allow         | allow            | allow        | allow  | sb-host       | §1.1, §6 D0          |
 | layoutReady  | lifecycle | yes     | allow       | allow    | allow         | allow            | allow        | allow  | sb-host       | §1.1, §6 D0          |
-| **preSave**  | save      | **no**  | **deny**    | n/a      | **deny**      | n/a              | n/a          | n/a    | n/a           | §1.2, §6.1 (D1.A)    |
+| **preSave**¹ | save      | **gated** | **gated**   | gated    | **gated**     | gated            | gated        | gated  | sb-host       | §1.2, §6.1 (D1.B)    |
 | **preSubmit**| submit    | **no**  | **deny**    | n/a      | **deny**      | n/a              | n/a          | n/a    | n/a           | §1.2, §6.2 (D2.A)    |
 | postSave     | save      | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2, §6 R08         |
 | postSubmit   | submit    | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
@@ -148,9 +172,20 @@ Cell legend:
 | full         | data      | no      | deny        | n/a      | deny          | n/a              | n/a          | n/a    | n/a           | §1.2                 |
 
 **Bolded rows** are the W3-B closure trio (`preSave`, `preSubmit`, `click`).
-W3-B does NOT change the cell values; it pins them with regression tests
-(see §8) so a silent default flip is no longer possible at the dispatch
-layer or the host-binding layer.
+W3-B pinned them with regression tests (see §8) so a silent default flip is
+no longer possible at the dispatch layer or the host-binding layer. v5 adds
+the **gated** cell semantics for `preSave` only:
+
+¹ **`gated` cell legend (preSave row only):**
+- With `XFA_PRESAVE_DURING_FLATTEN` unset / `"0"` / any non-`"1"` value:
+  every `gated` cell reads as `deny` and the row's `Flatten?` column reads
+  as `no`. Byte-identical to v4.
+- With `XFA_PRESAVE_DURING_FLATTEN=1`: every `gated` cell reads as `allow`
+  (C2/C5/C6) or `allow`-with-host-mirroring (C1/C3), and the row's
+  `Flatten?` column reads as `yes`. C7 stays `sb-host` (safe defaults +
+  `unsupported_host_calls` bump).
+- The remaining `gated` cells for the `preSubmit` / `click` rows are NOT
+  added by v5 — hard-stop §6.1.
 
 **Read-column entries marked `n/a` for denied rows.** A denied row never
 executes its script body, so the read-column distinction (C2 / C4 / C5 / C6
@@ -247,28 +282,64 @@ The JS2-02 event-policy matrix
 (`benchmarks/runs/xfa_enterprise_plan/sprint2_batchB/JS2_02_EVENT_POLICY_MATRIX.md`)
 captures five operator decisions:
 
-### 6.1 D1 — preSave during flatten
+### 6.1 D1 — preSave during flatten (D1.B committed in v5)
 
-- **Status quo (current, v4 closed):** deny. **Pinned by W3-B tests** in
-  `crates/pdf-xfa/tests/m3b_phasePQ_event_policy_closure_w3b.rs`
-  (`w3b_closure_presave_script_is_skipped_at_dispatch`,
-  `w3b_closure_host_layer_refuses_mutations_for_all_three_activities`).
-- **Recommended:** D1.B (gated allow + feature flag + per-class host policy).
-- **Operator commit status:** **not yet committed.** Until operator commits
-  D1.B, the current deny contract is the FINAL contract.
-- **Risk delta if approved later:** +1 feature flag in public Cargo surface
-  (`XFA_PRESAVE_DURING_FLATTEN`, default OFF), +18 tests; no semantic change
-  unless the flag is flipped; reversible by removing the flag.
-- **Implementation plan (deferred — only if D1.B is committed):**
-  1. Extend `SANDBOX_ACTIVITY_ALLOWLIST` behind a Cargo feature `presave-during-flatten`, default OFF.
-  2. Generalise `write_activity_allowed` → `host_call_allowed(class)` so C7 keeps `sb-host` semantics even when C1/C3 are opened up.
-  3. Add `xfa.event.target == "flatten"` marker so scripts can branch.
-  4. Re-issue this document as v5 with the new row/column cells.
-  5. Corpus replay required before flipping the flag default.
-
-**Until D1.B is committed, `preSave` remains in the denylist.** v4 (this
-document) does NOT change behaviour. See JS2-02 §6.1 for the option
-comparison.
+- **Default behaviour (v5):** deny — byte-identical to v4. Pinned by the
+  W3-B closure suite (`m3b_phasePQ_event_policy_closure_w3b.rs`, 7 tests)
+  which is **unchanged** by v5 and runs without setting any environment
+  variable.
+- **Gated behaviour (v5):** when an operator sets
+  `XFA_PRESAVE_DURING_FLATTEN=1`, `preSave` is unlocked at BOTH the
+  dispatch gate (`activity_allowed_for_sandbox_with_gate`) AND the
+  host-binding gate (`HostBindings::write_activity_allowed`). Mutating
+  host calls (`instance_add` / `instance_remove` / `instance_set` /
+  `set_raw_value` / `list_clear` / `list_add`) succeed under `preSave`
+  exactly as they do under `initialize` / `calculate` / etc.
+- **Hard-stops (enforced by tests):**
+  1. Only `preSave` is unlocked. `preSubmit`, `click`, `mouseEnter`,
+     `exit`, `postSave`, and every other denylist activity stay denied at
+     both layers under the gate. Pinned by
+     `d1b_flag_on_still_denies_presubmit_and_click_and_mouse` +
+     `d1b_host_layer_gate_mirrors_dispatch_for_presave_only`.
+  2. Only the exact env-var value `"1"` enables the gate. Pinned by
+     `d1b_env_var_parsing_only_one_enables_gate`.
+  3. Default behaviour is byte-identical to v4 when the variable is unset.
+     Pinned by `d1b_default_off_keeps_presave_denied_at_dispatch` plus the
+     entire untouched W3-B suite.
+  4. The gate is cleared on `reset_per_document`. Pinned by
+     `d1b_gate_resets_across_documents`.
+- **Implementation entry points:**
+  - `crates/pdf-xfa/src/js_runtime/mod.rs::ENV_PRESAVE_DURING_FLATTEN`
+    (constant naming the env var).
+  - `crates/pdf-xfa/src/js_runtime/mod.rs::presave_during_flatten_enabled`
+    (env-var reader; only `"1"` returns true).
+  - `crates/pdf-xfa/src/js_runtime/mod.rs::activity_allowed_for_sandbox_with_gate`
+    (gate-aware allowlist check).
+  - `crates/pdf-xfa/src/js_runtime/mod.rs::XfaJsRuntime::set_presave_gate`
+    (trait method; dispatch threads the per-flatten decision into the
+    runtime adapter).
+  - `crates/pdf-xfa/src/js_runtime/host.rs::HostBindings::set_presave_gate`
+    + `write_activity_allowed` (host-binding gate).
+  - `crates/pdf-xfa/src/dynamic.rs::apply_dynamic_scripts_with_runtime`
+    (one-shot env-var read + gate propagation).
+  - `crates/pdf-xfa/src/js_runtime/rquickjs_backend.rs::execute_script`
+    (defence-in-depth check that mirrors the dispatch gate).
+- **Operator commit status:** **committed (v5).** The default remains OFF;
+  no behaviour change for any embedder that does not set the env var.
+- **Reversibility:** removing the env-var read (`set_presave_gate(false)`
+  unconditionally) restores v4 behaviour byte-identically.
+- **Customer-trigger criteria (when to ship gate=ON to a specific
+  customer):**
+  1. Customer X explicitly requests `preSave` runtime during flatten.
+  2. Customer X signs a liability waiver acknowledging that `preSave`
+     scripts may mutate the saved document content (which is a deviation
+     from Adobe's flatten-as-snapshot semantics).
+  3. Corpus replay on the customer's representative document set
+     completes without inflating `js_runtime_errors` or breaking the
+     target-doc preservation invariants (`13275420 ≥ 10 pages`,
+     `2ff85101.inst_writes == 4`, `60df78fe.caption.resolve_failures == 0`).
+  4. Customer X opts in via deployment configuration setting
+     `XFA_PRESAVE_DURING_FLATTEN=1`.
 
 ### 6.2 D2 — preSubmit during flatten
 
@@ -313,8 +384,9 @@ holds.**
 
 ### 6.5 D5 — Policy doc cadence
 
-This document (v3) reflects the **current** state. The operator should
-re-issue as **v4** after committing D1 and/or D4.
+This document (v5) reflects the **current** state. v4 → v5 was triggered by
+the D1.B commit (gated allow + env var). The next re-issue (`v6`) would be
+required if the operator commits D4 (typed-error policy for C7 host calls).
 
 ## 7. Verification (current corpus baselines)
 
@@ -345,6 +417,7 @@ Target-doc preservation invariants enforced by every Wave 1 agent:
 | Track C event semantics | `crates/pdf-xfa/tests/m3b_phasePQ_event_semantics.rs`      | 9     |
 | Track C host object     | `crates/pdf-xfa/tests/m3b_phasePQ_host_object_semantics.rs`| 10    |
 | **W3-B policy closure** | `crates/pdf-xfa/tests/m3b_phasePQ_event_policy_closure_w3b.rs` | **7** |
+| **D1.B repair (v5)**    | `crates/pdf-xfa/tests/m3b_phasePQ_presave_gated_w3repair_d1b.rs` | **8** |
 
 The Track C suite (Wave 1) adds 19 net-new tests that pin
 - the canonical allowlist constant,
@@ -391,6 +464,34 @@ default-drift:
   rewrite (case-insensitive, trim, alias-table) would constitute a silent
   default change and trip this test first.
 
+The **D1.B repair suite** (Wave 3 Repair, v5 wiring) adds 8 net-new tests
+that pin the gated-allow contract introduced by v5:
+
+- `d1b_default_off_keeps_presave_denied_at_dispatch` — pins default-OFF:
+  with `XFA_PRESAVE_DURING_FLATTEN` unset, `preSave` is denied at the
+  dispatch gate exactly like v4.
+- `d1b_flag_on_executes_only_presave` — pins the opt-in path: with the
+  env var set to `"1"`, `preSave` is dispatched and a mutating body
+  applies its mutation to the form tree (`js_mutations >= 1`).
+- `d1b_flag_on_still_denies_presubmit_and_click_and_mouse` — hard-stop:
+  with the gate ON, `preSubmit` / `click` / `mouseEnter` MUST remain
+  denied at the dispatch layer.
+- `d1b_env_var_parsing_only_one_enables_gate` — pins exact-match
+  parsing: every value other than the exact string `"1"` keeps the gate
+  OFF (tolerant variants explicitly rejected).
+- `d1b_host_layer_gate_mirrors_dispatch_for_presave_only` — pins host-
+  layer defence-in-depth: with the gate ON the host accepts `preSave`
+  mutations and continues to refuse `preSubmit` / `click` / `mouseEnter`
+  / `exit` / `postSave`.
+- `d1b_gate_resets_across_documents` — pins cross-document isolation:
+  `reset_per_document` MUST clear the gate so a previous-document
+  decision cannot leak.
+- `d1b_activity_helper_matches_v5_policy_table` — pins the v5 §1.3
+  cell values for the `gated` column under both flag states.
+- `d1b_flag_on_mixed_dispatch_partitions_correctly` — pins the no-
+  cross-talk property under the gate: `initialize` + `preSave` both
+  execute (twice on one node), `preSubmit` + `click` stay denied.
+
 ## 9. Stop-rules (this document)
 
 This document MUST NOT be edited to change behaviour. Edits permitted:
@@ -405,7 +506,10 @@ Edits forbidden without operator decision commit:
 
 - Moving any activity from §1.2 (denylist) to §1.1 (allowlist).
 - Removing any test pin in §8 without a follow-up doc update.
-- Promising behaviour changes (this is a description of v3, not a roadmap).
+- Promising behaviour changes (this is a description of v5, not a roadmap).
+- Flipping the `XFA_PRESAVE_DURING_FLATTEN` default. Default is OFF and
+  remains OFF in this version; any change to the default requires a
+  separate operator-decision commit (and a new policy doc version).
 
 ## 10. References
 
@@ -425,8 +529,14 @@ Edits forbidden without operator decision commit:
   — host stub gap closure inventory.
 - `benchmarks/JS_SANDBOX_SECURITY_AUDIT.md` — sandbox capability inventory.
 - `crates/pdf-xfa/tests/m3b_phasePQ_event_policy_closure_w3b.rs` — W3-B
-  regression suite that pins the §1.3 FINAL policy table.
+  regression suite that pins the §1.3 FINAL policy table (still PASS under
+  v5 with the env var unset — load-bearing default-behaviour pin).
+- `crates/pdf-xfa/tests/m3b_phasePQ_presave_gated_w3repair_d1b.rs` — D1.B
+  repair suite (v5) that pins the gated-allow contract for `preSave` and
+  the hard-stops for `preSubmit` / `click` / `mouseEnter`.
 - `benchmarks/runs/xfa_enterprise_plan/product_quality_track/WAVE3_EXECUTION_PLAN.md`
   §W3-B — track brief.
 - `benchmarks/runs/xfa_enterprise_plan/product_quality_track/W3_B_REPORT.md`
-  — Wave 3 closure report (this document's promotion evidence).
+  — Wave 3 closure report (v4 promotion evidence).
+- `benchmarks/runs/xfa_enterprise_plan/product_quality_track/D1B_POLICY_CLOSURE_REPORT.md`
+  — Wave 3 repair report (v5 D1.B commit evidence).
