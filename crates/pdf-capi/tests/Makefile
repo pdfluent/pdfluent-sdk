@@ -67,7 +67,7 @@ LDFLAGS  := -L$(TARGET_DIR)
 LIBS     := -lpdf_capi
 INCLUDE  := -I..
 
-TESTS := test_smoke
+TESTS := test_smoke test_text_blocks
 
 .PHONY: all clean run
 
@@ -76,8 +76,12 @@ all: $(TESTS)
 test_smoke: test_smoke.c ../pdf_capi.h
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $< $(LDFLAGS) $(LIBS)
 
+test_text_blocks: test_text_blocks.c ../pdf_capi.h
+	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $< $(LDFLAGS) $(LIBS)
+
 run: all
 	@cd ../../.. && $(DYLIB_VAR)=$(abspath $(TARGET_DIR)) crates/pdf-capi/tests/test_smoke
+	@cd ../../.. && $(DYLIB_VAR)=$(abspath $(TARGET_DIR)) crates/pdf-capi/tests/test_text_blocks
 
 clean:
 	rm -f $(TESTS)
