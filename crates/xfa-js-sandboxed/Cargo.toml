@@ -9,7 +9,7 @@ homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 
 [dependencies]
-rquickjs = { version = "0.8", features = ["macro"] }
+rquickjs = { version = "=0.8.1", features = ["macro"] }
 thiserror = "2"
 
 [dev-dependencies]

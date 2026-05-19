@@ -31,7 +31,7 @@ image = { workspace = true }
 # M3-B Phase B: optional sandboxed JavaScript runtime backend.
 # Off by default; enabled via `--features xfa-js-sandboxed`.
 # See benchmarks/runs/M3B_RUNTIME_SECURITY_MODEL.md for the binding contract.
-rquickjs = { version = "0.8", optional = true, default-features = false }
+rquickjs = { version = "=0.8.1", optional = true, default-features = false }
 
 [features]
 default = []
