@@ -13,15 +13,20 @@ and assigns each case to one of:
   - ``high_fidelity_no_action``     — SSIM >= 0.94, no investigation needed.
 
 For ``oracle_mismatch_rendering`` cases the classifier also assigns a
-``fine_category`` subcategory (Wave 1 Agent D extension):
+``fine_category`` subcategory (Wave 1 Agent D extension; QF2-E additions):
 
-  - ``antialias_variant``  — pure sub-pixel AA difference; text strokes only.
-  - ``font_metric``        — systematic font size / leading / tracking difference
-                             that distributes diff uniformly across all text.
-  - ``element_position``   — one or more elements are geometrically shifted
-                             (localized dense diff block, not global).
-  - ``clipping``           — diff concentrated at page/element boundary edges.
-  - ``mixed_rendering``    — combination of the above; no dominant subcategory.
+  - ``antialias_variant``        — pure sub-pixel AA difference; text strokes only.
+  - ``font_metric``              — systematic font size / leading / tracking difference
+                                   that distributes diff uniformly across all text.
+  - ``element_position``         — one or more elements are geometrically shifted
+                                   (localized dense diff block, not global).
+  - ``clipping``                 — diff concentrated at page/element boundary edges.
+  - ``border_rendering_delta``   — oracle renders vertical/horizontal border lines or
+                                   table rules that are absent in our output; identified
+                                   by very high column-mean variance, specific hot columns,
+                                   and oracle being darker than ours (negative blank_gap).
+                                   (QF2-E — added from gen-854_854654 corpus pattern.)
+  - ``mixed_rendering``          — combination of the above; no dominant subcategory.
 
 Heuristics are best-effort signals over the per-page panel PNGs already written
 by OV2-01 (``*_ours.png``, ``*_oracle.png``). The classifier does NOT call any
@@ -91,11 +96,28 @@ ELEMENT_POSITION_COL_VAR_FLOOR = 0.50
 # band); mean_abs_diff very low.
 ANTIALIAS_MEAN_ABS_CEILING = 8.0
 
+# QF2-E — border_rendering_delta fine-category thresholds.
+#
+# Border-line signature: oracle renders table separator lines / vertical rules that
+# are absent in our output.  Identified from gen-854_854654 corpus pattern (3 docs).
+# Key signals (require panels): column-mean variance very high (specific hot columns)
+# AND oracle is DARKER than ours (blank_gap <= 0) AND mean_abs_diff is low (< 10).
+# Stats-only fallback: blank_gap <= BORDER_BLANK_GAP_STATS_FLOOR AND mean_abs_diff
+# below BORDER_MEAN_ABS_STATS_CEILING (when panels are unavailable).
+BORDER_COL_VAR_FLOOR = 1.5         # normalised column-mean std >= this -> hot columns.
+BORDER_COL_MAX_FLOOR = 50.0        # max column mean >= this -> extreme hotspot column.
+BORDER_BLANK_GAP_CEILING = 0.01    # blank_gap <= this (oracle darker / adds content).
+BORDER_MEAN_ABS_CEILING = 10.0     # mean_abs_diff < this (globally low but spiked cols).
+# Stats-only border fallback thresholds (less precise, applied when no panels):
+BORDER_BLANK_GAP_STATS_FLOOR = -0.005   # blank_gap <= this in stats-only mode.
+BORDER_MEAN_ABS_STATS_CEILING = 8.0     # mean_abs_diff < this in stats-only mode.
+
 FINE_CATEGORIES = (
     "antialias_variant",
     "font_metric",
     "element_position",
     "clipping",
+    "border_rendering_delta",
     "mixed_rendering",
 )
 
@@ -287,8 +309,11 @@ def compute_fine_category(
     Wave 1 Agent D extension: produces a finer subcategory classification
     (font_metric / element_position / clipping / antialias_variant / mixed_rendering).
 
+    QF2-E extension: adds border_rendering_delta subcategory.
+
     This function performs additional image analysis beyond what diff_band_correlation
-    captures: column-mean variance (uniformity proxy) and edge-concentration analysis.
+    captures: column-mean variance (uniformity proxy), edge-concentration analysis,
+    and hot-column detection for border lines.
     When panel images are unavailable it falls back to diff_stats signals alone.
     """
     mean_abs = diff_stats.get("mean_abs_diff", 0.0) if diff_stats else 0.0
@@ -314,12 +339,33 @@ def compute_fine_category(
             ),
         )
 
-    # Load panels for additional spatial analysis.
+    # Stats-only fast path: border_rendering_delta when panels are unavailable.
+    # Applied before loading panels to short-circuit on unambiguous cases.
+    # (Full panel-based detection below is more precise.)
     ours_gray = load_gray_panel(ours_path)
     oracle_gray = load_gray_panel(oracle_path)
 
+    if ours_gray is None or oracle_gray is None:
+        # Stats-only fallback: detect border_rendering_delta from diff_stats.
+        if (
+            diff_stats is not None
+            and blank_gap <= BORDER_BLANK_GAP_STATS_FLOOR
+            and mean_abs < BORDER_MEAN_ABS_STATS_CEILING
+        ):
+            return (
+                "border_rendering_delta",
+                (
+                    f"Stats-only: blank_gap={blank_gap:.4f} <= {BORDER_BLANK_GAP_STATS_FLOOR} "
+                    f"(oracle darker than ours) and mean_abs_diff={mean_abs:.2f} < "
+                    f"{BORDER_MEAN_ABS_STATS_CEILING}; pattern matches border/rule lines "
+                    "present in oracle but absent in our output. "
+                    "(QF2-E — gen-854_854654 pattern; see QF2_E_VISUAL_DEEPENING_REPORT.md)"
+                ),
+            )
+
     col_var_norm: float | None = None
     edge_high_frac: float | None = None
+    col_max: float | None = None
 
     if ours_gray is not None and oracle_gray is not None:
         if ours_gray.shape != oracle_gray.shape:
@@ -338,6 +384,7 @@ def compute_fine_category(
         # Column-mean uniformity: low variance -> diff spread uniformly (font-metric).
         col_means = diff_arr.mean(axis=0)
         col_mean_global = float(col_means.mean()) if col_means.size > 0 else 1.0
+        col_max = float(col_means.max()) if col_means.size > 0 else 0.0
         if col_mean_global > 0:
             col_var_norm = float(col_means.std()) / col_mean_global
         else:
@@ -360,6 +407,29 @@ def compute_fine_category(
                 edge_high_frac = 0.0
 
     # --- Decision tree ---
+
+    # QF2-E: border_rendering_delta — oracle renders border/rule lines absent in ours.
+    # Requires panels; signals: very high col_var_norm (hot columns), oracle darker,
+    # mean_abs globally low.  Takes priority over clipping to avoid misclassification.
+    if (
+        col_var_norm is not None
+        and col_var_norm >= BORDER_COL_VAR_FLOOR
+        and col_max is not None
+        and col_max >= BORDER_COL_MAX_FLOOR
+        and blank_gap <= BORDER_BLANK_GAP_CEILING
+        and mean_abs < BORDER_MEAN_ABS_CEILING
+    ):
+        return (
+            "border_rendering_delta",
+            (
+                f"col_var_norm={col_var_norm:.3f} >= {BORDER_COL_VAR_FLOOR} and "
+                f"col_max={col_max:.1f} >= {BORDER_COL_MAX_FLOOR}; "
+                f"blank_gap={blank_gap:.4f} <= {BORDER_BLANK_GAP_CEILING} (oracle darker); "
+                f"mean_abs_diff={mean_abs:.2f} < {BORDER_MEAN_ABS_CEILING}. "
+                "Oracle renders table separator / border lines absent in our output. "
+                "(QF2-E — gen-854_854654 pattern; see QF2_E_VISUAL_DEEPENING_REPORT.md)"
+            ),
+        )
 
     # Clipping: diff concentrated at image edges.
     if edge_high_frac is not None and edge_high_frac >= CLIPPING_EDGE_FRACTION:
