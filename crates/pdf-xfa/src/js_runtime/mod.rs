@@ -23,8 +23,8 @@ pub mod regex_guard;
 pub mod rquickjs_backend;
 
 pub use host::{
-    HostBindings, MAX_INSTANCES_PER_SUBFORM, MAX_ITEMS_PER_LISTBOX, MAX_MUTATIONS_PER_DOC,
-    MAX_RESOLVE_CALLS_PER_SCRIPT, MAX_RESOLVE_RESULTS, MAX_SOM_DEPTH, MutationLogEntry,
+    HostBindings, MutationLogEntry, MAX_INSTANCES_PER_SUBFORM, MAX_ITEMS_PER_LISTBOX,
+    MAX_MUTATIONS_PER_DOC, MAX_RESOLVE_CALLS_PER_SCRIPT, MAX_RESOLVE_RESULTS, MAX_SOM_DEPTH,
 };
 pub use null::NullRuntime;
 #[cfg(feature = "xfa-js-sandboxed")]
