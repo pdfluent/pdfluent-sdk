@@ -179,3 +179,85 @@ pub unsafe extern "C" fn pdfluent_license_status(out: *mut PdfluentLicenseStatus
     }
     PdfStatus::Ok
 }
+
+/// Activate the process-global license from a **signed JSON payload**
+/// (Ed25519-verified).
+///
+/// `payload_json` must be a null-terminated UTF-8 string containing the
+/// full signed license JSON (`{"payload": {…}, "signature": "…"}`).
+///
+/// The public verification key must already have been injected via
+/// [`pdfluent_license_set_public_key`]; otherwise this call returns
+/// [`PdfStatus::ErrorInvalidLicense`].
+///
+/// Returns:
+/// - [`PdfStatus::Ok`] on successful activation;
+/// - [`PdfStatus::ErrorLicenseInvalidSignature`] (=20) if the signature
+///   does not verify;
+/// - [`PdfStatus::ErrorLicenseExpired`] (=19) if `expires_at` is in the
+///   past;
+/// - [`PdfStatus::ErrorLicenseAlreadySet`] (=17) if the process is
+///   already activated to a different tier;
+/// - [`PdfStatus::ErrorInvalidLicense`] (=16) for malformed JSON,
+///   unknown tier names, or missing public key.
+///
+/// On any error the process-global tier is **NOT** modified.
+///
+/// # Safety
+/// `payload_json` must be a valid null-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn pdfluent_license_activate_payload(
+    payload_json: *const c_char,
+) -> PdfStatus {
+    if payload_json.is_null() {
+        set_last_error_str("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let s = match unsafe { CStr::from_ptr(payload_json) }.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_last_error_str("license payload is not valid UTF-8");
+            return PdfStatus::ErrorInvalidArgument;
+        }
+    };
+    match pdfluent::set_license_payload(s) {
+        Ok(()) => {
+            record_source(SourceTag::Explicit);
+            PdfStatus::Ok
+        }
+        Err(e) => PdfStatus::from_pdfluent_error(&e),
+    }
+}
+
+/// Inject the public Ed25519 verification key used by
+/// [`pdfluent_license_activate_payload`].
+///
+/// Must be called once at process startup before any
+/// `pdfluent_license_activate_payload` call. Calling twice with the SAME
+/// key is idempotent; calling with a DIFFERENT key returns
+/// [`PdfStatus::ErrorInvalidLicense`].
+///
+/// `public_key` must be a 32-byte buffer (raw Ed25519 verifying key).
+///
+/// # Safety
+/// `public_key` must point to a readable buffer of at least `key_len`
+/// bytes, and `key_len` must equal 32.
+#[no_mangle]
+pub unsafe extern "C" fn pdfluent_license_set_public_key(
+    public_key: *const u8,
+    key_len: usize,
+) -> PdfStatus {
+    if public_key.is_null() {
+        set_last_error_str("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    if key_len != 32 {
+        set_last_error_str("public key must be exactly 32 bytes");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(public_key, key_len) };
+    match pdfluent::set_license_public_key(slice) {
+        Ok(()) => PdfStatus::Ok,
+        Err(e) => PdfStatus::from_pdfluent_error(&e),
+    }
+}

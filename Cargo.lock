@@ -4559,6 +4559,7 @@ dependencies = [
  "png 0.17.16",
  "tokio",
  "tracing",
+ "xfa-license",
 ]
 
 [[package]]
