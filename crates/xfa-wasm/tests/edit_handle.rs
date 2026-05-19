@@ -34,7 +34,9 @@ fn synthetic_pdf_with_text(text: &str) -> Vec<u8> {
         ),
         Operation::new("ET", vec![]),
     ];
-    let content_bytes = Content { operations: ops }.encode().expect("encode content");
+    let content_bytes = Content { operations: ops }
+        .encode()
+        .expect("encode content");
 
     let mut doc = Document::with_version("1.7");
     let font = dictionary! {

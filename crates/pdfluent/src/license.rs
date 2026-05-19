@@ -187,11 +187,9 @@ pub fn license_info() -> LicenseInfo {
 /// different key returns [`Error::InvalidLicense`] — restart the process
 /// to swap keys.
 pub fn set_license_public_key(public_key: &[u8]) -> Result<()> {
-    let key_bytes: [u8; 32] = public_key
-        .try_into()
-        .map_err(|_| Error::InvalidLicense {
-            reason: "public key must be exactly 32 bytes".into(),
-        })?;
+    let key_bytes: [u8; 32] = public_key.try_into().map_err(|_| Error::InvalidLicense {
+        reason: "public key must be exactly 32 bytes".into(),
+    })?;
     match LICENSE_PUBLIC_KEY.set(key_bytes) {
         Ok(()) => Ok(()),
         Err(_) => {
