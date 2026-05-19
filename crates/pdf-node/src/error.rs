@@ -80,6 +80,22 @@ pub fn pdfluent_err_to_napi(err: pdfluent::Error, operation: &str) -> napi::Erro
             "capability not compiled into this build",
             format!("{capability:?} requires Cargo feature {feature_flag:?}"),
         ),
+        pdfluent::Error::LicenseExpired { expires_at } => (
+            "license expired",
+            format!("expires_at = {expires_at} (unix timestamp)"),
+        ),
+        pdfluent::Error::LicenseInvalidSignature => (
+            "license signature does not verify",
+            "the signed payload was tampered or signed with a different private key than the verifier expects".to_string(),
+        ),
+        pdfluent::Error::LicenseRateLimited {
+            resource,
+            used,
+            limit,
+        } => (
+            "license rate limit exceeded",
+            format!("{used}/{limit} {resource} in the current window"),
+        ),
         other => ("operation failed", other.to_string()),
     };
     structured_error(code, message, operation, Some(&cause))

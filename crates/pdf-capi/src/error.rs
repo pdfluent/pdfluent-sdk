@@ -84,6 +84,18 @@ impl PdfStatusForLicense for crate::types::PdfStatus {
                     crate::types::PdfStatus::ErrorInvalidLicense
                 }
             }
+            pdfluent::Error::LicenseExpired { expires_at } => {
+                set_last_error_str(&format!(
+                    "license expired at unix timestamp {expires_at}"
+                ));
+                crate::types::PdfStatus::ErrorLicenseExpired
+            }
+            pdfluent::Error::LicenseInvalidSignature => {
+                set_last_error_str(
+                    "license signature does not verify against the configured public key",
+                );
+                crate::types::PdfStatus::ErrorLicenseInvalidSignature
+            }
             other => {
                 set_last_error_str(&format!("license error: {other}"));
                 crate::types::PdfStatus::ErrorUnknown

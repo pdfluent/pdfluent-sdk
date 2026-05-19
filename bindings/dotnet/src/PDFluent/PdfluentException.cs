@@ -81,10 +81,12 @@ namespace PDFluent
                 PdfStatus.ErrorInvalidPassword    => new PdfluentPermissionException(status, message),
                 PdfStatus.ErrorPageRange          => new PdfluentPageRangeException(status, message),
                 PdfStatus.ErrorRender             => new PdfluentRenderException(status, message),
-                PdfStatus.ErrorInvalidLicense     => new PdfluentLicenseException(status, message, "E-LICENSE-INVALID"),
-                PdfStatus.ErrorLicenseAlreadySet  => new PdfluentLicenseException(status, message, "E-LICENSE-INVALID"),
-                PdfStatus.ErrorLicenseFile        => new PdfluentIoException(status, message),
-                _                                 => new PdfluentException(status, message),
+                PdfStatus.ErrorInvalidLicense          => new PdfluentLicenseException(status, message, "E-LICENSE-INVALID"),
+                PdfStatus.ErrorLicenseAlreadySet       => new PdfluentLicenseException(status, message, "E-LICENSE-INVALID"),
+                PdfStatus.ErrorLicenseFile             => new PdfluentIoException(status, message),
+                PdfStatus.ErrorLicenseExpired          => new PdfluentLicenseException(status, message, "E-LICENSE-EXPIRED"),
+                PdfStatus.ErrorLicenseInvalidSignature => new PdfluentLicenseException(status, message, "E-LICENSE-INVALID-SIGNATURE"),
+                _                                      => new PdfluentException(status, message),
             };
     }
 
