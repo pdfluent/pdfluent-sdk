@@ -1,10 +1,29 @@
 # PDFluent cleanup log rotation.
 #
+# Covers both:
+# 1. Operator-installed paths used by /etc/cron.d/pdfluent-ci-hygiene:
+#       /var/log/pdfluent-ci-hygiene.log
+#       /var/log/pdfluent-ci-hygiene.cron.log
+# 2. Spec-default paths used by scripts/infra/cron/pdfluent-vps-cleanup.cron:
+#       /var/log/pdfluent-cleanup/*.log
+#
 # Operator install:
 #   sudo install -m 0644 scripts/infra/cron/pdfluent-cleanup.logrotate \
 #        /etc/logrotate.d/pdfluent-cleanup
 #
 # Rotates weekly, keeps 8 generations (~2 months), compresses with gzip.
+# logrotate handles missing files quietly (missingok) so it is safe to
+# ship the union of both naming patterns even when only one is in use.
+
+/var/log/pdfluent-ci-hygiene.log /var/log/pdfluent-ci-hygiene.cron.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+}
 
 /var/log/pdfluent-cleanup/*.log {
     weekly
