@@ -534,11 +534,21 @@ fn variables_script_runaway_body_does_not_hang_flatten() {
 #[test]
 fn variables_script_oversized_body_is_rejected() {
     // Phase D-ι, Codex P1 review on PR #1499: variables-script bodies
-    // exceeding MAX_SCRIPT_BODY_BYTES must be rejected, mirroring the
-    // execute_script path.
+    // exceeding `MAX_VARIABLES_SCRIPT_BODY_BYTES` must be rejected,
+    // mirroring the execute_script path.
+    //
+    // W2-B: variables-scripts use the dedicated, higher cap
+    // `MAX_VARIABLES_SCRIPT_BODY_BYTES` so real-world XFA helper
+    // libraries (e.g. `validateForm` ≈ 125 KB, `LOV` ≈ 507 KB) still
+    // register. This test exercises the *upper* cap by constructing a
+    // body strictly larger than it.
     let mut tree = FormTree::new();
     let root = add_node(&mut tree, "root", FormNodeType::Root);
-    let huge = "var x = 1;\n".repeat(64 * 1024);
+    let unit = "var x = 1;\n"; // 11 bytes
+    let target_bytes = pdf_xfa::js_runtime::MAX_VARIABLES_SCRIPT_BODY_BYTES + 1;
+    let repeats = target_bytes.div_ceil(unit.len());
+    let huge = unit.repeat(repeats);
+    assert!(huge.len() > pdf_xfa::js_runtime::MAX_VARIABLES_SCRIPT_BODY_BYTES);
     tree.variables_scripts.push((None, "Huge".into(), huge));
     let out = add_field(&mut tree, root, "Out", "");
     add_js_script(

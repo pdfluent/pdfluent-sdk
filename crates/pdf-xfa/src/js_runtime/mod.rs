@@ -181,6 +181,31 @@ pub const DEFAULT_MEMORY_BUDGET_BYTES: usize = 32 * 1024 * 1024;
 /// rejected before any parse attempt.
 pub const MAX_SCRIPT_BODY_BYTES: usize = 64 * 1024;
 
+/// Hard cap on `<variables><script>` body size (W2-B).
+///
+/// Variables-scripts are form-level helper libraries (XFA 3.3 §5.5):
+/// they hold the top-level `var` / `function` declarations that event
+/// scripts call as `<scriptName>.<top_level_decl>(...)`. They run once
+/// per document at registration time, under the same per-script time
+/// budget ([`DEFAULT_TIME_BUDGET_MS`]) and same per-document memory
+/// budget ([`DEFAULT_MEMORY_BUDGET_BYTES`]) as event scripts.
+///
+/// Real-world government XFA forms (Canadian IRCC `imm5709e` / `imm5710e`,
+/// Canadian Revenue Agency `t2200` / `t2-fill`) ship variables-scripts
+/// such as `validateForm` (~125 KB), `CoreFunctions` (~115 KB) and
+/// `LOV` (~507 KB) — well above the 64 KB event-script cap. With the
+/// event-script cap applied to variables-scripts, registration fails
+/// silently with [`SandboxError::BodyTooLarge`] and the dependent
+/// event scripts cannot resolve `validateForm.X()` / `CoreFunctions.X()`,
+/// surfacing as the W1-B `implicit_function` cluster (impact 79 across
+/// 10 docs).
+///
+/// 1 MiB is intentionally above the largest observed real-world body
+/// (`LOV` ≈ 507 KB on `imm5710e`) so the cap remains a defence-in-depth
+/// stop and never a routine failure path. The time and memory budgets
+/// still bound runaway parse / execute cost.
+pub const MAX_VARIABLES_SCRIPT_BODY_BYTES: usize = 1024 * 1024;
+
 /// The activities for which the sandboxed runtime accepts dispatch.
 /// Other activities (`click`, `preSubmit`, `mouseEnter`, …) skip the
 /// runtime entirely at the [`crate::dynamic::apply_dynamic_scripts_with_mode`]
@@ -312,5 +337,31 @@ mod tests {
         assert!(MAX_SCRIPT_BODY_BYTES >= 4096);
         assert!(DEFAULT_TIME_BUDGET_MS >= 25);
         assert!(DEFAULT_MEMORY_BUDGET_BYTES >= 1024 * 1024);
+    }
+
+    // W2-B: variables-script body cap must be strictly higher than the
+    // event-script cap so XFA helper libraries (validateForm, LOV,
+    // CoreFunctions) register; it must still be bounded so an oversize
+    // body cannot bypass static defence-in-depth before the per-document
+    // memory budget engages.
+    #[test]
+    fn variables_script_cap_is_above_event_cap_and_bounded() {
+        assert!(
+            MAX_VARIABLES_SCRIPT_BODY_BYTES > MAX_SCRIPT_BODY_BYTES,
+            "variables-script cap must exceed event-script cap"
+        );
+        // Sanity: must be high enough to register the largest observed
+        // real-world variables-script library (LOV ≈ 507 KB).
+        assert!(
+            MAX_VARIABLES_SCRIPT_BODY_BYTES >= 768 * 1024,
+            "variables-script cap below observed real-world max"
+        );
+        // Sanity: must be bounded well under the per-document memory
+        // budget so a single oversize body cannot consume the entire
+        // budget on parse alone.
+        assert!(
+            MAX_VARIABLES_SCRIPT_BODY_BYTES <= DEFAULT_MEMORY_BUDGET_BYTES / 8,
+            "variables-script cap must stay an order of magnitude below memory budget"
+        );
     }
 }
