@@ -65,6 +65,11 @@ wasm = ["render", "annotate"]
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 
+# Used by tests/edit_handle.rs to synthesise minimal PDFs with known
+# extractable text runs (avoids dependency on specific corpus encoding).
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }
+
 # npm package identity — set by scripts/release/transform-wasm-pkg.sh at
 # publish time. Cargo workspace version and npm version are independent.
 [package.metadata.npm]

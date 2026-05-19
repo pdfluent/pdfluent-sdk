@@ -14,6 +14,9 @@ use std::collections::BTreeMap;
 use lopdf::Document as LopdfDocument;
 use pdf_manip::text_run::extract_page_text_runs;
 use pdf_manip::text_style::{set_text_run_style, StateIsolationStrategy, StyleResult};
+use pdf_text_format::{
+    format_text_run, FormatResult, StateIsolationStrategy as FormatIsolation, TextRunLocator,
+};
 use wasm_bindgen::prelude::*;
 
 // ---------- the handle -----------------------------------------------------
@@ -364,6 +367,125 @@ impl PdfDocMut {
         handle.set_text_run_style_js(page_num, "[]", run_index, bold, italic)?;
         handle.save()
     }
+
+    // ---- WASM3: Text formatting (font size + fill color) -------------------
+
+    /// Format a single text run on `page_num` (1-based) by changing its font
+    /// size and/or fill color. The mutation is scoped so other runs on the
+    /// page are unaffected (q…Q isolation injected as needed).
+    ///
+    /// Parameters:
+    /// - `page_num`: 1-based page index.
+    /// - `run_index`: 0-based index into `extract_page_text_runs(page_num)`.
+    /// - `font_size`: optional new font size (points). Pass `None` to keep.
+    /// - `color`: optional hex color string (e.g. `"#FF0000"`); pass `None`
+    ///   to keep the existing fill color.
+    ///
+    /// Returns a JSON string with the canonical `FormatResult` shape:
+    /// `{ "formatted": bool, "bytesChanged": usize, "isolationStrategy": str,
+    ///   "originalSize": f32?, "originalColor": [f32; 3]?, "code": str? }`.
+    ///
+    /// Passing both `font_size = None` and `color = None` is a no-op:
+    /// `formatted = false`, `bytesChanged = 0`, no error.
+    #[wasm_bindgen(js_name = "formatTextSpan")]
+    pub fn format_text_span_js(
+        &mut self,
+        page_num: u32,
+        run_index: usize,
+        font_size: Option<f32>,
+        color: Option<String>,
+    ) -> Result<String, JsError> {
+        let runs = extract_page_text_runs(&self.doc, page_num)
+            .map_err(|e| JsError::new(&format!("formatTextSpan: extract runs: {e}")))?;
+        let run = runs.get(run_index).ok_or_else(|| {
+            JsError::new(&format!(
+                "formatTextSpan: run index {run_index} out of range (page has {} runs)",
+                runs.len()
+            ))
+        })?;
+        let locator = TextRunLocator::from_run(run);
+
+        let color_rgb = match color.as_deref() {
+            Some(hex) => Some(parse_color_hex_f32(Some(hex)).ok_or_else(|| {
+                JsError::new(&format!(
+                    "formatTextSpan: invalid color hex '{hex}' (expected '#RRGGBB')"
+                ))
+            })?),
+            None => None,
+        };
+
+        let result = format_text_run(&mut self.doc, page_num, locator, font_size, color_rgb)
+            .map_err(|e| JsError::new(&format!("formatTextSpan: {e}")))?;
+
+        let js = format_result_to_js(&result);
+        serde_json::to_string(&js)
+            .map_err(|e| JsError::new(&format!("formatTextSpan: serialize: {e}")))
+    }
+
+    /// Convenience: open bytes, format a single run, return new bytes.
+    ///
+    /// One-shot equivalent of `open → formatTextSpan → save`.
+    #[wasm_bindgen(js_name = "applyTextFormat")]
+    pub fn apply_text_format(
+        data: &[u8],
+        page_num: u32,
+        run_index: usize,
+        font_size: Option<f32>,
+        color: Option<String>,
+    ) -> Result<Vec<u8>, JsError> {
+        let mut handle = PdfDocMut::open(data)?;
+        handle.format_text_span_js(page_num, run_index, font_size, color)?;
+        handle.save()
+    }
+}
+
+// ---- WASM3: FormatResult JSON projection ----------------------------------
+
+#[derive(serde::Serialize)]
+struct FormatResultJs {
+    /// `true` when at least one operator was injected; `false` for a no-op.
+    formatted: bool,
+    #[serde(rename = "bytesChanged")]
+    bytes_changed: usize,
+    /// `"NoIsolation"` / `"AddQGroup"` / `"ReuseExistingQGroup"`.
+    #[serde(rename = "isolationStrategy")]
+    isolation_strategy: &'static str,
+    /// Pre-format font size (points), if a preceding `Tf` was found.
+    #[serde(rename = "originalSize", skip_serializing_if = "Option::is_none")]
+    original_size: Option<f32>,
+    /// Pre-format fill color `[r, g, b]` in `0.0..=1.0`, if resolvable.
+    #[serde(rename = "originalColor", skip_serializing_if = "Option::is_none")]
+    original_color: Option<[f32; 3]>,
+}
+
+fn format_result_to_js(r: &FormatResult) -> FormatResultJs {
+    FormatResultJs {
+        formatted: r.bytes_changed > 0,
+        bytes_changed: r.bytes_changed,
+        isolation_strategy: match r.state_isolation_strategy {
+            FormatIsolation::NoIsolation => "NoIsolation",
+            FormatIsolation::AddQGroup => "AddQGroup",
+            FormatIsolation::ReuseExistingQGroup => "ReuseExistingQGroup",
+        },
+        original_size: r.original_size,
+        original_color: r.original_color,
+    }
+}
+
+/// Parse `"#RRGGBB"` into `[r, g, b]` in `0.0..=1.0`.
+fn parse_color_hex_f32(hex: Option<&str>) -> Option<[f32; 3]> {
+    let s = hex?.trim().trim_start_matches('#');
+    if s.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+    Some([
+        f32::from(r) / 255.0,
+        f32::from(g) / 255.0,
+        f32::from(b) / 255.0,
+    ])
 }
 
 // ---------- helpers --------------------------------------------------------
