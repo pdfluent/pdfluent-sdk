@@ -8,6 +8,13 @@ try:
 except Exception as e:  # noqa: BLE001
     print(f"SKIP pdfluent not importable: {e}"); sys.exit(0)
 
+# Guard against an unrelated/placeholder `pdfluent` package shadowing the real
+# binding (e.g. a same-named conda/PyPI package). The real binding exposes
+# PdfDocument; if absent, this is NOT our binding -> SKIP, never a false pass.
+if not hasattr(pdfluent, "PdfDocument"):
+    print(f"SKIP not the PDFluent binding (no PdfDocument) at {getattr(pdfluent, '__file__', '?')}")
+    sys.exit(0)
+
 fails = []
 # malformed PDF -> typed error
 try:
