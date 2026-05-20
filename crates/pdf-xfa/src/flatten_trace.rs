@@ -209,6 +209,22 @@ pub(crate) struct PageSuppressionDiag {
     /// A non-negative value marks this page as a repeated occur-instance.
     pub duplicate_of_page: i64,
     pub runtime_instantiated: bool,
+    // --- Layout provenance (XFA_LAYOUT_PROVENANCE_ENGINE_WAVE) ---
+    /// True when the page's content sits under a repeating (`occur` max>1)
+    /// subform ancestor.
+    pub under_repeating_subform: bool,
+    /// FormNodeId of the nearest repeating-subform ancestor, or -1.
+    pub occur_template_id: i64,
+    /// Page nodes bound to a data node (`meta.bound_data_node.is_some()`).
+    pub data_bound_nodes_count: usize,
+    /// Why this page exists: root_page / continuation / occur_instance /
+    /// repeated_empty_instance / static_page_area / unknown.
+    pub page_reason: &'static str,
+    /// True when this page is a data-empty repeated occur-instance — the only
+    /// class that is provenance-safe to drop.
+    pub suppression_safe_to_drop: bool,
+    /// exact / inferred / unknown.
+    pub provenance_confidence: &'static str,
 }
 
 /// All inputs needed to assemble a flatten trace. Borrowed; nothing is cloned
@@ -333,7 +349,7 @@ pub(crate) fn emit(i: &TraceInputs) {
         }
         let _ = write!(
             supp,
-            "{{\"page\":{},\"keep\":{},\"reason\":{},\"field_count\":{},\"empty_field_count\":{},\"nonempty_field_count\":{},\"static_draw_text_chars\":{},\"distinct_form_nodes\":{},\"duplicate_of_page\":{},\"runtime_instantiated\":{}}}",
+            "{{\"page\":{},\"keep\":{},\"reason\":{},\"field_count\":{},\"empty_field_count\":{},\"nonempty_field_count\":{},\"static_draw_text_chars\":{},\"distinct_form_nodes\":{},\"duplicate_of_page\":{},\"runtime_instantiated\":{},\"under_repeating_subform\":{},\"occur_template_id\":{},\"data_bound_nodes_count\":{},\"page_reason\":{},\"suppression_safe_to_drop\":{},\"provenance_confidence\":{}}}",
             d.page_index + 1,
             d.keep,
             json_str(d.reason),
@@ -344,6 +360,12 @@ pub(crate) fn emit(i: &TraceInputs) {
             d.distinct_form_nodes,
             d.duplicate_of_page,
             d.runtime_instantiated,
+            d.under_repeating_subform,
+            d.occur_template_id,
+            d.data_bound_nodes_count,
+            json_str(d.page_reason),
+            d.suppression_safe_to_drop,
+            json_str(d.provenance_confidence),
         );
     }
     supp.push(']');
