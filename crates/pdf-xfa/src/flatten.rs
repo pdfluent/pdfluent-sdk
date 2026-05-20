@@ -83,6 +83,7 @@ use crate::dynamic::{
 };
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
+use crate::flatten_trace;
 use crate::font_bridge::{
     font_variant_key, pdf_glyph_name_to_unicode, CidFontInfo, EmbeddedFontData, PdfBaseEncoding,
     PdfSimpleEncoding, PdfSourceFont, ResolvedFont, XfaFontResolver, XfaFontSpec,
@@ -568,6 +569,8 @@ fn xfa_flatten_inner(
     );
     _stage = PipelineStage::Bind;
 
+    // Trace capture (env-gated emit at end of function; counts are cheap).
+    let trace_image_files = image_files.len();
     let merger = FormMerger::new(&data_dom).with_image_files(image_files);
     let (mut tree, root_id) = merger
         .merge(template_xml)
@@ -724,6 +727,7 @@ fn xfa_flatten_inner(
     // Suppressing when binding is incomplete would incorrectly drop pages of
     // explicitly-paginated documents whose fields appear data-empty to this
     // heuristic even though real data is present.
+    let trace_pages_produced = layout.pages.len();
     if layout.pages.len() > 1 {
         let keep: Vec<bool> = layout
             .pages
@@ -898,8 +902,11 @@ fn xfa_flatten_inner(
     );
     _stage = PipelineStage::Write;
 
+    let mut trace_widgets_baked = 0usize;
+    let mut trace_excess_deleted = 0usize;
     if preserve_static {
         let baked = flatten_widget_appearances(&mut doc);
+        trace_widgets_baked = baked;
         if baked == 0 {
             // No widget APs were baked — the form structure lives in the
             // pre-rendered page content but field values exist only in the
@@ -979,6 +986,7 @@ fn xfa_flatten_inner(
         let excess: Vec<u32> = ((n_layout + 1) as u32..=(n_existing as u32))
             .rev()
             .collect();
+        trace_excess_deleted = excess.len();
         doc.delete_pages(&excess);
     }
 
@@ -1017,14 +1025,112 @@ fn xfa_flatten_inner(
         log::warn!("stripped {stripped_js} JavaScript action(s) from flattened output");
     }
 
+    // Env-gated flatten trace (default OFF): capture stage signals BEFORE the
+    // document is consumed by serialization. Built only when XFA_FLATTEN_TRACE set.
+    let trace_ctx = if flatten_trace::enabled() {
+        let (acroform_removed, xfa_removed_structural, needs_rendering_removed) =
+            catalog_cleanup_status(&doc);
+        Some((
+            acroform_removed,
+            xfa_removed_structural,
+            needs_rendering_removed,
+            doc.page_iter().count(),
+            layout
+                .pages
+                .iter()
+                .filter(|p| p.runtime_instantiated)
+                .count(),
+        ))
+    } else {
+        None
+    };
+
     let mut out = Vec::new();
     doc.save_to(&mut out)
         .map_err(|e| XfaError::LayoutFailed(format!("save: {e}")))?;
+
+    if let Some((
+        acroform_removed,
+        xfa_removed_structural,
+        needs_rendering_removed,
+        output_page_count,
+        runtime_pages,
+    )) = trace_ctx
+    {
+        let js_mode =
+            std::env::var("XFA_JS_EXECUTION_MODE").unwrap_or_else(|_| "best_effort_static".into());
+        flatten_trace::emit(&flatten_trace::TraceInputs {
+            input_bytes: pdf_bytes.len(),
+            template_bytes: template_xml.len(),
+            js_execution_mode: &js_mode,
+            flatten_path: if preserve_static {
+                "static_preserve"
+            } else {
+                "dynamic"
+            },
+            template_packet_found: true,
+            datasets_packet_found: datasets_xml.is_some(),
+            form_packet_found: form_xml.is_some(),
+            image_files: trace_image_files,
+            tree: &tree,
+            scripts: &dynamic_scripts,
+            layout: &layout,
+            pages_produced: trace_pages_produced,
+            pages_after_suppression: layout.pages.len(),
+            runtime_instantiated_pages: runtime_pages,
+            overlays: &overlays,
+            n_layout,
+            n_existing,
+            is_static_form,
+            has_static_content,
+            preserve_static,
+            excess_pages_deleted: trace_excess_deleted,
+            widgets_baked: trace_widgets_baked,
+            acroform_removed,
+            xfa_removed_structural,
+            needs_rendering_removed,
+            javascript_actions_stripped: stripped_js,
+            output_bytes: out.len(),
+            output_page_count,
+        });
+    }
+
     Ok(FlattenOutput::new(
         out,
         layout_dump.unwrap_or_default(),
         dynamic_scripts,
     ))
+}
+
+/// Inspect the catalog after cleanup: returns
+/// `(acroform_removed, xfa_removed_structural, needs_rendering_removed)`.
+/// Used by the env-gated flatten trace to confirm structural XFA removal.
+fn catalog_cleanup_status(doc: &Document) -> (bool, bool, bool) {
+    let root_id = match doc.trailer.get(b"Root") {
+        Ok(Object::Reference(id)) => *id,
+        _ => return (true, true, true),
+    };
+    let Ok(cat) = doc.get_dictionary(root_id) else {
+        return (true, true, true);
+    };
+    let acroform_present = cat.get(b"AcroForm").is_ok();
+    let needs_rendering_present = cat.get(b"NeedsRendering").is_ok();
+    let direct_xfa = cat.get(b"XFA").is_ok();
+    let acroform_xfa = cat
+        .get(b"AcroForm")
+        .ok()
+        .and_then(|o| match o {
+            Object::Reference(id) => doc.get_dictionary(*id).ok(),
+            Object::Dictionary(d) => Some(d),
+            _ => None,
+        })
+        .map(|d| d.get(b"XFA").is_ok())
+        .unwrap_or(false);
+    (
+        !acroform_present,
+        !(direct_xfa || acroform_xfa),
+        !needs_rendering_present,
+    )
 }
 
 fn layout_dump_from_profile(profile: LayoutProfile) -> LayoutDump {
