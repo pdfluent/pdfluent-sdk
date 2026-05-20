@@ -130,13 +130,15 @@ fn subform_scoped_script_object_counted_but_not_bare_visible() {
         outcome.script_objects_subform_scoped, 1,
         "nested-subform script must be counted as subform-scoped"
     );
-    // Registration into subformVariables succeeds...
     assert_eq!(outcome.script_objects_registered, 1);
-    // ...but the symbol is NOT bare-ident visible (documents the gap).
+    // D4 update: a UNIQUE-name subform-scoped script is now exposed as a bare
+    // identifier (the D4 minimal SOM resolution). The D3-era "absent" gap is
+    // closed for the unambiguous case; see d4_minimal_som_resolution.rs for the
+    // fail-closed ambiguous-name behaviour.
     assert_eq!(
         field_value(&tree, out),
-        "absent",
-        "subform-scoped script must NOT resolve as a bare identifier today"
+        "CA",
+        "unique-name subform-scoped script resolves as a bare identifier after D4"
     );
 }
 

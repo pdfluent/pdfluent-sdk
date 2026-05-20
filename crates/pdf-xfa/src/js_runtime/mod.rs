@@ -184,6 +184,22 @@ pub struct RuntimeMetadata {
     /// (registered into `subformVariables` only, hence not reachable as a bare
     /// identifier today — the "scope_hidden" gap class).
     pub script_objects_subform_scoped: usize,
+    /// D4: total SOM lookups observed at the host resolve boundary (successes +
+    /// failures across the instrumented `resolve_*` entry points).
+    pub som_lookups_total: usize,
+    /// D4: SOM lookups that resolved to at least one node.
+    pub som_lookup_successes: usize,
+    /// D4: SOM lookups that returned NoMatch.
+    pub som_lookup_failures: usize,
+    /// D4: subform-scoped script-object names NOT exposed because the same name
+    /// is declared by ≥2 subforms (fail-closed ambiguity).
+    pub som_lookup_ambiguous: usize,
+    /// D4: subform-scoped script objects exposed to bare-identifier lookup
+    /// (unique-name, sandboxed-only).
+    pub som_subform_scripts_exposed: usize,
+    /// D4 (trace-only): SOM NoMatch references whose path is an `occur` path
+    /// (`occur` / `occur.min` / `occur.max` …). Classified, NOT resolved.
+    pub som_occur_path_refs: usize,
 }
 
 impl RuntimeMetadata {
@@ -228,6 +244,22 @@ impl RuntimeMetadata {
         self.script_objects_subform_scoped = self
             .script_objects_subform_scoped
             .saturating_add(other.script_objects_subform_scoped);
+        self.som_lookups_total = self.som_lookups_total.saturating_add(other.som_lookups_total);
+        self.som_lookup_successes = self
+            .som_lookup_successes
+            .saturating_add(other.som_lookup_successes);
+        self.som_lookup_failures = self
+            .som_lookup_failures
+            .saturating_add(other.som_lookup_failures);
+        self.som_lookup_ambiguous = self
+            .som_lookup_ambiguous
+            .saturating_add(other.som_lookup_ambiguous);
+        self.som_subform_scripts_exposed = self
+            .som_subform_scripts_exposed
+            .saturating_add(other.som_subform_scripts_exposed);
+        self.som_occur_path_refs = self
+            .som_occur_path_refs
+            .saturating_add(other.som_occur_path_refs);
     }
 }
 

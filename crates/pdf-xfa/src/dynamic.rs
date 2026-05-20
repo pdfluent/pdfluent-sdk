@@ -141,6 +141,18 @@ pub struct DynamicScriptOutcome {
     /// **D3 (trace-only).** Script objects collected under a nested subform
     /// scope (registered to `subformVariables` only — not bare-ident visible).
     pub script_objects_subform_scoped: usize,
+    /// **D4.** Total SOM lookups at the host resolve boundary.
+    pub som_lookups_total: usize,
+    /// **D4.** SOM lookups that resolved.
+    pub som_lookup_successes: usize,
+    /// **D4.** SOM lookups that returned NoMatch.
+    pub som_lookup_failures: usize,
+    /// **D4.** Subform-script names withheld for ambiguity (fail-closed).
+    pub som_lookup_ambiguous: usize,
+    /// **D4.** Subform-scoped script objects exposed to bare-identifier lookup.
+    pub som_subform_scripts_exposed: usize,
+    /// **D4 (trace-only).** `occur`-path SOM references (classified, not resolved).
+    pub som_occur_path_refs: usize,
 }
 
 impl Default for DynamicScriptOutcome {
@@ -171,6 +183,12 @@ impl Default for DynamicScriptOutcome {
             script_objects_registered: 0,
             script_objects_register_failed: 0,
             script_objects_subform_scoped: 0,
+            som_lookups_total: 0,
+            som_lookup_successes: 0,
+            som_lookup_failures: 0,
+            som_lookup_ambiguous: 0,
+            som_subform_scripts_exposed: 0,
+            som_occur_path_refs: 0,
         }
     }
 }
@@ -540,6 +558,12 @@ pub fn apply_dynamic_scripts_with_runtime(
         script_objects_registered: sandbox_metadata.script_objects_registered,
         script_objects_register_failed: sandbox_metadata.script_objects_register_failed,
         script_objects_subform_scoped: sandbox_metadata.script_objects_subform_scoped,
+        som_lookups_total: sandbox_metadata.som_lookups_total,
+        som_lookup_successes: sandbox_metadata.som_lookup_successes,
+        som_lookup_failures: sandbox_metadata.som_lookup_failures,
+        som_lookup_ambiguous: sandbox_metadata.som_lookup_ambiguous,
+        som_subform_scripts_exposed: sandbox_metadata.som_subform_scripts_exposed,
+        som_occur_path_refs: sandbox_metadata.som_occur_path_refs,
     })
 }
 

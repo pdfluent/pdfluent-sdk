@@ -1202,6 +1202,7 @@ impl QuickJsRuntime {
         name: &str,
         body: &str,
         subform_scope: Option<&str>,
+        expose_global: bool,
     ) -> Result<bool, SandboxError> {
         let Some(setter) = self.set_variables_script.clone() else {
             return Ok(false);
@@ -1231,7 +1232,7 @@ impl QuickJsRuntime {
         let result = catch_unwind(AssertUnwindSafe(|| {
             self.context.with(|ctx| -> Result<bool, rquickjs::Error> {
                 let setter = setter.restore(&ctx)?;
-                let ok: bool = setter.call((name, body, idents, scope))?;
+                let ok: bool = setter.call((name, body, idents, scope, expose_global))?;
                 Ok(ok)
             })
         }));
@@ -3278,6 +3279,14 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   // items; currently populated only at root scope but the structure is
   // here so an upcoming pass can light it up without further refactor.
   var subformVariablesDataItems = lookupObject();
+  // D4: flat first-wins exposure of subform-scoped named `<script>` objects to
+  // bare-identifier lookup. The host only writes an entry here for names that
+  // are unique across all subforms (ambiguous names are withheld — fail-closed
+  // — and counted Rust-side). Consulted by the `with` proxy AFTER
+  // `variablesScripts` / `variablesDataItems` (root scope wins) and BEFORE the
+  // host SOM resolver, so a subform-scoped helper such as `countryScript`
+  // resolves as a bare global instead of falling through to a SOM NoMatch.
+  var subformScriptsByName = lookupObject();
 
   function makeImplicitGlobals(body) {
     var currentId = host.currentNodeId();
@@ -3420,6 +3429,14 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (variablesDataItems[prop] !== undefined) {
           return variablesDataItems[prop];
         }
+        // D4: subform-scoped named script objects (unique-name only) resolve as
+        // bare globals here, after root-scope scripts/data items and before the
+        // host SOM resolver. This is the minimal SOM resolution for the
+        // `countryScript` / `partNoScript` cluster (XFA 3.3 §5.5 subform
+        // variables). Ambiguous names were never written here (fail-closed).
+        if (subformScriptsByName[prop] !== undefined) {
+          return subformScriptsByName[prop];
+        }
         return lookup(prop);
       },
       set: function(_target, prop, value) {
@@ -3480,7 +3497,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     // are intentionally NOT written to the flat dict: two subforms may
     // define the same script name, and writing both to the flat map would
     // let the second registration silently shadow the first.
-    setVariablesScript: function(name, body, identNames, subformName) {
+    setVariablesScript: function(name, body, identNames, subformName, exposeGlobal) {
       if (typeof name !== "string" || name.length === 0) return false;
       if (typeof body !== "string") return false;
       var idents = Array.isArray(identNames) ? identNames : [];
@@ -3509,6 +3526,11 @@ const PHASE_C_BINDINGS_JS: &str = r#"
             subformVariables[subformName] = lookupObject();
           }
           subformVariables[subformName][name] = ns;
+          // D4: also expose to bare-identifier lookup when the host marked this
+          // name unique across subforms (ambiguous names are withheld).
+          if (exposeGlobal === true && subformScriptsByName[name] === undefined) {
+            subformScriptsByName[name] = ns;
+          }
         } else {
           variablesScripts[name] = ns;
         }
@@ -3525,6 +3547,12 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       var skeys = Object.keys(subformVariables);
       for (var j = 0; j < skeys.length; j++) {
         delete subformVariables[skeys[j]];
+      }
+      // D4: clear the flat subform-script exposure map on the same per-document
+      // lifecycle as the scoped maps.
+      var ssnkeys = Object.keys(subformScriptsByName);
+      for (var n = 0; n < ssnkeys.length; n++) {
+        delete subformScriptsByName[ssnkeys[n]];
       }
       // W3-D RETRY: data items share the same per-document lifecycle as
       // scripts. Dropping them here keeps a single bridge entry-point at
@@ -3700,6 +3728,25 @@ impl XfaJsRuntime for QuickJsRuntime {
                 .metadata
                 .variables_scripts_collected
                 .saturating_add(scripts.len());
+            // D4: decide which subform-scoped script names are unique (and thus
+            // eligible for bare-identifier exposure). A name declared by ≥2
+            // subforms is ambiguous and withheld (fail-closed); count each such
+            // ambiguous name once.
+            let mut subform_name_counts: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            for (subform_scope, name, _) in &scripts {
+                if subform_scope.is_some() {
+                    *subform_name_counts.entry(name.clone()).or_insert(0) += 1;
+                }
+            }
+            let ambiguous_subform_names = subform_name_counts
+                .values()
+                .filter(|&&c| c > 1)
+                .count();
+            self.metadata.som_lookup_ambiguous = self
+                .metadata
+                .som_lookup_ambiguous
+                .saturating_add(ambiguous_subform_names);
             for (subform_scope, name, body) in scripts {
                 if subform_scope.is_some() {
                     self.metadata.script_objects_subform_scoped = self
@@ -3707,10 +3754,26 @@ impl XfaJsRuntime for QuickJsRuntime {
                         .script_objects_subform_scoped
                         .saturating_add(1);
                 }
-                match self.register_variables_script(&name, &body, subform_scope.as_deref()) {
+                // D4: expose unique-name subform-scoped scripts as bare globals.
+                let expose_global = subform_scope.is_some()
+                    && subform_name_counts.get(&name).copied().unwrap_or(0) == 1;
+                match self.register_variables_script(
+                    &name,
+                    &body,
+                    subform_scope.as_deref(),
+                    expose_global,
+                ) {
                     Ok(true) => {
                         self.metadata.script_objects_registered =
                             self.metadata.script_objects_registered.saturating_add(1);
+                        // Count only scripts that actually registered AND were
+                        // exposed (JS bound the namespace into the flat map).
+                        if expose_global {
+                            self.metadata.som_subform_scripts_exposed = self
+                                .metadata
+                                .som_subform_scripts_exposed
+                                .saturating_add(1);
+                        }
                     }
                     Ok(false) => {
                         self.metadata.script_objects_register_failed = self
