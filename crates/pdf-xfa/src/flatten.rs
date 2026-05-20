@@ -362,10 +362,59 @@ fn page_form_node_signature(nodes: &[LayoutNode], out: &mut Vec<usize>) {
 
 /// Compute per-page suppression diagnostics mirroring the keep decision in the
 /// XFA §4.3 suppression block. Used only by the env-gated flatten trace.
+/// Build a child→parent index map over the FormTree (`parent[i]` = parent
+/// FormNodeId.0, or `usize::MAX` for roots). Used for occur-ancestor walks.
+fn build_parent_map(tree: &FormTree) -> Vec<usize> {
+    let mut parent = vec![usize::MAX; tree.nodes.len()];
+    for (pid, node) in tree.nodes.iter().enumerate() {
+        for &child in &node.children {
+            if child.0 < parent.len() {
+                parent[child.0] = pid;
+            }
+        }
+    }
+    parent
+}
+
+/// Count page nodes bound to a data node (`meta.bound_data_node.is_some()`).
+fn page_data_bound_count(nodes: &[LayoutNode], tree: &FormTree) -> usize {
+    let mut c = 0;
+    for n in nodes {
+        if tree.meta(n.form_node).bound_data_node.is_some() {
+            c += 1;
+        }
+        c += page_data_bound_count(&n.children, tree);
+    }
+    c
+}
+
+/// Nearest repeating-subform ancestor (`occur.is_repeating()`) of any form node
+/// on the page, walking up `parent_map`. Returns its FormNodeId.0, or None.
+fn page_repeating_ancestor(
+    distinct_ids: &[usize],
+    tree: &FormTree,
+    parent_map: &[usize],
+) -> Option<usize> {
+    use xfa_layout_engine::form::FormNodeId;
+    for &start in distinct_ids {
+        let mut cur = start;
+        let mut depth = 0;
+        while cur != usize::MAX && depth < 4096 {
+            if cur < tree.nodes.len() && tree.get(FormNodeId(cur)).occur.is_repeating() {
+                return Some(cur);
+            }
+            cur = parent_map.get(cur).copied().unwrap_or(usize::MAX);
+            depth += 1;
+        }
+    }
+    None
+}
+
 fn compute_suppression_diags(
     layout: &LayoutDom,
     tree: &FormTree,
 ) -> Vec<flatten_trace::PageSuppressionDiag> {
+    let parent_map = build_parent_map(tree);
     let n = layout.pages.len();
     // Raw per-page keep (matches the suppression `map`).
     let raw: Vec<(bool, bool, bool)> = layout
@@ -419,6 +468,35 @@ fn compute_suppression_diags(
         } else {
             (true, "all_empty_kept")
         };
+
+        // --- Layout provenance ---
+        let data_bound = page_data_bound_count(&layout.pages[i].nodes, tree);
+        let repeating_ancestor = page_repeating_ancestor(&sigs[i], tree, &parent_map);
+        let under_repeating = repeating_ancestor.is_some();
+        let occur_template_id = repeating_ancestor.map_or(-1, |id| id as i64);
+        let has_data = nf > 0 || data_bound > 0;
+        let page_reason = if rt {
+            "root_page"
+        } else if under_repeating && !has_data {
+            "repeated_empty_instance"
+        } else if under_repeating {
+            "occur_instance"
+        } else if has_data {
+            "continuation"
+        } else if static_chars > 0 {
+            "static_page_area"
+        } else {
+            "unknown"
+        };
+        let suppression_safe_to_drop = page_reason == "repeated_empty_instance";
+        let provenance_confidence = if rt || under_repeating || has_data {
+            "exact"
+        } else if static_chars > 0 {
+            "inferred"
+        } else {
+            "unknown"
+        };
+
         diags.push(flatten_trace::PageSuppressionDiag {
             page_index: i,
             keep,
@@ -430,6 +508,12 @@ fn compute_suppression_diags(
             distinct_form_nodes: sigs[i].len(),
             duplicate_of_page: dup,
             runtime_instantiated: rt,
+            under_repeating_subform: under_repeating,
+            occur_template_id,
+            data_bound_nodes_count: data_bound,
+            page_reason,
+            suppression_safe_to_drop,
+            provenance_confidence,
         });
     }
     diags
