@@ -63,6 +63,7 @@ pub mod parity;
 pub mod prelude;
 pub mod redact;
 pub mod signer;
+pub mod structure;
 pub mod tier;
 pub mod watermark;
 
