@@ -531,5 +531,133 @@ class QF2ERegressionGuardTest(unittest.TestCase):
         )
 
 
+class QF5BReconciliationTest(unittest.TestCase):
+    """QF5-B: reconcile the QF2-E recorded labels against the live classifier.
+
+    QF4-F observed (but did not resolve) a 23/73-doc gap between the QF2-E
+    recorded ``fine_category`` and the live classifier output. QF5-B reconciled
+    that gap: the current classifier output is the canonical label set
+    (recorded per-doc as ``fine_category_canonical`` in the QF2-E JSON and
+    summarised in the ``reconciliation_qf5_b`` block). No real classifier bug
+    surfaced — all 23 deltas are threshold / stats-only-path preferences — so
+    the classifier code is unchanged.
+
+    These tests lock the reconciliation: the recorded ``fine_category_canonical``
+    must keep matching the live classifier, and the documented delta accounting
+    (23 deltas across 3 root-cause buckets) must stay accurate.
+    """
+
+    @classmethod
+    def setUpClass(cls_self):
+        if not QF2_E_PATH.exists():
+            raise unittest.SkipTest(f"QF2-E JSON not available: {QF2_E_PATH}")
+        with open(QF2_E_PATH) as f:
+            cls_self.qf2e = json.load(f)
+
+    def _reclassify_doc(self, doc: dict) -> str:
+        # Reuse the regression-guard reclassifier (identical mechanism).
+        return QF2ERegressionGuardTest._reclassify_doc(self, doc)
+
+    def test_canonical_field_present_on_all_73_docs(self):
+        docs = self.qf2e["docs"]
+        self.assertEqual(len(docs), 73)
+        for doc in docs:
+            self.assertIn(
+                "fine_category_canonical",
+                doc,
+                f"{doc['doc_filename']} missing fine_category_canonical",
+            )
+            self.assertIn(doc["fine_category_canonical"], cls.FINE_CATEGORIES)
+
+    def test_canonical_matches_live_classifier_for_all_73_docs(self):
+        """Every recorded ``fine_category_canonical`` must equal live classifier output."""
+        docs = self.qf2e["docs"]
+        mismatches = []
+        for doc in docs:
+            replayed = self._reclassify_doc(doc)
+            canonical = doc.get("fine_category_canonical")
+            if replayed != canonical:
+                mismatches.append(
+                    {
+                        "doc": doc["doc_filename"],
+                        "recorded_canonical": canonical,
+                        "live_classifier": replayed,
+                        "evidence": doc["evidence"],
+                    }
+                )
+        self.assertEqual(
+            mismatches,
+            [],
+            "QF5-B reconciliation FAILED: fine_category_canonical diverges from "
+            f"the live classifier on {len(mismatches)} doc(s). The QF2-E JSON "
+            "must be re-reconciled (regenerate fine_category_canonical) whenever "
+            "the classifier thresholds change. First mismatches: "
+            f"{json.dumps(mismatches[:5], indent=2)}",
+        )
+
+    def test_canonical_matches_regression_guard_fixture(self):
+        """fine_category_canonical must equal the QF4-F captured baseline fixture."""
+        with open(QF2E_BASELINE_FIXTURE) as f:
+            fixture = json.load(f)
+        mismatches = [
+            doc["doc_filename"]
+            for doc in self.qf2e["docs"]
+            if doc.get("fine_category_canonical") != fixture.get(doc["doc_filename"])
+        ]
+        self.assertEqual(
+            mismatches,
+            [],
+            "fine_category_canonical must be byte-identical to the QF4-F "
+            f"regression-guard fixture; diverging docs: {mismatches}",
+        )
+
+    def test_delta_accounting_is_23_in_3_buckets(self):
+        """The documented reconciliation must report exactly the observed deltas."""
+        recon = self.qf2e.get("reconciliation_qf5_b")
+        self.assertIsNotNone(recon, "reconciliation_qf5_b block missing")
+
+        # Recompute deltas from the per-doc fields.
+        docs = self.qf2e["docs"]
+        observed_deltas = [
+            doc
+            for doc in docs
+            if doc["fine_category_canonical"] != doc["fine_category"]
+        ]
+        self.assertEqual(len(observed_deltas), 23)
+        self.assertEqual(recon["delta_count"], 23)
+        self.assertEqual(recon["agreement_count"], 73 - 23)
+
+        # Every delta must be a oracle-mismatch fine-label collapse to mixed_rendering.
+        for doc in observed_deltas:
+            self.assertEqual(doc["fine_category_canonical"], "mixed_rendering")
+            self.assertIn(
+                doc["fine_category"], {"antialias_variant", "font_metric"}
+            )
+
+        buckets = recon["delta_buckets"]
+        self.assertEqual(buckets["A_antialias_mean_ceiling"]["count"], 9)
+        self.assertEqual(buckets["B_font_metric_blank_gap_blocked"]["count"], 8)
+        self.assertEqual(buckets["C_font_metric_mean_floor_blocked"]["count"], 6)
+        self.assertEqual(
+            9 + 8 + 6, len(observed_deltas), "bucket counts must sum to delta count"
+        )
+
+    def test_canonical_source_is_classifier_no_engine_change(self):
+        recon = self.qf2e["reconciliation_qf5_b"]
+        self.assertIn("classifier", recon["canonical_source"])
+        self.assertFalse(recon["classifier_bug_found"])
+        self.assertEqual(recon["classifier_changes"].split()[0], "none")
+
+    def test_qf5b_delta_flag_consistent_with_labels(self):
+        """The per-doc fine_category_qf5b_delta flag must match the label comparison."""
+        for doc in self.qf2e["docs"]:
+            expected = doc["fine_category_canonical"] != doc["fine_category"]
+            self.assertEqual(
+                doc.get("fine_category_qf5b_delta"),
+                expected,
+                f"{doc['doc_filename']} fine_category_qf5b_delta is inconsistent",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
