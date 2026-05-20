@@ -50,8 +50,20 @@ else
   record "QR-10" "release_gate_defined_not_executed_locally" "scripts/ci/qr10_wasm_browser/run_qr10_wasm_browser.sh (no passing result yet)"
 fi
 
-# CI-only lanes: defined + executable in CI, not on this host.
-record "QR-9"  "release_gate_defined_not_executed_locally" "scripts/ci/qr9_sanitizers.sh (Linux+nightly ASAN/LSAN/Miri)"
+# QR-9 FFI memory-safety — Miri (local) + ASAN/LSAN (Linux, executed on VPS).
+#   QR9_RUN=1 re-runs the Linux sanitizer lane live (Linux+nightly only);
+#   otherwise validate the committed ASAN/LSAN result (asan_run_exit==0).
+QR9_RESULT="benchmarks/runs/ga_readiness_3d/sdk_ga_qr9_linux_asan_lsan/qr9_asan_lsan_result.json"
+if [ "${QR9_RUN:-0}" = "1" ]; then
+  if bash scripts/ci/qr9_sanitizers.sh; then record "QR-9" "green_proven" "live sanitizer run (qr9_sanitizers.sh)"; \
+  else record "QR-9" "blocked_sanitizer_failed" "qr9_sanitizers.sh failed"; FAIL=1; fi
+elif python3 -c "import json,sys; d=json.load(open('$QR9_RESULT')); sys.exit(0 if d.get('asan_run_exit')==0 and d.get('asan')=='executed_passed' else 1)" 2>/dev/null; then
+  record "QR-9" "green_proven" "Miri (local) + Linux ASAN+LSAN executed-passed (committed $QR9_RESULT); re-run with QR9_RUN=1"
+else
+  record "QR-9" "release_gate_defined_not_executed_locally" "scripts/ci/qr9_sanitizers.sh (no passing ASAN result yet)"
+fi
+
+# CI-only lane: needs built binding artifacts.
 record "QR-11" "release_gate_defined_not_executed_locally" "scripts/ci/qr11_binding_runtime_mapping.sh (needs built bindings)"
 
 printf '{\n  "milestone":"SDK_GA_QUALITY_RELEASE_RECHECK_LANES",\n  "generated":"%s",\n  "lanes":[\n    %s\n  ],\n  "executable_failed":%s\n}\n' \
