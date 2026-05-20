@@ -1475,7 +1475,7 @@ mod tests {
         );
 
         // Assert that the permissions validate correctly.
-        assert!(algorithm.validate_permissions(&file_encryption_key).is_ok());
+        assert!(algorithm.validate_permissions(file_encryption_key).is_ok());
 
         // Assert that the file encryption key is equal for the owner password.
         let key = algorithm
@@ -1555,7 +1555,7 @@ mod tests {
         );
 
         // Assert that the permissions validate correctly.
-        assert!(algorithm.validate_permissions(&file_encryption_key).is_ok());
+        assert!(algorithm.validate_permissions(file_encryption_key).is_ok());
 
         // Assert that the file encryption key is equal for the owner password.
         let key = algorithm

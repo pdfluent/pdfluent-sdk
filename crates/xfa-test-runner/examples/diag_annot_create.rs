@@ -20,8 +20,7 @@ fn main() {
     let start = comm_run.ops_range.start.saturating_sub(8);
     let end = (comm_run.ops_range.end + 5).min(ops.len());
     println!("Ops [{start}..{end}]:");
-    for i in start..end {
-        let op = &ops[i];
+    for (i, op) in ops.iter().enumerate().take(end).skip(start) {
         // Show first 80 chars of operand debug
         let ops_str = format!("{:?}", op.operands.iter().take(2).collect::<Vec<_>>());
         println!(

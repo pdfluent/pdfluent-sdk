@@ -215,6 +215,32 @@ fn run() -> Result<()> {
     }
 }
 
+/// Parse a comma-separated page list (1-based) into 0-based indices.
+/// Supports ranges like "1,3-5,8".
+pub fn parse_page_list(s: &str, total: usize) -> Result<Vec<usize>> {
+    let mut result = Vec::new();
+    for part in s.split(',') {
+        let part = part.trim();
+        if let Some((start, end)) = part.split_once('-') {
+            let start: usize = start.trim().parse()?;
+            let end: usize = end.trim().parse()?;
+            if start == 0 || end == 0 || start > total || end > total {
+                bail!("page range {start}-{end} out of bounds (1-{total})");
+            }
+            for i in start..=end {
+                result.push(i - 1);
+            }
+        } else {
+            let page: usize = part.parse()?;
+            if page == 0 || page > total {
+                bail!("page {page} out of bounds (1-{total})");
+            }
+            result.push(page - 1);
+        }
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,30 +270,4 @@ mod tests {
             _ => panic!("unexpected command"),
         }
     }
-}
-
-/// Parse a comma-separated page list (1-based) into 0-based indices.
-/// Supports ranges like "1,3-5,8".
-pub fn parse_page_list(s: &str, total: usize) -> Result<Vec<usize>> {
-    let mut result = Vec::new();
-    for part in s.split(',') {
-        let part = part.trim();
-        if let Some((start, end)) = part.split_once('-') {
-            let start: usize = start.trim().parse()?;
-            let end: usize = end.trim().parse()?;
-            if start == 0 || end == 0 || start > total || end > total {
-                bail!("page range {start}-{end} out of bounds (1-{total})");
-            }
-            for i in start..=end {
-                result.push(i - 1);
-            }
-        } else {
-            let page: usize = part.parse()?;
-            if page == 0 || page > total {
-                bail!("page {page} out of bounds (1-{total})");
-            }
-            result.push(page - 1);
-        }
-    }
-    Ok(result)
 }

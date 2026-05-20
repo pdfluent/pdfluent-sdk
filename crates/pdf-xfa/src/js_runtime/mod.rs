@@ -535,14 +535,20 @@ mod tests {
     #[test]
     fn metadata_is_clean_when_zero() {
         assert!(RuntimeMetadata::default().is_clean());
-        let mut m = RuntimeMetadata::default();
-        m.executed = 5;
+        let mut m = RuntimeMetadata {
+            executed: 5,
+            ..Default::default()
+        };
         assert!(m.is_clean(), "executed counter does not flip cleanliness");
         m.runtime_errors = 1;
         assert!(!m.is_clean());
     }
 
     #[test]
+    // Intentional const-floor contract assertions: these pin the safety
+    // floors of compile-time budget constants. assertions_on_constants is
+    // expected and desired here.
+    #[allow(clippy::assertions_on_constants)]
     fn budget_constants_are_sane() {
         assert!(MAX_SCRIPT_BODY_BYTES >= 4096);
         assert!(DEFAULT_TIME_BUDGET_MS >= 25);
@@ -583,6 +589,8 @@ mod tests {
     // body cannot bypass static defence-in-depth before the per-document
     // memory budget engages.
     #[test]
+    // Intentional const-floor contract assertions on compile-time caps.
+    #[allow(clippy::assertions_on_constants)]
     fn variables_script_cap_is_above_event_cap_and_bounded() {
         assert!(
             MAX_VARIABLES_SCRIPT_BODY_BYTES > MAX_SCRIPT_BODY_BYTES,

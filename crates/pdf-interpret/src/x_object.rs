@@ -888,7 +888,7 @@ mod tests {
         let Ok(pdf) = pdf else { return };
 
         let pages = pdf.pages();
-        let Some(page) = pages.get(0) else { return };
+        let Some(page) = pages.first() else { return };
 
         let settings = InterpreterSettings::default();
         let initial_transform = page.initial_transform(true);
@@ -898,6 +898,6 @@ mod tests {
 
         // Must not panic: verifies that q/Q (save/restore) and clip push/pop
         // are balanced for both plain and transparency-group Form XObjects.
-        interpret_page(&page, &mut context, &mut device);
+        interpret_page(page, &mut context, &mut device);
     }
 }

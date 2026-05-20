@@ -39,6 +39,9 @@ fn string_concatenation_result() {
 }
 
 #[test]
+// 3.14 / 6.28 are literal FormCalc test inputs/outputs, not approximations
+// of PI/TAU; keep the literals exactly as written.
+#[allow(clippy::approx_constant)]
 fn numeric_expression_with_decimal() {
     let mut rt = fresh();
     let mut fields = FieldValues::new();

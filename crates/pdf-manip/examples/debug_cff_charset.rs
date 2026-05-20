@@ -192,7 +192,7 @@ fn skip_cff_index(data: &[u8], start: usize) -> Option<usize> {
         return Some(start + 2);
     }
     let off_size = *data.get(start + 2)? as usize;
-    if off_size < 1 || off_size > 4 {
+    if !(1..=4).contains(&off_size) {
         return None;
     }
     let last_off_pos = start + 3 + count * off_size;
@@ -217,7 +217,7 @@ fn get_first_cff_index_item(data: &[u8], start: usize) -> Option<(usize, usize)>
         return None;
     }
     let off_size = *data.get(start + 2)? as usize;
-    if off_size < 1 || off_size > 4 {
+    if !(1..=4).contains(&off_size) {
         return None;
     }
     // Read first offset (offset 0 = relative start)
