@@ -1613,6 +1613,58 @@ impl PdfDocument {
         Self::from_lopdf(lopdf_doc)
     }
 
+    // ---------- Document structure: outlines / annotations / attachments ----------
+
+    /// Read the document outline (bookmark) tree.
+    ///
+    /// Returns the nested [`Outline`](crate::structure::Outline) list; an
+    /// empty `Vec` for a document without an outline. `Outline::page` is
+    /// the 0-based target page for in-document GoTo actions, `None` for
+    /// URI / named / external destinations.
+    pub fn outlines(&self) -> Result<Vec<crate::structure::Outline>> {
+        let bookmarks = pdf_manip::bookmarks::read_bookmarks(&self.lopdf)?;
+        Ok(bookmarks
+            .iter()
+            .map(crate::structure::from_bookmark)
+            .collect())
+    }
+
+    /// Replace the document outline (bookmark) tree.
+    ///
+    /// Passing an empty slice removes the outline. Pages are 0-based.
+    pub fn set_outlines(&mut self, outlines: &[crate::structure::Outline]) -> Result<()> {
+        let bookmarks: Vec<_> = outlines.iter().map(crate::structure::to_bookmark).collect();
+        pdf_manip::bookmarks::write_bookmarks(&mut self.lopdf, &bookmarks)?;
+        Ok(())
+    }
+
+    /// List the annotations on a 0-based page (read-only view).
+    ///
+    /// Returns `[{subtype, rect, contents}]`. Annotation **authoring**
+    /// (add/delete/update) is intentionally not exposed on the Rust
+    /// facade in v1 — the v1 annotation-authoring surface is the WASM
+    /// binding (`PdfDocMut.addHighlight` / `addStickyNote` / `addFreeText`)
+    /// and the `pdf-annot` builder crate. See
+    /// `benchmarks/runs/ga_100_closure_v3/core_pdf_sdk_quality_true100/`.
+    pub fn annotations(&self, page_index: usize) -> Result<Vec<crate::structure::AnnotationInfo>> {
+        Ok(crate::structure::read_annotations(&self.lopdf, page_index))
+    }
+
+    /// List embedded-file attachments (name + uncompressed size).
+    ///
+    /// Useful for ZUGFeRD / e-invoice extraction. Adding embedded files
+    /// is intentionally not exposed on the Rust facade in v1 (see the
+    /// closure report); only read/list + extract are supported.
+    pub fn attachments(&self) -> Result<Vec<crate::structure::Attachment>> {
+        Ok(crate::structure::read_attachments(&self.lopdf))
+    }
+
+    /// Extract the bytes of the embedded file with the given name, or
+    /// `None` if no attachment with that name exists.
+    pub fn attachment_bytes(&self, name: &str) -> Result<Option<Vec<u8>>> {
+        Ok(crate::structure::read_attachment_bytes(&self.lopdf, name))
+    }
+
     // ---------- Persistence ----------
 
     /// Save the document to a filesystem path.
