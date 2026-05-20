@@ -121,7 +121,88 @@ fn count_bind(tree: &FormTree) -> BindCounts {
             stack.push((child, eff_hidden));
         }
     }
+    if std::env::var("XFA_HIDDEN_DUMP").ok().as_deref() == Some("1") {
+        dump_hidden_nodes(tree);
+    }
     c
+}
+
+/// D8 (trace-only, env-gated by `XFA_HIDDEN_DUMP=1`, default OFF): emit one
+/// stderr line per non-visible FormTree node for investigation. Behaviour-
+/// neutral — only runs when the env flag is set AND the trace path is active,
+/// and writes to stderr only. Fields: id, type, presence, occur(min/max/initial),
+/// bound (has bound_data_node), zinst (is_zero_instance_prototype), parent id,
+/// and subtree field/draw/text-char counts.
+fn dump_hidden_nodes(tree: &FormTree) {
+    let n = tree.nodes.len();
+    let mut parent = vec![usize::MAX; n];
+    for i in 0..n {
+        for &c in &tree.get(FormNodeId(i)).children {
+            if c.0 < n {
+                parent[c.0] = i;
+            }
+        }
+    }
+    for i in 0..n {
+        let id = FormNodeId(i);
+        let m = tree.meta(id);
+        if m.presence == Presence::Visible {
+            continue;
+        }
+        let node = tree.get(id);
+        // Subtree content tally.
+        let (mut fields, mut draws, mut chars) = (0usize, 0usize, 0usize);
+        let mut s = vec![id];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(x) = s.pop() {
+            if x.0 >= n || !seen.insert(x.0) {
+                continue;
+            }
+            match &tree.get(x).node_type {
+                FormNodeType::Field { value } => {
+                    fields += 1;
+                    chars += value.trim().len();
+                }
+                FormNodeType::Draw(DrawContent::Text(t)) => {
+                    draws += 1;
+                    chars += t.trim().len();
+                }
+                FormNodeType::Draw(_) => draws += 1,
+                _ => {}
+            }
+            for &c in &tree.get(x).children {
+                s.push(c);
+            }
+        }
+        let ty = match &node.node_type {
+            FormNodeType::Subform => "subform",
+            FormNodeType::SubformSet => "subformset",
+            FormNodeType::Area => "area",
+            FormNodeType::ExclGroup => "exclgroup",
+            FormNodeType::Field { .. } => "field",
+            FormNodeType::Draw(_) => "draw",
+            FormNodeType::Image { .. } => "image",
+            FormNodeType::PageArea { .. } => "pagearea",
+            FormNodeType::PageSet => "pageset",
+            FormNodeType::Root => "root",
+        };
+        eprintln!(
+            "XFA_HIDDEN_DUMP id={} type={} name={:?} presence={:?} occur(min={},max={:?},init={}) bound={} zinst={} parent={} sub_fields={} sub_draws={} sub_chars={}",
+            i,
+            ty,
+            node.name,
+            m.presence,
+            node.occur.min,
+            node.occur.max,
+            node.occur.initial,
+            m.bound_data_node.is_some(),
+            m.is_zero_instance_prototype,
+            parent[i] as i64,
+            fields,
+            draws,
+            chars
+        );
+    }
 }
 
 /// Counts derived from the laid-out pages (layout stage).
