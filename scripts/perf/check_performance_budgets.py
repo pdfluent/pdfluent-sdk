@@ -55,6 +55,23 @@ def flatten(run_dir: Path) -> dict:
             samples["cabi.open_pagecount_free.p50_ns"] = c.get("samples", 0)
             samples["cabi.open_pagecount_free.p95_ns"] = c.get("samples", 0)
 
+    # Language-binding overhead (Node / Python), measured by the per-binding
+    # timing harnesses (scripts/perf/bindings/*). Optional files; included
+    # when present so the of-record run can budget binding overhead.
+    for bname, fname in (("node", "binding_node_run.json"), ("python", "binding_python_run.json")):
+        bj = _load(run_dir / fname)
+        if bj and bj.get("status") == "green_measured":
+            v = bj.get("valid", {})
+            if "p50_ns" in v:
+                m[f"{bname}.open_pagecount.p50_ns"] = v["p50_ns"]
+                m[f"{bname}.open_pagecount.p95_ns"] = v["p95_ns"]
+                samples[f"{bname}.open_pagecount.p50_ns"] = v.get("samples", 0)
+                samples[f"{bname}.open_pagecount.p95_ns"] = v.get("samples", 0)
+            mf = bj.get("malformed", {})
+            if "p50_ns" in mf:
+                m[f"{bname}.error_path.p50_ns"] = mf["p50_ns"]
+                samples[f"{bname}.error_path.p50_ns"] = mf.get("samples", 0)
+
     wasm = _load(run_dir / "wasm_perf_run.json")
     if wasm and wasm.get("ok"):
         if "init_ms" in wasm:
