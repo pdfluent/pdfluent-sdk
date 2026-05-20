@@ -216,9 +216,17 @@ pub struct RuntimeMetadata {
     pub occur_max_writes: usize,
     /// D5: occur mutations captured as intent (no layout effect).
     pub occur_mutations_captured: usize,
-    /// D5: occur mutations APPLIED to layout. Wired for the next milestone;
-    /// **always 0 in D5** (capture-only).
+    /// D5: occur mutations APPLIED to layout. **Always 0 in D5** (capture-only);
+    /// D6 bumps this when `XFA_OCCUR_APPLY=1` applies a captured `occur.min`.
     pub occur_mutations_applied: usize,
+    /// D6: captured occur mutations NOT applied (rollback, apply-flag off,
+    /// dead/non-repeatable target, unsupported prop, negative value).
+    pub occur_mutations_skipped: usize,
+    /// D6: captured occur mutations skipped because the target node is not a
+    /// repeatable container (Subform/Area/ExclGroup) — fail-closed.
+    pub occur_application_ambiguous: usize,
+    /// D6: distinct form nodes whose occur was applied.
+    pub occur_application_targets: usize,
 }
 
 impl RuntimeMetadata {
@@ -304,6 +312,15 @@ impl RuntimeMetadata {
         self.occur_mutations_applied = self
             .occur_mutations_applied
             .saturating_add(other.occur_mutations_applied);
+        self.occur_mutations_skipped = self
+            .occur_mutations_skipped
+            .saturating_add(other.occur_mutations_skipped);
+        self.occur_application_ambiguous = self
+            .occur_application_ambiguous
+            .saturating_add(other.occur_application_ambiguous);
+        self.occur_application_targets = self
+            .occur_application_targets
+            .saturating_add(other.occur_application_targets);
     }
 }
 
@@ -531,6 +548,14 @@ pub trait XfaJsRuntime {
     /// Take the cumulative metadata since the last `take_metadata`
     /// call (or since `reset_for_new_document`, whichever was later).
     fn take_metadata(&mut self) -> RuntimeMetadata;
+
+    /// D6: drain captured `occur.min`/`occur.max` write intents
+    /// `(node_index, prop, value)` recorded during the script pass. The
+    /// dispatch path applies them (only when `XFA_OCCUR_APPLY=1`) after the
+    /// rollback decision. Default: none (non-sandboxed runtimes capture nothing).
+    fn take_occur_mutations(&mut self) -> Vec<(usize, String, i64)> {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]

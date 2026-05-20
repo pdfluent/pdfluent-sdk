@@ -169,8 +169,15 @@ pub struct DynamicScriptOutcome {
     pub occur_max_writes: usize,
     /// **D5.** Occur mutations captured as intent (no layout effect).
     pub occur_mutations_captured: usize,
-    /// **D5.** Occur mutations APPLIED to layout — always 0 in D5 (capture-only).
+    /// **D5/D6.** Occur mutations APPLIED to layout (D5: 0; D6: >0 under `XFA_OCCUR_APPLY`).
     pub occur_mutations_applied: usize,
+    /// **D6.** Captured occur mutations not applied (gate off / rollback / unsupported).
+    pub occur_mutations_skipped: usize,
+    /// **D6.** Captured occur mutations skipped because the target is not a
+    /// repeatable container (fail-closed).
+    pub occur_application_ambiguous: usize,
+    /// **D6.** Distinct nodes whose occur was applied.
+    pub occur_application_targets: usize,
 }
 
 impl Default for DynamicScriptOutcome {
@@ -216,6 +223,9 @@ impl Default for DynamicScriptOutcome {
             occur_max_writes: 0,
             occur_mutations_captured: 0,
             occur_mutations_applied: 0,
+            occur_mutations_skipped: 0,
+            occur_application_ambiguous: 0,
+            occur_application_targets: 0,
         }
     }
 }
@@ -390,6 +400,14 @@ pub fn apply_dynamic_scripts_with_mode(
     apply_dynamic_scripts_with_runtime(form, root_id, mode, &mut NullRuntime::new())
 }
 
+/// D6: opt-in gate for applying captured `occur.min` mutations to layout.
+/// Default OFF. Even in sandboxed mode, occur application only happens when
+/// `XFA_OCCUR_APPLY=1`, so the committed default (and default sandboxed
+/// capture-only) behaviour is unchanged.
+fn occur_apply_enabled() -> bool {
+    std::env::var("XFA_OCCUR_APPLY").ok().as_deref() == Some("1")
+}
+
 /// Phase B entry point that lets the caller inject a sandboxed runtime
 /// adapter. When `mode == JsExecutionMode::SandboxedRuntime` the supplied
 /// `runtime` is consulted for every JavaScript script whose `<event activity>`
@@ -507,9 +525,11 @@ pub fn apply_dynamic_scripts_with_runtime(
         }
     }
 
+    let mut captured_occur: Vec<(usize, String, i64)> = Vec::new();
     if sandbox_active {
         let _ = runtime.set_form_handle(std::ptr::null_mut(), root_id);
         sandbox_metadata = runtime.take_metadata();
+        captured_occur = runtime.take_occur_mutations();
     }
 
     let mut stats = ScriptStats::default();
@@ -544,9 +564,72 @@ pub fn apply_dynamic_scripts_with_runtime(
     let rollback_errors = stats.errors.saturating_add(sandbox_rollback_errors);
     let rollback_successes = stats.successes.saturating_add(sandbox_metadata.executed);
 
-    if should_rollback(form, &snapshot, rollback_errors, rollback_successes) {
+    let rolled_back = should_rollback(form, &snapshot, rollback_errors, rollback_successes);
+    if rolled_back {
         restore_snapshot(form, &snapshot);
         changes = 0;
+    }
+
+    // D6: apply captured `occur.min` mutations to the form before layout.
+    // Strictly gated: sandboxed mode + the opt-in `XFA_OCCUR_APPLY=1` flag +
+    // the script pass did NOT roll back. Default flatten and the default
+    // sandboxed (capture-only) behaviour are unchanged. Each captured write is
+    // applied only to a live, repeatable container node (Subform/Area/ExclGroup);
+    // everything else fails closed (counted, not applied). `occur.max` writes
+    // are captured but not applied in D6 (min-only scope).
+    if sandbox_active && !rolled_back && occur_apply_enabled() && !captured_occur.is_empty() {
+        let mut applied_targets: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        for (idx, prop, value) in &captured_occur {
+            if prop != "min" {
+                // occur.max captured but not applied in D6.
+                sandbox_metadata.occur_mutations_skipped =
+                    sandbox_metadata.occur_mutations_skipped.saturating_add(1);
+                continue;
+            }
+            if *value < 0 || *idx >= form.nodes.len() {
+                sandbox_metadata.occur_mutations_skipped =
+                    sandbox_metadata.occur_mutations_skipped.saturating_add(1);
+                continue;
+            }
+            let nid = FormNodeId(*idx);
+            let is_repeatable = matches!(
+                form.get(nid).node_type,
+                FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup
+            );
+            if !is_repeatable {
+                // Fail closed: only repeatable containers may have occur applied.
+                sandbox_metadata.occur_application_ambiguous = sandbox_metadata
+                    .occur_application_ambiguous
+                    .saturating_add(1);
+                sandbox_metadata.occur_mutations_skipped =
+                    sandbox_metadata.occur_mutations_skipped.saturating_add(1);
+                continue;
+            }
+            let v = *value as u32;
+            let node = form.get_mut(nid);
+            node.occur.min = v;
+            if node.occur.initial < v {
+                node.occur.initial = v;
+            }
+            if let Some(m) = node.occur.max {
+                if m < v {
+                    node.occur.max = Some(v);
+                }
+            }
+            sandbox_metadata.occur_mutations_applied =
+                sandbox_metadata.occur_mutations_applied.saturating_add(1);
+            applied_targets.insert(*idx);
+        }
+        sandbox_metadata.occur_application_targets = sandbox_metadata
+            .occur_application_targets
+            .saturating_add(applied_targets.len());
+    } else if !captured_occur.is_empty() {
+        // Captured but the apply gate is closed (default capture-only path):
+        // count them as skipped for observability without touching layout.
+        sandbox_metadata.occur_mutations_skipped = sandbox_metadata
+            .occur_mutations_skipped
+            .saturating_add(captured_occur.len());
     }
 
     let js_seen_count = js_skipped + sandbox_metadata.executed;
@@ -600,6 +683,9 @@ pub fn apply_dynamic_scripts_with_runtime(
         occur_max_writes: sandbox_metadata.occur_max_writes,
         occur_mutations_captured: sandbox_metadata.occur_mutations_captured,
         occur_mutations_applied: sandbox_metadata.occur_mutations_applied,
+        occur_mutations_skipped: sandbox_metadata.occur_mutations_skipped,
+        occur_application_ambiguous: sandbox_metadata.occur_application_ambiguous,
+        occur_application_targets: sandbox_metadata.occur_application_targets,
     })
 }
 
