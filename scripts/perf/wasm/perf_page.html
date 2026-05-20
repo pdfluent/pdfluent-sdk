@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- WASM perf glue: measures init, then in-browser open+pageCount loops to
+     avoid per-call IPC noise. Exposes window.perfLoop / window.__init_ms. -->
+<html>
+  <head><meta charset="utf-8" /><title>WASM perf baseline</title></head>
+  <body>
+    <script type="module">
+      import init, { PdfDoc } from './xfa_wasm.js';
+      window.__perf_error = null;
+      window.addEventListener('unhandledrejection', (e) => {
+        window.__perf_error = 'unhandledrejection: ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason));
+      });
+      try {
+        const t0 = performance.now();
+        await init();
+        window.__init_ms = performance.now() - t0;
+        const pctOf = (arr, q) => arr[Math.min(arr.length - 1, Math.floor(q * (arr.length - 1)))];
+        window.perfLoop = (bytesArray, iters, expectOk) => {
+          const u8 = new Uint8Array(bytesArray);
+          const times = [];
+          let oks = 0, errs = 0, lastPages = -1;
+          for (let i = 0; i < iters; i++) {
+            const a = performance.now();
+            try { const d = PdfDoc.open(u8); lastPages = d.pageCount(); oks++; }
+            catch (e) { errs++; }
+            times.push((performance.now() - a) * 1e6); // -> ns
+          }
+          times.sort((x, y) => x - y);
+          return {
+            samples: times.length, oks, errs, pages: lastPages,
+            min_ns: times[0], p50_ns: pctOf(times, 0.5), p95_ns: pctOf(times, 0.95),
+            p99_ns: pctOf(times, 0.99), max_ns: times[times.length - 1],
+            usedJSHeapSize: (performance.memory ? performance.memory.usedJSHeapSize : null),
+          };
+        };
+        window.__perf_ready = true;
+      } catch (e) {
+        window.__perf_error = 'init failed: ' + (e && e.message ? e.message : String(e));
+      }
+    </script>
+  </body>
+</html>
