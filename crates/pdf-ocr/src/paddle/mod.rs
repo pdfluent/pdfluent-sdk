@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn crop_regions_extracts_correct_pixels() {
         // 4x4 RGB image, all red
-        let mut img: Vec<u8> = vec![255, 0, 0].repeat(16);
+        let mut img: Vec<u8> = [255, 0, 0].repeat(16);
         // Set center 2x2 to green
         for y in 1u32..3 {
             for x in 1u32..3 {

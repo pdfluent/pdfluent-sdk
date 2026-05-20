@@ -1730,7 +1730,7 @@ mod tests {
 
     #[test]
     fn meta_null() {
-        let key = b"Title\0".as_ptr().cast::<c_char>();
+        let key = c"Title".as_ptr();
         assert!(unsafe { pdf_document_get_meta(ptr::null(), key) }.is_null());
     }
 
@@ -1758,7 +1758,7 @@ mod tests {
 
     #[test]
     fn search_count_null() {
-        let q = b"test\0".as_ptr().cast::<c_char>();
+        let q = c"test".as_ptr();
         assert_eq!(unsafe { pdf_document_search_count(ptr::null(), q) }, -1);
         assert_eq!(
             unsafe { pdf_document_search_count(ptr::null(), ptr::null()) },
@@ -1786,7 +1786,7 @@ mod tests {
 
     #[test]
     fn watermark_null() {
-        let text = b"DRAFT\0".as_ptr().cast::<c_char>();
+        let text = c"DRAFT".as_ptr();
         let mut out: *mut PdfDocument = ptr::null_mut();
         let s = unsafe { pdf_document_add_watermark(ptr::null(), text, &mut out) };
         assert_eq!(s, PdfStatus::ErrorInvalidArgument);

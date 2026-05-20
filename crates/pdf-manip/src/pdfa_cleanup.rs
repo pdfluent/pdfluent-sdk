@@ -5673,6 +5673,41 @@ fn normalize_date_for_xmp(date: &str) -> String {
     cleaned.to_string()
 }
 
+/// Ensure 'xref' and 'startxref' keywords are followed by proper EOL (§6.1.4).
+fn fix_xref_eol(data: &mut Vec<u8>) {
+    // 1. Fix 'xref' keyword.
+    if let Some(pos) = find_last(data, b"xref") {
+        // Check if standalone 'xref' (not part of 'startxref').
+        if pos == 0 || data[pos - 1].is_ascii_whitespace() {
+            let next = pos + 4;
+            if next < data.len() && data[next] == b' ' {
+                // Remove trailing spaces after 'xref' before EOL.
+                let mut end = next;
+                while end < data.len() && data[end] == b' ' {
+                    end += 1;
+                }
+                if end > next {
+                    data.drain(next..end);
+                }
+            }
+        }
+    }
+
+    // 2. Fix 'startxref' keyword.
+    if let Some(pos) = find_last(data, b"startxref") {
+        let next = pos + 9;
+        if next < data.len() && data[next] == b' ' {
+            let mut end = next;
+            while end < data.len() && data[end] == b' ' {
+                end += 1;
+            }
+            if end > next {
+                data.drain(next..end);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5875,8 +5910,7 @@ mod tests {
     #[test]
     fn test_remove_encryption() {
         let mut doc = make_basic_doc();
-        doc.trailer
-            .set("Encrypt", Object::Reference((99, 0).into()));
+        doc.trailer.set("Encrypt", Object::Reference((99, 0)));
 
         assert!(remove_encryption(&mut doc));
         assert!(!doc.trailer.has(b"Encrypt"));
@@ -5980,7 +6014,7 @@ mod tests {
         let mut doc = make_basic_doc();
         // Annotation with AP dict that has /D but no /N.
         let ap = dictionary! {
-            "D" => Object::Reference((99, 0).into()),
+            "D" => Object::Reference((99, 0)),
         };
         let annot = dictionary! {
             "Subtype" => Object::Name(b"Stamp".to_vec()),
@@ -6287,40 +6321,5 @@ mod tests {
         let mut data = b"%PDF-2.0\ntest".to_vec();
         fix_pdf_header(&mut data);
         assert!(data.starts_with(b"%PDF-1.7"));
-    }
-}
-
-/// Ensure 'xref' and 'startxref' keywords are followed by proper EOL (§6.1.4).
-fn fix_xref_eol(data: &mut Vec<u8>) {
-    // 1. Fix 'xref' keyword.
-    if let Some(pos) = find_last(data, b"xref") {
-        // Check if standalone 'xref' (not part of 'startxref').
-        if pos == 0 || data[pos - 1].is_ascii_whitespace() {
-            let next = pos + 4;
-            if next < data.len() && data[next] == b' ' {
-                // Remove trailing spaces after 'xref' before EOL.
-                let mut end = next;
-                while end < data.len() && data[end] == b' ' {
-                    end += 1;
-                }
-                if end > next {
-                    data.drain(next..end);
-                }
-            }
-        }
-    }
-
-    // 2. Fix 'startxref' keyword.
-    if let Some(pos) = find_last(data, b"startxref") {
-        let next = pos + 9;
-        if next < data.len() && data[next] == b' ' {
-            let mut end = next;
-            while end < data.len() && data[end] == b' ' {
-                end += 1;
-            }
-            if end > next {
-                data.drain(next..end);
-            }
-        }
     }
 }

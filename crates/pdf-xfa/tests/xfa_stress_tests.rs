@@ -101,9 +101,9 @@ fn stress_100_repeating_subform_instances() {
         "stress test took {elapsed:?} — must complete within 30 seconds"
     );
 
-    match result {
-        Ok(output) => assert!(!output.is_empty(), "flattened output must not be empty"),
-        Err(_) => {} // acceptable — the form may not be fully supported
+    // acceptable — the form may not be fully supported
+    if let Ok(output) = result {
+        assert!(!output.is_empty(), "flattened output must not be empty");
     }
 }
 
@@ -152,9 +152,9 @@ fn stress_50_fields_per_page() {
     // This test merely verifies that we do not OOM or panic. No explicit
     // memory check — Rust's allocator will abort on OOM before this assert.
     let result = flatten_xfa_to_pdf(&pdf_bytes);
-    match result {
-        Ok(output) => assert!(!output.is_empty(), "flattened output must not be empty"),
-        Err(_) => {} // acceptable — the form may not be fully supported
+    // acceptable — the form may not be fully supported
+    if let Ok(output) = result {
+        assert!(!output.is_empty(), "flattened output must not be empty");
     }
 }
 
@@ -196,8 +196,8 @@ fn stress_20_levels_deep_no_stack_overflow() {
 
     // Must not panic with a stack overflow — use the default thread stack.
     let result = flatten_xfa_to_pdf(&pdf_bytes);
-    match result {
-        Ok(output) => assert!(!output.is_empty(), "flattened output must not be empty"),
-        Err(_) => {} // acceptable — the form may not be fully supported
+    // acceptable — the form may not be fully supported
+    if let Ok(output) = result {
+        assert!(!output.is_empty(), "flattened output must not be empty");
     }
 }

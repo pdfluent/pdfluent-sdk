@@ -658,6 +658,34 @@ fn read_widths2(arr: &Array<'_>) -> Option<HashMap<u32, [f32; 3]>> {
     Some(map)
 }
 
+fn read_encoding(
+    object: &Object<'_>,
+    cmap_resolver: &CMapResolverFn,
+    warning_sink: &WarningSinkFn,
+) -> Option<CMap> {
+    // TODO: Support fetching CMaps referenced via `usecmap` in the PDF.
+    match object {
+        Object::Name(n) => {
+            let cmap_type = pdf_font::cmap::CMapName::from_bytes(n.deref());
+            match cmap_type {
+                pdf_font::cmap::CMapName::IdentityH => Some(CMap::identity_h()),
+                pdf_font::cmap::CMapName::IdentityV => Some(CMap::identity_v()),
+                _ => {
+                    let data = (cmap_resolver)(cmap_type)?;
+                    let resolver = cmap_resolver.clone();
+                    CMap::parse(data, move |n| (resolver)(n))
+                }
+            }
+        }
+        Object::Stream(s) => {
+            let decoded = decode_or_warn(s, warning_sink)?;
+            let resolver = cmap_resolver.clone();
+            CMap::parse(&decoded, move |n| (resolver)(n))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -735,33 +763,5 @@ mod tests {
     fn test_w_empty_array() {
         let map = parse_widths(b"[]");
         assert!(map.is_empty());
-    }
-}
-
-fn read_encoding(
-    object: &Object<'_>,
-    cmap_resolver: &CMapResolverFn,
-    warning_sink: &WarningSinkFn,
-) -> Option<CMap> {
-    // TODO: Support fetching CMaps referenced via `usecmap` in the PDF.
-    match object {
-        Object::Name(n) => {
-            let cmap_type = pdf_font::cmap::CMapName::from_bytes(n.deref());
-            match cmap_type {
-                pdf_font::cmap::CMapName::IdentityH => Some(CMap::identity_h()),
-                pdf_font::cmap::CMapName::IdentityV => Some(CMap::identity_v()),
-                _ => {
-                    let data = (cmap_resolver)(cmap_type)?;
-                    let resolver = cmap_resolver.clone();
-                    CMap::parse(data, move |n| (resolver)(n))
-                }
-            }
-        }
-        Object::Stream(s) => {
-            let decoded = decode_or_warn(s, warning_sink)?;
-            let resolver = cmap_resolver.clone();
-            CMap::parse(&decoded, move |n| (resolver)(n))
-        }
-        _ => None,
     }
 }

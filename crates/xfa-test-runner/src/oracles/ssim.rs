@@ -143,8 +143,8 @@ mod tests {
     fn different_images_return_low_ssim() {
         let w = 16u32;
         let h = 16u32;
-        let white: Vec<u8> = vec![255, 255, 255, 255].repeat((w * h) as usize);
-        let black: Vec<u8> = vec![0, 0, 0, 255].repeat((w * h) as usize);
+        let white: Vec<u8> = [255, 255, 255, 255].repeat((w * h) as usize);
+        let black: Vec<u8> = [0, 0, 0, 255].repeat((w * h) as usize);
 
         let score = compute_ssim(&white, w, h, &black, w, h);
         assert!(score < 0.1, "Expected low SSIM, got {score}");

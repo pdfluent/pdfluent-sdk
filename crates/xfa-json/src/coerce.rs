@@ -71,6 +71,9 @@ mod tests {
     }
 
     #[test]
+    // 3.14 is literal test input verifying string->number coercion, not an
+    // approximation of PI.
+    #[allow(clippy::approx_constant)]
     fn numbers() {
         assert_eq!(coerce_value("42"), FieldValue::Number(42.0));
         assert_eq!(coerce_value("3.14"), FieldValue::Number(3.14));

@@ -4518,7 +4518,7 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    fn find_last_content_stream<'a>(doc: &'a Document, page_id: ObjectId) -> &'a Stream {
+    fn find_last_content_stream(doc: &Document, page_id: ObjectId) -> &Stream {
         let page_dict = doc.get_dictionary(page_id).expect("page dict");
         match page_dict.get(b"Contents").expect("contents") {
             Object::Reference(id) => doc
@@ -4699,13 +4699,11 @@ mod tests {
         let mut found_content = false;
         for page_id in &pages {
             if let Ok(page_dict) = doc.get_dictionary(*page_id) {
-                if let Ok(contents_ref) = page_dict.get(b"Contents") {
-                    if let Object::Reference(stream_id) = contents_ref {
-                        if let Ok(obj) = doc.get_object(*stream_id) {
-                            if let Ok(stream) = obj.as_stream() {
-                                if !stream.content.is_empty() {
-                                    found_content = true;
-                                }
+                if let Ok(Object::Reference(stream_id)) = page_dict.get(b"Contents") {
+                    if let Ok(obj) = doc.get_object(*stream_id) {
+                        if let Ok(stream) = obj.as_stream() {
+                            if !stream.content.is_empty() {
+                                found_content = true;
                             }
                         }
                     }
@@ -6138,15 +6136,13 @@ ET
         let doc = Document::load_mem(&flattened).expect("parse flattened PDF");
         for page_id in doc.page_iter() {
             let page = doc.get_dictionary(page_id).expect("page dict");
-            match page.get(b"Annots") {
-                Ok(Object::Array(arr)) => {
-                    assert!(
-                        !arr.is_empty(),
-                        "page {:?}: /Annots must either be absent or non-empty after flatten",
-                        page_id
-                    );
-                }
-                _ => {} // absent = good
+            if let Ok(Object::Array(arr)) = page.get(b"Annots") {
+                // absent = good; only a present /Annots must be non-empty
+                assert!(
+                    !arr.is_empty(),
+                    "page {:?}: /Annots must either be absent or non-empty after flatten",
+                    page_id
+                );
             }
         }
     }
@@ -6459,12 +6455,8 @@ ET
     fn flatten_empty_bytes_does_not_panic_and_does_not_error() {
         // Empty byte slice: not a PDF, no XFA markers — should return Ok([])
         // or at worst a well-formed Err (not a panic).
-        let result = flatten_xfa_to_pdf(b"");
-        // We only assert it does not panic; Ok with empty bytes is acceptable.
-        match result {
-            Ok(_) => {}
-            Err(_) => {} // Err is fine for invalid input
-        }
+        // We only assert it does not panic; Ok or Err is acceptable.
+        let _ = flatten_xfa_to_pdf(b"");
     }
 
     /// Non-XFA PDF bytes: flatten_xfa_to_pdf must return the input unchanged
@@ -6475,10 +6467,9 @@ ET
         // and no xdp:xdp — the pre-check at the start of flatten_xfa_to_pdf
         // should return immediately with the original bytes cloned.
         let input = b"%PDF-1.4\n%%EOF\n";
-        let result = flatten_xfa_to_pdf(input);
-        match result {
-            Ok(out) => assert_eq!(out, input, "non-XFA input should pass through unchanged"),
-            Err(_) => {} // Err is acceptable for degenerate input
+        // Err is acceptable for degenerate input; a success must pass through.
+        if let Ok(out) = flatten_xfa_to_pdf(input) {
+            assert_eq!(out, input, "non-XFA input should pass through unchanged");
         }
     }
 }

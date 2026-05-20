@@ -6644,7 +6644,7 @@ mod tests {
         );
 
         // All 8 fields should be distributed across the pages.
-        let total_leaves: usize = result.pages.iter().map(|p| count_leaf_nodes(p)).sum();
+        let total_leaves: usize = result.pages.iter().map(count_leaf_nodes).sum();
         assert_eq!(
             total_leaves, 8,
             "All 8 fields should appear across pages, found {}",
@@ -7556,14 +7556,16 @@ mod tests {
 
     #[test]
     fn resolve_display_value_maps_save_to_display() {
-        let mut meta = FormNodeMeta::default();
-        meta.field_kind = FieldKind::Dropdown;
-        meta.display_items = vec![
-            "United States".to_string(),
-            "United Kingdom".to_string(),
-            "Canada".to_string(),
-        ];
-        meta.save_items = vec!["US".to_string(), "UK".to_string(), "CA".to_string()];
+        let meta = FormNodeMeta {
+            field_kind: FieldKind::Dropdown,
+            display_items: vec![
+                "United States".to_string(),
+                "United Kingdom".to_string(),
+                "Canada".to_string(),
+            ],
+            save_items: vec!["US".to_string(), "UK".to_string(), "CA".to_string()],
+            ..Default::default()
+        };
 
         // Save value "UK" should resolve to "United Kingdom"
         assert_eq!(resolve_display_value("UK", &meta), "United Kingdom");
@@ -7577,27 +7579,33 @@ mod tests {
 
     #[test]
     fn resolve_display_value_no_save_items_passthrough() {
-        let mut meta = FormNodeMeta::default();
-        meta.field_kind = FieldKind::Dropdown;
-        meta.display_items = vec!["Red".to_string(), "Green".to_string()];
+        let meta = FormNodeMeta {
+            field_kind: FieldKind::Dropdown,
+            display_items: vec!["Red".to_string(), "Green".to_string()],
+            ..Default::default()
+        };
         // No save_items — value passes through unchanged
         assert_eq!(resolve_display_value("Red", &meta), "Red");
     }
 
     #[test]
     fn resolve_display_value_non_dropdown_passthrough() {
-        let mut meta = FormNodeMeta::default();
-        meta.field_kind = FieldKind::Text;
-        meta.save_items = vec!["US".to_string()];
-        meta.display_items = vec!["United States".to_string()];
+        let meta = FormNodeMeta {
+            field_kind: FieldKind::Text,
+            save_items: vec!["US".to_string()],
+            display_items: vec!["United States".to_string()],
+            ..Default::default()
+        };
         // Non-dropdown field: no resolution
         assert_eq!(resolve_display_value("US", &meta), "US");
     }
 
     #[test]
     fn resolve_display_value_numeric_edit_strips_trailing_zeros() {
-        let mut meta = FormNodeMeta::default();
-        meta.field_kind = FieldKind::NumericEdit;
+        let meta = FormNodeMeta {
+            field_kind: FieldKind::NumericEdit,
+            ..Default::default()
+        };
 
         assert_eq!(resolve_display_value("1.00000000", &meta), "1");
         assert_eq!(resolve_display_value("3.50", &meta), "3.5");
@@ -7611,8 +7619,10 @@ mod tests {
 
     #[test]
     fn resolve_display_value_date_time_picker_uses_iso_date_prefix() {
-        let mut meta = FormNodeMeta::default();
-        meta.field_kind = FieldKind::DateTimePicker;
+        let meta = FormNodeMeta {
+            field_kind: FieldKind::DateTimePicker,
+            ..Default::default()
+        };
 
         assert_eq!(resolve_display_value("2026-04-12", &meta), "2026-04-12");
         assert_eq!(
@@ -8148,7 +8158,7 @@ mod container_node_tests {
         assert_eq!(result.pages.len(), 1);
         // SubformSet itself may appear as a container node; its children should be present
         let page = &result.pages[0];
-        fn count_named<'a>(nodes: &'a [LayoutNode], name: &str) -> usize {
+        fn count_named(nodes: &[LayoutNode], name: &str) -> usize {
             nodes
                 .iter()
                 .map(|n| usize::from(n.name == name) + count_named(&n.children, name))

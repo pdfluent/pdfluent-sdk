@@ -43,6 +43,9 @@ mod tests {
     }
 
     #[test]
+    // 3.14 is literal test input verifying float formatting, not an
+    // approximation of PI.
+    #[allow(clippy::approx_constant)]
     fn float_number_formats_with_decimal() {
         assert_eq!(JsValue::Number(3.14).to_raw_string(), "3.14");
     }
