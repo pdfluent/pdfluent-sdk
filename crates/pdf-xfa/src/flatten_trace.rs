@@ -190,9 +190,31 @@ fn json_str(s: &str) -> String {
     out
 }
 
+/// Per-page suppression diagnostics (XFA §4.3 data-empty page suppression).
+/// Captured before the suppression `retain` so the trace can explain every
+/// keep/drop decision and the occur-instance-aware signal that distinguishes a
+/// real continuation page from an empty repeated occur-instance.
+#[derive(Clone)]
+pub(crate) struct PageSuppressionDiag {
+    pub page_index: usize,
+    pub keep: bool,
+    pub reason: &'static str,
+    pub field_count: usize,
+    pub empty_field_count: usize,
+    pub nonempty_field_count: usize,
+    pub static_draw_text_chars: usize,
+    /// Distinct FormNode ids referenced on the page (occur-instance signature).
+    pub distinct_form_nodes: usize,
+    /// Index of an earlier page with an identical FormNode-id signature, or -1.
+    /// A non-negative value marks this page as a repeated occur-instance.
+    pub duplicate_of_page: i64,
+    pub runtime_instantiated: bool,
+}
+
 /// All inputs needed to assemble a flatten trace. Borrowed; nothing is cloned
 /// beyond the small derived count structs.
 pub(crate) struct TraceInputs<'a> {
+    pub suppression: &'a [PageSuppressionDiag],
     pub input_bytes: usize,
     pub template_bytes: usize,
     pub js_execution_mode: &'a str,
@@ -304,6 +326,28 @@ pub(crate) fn emit(i: &TraceInputs) {
     }
     per_page.push(']');
 
+    let mut supp = String::from("[");
+    for (idx, d) in i.suppression.iter().enumerate() {
+        if idx > 0 {
+            supp.push(',');
+        }
+        let _ = write!(
+            supp,
+            "{{\"page\":{},\"keep\":{},\"reason\":{},\"field_count\":{},\"empty_field_count\":{},\"nonempty_field_count\":{},\"static_draw_text_chars\":{},\"distinct_form_nodes\":{},\"duplicate_of_page\":{},\"runtime_instantiated\":{}}}",
+            d.page_index + 1,
+            d.keep,
+            json_str(d.reason),
+            d.field_count,
+            d.empty_field_count,
+            d.nonempty_field_count,
+            d.static_draw_text_chars,
+            d.distinct_form_nodes,
+            d.duplicate_of_page,
+            d.runtime_instantiated,
+        );
+    }
+    supp.push(']');
+
     let mut j = String::with_capacity(2048);
     let _ = write!(
         j,
@@ -316,6 +360,7 @@ pub(crate) fn emit(i: &TraceInputs) {
 \"layout\":{{\"pages_produced\":{},\"pages_after_suppression\":{},\"pages_suppressed\":{},\"runtime_instantiated_pages\":{},\"layout_nodes_total\":{},\"layout_text_nodes\":{},\"layout_wrapped_text_nodes\":{},\"layout_field_nodes\":{},\"layout_draw_nodes\":{},\"layout_image_nodes\":{},\"layout_total_chars\":{}}},\
 \"paint\":{{\"overlays_generated\":{},\"overlay_total_bytes\":{},\"overlay_substantial\":{},\"per_page\":{}}},\
 \"writer\":{{\"n_layout\":{},\"n_existing\":{},\"is_static_form\":{},\"has_static_content\":{},\"preserve_static\":{},\"excess_pages_deleted\":{},\"widgets_baked\":{},\"acroform_removed\":{},\"xfa_removed_structural\":{},\"needs_rendering_removed\":{},\"javascript_actions_stripped\":{},\"output_bytes\":{},\"output_page_count\":{}}},\
+\"suppression\":{},\
 \"stage_first_divergence_hint\":{}}}",
         i.input_bytes, i.template_bytes,
         json_str(i.js_execution_mode), json_str(i.flatten_path),
@@ -325,6 +370,7 @@ pub(crate) fn emit(i: &TraceInputs) {
         i.pages_produced, i.pages_after_suppression, i.pages_produced.saturating_sub(i.pages_after_suppression), i.runtime_instantiated_pages, lay.nodes_total, lay.text_nodes, lay.wrapped_text_nodes, lay.field_nodes, lay.draw_nodes, lay.image_nodes, lay.total_chars,
         i.overlays.len(), overlay_total_bytes, overlay_substantial, per_page,
         i.n_layout, i.n_existing, i.is_static_form, i.has_static_content, i.preserve_static, i.excess_pages_deleted, i.widgets_baked, i.acroform_removed, i.xfa_removed_structural, i.needs_rendering_removed, i.javascript_actions_stripped, i.output_bytes, i.output_page_count,
+        supp,
         json_str(hint),
     );
 

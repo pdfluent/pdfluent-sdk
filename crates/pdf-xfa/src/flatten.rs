@@ -307,6 +307,134 @@ fn page_has_field_data(nodes: &[LayoutNode], tree: &FormTree) -> bool {
     })
 }
 
+/// Per-page field counts `(total, empty, nonempty)` for suppression tracing.
+fn page_field_counts(nodes: &[LayoutNode], tree: &FormTree) -> (usize, usize, usize) {
+    use xfa_layout_engine::form::FormNodeType;
+    let mut total = 0;
+    let mut empty = 0;
+    let mut nonempty = 0;
+    for n in nodes {
+        if let FormNodeType::Field { value } = &tree.get(n.form_node).node_type {
+            total += 1;
+            if value.trim().is_empty() {
+                empty += 1;
+            } else {
+                nonempty += 1;
+            }
+        }
+        let (t, e, ne) = page_field_counts(&n.children, tree);
+        total += t;
+        empty += e;
+        nonempty += ne;
+    }
+    (total, empty, nonempty)
+}
+
+/// Static (non-field) visible text characters on a page (draw text + loose/
+/// wrapped text not from a field value). Used only for suppression tracing.
+fn page_static_draw_chars(nodes: &[LayoutNode]) -> usize {
+    let mut total = 0usize;
+    for n in nodes {
+        match &n.content {
+            LayoutContent::Text(t) => total += t.chars().count(),
+            LayoutContent::Draw(DrawContent::Text(t)) => total += t.chars().count(),
+            LayoutContent::WrappedText {
+                lines, from_field, ..
+            } if !*from_field => {
+                total += lines.iter().map(|l| l.chars().count()).sum::<usize>();
+            }
+            _ => {}
+        }
+        total += page_static_draw_chars(&n.children);
+    }
+    total
+}
+
+/// Sorted distinct FormNode ids referenced on a page — the "occur-instance
+/// signature". Two pages with identical signatures are repeated instances of
+/// the same template subtree (occur expansion reuses the template id).
+fn page_form_node_signature(nodes: &[LayoutNode], out: &mut Vec<usize>) {
+    for n in nodes {
+        out.push(n.form_node.0);
+        page_form_node_signature(&n.children, out);
+    }
+}
+
+/// Compute per-page suppression diagnostics mirroring the keep decision in the
+/// XFA §4.3 suppression block. Used only by the env-gated flatten trace.
+fn compute_suppression_diags(
+    layout: &LayoutDom,
+    tree: &FormTree,
+) -> Vec<flatten_trace::PageSuppressionDiag> {
+    let n = layout.pages.len();
+    // Raw per-page keep (matches the suppression `map`).
+    let raw: Vec<(bool, bool, bool)> = layout
+        .pages
+        .iter()
+        .map(|p| {
+            (
+                p.runtime_instantiated,
+                page_has_fields(&p.nodes, tree),
+                page_has_field_data(&p.nodes, tree),
+            )
+        })
+        .collect();
+    let raw_keep = |i: usize| -> bool {
+        // Mirrors the suppression `map`: keep when runtime-instantiated, when a
+        // field carries data, or when the page has no fields at all.
+        // (`(hf && hd) || !hf` reduces to `hd || !hf`.)
+        let (rt, hf, hd) = raw[i];
+        rt || hd || !hf
+    };
+    let any_keep = (0..n).any(raw_keep);
+
+    // Signatures for repeated-instance detection.
+    let mut sigs: Vec<Vec<usize>> = Vec::with_capacity(n);
+    for p in &layout.pages {
+        let mut s = Vec::new();
+        page_form_node_signature(&p.nodes, &mut s);
+        s.sort_unstable();
+        s.dedup();
+        sigs.push(s);
+    }
+
+    let mut diags = Vec::with_capacity(n);
+    for i in 0..n {
+        let (rt, hf, hd) = raw[i];
+        let (fc, ef, nf) = page_field_counts(&layout.pages[i].nodes, tree);
+        let static_chars = page_static_draw_chars(&layout.pages[i].nodes);
+        let dup = (0..i)
+            .find(|&j| sigs[j] == sigs[i])
+            .map_or(-1, |j| j as i64);
+        let (keep, reason) = if n <= 1 {
+            (true, "single_page")
+        } else if rt {
+            (true, "runtime_instantiated")
+        } else if hf && hd {
+            (true, "has_field_data")
+        } else if !hf {
+            (true, "no_fields_static_kept")
+        } else if any_keep {
+            (false, "data_empty_dropped")
+        } else {
+            (true, "all_empty_kept")
+        };
+        diags.push(flatten_trace::PageSuppressionDiag {
+            page_index: i,
+            keep,
+            reason,
+            field_count: fc,
+            empty_field_count: ef,
+            nonempty_field_count: nf,
+            static_draw_text_chars: static_chars,
+            distinct_form_nodes: sigs[i].len(),
+            duplicate_of_page: dup,
+            runtime_instantiated: rt,
+        });
+    }
+    diags
+}
+
 /// Flatten all XFA content in `pdf_bytes` to static PDF content streams.
 ///
 /// Returns the modified PDF bytes. The /AcroForm entry is removed so the
@@ -728,6 +856,13 @@ fn xfa_flatten_inner(
     // explicitly-paginated documents whose fields appear data-empty to this
     // heuristic even though real data is present.
     let trace_pages_produced = layout.pages.len();
+    // Capture per-page suppression diagnostics BEFORE the retain mutates pages
+    // (env-gated; empty when tracing is off).
+    let trace_suppression = if flatten_trace::enabled() {
+        compute_suppression_diags(&layout, &tree)
+    } else {
+        Vec::new()
+    };
     if layout.pages.len() > 1 {
         let keep: Vec<bool> = layout
             .pages
@@ -1060,6 +1195,7 @@ fn xfa_flatten_inner(
         let js_mode =
             std::env::var("XFA_JS_EXECUTION_MODE").unwrap_or_else(|_| "best_effort_static".into());
         flatten_trace::emit(&flatten_trace::TraceInputs {
+            suppression: &trace_suppression,
             input_bytes: pdf_bytes.len(),
             template_bytes: template_xml.len(),
             js_execution_mode: &js_mode,
