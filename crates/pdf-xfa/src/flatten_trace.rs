@@ -318,6 +318,55 @@ fn divergence_hint(i: &TraceInputs, bind: &BindCounts, lay: &LayoutCounts) -> &'
     "none"
 }
 
+/// JSON array of repeating (`occur` max>1/unbounded) subforms: their occur
+/// params and how many instances actually reached the laid-out tree. Lets the
+/// trace show whether under-/over-pagination is occur/instance driven (it is the
+/// runtime-instance signal the suppression problem was missing).
+fn repeating_subforms_json(tree: &FormTree, layout: &LayoutDom) -> String {
+    use xfa_layout_engine::form::FormNodeType;
+    let mut inst = vec![0usize; tree.nodes.len()];
+    fn walk(n: &LayoutNode, inst: &mut [usize]) {
+        if n.form_node.0 < inst.len() {
+            inst[n.form_node.0] += 1;
+        }
+        for c in &n.children {
+            walk(c, inst);
+        }
+    }
+    for p in &layout.pages {
+        for n in &p.nodes {
+            walk(n, &mut inst);
+        }
+    }
+    let mut out = String::from("[");
+    let mut first = true;
+    for idx in 0..tree.nodes.len() {
+        let node = tree.get(FormNodeId(idx));
+        if !matches!(
+            node.node_type,
+            FormNodeType::Subform
+                | FormNodeType::SubformSet
+                | FormNodeType::Area
+                | FormNodeType::ExclGroup
+        ) || !node.occur.is_repeating()
+        {
+            continue;
+        }
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        let max = node.occur.max.map_or(-1i64, |m| m as i64);
+        let _ = write!(
+            out,
+            "{{\"template_id\":{},\"occur_min\":{},\"occur_max\":{},\"occur_initial\":{},\"layout_instances\":{}}}",
+            idx, node.occur.min, max, node.occur.initial, inst[idx]
+        );
+    }
+    out.push(']');
+    out
+}
+
 /// Build the JSON trace and emit it per the env contract. Call only when
 /// [`enabled`] returned true.
 pub(crate) fn emit(i: &TraceInputs) {
@@ -383,6 +432,7 @@ pub(crate) fn emit(i: &TraceInputs) {
 \"paint\":{{\"overlays_generated\":{},\"overlay_total_bytes\":{},\"overlay_substantial\":{},\"per_page\":{}}},\
 \"writer\":{{\"n_layout\":{},\"n_existing\":{},\"is_static_form\":{},\"has_static_content\":{},\"preserve_static\":{},\"excess_pages_deleted\":{},\"widgets_baked\":{},\"acroform_removed\":{},\"xfa_removed_structural\":{},\"needs_rendering_removed\":{},\"javascript_actions_stripped\":{},\"output_bytes\":{},\"output_page_count\":{}}},\
 \"suppression\":{},\
+\"repeating_subforms\":{},\
 \"stage_first_divergence_hint\":{}}}",
         i.input_bytes, i.template_bytes,
         json_str(i.js_execution_mode), json_str(i.flatten_path),
@@ -393,6 +443,7 @@ pub(crate) fn emit(i: &TraceInputs) {
         i.overlays.len(), overlay_total_bytes, overlay_substantial, per_page,
         i.n_layout, i.n_existing, i.is_static_form, i.has_static_content, i.preserve_static, i.excess_pages_deleted, i.widgets_baked, i.acroform_removed, i.xfa_removed_structural, i.needs_rendering_removed, i.javascript_actions_stripped, i.output_bytes, i.output_page_count,
         supp,
+        repeating_subforms_json(i.tree, i.layout),
         json_str(hint),
     );
 
