@@ -232,8 +232,71 @@ def check_cookbook_uses_real_api(path: Path, lines: list[str]) -> list[Finding]:
     return []
 
 
+#: Bindings that must each ship a CI-verified example directory.
+REQUIRED_BINDING_EXAMPLES = ("rust", "c", "wasm", "node", "python", "dotnet", "java")
+
+#: Canonical per-binding quickstart page (facade-based, evidence-backed).
+CANONICAL_QUICKSTART = "docs/en/quickstart-bindings.md"
+
+
+def check_binding_examples_present() -> list[Finding]:
+    """Each supported binding must ship an example dir (DX first-run evidence)."""
+    findings: list[Finding] = []
+    base = REPO_ROOT / "pdfluent-examples"
+    for lang in REQUIRED_BINDING_EXAMPLES:
+        if not (base / lang).is_dir():
+            findings.append(
+                Finding(
+                    path=base / lang,
+                    line_no=1,
+                    category="missing-binding-example",
+                    excerpt=f"pdfluent-examples/{lang}/ is missing (DX-1/DX-11 evidence)",
+                )
+            )
+    return findings
+
+
+def check_canonical_quickstart() -> list[Finding]:
+    """The canonical quickstart must exist, use the `pdfluent` facade, and
+    name every supported binding (guards DX quickstart drift)."""
+    path = REPO_ROOT / CANONICAL_QUICKSTART
+    if not path.is_file():
+        return [
+            Finding(
+                path=path,
+                line_no=1,
+                category="missing-canonical-quickstart",
+                excerpt=f"{CANONICAL_QUICKSTART} is missing",
+            )
+        ]
+    text = path.read_text(encoding="utf-8")
+    findings: list[Finding] = []
+    if "pdfluent" not in text or "PdfDocument" not in text:
+        findings.append(
+            Finding(
+                path=path,
+                line_no=1,
+                category="canonical-quickstart-not-facade",
+                excerpt="canonical quickstart must use the `pdfluent` facade (PdfDocument)",
+            )
+        )
+    for lang in ("Rust", "C ABI", "WASM", "Node", "Python", ".NET", "Java"):
+        if lang not in text:
+            findings.append(
+                Finding(
+                    path=path,
+                    line_no=1,
+                    category="canonical-quickstart-missing-binding",
+                    excerpt=f"canonical quickstart does not cover: {lang}",
+                )
+            )
+    return findings
+
+
 def main() -> int:
     findings: list[Finding] = []
+    findings.extend(check_binding_examples_present())
+    findings.extend(check_canonical_quickstart())
     for path in _iter_doc_files():
         try:
             content = path.read_text(encoding="utf-8")
