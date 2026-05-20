@@ -63,8 +63,18 @@ else
   record "QR-9" "release_gate_defined_not_executed_locally" "scripts/ci/qr9_sanitizers.sh (no passing ASAN result yet)"
 fi
 
-# CI-only lane: needs built binding artifacts.
-record "QR-11" "release_gate_defined_not_executed_locally" "scripts/ci/qr11_binding_runtime_mapping.sh (needs built bindings)"
+# QR-11 binding runtime error-mapping — C-ABI + Node + Python + .NET + Java
+#   all executed-green (built artifacts + per-binding error-mapping tests).
+#   QR11_RUN=1 re-runs the lane script live (needs built artifacts present).
+QR11_RESULT="benchmarks/runs/ga_readiness_3d/sdk_ga_qr11_binding_runtime_mapping/qr11_result.json"
+if [ "${QR11_RUN:-0}" = "1" ]; then
+  if bash scripts/ci/qr11_binding_runtime_mapping.sh; then record "QR-11" "green_proven" "live binding runtime mapping (qr11_binding_runtime_mapping.sh)"; \
+  else record "QR-11" "blocked_binding_runtime_failed" "qr11_binding_runtime_mapping.sh failed"; FAIL=1; fi
+elif python3 -c "import json,sys; d=json.load(open('$QR11_RESULT')); b=d.get('bindings',{}); sys.exit(0 if d.get('all_green') is True and all(v.get('status')=='green_proven' for v in b.values()) and {'c-abi','node','python','dotnet','java'} <= set(b) else 1)" 2>/dev/null; then
+  record "QR-11" "green_proven" "committed $QR11_RESULT — c-abi+node+python+dotnet+java all green; re-run with QR11_RUN=1"
+else
+  record "QR-11" "release_gate_defined_not_executed_locally" "scripts/ci/qr11_binding_runtime_mapping.sh (no passing result yet)"
+fi
 
 printf '{\n  "milestone":"SDK_GA_QUALITY_RELEASE_RECHECK_LANES",\n  "generated":"%s",\n  "lanes":[\n    %s\n  ],\n  "executable_failed":%s\n}\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(IFS=,; echo "${ENTRIES[*]}" | sed 's/},{/},\n    {/g')" "$FAIL" > "$OUT"
