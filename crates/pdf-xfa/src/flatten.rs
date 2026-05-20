@@ -2575,6 +2575,16 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
         if xml_tag == "subform" || xml_tag == "field" || xml_tag == "pageArea" {
             if let Some(pres) = xml_node.attribute("presence") {
                 if pres == "hidden" {
+                    // D9 (trace-only, env-gated): provenance of a form-DOM
+                    // explicit `presence="hidden"` override. Behaviour-neutral.
+                    if std::env::var("XFA_PRESENCE_PROV").ok().as_deref() == Some("1") {
+                        eprintln!(
+                            "XFA_PRESENCE_PROV site=formdom_explicit id={} name={:?} tag={}",
+                            form_node_id.0,
+                            tree.get(form_node_id).name,
+                            xml_tag
+                        );
+                    }
                     tree.meta_mut(form_node_id).presence = Presence::Hidden;
                 }
             }
@@ -2774,6 +2784,14 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
                 if matches!(child_node.node_type, FormNodeType::Subform)
                     && !child_node.name.is_empty()
                 {
+                    // D9 (trace-only, env-gated): provenance of a form-DOM
+                    // unmatched-child suppression. Behaviour-neutral.
+                    if std::env::var("XFA_PRESENCE_PROV").ok().as_deref() == Some("1") {
+                        eprintln!(
+                            "XFA_PRESENCE_PROV site=formdom_unmatched id={} name={:?}",
+                            fid.0, child_node.name
+                        );
+                    }
                     tree.meta_mut(fid).presence = Presence::Hidden;
                 }
             }
