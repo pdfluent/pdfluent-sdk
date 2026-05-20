@@ -29,8 +29,23 @@ FIXTURE_MANIFEST = BASE / "CORE_PDF_FIXTURE_MANIFEST.json"
 PERF_BASELINE = BASE / "CORE_PDF_PERFORMANCE_BASELINE.json"
 SECURITY_REPORT = BASE / "CORE_PDF_SECURITY_HARDENING_REPORT.md"
 
-FORBIDDEN = {"bug", "missing", "beta_limitation"}
-NEEDS_RATIONALE = {"intentionally_unsupported", "not_exposed_by_design"}
+# Hardened for CORE_PDF_SDK_ENTERPRISE_TRUE_100: no soft/vague statuses.
+FORBIDDEN = {
+    "bug",
+    "missing",
+    "beta_limitation",
+    "out_of_scope",
+    # the pre-followup soft statuses are no longer acceptable as 100%-closure
+    "not_exposed_by_design",
+    "intentionally_unsupported",
+}
+# Non-supported statuses allowed ONLY with full enforcement
+# (rationale + evidence + expected_developer_behavior).
+NEEDS_RATIONALE = {
+    "intentionally_unsupported_v1",
+    "not_exposed_by_design_with_typed_error",
+    "split_read_supported_write_unsupported",
+}
 
 
 def main() -> int:
@@ -54,14 +69,22 @@ def main() -> int:
             if not c.get("evidence"):
                 errors.append(f"supported capability '{cap}' has no evidence pointer")
         elif st in NEEDS_RATIONALE:
+            # Hard enforcement: every non-supported cell must carry
+            # rationale + evidence + expected developer behavior.
             if not c.get("rationale"):
                 errors.append(f"capability '{cap}' status '{st}' needs a rationale")
+            if not c.get("evidence"):
+                errors.append(f"capability '{cap}' status '{st}' needs an evidence pointer")
+            if not c.get("expected_developer_behavior"):
+                errors.append(
+                    f"capability '{cap}' status '{st}' needs 'expected_developer_behavior'"
+                )
         else:
-            errors.append(f"capability '{cap}' has unknown status '{st}'")
+            errors.append(f"capability '{cap}' has unknown/disallowed status '{st}'")
 
-    # binding smokes: each binding cell must be supported (or have rationale)
+    # binding smokes: each binding cell must be supported (or a hardened status)
     for b in matrix.get("bindings_non_xfa_smoke", {}).get("bindings", []):
-        if b.get("status") not in ("supported", "intentionally_unsupported", "not_exposed_by_design"):
+        if b.get("status") not in ({"supported"} | NEEDS_RATIONALE):
             errors.append(f"binding '{b.get('binding')}' has invalid status '{b.get('status')}'")
         if b.get("status") == "supported" and not b.get("smoke"):
             errors.append(f"binding '{b.get('binding')}' supported but no smoke evidence")

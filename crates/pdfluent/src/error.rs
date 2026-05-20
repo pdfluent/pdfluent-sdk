@@ -621,7 +621,7 @@ mod tests {
         // One representative instance per variant.
         let variants: Vec<Error> = vec![
             Error::Io {
-                source: std::io::Error::new(std::io::ErrorKind::Other, "test"),
+                source: std::io::Error::other("test"),
                 path: None,
             },
             Error::FileNotFound {
