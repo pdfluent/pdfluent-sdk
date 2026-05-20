@@ -184,6 +184,13 @@ fn flatten_trace_env_gated_and_wellformed() {
     );
     assert!(body.contains("\"acroform_removed\":true"), "body={body}");
 
+    // Per-page suppression diagnostics must be present with a decision.
+    assert!(body.contains("\"suppression\":["), "body={body}");
+    assert!(
+        body.contains("\"keep\":true") && body.contains("\"reason\":\"single_page\""),
+        "single-page form must record a single_page keep decision: {body}"
+    );
+
     // No unexpected static-text drop: this form is fully visible, so nothing is
     // pruned and every text-draw is "visible".
     assert_eq!(
