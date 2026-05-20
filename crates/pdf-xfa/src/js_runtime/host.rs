@@ -287,13 +287,37 @@ impl HostBindings {
         true
     }
 
+    /// D4 (trace-only): record a SOM lookup outcome at the host resolve
+    /// boundary. `resolved` is true when the lookup matched at least one node.
+    /// On a miss, an `occur`-path reference is additionally classified (it is
+    /// only counted, never resolved or mutated in D4). Pure observability — not
+    /// folded into `is_clean`/rollback.
+    fn note_som(&mut self, resolved: bool, path: &str) {
+        self.metadata.som_lookups_total = self.metadata.som_lookups_total.saturating_add(1);
+        if resolved {
+            self.metadata.som_lookup_successes =
+                self.metadata.som_lookup_successes.saturating_add(1);
+        } else {
+            self.metadata.som_lookup_failures =
+                self.metadata.som_lookup_failures.saturating_add(1);
+            if path == "occur" || path.starts_with("occur.") || path.starts_with("occur[") {
+                self.metadata.som_occur_path_refs =
+                    self.metadata.som_occur_path_refs.saturating_add(1);
+            }
+        }
+    }
+
     /// Resolve a SOM path to the first field node.
     pub fn resolve_node(&mut self, path: &str) -> Option<FormNodeId> {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
         let nodes = match self.resolve_path(path) {
-            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::Ok(nodes) => {
+                self.note_som(true, path);
+                nodes
+            }
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                self.note_som(false, path);
                 debug_log_resolve_miss("resolve_node:NoMatch", path);
                 return None;
             }
@@ -356,9 +380,13 @@ impl HostBindings {
     pub fn resolve_implicit(&mut self, current_id: FormNodeId, name: &str) -> Option<FormNodeId> {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
         match self.resolve_implicit_inner(current_id, name) {
-            ResolveOutcome::Ok(nodes) => nodes.into_iter().next(),
+            ResolveOutcome::Ok(nodes) => {
+                self.note_som(true, name);
+                nodes.into_iter().next()
+            }
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                self.note_som(false, name);
                 debug_log_resolve_miss("resolve_implicit:NoMatch", name);
                 None
             }
@@ -381,9 +409,13 @@ impl HostBindings {
     ) -> Vec<FormNodeId> {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
         match self.resolve_implicit_inner(current_id, name) {
-            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::Ok(nodes) => {
+                self.note_som(true, name);
+                nodes
+            }
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                self.note_som(false, name);
                 debug_log_resolve_miss("resolve_implicit_candidates:NoMatch", name);
                 Vec::new()
             }
@@ -420,9 +452,13 @@ impl HostBindings {
     pub fn resolve_child(&mut self, parent_id: FormNodeId, name: &str) -> Option<FormNodeId> {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
         match self.resolve_child_inner(parent_id, name) {
-            ResolveOutcome::Ok(nodes) => nodes.into_iter().next(),
+            ResolveOutcome::Ok(nodes) => {
+                self.note_som(true, name);
+                nodes.into_iter().next()
+            }
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                self.note_som(false, name);
                 debug_log_resolve_miss("resolve_child:NoMatch", name);
                 None
             }
@@ -446,9 +482,13 @@ impl HostBindings {
     ) -> Vec<FormNodeId> {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
         match self.resolve_child_candidates_inner(parent_ids, name) {
-            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::Ok(nodes) => {
+                self.note_som(true, name);
+                nodes
+            }
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                self.note_som(false, name);
                 debug_log_resolve_miss("resolve_child_candidates:NoMatch", name);
                 Vec::new()
             }
@@ -492,9 +532,13 @@ impl HostBindings {
     ) -> Vec<FormNodeId> {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
         match self.resolve_scoped_candidates_inner(scope_ids, name) {
-            ResolveOutcome::Ok(nodes) => nodes,
+            ResolveOutcome::Ok(nodes) => {
+                self.note_som(true, name);
+                nodes
+            }
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
+                self.note_som(false, name);
                 debug_log_resolve_miss("resolve_scoped_candidates:NoMatch", name);
                 Vec::new()
             }
