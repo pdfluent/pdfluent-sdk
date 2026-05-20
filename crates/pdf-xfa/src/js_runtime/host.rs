@@ -69,6 +69,11 @@ pub struct HostBindings {
     /// gate decision cannot leak across the cross-document isolation boundary
     /// (§5 of the policy doc).
     presave_gate: bool,
+    /// D6: captured `occur.min`/`occur.max` write intents `(node, prop, value)`
+    /// recorded during the script pass. Drained by the dispatch path after the
+    /// rollback decision and (only when `XFA_OCCUR_APPLY=1`) applied to the form
+    /// before layout. Cleared per document.
+    captured_occur_mutations: Vec<(FormNodeId, String, i64)>,
 }
 
 impl Default for HostBindings {
@@ -89,6 +94,7 @@ impl Default for HostBindings {
             zero_instance_runs: HashMap::new(),
             data_dom: None,
             presave_gate: false,
+            captured_occur_mutations: Vec::new(),
         }
     }
 }
@@ -133,6 +139,7 @@ impl HostBindings {
         self.metadata = RuntimeMetadata::default();
         self.static_page_count = 0;
         self.zero_instance_runs.clear();
+        self.captured_occur_mutations.clear();
         // data_dom is NOT reset here — see doc comment above.
         // D1.B gate is cleared so a previous-document opt-in cannot leak
         // across the cross-document isolation boundary (§5 of policy v5).
@@ -307,7 +314,7 @@ impl HostBindings {
         prop: &str,
         _value: i64,
     ) -> bool {
-        let _ = (node_id, generation);
+        let _ = generation;
         self.metadata.occur_property_writes = self.metadata.occur_property_writes.saturating_add(1);
         match prop {
             "min" => {
@@ -320,8 +327,21 @@ impl HostBindings {
         }
         self.metadata.occur_mutations_captured =
             self.metadata.occur_mutations_captured.saturating_add(1);
-        // occur_mutations_applied intentionally NOT incremented (capture-only).
+        // D6: record the write intent so the dispatch path can apply it after the
+        // rollback decision (only when XFA_OCCUR_APPLY=1). `occur_mutations_applied`
+        // is bumped by the dispatch apply step, never here (capture-only at host).
+        if prop == "min" || prop == "max" {
+            self.captured_occur_mutations
+                .push((node_id, prop.to_string(), _value));
+        }
         true
+    }
+
+    /// D6: drain the captured `occur.min`/`occur.max` write intents recorded
+    /// during the script pass. Called once by the dispatch path after the
+    /// rollback decision.
+    pub fn take_occur_mutations(&mut self) -> Vec<(FormNodeId, String, i64)> {
+        std::mem::take(&mut self.captured_occur_mutations)
     }
 
     /// Write `field.rawValue` when the activity and target are permitted.

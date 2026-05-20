@@ -4070,6 +4070,15 @@ impl XfaJsRuntime for QuickJsRuntime {
     fn take_metadata(&mut self) -> RuntimeMetadata {
         std::mem::take(&mut self.metadata)
     }
+
+    fn take_occur_mutations(&mut self) -> Vec<(usize, String, i64)> {
+        self.host
+            .borrow_mut()
+            .take_occur_mutations()
+            .into_iter()
+            .map(|(id, prop, value)| (id.0, prop, value))
+            .collect()
+    }
 }
 
 #[cfg(test)]
