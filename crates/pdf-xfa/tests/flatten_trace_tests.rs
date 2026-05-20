@@ -191,6 +191,10 @@ fn flatten_trace_env_gated_and_wellformed() {
         "single-page form must record a single_page keep decision: {body}"
     );
 
+    // Runtime-instance trace: repeating-subforms array present (empty for this
+    // non-repeating fixture).
+    assert!(body.contains("\"repeating_subforms\":["), "body={body}");
+
     // Layout provenance fields must be present; a fully-visible single page is
     // never a provenance-safe drop.
     assert!(body.contains("\"page_reason\":"), "body={body}");

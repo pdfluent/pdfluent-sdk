@@ -62,3 +62,10 @@ ttf-parser.workspace = true
 base64 = "0.22"
 clap_complete = "4"
 clap_mangen = "0.2"
+
+[features]
+default = []
+# Opt-in: build the CLI with the sandboxed QuickJS runtime so
+# `XFA_JS_EXECUTION_MODE=sandboxed` executes instanceManager scripts. Off by
+# default; no behaviour change unless both this feature and the env var are set.
+xfa-js-sandboxed = ["pdf-engine/xfa-js-sandboxed"]
