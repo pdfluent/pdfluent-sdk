@@ -260,6 +260,70 @@ impl HostBindings {
         Some(form.get(node_id).name.clone())
     }
 
+    /// D5: resolve a `node.occur` handle. Trace-only liveness check that bumps
+    /// the occur-lookup counters; returns whether the node handle is live.
+    pub fn occur_resolve(&mut self, node_id: FormNodeId, generation: u64) -> bool {
+        self.metadata.occur_lookups_total = self.metadata.occur_lookups_total.saturating_add(1);
+        let live = self.handle_is_live(node_id, generation);
+        if live {
+            self.metadata.occur_lookup_successes =
+                self.metadata.occur_lookup_successes.saturating_add(1);
+        } else {
+            self.metadata.occur_lookup_failures =
+                self.metadata.occur_lookup_failures.saturating_add(1);
+        }
+        live
+    }
+
+    /// D5: read an `occur` property (`min`/`max`/`initial`) from the structural
+    /// template. Returns `-1` for unlimited (`max == None`), an unknown
+    /// property, or a dead handle. Bumps `occur_property_reads`.
+    pub fn occur_read(&mut self, node_id: FormNodeId, generation: u64, prop: &str) -> i64 {
+        self.metadata.occur_property_reads = self.metadata.occur_property_reads.saturating_add(1);
+        if !self.handle_is_live(node_id, generation) {
+            return -1;
+        }
+        let Some(form) = self.form_ref() else {
+            return -1;
+        };
+        let occur = &form.get(node_id).occur;
+        match prop {
+            "min" => occur.min as i64,
+            "max" => occur.max.map(|m| m as i64).unwrap_or(-1),
+            "initial" => occur.initial as i64,
+            _ => -1,
+        }
+    }
+
+    /// D5: capture a write to an `occur` property (`min`/`max`). Records the
+    /// mutation **intent** in metadata WITHOUT changing layout/pagination
+    /// (`occur_mutations_applied` is never bumped in D5). Returns `true` so the
+    /// JS assignment is accepted and the script proceeds. `node_id`/`generation`
+    /// are accepted for the next milestone's apply path; D5 does not use them.
+    pub fn occur_capture(
+        &mut self,
+        node_id: FormNodeId,
+        generation: u64,
+        prop: &str,
+        _value: i64,
+    ) -> bool {
+        let _ = (node_id, generation);
+        self.metadata.occur_property_writes = self.metadata.occur_property_writes.saturating_add(1);
+        match prop {
+            "min" => {
+                self.metadata.occur_min_writes = self.metadata.occur_min_writes.saturating_add(1)
+            }
+            "max" => {
+                self.metadata.occur_max_writes = self.metadata.occur_max_writes.saturating_add(1)
+            }
+            _ => {}
+        }
+        self.metadata.occur_mutations_captured =
+            self.metadata.occur_mutations_captured.saturating_add(1);
+        // occur_mutations_applied intentionally NOT incremented (capture-only).
+        true
+    }
+
     /// Write `field.rawValue` when the activity and target are permitted.
     pub fn set_raw_value(&mut self, node_id: FormNodeId, value: String, generation: u64) -> bool {
         self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
@@ -298,8 +362,7 @@ impl HostBindings {
             self.metadata.som_lookup_successes =
                 self.metadata.som_lookup_successes.saturating_add(1);
         } else {
-            self.metadata.som_lookup_failures =
-                self.metadata.som_lookup_failures.saturating_add(1);
+            self.metadata.som_lookup_failures = self.metadata.som_lookup_failures.saturating_add(1);
             if path == "occur" || path.starts_with("occur.") || path.starts_with("occur[") {
                 self.metadata.som_occur_path_refs =
                     self.metadata.som_occur_path_refs.saturating_add(1);

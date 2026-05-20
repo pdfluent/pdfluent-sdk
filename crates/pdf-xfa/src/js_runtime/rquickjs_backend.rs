@@ -734,6 +734,64 @@ impl QuickJsRuntime {
                 .set("nodeName", node_name)
                 .map_err(|e| format!("set nodeName: {e}"))?;
 
+            // D5: occur handle resolution (liveness check + lookup counters).
+            let occur_resolve_host = Rc::clone(&host);
+            let occur_resolve =
+                Function::new(ctx.clone(), move |id: i32, generation: i64| -> bool {
+                    if id < 0 || generation < 0 {
+                        return false;
+                    }
+                    occur_resolve_host
+                        .borrow_mut()
+                        .occur_resolve(FormNodeId(id as usize), generation as u64)
+                })
+                .map_err(|e| format!("occurResolve: {e}"))?;
+            internal
+                .set("occurResolve", occur_resolve)
+                .map_err(|e| format!("set occurResolve: {e}"))?;
+
+            // D5: read an occur property (`min`/`max`/`initial`); -1 = unlimited/unknown.
+            let occur_read_host = Rc::clone(&host);
+            let occur_read = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64, prop: String| -> i64 {
+                    if id < 0 || generation < 0 {
+                        return -1;
+                    }
+                    occur_read_host.borrow_mut().occur_read(
+                        FormNodeId(id as usize),
+                        generation as u64,
+                        &prop,
+                    )
+                },
+            )
+            .map_err(|e| format!("occurRead: {e}"))?;
+            internal
+                .set("occurRead", occur_read)
+                .map_err(|e| format!("set occurRead: {e}"))?;
+
+            // D5: capture an occur property write (`min`/`max`) — trace-only, no
+            // layout effect. Returns true so the JS assignment proceeds.
+            let occur_capture_host = Rc::clone(&host);
+            let occur_capture = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64, prop: String, value: i64| -> bool {
+                    if id < 0 || generation < 0 {
+                        return false;
+                    }
+                    occur_capture_host.borrow_mut().occur_capture(
+                        FormNodeId(id as usize),
+                        generation as u64,
+                        &prop,
+                        value,
+                    )
+                },
+            )
+            .map_err(|e| format!("occurCapture: {e}"))?;
+            internal
+                .set("occurCapture", occur_capture)
+                .map_err(|e| format!("set occurCapture: {e}"))?;
+
             // XFA-DATA-M3C: container test used by the JS proxy to decide
             // whether `<handle>._<Name>` should fall back to an empty
             // instance-manager sentinel (containers) or stay `undefined`
@@ -1504,6 +1562,35 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     });
   }
 
+  // D5: minimal `node.occur` handle. Reads `min`/`max`/`initial` from the
+  // structural template (host.occurRead; -1 = unlimited/unknown). Writes to
+  // `min`/`max` are CAPTURED (host.occurCapture) as mutation intent and then
+  // discarded — no layout/pagination effect in D5. This stops
+  // `subform.occur.min = N` from throwing `cannot set property 'min' of
+  // undefined` so the script proceeds; the captured intent is for the next
+  // milestone's bounded apply path.
+  function makeOccurHandle(id, generation) {
+    var occ = nullProtoObject();
+    function defineOccurProp(name) {
+      Object.defineProperty(occ, name, {
+        enumerable: true,
+        configurable: false,
+        get: function() {
+          return host.occurRead(id, generation, name);
+        },
+        set: function(value) {
+          var n = (typeof value === "number") ? value : parseInt(value, 10);
+          if (isNaN(n)) { n = 0; }
+          host.occurCapture(id, generation, name, n);
+        }
+      });
+    }
+    defineOccurProp("min");
+    defineOccurProp("max");
+    defineOccurProp("initial");
+    return occ;
+  }
+
   function makeInstanceManager(id, generation) {
     var manager = nullProtoObject();
     Object.defineProperty(manager, "count", {
@@ -1875,6 +1962,10 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "instanceManager") {
           return makeInstanceManager(firstId, generation);
         }
+        if (prop === "occur") {
+          host.occurResolve(firstId, generation);
+          return makeOccurHandle(firstId, generation);
+        }
         if (prop === "index") {
           return host.nodeIndex(firstId, generation);
         }
@@ -2150,6 +2241,10 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         }
         if (prop === "instanceManager") {
           return makeInstanceManager(id, generation);
+        }
+        if (prop === "occur") {
+          host.occurResolve(id, generation);
+          return makeOccurHandle(id, generation);
         }
         if (prop === "index") {
           return host.nodeIndex(id, generation);
@@ -3739,10 +3834,7 @@ impl XfaJsRuntime for QuickJsRuntime {
                     *subform_name_counts.entry(name.clone()).or_insert(0) += 1;
                 }
             }
-            let ambiguous_subform_names = subform_name_counts
-                .values()
-                .filter(|&&c| c > 1)
-                .count();
+            let ambiguous_subform_names = subform_name_counts.values().filter(|&&c| c > 1).count();
             self.metadata.som_lookup_ambiguous = self
                 .metadata
                 .som_lookup_ambiguous
@@ -3769,10 +3861,8 @@ impl XfaJsRuntime for QuickJsRuntime {
                         // Count only scripts that actually registered AND were
                         // exposed (JS bound the namespace into the flat map).
                         if expose_global {
-                            self.metadata.som_subform_scripts_exposed = self
-                                .metadata
-                                .som_subform_scripts_exposed
-                                .saturating_add(1);
+                            self.metadata.som_subform_scripts_exposed =
+                                self.metadata.som_subform_scripts_exposed.saturating_add(1);
                         }
                     }
                     Ok(false) => {

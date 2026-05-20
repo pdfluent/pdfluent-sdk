@@ -153,6 +153,24 @@ pub struct DynamicScriptOutcome {
     pub som_subform_scripts_exposed: usize,
     /// **D4 (trace-only).** `occur`-path SOM references (classified, not resolved).
     pub som_occur_path_refs: usize,
+    /// **D5.** `node.occur` handle accesses (successes + failures).
+    pub occur_lookups_total: usize,
+    /// **D5.** `node.occur` accesses where the node handle was live.
+    pub occur_lookup_successes: usize,
+    /// **D5.** `node.occur` accesses where the node handle was not live.
+    pub occur_lookup_failures: usize,
+    /// **D5.** Reads of an occur property (`min`/`max`/`initial`).
+    pub occur_property_reads: usize,
+    /// **D5.** Writes to an occur property (captured, not applied).
+    pub occur_property_writes: usize,
+    /// **D5.** Writes specifically to `occur.min`.
+    pub occur_min_writes: usize,
+    /// **D5.** Writes specifically to `occur.max`.
+    pub occur_max_writes: usize,
+    /// **D5.** Occur mutations captured as intent (no layout effect).
+    pub occur_mutations_captured: usize,
+    /// **D5.** Occur mutations APPLIED to layout — always 0 in D5 (capture-only).
+    pub occur_mutations_applied: usize,
 }
 
 impl Default for DynamicScriptOutcome {
@@ -189,6 +207,15 @@ impl Default for DynamicScriptOutcome {
             som_lookup_ambiguous: 0,
             som_subform_scripts_exposed: 0,
             som_occur_path_refs: 0,
+            occur_lookups_total: 0,
+            occur_lookup_successes: 0,
+            occur_lookup_failures: 0,
+            occur_property_reads: 0,
+            occur_property_writes: 0,
+            occur_min_writes: 0,
+            occur_max_writes: 0,
+            occur_mutations_captured: 0,
+            occur_mutations_applied: 0,
         }
     }
 }
@@ -564,6 +591,15 @@ pub fn apply_dynamic_scripts_with_runtime(
         som_lookup_ambiguous: sandbox_metadata.som_lookup_ambiguous,
         som_subform_scripts_exposed: sandbox_metadata.som_subform_scripts_exposed,
         som_occur_path_refs: sandbox_metadata.som_occur_path_refs,
+        occur_lookups_total: sandbox_metadata.occur_lookups_total,
+        occur_lookup_successes: sandbox_metadata.occur_lookup_successes,
+        occur_lookup_failures: sandbox_metadata.occur_lookup_failures,
+        occur_property_reads: sandbox_metadata.occur_property_reads,
+        occur_property_writes: sandbox_metadata.occur_property_writes,
+        occur_min_writes: sandbox_metadata.occur_min_writes,
+        occur_max_writes: sandbox_metadata.occur_max_writes,
+        occur_mutations_captured: sandbox_metadata.occur_mutations_captured,
+        occur_mutations_applied: sandbox_metadata.occur_mutations_applied,
     })
 }
 

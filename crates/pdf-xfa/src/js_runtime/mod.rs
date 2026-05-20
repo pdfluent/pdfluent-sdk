@@ -200,6 +200,25 @@ pub struct RuntimeMetadata {
     /// D4 (trace-only): SOM NoMatch references whose path is an `occur` path
     /// (`occur` / `occur.min` / `occur.max` …). Classified, NOT resolved.
     pub som_occur_path_refs: usize,
+    /// D5: `node.occur` handle accesses (successes + failures).
+    pub occur_lookups_total: usize,
+    /// D5: `node.occur` accesses where the node handle was live.
+    pub occur_lookup_successes: usize,
+    /// D5: `node.occur` accesses where the node handle was not live.
+    pub occur_lookup_failures: usize,
+    /// D5: reads of an `occur` property (`min`/`max`/`initial`).
+    pub occur_property_reads: usize,
+    /// D5: writes to an `occur` property (captured, not applied).
+    pub occur_property_writes: usize,
+    /// D5: writes specifically to `occur.min`.
+    pub occur_min_writes: usize,
+    /// D5: writes specifically to `occur.max`.
+    pub occur_max_writes: usize,
+    /// D5: occur mutations captured as intent (no layout effect).
+    pub occur_mutations_captured: usize,
+    /// D5: occur mutations APPLIED to layout. Wired for the next milestone;
+    /// **always 0 in D5** (capture-only).
+    pub occur_mutations_applied: usize,
 }
 
 impl RuntimeMetadata {
@@ -244,7 +263,9 @@ impl RuntimeMetadata {
         self.script_objects_subform_scoped = self
             .script_objects_subform_scoped
             .saturating_add(other.script_objects_subform_scoped);
-        self.som_lookups_total = self.som_lookups_total.saturating_add(other.som_lookups_total);
+        self.som_lookups_total = self
+            .som_lookups_total
+            .saturating_add(other.som_lookups_total);
         self.som_lookup_successes = self
             .som_lookup_successes
             .saturating_add(other.som_lookup_successes);
@@ -260,6 +281,29 @@ impl RuntimeMetadata {
         self.som_occur_path_refs = self
             .som_occur_path_refs
             .saturating_add(other.som_occur_path_refs);
+        self.occur_lookups_total = self
+            .occur_lookups_total
+            .saturating_add(other.occur_lookups_total);
+        self.occur_lookup_successes = self
+            .occur_lookup_successes
+            .saturating_add(other.occur_lookup_successes);
+        self.occur_lookup_failures = self
+            .occur_lookup_failures
+            .saturating_add(other.occur_lookup_failures);
+        self.occur_property_reads = self
+            .occur_property_reads
+            .saturating_add(other.occur_property_reads);
+        self.occur_property_writes = self
+            .occur_property_writes
+            .saturating_add(other.occur_property_writes);
+        self.occur_min_writes = self.occur_min_writes.saturating_add(other.occur_min_writes);
+        self.occur_max_writes = self.occur_max_writes.saturating_add(other.occur_max_writes);
+        self.occur_mutations_captured = self
+            .occur_mutations_captured
+            .saturating_add(other.occur_mutations_captured);
+        self.occur_mutations_applied = self
+            .occur_mutations_applied
+            .saturating_add(other.occur_mutations_applied);
     }
 }
 
