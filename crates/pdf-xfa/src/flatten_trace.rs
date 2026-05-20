@@ -340,7 +340,7 @@ fn repeating_subforms_json(tree: &FormTree, layout: &LayoutDom) -> String {
     }
     let mut out = String::from("[");
     let mut first = true;
-    for idx in 0..tree.nodes.len() {
+    for (idx, &inst_count) in inst.iter().enumerate() {
         let node = tree.get(FormNodeId(idx));
         if !matches!(
             node.node_type,
@@ -360,7 +360,7 @@ fn repeating_subforms_json(tree: &FormTree, layout: &LayoutDom) -> String {
         let _ = write!(
             out,
             "{{\"template_id\":{},\"occur_min\":{},\"occur_max\":{},\"occur_initial\":{},\"layout_instances\":{}}}",
-            idx, node.occur.min, max, node.occur.initial, inst[idx]
+            idx, node.occur.min, max, node.occur.initial, inst_count
         );
     }
     out.push(']');
