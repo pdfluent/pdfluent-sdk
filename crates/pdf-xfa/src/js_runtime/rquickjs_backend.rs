@@ -3702,8 +3702,10 @@ impl XfaJsRuntime for QuickJsRuntime {
                 .saturating_add(scripts.len());
             for (subform_scope, name, body) in scripts {
                 if subform_scope.is_some() {
-                    self.metadata.script_objects_subform_scoped =
-                        self.metadata.script_objects_subform_scoped.saturating_add(1);
+                    self.metadata.script_objects_subform_scoped = self
+                        .metadata
+                        .script_objects_subform_scoped
+                        .saturating_add(1);
                 }
                 match self.register_variables_script(&name, &body, subform_scope.as_deref()) {
                     Ok(true) => {
