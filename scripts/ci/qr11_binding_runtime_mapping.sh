@@ -31,22 +31,25 @@ run_lane "c-abi" "command -v cc" \
       -Ltarget/release -lpdf_capi -Wl,-rpath,target/release -o /tmp/qr11_cabi && \
    /tmp/qr11_cabi"
 
-# Node: needs the built napi binding AND a dedicated error-mapping harness.
-run_lane "node" "test -f pdfluent-examples/node/strict-ts/error_mapping_smoke.mjs && test -d pdfluent-examples/node/strict-ts/node_modules/pdfluent" \
-  "node pdfluent-examples/node/strict-ts/error_mapping_smoke.mjs"
+# Node: built napi artifact (index.js + *.node) + the dedicated error-mapping
+# harness. Identity-guarded inside the harness (local index.js + PdfDocument).
+run_lane "node" "command -v node && ls crates/pdf-node/*.node >/dev/null 2>&1 && test -f scripts/ci/qr11_runtime/node_error_mapping.cjs" \
+  "node scripts/ci/qr11_runtime/node_error_mapping.cjs"
 
-# Python: needs the REAL pdfluent binding (a same-named placeholder package
-# must not count). The helper itself re-checks hasattr(PdfDocument).
-run_lane "python" "python3 -c 'import pdfluent,sys; sys.exit(0 if hasattr(pdfluent,\"PdfDocument\") else 1)'" \
-  "python3 scripts/quality/qr11_python_error_mapping.py"
+# Python: the REAL pdfluent binding only (a same-named placeholder must not
+# count). PY_BIN may point at the maturin build venv; the helper re-checks
+# __file__ in pdf-python + the typed hierarchy.
+run_lane "python" "\${PY_BIN:-python3} -c 'import pdfluent,sys; sys.exit(0 if hasattr(pdfluent,\"open_pdf\") and hasattr(pdfluent,\"PdfluentError\") else 1)'" \
+  "\${PY_BIN:-python3} scripts/quality/qr11_python_error_mapping.py"
 
-# .NET: only run when a built binding artifact exists (avoid false FAIL/pass).
-run_lane "dotnet" "command -v dotnet && ls pdfluent-examples/dotnet/StrictApi/bin/*/*/StrictApi.dll >/dev/null 2>&1" \
-  "(cd pdfluent-examples/dotnet/StrictApi && dotnet run --no-build >/dev/null 2>&1)"
+# .NET: build the committed console harness against the local PDFluent project
+# and run it (native libpdf_capi must match the dotnet runtime arch; see report).
+run_lane "dotnet" "command -v dotnet && test -f scripts/ci/qr11_runtime/dotnet/Program.cs" \
+  "REPO=\"\$PWD\" dotnet run --project scripts/ci/qr11_runtime/dotnet -c Release"
 
-# Java: only run a DEDICATED error-mapping test (a generic build/test is not
-# an error-mapping proof). Harness absent today -> SKIP, never a false pass.
-run_lane "java" "command -v mvn && test -f pdfluent-examples/java/StrictApi/src/test/java/ErrorMappingTest.java" \
-  "(cd pdfluent-examples/java/StrictApi && mvn -q -o test -Dtest=ErrorMappingTest)"
+# Java: the canonical com.pdfluent binding test (matches the JNI exports).
+# Native libs (libpdfluent_java + libpdf_capi) must be on java.library.path.
+run_lane "java" "command -v mvn && test -f bindings/java/src/test/java/com/pdfluent/Qr11ErrorMappingTest.java" \
+  "(cd bindings/java && mvn test -Dtest=Qr11ErrorMappingTest -DfailIfNoTests=false)"
 
 exit $RESULT
