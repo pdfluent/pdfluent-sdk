@@ -56,7 +56,7 @@ fn main() {
             }
 
             // Check FontDescriptor
-            if let Some(lopdf::Object::Reference(fd_ref)) = dict.get(b"FontDescriptor").ok() {
+            if let Ok(lopdf::Object::Reference(fd_ref)) = dict.get(b"FontDescriptor") {
                 if let Ok(lopdf::Object::Dictionary(fd)) = doc.get_object(*fd_ref) {
                     let flags = fd
                         .get(b"Flags")
@@ -77,7 +77,7 @@ fn main() {
                     );
 
                     // Read font file
-                    if let Some(lopdf::Object::Reference(ff_ref)) = fd.get(b"FontFile3").ok() {
+                    if let Ok(lopdf::Object::Reference(ff_ref)) = fd.get(b"FontFile3") {
                         if let Ok(lopdf::Object::Stream(stream)) = doc.get_object(*ff_ref) {
                             if let Ok(font_data) = stream.decompressed_content() {
                                 eprintln!("  FontFile3 size: {} bytes", font_data.len());
@@ -114,7 +114,7 @@ fn main() {
                                         let gid = cff_parser::GlyphId(gid_raw);
                                         let name = cff.glyph_name(gid);
                                         let sid = cff.charset.gid_to_sid(gid).map(|s| s.0);
-                                        let is_std = sid.map_or(false, |s| {
+                                        let is_std = sid.is_some_and(|s| {
                                             (s as usize) < cff_parser::STANDARD_NAMES.len()
                                         });
                                         eprintln!(

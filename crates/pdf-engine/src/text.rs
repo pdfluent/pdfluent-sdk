@@ -1847,7 +1847,7 @@ mod tests {
         let threshold = compute_adaptive_column_gap(&bands);
         // median gap = 4, × 3 = 12, clamped to [10, 40] → 12
         assert!(
-            threshold >= 10.0 && threshold <= 14.0,
+            (10.0..=14.0).contains(&threshold),
             "expected ~12, got {threshold}"
         );
     }
@@ -2393,15 +2393,17 @@ mod tests {
     /// and that the bound matches the span's x / width.
     #[test]
     fn g2_single_glyph_span_has_one_char_bound() {
-        let mut s = TextSpan::default();
-        s.text = "A".into();
-        s.x = 10.0;
-        s.y = 100.0;
-        s.width = 7.22;
-        s.height = 10.0;
-        s.font_size = 10.0;
-        s.width_source = WidthSource::Metric;
-        s.char_bounds = vec![[10.0, 100.0, 17.22, 110.0]];
+        let s = TextSpan {
+            text: "A".into(),
+            x: 10.0,
+            y: 100.0,
+            width: 7.22,
+            height: 10.0,
+            font_size: 10.0,
+            width_source: WidthSource::Metric,
+            char_bounds: vec![[10.0, 100.0, 17.22, 110.0]],
+            ..Default::default()
+        };
 
         assert_eq!(s.char_bounds.len(), 1);
         let [x0, y0, x1, y1] = s.char_bounds[0];
@@ -2414,9 +2416,11 @@ mod tests {
     /// if any glyph was estimated.
     #[test]
     fn g2_merged_span_degrades_width_source_on_estimate() {
-        let mut s = TextSpan::default();
-        s.width_source = WidthSource::Metric;
-        s.char_bounds = vec![[0.0, 0.0, 7.0, 10.0]];
+        let mut s = TextSpan {
+            width_source: WidthSource::Metric,
+            char_bounds: vec![[0.0, 0.0, 7.0, 10.0]],
+            ..Default::default()
+        };
 
         // Simulate what draw_glyph does on merge: push bound + downgrade.
         s.char_bounds.push([7.0, 0.0, 12.0, 10.0]);

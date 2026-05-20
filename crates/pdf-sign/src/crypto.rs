@@ -295,15 +295,16 @@ mod tests {
         let explicit_content = 2 + inner_seq_content; // inner SEQ tag + len + content
         let outer_seq_content = 2 + explicit_content; // [0] tag + len + content
 
-        let mut p = Vec::new();
-        p.push(0x30);
-        p.push(outer_seq_content as u8);
-        p.push(0xA0);
-        p.push(explicit_content as u8);
-        p.push(0x30);
-        p.push(inner_seq_content as u8);
-        p.push(0x06);
-        p.push(oid_content as u8);
+        let mut p = vec![
+            0x30,
+            outer_seq_content as u8,
+            0xA0,
+            explicit_content as u8,
+            0x30,
+            inner_seq_content as u8,
+            0x06,
+            oid_content as u8,
+        ];
         p.extend_from_slice(hash_oid);
         p
     }

@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn crop_simple() {
         // 4x4 red image with 2x2 green center
-        let mut img = vec![255u8, 0, 0].repeat(16);
+        let mut img = [255u8, 0, 0].repeat(16);
         for y in 1..3u32 {
             for x in 1..3u32 {
                 let idx = (y * 4 + x) as usize * 3;

@@ -42,7 +42,7 @@ fn main() {
                     name
                 );
 
-                if let Some(Object::Reference(fd_id)) = dict.get(b"FontDescriptor").ok() {
+                if let Ok(Object::Reference(fd_id)) = dict.get(b"FontDescriptor") {
                     println!("  FontDescriptor: {:?}", fd_id);
                     if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_id) {
                         let has_ff2 = fd.has(b"FontFile2");
@@ -63,7 +63,7 @@ fn main() {
                                         let bits: u32 = bytes.iter().map(|b| b.count_ones()).sum();
                                         println!("  CIDSet bits set: {}", bits);
                                         println!("  First 8 bytes: {:08b} {:08b} {:08b} {:08b} {:08b} {:08b} {:08b} {:08b}",
-                                            bytes.get(0).copied().unwrap_or(0),
+                                            bytes.first().copied().unwrap_or(0),
                                             bytes.get(1).copied().unwrap_or(0),
                                             bytes.get(2).copied().unwrap_or(0),
                                             bytes.get(3).copied().unwrap_or(0),
@@ -81,7 +81,7 @@ fn main() {
 
                         // Check FontFile2 (TrueType)
                         if has_ff2 {
-                            if let Some(Object::Reference(ff_id)) = fd.get(b"FontFile2").ok() {
+                            if let Ok(Object::Reference(ff_id)) = fd.get(b"FontFile2") {
                                 if let Some(Object::Stream(s)) = doc.objects.get(ff_id) {
                                     let mut s2 = s.clone();
                                     let _ = s2.decompress();
@@ -123,7 +123,7 @@ fn main() {
 
                         // Check FontFile3 (CFF)
                         if has_ff3 {
-                            if let Some(Object::Reference(ff_id)) = fd.get(b"FontFile3").ok() {
+                            if let Ok(Object::Reference(ff_id)) = fd.get(b"FontFile3") {
                                 if let Some(Object::Stream(s)) = doc.objects.get(ff_id) {
                                     let data = &s.content;
                                     println!("  FontFile3 size: {} bytes", data.len());

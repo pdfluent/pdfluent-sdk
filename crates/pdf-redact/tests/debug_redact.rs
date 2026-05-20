@@ -183,7 +183,7 @@ fn debug_redact_r3_501_full() {
     // Check page count to see if "Are" might be on a different page
     let pages = doc2.get_pages();
     println!("Total pages in redacted PDF: {}", pages.len());
-    for (page_num, _) in &pages {
+    for page_num in pages.keys() {
         if let Ok(chars) = pdf_extract::extract_positioned_chars(&doc2, *page_num) {
             let t: String = chars.iter().map(|c| c.ch).collect();
             let count = t.matches("Are").count();

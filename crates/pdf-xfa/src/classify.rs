@@ -94,8 +94,10 @@ mod tests {
     fn packets_from_xml(xml: &str) -> XfaPackets {
         // Use the internal parse helper via extract module's public surface.
         // We build XfaPackets by hand to keep tests self-contained.
-        let mut p = XfaPackets::default();
-        p.full_xml = Some(xml.to_string());
+        let mut p = XfaPackets {
+            full_xml: Some(xml.to_string()),
+            ..Default::default()
+        };
         // Manually push the template packet so get_packet("template") works.
         if xml.contains("<template") {
             let start = xml.find("<template").unwrap();
@@ -103,7 +105,7 @@ mod tests {
             let end = xml
                 .find("</template>")
                 .map(|i| i + "</template>".len())
-                .or_else(|| {
+                .or({
                     // self-closing or other variant — take to end of xml as fallback
                     Some(xml.len())
                 })
@@ -151,8 +153,10 @@ mod tests {
     fn packets_with_only_full_xml_static() {
         // Simulate a monolithic XDP stream (full_xml set, packets empty).
         let xml = r#"<?xml version="1.0"?><xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"><template baseProfile="interactiveForms"><subform/></template></xdp:xdp>"#;
-        let mut p = XfaPackets::default();
-        p.full_xml = Some(xml.to_string());
+        let p = XfaPackets {
+            full_xml: Some(xml.to_string()),
+            ..Default::default()
+        };
         // No individual packets — detect from full_xml fallback.
         assert_eq!(detect_xfa_type_from_packets(&p), XfaType::Static);
     }

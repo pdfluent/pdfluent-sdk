@@ -2268,7 +2268,7 @@ mod tests {
         );
         let doc = roxmltree::Document::parse(&xml).unwrap();
         let root = doc.root_element();
-        let subform = root.children().filter(|n| n.is_element()).next().unwrap();
+        let subform = root.children().find(|n| n.is_element()).unwrap();
         parse_layout_attr(subform)
     }
 
@@ -2492,7 +2492,7 @@ mod tests {
             0x00, // pixel (BGR: blue=FF, green=0, red=0) + 1 byte row padding
         ];
         use base64::Engine;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(bmp_bytes);
 
         let xml = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>

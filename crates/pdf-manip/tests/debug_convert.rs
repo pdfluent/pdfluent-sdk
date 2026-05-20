@@ -158,7 +158,7 @@ fn debug_gen626_symbol_widths_trace() {
     let mut doc = lopdf::Document::load_mem(&data).unwrap();
 
     fn get_symbol_widths(doc: &lopdf::Document) -> (Option<i64>, Option<i64>) {
-        for (_id, obj) in &doc.objects {
+        for obj in doc.objects.values() {
             if let Object::Dictionary(dict) = obj {
                 let base = dict
                     .get(b"BaseFont")
@@ -360,7 +360,7 @@ fn debug_gen626_symbol_cff_widths() {
                 Some(cff) => {
                     let n = cff.number_of_glyphs();
                     println!("CFF parse: OK, glyphs={n}");
-                    let scale = cff.matrix().sx as f64 * 1000.0;
+                    let scale = cff.matrix().sx * 1000.0;
                     // Print all glyph widths
                     for gid in 0..n {
                         let gid_obj = cff_parser::GlyphId(gid);
@@ -370,7 +370,7 @@ fn debug_gen626_symbol_cff_widths() {
                         let name = cff
                             .glyph_name(gid_obj)
                             .map(|n| n.to_string())
-                            .unwrap_or_else(|| format!("?"));
+                            .unwrap_or_else(|| "?".to_string());
                         println!("  GID {gid}: name={name} width={w:?}");
                     }
                     // Print encoding for codes 1 and 128
@@ -554,7 +554,7 @@ fn debug_gen772_arial_widths_trace() {
     // Collect (FirstChar, Widths) for all Arial fonts
     fn get_arial_widths(doc: &lopdf::Document) -> Vec<(String, u32, Vec<i64>)> {
         let mut result = Vec::new();
-        for (_id, obj) in &doc.objects {
+        for obj in doc.objects.values() {
             if let Object::Dictionary(dict) = obj {
                 let base = dict
                     .get(b"BaseFont")
@@ -671,7 +671,7 @@ fn debug_gen772_arial_widths_trace() {
     // Debug: inspect the CFF font data directly for one Arial font
     {
         use lopdf::Object;
-        for (_id, obj) in &doc.objects {
+        for obj in doc.objects.values() {
             if let Object::Dictionary(dict) = obj {
                 let base = dict
                     .get(b"BaseFont")
@@ -760,7 +760,7 @@ fn debug_gen772_arial_widths_trace() {
                         let n = cff.number_of_glyphs();
                         println!("  cff_parser: OK glyphs={}", n);
                         let mx = cff.matrix();
-                        let scale = (mx.sx as f64) * 1000.0;
+                        let scale = mx.sx * 1000.0;
                         println!("  CFF matrix sx={} scale={}", mx.sx, scale);
                         // Check glyph names for first 5 non-notdef
                         for gid in 0..n.min(10) {
@@ -800,13 +800,13 @@ fn debug_gen772_arial_widths_trace() {
                         );
                         // Check private dict widths by parsing CFF top dict
                         let mx = cff.matrix();
-                        let cff_scale = (mx.sx as f64 * 1_000_000.0).round() / 1_000_000.0 * 1000.0;
+                        let cff_scale = (mx.sx * 1_000_000.0).round() / 1_000_000.0 * 1000.0;
                         // Show cff.glyph_index for codes 32 and 64
                         for code in [32u8, 40, 41, 64, 65, 97] {
                             let gid = cff.glyph_index(code);
                             let w = gid.and_then(|g| cff.glyph_width(g));
                             // Also show what cff_type2_endchar_default_width returns
-                            let endchar_w = gid.and_then(|g| {
+                            let endchar_w = gid.and({
                                 // Simulate: parse private dict then charstring
                                 None::<f64> // placeholder
                             });
@@ -1640,7 +1640,7 @@ fn debug_gen490_cff_glyphs() {
         println!("\n=== Font {id:?} BaseFont={base} fc={fc} lc={lc} (HAS 222/223) ===");
 
         // Show /Widths for code 222/223
-        if let Some(Object::Array(ws)) = dict.get(b"Widths").ok() {
+        if let Ok(Object::Array(ws)) = dict.get(b"Widths") {
             for code in [222i64, 223i64] {
                 let idx = (code - fc) as usize;
                 if idx < ws.len() {
@@ -1650,7 +1650,7 @@ fn debug_gen490_cff_glyphs() {
         }
 
         // Show encoding
-        if let Some(enc) = dict.get(b"Encoding").ok() {
+        if let Ok(enc) = dict.get(b"Encoding") {
             println!("  /Encoding = {:?}", enc);
         }
 
@@ -1713,7 +1713,7 @@ fn debug_gen319_code39_trace() {
     use pdf_manip::pdfa_xmp::PdfAConformance;
 
     fn get_helvetica_code39(doc: &lopdf::Document) -> Option<i64> {
-        for (_id, obj) in &doc.objects {
+        for obj in doc.objects.values() {
             if let Object::Dictionary(dict) = obj {
                 let base = dict
                     .get(b"BaseFont")
@@ -1754,7 +1754,7 @@ fn debug_gen319_code39_trace() {
                 if fc > 39 || 39 > lc {
                     continue;
                 }
-                if let Some(Object::Array(ws)) = dict.get(b"Widths").ok() {
+                if let Ok(Object::Array(ws)) = dict.get(b"Widths") {
                     let idx = (39 - fc) as usize;
                     if idx < ws.len() {
                         if let Object::Integer(w) = &ws[idx] {
@@ -1862,7 +1862,7 @@ fn debug_gen319_helvetica_fd() {
             println!("Font {id:?}: {base} Enc={enc}");
 
             // Get FontDescriptor
-            if let Some(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor").ok() {
+            if let Ok(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor") {
                 println!("  FontDescriptor ref: {fd_ref:?}");
                 if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_ref) {
                     let ff1 = fd.get(b"FontFile").is_ok();
@@ -1870,7 +1870,7 @@ fn debug_gen319_helvetica_fd() {
                     let ff3 = fd.get(b"FontFile3").is_ok();
                     println!("  FontFile1={ff1} FontFile2={ff2} FontFile3={ff3}");
                     if ff3 {
-                        if let Some(Object::Reference(ff3_ref)) = fd.get(b"FontFile3").ok() {
+                        if let Ok(Object::Reference(ff3_ref)) = fd.get(b"FontFile3") {
                             println!("  FontFile3 ref: {ff3_ref:?}");
                             if let Some(Object::Stream(s)) = doc.objects.get(ff3_ref) {
                                 let subtype2 = s
@@ -1924,7 +1924,7 @@ fn debug_gen319_cff_width_direct() {
 
     // Find NNHDHP+Helvetica FontFile3 bytes
     let mut font_data: Option<Vec<u8>> = None;
-    for (_id, obj) in &doc.objects {
+    for obj in doc.objects.values() {
         if let Object::Dictionary(dict) = obj {
             let st = dict
                 .get(b"Subtype")
@@ -1954,9 +1954,9 @@ fn debug_gen319_cff_width_direct() {
             if !base.contains("Helvetica") {
                 continue;
             }
-            if let Some(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor").ok() {
+            if let Ok(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor") {
                 if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_ref) {
-                    if let Some(Object::Reference(ff3_ref)) = fd.get(b"FontFile3").ok() {
+                    if let Ok(Object::Reference(ff3_ref)) = fd.get(b"FontFile3") {
                         if let Some(Object::Stream(s)) = doc.objects.get(ff3_ref) {
                             font_data = Some(s.content.clone());
                             break;
@@ -1989,7 +1989,7 @@ fn debug_gen319_cff_width_direct() {
         let w = cff.glyph_width(g);
         println!(
             "  GID {gid}: name={name:?} width={w:?} (scaled={:.1})",
-            w.unwrap_or(0) as f64 * 1000.0 * scale as f64
+            w.unwrap_or(0) as f64 * 1000.0 * scale
         );
     }
 
@@ -2039,9 +2039,9 @@ fn debug_gen319_cff_glyph_index() {
             if !base.contains("Helvetica") {
                 continue;
             }
-            if let Some(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor").ok() {
+            if let Ok(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor") {
                 if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_ref) {
-                    if let Some(Object::Reference(ff3_ref)) = fd.get(b"FontFile3").ok() {
+                    if let Ok(Object::Reference(ff3_ref)) = fd.get(b"FontFile3") {
                         ff3_id = Some(*ff3_ref);
                     }
                 }
@@ -2075,7 +2075,7 @@ fn debug_gen319_cff_glyph_index() {
         }
         let gix39 = cff.glyph_index(39u8);
         println!("cff.glyph_index(39) = {gix39:?}");
-        let scale = cff.matrix().sx as f64;
+        let scale = cff.matrix().sx;
         if let Some(gid) = gix39 {
             let w = cff.glyph_width(gid);
             println!(
@@ -2097,7 +2097,7 @@ fn debug_gen319_helvetica_flags() {
     let data = std::fs::read("/tmp/gen-319_319905.pdf").unwrap();
     let doc = lopdf::Document::load_mem(&data).unwrap();
 
-    for (_id, obj) in &doc.objects {
+    for obj in doc.objects.values() {
         if let Object::Dictionary(dict) = obj {
             let st = dict
                 .get(b"Subtype")
@@ -2127,7 +2127,7 @@ fn debug_gen319_helvetica_flags() {
             if !base.contains("Helvetica") {
                 continue;
             }
-            if let Some(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor").ok() {
+            if let Ok(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor") {
                 if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_ref) {
                     let flags = fd.get(b"Flags").ok().and_then(|o| {
                         if let Object::Integer(i) = o {
@@ -2249,7 +2249,7 @@ fn debug_gen319_fix_trace() {
             println!("  Font {id:?} {base} FC={fc} Enc={enc:?} Widths={widths_obj}");
 
             // Check FontDescriptor
-            if let Some(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor").ok() {
+            if let Ok(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor") {
                 if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_ref) {
                     let ff3 = fd.get(b"FontFile3").is_ok();
                     let ff2 = fd.get(b"FontFile2").is_ok();
@@ -2340,7 +2340,7 @@ fn debug_gen319_enc_dict() {
                         })
                         .unwrap_or("(none)".to_string());
                     println!("  Encoding: Dict BaseEncoding={base_enc:?}");
-                    if let Some(Object::Array(diffs)) = ed.get(b"Differences").ok() {
+                    if let Ok(Object::Array(diffs)) = ed.get(b"Differences") {
                         println!(
                             "  Differences[{}]: {:?}",
                             diffs.len(),
@@ -2466,7 +2466,7 @@ fn debug_gen319_cff_trace() {
 
     // Find FontFile3 stream for NNHDHP+Helvetica
     let mut ff3_id: Option<lopdf::ObjectId> = None;
-    for (_id, obj) in &doc.objects {
+    for obj in doc.objects.values() {
         if let Object::Dictionary(dict) = obj {
             let st = dict
                 .get(b"Subtype")
@@ -2496,9 +2496,9 @@ fn debug_gen319_cff_trace() {
             if !base.contains("Helvetica") {
                 continue;
             }
-            if let Some(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor").ok() {
+            if let Ok(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor") {
                 if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_ref) {
-                    if let Some(Object::Reference(ff3_ref)) = fd.get(b"FontFile3").ok() {
+                    if let Ok(Object::Reference(ff3_ref)) = fd.get(b"FontFile3") {
                         ff3_id = Some(*ff3_ref);
                     }
                 }
@@ -2523,7 +2523,7 @@ fn debug_gen319_cff_trace() {
     let cff = cff_parser::Table::parse(&font_data).expect("CFF parse failed");
     let scale = {
         let sx = cff.matrix().sx;
-        let raw = sx as f64 * 1000.0;
+        let raw = sx * 1000.0;
         (raw * 1_000_000.0).round() / 1_000_000.0
     };
     println!("cff_matrix_scale={scale}");
@@ -2533,7 +2533,7 @@ fn debug_gen319_cff_trace() {
             let n = cff.number_of_glyphs();
             (0..n).find_map(|gid_raw| {
                 let gid = cff_parser::GlyphId(gid_raw);
-                if cff.glyph_name(gid).as_deref() == Some(name) {
+                if cff.glyph_name(gid) == Some(name) {
                     cff.glyph_width(gid).map(|w| w as f64 * scale)
                 } else {
                     None
@@ -2625,7 +2625,7 @@ fn debug_gen319_after_preprocess() {
                 let ff3_id_opt: Option<lopdf::ObjectId> = (|| {
                     let fd_ref = dict.get(b"FontDescriptor").ok()?.as_reference().ok()?;
                     let fd = doc.objects.get(&fd_ref)?.as_dict().ok()?;
-                    Some(fd.get(b"FontFile3").ok()?.as_reference().ok()?.clone())
+                    fd.get(b"FontFile3").ok()?.as_reference().ok()
                 })();
                 (enc_desc, fc, lc, w39_val, ff3_id_opt)
             }
@@ -2635,7 +2635,7 @@ fn debug_gen319_after_preprocess() {
     println!("(49,0): FC={fc} LC={lc} Enc={enc_desc} Widths[39]={w39_val}");
     // Print Encoding dict details
     if let Some(Object::Dictionary(dict)) = doc.objects.get(&(49, 0)) {
-        if let Some(Object::Dictionary(enc_dict)) = dict.get(b"Encoding").ok() {
+        if let Ok(Object::Dictionary(enc_dict)) = dict.get(b"Encoding") {
             let base = enc_dict.get(b"BaseEncoding").ok().and_then(|o| {
                 if let Object::Name(n) = o {
                     Some(String::from_utf8_lossy(n).to_string())
@@ -2644,7 +2644,7 @@ fn debug_gen319_after_preprocess() {
                 }
             });
             println!("  Encoding.BaseEncoding={base:?}");
-            if let Some(Object::Array(diffs)) = enc_dict.get(b"Differences").ok() {
+            if let Ok(Object::Array(diffs)) = enc_dict.get(b"Differences") {
                 let mut code: u32 = 0;
                 let mut entries = Vec::new();
                 for obj in diffs {
@@ -2680,12 +2680,12 @@ fn debug_gen319_after_preprocess() {
             println!("  ttf_parser success={ttf_ok}");
             if let Some(cff) = cff_parser::Table::parse(&font_data) {
                 let sx = cff.matrix().sx;
-                let scale = (sx as f64 * 1000.0 * 1_000_000.0).round() / 1_000_000.0;
+                let scale = (sx * 1000.0 * 1_000_000.0).round() / 1_000_000.0;
                 println!("  CFF scale={scale}");
                 let n = cff.number_of_glyphs();
                 let qr = (0..n).find_map(|g| {
                     let gid = cff_parser::GlyphId(g);
-                    if cff.glyph_name(gid).as_deref() == Some("quoteright") {
+                    if cff.glyph_name(gid) == Some("quoteright") {
                         cff.glyph_width(gid).map(|w| w as f64 * scale)
                     } else {
                         None
@@ -2938,7 +2938,7 @@ fn debug_gen319_full_pipeline() {
                 }
             })
             .unwrap_or(-1);
-        let enc_entry = if let Some(Object::Dictionary(enc_dict)) = dict.get(b"Encoding").ok() {
+        let enc_entry = if let Ok(Object::Dictionary(enc_dict)) = dict.get(b"Encoding") {
             let base = enc_dict
                 .get(b"BaseEncoding")
                 .ok()
@@ -2950,7 +2950,7 @@ fn debug_gen319_full_pipeline() {
                     }
                 })
                 .unwrap_or_default();
-            if let Some(Object::Array(diffs)) = enc_dict.get(b"Differences").ok() {
+            if let Ok(Object::Array(diffs)) = enc_dict.get(b"Differences") {
                 let mut code: i64 = 0;
                 let mut found = String::new();
                 for d in diffs {
@@ -2972,7 +2972,7 @@ fn debug_gen319_full_pipeline() {
             } else {
                 format!("EncDict(Base={base},no Diffs)")
             }
-        } else if let Some(Object::Name(n)) = dict.get(b"Encoding").ok() {
+        } else if let Ok(Object::Name(n)) = dict.get(b"Encoding") {
             format!("Enc={}", String::from_utf8_lossy(n))
         } else {
             "no Encoding".to_string()
@@ -3526,7 +3526,7 @@ fn debug_gen698_encoding() {
     let doc = lopdf::Document::load_mem(&data).unwrap();
 
     // Encoding object is (165, 0)
-    if let Some(Object::Dictionary(enc)) = doc.objects.get(&(165u32, 0u16).into()) {
+    if let Some(Object::Dictionary(enc)) = doc.objects.get(&(165u32, 0u16)) {
         println!(
             "Encoding (165,0) keys: {:?}",
             enc.iter()
@@ -3939,7 +3939,7 @@ fn debug_gen152_oi_trace() {
                     println!("  DestOutputProfile: can't get as Stream (returns None)");
                     // Try to get the raw ref
                     // Check the ICC stream (object 40,0) via lopdf
-                    let icc_id: lopdf::ObjectId = (40u32, 0u16).into();
+                    let icc_id: lopdf::ObjectId = (40u32, 0u16);
                     if let Some(Object::Stream(stream)) = doc.objects.get(&icc_id) {
                         let bytes = stream.decompressed_content().unwrap_or_default();
                         println!("  lopdf ICC (40,0) bytes: {}", bytes.len());
@@ -5090,7 +5090,7 @@ fn debug_gen490_corrections() {
             if !(fc <= 222 && 222 <= lc) {
                 continue;
             }
-            if let Some(Object::Array(ws)) = dict.get(b"Widths").ok() {
+            if let Ok(Object::Array(ws)) = dict.get(b"Widths") {
                 let idx222 = (222 - fc) as usize;
                 let idx223 = (223 - fc) as usize;
                 let w222 = ws
@@ -5424,7 +5424,7 @@ fn debug_gen490_trace_corrections() {
                 .unwrap_or("?".to_string());
             println!("  Type1 {id:?}: base={base} fc={fc} lc={lc}");
             if fc <= 222 && 222 <= lc {
-                if let Some(Object::Array(ws)) = d.get(b"Widths").ok() {
+                if let Ok(Object::Array(ws)) = d.get(b"Widths") {
                     let idx = (222 - fc) as usize;
                     if idx < ws.len() {
                         println!("    code222 width = {:?}", ws[idx]);
@@ -5452,7 +5452,7 @@ fn debug_gen490_widths_ref() {
                 .map(|(k, _)| String::from_utf8_lossy(k).to_string())
                 .collect::<Vec<_>>()
         );
-        if let Some(widths_obj) = d.get(b"Widths").ok() {
+        if let Ok(widths_obj) = d.get(b"Widths") {
             println!("Widths obj type: {:?}", std::mem::discriminant(widths_obj));
             match widths_obj {
                 Object::Array(a) => println!("  Direct array len={}", a.len()),
@@ -5551,10 +5551,7 @@ fn debug_gen490_widths_ref2() {
                             let idx = (222 - fc) as usize;
                             println!("  Resolved array len={}, code222={:?}", a.len(), a.get(idx));
                         }
-                        other => println!(
-                            "  Resolved to {:?}",
-                            other.map(|o| std::mem::discriminant(o))
-                        ),
+                        other => println!("  Resolved to {:?}", other.map(std::mem::discriminant)),
                     }
                 }
                 Some(other) => println!(
@@ -5954,7 +5951,7 @@ fn debug_cff_charset_helv_bold() {
             let gid = cff_parser::GlyphId(gid_raw);
             let name = cff.glyph_name(gid);
             let w = cff.glyph_width(gid);
-            let s = cff.matrix().sx as f64 * 1000.0;
+            let s = cff.matrix().sx * 1000.0;
             let ws = w.map(|w| w as f64 * s);
             eprintln!("    GID {gid_raw}: name={name:?} w_raw={w:?} w_scaled={ws:?}");
         }
@@ -6270,7 +6267,7 @@ fn debug_gen997_symbol_trace() {
     use lopdf::Object;
 
     fn get_symbol_info(doc: &lopdf::Document) -> Option<(String, bool, bool, bool, i64)> {
-        for (_id, obj) in &doc.objects {
+        for obj in doc.objects.values() {
             let Object::Dictionary(dict) = obj else {
                 continue;
             };
@@ -6730,7 +6727,7 @@ fn debug_melebe_trace() {
     use lopdf::Object;
 
     fn melebe_w227(doc: &lopdf::Document, label: &str) {
-        for (_id, obj) in &doc.objects {
+        for obj in doc.objects.values() {
             let Object::Dictionary(dict) = obj else {
                 continue;
             };
@@ -6834,7 +6831,7 @@ fn debug_melebe_trace() {
     pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
     melebe_w227(&doc, "fix_missing_widths");
     // Check Differences for MELEBE at this point
-    for (_id, obj) in &doc.objects {
+    for obj in doc.objects.values() {
         let lopdf::Object::Dictionary(dict) = obj else {
             continue;
         };
@@ -7035,7 +7032,7 @@ fn test_filespec_and_xref_fixes() {
     for dir in ["/tmp/test_69", "/tmp/test_614"] {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for e in entries.flatten() {
-                if e.path().extension().map_or(false, |x| x == "pdf") {
+                if e.path().extension().is_some_and(|x| x == "pdf") {
                     paths.push(e.path().to_string_lossy().into_owned());
                 }
             }
@@ -7099,7 +7096,7 @@ fn diagnose_three_patterns() {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(true, |x| x != "pdf") {
+            if path.extension().is_none_or(|x| x != "pdf") {
                 continue;
             }
             let name = path.file_name().unwrap().to_string_lossy().to_string();
@@ -7622,7 +7619,7 @@ fn debug_62117_fonts() {
                 eprintln!("Font {:?}: Subtype={:?} BaseFont={:?} Encoding={:?} ToUnicode={} Descendants={:?}",
                     id, subtype, base_font, encoding, has_tounicode, descendants);
                 // If Type0, check descendant
-                if let Some(lopdf::Object::Array(desc)) = dict.get(b"DescendantFonts").ok() {
+                if let Ok(lopdf::Object::Array(desc)) = dict.get(b"DescendantFonts") {
                     for d in desc {
                         if let lopdf::Object::Reference(cid_id) = d {
                             if let Some(lopdf::Object::Dictionary(cid_dict)) =
@@ -7653,8 +7650,8 @@ fn debug_62117_fonts() {
                                 eprintln!("  CIDFont {:?}: Subtype={:?} BaseFont={:?} CIDToGIDMap={:?} FD={:?}",
                                     cid_id, cid_sub, cid_bf, cidtogid, fd);
                                 // Check font file
-                                if let Some(lopdf::Object::Reference(fd_id)) =
-                                    cid_dict.get(b"FontDescriptor").ok()
+                                if let Ok(lopdf::Object::Reference(fd_id)) =
+                                    cid_dict.get(b"FontDescriptor")
                                 {
                                     if let Some(lopdf::Object::Dictionary(fd_dict)) =
                                         doc.objects.get(fd_id)

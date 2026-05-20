@@ -204,6 +204,13 @@ pub fn render_pdf(
     Some(rendered)
 }
 
+pub(crate) fn derive_settings(settings: &vello_cpu::RenderSettings) -> vello_cpu::RenderSettings {
+    vello_cpu::RenderSettings {
+        num_threads: 0,
+        ..*settings
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,12 +305,5 @@ mod tests {
         // Range 0..=0 selects only the first (and only) page.
         let pixmaps = render_pdf(&pdf, 1.0, InterpreterSettings::default(), Some(0..=0)).unwrap();
         assert_eq!(pixmaps.len(), 1);
-    }
-}
-
-pub(crate) fn derive_settings(settings: &vello_cpu::RenderSettings) -> vello_cpu::RenderSettings {
-    vello_cpu::RenderSettings {
-        num_threads: 0,
-        ..*settings
     }
 }

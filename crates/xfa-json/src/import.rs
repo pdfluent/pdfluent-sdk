@@ -322,6 +322,9 @@ mod tests {
     }
 
     #[test]
+    // 3.14 is literal test input verifying number->string formatting, not an
+    // approximation of PI.
+    #[allow(clippy::approx_constant)]
     fn field_value_to_string_formats() {
         assert_eq!(field_value_to_string(&FieldValue::Number(42.0)), "42");
         assert_eq!(field_value_to_string(&FieldValue::Number(3.14)), "3.14");

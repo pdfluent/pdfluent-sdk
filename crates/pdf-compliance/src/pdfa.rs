@@ -2102,7 +2102,7 @@ mod string_scan_tests {
 
     #[test]
     fn real_long_string_flagged() {
-        let long_str: Vec<u8> = std::iter::repeat(b'A').take(33_000).collect();
+        let long_str: Vec<u8> = std::iter::repeat_n(b'A', 33_000).collect();
         let mut stream = b"BT\r\n(".to_vec();
         stream.extend_from_slice(&long_str);
         stream.extend_from_slice(b") Tj\r\nET\r\n");

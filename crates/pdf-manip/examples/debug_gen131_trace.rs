@@ -4,7 +4,7 @@ fn main() {
     let mut doc = lopdf::Document::load_mem(&data).unwrap();
 
     fn print_code129(doc: &lopdf::Document, step: &str) {
-        for (_id, obj) in &doc.objects {
+        for obj in doc.objects.values() {
             let lopdf::Object::Dictionary(dict) = obj else {
                 continue;
             };
