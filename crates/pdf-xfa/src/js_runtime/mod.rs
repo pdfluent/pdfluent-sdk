@@ -167,6 +167,23 @@ pub struct RuntimeMetadata {
     /// chain.length == 1` (no same-name ambiguity possible).  Every skipped
     /// call saves one `resolveWithFullChainStrict` host round-trip.
     pub probe_skips: usize,
+    /// D3 (trace-only): `<variables>` `<script>` objects collected from the
+    /// template for this document (root + subform scopes).
+    pub variables_scripts_collected: usize,
+    /// D3 (trace-only): `<variables>` `<text>` data items collected.
+    pub variables_data_items_collected: usize,
+    /// D3 (trace-only): script objects whose JS-side registration returned
+    /// success (namespace bound into `variablesScripts` / `subformVariables`).
+    pub script_objects_registered: usize,
+    /// D3 (trace-only): script objects that did NOT register — either a Rust
+    /// skip (`BodyTooLarge` / `RegexRejected` / panic) or a JS-side eval
+    /// failure (`setVariablesScript` returned `false`). Pure observability;
+    /// never folded into [`is_clean`](Self::is_clean) or rollback.
+    pub script_objects_register_failed: usize,
+    /// D3 (trace-only): script objects collected under a NESTED subform scope
+    /// (registered into `subformVariables` only, hence not reachable as a bare
+    /// identifier today — the "scope_hidden" gap class).
+    pub script_objects_subform_scoped: usize,
 }
 
 impl RuntimeMetadata {
@@ -196,6 +213,21 @@ impl RuntimeMetadata {
             .unsupported_host_calls
             .saturating_add(other.unsupported_host_calls);
         self.probe_skips = self.probe_skips.saturating_add(other.probe_skips);
+        self.variables_scripts_collected = self
+            .variables_scripts_collected
+            .saturating_add(other.variables_scripts_collected);
+        self.variables_data_items_collected = self
+            .variables_data_items_collected
+            .saturating_add(other.variables_data_items_collected);
+        self.script_objects_registered = self
+            .script_objects_registered
+            .saturating_add(other.script_objects_registered);
+        self.script_objects_register_failed = self
+            .script_objects_register_failed
+            .saturating_add(other.script_objects_register_failed);
+        self.script_objects_subform_scoped = self
+            .script_objects_subform_scoped
+            .saturating_add(other.script_objects_subform_scoped);
     }
 }
 

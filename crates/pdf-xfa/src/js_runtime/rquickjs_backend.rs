@@ -1192,14 +1192,19 @@ impl QuickJsRuntime {
     /// budget, an untrusted/malformed XFA template that contains
     /// `while (true) {}` inside `<variables>` could hang flatten before
     /// any normal event script runs (Codex P1 review on PR #1499).
+    /// Returns `Ok(true)` when the JS-side `setVariablesScript` bound the
+    /// namespace, `Ok(false)` when it returned `false` (eval failure caught
+    /// JS-side), or `Err` on a Rust-side skip (cap / REDOS / timeout / panic).
+    /// D3: the boolean is now propagated so `set_form_handle` can count
+    /// registration outcomes for trace observability (previously discarded).
     fn register_variables_script(
         &self,
         name: &str,
         body: &str,
         subform_scope: Option<&str>,
-    ) -> Result<(), SandboxError> {
+    ) -> Result<bool, SandboxError> {
         let Some(setter) = self.set_variables_script.clone() else {
-            return Ok(());
+            return Ok(false);
         };
         // W2-B: variables-scripts use a higher body-size cap than event
         // scripts because they are form-level helper libraries (XFA 3.3
@@ -1224,10 +1229,10 @@ impl QuickJsRuntime {
         let scope = subform_scope.unwrap_or("").to_string();
         self.set_deadline();
         let result = catch_unwind(AssertUnwindSafe(|| {
-            self.context.with(|ctx| -> Result<(), rquickjs::Error> {
+            self.context.with(|ctx| -> Result<bool, rquickjs::Error> {
                 let setter = setter.restore(&ctx)?;
-                let _: bool = setter.call((name, body, idents, scope))?;
-                Ok(())
+                let ok: bool = setter.call((name, body, idents, scope))?;
+                Ok(ok)
             })
         }));
         // Detect timeouts the same way `execute_script` does: if the
@@ -1241,7 +1246,7 @@ impl QuickJsRuntime {
         let timed_out = deadline_now != 0 && now_nanos >= deadline_now;
         self.clear_deadline();
         match result {
-            Ok(Ok(())) => Ok(()),
+            Ok(Ok(ok)) => Ok(ok),
             // QF1-E / SEC-01: defence-in-depth wall-time fallback also
             // covers `<variables>` `<script>` registration. The same
             // classifier upgrades a `Timeout` to `WallTimeExceeded` when
@@ -3689,11 +3694,36 @@ impl XfaJsRuntime for QuickJsRuntime {
             // SAFETY: caller guarantees `form` outlives this call.
             let scripts: Vec<(Option<String>, String, String)> =
                 unsafe { (*form).variables_scripts.clone() };
+            // D3 (trace-only): count collected vs registered vs failed and the
+            // subform-scoped subset. Pure observability — no behaviour change.
+            self.metadata.variables_scripts_collected = self
+                .metadata
+                .variables_scripts_collected
+                .saturating_add(scripts.len());
             for (subform_scope, name, body) in scripts {
-                if let Err(e) =
-                    self.register_variables_script(&name, &body, subform_scope.as_deref())
-                {
-                    log::debug!("D-ι register `{name}` failed: {e:?}");
+                if subform_scope.is_some() {
+                    self.metadata.script_objects_subform_scoped =
+                        self.metadata.script_objects_subform_scoped.saturating_add(1);
+                }
+                match self.register_variables_script(&name, &body, subform_scope.as_deref()) {
+                    Ok(true) => {
+                        self.metadata.script_objects_registered =
+                            self.metadata.script_objects_registered.saturating_add(1);
+                    }
+                    Ok(false) => {
+                        self.metadata.script_objects_register_failed = self
+                            .metadata
+                            .script_objects_register_failed
+                            .saturating_add(1);
+                        log::debug!("D-ι register `{name}` returned false (JS eval failed)");
+                    }
+                    Err(e) => {
+                        self.metadata.script_objects_register_failed = self
+                            .metadata
+                            .script_objects_register_failed
+                            .saturating_add(1);
+                        log::debug!("D-ι register `{name}` failed: {e:?}");
+                    }
                 }
             }
             // W3-D RETRY: register `<variables><text name="X">…</text>`
@@ -3703,11 +3733,24 @@ impl XfaJsRuntime for QuickJsRuntime {
             // SAFETY: same lifetime guarantee as above.
             let data_items: Vec<(Option<String>, String, String)> =
                 unsafe { (*form).variables_data_items.clone() };
+            // D3 (trace-only): count collected vs registered vs failed.
+            self.metadata.variables_data_items_collected = self
+                .metadata
+                .variables_data_items_collected
+                .saturating_add(data_items.len());
             for (subform_scope, name, initial) in data_items {
-                if let Err(e) =
-                    self.register_variables_data_item(&name, &initial, subform_scope.as_deref())
-                {
-                    log::debug!("W3-D register data item `{name}` failed: {e:?}");
+                match self.register_variables_data_item(&name, &initial, subform_scope.as_deref()) {
+                    Ok(()) => {
+                        self.metadata.script_objects_registered =
+                            self.metadata.script_objects_registered.saturating_add(1);
+                    }
+                    Err(e) => {
+                        self.metadata.script_objects_register_failed = self
+                            .metadata
+                            .script_objects_register_failed
+                            .saturating_add(1);
+                        log::debug!("W3-D register data item `{name}` failed: {e:?}");
+                    }
                 }
             }
         }
