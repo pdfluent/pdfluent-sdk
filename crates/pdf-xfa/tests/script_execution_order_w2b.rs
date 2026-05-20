@@ -269,9 +269,14 @@ fn variables_script_registered_before_first_event_script() {
 }
 
 /// W2-B ordering invariant: a *subform-scoped* variables-script is
-/// available through `subformHandle.variables.<name>` from event scripts
-/// the moment dispatch starts. Guards the D-ι.2 dispatch path so the
+/// registered before dispatch. Guards the D-ι.2 dispatch path so the
 /// size-cap split does not regress subform-scoped namespaces.
+///
+/// D4 update: a UNIQUE-name subform-scoped script is now ALSO resolvable as a
+/// bare identifier (minimal SOM resolution). The dispatch-ordering guarantee
+/// (registered before the first calculate, no runtime errors) is unchanged;
+/// only the bare-identifier visibility expectation is updated. Ambiguous
+/// (multi-subform) names remain fail-closed — see d4_minimal_som_resolution.rs.
 #[test]
 fn subform_scoped_variables_script_registers_before_dispatch() {
     let mut tree = FormTree::new();
@@ -284,26 +289,24 @@ fn subform_scoped_variables_script_registers_before_dispatch() {
     ));
 
     let out = add_field(&mut tree, root, "Out", "");
-    // Event script reads from the form-tree implicit scope; a missing
-    // subform handle should not crash dispatch.
     add_js_script(
         &mut tree,
         out,
         "calculate",
         "this.rawValue = (typeof PageHelpers === \"undefined\") \
-         ? \"scoped_absent\" : \"scoped_leaked\";",
+         ? \"scoped_absent\" : PageHelpers.pageOnly();",
     );
 
     let outcome = run_sandbox(&mut tree, root);
 
-    // Subform-scoped scripts are intentionally NOT visible as bare
-    // globals — only via `subformHandle.variables.<name>`. The bare
-    // identifier MUST stay undefined; this is the W2-B regression guard.
+    // D4: the unique-name subform-scoped script resolves as a bare identifier
+    // and its top-level function is callable from the first calculate script.
     assert_eq!(
         field_value(&tree, out),
-        "scoped_absent",
-        "subform-scoped variables must NOT leak into the bare global scope",
+        "page_ok",
+        "unique-name subform-scoped script must resolve as a bare identifier after D4",
     );
+    assert_eq!(outcome.som_subform_scripts_exposed, 1);
     assert_eq!(outcome.js_executed, 1);
     assert_eq!(outcome.js_runtime_errors, 0);
 }
