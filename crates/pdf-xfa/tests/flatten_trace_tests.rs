@@ -191,6 +191,21 @@ fn flatten_trace_env_gated_and_wellformed() {
         "single-page form must record a single_page keep decision: {body}"
     );
 
+    // Layout provenance fields must be present; a fully-visible single page is
+    // never a provenance-safe drop.
+    assert!(body.contains("\"page_reason\":"), "body={body}");
+    assert!(body.contains("\"under_repeating_subform\":"), "body={body}");
+    assert!(body.contains("\"data_bound_nodes_count\":"), "body={body}");
+    assert!(body.contains("\"provenance_confidence\":"), "body={body}");
+    assert!(
+        body.contains("\"suppression_safe_to_drop\":false"),
+        "a visible single page must not be provenance-safe to drop: {body}"
+    );
+    assert!(
+        !body.contains("\"suppression_safe_to_drop\":true"),
+        "no page in a fully-visible form may be flagged safe-to-drop: {body}"
+    );
+
     // No unexpected static-text drop: this form is fully visible, so nothing is
     // pruned and every text-draw is "visible".
     assert_eq!(
