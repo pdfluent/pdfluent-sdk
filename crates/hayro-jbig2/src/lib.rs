@@ -554,6 +554,49 @@ impl DecodeContext {
     }
 }
 
+/// Create a decode context from page information segment data.
+///
+/// This parses the page information and creates the initial page bitmap
+/// with the default pixel value.
+pub(crate) fn get_ctx(
+    reader: &mut Reader<'_>,
+    height_from_stripes: Option<u32>,
+) -> Result<(DecodeContext, Bitmap)> {
+    let page_info = parse_page_information(reader)?;
+
+    // "A page's bitmap height may be declared in its page information segment
+    // to be unknown (by specifying a height of 0xFFFFFFFF). In this case, the
+    // page must be striped." (7.4.8.2)
+    let height = if page_info.height == 0xFFFF_FFFF {
+        height_from_stripes.ok_or(FormatError::UnknownPageHeight)?
+    } else {
+        page_info.height
+    };
+
+    // "Bit 2: Page default pixel value. This bit contains the initial value
+    // for every pixel in the page, before any region segments are decoded
+    // or drawn." (7.4.8.5)
+    let page_bitmap = Bitmap::new_with(
+        page_info.width,
+        height,
+        0,
+        0,
+        page_info.flags.default_pixel != 0,
+    );
+
+    let ctx = DecodeContext {
+        page_info,
+        page_pristine: true,
+        referred_segments: Vec::new(),
+        pattern_dictionaries: Vec::new(),
+        symbol_dictionaries: Vec::new(),
+        huffman_tables: Vec::new(),
+        standard_tables: StandardHuffmanTables::new(),
+    };
+
+    Ok((ctx, page_bitmap))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -692,47 +735,4 @@ mod tests {
         // with a truncated single-segment stream produces an error gracefully.
         assert!(decode_embedded(&[], None).is_err());
     }
-}
-
-/// Create a decode context from page information segment data.
-///
-/// This parses the page information and creates the initial page bitmap
-/// with the default pixel value.
-pub(crate) fn get_ctx(
-    reader: &mut Reader<'_>,
-    height_from_stripes: Option<u32>,
-) -> Result<(DecodeContext, Bitmap)> {
-    let page_info = parse_page_information(reader)?;
-
-    // "A page's bitmap height may be declared in its page information segment
-    // to be unknown (by specifying a height of 0xFFFFFFFF). In this case, the
-    // page must be striped." (7.4.8.2)
-    let height = if page_info.height == 0xFFFF_FFFF {
-        height_from_stripes.ok_or(FormatError::UnknownPageHeight)?
-    } else {
-        page_info.height
-    };
-
-    // "Bit 2: Page default pixel value. This bit contains the initial value
-    // for every pixel in the page, before any region segments are decoded
-    // or drawn." (7.4.8.5)
-    let page_bitmap = Bitmap::new_with(
-        page_info.width,
-        height,
-        0,
-        0,
-        page_info.flags.default_pixel != 0,
-    );
-
-    let ctx = DecodeContext {
-        page_info,
-        page_pristine: true,
-        referred_segments: Vec::new(),
-        pattern_dictionaries: Vec::new(),
-        symbol_dictionaries: Vec::new(),
-        huffman_tables: Vec::new(),
-        standard_tables: StandardHuffmanTables::new(),
-    };
-
-    Ok((ctx, page_bitmap))
 }

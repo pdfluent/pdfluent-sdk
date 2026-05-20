@@ -90,9 +90,9 @@ fn edge_case_deeply_nested_subforms() {
     let pdf_bytes = build_xfa_pdf(xdp);
     let result = flatten_xfa_to_pdf(&pdf_bytes);
     // Must not panic. Result may be Ok or Err — we only assert it is non-empty when Ok.
-    match result {
-        Ok(output) => assert!(!output.is_empty(), "flattened output must not be empty"),
-        Err(_) => {} // acceptable — the form may not be fully supported yet
+    // acceptable — the form may not be fully supported yet
+    if let Ok(output) = result {
+        assert!(!output.is_empty(), "flattened output must not be empty");
     }
 }
 
@@ -122,9 +122,8 @@ fn edge_case_repeating_subform_zero_instances() {
 
     let pdf_bytes = build_xfa_pdf(xdp);
     let result = flatten_xfa_to_pdf(&pdf_bytes);
-    match result {
-        Ok(output) => assert!(!output.is_empty(), "flattened output must not be empty"),
-        Err(_) => {}
+    if let Ok(output) = result {
+        assert!(!output.is_empty(), "flattened output must not be empty")
     }
 }
 
@@ -161,9 +160,8 @@ fn edge_case_repeating_subform_many_instances() {
 
     let pdf_bytes = build_xfa_pdf(&xdp);
     let result = flatten_xfa_to_pdf(&pdf_bytes);
-    match result {
-        Ok(output) => assert!(!output.is_empty(), "flattened output must not be empty"),
-        Err(_) => {}
+    if let Ok(output) = result {
+        assert!(!output.is_empty(), "flattened output must not be empty")
     }
 }
 
@@ -253,9 +251,8 @@ fn edge_case_multipage_three_pages() {
 
     let pdf_bytes = build_multipage_xfa_pdf(xdp);
     let result = flatten_xfa_to_pdf(&pdf_bytes);
-    match result {
-        Ok(output) => assert!(!output.is_empty(), "flattened output must not be empty"),
-        Err(_) => {}
+    if let Ok(output) = result {
+        assert!(!output.is_empty(), "flattened output must not be empty")
     }
 }
 
@@ -293,9 +290,8 @@ fn edge_case_static_and_dynamic_sections() {
 
     let pdf_bytes = build_xfa_pdf(xdp);
     let result = flatten_xfa_to_pdf(&pdf_bytes);
-    match result {
-        Ok(output) => assert!(!output.is_empty(), "flattened output must not be empty"),
-        Err(_) => {}
+    if let Ok(output) = result {
+        assert!(!output.is_empty(), "flattened output must not be empty")
     }
 }
 
@@ -326,9 +322,8 @@ fn edge_case_empty_datasets() {
 
     let pdf_bytes = build_xfa_pdf(xdp);
     let result = flatten_xfa_to_pdf(&pdf_bytes);
-    match result {
-        Ok(output) => assert!(!output.is_empty(), "flattened output must not be empty"),
-        Err(_) => {}
+    if let Ok(output) = result {
+        assert!(!output.is_empty(), "flattened output must not be empty")
     }
 }
 
@@ -364,9 +359,8 @@ fn edge_case_unicode_text() {
 
     let pdf_bytes = build_xfa_pdf(xdp);
     let result = flatten_xfa_to_pdf(&pdf_bytes);
-    match result {
-        Ok(output) => assert!(!output.is_empty(), "flattened output must not be empty"),
-        Err(_) => {}
+    if let Ok(output) = result {
+        assert!(!output.is_empty(), "flattened output must not be empty")
     }
 }
 
@@ -404,8 +398,7 @@ fn edge_case_very_long_text_field() {
 
     let pdf_bytes = build_xfa_pdf(&xdp);
     let result = flatten_xfa_to_pdf(&pdf_bytes);
-    match result {
-        Ok(output) => assert!(!output.is_empty(), "flattened output must not be empty"),
-        Err(_) => {}
+    if let Ok(output) = result {
+        assert!(!output.is_empty(), "flattened output must not be empty")
     }
 }

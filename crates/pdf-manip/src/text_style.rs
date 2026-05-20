@@ -1025,7 +1025,7 @@ mod tests {
                 && op
                     .operands
                     .first()
-                    .and_then(|o| as_number(o))
+                    .and_then(as_number)
                     .map(|v| v as i32 == 2)
                     .unwrap_or(false)
         });

@@ -273,8 +273,8 @@ fn test_redact_text_in_form_xobjects() {
 
     let chars = pdf_extract::extract_positioned_chars(&doc, 1);
     println!("Positioned chars extraction: {:?}", chars.is_ok());
-    if chars.is_ok() {
-        let text: String = chars.unwrap().iter().map(|c| c.ch).collect();
+    if let Ok(chars) = &chars {
+        let text: String = chars.iter().map(|c| c.ch).collect();
         println!("Extracted text: {:?}", text);
     }
 

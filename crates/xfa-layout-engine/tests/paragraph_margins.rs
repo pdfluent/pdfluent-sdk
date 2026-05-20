@@ -91,20 +91,20 @@ fn lines_for_field(
 #[test]
 fn paragraph_margins_reduce_available_width_for_wrapping() {
     let text = "AAAAAA AAAAAA AAAAAA AAAAA AAAAA";
-    let measured_width = FontMetrics::default().measure_width(&text);
+    let measured_width = FontMetrics::default().measure_width(text);
     assert!(
         measured_width > 180.0 && measured_width <= 200.0,
         "test text must fit 200pt but overflow 180pt, got width {measured_width:.2}: {text:?}"
     );
 
-    let lines_without_margins = lines_for_field(&text, None, None);
+    let lines_without_margins = lines_for_field(text, None, None);
     assert_eq!(
         lines_without_margins.len(),
         1,
         "text should stay on one line without paragraph margins: {text:?}"
     );
 
-    let lines_with_margins = lines_for_field(&text, Some(10.0), Some(10.0));
+    let lines_with_margins = lines_for_field(text, Some(10.0), Some(10.0));
     assert_eq!(
         lines_with_margins.len(),
         2,

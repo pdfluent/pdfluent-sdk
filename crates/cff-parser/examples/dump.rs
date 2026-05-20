@@ -27,13 +27,13 @@ fn main() {
         Charset::ExpertSubset => println!("ExpertSubset"),
         Charset::Format0(ref array) => {
             println!("Format0:");
-            for sid in array.clone() {
+            for sid in *array {
                 println!("  {:?}", string_by_id(&table, sid));
             }
         }
         Charset::Format1(ref array) => {
             println!("Format1:");
-            for range in array.clone() {
+            for range in *array {
                 let sid = range.first;
                 let count = range.left;
                 println!("  {:?} {:?}", sid, count);
@@ -47,7 +47,7 @@ fn main() {
         }
         Charset::Format2(ref array) => {
             println!("Format2:");
-            for range in array.clone() {
+            for range in *array {
                 let sid = range.first;
                 let count = range.left;
                 println!("  {:?} {:?}", sid, count);
@@ -63,13 +63,13 @@ fn main() {
         cff_parser::EncodingKind::Expert => println!("Expert"),
         cff_parser::EncodingKind::Format0(ref array) => {
             println!("Format0:");
-            for code in array.clone() {
+            for code in *array {
                 println!("  {:?}", code);
             }
         }
         cff_parser::EncodingKind::Format1(ref array) => {
             println!("Format1:");
-            for range in array.clone() {
+            for range in *array {
                 println!("  {:?} {:?}", range.first, range.left);
             }
         }

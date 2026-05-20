@@ -1,8 +1,7 @@
 //! Parser unit tests — covers the G3 operator list and round-trip guarantee.
 
 use crate::{
-    serialize, verify_round_trip, ContentOp, ContentStreamError, ContentStreamParser, RawOperand,
-    TjItem,
+    verify_round_trip, ContentOp, ContentStreamError, ContentStreamParser, RawOperand, TjItem,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -390,7 +389,7 @@ fn t42_full_text_block_round_trip() {
 fn t43_multiline_text() {
     let stream = b"BT /F1 12 Tf 72 720 Td (Line 1) Tj T* (Line 2) Tj ET";
     let ops = parse_ok(stream);
-    assert!(ops.iter().any(|op| *op == ContentOp::NextLine));
+    assert!(ops.contains(&ContentOp::NextLine));
     assert!(ops
         .iter()
         .any(|op| *op == ContentOp::ShowText(b"Line 2".to_vec())));

@@ -4052,8 +4052,10 @@ mod tests {
 
     #[test]
     fn checkbox_ignores_global_background_without_explicit_fill() {
-        let mut config = XfaRenderConfig::default();
-        config.background_color = Some([0.949, 0.949, 0.949]);
+        let config = XfaRenderConfig {
+            background_color: Some([0.949, 0.949, 0.949]),
+            ..Default::default()
+        };
         let s = styled_overlay_str_with_config(
             make_styled_checkbox(10.0, 10.0, 20.0, 20.0, "0", FormNodeStyle::default()),
             config,
@@ -4066,8 +4068,10 @@ mod tests {
 
     #[test]
     fn radio_ignores_global_background_without_explicit_fill() {
-        let mut config = XfaRenderConfig::default();
-        config.background_color = Some([0.949, 0.949, 0.949]);
+        let config = XfaRenderConfig {
+            background_color: Some([0.949, 0.949, 0.949]),
+            ..Default::default()
+        };
         let s = styled_overlay_str_with_config(
             make_styled_radio(
                 10.0,
