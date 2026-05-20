@@ -178,6 +178,18 @@ pub struct DynamicScriptOutcome {
     pub occur_application_ambiguous: usize,
     /// **D6.** Distinct nodes whose occur was applied.
     pub occur_application_targets: usize,
+    /// **D7.** Presence retry was active (sandboxed + both flags + no rollback).
+    pub presence_retry_enabled: bool,
+    /// **D7.** Hidden/invisible/inactive nodes considered under occur targets.
+    pub presence_retry_candidates: usize,
+    /// **D7.** Nodes admitted (Hidden/Invisible -> Visible).
+    pub presence_retry_admitted: usize,
+    /// **D7.** Candidates skipped (e.g. Inactive, fail-closed).
+    pub presence_retry_skipped: usize,
+    /// **D7.** Total nodes under admitted subtrees (recovery breadth).
+    pub presence_retry_nodes_under_admitted: usize,
+    /// **D7.** Field/draw nodes under admitted subtrees.
+    pub presence_retry_text_nodes_admitted: usize,
 }
 
 impl Default for DynamicScriptOutcome {
@@ -226,6 +238,12 @@ impl Default for DynamicScriptOutcome {
             occur_mutations_skipped: 0,
             occur_application_ambiguous: 0,
             occur_application_targets: 0,
+            presence_retry_enabled: false,
+            presence_retry_candidates: 0,
+            presence_retry_admitted: 0,
+            presence_retry_skipped: 0,
+            presence_retry_nodes_under_admitted: 0,
+            presence_retry_text_nodes_admitted: 0,
         }
     }
 }
@@ -408,6 +426,13 @@ fn occur_apply_enabled() -> bool {
     std::env::var("XFA_OCCUR_APPLY").ok().as_deref() == Some("1")
 }
 
+/// D7: opt-in gate for presence/visibility retry. Default OFF. Requires
+/// `XFA_PRESENCE_RETRY=1`; the dispatch path additionally requires
+/// `XFA_OCCUR_APPLY=1` (occur application is the prerequisite for the retry).
+fn presence_retry_enabled() -> bool {
+    std::env::var("XFA_PRESENCE_RETRY").ok().as_deref() == Some("1")
+}
+
 /// Phase B entry point that lets the caller inject a sandboxed runtime
 /// adapter. When `mode == JsExecutionMode::SandboxedRuntime` the supplied
 /// `runtime` is consulted for every JavaScript script whose `<event activity>`
@@ -577,9 +602,9 @@ pub fn apply_dynamic_scripts_with_runtime(
     // applied only to a live, repeatable container node (Subform/Area/ExclGroup);
     // everything else fails closed (counted, not applied). `occur.max` writes
     // are captured but not applied in D6 (min-only scope).
+    let mut occur_applied_targets: std::collections::HashSet<usize> =
+        std::collections::HashSet::new();
     if sandbox_active && !rolled_back && occur_apply_enabled() && !captured_occur.is_empty() {
-        let mut applied_targets: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
         for (idx, prop, value) in &captured_occur {
             if prop != "min" {
                 // occur.max captured but not applied in D6.
@@ -619,17 +644,79 @@ pub fn apply_dynamic_scripts_with_runtime(
             }
             sandbox_metadata.occur_mutations_applied =
                 sandbox_metadata.occur_mutations_applied.saturating_add(1);
-            applied_targets.insert(*idx);
+            occur_applied_targets.insert(*idx);
         }
         sandbox_metadata.occur_application_targets = sandbox_metadata
             .occur_application_targets
-            .saturating_add(applied_targets.len());
+            .saturating_add(occur_applied_targets.len());
     } else if !captured_occur.is_empty() {
         // Captured but the apply gate is closed (default capture-only path):
         // count them as skipped for observability without touching layout.
         sandbox_metadata.occur_mutations_skipped = sandbox_metadata
             .occur_mutations_skipped
             .saturating_add(captured_occur.len());
+    }
+
+    // D7: opt-in presence/visibility retry. Strictly gated: sandboxed +
+    // `XFA_PRESENCE_RETRY=1` + `XFA_OCCUR_APPLY=1` (occur application is the
+    // prerequisite) + no rollback. Admits (`Hidden`/`Invisible` -> `Visible`)
+    // ONLY nodes that are an occur-applied target or a descendant of one
+    // (occur-related, unambiguous). `Inactive` is skipped (fail-closed). Default
+    // and default-sandboxed behaviour are unchanged.
+    let mut pr_candidates = 0usize;
+    let mut pr_admitted = 0usize;
+    let mut pr_skipped = 0usize;
+    let mut pr_nodes_under_admitted = 0usize;
+    let mut pr_text_nodes_admitted = 0usize;
+    let presence_retry_active = sandbox_active
+        && !rolled_back
+        && occur_apply_enabled()
+        && presence_retry_enabled()
+        && !occur_applied_targets.is_empty();
+    if presence_retry_active {
+        let mut visited: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut stack: Vec<FormNodeId> = occur_applied_targets
+            .iter()
+            .map(|&i| FormNodeId(i))
+            .collect();
+        let mut admitted_ids: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        while let Some(nid) = stack.pop() {
+            if nid.0 >= form.nodes.len() || !visited.insert(nid.0) {
+                continue;
+            }
+            let presence = form.meta(nid).presence;
+            if presence == Presence::Hidden || presence == Presence::Invisible {
+                pr_candidates += 1;
+                // Fail-closed safety: never un-hide `Inactive` (intentionally
+                // removed); only `Hidden`/`Invisible` are admitted here.
+                form.meta_mut(nid).presence = Presence::Visible;
+                pr_admitted += 1;
+                admitted_ids.insert(nid.0);
+            } else if presence == Presence::Inactive {
+                pr_candidates += 1;
+                pr_skipped += 1;
+            }
+            for &c in &form.get(nid).children {
+                stack.push(c);
+            }
+        }
+        // Count content under admitted subtrees (observability of recovery).
+        for &aid in &admitted_ids {
+            let mut s = vec![FormNodeId(aid)];
+            let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            while let Some(n) = s.pop() {
+                if n.0 >= form.nodes.len() || !seen.insert(n.0) {
+                    continue;
+                }
+                pr_nodes_under_admitted += 1;
+                if let FormNodeType::Draw(_) | FormNodeType::Field { .. } = form.get(n).node_type {
+                    pr_text_nodes_admitted += 1;
+                }
+                for &c in &form.get(n).children {
+                    s.push(c);
+                }
+            }
+        }
     }
 
     let js_seen_count = js_skipped + sandbox_metadata.executed;
@@ -686,6 +773,12 @@ pub fn apply_dynamic_scripts_with_runtime(
         occur_mutations_skipped: sandbox_metadata.occur_mutations_skipped,
         occur_application_ambiguous: sandbox_metadata.occur_application_ambiguous,
         occur_application_targets: sandbox_metadata.occur_application_targets,
+        presence_retry_enabled: presence_retry_active,
+        presence_retry_candidates: pr_candidates,
+        presence_retry_admitted: pr_admitted,
+        presence_retry_skipped: pr_skipped,
+        presence_retry_nodes_under_admitted: pr_nodes_under_admitted,
+        presence_retry_text_nodes_admitted: pr_text_nodes_admitted,
     })
 }
 
