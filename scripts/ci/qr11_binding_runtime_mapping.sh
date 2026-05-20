@@ -21,23 +21,32 @@ run_lane () { # name, detect-cmd, run-cmd
 }
 
 # C ABI: the strict-api example already exercises null/typed-status paths.
-run_lane "c-abi" "command -v cc && test -d pdfluent-examples/c/strict-api" \
-  "(cd pdfluent-examples/c/strict-api && make check >/dev/null 2>&1)"
+# C ABI: build the lib, then compile+link+RUN the runtime error-mapping
+# harness (real typed-status assertions, not just a syntax check).
+run_lane "c-abi" "command -v cc" \
+  "cargo build -p pdf-capi --release >/dev/null 2>&1 && \
+   LIBEXT=\$([ \"\$(uname -s)\" = Darwin ] && echo dylib || echo so) && \
+   cc -Wall -Wextra -Werror -std=c11 -Icrates/pdf-capi/include \
+      scripts/ci/qr11_runtime/c_abi_error_mapping.c \
+      -Ltarget/release -lpdf_capi -Wl,-rpath,target/release -o /tmp/qr11_cabi && \
+   /tmp/qr11_cabi"
 
-# Node: needs the built napi binding on the example's node_modules.
-run_lane "node" "command -v node && test -d pdfluent-examples/node/strict-ts/node_modules/pdfluent" \
+# Node: needs the built napi binding AND a dedicated error-mapping harness.
+run_lane "node" "test -f pdfluent-examples/node/strict-ts/error_mapping_smoke.mjs && test -d pdfluent-examples/node/strict-ts/node_modules/pdfluent" \
   "node pdfluent-examples/node/strict-ts/error_mapping_smoke.mjs"
 
-# Python: needs the editable/installed pdfluent wheel.
-run_lane "python" "python3 -c 'import pdfluent' " \
+# Python: needs the REAL pdfluent binding (a same-named placeholder package
+# must not count). The helper itself re-checks hasattr(PdfDocument).
+run_lane "python" "python3 -c 'import pdfluent,sys; sys.exit(0 if hasattr(pdfluent,\"PdfDocument\") else 1)'" \
   "python3 scripts/quality/qr11_python_error_mapping.py"
 
-# .NET: needs the built binding referenced by StrictApi.
-run_lane "dotnet" "command -v dotnet && test -d pdfluent-examples/dotnet/StrictApi" \
-  "(cd pdfluent-examples/dotnet/StrictApi && dotnet run --no-restore >/dev/null 2>&1)"
+# .NET: only run when a built binding artifact exists (avoid false FAIL/pass).
+run_lane "dotnet" "command -v dotnet && ls pdfluent-examples/dotnet/StrictApi/bin/*/*/StrictApi.dll >/dev/null 2>&1" \
+  "(cd pdfluent-examples/dotnet/StrictApi && dotnet run --no-build >/dev/null 2>&1)"
 
-# Java: needs the built jar on the local Maven repo.
-run_lane "java" "command -v mvn && test -d pdfluent-examples/java/StrictApi" \
-  "(cd pdfluent-examples/java/StrictApi && mvn -q test)"
+# Java: only run a DEDICATED error-mapping test (a generic build/test is not
+# an error-mapping proof). Harness absent today -> SKIP, never a false pass.
+run_lane "java" "command -v mvn && test -f pdfluent-examples/java/StrictApi/src/test/java/ErrorMappingTest.java" \
+  "(cd pdfluent-examples/java/StrictApi && mvn -q -o test -Dtest=ErrorMappingTest)"
 
 exit $RESULT
