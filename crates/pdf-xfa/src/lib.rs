@@ -29,6 +29,8 @@ pub mod dynamic;
 pub mod error;
 pub mod extract;
 pub mod flatten;
+/// Env-gated flatten traceability (parse/bind/script/layout/paint/writer counts).
+mod flatten_trace;
 /// Font resolution, embedding, and metrics for the XFA flatten pipeline (internal bridge).
 pub mod font_bridge;
 /// Image embedding utilities for the XFA flatten pipeline (internal bridge).
