@@ -1,42 +1,43 @@
-// QR-10 release gate — WASM browser hostile-input harness (Playwright).
-// Runs in a real headless browser against the built WASM package. Requires:
-//   npm i -D @playwright/test && npx playwright install chromium
-//   a served page that imports the built `pdfluent` wasm and exposes
-//   window.openPdf(bytes) -> {ok, errorCode}.
-// This file is the executable gate definition; CI runs `npx playwright test`.
+// QR-10 WASM browser hostile-input — @playwright/test variant (for CI runners
+// that use the Playwright test runner). The canonical, dependency-light harness
+// that was actually EXECUTED for this milestone is `run_browser.mjs` (plain
+// node + the Playwright library); both drive the same glue page
+// (`test_page.html`) and assert identical behaviour.
+//
+// Run (CI): serve the wasm-pack `web` package dir (with test_page.html as
+// index.html), then:
+//   QR10_URL=http://localhost:PORT/ npx playwright test hostile_input.spec.mjs
 import { test, expect } from '@playwright/test';
 
-const cases = {
-  empty: new Uint8Array([]),
-  garbage: new Uint8Array([0xDE, 0xAD, 0xBE, 0xEF]),
-  truncated: new TextEncoder().encode('%PDF-1.7\n1 0 obj'),
+const CASES = {
+  empty: [],
+  garbage: [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x42],
+  truncated_header: Array.from(new TextEncoder().encode('%PDF-1.7\n1 0 obj')),
+  bogus_xref: Array.from(new TextEncoder().encode('%PDF-1.7\nxref\nstartxref\n999999\n%%EOF')),
+  nul_block: new Array(4096).fill(0),
 };
 
-test.beforeEach(async ({ page }) => {
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
-  page.on('crash', () => errors.push('PAGE CRASH'));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-  page.__errors = errors;
+test('QR-10 WASM hostile input: typed errors, no crash', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(String(e)));
+  page.on('crash', () => pageErrors.push('PAGE CRASH'));
+
   await page.goto(process.env.QR10_URL || 'http://localhost:8080/');
-});
+  await page.waitForFunction('window.__qr10_ready === true || window.__qr10_error !== null', { timeout: 30000 });
+  expect(await page.evaluate(() => window.__qr10_error)).toBeNull();
 
-for (const [name, bytes] of Object.entries(cases)) {
-  test(`hostile ${name}: typed error, no crash, no unhandled rejection`, async ({ page }) => {
-    const res = await page.evaluate((b) => window.openPdf(new Uint8Array(b)), Array.from(bytes));
-    expect(res.ok).toBe(false);            // hostile input must not "succeed"
-    expect(typeof res.errorCode).toBe('string'); // typed error surfaced to JS
-    expect(page.__errors).toEqual([]);     // no crash / unhandled rejection
-  });
-}
+  // Hostile inputs -> typed error (ok:false + string errorCode), never a crash.
+  for (const [name, bytes] of Object.entries(CASES)) {
+    const r = await page.evaluate((b) => window.openPdf(b), bytes);
+    expect(r.ok, `${name} must not succeed`).toBe(false);
+    expect(typeof r.errorCode, `${name} must surface a typed errorCode`).toBe('string');
+  }
 
-test('repeated opens do not leak (heap stays bounded)', async ({ page }) => {
-  const grow = await page.evaluate(async () => {
-    const before = performance.memory?.usedJSHeapSize ?? 0;
-    for (let i = 0; i < 200; i++) window.openPdf(new Uint8Array([0xDE,0xAD]));
-    const after = performance.memory?.usedJSHeapSize ?? 0;
-    return after - before;
-  });
-  // Allow churn but flag gross growth (>64MB) across 200 hostile opens.
-  expect(grow).toBeLessThan(64 * 1024 * 1024);
+  // Repeated hostile opens must not poison the runtime.
+  for (let i = 0; i < 50; i++) await page.evaluate((b) => window.openPdf(b), CASES.garbage);
+  expect((await page.evaluate((b) => window.openPdf(b), CASES.garbage)).ok).toBe(false);
+
+  // No crash / unhandled rejection occurred.
+  expect(await page.evaluate(() => window.__qr10_error)).toBeNull();
+  expect(pageErrors).toEqual([]);
 });

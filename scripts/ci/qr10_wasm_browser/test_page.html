@@ -1,0 +1,39 @@
+<!doctype html>
+<!--
+  QR-10 WASM browser hostile-input glue page.
+  Loaded by the Playwright harness; imports the wasm-pack `web` build and
+  exposes window.openPdf(bytesArray) -> { ok, pages? , errorCode? }.
+  No app logic — just a thin bridge to PdfDoc.open so the harness can feed
+  hostile bytes and observe typed errors vs crashes.
+-->
+<html>
+  <head><meta charset="utf-8" /><title>QR-10 hostile-input harness</title></head>
+  <body>
+    <script type="module">
+      import init, { PdfDoc } from './xfa_wasm.js';
+      window.__qr10_error = null;
+      window.addEventListener('unhandledrejection', (e) => {
+        window.__qr10_error = 'unhandledrejection: ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason));
+      });
+      try {
+        await init();
+        // bytesArray: a plain JS array of byte values (Playwright-serialisable).
+        window.openPdf = (bytesArray) => {
+          try {
+            const doc = PdfDoc.open(new Uint8Array(bytesArray));
+            // wasm-bindgen camelCases methods: Rust page_count -> JS pageCount.
+            const pages = doc.pageCount();
+            return { ok: true, pages };
+          } catch (e) {
+            // wasm-bindgen surfaces Rust Err(JsValue) as a thrown JS value.
+            const msg = e && e.message ? e.message : String(e);
+            return { ok: false, errorCode: msg };
+          }
+        };
+        window.__qr10_ready = true;
+      } catch (e) {
+        window.__qr10_error = 'init failed: ' + (e && e.message ? e.message : String(e));
+      }
+    </script>
+  </body>
+</html>

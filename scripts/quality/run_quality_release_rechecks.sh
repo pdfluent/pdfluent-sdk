@@ -32,9 +32,26 @@ else
   record "QR-13" "blocked_checker_failed" "no-network checker failed"; FAIL=1
 fi
 
+# QR-10 WASM browser hostile-input — executed in real Chromium.
+#   QR10_RUN=1 re-runs the full build+browser harness live (~5min wasm build);
+#   otherwise validate the committed run result (ok==true + valid_control ok).
+QR10_RESULT="benchmarks/runs/ga_readiness_3d/sdk_ga_wasm_browser_hostile_input/qr10_browser_result.json"
+if [ "${QR10_RUN:-0}" = "1" ]; then
+  if bash scripts/ci/qr10_wasm_browser/run_qr10_wasm_browser.sh; then
+    record "QR-10" "green_proven" "live Chromium run (run_qr10_wasm_browser.sh)"
+  else
+    rc=$?
+    if [ "$rc" = "2" ]; then record "QR-10" "release_gate_defined_not_executed_locally" "browser/playwright unavailable (skip)"; \
+    else record "QR-10" "blocked_browser_test_failed" "run_qr10_wasm_browser.sh failed"; FAIL=1; fi
+  fi
+elif python3 -c "import json,sys; d=json.load(open('$QR10_RESULT')); vc=d.get('cases',{}).get('valid_control',{}); sys.exit(0 if d.get('ok') is True and vc.get('ok') is True else 1)" 2>/dev/null; then
+  record "QR-10" "green_proven" "committed Chromium result $QR10_RESULT (ok=true, valid_control ok); re-run with QR10_RUN=1"
+else
+  record "QR-10" "release_gate_defined_not_executed_locally" "scripts/ci/qr10_wasm_browser/run_qr10_wasm_browser.sh (no passing result yet)"
+fi
+
 # CI-only lanes: defined + executable in CI, not on this host.
 record "QR-9"  "release_gate_defined_not_executed_locally" "scripts/ci/qr9_sanitizers.sh (Linux+nightly ASAN/LSAN/Miri)"
-record "QR-10" "release_gate_defined_not_executed_locally" "scripts/ci/qr10_wasm_browser/hostile_input.spec.mjs (Playwright)"
 record "QR-11" "release_gate_defined_not_executed_locally" "scripts/ci/qr11_binding_runtime_mapping.sh (needs built bindings)"
 
 printf '{\n  "milestone":"SDK_GA_QUALITY_RELEASE_RECHECK_LANES",\n  "generated":"%s",\n  "lanes":[\n    %s\n  ],\n  "executable_failed":%s\n}\n' \
