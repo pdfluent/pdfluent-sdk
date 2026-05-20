@@ -133,6 +133,9 @@ fn count_bind(tree: &FormTree) -> BindCounts {
 /// and writes to stderr only. Fields: id, type, presence, occur(min/max/initial),
 /// bound (has bound_data_node), zinst (is_zero_instance_prototype), parent id,
 /// and subtree field/draw/text-char counts.
+// Indices are used to address parallel arrays (`parent`) and to build
+// `FormNodeId`s, so a range loop is the clearest form here.
+#[allow(clippy::needless_range_loop)]
 fn dump_hidden_nodes(tree: &FormTree) {
     let n = tree.nodes.len();
     let mut parent = vec![usize::MAX; n];
