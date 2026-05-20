@@ -128,6 +128,19 @@ pub struct DynamicScriptOutcome {
     /// sibling ambiguity possible). Each skipped call saves one
     /// `resolveWithFullChainStrict` host round-trip.
     pub js_probe_skips: usize,
+    /// **D3 (trace-only).** `<variables>` `<script>` objects collected.
+    pub variables_scripts_collected: usize,
+    /// **D3 (trace-only).** `<variables>` `<text>` data items collected.
+    pub variables_data_items_collected: usize,
+    /// **D3 (trace-only).** Script objects / data items whose registration
+    /// bound a namespace (JS-side `setVariables*` returned success).
+    pub script_objects_registered: usize,
+    /// **D3 (trace-only).** Script objects / data items that did NOT register
+    /// (Rust skip or JS-side eval failure). Observability only.
+    pub script_objects_register_failed: usize,
+    /// **D3 (trace-only).** Script objects collected under a nested subform
+    /// scope (registered to `subformVariables` only — not bare-ident visible).
+    pub script_objects_subform_scoped: usize,
 }
 
 impl Default for DynamicScriptOutcome {
@@ -153,6 +166,11 @@ impl Default for DynamicScriptOutcome {
             js_data_reads: 0,
             js_unsupported_host_calls: 0,
             js_probe_skips: 0,
+            variables_scripts_collected: 0,
+            variables_data_items_collected: 0,
+            script_objects_registered: 0,
+            script_objects_register_failed: 0,
+            script_objects_subform_scoped: 0,
         }
     }
 }
@@ -517,6 +535,11 @@ pub fn apply_dynamic_scripts_with_runtime(
         js_data_reads: sandbox_metadata.data_reads,
         js_unsupported_host_calls: sandbox_metadata.unsupported_host_calls,
         js_probe_skips: sandbox_metadata.probe_skips,
+        variables_scripts_collected: sandbox_metadata.variables_scripts_collected,
+        variables_data_items_collected: sandbox_metadata.variables_data_items_collected,
+        script_objects_registered: sandbox_metadata.script_objects_registered,
+        script_objects_register_failed: sandbox_metadata.script_objects_register_failed,
+        script_objects_subform_scoped: sandbox_metadata.script_objects_subform_scoped,
     })
 }
 
