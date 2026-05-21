@@ -167,6 +167,68 @@ pub struct LayoutDumpEntry {
     pub first_overflow_element: Option<String>,
 }
 
+/// **D11.** XFA flatten rendering policy — how PDFluent resolves a conflict
+/// between a PDF's embedded form DOM (Adobe Reader's saved runtime state) and a
+/// fresh `template + datasets` re-merge.
+///
+/// See `benchmarks/runs/xfa_enterprise_plan/d10_formdom_vs_remerge_policy/` for
+/// the decision record. The default is [`XfaRenderingPolicy::SavedStateFaithful`]
+/// and is the only policy implemented today; selecting
+/// [`XfaRenderingPolicy::FreshMergeExperimental`] returns
+/// [`crate::error::XfaError::RenderingPolicyUnsupported`] rather than silently
+/// falling back (no fake support, no silent behaviour switch).
+///
+/// PDFluent does **not** claim a single universal Adobe-parity mode: XFA
+/// rendering is policy-dependent (saved-state vs fresh-merge), mirroring Adobe's
+/// own static-vs-dynamic rendering distinction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum XfaRenderingPolicy {
+    /// Honor the embedded form DOM — render the instance set the document was
+    /// last saved with; suppress template/data instances the form DOM did not
+    /// enumerate. This is the current, default, fully-supported behaviour.
+    #[default]
+    SavedStateFaithful,
+    /// **Experimental / not implemented (D12).** Ignore the saved form DOM for
+    /// dynamic sections and re-merge template + datasets. Selecting this returns
+    /// `RenderingPolicyUnsupported` until D12 implements it behind its own gates.
+    FreshMergeExperimental,
+}
+
+impl XfaRenderingPolicy {
+    /// Stable lowercase identifier for reports / trace / CLI
+    /// (`"saved_state_faithful"` | `"fresh_merge_experimental"`).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SavedStateFaithful => "saved_state_faithful",
+            Self::FreshMergeExperimental => "fresh_merge_experimental",
+        }
+    }
+
+    /// Parse a CLI/API token (`"saved-state"` | `"fresh-merge"`, plus the
+    /// `as_str` forms). Returns `None` for an unrecognised token.
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "saved-state" | "saved_state" | "saved_state_faithful" | "savedstatefaithful" => {
+                Some(Self::SavedStateFaithful)
+            }
+            "fresh-merge"
+            | "fresh_merge"
+            | "fresh_merge_experimental"
+            | "freshmergeexperimental" => Some(Self::FreshMergeExperimental),
+            _ => None,
+        }
+    }
+
+    /// Whether this policy has an implementation today. Only
+    /// `SavedStateFaithful` is supported in D11.
+    #[must_use]
+    pub const fn is_supported(self) -> bool {
+        matches!(self, Self::SavedStateFaithful)
+    }
+}
+
 /// Lightweight metadata returned alongside the flattened PDF bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FlattenMetadata {
@@ -174,6 +236,9 @@ pub struct FlattenMetadata {
     pub dynamic_scripts: DynamicScriptOutcome,
     /// Overall output quality level of the flattened result.
     pub output_quality: OutputQuality,
+    /// **D11.** The rendering policy that produced this result. Always
+    /// [`XfaRenderingPolicy::SavedStateFaithful`] today.
+    pub rendering_policy: XfaRenderingPolicy,
 }
 
 impl FlattenMetadata {
@@ -181,6 +246,7 @@ impl FlattenMetadata {
         Self {
             dynamic_scripts,
             output_quality: dynamic_scripts.output_quality,
+            rendering_policy: XfaRenderingPolicy::SavedStateFaithful,
         }
     }
 }
@@ -606,6 +672,51 @@ pub fn flatten_xfa_to_pdf_with_layout_dump_and_metadata(
 ) -> Result<(Vec<u8>, LayoutDump, FlattenMetadata)> {
     let out = flatten_xfa_to_pdf_internal(pdf_bytes, true)?;
     Ok((out.pdf_bytes, out.layout_dump, out.metadata))
+}
+
+/// **D11.** Flatten XFA content under an explicit [`XfaRenderingPolicy`].
+///
+/// [`XfaRenderingPolicy::SavedStateFaithful`] (the default) behaves identically
+/// to [`flatten_xfa_to_pdf`]. [`XfaRenderingPolicy::FreshMergeExperimental`]
+/// returns [`crate::error::XfaError::RenderingPolicyUnsupported`] (not
+/// implemented until D12) — it never silently falls back to the default.
+///
+/// # Errors
+///
+/// Returns [`crate::error::XfaError::RenderingPolicyUnsupported`] for an
+/// unimplemented policy, or [`XfaError`] on parse/layout/render failures.
+#[must_use = "flattened PDF bytes must be used; discarding them loses output"]
+pub fn flatten_xfa_to_pdf_with_policy(
+    pdf_bytes: &[u8],
+    policy: XfaRenderingPolicy,
+) -> Result<Vec<u8>> {
+    flatten_xfa_to_pdf_with_policy_and_metadata(pdf_bytes, policy).map(|(bytes, _)| bytes)
+}
+
+/// **D11.** Flatten XFA content under an explicit [`XfaRenderingPolicy`],
+/// returning the bytes and [`FlattenMetadata`] (whose `rendering_policy` field
+/// records the selected policy).
+///
+/// # Errors
+///
+/// Returns [`crate::error::XfaError::RenderingPolicyUnsupported`] for an
+/// unimplemented policy, or [`XfaError`] on parse/layout/render failures.
+#[must_use = "flattened PDF bytes and metadata must be used; discarding them loses output"]
+pub fn flatten_xfa_to_pdf_with_policy_and_metadata(
+    pdf_bytes: &[u8],
+    policy: XfaRenderingPolicy,
+) -> Result<(Vec<u8>, FlattenMetadata)> {
+    if !policy.is_supported() {
+        return Err(XfaError::RenderingPolicyUnsupported(format!(
+            "{} is experimental and not implemented yet (D12); the default \
+             saved_state_faithful policy is the only supported policy",
+            policy.as_str()
+        )));
+    }
+    let out = flatten_xfa_to_pdf_internal(pdf_bytes, false)?;
+    let mut metadata = out.metadata;
+    metadata.rendering_policy = policy;
+    Ok((out.pdf_bytes, metadata))
 }
 
 fn flatten_xfa_to_pdf_internal(

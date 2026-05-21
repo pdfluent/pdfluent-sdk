@@ -50,8 +50,9 @@ pub use extract::{extract_embedded_fonts, validate_xfa_packets, PacketValidation
 pub use flatten::{
     compare_flatten_quality, flatten_xfa_to_pdf, flatten_xfa_to_pdf_with_layout_dump,
     flatten_xfa_to_pdf_with_layout_dump_and_metadata, flatten_xfa_to_pdf_with_metadata,
-    is_pdf_encrypted, validate_flattened_pdf, validate_text_completeness, FlattenMetadata,
-    FlattenQualityMetrics, FlattenValidation, LayoutDump, LayoutDumpEntry, TextValidation,
+    flatten_xfa_to_pdf_with_policy, flatten_xfa_to_pdf_with_policy_and_metadata, is_pdf_encrypted,
+    validate_flattened_pdf, validate_text_completeness, FlattenMetadata, FlattenQualityMetrics,
+    FlattenValidation, LayoutDump, LayoutDumpEntry, TextValidation, XfaRenderingPolicy,
 };
 pub use js_runtime::{
     activity_allowed_for_sandbox, activity_allowed_for_sandbox_with_gate,

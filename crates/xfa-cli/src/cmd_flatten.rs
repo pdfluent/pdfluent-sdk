@@ -45,7 +45,31 @@ fn write_layout_dump(path: &Path, dump: pdf_xfa::LayoutDump) -> Result<()> {
     Ok(())
 }
 
-pub fn run(input: &Path, output: &Path, dump_layout: Option<&Path>) -> Result<()> {
+pub fn run(
+    input: &Path,
+    output: &Path,
+    dump_layout: Option<&Path>,
+    xfa_rendering_policy: &str,
+) -> Result<()> {
+    // D11: explicit rendering policy. Default `saved-state` keeps the existing
+    // behaviour byte-for-byte. An unknown token or the experimental
+    // `fresh-merge` policy fails loudly (no silent fallback).
+    let policy =
+        pdf_xfa::XfaRenderingPolicy::from_token(xfa_rendering_policy).with_context(|| {
+            format!(
+                "unknown --xfa-rendering-policy '{xfa_rendering_policy}' \
+             (expected 'saved-state' or 'fresh-merge')"
+            )
+        })?;
+    if !policy.is_supported() {
+        eprintln!(
+            "XFA rendering policy '{}' is experimental and not implemented yet (D12); \
+             the default 'saved-state' policy is the only supported policy.",
+            policy.as_str()
+        );
+        std::process::exit(2);
+    }
+
     let pdf_bytes = std::fs::read(input).context("failed to read input PDF")?;
 
     match dump_layout {

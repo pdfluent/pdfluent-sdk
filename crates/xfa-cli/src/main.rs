@@ -78,6 +78,11 @@ pub enum Commands {
         /// Write per-page layout metadata to JSON.
         #[arg(long, value_name = "PATH")]
         dump_layout: Option<PathBuf>,
+        /// XFA rendering policy. `saved-state` (default) honors the document's
+        /// saved form state; `fresh-merge` is experimental and not yet
+        /// implemented (D12).
+        #[arg(long, value_name = "POLICY", default_value = "saved-state")]
+        xfa_rendering_policy: String,
     },
     /// Flatten a PDF and print quality metrics comparing before and after.
     FlattenCheck {
@@ -193,7 +198,13 @@ fn run() -> Result<()> {
             input,
             output,
             dump_layout,
-        } => cmd_flatten::run(&input, &output, dump_layout.as_deref()),
+            xfa_rendering_policy,
+        } => cmd_flatten::run(
+            &input,
+            &output,
+            dump_layout.as_deref(),
+            &xfa_rendering_policy,
+        ),
         Commands::FlattenCheck { input, output } => {
             cmd_flatten_check::run(&input, output.as_deref())
         }
@@ -262,10 +273,12 @@ mod tests {
                 input,
                 output,
                 dump_layout,
+                xfa_rendering_policy,
             } => {
                 assert_eq!(input, PathBuf::from("input.pdf"));
                 assert_eq!(output, PathBuf::from("output.pdf"));
                 assert_eq!(dump_layout, Some(PathBuf::from("/tmp/layout.json")));
+                assert_eq!(xfa_rendering_policy, "saved-state");
             }
             _ => panic!("unexpected command"),
         }
