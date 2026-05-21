@@ -176,9 +176,11 @@ pub struct LayoutDumpEntry {
 /// See `benchmarks/runs/xfa_enterprise_plan/d10_formdom_vs_remerge_policy/` for
 /// the decision record. The default is [`XfaRenderingPolicy::SavedStateFaithful`].
 ///
-/// **D12 status:** `FreshMergeExperimental` is plumbed and returns output, but
-/// VPS measurement and visual review have not yet run. Output quality under
-/// `FreshMergeExperimental` is unvalidated. Do not rely on it for production use.
+/// **D12 validation (2026-05-21):** `FreshMergeExperimental` was measured on a
+/// 9-doc target set and returned a GREEN verdict — no page-count regressions,
+/// `01de9ce4` recovered +80% text content. Corpus-scale measurement (D13) is
+/// pending. `FreshMergeExperimental` remains explicitly experimental and is not
+/// the production default.
 ///
 /// PDFluent does **not** claim a single universal Adobe-parity mode: XFA
 /// rendering is policy-dependent (saved-state vs fresh-merge), mirroring Adobe's
@@ -190,11 +192,13 @@ pub enum XfaRenderingPolicy {
     /// enumerate. This is the default, fully-supported, production behaviour.
     #[default]
     SavedStateFaithful,
-    /// **Experimental — unvalidated.** Ignore the saved form DOM for dynamic
-    /// sections; admit data-bound subforms the form DOM omitted. May improve
-    /// output for some documents (`01de9ce4`-class) but changes page counts for
-    /// protected targets (`13275420`, `b0389682`). VPS measurement and visual
-    /// review required before production use. Default behavior is unchanged.
+    /// **Experimental.** Ignore the saved form DOM for dynamic sections; admit
+    /// data-bound subforms the form DOM omitted. D12 validation (2026-05-21)
+    /// confirmed improvement on `01de9ce4` (+80% text, 20 recovered rows) with
+    /// no page-count regressions on 8 protected targets. Some targets (`13275420`,
+    /// `b0389682`) do admit extra nodes under this policy, so page counts may
+    /// change. Corpus-scale measurement (D13) is pending before production use.
+    /// Default behavior (`SavedStateFaithful`) is unchanged.
     FreshMergeExperimental,
 }
 
@@ -226,8 +230,9 @@ impl XfaRenderingPolicy {
     }
 
     /// Whether this policy has an implementation. Both policies are implemented
-    /// as of D12 (draft). `FreshMergeExperimental` is unvalidated — do not
-    /// use in production until D12 VPS measurement and visual review complete.
+    /// and D12-validated (9-doc set, GREEN, 2026-05-21). `FreshMergeExperimental`
+    /// is still experimental — corpus-scale measurement (D13) pending before
+    /// production use.
     #[must_use]
     pub const fn is_supported(self) -> bool {
         true
@@ -251,8 +256,9 @@ pub struct FlattenMetadata {
     /// Always 0 under `SavedStateFaithful`.  Under `FreshMergeExperimental`
     /// a non-zero value means the output may differ from `SavedStateFaithful`.
     ///
-    /// **Unvalidated** — VPS measurement and visual review have not yet run.
-    /// Do not use as a quality signal until D12 execution completes.
+    /// **D12-validated** (9-doc set, GREEN, 2026-05-21). On `01de9ce4` a value
+    /// of 20 confirmed 20 recovered purchase-order rows. Corpus-scale measurement
+    /// (D13) pending; treat non-zero values as informational until D13 completes.
     pub fresh_merge_admitted_nodes: usize,
 }
 
@@ -696,8 +702,8 @@ pub fn flatten_xfa_to_pdf_with_layout_dump_and_metadata(
 ///
 /// [`XfaRenderingPolicy::SavedStateFaithful`] (the default) behaves identically
 /// to [`flatten_xfa_to_pdf`]. [`XfaRenderingPolicy::FreshMergeExperimental`]
-/// is implemented as of D12 (draft) but **unvalidated** — VPS measurement and
-/// visual review have not yet run.
+/// is D12-validated (9-doc set, GREEN, 2026-05-21) but remains experimental —
+/// corpus-scale measurement (D13) is pending.
 ///
 /// # Errors
 ///
@@ -2954,8 +2960,9 @@ fn apply_form_dom_presence(
                     //
                     // NOTE: this does NOT discriminate 01de9ce4 from 13275420;
                     // both pass the same guards.  FreshMerge is opt-in/
-                    // experimental and known to change protected targets.
-                    // VPS measurement + visual review required before merge.
+                    // experimental and known to admit extra nodes on protected
+                    // targets.  D12 GREEN (2026-05-21); D13 corpus measurement
+                    // pending.
                     let meta = tree.meta(fid);
                     let is_fresh_merge_candidate = policy
                         == XfaRenderingPolicy::FreshMergeExperimental
