@@ -79,6 +79,22 @@ else
     echo "[runner_disk_guard] WARNING: ${STORAGEBOX_CI_ROOT} missing — runner storage layout not initialised"
 fi
 
+# Observability (warn-only): surface a concurrent corpus-archival `tar`.
+# The CI builds_dir lives on the CIFS storagebox; a corpus archive writing to the
+# same mount starves get_sources / working-tree checkout and has caused branch
+# pipelines to time out and be cancelled (see D13A pipeline-failure diagnosis:
+# benchmarks/runs/xfa_enterprise_plan/d13a_pipeline_failure_fix_and_cli_next_step).
+# This NEVER changes the verdict — it only makes the cause visible to a triager.
+archive_procs="$(pgrep -fl 'tar.*xfa-corpus' 2>/dev/null || true)"
+if [[ -n "${archive_procs}" ]]; then
+    echo ""
+    echo "[runner_disk_guard] WARN: a corpus-archival tar appears to be running:"
+    echo "${archive_procs}" | sed 's/^/  /'
+    echo "[runner_disk_guard]   CI builds_dir is on CIFS (${STORAGEBOX_MOUNT}); a concurrent"
+    echo "[runner_disk_guard]   archive write to the same mount can slow get_sources/checkout"
+    echo "[runner_disk_guard]   and cause pipeline timeouts/cancellations. Serialise them."
+fi
+
 echo ""
 echo "[runner_disk_guard] top 10 root consumers:"
 {

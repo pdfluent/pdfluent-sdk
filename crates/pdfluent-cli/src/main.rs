@@ -54,6 +54,9 @@ enum Commands {
     Inspect {
         /// Input PDF file.
         input: PathBuf,
+        /// Accepted for compatibility; `inspect` always emits JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Extract text from a PDF.
     ExtractText {
@@ -120,7 +123,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let code = match cli.command {
         Commands::Info { input, json } => cmd_info(&input, json),
-        Commands::Inspect { input } => cmd_info(&input, true),
+        Commands::Inspect { input, .. } => cmd_info(&input, true),
         Commands::ExtractText { input, out, json } => {
             cmd_extract_text(&input, out.as_deref(), json)
         }
