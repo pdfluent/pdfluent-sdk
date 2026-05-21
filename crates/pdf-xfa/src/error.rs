@@ -36,6 +36,15 @@ pub enum XfaError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// RenderingPolicyUnsupported. **D11.** The requested
+    /// [`crate::flatten::XfaRenderingPolicy`] is not implemented yet (e.g.
+    /// `FreshMergeExperimental`). The default `SavedStateFaithful` policy is
+    /// always supported; this variant exists so an unsupported policy fails
+    /// loudly rather than silently producing default output under the wrong
+    /// label.
+    #[error("XFA rendering policy not supported: {0}")]
+    RenderingPolicyUnsupported(String),
+
     // ---- New structured variants (XFA-F9-01 #1120) ----
     /// XFA packet extraction failed (e.g. missing /AcroForm, corrupt stream).
     #[error("XFA extraction failed: {0}")]
