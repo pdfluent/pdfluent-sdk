@@ -45,6 +45,18 @@ use pdf_interpret::{BlendMode, Context};
 use pdf_interpret::{ClipPath, interpret_page};
 use std::ops::RangeInclusive;
 
+/// Whether per-stage render tracing is enabled (env `PDF_RENDER_TRACE=1`).
+/// Read once; zero cost in the hot path when disabled.
+fn render_trace_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PDF_RENDER_TRACE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
 pub use pdf_interpret;
 pub use pdf_interpret::pdf_syntax;
 pub use vello_cpu;
@@ -157,14 +169,36 @@ pub fn render(
     });
 
     device.push_transparency_group(1.0, None, BlendMode::Normal);
+
+    // Stage timing (env-gated; zero cost when disabled): the two dominant phases
+    // are (1) `interpret_page` — building the vello scene/display list from the
+    // PDF content stream (path/text/image construction), and (2)
+    // `render_to_pixmap` — vello_cpu rasterization to RGBA. This split localizes
+    // whether render cost is scene-build or rasterization.
+    let trace = render_trace_enabled();
+    let t_interpret = trace.then(std::time::Instant::now);
     interpret_page(page, &mut state, &mut device);
+    let interpret_ms = t_interpret.map(|t| t.elapsed().as_secs_f64() * 1000.0);
 
     device.pop_transparency_group();
 
     device.pop_clip_path();
 
     let mut pixmap = Pixmap::new(pix_width, pix_height);
+    let t_raster = trace.then(std::time::Instant::now);
     device.ctx.render_to_pixmap(&mut pixmap);
+    let raster_ms = t_raster.map(|t| t.elapsed().as_secs_f64() * 1000.0);
+
+    if trace {
+        eprintln!(
+            "PDF_RENDER_TRACE interpret_ms={:.2} raster_ms={:.2} w={} h={} threads={}",
+            interpret_ms.unwrap_or(0.0),
+            raster_ms.unwrap_or(0.0),
+            pix_width,
+            pix_height,
+            vc_settings.num_threads,
+        );
+    }
 
     pixmap
 }
