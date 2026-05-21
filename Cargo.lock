@@ -4216,7 +4216,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-capi"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.8"
 dependencies = [
  "pdf-compliance",
  "pdf-engine",
@@ -4404,7 +4404,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-node"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.8"
 dependencies = [
  "napi",
  "napi-build",
@@ -8985,7 +8985,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-wasm"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "formcalc-interpreter",
  "getrandom 0.2.17",

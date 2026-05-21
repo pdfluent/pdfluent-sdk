@@ -1,6 +1,6 @@
 //! PDFluent Rust SDK — golden-path example.
 //!
-//! Pinned to `pdfluent 1.0.0-beta.5` (workspace crate during development).
+//! Pinned to `pdfluent 1.0.0-beta.8` (workspace crate during development).
 //!
 //! Demonstrates the canonical SDK lifecycle:
 //!
