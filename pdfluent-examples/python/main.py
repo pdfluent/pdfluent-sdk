@@ -1,6 +1,6 @@
 """PDFluent Python SDK — golden-path example.
 
-Pinned to ``pdfluent==1.0.0b7`` (see ``requirements.txt``).
+Pinned to ``pdfluent==1.0.0b8`` (see ``requirements.txt``).
 
 Demonstrates the canonical lifecycle:
 

@@ -20,7 +20,7 @@
   <ItemGroup>
     <!-- Reference the local source tree during development.
          In production, replace with:
-         <PackageReference Include="PDFluent" Version="1.0.0-beta.5" /> -->
+         <PackageReference Include="PDFluent" Version="1.0.0-beta.8" /> -->
     <ProjectReference Include="..\..\..\bindings\dotnet\src\PDFluent\PDFluent.csproj" />
   </ItemGroup>
 </Project>
