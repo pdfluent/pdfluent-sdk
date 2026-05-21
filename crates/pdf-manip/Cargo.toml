@@ -1,6 +1,6 @@
 [package]
 name = "pdf-manip"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 edition.workspace = true
 license-file = "LICENSE"
 readme = "README.md"
@@ -38,7 +38,7 @@ pdfa-convert = ["dep:xmp-writer", "dep:hayro-jbig2"]
 tempfile = "3"
 pdf-syntax.workspace = true
 pdf-compliance.workspace = true
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.5" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.8" }
 
 [package.metadata.docs.rs]
 all-features = true

@@ -54,7 +54,9 @@ use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, StringFo
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 // GL-QA36: Re-entrance guard for flatten_xfa_to_pdf.
@@ -806,32 +808,60 @@ fn flatten_xfa_to_pdf_internal(
     //    Wrap in a thread-based timeout (30s) to prevent hangs on pathological
     //    XFA documents. If the timeout fires, the join handle's result is an Err
     //    and we fall back to static_fallback.
-    const FLATTEN_TIMEOUT: Duration = Duration::from_secs(30);
-    let pdf_bytes_ref = pdf_bytes.to_vec();
-    let template_xml_owned = template_xml.clone();
     let datasets_xml_owned = packets.datasets().map(strip_undefined_xml_entities);
     let form_xml_owned = packets.get_packet("form").map(|s| s.to_string());
 
-    let handle = thread::spawn(move || {
-        xfa_flatten_inner(
-            &pdf_bytes_ref,
-            &template_xml_owned,
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // Native: wrap in a thread-based timeout (30s) so pathological XFA
+        // documents cannot hang a server. If the timeout fires, the join
+        // handle's result is an Err and we fall back to static_fallback.
+        const FLATTEN_TIMEOUT: Duration = Duration::from_secs(30);
+        let pdf_bytes_ref = pdf_bytes.to_vec();
+        let template_xml_owned = template_xml.clone();
+
+        let handle = thread::spawn(move || {
+            xfa_flatten_inner(
+                &pdf_bytes_ref,
+                &template_xml_owned,
+                datasets_xml_owned.as_deref(),
+                form_xml_owned.as_deref(),
+                collect_layout_dump,
+            )
+        });
+
+        match handle.join() {
+            Ok(Ok(out)) => Ok(out),
+            Ok(Err(e @ XfaError::UnsupportedFeature(_))) => Err(e),
+            Ok(Err(e)) => {
+                eprintln!("XFA flatten failed: {e:?}");
+                static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
+            }
+            Err(_) => {
+                eprintln!("XFA flatten timed out after {:?}", FLATTEN_TIMEOUT);
+                static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
+            }
+        }
+    }
+
+    // wasm32 has no `std::thread`, no preemption, and the host page is the
+    // natural cancellation boundary, so run the same pipeline inline (no
+    // watchdog thread — `thread::spawn` is unsupported on wasm32 and panics).
+    #[cfg(target_arch = "wasm32")]
+    {
+        match xfa_flatten_inner(
+            pdf_bytes,
+            &template_xml,
             datasets_xml_owned.as_deref(),
             form_xml_owned.as_deref(),
             collect_layout_dump,
-        )
-    });
-
-    match handle.join() {
-        Ok(Ok(out)) => Ok(out),
-        Ok(Err(e @ XfaError::UnsupportedFeature(_))) => Err(e),
-        Ok(Err(e)) => {
-            eprintln!("XFA flatten failed: {e:?}");
-            static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
-        }
-        Err(_) => {
-            eprintln!("XFA flatten timed out after {:?}", FLATTEN_TIMEOUT);
-            static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
+        ) {
+            Ok(out) => Ok(out),
+            Err(e @ XfaError::UnsupportedFeature(_)) => Err(e),
+            Err(e) => {
+                eprintln!("XFA flatten failed: {e:?}");
+                static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
+            }
         }
     }
 }
