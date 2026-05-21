@@ -62,6 +62,10 @@ full = ["parallel", "xfa", "ocr", "ocr-onnx", "ocr-cloud"]
 [dev-dependencies]
 image = { workspace = true }
 lopdf = { workspace = true }
+# Dev-only pdfium reference comparator for the render-profiling milestone.
+# Binds at runtime to a local libpdfium (e.g. from pypdfium2); the native lib is
+# never committed. Used only by examples/pdfium_compare.rs.
+pdfium-render = "0.8"
 
 [package.metadata.docs.rs]
 all-features = true
