@@ -24,3 +24,28 @@ rustflags = [
   "--remap-path-prefix", "/Users/jasperdewinter/.cargo/git=/git",
   "--remap-path-prefix", "/Users/jasperdewinter/.cargo/registry=/registry",
 ]
+
+# WASM SIMD: vello_cpu's rasterizer (via fearless_simd) selects its 128-bit SIMD
+# path on wasm32 ONLY when the target is compiled with `simd128` enabled — at
+# compile time. Without it, fearless_simd's `Level::new()` returns the scalar
+# fallback, so the browser/Node WASM SDK runs the rasterizer scalar. Enabling
+# `simd128` activates the `WasmSimd128` path. `bulk-memory` is already on by
+# default for wasm32 but is listed explicitly for clarity.
+#
+# IMPORTANT: cargo uses target-specific `rustflags` *instead of* `[build]`
+# rustflags (they are NOT merged). The four `--remap-path-prefix` flags above
+# MUST therefore be repeated here, or wasm32 artefacts would lose the private-
+# path scrubbing required by the publish constitution.
+#
+# simd128 is supported by all current evergreen browsers (Chrome/Firefox/Safari)
+# and Node >= 16. Byte/visual fidelity vs the scalar path must be confirmed by
+# the WASM browser golden harness (QR-10) before this is relied on for a shipped
+# artefact; see the follow-up task in the milestone report.
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "--remap-path-prefix", "/Users/jasperdewinter=/buildenv",
+  "--remap-path-prefix", "/Users/jasperdewinter/Documents/XFA=/src",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/git=/git",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/registry=/registry",
+  "-C", "target-feature=+simd128,+bulk-memory",
+]
