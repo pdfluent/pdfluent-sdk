@@ -136,6 +136,22 @@ fn info_valid_fixture() {
 }
 
 #[test]
+fn inspect_json_invocation_works() {
+    // The spec lists `pdfluent inspect <input> --json`; the --json flag is
+    // accepted for compatibility and inspect always emits JSON.
+    let f = sample_pdf();
+    if !f.exists() {
+        return; // fixture not present in this checkout; skip
+    }
+    let (ok, stdout, _) = run(&["inspect", f.to_str().unwrap(), "--json"]);
+    assert!(ok, "inspect --json should succeed");
+    assert!(
+        stdout.contains("\"page_count\""),
+        "inspect emits JSON with page_count"
+    );
+}
+
+#[test]
 fn info_malformed_fails_cleanly() {
     let dir = std::env::temp_dir();
     let bad = dir.join("pdfluent_cli_bad_input.pdf");
