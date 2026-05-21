@@ -1,6 +1,6 @@
 [package]
 name = "xfa-js-sandboxed"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 edition = "2021"
 license-file = "LICENSE"
 description = "Sandboxed QuickJS runtime for XFA JavaScript calculate scripts. Part of the PDFluent XFA stack."
