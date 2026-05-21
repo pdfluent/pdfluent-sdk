@@ -31,6 +31,7 @@ members = [
     "crates/pdf-java",
     "crates/xfa-wasm",
     "crates/xfa-cli",
+    "crates/pdfluent-cli",
 
     # --- Existing support crates ---
     "crates/xfa-api-server",
