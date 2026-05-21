@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Pre-push gate: block pushes that don't pass the CI sanity+lint gates.
+# Enable once per clone:   git config core.hooksPath .githooks
+# Bypass intentionally:    PRE_PUSH_SKIP=1 git push ...   (or git push --no-verify)
+[ "${PRE_PUSH_SKIP:-0}" = "1" ] && { echo "[pre-push] skipped (PRE_PUSH_SKIP=1)"; exit 0; }
+echo "[pre-push] running local CI gate (sanity + lint)…"
+bash scripts/ci/local_ci_gate.sh || {
+  echo "[pre-push] BLOCKED: local CI gate failed. Fix, or 'PRE_PUSH_SKIP=1 git push' to override." >&2
+  exit 1
+}
