@@ -1,13 +1,14 @@
-//! D11 — explicit XFA rendering policy API tests.
+//! D11/D12 — explicit XFA rendering policy API tests.
 //!
 //! Verifies the policy surface without changing default behaviour:
 //! - default policy is `SavedStateFaithful`;
 //! - explicit `SavedStateFaithful` produces byte-identical output to the no-arg
 //!   entrypoint, and metadata records the policy;
-//! - `FreshMergeExperimental` returns a typed `RenderingPolicyUnsupported`
-//!   error (never a silent fallback);
+//! - `FreshMergeExperimental` is plumbed (D12 draft) and returns output;
 //! - token parsing round-trips.
 
+// XfaError kept in case future tests re-add error-path assertions
+#[allow(unused_imports)]
 use pdf_xfa::error::XfaError;
 use pdf_xfa::{
     flatten_xfa_to_pdf, flatten_xfa_to_pdf_with_policy,
@@ -26,8 +27,9 @@ fn default_policy_is_saved_state_faithful() {
         XfaRenderingPolicy::default(),
         XfaRenderingPolicy::SavedStateFaithful
     );
+    // Both policies are implemented as of D12 draft.
     assert!(XfaRenderingPolicy::SavedStateFaithful.is_supported());
-    assert!(!XfaRenderingPolicy::FreshMergeExperimental.is_supported());
+    assert!(XfaRenderingPolicy::FreshMergeExperimental.is_supported());
 }
 
 #[test]
@@ -62,12 +64,19 @@ fn metadata_records_selected_policy() {
 }
 
 #[test]
-fn fresh_merge_returns_typed_unsupported_error_not_silent_fallback() {
-    let err = flatten_xfa_to_pdf_with_policy(TINY_PDF, XfaRenderingPolicy::FreshMergeExperimental)
-        .expect_err("FreshMergeExperimental must not be silently supported");
-    assert!(
-        matches!(err, XfaError::RenderingPolicyUnsupported(_)),
-        "expected RenderingPolicyUnsupported, got {err:?}"
+fn fresh_merge_is_plumbed_and_returns_output() {
+    // D12: FreshMergeExperimental is now plumbed through the pipeline.
+    // It returns output (byte-identical to SavedStateFaithful in the
+    // plumbing-only phase) rather than RenderingPolicyUnsupported.
+    let (_, meta) = flatten_xfa_to_pdf_with_policy_and_metadata(
+        TINY_PDF,
+        XfaRenderingPolicy::FreshMergeExperimental,
+    )
+    .expect("FreshMergeExperimental must return output after D12 plumbing");
+    assert_eq!(
+        meta.rendering_policy,
+        XfaRenderingPolicy::FreshMergeExperimental,
+        "metadata must label the FreshMerge policy"
     );
 }
 
