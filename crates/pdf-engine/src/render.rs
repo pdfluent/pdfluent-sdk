@@ -86,6 +86,15 @@ pub struct RenderOptions {
     pub width: Option<u16>,
     /// Force output height in pixels (overrides DPI for height).
     pub height: Option<u16>,
+    /// Optional **opt-in** pixel budget. When `Some(n)` and the requested scale
+    /// would produce more than `n` pixels (width × height), the effective scale
+    /// is reduced proportionally so the output fits the budget. Default `None`
+    /// preserves the exact requested scale (byte-identical to prior behavior).
+    ///
+    /// This is an explicit, caller-controlled quality/performance trade-off — it
+    /// is never applied by default and the returned `RenderedPage` reports the
+    /// actual `width`/`height` so callers see the applied resolution.
+    pub max_pixels: Option<u32>,
 }
 
 impl Default for RenderOptions {
@@ -96,6 +105,7 @@ impl Default for RenderOptions {
             render_annotations: true,
             width: None,
             height: None,
+            max_pixels: None,
         }
     }
 }
@@ -636,7 +646,21 @@ fn render_rgba_pixels(
     options: &RenderOptions,
     settings: &InterpreterSettings,
 ) -> (u32, u32, Vec<u8>) {
-    let scale = (options.dpi / 72.0) as f32;
+    let mut scale = (options.dpi / 72.0) as f32;
+
+    // Opt-in pixel budget: clamp the effective scale so width*height <= max_pixels.
+    // Only active when `max_pixels` is Some AND `width`/`height` are not forced.
+    if let Some(budget) = options.max_pixels {
+        if options.width.is_none() && options.height.is_none() && budget > 0 && scale > 0.0 {
+            let (base_w, base_h) = page.render_dimensions();
+            let predicted = (base_w as f64 * scale as f64) * (base_h as f64 * scale as f64);
+            if predicted > budget as f64 {
+                let factor = (budget as f64 / predicted).sqrt() as f32;
+                scale *= factor;
+            }
+        }
+    }
+
     let bg = AlphaColor::<Srgb>::new(options.background);
 
     let rs = RenderSettings {
