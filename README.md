@@ -28,8 +28,8 @@ fn main() -> Result<()> {
 
 ## Features
 
-### XFA Forms
-- **Full XFA 3.3 support** — dynamic forms with scriptable calculations
+### XFA Forms (experimental, feature-gated — not production-supported)
+- **XFA 3.3 feature set** — dynamic forms with scriptable calculations (experimental, behind the `xfa` feature gate)
 - **Font embedding pipeline** — automatic resolution of embedded, system, and fallback fonts
 - **Image embedding** — JPEG/PNG XObjects with alpha transparency via SMask
 - **Layout engine** — positioned, flowed (tb/lr-tb), and table layouts with pagination
