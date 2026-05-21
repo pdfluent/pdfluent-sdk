@@ -6,4 +6,4 @@
 #     pip install -e ../../crates/pdf-python
 #
 # Once the binding is published to PyPI:
-pdfluent==1.0.0b7
+pdfluent==1.0.0b8
