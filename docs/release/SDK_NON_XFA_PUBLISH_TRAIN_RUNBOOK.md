@@ -106,7 +106,7 @@ For every channel: **(a) build on the correct runner → (b) audit the built art
 ### 2.2 C-ABI (release tarball)
 
 - **Runner/platform:** one runner per target OS/arch (linux-x64 proven; add macOS/Windows as needed).
-- **Build:** `bash scripts/release/package_cabi.sh` → `target/release/pdfluent-capi-1.0.0-beta.1.tar.gz`
+- **Build:** `bash scripts/release/package_cabi.sh` → `target/release/pdfluent-capi-1.0.0-beta.8.tar.gz`
   (contains `lib/libpdf_capi.{so,dylib,dll}` + `include/pdfluent.h` + `include/pdf_engine.h` + LICENSE).
 - **Pre-publish audit:** `python3 scripts/release/check_release_artifact_contents.py <tarball>`
   (expect `ok:true`, LICENSE present, 0 corpus/secret/private-path).
@@ -118,7 +118,7 @@ For every channel: **(a) build on the correct runner → (b) audit the built art
 - **Post-publish verify:** download the tarball on a clean machine; compile the §2-style tiny C
   program against `include/` + link the lib; open a valid PDF → page count; malformed → non-zero status.
 
-### 2.3 npm (`@pdfluent/node`, currently 1.0.0-beta.5)
+### 2.3 npm (`@pdfluent/node`, 1.0.0-beta.8)
 
 - **Runner/platform:** per-OS Node runners to produce prebuilt `.node` addons (linux-x64, darwin-arm64,
   darwin-x64, win-x64); napi multi-platform packaging.
@@ -132,7 +132,7 @@ For every channel: **(a) build on the correct runner → (b) audit the built art
 - **Post-publish verify:** `npm install @pdfluent/node@<ver>` in a scratch project; valid open →
   `pageCount`; malformed → typed `Error`.
 
-### 2.4 PyPI (`pdfluent`, currently 1.0.0b7)
+### 2.4 PyPI (`pdfluent`, 1.0.0b8)
 
 - **Runner/platform:** manylinux container (cibuildwheel) + macOS (arm64/x64) + Windows runners to
   build the full wheel matrix; plus an sdist.
@@ -147,7 +147,7 @@ For every channel: **(a) build on the correct runner → (b) audit the built art
   `page_count`; malformed → typed error. (Local dev-host smoke was blocked only by interpreter-tag
   mismatch — must be re-smoked on a matching interpreter here.)
 
-### 2.5 NuGet (`PDFluent`, currently 1.0.0-beta.6)
+### 2.5 NuGet (`PDFluent`, 1.0.0-beta.8)
 
 - **Runner/platform:** a runner (or CI matrix) where the native libs for each RID are present.
 - **Build:**
@@ -165,7 +165,7 @@ For every channel: **(a) build on the correct runner → (b) audit the built art
 - **Post-publish verify:** scratch console app, `dotnet add package PDFluent --version <ver>`; valid
   open → `PageCount`; malformed → typed `PdfException`; native auto-loads on each target RID.
 
-### 2.6 Maven Central (`com.pdfluent:pdfluent`, currently 1.0.0-beta.6)
+### 2.6 Maven Central (`com.pdfluent:pdfluent`, 1.0.0-beta.8)
 
 - **Runner/platform:** JDK 17/21 build runner (the `jdk24-plus` profile auto-activates only on
   JDK 24+); native `libpdf_capi` available for the target OSes the jar will load via JNA.
@@ -181,7 +181,7 @@ For every channel: **(a) build on the correct runner → (b) audit the built art
 - **Post-publish verify:** scratch Maven project depends on `com.pdfluent:pdfluent:<ver>`; valid open →
   `getPageCount`; malformed → typed `PdfluentException`.
 
-### 2.7 WASM (`@pdfluent/sdk-wasm`, currently 1.0.0-beta.3)
+### 2.7 WASM (`@pdfluent/sdk-wasm`, 1.0.0-beta.8)
 
 - **Runner/platform:** any runner with the wasm32 target + wasm-pack (platform-independent output).
 - **Build/validate:** `bash scripts/release/wasm_dry_run.sh` (expect `R1_3_WASM_DRY_RUN_GREEN`).
@@ -233,17 +233,21 @@ never hand-edited or copied across arches.
 
 | Item | Current state | Action before publish |
 |------|---------------|-----------------------|
-| **Versions** | NOT unified: crates.io `1.0.0-beta.8`; jar/nuget `1.0.0-beta.6`; npm `1.0.0-beta.5`; pypi `1.0.0b7`; wasm `1.0.0-beta.3`; cabi `1.0.0-beta.1` | **Decide policy** (see below). This is a go/no-go item, not auto-resolved here (no version bump allowed in this milestone). |
+| **Versions** | **Aligned to the RC line `1.0.0-beta.8`** across all binding channels (PyPI uses `1.0.0b8` per PEP 440) via `SDK_NON_XFA_CROSS_CHANNEL_VERSION_ALIGNMENT_GREEN`. The crates.io Rust graph stays intentionally heterogeneous (flagship `pdfluent 1.0.0-beta.8`; some crates legitimately `beta.3`/`beta.4`, upstream forks `0.x`) — that is the proven topological set, not an inconsistency. | Confirm versions on the CI-built artifacts before publish. |
 | Release notes | not yet drafted | draft per-channel notes from the RC audit + this train |
 | Changelog | not yet cut | add a CHANGELOG entry per channel/version |
 | Tags | none (do NOT create here) | operator creates annotated tags at publish time |
 | License files | present in every artifact (RC audit Phase 3) | re-confirm on CI-built artifacts |
 | XFA caveats | README + crate description label XFA experimental/feature-gated | keep verbatim; do not soften |
 
-**Version-policy decision (required):** the channels intentionally carry independent package
-versions today. Either (a) accept independent per-channel versions and document the mapping, or
-(b) unify to a single marketing version in a *separate* version-bump milestone (NOT here). Publishing
-with mismatched versions is allowed only if (a) is explicitly chosen and documented in release notes.
+**Version-policy decision (RESOLVED):** binding channels are now unified on the RC line
+`1.0.0-beta.8` (PyPI `1.0.0b8`). The crates.io Rust crate graph remains intentionally heterogeneous
+(it is the topologically-proven publish set). No further version bump is required for the RC.
+
+_Superseded (historical): before alignment the channels carried independent versions
+(jar/nuget `beta.6`, npm `beta.5`, pypi `1.0.0b7`, wasm `beta.3`, cabi `beta.1`). The
+`SDK_NON_XFA_CROSS_CHANNEL_VERSION_ALIGNMENT_FOR_RC` milestone unified the binding channels to
+`1.0.0-beta.8` (PyPI `1.0.0b8`); this paragraph is retained only as a record of the prior state._
 
 ---
 
