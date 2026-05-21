@@ -79,9 +79,12 @@ pub enum Commands {
         /// Write per-page layout metadata to JSON.
         #[arg(long, value_name = "PATH")]
         dump_layout: Option<PathBuf>,
-        /// XFA rendering policy. `saved-state` (default) honors the document's
-        /// saved form state; `fresh-merge` is experimental and not yet
-        /// implemented (D12).
+        /// XFA rendering policy for `flatten`: `saved-state` only (default).
+        /// `flatten` always applies the production SavedStateFaithful policy.
+        /// `fresh-merge` (FreshMergeExperimental) is experimental, opt-in, and
+        /// pending corpus-scale (D13) validation — it is rejected by `flatten`;
+        /// use `measure --policy fresh-merge` for experimental measurement.
+        /// No Adobe-parity claim.
         #[arg(long, value_name = "POLICY", default_value = "saved-state")]
         xfa_rendering_policy: String,
     },
@@ -100,7 +103,8 @@ pub enum Commands {
         /// Input PDF file.
         #[arg(long)]
         input: PathBuf,
-        /// Rendering policy: `saved-state` (default) or `fresh-merge`.
+        /// Rendering policy: `saved-state` (default) or `fresh-merge`
+        /// (experimental, opt-in; pending corpus-scale D13 validation).
         #[arg(long, value_name = "POLICY", default_value = "saved-state")]
         policy: String,
         /// Write measurement JSON to this path (else printed to stdout).

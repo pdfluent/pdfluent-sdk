@@ -51,9 +51,14 @@ pub fn run(
     dump_layout: Option<&Path>,
     xfa_rendering_policy: &str,
 ) -> Result<()> {
-    // D11: explicit rendering policy. Default `saved-state` keeps the existing
-    // behaviour byte-for-byte. An unknown token or the experimental
-    // `fresh-merge` policy fails loudly (no silent fallback).
+    // D11/D14: explicit rendering policy. `flatten` is the production command and
+    // applies the default `SavedStateFaithful` policy only — it does not thread a
+    // policy through the flattener. `FreshMergeExperimental` is experimental,
+    // opt-in, and pending corpus-scale (D13) validation; it is reproduced for
+    // measurement via the policy-aware API
+    // (`pdf_xfa::flatten_xfa_to_pdf_with_policy`) or `pdfluent measure --policy
+    // fresh-merge`, never by `flatten`. Reject any non-saved-state token loudly
+    // rather than silently producing saved-state output under the wrong label.
     let policy =
         pdf_xfa::XfaRenderingPolicy::from_token(xfa_rendering_policy).with_context(|| {
             format!(
@@ -61,10 +66,13 @@ pub fn run(
              (expected 'saved-state' or 'fresh-merge')"
             )
         })?;
-    if !policy.is_supported() {
+    if policy != pdf_xfa::XfaRenderingPolicy::SavedStateFaithful {
         eprintln!(
-            "XFA rendering policy '{}' is experimental and not implemented yet (D12); \
-             the default 'saved-state' policy is the only supported policy.",
+            "`flatten` applies the production 'saved-state' (SavedStateFaithful) \
+             policy only. '{}' is experimental and not produced by `flatten` \
+             (pending D13 corpus-scale validation); use \
+             `pdfluent measure --policy fresh-merge` for experimental measurement. \
+             SavedStateFaithful remains the default.",
             policy.as_str()
         );
         std::process::exit(2);
