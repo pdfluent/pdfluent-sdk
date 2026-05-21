@@ -67,6 +67,7 @@ fn main() {
             let mut w = 0u32;
             let mut h = 0u32;
             let mut bytes = 0usize;
+            let mut phash = 0u64; // FNV-1a of pixels — for cross-process fidelity compare
             for _ in 0..runs {
                 let t = Instant::now();
                 match doc.render_page(page, &opts) {
@@ -75,6 +76,11 @@ fn main() {
                         w = r.width;
                         h = r.height;
                         bytes = r.pixels.len();
+                        let mut hsh = 0xcbf29ce484222325u64;
+                        for b in &r.pixels {
+                            hsh = (hsh ^ *b as u64).wrapping_mul(0x100000001b3);
+                        }
+                        phash = hsh;
                     }
                     Err(e) => {
                         println!(
@@ -94,7 +100,7 @@ fn main() {
             let mpx = (w as f64 * h as f64) / 1.0e6;
             let ms_per_mpx = if mpx > 0.0 { p50 / mpx } else { 0.0 };
             println!(
-                "{{\"event\":\"render\",\"page\":{page},\"scale\":{scale},\"w\":{w},\"h\":{h},\"megapixels\":{mpx:.3},\"render_p50_ms\":{p50:.2},\"render_p95_ms\":{p95:.2},\"render_min_ms\":{cold:.2},\"ms_per_megapixel\":{ms_per_mpx:.2},\"out_bytes\":{bytes},\"runs\":{}}}",
+                "{{\"event\":\"render\",\"page\":{page},\"scale\":{scale},\"w\":{w},\"h\":{h},\"megapixels\":{mpx:.3},\"render_p50_ms\":{p50:.2},\"render_p95_ms\":{p95:.2},\"render_min_ms\":{cold:.2},\"ms_per_megapixel\":{ms_per_mpx:.2},\"out_bytes\":{bytes},\"phash\":\"{phash:016x}\",\"runs\":{}}}",
                 times.len()
             );
         }

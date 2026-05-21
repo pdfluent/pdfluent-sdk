@@ -4076,6 +4076,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "ordered-channel"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95be4d57809897b5a7539fc15a7dfe0e84141bc3dfaa2e9b1b27caa90acf61ab"
+dependencies = [
+ "crossbeam-channel",
+]
+
+[[package]]
 name = "ort"
 version = "2.0.0-rc.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7867,7 +7876,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0162bfe48aabf6a9fdcd401b628c7d9f260c2cbabb343c70a65feba6f7849edc"
 dependencies = [
  "bytemuck",
+ "crossbeam-channel",
  "hashbrown 0.16.1",
+ "ordered-channel",
+ "rayon",
+ "thread_local",
  "vello_common",
 ]
 
