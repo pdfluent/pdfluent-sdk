@@ -99,6 +99,42 @@ use vello_cpu::{Level, Pixmap, RenderMode};
 
 mod renderer;
 
+/// Rasterization precision / speed trade-off for the vello_cpu pipeline.
+///
+/// vello_cpu ships two compositing pipelines: a higher-precision `f32` pipeline
+/// and a faster `u8` pipeline. Both are compiled in; this selects which one a
+/// given render uses.
+///
+/// The default is [`RasterQuality::Quality`] (the `f32` pipeline), which keeps
+/// output **byte-identical** to historical PDFluent releases. [`RasterQuality::Speed`]
+/// is an explicit, caller-controlled opt-in: on content-heavy pages it renders
+/// ~1.4–1.6× faster, at the cost of sub-perceptual rounding differences wherever
+/// alpha blending, anti-aliasing or images compose (8-bit vs f32 compositing
+/// precision). Pages built only from opaque vector fills are byte-identical in
+/// both modes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum RasterQuality {
+    /// Higher-precision `f32` compositing pipeline. Default; matches historical
+    /// output byte-for-byte.
+    #[default]
+    Quality,
+    /// Faster `u8` compositing pipeline (~1.4–1.6× on content-heavy pages).
+    /// Opt-in; output differs from [`RasterQuality::Quality`] by sub-perceptual
+    /// rounding where blending/AA/images compose.
+    Speed,
+}
+
+impl RasterQuality {
+    /// Map to the underlying vello_cpu render mode.
+    fn render_mode(self) -> RenderMode {
+        match self {
+            // OptimizeQuality requires the `f32_pipeline` feature (enabled in Cargo.toml).
+            RasterQuality::Quality => RenderMode::OptimizeQuality,
+            RasterQuality::Speed => RenderMode::OptimizeSpeed,
+        }
+    }
+}
+
 /// Settings to apply during rendering.
 #[derive(Clone, Copy)]
 pub struct RenderSettings {
@@ -115,6 +151,9 @@ pub struct RenderSettings {
     /// The background color. Determines the color of the base
     /// rectangle during rendering to a pixmap.
     pub bg_color: AlphaColor<Srgb>,
+    /// Rasterization precision/speed trade-off (default [`RasterQuality::Quality`],
+    /// which is byte-identical to historical output).
+    pub quality: RasterQuality,
 }
 
 impl Default for RenderSettings {
@@ -125,6 +164,7 @@ impl Default for RenderSettings {
             width: None,
             height: None,
             bg_color: TRANSPARENT,
+            quality: RasterQuality::default(),
         }
     }
 }
@@ -172,7 +212,7 @@ pub fn render(
     let vc_settings = vello_cpu::RenderSettings {
         level: Level::new(),
         num_threads: render_num_threads(),
-        render_mode: RenderMode::OptimizeSpeed,
+        render_mode: render_settings.quality.render_mode(),
     };
 
     let mut device = Renderer::new(pix_width, pix_height, vc_settings);
@@ -390,5 +430,51 @@ mod tests {
             b[0].data_as_u8_slice(),
             "render output must be byte-identical across runs"
         );
+    }
+
+    /// Each `RasterQuality` mode must itself be deterministic (byte-identical
+    /// across runs) and produce identical dimensions. This guards the opt-in
+    /// Speed (u8) pipeline against nondeterminism while leaving the default
+    /// Quality (f32) path as the byte-identical baseline.
+    #[test]
+    fn raster_quality_modes_are_deterministic() {
+        let bytes = minimal_pdf_bytes();
+        let pdf = Pdf::new(bytes).expect("PDF should load");
+        for quality in [RasterQuality::Quality, RasterQuality::Speed] {
+            let render_once = || {
+                let page = &pdf.pages()[0];
+                render(
+                    page,
+                    &InterpreterSettings::default(),
+                    &RenderSettings {
+                        x_scale: 2.0,
+                        y_scale: 2.0,
+                        bg_color: WHITE,
+                        quality,
+                        ..Default::default()
+                    },
+                )
+            };
+            let a = render_once();
+            let b = render_once();
+            assert_eq!(
+                (a.width(), a.height()),
+                (b.width(), b.height()),
+                "{quality:?} dimensions must be stable"
+            );
+            assert_eq!(
+                a.data_as_u8_slice(),
+                b.data_as_u8_slice(),
+                "{quality:?} output must be byte-identical across runs"
+            );
+        }
+    }
+
+    /// `RasterQuality::Quality` is the default and must map to the f32 render
+    /// mode, keeping default output byte-identical to historical releases.
+    #[test]
+    fn raster_quality_default_is_quality() {
+        assert_eq!(RasterQuality::default(), RasterQuality::Quality);
+        assert_eq!(RenderSettings::default().quality, RasterQuality::Quality);
     }
 }
