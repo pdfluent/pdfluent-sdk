@@ -1817,7 +1817,7 @@ dependencies = [
 
 [[package]]
 name = "formcalc-interpreter"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "thiserror 2.0.18",
  "xfa-dom-resolver",
@@ -4231,7 +4231,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-compliance"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "flate2",
  "log",
@@ -4275,7 +4275,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-docx"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "pdfluent-extract",
  "pdfluent-lopdf",
@@ -4287,7 +4287,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-engine"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "base64 0.22.1",
  "dirs-sys 0.3.7",
@@ -4379,7 +4379,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-manip"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "flate2",
  "image",
@@ -4453,7 +4453,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-redact"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "flate2",
  "pdf-font",
@@ -4467,7 +4467,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-render"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "bytemuck",
  "fast_image_resize",
@@ -4499,7 +4499,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-text-format"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "pdf-manip",
  "pdfluent-lopdf",
@@ -4508,7 +4508,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-xfa"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -4543,7 +4543,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "criterion",
  "getrandom 0.2.17",
@@ -4572,7 +4572,7 @@ version = "0.2.0"
 
 [[package]]
 name = "pdfluent-extract"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "flate2",
  "pdfluent-lopdf",
@@ -4583,7 +4583,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-forms"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "log",
  "pdf-syntax",
@@ -4648,7 +4648,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-sign"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "der",
  "digest",
@@ -8856,7 +8856,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-dom-resolver"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "roxmltree",
  "thiserror 2.0.18",
@@ -8875,7 +8875,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-js-sandboxed"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "rquickjs",
  "thiserror 2.0.18",
@@ -8883,7 +8883,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-json"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "indexmap 2.14.0",
  "serde",
@@ -8893,7 +8893,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-layout-engine"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 dependencies = [
  "formcalc-interpreter",
  "log",
