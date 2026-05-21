@@ -8,6 +8,8 @@
 //!   error (never a silent fallback);
 //! - token parsing round-trips.
 
+// XfaError kept in case future tests re-add error-path assertions
+#[allow(unused_imports)]
 use pdf_xfa::error::XfaError;
 use pdf_xfa::{
     flatten_xfa_to_pdf, flatten_xfa_to_pdf_with_policy,
@@ -62,12 +64,17 @@ fn metadata_records_selected_policy() {
 }
 
 #[test]
-fn fresh_merge_returns_typed_unsupported_error_not_silent_fallback() {
-    let err = flatten_xfa_to_pdf_with_policy(TINY_PDF, XfaRenderingPolicy::FreshMergeExperimental)
-        .expect_err("FreshMergeExperimental must not be silently supported");
-    assert!(
-        matches!(err, XfaError::RenderingPolicyUnsupported(_)),
-        "expected RenderingPolicyUnsupported, got {err:?}"
+fn fresh_merge_is_plumbed_and_returns_output() {
+    // D12: FreshMergeExperimental is now plumbed through the pipeline.
+    // It returns output (byte-identical to SavedStateFaithful in the
+    // plumbing-only phase) rather than RenderingPolicyUnsupported.
+    let (_, meta) =
+        flatten_xfa_to_pdf_with_policy_and_metadata(TINY_PDF, XfaRenderingPolicy::FreshMergeExperimental)
+            .expect("FreshMergeExperimental must return output after D12 plumbing");
+    assert_eq!(
+        meta.rendering_policy,
+        XfaRenderingPolicy::FreshMergeExperimental,
+        "metadata must label the FreshMerge policy"
     );
 }
 
