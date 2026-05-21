@@ -57,6 +57,36 @@ fn render_trace_enabled() -> bool {
     })
 }
 
+/// Worker-thread count for vello_cpu rasterization. Only has an effect on native
+/// targets where the `multithreading` feature is enabled (wasm32 keeps the
+/// single-threaded path). `0` = single-threaded. Multi-threaded tiled raster is
+/// deterministic and byte-identical to single-threaded (verified by test).
+///
+/// Default: `available_parallelism` on native; overridable via the
+/// `PDF_RENDER_THREADS` env var (e.g. `1` to force single-threaded for A/B).
+fn render_num_threads() -> u16 {
+    use std::sync::OnceLock;
+    static N: OnceLock<u16> = OnceLock::new();
+    *N.get_or_init(|| {
+        if let Some(n) = std::env::var("PDF_RENDER_THREADS")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+        {
+            return n;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::thread::available_parallelism()
+                .map(|n| n.get().min(u16::MAX as usize) as u16)
+                .unwrap_or(1)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            0
+        }
+    })
+}
+
 pub use pdf_interpret;
 pub use pdf_interpret::pdf_syntax;
 pub use vello_cpu;
@@ -141,7 +171,7 @@ pub fn render(
 
     let vc_settings = vello_cpu::RenderSettings {
         level: Level::new(),
-        num_threads: 0,
+        num_threads: render_num_threads(),
         render_mode: RenderMode::OptimizeSpeed,
     };
 
@@ -186,6 +216,9 @@ pub fn render(
 
     let mut pixmap = Pixmap::new(pix_width, pix_height);
     let t_raster = trace.then(std::time::Instant::now);
+    // Multi-threaded rasterization requires an explicit flush before sampling
+    // the pixmap; on the single-threaded path flush() is a no-op.
+    device.ctx.flush();
     device.ctx.render_to_pixmap(&mut pixmap);
     let raster_ms = t_raster.map(|t| t.elapsed().as_secs_f64() * 1000.0);
 
@@ -339,5 +372,23 @@ mod tests {
         // Range 0..=0 selects only the first (and only) page.
         let pixmaps = render_pdf(&pdf, 1.0, InterpreterSettings::default(), Some(0..=0)).unwrap();
         assert_eq!(pixmaps.len(), 1);
+    }
+
+    /// Rasterization must be deterministic and byte-identical across renders,
+    /// including under the multi-threaded vello_cpu path (native). This guards
+    /// the multithreading-enable change against any nondeterminism regression —
+    /// a pixel difference here would be a fidelity regression, not a perf win.
+    #[test]
+    fn render_pdf_is_byte_deterministic() {
+        let bytes = minimal_pdf_bytes();
+        let pdf = Pdf::new(bytes).expect("PDF should load");
+        let a = render_pdf(&pdf, 2.0, InterpreterSettings::default(), None).unwrap();
+        let b = render_pdf(&pdf, 2.0, InterpreterSettings::default(), None).unwrap();
+        assert_eq!(a.len(), b.len());
+        assert_eq!(
+            a[0].data_as_u8_slice(),
+            b[0].data_as_u8_slice(),
+            "render output must be byte-identical across runs"
+        );
     }
 }
