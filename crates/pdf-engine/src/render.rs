@@ -17,6 +17,7 @@ use pdf_render::vello_cpu::peniko::Fill as PenikoFill;
 use pdf_render::vello_cpu::{
     Level, Pixmap, RenderContext, RenderMode, RenderSettings as CpuRenderSettings,
 };
+pub use pdf_render::RasterQuality;
 use pdf_render::{render, RenderSettings};
 
 const AXIS_EPSILON: f64 = 1e-5;
@@ -95,6 +96,14 @@ pub struct RenderOptions {
     /// is never applied by default and the returned `RenderedPage` reports the
     /// actual `width`/`height` so callers see the applied resolution.
     pub max_pixels: Option<u32>,
+    /// Rasterization precision/speed trade-off (default [`RasterQuality::Quality`]).
+    ///
+    /// [`RasterQuality::Quality`] (default) uses the higher-precision f32
+    /// compositing pipeline and is **byte-identical** to historical output.
+    /// [`RasterQuality::Speed`] is an explicit opt-in: ~1.4–1.6× faster on
+    /// content-heavy pages, with sub-perceptual rounding differences where
+    /// blending/anti-aliasing/images compose. Never changes output by default.
+    pub quality: RasterQuality,
 }
 
 impl Default for RenderOptions {
@@ -106,6 +115,7 @@ impl Default for RenderOptions {
             width: None,
             height: None,
             max_pixels: None,
+            quality: RasterQuality::Quality,
         }
     }
 }
@@ -211,7 +221,9 @@ impl CmykOverlayDevice {
             cpu_settings: CpuRenderSettings {
                 level: Level::new(),
                 num_threads: 0,
-                render_mode: RenderMode::OptimizeSpeed,
+                // f32 pipeline for the exact-CMYK mask path: keeps mask coverage
+                // byte-identical to historical output (both pipelines are compiled).
+                render_mode: RenderMode::OptimizeQuality,
             },
         }
     }
@@ -669,6 +681,7 @@ fn render_rgba_pixels(
         width: options.width,
         height: options.height,
         bg_color: bg,
+        quality: options.quality,
     };
 
     let mut isettings = settings.clone();
@@ -735,6 +748,10 @@ mod tests {
         assert!(opts.render_annotations);
         assert!(opts.width.is_none());
         assert!(opts.height.is_none());
+        assert!(opts.max_pixels.is_none());
+        // Default rasterization mode is Quality (f32 pipeline) — byte-identical
+        // to historical output. Speed (u8) is opt-in only.
+        assert_eq!(opts.quality, RasterQuality::Quality);
     }
 
     #[test]

@@ -58,9 +58,15 @@ fn main() {
             let max_pixels = std::env::var("MAX_PIXELS")
                 .ok()
                 .and_then(|s| s.parse::<u32>().ok());
+            // RENDER_QUALITY=speed selects the faster u8 pipeline; default = quality (f32).
+            let quality = match std::env::var("RENDER_QUALITY").ok().as_deref() {
+                Some("speed") | Some("Speed") => pdf_engine::RasterQuality::Speed,
+                _ => pdf_engine::RasterQuality::Quality,
+            };
             let opts = RenderOptions {
                 dpi: 72.0 * scale,
                 max_pixels,
+                quality,
                 ..Default::default()
             };
             let mut times = Vec::with_capacity(runs);
