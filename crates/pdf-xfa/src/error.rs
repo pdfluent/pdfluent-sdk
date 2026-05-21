@@ -37,11 +37,13 @@ pub enum XfaError {
     Io(#[from] std::io::Error),
 
     /// RenderingPolicyUnsupported. **D11.** The requested
-    /// [`crate::flatten::XfaRenderingPolicy`] is not implemented yet (e.g.
-    /// `FreshMergeExperimental`). The default `SavedStateFaithful` policy is
-    /// always supported; this variant exists so an unsupported policy fails
-    /// loudly rather than silently producing default output under the wrong
-    /// label.
+    /// [`crate::flatten::XfaRenderingPolicy`] is not available in the calling
+    /// context (e.g. a future/unknown policy, or a command such as `flatten`
+    /// that applies `SavedStateFaithful` only). Both `SavedStateFaithful` (the
+    /// default, production policy) and `FreshMergeExperimental` (experimental,
+    /// opt-in) are implemented as of D12; this variant exists so an unavailable
+    /// policy fails loudly rather than silently producing default output under
+    /// the wrong label.
     #[error("XFA rendering policy not supported: {0}")]
     RenderingPolicyUnsupported(String),
 
