@@ -15,7 +15,12 @@
 #   audit    : scripts/ci/run_audit.sh   (--full only; needs clean tree)
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
-FULL=0; [ "${1:-}" = "--full" ] && FULL=1
+FULL=0
+case "${1:-}" in
+  --full)     FULL=1 ;;
+  --fast|"")  FULL=0 ;;
+  *) echo "usage: local_ci_gate.sh [--fast|--full]" >&2; exit 2 ;;
+esac
 fail=0; pass=0
 run() { local name="$1"; shift
   printf '=== %-9s' "$name"
