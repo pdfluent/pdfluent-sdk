@@ -58,7 +58,8 @@ def flatten(run_dir: Path) -> dict:
     # Language-binding overhead (Node / Python), measured by the per-binding
     # timing harnesses (scripts/perf/bindings/*). Optional files; included
     # when present so the of-record run can budget binding overhead.
-    for bname, fname in (("node", "binding_node_run.json"), ("python", "binding_python_run.json")):
+    for bname, fname in (("node", "binding_node_run.json"), ("python", "binding_python_run.json"),
+                          ("java", "binding_java_run.json"), ("dotnet", "binding_dotnet_run.json")):
         bj = _load(run_dir / fname)
         if bj and bj.get("status") == "green_measured":
             v = bj.get("valid", {})
