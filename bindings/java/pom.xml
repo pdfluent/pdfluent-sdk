@@ -123,10 +123,12 @@
                         <!-- Suppress "system modules path not set" when building
                              with a JDK newer than 11 but targeting Java 11. -->
                         <arg>-Xlint:-options</arg>
-                        <!-- Suppress JEP 472 "restricted method" lint emitted by
-                             JDK 22+ for System.load{,Library}; native loading is
-                             the explicit purpose of NativeLoader. -->
-                        <arg>-Xlint:-restricted</arg>
+                        <!-- NOTE: -Xlint:-restricted is intentionally NOT here.
+                             The "restricted" lint category only exists on JDK 24+;
+                             passing it unconditionally breaks JDK 17/21 builds
+                             (unknown key + -Werror = fatal). It is appended by the
+                             jdk24-plus profile below, which activates only on
+                             JDK [24,). -->
                         <arg>-Werror</arg>
                     </compilerArgs>
                 </configuration>
@@ -213,6 +215,37 @@
          See DISTRIBUTION_SETUP.md for the full publish checklist.
          ================================================================ -->
     <profiles>
+        <!-- ============================================================
+             jdk24-plus — JDK 24+ portability profile.
+             The "restricted" javac lint category (JEP 472, restricting
+             System.load{,Library} / FFM restricted methods) only exists
+             on JDK 24+. Building NativeLoader emits that lint, and with
+             -Werror it would fail the build. We suppress it ONLY when the
+             build JDK is 24 or newer; on JDK 17/21 the flag is unknown and
+             must NOT be passed (it would itself trip -Werror).
+             combine.children="append" merges this arg onto the base
+             maven-compiler-plugin compilerArgs rather than replacing them.
+             ============================================================ -->
+        <profile>
+            <id>jdk24-plus</id>
+            <activation>
+                <jdk>[24,)</jdk>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <compilerArgs combine.children="append">
+                                <arg>-Xlint:-restricted</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
         <profile>
             <id>release</id>
             <build>
