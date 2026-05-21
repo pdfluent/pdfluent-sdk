@@ -1,36 +1,31 @@
-//! PDFluent public command-line interface (scaffold).
+//! PDFluent public command-line interface.
 //!
-//! This is the public-facing CLI built on the `pdfluent` SDK facade. It exposes
-//! a deliberately small, release-aligned surface. XFA support is **experimental
-//! and feature-gated** — there is no Adobe Reader parity claim, and the
-//! `fresh-merge` policy is opt-in and never the default.
+//! Public-facing CLI built on the `pdfluent` SDK facade. Deliberately small,
+//! release-aligned, non-XFA core surface. XFA support is **experimental and
+//! feature-gated** — no Adobe Reader parity claim, and the `fresh-merge` policy
+//! is opt-in and never the default.
 //!
 //! Internal/dev/corpus tooling (measure, debug-xfa, flatten-check, demo,
 //! collectors) lives in the separate `xfa-cli` crate and is intentionally NOT
 //! exposed here.
 
-use std::io::Write;
-use std::path::PathBuf;
+mod output;
+
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
+use serde_json::json;
 
-/// Stable CLI version string (RC line).
-const CLI_VERSION: &str = "1.0.0-beta.8";
+use output::{exit, CLI_VERSION};
 
-/// The XFA caveat reused wherever XFA is mentioned.
+/// XFA caveat reused wherever XFA is mentioned.
 const XFA_CAVEAT: &str =
     "XFA support is EXPERIMENTAL and feature-gated — not production-supported, \
 no Adobe Reader parity claim. The `fresh-merge` policy is opt-in and never the default.";
 
-/// Exit-code contract (see docs/cli). 0 success; non-zero mapped by class.
-mod exit {
-    pub const OK: u8 = 0;
-    pub const USAGE: u8 = 2;
-    pub const IO: u8 = 3;
-    pub const INVALID_PDF: u8 = 4;
-    pub const UNSUPPORTED: u8 = 6; // experimental/not-yet-implemented or opt-in required
-}
+/// Cap on inline `text` returned in `extract-text --json` (without `--out`).
+const JSON_TEXT_INLINE_CAP: usize = 64 * 1024;
 
 #[derive(Parser)]
 #[command(
@@ -47,11 +42,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Show document information (page count, file size).
+    /// Show document information (page count, PDF version, file size).
     Info {
         /// Input PDF file.
         input: PathBuf,
-        /// Emit a single JSON object on stdout.
+        /// Emit the stable JSON envelope on stdout.
         #[arg(long)]
         json: bool,
     },
@@ -60,24 +55,31 @@ enum Commands {
         /// Input PDF file.
         input: PathBuf,
     },
-    /// Extract text from a PDF (not yet implemented in this scaffold).
+    /// Extract text from a PDF.
     ExtractText {
         /// Input PDF file.
         input: PathBuf,
         /// Write extracted text to this path instead of stdout.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Emit the stable JSON envelope on stdout.
+        #[arg(long)]
+        json: bool,
     },
-    /// Validate a PDF against a compliance profile (not yet implemented in this scaffold).
+    /// Validate that a PDF parses and has readable pages (NOT a PDF/A conformance check).
     Validate {
         /// Input PDF file.
         input: PathBuf,
-        /// Emit a single JSON object on stdout.
+        /// Emit the stable JSON envelope on stdout.
         #[arg(long)]
         json: bool,
     },
     /// Check environment / installation and print build info.
-    Doctor,
+    Doctor {
+        /// Emit the stable JSON envelope on stdout.
+        #[arg(long)]
+        json: bool,
+    },
     /// Generate shell completions.
     Completions {
         /// Shell to generate completions for.
@@ -93,7 +95,7 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum XfaCommands {
-    /// Flatten an XFA/AcroForm document (not yet implemented in this scaffold).
+    /// Flatten an XFA/AcroForm document (not yet implemented in the public CLI).
     ///
     /// XFA support is EXPERIMENTAL and feature-gated — no Adobe Reader parity
     /// claim. `--policy saved-state` (default) honors the document's saved form
@@ -119,9 +121,11 @@ fn main() -> ExitCode {
     let code = match cli.command {
         Commands::Info { input, json } => cmd_info(&input, json),
         Commands::Inspect { input } => cmd_info(&input, true),
-        Commands::ExtractText { .. } => not_implemented("extract-text"),
-        Commands::Validate { .. } => not_implemented("validate"),
-        Commands::Doctor => cmd_doctor(),
+        Commands::ExtractText { input, out, json } => {
+            cmd_extract_text(&input, out.as_deref(), json)
+        }
+        Commands::Validate { input, json } => cmd_validate(&input, json),
+        Commands::Doctor { json } => cmd_doctor(json),
         Commands::Completions { shell } => cmd_completions(shell),
         Commands::Xfa { command } => match command {
             XfaCommands::Flatten {
@@ -134,59 +138,155 @@ fn main() -> ExitCode {
     ExitCode::from(code)
 }
 
-/// `info` / `inspect`: real implementation via the public `pdfluent` facade.
-fn cmd_info(input: &std::path::Path, json: bool) -> u8 {
+/// Open a PDF via the public facade, mapping IO/parse failures to the contract.
+fn open_doc(cmd: &str, input: &Path, json: bool) -> Result<pdfluent::PdfDocument, u8> {
     if !input.exists() {
-        return fail(
-            exit::IO,
-            "info",
+        return Err(output::error(
+            cmd,
+            json,
             "FILE_NOT_FOUND",
             &format!("no such file: {}", input.display()),
-        );
+        ));
     }
-    let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
-    let doc = match pdfluent::PdfDocument::open(input) {
+    pdfluent::PdfDocument::open(input).map_err(|e| {
+        output::error(
+            cmd,
+            json,
+            "INVALID_PDF",
+            &format!("could not open PDF: {e}"),
+        )
+    })
+}
+
+/// `info` / `inspect`.
+fn cmd_info(input: &Path, json: bool) -> u8 {
+    let doc = match open_doc("info", input, json) {
         Ok(d) => d,
-        Err(e) => {
-            return fail(
-                exit::INVALID_PDF,
-                "info",
-                "INVALID_PDF",
-                &format!("could not open PDF: {e}"),
-            );
-        }
+        Err(c) => return c,
+    };
+    let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+    let page_count = doc.page_count();
+    let version = doc.version().to_string();
+    output::success(
+        "info",
+        json,
+        json!({ "page_count": page_count, "pdf_version": version, "file_size": file_size }),
+        vec![],
+        || {
+            println!("Pages:       {page_count}");
+            println!("PDF version: {version}");
+            println!("Size:        {file_size} bytes");
+        },
+    )
+}
+
+/// `extract-text`.
+fn cmd_extract_text(input: &Path, out: Option<&Path>, json: bool) -> u8 {
+    let doc = match open_doc("extract-text", input, json) {
+        Ok(d) => d,
+        Err(c) => return c,
     };
     let page_count = doc.page_count();
-    if json {
-        let env = serde_json::json!({
-            "ok": true,
-            "command": "info",
-            "version": CLI_VERSION,
-            "data": { "path": input.display().to_string(), "file_size": file_size, "page_count": page_count },
-            "error": serde_json::Value::Null,
-        });
-        println!("{}", serde_json::to_string_pretty(&env).unwrap());
-    } else {
-        println!("File:       {}", input.display());
-        println!("Size:       {file_size} bytes");
-        println!("Pages:      {page_count}");
+    let text = match doc.extract_text() {
+        Ok(t) => t,
+        Err(e) => {
+            return output::error(
+                "extract-text",
+                json,
+                "INVALID_PDF",
+                &format!("text extraction failed: {e}"),
+            )
+        }
+    };
+    let char_count = text.chars().count();
+
+    if let Some(path) = out {
+        if let Err(e) = std::fs::write(path, &text) {
+            return output::error(
+                "extract-text",
+                json,
+                "IO",
+                &format!("could not write {}: {e}", path.display()),
+            );
+        }
+        return output::success(
+            "extract-text",
+            json,
+            json!({ "page_count": page_count, "char_count": char_count, "output_path": path.display().to_string() }),
+            vec![],
+            || println!("Wrote {char_count} chars to {}", path.display()),
+        );
     }
-    exit::OK
+
+    if json {
+        // Include inline text only when reasonably bounded; otherwise a preview.
+        let mut data = json!({ "page_count": page_count, "char_count": char_count, "output_path": serde_json::Value::Null });
+        let mut warnings = vec![];
+        if text.len() <= JSON_TEXT_INLINE_CAP {
+            data["text"] = json!(text);
+        } else {
+            let preview: String = text.chars().take(2000).collect();
+            data["preview"] = json!(preview);
+            warnings.push(format!(
+                "text omitted from JSON (>{JSON_TEXT_INLINE_CAP} bytes); use --out"
+            ));
+        }
+        output::success("extract-text", true, data, warnings, || {})
+    } else {
+        print!("{text}");
+        exit::OK
+    }
 }
 
-/// `doctor`: environment / build info. Always exits 0.
-fn cmd_doctor() -> u8 {
-    println!("pdfluent CLI doctor");
-    println!("  cli_version:  {CLI_VERSION}");
-    println!("  sdk:          pdfluent facade (=1.0.0-beta.8)");
-    println!("  target_os:    {}", std::env::consts::OS);
-    println!("  target_arch:  {}", std::env::consts::ARCH);
-    println!("  license:      PDFluent Commercial License (evaluation use permitted)");
-    println!("  note:         XFA is experimental/feature-gated; this is a scaffold CLI.");
-    exit::OK
+/// `validate` — parse + page-count only. NOT a PDF/A / veraPDF conformance check.
+fn cmd_validate(input: &Path, json: bool) -> u8 {
+    let doc = match open_doc("validate", input, json) {
+        Ok(d) => d,
+        Err(c) => return c, // INVALID_PDF / FILE_NOT_FOUND already emitted
+    };
+    let page_count = doc.page_count();
+    let version = doc.version().to_string();
+    output::success(
+        "validate",
+        json,
+        json!({
+            "valid": true,
+            "page_count": page_count,
+            "pdf_version": version,
+            "checks": ["parse", "page_count"],
+            "compliance": serde_json::Value::Null,
+        }),
+        vec![],
+        || {
+            println!("valid: parses, {page_count} page(s), PDF {version}");
+            println!("note: this is a parse + page-count check, not a PDF/A or veraPDF conformance check.");
+        },
+    )
 }
 
-/// `completions`: emit shell completions for the `pdfluent` command.
+/// `doctor`.
+fn cmd_doctor(json: bool) -> u8 {
+    let data = json!({
+        "cli_version": CLI_VERSION,
+        "sdk": "pdfluent facade (=1.0.0-beta.8)",
+        "target_os": std::env::consts::OS,
+        "target_arch": std::env::consts::ARCH,
+        "license": "PDFluent Commercial License (evaluation use permitted)",
+        "xfa": "experimental/feature-gated",
+        "binary": "pdfluent-cli (public CLI; `pdfluent` binary-name takeover is a separate milestone)",
+    });
+    output::success("doctor", json, data, vec![], || {
+        println!("pdfluent CLI doctor");
+        println!("  cli_version:  {CLI_VERSION}");
+        println!("  sdk:          pdfluent facade (=1.0.0-beta.8)");
+        println!("  target_os:    {}", std::env::consts::OS);
+        println!("  target_arch:  {}", std::env::consts::ARCH);
+        println!("  license:      PDFluent Commercial License (evaluation use permitted)");
+        println!("  note:         XFA is experimental/feature-gated; binary is `pdfluent-cli`.");
+    })
+}
+
+/// `completions`.
 fn cmd_completions(shell: clap_complete::Shell) -> u8 {
     let mut cmd = Cli::command();
     let bin = cmd.get_name().to_string();
@@ -194,48 +294,37 @@ fn cmd_completions(shell: clap_complete::Shell) -> u8 {
     exit::OK
 }
 
-/// `xfa flatten`: scaffold stub. Enforces the experimental/opt-in contract.
+/// `xfa flatten` — scaffold stub; enforces experimental/opt-in contract.
 fn cmd_xfa_flatten(policy: &str, experimental: bool) -> u8 {
     eprintln!("note: {XFA_CAVEAT}");
     match policy {
-        "saved-state" => not_implemented("xfa flatten (saved-state)"),
+        "saved-state" => output::error(
+            "xfa flatten",
+            false,
+            "NOT_IMPLEMENTED",
+            "xfa flatten is not implemented in the public CLI yet; use the SDK or internal tooling. XFA is experimental",
+        ),
         "fresh-merge" => {
             if !experimental {
-                return fail(
-                    exit::UNSUPPORTED,
+                return output::error(
                     "xfa flatten",
+                    false,
                     "EXPERIMENTAL_OPT_IN_REQUIRED",
-                    "policy `fresh-merge` is experimental and opt-in; re-run with --experimental to acknowledge",
+                    "policy `fresh-merge` is experimental and opt-in; re-run with --experimental to acknowledge (still not implemented in the public CLI)",
                 );
             }
-            not_implemented("xfa flatten (fresh-merge, experimental)")
+            output::error(
+                "xfa flatten",
+                false,
+                "NOT_IMPLEMENTED",
+                "xfa flatten (fresh-merge) is experimental and not implemented in the public CLI yet",
+            )
         }
-        other => fail(
-            exit::USAGE,
+        other => output::error(
             "xfa flatten",
+            false,
             "BAD_POLICY",
             &format!("unknown --policy `{other}` (expected `saved-state` or `fresh-merge`)"),
         ),
     }
-}
-
-/// Uniform "not implemented in this scaffold" path.
-fn not_implemented(what: &str) -> u8 {
-    fail(
-        exit::UNSUPPORTED,
-        what,
-        "NOT_IMPLEMENTED",
-        "not yet implemented in this CLI scaffold (see the PDFluent CLI implementation roadmap)",
-    )
-}
-
-/// Print a structured error to stderr and return the exit code.
-fn fail(code: u8, command: &str, err_code: &str, message: &str) -> u8 {
-    let _ = writeln!(
-        std::io::stderr(),
-        "[{err_code}] {message} — Docs: https://docs.pdfluent.dev/cli/errors/{}",
-        err_code.to_lowercase()
-    );
-    let _ = command; // command name reserved for future structured JSON error output
-    code
 }
