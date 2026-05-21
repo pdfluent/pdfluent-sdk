@@ -169,16 +169,16 @@ pub struct LayoutDumpEntry {
     pub first_overflow_element: Option<String>,
 }
 
-/// **D11.** XFA flatten rendering policy — how PDFluent resolves a conflict
+/// **D11/D12.** XFA flatten rendering policy — how PDFluent resolves a conflict
 /// between a PDF's embedded form DOM (Adobe Reader's saved runtime state) and a
 /// fresh `template + datasets` re-merge.
 ///
 /// See `benchmarks/runs/xfa_enterprise_plan/d10_formdom_vs_remerge_policy/` for
-/// the decision record. The default is [`XfaRenderingPolicy::SavedStateFaithful`]
-/// and is the only policy implemented today; selecting
-/// [`XfaRenderingPolicy::FreshMergeExperimental`] returns
-/// [`crate::error::XfaError::RenderingPolicyUnsupported`] rather than silently
-/// falling back (no fake support, no silent behaviour switch).
+/// the decision record. The default is [`XfaRenderingPolicy::SavedStateFaithful`].
+///
+/// **D12 status:** `FreshMergeExperimental` is plumbed and returns output, but
+/// VPS measurement and visual review have not yet run. Output quality under
+/// `FreshMergeExperimental` is unvalidated. Do not rely on it for production use.
 ///
 /// PDFluent does **not** claim a single universal Adobe-parity mode: XFA
 /// rendering is policy-dependent (saved-state vs fresh-merge), mirroring Adobe's
@@ -187,12 +187,14 @@ pub struct LayoutDumpEntry {
 pub enum XfaRenderingPolicy {
     /// Honor the embedded form DOM — render the instance set the document was
     /// last saved with; suppress template/data instances the form DOM did not
-    /// enumerate. This is the current, default, fully-supported behaviour.
+    /// enumerate. This is the default, fully-supported, production behaviour.
     #[default]
     SavedStateFaithful,
-    /// **Experimental / not implemented (D12).** Ignore the saved form DOM for
-    /// dynamic sections and re-merge template + datasets. Selecting this returns
-    /// `RenderingPolicyUnsupported` until D12 implements it behind its own gates.
+    /// **Experimental — unvalidated.** Ignore the saved form DOM for dynamic
+    /// sections; admit data-bound subforms the form DOM omitted. May improve
+    /// output for some documents (`01de9ce4`-class) but changes page counts for
+    /// protected targets (`13275420`, `b0389682`). VPS measurement and visual
+    /// review required before production use. Default behavior is unchanged.
     FreshMergeExperimental,
 }
 
@@ -223,11 +225,12 @@ impl XfaRenderingPolicy {
         }
     }
 
-    /// Whether this policy has an implementation today. Only
-    /// `SavedStateFaithful` is supported in D11.
+    /// Whether this policy has an implementation. Both policies are implemented
+    /// as of D12 (draft). `FreshMergeExperimental` is unvalidated — do not
+    /// use in production until D12 VPS measurement and visual review complete.
     #[must_use]
     pub const fn is_supported(self) -> bool {
-        matches!(self, Self::SavedStateFaithful)
+        true
     }
 }
 
@@ -240,12 +243,16 @@ pub struct FlattenMetadata {
     pub output_quality: OutputQuality,
     /// **D11.** The rendering policy that produced this result.
     pub rendering_policy: XfaRenderingPolicy,
-    /// **D12.** Count of `formdom_unmatched` nodes that qualify for admission
-    /// under [`XfaRenderingPolicy::FreshMergeExperimental`] (data-bound,
-    /// not zero-instance, not template-hidden). Always 0 under
-    /// `SavedStateFaithful`. Non-zero under `FreshMergeExperimental` once
-    /// D12 execution lands; for now records would-admit candidates even
-    /// when suppression is still applied (plumbing-only phase).
+    /// **D12.** Count of `formdom_unmatched` nodes that were **admitted**
+    /// (not suppressed) under [`XfaRenderingPolicy::FreshMergeExperimental`].
+    /// These are data-bound, non-zero-instance, non-template-hidden subforms
+    /// that the form DOM omitted but the merger matched to data.
+    ///
+    /// Always 0 under `SavedStateFaithful`.  Under `FreshMergeExperimental`
+    /// a non-zero value means the output may differ from `SavedStateFaithful`.
+    ///
+    /// **Unvalidated** — VPS measurement and visual review have not yet run.
+    /// Do not use as a quality signal until D12 execution completes.
     pub fresh_merge_admitted_nodes: usize,
 }
 
@@ -664,7 +671,8 @@ pub fn flatten_xfa_to_pdf_with_layout_dump(pdf_bytes: &[u8]) -> Result<(Vec<u8>,
 /// Returns [`XfaError`] on parse, layout, or render failures.
 #[must_use = "flattened PDF bytes and metadata must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_metadata(pdf_bytes: &[u8]) -> Result<(Vec<u8>, FlattenMetadata)> {
-    let out = flatten_xfa_to_pdf_internal(pdf_bytes, false, XfaRenderingPolicy::SavedStateFaithful)?;
+    let out =
+        flatten_xfa_to_pdf_internal(pdf_bytes, false, XfaRenderingPolicy::SavedStateFaithful)?;
     Ok((out.pdf_bytes, out.metadata))
 }
 
@@ -684,17 +692,16 @@ pub fn flatten_xfa_to_pdf_with_layout_dump_and_metadata(
     Ok((out.pdf_bytes, out.layout_dump, out.metadata))
 }
 
-/// **D11.** Flatten XFA content under an explicit [`XfaRenderingPolicy`].
+/// **D11/D12.** Flatten XFA content under an explicit [`XfaRenderingPolicy`].
 ///
 /// [`XfaRenderingPolicy::SavedStateFaithful`] (the default) behaves identically
 /// to [`flatten_xfa_to_pdf`]. [`XfaRenderingPolicy::FreshMergeExperimental`]
-/// returns [`crate::error::XfaError::RenderingPolicyUnsupported`] (not
-/// implemented until D12) — it never silently falls back to the default.
+/// is implemented as of D12 (draft) but **unvalidated** — VPS measurement and
+/// visual review have not yet run.
 ///
 /// # Errors
 ///
-/// Returns [`crate::error::XfaError::RenderingPolicyUnsupported`] for an
-/// unimplemented policy, or [`XfaError`] on parse/layout/render failures.
+/// Returns [`XfaError`] on parse, layout, or render failures.
 #[must_use = "flattened PDF bytes must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_policy(
     pdf_bytes: &[u8],
@@ -703,21 +710,20 @@ pub fn flatten_xfa_to_pdf_with_policy(
     flatten_xfa_to_pdf_with_policy_and_metadata(pdf_bytes, policy).map(|(bytes, _)| bytes)
 }
 
-/// **D11.** Flatten XFA content under an explicit [`XfaRenderingPolicy`],
+/// **D11/D12.** Flatten XFA content under an explicit [`XfaRenderingPolicy`],
 /// returning the bytes and [`FlattenMetadata`] (whose `rendering_policy` field
-/// records the selected policy).
+/// records the selected policy and `fresh_merge_admitted_nodes` the count of
+/// nodes admitted under `FreshMergeExperimental`).
 ///
 /// # Errors
 ///
-/// Returns [`crate::error::XfaError::RenderingPolicyUnsupported`] for an
-/// unimplemented policy, or [`XfaError`] on parse/layout/render failures.
+/// Returns [`XfaError`] on parse, layout, or render failures.
 #[must_use = "flattened PDF bytes and metadata must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_policy_and_metadata(
     pdf_bytes: &[u8],
     policy: XfaRenderingPolicy,
 ) -> Result<(Vec<u8>, FlattenMetadata)> {
     // D12: FreshMergeExperimental is now plumbed through the pipeline.
-    // The early RenderingPolicyUnsupported gate is removed.
     let out = flatten_xfa_to_pdf_internal(pdf_bytes, false, policy)?;
     let mut metadata = out.metadata;
     metadata.rendering_policy = policy;
@@ -2939,36 +2945,45 @@ fn apply_form_dom_presence(
                 if matches!(child_node.node_type, FormNodeType::Subform)
                     && !child_node.name.is_empty()
                 {
-                    // D12 — check whether this node would qualify for
-                    // admission under FreshMergeExperimental (plumbing-only;
-                    // suppression still applied in all cases here).
+                    // D12: under FreshMergeExperimental, data-bound unmatched
+                    // subforms are admitted rather than suppressed.  Guards:
+                    //  - not template-hidden (Presence::Hidden / Inactive)
+                    //  - not a zero-instance prototype placeholder
+                    //  - has a data-node bound during merge
+                    //  - did not opt out of binding via <bind match="none">
+                    //
+                    // NOTE: this does NOT discriminate 01de9ce4 from 13275420;
+                    // both pass the same guards.  FreshMerge is opt-in/
+                    // experimental and known to change protected targets.
+                    // VPS measurement + visual review required before merge.
                     let meta = tree.meta(fid);
-                    let is_fresh_merge_candidate =
-                        policy == XfaRenderingPolicy::FreshMergeExperimental
-                            && !matches!(meta.presence, Presence::Hidden | Presence::Inactive)
-                            && !meta.is_zero_instance_prototype
-                            && meta.bound_data_node.is_some()
-                            && !meta.data_bind_none;
-                    if is_fresh_merge_candidate {
-                        admitted += 1;
-                    }
+                    let is_fresh_merge_candidate = policy
+                        == XfaRenderingPolicy::FreshMergeExperimental
+                        && !matches!(meta.presence, Presence::Hidden | Presence::Inactive)
+                        && !meta.is_zero_instance_prototype
+                        && meta.bound_data_node.is_some()
+                        && !meta.data_bind_none;
+
                     if std::env::var("XFA_PRESENCE_PROV").ok().as_deref() == Some("1") {
-                        if is_fresh_merge_candidate {
-                            eprintln!(
-                                "XFA_PRESENCE_PROV site=formdom_unmatched_fresh_merge_candidate id={} name={:?}",
-                                fid.0, child_node.name
-                            );
+                        let site = if is_fresh_merge_candidate {
+                            "formdom_unmatched_fresh_merge_admitted"
                         } else {
-                            eprintln!(
-                                "XFA_PRESENCE_PROV site=formdom_unmatched id={} name={:?}",
-                                fid.0, child_node.name
-                            );
-                        }
+                            "formdom_unmatched"
+                        };
+                        eprintln!(
+                            "XFA_PRESENCE_PROV site={site} id={} name={:?}",
+                            fid.0, child_node.name
+                        );
                     }
-                    // SavedStateFaithful: always suppress.
-                    // FreshMergeExperimental (plumbing-only): still suppress
-                    // here; full admission is D12 execution phase.
-                    tree.meta_mut(fid).presence = Presence::Hidden;
+
+                    if is_fresh_merge_candidate {
+                        // FreshMerge: admit — leave presence as-is (Visible by
+                        // default from the merger).
+                        admitted += 1;
+                    } else {
+                        // SavedStateFaithful (or ineligible node): suppress.
+                        tree.meta_mut(fid).presence = Presence::Hidden;
+                    }
                 }
             }
         }
@@ -5992,7 +6007,12 @@ ET
         );
 
         // Apply form DOM
-        apply_form_dom_presence(&mut tree, root_id, form_xml, XfaRenderingPolicy::SavedStateFaithful);
+        apply_form_dom_presence(
+            &mut tree,
+            root_id,
+            form_xml,
+            XfaRenderingPolicy::SavedStateFaithful,
+        );
 
         // After form DOM: 3 Row instances with correct values
         let rows_after: Vec<FormNodeId> = tree
@@ -6059,7 +6079,12 @@ ET
         let merger = crate::merger::FormMerger::new(&data_dom);
         let (mut tree, root_id) = merger.merge(template).unwrap();
 
-        apply_form_dom_presence(&mut tree, root_id, form_xml, XfaRenderingPolicy::SavedStateFaithful);
+        apply_form_dom_presence(
+            &mut tree,
+            root_id,
+            form_xml,
+            XfaRenderingPolicy::SavedStateFaithful,
+        );
 
         fn collect_page_areas(tree: &FormTree, id: FormNodeId, out: &mut Vec<FormNodeId>) {
             if matches!(tree.get(id).node_type, FormNodeType::PageArea { .. }) {
@@ -6124,7 +6149,12 @@ ET
         let merger = crate::merger::FormMerger::new(&data_dom);
         let (mut tree, root_id) = merger.merge(template).unwrap();
 
-        apply_form_dom_presence(&mut tree, root_id, form_xml, XfaRenderingPolicy::SavedStateFaithful);
+        apply_form_dom_presence(
+            &mut tree,
+            root_id,
+            form_xml,
+            XfaRenderingPolicy::SavedStateFaithful,
+        );
 
         fn collect_page_areas(tree: &FormTree, id: FormNodeId, out: &mut Vec<FormNodeId>) {
             if matches!(tree.get(id).node_type, FormNodeType::PageArea { .. }) {
