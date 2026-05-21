@@ -28,8 +28,12 @@
 
 set -euo pipefail
 
-HARD_FAIL_GB="${1:-5}"
-WARN_GB="${2:-15}"
+# HARD_FAIL_GB raised 5 -> 10: a 5 GB floor let cold-cache Rust builds run the
+# root partition out of space mid-compile (CARGO_TARGET_DIR alone is ~4 GB warm
+# and grows several GB transiently). 10 GB leaves headroom for the build's peak;
+# WARN 20 nudges a cleanup before it gets tight. Override via positional args.
+HARD_FAIL_GB="${1:-10}"
+WARN_GB="${2:-20}"
 
 STORAGEBOX_MOUNT="/mnt/storagebox"
 STORAGEBOX_CI_ROOT="${STORAGEBOX_MOUNT}/pdfluent/ci"
@@ -43,6 +47,8 @@ echo "===================================================================="
 # Root filesystem
 root_avail_gb=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
 echo "[runner_disk_guard] root (/) free: ${root_avail_gb} GB"
+df -h / | sed 's/^/[runner_disk_guard]   /'
+echo "[runner_disk_guard] cache env: CARGO_HOME=${CARGO_HOME:-unset} CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-unset} TMPDIR=${TMPDIR:-unset}"
 
 # Storagebox
 if [[ -d "${STORAGEBOX_MOUNT}" ]]; then
