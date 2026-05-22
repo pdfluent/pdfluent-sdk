@@ -202,6 +202,8 @@ pub fn render(
             .unwrap_or(scaled_height.round() as u16)
             .max(1),
     );
+    let trace = render_trace_enabled();
+    let t_setup = trace.then(std::time::Instant::now);
     let mut state = Context::new(
         initial_transform,
         Rect::new(0.0, 0.0, pix_width as f64, pix_height as f64),
@@ -245,7 +247,9 @@ pub fn render(
     // PDF content stream (path/text/image construction), and (2)
     // `render_to_pixmap` — vello_cpu rasterization to RGBA. This split localizes
     // whether render cost is scene-build or rasterization.
-    let trace = render_trace_enabled();
+    // Setup = Context/Renderer construction + background fill + clip/group push,
+    // measured up to (but excluding) interpretation.
+    let setup_ms = t_setup.map(|t| t.elapsed().as_secs_f64() * 1000.0);
     let t_interpret = trace.then(std::time::Instant::now);
     interpret_page(page, &mut state, &mut device);
     let interpret_ms = t_interpret.map(|t| t.elapsed().as_secs_f64() * 1000.0);
@@ -264,7 +268,8 @@ pub fn render(
 
     if trace {
         eprintln!(
-            "PDF_RENDER_TRACE interpret_ms={:.2} raster_ms={:.2} w={} h={} threads={}",
+            "PDF_RENDER_TRACE setup_ms={:.3} interpret_ms={:.2} raster_ms={:.2} w={} h={} threads={}",
+            setup_ms.unwrap_or(0.0),
             interpret_ms.unwrap_or(0.0),
             raster_ms.unwrap_or(0.0),
             pix_width,
