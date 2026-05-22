@@ -1,0 +1,25 @@
+# Standalone, read-only lopdf strict-parse probe for the PDF input repairability
+# baseline. Deliberately its own workspace (`[workspace]` below) so it is NOT pulled
+# into the parent cargo workspace and never affects the product build.
+#
+# It performs NO repair and NO mutation: it only attempts `lopdf::Document::load`
+# and prints a one-line JSON verdict. lopdf is pinned to the same 0.34 line the
+# product uses, so the probe measures the exact strict parser that rejects damaged
+# inputs in the flatten/measure paths.
+[package]
+name = "lopdf_probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+lopdf = "0.34"
+
+[[bin]]
+name = "lopdf_probe"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 1
