@@ -488,6 +488,11 @@ impl<'a> FormMerger<'a> {
         // may add more.
         let (_bind_ref_unused, bind_none) = parse_bind(element);
         if bind_none {
+            // Diagnostic (read-only, env-gated; no behavior change). See milestone
+            // XFA_LAYOUT_INSTANCE_EXPANSION_PARITY.
+            if std::env::var_os("XFA_IE_TRACE").is_some() {
+                eprintln!("XFA_IE_TRACE expand name={name:?} bind=none data_count=0 -> count=1 (script-instanceManager-only)");
+            }
             return Ok(vec![self.parse_node(element, data_context, is_root)?]);
         }
 
@@ -547,6 +552,16 @@ impl<'a> FormMerger<'a> {
         } else {
             data_count.clamp(min, max)
         };
+
+        // Diagnostic (read-only, env-gated; no behavior change). See milestone
+        // XFA_LAYOUT_INSTANCE_EXPANSION_PARITY.
+        if std::env::var_os("XFA_IE_TRACE").is_some() {
+            let bind_kind = if bind_ref.is_some() { "ref" } else { "byname" };
+            eprintln!(
+                "XFA_IE_TRACE expand name={name:?} bind={bind_kind} data_count={data_count} occur(min={},max={:?},initial={}) -> count={count}",
+                min, occur.max, occur.initial
+            );
+        }
 
         let layout = area_layout(element);
         let bm = parse_box_model(element);
