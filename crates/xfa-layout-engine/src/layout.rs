@@ -924,6 +924,34 @@ impl<'a> LayoutEngine<'a> {
 
             let all_content_positioned = multi_positioned || single_positioned_delegate;
 
+            // Diagnostic (read-only, env-gated; no behavior change). Milestone
+            // XFA_LAYOUT_OVERFLOW_PAGINATION_PARITY.
+            if std::env::var_os("XFA_OF_TRACE").is_some() {
+                let ca_h = page_areas.first().map(|pa| primary_content_area(pa).height);
+                let parts: Vec<String> = content_queued
+                    .iter()
+                    .map(|qn| {
+                        let n = self.form.get(qn.id);
+                        format!(
+                            "[{:?} h={:.0} bb={}]",
+                            n.layout,
+                            self.compute_extent(qn.id).height,
+                            qn.break_before
+                        )
+                    })
+                    .collect();
+                eprintln!(
+                    "XFA_OF_TRACE page_areas={} content_queued={} ca_h={:?} multi_pos={} single_deleg={} all_pos={} nodes={}",
+                    page_areas.len(),
+                    content_queued.len(),
+                    ca_h,
+                    multi_positioned,
+                    single_positioned_delegate,
+                    all_content_positioned,
+                    parts.join(",")
+                );
+            }
+
             if all_content_positioned {
                 let pa = &page_areas[0];
                 let ca = primary_content_area(pa);
@@ -976,6 +1004,15 @@ impl<'a> LayoutEngine<'a> {
                         page_area_continuation_needs_body_content,
                     )
                 {
+                    // Diagnostic (read-only, env-gated; no behavior change).
+                    // Milestone XFA_LAYOUT_OVERFLOW_PAGINATION_PARITY.
+                    if std::env::var_os("XFA_OF_TRACE").is_some() {
+                        eprintln!(
+                            "XFA_OF_TRACE guard-drop: remaining={} after pages_committed={} (queued_nodes_can_populate_continuation_page_area=false -> continuation suppressed)",
+                            remaining.len(),
+                            pages.len()
+                        );
+                    }
                     remaining.clear();
                     break;
                 }
