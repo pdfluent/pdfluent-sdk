@@ -1267,8 +1267,17 @@ impl<'a> LayoutEngine<'a> {
         if content_area_height <= 0.0 {
             return false;
         }
-        self.subtree_has_visible_body_content(node.id)
-            && self.compute_extent(node.id).height >= 0.5 * content_area_height
+        let visible = self.subtree_has_visible_body_content(node.id);
+        let ext = self.compute_extent(node.id).height;
+        let decision = visible && ext >= 0.5 * content_area_height;
+        if std::env::var_os("XFA_OF_TRACE").is_some() {
+            eprintln!(
+                "XFA_OF_TRACE keep-pred: visible={visible} extent={ext:.0} ca_h={content_area_height:.0} floor50={} fits={} -> keep={decision}",
+                ext >= 0.5 * content_area_height,
+                ext <= content_area_height
+            );
+        }
+        decision
     }
 
     /// Visible body content = a non-layout-hidden Draw / Image / Field leaf, or
