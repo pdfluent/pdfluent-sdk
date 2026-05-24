@@ -1,0 +1,42 @@
+{
+  "milestone": "PDFLUENT_DISTRIBUTION_AND_RELEASE_SYSTEMS_MAP",
+  "verdict": "PDFLUENT_RELEASE_SYSTEMS_MAPPED_AND_HARDENED",
+  "date": "2026-05-24",
+  "base": "origin/enterprise/ga-hardening@47edfe4a7",
+  "branch": "quality/pdfluent-distribution-systems-map",
+  "version_source_of_truth": "Cargo.toml [workspace.package] version = 1.0.0-beta.3",
+  "central_blocker": "first-party RC version drift across 1.0.0-beta.3 / beta.4 / beta.8",
+  "channels": {
+    "cli": {"status": "no_publish_rc_ready", "publish": false, "binary": "pdfluent-cli"},
+    "crates_io": {"status": "partial_blocked", "blocker": "version_drift + 4 unpublished crates"},
+    "wasm_npm": {"status": "partial", "blocker": "simd_vs_scalar_golden_fidelity"},
+    "pypi": {"status": "partial"},
+    "nuget": {"status": "partial"},
+    "maven": {"status": "partial"},
+    "c_abi": {"status": "partial_not_publish_ready", "blocker": "stale_MIT_license"},
+    "node": {"status": "early"},
+    "desktop": {"status": "early"},
+    "gitlab_registry": {"status": "n/a"}
+  },
+  "improvements": [
+    "fixed check_release_consistency.py Python 3.9 import crash (from __future__ import annotations)",
+    "added --offline mode (local gate, no network)",
+    "added first-party version-drift detection (WARNING, rc stays 0)",
+    "produced grounded distribution systems map"
+  ],
+  "pipeline_safe": "check_release_consistency.py is not wired into .gitlab-ci.yml",
+  "validation": {
+    "ast_parse": "OK",
+    "offline_run": "0 failures, 10 warnings — PASS",
+    "no_private_paths": "OK",
+    "leak_scan_new_docs": "clean"
+  },
+  "version_drift_detail": {
+    "1.0.0-beta.8": ["formcalc-interpreter", "pdf-compliance", "pdf-docx", "pdf-engine", "pdf-manip", "pdf-redact", "pdf-render", "pdf-text-format", "pdf-xfa", "pdfluent", "pdfluent-extract", "pdfluent-forms", "pdfluent-sign", "xfa-dom-resolver", "xfa-js-sandboxed", "xfa-json", "xfa-layout-engine"],
+    "1.0.0-beta.4": ["pdf-annot"],
+    "1.0.0-beta.3": ["pdf-ocr", "xfa-license"]
+  },
+  "remaining_before_publish": ["align RC versions", "reconcile C-ABI license", "WASM SIMD fidelity", "signing/SBOM", "wire CLI into unified runner"],
+  "business_decisions": ["version-alignment target & cadence", "channel launch order", "code-signing identities", "CLI binary takeover"],
+  "next_milestone": "PDFLUENT_WORKSPACE_VERSION_ALIGNMENT_RC"
+}

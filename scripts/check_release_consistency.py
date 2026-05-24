@@ -13,6 +13,12 @@ Exit codes:
     1 — one or more checks failed (details printed)
 """
 
+# Allow PEP-604 (`X | None`) annotations to evaluate lazily so this gate runs on
+# Python 3.9 (CI runner + macOS system python), not only 3.10+. Without this the
+# checker raised `TypeError: unsupported operand type(s) for |` at import time —
+# a release gate that crashes provides false safety.
+from __future__ import annotations
+
 import argparse
 import glob
 import json
@@ -144,7 +150,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fix-report", action="store_true",
                         help="Print actionable fix commands at the end")
+    parser.add_argument("--offline", action="store_true",
+                        help="Skip crates.io network checks; run only local invariants "
+                             "(first-party version consistency + metadata). Runnable as a local gate.")
     args = parser.parse_args()
+
+    # Collect first-party RC-line versions (1.0.0-beta.N) for an internal
+    # consistency check, independent of crates.io. INDEPENDENT/INTERNAL/UNRELEASED
+    # crates are excluded (they intentionally diverge or are not in the train).
+    first_party_versions: dict[str, str] = {}
 
     tomls = sorted(glob.glob("crates/*/Cargo.toml"))
     if not tomls:
@@ -189,6 +203,18 @@ def main() -> int:
                     f"ensure workspace version is bumped before next publish"
                 )
 
+        # Record first-party RC-line version for the internal-consistency check.
+        if (
+            name not in INDEPENDENT_VERSION_CRATES
+            and name not in UNRELEASED_CRATES
+            and re.fullmatch(r"1\.0\.0-beta\.\d+", local_ver or "")
+        ):
+            first_party_versions[name] = local_ver
+
+        if args.offline:
+            print(f"  CHECK {name:45} local={local_ver}  (offline: crates.io skipped)")
+            continue
+
         print(f"  CHECK {name:45} local={local_ver}", end=" ")
         sys.stdout.flush()
 
@@ -230,6 +256,29 @@ def main() -> int:
         print(f"crates.io={published_ver}  {status}")
 
     print()
+
+    # Internal first-party version consistency (offline-safe): all RC-line
+    # (1.0.0-beta.N) first-party crates should share ONE version. Drift here is a
+    # release-train risk regardless of crates.io state. Reported as a WARNING (the
+    # alignment is a deliberate release decision; see the systems map report).
+    distinct = sorted(set(first_party_versions.values()))
+    if len(distinct) > 1:
+        from collections import Counter
+        counts = Counter(first_party_versions.values())
+        print("=== FIRST-PARTY VERSION DRIFT (internal) ===")
+        print(f"  RC-line first-party crates span {len(distinct)} versions: {', '.join(distinct)}")
+        for ver in distinct:
+            crates = sorted(n for n, v in first_party_versions.items() if v == ver)
+            print(f"    {ver} ({counts[ver]}): {', '.join(crates)}")
+        warnings.append(
+            "WARN  first-party version drift: RC-line crates span "
+            f"{', '.join(distinct)} — align before a coherent release train (decision required)"
+        )
+        print()
+    elif distinct:
+        print(f"First-party RC-line version: {distinct[0]} (consistent across "
+              f"{len(first_party_versions)} crates)")
+        print()
 
     if warnings:
         print("=== WARNINGS ===")
