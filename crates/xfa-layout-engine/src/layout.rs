@@ -313,12 +313,28 @@ fn groundtruth_trace_state() -> &'static Mutex<GroundTruthTraceState> {
 /// The layout engine.
 pub struct LayoutEngine<'a> {
     form: &'a FormTree,
+    /// Experimental, **default-OFF** continuation-guard relaxation.
+    ///
+    /// When enabled (env `XFA_OVERFLOW_STATIC_BODY_CONTINUATION` set), a queued
+    /// node may populate a continuation pageArea if it has *substantial visible
+    /// body content* (Draw/Image/Field) filling ≥ 50 % of the continuation
+    /// content area — not only data-backed fields. This fixes
+    /// `UNDER_PAGINATED_LOW_RECALL` docs whose trailing full-page positioned
+    /// subforms carry static (non-data-bound) body and are wrongly dropped by
+    /// the §8.6 guard. Default-off so behavior is byte-equivalent to the prior
+    /// guard until the validation gate graduates it. See milestone
+    /// `XFA_LAYOUT_OVERFLOW_CONTINUATION_GUARD_FIX`.
+    static_body_continuation: bool,
 }
 
 impl<'a> LayoutEngine<'a> {
     /// Create a new layout engine.
     pub fn new(form: &'a FormTree) -> Self {
-        Self { form }
+        Self {
+            form,
+            static_body_continuation: std::env::var_os("XFA_OVERFLOW_STATIC_BODY_CONTINUATION")
+                .is_some(),
+        }
     }
 
     /// Resolve a SOM-string reference (typically a subform name) to a
@@ -1003,6 +1019,14 @@ impl<'a> LayoutEngine<'a> {
                         &remaining,
                         page_area_continuation_needs_body_content,
                     )
+                    // Experimental (default-off) relaxation: keep the continuation
+                    // when a remaining node has substantial visible *static* body
+                    // content filling this pageArea. See `static_body_continuation`.
+                    && !(self.static_body_continuation
+                        && self.queued_nodes_have_substantial_visible_body(
+                            &remaining,
+                            primary_content_area(pa).height,
+                        ))
                 {
                     // Diagnostic (read-only, env-gated; no behavior change).
                     // Milestone XFA_LAYOUT_OVERFLOW_PAGINATION_PARITY.
@@ -1213,6 +1237,60 @@ impl<'a> LayoutEngine<'a> {
         self.queued_node_has_explicit_page_anchor(node)
             || Self::queued_node_is_split_remainder(node)
             || self.queued_node_has_data_backed_body_content(node)
+    }
+
+    /// Experimental (default-off) continuation predicate: does any remaining
+    /// queued node have substantial visible body content for this continuation
+    /// content area? Gated by `static_body_continuation`.
+    fn queued_nodes_have_substantial_visible_body(
+        &self,
+        nodes: &[QueuedNode],
+        content_area_height: f64,
+    ) -> bool {
+        nodes
+            .iter()
+            .any(|node| self.queued_node_has_substantial_visible_body(node, content_area_height))
+    }
+
+    /// A queued node can populate a continuation pageArea when it has visible
+    /// body content (Draw / Image / Field — not only data-backed) AND its
+    /// content extent fills ≥ 50 % of the continuation content area. The size
+    /// floor distinguishes a real static *body* page (e.g. a near-full-page
+    /// positioned instructions/terms subform) from small *chrome*
+    /// (headers/footers, which are handled via `pa.fixed_nodes`). This is a
+    /// content-geometry invariant — not an oracle page-count shortcut.
+    fn queued_node_has_substantial_visible_body(
+        &self,
+        node: &QueuedNode,
+        content_area_height: f64,
+    ) -> bool {
+        if content_area_height <= 0.0 {
+            return false;
+        }
+        self.subtree_has_visible_body_content(node.id)
+            && self.compute_extent(node.id).height >= 0.5 * content_area_height
+    }
+
+    /// Visible body content = a non-layout-hidden Draw / Image / Field leaf, or
+    /// any container whose occur-expanded subtree contains one. Unlike
+    /// `subtree_has_data_backed_body_content`, static draws/images count here.
+    fn subtree_has_visible_body_content(&self, id: FormNodeId) -> bool {
+        if self.is_layout_hidden(id) {
+            return false;
+        }
+        let node = self.form.get(id);
+        match &node.node_type {
+            FormNodeType::Draw(_) | FormNodeType::Image { .. } | FormNodeType::Field { .. } => true,
+            FormNodeType::Root
+            | FormNodeType::Subform
+            | FormNodeType::Area
+            | FormNodeType::ExclGroup
+            | FormNodeType::SubformSet => self
+                .expand_occur(&node.children)
+                .iter()
+                .any(|&child_id| self.subtree_has_visible_body_content(child_id)),
+            FormNodeType::PageSet | FormNodeType::PageArea { .. } => false,
+        }
     }
 
     fn queued_node_has_explicit_page_anchor(&self, node: &QueuedNode) -> bool {
