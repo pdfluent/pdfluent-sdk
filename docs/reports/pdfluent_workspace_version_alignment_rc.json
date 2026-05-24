@@ -44,7 +44,15 @@
     "no_private_paths": "PASS",
     "leak_scan": "clean",
     "source_or_license_field_changes": "none",
-    "branch_merge_pipelines": "run on push/merge (authoritative package/license/leak audits in CI)"
+    "branch_merge_pipelines": "BLOCKED by pre-existing XFA clippy error on base (xfa-layout-engine/src/layout.rs:1017 nonminimal_bool); this branch's own metadata/fmt/build pass; merge held, not forced"
+  },
+  "pipeline_blocker_preexisting": {
+    "lint": "clippy::nonminimal_bool",
+    "location": "crates/xfa-layout-engine/src/layout.rs:1017",
+    "introduced_by": "XFA merge ef6f74c7f (DIAGNOSED_SPLIT_NEEDED)",
+    "this_branch_changed_rs_files": 0,
+    "reproduced_on_untouched_base": true,
+    "action": "merge held (no XFA changes allowed); branch pushed via documented PRE_PUSH_SKIP; ready to merge once XFA clippy fixed"
   },
   "first_party_rc_consistent": true,
   "crates_io_no_publish_rc_unblocked": true,

@@ -60,7 +60,23 @@ Cross-language packaging manifests were already at beta.8 equivalents: `bindings
 | `check_no_private_paths.sh` | **PASS** |
 | Leak scan (changed files) | **clean** |
 | No source/license-field changes | **confirmed** (manifests + lock + 1 doc only) |
-| Branch & merge pipelines | run on push/merge — authoritative per-channel package/license/leak audits live in CI `package_manual` |
+| Branch & merge pipelines | **blocked by a pre-existing XFA clippy error on the base** (see §7b) — this branch's own gates (metadata/fmt/build) pass; only the pre-existing XFA lint fails |
+
+### 6b. Pre-existing pipeline blocker (NOT introduced here) — merge held
+
+The local CI gate / branch pipeline is red because of a **pre-existing** clippy error on `enterprise/ga-hardening` itself:
+
+```
+error: this boolean expression can be simplified
+  --> crates/xfa-layout-engine/src/layout.rs:1017:20   (clippy::nonminimal_bool, -D warnings)
+```
+
+Evidence it is not mine:
+- This branch changed **zero `.rs` files** (`git diff ef6f74c7f..HEAD` = manifests + lock + 2 docs only).
+- Running `cargo clippy -p xfa-layout-engine` on the **untouched base** `ef6f74c7f` reproduces the identical lint at the same line.
+- The toolchain is pinned to **1.94.0** and the local clippy is exactly 1.94.0 — no local/CI skew. CI's `run_clippy.sh` does **not** exclude `xfa-layout-engine`, so CI is red too. It was introduced by the XFA merge `ef6f74c7f` ("DIAGNOSED_SPLIT_NEEDED"), after this domain's last green merge (`609095dd2`).
+
+Per the milestone hard rule **"No XFA behavior changes,"** I must not edit `layout.rs` (even a boolean simplification / `#[allow]` touches in-progress XFA work). Per **"block with evidence rather than forcing it,"** I therefore **pushed the alignment branch but did NOT merge it onto the red base.** The branch is clean and ready to merge the instant the XFA clippy error is resolved by the XFA track (flagged separately). The branch push used the pre-push hook's documented `PRE_PUSH_SKIP=1` escape hatch (the gate was not modified/weakened; the failure is pre-existing and unrelated).
 
 ## 7. Remaining blocker — Maven channel (structural, not a version bump)
 
