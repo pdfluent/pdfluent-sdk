@@ -396,3 +396,64 @@ fn extract_text_out_content_matches_stdout() {
 fn missing_required_arg_is_usage_error() {
     assert_eq!(exit_code(&["info"]), 2, "missing <INPUT> is a usage error");
 }
+
+// --- release/distribution contract hardening (PDFLUENT_CLI_RELEASE_AND_DISTRIBUTION_READINESS) ---
+
+/// Paths with spaces and non-ASCII (unicode) characters are handled correctly.
+#[test]
+fn unicode_and_space_path_handling() {
+    let f = sample_pdf();
+    if !f.exists() {
+        return;
+    }
+    let dir = std::env::temp_dir().join("pdfluent cli ünïcode dir");
+    let _ = std::fs::create_dir_all(&dir);
+    let p = dir.join("héllo wörld (1).pdf");
+    std::fs::copy(&f, &p).unwrap();
+    let (ok, stdout, _) = run(&["info", p.to_str().unwrap()]);
+    assert!(ok, "info on unicode/space path should succeed");
+    assert!(stdout.contains("Pages:"));
+    let _ = std::fs::remove_file(&p);
+    let _ = std::fs::remove_dir(&dir);
+}
+
+/// `extract-text --out` overwrites an existing file deterministically (documented
+/// overwrite semantics: the target is replaced with exactly the extracted text).
+#[test]
+fn extract_text_out_overwrites_existing() {
+    let f = sample_pdf();
+    if !f.exists() {
+        return;
+    }
+    let out = std::env::temp_dir().join("pdfluent_cli_overwrite.txt");
+    std::fs::write(&out, b"PREEXISTING-CONTENT-SHOULD-BE-REPLACED").unwrap();
+    let (ok, _, _) = run(&[
+        "extract-text",
+        f.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(ok);
+    let after = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        !after.contains("PREEXISTING-CONTENT"),
+        "--out must overwrite, not append"
+    );
+    let _ = std::fs::remove_file(&out);
+}
+
+/// On error, human output goes to stderr and stdout stays clean (operational
+/// contract: pipelines can trust stdout for data only in non-JSON mode).
+#[test]
+fn error_human_output_goes_to_stderr_not_stdout() {
+    let bad = std::env::temp_dir().join("pdfluent_cli_stderr_sep.pdf");
+    std::fs::write(&bad, b"%PDF-broken\n").unwrap();
+    let (ok, stdout, stderr) = run(&["info", bad.to_str().unwrap()]);
+    assert!(!ok);
+    assert!(
+        stdout.trim().is_empty(),
+        "stdout must be clean on error (non-JSON)"
+    );
+    assert!(stderr.contains("INVALID_PDF"), "human error code on stderr");
+    let _ = std::fs::remove_file(&bad);
+}
