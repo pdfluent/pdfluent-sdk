@@ -295,3 +295,104 @@ fn no_secrets_in_doctor() {
         assert!(!stdout.contains(leak), "doctor must not leak `{leak}`");
     }
 }
+
+// --- enterprise readiness additions (PDFLUENT_CLI_ENTERPRISE_PRODUCTION_READINESS) ---
+
+/// `completions` emits non-empty, shell-appropriate output and exits 0 for every
+/// supported shell. Guards the documented completion-install workflow.
+///
+/// NOTE: generated completions use the clap program name `pdfluent` (not the
+/// binary `pdfluent-cli`) — a known mismatch tracked as the top item in
+/// `docs/reports/pdfluent_cli_enterprise_readiness_final.md` (entangled with the
+/// deferred `pdfluent` binary-takeover decision; intentionally not changed here).
+#[test]
+fn completions_all_shells_smoke() {
+    for (shell, marker) in [
+        ("bash", "pdfluent"),
+        ("zsh", "#compdef"),
+        ("fish", "pdfluent"),
+        ("powershell", "pdfluent"),
+    ] {
+        let (ok, stdout, _) = run(&["completions", shell]);
+        assert!(ok, "completions {shell} should exit 0");
+        assert!(!stdout.trim().is_empty(), "completions {shell} non-empty");
+        assert!(
+            stdout.contains(marker),
+            "completions {shell} should contain `{marker}`"
+        );
+    }
+}
+
+/// Every `--json` surface must emit a single valid JSON document with the stable
+/// envelope keys. Parses (not substring-matches) to lock the machine contract.
+#[test]
+fn json_outputs_are_valid_documents() {
+    let f = sample_pdf();
+    if !f.exists() {
+        return;
+    }
+    let fp = f.to_str().unwrap();
+    let cases: &[&[&str]] = &[
+        &["info", fp, "--json"],
+        &["inspect", fp, "--json"],
+        &["validate", fp, "--json"],
+        &["extract-text", fp, "--json"],
+        &["doctor", "--json"],
+    ];
+    for args in cases {
+        let (ok, stdout, _) = run(args);
+        assert!(ok, "{args:?} should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{args:?} invalid JSON: {e}"));
+        assert_eq!(v["ok"], serde_json::Value::Bool(true), "{args:?} ok=true");
+        assert_eq!(v["version"], "1.0.0-beta.8", "{args:?} stable version");
+        assert!(v.get("command").is_some(), "{args:?} has command");
+        assert!(v.get("data").is_some(), "{args:?} has data");
+    }
+}
+
+/// The error envelope is also valid JSON with the documented error shape + exit code.
+#[test]
+fn json_error_envelope_is_valid() {
+    let bad = std::env::temp_dir().join("pdfluent_cli_json_err.pdf");
+    std::fs::write(&bad, b"%PDF-nope\n").unwrap();
+    let (ok, stdout, _) = run(&["info", bad.to_str().unwrap(), "--json"]);
+    assert!(!ok, "malformed --json should be non-zero");
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("error envelope is valid JSON");
+    assert_eq!(v["ok"], serde_json::Value::Bool(false));
+    assert_eq!(v["error"]["code"], "INVALID_PDF");
+    assert_eq!(v["error"]["exit_code"], 4);
+    let _ = std::fs::remove_file(&bad);
+}
+
+/// `extract-text --out` writes exactly the same text that the stdout path prints
+/// (round-trip integrity), and stdout stays clean of the text in `--out` mode.
+#[test]
+fn extract_text_out_content_matches_stdout() {
+    let f = sample_pdf();
+    if !f.exists() {
+        return;
+    }
+    let fp = f.to_str().unwrap();
+    let (_, stdout_text, _) = run(&["extract-text", fp]);
+    let out = std::env::temp_dir().join("pdfluent_cli_roundtrip.txt");
+    let _ = std::fs::remove_file(&out);
+    let (ok, stdout_out, _) = run(&["extract-text", fp, "--out", out.to_str().unwrap()]);
+    assert!(ok);
+    let file_text = std::fs::read_to_string(&out).expect("out file readable");
+    assert_eq!(
+        file_text, stdout_text,
+        "--out content must equal stdout text"
+    );
+    assert!(
+        !stdout_out.contains(&file_text) || file_text.is_empty(),
+        "--out mode must not also dump text to stdout"
+    );
+    let _ = std::fs::remove_file(&out);
+}
+
+/// Usage errors (missing required arg) exit with code 2 (USAGE), not a panic.
+#[test]
+fn missing_required_arg_is_usage_error() {
+    assert_eq!(exit_code(&["info"]), 2, "missing <INPUT> is a usage error");
+}
