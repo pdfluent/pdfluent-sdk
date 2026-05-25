@@ -438,6 +438,51 @@ fn page_static_draw_chars(nodes: &[LayoutNode]) -> usize {
     total
 }
 
+/// Returns `true` when the page's layout nodes render any visible ink — a
+/// placed field (border/caption/value box), a static draw (line/rect/arc),
+/// non-empty draw/loose/wrapped text, or an image. A page whose nodes all
+/// carry `LayoutContent::None` or only whitespace renders nothing and is *not*
+/// visible.
+///
+/// This is the keep predicate for the [`suppression_trust_layout_enabled`]
+/// relaxation: it lets §4.3 keep data-empty pages that still draw content
+/// (trusting the layout page count) while still dropping truly-blank pages,
+/// rather than dropping every page whose fields lack a bound value.
+fn page_has_visible_content(nodes: &[LayoutNode]) -> bool {
+    nodes.iter().any(|n| {
+        let self_visible = match &n.content {
+            LayoutContent::None => false,
+            LayoutContent::Text(t) => !t.trim().is_empty(),
+            LayoutContent::WrappedText { lines, .. } => lines.iter().any(|l| !l.trim().is_empty()),
+            LayoutContent::Draw(DrawContent::Text(t)) => !t.trim().is_empty(),
+            // Lines, rectangles and arcs are visible structural ink.
+            LayoutContent::Draw(_) => true,
+            // A placed field renders its border/caption/value box even when
+            // the bound value is empty.
+            LayoutContent::Field { .. } => true,
+            LayoutContent::Image { .. } => true,
+        };
+        self_visible || page_has_visible_content(&n.children)
+    })
+}
+
+/// Opt-in (default-off) for `XFA_SUPPRESSION_TRUST_LAYOUT`: when set to a
+/// truthy value (`1`/`on`/`true`), §4.3 suppression trusts the layout page
+/// count and keeps every laid-out page that renders visible content
+/// ([`page_has_visible_content`]) instead of dropping data-empty pages.
+///
+/// This is the suppression half of the over-pagination/occur-instance fix.
+/// It is intentionally NOT default-on: until the layout engine stops
+/// over-producing pages for a handful of docs, trusting the layout count
+/// re-inflates those over-produced pages. The flag therefore stays off by
+/// default and pairs with the layout over-production milestone.
+fn suppression_trust_layout_enabled() -> bool {
+    matches!(std::env::var("XFA_SUPPRESSION_TRUST_LAYOUT"), Ok(v) if {
+        let v = v.trim();
+        v == "1" || v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("true")
+    })
+}
+
 /// Sorted distinct FormNode ids referenced on a page — the "occur-instance
 /// signature". Two pages with identical signatures are repeated instances of
 /// the same template subtree (occur expansion reuses the template id).
@@ -504,6 +549,7 @@ fn compute_suppression_diags(
 ) -> Vec<flatten_trace::PageSuppressionDiag> {
     let parent_map = build_parent_map(tree);
     let n = layout.pages.len();
+    let trust_layout = suppression_trust_layout_enabled();
     // Raw per-page keep (matches the suppression `map`).
     let raw: Vec<(bool, bool, bool)> = layout
         .pages
@@ -552,7 +598,13 @@ fn compute_suppression_diags(
         } else if !hf {
             (true, "no_fields_static_kept")
         } else if any_keep {
-            (false, "data_empty_dropped")
+            // Data-empty page. Default drops it; with XFA_SUPPRESSION_TRUST_LAYOUT
+            // on, keep it when it still renders visible content.
+            if trust_layout && page_has_visible_content(&layout.pages[i].nodes) {
+                (true, "trust_layout_kept")
+            } else {
+                (false, "data_empty_dropped")
+            }
         } else {
             (true, "all_empty_kept")
         };
@@ -1109,6 +1161,10 @@ fn xfa_flatten_inner(
     } else {
         Vec::new()
     };
+    // Default-off opt-in: trust the layout page count and keep every laid-out
+    // page that still renders visible content, rather than dropping data-empty
+    // pages. Pairs with the layout over-production fix (see helper docs).
+    let trust_layout = suppression_trust_layout_enabled();
     if layout.pages.len() > 1 {
         let keep: Vec<bool> = layout
             .pages
@@ -1121,7 +1177,12 @@ fn xfa_flatten_inner(
                 if p.runtime_instantiated {
                     true
                 } else if page_has_fields(&p.nodes, &tree) {
+                    // Default: keep only when a field carries data. With
+                    // XFA_SUPPRESSION_TRUST_LAYOUT on, also keep data-empty
+                    // pages that still render visible content (the `&&`
+                    // short-circuits, so flag-off is byte-identical).
                     page_has_field_data(&p.nodes, &tree)
+                        || (trust_layout && page_has_visible_content(&p.nodes))
                 } else {
                     true
                 }
