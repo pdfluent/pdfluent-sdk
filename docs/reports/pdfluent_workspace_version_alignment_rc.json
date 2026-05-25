@@ -1,6 +1,15 @@
 {
   "milestone": "PDFLUENT_WORKSPACE_VERSION_ALIGNMENT_RC",
-  "verdict": "PDFLUENT_WORKSPACE_VERSION_ALIGNMENT_RC_PARTIAL_BLOCKERS_REMAIN",
+  "verdict": "PDFLUENT_WORKSPACE_VERSION_ALIGNMENT_RC_GREEN_NO_PUBLISH",
+  "lint_only_exception": {
+    "authorized_by": "Jasper",
+    "file_line": "crates/xfa-layout-engine/src/layout.rs:1017",
+    "lint": "clippy::nonminimal_bool",
+    "change": "De Morgan: !a && !b && !(c && d) -> !(a || b || (c && d))",
+    "behavior_equivalent": "same operands, same left-to-right short-circuit order, && binds tighter than || so c&&d grouping preserved",
+    "reason": "base ga-hardening was pre-existing clippy-red (introduced by XFA merge ef6f74c7f); blocked the whole pipeline; lint-only, no XFA functional change",
+    "validated": ["cargo fmt", "cargo clippy -p xfa-layout-engine -D warnings", "xfa-layout-engine tests pass", "local_ci_gate.sh PASS 4/4"]
+  },
   "date": "2026-05-24",
   "branch": "quality/pdfluent-workspace-version-alignment-rc",
   "base": "enterprise/ga-hardening@ef6f74c7f",
