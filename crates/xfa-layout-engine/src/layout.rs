@@ -333,7 +333,31 @@ pub struct LayoutEngine<'a> {
     /// See `XFA_LAYOUT_OVERFLOW_CONTINUATION_GUARD_FIX` (introduction) and
     /// `XFA_STATIC_BODY_CONTINUATION_FLAG_PROMOTION` (graduation).
     static_body_continuation: bool,
+
+    /// Tiny-positioned-page coalescing, **default-OFF** (env
+    /// `XFA_TINY_POSITIONED_PAGE_COALESCE=1|on|true`).
+    ///
+    /// Targets the `XFA_LAYOUT_OCCUR_INSTANCE_OVERPRODUCTION` over-pagination
+    /// class: a *tiny* positioned content subform (e.g. a header band, height
+    /// below [`TINY_POSITIONED_PAGE_FRAC`] of the page) that the flow pager
+    /// places alone on its own page because it cannot share a page with the
+    /// adjacent full-page positioned sibling (the two stack and overflow the
+    /// content area). Adobe overlays such a band onto the neighbouring body
+    /// page, so the lone page is spurious (+1 page vs the oracle). When
+    /// enabled, a page whose sole content node is such a tiny positioned
+    /// container is merged forward into the following page.
+    ///
+    /// Correct multi-page positioned documents are untouched: there every page
+    /// carries a full-page-height positioned instance (well above the tiny
+    /// floor), so none qualifies. Off by default until the full 389-doc +
+    /// unit-suite validation proves it regression-free.
+    tiny_positioned_coalesce: bool,
 }
+
+/// Height ceiling (fraction of page height) below which a lone positioned
+/// content page is treated as a coalescible header/footer band rather than a
+/// body page. See [`LayoutEngine::tiny_positioned_coalesce`].
+const TINY_POSITIONED_PAGE_FRAC: f64 = 0.12;
 
 impl<'a> LayoutEngine<'a> {
     /// Create a new layout engine.
@@ -350,6 +374,13 @@ impl<'a> LayoutEngine<'a> {
                         || v.eq_ignore_ascii_case("false"))
                 })
                 .unwrap_or(true),
+            // Default-OFF; opt in with XFA_TINY_POSITIONED_PAGE_COALESCE=1|on|true.
+            tiny_positioned_coalesce: std::env::var("XFA_TINY_POSITIONED_PAGE_COALESCE")
+                .map(|v| {
+                    let v = v.trim();
+                    v == "1" || v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("true")
+                })
+                .unwrap_or(false),
         }
     }
 
@@ -1244,7 +1275,90 @@ impl<'a> LayoutEngine<'a> {
             }
         }
 
+        // Diagnostic (read-only, env-gated; no behavior change). Per-page
+        // composition for the XFA_LAYOUT_OCCUR_INSTANCE_OVERPRODUCTION trace —
+        // reveals lone tiny-positioned pages that inflate the page count.
+        if std::env::var_os("XFA_OF_TRACE").is_some() {
+            for (pi, pg) in pages.iter().enumerate() {
+                let first = pg.nodes.first().map(|n| {
+                    let fnode = self.form.get(n.form_node);
+                    format!(
+                        "{:?}/{} h={:.0}",
+                        fnode.layout,
+                        Self::form_node_type_name(&fnode.node_type),
+                        n.rect.height
+                    )
+                });
+                eprintln!(
+                    "XFA_OF_TRACE page[{pi}] nodes={} h={:.0} rt_inst={} tiny_only={} first={:?}",
+                    pg.nodes.len(),
+                    pg.height,
+                    pg.runtime_instantiated,
+                    self.page_is_tiny_positioned_only(pg),
+                    first,
+                );
+            }
+        }
+
+        // XFA_LAYOUT_OCCUR_INSTANCE_OVERPRODUCTION (flag-gated, default-off):
+        // fold spurious lone tiny-positioned pages into the adjacent body page.
+        if self.tiny_positioned_coalesce {
+            let prof_pages = profile.as_mut().map(|p| &mut p.pages);
+            self.coalesce_tiny_positioned_pages(&mut pages, prof_pages);
+        }
+
         Ok(LayoutDom { pages })
+    }
+
+    /// True when this page's sole content is a single tiny positioned-layout
+    /// container (Subform / Area / ExclGroup) — the coalescible header/footer
+    /// band pattern. Pages carrying a full-page positioned instance, flowing
+    /// content, multiple nodes, or a runtime-instantiated commitment do NOT
+    /// qualify. See [`Self::tiny_positioned_coalesce`].
+    fn page_is_tiny_positioned_only(&self, page: &LayoutPage) -> bool {
+        if page.runtime_instantiated || page.height <= 0.0 || page.nodes.len() != 1 {
+            return false;
+        }
+        let n = &page.nodes[0];
+        let node = self.form.get(n.form_node);
+        node.layout == LayoutStrategy::Positioned
+            && matches!(
+                node.node_type,
+                FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup
+            )
+            && n.rect.height <= TINY_POSITIONED_PAGE_FRAC * page.height
+    }
+
+    /// XFA_LAYOUT_OCCUR_INSTANCE_OVERPRODUCTION fix (flag-gated, default-off).
+    /// Merge each tiny-positioned-only page forward into its following page,
+    /// eliminating the spurious standalone page Adobe overlays on the body.
+    /// `profile_pages`, when present, is kept index-aligned with `pages`.
+    fn coalesce_tiny_positioned_pages(
+        &self,
+        pages: &mut Vec<LayoutPage>,
+        mut profile_pages: Option<&mut Vec<LayoutProfilePage>>,
+    ) {
+        if pages.len() < 2 {
+            return;
+        }
+        // Coalescible indices with a forward target (never the last page).
+        // Process high→low so lower indices stay valid as pages are removed.
+        let targets: Vec<usize> = (0..pages.len() - 1)
+            .filter(|&i| self.page_is_tiny_positioned_only(&pages[i]))
+            .collect();
+        for &i in targets.iter().rev() {
+            let moved = std::mem::take(&mut pages[i].nodes);
+            let next = &mut pages[i + 1];
+            let mut combined = moved;
+            combined.append(&mut next.nodes);
+            next.nodes = combined;
+            pages.remove(i);
+            if let Some(pp) = profile_pages.as_mut() {
+                if i < pp.len() {
+                    pp.remove(i);
+                }
+            }
+        }
     }
 
     // -------------------------------------------------------------------
