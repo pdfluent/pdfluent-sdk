@@ -313,17 +313,25 @@ fn groundtruth_trace_state() -> &'static Mutex<GroundTruthTraceState> {
 /// The layout engine.
 pub struct LayoutEngine<'a> {
     form: &'a FormTree,
-    /// Experimental, **default-OFF** continuation-guard relaxation.
+    /// Continuation-guard relaxation, **default-ON** (graduated 2026-05-25).
     ///
-    /// When enabled (env `XFA_OVERFLOW_STATIC_BODY_CONTINUATION` set), a queued
-    /// node may populate a continuation pageArea if it has *substantial visible
-    /// body content* (Draw/Image/Field) filling ≥ 50 % of the continuation
-    /// content area — not only data-backed fields. This fixes
+    /// A queued node may populate a continuation pageArea if it has *substantial
+    /// visible body content* (Draw/Image/Field) filling ≥ 50 % of the
+    /// continuation content area — not only data-backed fields — AND the content
+    /// queue is homogeneously positioned (see
+    /// [`Self::queued_nodes_all_positioned_body`]). This fixes
     /// `UNDER_PAGINATED_LOW_RECALL` docs whose trailing full-page positioned
-    /// subforms carry static (non-data-bound) body and are wrongly dropped by
-    /// the §8.6 guard. Default-off so behavior is byte-equivalent to the prior
-    /// guard until the validation gate graduates it. See milestone
-    /// `XFA_LAYOUT_OVERFLOW_CONTINUATION_GUARD_FIX`.
+    /// subforms carry static (non-data-bound) body and were wrongly dropped by
+    /// the §8.6 guard.
+    ///
+    /// Graduated to default-ON after the `XFA_STATIC_BODY_CONTINUATION_FLAG_PROMOTION`
+    /// validation: across 389 oracle docs it fixed 7 to exact oracle page count
+    /// with **0 regressions and 0 over-production**, and the full layout-engine
+    /// suite passes both states. The homogeneous-positioned gate eliminated the
+    /// prior mixed-queue over-production (`2a49f624` 1→3). Set the env var
+    /// `XFA_OVERFLOW_STATIC_BODY_CONTINUATION=0` (or `off`/`false`) to opt out.
+    /// See `XFA_LAYOUT_OVERFLOW_CONTINUATION_GUARD_FIX` (introduction) and
+    /// `XFA_STATIC_BODY_CONTINUATION_FLAG_PROMOTION` (graduation).
     static_body_continuation: bool,
 }
 
@@ -332,8 +340,16 @@ impl<'a> LayoutEngine<'a> {
     pub fn new(form: &'a FormTree) -> Self {
         Self {
             form,
-            static_body_continuation: std::env::var_os("XFA_OVERFLOW_STATIC_BODY_CONTINUATION")
-                .is_some(),
+            // Default-ON; opt out with XFA_OVERFLOW_STATIC_BODY_CONTINUATION=0|off|false.
+            static_body_continuation: std::env::var("XFA_OVERFLOW_STATIC_BODY_CONTINUATION")
+                .map(|v| {
+                    let v = v.trim();
+                    !(v.is_empty()
+                        || v == "0"
+                        || v.eq_ignore_ascii_case("off")
+                        || v.eq_ignore_ascii_case("false"))
+                })
+                .unwrap_or(true),
         }
     }
 
