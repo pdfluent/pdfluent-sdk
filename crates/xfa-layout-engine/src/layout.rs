@@ -996,6 +996,14 @@ impl<'a> LayoutEngine<'a> {
                 }
             }
 
+            // XFA_STATIC_BODY_CONTINUATION_FLAG_PROMOTION: gate the static-body
+            // continuation relaxation on a homogeneous positioned queue. Computed
+            // here while `content_queued` is still alive (it is moved into
+            // `remaining` just below). When the flag is off this is always false,
+            // so default behavior is byte-identical.
+            let static_body_queue_eligible = self.static_body_continuation
+                && self.queued_nodes_all_positioned_body(&content_queued);
+
             // Layout content across page areas, then repeat last template for overflow.
             let mut remaining = if all_content_positioned {
                 Vec::new()
@@ -1027,7 +1035,10 @@ impl<'a> LayoutEngine<'a> {
                     // Experimental (default-off) relaxation: keep the continuation
                     // when a remaining node has substantial visible *static* body
                     // content filling this pageArea. See `static_body_continuation`.
-                    || self.static_body_continuation
+                    // Gated on a homogeneous positioned queue (mixed flow+positioned
+                    // queues use flow pagination instead) — see
+                    // `queued_nodes_all_positioned_body`.
+                    || static_body_queue_eligible
                         && self.queued_nodes_have_substantial_visible_body(
                             &remaining,
                             primary_content_area(pa).height,
@@ -1255,6 +1266,31 @@ impl<'a> LayoutEngine<'a> {
         nodes
             .iter()
             .any(|node| self.queued_node_has_substantial_visible_body(node, content_area_height))
+    }
+
+    /// True when every queued node is a Positioned subform/area/exclGroup — the
+    /// homogeneous full-page *positioned* body pattern that the
+    /// `static_body_continuation` relaxation targets (sequences of positioned
+    /// terms/instructions/form subforms, each filling its own pageArea).
+    ///
+    /// XFA_STATIC_BODY_CONTINUATION_FLAG_PROMOTION: when the content queue mixes
+    /// flowing (non-positioned, e.g. TopToBottom) body content with positioned
+    /// subforms, flow pagination — not this flag — must govern the page count.
+    /// Firing the relaxation on such mixed queues over-paginates (a positioned
+    /// sibling's near-full-page extent keeps a continuation pageArea that Adobe
+    /// coalesces). Gating on a homogeneous positioned queue removes that
+    /// over-production while leaving pure positioned-body documents unchanged.
+    /// This is a content-structure invariant, not an oracle/SHA shortcut.
+    fn queued_nodes_all_positioned_body(&self, nodes: &[QueuedNode]) -> bool {
+        !nodes.is_empty()
+            && nodes.iter().all(|qn| {
+                let node = self.form.get(qn.id);
+                node.layout == LayoutStrategy::Positioned
+                    && matches!(
+                        node.node_type,
+                        FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup
+                    )
+            })
     }
 
     /// A queued node can populate a continuation pageArea when it has visible
