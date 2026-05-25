@@ -8,16 +8,30 @@
   <!-- =========================================================== -->
   <!-- Coordinates                                                  -->
   <!-- =========================================================== -->
+  <!-- ===========================================================
+       DEPRECATED — DO NOT PUBLISH.
+       This is the legacy `com.xfa.pdf` Java binding (artifactId
+       `xfa-pdf`, MIT). It is fully superseded by the canonical Maven
+       channel `bindings/java` (`com.pdfluent:pdfluent`, commercial
+       license), which is what CI, the unified package auditor
+       (`scripts/release/audit-all-packages.sh`), the publish train, and
+       the consumer smoke target. It is retained only so the historic
+       `com.xfa.pdf` sources still compile locally against the JNI native
+       library (`libpdfluent_java`, built by the Rust crate `pdf-java`).
+       Maven deploy is disabled below (maven-deploy-plugin skip + no
+       distributionManagement) so this artifact can never be published.
+       Canonical channel: bindings/java/pom.xml. See
+       docs/reports/pdfluent_maven_channel_pom_reconciliation.md.
+       =========================================================== -->
   <groupId>com.pdfluent</groupId>
   <artifactId>xfa-pdf</artifactId>
   <version>1.0.0-beta.1</version>
   <packaging>jar</packaging>
 
-  <name>XFA PDF SDK</name>
+  <name>XFA PDF SDK (DEPRECATED — superseded by com.pdfluent:pdfluent)</name>
   <description>
-    Enterprise PDF SDK — rendering, text extraction, forms, annotations,
-    redaction, encryption, and PDF/A compliance via a native Rust engine
-    accessed through JNI.
+    DEPRECATED legacy `com.xfa.pdf` Java binding. Not published. The
+    supported Java SDK is `com.pdfluent:pdfluent` (bindings/java).
   </description>
   <url>https://github.com/pdfluent/PDFluent-project</url>
 
@@ -146,54 +160,30 @@
         </executions>
       </plugin>
 
-      <!-- GPG signing (required by Maven Central) -->
+      <!-- DEPRECATED ARTIFACT — publish disabled.
+           The Maven Central publish plumbing (GPG signing + Sonatype OSSRH
+           nexus-staging) and the distribution-management section were removed
+           so this legacy `xfa-pdf` artifact can never be deployed. `mvn deploy` is
+           hard-disabled below via maven-deploy-plugin skip=true. The
+           canonical, publishable Java artifact is `com.pdfluent:pdfluent`
+           (bindings/java). -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-gpg-plugin</artifactId>
-        <version>3.1.0</version>
-        <executions>
-          <execution>
-            <id>sign-artifacts</id>
-            <phase>verify</phase>
-            <goals>
-              <goal>sign</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-
-      <!-- Sonatype OSSRH staging (Maven Central publish) -->
-      <plugin>
-        <groupId>org.sonatype.plugins</groupId>
-        <artifactId>nexus-staging-maven-plugin</artifactId>
-        <version>1.6.13</version>
-        <extensions>true</extensions>
+        <artifactId>maven-deploy-plugin</artifactId>
+        <version>3.1.2</version>
         <configuration>
-          <serverId>ossrh</serverId>
-          <nexusUrl>https://s01.oss.sonatype.org/</nexusUrl>
-          <!--
-            Set to true to release automatically after a successful close.
-            Leave false to inspect in the staging repository first.
-          -->
-          <autoReleaseAfterClose>false</autoReleaseAfterClose>
+          <skip>true</skip>
         </configuration>
       </plugin>
 
     </plugins>
   </build>
 
-  <!-- =========================================================== -->
-  <!-- Distribution management (OSSRH / Maven Central)             -->
-  <!-- =========================================================== -->
-  <distributionManagement>
-    <snapshotRepository>
-      <id>ossrh</id>
-      <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
-    </snapshotRepository>
-    <repository>
-      <id>ossrh</id>
-      <url>https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/</url>
-    </repository>
-  </distributionManagement>
+  <!--
+    No distribution-management section: this deprecated artifact has no
+    publish target by design. Canonical Maven channel is bindings/java/pom.xml
+    (com.pdfluent:pdfluent). See
+    docs/reports/pdfluent_maven_channel_pom_reconciliation.md.
+  -->
 
 </project>

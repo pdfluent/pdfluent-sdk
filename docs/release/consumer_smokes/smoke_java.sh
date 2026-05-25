@@ -8,7 +8,7 @@
 #   docs/release/consumer_smokes/smoke_java.sh [--jar PATH] [--version VERSION]
 #
 # Options:
-#   --jar PATH       Path to the local .jar file (default: auto-detect under crates/pdf-java)
+#   --jar PATH       Path to the local .jar file (default: auto-detect under bindings/java)
 #   --version VER    Expected artifact version (default: read from pom.xml)
 
 set -Eeuo pipefail
@@ -18,7 +18,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 JAR_PATH=""
 EXPECTED_VERSION=""
 GROUP_ID="com.pdfluent"
-ARTIFACT_ID="xfa-pdf"
+ARTIFACT_ID="pdfluent"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -39,11 +39,11 @@ MVN=$(command -v mvn 2>/dev/null || echo "./mvnw")
 
 # Auto-detect jar.
 if [[ -z "$JAR_PATH" ]]; then
-    mapfile -t candidates < <(find "${REPO_ROOT}/crates/pdf-java" -name "*.jar" \
+    mapfile -t candidates < <(find "${REPO_ROOT}/bindings/java" -name "*.jar" \
         -not -name "*javadoc*" -not -name "*sources*" 2>/dev/null | sort -r)
     if [[ ${#candidates[@]} -eq 0 ]]; then
-        echo "⚠️  No .jar found under crates/pdf-java. Build first with:"
-        echo "    cd crates/pdf-java && mvn package -DskipTests"
+        echo "⚠️  No .jar found under bindings/java. Build first with:"
+        echo "    cd bindings/java && mvn package -DskipTests"
         echo ""
         echo "Smoke skipped — no artefact."
         exit 0
@@ -60,7 +60,7 @@ echo "Jar: ${JAR_PATH}"
 
 # Resolve version from pom.xml if not provided.
 if [[ -z "$EXPECTED_VERSION" ]]; then
-    EXPECTED_VERSION=$(grep -oPm1 '(?<=<version>)[^<]+' "${REPO_ROOT}/crates/pdf-java/pom.xml" 2>/dev/null | head -1 || echo "1.0.0-beta.1")
+    EXPECTED_VERSION=$(grep -oPm1 '(?<=<version>)[^<]+' "${REPO_ROOT}/bindings/java/pom.xml" 2>/dev/null | head -1 || echo "1.0.0-beta.8")
 fi
 echo "Version: ${EXPECTED_VERSION}"
 echo ""
