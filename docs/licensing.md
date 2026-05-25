@@ -139,7 +139,7 @@ Console.WriteLine(s.Tier);  // Enterprise
 ### Java
 
 ```java
-import com.xfa.pdf.PdfluentLicensing;
+import com.pdfluent.PdfluentLicensing;
 
 PdfluentLicensing.activateKey("tier:enterprise");
 PdfluentLicensing.LicenseStatus s = PdfluentLicensing.status();
