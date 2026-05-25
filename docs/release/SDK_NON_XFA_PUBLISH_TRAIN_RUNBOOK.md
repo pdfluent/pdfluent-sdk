@@ -69,29 +69,29 @@ For every channel: **(a) build on the correct runner → (b) audit the built art
   cargo publish -p pdfluent-jpeg2000   # 0.3.3
   cargo publish -p xfa-dom-resolver    # 1.0.0-beta.8
   cargo publish -p xfa-js-sandboxed    # 1.0.0-beta.8
-  cargo publish -p xfa-license         # 1.0.0-beta.3
+  cargo publish -p xfa-license         # 1.0.0-beta.8
   cargo publish -p formcalc-interpreter# 1.0.0-beta.8
   cargo publish -p pdfluent-jbig2      # 0.2.3
   cargo publish -p pdf-syntax          # 0.5.4
   cargo publish -p pdfluent-lopdf      # 0.39.2
   cargo publish -p xfa-layout-engine   # 1.0.0-beta.8
-  cargo publish -p pdf-annot           # 1.0.0-beta.4
+  cargo publish -p pdf-annot           # 1.0.0-beta.8
   cargo publish -p pdf-compliance      # 1.0.0-beta.8
   cargo publish -p pdf-interpret       # 0.5.6
-  cargo publish -p pdf-invoice         # 1.0.0-beta.3
-  cargo publish -p pdf-ocr             # 1.0.0-beta.3
+  cargo publish -p pdf-invoice         # 1.0.0-beta.8
+  cargo publish -p pdf-ocr             # 1.0.0-beta.8
   cargo publish -p pdfluent-extract    # 1.0.0-beta.8
   cargo publish -p pdfluent-forms      # 1.0.0-beta.8
   cargo publish -p pdfluent-sign       # 1.0.0-beta.8
   cargo publish -p xfa-json            # 1.0.0-beta.8
   cargo publish -p pdf-docx            # 1.0.0-beta.8
-  cargo publish -p pdf-pptx            # 1.0.0-beta.3
+  cargo publish -p pdf-pptx            # 1.0.0-beta.8
   cargo publish -p pdf-render          # 1.0.0-beta.8
   cargo publish -p pdf-xfa             # 1.0.0-beta.8
-  cargo publish -p pdf-xlsx            # 1.0.0-beta.3
+  cargo publish -p pdf-xlsx            # 1.0.0-beta.8
   cargo publish -p pdf-engine          # 1.0.0-beta.8
   cargo publish -p pdf-manip           # 1.0.0-beta.8
-  cargo publish -p xfa-cli             # 1.0.0-beta.3
+  cargo publish -p xfa-cli             # 1.0.0-beta.8
   cargo publish -p pdf-redact          # 1.0.0-beta.8
   cargo publish -p pdf-text-format     # 1.0.0-beta.8
   cargo publish -p pdfluent            # 1.0.0-beta.8   (umbrella — LAST)

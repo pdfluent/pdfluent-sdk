@@ -4222,7 +4222,7 @@ checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "pdf-annot"
-version = "1.0.0-beta.4"
+version = "1.0.0-beta.8"
 dependencies = [
  "log",
  "pdf-syntax",
@@ -4232,7 +4232,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-bench"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "criterion",
  "formcalc-interpreter",
@@ -4286,7 +4286,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-desktop"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -4384,7 +4384,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-invoice"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "chrono",
  "flate2",
@@ -4462,7 +4462,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-ocr"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "dirs-next",
  "image",
@@ -4477,7 +4477,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-pptx"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "pdfluent-extract",
  "pdfluent-lopdf",
@@ -4566,7 +4566,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-xlsx"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "pdfluent-extract",
  "pdfluent-lopdf",
@@ -8907,7 +8907,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-api-server"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "axum",
  "indexmap 2.14.0",
@@ -8930,7 +8930,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-cli"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -8965,7 +8965,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-golden-tests"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "image",
  "pdf-engine",
@@ -9005,7 +9005,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-license"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -9017,7 +9017,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-license-gen"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "anyhow",
  "clap",
@@ -9046,7 +9046,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-test-runner"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.8"
 dependencies = [
  "base64 0.22.1",
  "chrono",

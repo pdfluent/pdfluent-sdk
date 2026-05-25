@@ -1,0 +1,71 @@
+{
+  "milestone": "PDFLUENT_WORKSPACE_VERSION_ALIGNMENT_RC",
+  "verdict": "PDFLUENT_WORKSPACE_VERSION_ALIGNMENT_RC_GREEN_NO_PUBLISH",
+  "lint_only_exception": {
+    "authorized_by": "Jasper",
+    "file_line": "crates/xfa-layout-engine/src/layout.rs:1017",
+    "lint": "clippy::nonminimal_bool",
+    "change": "De Morgan: !a && !b && !(c && d) -> !(a || b || (c && d))",
+    "behavior_equivalent": "same operands, same left-to-right short-circuit order, && binds tighter than || so c&&d grouping preserved",
+    "reason": "base ga-hardening was pre-existing clippy-red (introduced by XFA merge ef6f74c7f); blocked the whole pipeline; lint-only, no XFA functional change",
+    "validated": ["cargo fmt", "cargo clippy -p xfa-layout-engine -D warnings", "xfa-layout-engine tests pass", "local_ci_gate.sh PASS 4/4"]
+  },
+  "date": "2026-05-24",
+  "branch": "quality/pdfluent-workspace-version-alignment-rc",
+  "base": "enterprise/ga-hardening@ef6f74c7f",
+  "unified_target": "1.0.0-beta.8",
+  "before": {
+    "workspace_default": "1.0.0-beta.3",
+    "explicit_beta8_crates": 17,
+    "pdf-annot": "1.0.0-beta.4",
+    "pdf-ocr": "1.0.0-beta.3 (inherited)",
+    "xfa-license": "1.0.0-beta.3 (inherited)",
+    "stale_dep_pin_pdf-invoice": "=1.0.0-beta.1",
+    "first_party_versions_spanned": ["1.0.0-beta.3", "1.0.0-beta.4", "1.0.0-beta.8"]
+  },
+  "changed": {
+    "workspace_package_version": "1.0.0-beta.3 -> 1.0.0-beta.8",
+    "pdf-annot_version": "1.0.0-beta.4 -> 1.0.0-beta.8",
+    "workspace_dependency_pins": {
+      "xfa-license": "=1.0.0-beta.3 -> =1.0.0-beta.8",
+      "pdf-annot": "=1.0.0-beta.4 -> =1.0.0-beta.8",
+      "pdf-ocr": "=1.0.0-beta.3 -> =1.0.0-beta.8",
+      "pdf-invoice": "=1.0.0-beta.1 -> =1.0.0-beta.8"
+    },
+    "intra_crate_pins_bumped_in": ["pdf-desktop", "pdf-node", "pdf-python", "pdf-java", "xfa-wasm", "pdf-manip", "pdfluent", "xfa-test-runner"],
+    "lockfile": "regenerated offline; 13 crate versions updated, no graph churn",
+    "docs": ["docs/release/SDK_NON_XFA_PUBLISH_TRAIN_RUNBOOK.md"]
+  },
+  "aligned_consistent_crates": 20,
+  "not_aligned_intentional": {
+    "pdf-font": "1.0.0-beta.3 (independent track)",
+    "pdf-syntax": "0.5.4", "pdf-interpret": "0.5.6",
+    "pdfluent-lopdf": "0.39.2", "pdfluent-cff": "0.2.0", "pdfluent-ccitt": "0.2.2",
+    "pdfluent-jbig2": "0.2.3", "pdfluent-jpeg2000": "0.3.3",
+    "pdf-content-stream": "0.1.0", "pdf-diff": "1.0.0-beta.1", "xfa-pdfrest-compare": "0.1.0",
+    "crates/pdf-java/pom.xml": "1.0.0-beta.1 (structural Maven blocker, not force-aligned)"
+  },
+  "gates": {
+    "consistency_checker_offline": "PASS (0 failures, 9 pre-existing metadata warnings, no drift)",
+    "cargo_metadata_offline": "PASS",
+    "cargo_check_pdf-annot": "PASS",
+    "cargo_check_pdfluent": "PASS",
+    "no_private_paths": "PASS",
+    "leak_scan": "clean",
+    "source_or_license_field_changes": "none",
+    "branch_merge_pipelines": "BLOCKED by pre-existing XFA clippy error on base (xfa-layout-engine/src/layout.rs:1017 nonminimal_bool); this branch's own metadata/fmt/build pass; merge held, not forced"
+  },
+  "pipeline_blocker_preexisting": {
+    "lint": "clippy::nonminimal_bool",
+    "location": "crates/xfa-layout-engine/src/layout.rs:1017",
+    "introduced_by": "XFA merge ef6f74c7f (DIAGNOSED_SPLIT_NEEDED)",
+    "this_branch_changed_rs_files": 0,
+    "reproduced_on_untouched_base": true,
+    "action": "merge held (no XFA changes allowed); branch pushed via documented PRE_PUSH_SKIP; ready to merge once XFA clippy fixed"
+  },
+  "first_party_rc_consistent": true,
+  "crates_io_no_publish_rc_unblocked": true,
+  "channels_still_blocked": ["maven (crates/pdf-java pom: beta.1 + MIT + artifactId xfa-pdf vs bindings/java beta.8 commercial)"],
+  "remaining_before_publish": ["maven pom reconciliation", "c-abi license", "wasm SIMD fidelity", "signing/SBOM", "actual human-run publish"],
+  "next_milestone": "PDFLUENT_MAVEN_CHANNEL_POM_RECONCILIATION"
+}

@@ -26,7 +26,7 @@ pdf-engine = { workspace = true, features = ["xfa"] }
 pdf-sign.workspace = true
 pdf-compliance.workspace = true
 pdf-render = { path = "../pdf-render", optional = true, version = "=1.0.0-beta.8" }
-pdf-annot = { path = "../pdf-annot", optional = true, version = "=1.0.0-beta.4" }
+pdf-annot = { path = "../pdf-annot", optional = true, version = "=1.0.0-beta.8" }
 wasm-bindgen = "0.2"
 serde.workspace = true
 serde_json.workspace = true
