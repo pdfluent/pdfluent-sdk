@@ -50,7 +50,7 @@ pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.8", option
 # Signed-payload activation: Ed25519 verification + payload parsing live
 # in the xfa-license crate. The umbrella consumes the verifier API only
 # (no signing key dependency at runtime).
-xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.3" }
+xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.8" }
 tokio = { version = "1", features = ["rt", "fs"], optional = true }
 tracing = { version = "0.1", optional = true }
 
@@ -88,7 +88,7 @@ criterion = { version = "0.5", default-features = false, features = ["cargo_benc
 # integration test can build test fixtures (keypair generation + payload
 # signing) at runtime, in-memory, without committing private key bytes
 # to the repo.
-xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.3", features = ["signing"] }
+xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.8", features = ["signing"] }
 
 [[bench]]
 name = "facade"

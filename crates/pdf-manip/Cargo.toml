@@ -24,7 +24,7 @@ roxmltree.workspace = true
 ttf-parser = { workspace = true }
 cff-parser = { workspace = true }
 hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.2.3" }
-xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.3" }
+xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.8" }
 
 [features]
 default = ["serde", "image-insert", "font-subset", "pdfa-convert"]

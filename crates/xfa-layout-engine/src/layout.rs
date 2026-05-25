@@ -1014,15 +1014,20 @@ impl<'a> LayoutEngine<'a> {
                 // queued pageArea continuation after an emitted page is used
                 // only when body content, an explicit page anchor, or an
                 // accepted split remainder still needs that next pageArea.
-                if !pages.is_empty()
-                    && !self.queued_nodes_can_populate_continuation_page_area(
+                // clippy::nonminimal_bool — De Morgan of the original
+                // `!a && !b && !(c && d)` into `!(a || b || (c && d))`. Truth-
+                // equivalent (same operands, same left-to-right short-circuit
+                // order; `&&` binds tighter than `||` so the `c && d` grouping is
+                // preserved). No layout-behavior change.
+                if !(pages.is_empty()
+                    || self.queued_nodes_can_populate_continuation_page_area(
                         &remaining,
                         page_area_continuation_needs_body_content,
                     )
                     // Experimental (default-off) relaxation: keep the continuation
                     // when a remaining node has substantial visible *static* body
                     // content filling this pageArea. See `static_body_continuation`.
-                    && !(self.static_body_continuation
+                    || self.static_body_continuation
                         && self.queued_nodes_have_substantial_visible_body(
                             &remaining,
                             primary_content_area(pa).height,
