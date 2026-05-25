@@ -18,8 +18,11 @@ maturin publish --dry-run  # verwijder --dry-run op launch day
 cd ../..
 
 echo "=== 4/4 Maven ==="
-cd crates/pdf-java
-mvn deploy -DskipTests --dry-run  # verwijder --dry-run op launch day
+# Canonical Maven channel = bindings/java (com.pdfluent:pdfluent, commercial).
+# The legacy crates/pdf-java (xfa-pdf, MIT) is DEPRECATED + non-publishable.
+bash "$(dirname "$0")/release/maven_channel_guard.sh"
+cd bindings/java
+mvn -P release deploy -DskipTests --dry-run  # verwijder --dry-run op launch day
 cd ../..
 
 echo "✅ Alle packages gepubliceerd"
