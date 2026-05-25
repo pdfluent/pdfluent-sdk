@@ -1275,27 +1275,43 @@ impl<'a> LayoutEngine<'a> {
             }
         }
 
+        // Page-area fixed nodes (headers/footers/decorations prepended onto
+        // every page) — the "chrome" excluded when isolating a page's flowed
+        // body content for tiny-positioned coalescing.
+        let chrome_ids: std::collections::HashSet<FormNodeId> = page_areas
+            .iter()
+            .flat_map(|pa| pa.fixed_nodes.iter().copied())
+            .collect();
+
         // Diagnostic (read-only, env-gated; no behavior change). Per-page
         // composition for the XFA_LAYOUT_OCCUR_INSTANCE_OVERPRODUCTION trace —
         // reveals lone tiny-positioned pages that inflate the page count.
         if std::env::var_os("XFA_OF_TRACE").is_some() {
             for (pi, pg) in pages.iter().enumerate() {
-                let first = pg.nodes.first().map(|n| {
-                    let fnode = self.form.get(n.form_node);
-                    format!(
-                        "{:?}/{} h={:.0}",
-                        fnode.layout,
-                        Self::form_node_type_name(&fnode.node_type),
-                        n.rect.height
-                    )
-                });
+                let vis_h: f64 = pg
+                    .nodes
+                    .iter()
+                    .map(|n| n.rect.y + n.rect.height)
+                    .fold(0.0_f64, f64::max)
+                    - pg.nodes.iter().map(|n| n.rect.y).fold(f64::MAX, f64::min);
+                let names: Vec<String> = pg
+                    .nodes
+                    .iter()
+                    .map(|n| {
+                        format!(
+                            "{}#{}:{:.0}@{:.0}",
+                            n.name, n.form_node.0, n.rect.height, n.rect.y
+                        )
+                    })
+                    .collect();
                 eprintln!(
-                    "XFA_OF_TRACE page[{pi}] nodes={} h={:.0} rt_inst={} tiny_only={} first={:?}",
+                    "XFA_OF_TRACE page[{pi}] nodes={} h={:.0} span={:.0} rt_inst={} tiny_body={} [{}]",
                     pg.nodes.len(),
                     pg.height,
+                    vis_h,
                     pg.runtime_instantiated,
-                    self.page_is_tiny_positioned_only(pg),
-                    first,
+                    self.page_body_is_tiny_positioned(pg, &chrome_ids).is_some(),
+                    names.join(", "),
                 );
             }
         }
@@ -1304,39 +1320,62 @@ impl<'a> LayoutEngine<'a> {
         // fold spurious lone tiny-positioned pages into the adjacent body page.
         if self.tiny_positioned_coalesce {
             let prof_pages = profile.as_mut().map(|p| &mut p.pages);
-            self.coalesce_tiny_positioned_pages(&mut pages, prof_pages);
+            self.coalesce_tiny_positioned_pages(&mut pages, prof_pages, &chrome_ids);
         }
 
         Ok(LayoutDom { pages })
     }
 
-    /// True when this page's sole content is a single tiny positioned-layout
-    /// container (Subform / Area / ExclGroup) — the coalescible header/footer
-    /// band pattern. Pages carrying a full-page positioned instance, flowing
-    /// content, multiple nodes, or a runtime-instantiated commitment do NOT
-    /// qualify. See [`Self::tiny_positioned_coalesce`].
-    fn page_is_tiny_positioned_only(&self, page: &LayoutPage) -> bool {
-        if page.runtime_instantiated || page.height <= 0.0 || page.nodes.len() != 1 {
-            return false;
+    /// If this page's only non-chrome (body) content is a single tiny
+    /// positioned container (Subform / Area / ExclGroup), return the page-node
+    /// indices of that body content; otherwise `None`.
+    ///
+    /// "Chrome" = page-area fixed nodes (headers/footers/decorations prepended
+    /// onto every page, in `chrome_ids`) — these are excluded so the check sees
+    /// only the flowed body. A spurious lone "header band" page (e.g. a tiny
+    /// `lock` subform below the tiny floor) matches; full-page positioned body
+    /// instances and runtime-instantiated commitments do not.
+    /// See [`Self::tiny_positioned_coalesce`].
+    fn page_body_is_tiny_positioned(
+        &self,
+        page: &LayoutPage,
+        chrome_ids: &std::collections::HashSet<FormNodeId>,
+    ) -> Option<Vec<usize>> {
+        if page.runtime_instantiated || page.height <= 0.0 {
+            return None;
         }
-        let n = &page.nodes[0];
+        let body: Vec<usize> = page
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| !chrome_ids.contains(&n.form_node))
+            .map(|(i, _)| i)
+            .collect();
+        if body.len() != 1 {
+            return None;
+        }
+        let n = &page.nodes[body[0]];
         let node = self.form.get(n.form_node);
-        node.layout == LayoutStrategy::Positioned
+        let is_tiny_positioned = node.layout == LayoutStrategy::Positioned
             && matches!(
                 node.node_type,
                 FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup
             )
-            && n.rect.height <= TINY_POSITIONED_PAGE_FRAC * page.height
+            && n.rect.height <= TINY_POSITIONED_PAGE_FRAC * page.height;
+        is_tiny_positioned.then_some(body)
     }
 
     /// XFA_LAYOUT_OCCUR_INSTANCE_OVERPRODUCTION fix (flag-gated, default-off).
-    /// Merge each tiny-positioned-only page forward into its following page,
-    /// eliminating the spurious standalone page Adobe overlays on the body.
-    /// `profile_pages`, when present, is kept index-aligned with `pages`.
+    /// Fold each spurious lone tiny-positioned *body* page forward into its
+    /// following page: the tiny body node(s) are moved onto the next page
+    /// (overlaying at their absolute coordinates) and the now-redundant page
+    /// (whose chrome the next page already carries) is dropped. `profile_pages`,
+    /// when present, is kept index-aligned with `pages`.
     fn coalesce_tiny_positioned_pages(
         &self,
         pages: &mut Vec<LayoutPage>,
         mut profile_pages: Option<&mut Vec<LayoutProfilePage>>,
+        chrome_ids: &std::collections::HashSet<FormNodeId>,
     ) {
         if pages.len() < 2 {
             return;
@@ -1344,14 +1383,20 @@ impl<'a> LayoutEngine<'a> {
         // Coalescible indices with a forward target (never the last page).
         // Process high→low so lower indices stay valid as pages are removed.
         let targets: Vec<usize> = (0..pages.len() - 1)
-            .filter(|&i| self.page_is_tiny_positioned_only(&pages[i]))
+            .filter(|&i| {
+                self.page_body_is_tiny_positioned(&pages[i], chrome_ids)
+                    .is_some()
+            })
             .collect();
         for &i in targets.iter().rev() {
-            let moved = std::mem::take(&mut pages[i].nodes);
-            let next = &mut pages[i + 1];
-            let mut combined = moved;
-            combined.append(&mut next.nodes);
-            next.nodes = combined;
+            // Move only the body (non-chrome) nodes forward; the merged page's
+            // chrome is redundant since the next page carries its own.
+            let body: Vec<LayoutNode> = pages[i]
+                .nodes
+                .drain(..)
+                .filter(|n| !chrome_ids.contains(&n.form_node))
+                .collect();
+            pages[i + 1].nodes.extend(body);
             pages.remove(i);
             if let Some(pp) = profile_pages.as_mut() {
                 if i < pp.len() {
