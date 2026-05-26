@@ -55,7 +55,7 @@ mkdir -p "$STAGE/completions"
 for sh in bash zsh fish powershell; do "$BINPATH" completions "$sh" > "$STAGE/completions/$BIN.$sh" 2>/dev/null || true; done
 
 # --- checksums -------------------------------------------------------------
-( cd "$STAGE" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256 > SHA256SUMS )
+( cd "$STAGE" && find . -type f ! -name SHA256SUMS -print0 | sort -z | while IFS= read -r -d '' f; do sha256 "$f"; done > SHA256SUMS )
 # verify immediately
 ( cd "$STAGE" && sha256 -c SHA256SUMS >/dev/null ) || { echo "FAIL: checksum self-verify failed"; exit 6; }
 
