@@ -1105,15 +1105,22 @@ fn xfa_flatten_inner(
     // the template-based defaults. This captures script-driven visibility
     // changes (e.g. Avoka framework's sfcUtils.updateVisibility) that our
     // FormCalc interpreter cannot execute.
-    // Default-off production override (`XFA_FORMDOM_ADMIT_DATABOUND=1`). When
-    // set, `SavedStateFaithful` admits data-bound unmatched subforms through
-    // the same guarded branch as `FreshMergeExperimental` instead of
-    // suppressing them, WITHOUT flipping the policy default. Read here at the
-    // pipeline boundary (like `XFA_JS_EXECUTION_MODE`) so the presence logic
-    // stays a pure, deterministically-testable function. No-op under
-    // `FreshMergeExperimental` (which already admits the same set).
-    let admit_databound_override =
-        std::env::var("XFA_FORMDOM_ADMIT_DATABOUND").ok().as_deref() == Some("1");
+    // Graduated default-ON (static-parity-rc1): `SavedStateFaithful` admits
+    // data-bound unmatched subforms through the same guarded branch as
+    // `FreshMergeExperimental` instead of suppressing them, WITHOUT flipping the
+    // policy default. Opt out with `XFA_FORMDOM_ADMIT_DATABOUND=0|off|false`.
+    // Read here at the pipeline boundary (like `XFA_JS_EXECUTION_MODE`) so the
+    // presence logic stays a pure, deterministically-testable function. No-op
+    // under `FreshMergeExperimental` (which already admits the same set).
+    let admit_databound_override = std::env::var("XFA_FORMDOM_ADMIT_DATABOUND")
+        .map(|v| {
+            let v = v.trim();
+            !(v.is_empty()
+                || v == "0"
+                || v.eq_ignore_ascii_case("off")
+                || v.eq_ignore_ascii_case("false"))
+        })
+        .unwrap_or(true);
     let fresh_merge_admitted = if let Some(fxml) = form_xml {
         apply_form_dom_presence(&mut tree, root_id, fxml, policy, admit_databound_override)
     } else {

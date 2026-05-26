@@ -404,20 +404,26 @@ impl<'a> LayoutEngine<'a> {
                         || v.eq_ignore_ascii_case("false"))
                 })
                 .unwrap_or(true),
-            // Default-OFF; opt in with XFA_TINY_POSITIONED_PAGE_COALESCE=1|on|true.
+            // Graduated default-ON (static-parity-rc1); opt out with XFA_TINY_POSITIONED_PAGE_COALESCE=0|off|false.
             tiny_positioned_coalesce: std::env::var("XFA_TINY_POSITIONED_PAGE_COALESCE")
                 .map(|v| {
                     let v = v.trim();
-                    v == "1" || v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("true")
+                    !(v.is_empty()
+                        || v == "0"
+                        || v.eq_ignore_ascii_case("off")
+                        || v.eq_ignore_ascii_case("false"))
                 })
-                .unwrap_or(false),
-            // Default-OFF; opt in with XFA_CONTINUATION_RUNTIME_INSTANTIATED_KEEP=1|on|true.
+                .unwrap_or(true),
+            // Graduated default-ON (static-parity-rc1); opt out with XFA_CONTINUATION_RUNTIME_INSTANTIATED_KEEP=0|off|false.
             continuation_runtime_keep: std::env::var("XFA_CONTINUATION_RUNTIME_INSTANTIATED_KEEP")
                 .map(|v| {
                     let v = v.trim();
-                    v == "1" || v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("true")
+                    !(v.is_empty()
+                        || v == "0"
+                        || v.eq_ignore_ascii_case("off")
+                        || v.eq_ignore_ascii_case("false"))
                 })
-                .unwrap_or(false),
+                .unwrap_or(true),
         }
     }
 
