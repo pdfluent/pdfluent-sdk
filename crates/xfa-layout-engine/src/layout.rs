@@ -368,8 +368,11 @@ pub struct LayoutEngine<'a> {
     /// [`Self::queued_nodes_all_positioned_body`] — while these queues are
     /// flowed `TopToBottom`). When enabled, the guard keeps the continuation if
     /// the whole pageArea set is a runtime-instantiated mirror and a remaining
-    /// node has substantial visible body (reusing
-    /// [`Self::queued_nodes_have_substantial_visible_body`]).
+    /// node carries visible body content (see
+    /// [`Self::queued_nodes_have_visible_body_content`]). The 50 % content
+    /// floor of the positioned rescue is intentionally omitted here: short but
+    /// real trailing mirror pages must keep, and over-production is instead
+    /// bounded structurally by the mirror count.
     ///
     /// **Bounded by the mirror count.** The relaxation only activates when
     /// *every* pageArea is runtime-instantiated, which is exactly the condition
@@ -1136,17 +1139,17 @@ impl<'a> LayoutEngine<'a> {
                         )
                     // XFA_LAYOUT_CONTINUATION_RUNTIME_INSTANTIATED_KEEP (default-off):
                     // keep the continuation when the whole pageArea set is a
-                    // runtime-instantiated mirror and a remaining node has
-                    // substantial visible *static* body filling this pageArea.
-                    // Unlike `static_body_queue_eligible`, this is not gated on a
-                    // homogeneous positioned queue, so it rescues flowed
-                    // (`TopToBottom`) Sub-B bodies. Bounded by the mirror count:
-                    // see the post-loop clamp keyed on the same predicate.
+                    // runtime-instantiated mirror and a remaining node carries
+                    // visible body content. Unlike `static_body_queue_eligible`
+                    // this is not gated on a homogeneous positioned queue (so it
+                    // rescues flowed `TopToBottom` Sub-B bodies) and omits the
+                    // 50% content floor: a real but short trailing mirror page
+                    // (closing/signature instance) is still a page. Over-
+                    // production is bounded structurally by the mirror count —
+                    // see the post-loop clamp keyed on the same
+                    // `all_pageareas_runtime_instantiated` predicate.
                     || (runtime_keep_eligible
-                        && self.queued_nodes_have_substantial_visible_body(
-                            &remaining,
-                            primary_content_area(pa).height,
-                        )))
+                        && self.queued_nodes_have_visible_body_content(&remaining)))
                 {
                     // Diagnostic (read-only, env-gated; no behavior change).
                     // Milestone XFA_LAYOUT_OVERFLOW_PAGINATION_PARITY.
@@ -1501,6 +1504,30 @@ impl<'a> LayoutEngine<'a> {
         nodes
             .iter()
             .any(|node| self.queued_node_has_substantial_visible_body(node, content_area_height))
+    }
+
+    /// Runtime-instantiated-keep continuation predicate: does any remaining
+    /// queued node carry visible body content (Draw / Image / Field)? Unlike
+    /// [`Self::queued_nodes_have_substantial_visible_body`] this omits the 50 %
+    /// content-area-height floor. In the runtime-instantiated *mirror* case the
+    /// over-production bound comes from the mirror count — every emitted page is
+    /// one of the `page_areas.len() == oracle` instances and the post-loop clamp
+    /// discards any residual — not from a content floor. A legitimate short
+    /// trailing instance (e.g. a closing/signature page occupying well under
+    /// half the body) must therefore still keep its mirrored pageArea. Actual
+    /// page emission stays gated downstream on [`Self::has_visible_content`], so
+    /// a remainder that lays out empty still produces no page.
+    fn queued_nodes_have_visible_body_content(&self, nodes: &[QueuedNode]) -> bool {
+        let decision = nodes
+            .iter()
+            .any(|node| self.subtree_has_visible_body_content(node.id));
+        if std::env::var_os("XFA_OF_TRACE").is_some() {
+            eprintln!(
+                "XFA_OF_TRACE rt-keep-pred: queued={} visible_body={decision}",
+                nodes.len()
+            );
+        }
+        decision
     }
 
     /// True when every queued node is a Positioned subform/area/exclGroup — the
