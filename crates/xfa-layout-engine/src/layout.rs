@@ -352,6 +352,33 @@ pub struct LayoutEngine<'a> {
     /// floor), so none qualifies. Off by default until the full 389-doc +
     /// unit-suite validation proves it regression-free.
     tiny_positioned_coalesce: bool,
+
+    /// Runtime-instantiated continuation keep, **default-OFF** (env
+    /// `XFA_CONTINUATION_RUNTIME_INSTANTIATED_KEEP=1|on|true`).
+    ///
+    /// Targets the `XFA_LAYOUT_CONTINUATION_RUNTIME_INSTANTIATED_KEEP` Sub-B
+    /// under-pagination class: a uniform-template form whose saved form-DOM
+    /// mirror committed to exactly `oracle` pageArea instances (every instance
+    /// tagged [`PageAreaInfo::runtime_instantiated`]), but whose trailing
+    /// instance carries *static* (non-data-backed) flowed body. The §8.6
+    /// continuation guard drops that last instance because
+    /// [`Self::queued_node_has_data_backed_body_content`] is false, and the
+    /// existing [`Self::static_body_continuation`] rescue does not apply (it is
+    /// gated on a homogeneous *positioned* queue — see
+    /// [`Self::queued_nodes_all_positioned_body`] — while these queues are
+    /// flowed `TopToBottom`). When enabled, the guard keeps the continuation if
+    /// the whole pageArea set is a runtime-instantiated mirror and a remaining
+    /// node has substantial visible body (reusing
+    /// [`Self::queued_nodes_have_substantial_visible_body`]).
+    ///
+    /// **Bounded by the mirror count.** The relaxation only activates when
+    /// *every* pageArea is runtime-instantiated, which is exactly the condition
+    /// under which the post-loop overflow clamp clears any residual queue. The
+    /// `for pa in &page_areas` loop therefore emits at most `page_areas.len()`
+    /// pages (the occur-clamped mirror count == oracle) and the overflow loop
+    /// never runs — it is incapable of over-paginating. Off by default until
+    /// the full 389-doc + unit-suite validation proves it regression-free.
+    continuation_runtime_keep: bool,
 }
 
 /// Height ceiling (fraction of page height) below which a lone positioned
@@ -376,6 +403,13 @@ impl<'a> LayoutEngine<'a> {
                 .unwrap_or(true),
             // Default-OFF; opt in with XFA_TINY_POSITIONED_PAGE_COALESCE=1|on|true.
             tiny_positioned_coalesce: std::env::var("XFA_TINY_POSITIONED_PAGE_COALESCE")
+                .map(|v| {
+                    let v = v.trim();
+                    v == "1" || v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("true")
+                })
+                .unwrap_or(false),
+            // Default-OFF; opt in with XFA_CONTINUATION_RUNTIME_INSTANTIATED_KEEP=1|on|true.
+            continuation_runtime_keep: std::env::var("XFA_CONTINUATION_RUNTIME_INSTANTIATED_KEEP")
                 .map(|v| {
                     let v = v.trim();
                     v == "1" || v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("true")
@@ -1051,6 +1085,16 @@ impl<'a> LayoutEngine<'a> {
             let static_body_queue_eligible = self.static_body_continuation
                 && self.queued_nodes_all_positioned_body(&content_queued);
 
+            // XFA_LAYOUT_CONTINUATION_RUNTIME_INSTANTIATED_KEEP: the whole
+            // pageArea set is a runtime-instantiated mirror (the saved form DOM
+            // committed to exactly these pages). This same predicate gates the
+            // post-loop overflow clamp below, so when it holds the relaxation
+            // can never emit more than `page_areas.len()` pages.
+            let all_pageareas_runtime_instantiated =
+                !page_areas.is_empty() && page_areas.iter().all(|pa| pa.runtime_instantiated);
+            let runtime_keep_eligible =
+                self.continuation_runtime_keep && all_pageareas_runtime_instantiated;
+
             // Layout content across page areas, then repeat last template for overflow.
             let mut remaining = if all_content_positioned {
                 Vec::new()
@@ -1089,7 +1133,20 @@ impl<'a> LayoutEngine<'a> {
                         && self.queued_nodes_have_substantial_visible_body(
                             &remaining,
                             primary_content_area(pa).height,
-                        ))
+                        )
+                    // XFA_LAYOUT_CONTINUATION_RUNTIME_INSTANTIATED_KEEP (default-off):
+                    // keep the continuation when the whole pageArea set is a
+                    // runtime-instantiated mirror and a remaining node has
+                    // substantial visible *static* body filling this pageArea.
+                    // Unlike `static_body_queue_eligible`, this is not gated on a
+                    // homogeneous positioned queue, so it rescues flowed
+                    // (`TopToBottom`) Sub-B bodies. Bounded by the mirror count:
+                    // see the post-loop clamp keyed on the same predicate.
+                    || (runtime_keep_eligible
+                        && self.queued_nodes_have_substantial_visible_body(
+                            &remaining,
+                            primary_content_area(pa).height,
+                        )))
                 {
                     // Diagnostic (read-only, env-gated; no behavior change).
                     // Milestone XFA_LAYOUT_OVERFLOW_PAGINATION_PARITY.
@@ -1166,8 +1223,11 @@ impl<'a> LayoutEngine<'a> {
             // overflow beyond the recorded count is suppressed.  The runtime
             // already committed to N pages; emitting more is over-pagination
             // relative to the saved form state.  Excess body content is
-            // dropped from the visible output.
-            if !page_areas.is_empty() && page_areas.iter().all(|pa| pa.runtime_instantiated) {
+            // dropped from the visible output.  This is the same predicate that
+            // gates `runtime_keep_eligible`, so any continuation kept above is
+            // still clamped here — the relaxation can fill the mirrored pages
+            // but never add pages beyond `page_areas.len()`.
+            if all_pageareas_runtime_instantiated {
                 remaining.clear();
             }
 
