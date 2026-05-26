@@ -1105,8 +1105,17 @@ fn xfa_flatten_inner(
     // the template-based defaults. This captures script-driven visibility
     // changes (e.g. Avoka framework's sfcUtils.updateVisibility) that our
     // FormCalc interpreter cannot execute.
+    // Default-off production override (`XFA_FORMDOM_ADMIT_DATABOUND=1`). When
+    // set, `SavedStateFaithful` admits data-bound unmatched subforms through
+    // the same guarded branch as `FreshMergeExperimental` instead of
+    // suppressing them, WITHOUT flipping the policy default. Read here at the
+    // pipeline boundary (like `XFA_JS_EXECUTION_MODE`) so the presence logic
+    // stays a pure, deterministically-testable function. No-op under
+    // `FreshMergeExperimental` (which already admits the same set).
+    let admit_databound_override =
+        std::env::var("XFA_FORMDOM_ADMIT_DATABOUND").ok().as_deref() == Some("1");
     let fresh_merge_admitted = if let Some(fxml) = form_xml {
-        apply_form_dom_presence(&mut tree, root_id, fxml, policy)
+        apply_form_dom_presence(&mut tree, root_id, fxml, policy, admit_databound_override)
     } else {
         0
     };
@@ -2726,6 +2735,7 @@ fn apply_form_dom_presence(
     root_id: FormNodeId,
     form_xml: &str,
     policy: XfaRenderingPolicy,
+    admit_databound_override: bool,
 ) -> usize {
     use xfa_layout_engine::form::{FormNodeType, Presence};
 
@@ -2789,6 +2799,7 @@ fn apply_form_dom_presence(
         form_node_id: FormNodeId,
         xml_node: roxmltree::Node<'_, '_>,
         policy: XfaRenderingPolicy,
+        admit_databound_override: bool,
     ) -> usize {
         let mut admitted: usize = 0;
         let xml_tag = xml_node.tag_name().name();
@@ -2984,7 +2995,7 @@ fn apply_form_dom_presence(
                     .find(|(i, &fid)| !used[*i] && child_matches(tree, fid, gtag, gname));
                 if let Some((idx, &fid)) = matched {
                     used[idx] = true;
-                    admitted += apply_recursive(tree, fid, xc, policy);
+                    admitted += apply_recursive(tree, fid, xc, policy, admit_databound_override);
                 }
             }
         }
@@ -3012,29 +3023,42 @@ fn apply_form_dom_presence(
                 if matches!(child_node.node_type, FormNodeType::Subform)
                     && !child_node.name.is_empty()
                 {
-                    // D12: under FreshMergeExperimental, data-bound unmatched
-                    // subforms are admitted rather than suppressed.  Guards:
-                    //  - not template-hidden (Presence::Hidden / Inactive)
+                    // Admit data-bound unmatched subforms instead of
+                    // suppressing them. Two triggers share one guard:
+                    //  - `FreshMergeExperimental` (experimental policy), or
+                    //  - `XFA_FORMDOM_ADMIT_DATABOUND=1`, a default-off
+                    //    production override that lets `SavedStateFaithful`
+                    //    admit the same set WITHOUT flipping the policy default.
+                    //
+                    // Guard (admit only when):
+                    //  - not template-hidden (`Presence::Hidden` / `Inactive`)
                     //  - not a zero-instance prototype placeholder
                     //  - has a data-node bound during merge
-                    //  - did not opt out of binding via <bind match="none">
+                    //  - did not opt out of binding via `<bind match="none">`
                     //
-                    // NOTE: this does NOT discriminate 01de9ce4 from 13275420;
-                    // both pass the same guards.  FreshMerge is opt-in/
-                    // experimental and known to admit extra nodes on protected
-                    // targets.  D12 GREEN (2026-05-21); D13 corpus measurement
-                    // pending.
+                    // The `bound_data_node.is_some()` clause is the
+                    // over-pagination guard: truly-unmatched NON-data subforms
+                    // (no bound data node) are never admitted, so the §3.1
+                    // suppression that protects against phantom page-level
+                    // subforms still holds. A data-bound subform only adds a
+                    // page when its admitted content overflows — the layout
+                    // engine self-regulates; this is not a page-count heuristic.
                     let meta = tree.meta(fid);
-                    let is_fresh_merge_candidate = policy
+                    let admit_unmatched_databound = (policy
                         == XfaRenderingPolicy::FreshMergeExperimental
+                        || admit_databound_override)
                         && !matches!(meta.presence, Presence::Hidden | Presence::Inactive)
                         && !meta.is_zero_instance_prototype
                         && meta.bound_data_node.is_some()
                         && !meta.data_bind_none;
 
                     if std::env::var("XFA_PRESENCE_PROV").ok().as_deref() == Some("1") {
-                        let site = if is_fresh_merge_candidate {
-                            "formdom_unmatched_fresh_merge_admitted"
+                        let site = if admit_unmatched_databound {
+                            if policy == XfaRenderingPolicy::FreshMergeExperimental {
+                                "formdom_unmatched_fresh_merge_admitted"
+                            } else {
+                                "formdom_unmatched_databound_admitted"
+                            }
                         } else {
                             "formdom_unmatched"
                         };
@@ -3044,12 +3068,13 @@ fn apply_form_dom_presence(
                         );
                     }
 
-                    if is_fresh_merge_candidate {
-                        // FreshMerge: admit — leave presence as-is (Visible by
-                        // default from the merger).
+                    if admit_unmatched_databound {
+                        // Admit — leave presence as-is (Visible by default
+                        // from the merger).
                         admitted += 1;
                     } else {
-                        // SavedStateFaithful (or ineligible node): suppress.
+                        // SavedStateFaithful without override (or ineligible
+                        // node): suppress.
                         tree.meta_mut(fid).presence = Presence::Hidden;
                     }
                 }
@@ -3070,7 +3095,13 @@ fn apply_form_dom_presence(
         let root_name = xml_root_sf.attribute("name").unwrap_or("");
         for &child_id in &root_children {
             if tree.get(child_id).name == root_name {
-                total_admitted += apply_recursive(tree, child_id, xml_root_sf, policy);
+                total_admitted += apply_recursive(
+                    tree,
+                    child_id,
+                    xml_root_sf,
+                    policy,
+                    admit_databound_override,
+                );
                 break;
             }
         }
@@ -6080,6 +6111,7 @@ ET
             root_id,
             form_xml,
             XfaRenderingPolicy::SavedStateFaithful,
+            false,
         );
 
         // After form DOM: 3 Row instances with correct values
@@ -6152,6 +6184,7 @@ ET
             root_id,
             form_xml,
             XfaRenderingPolicy::SavedStateFaithful,
+            false,
         );
 
         fn collect_page_areas(tree: &FormTree, id: FormNodeId, out: &mut Vec<FormNodeId>) {
@@ -6222,6 +6255,7 @@ ET
             root_id,
             form_xml,
             XfaRenderingPolicy::SavedStateFaithful,
+            false,
         );
 
         fn collect_page_areas(tree: &FormTree, id: FormNodeId, out: &mut Vec<FormNodeId>) {
@@ -6246,6 +6280,150 @@ ET
                 "non-expansion case must not set runtime_instantiated_page flag"
             );
         }
+    }
+
+    /// `XFA_FORMDOM_ADMIT_DATABOUND` (default-off) admit gate.
+    ///
+    /// The §3.1 unmatched-subform suppression hides named template subforms
+    /// the saved form DOM did not enumerate. For DATA-BOUND unmatched
+    /// subforms that is wrong — Adobe renders them. The default-off
+    /// production override routes those through the same guarded admit branch
+    /// as `FreshMergeExperimental`, WITHOUT flipping the policy default and
+    /// WITHOUT loosening the guard: a truly-unmatched NON-data subform (no
+    /// `bound_data_node`) must stay suppressed in every mode — that is the
+    /// over-pagination guard.
+    ///
+    /// The override is passed as an explicit bool (the env read happens at the
+    /// pipeline boundary), so this test is deterministic and touches no env.
+    #[test]
+    fn formdom_admit_databound_override_admits_only_data_bound() {
+        use xfa_layout_engine::form::{FormNodeType, Presence};
+
+        // root > body > { Bound (data-bound), Unbound (no data), Present }.
+        let template = r#"<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+          <subform name="root" layout="tb">
+            <subform name="body" layout="tb">
+              <subform name="Bound" layout="tb">
+                <field name="A"><ui><textEdit/></ui></field>
+              </subform>
+              <subform name="Unbound" layout="tb">
+                <field name="B"><ui><textEdit/></ui></field>
+              </subform>
+              <subform name="Present" layout="tb">
+                <field name="C"><ui><textEdit/></ui></field>
+              </subform>
+            </subform>
+          </subform>
+        </template>"#;
+
+        // Saved form DOM enumerates only `Present` under `body`, so `Bound`
+        // and `Unbound` are unmatched §3.1 suppression candidates; `body`
+        // lists a subform child, so `has_subform_children` is true.
+        let form_xml = r#"<form xmlns="http://www.xfa.org/schema/xfa-form/2.8/">
+          <subform name="root">
+            <subform name="body">
+              <subform name="Present">
+                <field name="C"><value><text>x</text></value></field>
+              </subform>
+            </subform>
+          </subform>
+        </form>"#;
+
+        fn find(tree: &FormTree, parent: FormNodeId, name: &str) -> Option<FormNodeId> {
+            for &c in &tree.get(parent).children {
+                if tree.get(c).name == name {
+                    return Some(c);
+                }
+                if let Some(f) = find(tree, c, name) {
+                    return Some(f);
+                }
+            }
+            None
+        }
+
+        // Build a fresh tree, install the data-binding scenario explicitly
+        // (independent of merge defaults), then run `apply_form_dom_presence`.
+        // Returns (admitted_count, Bound.presence, Unbound.presence).
+        let scenario = |policy: XfaRenderingPolicy, override_on: bool| {
+            let data_dom = xfa_dom_resolver::data_dom::DataDom::new();
+            let merger = crate::merger::FormMerger::new(&data_dom);
+            let (mut tree, root_id) = merger.merge(template).unwrap();
+
+            let bound = find(&tree, root_id, "Bound").expect("Bound subform in tree");
+            let unbound = find(&tree, root_id, "Unbound").expect("Unbound subform in tree");
+            assert!(matches!(tree.get(bound).node_type, FormNodeType::Subform));
+            assert!(matches!(tree.get(unbound).node_type, FormNodeType::Subform));
+
+            for &id in &[bound, unbound] {
+                let m = tree.meta_mut(id);
+                m.presence = Presence::Visible;
+                m.is_zero_instance_prototype = false;
+                m.data_bind_none = false;
+            }
+            tree.meta_mut(bound).bound_data_node = Some(0); // data-bound
+            tree.meta_mut(unbound).bound_data_node = None; // no data node
+
+            let admitted =
+                apply_form_dom_presence(&mut tree, root_id, form_xml, policy, override_on);
+            (
+                admitted,
+                tree.meta(bound).presence,
+                tree.meta(unbound).presence,
+            )
+        };
+
+        // 1. Production default (SavedStateFaithful, override OFF): both the
+        //    data-bound and the non-data unmatched subform are suppressed —
+        //    unchanged baseline behaviour.
+        let (adm, bound_p, unbound_p) = scenario(XfaRenderingPolicy::SavedStateFaithful, false);
+        assert_eq!(
+            adm, 0,
+            "override off admits nothing under SavedStateFaithful"
+        );
+        assert_eq!(
+            bound_p,
+            Presence::Hidden,
+            "data-bound suppressed when override off"
+        );
+        assert_eq!(
+            unbound_p,
+            Presence::Hidden,
+            "non-data suppressed when override off"
+        );
+
+        // 2. Override ON under SavedStateFaithful: the data-bound subform is
+        //    admitted (presence preserved); the non-data subform stays
+        //    suppressed — the over-pagination guard holds.
+        let (adm, bound_p, unbound_p) = scenario(XfaRenderingPolicy::SavedStateFaithful, true);
+        assert_eq!(adm, 1, "override on admits exactly the data-bound subform");
+        assert_eq!(
+            bound_p,
+            Presence::Visible,
+            "data-bound admitted when override on"
+        );
+        assert_eq!(
+            unbound_p,
+            Presence::Hidden,
+            "non-data subform must stay suppressed with override on (over-pagination guard)"
+        );
+
+        // 3. FreshMergeExperimental (override OFF) admits the same set — the
+        //    override merely extends this to the production policy.
+        let (adm, bound_p, unbound_p) = scenario(XfaRenderingPolicy::FreshMergeExperimental, false);
+        assert_eq!(
+            adm, 1,
+            "fresh-merge admits the data-bound subform without override"
+        );
+        assert_eq!(
+            bound_p,
+            Presence::Visible,
+            "data-bound admitted under fresh-merge"
+        );
+        assert_eq!(
+            unbound_p,
+            Presence::Hidden,
+            "non-data suppressed under fresh-merge"
+        );
     }
 
     // GL-QA36: verify the re-entrance guard prevents infinite recursion.
