@@ -80,6 +80,19 @@ pub fn run(
 
     let pdf_bytes = std::fs::read(input).context("failed to read input PDF")?;
 
+    // Reject non-PDF input loudly. `flatten_xfa_to_pdf` returns the input bytes
+    // unchanged when it finds no PDF/XFA structure, so without this guard a
+    // non-PDF file was copied through and reported as a successful flatten
+    // (exit 0) — the same class of silent failure that `info`/`measure` already
+    // reject. Encrypted PDFs carry a valid header and still pass here, so the
+    // encrypted-skip path (exit 2) below stays authoritative.
+    if !has_pdf_header(&pdf_bytes) {
+        anyhow::bail!(
+            "input is not a PDF file (missing %PDF header): {}",
+            input.display()
+        );
+    }
+
     match dump_layout {
         Some(dump_path) => match pdf_xfa::flatten_xfa_to_pdf_with_layout_dump(&pdf_bytes) {
             Ok((flattened_bytes, layout_dump)) => {
@@ -214,4 +227,46 @@ fn flatten_acroform(doc: &mut lopdf::Document) -> usize {
     }
 
     removed
+}
+
+/// Returns `true` when `bytes` carries a PDF signature (`%PDF-`) within the
+/// first kibibyte — the tolerant window Adobe-class readers scan for the file
+/// header. Used to reject non-PDF input before flattening.
+fn has_pdf_header(bytes: &[u8]) -> bool {
+    const SIGNATURE: &[u8] = b"%PDF-";
+    const SCAN_WINDOW: usize = 1024;
+    let scan = &bytes[..bytes.len().min(SCAN_WINDOW)];
+    scan.windows(SIGNATURE.len())
+        .any(|window| window == SIGNATURE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_non_pdf_bytes() {
+        assert!(!has_pdf_header(b"not a pdf"));
+        assert!(!has_pdf_header(b""));
+        assert!(!has_pdf_header(b"%PD"));
+    }
+
+    #[test]
+    fn accepts_pdf_header_at_start() {
+        assert!(has_pdf_header(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n"));
+    }
+
+    #[test]
+    fn accepts_pdf_header_within_scan_window() {
+        let mut data = vec![b' '; 100];
+        data.extend_from_slice(b"%PDF-1.4");
+        assert!(has_pdf_header(&data));
+    }
+
+    #[test]
+    fn ignores_header_past_scan_window() {
+        let mut data = vec![b'\n'; 2000];
+        data.extend_from_slice(b"%PDF-1.4");
+        assert!(!has_pdf_header(&data));
+    }
 }
