@@ -4870,12 +4870,13 @@ fn debug_isartor635_convert() {
     }
 
     // Validate with veraPDF if available
-    let verapdf = std::path::Path::new("/Users/jasperdewinter/verapdf/verapdf");
-    if verapdf.exists() {
+    let verapdf_bin = std::env::var("VERAPDF_BIN").unwrap_or_else(|_| "verapdf".to_string());
+    let verapdf = std::path::Path::new(&verapdf_bin);
+    if verapdf.exists() || verapdf_bin == "verapdf" {
         let result = std::process::Command::new("bash")
             .arg("-c")
             .arg(format!(
-                "/Users/jasperdewinter/verapdf/verapdf --format mrr --flavour 2b {out} 2>/dev/null | grep -o 'failedChecks=\"[0-9]*\"'"
+                "{verapdf_bin} --format mrr --flavour 2b {out} 2>/dev/null | grep -o 'failedChecks=\"[0-9]*\"'"
             ))
             .output();
         match result {
@@ -4979,7 +4980,7 @@ fn debug_pdfa_fails_all_convert() {
         ),
     ];
 
-    let verapdf_bin = "/Users/jasperdewinter/verapdf/verapdf";
+    let verapdf_bin = std::env::var("VERAPDF_BIN").unwrap_or_else(|_| "verapdf".to_string());
     let mut all_pass = true;
 
     for (name, conformance, flavour) in pdfs {
@@ -4993,7 +4994,7 @@ fn debug_pdfa_fails_all_convert() {
         let out = format!("/tmp/{name}-converted.pdf");
         std::fs::write(&out, &converted).unwrap();
 
-        if std::path::Path::new(verapdf_bin).exists() {
+        if std::path::Path::new(&verapdf_bin).exists() || verapdf_bin == "verapdf" {
             let result = std::process::Command::new("bash")
                 .arg("-c")
                 .arg(format!(
@@ -6518,7 +6519,7 @@ fn debug_r25_6211_5_regressions() {
         saved
     }
 
-    let verapdf_bin = "/Users/jasperdewinter/verapdf/verapdf";
+    let verapdf_bin = std::env::var("VERAPDF_BIN").unwrap_or_else(|_| "verapdf".to_string());
     let pdfs = [
         "/tmp/pdfa_r25_reg_1.pdf", // c4k-348_348108: Lucida CFF custom-encoding
         "/tmp/pdfa_r25_reg_2.pdf", // c4k-001_001688: regression sample
