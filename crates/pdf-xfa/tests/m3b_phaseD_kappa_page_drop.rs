@@ -307,8 +307,14 @@ fn two_data_pages_both_kept() {
 /// regression in form-DOM walking or runtime-instantiated semantics will
 /// surface immediately.
 #[test]
+#[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_13275420_at_least_eight_pages() {
-    let path = "/Users/jasperdewinter/xfa_analysis/input/13275420.pdf";
+    let dir = match std::env::var("XFA_CORPUS_INPUT_DIR") {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let path = format!("{dir}/13275420.pdf");
+    let path = path.as_str();
     if !std::path::Path::new(path).exists() {
         return;
     }

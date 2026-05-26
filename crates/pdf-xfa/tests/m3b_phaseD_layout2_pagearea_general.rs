@@ -170,10 +170,13 @@ fn multi_template_pagearea_does_not_over_expand() {
 // EXPANSION engine regression surfaces here.
 // ---------------------------------------------------------------------------
 
-const CORPUS_INPUT_DIR: &str = "/Users/jasperdewinter/xfa_analysis/input";
+fn corpus_input_dir() -> Option<String> {
+    std::env::var("XFA_CORPUS_INPUT_DIR").ok()
+}
 
 fn flatten_corpus_doc(name: &str) -> Option<usize> {
-    let path = format!("{CORPUS_INPUT_DIR}/{name}.pdf");
+    let dir = corpus_input_dir()?;
+    let path = format!("{dir}/{name}.pdf");
     if !std::path::Path::new(&path).exists() {
         return None;
     }
@@ -186,6 +189,7 @@ fn flatten_corpus_doc(name: &str) -> Option<usize> {
 /// to 10 pages. L2-01 must not regress below the >= 8 floor that the
 /// existing m3b_phaseD guard pins.
 #[test]
+#[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_13275420_pagearea_expansion_holds() {
     let Some(pages) = flatten_corpus_doc("13275420") else {
         return;
@@ -199,6 +203,7 @@ fn corpus_13275420_pagearea_expansion_holds() {
 /// 927d2419 — Sprint-1 PAGEAREA-EXPANSION lifted from 1 to 2 pages.
 /// L2-01 must not regress that improvement.
 #[test]
+#[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_927d2419_stays_improved() {
     let Some(pages) = flatten_corpus_doc("927d2419") else {
         return;
@@ -211,6 +216,7 @@ fn corpus_927d2419_stays_improved() {
 
 /// 778a1138 — uniform Page1 × 2 in form-DOM.
 #[test]
+#[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_778a1138_stays_at_two_pages() {
     let Some(pages) = flatten_corpus_doc("778a1138") else {
         return;
@@ -220,6 +226,7 @@ fn corpus_778a1138_stays_at_two_pages() {
 
 /// d9ec06f8 — uniform Page1 × 4 in form-DOM. Sprint-1 floor is 3 pages.
 #[test]
+#[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_d9ec06f8_post_sprint1_floor() {
     let Some(pages) = flatten_corpus_doc("d9ec06f8") else {
         return;
@@ -232,6 +239,7 @@ fn corpus_d9ec06f8_post_sprint1_floor() {
 
 /// 3963b9b6 — uniform Service_Call_Report × 3 in form-DOM.
 #[test]
+#[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_3963b9b6_stays_at_three_pages() {
     let Some(pages) = flatten_corpus_doc("3963b9b6") else {
         return;
@@ -243,6 +251,7 @@ fn corpus_3963b9b6_stays_at_three_pages() {
 /// floor so any pageArea-expansion regression that drops below 1 page
 /// surfaces here.
 #[test]
+#[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_ce382c3d_stays_at_one_or_more_pages() {
     let Some(pages) = flatten_corpus_doc("ce382c3d") else {
         return;
