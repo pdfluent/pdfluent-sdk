@@ -42,7 +42,7 @@ pub fn collect(url_file: &Path, output_dir: &Path, limit: Option<usize>) -> anyh
 
     let client = reqwest::blocking::ClientBuilder::new()
         .user_agent(
-            "xfa-collector/0.1 (XFA research; https://github.com/jasperdew/xfa-native-rust)",
+            "xfa-collector/0.1 (PDFluent XFA research)",
         )
         .timeout(std::time::Duration::from_secs(60))
         .build()?;
