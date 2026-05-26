@@ -3,6 +3,17 @@ THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
 This project incorporates components from the projects listed below. The
 original copyright notices and license terms are included below.
 
+Generated: 2026-05-26 via `cargo license --avoid-build-deps --avoid-dev-deps`
+RC1 commit: 747cf1c8ab6c6debdec734c3569b2995f37d1f1f
+
+All PDFluent workspace crates (formcalc-interpreter, pdf-annot, pdf-compliance,
+pdf-docx, pdf-engine, pdf-font, pdf-invoice, pdf-manip, pdf-ocr, pdf-pptx,
+pdf-redact, pdf-render, pdf-text-format, pdf-xfa, pdf-xlsx, pdfluent,
+pdfluent-cli, pdfluent-extract, pdfluent-forms, pdfluent-sign, xfa-cli,
+xfa-dom-resolver, xfa-js-sandboxed, xfa-json, xfa-layout-engine, xfa-license,
+xfa-wasm, and others) are covered by the PDFluent Commercial License v1.0
+(see LICENSE at the root of this repository).
+
 ================================================================================
 hayro — A PDF interpreter and renderer in pure Rust
 https://github.com/LaurenzV/hayro
@@ -93,40 +104,242 @@ CGATS001Compat-v2-micro.icc — CGATS.001 compatible CMYK ICC profile.
 See: crates/pdf-interpret/assets/CGATS_LICENSE.txt
 
 ================================================================================
-Rust Crate Dependencies (non-exhaustive, key dependencies)
+Rust Crate Dependencies — Complete List (cargo license 2026-05-26)
 ================================================================================
 
-The following crates are used as dependencies. Each is available under the
-license(s) specified in their respective Cargo.toml files on crates.io:
+The following crates are transitive dependencies of PDFluent at rc1.
+License expressions follow SPDX 3.x syntax.
 
-  vello_cpu          — Apache-2.0 OR MIT (Linebender)
-  skrifa             — Apache-2.0 OR MIT (Linebender / Google Fonts)
-  kurbo              — Apache-2.0 OR MIT (Linebender)
-  flate2             — Apache-2.0 OR MIT
-  image              — Apache-2.0 OR MIT
-  ttf-parser         — Apache-2.0 OR MIT
-  lopdf              — MIT
-  roxmltree          — Apache-2.0 OR MIT
-  thiserror          — Apache-2.0 OR MIT
-  serde              — Apache-2.0 OR MIT
-  serde_json         — Apache-2.0 OR MIT
-  indexmap           — Apache-2.0 OR MIT
-  clap               — Apache-2.0 OR MIT
-  anyhow             — Apache-2.0 OR MIT
-  moxcms             — Apache-2.0 OR MIT
-  phf                — MIT
-  bytemuck           — Apache-2.0 OR MIT OR Zlib
-  fast_image_resize  — Apache-2.0 OR MIT
-  fearless_simd      — Apache-2.0 OR MIT
-  brotli             — BSD-3-Clause OR MIT
-  zune-jpeg          — Apache-2.0 OR MIT OR Zlib
-  yoke               — Unicode-3.0
-  siphasher          — Apache-2.0 OR MIT
-  rustc-hash         — Apache-2.0 OR MIT
-  smallvec           — Apache-2.0 OR MIT
-  bitflags           — Apache-2.0 OR MIT
-  log                — Apache-2.0 OR MIT
-  pdfium-render      — Apache-2.0 OR MIT (optional, golden tests only)
+---- Apache-2.0 OR MIT (and combined expressions with these) ----
+aes, ahash, aligned, android_system_properties, anstream, anstyle,
+anstyle-parse, anstyle-query, anstyle-wincon, anyhow, arbitrary, arrayvec,
+as-slice, atomic-waker, base16ct, base64, base64ct, bit-set, bit-vec,
+bit_field, bitflags, bitstream-io, block-buffer, block-padding, bs58,
+bumpalo, bytecount, camino, cargo-platform, cbc, cesu8, cfg-if, chrono,
+cipher, clap, clap_builder, clap_complete, clap_derive, clap_lex, clap_mangen,
+color, colorchoice, const-oid, cookie, core-foundation, core-foundation-sys,
+core-graphics, core-graphics-types, cpufeatures, crc32fast, crossbeam-channel,
+crossbeam-deque, crossbeam-epoch, crossbeam-utils, crypto-bigint,
+crypto-common, ctor, ctor-proc-macro, curve25519-dalek-derive, dbus, der,
+deranged, derive_arbitrary, des, digest, dirs, dirs-sys, displaydoc,
+document-features, dtoa, dtor, dtor-proc-macro, dyn-clone, ecdsa, ed25519,
+either, elliptic-curve, embed_plist, encode_unicode, equivalent, erased-serde,
+errno, euclid, fallible-iterator, fallible-streaming-iterator,
+fast_image_resize, fastrand, fdeflate, fearless_simd, ff, field-offset,
+flate2, fnv, font-types, foreign-types, foreign-types-macros,
+foreign-types-shared, form_urlencoded, futf, futures-channel, futures-core,
+futures-executor, futures-io, futures-macro, futures-sink, futures-task,
+futures-util, fxhash, getopts, getrandom, gif, glob, group, half, hashbrown,
+hashlink, heck, hermit-abi, hex, hmac, html5ever, http, httparse, httpdate,
+hyper-tls, iana-time-zone, iana-time-zone-haiku, id-arena, ident_case, idna,
+idna_adapter, image, image-webp, indexmap, inout, ipnet, is_terminal_polyfill,
+itertools, itoa, jni, jni-sys, jni-sys-macros, js-sys, json-patch, jsonptr,
+keyboard-types, kurbo, lazy_static, leb128fmt, libappindicator,
+libappindicator-sys, libc, libdbus-sys, linebender_resource_handle, litrs,
+lock_api, log, mac, markup5ever, md-5, mime, minimal-lexical, muda,
+native-tls, ndk, ndk-sys, no_std_io2, num-bigint, num-bigint-dig, num-conv,
+num-derive, num-integer, num-iter, num-rational, num-traits, num_cpus,
+once_cell, once_cell_polyfill, openssl-macros, openssl-probe, ordered-channel,
+p12, p256, p384, parking_lot, parking_lot_core, paste, pastey, pathdiff,
+pdf-content-stream, pdf-interpret, pdf-syntax, pdfluent-ccitt, pdfluent-cff,
+pdfluent-jbig2, pdfluent-jpeg2000, peniko, percent-encoding,
+pin-project-lite, pkcs1, pkcs8, png, polycool, portable-atomic,
+portable-atomic-util, powerfmt, ppv-lite86, prettyplease, primeorder,
+proc-macro-crate, proc-macro-error, proc-macro-error-attr, proc-macro2,
+profiling, profiling-procmacros, qoi, quick-error, quote, rand, rand_chacha,
+rand_core, rangemap, rayon, rayon-core, rc2, read-fonts, ref-cast,
+ref-cast-impl, regex, regex-automata, regex-lite, regex-syntax, relative-path,
+reqwest, rfc6979, roff, roxmltree, rsa, rust_xlsxwriter, rustc-hash,
+rustls-pki-types, rustversion, scopeguard, sec1, security-framework,
+security-framework-sys, semver, serde, serde-untagged, serde_core,
+serde_derive, serde_derive_internals, serde_json, serde_path_to_error,
+serde_repr, serde_spanned, serde_urlencoded, serde_with, serde_with_macros,
+serialize-to-javascript, serialize-to-javascript-impl, servo_arc, sha1, sha2,
+signal-hook, signal-hook-registry, signature, siphasher, skrifa, smallvec,
+socket2, softbuffer, spki, stable_deref_trait, string_cache, stringprep,
+subsetter, swift-rs, syn, system-configuration, system-configuration-sys,
+tao, tao-macros, tauri, tauri-codegen, tauri-macros, tauri-plugin-dialog,
+tauri-plugin-fs, tauri-plugin-shell, tauri-runtime, tauri-runtime-wry,
+tauri-utils, tempfile, tendril, thiserror, thiserror-impl, thread_local,
+tikv-jemalloc-sys, tikv-jemallocator, time, time-core, time-macros,
+tokio-rustls, toml, toml_datetime, toml_edit, toml_parser, toml_writer,
+tray-icon, ttf-parser, typed-path, typeid, typenum, unic-char-property,
+unic-char-range, unic-common, unic-ucd-ident, unic-ucd-version, unicode-bidi,
+unicode-normalization, unicode-properties, unicode-segmentation, unicode-width,
+unicode-xid, url, utf-8, utf8_iter, utf8parse, uuid, vello_common, vello_cpu,
+wasm-bindgen, wasm-bindgen-futures, wasm-bindgen-macro,
+wasm-bindgen-macro-support, wasm-bindgen-shared, wasm-streams, web-sys,
+web-time, web_atoms, weezl, winapi, winapi-i686-pc-windows-gnu,
+winapi-x86_64-pc-windows-gnu, window-vibrancy, windows, windows-collections,
+windows-core, windows-future, windows-implement, windows-interface,
+windows-link, windows-numerics, windows-registry, windows-result,
+windows-strings, windows-sys, windows-targets, windows-threading,
+windows-version, windows_aarch64_gnullvm, windows_aarch64_msvc, windows_i686_gnu,
+windows_i686_gnullvm, windows_i686_msvc, windows_x86_64_gnu,
+windows_x86_64_gnullvm, windows_x86_64_msvc, write-fonts, wry, xmp-writer,
+yasna, zeroize
 
-For the complete and authoritative license information for all transitive
-dependencies, run: cargo license --avoid-build-deps --avoid-dev-deps
+License: Apache-2.0 OR MIT (see https://opensource.org/licenses/MIT and
+         https://www.apache.org/licenses/LICENSE-2.0)
+
+---- Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT ----
+linux-raw-sys, rustix, wasi, wasip2, wasip3, wasm-encoder, wasm-metadata,
+wasmparser, wit-bindgen, wit-bindgen-core, wit-bindgen-rust,
+wit-bindgen-rust-macro, wit-component, wit-parser
+
+---- Apache-2.0 OR MIT OR Zlib ----
+bytemuck, bytemuck_derive, dispatch2, miniz_oxide, objc2-app-kit,
+objc2-cloud-kit, objc2-core-data, objc2-core-foundation, objc2-core-graphics,
+objc2-core-image, objc2-core-location, objc2-core-text,
+objc2-exception-helper, objc2-io-surface, objc2-quartz-core, objc2-ui-kit,
+objc2-user-notifications, objc2-web-kit, raw-window-handle, tinyvec,
+tinyvec_macros, zune-core, zune-inflate, zune-jpeg
+
+---- Apache-2.0 OR BSD-3-Clause ----
+moxcms, pxfm
+
+---- Apache-2.0 OR BSD-3-Clause OR MIT ----
+num_enum, num_enum_derive
+
+---- Apache-2.0 OR BSD-2-Clause OR MIT ----
+zerocopy, zerocopy-derive
+
+---- Apache-2.0 (standalone) ----
+openssl, sync_wrapper, zopfli
+
+---- Apache-2.0 AND ISC ----
+ring
+
+---- Apache-2.0 AND MIT ----
+dpi
+
+---- Apache-2.0 OR BSL-1.0 ----
+ryu
+(BSL-1.0 = Boost Software License, fully permissive)
+
+---- Apache-2.0 OR CC0-1.0 ----
+imgref
+
+---- Apache-2.0 OR CC0-1.0 OR MIT-0 ----
+dunce
+
+---- Apache-2.0 OR ISC OR MIT ----
+hyper-rustls, rustls
+
+---- Apache-2.0 OR LGPL-2.1-or-later OR MIT ----
+r-efi
+(PDFluent selects Apache-2.0 / MIT; LGPL alternative not exercised)
+
+---- (Apache-2.0 OR MIT) AND BSD-3-Clause ----
+encoding_rs
+
+---- (Apache-2.0 OR MIT) AND NCSA ----
+libfuzzer-sys
+(NCSA = Univ. of Illinois/NCSA Open Source License, 3-clause BSD equivalent)
+
+---- (Apache-2.0 OR MIT) AND Unicode-3.0 ----
+unicode-ident
+
+---- Apache-2.0 OR BSD-1-Clause OR MIT ----
+fiat-crypto
+
+---- MIT ----
+aligned-vec, arg_enum_proc_macro, atk, atk-sys, av-scenechange, axum,
+axum-core, block2, bytes, cairo-rs, cairo-sys-rs, cargo_metadata, cfb,
+color_quant, combine, console, convert_case, crunchy, darling, darling_core,
+darling_macro, derive_more, derive_more-impl, dlopen2, dlopen2_derive,
+dom_query, ecb, equator, equator-macro, fax, gdk, gdk-pixbuf, gdk-pixbuf-sys,
+gdk-sys, gdkwayland-sys, gdkx11, gdkx11-sys, generic-array, gio, gio-sys,
+glib, glib-macros, glib-sys, gobject-sys, gtk, gtk-sys, gtk3-macros, h2,
+http-body, http-body-util, hyper, hyper-util, ico, indicatif, infer,
+interpolate_name, is-docker, is-wsl, javascriptcore-rs, javascriptcore-rs-sys,
+libm, libredox, libsqlite3-sys, loop9, lopdf, matchers, maybe-rayon,
+memoffset, mio, multer, napi, napi-derive, napi-derive-backend, napi-sys,
+new_debug_unreachable, nom, nom_locate, noop_proc_macro, nu-ansi-term,
+number_prefix, objc2, objc2-encode, objc2-foundation, open, openssl-sys,
+os_pipe, pango, pango-sys, pdf-bench, pdf-desktop, pdf-diff, pdf-java,
+pdfluent-lopdf, phf, phf_generator, phf_macros, phf_shared, plist,
+precomputed-hash, quick-xml, redox_syscall, redox_users, rfd, rgb, rquickjs,
+rquickjs-core, rquickjs-macro, rquickjs-sys, rusqlite, schannel, schemars,
+schemars_derive, sharded-slab, shared_child, sigchld, simd-adler32,
+simd_helpers, slab, soup3, soup3-sys, spin, strsim, synstructure, tiff,
+tokio, tokio-macros, tokio-native-tls, tokio-util, tower, tower-http,
+tower-layer, tower-service, tracing, tracing-attributes, tracing-core,
+tracing-log, tracing-subscriber, try-lock, urlpattern, valuable, want,
+webkit2gtk, webkit2gtk-sys, webview2-com, webview2-com-macros,
+webview2-com-sys, winnow, x11, x11-dl, xfa-api-server, xfa-golden-tests,
+xfa-license-gen, xfa-test-runner, y4m, zip, zmij
+
+License: MIT (see https://opensource.org/licenses/MIT)
+
+---- MIT OR Unlicense ----
+aho-corasick, byteorder, byteorder-lite, jiff, jiff-static, jiff-tzdb,
+jiff-tzdb-platform, memchr, same-file, walkdir, winapi-util
+
+---- BSD-2-Clause ----
+av1-grain, rav1e, v_frame
+
+---- BSD-3-Clause ----
+alloc-no-stdlib, alloc-stdlib, avif-serialize, curve25519-dalek,
+ed25519-dalek, exr, lebe, ravif, subtle
+
+---- BSD-3-Clause AND MIT ----
+brotli, matchit
+
+---- BSD-3-Clause OR MIT ----
+brotli-decompressor
+
+---- ISC ----
+ego-tree, libloading, rustls-webpki, scraper, untrusted
+
+---- Zlib ----
+foldhash, zlib-rs
+
+---- MPL-2.0 (file-level copyleft only) ----
+cssparser, cssparser-macros, dtoa-short, option-ext, selectors
+
+Mozilla Public License 2.0: https://www.mozilla.org/en-US/MPL/2.0/
+Modifications to MPL-covered files must be shared; surrounding code is free.
+
+---- BSL-1.0 (Boost Software License; permissive) ----
+ryu
+
+License: https://www.boost.org/users/license.html
+
+---- 0BSD ----
+adler2
+
+---- MIT-0 ----
+dunce (in expression Apache-2.0 OR CC0-1.0 OR MIT-0)
+
+---- CC0-1.0 ----
+imgref, dunce (via OR expressions)
+
+---- Unlicense ----
+aho-corasick, byteorder, memchr, walkdir, winapi-util (all MIT OR Unlicense)
+
+---- NCSA ----
+libfuzzer-sys (in expression (Apache-2.0 OR MIT) AND NCSA)
+
+---- Unicode-3.0 ----
+icu_collections, icu_locale_core, icu_normalizer, icu_normalizer_data,
+icu_properties, icu_properties_data, icu_provider, litemap, potential_utf,
+tinystr, writeable, yoke, yoke-derive, zerofrom, zerofrom-derive, zerotrie,
+zerovec, zerovec-derive
+
+License: https://opensource.org/licenses/Unicode-3.0
+
+================================================================================
+OFL-1.1 NOTE — Liberation Fonts (NOT BUNDLED AT RC1)
+================================================================================
+
+The xfa/font-bundled-liberation branch (not merged at rc1) would bundle
+Liberation fonts under OFL-1.1.  At rc1 no OFL-1.1 fonts are bundled.
+When that branch merges:
+  - Add OFL-1.1 text to this file
+  - Verify font files are unmodified (OFL §1 reserved font name constraint)
+  - OFL-1.1 is compatible with commercial embedding in a PDF SDK
+
+================================================================================
+END OF THIRD PARTY LICENSES
+================================================================================
