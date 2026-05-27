@@ -2116,7 +2116,7 @@ const PHASE_C_BINDINGS_JS: &str = r##"
           if (csDisplayItems.length > 0) {
             host.somItemsPathHit();
           }
-          return Object.freeze(csDisplayItems.slice());
+          return makeItemsSubstitute(csDisplayItems);
         }
         // XFA-DATA-M3C: `<candidateSet>.ui` returns the widget-config stub.
         // See makeUiStub on makeHandle for rationale.
@@ -2231,6 +2231,46 @@ const PHASE_C_BINDINGS_JS: &str = r##"
   // `data.`, `$data.`, and `xfa.datasets.data.` prefixes. The Cluster C
   // null-return contract is preserved: a miss in the host returns native
   // `null` for the singular form and a frozen empty array for the plural.
+  // BE-1: XFA-compatible substitute for the <items> element returned by
+  // resolveNode("FieldName.#items").  In a live viewer the result is an XFA
+  // node whose .nodes collection contains one <text> child per option label;
+  // each child exposes .value / .rawValue.  Scripts iterate:
+  //   for (var i=0; i<items.nodes.length; i++) { items.nodes.item(i).value }
+  // We materialise that shape from the host display-strings array so existing
+  // scripts complete without TypeError and can read the label list.
+  function makeItemsSubstitute(displayStrings) {
+    var nodes = [];
+    for (var k = 0; k < displayStrings.length; k++) {
+      (function(label) {
+        var textNode = nullProtoObject();
+        Object.defineProperty(textNode, "value", {
+          enumerable: true, configurable: false, writable: false, value: label
+        });
+        Object.defineProperty(textNode, "rawValue", {
+          enumerable: false, configurable: false, writable: false, value: label
+        });
+        nodes.push(Object.freeze(textNode));
+      })(displayStrings[k]);
+    }
+    var frozenNodes = Object.freeze(nodes);
+    var nodesCollection = nullProtoObject();
+    Object.defineProperty(nodesCollection, "length", {
+      enumerable: true, configurable: false, get: function() { return frozenNodes.length; }
+    });
+    Object.defineProperty(nodesCollection, "item", {
+      enumerable: false, configurable: false, writable: false,
+      value: function(idx) { return frozenNodes[idx] || null; }
+    });
+    var substitute = nullProtoObject();
+    Object.defineProperty(substitute, "nodes", {
+      enumerable: true, configurable: false, writable: false, value: Object.freeze(nodesCollection)
+    });
+    Object.defineProperty(substitute, "length", {
+      enumerable: true, configurable: false, get: function() { return frozenNodes.length; }
+    });
+    return Object.freeze(substitute);
+  }
+
   function handleResolveNode(path) {
     if (typeof path === "string" &&
         (path.indexOf("data.") === 0 || path.indexOf("$data.") === 0 ||
@@ -2241,13 +2281,10 @@ const PHASE_C_BINDINGS_JS: &str = r##"
     }
     // BE-1: intercept `FieldName.#items` (XFA 3.3 §7.7 / §8.1).
     // `#items` is the SOM class reference for a choiceList's <items> element.
-    // The form-tree resolver has no node for it; we resolve the field part and
-    // return a frozen-array substitute so scripts can iterate the item list.
-    // Pattern: path ends with ".#items" (possibly more prefix segments before).
-    // Guard: path.length must exceed 7 (".#items" itself) so the fieldPath
-    // portion is at least one character — otherwise lastIndexOf(".#items")==-1
-    // and path.length-7 could both be -1, causing a false-positive match on
-    // short paths like "Field1" (length 6, length-7 == -1 == lastIndexOf miss).
+    // The form-tree resolver has no node for it; we resolve the field part,
+    // fetch its display labels, and return an XFA-compatible substitute.
+    // Guard: path.length > 7 prevents false-positive when lastIndexOf returns
+    // -1 and path.length-7 is also -1 (paths shorter than 8 chars).
     if (typeof path === "string" && path.length > 7 &&
         path.lastIndexOf(".#items") === path.length - 7) {
       var fieldPath = path.substring(0, path.length - 7);
@@ -2257,9 +2294,7 @@ const PHASE_C_BINDINGS_JS: &str = r##"
         if (displayItems.length > 0) {
           host.somItemsPathHit();
         }
-        // Return a frozen array so scripts that iterate it directly work.
-        var itemsArr = Object.freeze(displayItems.slice());
-        return itemsArr;
+        return makeItemsSubstitute(displayItems);
       }
       return null;
     }
@@ -2474,15 +2509,16 @@ const PHASE_C_BINDINGS_JS: &str = r##"
         }
         // BE-1: `#items` — XFA 3.3 §7.7 / §8.1 choiceList item labels.
         // Scripts access `fieldHandle.#items` (e.g. `Wojewodztwo.#items`) to
-        // read the display-label array for a choice-list field.  The `#`
-        // prefix is a legal XFA SOM class reference; it bypasses
-        // `shouldDeferHandleProperty` via `handlePropertyExclusions`.
+        // read the display-label collection.  Returns an XFA-compatible
+        // substitute (makeItemsSubstitute) so scripts can use both direct
+        // array indexing and the `.nodes` / `.nodes.item(i)` access pattern.
+        // `#` bypasses `shouldDeferHandleProperty` via `handlePropertyExclusions`.
         if (prop === "#items") {
           var displayItems = host.getDisplayItems(id, generation);
           if (displayItems.length > 0) {
             host.somItemsPathHit();
           }
-          return Object.freeze(displayItems.slice());
+          return makeItemsSubstitute(displayItems);
         }
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
@@ -2973,7 +3009,7 @@ const PHASE_C_BINDINGS_JS: &str = r##"
       // Scripts call `xfa.resolveNode("Wojewodztwo.#items")` to get the items
       // collection for a choiceList; the form-tree SOM cannot resolve `#items`
       // as a node, so we resolve the field, fetch its display labels, and
-      // return a frozen array in its place.
+      // return an XFA-compatible substitute (makeItemsSubstitute).
       // Guard: path.length > 7 prevents false-positive match when
       // lastIndexOf returns -1 and path.length-7 is also -1.
       if (typeof path === "string" && path.length > 7 &&
@@ -2985,7 +3021,7 @@ const PHASE_C_BINDINGS_JS: &str = r##"
           if (xrDisplayItems.length > 0) {
             host.somItemsPathHit();
           }
-          return Object.freeze(xrDisplayItems.slice());
+          return makeItemsSubstitute(xrDisplayItems);
         }
         return null;
       }
