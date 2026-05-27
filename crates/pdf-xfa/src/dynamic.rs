@@ -2608,4 +2608,166 @@ Details.presence = "visible"
             "unknown-function failure must increment formcalc_errors"
         );
     }
+
+    // ─── Epic A enrichment tests ──────────────────────────────────────────────
+    //
+    // Environment variable writes are not `std::sync::atomic` — we serialise all
+    // three tests with a process-wide `Mutex` so they cannot race on the env.
+    static ENV_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// E-1: `script_lifecycle` is populated when `XFA_FLATTEN_TRACE=1`.
+    ///
+    /// Builds a FormTree with a single JavaScript `initialize` event on a field.
+    /// In `BestEffortStatic` mode the script is skipped but still recorded in
+    /// the lifecycle vec with outcome `"skipped_mode"`.
+    #[test]
+    fn script_lifecycle_populated_when_trace_enabled() {
+        let _guard = env_lock();
+        std::env::set_var("XFA_FLATTEN_TRACE", "1");
+
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let field = add_node(
+            &mut tree,
+            "TraceField",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+        tree.get_mut(root).children = vec![field];
+        tree.meta_mut(field).event_scripts = vec![javascript_script(
+            "xfa.host.messageBox('trace');",
+            "initialize",
+        )];
+
+        let outcome =
+            apply_dynamic_scripts_with_mode(&mut tree, root, JsExecutionMode::BestEffortStatic)
+                .unwrap();
+
+        std::env::remove_var("XFA_FLATTEN_TRACE");
+
+        assert!(
+            !outcome.script_lifecycle.is_empty(),
+            "script_lifecycle must have at least one entry when XFA_FLATTEN_TRACE=1"
+        );
+        let entry = &outcome.script_lifecycle[0];
+        assert_eq!(entry.node_name, "TraceField");
+        assert_eq!(entry.activity, "initialize");
+        assert_eq!(entry.lang, "javascript");
+        // BestEffortStatic skips JS entirely — outcome must reflect that.
+        assert_eq!(
+            entry.outcome, "skipped_mode",
+            "BestEffortStatic JS must appear as skipped_mode in lifecycle"
+        );
+    }
+
+    /// E-6: `skipped_activities` tallies correctly for a `click` script.
+    ///
+    /// A JavaScript script with `activity="click"` cannot be executed during
+    /// flatten (not in the sandbox allowlist and skipped by BestEffortStatic).
+    /// When `XFA_FLATTEN_TRACE=1` the `skipped_activities.click` counter must
+    /// increment by exactly 1.
+    #[test]
+    fn skipped_activities_tallies_click_correctly() {
+        let _guard = env_lock();
+        std::env::set_var("XFA_FLATTEN_TRACE", "1");
+
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let btn = add_node(
+            &mut tree,
+            "ClickBtn",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+        tree.get_mut(root).children = vec![btn];
+        // `click` activity — never executed during flatten regardless of mode.
+        tree.meta_mut(btn).event_scripts = vec![javascript_script(
+            "xfa.host.messageBox('clicked');",
+            "click",
+        )];
+
+        let outcome =
+            apply_dynamic_scripts_with_mode(&mut tree, root, JsExecutionMode::BestEffortStatic)
+                .unwrap();
+
+        std::env::remove_var("XFA_FLATTEN_TRACE");
+
+        assert_eq!(
+            outcome.skipped_activities.click, 1,
+            "exactly one click-activity JS script must be tallied in skipped_activities.click"
+        );
+        // Other buckets must stay at zero.
+        assert_eq!(outcome.skipped_activities.initialize, 0);
+        assert_eq!(outcome.skipped_activities.calculate, 0);
+        assert_eq!(outcome.skipped_activities.other, 0);
+    }
+
+    /// E-5: `form_dom_match_failures` increments when `apply_form_dom_presence`
+    /// suppresses a named subform absent from the form DOM.
+    ///
+    /// The FormTree contains a named `Subform` child ("Ghost") that does NOT
+    /// appear in the form XML packet.  The form XML contains a sibling child
+    /// ("Present") so that the "has_subform_children" guard inside
+    /// `apply_form_dom_presence` fires and suppression logic runs.
+    #[test]
+    fn form_dom_match_failures_increments_for_unmatched_subform() {
+        use crate::flatten::{apply_form_dom_presence, XfaRenderingPolicy};
+
+        let _guard = env_lock();
+        // E-5 diag log is armed when XFA_FLATTEN_TRACE or XFA_RUNTIME_DIAG is set.
+        std::env::set_var("XFA_FLATTEN_TRACE", "1");
+
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        // "form1" is the top-level subform that the form XML root-subform matches.
+        let form1 = add_node(&mut tree, "form1", FormNodeType::Subform);
+        // "Present" appears in the form DOM — will be matched.
+        let present = add_node(&mut tree, "Present", FormNodeType::Subform);
+        // "Ghost" is NOT in the form DOM — will be suppressed.
+        let ghost = add_node(&mut tree, "Ghost", FormNodeType::Subform);
+
+        tree.get_mut(root).children = vec![form1];
+        tree.get_mut(form1).children = vec![present, ghost];
+
+        // Minimal form XML: root subform "form1" contains one child "Present"
+        // but no "Ghost" child.  Because "Present" is listed, the
+        // `has_subform_children` guard fires and "Ghost" is suppressed.
+        let form_xml = r#"<form>
+  <subform name="form1">
+    <subform name="Present"/>
+  </subform>
+</form>"#;
+
+        let (_admitted, match_failures, match_log) = apply_form_dom_presence(
+            &mut tree,
+            root,
+            form_xml,
+            XfaRenderingPolicy::SavedStateFaithful,
+            false,
+        );
+
+        std::env::remove_var("XFA_FLATTEN_TRACE");
+
+        assert_eq!(
+            match_failures, 1,
+            "exactly one unmatched named subform (Ghost) must be counted"
+        );
+        assert_eq!(match_log.len(), 1, "match_log must contain the Ghost entry");
+        assert_eq!(match_log[0].template_node_name, "Ghost");
+        assert_eq!(match_log[0].reason, "formdom_unmatched_suppressed");
+        // Verify presence was actually suppressed on the FormTree node.
+        assert!(
+            tree.meta(ghost).presence.is_not_visible(),
+            "Ghost subform must have been hidden by apply_form_dom_presence"
+        );
+    }
 }
