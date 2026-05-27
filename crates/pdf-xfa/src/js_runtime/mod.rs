@@ -324,6 +324,17 @@ impl RuntimeMetadata {
     }
 }
 
+/// Epic A E-2/E-3: verbose per-entry diagnostic logs drained alongside
+/// [`RuntimeMetadata`] from [`HostBindings`].  Empty unless
+/// `XFA_RUNTIME_DIAG=1` is set at the HostBindings call sites.
+#[derive(Debug, Default)]
+pub struct RuntimeDiagLogs {
+    /// E-2: SOM resolution misses (capped at 200).
+    pub som_fail_log: Vec<crate::dynamic::SomFailEntry>,
+    /// E-3: instanceManager write events (capped at 200).
+    pub instance_write_log: Vec<crate::dynamic::InstanceWriteEntry>,
+}
+
 /// Default per-script wall-clock budget enforced by the rquickjs
 /// backend (S-9). Exposed as a constant so tests can reason about it
 /// without depending on the runtime backend module.
@@ -555,6 +566,13 @@ pub trait XfaJsRuntime {
     /// rollback decision. Default: none (non-sandboxed runtimes capture nothing).
     fn take_occur_mutations(&mut self) -> Vec<(usize, String, i64)> {
         Vec::new()
+    }
+
+    /// Epic A E-2/E-3: drain verbose per-entry diagnostic logs. Only
+    /// populated when `XFA_RUNTIME_DIAG=1` is set at the host call sites.
+    /// Default impl returns empty logs (NullRuntime, non-sandboxed paths).
+    fn take_diag_logs(&mut self) -> RuntimeDiagLogs {
+        RuntimeDiagLogs::default()
     }
 }
 
