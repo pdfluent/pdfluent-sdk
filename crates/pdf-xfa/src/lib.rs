@@ -45,7 +45,10 @@ pub mod render_bridge;
 pub mod template_parser;
 
 pub use classify::{detect_xfa_type, detect_xfa_type_from_packets, XfaType};
-pub use dynamic::{DynamicScriptOutcome, JsExecutionMode, OutputQuality};
+pub use dynamic::{
+    DynamicScriptOutcome, FormDomMatchEntry, InstanceWriteEntry, JsExecutionMode, OutputQuality,
+    PresenceMutationEntry, ScriptLifecycleEntry, SkippedActivities, SomFailEntry,
+};
 pub use extract::{extract_embedded_fonts, validate_xfa_packets, PacketValidation};
 pub use flatten::{
     compare_flatten_quality, flatten_xfa_to_pdf, flatten_xfa_to_pdf_with_layout_dump,

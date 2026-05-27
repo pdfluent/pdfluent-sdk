@@ -80,8 +80,8 @@ thread_local! {
 #[cfg(feature = "xfa-js-sandboxed")]
 use crate::dynamic::apply_dynamic_scripts_with_runtime;
 use crate::dynamic::{
-    apply_dynamic_scripts, apply_dynamic_scripts_with_mode, DynamicScriptOutcome, JsExecutionMode,
-    OutputQuality,
+    apply_dynamic_scripts, apply_dynamic_scripts_with_mode, runtime_diag_enabled,
+    DynamicScriptOutcome, FormDomMatchEntry, JsExecutionMode, OutputQuality,
 };
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
@@ -240,7 +240,7 @@ impl XfaRenderingPolicy {
 }
 
 /// Lightweight metadata returned alongside the flattened PDF bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FlattenMetadata {
     /// Outcome of dynamic script processing applied during flattening.
     pub dynamic_scripts: DynamicScriptOutcome,
@@ -264,9 +264,10 @@ pub struct FlattenMetadata {
 
 impl FlattenMetadata {
     fn from_dynamic_scripts(dynamic_scripts: DynamicScriptOutcome) -> Self {
+        let output_quality = dynamic_scripts.output_quality;
         Self {
             dynamic_scripts,
-            output_quality: dynamic_scripts.output_quality,
+            output_quality,
             rendering_policy: XfaRenderingPolicy::SavedStateFaithful,
             fresh_merge_admitted_nodes: 0,
         }
@@ -285,12 +286,14 @@ impl FlattenOutput {
         mut layout_dump: LayoutDump,
         dynamic_scripts: DynamicScriptOutcome,
     ) -> Self {
+        let output_quality = dynamic_scripts.output_quality;
+        let metadata = FlattenMetadata::from_dynamic_scripts(dynamic_scripts.clone());
         layout_dump.dynamic_scripts = dynamic_scripts;
-        layout_dump.output_quality = dynamic_scripts.output_quality;
+        layout_dump.output_quality = output_quality;
         Self {
             pdf_bytes,
             layout_dump,
-            metadata: FlattenMetadata::from_dynamic_scripts(dynamic_scripts),
+            metadata,
         }
     }
 
@@ -1121,11 +1124,12 @@ fn xfa_flatten_inner(
                 || v.eq_ignore_ascii_case("false"))
         })
         .unwrap_or(true);
-    let fresh_merge_admitted = if let Some(fxml) = form_xml {
-        apply_form_dom_presence(&mut tree, root_id, fxml, policy, admit_databound_override)
-    } else {
-        0
-    };
+    let (fresh_merge_admitted, form_dom_match_failures, form_dom_match_log) =
+        if let Some(fxml) = form_xml {
+            apply_form_dom_presence(&mut tree, root_id, fxml, policy, admit_databound_override)
+        } else {
+            (0, 0, Vec::new())
+        };
 
     // Resolve fonts BEFORE layout so the layout engine uses actual font metrics
     // (widths, ascender, descender) instead of generic AFM tables.
@@ -1553,6 +1557,11 @@ fn xfa_flatten_inner(
             output_page_count,
         });
     }
+
+    // Epic A E-5: patch match-failure data into the dynamic_scripts outcome.
+    let mut dynamic_scripts = dynamic_scripts;
+    dynamic_scripts.form_dom_match_failures = form_dom_match_failures;
+    dynamic_scripts.form_dom_match_log = form_dom_match_log;
 
     let mut flatten_out = FlattenOutput::new(out, layout_dump.unwrap_or_default(), dynamic_scripts);
     flatten_out.metadata.fresh_merge_admitted_nodes = fresh_merge_admitted;
@@ -2722,6 +2731,13 @@ fn static_fallback(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+// Epic A E-5: thread-local for match-failure accumulation inside the local
+// `apply_recursive` fn (which cannot capture outer state).
+std::thread_local! {
+    static FORM_DOM_MATCH_LOG: std::cell::RefCell<Option<Vec<FormDomMatchEntry>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Apply presence overrides and repeating-instance expansion from the XFA form
 /// DOM packet.
 ///
@@ -2737,17 +2753,19 @@ fn static_fallback(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
 ///    correct instance count produced by the runtime's `instanceManager`.  We
 ///    deep-clone the template instance and populate field values from the form
 ///    DOM so the layout engine produces the right number of pages.
+///
+/// Return value: `(admitted_count, match_failures, match_log)`.
 fn apply_form_dom_presence(
     tree: &mut FormTree,
     root_id: FormNodeId,
     form_xml: &str,
     policy: XfaRenderingPolicy,
     admit_databound_override: bool,
-) -> usize {
+) -> (usize, usize, Vec<FormDomMatchEntry>) {
     use xfa_layout_engine::form::{FormNodeType, Presence};
 
     let Ok(doc) = roxmltree::Document::parse(form_xml) else {
-        return 0;
+        return (0, 0, Vec::new());
     };
 
     /// Deep-clone a subtree rooted at `src_id`, returning the new root id.
@@ -3082,7 +3100,21 @@ fn apply_form_dom_presence(
                     } else {
                         // SavedStateFaithful without override (or ineligible
                         // node): suppress.
+                        // Epic A E-5: capture name before mutating (borrow order).
+                        let suppressed_name = child_node.name.clone();
+                        let suppressed_id = fid.0;
                         tree.meta_mut(fid).presence = Presence::Hidden;
+                        crate::flatten::FORM_DOM_MATCH_LOG.with(|cell| {
+                            if let Some(ref mut log) = *cell.borrow_mut() {
+                                if log.len() < 200 {
+                                    log.push(crate::dynamic::FormDomMatchEntry {
+                                        template_node_id: suppressed_id,
+                                        template_node_name: suppressed_name,
+                                        reason: "formdom_unmatched_suppressed".to_string(),
+                                    });
+                                }
+                            }
+                        });
                     }
                 }
             }
@@ -3095,6 +3127,14 @@ fn apply_form_dom_presence(
     let form_root_subform = form_root
         .children()
         .find(|c| c.is_element() && c.tag_name().name() == "subform");
+
+    // E-5: arm the thread-local if XFA_RUNTIME_DIAG or XFA_FLATTEN_TRACE.
+    let diag_on = runtime_diag_enabled() || crate::flatten_trace::enabled();
+    if diag_on {
+        FORM_DOM_MATCH_LOG.with(|cell| {
+            *cell.borrow_mut() = Some(Vec::new());
+        });
+    }
 
     let mut total_admitted: usize = 0;
     if let Some(xml_root_sf) = form_root_subform {
@@ -3113,7 +3153,15 @@ fn apply_form_dom_presence(
             }
         }
     }
-    total_admitted
+
+    // E-5: drain.
+    let match_log = if diag_on {
+        FORM_DOM_MATCH_LOG.with(|cell| cell.borrow_mut().take().unwrap_or_default())
+    } else {
+        Vec::new()
+    };
+    let match_failures = match_log.len();
+    (total_admitted, match_failures, match_log)
 }
 
 /// Tiny PDFs (<1KB) with XFA templates that lack essential elements (subform,
@@ -6113,7 +6161,7 @@ ET
         );
 
         // Apply form DOM
-        apply_form_dom_presence(
+        let _ = apply_form_dom_presence(
             &mut tree,
             root_id,
             form_xml,
@@ -6186,7 +6234,7 @@ ET
         let merger = crate::merger::FormMerger::new(&data_dom);
         let (mut tree, root_id) = merger.merge(template).unwrap();
 
-        apply_form_dom_presence(
+        let _ = apply_form_dom_presence(
             &mut tree,
             root_id,
             form_xml,
@@ -6257,7 +6305,7 @@ ET
         let merger = crate::merger::FormMerger::new(&data_dom);
         let (mut tree, root_id) = merger.merge(template).unwrap();
 
-        apply_form_dom_presence(
+        let _ = apply_form_dom_presence(
             &mut tree,
             root_id,
             form_xml,
@@ -6370,7 +6418,7 @@ ET
             tree.meta_mut(bound).bound_data_node = Some(0); // data-bound
             tree.meta_mut(unbound).bound_data_node = None; // no data node
 
-            let admitted =
+            let (admitted, _, _) =
                 apply_form_dom_presence(&mut tree, root_id, form_xml, policy, override_on);
             (
                 admitted,

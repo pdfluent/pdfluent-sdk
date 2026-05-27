@@ -74,6 +74,12 @@ pub struct HostBindings {
     /// rollback decision and (only when `XFA_OCCUR_APPLY=1`) applied to the form
     /// before layout. Cleared per document.
     captured_occur_mutations: Vec<(FormNodeId, String, i64)>,
+    /// Epic A E-2: SOM resolution misses (capped at 200 entries). Only
+    /// populated when `XFA_RUNTIME_DIAG=1`.
+    som_fail_log: Vec<crate::dynamic::SomFailEntry>,
+    /// Epic A E-3: instanceManager write entries (capped at 200). Only
+    /// populated when `XFA_RUNTIME_DIAG=1`.
+    instance_write_log: Vec<crate::dynamic::InstanceWriteEntry>,
 }
 
 impl Default for HostBindings {
@@ -95,6 +101,8 @@ impl Default for HostBindings {
             data_dom: None,
             presave_gate: false,
             captured_occur_mutations: Vec::new(),
+            som_fail_log: Vec::new(),
+            instance_write_log: Vec::new(),
         }
     }
 }
@@ -233,6 +241,14 @@ impl HostBindings {
     /// Read and clear host metadata counters.
     pub fn take_metadata(&mut self) -> RuntimeMetadata {
         std::mem::take(&mut self.metadata)
+    }
+
+    /// Epic A E-2/E-3: drain the verbose diagnostic log vectors.
+    pub fn take_diag_logs(&mut self) -> crate::js_runtime::RuntimeDiagLogs {
+        crate::js_runtime::RuntimeDiagLogs {
+            som_fail_log: std::mem::take(&mut self.som_fail_log),
+            instance_write_log: std::mem::take(&mut self.instance_write_log),
+        }
     }
 
     /// Mutation log for tests and debug reporting.
@@ -401,12 +417,12 @@ impl HostBindings {
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
                 self.note_som(false, path);
-                debug_log_resolve_miss("resolve_node:NoMatch", path);
+                self.debug_log_resolve_miss("resolve_node:NoMatch", path);
                 return None;
             }
             ResolveOutcome::BindingError => {
                 self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
-                debug_log_resolve_miss("resolve_node:BindingError", path);
+                self.debug_log_resolve_miss("resolve_node:BindingError", path);
                 return None;
             }
         };
@@ -420,7 +436,7 @@ impl HostBindings {
             .find(|node_id| matches!(form.get(*node_id).node_type, FormNodeType::Field { .. }));
         if found.is_none() {
             self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
-            debug_log_resolve_miss("resolve_node:NoField", path);
+            self.debug_log_resolve_miss("resolve_node:NoField", path);
         }
         found
     }
@@ -432,13 +448,13 @@ impl HostBindings {
         let nodes = match self.resolve_path(path) {
             ResolveOutcome::Ok(nodes) => nodes,
             ResolveOutcome::NoMatch => {
-                debug_log_resolve_miss("resolve_nodes:NoMatch", path);
+                self.debug_log_resolve_miss("resolve_nodes:NoMatch", path);
                 return Vec::new();
             }
             ResolveOutcome::BindingError => {
                 self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
-                debug_log_resolve_miss("resolve_nodes:BindingError", path);
+                self.debug_log_resolve_miss("resolve_nodes:BindingError", path);
                 return Vec::new();
             }
         };
@@ -470,7 +486,7 @@ impl HostBindings {
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
                 self.note_som(false, name);
-                debug_log_resolve_miss("resolve_implicit:NoMatch", name);
+                self.debug_log_resolve_miss("resolve_implicit:NoMatch", name);
                 None
             }
             ResolveOutcome::BindingError => {
@@ -499,7 +515,7 @@ impl HostBindings {
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
                 self.note_som(false, name);
-                debug_log_resolve_miss("resolve_implicit_candidates:NoMatch", name);
+                self.debug_log_resolve_miss("resolve_implicit_candidates:NoMatch", name);
                 Vec::new()
             }
             ResolveOutcome::BindingError => {
@@ -542,7 +558,7 @@ impl HostBindings {
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
                 self.note_som(false, name);
-                debug_log_resolve_miss("resolve_child:NoMatch", name);
+                self.debug_log_resolve_miss("resolve_child:NoMatch", name);
                 None
             }
             ResolveOutcome::BindingError => {
@@ -572,7 +588,7 @@ impl HostBindings {
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
                 self.note_som(false, name);
-                debug_log_resolve_miss("resolve_child_candidates:NoMatch", name);
+                self.debug_log_resolve_miss("resolve_child_candidates:NoMatch", name);
                 Vec::new()
             }
             ResolveOutcome::BindingError => {
@@ -622,7 +638,7 @@ impl HostBindings {
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
                 self.note_som(false, name);
-                debug_log_resolve_miss("resolve_scoped_candidates:NoMatch", name);
+                self.debug_log_resolve_miss("resolve_scoped_candidates:NoMatch", name);
                 Vec::new()
             }
             ResolveOutcome::BindingError => {
@@ -671,7 +687,7 @@ impl HostBindings {
             ResolveOutcome::Ok(nodes) => nodes,
             ResolveOutcome::NoMatch => {
                 self.metadata.resolve_failures = self.metadata.resolve_failures.saturating_add(1);
-                debug_log_resolve_miss("resolve_implicit_candidates_hinted:NoMatch", name);
+                self.debug_log_resolve_miss("resolve_implicit_candidates_hinted:NoMatch", name);
                 return Vec::new();
             }
             ResolveOutcome::BindingError => {
@@ -1430,6 +1446,13 @@ impl HostBindings {
             return Err(());
         };
         let remove_ids = run.nodes;
+        let old_count_set = remove_ids.len();
+        // E-3: capture parent name before taking form_mut.
+        let parent_name_set = self
+            .form_ref()
+            .and_then(|form| form.nodes.get(parent_id.0))
+            .map(|n| n.name.clone())
+            .unwrap_or_default();
 
         let mut new_ids = Vec::with_capacity(target_count);
         if target_count > 0 {
@@ -1454,13 +1477,20 @@ impl HostBindings {
             parent.children.insert(insert_pos + offset, node_id);
         }
 
-        let key = (parent_id, prototype_name);
+        let key = (parent_id, prototype_name.clone());
         if target_count == 0 {
             self.zero_instance_runs.insert(key, self.generation);
         } else {
             self.zero_instance_runs.remove(&key);
         }
         self.record_instance_write();
+        self.record_instance_write_detail(
+            parent_id,
+            &parent_name_set,
+            &prototype_name,
+            old_count_set,
+            target_count,
+        );
         Ok(target_count as u32)
     }
 
@@ -1486,6 +1516,19 @@ impl HostBindings {
             .form_ref()
             .and_then(|form| form.nodes.get(run.prototype_id.0))
             .map(|node| (run.parent_id, node.name.clone()));
+        // E-3: capture details before mutable borrow.
+        let add_proto_name = self
+            .form_ref()
+            .and_then(|form| form.nodes.get(run.prototype_id.0))
+            .map(|n| n.name.clone())
+            .unwrap_or_default();
+        let add_parent_name = self
+            .form_ref()
+            .and_then(|form| form.nodes.get(run.parent_id.0))
+            .map(|n| n.name.clone())
+            .unwrap_or_default();
+        let add_old_count = run.nodes.len();
+        let add_parent_id = run.parent_id;
         let Some(max_allowed) = self.max_instances_for(run.prototype_id) else {
             self.metadata.binding_errors = self.metadata.binding_errors.saturating_add(1);
             return Err(());
@@ -1508,6 +1551,13 @@ impl HostBindings {
             self.zero_instance_runs.remove(&key);
         }
         self.record_instance_write();
+        self.record_instance_write_detail(
+            add_parent_id,
+            &add_parent_name,
+            &add_proto_name,
+            add_old_count,
+            add_old_count + 1,
+        );
         Ok(cloned_id)
     }
 
@@ -1534,6 +1584,19 @@ impl HostBindings {
             .form_ref()
             .and_then(|form| form.nodes.get(run.prototype_id.0))
             .map(|node| (run.parent_id, node.name.clone()));
+        // E-3: capture details before mutable borrow.
+        let rm_proto_name = self
+            .form_ref()
+            .and_then(|form| form.nodes.get(run.prototype_id.0))
+            .map(|n| n.name.clone())
+            .unwrap_or_default();
+        let rm_parent_name = self
+            .form_ref()
+            .and_then(|form| form.nodes.get(run.parent_id.0))
+            .map(|n| n.name.clone())
+            .unwrap_or_default();
+        let rm_old_count = run.nodes.len();
+        let rm_parent_id = run.parent_id;
         let min_allowed = self
             .form_ref()
             .and_then(|form| form.nodes.get(run.prototype_id.0))
@@ -1562,6 +1625,13 @@ impl HostBindings {
             }
         }
         self.record_instance_write();
+        self.record_instance_write_detail(
+            rm_parent_id,
+            &rm_parent_name,
+            &rm_proto_name,
+            rm_old_count,
+            rm_old_count.saturating_sub(1),
+        );
         Ok(())
     }
 
@@ -1684,6 +1754,33 @@ impl HostBindings {
     fn record_instance_write(&mut self) {
         self.metadata.instance_writes = self.metadata.instance_writes.saturating_add(1);
         self.mutation_count_this_doc = self.mutation_count_this_doc.saturating_add(1);
+    }
+
+    /// Epic A E-3: record instance write with structural detail.  Called from
+    /// the three instance mutation sites after the plain `record_instance_write`
+    /// bump.  Only adds to `instance_write_log` when `XFA_RUNTIME_DIAG=1`.
+    fn record_instance_write_detail(
+        &mut self,
+        parent_id: FormNodeId,
+        parent_name: &str,
+        proto_name: &str,
+        old_count: usize,
+        new_count: usize,
+    ) {
+        if !crate::dynamic::runtime_diag_enabled() || self.instance_write_log.len() >= 200 {
+            return;
+        }
+        let parent_node_id = parent_id.0;
+        self.instance_write_log
+            .push(crate::dynamic::InstanceWriteEntry {
+                script_idx: self.current_script_idx,
+                activity: self.current_activity.as_deref().unwrap_or("").to_string(),
+                parent_node_id,
+                parent_node_name: parent_name.to_string(),
+                prototype_node_name: proto_name.to_string(),
+                old_count,
+                new_count,
+            });
     }
 
     fn record_list_write(&mut self) {
@@ -2010,12 +2107,25 @@ fn is_instance_node(node_type: &FormNodeType) -> bool {
     )
 }
 
-/// XFA-DATA-M3C diagnostic: log the SOM path that failed to resolve when the
-/// `XFA_JS_DEBUG` env var is set to `1`. Off by default so the dispatch path
-/// stays silent in normal operation.
-fn debug_log_resolve_miss(kind: &str, path: &str) {
-    if std::env::var("XFA_JS_DEBUG").ok().as_deref() == Some("1") {
-        eprintln!("XFA_JS_DEBUG {kind} path={path:?}");
+impl HostBindings {
+    /// XFA-DATA-M3C diagnostic: log the SOM path that failed to resolve when
+    /// the `XFA_JS_DEBUG` env var is set to `1`. Off by default so the dispatch
+    /// path stays silent in normal operation.
+    ///
+    /// Epic A E-2: also pushes an entry to `self.som_fail_log` when
+    /// `XFA_RUNTIME_DIAG=1` (capped at 200).
+    fn debug_log_resolve_miss(&mut self, kind: &str, path: &str) {
+        if std::env::var("XFA_JS_DEBUG").ok().as_deref() == Some("1") {
+            eprintln!("XFA_JS_DEBUG {kind} path={path:?}");
+        }
+        if crate::dynamic::runtime_diag_enabled() && self.som_fail_log.len() < 200 {
+            self.som_fail_log.push(crate::dynamic::SomFailEntry {
+                path: path.to_string(),
+                kind: kind.to_string(),
+                script_idx: self.current_script_idx,
+                activity: self.current_activity.as_deref().unwrap_or("").to_string(),
+            });
+        }
     }
 }
 
