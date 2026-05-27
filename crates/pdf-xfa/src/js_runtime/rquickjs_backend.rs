@@ -2239,6 +2239,30 @@ const PHASE_C_BINDINGS_JS: &str = r##"
       if (rawId < 0) return null;
       return makeDataHandle(rawId);
     }
+    // BE-1: intercept `FieldName.#items` (XFA 3.3 §7.7 / §8.1).
+    // `#items` is the SOM class reference for a choiceList's <items> element.
+    // The form-tree resolver has no node for it; we resolve the field part and
+    // return a frozen-array substitute so scripts can iterate the item list.
+    // Pattern: path ends with ".#items" (possibly more prefix segments before).
+    // Guard: path.length must exceed 7 (".#items" itself) so the fieldPath
+    // portion is at least one character — otherwise lastIndexOf(".#items")==-1
+    // and path.length-7 could both be -1, causing a false-positive match on
+    // short paths like "Field1" (length 6, length-7 == -1 == lastIndexOf miss).
+    if (typeof path === "string" && path.length > 7 &&
+        path.lastIndexOf(".#items") === path.length - 7) {
+      var fieldPath = path.substring(0, path.length - 7);
+      var fid = host.resolveNodeId(fieldPath);
+      if (fid >= 0) {
+        var displayItems = host.getDisplayItems(fid, host.generation());
+        if (displayItems.length > 0) {
+          host.somItemsPathHit();
+        }
+        // Return a frozen array so scripts that iterate it directly work.
+        var itemsArr = Object.freeze(displayItems.slice());
+        return itemsArr;
+      }
+      return null;
+    }
     var nid = host.resolveNodeId(path);
     if (nid < 0) return null;
     return makeHandle(nid, host.generation());
@@ -2944,6 +2968,26 @@ const PHASE_C_BINDINGS_JS: &str = r##"
         var rawId = host.dataResolveNode(path);
         if (rawId < 0) return null;
         return makeDataHandle(rawId);
+      }
+      // BE-1: intercept `FieldName.#items` — same logic as handleResolveNode.
+      // Scripts call `xfa.resolveNode("Wojewodztwo.#items")` to get the items
+      // collection for a choiceList; the form-tree SOM cannot resolve `#items`
+      // as a node, so we resolve the field, fetch its display labels, and
+      // return a frozen array in its place.
+      // Guard: path.length > 7 prevents false-positive match when
+      // lastIndexOf returns -1 and path.length-7 is also -1.
+      if (typeof path === "string" && path.length > 7 &&
+          path.lastIndexOf(".#items") === path.length - 7) {
+        var fieldPath = path.substring(0, path.length - 7);
+        var fid = host.resolveNodeId(fieldPath);
+        if (fid >= 0) {
+          var xrDisplayItems = host.getDisplayItems(fid, host.generation());
+          if (xrDisplayItems.length > 0) {
+            host.somItemsPathHit();
+          }
+          return Object.freeze(xrDisplayItems.slice());
+        }
+        return null;
       }
       var id = host.resolveNodeId(path);
       if (id < 0) {
