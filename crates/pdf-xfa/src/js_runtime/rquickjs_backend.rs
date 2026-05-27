@@ -4079,6 +4079,10 @@ impl XfaJsRuntime for QuickJsRuntime {
             .map(|(id, prop, value)| (id.0, prop, value))
             .collect()
     }
+
+    fn take_diag_logs(&mut self) -> crate::js_runtime::RuntimeDiagLogs {
+        self.host.borrow_mut().take_diag_logs()
+    }
 }
 
 #[cfg(test)]

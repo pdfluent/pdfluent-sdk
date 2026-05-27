@@ -73,7 +73,7 @@ impl OutputQuality {
 ///
 /// Returned by [`flatten_xfa_to_pdf_with_metadata`](crate::flatten_xfa_to_pdf_with_metadata)
 /// and embedded in [`FlattenMetadata`](crate::FlattenMetadata).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DynamicScriptOutcome {
     /// Number of form field values that were mutated by scripts.
     pub changes: usize,
@@ -190,6 +190,146 @@ pub struct DynamicScriptOutcome {
     pub presence_retry_nodes_under_admitted: usize,
     /// **D7.** Field/draw nodes under admitted subtrees.
     pub presence_retry_text_nodes_admitted: usize,
+
+    // ---- Epic A: runtime observability enrichment (XFA_FLATTEN_TRACE / XFA_RUNTIME_DIAG) ----
+    /// **E-1 (XFA_FLATTEN_TRACE).** Per-script lifecycle entries (capped at 500).
+    /// Each entry records the script index, host node id/name, activity, language,
+    /// and outcome (executed|skipped_activity|skipped_mode|error|timeout).
+    pub script_lifecycle: Vec<ScriptLifecycleEntry>,
+
+    /// **E-6 (XFA_FLATTEN_TRACE).** Per-activity tally of JS scripts that were
+    /// skipped (not routed through the sandbox).
+    pub skipped_activities: SkippedActivities,
+
+    /// **E-2 (XFA_RUNTIME_DIAG).** SOM resolution misses logged at the host-binding
+    /// boundary. Capped at 200 entries.
+    pub som_fail_log: Vec<SomFailEntry>,
+
+    /// **E-3 (XFA_RUNTIME_DIAG).** Per-write instanceManager mutation log (capped at 200).
+    pub instance_write_log: Vec<InstanceWriteEntry>,
+
+    /// **E-4 (XFA_RUNTIME_DIAG).** Presence mutations observed during FormCalc
+    /// script execution (capped at 200). JS-side presence writes go through the
+    /// host binding; FormCalc goes through `set_presence` in dynamic.rs — this
+    /// captures the FormCalc path.
+    pub presence_mutation_log: Vec<PresenceMutationEntry>,
+
+    /// **E-5 (XFA_FLATTEN_TRACE).** Number of named subforms hidden by
+    /// `apply_form_dom_presence` because they had no matching form-DOM entry.
+    pub form_dom_match_failures: usize,
+
+    /// **E-5 (XFA_RUNTIME_DIAG).** Per-suppression entries from
+    /// `apply_form_dom_presence` (capped at 200).
+    pub form_dom_match_log: Vec<FormDomMatchEntry>,
+}
+
+// ---- Epic A support types ----
+
+/// E-1: one entry in `script.lifecycle[]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptLifecycleEntry {
+    /// Zero-based index of this script in document execution order.
+    pub script_idx: usize,
+    /// FormNodeId that owns the script.
+    pub node_id: usize,
+    /// `name` attribute of the owning node (may be empty).
+    pub node_name: String,
+    /// `activity` attribute of the event element (e.g. `"initialize"`), or empty.
+    pub activity: String,
+    /// Script language.
+    pub lang: &'static str,
+    /// Execution outcome.
+    pub outcome: &'static str,
+}
+
+/// E-6: per-activity skip tallies for JavaScript scripts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SkippedActivities {
+    /// Scripts with `activity="initialize"` skipped.
+    pub initialize: usize,
+    /// Scripts with `activity="calculate"` skipped.
+    pub calculate: usize,
+    /// Scripts with `activity="click"` skipped.
+    pub click: usize,
+    /// Scripts with `activity="docReady"` skipped.
+    pub doc_ready: usize,
+    /// Scripts with `activity="layoutReady"` skipped.
+    pub layout_ready: usize,
+    /// Scripts with any other (or absent) activity attribute skipped.
+    pub other: usize,
+}
+
+impl SkippedActivities {
+    fn bump(&mut self, activity: Option<&str>) {
+        match activity {
+            Some("initialize") => self.initialize += 1,
+            Some("calculate") => self.calculate += 1,
+            Some("click") => self.click += 1,
+            Some("docReady") => self.doc_ready += 1,
+            Some("layoutReady") => self.layout_ready += 1,
+            _ => self.other += 1,
+        }
+    }
+}
+
+/// E-2: one SOM-miss entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SomFailEntry {
+    /// The SOM path that failed to resolve.
+    pub path: String,
+    /// Miss category (e.g. `"resolve_miss"`, `"formcalc_miss"`).
+    pub kind: String,
+    /// Script index (matches `ScriptLifecycleEntry::script_idx`).
+    pub script_idx: usize,
+    /// Activity at the time of the miss.
+    pub activity: String,
+}
+
+/// E-3: one instanceManager write entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceWriteEntry {
+    /// Script index.
+    pub script_idx: usize,
+    /// Activity.
+    pub activity: String,
+    /// Parent container node id.
+    pub parent_node_id: usize,
+    /// Parent container node name.
+    pub parent_node_name: String,
+    /// Prototype node name (the repeated child template).
+    pub prototype_node_name: String,
+    /// Instance count before the write.
+    pub old_count: usize,
+    /// Instance count after the write.
+    pub new_count: usize,
+}
+
+/// E-4: one presence-mutation observation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresenceMutationEntry {
+    /// Script index at mutation time (best-effort; may be 0 for FormCalc).
+    pub script_idx: usize,
+    /// Activity at mutation time.
+    pub activity: String,
+    /// Node id.
+    pub node_id: usize,
+    /// Node name.
+    pub node_name: String,
+    /// Presence before the change.
+    pub old_presence: String,
+    /// Presence after the change.
+    pub new_presence: String,
+}
+
+/// E-5: one form-DOM match-failure / suppression entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormDomMatchEntry {
+    /// Template FormNodeId of the hidden subform.
+    pub template_node_id: usize,
+    /// Name of the suppressed subform.
+    pub template_node_name: String,
+    /// Short reason string.
+    pub reason: String,
 }
 
 impl Default for DynamicScriptOutcome {
@@ -244,6 +384,13 @@ impl Default for DynamicScriptOutcome {
             presence_retry_skipped: 0,
             presence_retry_nodes_under_admitted: 0,
             presence_retry_text_nodes_admitted: 0,
+            script_lifecycle: Vec::new(),
+            skipped_activities: SkippedActivities::default(),
+            som_fail_log: Vec::new(),
+            instance_write_log: Vec::new(),
+            presence_mutation_log: Vec::new(),
+            form_dom_match_failures: 0,
+            form_dom_match_log: Vec::new(),
         }
     }
 }
@@ -433,6 +580,48 @@ fn presence_retry_enabled() -> bool {
     std::env::var("XFA_PRESENCE_RETRY").ok().as_deref() == Some("1")
 }
 
+/// Epic A: true when `XFA_RUNTIME_DIAG` is set to `"1"`.  Gates the verbose
+/// per-entry log arrays (E-2, E-3, E-4, E-5-log).  Default OFF so normal
+/// flattens are byte-identical and zero-cost.
+pub(crate) fn runtime_diag_enabled() -> bool {
+    std::env::var("XFA_RUNTIME_DIAG").ok().as_deref() == Some("1")
+}
+
+// Epic A E-4: thread-local accumulator for FormCalc presence mutations.
+// Active only during `apply_dynamic_scripts_with_runtime` when
+// `XFA_RUNTIME_DIAG=1`.  Using thread-local avoids threading an extra Vec
+// through `run_script_phase` / `write_formcalc_value` / `set_presence`.
+std::thread_local! {
+    static PRESENCE_MUT_LOG: std::cell::RefCell<Option<Vec<PresenceMutationEntry>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Push a presence mutation entry into the thread-local log.
+/// Called from `set_presence_inner` when an entry was created.
+fn push_presence_mutation(
+    node_id: usize,
+    node_name: &str,
+    old_presence: &'static str,
+    new_presence: &'static str,
+) {
+    PRESENCE_MUT_LOG.with(|cell| {
+        if let Some(ref mut log) = *cell.borrow_mut() {
+            if log.len() < 200 {
+                log.push(PresenceMutationEntry {
+                    // script_idx/activity are not readily available at this call
+                    // depth — report 0/"" (best-effort per Epic A spec note).
+                    script_idx: 0,
+                    activity: String::new(),
+                    node_id,
+                    node_name: node_name.to_string(),
+                    old_presence: old_presence.to_string(),
+                    new_presence: new_presence.to_string(),
+                });
+            }
+        }
+    });
+}
+
 /// Phase B entry point that lets the caller inject a sandboxed runtime
 /// adapter. When `mode == JsExecutionMode::SandboxedRuntime` the supplied
 /// `runtime` is consulted for every JavaScript script whose `<event activity>`
@@ -489,6 +678,18 @@ pub fn apply_dynamic_scripts_with_runtime(
     // in-depth §2 of the policy doc).
     let presave_gate = sandbox_active && presave_during_flatten_enabled();
 
+    // Epic A E-1/E-6: read gates once; zero cost unless env is set.
+    let trace_enabled = crate::flatten_trace::enabled();
+    let diag_enabled = runtime_diag_enabled();
+
+    // E-1: lifecycle log (cap 500).
+    let mut script_lifecycle: Vec<ScriptLifecycleEntry> = Vec::new();
+    // E-6: per-activity skip tally.
+    let mut skipped_activities = SkippedActivities::default();
+    // Running script index (mirrors host.rs next_script_idx for JS; for
+    // FormCalc scripts we share the same monotonic counter).
+    let mut dispatch_script_idx: usize = 0;
+
     if sandbox_active {
         // Best-effort init / reset; init failures are non-fatal — the
         // dispatch path will record them as runtime_errors per script.
@@ -499,24 +700,42 @@ pub fn apply_dynamic_scripts_with_runtime(
     }
 
     for (node_id, node_scripts) in all_scripts {
+        let node = form.get(node_id);
+        let node_name = if trace_enabled || diag_enabled {
+            node.name.clone()
+        } else {
+            String::new()
+        };
         let mut formcalc_scripts = Vec::new();
         for script in node_scripts {
             match script.language {
                 ScriptLanguage::FormCalc => formcalc_scripts.push(script),
                 ScriptLanguage::JavaScript => {
+                    let activity_str = script.activity.as_deref().unwrap_or("");
                     if sandbox_active
                         && activity_allowed_for_sandbox_with_gate(
                             script.activity.as_deref(),
                             presave_gate,
                         )
                     {
+                        let this_idx = dispatch_script_idx;
+                        dispatch_script_idx += 1;
                         let _ = runtime.reset_per_script(node_id, script.activity.as_deref());
-                        match runtime.execute_script(script.activity.as_deref(), &script.script) {
-                            Ok(_outcome) => {
+                        let outcome_str = match runtime
+                            .execute_script(script.activity.as_deref(), &script.script)
+                        {
+                            Ok(_) => {
                                 // Counter increment lives on `take_metadata()`.
+                                "executed"
                             }
-                            Err(SandboxError::Timeout) => js_skipped += 1,
-                            Err(SandboxError::OutOfMemory) => js_skipped += 1,
+                            Err(SandboxError::Timeout) => {
+                                js_skipped += 1;
+                                "timeout"
+                            }
+                            Err(SandboxError::OutOfMemory) => {
+                                js_skipped += 1;
+                                "error"
+                            }
                             Err(e) => {
                                 // M3-B Phase C-α: surface the per-script error
                                 // class via `log::debug!` for normal builds and
@@ -536,13 +755,60 @@ pub fn apply_dynamic_scripts_with_runtime(
                                     );
                                 }
                                 js_skipped += 1;
+                                "error"
                             }
+                        };
+                        // E-1: record lifecycle entry when tracing is on.
+                        if trace_enabled && script_lifecycle.len() < 500 {
+                            script_lifecycle.push(ScriptLifecycleEntry {
+                                script_idx: this_idx,
+                                node_id: node_id.0,
+                                node_name: node_name.clone(),
+                                activity: activity_str.to_string(),
+                                lang: "javascript",
+                                outcome: outcome_str,
+                            });
                         }
                     } else {
                         js_skipped += 1;
+                        // E-1: record skipped lifecycle entry.
+                        if trace_enabled && script_lifecycle.len() < 500 {
+                            let skip_reason = if sandbox_active {
+                                "skipped_activity"
+                            } else {
+                                "skipped_mode"
+                            };
+                            script_lifecycle.push(ScriptLifecycleEntry {
+                                script_idx: dispatch_script_idx,
+                                node_id: node_id.0,
+                                node_name: node_name.clone(),
+                                activity: activity_str.to_string(),
+                                lang: "javascript",
+                                outcome: skip_reason,
+                            });
+                        }
+                        // E-6: tally per-activity skips.
+                        if trace_enabled {
+                            skipped_activities.bump(script.activity.as_deref());
+                        }
+                        dispatch_script_idx += 1;
                     }
                 }
-                ScriptLanguage::Other => other_skipped += 1,
+                ScriptLanguage::Other => {
+                    other_skipped += 1;
+                    // E-1: log other-language skips.
+                    if trace_enabled && script_lifecycle.len() < 500 {
+                        script_lifecycle.push(ScriptLifecycleEntry {
+                            script_idx: dispatch_script_idx,
+                            node_id: node_id.0,
+                            node_name: node_name.clone(),
+                            activity: script.activity.as_deref().unwrap_or("").to_string(),
+                            lang: "other",
+                            outcome: "skipped_mode",
+                        });
+                    }
+                    dispatch_script_idx += 1;
+                }
             }
         }
         if !formcalc_scripts.is_empty() {
@@ -551,13 +817,25 @@ pub fn apply_dynamic_scripts_with_runtime(
     }
 
     let mut captured_occur: Vec<(usize, String, i64)> = Vec::new();
+    // Epic A E-2/E-3: logs drained from host bindings.
+    let mut sandbox_diag = crate::js_runtime::RuntimeDiagLogs::default();
     if sandbox_active {
         let _ = runtime.set_form_handle(std::ptr::null_mut(), root_id);
         sandbox_metadata = runtime.take_metadata();
         captured_occur = runtime.take_occur_mutations();
+        if diag_enabled {
+            sandbox_diag = runtime.take_diag_logs();
+        }
     }
 
     let mut stats = ScriptStats::default();
+
+    // Epic A E-4: arm the thread-local presence mutation log.
+    if diag_enabled {
+        PRESENCE_MUT_LOG.with(|cell| {
+            *cell.borrow_mut() = Some(Vec::new());
+        });
+    }
 
     let mut changes = sandbox_metadata
         .mutations
@@ -580,6 +858,13 @@ pub fn apply_dynamic_scripts_with_runtime(
             MAX_SCRIPT_PASSES,
             &mut stats,
         )?;
+
+    // E-4: drain and disarm.
+    let presence_mutation_log = if diag_enabled {
+        PRESENCE_MUT_LOG.with(|cell| cell.borrow_mut().take().unwrap_or_default())
+    } else {
+        Vec::new()
+    };
 
     let sandbox_rollback_errors = sandbox_metadata
         .runtime_errors
@@ -779,6 +1064,14 @@ pub fn apply_dynamic_scripts_with_runtime(
         presence_retry_skipped: pr_skipped,
         presence_retry_nodes_under_admitted: pr_nodes_under_admitted,
         presence_retry_text_nodes_admitted: pr_text_nodes_admitted,
+        // Epic A fields.
+        script_lifecycle,
+        skipped_activities,
+        som_fail_log: sandbox_diag.som_fail_log,
+        instance_write_log: sandbox_diag.instance_write_log,
+        presence_mutation_log,
+        form_dom_match_failures: 0,
+        form_dom_match_log: Vec::new(),
     })
 }
 
@@ -1520,8 +1813,17 @@ fn set_raw_value(form: &mut FormTree, node_id: FormNodeId, value: ScriptValue) -
 }
 
 fn set_presence(form: &mut FormTree, node_id: FormNodeId, value: ScriptValue) -> usize {
+    set_presence_inner(form, node_id, value).0
+}
+
+/// Returns `(change_count, Option<(old_str, new_str)>)` for E-4 observability.
+fn set_presence_inner(
+    form: &mut FormTree,
+    node_id: FormNodeId,
+    value: ScriptValue,
+) -> (usize, Option<(&'static str, &'static str)>) {
     let value = match value {
-        ScriptValue::Null => return 0,
+        ScriptValue::Null => return (0, None),
         ScriptValue::String(value) => value,
     };
     let normalized = value.trim().to_ascii_lowercase();
@@ -1530,15 +1832,30 @@ fn set_presence(form: &mut FormTree, node_id: FormNodeId, value: ScriptValue) ->
         "hidden" => Presence::Hidden,
         "invisible" => Presence::Invisible,
         "inactive" => Presence::Inactive,
-        _ => return 0,
+        _ => return (0, None),
     };
 
     let meta = form.meta_mut(node_id);
-    if meta.presence == new_presence {
-        return 0;
+    let old_presence = meta.presence;
+    if old_presence == new_presence {
+        return (0, None);
     }
     meta.presence = new_presence;
-    1
+
+    fn pres_str(p: Presence) -> &'static str {
+        match p {
+            Presence::Visible => "visible",
+            Presence::Hidden => "hidden",
+            Presence::Invisible => "invisible",
+            Presence::Inactive => "inactive",
+        }
+    }
+    let mutation = (pres_str(old_presence), pres_str(new_presence));
+    if runtime_diag_enabled() {
+        let node_name = form.get(node_id).name.clone();
+        push_presence_mutation(node_id.0, &node_name, mutation.0, mutation.1);
+    }
+    (1, Some(mutation))
 }
 
 fn normalize_number(number: f64) -> String {
