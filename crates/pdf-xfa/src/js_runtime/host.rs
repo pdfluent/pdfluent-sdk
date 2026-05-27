@@ -1220,6 +1220,18 @@ impl HostBindings {
         self.metadata.probe_skips = self.metadata.probe_skips.saturating_add(1);
     }
 
+    /// BE-1: Record a successful `$data` bare-global intercept.
+    pub fn metadata_som_data_root_hit(&mut self) {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        self.metadata.som_data_root_hits = self.metadata.som_data_root_hits.saturating_add(1);
+    }
+
+    /// BE-1: Record a successful `#items` property access (non-empty list returned).
+    pub fn metadata_som_items_path_hit(&mut self) {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        self.metadata.som_items_path_hits = self.metadata.som_items_path_hits.saturating_add(1);
+    }
+
     fn consume_resolve_call(&mut self) -> bool {
         if self.resolve_count_this_script >= MAX_RESOLVE_CALLS_PER_SCRIPT {
             return false;
@@ -2007,6 +2019,39 @@ impl HostBindings {
             return None;
         }
         form.meta(form_node_id).bound_data_node
+    }
+
+    /// BE-1: Return the display-label strings for a choice-list field.
+    ///
+    /// Priority order (mirrors Adobe Reader behaviour):
+    /// 1. Runtime-populated items from D-β `addItem` calls (display strings only).
+    /// 2. Static `<items>` display strings parsed from the template at merge time.
+    ///
+    /// Returns an empty `Vec` when the handle is stale, the node is not a
+    /// field, or neither list is populated.  The `som_items_path_hits` counter
+    /// is **not** bumped here — the JS layer bumps it after receiving the
+    /// non-empty result so the counter accurately reflects "did the script get
+    /// useful data" rather than "was the host called".
+    pub fn get_display_items(&mut self, field_id: FormNodeId, generation: u64) -> Vec<String> {
+        self.metadata.host_calls = self.metadata.host_calls.saturating_add(1);
+        if !self.handle_is_live(field_id, generation) {
+            return Vec::new();
+        }
+        let Some(form) = self.form_ref() else {
+            return Vec::new();
+        };
+        if !matches!(form.get(field_id).node_type, FormNodeType::Field { .. }) {
+            return Vec::new();
+        }
+        let meta = form.meta(field_id);
+        if !meta.runtime_listbox_items.is_empty() {
+            return meta
+                .runtime_listbox_items
+                .iter()
+                .map(|(display, _save)| display.clone())
+                .collect();
+        }
+        meta.display_items.clone()
     }
 
     /// Phase D-γ: resolve a data SOM path to the first matching node.
