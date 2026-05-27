@@ -939,6 +939,34 @@ fn flatten_xfa_to_pdf_internal(
     }
 }
 
+/// BE-1 tranche #1: collect the names of structural containers
+/// (`subform`/`subformSet`/`exclGroup`/`area`) declared anywhere in the XFA
+/// template. Installed on the sandboxed runtime before script execution so a
+/// bare implicit SOM reference to a declared-but-absent container resolves to a
+/// benign empty node (Adobe semantics) instead of `undefined`. Only built on
+/// the sandboxed path; the default binary never calls this.
+#[cfg(feature = "xfa-js-sandboxed")]
+fn collect_declared_container_names(template_xml: &str) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    if let Ok(doc) = roxmltree::Document::parse(template_xml) {
+        for node in doc.descendants() {
+            if node.is_element()
+                && matches!(
+                    node.tag_name().name(),
+                    "subform" | "subformSet" | "exclGroup" | "area"
+                )
+            {
+                if let Some(name) = node.attribute("name") {
+                    if !name.is_empty() {
+                        names.insert(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
 /// Core XFA flatten pipeline: parse template, bind data, layout, render.
 fn xfa_flatten_inner(
     pdf_bytes: &[u8],
@@ -1033,6 +1061,14 @@ fn xfa_flatten_inner(
                 match QuickJsRuntime::new() {
                     Ok(mut rt) => {
                         rt.set_data_handle(&data_dom as *const _);
+                        // BE-1 tranche #1: install template-declared container
+                        // names so a bare implicit ref to a declared-but-absent
+                        // subform resolves to a benign empty node (isNull=true)
+                        // instead of `undefined`, letting guarded second-party
+                        // scripts run their else branch (setInstances(0)/hide).
+                        rt.set_declared_subform_names(collect_declared_container_names(
+                            template_xml,
+                        ));
                         apply_dynamic_scripts_with_runtime(
                             &mut tree,
                             root_id,

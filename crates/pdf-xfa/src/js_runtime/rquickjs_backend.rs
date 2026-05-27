@@ -1142,6 +1142,26 @@ impl QuickJsRuntime {
                 .set("dataResolveNode", data_resolve_node)
                 .map_err(|e| format!("set dataResolveNode: {e}"))?;
 
+            // BE-1 tranche #1: predicate for the benign absent-declared-node
+            // façade. The implicit-globals `lookup` calls this only after the
+            // scope resolve returned 0 nodes; a `true` result means the name is
+            // a template-declared container (subform/subformSet/exclGroup/area)
+            // absent from the current scope, so `lookup` returns
+            // `makeAbsentNodeHandle()` (isNull===true, chainable) instead of
+            // `undefined`. Undeclared names → false → `undefined` (D-θ.1).
+            let idan_host = Rc::clone(&host);
+            let is_declared_absent_node =
+                Function::new(ctx.clone(), move |name: Opt<Coerced<String>>| -> bool {
+                    let Some(name) = name.0 else {
+                        return false;
+                    };
+                    idan_host.borrow().is_declared_absent_node(&name.0)
+                })
+                .map_err(|e| format!("isDeclaredAbsentNode: {e}"))?;
+            internal
+                .set("isDeclaredAbsentNode", is_declared_absent_node)
+                .map_err(|e| format!("set isDeclaredAbsentNode: {e}"))?;
+
             let drns_host = Rc::clone(&host);
             let data_resolve_nodes =
                 Function::new(ctx.clone(), move |path: Opt<Coerced<String>>| -> Vec<i32> {
@@ -2619,6 +2639,51 @@ const PHASE_C_BINDINGS_JS: &str = r##"
     });
   }
 
+  // BE-1 tranche #1: benign "absent declared node" façade. Returned by the
+  // implicit-globals `lookup` for a bare identifier that fails the scope
+  // resolve but names a template-declared container (gated by the host
+  // `isDeclaredAbsentNode`). Mirrors Adobe semantics: a reference to a
+  // declared-but-absent node is an EMPTY node — `isNull === true`, `rawValue`/
+  // `value` null, empty `nodes`, an empty `instanceManager`, and every further
+  // SOM segment chains to another empty node. Writes are absorbed. This lets a
+  // guarded script (`if (!Sub.Child.Field.isNull) {…} else {…}`) evaluate the
+  // guard to `false` and run its else branch (e.g. `_X.setInstances(0)`,
+  // `presence = "invisible"`) instead of throwing on `undefined`. Modelled on
+  // `makeNullDataHandle`; the explicit boolean `isNull` is essential — without
+  // it, `.isNull` would chain to a truthy façade object and invert the guard.
+  function makeAbsentNodeHandle() {
+    var sentinel = nullProtoObject();
+    Object.defineProperty(sentinel, "isNull",
+      { get: function() { return true; }, enumerable: true, configurable: true });
+    Object.defineProperty(sentinel, "value",
+      { get: function() { return null; }, enumerable: true, configurable: true });
+    Object.defineProperty(sentinel, "rawValue",
+      { get: function() { return null; }, enumerable: true, configurable: true });
+    Object.defineProperty(sentinel, "length",
+      { get: function() { return 0; }, enumerable: true, configurable: true });
+    var emptyNodes = [];
+    emptyNodes.item = function() { return makeAbsentNodeHandle(); };
+    Object.freeze(emptyNodes);
+    Object.defineProperty(sentinel, "nodes",
+      { get: function() { return emptyNodes; }, enumerable: true, configurable: true });
+    Object.defineProperty(sentinel, "instanceManager",
+      { get: function() { return makeEmptyInstanceManager(); }, enumerable: true, configurable: true });
+    sentinel.item = function() { return makeAbsentNodeHandle(); };
+    return new Proxy(sentinel, {
+      get: function(target, prop) {
+        if (prop in target) return target[prop];
+        if (typeof prop !== "string") return undefined;
+        // `_<Name>` underscore-shorthand → an empty instanceManager, so chained
+        // `Sub._Child.setInstances(n)` on an absent node is a safe no-op.
+        if (prop.charAt(0) === "_" && prop.length > 1) return makeEmptyInstanceManager();
+        // any further SOM segment chains to another empty node.
+        return makeAbsentNodeHandle();
+      },
+      // absorb writes (presence, rawValue, mandatory, …) — empty nodes are inert.
+      set: function(_target, _prop, _value) { return true; }
+    });
+  }
+
   // Phase D-γ: Data DOM handle — wraps a raw DataDom node index and exposes
   // `.value`, `.nodes`, `.length`, `.item(i)`, and named child access via Proxy.
   function makeDataHandle(rawId) {
@@ -3545,6 +3610,21 @@ const PHASE_C_BINDINGS_JS: &str = r##"
       }
       var nodeIds = uniqueNodeIds(host.resolveImplicitNodeIds(currentId, name));
       if (nodeIds.length === 0) {
+        // BE-1 tranche #1: a bare implicit identifier that fails the scope
+        // resolve but names a template-declared container resolves to a benign
+        // EMPTY node (Adobe semantics: isNull===true), not `undefined`. This
+        // lets guarded scripts such as
+        //   if (!Podmiot1.OsobaFizyczna.PESEL.isNull) {...} else {...}
+        // take the empty (else) branch and run their setInstances(0)/presence
+        // writes instead of throwing "cannot read property '…' of undefined"
+        // and aborting. Undeclared names still return `undefined`, preserving
+        // the D-θ.1 `A.B === undefined` byte-identity contract for genuine
+        // misses. Gated host-side by `isDeclaredAbsentNode`; sandboxed-only.
+        if (host.isDeclaredAbsentNode(name)) {
+          var facade = makeAbsentNodeHandle();
+          cachedHandles[name] = facade;
+          return facade;
+        }
         return undefined;
       }
       // Phase D-θ.2: wrap an implicit hit in the full-chain accumulator. The
@@ -4077,6 +4157,10 @@ impl XfaJsRuntime for QuickJsRuntime {
         self.host.borrow_mut().set_data_handle(dom);
     }
 
+    fn set_declared_subform_names(&mut self, names: std::collections::HashSet<String>) {
+        self.host.borrow_mut().set_declared_subform_names(names);
+    }
+
     fn reset_per_script(
         &mut self,
         current_id: FormNodeId,
@@ -4267,6 +4351,62 @@ mod tests {
         let md = rt.take_metadata();
         assert_eq!(md.executed, 1);
         assert!(md.is_clean());
+    }
+
+    // BE-1 tranche #1: a bare implicit reference to a template-declared
+    // container that has no live node resolves to a benign EMPTY node
+    // (isNull===true, chainable, writes absorbed) — so the guarded
+    // second-party pattern takes its else branch instead of throwing
+    // "cannot read property '…' of undefined" and aborting the script.
+    #[test]
+    fn absent_declared_subform_resolves_to_empty_node() {
+        let mut rt = fresh_runtime();
+        let mut names = std::collections::HashSet::new();
+        names.insert("Podmiot1".to_string());
+        rt.set_declared_subform_names(names);
+        // Mirrors the real NIP1/PESEL1 initialize script on 2ff85101.
+        rt.execute_script(
+            Some("calculate"),
+            r#"
+            if (Podmiot1.OsobaFizyczna.PESEL.isNull !== true)
+                throw new Error('expected isNull === true on absent declared node');
+            var tookElse = false;
+            if (!Podmiot1.OsobaFizyczna.PESEL.isNull) { tookElse = false; }
+            else { tookElse = true; }
+            if (!tookElse) throw new Error('guard did not take the empty (else) branch');
+            // Chained writes on the empty node must be inert (no throw).
+            Podmiot1.OsobaFizyczna.presence = "invisible";
+            Podmiot1.OsobaFizyczna.PESEL.rawValue = 2;
+            if (Podmiot1.nodes.length !== 0) throw new Error('expected empty .nodes');
+            "#,
+        )
+        .expect("absent declared subform must resolve to a benign empty node");
+    }
+
+    // BE-1 tranche #1: the discriminator is necessary — an UNDECLARED bare name
+    // must still surface as `undefined`, preserving the D-θ.1 byte-identity
+    // contract (`A.B === undefined` for genuine misses). Without the declared
+    // set installed, the same identifier stays undefined.
+    #[test]
+    fn undeclared_bare_name_stays_undefined() {
+        let mut rt = fresh_runtime();
+        // No declared names installed at all.
+        rt.execute_script(
+            Some("calculate"),
+            "if (typeof NemoNonexistent7 !== 'undefined') \
+             throw new Error('D-theta.1 violated: undeclared name became defined');",
+        )
+        .expect("undeclared bare name must remain undefined");
+        // Even with an UNRELATED declared name present, an undeclared ref stays undefined.
+        let mut names = std::collections::HashSet::new();
+        names.insert("SomeOtherSubform".to_string());
+        rt.set_declared_subform_names(names);
+        rt.execute_script(
+            Some("calculate"),
+            "if (typeof NemoNonexistent7 !== 'undefined') \
+             throw new Error('D-theta.1 violated: undeclared name became defined (declared set present)');",
+        )
+        .expect("undeclared bare name must remain undefined even when other names are declared");
     }
 
     #[test]
