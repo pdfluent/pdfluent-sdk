@@ -227,6 +227,10 @@ pub struct RuntimeMetadata {
     pub occur_application_ambiguous: usize,
     /// D6: distinct form nodes whose occur was applied.
     pub occur_application_targets: usize,
+    /// BE-1: `$data` bare-global intercepts resolved successfully (JS layer).
+    pub som_data_root_hits: usize,
+    /// BE-1: `#items` property accesses resolved to a non-empty item list.
+    pub som_items_path_hits: usize,
 }
 
 impl RuntimeMetadata {
@@ -321,6 +325,12 @@ impl RuntimeMetadata {
         self.occur_application_targets = self
             .occur_application_targets
             .saturating_add(other.occur_application_targets);
+        self.som_data_root_hits = self
+            .som_data_root_hits
+            .saturating_add(other.som_data_root_hits);
+        self.som_items_path_hits = self
+            .som_items_path_hits
+            .saturating_add(other.som_items_path_hits);
     }
 }
 
