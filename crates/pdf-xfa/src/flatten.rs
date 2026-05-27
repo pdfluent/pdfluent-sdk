@@ -2755,7 +2755,7 @@ std::thread_local! {
 ///    DOM so the layout engine produces the right number of pages.
 ///
 /// Return value: `(admitted_count, match_failures, match_log)`.
-fn apply_form_dom_presence(
+pub(crate) fn apply_form_dom_presence(
     tree: &mut FormTree,
     root_id: FormNodeId,
     form_xml: &str,

@@ -952,6 +952,27 @@ impl QuickJsRuntime {
                 .set("boundItem", bound_item)
                 .map_err(|e| format!("set boundItem: {e}"))?;
 
+            // BE-1: `#items` — XFA 3.3 §7.7 / §8.1 choiceList item labels.
+            // Returns a JS Array of display-label strings for the field, or
+            // an empty array when the handle is stale or the node is not a
+            // field with a populated item list.
+            let get_display_items_host = Rc::clone(&host);
+            let get_display_items = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64| -> Vec<String> {
+                    if id < 0 || generation < 0 {
+                        return Vec::new();
+                    }
+                    get_display_items_host
+                        .borrow_mut()
+                        .get_display_items(FormNodeId(id as usize), generation as u64)
+                },
+            )
+            .map_err(|e| format!("getDisplayItems: {e}"))?;
+            internal
+                .set("getDisplayItems", get_display_items)
+                .map_err(|e| format!("set getDisplayItems: {e}"))?;
+
             let num_pages_host = Rc::clone(&host);
             let num_pages =
                 Function::new(ctx.clone(), move || num_pages_host.borrow_mut().num_pages())
@@ -977,6 +998,30 @@ impl QuickJsRuntime {
             internal
                 .set("resolveFailure", resolve_failure)
                 .map_err(|e| format!("set resolveFailure: {e}"))?;
+
+            // BE-1 telemetry: `$data` bare-global resolve hit.
+            let som_data_root_hit_host = Rc::clone(&host);
+            let som_data_root_hit = Function::new(ctx.clone(), move || {
+                som_data_root_hit_host
+                    .borrow_mut()
+                    .metadata_som_data_root_hit();
+            })
+            .map_err(|e| format!("somDataRootHit: {e}"))?;
+            internal
+                .set("somDataRootHit", som_data_root_hit)
+                .map_err(|e| format!("set somDataRootHit: {e}"))?;
+
+            // BE-1 telemetry: `#items` property access resolved to non-empty list.
+            let som_items_path_hit_host = Rc::clone(&host);
+            let som_items_path_hit = Function::new(ctx.clone(), move || {
+                som_items_path_hit_host
+                    .borrow_mut()
+                    .metadata_som_items_path_hit();
+            })
+            .map_err(|e| format!("somItemsPathHit: {e}"))?;
+            internal
+                .set("somItemsPathHit", som_items_path_hit)
+                .map_err(|e| format!("set somItemsPathHit: {e}"))?;
 
             // Phase E (XFA-JS-HOST-STUBS) — sandbox-safe accounting hook for
             // host capabilities that require viewer / user interaction. JS
@@ -1435,7 +1480,7 @@ fn strip_js_comments(src: &str) -> String {
     out
 }
 
-const PHASE_C_BINDINGS_JS: &str = r#"
+const PHASE_C_BINDINGS_JS: &str = r##"
 (function(host) {
   function protoGuard() {
     return Object.freeze(Object.create(null));
@@ -1494,7 +1539,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   // Properties that must NOT be deferred so their specific implementations run.
   var handlePropertyExclusions = lookupObject();
   ["rawValue", "somExpression", "isNull", "clearItems", "addItem", "boundItem",
-   "$record", "nodes", "value", "length", "item", "choiceList"].forEach(function(name) {
+   "$record", "nodes", "value", "length", "item", "choiceList", "#items"].forEach(function(name) {
     handlePropertyExclusions[name] = true;
   });
 
@@ -1717,6 +1762,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       case "clearItems":
       case "addItem":
       case "boundItem":
+      case "#items":
       case "$record":
       case "variables":
       case "nodes":
@@ -2062,6 +2108,16 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "choiceList") {
           return Object.freeze([]);
         }
+        // BE-1: `#items` on a candidate-set — mirrors the makeHandle path.
+        // Uses the first candidate as the representative field id (same
+        // convention as boundItem / clearItems / addItem above).
+        if (prop === "#items") {
+          var csDisplayItems = host.getDisplayItems(firstId, generation);
+          if (csDisplayItems.length > 0) {
+            host.somItemsPathHit();
+          }
+          return makeItemsSubstitute(csDisplayItems);
+        }
         // XFA-DATA-M3C: `<candidateSet>.ui` returns the widget-config stub.
         // See makeUiStub on makeHandle for rationale.
         if (prop === "ui") {
@@ -2175,6 +2231,46 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   // `data.`, `$data.`, and `xfa.datasets.data.` prefixes. The Cluster C
   // null-return contract is preserved: a miss in the host returns native
   // `null` for the singular form and a frozen empty array for the plural.
+  // BE-1: XFA-compatible substitute for the <items> element returned by
+  // resolveNode("FieldName.#items").  In a live viewer the result is an XFA
+  // node whose .nodes collection contains one <text> child per option label;
+  // each child exposes .value / .rawValue.  Scripts iterate:
+  //   for (var i=0; i<items.nodes.length; i++) { items.nodes.item(i).value }
+  // We materialise that shape from the host display-strings array so existing
+  // scripts complete without TypeError and can read the label list.
+  function makeItemsSubstitute(displayStrings) {
+    var nodes = [];
+    for (var k = 0; k < displayStrings.length; k++) {
+      (function(label) {
+        var textNode = nullProtoObject();
+        Object.defineProperty(textNode, "value", {
+          enumerable: true, configurable: false, writable: false, value: label
+        });
+        Object.defineProperty(textNode, "rawValue", {
+          enumerable: false, configurable: false, writable: false, value: label
+        });
+        nodes.push(Object.freeze(textNode));
+      })(displayStrings[k]);
+    }
+    var frozenNodes = Object.freeze(nodes);
+    var nodesCollection = nullProtoObject();
+    Object.defineProperty(nodesCollection, "length", {
+      enumerable: true, configurable: false, get: function() { return frozenNodes.length; }
+    });
+    Object.defineProperty(nodesCollection, "item", {
+      enumerable: false, configurable: false, writable: false,
+      value: function(idx) { return frozenNodes[idx] || null; }
+    });
+    var substitute = nullProtoObject();
+    Object.defineProperty(substitute, "nodes", {
+      enumerable: true, configurable: false, writable: false, value: Object.freeze(nodesCollection)
+    });
+    Object.defineProperty(substitute, "length", {
+      enumerable: true, configurable: false, get: function() { return frozenNodes.length; }
+    });
+    return Object.freeze(substitute);
+  }
+
   function handleResolveNode(path) {
     if (typeof path === "string" &&
         (path.indexOf("data.") === 0 || path.indexOf("$data.") === 0 ||
@@ -2182,6 +2278,25 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       var rawId = host.dataResolveNode(path);
       if (rawId < 0) return null;
       return makeDataHandle(rawId);
+    }
+    // BE-1: intercept `FieldName.#items` (XFA 3.3 §7.7 / §8.1).
+    // `#items` is the SOM class reference for a choiceList's <items> element.
+    // The form-tree resolver has no node for it; we resolve the field part,
+    // fetch its display labels, and return an XFA-compatible substitute.
+    // Guard: path.length > 7 prevents false-positive when lastIndexOf returns
+    // -1 and path.length-7 is also -1 (paths shorter than 8 chars).
+    if (typeof path === "string" && path.length > 7 &&
+        path.lastIndexOf(".#items") === path.length - 7) {
+      var fieldPath = path.substring(0, path.length - 7);
+      var fid = host.resolveNodeId(fieldPath);
+      if (fid >= 0) {
+        var displayItems = host.getDisplayItems(fid, host.generation());
+        if (displayItems.length > 0) {
+          host.somItemsPathHit();
+        }
+        return makeItemsSubstitute(displayItems);
+      }
+      return null;
     }
     var nid = host.resolveNodeId(path);
     if (nid < 0) return null;
@@ -2392,6 +2507,19 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "resolveNodes") {
           return handleResolveNodes;
         }
+        // BE-1: `#items` — XFA 3.3 §7.7 / §8.1 choiceList item labels.
+        // Scripts access `fieldHandle.#items` (e.g. `Wojewodztwo.#items`) to
+        // read the display-label collection.  Returns an XFA-compatible
+        // substitute (makeItemsSubstitute) so scripts can use both direct
+        // array indexing and the `.nodes` / `.nodes.item(i)` access pattern.
+        // `#` bypasses `shouldDeferHandleProperty` via `handlePropertyExclusions`.
+        if (prop === "#items") {
+          var displayItems = host.getDisplayItems(id, generation);
+          if (displayItems.length > 0) {
+            host.somItemsPathHit();
+          }
+          return makeItemsSubstitute(displayItems);
+        }
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
         }
@@ -2426,6 +2554,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           prop === "caption" ||
           prop === "resolveNode" ||
           prop === "resolveNodes" ||
+          prop === "#items" ||
           Reflect.has(target, prop);
       }
     });
@@ -2875,6 +3004,26 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         var rawId = host.dataResolveNode(path);
         if (rawId < 0) return null;
         return makeDataHandle(rawId);
+      }
+      // BE-1: intercept `FieldName.#items` — same logic as handleResolveNode.
+      // Scripts call `xfa.resolveNode("Wojewodztwo.#items")` to get the items
+      // collection for a choiceList; the form-tree SOM cannot resolve `#items`
+      // as a node, so we resolve the field, fetch its display labels, and
+      // return an XFA-compatible substitute (makeItemsSubstitute).
+      // Guard: path.length > 7 prevents false-positive match when
+      // lastIndexOf returns -1 and path.length-7 is also -1.
+      if (typeof path === "string" && path.length > 7 &&
+          path.lastIndexOf(".#items") === path.length - 7) {
+        var fieldPath = path.substring(0, path.length - 7);
+        var fid = host.resolveNodeId(fieldPath);
+        if (fid >= 0) {
+          var xrDisplayItems = host.getDisplayItems(fid, host.generation());
+          if (xrDisplayItems.length > 0) {
+            host.somItemsPathHit();
+          }
+          return makeItemsSubstitute(xrDisplayItems);
+        }
+        return null;
       }
       var id = host.resolveNodeId(path);
       if (id < 0) {
@@ -3495,6 +3644,18 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           if (recRaw < 0) return makeNullDataHandle();
           return makeDataHandle(recRaw);
         }
+        // BE-1: `$data` as a bare global refers to the data-DOM root node
+        // (XFA 3.3 §3.3.2: `$data` == `xfa.datasets.data`).  Scripts write
+        // e.g. `var root = $data; root.child.value` — we intercept here
+        // before the SOM resolver so the data-dom root is returned directly.
+        // `data_resolve_node("$data")` resolves to the root of the DataDom
+        // (SomRoot::Data + zero segments -> start node) via resolve_data_som.
+        if (prop === "$data") {
+          var dataRootRaw = host.dataResolveNode("$data");
+          if (dataRootRaw < 0) return makeNullDataHandle();
+          host.somDataRootHit();
+          return makeDataHandle(dataRootRaw);
+        }
         // Phase D-γ: `util` is an XFA global (Acrobat SDK §Util) that provides
         // date/number formatting functions.  `util.printd(fmt, date)` is widely
         // used by XFA templates to format Date objects.  We intercept it here so
@@ -3725,7 +3886,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     }
   };
 })
-"#;
+"##;
 
 // Process-wide reference epoch; used together with `Instant::now() - EPOCH`
 // to materialise a u64 nanosecond timestamp comparable across the interrupt
