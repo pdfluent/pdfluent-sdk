@@ -520,6 +520,20 @@ pub trait XfaJsRuntime {
     /// through it.
     fn set_data_handle(&mut self, _dom: *const DataDom) {}
 
+    /// BE-1 tranche #1 (benign zero-instance SOM): install the set of
+    /// template-declared container names (`subform`/`subformSet`/`exclGroup`/
+    /// `area`) for the current document. Backends that resolve implicit SOM
+    /// identifiers use it to return a benign empty-node façade for a
+    /// declared-but-absent reference instead of `undefined` (Adobe semantics),
+    /// so guarded scripts (`if (!Sub.Child.isNull) {...} else {...}`) run their
+    /// else branch instead of throwing. Like [`set_data_handle`], the caller
+    /// installs this before script execution. Default: no-op (the static
+    /// `NullRuntime` ignores it, so the default/non-sandboxed path is
+    /// unaffected and stays byte-identical).
+    ///
+    /// [`set_data_handle`]: XfaJsRuntime::set_data_handle
+    fn set_declared_subform_names(&mut self, _names: std::collections::HashSet<String>) {}
+
     /// Phase C: reset per-script host counters and install the current script
     /// context node / activity. Backends without host bindings ignore it.
     fn reset_per_script(

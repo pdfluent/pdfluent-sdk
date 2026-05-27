@@ -4,7 +4,7 @@
 //! bounded SOM resolution plus `field.rawValue` reads/writes. It never changes
 //! tree structure or layout metadata.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use xfa_dom_resolver::data_dom::{DataDom, DataNodeId};
 use xfa_dom_resolver::som::{
@@ -80,6 +80,15 @@ pub struct HostBindings {
     /// Epic A E-3: instanceManager write entries (capped at 200). Only
     /// populated when `XFA_RUNTIME_DIAG=1`.
     instance_write_log: Vec<crate::dynamic::InstanceWriteEntry>,
+    /// BE-1 tranche #1 (benign zero-instance SOM): names of structural
+    /// containers (`subform`/`subformSet`/`exclGroup`/`area`) declared by the
+    /// template. Installed per-document by `flatten.rs` via
+    /// [`HostBindings::set_declared_subform_names`] before script execution,
+    /// mirroring `data_dom`. Used by [`HostBindings::is_declared_absent_node`]
+    /// so the sandboxed runtime can return a benign empty-node façade for a
+    /// declared-but-absent SOM reference instead of `undefined` (Adobe
+    /// semantics). Empty when the feature/runtime is inactive.
+    declared_subform_names: HashSet<String>,
 }
 
 impl Default for HostBindings {
@@ -103,6 +112,7 @@ impl Default for HostBindings {
             captured_occur_mutations: Vec::new(),
             som_fail_log: Vec::new(),
             instance_write_log: Vec::new(),
+            declared_subform_names: HashSet::new(),
         }
     }
 }
@@ -161,6 +171,26 @@ impl HostBindings {
     /// `dom` must outlive all script execution for this document.
     pub fn set_data_handle(&mut self, dom: *const DataDom) {
         self.data_dom = Some(dom);
+    }
+
+    /// BE-1 tranche #1: install the set of template-declared container names for
+    /// the current document. Like `set_data_handle`, the caller installs this
+    /// before script execution; it is intentionally NOT cleared in
+    /// [`HostBindings::reset_per_document`].
+    pub fn set_declared_subform_names(&mut self, names: HashSet<String>) {
+        self.declared_subform_names = names;
+    }
+
+    /// BE-1 tranche #1: true when `name` is a container declared by the template
+    /// (`subform`/`subformSet`/`exclGroup`/`area`). The sandboxed runtime calls
+    /// this only after the implicit scope resolve already returned no nodes, so
+    /// a `true` result means "declared structural node, absent from the current
+    /// scope" → the runtime substitutes a benign empty-node façade (Adobe
+    /// semantics) instead of `undefined`. Returns `false` for any undeclared
+    /// name, preserving the `A.B === undefined` byte-identity contract for
+    /// genuine misses.
+    pub fn is_declared_absent_node(&self, name: &str) -> bool {
+        self.declared_subform_names.contains(name)
     }
 
     /// Reset per-script state and install the current event context.
