@@ -495,8 +495,8 @@ fn suppression_trust_layout_enabled() -> bool {
 /// otherwise data-empty page alive. Only meaningful when sandboxed JS actually
 /// mutates the tree; in the static default path pre-JS == live, so this is a
 /// no-op and the default binary stays byte-identical.
-fn harvest_suppression_enabled() -> bool {
-    matches!(std::env::var("XFA_JS_HARVEST_SUPPRESSION"), Ok(v) if {
+fn harvest_mode_enabled() -> bool {
+    matches!(std::env::var("XFA_JS_HARVEST_MODE"), Ok(v) if {
         let v = v.trim();
         v == "1" || v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("true")
     })
@@ -591,20 +591,23 @@ fn page_repeating_ancestor(
 fn compute_suppression_diags(
     layout: &LayoutDom,
     tree: &FormTree,
+    pre_js_nonempty: Option<&HashSet<FormNodeId>>,
 ) -> Vec<flatten_trace::PageSuppressionDiag> {
     let parent_map = build_parent_map(tree);
     let n = layout.pages.len();
     let trust_layout = suppression_trust_layout_enabled();
-    // Raw per-page keep (matches the suppression `map`).
+    // Raw per-page keep (matches the suppression `map`). Under harvest-mode the
+    // "has field data" test uses the pre-JS snapshot so the diag reflects the
+    // real (harvest) keep decision rather than the post-JS live tree.
     let raw: Vec<(bool, bool, bool)> = layout
         .pages
         .iter()
         .map(|p| {
-            (
-                p.runtime_instantiated,
-                page_has_fields(&p.nodes, tree),
-                page_has_field_data(&p.nodes, tree),
-            )
+            let hd = match pre_js_nonempty {
+                Some(snap) => page_has_field_data_snapshot(&p.nodes, snap),
+                None => page_has_field_data(&p.nodes, tree),
+            };
+            (p.runtime_instantiated, page_has_fields(&p.nodes, tree), hd)
         })
         .collect();
     let raw_keep = |i: usize| -> bool {
@@ -1090,7 +1093,7 @@ fn xfa_flatten_inner(
     // BEFORE the scripts run, so the later §4.3 page-suppression can preserve
     // the static `data_empty_dropped` behaviour even when sandboxed JS populates
     // fields. `None` (flag off) → suppression uses the live tree (byte-identical).
-    let pre_js_nonempty_fields: Option<HashSet<FormNodeId>> = if harvest_suppression_enabled() {
+    let pre_js_nonempty_fields: Option<HashSet<FormNodeId>> = if harvest_mode_enabled() {
         Some(snapshot_nonempty_field_ids(&tree))
     } else {
         None
@@ -1265,7 +1268,7 @@ fn xfa_flatten_inner(
     // Capture per-page suppression diagnostics BEFORE the retain mutates pages
     // (env-gated; empty when tracing is off).
     let trace_suppression = if flatten_trace::enabled() {
-        compute_suppression_diags(&layout, &tree)
+        compute_suppression_diags(&layout, &tree, pre_js_nonempty_fields.as_ref())
     } else {
         Vec::new()
     };
