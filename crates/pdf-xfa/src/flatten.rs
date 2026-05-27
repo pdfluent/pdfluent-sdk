@@ -486,6 +486,48 @@ fn suppression_trust_layout_enabled() -> bool {
     })
 }
 
+/// BE-1 harvest-mode (default OFF). When set, the §4.3 `data_empty_dropped`
+/// page-suppression decision is taken against the **pre-JS** (data-bound) field
+/// values rather than the post-JS live tree. This preserves the static
+/// data-empty suppression under `XFA_JS_EXECUTION_MODE=sandboxed`: the runtime
+/// still applies structural intents (instanceManager / presence), but JS field
+/// population (`#items` list writes, value mutations) no longer keeps an
+/// otherwise data-empty page alive. Only meaningful when sandboxed JS actually
+/// mutates the tree; in the static default path pre-JS == live, so this is a
+/// no-op and the default binary stays byte-identical.
+fn harvest_mode_enabled() -> bool {
+    matches!(std::env::var("XFA_JS_HARVEST_MODE"), Ok(v) if {
+        let v = v.trim();
+        v == "1" || v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("true")
+    })
+}
+
+/// BE-1 harvest-mode: snapshot the ids of all `Field` nodes that carry a
+/// non-empty value at the moment of capture (taken pre-JS, right after the
+/// data merge). Used by [`page_has_field_data_snapshot`] so the suppression
+/// decision reflects data-bound emptiness, not JS-populated values.
+fn snapshot_nonempty_field_ids(tree: &FormTree) -> HashSet<FormNodeId> {
+    use xfa_layout_engine::form::FormNodeType;
+    let mut ids = HashSet::new();
+    for i in 0..tree.nodes.len() {
+        let id = FormNodeId(i);
+        if let FormNodeType::Field { value } = &tree.get(id).node_type {
+            if !value.trim().is_empty() {
+                ids.insert(id);
+            }
+        }
+    }
+    ids
+}
+
+/// BE-1 harvest-mode counterpart to [`page_has_field_data`]: a page "has field
+/// data" iff one of its nodes was a non-empty field in the pre-JS snapshot.
+fn page_has_field_data_snapshot(nodes: &[LayoutNode], snapshot: &HashSet<FormNodeId>) -> bool {
+    nodes.iter().any(|n| {
+        snapshot.contains(&n.form_node) || page_has_field_data_snapshot(&n.children, snapshot)
+    })
+}
+
 /// Sorted distinct FormNode ids referenced on a page — the "occur-instance
 /// signature". Two pages with identical signatures are repeated instances of
 /// the same template subtree (occur expansion reuses the template id).
@@ -549,20 +591,23 @@ fn page_repeating_ancestor(
 fn compute_suppression_diags(
     layout: &LayoutDom,
     tree: &FormTree,
+    pre_js_nonempty: Option<&HashSet<FormNodeId>>,
 ) -> Vec<flatten_trace::PageSuppressionDiag> {
     let parent_map = build_parent_map(tree);
     let n = layout.pages.len();
     let trust_layout = suppression_trust_layout_enabled();
-    // Raw per-page keep (matches the suppression `map`).
+    // Raw per-page keep (matches the suppression `map`). Under harvest-mode the
+    // "has field data" test uses the pre-JS snapshot so the diag reflects the
+    // real (harvest) keep decision rather than the post-JS live tree.
     let raw: Vec<(bool, bool, bool)> = layout
         .pages
         .iter()
         .map(|p| {
-            (
-                p.runtime_instantiated,
-                page_has_fields(&p.nodes, tree),
-                page_has_field_data(&p.nodes, tree),
-            )
+            let hd = match pre_js_nonempty {
+                Some(snap) => page_has_field_data_snapshot(&p.nodes, snap),
+                None => page_has_field_data(&p.nodes, tree),
+            };
+            (p.runtime_instantiated, page_has_fields(&p.nodes, tree), hd)
         })
         .collect();
     let raw_keep = |i: usize| -> bool {
@@ -1043,6 +1088,16 @@ fn xfa_flatten_inner(
     //   Only effective when the `xfa-js-sandboxed` Cargo feature is compiled
     //   in; otherwise NullRuntime returns NotCompiledIn and the dispatch
     //   path falls back to the same skip behaviour as `BestEffortStatic`.
+    //
+    // BE-1 harvest-mode (default OFF): snapshot data-bound field emptiness
+    // BEFORE the scripts run, so the later §4.3 page-suppression can preserve
+    // the static `data_empty_dropped` behaviour even when sandboxed JS populates
+    // fields. `None` (flag off) → suppression uses the live tree (byte-identical).
+    let pre_js_nonempty_fields: Option<HashSet<FormNodeId>> = if harvest_mode_enabled() {
+        Some(snapshot_nonempty_field_ids(&tree))
+    } else {
+        None
+    };
     let dynamic_scripts = match std::env::var("XFA_JS_EXECUTION_MODE")
         .ok()
         .map(|s| s.to_ascii_lowercase())
@@ -1213,7 +1268,7 @@ fn xfa_flatten_inner(
     // Capture per-page suppression diagnostics BEFORE the retain mutates pages
     // (env-gated; empty when tracing is off).
     let trace_suppression = if flatten_trace::enabled() {
-        compute_suppression_diags(&layout, &tree)
+        compute_suppression_diags(&layout, &tree, pre_js_nonempty_fields.as_ref())
     } else {
         Vec::new()
     };
@@ -1237,8 +1292,17 @@ fn xfa_flatten_inner(
                     // XFA_SUPPRESSION_TRUST_LAYOUT on, also keep data-empty
                     // pages that still render visible content (the `&&`
                     // short-circuits, so flag-off is byte-identical).
-                    page_has_field_data(&p.nodes, &tree)
-                        || (trust_layout && page_has_visible_content(&p.nodes))
+                    //
+                    // BE-1 harvest-mode: when a pre-JS snapshot is present,
+                    // base "has data" on the data-bound (pre-JS) field values
+                    // so sandboxed JS field population can't keep an otherwise
+                    // data-empty page. `None` (flag off) → live-tree check,
+                    // byte-identical to the static default.
+                    let has_field_data = match pre_js_nonempty_fields {
+                        Some(ref snap) => page_has_field_data_snapshot(&p.nodes, snap),
+                        None => page_has_field_data(&p.nodes, &tree),
+                    };
+                    has_field_data || (trust_layout && page_has_visible_content(&p.nodes))
                 } else {
                     true
                 }
