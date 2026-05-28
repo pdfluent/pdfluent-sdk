@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pdfluent.com/schemas/sha_ledger/v1.json",
+  "title": "PDFluent Registry SHA Ledger — per-channel",
+  "description": "Append-only record of every published artifact's sha256, used for indefinite post-publish drift detection. See docs/release/sha_ledger/README.md.",
+  "type": "object",
+  "required": ["schema_version", "channel", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Ledger schema version. Bump only with a migration."
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["crates_io", "npm", "pypi", "maven", "nuget", "wasm", "binary", "gitlab"],
+      "description": "Package channel this ledger covers; matches scripts/release/audit_package_tree.py --channel choices."
+    },
+    "entries": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/entry"}
+    }
+  },
+  "definitions": {
+    "entry": {
+      "type": "object",
+      "required": [
+        "package",
+        "version",
+        "artifact_filename",
+        "sha256_local",
+        "size_bytes",
+        "published_at",
+        "audit_report",
+        "status",
+        "registry_url"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "package": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Published package name as it appears in the registry."
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([+-][0-9A-Za-z.-]+)?$",
+          "description": "SemVer version string. Pre-release allowed via the standard `-beta.N` / `-rc.N` etc."
+        },
+        "artifact_filename": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Filename of the published artifact as uploaded (e.g. pdfluent-1.0.0-beta.8.crate)."
+        },
+        "sha256_local": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the locally-built artifact at publish time. Computed by ledger_add_entry.py."
+        },
+        "sha256_registry": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the registry-distributed artifact, computed by ledger_verify.py during post-publish verify. Null until verify runs."
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Byte count of the local artifact."
+        },
+        "published_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO-8601 UTC timestamp of the publish step. Set by ledger_add_entry.py at write time."
+        },
+        "verified_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "ISO-8601 UTC timestamp of the post-publish sha256 match. Null until verify_runs."
+        },
+        "audit_report": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repo-relative path to the prepublish audit report (committed under benchmarks/runs/prepublish_audits/)."
+        },
+        "verify_report": {
+          "type": ["string", "null"],
+          "description": "Repo-relative path to the post-publish verify report (committed under benchmarks/runs/post_publish_verify/). Null until verify runs."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["live", "verified", "yanked"],
+          "description": "Lifecycle state. live=published+sha_local recorded, verified=sha_registry matches sha_local, yanked=registry yank executed via §13 procedure."
+        },
+        "yanked_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "ISO-8601 UTC timestamp of the yank action. Null if not yanked."
+        },
+        "yanked_reason": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Short reason for the yank (e.g. 'licence-file missing from tarball'). Required when status=yanked."
+        },
+        "registry_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Canonical URL where the artifact can be re-downloaded for verification. e.g. https://static.crates.io/crates/pdfluent/pdfluent-1.0.0-beta.8.crate"
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "yanked"}}},
+          "then": {"required": ["yanked_at", "yanked_reason"]}
+        },
+        {
+          "if": {"properties": {"status": {"const": "verified"}}},
+          "then": {"required": ["sha256_registry", "verified_at"]}
+        }
+      ]
+    }
+  }
+}

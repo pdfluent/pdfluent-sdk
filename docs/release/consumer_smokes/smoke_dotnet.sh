@@ -33,9 +33,12 @@ if ! command -v dotnet &>/dev/null; then
     exit 0
 fi
 
-# Auto-detect .nupkg.
+# Auto-detect .nupkg. `mapfile` is bash 4+; macOS bash 3.2 portable form
+# uses a while-read loop into the array — same shape as the rest of the
+# release toolkit (sbom-generate.sh §"target crate list").
 if [[ -z "$NUPKG_PATH" ]]; then
-    mapfile -t candidates < <(find "${REPO_ROOT}/bindings/dotnet" -name "*.nupkg" -not -path "*/obj/*" 2>/dev/null | sort -r)
+    candidates=()
+    while IFS= read -r line; do candidates+=("$line"); done < <(find "${REPO_ROOT}/bindings/dotnet" -name "*.nupkg" -not -path "*/obj/*" 2>/dev/null | sort -r)
     if [[ ${#candidates[@]} -eq 0 ]]; then
         echo "⚠️  No .nupkg found under bindings/dotnet. Build first with:"
         echo "    cd bindings/dotnet/src/PDFluent && dotnet pack -c Release"
