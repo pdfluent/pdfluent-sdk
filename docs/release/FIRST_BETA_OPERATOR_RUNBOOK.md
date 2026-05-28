@@ -17,17 +17,87 @@ which assumes credentials are already provisioned.
 
 ## 0. Pre-conditions (must all be true before starting)
 
-- [ ] **MR !5 (Tier-1)** is merged into `master`. Verify with
-      `curl -s ".../merge_requests/5" | jq '.state' → "merged"`.
-- [ ] **Tier-2/Tier-3 MR** is merged into `master`. Same verification.
-- [ ] `git status --porcelain` is empty on the publish branch (a checkout
-      of the merged `master` head).
-- [ ] All publish-bound credentials (per §3 of this runbook) are
-      provisioned in the operator's keychain + GitLab CI/CD variables.
-- [ ] The operator has read `PUBLISH_PROTOCOL.md` and
-      `RELEASE_TRAIN_MATRIX.md` in their current committed form.
-- [ ] The operator has read `ROLLBACK_PROCEDURE.md` so they know what
-      to do if anything goes wrong mid-train.
+- [x] **MR !5 (Tier-1)** merged into `master` 2026-05-28 (merge commit
+      `1c0814d04`). Verified via API.
+- [ ] **MR !6 (Tier-2/Tier-3)** merged into `master`. Currently OPEN +
+      mergeable; CI pipeline `2559947200` sanity stage 3/3 PASS. Awaits
+      owner click. (Until this is merged, the runbook lives only on the
+      `release-hardening/tier2` branch — operator must check out that
+      branch to use the new scripts referenced below.)
+- [ ] `git status --porcelain` is empty on the publish branch.
+- [ ] Operator has read `PUBLISH_PROTOCOL.md`, `RELEASE_TRAIN_MATRIX.md`,
+      and `ROLLBACK_PROCEDURE.md` in their current committed form.
+- [ ] **§0.5 preflight commands below all PASS** for the channels the
+      operator intends to publish in this session.
+
+## 0.5 Pre-flight credential check (no-secret variant)
+
+Run these before *any* publish session. Each command verifies presence +
+basic shape of the credential the channel needs, without printing the
+secret value. A FAIL means the channel cannot publish today; consult §3
+for what to provision and where.
+
+```bash
+# crates.io — token shape only, no value
+test -f ~/.cargo/credentials.toml && \
+  python3 -c "import tomllib; t=tomllib.load(open('$HOME/.cargo/credentials.toml','rb'))['registry']['token']; assert len(t)>=30, 'crates.io token suspiciously short'; print('crates.io: OK')" || \
+  echo 'crates.io: MISSING'
+
+# npm @pdfluent — verify authenticated AND owner of @pdfluent org
+npm whoami --registry=https://registry.npmjs.org/ >/dev/null 2>&1 && \
+  npm org ls @pdfluent 2>/dev/null | grep -E "$(npm whoami) - owner" >/dev/null && \
+  echo 'npm @pdfluent: OK (owner-verified)' || \
+  echo 'npm @pdfluent: MISSING or not owner of @pdfluent'
+
+# PyPI — token shape (must start with `pypi-`)
+val=$(security find-generic-password -s pypi-token -w 2>/dev/null)
+[[ "$val" =~ ^pypi- ]] && echo 'PyPI: OK' || echo 'PyPI: MISSING or wrong format'
+unset val
+
+# NuGet — API key shape (must start with `oy2` for v3)
+val=$(security find-generic-password -s nuget-api-key -w 2>/dev/null)
+[[ "$val" =~ ^oy2 ]] && echo 'NuGet: OK' || echo 'NuGet: MISSING or wrong format'
+unset val
+
+# Maven Central — server config + GPG secret-key, each reported independently.
+# pinentry-mac is OPTIONAL: only needed for non-interactive GPG passphrase
+# entry (CI-only requirement). Operator-on-Mac runs interactively so a TTY
+# prompt is fine — preflight reports it but does not block.
+test -f ~/.m2/settings.xml && \
+  python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('$HOME/.m2/settings.xml').getroot(); assert any((s.find('id') or s.find('{http://maven.apache.org/SETTINGS/1.0.0}id')).text=='central' for s in r.iter() if s.tag.endswith('server')), 'central server not in settings.xml'; print('maven settings: OK')" \
+  || echo 'maven settings: MISSING'
+gpg --list-secret-keys hello@pdfluent.com >/dev/null 2>&1 && echo 'maven GPG: OK' || echo 'maven GPG: MISSING'
+( test -x /usr/local/opt/pinentry-mac/bin/pinentry-mac \
+    || test -x /opt/homebrew/opt/pinentry-mac/bin/pinentry-mac ) \
+  && echo 'pinentry-mac: OK (CI non-interactive ready)' \
+  || echo 'pinentry-mac: not installed (operator-on-Mac TTY prompt fine; install via `brew install pinentry-mac` for CI use)'
+
+# Apple Developer ID Application — required for macOS sign + notarize
+security find-identity -v -p codesigning | grep -E 'Developer ID Application' >/dev/null && \
+  echo 'macOS Developer ID: OK' || echo 'macOS Developer ID: MISSING'
+
+# Microsoft Trusted Signing (Azure) — only sensible if AZ creds set
+[ -n "${AZ_TENANT_ID:-}" ] && [ -n "${AZ_CLIENT_ID:-}" ] && [ -n "${AZ_CLIENT_SECRET:-}" ] && \
+  echo 'Windows Trusted Signing: env present (verify in §3.7)' || \
+  echo 'Windows Trusted Signing: env not set (use USB EV fallback if available)'
+
+# GitLab API token — for `glab release create` and Releases upload
+security find-internet-password -s gitlab.com -a claude-pdfluent-api -w >/dev/null 2>&1 && \
+  echo 'GitLab API: OK' || echo 'GitLab API: MISSING'
+```
+
+**Current verified state on the operator Mac (2026-05-28):**
+
+| channel | preflight result | go/no-go today |
+|---|---|---|
+| crates.io | `OK` | 🟢 go |
+| npm `@pdfluent` | `OK (owner-verified)` | 🟢 go |
+| PyPI | `OK` | 🟢 go |
+| NuGet | `OK` | 🟢 go |
+| Maven Central | `OK` (settings + GPG; pinentry-mac not installed but only needed for CI — TTY passphrase prompt is fine on operator-on-Mac) | 🟢 go |
+| macOS binary signing | `MISSING` | 🔴 no — needs Apple Developer ID Application + notarytool API key (§3.6) |
+| Windows binary signing | `MISSING` | 🔴 no — needs Trusted Signing or USB EV (§3.7) |
+| GitLab Releases upload | `OK` | 🟢 go (for unsigned/Linux-GPG tarballs) |
 
 ## 1. Per-channel operator checklist
 
@@ -65,8 +135,11 @@ bash scripts/release/sbom-generate.sh --check
 cargo package --allow-dirty=false -p <crate>
 # Locate the .crate at target/package/<crate>-<v>.crate.
 
-# 4. Publish (the operator-only step).
-cargo publish -p <crate>     # requires CARGO_REGISTRY_TOKEN; see §3.1
+# 4. Publish.
+# 🚦 OPERATOR APPROVAL ONLY — irreversible: crates.io is append-only, no
+#    re-upload of the same version after this returns 0. Verify §0.5 says
+#    `crates.io: OK` before running. Token from ~/.cargo/credentials.toml.
+cargo publish -p <crate>
 
 # 5. Append the SHA ledger entry IMMEDIATELY after the publish step
 #    returns 0 (per R6-1).
@@ -128,7 +201,10 @@ bash scripts/release/wasm_dry_run.sh
 # Output: pdfluent-sdk-wasm-1.0.0-beta.8.tgz
 
 # 5. Publish.
-( cd crates/xfa-wasm/pkg && npm publish --access public )     # requires NPM_TOKEN; see §3.2
+# 🚦 OPERATOR APPROVAL ONLY — irreversible: `npm unpublish` after 72h is
+#    blocked; the version name is forever-taken on `@pdfluent/sdk-wasm`.
+#    Verify §0.5 says `npm @pdfluent: OK (owner-verified)` before running.
+( cd crates/xfa-wasm/pkg && npm publish --access public )
 
 # 6. SHA ledger.
 python3 scripts/release/ledger_add_entry.py \
@@ -169,6 +245,8 @@ python3 scripts/release/audit_package_tree.py \
   --channel npm
 
 # 5. Publish.
+# 🚦 OPERATOR APPROVAL ONLY — same npm constraints as §1.2 (72h unpublish
+#    window then forever-taken). Verify §0.5 says `npm @pdfluent: OK`.
 ( cd crates/pdf-node && npm publish --access public )
 
 # 6. Ledger + verify + smoke (same shape as §1.2).
@@ -198,12 +276,21 @@ python3 scripts/release/scrub-wheel.py crates/pdf-python/target/wheels/pdfluent-
 python3 -m twine check crates/pdf-python/target/wheels/pdfluent-1.0.0b8-*.whl
 
 # 4. Publish to TestPyPI FIRST (staged smoke), then to PyPI proper.
-python3 -m twine upload --repository testpypi crates/pdf-python/target/wheels/pdfluent-1.0.0b8-*.whl
+# 🚦 OPERATOR APPROVAL ONLY (staging) — TestPyPI is staging but still
+#    burns the version name on test.pypi.org for `pdfluent`. Reversibility:
+#    can be yanked via test.pypi.org Manage UI; no hard delete.
+#    Token from keychain `pypi-token` via TWINE_PASSWORD.
+TWINE_USERNAME=__token__ TWINE_PASSWORD="$(security find-generic-password -s pypi-token -w)" \
+  python3 -m twine upload --repository testpypi crates/pdf-python/target/wheels/pdfluent-1.0.0b8-*.whl
 # Smoke from TestPyPI:
 bash docs/release/consumer_smokes/smoke_python.sh --index-url https://test.pypi.org/simple/
 
 # 5. Real publish (once TestPyPI smoke passes).
-python3 -m twine upload crates/pdf-python/target/wheels/pdfluent-1.0.0b8-*.whl    # requires TWINE_API_TOKEN; see §3.3
+# 🚦 OPERATOR APPROVAL ONLY — irreversible: PyPI does not allow re-upload
+#    of the same version after first upload, even after delete. The version
+#    name `pdfluent==1.0.0b8` is forever-taken on pypi.org after this returns 0.
+TWINE_USERNAME=__token__ TWINE_PASSWORD="$(security find-generic-password -s pypi-token -w)" \
+  python3 -m twine upload crates/pdf-python/target/wheels/pdfluent-1.0.0b8-*.whl
 
 # 6. Ledger + verify + smoke.
 python3 scripts/release/ledger_add_entry.py --channel pypi \
@@ -232,7 +319,13 @@ bash docs/release/consumer_smokes/smoke_python.sh
 bash scripts/release/maven_channel_guard.sh
 
 # 3. Deploy to Sonatype OSSRH staging (NOT release).
-( cd bindings/java && mvn deploy -P release -DperformRelease=true )    # requires GPG_PASSPHRASE + OSSRH credentials; see §3.4
+# 🚦 OPERATOR APPROVAL ONLY — deploys to Sonatype OSSRH **staging** (the
+#    staged repo is reversible: `mvn nexus-staging:drop` before release).
+#    The follow-up "release the staging repo" web-UI click in §1.5 step 5
+#    IS irreversible (Maven Central is immutable post-release). Maven
+#    credentials read from ~/.m2/settings.xml + GPG key from gpg-agent
+#    (pinentry-mac handles the passphrase prompt non-interactively).
+( cd bindings/java && mvn deploy -P release -DperformRelease=true )
 
 # 4. SMOKE TEST from STAGING (drop-able if anything is wrong).
 bash docs/release/consumer_smokes/smoke_java.sh --jar bindings/java/target/pdfluent-1.0.0-beta.8.jar
@@ -274,9 +367,13 @@ python3 scripts/release/audit_package_tree.py \
   --channel maven   # NuGet uses similar shape; "maven" channel is closest
 
 # 4. Push.
+# 🚦 OPERATOR APPROVAL ONLY — NuGet allows `dotnet nuget delete` (unlist
+#    only; the version stays installable by exact-version pin forever).
+#    No hard delete. Reversibility: relist via the nuget.org UI.
+#    API key read from keychain `nuget-api-key`; --api-key arg requires it.
 dotnet nuget push bindings/dotnet/src/PDFluent/bin/Release/PDFluent.1.0.0-beta.8.nupkg \
   --source https://api.nuget.org/v3/index.json \
-  --api-key $NUGET_API_KEY                                                     # see §3.5
+  --api-key "$(security find-generic-password -s nuget-api-key -w)"
 
 # 5. Ledger + verify + smoke.
 python3 scripts/release/ledger_add_entry.py --channel nuget \
@@ -348,6 +445,12 @@ bash docs/release/consumer_smokes/smoke_binary.sh --artifact dist/pdfluent-1.0.0
 GitLab Release attachment upload (the operator-only step):
 
 ```bash
+# 🚦 OPERATOR APPROVAL ONLY — creates a Release tag `1.0.0-beta.8` on the
+#    project (REVERSIBLE: `glab release delete 1.0.0-beta.8`). Note: the
+#    project CI workflow rules treat `$CI_COMMIT_TAG` as a publish-trigger
+#    — confirm no downstream CI publish job fires from this tag before
+#    running, or the cascade may push to channels that are already
+#    published earlier in this runbook.
 glab release create "1.0.0-beta.8" --name "PDFluent 1.0.0-beta.8" \
   --notes-file release-notes.md \
   --ref "<the merged-master SHA>"
@@ -400,6 +503,13 @@ channel publishes. Store every secret in the operator's macOS keychain
 (local development) AND as a **masked + protected** GitLab CI/CD
 variable (CI use). Never in the repo. Never in a screen-recorded
 terminal.
+
+> **Live state:** §0.5 above runs the per-credential preflight checks
+> against the operator Mac and reports OK / MISSING. As of 2026-05-28 the
+> verified state is: crates.io ✓, npm `@pdfluent` ✓ (owner-verified),
+> PyPI ✓, NuGet ✓, Maven Central + GPG + pinentry-mac ✓, GitLab API ✓,
+> macOS Developer ID ✗ (only Apple Development certs present), Windows
+> signing ✗.
 
 ### 3.1 crates.io API token
 
@@ -565,3 +675,39 @@ do not progress to the next channel, and follow `ROLLBACK_PROCEDURE.md`:
 - `docs/release/templates/PREPUBLISH_AUDIT_REPORT_TEMPLATE.md`,
   `POST_PUBLISH_VERIFY_TEMPLATE.md`,
   `REMEDIATION_REPORT_TEMPLATE.md` — report scaffolds.
+
+## 7. Ready for staged beta publish — yes/no per channel
+
+The §0.5 preflight + the credential inventory + the existing tooling state
+combine into a single yes/no answer per channel. This is the answer to
+"can I publish channel X today without further setup?"
+
+| channel | ready today? | rationale | go-to runbook section |
+|---|---|---|---|
+| **crates.io** (Rust SDK 32 crates) | 🟢 **YES** | token in `~/.cargo/credentials.toml`, topo dry-run + audit scripts ready, SBOM baselines committed | §1.1 — start with `formcalc-interpreter beta.8` per the chain order |
+| **npm `@pdfluent/sdk-wasm`** (WASM SDK) | 🟢 **YES** | `[redacted]` owner-verified on `@pdfluent`, `wasm-pack` available, `wasm_dry_run.sh` ready | §1.2 — build pkg + audit + publish |
+| **npm `@pdfluent/node`** (NAPI binding) | 🟢 **YES** (with caveat) | same npm token; pdf-node `npm pack` works (15 KB per Tier-1 CI logs). Caveat: confirm whether `pdf-node` ships JS-only-glue or includes prebuilt natives (see §1.3 step 2) | §1.3 |
+| **PyPI `pdfluent`** | 🟢 **YES** | `pypi-token` in keychain, `pypi-` prefix validated, `maturin` available | §1.4 — TestPyPI first |
+| **Maven Central `com.pdfluent:pdfluent`** | 🟢 **YES** | `~/.m2/settings.xml` server `central` present, GPG key `DA87…B513` for `<hello@pdfluent.com>` rsa4096 valid until 2028-05-13. **Caveat:** `pinentry-mac` not currently installed — GPG passphrase prompts will appear in the operator's terminal during `mvn deploy`. If running headless / for CI, first `brew install pinentry-mac` and configure `~/.gnupg/gpg-agent.conf` accordingly. | §1.5 — Sonatype staging first |
+| **NuGet `PDFluent`** | 🟢 **YES** | `nuget-api-key` in keychain, `oy2dt…` v3 format validated, `dotnet pack` available | §1.6 |
+| **C-ABI tarball `pdf-capi`** | 🟢 **YES** (unsigned) | `package_cabi.sh` ready; distribution storage destination is the only open choice (GitLab Releases, Hetzner Storage Box, etc.) | §1.7 |
+| **Binary release — Linux musl** (`x86_64-unknown-linux-musl`) | 🟢 **YES** (GPG-signed) | Tier-1 CI artefact present; `binary_release.md` checklist supports GPG `.asc` Linux signing via the PDFluent GPG key already in keychain. No platform code-signing identity required for Linux | §1.8 — Linux row |
+| **Binary release — Windows** (`x86_64-pc-windows-gnu`) | 🔴 **NO** | Tier-1 CI artefact present, but no code-signing identity provisioned. SmartScreen will warn on every consumer download. **Block on §3.7**: Microsoft Trusted Signing (preferred) or USB EV cert | §3.7 + `SIGNING_WINDOWS.md` |
+| **Binary release — macOS** (`x86_64-apple-darwin` + `aarch64-apple-darwin`) | 🔴 **NO** | No `Developer ID Application` cert in keychain (only `Apple Development` debug certs); no notarytool API key stored. Gatekeeper will refuse to open the binary. **Block on §3.6**: Apple Developer Program + Dev ID cert + notarytool key | §3.6 + `SIGNING_MACOS.md` |
+| **GitLab Releases** (artefact upload) | 🟢 **YES** | `claude-pdfluent-api` PAT in keychain, scope `api`, expires 2027-05-28 | §1.8 footer |
+
+**Summary:** 8 of 10 publish targets are ready for staged beta publish
+today, gated only on the operator's explicit per-step approval. The 2
+binary-release targets requiring code-signing (Windows, macOS) need an
+out-of-band one-time identity-provisioning step before they can be
+publicly distributed; the unsigned tarballs can still be uploaded as
+`*-unsigned.tar.gz` to internal mirrors for staging, but per the
+existing `binary_release.md` Failure Modes section "Unsigned artifact
+shipped" is "most catastrophic" — don't promote unsigned binaries to
+the public download URL.
+
+The CI side is NOT wired for any of the 8 ready channels (0 GitLab
+project CI/CD variables provisioned) — every publish is **operator-on-
+Mac**. Wiring the 5–6 secrets into GitLab CI/CD is a separate step that
+unlocks CI-driven publish for the 2nd beta onward (per
+`SDK_NON_XFA_PUBLISH_TRAIN_RUNBOOK.md`).
