@@ -58,13 +58,41 @@ fi
 echo "[smoke_binary] artifact: $ARTIFACT"
 
 # Derive target triple + version from filename:
-#   pdfluent-1.0.0-beta.8-x86_64-unknown-linux-musl.tar.gz
-#            └─ version ─┘└─── target triple ───┘
+#   pdfluent-1.0.0-beta.8-<target-triple>.tar.gz
+#            └─ version ─┘└── triple ──┘
+# Target triples are not single-token (e.g. x86_64-unknown-linux-musl is four
+# dash-separated segments) so a naive `${fname%-*}` cannot split them. Match
+# against the closed set of triples PDFluent currently ships; that is the
+# whole list of architectures the binary-release matrix produces (per
+# RELEASE_TRAIN_MATRIX.md channel #8 + "macOS deltas"). Anything not in this
+# list is a build-output we have not yet declared, and is rejected here.
+KNOWN_TRIPLES=(
+  x86_64-unknown-linux-musl
+  x86_64-unknown-linux-gnu
+  x86_64-pc-windows-gnu
+  x86_64-pc-windows-msvc
+  x86_64-apple-darwin
+  aarch64-apple-darwin
+  aarch64-unknown-linux-musl
+  aarch64-unknown-linux-gnu
+)
 fname="$(basename "$ARTIFACT" .tar.gz)"
 fname="${fname#pdfluent-}"
-target="${fname#*-x86_64-}"
-target="x86_64-${target}"
-version_from_fname="${fname%-x86_64-*}"
+target=""
+version_from_fname=""
+for triple in "${KNOWN_TRIPLES[@]}"; do
+  suffix="-${triple}"
+  if [[ "$fname" == *"$suffix" ]]; then
+    target="$triple"
+    version_from_fname="${fname%"$suffix"}"
+    break
+  fi
+done
+if [[ -z "$target" ]]; then
+  echo "[smoke_binary] FAIL: cannot identify target triple from filename: $(basename "$ARTIFACT")"
+  echo "                (known triples: ${KNOWN_TRIPLES[*]})"
+  exit 2
+fi
 if [[ -z "$EXPECTED_VERSION" ]]; then
   EXPECTED_VERSION="$version_from_fname"
 fi
@@ -141,21 +169,19 @@ echo "[smoke_binary] binary: $bin ($(wc -c <"$bin") bytes)"
 
 # 7. Run --version if host-target matches -----------------------------------
 host_os="$(uname -s)"; host_arch="$(uname -m)"
+# `uname -m` reports arm64 on Apple Silicon; Rust uses aarch64.
+[[ "$host_arch" = "arm64" ]] && host_arch_rust=aarch64 || host_arch_rust="$host_arch"
+run_it=0
 case "$target" in
-  x86_64-unknown-linux-*)
-    if [[ "$host_os" = "Linux" && "$host_arch" = "x86_64" ]]; then
-      run_it=1
-    else
-      run_it=0
-    fi
+  x86_64-unknown-linux-*|aarch64-unknown-linux-*)
+    [[ "$host_os" = "Linux" && "$host_arch_rust" = "${target%%-*}" ]] && run_it=1
+    ;;
+  x86_64-apple-darwin|aarch64-apple-darwin)
+    [[ "$host_os" = "Darwin" && "$host_arch_rust" = "${target%%-*}" ]] && run_it=1
     ;;
   x86_64-pc-windows-*)
-    # PE32+ on Linux requires wine; on macOS not realistically. Skip in
-    # both cases; the sha + LICENSE + structure checks above are still the
-    # meaningful smoke gates.
-    run_it=0
-    ;;
-  *)
+    # PE32+ on Linux requires wine; on macOS not realistically. Skip; the
+    # sha + LICENSE + structure checks above are still the meaningful gates.
     run_it=0
     ;;
 esac
