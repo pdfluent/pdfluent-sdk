@@ -26,6 +26,65 @@ All notable changes to PDFluent are documented here.
 Deprecation notice: `@pdfluent/sdk-wasm@1.0.0-beta.10` is deprecated; see
 npm registry for the deprecation message.
 
+## [1.0.0-beta.8] — 2026-05-27
+
+Workspace-wide line bump aligning every first-party crate to `1.0.0-beta.8`. Default flatten behaviour is
+**byte-identical** to beta.5: all new runtime capabilities below are **default-off / sandboxed-only**
+(opt-in via `XFA_JS_EXECUTION_MODE=sandboxed` and feature `xfa-js-sandboxed`); the shipping default binary
+contains no rquickjs and never invokes them.
+
+### Added
+
+- **XFA runtime observability** (`pdf-xfa`, Epic A — feature `xfa-js-sandboxed`): six diagnostic trace
+  fields surface dynamic-script behaviour when `XFA_FLATTEN_TRACE=1` and `XFA_RUNTIME_DIAG=1` are set —
+  `script.lifecycle[]` (per-script outcome), `skipped_activities{}`, `som_fail_log[]`,
+  `instance_write_log[]`, `presence_mutation_log[]`, and `form_dom_match_failures` (+ log). Trace schema
+  bumped from 1.0 → 1.1. Default-OFF; flag-off output byte-identical. Commits `1a6992ac7`, `4242dad91`.
+- **XFA SOM hardening — `$data` and `#items`** (`pdf-xfa`, Epic B — sandboxed-only): the implicit-global
+  resolver now handles XFA §3.3.2 `$data` (data-DOM root) and §7.7 `#items` (choiceList substitute with
+  `.nodes` collection), letting more dynamic scripts resolve correctly without throwing. Commit `dad9bf056`.
+- **Benign absent-declared-node SOM façade** (`pdf-xfa`, sandboxed-only): a bare implicit identifier that
+  fails the scope resolve but names a template-declared container (`subform`/`subformSet`/`exclGroup`/
+  `area`) now resolves to a benign empty node (`isNull === true`, chainable, writes absorbed) instead of
+  `undefined`. Adobe-aligned: guarded scripts like
+  `if (!Sub.Child.Field.isNull) {…} else { … }` correctly take the empty branch instead of throwing
+  `TypeError: cannot read property '…' of undefined`. Gated host-side by `is_declared_absent_node`
+  (template container-name set). Undeclared names still surface as `undefined` (D-θ.1 contract preserved).
+  Commit `31b5d4b94`, merge `bedf357df`.
+- **`XFA_JS_HARVEST_MODE`** (`pdf-xfa`, default-off, sandboxed-only): when set, the §4.3
+  `data_empty_dropped` page-suppression decides on a **pre-JS** data-bound emptiness snapshot rather than
+  the post-JS live tree, preserving the static data-empty drop under the sandboxed runtime so JS field
+  population (`#items` list writes + value mutations) cannot keep an otherwise data-empty page alive.
+  Net: the full sandboxed runtime path now corpus-wide matches the static default and unlocks parity on
+  the `2ff85101` wall doc (9 → 4 = oracle). Commit `df92232a8` (renamed `bebf4f0c3`), merge `99f31f52b`.
+
+### Changed
+
+- **`flatten` rejects non-PDF input** (`pdf-xfa` / `xfa-cli`): non-PDF bytes now return
+  `Error::NotPdf` immediately instead of being silently passed through. Commit `11a22c2ac`, merge
+  `e0810724e`.
+- **CLI User-Agent neutralised** (`xfa-cli`): the collector no longer references a retired GitHub repo
+  URL; the User-Agent is now neutral. Commits `6cd623154`, `0834456f9`.
+
+### Fixed
+
+- **`pdfluent_cli_package.sh` SHA256SUMS generation**: deterministic checksum file for staged release
+  binaries. Commit `a392c0f68`.
+- **CI: cargo-deny self-installs the tool** when the runner is missing it, restoring the license gate
+  that had silently dropped. Commit `4c7cf8b70`.
+- **CI: transient-infra auto-retry** (~1 s fast-fails from runner/API rate-limit no longer mark the
+  pipeline red; `script_failure` excluded so genuine failures still fail fast). Commit `f966664e9`.
+
+### Notes
+
+- BE-1 runtime parity engine — convergent verdict: the merged foundations (observability, SOM hardening,
+  benign façade, harvest-mode) give the sandboxed runtime path **static-default parity** corpus-wide and
+  resolve `2ff85101` (9 → 4 sandboxed). The "B-default-on" prize (making `XFA_SUPPRESSION_TRUST_LAYOUT`
+  the default, 99.3% trustworthy) is documented as **not technically achievable** as a regression-safe
+  default for the current corpus — page-local indistinguishability between legitimate keeps and
+  over-keeps is fundamental across suppression / presence / instanceManager / saved-form-DOM. See
+  `benchmarks/runs/xfa_enterprise_plan/_orchestration/BE1_RUNTIME_PARITY_ENGINE_REPORT.md`.
+
 ## [1.0.0-beta.5] — 2026-05-07
 
 ### Security
