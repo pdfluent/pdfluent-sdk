@@ -49,3 +49,31 @@ rustflags = [
   "--remap-path-prefix", "/Users/jasperdewinter/.cargo/registry=/registry",
   "-C", "target-feature=+simd128,+bulk-memory",
 ]
+
+# Cross-compile linkers for the `package:cli-cross-platform` CI job. These
+# linker names match the Ubuntu 24.04 mingw-w64 + musl-tools packages
+# installed on the self-hosted runner (`pdfluent-vps-ci`); without them
+# `cargo build --target x86_64-pc-windows-gnu` invokes plain `cc` /
+# `ld.bfd`, which cannot produce PE32+ Windows binaries (fails on
+# x86_64-w64-mingw32-dlltool lookup), and `--target x86_64-unknown-linux-musl`
+# cannot link against musl-libc statically.
+#
+# Same `--remap-path-prefix` block as [build] for private-path scrubbing
+# (target-specific rustflags REPLACE [build] rustflags, not merge).
+[target.x86_64-unknown-linux-musl]
+linker = "musl-gcc"
+rustflags = [
+  "--remap-path-prefix", "/Users/jasperdewinter=/buildenv",
+  "--remap-path-prefix", "/Users/jasperdewinter/Documents/XFA=/src",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/git=/git",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/registry=/registry",
+]
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+rustflags = [
+  "--remap-path-prefix", "/Users/jasperdewinter=/buildenv",
+  "--remap-path-prefix", "/Users/jasperdewinter/Documents/XFA=/src",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/git=/git",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/registry=/registry",
+]

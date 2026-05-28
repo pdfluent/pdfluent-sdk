@@ -110,7 +110,14 @@ thiserror = "2"
 image = "0.25"
 pixelmatch = "0.1"
 anyhow = "1"
-reqwest = { version = "0.12", features = ["blocking"] }
+# reqwest with rustls TLS backend instead of native-tls (default). rustls is
+# pure Rust, so the cross-target builds (x86_64-unknown-linux-musl,
+# x86_64-pc-windows-gnu) no longer need a system OpenSSL: previously
+# openssl-sys pulled native-tls -> system libssl, which the runner image
+# does not provide for musl, blocking package:cli-cross-platform. rustls
+# is the standard modern choice and is well-tested in production reqwest
+# deployments.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json", "stream", "gzip", "brotli", "deflate"] }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
