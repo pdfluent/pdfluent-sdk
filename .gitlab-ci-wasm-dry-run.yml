@@ -1,0 +1,43 @@
+# GitLab CI lane for the R1-3 WASM tarball dry-run.
+#
+# Builds @pdfluent/sdk-wasm with wasm-pack, packs the tarball, and runs the
+# full audit pipeline (scripts/release/wasm_dry_run.sh). Exits non-zero if
+# any required gate fails (private paths, GitHub URLs in text files, LICENSE
+# presence, expected file list, WASM SHA-256 vs the A2 ledger entry).
+#
+# Include from the main .gitlab-ci.yml via `include:` once the GitLab pipeline
+# is stood up. This file is the contract; it is intentionally a standalone
+# fragment so it does not change pipeline behaviour until included.
+
+wasm-tarball-dry-run:
+  stage: test
+  image: rust:1.95-bookworm
+  rules:
+    - changes:
+        - crates/xfa-wasm/**/*
+        - scripts/release/wasm_dry_run.sh
+        - scripts/release/audit_package_tree.py
+        - scripts/release/transform-wasm-pkg.sh
+        - .cargo/config.toml
+        - .gitlab-ci-wasm-dry-run.yml
+  timeout: 30m
+  variables:
+    CARGO_TERM_COLOR: always
+    RUST_BACKTRACE: '1'
+  before_script:
+    - rustup target add wasm32-unknown-unknown
+    - curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+    - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    - apt-get install -y nodejs binaryen python3 brotli
+  script:
+    - mkdir -p benchmarks/runs/ga_hardening_plan/release/r1
+    - scripts/release/wasm_dry_run.sh benchmarks/runs/ga_hardening_plan/release/r1
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - benchmarks/runs/ga_hardening_plan/release/r1/WASM_*.md
+      - crates/xfa-wasm/pkg/pdfluent-sdk-wasm-*.tgz
+    reports:
+      # Surface the audit JSON for downstream collation.
+      junit: []

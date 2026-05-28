@@ -27,6 +27,19 @@ pub struct FormTree {
     /// and `Some(subform_name)` for scripts scoped to a named subform
     /// (accessible as `subform.variables.scriptName`). Empty in default mode.
     pub variables_scripts: Vec<(Option<String>, String, String)>,
+    /// XFA 3.3 §5.5.2 `<variables>` `<text name="X">value</text>` data items
+    /// gathered at merge time. Each entry is `(subform_scope, name, initial)`.
+    /// `subform_scope` follows the same convention as
+    /// [`Self::variables_scripts`]. Data items are form-level mutable string
+    /// containers — the canonical Canadian IMM template pattern is
+    /// `<variables><text name="globValidatePressed"/></variables>` referenced
+    /// from event scripts as `globValidatePressed.value = "true";`. Empty in
+    /// default mode.
+    ///
+    /// W3-D RETRY: registering these alongside variables-scripts eliminates
+    /// the post-W2-B `implicit_function` residual for the IMM5709/IMM5257/
+    /// IMM5710 family.
+    pub variables_data_items: Vec<(Option<String>, String, String)>,
 }
 
 impl FormTree {
@@ -37,6 +50,7 @@ impl FormTree {
             metadata: Vec::new(),
             node_ids: HashMap::new(),
             variables_scripts: Vec::new(),
+            variables_data_items: Vec::new(),
         }
     }
 
@@ -501,6 +515,17 @@ pub struct FormNodeMeta {
     /// to expose an InstanceManager via `parent._child` even when no data
     /// bindings produced live rows. Layout treats this as `presence = Hidden`.
     pub is_zero_instance_prototype: bool,
+    /// True when this pageArea was allocated by the XFA runtime (recorded in
+    /// the form-DOM packet of an Adobe-Reader-saved PDF) rather than declared
+    /// once in the template.
+    ///
+    /// XFA 3.3 §8.6 / §3.1: the form DOM enumerates the runtime page-tree
+    /// state.  When the form DOM lists more `<pageArea>` siblings than the
+    /// template defines, those extra instances were created by the
+    /// `pageSet`/`occur` machinery and each one must emit a layout page even
+    /// when the flowing-body queue is exhausted (it is the runtime's record
+    /// of an already-paginated page).
+    pub runtime_instantiated_page: bool,
 }
 
 /// XFA `anchorType` attribute (XFA 3.3 §2.6, Appendix A p1510).

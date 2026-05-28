@@ -81,6 +81,9 @@ name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
+dependencies = [
+ "derive_arbitrary",
+]
 
 [[package]]
 name = "arg_enum_proc_macro"
@@ -307,10 +310,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cff-parser"
-version = "0.2.0"
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -491,6 +490,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "des"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -509,6 +519,17 @@ dependencies = [
  "const-oid",
  "crypto-common",
  "subtle",
+]
+
+[[package]]
+name = "displaydoc"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97369cbbc041bc366949bc74d34658d6cda5621039731c6310521892a3a20ae0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -747,6 +768,15 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "font-types"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39a654f404bbcbd48ea58c617c2993ee91d1cb63727a37bf2323a4edeed1b8c5"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
+name = "font-types"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73829a7b5c91198af28a99159b7ae4afbb252fb906159ff7f189f3a2ceaa3df2"
@@ -772,8 +802,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -829,26 +861,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
  "foldhash",
-]
-
-[[package]]
-name = "hayro-ccitt"
-version = "0.2.0"
-
-[[package]]
-name = "hayro-jbig2"
-version = "0.1.0"
-dependencies = [
- "hayro-ccitt",
-]
-
-[[package]]
-name = "hayro-jpeg2000"
-version = "0.3.2"
-dependencies = [
- "fearless_simd",
- "image",
- "moxcms 0.7.11",
 ]
 
 [[package]]
@@ -1048,6 +1060,17 @@ dependencies = [
 
 [[package]]
 name = "kurbo"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce9729cc38c18d86123ab736fd2e7151763ba226ac2490ec092d1dd148825e32"
+dependencies = [
+ "arrayvec",
+ "euclid",
+ "smallvec",
+]
+
+[[package]]
+name = "kurbo"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7564e90fe3c0d5771e1f0bc95322b21baaeaa0d9213fa6a0b61c99f8b17b3bfb"
@@ -1119,40 +1142,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fae87c125b03c1d2c0150c90365d7d6bcc53fb73a9acaef207d2d065860f062"
 dependencies = [
  "imgref",
-]
-
-[[package]]
-name = "lopdf"
-version = "0.39.0"
-dependencies = [
- "aes",
- "bitflags 2.11.0",
- "cbc",
- "chrono",
- "ecb",
- "encoding_rs",
- "flate2",
- "getrandom 0.3.4",
- "hayro-ccitt",
- "hayro-jbig2",
- "hayro-jpeg2000",
- "image",
- "indexmap",
- "itoa",
- "jiff",
- "log",
- "md-5",
- "nom",
- "nom_locate",
- "rand 0.9.2",
- "rangemap",
- "rayon",
- "sha2",
- "stringprep",
- "thiserror",
- "time",
- "ttf-parser",
- "weezl",
 ]
 
 [[package]]
@@ -1397,52 +1386,54 @@ checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
 name = "pdf-annot"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.4"
 dependencies = [
  "log",
- "lopdf",
  "pdf-syntax",
+ "pdfluent-lopdf",
  "thiserror",
 ]
 
 [[package]]
 name = "pdf-compliance"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.5"
 dependencies = [
- "cff-parser",
  "flate2",
  "log",
- "lopdf",
  "pdf-syntax",
+ "pdfluent-cff",
+ "pdfluent-lopdf",
  "thiserror",
  "ttf-parser",
 ]
 
 [[package]]
-name = "pdf-engine"
-version = "1.0.0-beta.1"
+name = "pdf-docx"
+version = "1.0.0-beta.5"
 dependencies = [
- "kurbo",
- "lopdf",
- "pdf-forms",
- "pdf-interpret",
- "pdf-render",
- "pdf-syntax",
+ "pdfluent-extract",
+ "pdfluent-lopdf",
+ "quick-xml",
  "thiserror",
+ "zip",
 ]
 
 [[package]]
-name = "pdf-extract"
-version = "1.0.0-beta.1"
+name = "pdf-engine"
+version = "1.0.0-beta.5"
 dependencies = [
- "flate2",
- "lopdf",
+ "kurbo 0.13.0",
+ "pdf-interpret",
+ "pdf-render",
+ "pdf-syntax",
+ "pdfluent-forms",
+ "pdfluent-lopdf",
  "thiserror",
 ]
 
 [[package]]
 name = "pdf-font"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.3"
 dependencies = [
  "brotli",
  "log",
@@ -1450,21 +1441,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "pdf-forms"
-version = "1.0.0-beta.1"
-dependencies = [
- "log",
- "lopdf",
- "pdf-syntax",
- "thiserror",
-]
-
-[[package]]
 name = "pdf-interpret"
-version = "0.5.0"
+version = "0.5.4"
 dependencies = [
  "bitflags 2.11.0",
- "kurbo",
+ "kurbo 0.13.0",
  "log",
  "moxcms 0.7.11",
  "pdf-font",
@@ -1472,7 +1453,7 @@ dependencies = [
  "phf",
  "rustc-hash",
  "siphasher",
- "skrifa",
+ "skrifa 0.40.0",
  "smallvec",
  "ttf-parser",
  "yoke",
@@ -1480,72 +1461,188 @@ dependencies = [
 
 [[package]]
 name = "pdf-manip"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.5"
 dependencies = [
- "cff-parser",
  "flate2",
- "lopdf",
+ "image",
  "pdf-font",
+ "pdfluent-cff",
+ "pdfluent-jbig2",
+ "pdfluent-lopdf",
  "roxmltree",
+ "serde",
+ "serde_json",
+ "subsetter",
  "thiserror",
  "ttf-parser",
  "weezl",
  "xfa-license",
+ "xmp-writer",
 ]
 
 [[package]]
 name = "pdf-python"
 version = "1.0.0-beta.1"
 dependencies = [
- "lopdf",
  "pdf-annot",
  "pdf-compliance",
  "pdf-engine",
- "pdf-forms",
  "pdf-manip",
  "pdf-redact",
- "pdf-sign",
  "pdf-syntax",
+ "pdfluent",
+ "pdfluent-forms",
+ "pdfluent-lopdf",
+ "pdfluent-sign",
  "pyo3",
 ]
 
 [[package]]
 name = "pdf-redact"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.5"
 dependencies = [
  "flate2",
- "lopdf",
- "pdf-extract",
  "pdf-manip",
+ "pdfluent-extract",
+ "pdfluent-lopdf",
  "regex",
  "thiserror",
 ]
 
 [[package]]
 name = "pdf-render"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.5"
 dependencies = [
  "bytemuck",
  "fast_image_resize",
  "image",
- "kurbo",
+ "kurbo 0.13.0",
  "pdf-interpret",
  "vello_cpu",
 ]
 
 [[package]]
-name = "pdf-sign"
-version = "1.0.0-beta.1"
+name = "pdf-syntax"
+version = "0.5.2"
+dependencies = [
+ "flate2",
+ "log",
+ "pdfluent-ccitt",
+ "pdfluent-jbig2",
+ "pdfluent-jpeg2000",
+ "rustc-hash",
+ "smallvec",
+ "zune-jpeg",
+]
+
+[[package]]
+name = "pdfluent"
+version = "1.0.0-beta.5"
+dependencies = [
+ "getrandom 0.2.17",
+ "image",
+ "pdf-compliance",
+ "pdf-docx",
+ "pdf-engine",
+ "pdf-manip",
+ "pdf-redact",
+ "pdf-render",
+ "pdfluent-lopdf",
+ "pdfluent-sign",
+ "png 0.17.16",
+]
+
+[[package]]
+name = "pdfluent-ccitt"
+version = "0.2.0"
+
+[[package]]
+name = "pdfluent-cff"
+version = "0.2.0"
+
+[[package]]
+name = "pdfluent-extract"
+version = "1.0.0-beta.5"
+dependencies = [
+ "flate2",
+ "pdfluent-lopdf",
+ "thiserror",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "pdfluent-forms"
+version = "1.0.0-beta.5"
+dependencies = [
+ "log",
+ "pdf-syntax",
+ "pdfluent-lopdf",
+ "thiserror",
+]
+
+[[package]]
+name = "pdfluent-jbig2"
+version = "0.2.1"
+dependencies = [
+ "pdfluent-ccitt",
+]
+
+[[package]]
+name = "pdfluent-jpeg2000"
+version = "0.3.3"
+dependencies = [
+ "fearless_simd",
+ "image",
+ "moxcms 0.7.11",
+]
+
+[[package]]
+name = "pdfluent-lopdf"
+version = "0.39.2"
+dependencies = [
+ "aes",
+ "bitflags 2.11.0",
+ "cbc",
+ "chrono",
+ "ecb",
+ "encoding_rs",
+ "flate2",
+ "getrandom 0.3.4",
+ "image",
+ "indexmap",
+ "itoa",
+ "jiff",
+ "log",
+ "md-5",
+ "nom",
+ "nom_locate",
+ "pdfluent-ccitt",
+ "pdfluent-jbig2",
+ "pdfluent-jpeg2000",
+ "rand 0.9.2",
+ "rangemap",
+ "rayon",
+ "sha2",
+ "stringprep",
+ "thiserror",
+ "time",
+ "ttf-parser",
+ "weezl",
+]
+
+[[package]]
+name = "pdfluent-sign"
+version = "1.0.0-beta.5"
 dependencies = [
  "der",
  "digest",
  "ecdsa",
  "log",
- "lopdf",
  "p12",
  "p256",
  "p384",
  "pdf-syntax",
+ "pdfluent-lopdf",
  "pkcs8",
  "rsa",
  "sha1",
@@ -1556,20 +1653,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pdf-syntax"
-version = "0.5.0"
-dependencies = [
- "flate2",
- "hayro-ccitt",
- "hayro-jbig2",
- "hayro-jpeg2000",
- "log",
- "rustc-hash",
- "smallvec",
- "zune-jpeg",
-]
-
-[[package]]
 name = "peniko"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1577,7 +1660,7 @@ checksum = "9a2b6aadb221872732e87d465213e9be5af2849b0e8cc5300a8ba98fffa2e00a"
 dependencies = [
  "bytemuck",
  "color",
- "kurbo",
+ "kurbo 0.13.0",
  "linebender_resource_handle",
  "smallvec",
 ]
@@ -1824,6 +1907,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
+name = "quick-xml"
+version = "0.37.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+dependencies = [
+ "memchr",
+ "serde",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1983,12 +2076,22 @@ dependencies = [
 
 [[package]]
 name = "read-fonts"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6717cf23b488adf64b9d711329542ba34de147df262370221940dfabc2c91358"
+dependencies = [
+ "bytemuck",
+ "font-types 0.10.1",
+]
+
+[[package]]
+name = "read-fonts"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b634fabf032fab15307ffd272149b622260f55974d9fad689292a5d33df02e5"
 dependencies = [
  "bytemuck",
- "font-types",
+ "font-types 0.11.1",
 ]
 
 [[package]]
@@ -2207,12 +2310,22 @@ checksum = "b2aa850e253778c88a04c3d7323b043aeda9d3e30d5971937c1855769763678e"
 
 [[package]]
 name = "skrifa"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c31071dedf532758ecf3fed987cdb4bd9509f900e026ab684b4ecb81ea49841"
+dependencies = [
+ "bytemuck",
+ "read-fonts 0.35.0",
+]
+
+[[package]]
+name = "skrifa"
 version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7fbdfe3d2475fbd7ddd1f3e5cf8288a30eb3e5f95832829570cd88115a7434ac"
 dependencies = [
  "bytemuck",
- "read-fonts",
+ "read-fonts 0.37.0",
 ]
 
 [[package]]
@@ -2252,6 +2365,18 @@ dependencies = [
  "unicode-bidi",
  "unicode-normalization",
  "unicode-properties",
+]
+
+[[package]]
+name = "subsetter"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb6895a12ac5599bb6057362f00e8a3cf1daab4df33f553a55690a44e4fed8d0"
+dependencies = [
+ "kurbo 0.12.0",
+ "rustc-hash",
+ "skrifa 0.37.0",
+ "write-fonts",
 ]
 
 [[package]]
@@ -2436,7 +2561,7 @@ dependencies = [
  "log",
  "peniko",
  "png 0.17.16",
- "skrifa",
+ "skrifa 0.40.0",
  "smallvec",
 ]
 
@@ -2598,8 +2723,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7249219f66ced02969388cf2bb044a09756a083d0fab1e566056b04d9fbcaa5"
 
 [[package]]
+name = "write-fonts"
+version = "0.43.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "886614b5ce857341226aa091f3c285e450683894acaaa7887f366c361efef79d"
+dependencies = [
+ "font-types 0.10.1",
+ "indexmap",
+ "kurbo 0.12.0",
+ "log",
+ "read-fonts 0.35.0",
+]
+
+[[package]]
 name = "xfa-license"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.3"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -2607,6 +2745,12 @@ dependencies = [
  "serde_json",
  "thiserror",
 ]
+
+[[package]]
+name = "xmp-writer"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "y4m"
@@ -2691,6 +2835,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
 
 [[package]]
+name = "zip"
+version = "2.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fabe6324e908f85a1c52063ce7aa26b68dcb7eb6dbc83a2d148403c9bc3eba50"
+dependencies = [
+ "arbitrary",
+ "crc32fast",
+ "crossbeam-utils",
+ "displaydoc",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "thiserror",
+ "zopfli",
+]
+
+[[package]]
 name = "zlib-rs"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2701,6 +2862,18 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[package]]
+name = "zopfli"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f05cd8797d63865425ff89b5c4a48804f35ba0ce8d125800027ad6017d2b5249"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]
 
 [[package]]
 name = "zune-core"

@@ -43,7 +43,7 @@
 //! Breaking changes require a new RFC.
 
 #![deny(unsafe_code)]
-#![warn(missing_docs)]
+#![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 /// Async I/O wrappers via Tokio's blocking pool.
@@ -63,6 +63,7 @@ pub mod parity;
 pub mod prelude;
 pub mod redact;
 pub mod signer;
+pub mod structure;
 pub mod tier;
 pub mod watermark;
 
@@ -79,7 +80,9 @@ pub use crate::document::{
 pub use crate::encrypt::{EncryptOptions, EncryptionAlgorithm, Permissions};
 pub use crate::error::{Error, ResourceLimitKind, Result};
 pub use crate::form::{FieldType, FormField, PdfFormMut};
-pub use crate::license::{license_info, set_license_key, LicenseInfo};
+pub use crate::license::{
+    license_info, set_license_key, set_license_payload, set_license_public_key, LicenseInfo,
+};
 pub use crate::merger::{BookmarkMergeStrategy, MergeOptions, PdfMerger};
 pub use crate::metadata::{Metadata, MetadataMut};
 pub use crate::parity::{

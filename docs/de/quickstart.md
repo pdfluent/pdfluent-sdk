@@ -6,9 +6,13 @@ Fuegen Sie `xfa-json` und `pdfium-ffi-bridge` zu Ihrer `Cargo.toml` hinzu:
 
 ```toml
 [dependencies]
-xfa-json = { git = "https://github.com/jasperdew/xfa-native-rust" }
-pdfium-ffi-bridge = { git = "https://github.com/jasperdew/xfa-native-rust" }
+pdfluent = "1.0.0-beta.5"
 ```
+
+> Fuer die Low-Level XFA-JSON-Pipeline (fortgeschritten, intern)
+> verwenden Sie die Crates `xfa-json` und `pdfium-ffi-bridge` aus
+> dem PDFluent GitLab-Workspace:
+> <https://github.com/pdfluent/PDFluent-project>.
 
 ## Felder aus einem XFA PDF extrahieren
 

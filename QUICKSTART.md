@@ -142,8 +142,8 @@ Pre-built wheels — no Rust toolchain required.
 
 ```bash
 pip install maturin
-git clone https://github.com/pdfluent/examples
-cd examples/rust
+git clone https://github.com/pdfluent/PDFluent-project.git pdfluent
+cd pdfluent/pdfluent-examples/rust
 maturin develop --release
 ```
 
@@ -239,11 +239,11 @@ Native `.node` binaries — no Rust toolchain required.
 ### Via npm (bundler — Vite / webpack)
 
 ```bash
-npm install @pdfluent/wasm
+npm install @pdfluent/sdk-wasm
 ```
 
 ```js
-import init, { PdfDoc } from '@pdfluent/wasm';
+import init, { PdfDoc } from '@pdfluent/sdk-wasm';
 
 await init();
 
@@ -327,5 +327,5 @@ automatic cleanup.
 - **Docs:** <https://pdfluent.com/docs>
 - **Trial license:** <https://pdfluent.com/trial>
 - **Pricing:** <https://pdfluent.com/pricing>
-- **Issues:** <https://github.com/pdfluent/examples/issues>
+- **Issues:** <https://github.com/pdfluent/PDFluent-project/-/issues>
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)

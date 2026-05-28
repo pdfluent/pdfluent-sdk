@@ -1,0 +1,116 @@
+name: WASM wasm-opt parity gate
+
+# Verifies that the wasm-opt-optimized SDK build produces byte-identical
+# outputs to a reference build (wasm-opt disabled) for the deterministic
+# operation set. Triggered on any MR touching crates/xfa-wasm/.
+#
+# This job is intentionally pure CI configuration. It is checked in to
+# document the contract; the GitHub Actions side is currently dormant
+# because the GitHub mirror is suspended. The same script
+# (scripts/bench/wasm-golden-compare.mjs) is the authoritative gate and
+# will be reused unchanged on the GitLab CI lane when that platform's
+# pipeline is set up.
+
+on:
+  pull_request:
+    paths:
+      - 'crates/xfa-wasm/**'
+      - 'scripts/bench/wasm-golden-compare.mjs'
+      - 'scripts/bench/wasm-bench.mjs'
+      - '.github/workflows/wasm-opt-parity.yml'
+  push:
+    branches:
+      - 'enterprise/post-beta-hardening'
+      - 'master'
+    paths:
+      - 'crates/xfa-wasm/**'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  wasm-opt-parity:
+    name: "wasm-opt -O3 vs disabled (byte-identical outputs)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build reference (wasm-opt disabled)
+        run: |
+          # Force-disable wasm-opt by toml-patching for the reference build.
+          cp crates/xfa-wasm/Cargo.toml crates/xfa-wasm/Cargo.toml.bak
+          python3 - <<'PY'
+          import re, pathlib
+          p = pathlib.Path("crates/xfa-wasm/Cargo.toml")
+          t = p.read_text()
+          t = re.sub(
+              r"^wasm-opt = .*$",
+              "wasm-opt = false",
+              t,
+              count=1,
+              flags=re.M,
+          )
+          p.write_text(t)
+          PY
+          wasm-pack build --release --target web \
+            --out-dir /tmp/ref/pkg crates/xfa-wasm \
+            -- --no-default-features --features wasm
+          mv crates/xfa-wasm/Cargo.toml.bak crates/xfa-wasm/Cargo.toml
+
+      - name: Build candidate (committed wasm-opt config)
+        run: |
+          wasm-pack build --release --target web \
+            --out-dir /tmp/cand/pkg crates/xfa-wasm \
+            -- --no-default-features --features wasm
+
+      - name: Golden comparison (must be byte-identical)
+        run: |
+          node scripts/bench/wasm-golden-compare.mjs \
+            --ref /tmp/ref/pkg \
+            --cand /tmp/cand/pkg \
+            --fixtures benchmarks/fixtures/wasm_perf/manifest.json \
+            --out  /tmp/golden.json
+          jq '{pass: .pass, fail: .fail, error: .error}' /tmp/golden.json
+
+      - name: Size guardrail (raw .wasm must not regress > 5%)
+        run: |
+          REF=$(stat -c %s /tmp/ref/pkg/xfa_wasm_bg.wasm)
+          CAND=$(stat -c %s /tmp/cand/pkg/xfa_wasm_bg.wasm)
+          echo "ref=$REF cand=$CAND"
+          python3 - <<PY
+          ref=$REF; cand=$CAND
+          ratio = (cand/ref - 1)*100
+          print(f"raw .wasm delta: {ratio:+.2f}%")
+          assert ratio <= 5.0, f"raw .wasm regressed > 5%: {ratio:+.2f}%"
+          PY
+
+      - name: Upload artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-opt-parity-artefacts
+          path: |
+            /tmp/golden.json
+            /tmp/ref/pkg/xfa_wasm_bg.wasm
+            /tmp/cand/pkg/xfa_wasm_bg.wasm
+          retention-days: 14

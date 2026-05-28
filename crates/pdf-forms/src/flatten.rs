@@ -854,10 +854,7 @@ mod tests {
             widget.get(b"AA").is_err(),
             "/AA must be stripped when /Next chain contains JavaScript"
         );
-        assert!(
-            widget.get(b"JS").is_err(),
-            "widget must not retain /JS key"
-        );
+        assert!(widget.get(b"JS").is_err(), "widget must not retain /JS key");
     }
 
     #[test]
@@ -891,12 +888,10 @@ mod tests {
         // object itself may or may not remain — the important thing is that
         // no JS-stripping occurred on the URI action.
         // We verify the URI AA entry on the widget object is untouched.
-        if let Ok(aa) = widget.get(b"AA") {
-            if let Object::Dictionary(aa_dict) = aa {
-                if let Ok(Object::Dictionary(e_dict)) = aa_dict.get(b"E") {
-                    if let Ok(Object::Name(name)) = e_dict.get(b"S") {
-                        assert_ne!(name, b"JavaScript", "/E must not be JS");
-                    }
+        if let Ok(Object::Dictionary(aa_dict)) = widget.get(b"AA") {
+            if let Ok(Object::Dictionary(e_dict)) = aa_dict.get(b"E") {
+                if let Ok(Object::Name(name)) = e_dict.get(b"S") {
+                    assert_ne!(name, b"JavaScript", "/E must not be JS");
                 }
             }
         }

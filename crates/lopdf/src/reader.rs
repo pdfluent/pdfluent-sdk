@@ -299,6 +299,23 @@ impl Document {
         buffer.try_into()
     }
 
+    /// Load a PDF document from a memory slice with a password for encrypted PDFs.
+    ///
+    /// This is a synchronous helper available in both sync and async builds so
+    /// that callers that already have the PDF in memory do not need to branch on
+    /// the `async` feature flag.
+    pub fn load_mem_with_password(buffer: &[u8], password: &str) -> Result<Document> {
+        Reader {
+            buffer,
+            document: Document::new(),
+            encryption_state: None,
+            raw_objects: BTreeMap::new(),
+            password: Some(password.to_string()),
+            options: LoadOptions::default(),
+        }
+        .read(None)
+    }
+
     /// Load PDF metadata (title and page count) without loading the entire document.
     /// This is much faster for large PDFs when you only need basic information.
     #[inline]
@@ -1484,8 +1501,7 @@ fn load_document_with_preceding_bytes() {
 
 #[test]
 fn load_many_shallow_brackets() {
-    let content: String = std::iter::repeat("()")
-        .take(MAX_BRACKET * 10)
+    let content: String = std::iter::repeat_n("()", MAX_BRACKET * 10)
         .flat_map(|x| x.chars())
         .collect();
     const STREAM_CRUFT: usize = 33;
@@ -1530,9 +1546,8 @@ startxref
 
 #[test]
 fn load_too_deep_brackets() {
-    let content: Vec<u8> = std::iter::repeat(b'(')
-        .take(MAX_BRACKET + 1)
-        .chain(std::iter::repeat(b')').take(MAX_BRACKET + 1))
+    let content: Vec<u8> = std::iter::repeat_n(b'(', MAX_BRACKET + 1)
+        .chain(std::iter::repeat_n(b')', MAX_BRACKET + 1))
         .collect();
     let content = String::from_utf8(content).unwrap();
     const STREAM_CRUFT: usize = 33;
@@ -1608,7 +1623,7 @@ fn search_substring_finds_last_occurrence() {
 
 /// A minimal but valid PDF containing a single page with no objects in ObjStm.
 /// Used as a fixture for LoadOptions tests.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "async")))]
 fn minimal_pdf_bytes() -> &'static [u8] {
     include_bytes!("../assets/example.pdf")
 }

@@ -54,7 +54,9 @@ use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, StringFo
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 // GL-QA36: Re-entrance guard for flatten_xfa_to_pdf.
@@ -78,11 +80,12 @@ thread_local! {
 #[cfg(feature = "xfa-js-sandboxed")]
 use crate::dynamic::apply_dynamic_scripts_with_runtime;
 use crate::dynamic::{
-    apply_dynamic_scripts, apply_dynamic_scripts_with_mode, DynamicScriptOutcome, JsExecutionMode,
-    OutputQuality,
+    apply_dynamic_scripts, apply_dynamic_scripts_with_mode, runtime_diag_enabled,
+    DynamicScriptOutcome, FormDomMatchEntry, JsExecutionMode, OutputQuality,
 };
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
+use crate::flatten_trace;
 use crate::font_bridge::{
     font_variant_key, pdf_glyph_name_to_unicode, CidFontInfo, EmbeddedFontData, PdfBaseEncoding,
     PdfSimpleEncoding, PdfSourceFont, ResolvedFont, XfaFontResolver, XfaFontSpec,
@@ -143,43 +146,130 @@ fn create_minimal_pdf_document() -> Document {
 /// Layout metadata emitted only for CLI diagnostics.
 #[derive(Debug, Clone, Default)]
 pub struct LayoutDump {
-    /// pages.
+    /// Per-page layout entries (one per rendered page).
     pub pages: Vec<LayoutDumpEntry>,
-    /// dynamic_scripts.
+    /// Outcome of any dynamic script processing applied before layout.
     pub dynamic_scripts: DynamicScriptOutcome,
-    /// output_quality.
+    /// Overall quality level of the flattened output.
     pub output_quality: OutputQuality,
 }
 
 /// One page entry in the optional layout dump.
 #[derive(Debug, Clone)]
 pub struct LayoutDumpEntry {
-    /// page_num.
+    /// 1-based page number.
     pub page_num: u32,
-    /// page_height.
+    /// Total height of the page area in points.
     pub page_height: f64,
-    /// used_height.
+    /// Height consumed by laid-out content on this page, in points.
     pub used_height: f64,
-    /// overflow_to_next.
+    /// True when content overflowed and continued on the next page.
     pub overflow_to_next: bool,
-    /// first_overflow_element.
+    /// Name of the first element that triggered overflow, if any.
     pub first_overflow_element: Option<String>,
 }
-/// FlattenMetadata.
 
+/// **D11/D12.** XFA flatten rendering policy — how PDFluent resolves a conflict
+/// between a PDF's embedded form DOM (Adobe Reader's saved runtime state) and a
+/// fresh `template + datasets` re-merge.
+///
+/// See `benchmarks/runs/xfa_enterprise_plan/d10_formdom_vs_remerge_policy/` for
+/// the decision record. The default is [`XfaRenderingPolicy::SavedStateFaithful`].
+///
+/// **D12 validation (2026-05-21):** `FreshMergeExperimental` was measured on a
+/// 9-doc target set and returned a GREEN verdict — no page-count regressions,
+/// `01de9ce4` recovered +80% text content. Corpus-scale measurement (D13) is
+/// pending. `FreshMergeExperimental` remains explicitly experimental and is not
+/// the production default.
+///
+/// PDFluent does **not** claim a single universal Adobe-parity mode: XFA
+/// rendering is policy-dependent (saved-state vs fresh-merge), mirroring Adobe's
+/// own static-vs-dynamic rendering distinction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum XfaRenderingPolicy {
+    /// Honor the embedded form DOM — render the instance set the document was
+    /// last saved with; suppress template/data instances the form DOM did not
+    /// enumerate. This is the default, fully-supported, production behaviour.
+    #[default]
+    SavedStateFaithful,
+    /// **Experimental.** Ignore the saved form DOM for dynamic sections; admit
+    /// data-bound subforms the form DOM omitted. D12 validation (2026-05-21)
+    /// confirmed improvement on `01de9ce4` (+80% text, 20 recovered rows) with
+    /// no page-count regressions on 8 protected targets. Some targets (`13275420`,
+    /// `b0389682`) do admit extra nodes under this policy, so page counts may
+    /// change. Corpus-scale measurement (D13) is pending before production use.
+    /// Default behavior (`SavedStateFaithful`) is unchanged.
+    FreshMergeExperimental,
+}
+
+impl XfaRenderingPolicy {
+    /// Stable lowercase identifier for reports / trace / CLI
+    /// (`"saved_state_faithful"` | `"fresh_merge_experimental"`).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SavedStateFaithful => "saved_state_faithful",
+            Self::FreshMergeExperimental => "fresh_merge_experimental",
+        }
+    }
+
+    /// Parse a CLI/API token (`"saved-state"` | `"fresh-merge"`, plus the
+    /// `as_str` forms). Returns `None` for an unrecognised token.
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "saved-state" | "saved_state" | "saved_state_faithful" | "savedstatefaithful" => {
+                Some(Self::SavedStateFaithful)
+            }
+            "fresh-merge"
+            | "fresh_merge"
+            | "fresh_merge_experimental"
+            | "freshmergeexperimental" => Some(Self::FreshMergeExperimental),
+            _ => None,
+        }
+    }
+
+    /// Whether this policy has an implementation. Both policies are implemented
+    /// and D12-validated (9-doc set, GREEN, 2026-05-21). `FreshMergeExperimental`
+    /// is still experimental — corpus-scale measurement (D13) pending before
+    /// production use.
+    #[must_use]
+    pub const fn is_supported(self) -> bool {
+        true
+    }
+}
+
+/// Lightweight metadata returned alongside the flattened PDF bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FlattenMetadata {
-    /// dynamic_scripts.
+    /// Outcome of dynamic script processing applied during flattening.
     pub dynamic_scripts: DynamicScriptOutcome,
-    /// output_quality.
+    /// Overall output quality level of the flattened result.
     pub output_quality: OutputQuality,
+    /// **D11.** The rendering policy that produced this result.
+    pub rendering_policy: XfaRenderingPolicy,
+    /// **D12.** Count of `formdom_unmatched` nodes that were **admitted**
+    /// (not suppressed) under [`XfaRenderingPolicy::FreshMergeExperimental`].
+    /// These are data-bound, non-zero-instance, non-template-hidden subforms
+    /// that the form DOM omitted but the merger matched to data.
+    ///
+    /// Always 0 under `SavedStateFaithful`.  Under `FreshMergeExperimental`
+    /// a non-zero value means the output may differ from `SavedStateFaithful`.
+    ///
+    /// **D12-validated** (9-doc set, GREEN, 2026-05-21). On `01de9ce4` a value
+    /// of 20 confirmed 20 recovered purchase-order rows. Corpus-scale measurement
+    /// (D13) pending; treat non-zero values as informational until D13 completes.
+    pub fresh_merge_admitted_nodes: usize,
 }
 
 impl FlattenMetadata {
     fn from_dynamic_scripts(dynamic_scripts: DynamicScriptOutcome) -> Self {
+        let output_quality = dynamic_scripts.output_quality;
         Self {
             dynamic_scripts,
-            output_quality: dynamic_scripts.output_quality,
+            output_quality,
+            rendering_policy: XfaRenderingPolicy::SavedStateFaithful,
+            fresh_merge_admitted_nodes: 0,
         }
     }
 }
@@ -196,12 +286,14 @@ impl FlattenOutput {
         mut layout_dump: LayoutDump,
         dynamic_scripts: DynamicScriptOutcome,
     ) -> Self {
+        let output_quality = dynamic_scripts.output_quality;
+        let metadata = FlattenMetadata::from_dynamic_scripts(dynamic_scripts.clone());
         layout_dump.dynamic_scripts = dynamic_scripts;
-        layout_dump.output_quality = dynamic_scripts.output_quality;
+        layout_dump.output_quality = output_quality;
         Self {
             pdf_bytes,
             layout_dump,
-            metadata: FlattenMetadata::from_dynamic_scripts(dynamic_scripts),
+            metadata,
         }
     }
 
@@ -265,14 +357,30 @@ fn try_decrypt_pdf(pdf_bytes: &[u8]) -> DecryptResult {
     DecryptResult::NotEncrypted
 }
 
-/// Returns `true` if the layout nodes contain at least one field node.
+/// Returns `true` if the layout nodes contain at least one data-bearing field.
+///
 /// Checks the FormTree source node because the layout engine may emit
 /// `WrappedText` instead of `Field` for fields with content.
+///
+/// Non-data-bearing widgets are excluded so pages whose only interactive
+/// elements are decorative or structural are treated as static-only pages
+/// and are never suppressed by the page-drop heuristic:
+///
+/// * `Draw` elements are purely static content — text labels, images, lines.
+/// * `FieldKind::Signature` — a signature box carries no user-typed value.
+/// * `FieldKind::Button` — a push-button carries no data value by design.
+/// * `FieldKind::Barcode` — barcodes are presentation-only.
 fn page_has_fields(nodes: &[LayoutNode], tree: &FormTree) -> bool {
-    use xfa_layout_engine::form::FormNodeType;
+    use xfa_layout_engine::form::{FieldKind, FormNodeType};
     nodes.iter().any(|n| {
-        matches!(tree.get(n.form_node).node_type, FormNodeType::Field { .. })
-            || page_has_fields(&n.children, tree)
+        // Draw nodes (text labels, lines, images) are static content; they
+        // must never count as data fields for the page-suppression heuristic.
+        let is_data_field = matches!(tree.get(n.form_node).node_type, FormNodeType::Field { .. })
+            && !matches!(
+                tree.meta(n.form_node).field_kind,
+                FieldKind::Signature | FieldKind::Button | FieldKind::Barcode
+            );
+        is_data_field || page_has_fields(&n.children, tree)
     })
 }
 
@@ -288,6 +396,315 @@ fn page_has_field_data(nodes: &[LayoutNode], tree: &FormTree) -> bool {
             FormNodeType::Field { value } if !value.is_empty()
         ) || page_has_field_data(&n.children, tree)
     })
+}
+
+/// Per-page field counts `(total, empty, nonempty)` for suppression tracing.
+fn page_field_counts(nodes: &[LayoutNode], tree: &FormTree) -> (usize, usize, usize) {
+    use xfa_layout_engine::form::FormNodeType;
+    let mut total = 0;
+    let mut empty = 0;
+    let mut nonempty = 0;
+    for n in nodes {
+        if let FormNodeType::Field { value } = &tree.get(n.form_node).node_type {
+            total += 1;
+            if value.trim().is_empty() {
+                empty += 1;
+            } else {
+                nonempty += 1;
+            }
+        }
+        let (t, e, ne) = page_field_counts(&n.children, tree);
+        total += t;
+        empty += e;
+        nonempty += ne;
+    }
+    (total, empty, nonempty)
+}
+
+/// Static (non-field) visible text characters on a page (draw text + loose/
+/// wrapped text not from a field value). Used only for suppression tracing.
+fn page_static_draw_chars(nodes: &[LayoutNode]) -> usize {
+    let mut total = 0usize;
+    for n in nodes {
+        match &n.content {
+            LayoutContent::Text(t) => total += t.chars().count(),
+            LayoutContent::Draw(DrawContent::Text(t)) => total += t.chars().count(),
+            LayoutContent::WrappedText {
+                lines, from_field, ..
+            } if !*from_field => {
+                total += lines.iter().map(|l| l.chars().count()).sum::<usize>();
+            }
+            _ => {}
+        }
+        total += page_static_draw_chars(&n.children);
+    }
+    total
+}
+
+/// Returns `true` when the page's layout nodes render any visible ink — a
+/// placed field (border/caption/value box), a static draw (line/rect/arc),
+/// non-empty draw/loose/wrapped text, or an image. A page whose nodes all
+/// carry `LayoutContent::None` or only whitespace renders nothing and is *not*
+/// visible.
+///
+/// This is the keep predicate for the [`suppression_trust_layout_enabled`]
+/// relaxation: it lets §4.3 keep data-empty pages that still draw content
+/// (trusting the layout page count) while still dropping truly-blank pages,
+/// rather than dropping every page whose fields lack a bound value.
+fn page_has_visible_content(nodes: &[LayoutNode]) -> bool {
+    nodes.iter().any(|n| {
+        let self_visible = match &n.content {
+            LayoutContent::None => false,
+            LayoutContent::Text(t) => !t.trim().is_empty(),
+            LayoutContent::WrappedText { lines, .. } => lines.iter().any(|l| !l.trim().is_empty()),
+            LayoutContent::Draw(DrawContent::Text(t)) => !t.trim().is_empty(),
+            // Lines, rectangles and arcs are visible structural ink.
+            LayoutContent::Draw(_) => true,
+            // A placed field renders its border/caption/value box even when
+            // the bound value is empty.
+            LayoutContent::Field { .. } => true,
+            LayoutContent::Image { .. } => true,
+        };
+        self_visible || page_has_visible_content(&n.children)
+    })
+}
+
+/// Opt-in (default-off) for `XFA_SUPPRESSION_TRUST_LAYOUT`: when set to a
+/// truthy value (`1`/`on`/`true`), §4.3 suppression trusts the layout page
+/// count and keeps every laid-out page that renders visible content
+/// ([`page_has_visible_content`]) instead of dropping data-empty pages.
+///
+/// This is the suppression half of the over-pagination/occur-instance fix.
+/// It is intentionally NOT default-on: until the layout engine stops
+/// over-producing pages for a handful of docs, trusting the layout count
+/// re-inflates those over-produced pages. The flag therefore stays off by
+/// default and pairs with the layout over-production milestone.
+fn suppression_trust_layout_enabled() -> bool {
+    matches!(std::env::var("XFA_SUPPRESSION_TRUST_LAYOUT"), Ok(v) if {
+        let v = v.trim();
+        v == "1" || v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("true")
+    })
+}
+
+/// BE-1 harvest-mode (default OFF). When set, the §4.3 `data_empty_dropped`
+/// page-suppression decision is taken against the **pre-JS** (data-bound) field
+/// values rather than the post-JS live tree. This preserves the static
+/// data-empty suppression under `XFA_JS_EXECUTION_MODE=sandboxed`: the runtime
+/// still applies structural intents (instanceManager / presence), but JS field
+/// population (`#items` list writes, value mutations) no longer keeps an
+/// otherwise data-empty page alive. Only meaningful when sandboxed JS actually
+/// mutates the tree; in the static default path pre-JS == live, so this is a
+/// no-op and the default binary stays byte-identical.
+fn harvest_mode_enabled() -> bool {
+    matches!(std::env::var("XFA_JS_HARVEST_MODE"), Ok(v) if {
+        let v = v.trim();
+        v == "1" || v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("true")
+    })
+}
+
+/// BE-1 harvest-mode: snapshot the ids of all `Field` nodes that carry a
+/// non-empty value at the moment of capture (taken pre-JS, right after the
+/// data merge). Used by [`page_has_field_data_snapshot`] so the suppression
+/// decision reflects data-bound emptiness, not JS-populated values.
+fn snapshot_nonempty_field_ids(tree: &FormTree) -> HashSet<FormNodeId> {
+    use xfa_layout_engine::form::FormNodeType;
+    let mut ids = HashSet::new();
+    for i in 0..tree.nodes.len() {
+        let id = FormNodeId(i);
+        if let FormNodeType::Field { value } = &tree.get(id).node_type {
+            if !value.trim().is_empty() {
+                ids.insert(id);
+            }
+        }
+    }
+    ids
+}
+
+/// BE-1 harvest-mode counterpart to [`page_has_field_data`]: a page "has field
+/// data" iff one of its nodes was a non-empty field in the pre-JS snapshot.
+fn page_has_field_data_snapshot(nodes: &[LayoutNode], snapshot: &HashSet<FormNodeId>) -> bool {
+    nodes.iter().any(|n| {
+        snapshot.contains(&n.form_node) || page_has_field_data_snapshot(&n.children, snapshot)
+    })
+}
+
+/// Sorted distinct FormNode ids referenced on a page — the "occur-instance
+/// signature". Two pages with identical signatures are repeated instances of
+/// the same template subtree (occur expansion reuses the template id).
+fn page_form_node_signature(nodes: &[LayoutNode], out: &mut Vec<usize>) {
+    for n in nodes {
+        out.push(n.form_node.0);
+        page_form_node_signature(&n.children, out);
+    }
+}
+
+/// Compute per-page suppression diagnostics mirroring the keep decision in the
+/// XFA §4.3 suppression block. Used only by the env-gated flatten trace.
+/// Build a child→parent index map over the FormTree (`parent[i]` = parent
+/// FormNodeId.0, or `usize::MAX` for roots). Used for occur-ancestor walks.
+fn build_parent_map(tree: &FormTree) -> Vec<usize> {
+    let mut parent = vec![usize::MAX; tree.nodes.len()];
+    for (pid, node) in tree.nodes.iter().enumerate() {
+        for &child in &node.children {
+            if child.0 < parent.len() {
+                parent[child.0] = pid;
+            }
+        }
+    }
+    parent
+}
+
+/// Count page nodes bound to a data node (`meta.bound_data_node.is_some()`).
+fn page_data_bound_count(nodes: &[LayoutNode], tree: &FormTree) -> usize {
+    let mut c = 0;
+    for n in nodes {
+        if tree.meta(n.form_node).bound_data_node.is_some() {
+            c += 1;
+        }
+        c += page_data_bound_count(&n.children, tree);
+    }
+    c
+}
+
+/// Nearest repeating-subform ancestor (`occur.is_repeating()`) of any form node
+/// on the page, walking up `parent_map`. Returns its FormNodeId.0, or None.
+fn page_repeating_ancestor(
+    distinct_ids: &[usize],
+    tree: &FormTree,
+    parent_map: &[usize],
+) -> Option<usize> {
+    use xfa_layout_engine::form::FormNodeId;
+    for &start in distinct_ids {
+        let mut cur = start;
+        let mut depth = 0;
+        while cur != usize::MAX && depth < 4096 {
+            if cur < tree.nodes.len() && tree.get(FormNodeId(cur)).occur.is_repeating() {
+                return Some(cur);
+            }
+            cur = parent_map.get(cur).copied().unwrap_or(usize::MAX);
+            depth += 1;
+        }
+    }
+    None
+}
+
+fn compute_suppression_diags(
+    layout: &LayoutDom,
+    tree: &FormTree,
+    pre_js_nonempty: Option<&HashSet<FormNodeId>>,
+) -> Vec<flatten_trace::PageSuppressionDiag> {
+    let parent_map = build_parent_map(tree);
+    let n = layout.pages.len();
+    let trust_layout = suppression_trust_layout_enabled();
+    // Raw per-page keep (matches the suppression `map`). Under harvest-mode the
+    // "has field data" test uses the pre-JS snapshot so the diag reflects the
+    // real (harvest) keep decision rather than the post-JS live tree.
+    let raw: Vec<(bool, bool, bool)> = layout
+        .pages
+        .iter()
+        .map(|p| {
+            let hd = match pre_js_nonempty {
+                Some(snap) => page_has_field_data_snapshot(&p.nodes, snap),
+                None => page_has_field_data(&p.nodes, tree),
+            };
+            (p.runtime_instantiated, page_has_fields(&p.nodes, tree), hd)
+        })
+        .collect();
+    let raw_keep = |i: usize| -> bool {
+        // Mirrors the suppression `map`: keep when runtime-instantiated, when a
+        // field carries data, or when the page has no fields at all.
+        // (`(hf && hd) || !hf` reduces to `hd || !hf`.)
+        let (rt, hf, hd) = raw[i];
+        rt || hd || !hf
+    };
+    let any_keep = (0..n).any(raw_keep);
+
+    // Signatures for repeated-instance detection.
+    let mut sigs: Vec<Vec<usize>> = Vec::with_capacity(n);
+    for p in &layout.pages {
+        let mut s = Vec::new();
+        page_form_node_signature(&p.nodes, &mut s);
+        s.sort_unstable();
+        s.dedup();
+        sigs.push(s);
+    }
+
+    let mut diags = Vec::with_capacity(n);
+    for i in 0..n {
+        let (rt, hf, hd) = raw[i];
+        let (fc, ef, nf) = page_field_counts(&layout.pages[i].nodes, tree);
+        let static_chars = page_static_draw_chars(&layout.pages[i].nodes);
+        let dup = (0..i)
+            .find(|&j| sigs[j] == sigs[i])
+            .map_or(-1, |j| j as i64);
+        let (keep, reason) = if n <= 1 {
+            (true, "single_page")
+        } else if rt {
+            (true, "runtime_instantiated")
+        } else if hf && hd {
+            (true, "has_field_data")
+        } else if !hf {
+            (true, "no_fields_static_kept")
+        } else if any_keep {
+            // Data-empty page. Default drops it; with XFA_SUPPRESSION_TRUST_LAYOUT
+            // on, keep it when it still renders visible content.
+            if trust_layout && page_has_visible_content(&layout.pages[i].nodes) {
+                (true, "trust_layout_kept")
+            } else {
+                (false, "data_empty_dropped")
+            }
+        } else {
+            (true, "all_empty_kept")
+        };
+
+        // --- Layout provenance ---
+        let data_bound = page_data_bound_count(&layout.pages[i].nodes, tree);
+        let repeating_ancestor = page_repeating_ancestor(&sigs[i], tree, &parent_map);
+        let under_repeating = repeating_ancestor.is_some();
+        let occur_template_id = repeating_ancestor.map_or(-1, |id| id as i64);
+        let has_data = nf > 0 || data_bound > 0;
+        let page_reason = if rt {
+            "root_page"
+        } else if under_repeating && !has_data {
+            "repeated_empty_instance"
+        } else if under_repeating {
+            "occur_instance"
+        } else if has_data {
+            "continuation"
+        } else if static_chars > 0 {
+            "static_page_area"
+        } else {
+            "unknown"
+        };
+        let suppression_safe_to_drop = page_reason == "repeated_empty_instance";
+        let provenance_confidence = if rt || under_repeating || has_data {
+            "exact"
+        } else if static_chars > 0 {
+            "inferred"
+        } else {
+            "unknown"
+        };
+
+        diags.push(flatten_trace::PageSuppressionDiag {
+            page_index: i,
+            keep,
+            reason,
+            field_count: fc,
+            empty_field_count: ef,
+            nonempty_field_count: nf,
+            static_draw_text_chars: static_chars,
+            distinct_form_nodes: sigs[i].len(),
+            duplicate_of_page: dup,
+            runtime_instantiated: rt,
+            under_repeating_subform: under_repeating,
+            occur_template_id,
+            data_bound_nodes_count: data_bound,
+            page_reason,
+            suppression_safe_to_drop,
+            provenance_confidence,
+        });
+    }
+    diags
 }
 
 /// Flatten all XFA content in `pdf_bytes` to static PDF content streams.
@@ -334,32 +751,95 @@ fn page_has_field_data(nodes: &[LayoutNode], tree: &FormTree) -> bool {
 /// See `scripts/generate_xfa_reference.sh` and `docs/XFA_SUCCESS_CRITERIA.md`.
 #[must_use = "flattened PDF bytes must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
-    flatten_xfa_to_pdf_internal(pdf_bytes, false).map(|out| out.pdf_bytes)
+    flatten_xfa_to_pdf_internal(pdf_bytes, false, XfaRenderingPolicy::SavedStateFaithful)
+        .map(|out| out.pdf_bytes)
 }
-/// flatten_xfa_to_pdf_with_layout_dump.
+/// Flatten XFA content and return the PDF bytes together with a per-page layout dump.
+///
+/// The [`LayoutDump`] is useful for CLI diagnostics and automated testing; use
+/// [`flatten_xfa_to_pdf`] when you only need the output bytes.
+///
+/// # Errors
+///
+/// Returns [`XfaError`] on parse, layout, or render failures.
 #[must_use = "flattened PDF bytes and layout dump must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_layout_dump(pdf_bytes: &[u8]) -> Result<(Vec<u8>, LayoutDump)> {
-    let out = flatten_xfa_to_pdf_internal(pdf_bytes, true)?;
+    let out = flatten_xfa_to_pdf_internal(pdf_bytes, true, XfaRenderingPolicy::SavedStateFaithful)?;
     Ok((out.pdf_bytes, out.layout_dump))
 }
-/// flatten_xfa_to_pdf_with_metadata.
+
+/// Flatten XFA content and return the PDF bytes together with [`FlattenMetadata`].
+///
+/// Metadata includes the dynamic-script outcome and overall output quality level.
+///
+/// # Errors
+///
+/// Returns [`XfaError`] on parse, layout, or render failures.
 #[must_use = "flattened PDF bytes and metadata must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_metadata(pdf_bytes: &[u8]) -> Result<(Vec<u8>, FlattenMetadata)> {
-    let out = flatten_xfa_to_pdf_internal(pdf_bytes, false)?;
+    let out =
+        flatten_xfa_to_pdf_internal(pdf_bytes, false, XfaRenderingPolicy::SavedStateFaithful)?;
     Ok((out.pdf_bytes, out.metadata))
 }
-/// flatten_xfa_to_pdf_with_layout_dump_and_metadata.
+
+/// Flatten XFA content and return the PDF bytes, a layout dump, and metadata in one call.
+///
+/// Combines [`flatten_xfa_to_pdf_with_layout_dump`] and
+/// [`flatten_xfa_to_pdf_with_metadata`] without running the pipeline twice.
+///
+/// # Errors
+///
+/// Returns [`XfaError`] on parse, layout, or render failures.
 #[must_use = "flattened PDF bytes, layout dump, and metadata must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_layout_dump_and_metadata(
     pdf_bytes: &[u8],
 ) -> Result<(Vec<u8>, LayoutDump, FlattenMetadata)> {
-    let out = flatten_xfa_to_pdf_internal(pdf_bytes, true)?;
+    let out = flatten_xfa_to_pdf_internal(pdf_bytes, true, XfaRenderingPolicy::SavedStateFaithful)?;
     Ok((out.pdf_bytes, out.layout_dump, out.metadata))
+}
+
+/// **D11/D12.** Flatten XFA content under an explicit [`XfaRenderingPolicy`].
+///
+/// [`XfaRenderingPolicy::SavedStateFaithful`] (the default) behaves identically
+/// to [`flatten_xfa_to_pdf`]. [`XfaRenderingPolicy::FreshMergeExperimental`]
+/// is D12-validated (9-doc set, GREEN, 2026-05-21) but remains experimental —
+/// corpus-scale measurement (D13) is pending.
+///
+/// # Errors
+///
+/// Returns [`XfaError`] on parse, layout, or render failures.
+#[must_use = "flattened PDF bytes must be used; discarding them loses output"]
+pub fn flatten_xfa_to_pdf_with_policy(
+    pdf_bytes: &[u8],
+    policy: XfaRenderingPolicy,
+) -> Result<Vec<u8>> {
+    flatten_xfa_to_pdf_with_policy_and_metadata(pdf_bytes, policy).map(|(bytes, _)| bytes)
+}
+
+/// **D11/D12.** Flatten XFA content under an explicit [`XfaRenderingPolicy`],
+/// returning the bytes and [`FlattenMetadata`] (whose `rendering_policy` field
+/// records the selected policy and `fresh_merge_admitted_nodes` the count of
+/// nodes admitted under `FreshMergeExperimental`).
+///
+/// # Errors
+///
+/// Returns [`XfaError`] on parse, layout, or render failures.
+#[must_use = "flattened PDF bytes and metadata must be used; discarding them loses output"]
+pub fn flatten_xfa_to_pdf_with_policy_and_metadata(
+    pdf_bytes: &[u8],
+    policy: XfaRenderingPolicy,
+) -> Result<(Vec<u8>, FlattenMetadata)> {
+    // D12: FreshMergeExperimental is now plumbed through the pipeline.
+    let out = flatten_xfa_to_pdf_internal(pdf_bytes, false, policy)?;
+    let mut metadata = out.metadata;
+    metadata.rendering_policy = policy;
+    Ok((out.pdf_bytes, metadata))
 }
 
 fn flatten_xfa_to_pdf_internal(
     pdf_bytes: &[u8],
     collect_layout_dump: bool,
+    policy: XfaRenderingPolicy,
 ) -> Result<FlattenOutput> {
     // GL-QA36: Re-entrance guard.  If this function is entered while already
     // running on this thread (depth ≥ 1), a recursive call has occurred —
@@ -444,34 +924,92 @@ fn flatten_xfa_to_pdf_internal(
     //    Wrap in a thread-based timeout (30s) to prevent hangs on pathological
     //    XFA documents. If the timeout fires, the join handle's result is an Err
     //    and we fall back to static_fallback.
-    const FLATTEN_TIMEOUT: Duration = Duration::from_secs(30);
-    let pdf_bytes_ref = pdf_bytes.to_vec();
-    let template_xml_owned = template_xml.clone();
     let datasets_xml_owned = packets.datasets().map(strip_undefined_xml_entities);
     let form_xml_owned = packets.get_packet("form").map(|s| s.to_string());
 
-    let handle = thread::spawn(move || {
-        xfa_flatten_inner(
-            &pdf_bytes_ref,
-            &template_xml_owned,
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // Native: wrap in a thread-based timeout (30s) so pathological XFA
+        // documents cannot hang a server. If the timeout fires, the join
+        // handle's result is an Err and we fall back to static_fallback.
+        const FLATTEN_TIMEOUT: Duration = Duration::from_secs(30);
+        let pdf_bytes_ref = pdf_bytes.to_vec();
+        let template_xml_owned = template_xml.clone();
+
+        let handle = thread::spawn(move || {
+            xfa_flatten_inner(
+                &pdf_bytes_ref,
+                &template_xml_owned,
+                datasets_xml_owned.as_deref(),
+                form_xml_owned.as_deref(),
+                collect_layout_dump,
+                policy,
+            )
+        });
+
+        match handle.join() {
+            Ok(Ok(out)) => Ok(out),
+            Ok(Err(e @ XfaError::UnsupportedFeature(_))) => Err(e),
+            Ok(Err(e)) => {
+                eprintln!("XFA flatten failed: {e:?}");
+                static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
+            }
+            Err(_) => {
+                eprintln!("XFA flatten timed out after {:?}", FLATTEN_TIMEOUT);
+                static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
+            }
+        }
+    }
+
+    // wasm32 has no `std::thread`, no preemption, and the host page is the
+    // natural cancellation boundary, so run the same pipeline inline (no
+    // watchdog thread — `thread::spawn` is unsupported on wasm32 and panics).
+    #[cfg(target_arch = "wasm32")]
+    {
+        match xfa_flatten_inner(
+            pdf_bytes,
+            &template_xml,
             datasets_xml_owned.as_deref(),
             form_xml_owned.as_deref(),
             collect_layout_dump,
-        )
-    });
-
-    match handle.join() {
-        Ok(Ok(out)) => Ok(out),
-        Ok(Err(e @ XfaError::UnsupportedFeature(_))) => Err(e),
-        Ok(Err(e)) => {
-            eprintln!("XFA flatten failed: {e:?}");
-            static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
-        }
-        Err(_) => {
-            eprintln!("XFA flatten timed out after {:?}", FLATTEN_TIMEOUT);
-            static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
+            policy,
+        ) {
+            Ok(out) => Ok(out),
+            Err(e @ XfaError::UnsupportedFeature(_)) => Err(e),
+            Err(e) => {
+                eprintln!("XFA flatten failed: {e:?}");
+                static_fallback(pdf_bytes).map(FlattenOutput::without_dump)
+            }
         }
     }
+}
+
+/// BE-1 tranche #1: collect the names of structural containers
+/// (`subform`/`subformSet`/`exclGroup`/`area`) declared anywhere in the XFA
+/// template. Installed on the sandboxed runtime before script execution so a
+/// bare implicit SOM reference to a declared-but-absent container resolves to a
+/// benign empty node (Adobe semantics) instead of `undefined`. Only built on
+/// the sandboxed path; the default binary never calls this.
+#[cfg(feature = "xfa-js-sandboxed")]
+fn collect_declared_container_names(template_xml: &str) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    if let Ok(doc) = roxmltree::Document::parse(template_xml) {
+        for node in doc.descendants() {
+            if node.is_element()
+                && matches!(
+                    node.tag_name().name(),
+                    "subform" | "subformSet" | "exclGroup" | "area"
+                )
+            {
+                if let Some(name) = node.attribute("name") {
+                    if !name.is_empty() {
+                        names.insert(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    names
 }
 
 /// Core XFA flatten pipeline: parse template, bind data, layout, render.
@@ -481,6 +1019,7 @@ fn xfa_flatten_inner(
     datasets_xml: Option<&str>,
     form_xml: Option<&str>,
     collect_layout_dump: bool,
+    policy: XfaRenderingPolicy,
 ) -> Result<FlattenOutput> {
     // XFA-F6-01 (#1109): pipeline stage tracker — verifies strict ordering via
     // debug_assert in each stage transition below.
@@ -530,6 +1069,8 @@ fn xfa_flatten_inner(
     );
     _stage = PipelineStage::Bind;
 
+    // Trace capture (env-gated emit at end of function; counts are cheap).
+    let trace_image_files = image_files.len();
     let merger = FormMerger::new(&data_dom).with_image_files(image_files);
     let (mut tree, root_id) = merger
         .merge(template_xml)
@@ -547,6 +1088,16 @@ fn xfa_flatten_inner(
     //   Only effective when the `xfa-js-sandboxed` Cargo feature is compiled
     //   in; otherwise NullRuntime returns NotCompiledIn and the dispatch
     //   path falls back to the same skip behaviour as `BestEffortStatic`.
+    //
+    // BE-1 harvest-mode (default OFF): snapshot data-bound field emptiness
+    // BEFORE the scripts run, so the later §4.3 page-suppression can preserve
+    // the static `data_empty_dropped` behaviour even when sandboxed JS populates
+    // fields. `None` (flag off) → suppression uses the live tree (byte-identical).
+    let pre_js_nonempty_fields: Option<HashSet<FormNodeId>> = if harvest_mode_enabled() {
+        Some(snapshot_nonempty_field_ids(&tree))
+    } else {
+        None
+    };
     let dynamic_scripts = match std::env::var("XFA_JS_EXECUTION_MODE")
         .ok()
         .map(|s| s.to_ascii_lowercase())
@@ -565,6 +1116,14 @@ fn xfa_flatten_inner(
                 match QuickJsRuntime::new() {
                     Ok(mut rt) => {
                         rt.set_data_handle(&data_dom as *const _);
+                        // BE-1 tranche #1: install template-declared container
+                        // names so a bare implicit ref to a declared-but-absent
+                        // subform resolves to a benign empty node (isNull=true)
+                        // instead of `undefined`, letting guarded second-party
+                        // scripts run their else branch (setInstances(0)/hide).
+                        rt.set_declared_subform_names(collect_declared_container_names(
+                            template_xml,
+                        ));
                         apply_dynamic_scripts_with_runtime(
                             &mut tree,
                             root_id,
@@ -590,7 +1149,7 @@ fn xfa_flatten_inner(
         // the Phase B JS runtime counters. Defaults stay 0 in
         // `BestEffortStatic` mode so existing log parsers remain compatible.
         log::warn!(
-            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_instance_writes={} js_list_writes={} js_binding_errors={} js_resolve_failures={} js_data_reads={}",
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_instance_writes={} js_list_writes={} js_binding_errors={} js_resolve_failures={} js_data_reads={} js_unsupported_host_calls={} js_probe_skips={}",
             dynamic_scripts.output_quality.as_str(),
             dynamic_scripts.js_present,
             dynamic_scripts.js_skipped,
@@ -608,9 +1167,11 @@ fn xfa_flatten_inner(
             dynamic_scripts.js_binding_errors,
             dynamic_scripts.js_resolve_failures,
             dynamic_scripts.js_data_reads,
+            dynamic_scripts.js_unsupported_host_calls,
+            dynamic_scripts.js_probe_skips,
         );
         eprintln!(
-            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_instance_writes={} js_list_writes={} js_binding_errors={} js_resolve_failures={} js_data_reads={}",
+            "XFA script metadata: output_quality={} js_present={} js_skipped={} other_skipped={} formcalc_run={} formcalc_errors={} js_executed={} js_runtime_errors={} js_timeouts={} js_oom={} js_host_calls={} js_mutations={} js_instance_writes={} js_list_writes={} js_binding_errors={} js_resolve_failures={} js_data_reads={} js_unsupported_host_calls={} js_probe_skips={}",
             dynamic_scripts.output_quality.as_str(),
             dynamic_scripts.js_present,
             dynamic_scripts.js_skipped,
@@ -628,6 +1189,8 @@ fn xfa_flatten_inner(
             dynamic_scripts.js_binding_errors,
             dynamic_scripts.js_resolve_failures,
             dynamic_scripts.js_data_reads,
+            dynamic_scripts.js_unsupported_host_calls,
+            dynamic_scripts.js_probe_skips,
         );
     }
 
@@ -636,9 +1199,28 @@ fn xfa_flatten_inner(
     // the template-based defaults. This captures script-driven visibility
     // changes (e.g. Avoka framework's sfcUtils.updateVisibility) that our
     // FormCalc interpreter cannot execute.
-    if let Some(fxml) = form_xml {
-        apply_form_dom_presence(&mut tree, root_id, fxml);
-    }
+    // Graduated default-ON (static-parity-rc1): `SavedStateFaithful` admits
+    // data-bound unmatched subforms through the same guarded branch as
+    // `FreshMergeExperimental` instead of suppressing them, WITHOUT flipping the
+    // policy default. Opt out with `XFA_FORMDOM_ADMIT_DATABOUND=0|off|false`.
+    // Read here at the pipeline boundary (like `XFA_JS_EXECUTION_MODE`) so the
+    // presence logic stays a pure, deterministically-testable function. No-op
+    // under `FreshMergeExperimental` (which already admits the same set).
+    let admit_databound_override = std::env::var("XFA_FORMDOM_ADMIT_DATABOUND")
+        .map(|v| {
+            let v = v.trim();
+            !(v.is_empty()
+                || v == "0"
+                || v.eq_ignore_ascii_case("off")
+                || v.eq_ignore_ascii_case("false"))
+        })
+        .unwrap_or(true);
+    let (fresh_merge_admitted, form_dom_match_failures, form_dom_match_log) =
+        if let Some(fxml) = form_xml {
+            apply_form_dom_presence(&mut tree, root_id, fxml, policy, admit_databound_override)
+        } else {
+            (0, 0, Vec::new())
+        };
 
     // Resolve fonts BEFORE layout so the layout engine uses actual font metrics
     // (widths, ascender, descender) instead of generic AFM tables.
@@ -682,13 +1264,45 @@ fn xfa_flatten_inner(
     // Suppressing when binding is incomplete would incorrectly drop pages of
     // explicitly-paginated documents whose fields appear data-empty to this
     // heuristic even though real data is present.
+    let trace_pages_produced = layout.pages.len();
+    // Capture per-page suppression diagnostics BEFORE the retain mutates pages
+    // (env-gated; empty when tracing is off).
+    let trace_suppression = if flatten_trace::enabled() {
+        compute_suppression_diags(&layout, &tree, pre_js_nonempty_fields.as_ref())
+    } else {
+        Vec::new()
+    };
+    // Default-off opt-in: trust the layout page count and keep every laid-out
+    // page that still renders visible content, rather than dropping data-empty
+    // pages. Pairs with the layout over-production fix (see helper docs).
+    let trust_layout = suppression_trust_layout_enabled();
     if layout.pages.len() > 1 {
         let keep: Vec<bool> = layout
             .pages
             .iter()
             .map(|p| {
-                if page_has_fields(&p.nodes, &tree) {
-                    page_has_field_data(&p.nodes, &tree)
+                // XFA 3.3 §3.1 / §8.6: pages emitted onto runtime-allocated
+                // pageAreas (recorded in the form-DOM packet) are an explicit
+                // commitment by Adobe's runtime — never drop them on a
+                // data-empty heuristic.
+                if p.runtime_instantiated {
+                    true
+                } else if page_has_fields(&p.nodes, &tree) {
+                    // Default: keep only when a field carries data. With
+                    // XFA_SUPPRESSION_TRUST_LAYOUT on, also keep data-empty
+                    // pages that still render visible content (the `&&`
+                    // short-circuits, so flag-off is byte-identical).
+                    //
+                    // BE-1 harvest-mode: when a pre-JS snapshot is present,
+                    // base "has data" on the data-bound (pre-JS) field values
+                    // so sandboxed JS field population can't keep an otherwise
+                    // data-empty page. `None` (flag off) → live-tree check,
+                    // byte-identical to the static default.
+                    let has_field_data = match pre_js_nonempty_fields {
+                        Some(ref snap) => page_has_field_data_snapshot(&p.nodes, snap),
+                        None => page_has_field_data(&p.nodes, &tree),
+                    };
+                    has_field_data || (trust_layout && page_has_visible_content(&p.nodes))
                 } else {
                     true
                 }
@@ -752,8 +1366,8 @@ fn xfa_flatten_inner(
         embed_resolved_fonts(&mut doc, &resolved_fonts, &layout);
 
     let config = XfaRenderConfig {
-        font_map,
-        font_metrics_data: metrics_data,
+        font_map: std::sync::Arc::new(font_map),
+        font_metrics_data: std::sync::Arc::new(metrics_data),
         ..Default::default()
     };
 
@@ -850,8 +1464,11 @@ fn xfa_flatten_inner(
     );
     _stage = PipelineStage::Write;
 
+    let mut trace_widgets_baked = 0usize;
+    let mut trace_excess_deleted = 0usize;
     if preserve_static {
         let baked = flatten_widget_appearances(&mut doc);
+        trace_widgets_baked = baked;
         if baked == 0 {
             // No widget APs were baked — the form structure lives in the
             // pre-rendered page content but field values exist only in the
@@ -931,6 +1548,7 @@ fn xfa_flatten_inner(
         let excess: Vec<u32> = ((n_layout + 1) as u32..=(n_existing as u32))
             .rev()
             .collect();
+        trace_excess_deleted = excess.len();
         doc.delete_pages(&excess);
     }
 
@@ -969,14 +1587,116 @@ fn xfa_flatten_inner(
         log::warn!("stripped {stripped_js} JavaScript action(s) from flattened output");
     }
 
+    // Env-gated flatten trace (default OFF): capture stage signals BEFORE the
+    // document is consumed by serialization. Built only when XFA_FLATTEN_TRACE set.
+    let trace_ctx = if flatten_trace::enabled() {
+        let (acroform_removed, xfa_removed_structural, needs_rendering_removed) =
+            catalog_cleanup_status(&doc);
+        Some((
+            acroform_removed,
+            xfa_removed_structural,
+            needs_rendering_removed,
+            doc.page_iter().count(),
+            layout
+                .pages
+                .iter()
+                .filter(|p| p.runtime_instantiated)
+                .count(),
+        ))
+    } else {
+        None
+    };
+
     let mut out = Vec::new();
     doc.save_to(&mut out)
         .map_err(|e| XfaError::LayoutFailed(format!("save: {e}")))?;
-    Ok(FlattenOutput::new(
-        out,
-        layout_dump.unwrap_or_default(),
-        dynamic_scripts,
-    ))
+
+    if let Some((
+        acroform_removed,
+        xfa_removed_structural,
+        needs_rendering_removed,
+        output_page_count,
+        runtime_pages,
+    )) = trace_ctx
+    {
+        let js_mode =
+            std::env::var("XFA_JS_EXECUTION_MODE").unwrap_or_else(|_| "best_effort_static".into());
+        flatten_trace::emit(&flatten_trace::TraceInputs {
+            suppression: &trace_suppression,
+            input_bytes: pdf_bytes.len(),
+            template_bytes: template_xml.len(),
+            js_execution_mode: &js_mode,
+            flatten_path: if preserve_static {
+                "static_preserve"
+            } else {
+                "dynamic"
+            },
+            template_packet_found: true,
+            datasets_packet_found: datasets_xml.is_some(),
+            form_packet_found: form_xml.is_some(),
+            image_files: trace_image_files,
+            tree: &tree,
+            scripts: &dynamic_scripts,
+            layout: &layout,
+            pages_produced: trace_pages_produced,
+            pages_after_suppression: layout.pages.len(),
+            runtime_instantiated_pages: runtime_pages,
+            overlays: &overlays,
+            n_layout,
+            n_existing,
+            is_static_form,
+            has_static_content,
+            preserve_static,
+            excess_pages_deleted: trace_excess_deleted,
+            widgets_baked: trace_widgets_baked,
+            acroform_removed,
+            xfa_removed_structural,
+            needs_rendering_removed,
+            javascript_actions_stripped: stripped_js,
+            output_bytes: out.len(),
+            output_page_count,
+        });
+    }
+
+    // Epic A E-5: patch match-failure data into the dynamic_scripts outcome.
+    let mut dynamic_scripts = dynamic_scripts;
+    dynamic_scripts.form_dom_match_failures = form_dom_match_failures;
+    dynamic_scripts.form_dom_match_log = form_dom_match_log;
+
+    let mut flatten_out = FlattenOutput::new(out, layout_dump.unwrap_or_default(), dynamic_scripts);
+    flatten_out.metadata.fresh_merge_admitted_nodes = fresh_merge_admitted;
+    Ok(flatten_out)
+}
+
+/// Inspect the catalog after cleanup: returns
+/// `(acroform_removed, xfa_removed_structural, needs_rendering_removed)`.
+/// Used by the env-gated flatten trace to confirm structural XFA removal.
+fn catalog_cleanup_status(doc: &Document) -> (bool, bool, bool) {
+    let root_id = match doc.trailer.get(b"Root") {
+        Ok(Object::Reference(id)) => *id,
+        _ => return (true, true, true),
+    };
+    let Ok(cat) = doc.get_dictionary(root_id) else {
+        return (true, true, true);
+    };
+    let acroform_present = cat.get(b"AcroForm").is_ok();
+    let needs_rendering_present = cat.get(b"NeedsRendering").is_ok();
+    let direct_xfa = cat.get(b"XFA").is_ok();
+    let acroform_xfa = cat
+        .get(b"AcroForm")
+        .ok()
+        .and_then(|o| match o {
+            Object::Reference(id) => doc.get_dictionary(*id).ok(),
+            Object::Dictionary(d) => Some(d),
+            _ => None,
+        })
+        .map(|d| d.get(b"XFA").is_ok())
+        .unwrap_or(false);
+    (
+        !acroform_present,
+        !(direct_xfa || acroform_xfa),
+        !needs_rendering_present,
+    )
 }
 
 fn layout_dump_from_profile(profile: LayoutProfile) -> LayoutDump {
@@ -1128,6 +1848,19 @@ fn extract_embedded_images(doc: &Document) -> HashMap<String, Vec<u8>> {
 // Font extraction, resolution, and embedding
 // ---------------------------------------------------------------------------
 
+/// Extract embedded font programs from a lopdf `Document`, including `/Widths`
+/// arrays and encoding metadata.
+///
+/// This is the flatten-pipeline-internal variant. It differs from the public
+/// `extract::extract_embedded_fonts` in three ways:
+/// - Input type: `lopdf::Document` (lopdf object model) vs `pdf_syntax::Pdf`.
+/// - Return type: [`EmbeddedFontData`] structs (with widths + encoding) vs
+///   plain `(name, bytes)` tuples.
+/// - Purpose: metric capture for layout + font embedding inside flatten.
+///   Not intended for external callers; use `pdf_xfa::extract_embedded_fonts`
+///   for inspection-only use cases.
+///
+/// Canonical public API: [`crate::extract::extract_embedded_fonts`].
 #[doc(hidden)]
 pub fn extract_embedded_fonts(doc: &Document) -> Vec<EmbeddedFontData> {
     let mut fonts = Vec::new();
@@ -1303,8 +2036,17 @@ fn extract_cid_font_widths(
         return None;
     }
 
-    let min_cid = entries.iter().map(|(c, _)| *c).min().unwrap();
-    let max_cid = entries.iter().map(|(c, _)| *c).max().unwrap();
+    // SAFETY: entries is non-empty (guarded above), so min/max always yield Some.
+    let min_cid = entries
+        .iter()
+        .map(|(c, _)| *c)
+        .min()
+        .expect("entries is non-empty");
+    let max_cid = entries
+        .iter()
+        .map(|(c, _)| *c)
+        .max()
+        .expect("entries is non-empty");
     let len = (max_cid - min_cid + 1) as usize;
     let mut widths = vec![default_width; len];
     for (cid, w) in &entries {
@@ -2089,6 +2831,13 @@ fn static_fallback(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+// Epic A E-5: thread-local for match-failure accumulation inside the local
+// `apply_recursive` fn (which cannot capture outer state).
+std::thread_local! {
+    static FORM_DOM_MATCH_LOG: std::cell::RefCell<Option<Vec<FormDomMatchEntry>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Apply presence overrides and repeating-instance expansion from the XFA form
 /// DOM packet.
 ///
@@ -2104,11 +2853,19 @@ fn static_fallback(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
 ///    correct instance count produced by the runtime's `instanceManager`.  We
 ///    deep-clone the template instance and populate field values from the form
 ///    DOM so the layout engine produces the right number of pages.
-fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &str) {
+///
+/// Return value: `(admitted_count, match_failures, match_log)`.
+pub(crate) fn apply_form_dom_presence(
+    tree: &mut FormTree,
+    root_id: FormNodeId,
+    form_xml: &str,
+    policy: XfaRenderingPolicy,
+    admit_databound_override: bool,
+) -> (usize, usize, Vec<FormDomMatchEntry>) {
     use xfa_layout_engine::form::{FormNodeType, Presence};
 
     let Ok(doc) = roxmltree::Document::parse(form_xml) else {
-        return;
+        return (0, 0, Vec::new());
     };
 
     /// Deep-clone a subtree rooted at `src_id`, returning the new root id.
@@ -2142,22 +2899,56 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
         inner.text().map(|t| t.to_string())
     }
 
+    /// Return true when a FormTree node semantically matches an XML form-DOM
+    /// child.  Subform/field/draw match by name; pageSet matches by node type
+    /// (unnamed in the XFA spec); pageArea matches by name within a pageSet.
+    fn child_matches(tree: &FormTree, fid: FormNodeId, xml_tag: &str, xml_name: &str) -> bool {
+        use xfa_layout_engine::form::FormNodeType;
+        let node = tree.get(fid);
+        match (xml_tag, &node.node_type) {
+            ("pageSet", FormNodeType::PageSet) => true,
+            ("pageArea", FormNodeType::PageArea { .. }) => node.name == xml_name,
+            ("subform", FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup) => {
+                node.name == xml_name
+            }
+            ("field", FormNodeType::Field { .. }) => node.name == xml_name,
+            ("draw", FormNodeType::Draw(_) | FormNodeType::Image { .. }) => node.name == xml_name,
+            _ => false,
+        }
+    }
+
     /// Apply presence, values, and child expansion from the form DOM to a
     /// FormTree node.
     fn apply_recursive(
         tree: &mut FormTree,
         form_node_id: FormNodeId,
         xml_node: roxmltree::Node<'_, '_>,
-    ) {
+        policy: XfaRenderingPolicy,
+        admit_databound_override: bool,
+    ) -> usize {
+        let mut admitted: usize = 0;
         let xml_tag = xml_node.tag_name().name();
-        if xml_tag != "subform" && xml_tag != "field" && xml_tag != "form" {
-            return;
+        if !matches!(
+            xml_tag,
+            "subform" | "field" | "form" | "pageSet" | "pageArea"
+        ) {
+            return 0;
         }
 
         // Apply presence override.
-        if xml_tag == "subform" || xml_tag == "field" {
+        if xml_tag == "subform" || xml_tag == "field" || xml_tag == "pageArea" {
             if let Some(pres) = xml_node.attribute("presence") {
                 if pres == "hidden" {
+                    // D9 (trace-only, env-gated): provenance of a form-DOM
+                    // explicit `presence="hidden"` override. Behaviour-neutral.
+                    if std::env::var("XFA_PRESENCE_PROV").ok().as_deref() == Some("1") {
+                        eprintln!(
+                            "XFA_PRESENCE_PROV site=formdom_explicit id={} name={:?} tag={}",
+                            form_node_id.0,
+                            tree.get(form_node_id).name,
+                            xml_tag
+                        );
+                    }
                     tree.meta_mut(form_node_id).presence = Presence::Hidden;
                 }
             }
@@ -2173,55 +2964,109 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
                     }
                 }
             }
-            return; // fields have no structural children to recurse into
+            return 0; // fields have no structural children to recurse into
         }
 
-        // Collect XML children (subforms and fields), skipping instanceManagers.
+        // Collect XML children we walk through.
+        //
+        // - `subform`, `field`, `draw` are the canonical content children.
+        // - `pageSet` and `pageArea` carry runtime-allocated page instances
+        //   that must be mirrored in the FormTree so the layout engine can
+        //   emit one page per runtime instance (XFA 3.3 §8.6 / §3.1).
         let xml_children: Vec<roxmltree::Node<'_, '_>> = xml_node
             .children()
             .filter(|c| {
                 c.is_element()
-                    && (c.tag_name().name() == "subform"
-                        || c.tag_name().name() == "field"
-                        || c.tag_name().name() == "draw")
+                    && matches!(
+                        c.tag_name().name(),
+                        "subform" | "field" | "draw" | "pageSet" | "pageArea"
+                    )
             })
             .collect();
 
-        // Group consecutive XML children by name to detect repeating instances.
-        // E.g., [Activity, Activity, Activity, Activity] → ("Activity", 4)
-        let mut xml_groups: Vec<(&str, Vec<roxmltree::Node<'_, '_>>)> = Vec::new();
+        // Within a `pageSet`, only allow pageArea expansion when the form-DOM
+        // enumerates a SINGLE pageArea name repeated multiple times — the
+        // classic "uniform template" pattern recorded by Adobe's runtime when
+        // it allocates more instances than the template declared (XFA 3.3
+        // §8.6 / §3.1, e.g. 13275420c3c9afbb: 10× `<pageArea name="Page1">`).
+        //
+        // When the pageSet enumerates multiple distinct pageArea names
+        // (e.g. IRCC forms with `Page1` + `OverFlowPage`), Adobe pre-allocates
+        // pageAreas as a *menu* of available templates — not every instance is
+        // actually rendered.  Expanding clones in that case over-paginates.
+        //
+        // Implementation: when inside a pageSet AND the pageArea-name set has
+        // more than one distinct entry, suppress cloning by setting the
+        // per-group `expansion_allowed` flag to false later.
+        let inside_page_set = xml_tag == "pageSet";
+        let uniform_page_area_template = if inside_page_set {
+            let mut names: Vec<&str> = xml_children
+                .iter()
+                .filter(|c| c.tag_name().name() == "pageArea")
+                .map(|c| c.attribute("name").unwrap_or(""))
+                .collect();
+            names.sort_unstable();
+            names.dedup();
+            names.len() == 1
+        } else {
+            false
+        };
+
+        // Group consecutive XML children by (tag, name) to detect repeating
+        // instances.  pageSet is unnamed in XFA, so a single `pageSet` group
+        // is keyed by tag alone; pageArea siblings share `name="Page1"` for
+        // runtime-allocated pages.
+        let mut xml_groups: Vec<((&str, &str), Vec<roxmltree::Node<'_, '_>>)> = Vec::new();
         for &xc in &xml_children {
+            let xtag = xc.tag_name().name();
             let xname = xc.attribute("name").unwrap_or("");
+            let key = (xtag, xname);
             if let Some(last) = xml_groups.last_mut() {
-                if last.0 == xname {
+                if last.0 == key {
                     last.1.push(xc);
                     continue;
                 }
             }
-            xml_groups.push((xname, vec![xc]));
+            xml_groups.push((key, vec![xc]));
         }
 
         // For each group, match against FormTree children, cloning when needed.
         let mut form_children = tree.get(form_node_id).children.clone();
         let mut used = vec![false; form_children.len()];
 
-        for (gname, group_xml_nodes) in &xml_groups {
+        for (gkey, group_xml_nodes) in &xml_groups {
+            let (gtag, gname) = *gkey;
             let xml_count = group_xml_nodes.len();
 
-            // Count existing FormTree children with this name
+            // Count existing FormTree children matching this XML group.
             let existing: Vec<(usize, FormNodeId)> = form_children
                 .iter()
                 .enumerate()
-                .filter(|(i, &fid)| !used[*i] && tree.get(fid).name == *gname)
+                .filter(|(i, &fid)| !used[*i] && child_matches(tree, fid, gtag, gname))
                 .map(|(i, &fid)| (i, fid))
                 .collect();
             let existing_count = existing.len();
 
+            // Gate per-group cloning:
+            //
+            // * pageArea clones may only be created inside a `pageSet` that
+            //   enumerates a single uniform pageArea template (see comment
+            //   above).  Otherwise pre-allocated "menu" pageAreas would be
+            //   replicated and inflate the rendered page count.
+            // * Other tags (subform/field/draw) follow the existing
+            //   instance-replication behaviour.
+            let expansion_allowed = if gtag == "pageArea" {
+                inside_page_set && uniform_page_area_template
+            } else {
+                true
+            };
+
             // If the form DOM has more instances than the FormTree, clone to match.
-            if xml_count > existing_count && existing_count > 0 {
+            if expansion_allowed && xml_count > existing_count && existing_count > 0 {
                 let template_id = existing[0].1;
-                // Find insertion position: after the last existing sibling
-                let last_existing_idx = existing.last().unwrap().0;
+                // Find insertion position: after the last existing sibling.
+                // SAFETY: existing_count > 0 is guarded by the enclosing `if`.
+                let last_existing_idx = existing.last().expect("existing_count > 0").0;
                 let insert_pos = last_existing_idx + 1;
                 let clones_needed = xml_count - existing_count;
                 let mut new_ids = Vec::new();
@@ -2238,9 +3083,26 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
                 tree.get_mut(form_node_id).children = form_children.clone();
             }
 
+            // Mark expanded pageAreas as runtime-instantiated so the layout
+            // engine emits a page per instance and the page-drop filter does
+            // not discard them.  Only applies when the pageArea expansion is
+            // active (uniform template inside a pageSet) AND clones were
+            // actually created — single-template forms (no expansion) keep
+            // their existing layout semantics.
+            if gtag == "pageArea" && expansion_allowed && xml_count > existing_count {
+                let to_mark: Vec<FormNodeId> = form_children
+                    .iter()
+                    .copied()
+                    .filter(|&fid| child_matches(tree, fid, gtag, gname))
+                    .collect();
+                for fid in to_mark {
+                    tree.meta_mut(fid).runtime_instantiated_page = true;
+                }
+            }
+
             // Now match each XML node in the group to a FormTree child
             for (group_idx, &xc) in group_xml_nodes.iter().enumerate() {
-                // Find next unmatched FormTree child with this name
+                // Find next unmatched FormTree child with the same shape.
                 let matched = form_children
                     .iter()
                     .enumerate()
@@ -2249,16 +3111,16 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
                         form_children
                             .iter()
                             .enumerate()
-                            .rfind(|(i, &fid)| used[*i] && tree.get(fid).name == *gname)
+                            .rfind(|(i, &fid)| used[*i] && child_matches(tree, fid, gtag, gname))
                             .map(|(i, _)| i + 1)
                             .unwrap_or(0)
                     } else {
                         0
                     })
-                    .find(|(i, &fid)| !used[*i] && tree.get(fid).name == *gname);
+                    .find(|(i, &fid)| !used[*i] && child_matches(tree, fid, gtag, gname));
                 if let Some((idx, &fid)) = matched {
                     used[idx] = true;
-                    apply_recursive(tree, fid, xc);
+                    admitted += apply_recursive(tree, fid, xc, policy, admit_databound_override);
                 }
             }
         }
@@ -2286,10 +3148,78 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
                 if matches!(child_node.node_type, FormNodeType::Subform)
                     && !child_node.name.is_empty()
                 {
-                    tree.meta_mut(fid).presence = Presence::Hidden;
+                    // Admit data-bound unmatched subforms instead of
+                    // suppressing them. Two triggers share one guard:
+                    //  - `FreshMergeExperimental` (experimental policy), or
+                    //  - `XFA_FORMDOM_ADMIT_DATABOUND=1`, a default-off
+                    //    production override that lets `SavedStateFaithful`
+                    //    admit the same set WITHOUT flipping the policy default.
+                    //
+                    // Guard (admit only when):
+                    //  - not template-hidden (`Presence::Hidden` / `Inactive`)
+                    //  - not a zero-instance prototype placeholder
+                    //  - has a data-node bound during merge
+                    //  - did not opt out of binding via `<bind match="none">`
+                    //
+                    // The `bound_data_node.is_some()` clause is the
+                    // over-pagination guard: truly-unmatched NON-data subforms
+                    // (no bound data node) are never admitted, so the §3.1
+                    // suppression that protects against phantom page-level
+                    // subforms still holds. A data-bound subform only adds a
+                    // page when its admitted content overflows — the layout
+                    // engine self-regulates; this is not a page-count heuristic.
+                    let meta = tree.meta(fid);
+                    let admit_unmatched_databound = (policy
+                        == XfaRenderingPolicy::FreshMergeExperimental
+                        || admit_databound_override)
+                        && !matches!(meta.presence, Presence::Hidden | Presence::Inactive)
+                        && !meta.is_zero_instance_prototype
+                        && meta.bound_data_node.is_some()
+                        && !meta.data_bind_none;
+
+                    if std::env::var("XFA_PRESENCE_PROV").ok().as_deref() == Some("1") {
+                        let site = if admit_unmatched_databound {
+                            if policy == XfaRenderingPolicy::FreshMergeExperimental {
+                                "formdom_unmatched_fresh_merge_admitted"
+                            } else {
+                                "formdom_unmatched_databound_admitted"
+                            }
+                        } else {
+                            "formdom_unmatched"
+                        };
+                        eprintln!(
+                            "XFA_PRESENCE_PROV site={site} id={} name={:?}",
+                            fid.0, child_node.name
+                        );
+                    }
+
+                    if admit_unmatched_databound {
+                        // Admit — leave presence as-is (Visible by default
+                        // from the merger).
+                        admitted += 1;
+                    } else {
+                        // SavedStateFaithful without override (or ineligible
+                        // node): suppress.
+                        // Epic A E-5: capture name before mutating (borrow order).
+                        let suppressed_name = child_node.name.clone();
+                        let suppressed_id = fid.0;
+                        tree.meta_mut(fid).presence = Presence::Hidden;
+                        crate::flatten::FORM_DOM_MATCH_LOG.with(|cell| {
+                            if let Some(ref mut log) = *cell.borrow_mut() {
+                                if log.len() < 200 {
+                                    log.push(crate::dynamic::FormDomMatchEntry {
+                                        template_node_id: suppressed_id,
+                                        template_node_name: suppressed_name,
+                                        reason: "formdom_unmatched_suppressed".to_string(),
+                                    });
+                                }
+                            }
+                        });
+                    }
                 }
             }
         }
+        admitted
     }
 
     // The form DOM root is <form><subform name="...">...</subform></form>
@@ -2298,16 +3228,40 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
         .children()
         .find(|c| c.is_element() && c.tag_name().name() == "subform");
 
+    // E-5: arm the thread-local if XFA_RUNTIME_DIAG or XFA_FLATTEN_TRACE.
+    let diag_on = runtime_diag_enabled() || crate::flatten_trace::enabled();
+    if diag_on {
+        FORM_DOM_MATCH_LOG.with(|cell| {
+            *cell.borrow_mut() = Some(Vec::new());
+        });
+    }
+
+    let mut total_admitted: usize = 0;
     if let Some(xml_root_sf) = form_root_subform {
         let root_children = tree.get(root_id).children.clone();
         let root_name = xml_root_sf.attribute("name").unwrap_or("");
         for &child_id in &root_children {
             if tree.get(child_id).name == root_name {
-                apply_recursive(tree, child_id, xml_root_sf);
+                total_admitted += apply_recursive(
+                    tree,
+                    child_id,
+                    xml_root_sf,
+                    policy,
+                    admit_databound_override,
+                );
                 break;
             }
         }
     }
+
+    // E-5: drain.
+    let match_log = if diag_on {
+        FORM_DOM_MATCH_LOG.with(|cell| cell.borrow_mut().take().unwrap_or_default())
+    } else {
+        Vec::new()
+    };
+    let match_failures = match_log.len();
+    (total_admitted, match_failures, match_log)
 }
 
 /// Tiny PDFs (<1KB) with XFA templates that lack essential elements (subform,
@@ -2964,7 +3918,8 @@ fn append_to_page_content(doc: &mut Document, page_id: ObjectId, data: &[u8]) {
             flatten_page_contents_entries(doc, existing, &mut flattened);
             flattened.push(Object::Reference(new_stream_id));
             if flattened.len() == 1 {
-                flattened.pop().unwrap()
+                // SAFETY: len == 1 is checked on the line above.
+                flattened.pop().expect("flattened.len() == 1")
             } else {
                 Object::Array(flattened)
             }
@@ -4029,7 +4984,7 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    fn find_last_content_stream<'a>(doc: &'a Document, page_id: ObjectId) -> &'a Stream {
+    fn find_last_content_stream(doc: &Document, page_id: ObjectId) -> &Stream {
         let page_dict = doc.get_dictionary(page_id).expect("page dict");
         match page_dict.get(b"Contents").expect("contents") {
             Object::Reference(id) => doc
@@ -4210,13 +5165,11 @@ mod tests {
         let mut found_content = false;
         for page_id in &pages {
             if let Ok(page_dict) = doc.get_dictionary(*page_id) {
-                if let Ok(contents_ref) = page_dict.get(b"Contents") {
-                    if let Object::Reference(stream_id) = contents_ref {
-                        if let Ok(obj) = doc.get_object(*stream_id) {
-                            if let Ok(stream) = obj.as_stream() {
-                                if !stream.content.is_empty() {
-                                    found_content = true;
-                                }
+                if let Ok(Object::Reference(stream_id)) = page_dict.get(b"Contents") {
+                    if let Ok(obj) = doc.get_object(*stream_id) {
+                        if let Ok(stream) = obj.as_stream() {
+                            if !stream.content.is_empty() {
+                                found_content = true;
                             }
                         }
                     }
@@ -5308,7 +6261,13 @@ ET
         );
 
         // Apply form DOM
-        apply_form_dom_presence(&mut tree, root_id, form_xml);
+        let _ = apply_form_dom_presence(
+            &mut tree,
+            root_id,
+            form_xml,
+            XfaRenderingPolicy::SavedStateFaithful,
+            false,
+        );
 
         // After form DOM: 3 Row instances with correct values
         let rows_after: Vec<FormNodeId> = tree
@@ -5335,6 +6294,291 @@ ET
             })
             .collect();
         assert_eq!(values, vec!["Alpha", "Beta", "Gamma"]);
+    }
+
+    /// XFA 3.3 §8.6 / §3.1 — pageArea expansion from form-DOM.
+    ///
+    /// When the form-DOM packet records multiple instances of a *single*
+    /// pageArea template, the FormTree must clone the template once per
+    /// recorded instance and tag the clones as `runtime_instantiated_page`.
+    /// This guards against the regression that produced 5 pages instead of
+    /// 10 on corpus doc 13275420c3c9afbb.
+    #[test]
+    fn form_dom_expands_uniform_page_area_template() {
+        use xfa_layout_engine::form::FormNodeType;
+
+        let template = r#"<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+          <subform name="root" layout="tb">
+            <pageSet>
+              <pageArea name="Page1">
+                <contentArea w="200mm" h="280mm"/>
+                <medium short="210mm" long="297mm"/>
+              </pageArea>
+            </pageSet>
+          </subform>
+        </template>"#;
+
+        let form_xml = r#"<form xmlns="http://www.xfa.org/schema/xfa-form/2.8/">
+          <subform name="root">
+            <pageSet>
+              <pageArea name="Page1"/>
+              <pageArea name="Page1"/>
+              <pageArea name="Page1"/>
+              <pageArea name="Page1"/>
+              <pageArea name="Page1"/>
+            </pageSet>
+          </subform>
+        </form>"#;
+
+        let data_dom = xfa_dom_resolver::data_dom::DataDom::new();
+        let merger = crate::merger::FormMerger::new(&data_dom);
+        let (mut tree, root_id) = merger.merge(template).unwrap();
+
+        let _ = apply_form_dom_presence(
+            &mut tree,
+            root_id,
+            form_xml,
+            XfaRenderingPolicy::SavedStateFaithful,
+            false,
+        );
+
+        fn collect_page_areas(tree: &FormTree, id: FormNodeId, out: &mut Vec<FormNodeId>) {
+            if matches!(tree.get(id).node_type, FormNodeType::PageArea { .. }) {
+                out.push(id);
+            }
+            for &c in &tree.get(id).children {
+                collect_page_areas(tree, c, out);
+            }
+        }
+
+        let mut page_areas = Vec::new();
+        collect_page_areas(&tree, root_id, &mut page_areas);
+        assert_eq!(
+            page_areas.len(),
+            5,
+            "uniform pageArea expansion: 5 form-DOM instances must clone the template"
+        );
+        for &pa_id in &page_areas {
+            assert!(
+                tree.meta(pa_id).runtime_instantiated_page,
+                "every expanded pageArea must be flagged as runtime-instantiated"
+            );
+        }
+    }
+
+    /// Multi-template pageSets (e.g. `Page1` + `OverFlowPage`) MUST NOT
+    /// trigger pageArea expansion — those pageAreas are a pre-allocated
+    /// menu, not a uniform repetition pattern, and replicating them would
+    /// over-paginate.
+    #[test]
+    fn form_dom_skips_multi_template_page_area_expansion() {
+        use xfa_layout_engine::form::FormNodeType;
+
+        let template = r#"<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+          <subform name="root" layout="tb">
+            <pageSet>
+              <pageArea name="Page1">
+                <contentArea w="200mm" h="280mm"/>
+                <medium short="210mm" long="297mm"/>
+              </pageArea>
+              <pageArea name="OverFlowPage">
+                <contentArea w="200mm" h="280mm"/>
+                <medium short="210mm" long="297mm"/>
+              </pageArea>
+            </pageSet>
+          </subform>
+        </template>"#;
+
+        let form_xml = r#"<form xmlns="http://www.xfa.org/schema/xfa-form/2.8/">
+          <subform name="root">
+            <pageSet>
+              <pageArea name="Page1"/>
+              <pageArea name="OverFlowPage"/>
+              <pageArea name="OverFlowPage"/>
+              <pageArea name="OverFlowPage"/>
+              <pageArea name="OverFlowPage"/>
+            </pageSet>
+          </subform>
+        </form>"#;
+
+        let data_dom = xfa_dom_resolver::data_dom::DataDom::new();
+        let merger = crate::merger::FormMerger::new(&data_dom);
+        let (mut tree, root_id) = merger.merge(template).unwrap();
+
+        let _ = apply_form_dom_presence(
+            &mut tree,
+            root_id,
+            form_xml,
+            XfaRenderingPolicy::SavedStateFaithful,
+            false,
+        );
+
+        fn collect_page_areas(tree: &FormTree, id: FormNodeId, out: &mut Vec<FormNodeId>) {
+            if matches!(tree.get(id).node_type, FormNodeType::PageArea { .. }) {
+                out.push(id);
+            }
+            for &c in &tree.get(id).children {
+                collect_page_areas(tree, c, out);
+            }
+        }
+
+        let mut page_areas = Vec::new();
+        collect_page_areas(&tree, root_id, &mut page_areas);
+        assert_eq!(
+            page_areas.len(),
+            2,
+            "multi-template pageSet must not clone pageAreas (kept original 2)"
+        );
+        for &pa_id in &page_areas {
+            assert!(
+                !tree.meta(pa_id).runtime_instantiated_page,
+                "non-expansion case must not set runtime_instantiated_page flag"
+            );
+        }
+    }
+
+    /// `XFA_FORMDOM_ADMIT_DATABOUND` (default-off) admit gate.
+    ///
+    /// The §3.1 unmatched-subform suppression hides named template subforms
+    /// the saved form DOM did not enumerate. For DATA-BOUND unmatched
+    /// subforms that is wrong — Adobe renders them. The default-off
+    /// production override routes those through the same guarded admit branch
+    /// as `FreshMergeExperimental`, WITHOUT flipping the policy default and
+    /// WITHOUT loosening the guard: a truly-unmatched NON-data subform (no
+    /// `bound_data_node`) must stay suppressed in every mode — that is the
+    /// over-pagination guard.
+    ///
+    /// The override is passed as an explicit bool (the env read happens at the
+    /// pipeline boundary), so this test is deterministic and touches no env.
+    #[test]
+    fn formdom_admit_databound_override_admits_only_data_bound() {
+        use xfa_layout_engine::form::{FormNodeType, Presence};
+
+        // root > body > { Bound (data-bound), Unbound (no data), Present }.
+        let template = r#"<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+          <subform name="root" layout="tb">
+            <subform name="body" layout="tb">
+              <subform name="Bound" layout="tb">
+                <field name="A"><ui><textEdit/></ui></field>
+              </subform>
+              <subform name="Unbound" layout="tb">
+                <field name="B"><ui><textEdit/></ui></field>
+              </subform>
+              <subform name="Present" layout="tb">
+                <field name="C"><ui><textEdit/></ui></field>
+              </subform>
+            </subform>
+          </subform>
+        </template>"#;
+
+        // Saved form DOM enumerates only `Present` under `body`, so `Bound`
+        // and `Unbound` are unmatched §3.1 suppression candidates; `body`
+        // lists a subform child, so `has_subform_children` is true.
+        let form_xml = r#"<form xmlns="http://www.xfa.org/schema/xfa-form/2.8/">
+          <subform name="root">
+            <subform name="body">
+              <subform name="Present">
+                <field name="C"><value><text>x</text></value></field>
+              </subform>
+            </subform>
+          </subform>
+        </form>"#;
+
+        fn find(tree: &FormTree, parent: FormNodeId, name: &str) -> Option<FormNodeId> {
+            for &c in &tree.get(parent).children {
+                if tree.get(c).name == name {
+                    return Some(c);
+                }
+                if let Some(f) = find(tree, c, name) {
+                    return Some(f);
+                }
+            }
+            None
+        }
+
+        // Build a fresh tree, install the data-binding scenario explicitly
+        // (independent of merge defaults), then run `apply_form_dom_presence`.
+        // Returns (admitted_count, Bound.presence, Unbound.presence).
+        let scenario = |policy: XfaRenderingPolicy, override_on: bool| {
+            let data_dom = xfa_dom_resolver::data_dom::DataDom::new();
+            let merger = crate::merger::FormMerger::new(&data_dom);
+            let (mut tree, root_id) = merger.merge(template).unwrap();
+
+            let bound = find(&tree, root_id, "Bound").expect("Bound subform in tree");
+            let unbound = find(&tree, root_id, "Unbound").expect("Unbound subform in tree");
+            assert!(matches!(tree.get(bound).node_type, FormNodeType::Subform));
+            assert!(matches!(tree.get(unbound).node_type, FormNodeType::Subform));
+
+            for &id in &[bound, unbound] {
+                let m = tree.meta_mut(id);
+                m.presence = Presence::Visible;
+                m.is_zero_instance_prototype = false;
+                m.data_bind_none = false;
+            }
+            tree.meta_mut(bound).bound_data_node = Some(0); // data-bound
+            tree.meta_mut(unbound).bound_data_node = None; // no data node
+
+            let (admitted, _, _) =
+                apply_form_dom_presence(&mut tree, root_id, form_xml, policy, override_on);
+            (
+                admitted,
+                tree.meta(bound).presence,
+                tree.meta(unbound).presence,
+            )
+        };
+
+        // 1. Production default (SavedStateFaithful, override OFF): both the
+        //    data-bound and the non-data unmatched subform are suppressed —
+        //    unchanged baseline behaviour.
+        let (adm, bound_p, unbound_p) = scenario(XfaRenderingPolicy::SavedStateFaithful, false);
+        assert_eq!(
+            adm, 0,
+            "override off admits nothing under SavedStateFaithful"
+        );
+        assert_eq!(
+            bound_p,
+            Presence::Hidden,
+            "data-bound suppressed when override off"
+        );
+        assert_eq!(
+            unbound_p,
+            Presence::Hidden,
+            "non-data suppressed when override off"
+        );
+
+        // 2. Override ON under SavedStateFaithful: the data-bound subform is
+        //    admitted (presence preserved); the non-data subform stays
+        //    suppressed — the over-pagination guard holds.
+        let (adm, bound_p, unbound_p) = scenario(XfaRenderingPolicy::SavedStateFaithful, true);
+        assert_eq!(adm, 1, "override on admits exactly the data-bound subform");
+        assert_eq!(
+            bound_p,
+            Presence::Visible,
+            "data-bound admitted when override on"
+        );
+        assert_eq!(
+            unbound_p,
+            Presence::Hidden,
+            "non-data subform must stay suppressed with override on (over-pagination guard)"
+        );
+
+        // 3. FreshMergeExperimental (override OFF) admits the same set — the
+        //    override merely extends this to the production policy.
+        let (adm, bound_p, unbound_p) = scenario(XfaRenderingPolicy::FreshMergeExperimental, false);
+        assert_eq!(
+            adm, 1,
+            "fresh-merge admits the data-bound subform without override"
+        );
+        assert_eq!(
+            bound_p,
+            Presence::Visible,
+            "data-bound admitted under fresh-merge"
+        );
+        assert_eq!(
+            unbound_p,
+            Presence::Hidden,
+            "non-data suppressed under fresh-merge"
+        );
     }
 
     // GL-QA36: verify the re-entrance guard prevents infinite recursion.
@@ -5520,15 +6764,13 @@ ET
         let doc = Document::load_mem(&flattened).expect("parse flattened PDF");
         for page_id in doc.page_iter() {
             let page = doc.get_dictionary(page_id).expect("page dict");
-            match page.get(b"Annots") {
-                Ok(Object::Array(arr)) => {
-                    assert!(
-                        !arr.is_empty(),
-                        "page {:?}: /Annots must either be absent or non-empty after flatten",
-                        page_id
-                    );
-                }
-                _ => {} // absent = good
+            if let Ok(Object::Array(arr)) = page.get(b"Annots") {
+                // absent = good; only a present /Annots must be non-empty
+                assert!(
+                    !arr.is_empty(),
+                    "page {:?}: /Annots must either be absent or non-empty after flatten",
+                    page_id
+                );
             }
         }
     }
@@ -5841,12 +7083,8 @@ ET
     fn flatten_empty_bytes_does_not_panic_and_does_not_error() {
         // Empty byte slice: not a PDF, no XFA markers — should return Ok([])
         // or at worst a well-formed Err (not a panic).
-        let result = flatten_xfa_to_pdf(b"");
-        // We only assert it does not panic; Ok with empty bytes is acceptable.
-        match result {
-            Ok(_) => {}
-            Err(_) => {} // Err is fine for invalid input
-        }
+        // We only assert it does not panic; Ok or Err is acceptable.
+        let _ = flatten_xfa_to_pdf(b"");
     }
 
     /// Non-XFA PDF bytes: flatten_xfa_to_pdf must return the input unchanged
@@ -5857,10 +7095,9 @@ ET
         // and no xdp:xdp — the pre-check at the start of flatten_xfa_to_pdf
         // should return immediately with the original bytes cloned.
         let input = b"%PDF-1.4\n%%EOF\n";
-        let result = flatten_xfa_to_pdf(input);
-        match result {
-            Ok(out) => assert_eq!(out, input, "non-XFA input should pass through unchanged"),
-            Err(_) => {} // Err is acceptable for degenerate input
+        // Err is acceptable for degenerate input; a success must pass through.
+        if let Ok(out) = flatten_xfa_to_pdf(input) {
+            assert_eq!(out, input, "non-XFA input should pass through unchanged");
         }
     }
 }

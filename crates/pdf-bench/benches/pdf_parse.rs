@@ -100,7 +100,7 @@ fn load_stress_fixtures(allow_large: bool) -> Vec<StressFixture> {
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.extension().is_some_and(|ext| ext == "pdf") {
+            if path.extension().is_none_or(|ext| ext != "pdf") {
                 continue;
             }
             let Ok(metadata) = entry.metadata() else {

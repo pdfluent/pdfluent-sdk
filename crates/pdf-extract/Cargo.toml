@@ -1,6 +1,6 @@
 [package]
 name = "pdfluent-extract"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 edition.workspace = true
 license-file = "LICENSE"
 readme = "README.md"

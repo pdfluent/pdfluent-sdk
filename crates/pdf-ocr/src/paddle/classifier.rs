@@ -8,7 +8,9 @@ use super::utils;
 /// Error type for angle classification.
 #[derive(Debug)]
 pub enum ClassifierError {
+    /// ONNX runtime inference failed; contains the error description.
     Inference(String),
+    /// Input tensor has an unexpected shape; contains the shape mismatch description.
     InvalidShape(String),
 }
 

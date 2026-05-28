@@ -95,23 +95,42 @@ doc = Document(open("file.pdf","rb").read())  # from bytes
 doc = Document("encrypted.pdf", password="pw")
 ```
 
-**Properties:** `page_count`, `metadata`, `bookmarks`
+**Properties:** `page_count`, `metadata`, `bookmarks`  
 **Methods:** `render_all(dpi)`, `search(query)`, `extract_text(page_num)`, `save(path)`,
 `get_form_fields()`, `set_form_field(name, value)`, `get_annotations(page)`,
 `add_annotation(page, type, rect, content)`, `redact_text(term, page=None)`,
-`encrypt(path, password)`, `decrypt(path, password)`
+`encrypt(path, password)`, `decrypt(path, password)`  
 **Protocols:** `len(doc)`, `doc[0]`, `for page in doc`, `with Document(...) as doc`
 
 ### `Page`
 
-**Properties:** `index`, `width`, `height`, `rotation`, `geometry`
+**Properties:** `index`, `width`, `height`, `rotation`, `geometry`  
 **Methods:** `render(dpi, width, height, background)`, `thumbnail(max_dimension)`,
 `extract_text()`, `extract_text_blocks()`
 
 ### `RenderedImage`
 
-**Properties:** `width`, `height`, `pixels` (raw RGBA bytes)
+**Properties:** `width`, `height`, `pixels` (raw RGBA bytes)  
 **Methods:** `to_pil()`, `to_numpy()`, `save(path)`
+
+### `TextSpan`
+
+Structured text with position data.
+
+**Properties:** `text`, `x`, `y`, `font_size`  
+**G1 font-metadata (Optional):** `font_name`, `is_bold`, `is_italic`, `color`
+
+> G1 fields return `None` in the current release. They are typed as `Optional`
+> so downstream code handles the `None` case correctly today and will
+> automatically receive data once the G1 extraction milestone lands.
+
+```python
+for block in page.extract_text_blocks():
+    for span in block.spans:
+        if span.font_name is not None:
+            print(f"{span.font_name} {'bold' if span.is_bold else ''}")
+        print(f"  '{span.text}' @ ({span.x:.1f}, {span.y:.1f})")
+```
 
 ### Module-level functions
 
@@ -121,6 +140,93 @@ doc = Document("encrypted.pdf", password="pw")
 | `merge_pdfs(paths, output)` | Merge a list of PDFs |
 | `validate_pdfa(path)` → `ComplianceReport` | Run PDF/A validation |
 | `decrypt_pdf(input, output, password)` | Decrypt to a new file |
+
+## Exception Hierarchy
+
+Every pdfluent-specific error derives from `PdfluentError`, so a single
+`except PdfluentError:` clause catches all library errors:
+
+```python
+from pdfluent import PdfluentError, PdfluentParseError, PdfluentEncryptedError
+
+try:
+    with Document("broken.pdf") as doc:
+        doc.render_all()
+except PdfluentParseError as exc:
+    print(f"Not a valid PDF: {exc}")
+except PdfluentEncryptedError:
+    print("PDF is password-protected")
+except PdfluentError as exc:
+    print(f"PDF error: {exc}")
+```
+
+Full hierarchy:
+
+```
+PdfluentError                 — base; catch all pdfluent errors
+├── PdfluentParseError        — corrupt / non-PDF bytes
+├── PdfluentValidationError   — schema / compliance failures
+├── PdfluentRenderError       — rendering and XFA flatten failures
+├── PdfluentEncryptedError    — operation blocked by encryption
+├── PdfluentPageRangeError    — page index out of range
+├── PdfluentIoError           — file-system I/O errors
+├── PdfluentLicenseError      — invalid / expired license
+├── PdfluentGeometryError     — invalid page geometry
+└── PdfluentLimitError        — processing-limit exceeded
+```
+
+## Typing Support
+
+pdfluent ships with hand-written `.pyi` stub files for IDE completion and
+`mypy --strict` compatibility:
+
+- `pdfluent/__init__.pyi` — full public API stubs
+- `pdfluent/_native.pyi` — native extension stubs (for mypy without a build)
+
+### Verifying with mypy
+
+```bash
+pip install mypy
+cd crates/pdf-python
+mypy --strict --python-path python tests/test_pdfluent_typing.py
+```
+
+### Example with typed annotations
+
+```python
+from __future__ import annotations
+from typing import Optional
+from pdfluent import Document, TextSpan, PdfluentError
+
+def get_font(span: TextSpan) -> Optional[str]:
+    """Return the font name if available."""
+    return span.font_name   # Optional[str] — mypy knows this may be None
+
+def safe_open(path: str) -> Optional[Document]:
+    try:
+        return Document(path)
+    except PdfluentError:
+        return None
+```
+
+## License Activation
+
+```python
+from pdfluent import activate_license, LicenseInfo, PdfluentLicenseError
+
+# Activate from a JSON license string or base64-encoded key
+try:
+    info: LicenseInfo = activate_license(open("my.license").read())
+    print(f"{info.tier} license for {info.company} ({info.seats} seats)")
+except PdfluentLicenseError as exc:
+    print(f"License error: {exc}")
+
+# Or set the environment variable and call with empty string:
+# PDFLUENT_LICENSE_KEY="<base64-key>" python myscript.py
+info = activate_license("")   # reads PDFLUENT_LICENSE_KEY from env
+```
+
+`LicenseInfo` fields: `licensee`, `company`, `tier`, `expires_at` (Unix timestamp), `seats`.
 
 ## Comparison
 
@@ -132,8 +238,47 @@ doc = Document("encrypted.pdf", password="pw")
 | Redaction | ✓ | – | – | – | ✓ |
 | Encryption | ✓ (AES-256) | ✓ | – | – | ✓ |
 | PDF/A validation | ✓ | – | – | – | – |
+| Typed stubs | ✓ | partial | – | – | – |
 | Native deps | **none** | none | none | none | libqpdf |
 | Language | **Rust** | Python | Python | Python | C++ |
+
+## License Activation
+
+The SDK runs in Trial mode by default; output is marked via `/Producer`
+metadata. Activate a license to unlock the paid-tier capability set.
+
+```python
+import pdfluent
+
+# Activate from a key string
+pdfluent.activate_license_key("tier:enterprise")
+
+# Or read the key from a UTF-8 text file
+pdfluent.activate_license_file("/path/to/key.lic")
+
+# Inspect the current status (always succeeds; defaults to Trial)
+status = pdfluent.license_status()
+print(status.tier)              # "Enterprise"
+print(status.source)            # "Explicit" | "EnvVar" | "Default"
+print(status.output_is_marked)  # False
+```
+
+The `PDFLUENT_LICENSE_KEY` environment variable is honoured automatically
+on process start when no explicit activation has happened.
+
+**Behavior to be aware of:**
+
+- The active tier is **process-global and set-once**. Re-activating with the
+  same key is a no-op. Re-activating with a different tier raises
+  `RuntimeError`; restart Python to switch tiers.
+- Invalid keys raise `ValueError`; missing license files raise `OSError`.
+- The key string is never logged or stored beyond the call to
+  `activate_license_key`.
+
+The 1.0 release accepts the simple evaluation format `tier:<name>`
+(`trial`/`developer`/`team`/`business`/`enterprise`). Cryptographically
+signed payloads will be accepted by the same functions in 1.1 without
+breaking the API.
 
 ## Building from Source
 
@@ -141,12 +286,11 @@ Requires a Rust toolchain and `maturin`.
 
 ```bash
 pip install maturin
-git clone https://github.com/xfa-sdk/pdfluent
-cd pdfluent/crates/pdf-python
+cd crates/pdf-python
 maturin develop --release          # install in current venv
 maturin build --release            # build wheel in ./dist/
 ```
 
 ## License
 
-MIT
+PDFluent Commercial License. See LICENSE.

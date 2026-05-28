@@ -68,7 +68,7 @@ fn main() {
             let gid = cff_parser::GlyphId(i);
             match table.glyph_width(gid) {
                 Some(w) => {
-                    let scaled = (w as f64 * scale as f64).round() as i64;
+                    let scaled = (w as f64 * scale).round() as i64;
                     let cid = table.glyph_cid(gid).unwrap_or(i);
                     widths.push((cid, scaled));
                 }

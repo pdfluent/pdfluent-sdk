@@ -1,0 +1,37 @@
+# PDFluent — pinned Rust toolchain.
+#
+# Pins rustc + cargo + fmt + clippy to the version the VPS CI runner
+# (xfa-test-runner) ships today (rustc 1.94.0). This file is read
+# automatically by `rustup` on every `cargo` / `rustc` invocation; local
+# developers running a different stable will see rustup auto-install
+# the pinned version on first use (no manual action required).
+#
+# Why we pin
+# ----------
+# 1. Clippy lints change between minor versions (e.g. `manual_repeat_n`
+#    added in 1.95). Without a pin, a routine `rustup update` on a
+#    developer machine can turn workspace clippy red even though no code
+#    has changed.
+# 2. CI (VPS runner) is on rustc 1.94.0; pinning the repo to the same
+#    version closes the local/CI gap.
+# 3. The pinned version is the one all our enterprise/ga-hardening
+#    closure verdicts (BINDING_API_PARITY_TRUE_100_PERCENT_GREEN,
+#    COMMERCIAL_LICENSE_E2E_TRUE_100_PERCENT_GREEN, LICENSE_COMPLIANCE_100,
+#    XFA_PRODUCT_QUALITY_100) were validated against in CI.
+#
+# How to update
+# -------------
+# 1. Open an MR that bumps `channel` here.
+# 2. Run the full quality gate locally (cargo fmt + check + clippy on the
+#    new version). Fix any newly-firing lints in PDFluent-authored crates;
+#    forked crates may need a targeted allow + comment if the lint
+#    triggers on upstream code we don't want to diverge from.
+# 3. Update the VPS runner with `rustup default <new>` BEFORE merging the
+#    MR (otherwise CI uses the cached old toolchain via this pin file
+#    until rustup auto-installs the new one on first build).
+# 4. Land the MR.
+
+[toolchain]
+channel = "1.94.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

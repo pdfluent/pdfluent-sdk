@@ -1,5 +1,12 @@
 # Quickstart Guide
 
+> **Canonical quickstart:** for the supported public bindings (Rust, C ABI,
+> WASM, Node, Python, .NET, Java) use **[quickstart-bindings.md](quickstart-bindings.md)**,
+> backed by the CI-verified `pdfluent-examples/` and the frozen **`pdfluent`**
+> facade. The snippets below use the lower-level internal `pdf_engine` crate
+> for advanced/embedding scenarios; new integrations should prefer the
+> `pdfluent` facade.
+
 ## Installation
 
 Add the crates you need to your `Cargo.toml`:

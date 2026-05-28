@@ -182,7 +182,7 @@ impl LayoutDom {
 const MAX_PAGES: usize = 500;
 
 /// A single page in the layout output.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct LayoutPage {
     /// Page width.
     pub width: f64,
@@ -190,6 +190,11 @@ pub struct LayoutPage {
     pub height: f64,
     /// Layout nodes on this page.
     pub nodes: Vec<LayoutNode>,
+    /// True when this page was emitted onto a pageArea that the XFA runtime
+    /// recorded in the form-DOM packet (XFA 3.3 §8.6 / §3.1).  Downstream
+    /// pipelines must NOT drop such pages on data-empty heuristics — the
+    /// runtime already committed to emitting them.
+    pub runtime_instantiated: bool,
 }
 
 /// A positioned element on a page.
@@ -308,12 +313,274 @@ fn groundtruth_trace_state() -> &'static Mutex<GroundTruthTraceState> {
 /// The layout engine.
 pub struct LayoutEngine<'a> {
     form: &'a FormTree,
+    /// Continuation-guard relaxation, **default-ON** (graduated 2026-05-25).
+    ///
+    /// A queued node may populate a continuation pageArea if it has *substantial
+    /// visible body content* (Draw/Image/Field) filling ≥ 50 % of the
+    /// continuation content area — not only data-backed fields — AND the content
+    /// queue is homogeneously positioned (see
+    /// [`Self::queued_nodes_all_positioned_body`]). This fixes
+    /// `UNDER_PAGINATED_LOW_RECALL` docs whose trailing full-page positioned
+    /// subforms carry static (non-data-bound) body and were wrongly dropped by
+    /// the §8.6 guard.
+    ///
+    /// Graduated to default-ON after the `XFA_STATIC_BODY_CONTINUATION_FLAG_PROMOTION`
+    /// validation: across 389 oracle docs it fixed 7 to exact oracle page count
+    /// with **0 regressions and 0 over-production**, and the full layout-engine
+    /// suite passes both states. The homogeneous-positioned gate eliminated the
+    /// prior mixed-queue over-production (`2a49f624` 1→3). Set the env var
+    /// `XFA_OVERFLOW_STATIC_BODY_CONTINUATION=0` (or `off`/`false`) to opt out.
+    /// See `XFA_LAYOUT_OVERFLOW_CONTINUATION_GUARD_FIX` (introduction) and
+    /// `XFA_STATIC_BODY_CONTINUATION_FLAG_PROMOTION` (graduation).
+    static_body_continuation: bool,
+
+    /// Tiny-positioned-page coalescing, **default-OFF** (env
+    /// `XFA_TINY_POSITIONED_PAGE_COALESCE=1|on|true`).
+    ///
+    /// Targets the `XFA_LAYOUT_OCCUR_INSTANCE_OVERPRODUCTION` over-pagination
+    /// class: a *tiny* positioned content subform (e.g. a header band, height
+    /// below [`TINY_POSITIONED_PAGE_FRAC`] of the page) that the flow pager
+    /// places alone on its own page because it cannot share a page with the
+    /// adjacent full-page positioned sibling (the two stack and overflow the
+    /// content area). Adobe overlays such a band onto the neighbouring body
+    /// page, so the lone page is spurious (+1 page vs the oracle). When
+    /// enabled, a page whose sole content node is such a tiny positioned
+    /// container is merged forward into the following page.
+    ///
+    /// Correct multi-page positioned documents are untouched: there every page
+    /// carries a full-page-height positioned instance (well above the tiny
+    /// floor), so none qualifies. Off by default until the full 389-doc +
+    /// unit-suite validation proves it regression-free.
+    tiny_positioned_coalesce: bool,
+
+    /// Runtime-instantiated continuation keep, **default-OFF** (env
+    /// `XFA_CONTINUATION_RUNTIME_INSTANTIATED_KEEP=1|on|true`).
+    ///
+    /// Targets the `XFA_LAYOUT_CONTINUATION_RUNTIME_INSTANTIATED_KEEP` Sub-B
+    /// under-pagination class: a uniform-template form whose saved form-DOM
+    /// mirror committed to exactly `oracle` pageArea instances (every instance
+    /// tagged [`PageAreaInfo::runtime_instantiated`]), but whose trailing
+    /// instance carries *static* (non-data-backed) flowed body. The §8.6
+    /// continuation guard drops that last instance because
+    /// [`Self::queued_node_has_data_backed_body_content`] is false, and the
+    /// existing [`Self::static_body_continuation`] rescue does not apply (it is
+    /// gated on a homogeneous *positioned* queue — see
+    /// [`Self::queued_nodes_all_positioned_body`] — while these queues are
+    /// flowed `TopToBottom`). When enabled, the guard keeps the continuation if
+    /// the whole pageArea set is a runtime-instantiated mirror and a remaining
+    /// node carries visible body content (see
+    /// [`Self::queued_nodes_have_visible_body_content`]). The 50 % content
+    /// floor of the positioned rescue is intentionally omitted here: short but
+    /// real trailing mirror pages must keep, and over-production is instead
+    /// bounded structurally by the mirror count.
+    ///
+    /// **Bounded by the mirror count.** The relaxation only activates when
+    /// *every* pageArea is runtime-instantiated, which is exactly the condition
+    /// under which the post-loop overflow clamp clears any residual queue. The
+    /// `for pa in &page_areas` loop therefore emits at most `page_areas.len()`
+    /// pages (the occur-clamped mirror count == oracle) and the overflow loop
+    /// never runs — it is incapable of over-paginating. Off by default until
+    /// the full 389-doc + unit-suite validation proves it regression-free.
+    continuation_runtime_keep: bool,
 }
+
+/// Height ceiling (fraction of page height) below which a lone positioned
+/// content page is treated as a coalescible header/footer band rather than a
+/// body page. See [`LayoutEngine::tiny_positioned_coalesce`].
+const TINY_POSITIONED_PAGE_FRAC: f64 = 0.12;
 
 impl<'a> LayoutEngine<'a> {
     /// Create a new layout engine.
     pub fn new(form: &'a FormTree) -> Self {
-        Self { form }
+        Self {
+            form,
+            // Default-ON; opt out with XFA_OVERFLOW_STATIC_BODY_CONTINUATION=0|off|false.
+            static_body_continuation: std::env::var("XFA_OVERFLOW_STATIC_BODY_CONTINUATION")
+                .map(|v| {
+                    let v = v.trim();
+                    !(v.is_empty()
+                        || v == "0"
+                        || v.eq_ignore_ascii_case("off")
+                        || v.eq_ignore_ascii_case("false"))
+                })
+                .unwrap_or(true),
+            // Graduated default-ON (static-parity-rc1); opt out with XFA_TINY_POSITIONED_PAGE_COALESCE=0|off|false.
+            tiny_positioned_coalesce: std::env::var("XFA_TINY_POSITIONED_PAGE_COALESCE")
+                .map(|v| {
+                    let v = v.trim();
+                    !(v.is_empty()
+                        || v == "0"
+                        || v.eq_ignore_ascii_case("off")
+                        || v.eq_ignore_ascii_case("false"))
+                })
+                .unwrap_or(true),
+            // Graduated default-ON (static-parity-rc1); opt out with XFA_CONTINUATION_RUNTIME_INSTANTIATED_KEEP=0|off|false.
+            continuation_runtime_keep: std::env::var("XFA_CONTINUATION_RUNTIME_INSTANTIATED_KEEP")
+                .map(|v| {
+                    let v = v.trim();
+                    !(v.is_empty()
+                        || v == "0"
+                        || v.eq_ignore_ascii_case("off")
+                        || v.eq_ignore_ascii_case("false"))
+                })
+                .unwrap_or(true),
+        }
+    }
+
+    /// Resolve a SOM-string reference (typically a subform name) to a
+    /// `FormNodeId` by walking from `anchor` up through parents and looking
+    /// for a sibling whose `name` matches.  Falls back to a `find_by_xfa_id`
+    /// lookup for templates that addressed the target by its `id` attribute.
+    ///
+    /// XFA Spec 3.3 §17 — overflow leader/trailer attributes are SOM
+    /// references to subforms.  The canonical form is a sibling subform
+    /// of the overflowing subform; matching by simple name + ancestor
+    /// walk covers the cases observed in the parsed templates without
+    /// pulling in the full SOM resolver.
+    fn lookup_overflow_target(&self, anchor: FormNodeId, name: &str) -> Option<FormNodeId> {
+        if name.is_empty() {
+            return None;
+        }
+        if let Some(id) = self.form.find_by_xfa_id(name) {
+            return Some(id);
+        }
+        // Walk up the parent chain; at each level search siblings (and the
+        // root node's children when no parent is found).
+        let mut cursor = Some(anchor);
+        while let Some(node_id) = cursor {
+            let parent = self.trace_parent_id(node_id);
+            let scope = parent.map(|p| self.form.get(p).children.as_slice());
+            let candidates = scope.unwrap_or_else(|| self.form.get(node_id).children.as_slice());
+            for &candidate in candidates {
+                if candidate != node_id && self.form.get(candidate).name == name {
+                    return Some(candidate);
+                }
+            }
+            cursor = parent;
+        }
+        None
+    }
+
+    /// Resolve `<overflow leader trailer>` SOM-string references attached to
+    /// `node_id`'s `FormNodeMeta` into concrete `FormNodeId`s.
+    ///
+    /// Returns `(leader, trailer)` — either may be `None` either because the
+    /// meta did not declare a reference or because the reference did not
+    /// resolve to any node in the form tree (the unresolved case is silently
+    /// ignored, matching the engine's prior behavior).
+    fn resolve_overflow_refs(
+        &self,
+        node_id: FormNodeId,
+    ) -> (Option<FormNodeId>, Option<FormNodeId>) {
+        let meta = self.form.meta(node_id);
+        let leader = meta
+            .overflow_leader
+            .as_deref()
+            .and_then(|name| self.lookup_overflow_target(node_id, name));
+        let trailer = meta
+            .overflow_trailer
+            .as_deref()
+            .and_then(|name| self.lookup_overflow_target(node_id, name));
+        (leader, trailer)
+    }
+
+    /// Return a `ContentArea` clone with overflow leader/trailer applied.
+    /// `refs` take precedence over any existing `leader`/`trailer` already
+    /// declared on the area (this is the overflow-page path; the base area
+    /// values represent per-page leaders/trailers which the overflow refs
+    /// override on continuation pages per XFA §8.10 + §17).
+    fn content_area_with_overflow(
+        ca: &ContentArea,
+        refs: (Option<FormNodeId>, Option<FormNodeId>),
+    ) -> ContentArea {
+        let (leader, trailer) = refs;
+        ContentArea {
+            name: ca.name.clone(),
+            x: ca.x,
+            y: ca.y,
+            width: ca.width,
+            height: ca.height,
+            leader: leader.or(ca.leader),
+            trailer: trailer.or(ca.trailer),
+        }
+    }
+
+    /// QF1-F — Per-subform overflow extension (XFA Spec 3.3 §17).
+    ///
+    /// Collect every (leader, trailer) `FormNodeId` referenced by any
+    /// subform anywhere in the form tree.  The result is used to exclude
+    /// those subforms from the regular content flow (preventing
+    /// double-render — same logic as W2-A applies, but extended to every
+    /// subform's refs, not just the root's).
+    ///
+    /// W2-A only filtered the root subform's overflow refs.  Per-subform
+    /// extension must filter every subform's refs because any of them may
+    /// produce a leader/trailer rendering on a continuation page.
+    fn collect_all_overflow_subform_ids(&self) -> Vec<FormNodeId> {
+        let mut ids = Vec::new();
+        for (idx, _node) in self.form.nodes.iter().enumerate() {
+            let node_id = FormNodeId(idx);
+            let meta = self.form.meta(node_id);
+            if meta.overflow_leader.is_none() && meta.overflow_trailer.is_none() {
+                continue;
+            }
+            if let Some(name) = meta.overflow_leader.as_deref() {
+                if let Some(target) = self.lookup_overflow_target(node_id, name) {
+                    if !ids.contains(&target) {
+                        ids.push(target);
+                    }
+                }
+            }
+            if let Some(name) = meta.overflow_trailer.as_deref() {
+                if let Some(target) = self.lookup_overflow_target(node_id, name) {
+                    if !ids.contains(&target) {
+                        ids.push(target);
+                    }
+                }
+            }
+        }
+        ids
+    }
+
+    /// QF1-F — Per-subform overflow resolution at break time.
+    ///
+    /// Given the first queued node about to be placed on a continuation
+    /// page (i.e. the "next item" returned in `rest` from the previous
+    /// page's `layout_content_fitting`), walk up the parent chain from
+    /// that node looking for the closest ancestor subform whose
+    /// `FormNodeMeta` declares an `overflow_leader` or `overflow_trailer`.
+    /// Resolve those refs using the same `lookup_overflow_target` logic
+    /// as W2-A.
+    ///
+    /// Returns the per-subform refs when found; otherwise falls back to
+    /// `root_refs` (preserving W2-A bounded MVP semantics for documents
+    /// that only declare overflow at the root subform).
+    ///
+    /// XFA §17 — `<overflow>` on a subform applies to continuation pages
+    /// where that subform's content overflows. The closest ancestor wins
+    /// because it represents the most specific overflow context.
+    fn resolve_active_overflow_refs(
+        &self,
+        active_node: Option<FormNodeId>,
+        root_refs: (Option<FormNodeId>, Option<FormNodeId>),
+    ) -> (Option<FormNodeId>, Option<FormNodeId>) {
+        let Some(start) = active_node else {
+            return root_refs;
+        };
+        // Walk up the parent chain looking for any ancestor (or the node
+        // itself) that declares overflow refs.
+        let mut cursor: Option<FormNodeId> = Some(start);
+        while let Some(node_id) = cursor {
+            let meta = self.form.meta(node_id);
+            if meta.overflow_leader.is_some() || meta.overflow_trailer.is_some() {
+                let refs = self.resolve_overflow_refs(node_id);
+                if refs.0.is_some() || refs.1.is_some() {
+                    return refs;
+                }
+            }
+            cursor = self.trace_parent_id(node_id);
+        }
+        root_refs
     }
 
     fn trace_node_id(&self, id: FormNodeId) -> String {
@@ -532,6 +799,12 @@ impl<'a> LayoutEngine<'a> {
         let root_node = self.form.get(root);
         let collect_profile = profile.is_some();
 
+        // XFA Spec 3.3 §17 — `<overflow leader trailer>` SOM-references on a
+        // subform that overflows pages.  Resolve once for the root so that
+        // overflow continuation pages can render the declared leader at the
+        // top of the content area and the trailer at the bottom.
+        let root_overflow_refs = self.resolve_overflow_refs(root);
+
         let (page_areas, raw_content_nodes) = self.extract_page_structure(root_node)?;
         self.trace_vertical_state(
             "layout_internal",
@@ -544,6 +817,22 @@ impl<'a> LayoutEngine<'a> {
                 raw_content_nodes.len()
             ),
         );
+        // XFA §17: subforms that are resolved as overflow leaders or trailers
+        // must not also be rendered in the regular content flow — they would
+        // double-render (once as content, once as the per-page decoration).
+        //
+        // QF1-F per-subform extension: the W2-A bounded MVP only filtered
+        // the root subform's overflow refs.  Per-subform overflow refs may
+        // also surface on continuation pages, so any subform's resolved
+        // leader/trailer ids are filtered out here as well.  This keeps
+        // the no-refs branch identical to baseline (the collected list is
+        // empty), and the root-only case identical to W2-A (only the root
+        // refs are in the list).
+        let all_overflow_ids = self.collect_all_overflow_subform_ids();
+        let raw_content_nodes: Vec<FormNodeId> = raw_content_nodes
+            .into_iter()
+            .filter(|id| !all_overflow_ids.contains(id))
+            .collect();
         // Build queued nodes with break_before flags and occur expansion.
         let content_queued = self.queue_content(&raw_content_nodes);
 
@@ -567,6 +856,12 @@ impl<'a> LayoutEngine<'a> {
                 // TB layout supports pagination: split content across pages
                 let mut remaining = content_queued;
                 let page_limit = self.estimate_page_limit(&remaining, page_h);
+                // XFA §17: overflow leader/trailer apply to continuation
+                // pages (page 2 onwards).  QF1-F: per-subform refs win
+                // over root refs when the next queued node sits inside a
+                // subform that declares its own overflow.  The continuation
+                // area is recomputed per-page since the active subform may
+                // change as pagination advances.
                 while !remaining.is_empty() {
                     if pages.len() >= page_limit {
                         eprintln!(
@@ -575,9 +870,19 @@ impl<'a> LayoutEngine<'a> {
                         );
                         break;
                     }
+                    let active_refs = self.resolve_active_overflow_refs(
+                        remaining.first().map(|qn| qn.id),
+                        root_overflow_refs,
+                    );
+                    let overflow_area = Self::content_area_with_overflow(&area, active_refs);
+                    let area_for_page = if pages.is_empty() {
+                        &area
+                    } else {
+                        &overflow_area
+                    };
                     let (page, rest, consumed_break_only, _, page_profile) = self
                         .layout_content_fitting(
-                            &area,
+                            area_for_page,
                             &remaining,
                             page_w,
                             page_h,
@@ -586,7 +891,7 @@ impl<'a> LayoutEngine<'a> {
                     if page.nodes.is_empty() && !consumed_break_only {
                         // Force place one item to prevent infinite loop
                         let forced = self.layout_content_on_page(
-                            &area,
+                            area_for_page,
                             page_w,
                             page_h,
                             &[remaining[0].id],
@@ -602,8 +907,8 @@ impl<'a> LayoutEngine<'a> {
                             profile.pages.push(
                                 self.profile_page_from_nodes(
                                     &forced,
-                                    area.y,
-                                    area.height,
+                                    area_for_page.y,
+                                    area_for_page.height,
                                     !next_remaining.is_empty(),
                                     next_remaining
                                         .first()
@@ -725,6 +1030,34 @@ impl<'a> LayoutEngine<'a> {
 
             let all_content_positioned = multi_positioned || single_positioned_delegate;
 
+            // Diagnostic (read-only, env-gated; no behavior change). Milestone
+            // XFA_LAYOUT_OVERFLOW_PAGINATION_PARITY.
+            if std::env::var_os("XFA_OF_TRACE").is_some() {
+                let ca_h = page_areas.first().map(|pa| primary_content_area(pa).height);
+                let parts: Vec<String> = content_queued
+                    .iter()
+                    .map(|qn| {
+                        let n = self.form.get(qn.id);
+                        format!(
+                            "[{:?} h={:.0} bb={}]",
+                            n.layout,
+                            self.compute_extent(qn.id).height,
+                            qn.break_before
+                        )
+                    })
+                    .collect();
+                eprintln!(
+                    "XFA_OF_TRACE page_areas={} content_queued={} ca_h={:?} multi_pos={} single_deleg={} all_pos={} nodes={}",
+                    page_areas.len(),
+                    content_queued.len(),
+                    ca_h,
+                    multi_positioned,
+                    single_positioned_delegate,
+                    all_content_positioned,
+                    parts.join(",")
+                );
+            }
+
             if all_content_positioned {
                 let pa = &page_areas[0];
                 let ca = primary_content_area(pa);
@@ -742,6 +1075,7 @@ impl<'a> LayoutEngine<'a> {
                     None
                 };
                 self.prepend_fixed_nodes(&pa.fixed_nodes, &mut page)?;
+                page.runtime_instantiated = pa.runtime_instantiated;
                 if Self::has_visible_content(&page.nodes) {
                     if let (Some(profile), Some(page_profile)) =
                         (profile.as_deref_mut(), page_profile)
@@ -751,6 +1085,24 @@ impl<'a> LayoutEngine<'a> {
                     pages.push(page);
                 }
             }
+
+            // XFA_STATIC_BODY_CONTINUATION_FLAG_PROMOTION: gate the static-body
+            // continuation relaxation on a homogeneous positioned queue. Computed
+            // here while `content_queued` is still alive (it is moved into
+            // `remaining` just below). When the flag is off this is always false,
+            // so default behavior is byte-identical.
+            let static_body_queue_eligible = self.static_body_continuation
+                && self.queued_nodes_all_positioned_body(&content_queued);
+
+            // XFA_LAYOUT_CONTINUATION_RUNTIME_INSTANTIATED_KEEP: the whole
+            // pageArea set is a runtime-instantiated mirror (the saved form DOM
+            // committed to exactly these pages). This same predicate gates the
+            // post-loop overflow clamp below, so when it holds the relaxation
+            // can never emit more than `page_areas.len()` pages.
+            let all_pageareas_runtime_instantiated =
+                !page_areas.is_empty() && page_areas.iter().all(|pa| pa.runtime_instantiated);
+            let runtime_keep_eligible =
+                self.continuation_runtime_keep && all_pageareas_runtime_instantiated;
 
             // Layout content across page areas, then repeat last template for overflow.
             let mut remaining = if all_content_positioned {
@@ -770,12 +1122,50 @@ impl<'a> LayoutEngine<'a> {
                 // queued pageArea continuation after an emitted page is used
                 // only when body content, an explicit page anchor, or an
                 // accepted split remainder still needs that next pageArea.
-                if !pages.is_empty()
-                    && !self.queued_nodes_can_populate_continuation_page_area(
+                // clippy::nonminimal_bool — De Morgan of the original
+                // `!a && !b && !(c && d)` into `!(a || b || (c && d))`. Truth-
+                // equivalent (same operands, same left-to-right short-circuit
+                // order; `&&` binds tighter than `||` so the `c && d` grouping is
+                // preserved). No layout-behavior change.
+                if !(pages.is_empty()
+                    || self.queued_nodes_can_populate_continuation_page_area(
                         &remaining,
                         page_area_continuation_needs_body_content,
                     )
+                    // Experimental (default-off) relaxation: keep the continuation
+                    // when a remaining node has substantial visible *static* body
+                    // content filling this pageArea. See `static_body_continuation`.
+                    // Gated on a homogeneous positioned queue (mixed flow+positioned
+                    // queues use flow pagination instead) — see
+                    // `queued_nodes_all_positioned_body`.
+                    || static_body_queue_eligible
+                        && self.queued_nodes_have_substantial_visible_body(
+                            &remaining,
+                            primary_content_area(pa).height,
+                        )
+                    // XFA_LAYOUT_CONTINUATION_RUNTIME_INSTANTIATED_KEEP (default-off):
+                    // keep the continuation when the whole pageArea set is a
+                    // runtime-instantiated mirror and a remaining node carries
+                    // visible body content. Unlike `static_body_queue_eligible`
+                    // this is not gated on a homogeneous positioned queue (so it
+                    // rescues flowed `TopToBottom` Sub-B bodies) and omits the
+                    // 50% content floor: a real but short trailing mirror page
+                    // (closing/signature instance) is still a page. Over-
+                    // production is bounded structurally by the mirror count —
+                    // see the post-loop clamp keyed on the same
+                    // `all_pageareas_runtime_instantiated` predicate.
+                    || (runtime_keep_eligible
+                        && self.queued_nodes_have_visible_body_content(&remaining)))
                 {
+                    // Diagnostic (read-only, env-gated; no behavior change).
+                    // Milestone XFA_LAYOUT_OVERFLOW_PAGINATION_PARITY.
+                    if std::env::var_os("XFA_OF_TRACE").is_some() {
+                        eprintln!(
+                            "XFA_OF_TRACE guard-drop: remaining={} after pages_committed={} (queued_nodes_can_populate_continuation_page_area=false -> continuation suppressed)",
+                            remaining.len(),
+                            pages.len()
+                        );
+                    }
                     remaining.clear();
                     break;
                 }
@@ -795,6 +1185,7 @@ impl<'a> LayoutEngine<'a> {
                     remaining = rest;
                 } else if Self::has_visible_content(&placed.nodes) {
                     self.prepend_fixed_nodes(&pa.fixed_nodes, &mut placed)?;
+                    placed.runtime_instantiated = pa.runtime_instantiated;
                     if let (Some(profile), Some(page_profile)) =
                         (profile.as_deref_mut(), page_profile)
                     {
@@ -810,6 +1201,7 @@ impl<'a> LayoutEngine<'a> {
                     // matches Adobe's behavior for explicit page areas
                     // whose flowing content is blank/hidden.
                     self.prepend_fixed_nodes(&pa.fixed_nodes, &mut placed)?;
+                    placed.runtime_instantiated = pa.runtime_instantiated;
                     if Self::has_visible_content(&placed.nodes) {
                         if let (Some(profile), Some(page_profile)) =
                             (profile.as_deref_mut(), page_profile)
@@ -835,13 +1227,31 @@ impl<'a> LayoutEngine<'a> {
                 }
             }
 
+            // XFA 3.3 §3.1 — when ALL pageAreas are runtime-instantiated
+            // (i.e. the form DOM recorded an explicit page-tree allocation),
+            // overflow beyond the recorded count is suppressed.  The runtime
+            // already committed to N pages; emitting more is over-pagination
+            // relative to the saved form state.  Excess body content is
+            // dropped from the visible output.  This is the same predicate that
+            // gates `runtime_keep_eligible`, so any continuation kept above is
+            // still clamped here — the relaxation can fill the mirrored pages
+            // but never add pages beyond `page_areas.len()`.
+            if all_pageareas_runtime_instantiated {
+                remaining.clear();
+            }
+
             // Overflow: repeat page templates until all content is placed.
             if !remaining.is_empty() {
                 let last_idx = page_areas.len() - 1;
-                let overflow_ca = primary_content_area(&page_areas[last_idx]);
+                let overflow_ca_ref = primary_content_area(&page_areas[last_idx]);
+                // XFA §17: apply the active subform's overflow leader/trailer
+                // to each continuation page.  QF1-F per-subform extension:
+                // the active refs are recomputed per-page from the first
+                // remaining queued node's ancestor chain; the root refs are
+                // the W2-A fallback when no nested subform declares its own.
                 // Dynamic page limit: estimated pages for remaining content + already placed.
                 let page_limit =
-                    self.estimate_page_limit(&remaining, overflow_ca.height) + pages.len();
+                    self.estimate_page_limit(&remaining, overflow_ca_ref.height) + pages.len();
                 while !remaining.is_empty() {
                     if pages.len() >= page_limit {
                         eprintln!(
@@ -852,7 +1262,16 @@ impl<'a> LayoutEngine<'a> {
                     }
                     let pa_idx = last_idx;
                     let pa = &page_areas[pa_idx];
-                    let ca = primary_content_area(pa);
+                    // Use the overflow-augmented content area for every page
+                    // in this loop — XFA §17 says the leader/trailer apply
+                    // to overflow continuation pages.
+                    let active_refs = self.resolve_active_overflow_refs(
+                        remaining.first().map(|qn| qn.id),
+                        root_overflow_refs,
+                    );
+                    let overflow_ca =
+                        Self::content_area_with_overflow(overflow_ca_ref, active_refs);
+                    let ca = &overflow_ca;
 
                     let (mut page, rest, consumed_break_only, _, page_profile) = self
                         .layout_content_fitting(
@@ -889,6 +1308,7 @@ impl<'a> LayoutEngine<'a> {
                                 None
                             };
                             self.prepend_fixed_nodes(&pa.fixed_nodes, &mut forced)?;
+                            forced.runtime_instantiated = pa.runtime_instantiated;
                             if let (Some(profile), Some(page_profile)) =
                                 (profile.as_deref_mut(), forced_profile)
                             {
@@ -902,6 +1322,7 @@ impl<'a> LayoutEngine<'a> {
                     } else {
                         if Self::has_visible_content(&page.nodes) {
                             self.prepend_fixed_nodes(&pa.fixed_nodes, &mut page)?;
+                            page.runtime_instantiated = pa.runtime_instantiated;
                             if !rest.is_empty() {
                                 self.trace_commit_page_boundary(
                                     pages.len() + 1,
@@ -923,7 +1344,135 @@ impl<'a> LayoutEngine<'a> {
             }
         }
 
+        // Page-area fixed nodes (headers/footers/decorations prepended onto
+        // every page) — the "chrome" excluded when isolating a page's flowed
+        // body content for tiny-positioned coalescing.
+        let chrome_ids: std::collections::HashSet<FormNodeId> = page_areas
+            .iter()
+            .flat_map(|pa| pa.fixed_nodes.iter().copied())
+            .collect();
+
+        // Diagnostic (read-only, env-gated; no behavior change). Per-page
+        // composition for the XFA_LAYOUT_OCCUR_INSTANCE_OVERPRODUCTION trace —
+        // reveals lone tiny-positioned pages that inflate the page count.
+        if std::env::var_os("XFA_OF_TRACE").is_some() {
+            for (pi, pg) in pages.iter().enumerate() {
+                let vis_h: f64 = pg
+                    .nodes
+                    .iter()
+                    .map(|n| n.rect.y + n.rect.height)
+                    .fold(0.0_f64, f64::max)
+                    - pg.nodes.iter().map(|n| n.rect.y).fold(f64::MAX, f64::min);
+                let names: Vec<String> = pg
+                    .nodes
+                    .iter()
+                    .map(|n| {
+                        format!(
+                            "{}#{}:{:.0}@{:.0}",
+                            n.name, n.form_node.0, n.rect.height, n.rect.y
+                        )
+                    })
+                    .collect();
+                eprintln!(
+                    "XFA_OF_TRACE page[{pi}] nodes={} h={:.0} span={:.0} rt_inst={} tiny_body={} [{}]",
+                    pg.nodes.len(),
+                    pg.height,
+                    vis_h,
+                    pg.runtime_instantiated,
+                    self.page_body_is_tiny_positioned(pg, &chrome_ids).is_some(),
+                    names.join(", "),
+                );
+            }
+        }
+
+        // XFA_LAYOUT_OCCUR_INSTANCE_OVERPRODUCTION (flag-gated, default-off):
+        // fold spurious lone tiny-positioned pages into the adjacent body page.
+        if self.tiny_positioned_coalesce {
+            let prof_pages = profile.as_mut().map(|p| &mut p.pages);
+            self.coalesce_tiny_positioned_pages(&mut pages, prof_pages, &chrome_ids);
+        }
+
         Ok(LayoutDom { pages })
+    }
+
+    /// If this page's only non-chrome (body) content is a single tiny
+    /// positioned container (Subform / Area / ExclGroup), return the page-node
+    /// indices of that body content; otherwise `None`.
+    ///
+    /// "Chrome" = page-area fixed nodes (headers/footers/decorations prepended
+    /// onto every page, in `chrome_ids`) — these are excluded so the check sees
+    /// only the flowed body. A spurious lone "header band" page (e.g. a tiny
+    /// `lock` subform below the tiny floor) matches; full-page positioned body
+    /// instances and runtime-instantiated commitments do not.
+    /// See [`Self::tiny_positioned_coalesce`].
+    fn page_body_is_tiny_positioned(
+        &self,
+        page: &LayoutPage,
+        chrome_ids: &std::collections::HashSet<FormNodeId>,
+    ) -> Option<Vec<usize>> {
+        if page.runtime_instantiated || page.height <= 0.0 {
+            return None;
+        }
+        let body: Vec<usize> = page
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| !chrome_ids.contains(&n.form_node))
+            .map(|(i, _)| i)
+            .collect();
+        if body.len() != 1 {
+            return None;
+        }
+        let n = &page.nodes[body[0]];
+        let node = self.form.get(n.form_node);
+        let is_tiny_positioned = node.layout == LayoutStrategy::Positioned
+            && matches!(
+                node.node_type,
+                FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup
+            )
+            && n.rect.height <= TINY_POSITIONED_PAGE_FRAC * page.height;
+        is_tiny_positioned.then_some(body)
+    }
+
+    /// XFA_LAYOUT_OCCUR_INSTANCE_OVERPRODUCTION fix (flag-gated, default-off).
+    /// Fold each spurious lone tiny-positioned *body* page forward into its
+    /// following page: the tiny body node(s) are moved onto the next page
+    /// (overlaying at their absolute coordinates) and the now-redundant page
+    /// (whose chrome the next page already carries) is dropped. `profile_pages`,
+    /// when present, is kept index-aligned with `pages`.
+    fn coalesce_tiny_positioned_pages(
+        &self,
+        pages: &mut Vec<LayoutPage>,
+        mut profile_pages: Option<&mut Vec<LayoutProfilePage>>,
+        chrome_ids: &std::collections::HashSet<FormNodeId>,
+    ) {
+        if pages.len() < 2 {
+            return;
+        }
+        // Coalescible indices with a forward target (never the last page).
+        // Process high→low so lower indices stay valid as pages are removed.
+        let targets: Vec<usize> = (0..pages.len() - 1)
+            .filter(|&i| {
+                self.page_body_is_tiny_positioned(&pages[i], chrome_ids)
+                    .is_some()
+            })
+            .collect();
+        for &i in targets.iter().rev() {
+            // Move only the body (non-chrome) nodes forward; the merged page's
+            // chrome is redundant since the next page carries its own.
+            let body: Vec<LayoutNode> = pages[i]
+                .nodes
+                .drain(..)
+                .filter(|n| !chrome_ids.contains(&n.form_node))
+                .collect();
+            pages[i + 1].nodes.extend(body);
+            pages.remove(i);
+            if let Some(pp) = profile_pages.as_mut() {
+                if i < pp.len() {
+                    pp.remove(i);
+                }
+            }
+        }
     }
 
     // -------------------------------------------------------------------
@@ -948,6 +1497,118 @@ impl<'a> LayoutEngine<'a> {
         self.queued_node_has_explicit_page_anchor(node)
             || Self::queued_node_is_split_remainder(node)
             || self.queued_node_has_data_backed_body_content(node)
+    }
+
+    /// Experimental (default-off) continuation predicate: does any remaining
+    /// queued node have substantial visible body content for this continuation
+    /// content area? Gated by `static_body_continuation`.
+    fn queued_nodes_have_substantial_visible_body(
+        &self,
+        nodes: &[QueuedNode],
+        content_area_height: f64,
+    ) -> bool {
+        nodes
+            .iter()
+            .any(|node| self.queued_node_has_substantial_visible_body(node, content_area_height))
+    }
+
+    /// Runtime-instantiated-keep continuation predicate: does any remaining
+    /// queued node carry visible body content (Draw / Image / Field)? Unlike
+    /// [`Self::queued_nodes_have_substantial_visible_body`] this omits the 50 %
+    /// content-area-height floor. In the runtime-instantiated *mirror* case the
+    /// over-production bound comes from the mirror count — every emitted page is
+    /// one of the `page_areas.len() == oracle` instances and the post-loop clamp
+    /// discards any residual — not from a content floor. A legitimate short
+    /// trailing instance (e.g. a closing/signature page occupying well under
+    /// half the body) must therefore still keep its mirrored pageArea. Actual
+    /// page emission stays gated downstream on [`Self::has_visible_content`], so
+    /// a remainder that lays out empty still produces no page.
+    fn queued_nodes_have_visible_body_content(&self, nodes: &[QueuedNode]) -> bool {
+        let decision = nodes
+            .iter()
+            .any(|node| self.subtree_has_visible_body_content(node.id));
+        if std::env::var_os("XFA_OF_TRACE").is_some() {
+            eprintln!(
+                "XFA_OF_TRACE rt-keep-pred: queued={} visible_body={decision}",
+                nodes.len()
+            );
+        }
+        decision
+    }
+
+    /// True when every queued node is a Positioned subform/area/exclGroup — the
+    /// homogeneous full-page *positioned* body pattern that the
+    /// `static_body_continuation` relaxation targets (sequences of positioned
+    /// terms/instructions/form subforms, each filling its own pageArea).
+    ///
+    /// XFA_STATIC_BODY_CONTINUATION_FLAG_PROMOTION: when the content queue mixes
+    /// flowing (non-positioned, e.g. TopToBottom) body content with positioned
+    /// subforms, flow pagination — not this flag — must govern the page count.
+    /// Firing the relaxation on such mixed queues over-paginates (a positioned
+    /// sibling's near-full-page extent keeps a continuation pageArea that Adobe
+    /// coalesces). Gating on a homogeneous positioned queue removes that
+    /// over-production while leaving pure positioned-body documents unchanged.
+    /// This is a content-structure invariant, not an oracle/SHA shortcut.
+    fn queued_nodes_all_positioned_body(&self, nodes: &[QueuedNode]) -> bool {
+        !nodes.is_empty()
+            && nodes.iter().all(|qn| {
+                let node = self.form.get(qn.id);
+                node.layout == LayoutStrategy::Positioned
+                    && matches!(
+                        node.node_type,
+                        FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup
+                    )
+            })
+    }
+
+    /// A queued node can populate a continuation pageArea when it has visible
+    /// body content (Draw / Image / Field — not only data-backed) AND its
+    /// content extent fills ≥ 50 % of the continuation content area. The size
+    /// floor distinguishes a real static *body* page (e.g. a near-full-page
+    /// positioned instructions/terms subform) from small *chrome*
+    /// (headers/footers, which are handled via `pa.fixed_nodes`). This is a
+    /// content-geometry invariant — not an oracle page-count shortcut.
+    fn queued_node_has_substantial_visible_body(
+        &self,
+        node: &QueuedNode,
+        content_area_height: f64,
+    ) -> bool {
+        if content_area_height <= 0.0 {
+            return false;
+        }
+        let visible = self.subtree_has_visible_body_content(node.id);
+        let ext = self.compute_extent(node.id).height;
+        let decision = visible && ext >= 0.5 * content_area_height;
+        if std::env::var_os("XFA_OF_TRACE").is_some() {
+            eprintln!(
+                "XFA_OF_TRACE keep-pred: visible={visible} extent={ext:.0} ca_h={content_area_height:.0} floor50={} fits={} -> keep={decision}",
+                ext >= 0.5 * content_area_height,
+                ext <= content_area_height
+            );
+        }
+        decision
+    }
+
+    /// Visible body content = a non-layout-hidden Draw / Image / Field leaf, or
+    /// any container whose occur-expanded subtree contains one. Unlike
+    /// `subtree_has_data_backed_body_content`, static draws/images count here.
+    fn subtree_has_visible_body_content(&self, id: FormNodeId) -> bool {
+        if self.is_layout_hidden(id) {
+            return false;
+        }
+        let node = self.form.get(id);
+        match &node.node_type {
+            FormNodeType::Draw(_) | FormNodeType::Image { .. } | FormNodeType::Field { .. } => true,
+            FormNodeType::Root
+            | FormNodeType::Subform
+            | FormNodeType::Area
+            | FormNodeType::ExclGroup
+            | FormNodeType::SubformSet => self
+                .expand_occur(&node.children)
+                .iter()
+                .any(|&child_id| self.subtree_has_visible_body_content(child_id)),
+            FormNodeType::PageSet | FormNodeType::PageArea { .. } => false,
+        }
     }
 
     fn queued_node_has_explicit_page_anchor(&self, node: &QueuedNode) -> bool {
@@ -1329,6 +1990,7 @@ impl<'a> LayoutEngine<'a> {
                                 page_width: pa_node.box_model.width.unwrap_or(612.0),
                                 page_height: pa_node.box_model.height.unwrap_or(792.0),
                                 fixed_nodes: fixed,
+                                runtime_instantiated: pa_meta.runtime_instantiated_page,
                             });
                         }
                     }
@@ -1356,6 +2018,7 @@ impl<'a> LayoutEngine<'a> {
                         page_width: child.box_model.width.unwrap_or(612.0),
                         page_height: child.box_model.height.unwrap_or(792.0),
                         fixed_nodes: fixed,
+                        runtime_instantiated: pa_meta.runtime_instantiated_page,
                     });
                 }
                 // XFA's canonical nesting: <subform layout="paginate"> wraps
@@ -1427,6 +2090,7 @@ impl<'a> LayoutEngine<'a> {
             width: page_width,
             height: page_height,
             nodes: Vec::new(),
+            runtime_instantiated: false,
         };
 
         let available = Size {
@@ -1503,6 +2167,7 @@ impl<'a> LayoutEngine<'a> {
             width: page_width,
             height: page_height,
             nodes: Vec::new(),
+            runtime_instantiated: false,
         };
 
         // XFA Spec 3.3 §8.10 — Leaders and Trailers (p314-326).
@@ -2325,7 +2990,12 @@ impl<'a> LayoutEngine<'a> {
                         && partial_child.rect.height <= child_remaining + 0.5
                     {
                         placed_children.push(partial_child);
-                        child_y += placed_children.last().unwrap().rect.height;
+                        // SAFETY: we just pushed partial_child above, so last() is always Some.
+                        child_y += placed_children
+                            .last()
+                            .expect("just pushed above")
+                            .rect
+                            .height;
                         split_idx = i + 1;
 
                         let mut rest: Vec<QueuedNode> = child_rest;
@@ -2372,7 +3042,12 @@ impl<'a> LayoutEngine<'a> {
 
                     if split_productive {
                         placed_children.push(partial_child);
-                        child_y += placed_children.last().unwrap().rect.height;
+                        // SAFETY: we just pushed partial_child above, so last() is always Some.
+                        child_y += placed_children
+                            .last()
+                            .expect("just pushed above")
+                            .rect
+                            .height;
                         split_idx = i + 1;
 
                         // When the recursive split returns a single QueuedNode
@@ -2394,7 +3069,11 @@ impl<'a> LayoutEngine<'a> {
                             && child_rest[0].id == child_id
                             && child_rest[0].children_override.is_some()
                         {
-                            let qn = child_rest.into_iter().next().unwrap();
+                            // SAFETY: child_rest.len() == 1 is checked on the line above.
+                            let qn = child_rest
+                                .into_iter()
+                                .next()
+                                .expect("child_rest.len() == 1");
                             (qn.children_override, qn.nested_child_overrides)
                         } else {
                             let mut ids = Vec::new();
@@ -3700,6 +4379,12 @@ struct PageAreaInfo {
     /// Fixed-position nodes (e.g., page-level headers/footers) placed on every
     /// page that uses this page area.
     fixed_nodes: Vec<FormNodeId>,
+    /// XFA 3.3 §8.6 / §3.1 — this pageArea was instantiated at runtime
+    /// (recorded in the form-DOM packet) rather than declared once in the
+    /// template.  Such instances always emit a layout page, even when the
+    /// flowing body queue is exhausted, because they record an already-
+    /// paginated runtime state.
+    runtime_instantiated: bool,
 }
 
 #[cfg(test)]
@@ -6392,7 +7077,7 @@ mod tests {
         );
 
         // All 8 fields should be distributed across the pages.
-        let total_leaves: usize = result.pages.iter().map(|p| count_leaf_nodes(p)).sum();
+        let total_leaves: usize = result.pages.iter().map(count_leaf_nodes).sum();
         assert_eq!(
             total_leaves, 8,
             "All 8 fields should appear across pages, found {}",
@@ -7304,14 +7989,16 @@ mod tests {
 
     #[test]
     fn resolve_display_value_maps_save_to_display() {
-        let mut meta = FormNodeMeta::default();
-        meta.field_kind = FieldKind::Dropdown;
-        meta.display_items = vec![
-            "United States".to_string(),
-            "United Kingdom".to_string(),
-            "Canada".to_string(),
-        ];
-        meta.save_items = vec!["US".to_string(), "UK".to_string(), "CA".to_string()];
+        let meta = FormNodeMeta {
+            field_kind: FieldKind::Dropdown,
+            display_items: vec![
+                "United States".to_string(),
+                "United Kingdom".to_string(),
+                "Canada".to_string(),
+            ],
+            save_items: vec!["US".to_string(), "UK".to_string(), "CA".to_string()],
+            ..Default::default()
+        };
 
         // Save value "UK" should resolve to "United Kingdom"
         assert_eq!(resolve_display_value("UK", &meta), "United Kingdom");
@@ -7325,27 +8012,33 @@ mod tests {
 
     #[test]
     fn resolve_display_value_no_save_items_passthrough() {
-        let mut meta = FormNodeMeta::default();
-        meta.field_kind = FieldKind::Dropdown;
-        meta.display_items = vec!["Red".to_string(), "Green".to_string()];
+        let meta = FormNodeMeta {
+            field_kind: FieldKind::Dropdown,
+            display_items: vec!["Red".to_string(), "Green".to_string()],
+            ..Default::default()
+        };
         // No save_items — value passes through unchanged
         assert_eq!(resolve_display_value("Red", &meta), "Red");
     }
 
     #[test]
     fn resolve_display_value_non_dropdown_passthrough() {
-        let mut meta = FormNodeMeta::default();
-        meta.field_kind = FieldKind::Text;
-        meta.save_items = vec!["US".to_string()];
-        meta.display_items = vec!["United States".to_string()];
+        let meta = FormNodeMeta {
+            field_kind: FieldKind::Text,
+            save_items: vec!["US".to_string()],
+            display_items: vec!["United States".to_string()],
+            ..Default::default()
+        };
         // Non-dropdown field: no resolution
         assert_eq!(resolve_display_value("US", &meta), "US");
     }
 
     #[test]
     fn resolve_display_value_numeric_edit_strips_trailing_zeros() {
-        let mut meta = FormNodeMeta::default();
-        meta.field_kind = FieldKind::NumericEdit;
+        let meta = FormNodeMeta {
+            field_kind: FieldKind::NumericEdit,
+            ..Default::default()
+        };
 
         assert_eq!(resolve_display_value("1.00000000", &meta), "1");
         assert_eq!(resolve_display_value("3.50", &meta), "3.5");
@@ -7359,8 +8052,10 @@ mod tests {
 
     #[test]
     fn resolve_display_value_date_time_picker_uses_iso_date_prefix() {
-        let mut meta = FormNodeMeta::default();
-        meta.field_kind = FieldKind::DateTimePicker;
+        let meta = FormNodeMeta {
+            field_kind: FieldKind::DateTimePicker,
+            ..Default::default()
+        };
 
         assert_eq!(resolve_display_value("2026-04-12", &meta), "2026-04-12");
         assert_eq!(
@@ -7896,7 +8591,7 @@ mod container_node_tests {
         assert_eq!(result.pages.len(), 1);
         // SubformSet itself may appear as a container node; its children should be present
         let page = &result.pages[0];
-        fn count_named<'a>(nodes: &'a [LayoutNode], name: &str) -> usize {
+        fn count_named(nodes: &[LayoutNode], name: &str) -> usize {
             nodes
                 .iter()
                 .map(|n| usize::from(n.name == name) + count_named(&n.children, name))

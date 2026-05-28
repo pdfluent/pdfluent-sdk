@@ -15,7 +15,7 @@ keywords = [
 ]
 categories = ["parser-implementations"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/pdfluent/examples"
+repository = "https://pdfluent.com/source"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 

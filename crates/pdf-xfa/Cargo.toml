@@ -1,24 +1,24 @@
 [package]
 name = "pdf-xfa"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
 description = "XFA engine — extraction, layout rendering, font resolution. Experimental and under active development."
-repository = "https://github.com/pdfluent/examples"
+repository = "https://pdfluent.com/source"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 
 keywords = ["pdf", "xfa", "forms", "adobe"]
 categories = ["rendering"]
 [dependencies]
-xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.5" }
-formcalc-interpreter = { path = "../formcalc-interpreter", version = "=1.0.0-beta.5" }
-xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.5" }
-xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.5" }
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.2" }
+xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.8" }
+formcalc-interpreter = { path = "../formcalc-interpreter", version = "=1.0.0-beta.8" }
+xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.8" }
+xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.8" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.4" }
 pdf-font = { path = "../pdf-font", version = "=1.0.0-beta.3" }
-pdf-interpret = { path = "../pdf-interpret", version = "=0.5.4" }
+pdf-interpret = { path = "../pdf-interpret", version = "=0.5.6" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }
 flate2 = "1"
 thiserror = "2"
@@ -31,7 +31,7 @@ image = { workspace = true }
 # M3-B Phase B: optional sandboxed JavaScript runtime backend.
 # Off by default; enabled via `--features xfa-js-sandboxed`.
 # See benchmarks/runs/M3B_RUNTIME_SECURITY_MODEL.md for the binding contract.
-rquickjs = { version = "0.8", optional = true, default-features = false }
+rquickjs = { version = "=0.8.1", optional = true, default-features = false }
 
 [features]
 default = []

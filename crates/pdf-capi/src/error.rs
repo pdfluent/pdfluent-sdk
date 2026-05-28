@@ -65,3 +65,39 @@ pub extern "C" fn pdf_clear_error() {
         *e.borrow_mut() = None;
     });
 }
+
+/// Helper trait used by the license module to map [`pdfluent::Error`]
+/// variants onto stable [`crate::types::PdfStatus`] codes without leaking
+/// the key string into the error buffer.
+pub(crate) trait PdfStatusForLicense {
+    fn from_pdfluent_error(e: &pdfluent::Error) -> Self;
+}
+
+impl PdfStatusForLicense for crate::types::PdfStatus {
+    fn from_pdfluent_error(e: &pdfluent::Error) -> Self {
+        match e {
+            pdfluent::Error::InvalidLicense { reason } => {
+                set_last_error_str(&format!("invalid license: {reason}"));
+                if reason.contains("already set") {
+                    crate::types::PdfStatus::ErrorLicenseAlreadySet
+                } else {
+                    crate::types::PdfStatus::ErrorInvalidLicense
+                }
+            }
+            pdfluent::Error::LicenseExpired { expires_at } => {
+                set_last_error_str(&format!("license expired at unix timestamp {expires_at}"));
+                crate::types::PdfStatus::ErrorLicenseExpired
+            }
+            pdfluent::Error::LicenseInvalidSignature => {
+                set_last_error_str(
+                    "license signature does not verify against the configured public key",
+                );
+                crate::types::PdfStatus::ErrorLicenseInvalidSignature
+            }
+            other => {
+                set_last_error_str(&format!("license error: {other}"));
+                crate::types::PdfStatus::ErrorUnknown
+            }
+        }
+    }
+}

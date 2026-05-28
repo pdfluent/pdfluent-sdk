@@ -1,3 +1,79 @@
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/xfa-cli-{ target }-v{ version }.tar.gz"
 bin-dir = "xfa-cli{ binary-ext }"
+
+# Path-prefix remapping — strips developer filesystem paths from all build
+# artefacts (WASM debug sections, rlib symbol tables, etc.).
+#
+# rustc uses last-match-wins semantics: when a path matches multiple prefix
+# rules, the LAST matching rule in this list wins. Therefore:
+#   - catch-all "/Users/jasperdewinter=/buildenv" is listed FIRST so it can
+#     be overridden by the more-specific rules that follow;
+#   - the most-specific rules (registry, git, source) are listed LAST so
+#     they take precedence over the catch-all.
+#
+# Target "/buildenv" is intentionally not a real path and does not match
+# the audit patterns for /Users/... or /home/... leakage.
+#
+# Required by the publish constitution: zero private-path strings in any
+# published artefact.
+[build]
+rustflags = [
+  "--remap-path-prefix", "/Users/jasperdewinter=/buildenv",
+  "--remap-path-prefix", "/Users/jasperdewinter/Documents/XFA=/src",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/git=/git",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/registry=/registry",
+]
+
+# WASM SIMD: vello_cpu's rasterizer (via fearless_simd) selects its 128-bit SIMD
+# path on wasm32 ONLY when the target is compiled with `simd128` enabled — at
+# compile time. Without it, fearless_simd's `Level::new()` returns the scalar
+# fallback, so the browser/Node WASM SDK runs the rasterizer scalar. Enabling
+# `simd128` activates the `WasmSimd128` path. `bulk-memory` is already on by
+# default for wasm32 but is listed explicitly for clarity.
+#
+# IMPORTANT: cargo uses target-specific `rustflags` *instead of* `[build]`
+# rustflags (they are NOT merged). The four `--remap-path-prefix` flags above
+# MUST therefore be repeated here, or wasm32 artefacts would lose the private-
+# path scrubbing required by the publish constitution.
+#
+# simd128 is supported by all current evergreen browsers (Chrome/Firefox/Safari)
+# and Node >= 16. Byte/visual fidelity vs the scalar path must be confirmed by
+# the WASM browser golden harness (QR-10) before this is relied on for a shipped
+# artefact; see the follow-up task in the milestone report.
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "--remap-path-prefix", "/Users/jasperdewinter=/buildenv",
+  "--remap-path-prefix", "/Users/jasperdewinter/Documents/XFA=/src",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/git=/git",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/registry=/registry",
+  "-C", "target-feature=+simd128,+bulk-memory",
+]
+
+# Cross-compile linkers for the `package:cli-cross-platform` CI job. These
+# linker names match the Ubuntu 24.04 mingw-w64 + musl-tools packages
+# installed on the self-hosted runner (`pdfluent-vps-ci`); without them
+# `cargo build --target x86_64-pc-windows-gnu` invokes plain `cc` /
+# `ld.bfd`, which cannot produce PE32+ Windows binaries (fails on
+# x86_64-w64-mingw32-dlltool lookup), and `--target x86_64-unknown-linux-musl`
+# cannot link against musl-libc statically.
+#
+# Same `--remap-path-prefix` block as [build] for private-path scrubbing
+# (target-specific rustflags REPLACE [build] rustflags, not merge).
+[target.x86_64-unknown-linux-musl]
+linker = "musl-gcc"
+rustflags = [
+  "--remap-path-prefix", "/Users/jasperdewinter=/buildenv",
+  "--remap-path-prefix", "/Users/jasperdewinter/Documents/XFA=/src",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/git=/git",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/registry=/registry",
+]
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+rustflags = [
+  "--remap-path-prefix", "/Users/jasperdewinter=/buildenv",
+  "--remap-path-prefix", "/Users/jasperdewinter/Documents/XFA=/src",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/git=/git",
+  "--remap-path-prefix", "/Users/jasperdewinter/.cargo/registry=/registry",
+]

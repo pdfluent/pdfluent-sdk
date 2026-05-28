@@ -1,0 +1,4 @@
+{
+  "per_op_wall_s_max": 5.0,
+  "_note": "load + page_count + metadata + first-page text extraction per fixture, via the golden_path example binary. 5s ceiling is generous headroom over the observed ~0.16s on small fixtures; trips only on a real regression or a hang."
+}

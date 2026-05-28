@@ -18,5 +18,6 @@ pub use crate::parity::{
 };
 pub use crate::redact::RedactOptions;
 pub use crate::signer::{PadesProfile, PdfSigner, Pkcs12Signer, SignOptions};
+pub use crate::structure::{AnnotationInfo, Attachment, Outline};
 pub use crate::tier::Tier;
 pub use crate::watermark::{Layer, Position, Rotation, WatermarkOptions};

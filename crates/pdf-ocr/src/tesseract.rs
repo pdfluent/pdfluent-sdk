@@ -353,12 +353,13 @@ mod tests {
     #[test]
     fn tesseract_engine_new_with_eng() {
         // This test requires tesseract-ocr installed with eng data.
-        let result = TesseractEngine::new("eng", None);
-        if result.is_err() {
-            eprintln!("Tesseract not available: {}", result.unwrap_err());
-            return;
-        }
-        let engine = result.unwrap();
+        let engine = match TesseractEngine::new("eng", None) {
+            Ok(engine) => engine,
+            Err(e) => {
+                eprintln!("Tesseract not available: {e}");
+                return;
+            }
+        };
         assert!(engine.supported_languages().contains(&"eng".to_string()));
     }
 

@@ -101,6 +101,27 @@ pub enum ManipError {
     #[error("decompressed FlateDecode stream exceeds {0}-byte limit")]
     DecompressionLimitExceeded(u64),
 
+    /// The requested bold or italic variant font is not embedded in the document.
+    ///
+    /// `set_text_run_style` only swaps to fonts that are already present in the
+    /// xref. Synthetic bold (stroke-and-fill) and system-font injection are
+    /// explicitly forbidden. The caller must embed the variant before styling.
+    ///
+    /// `available_variants` lists the BaseFont names of all variants of the same
+    /// family that *are* embedded, so the caller can surface actionable guidance.
+    #[error(
+        "font variant not embedded: cannot apply {requested:?} (current font {current:?}); \
+         available embedded variants: {available_variants:?}"
+    )]
+    FontVariantNotEmbedded {
+        /// BaseFont name of the current (pre-swap) font.
+        current: String,
+        /// BaseFont name of the desired variant that was not found.
+        requested: String,
+        /// All embedded font variants belonging to the same family.
+        available_variants: Vec<String>,
+    },
+
     /// A non-categorised manipulation failure. Reserved for cases the
     /// more specific variants do not cover; the message describes the
     /// situation.

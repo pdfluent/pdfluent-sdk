@@ -181,10 +181,16 @@ pub fn compare_pages(
 
 #[cfg(test)]
 mod tests {
+    // These tests build a single-page slice from `page` while the *same*
+    // `page` is moved into the second comparison slice in the same call, so
+    // `&[page.clone()]` cannot be rewritten to `slice::from_ref(&page)`
+    // (that would borrow `page` while it is moved). The clone is required.
+    #![allow(clippy::cloned_ref_to_slice_refs)]
+
     use super::*;
 
     fn make_solid_page(w: u32, h: u32, r: u8, g: u8, b: u8) -> PageImage {
-        let pixels = vec![r, g, b, 255].repeat((w * h) as usize);
+        let pixels = [r, g, b, 255].repeat((w * h) as usize);
         PageImage::new(w, h, pixels).unwrap()
     }
 

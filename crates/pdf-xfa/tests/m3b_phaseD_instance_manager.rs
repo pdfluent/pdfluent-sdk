@@ -912,10 +912,13 @@ fn multiple_subforms_variables_are_isolated() {
 }
 
 #[test]
-fn subform_scoped_variables_not_in_flat_global() {
-    // Subform-scoped scripts must NOT be accessible via bare `ScriptName.X`
-    // — only via `subformHandle.variables.ScriptName.X`. This prevents
-    // silent shadowing when two subforms define the same script name.
+fn subform_scoped_unique_variable_is_flat_visible_after_d4() {
+    // D4 update: a UNIQUE-name subform-scoped script is now ALSO accessible via
+    // bare `ScriptName.X` (minimal SOM resolution), in addition to the scoped
+    // `subformHandle.variables.ScriptName.X` path. There is no shadowing risk
+    // because the name is unique. Ambiguous (multi-subform) names remain
+    // withheld (fail-closed) — covered by d4_minimal_som_resolution.rs
+    // (`subform_scoped_duplicate_name_fails_closed`).
     let mut tree = FormTree::new();
     let root = add_node(&mut tree, "root", FormNodeType::Root);
     let _page2 = add_child(&mut tree, root, "Page2", FormNodeType::Subform);
@@ -925,17 +928,18 @@ fn subform_scoped_variables_not_in_flat_global() {
         "ScopedOnly".into(),
         r#"var VAL = "scoped";"#.into(),
     ));
-    // Access ScopedOnly directly (flat path) — must be undefined, not the
-    // scoped namespace.
+    // Access ScopedOnly directly (flat path): a unique-name subform script now
+    // resolves as a bare identifier and returns its top-level declaration.
     add_js_script(
         &mut tree,
         out,
         "calculate",
-        "Out.rawValue = (typeof ScopedOnly === 'undefined') ? 'not-flat' : 'leaked';",
+        "Out.rawValue = (typeof ScopedOnly === 'undefined') ? 'not-flat' : ScopedOnly.VAL;",
     );
 
     let outcome = run_sandbox(&mut tree, root);
 
-    assert_eq!(field_value(&tree, out), "not-flat");
+    assert_eq!(field_value(&tree, out), "scoped");
+    assert_eq!(outcome.som_subform_scripts_exposed, 1);
     assert_eq!(outcome.js_runtime_errors, 0);
 }

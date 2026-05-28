@@ -13,6 +13,7 @@
 use crate::error::Result;
 use crate::font_bridge::font_variant_key;
 use std::collections::HashMap;
+use std::sync::Arc;
 use xfa_layout_engine::form::{DrawContent, FieldKind, FormNodeStyle, RichTextSpan};
 use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutNode, LayoutPage};
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
@@ -38,9 +39,18 @@ pub struct XfaRenderConfig {
     /// Text padding from field edges.
     pub text_padding: f64,
     /// Map from typeface name to PDF font resource name (e.g. "/XFA_F0").
-    pub font_map: HashMap<String, String>,
+    ///
+    /// Wrapped in [`Arc`] so the immutable font-resource map can be shared
+    /// across thousands of `XfaRenderConfig::clone()` calls (PERF2-02:
+    /// `apply_node_style` clones the config per layout node). The field
+    /// dereferences to `HashMap<String, String>` transparently, so existing
+    /// `&config.font_map.get(...)` call sites continue to work unchanged.
+    pub font_map: Arc<HashMap<String, String>>,
     /// Resolved font metrics per typeface.
-    pub font_metrics_data: HashMap<String, FontMetricsData>,
+    ///
+    /// Same `Arc`-sharing rationale as [`Self::font_map`]: avoids deep-cloning
+    /// the per-typeface widths array on every node-level config clone.
+    pub font_metrics_data: Arc<HashMap<String, FontMetricsData>>,
     /// CheckButton mark style (check, circle, cross, diamond, square, star).
     pub check_button_mark: Option<String>,
     /// When true, only render field value text — skip backgrounds, borders,
@@ -106,8 +116,8 @@ impl Default for XfaRenderConfig {
             text_color: [0.0, 0.0, 0.0],
             background_color: None,
             text_padding: xfa_layout_engine::types::DEFAULT_TEXT_PADDING,
-            font_map: HashMap::new(),
-            font_metrics_data: HashMap::new(),
+            font_map: Arc::new(HashMap::new()),
+            font_metrics_data: Arc::new(HashMap::new()),
             check_button_mark: None,
             field_values_only: false,
         }
@@ -3399,6 +3409,7 @@ mod tests {
             width: 612.0,
             height: 792.0,
             nodes,
+            runtime_instantiated: false,
         }
     }
 
@@ -4041,8 +4052,10 @@ mod tests {
 
     #[test]
     fn checkbox_ignores_global_background_without_explicit_fill() {
-        let mut config = XfaRenderConfig::default();
-        config.background_color = Some([0.949, 0.949, 0.949]);
+        let config = XfaRenderConfig {
+            background_color: Some([0.949, 0.949, 0.949]),
+            ..Default::default()
+        };
         let s = styled_overlay_str_with_config(
             make_styled_checkbox(10.0, 10.0, 20.0, 20.0, "0", FormNodeStyle::default()),
             config,
@@ -4055,8 +4068,10 @@ mod tests {
 
     #[test]
     fn radio_ignores_global_background_without_explicit_fill() {
-        let mut config = XfaRenderConfig::default();
-        config.background_color = Some([0.949, 0.949, 0.949]);
+        let config = XfaRenderConfig {
+            background_color: Some([0.949, 0.949, 0.949]),
+            ..Default::default()
+        };
         let s = styled_overlay_str_with_config(
             make_styled_radio(
                 10.0,
@@ -4226,9 +4241,9 @@ mod tests {
     #[test]
     fn real_bold_font_variant_skips_synthetic_bold_stroke() {
         let mut config = XfaRenderConfig::default();
-        config
-            .font_map
-            .insert("Arial_Bold_Normal".to_string(), "/XFA_Fbold".to_string());
+        let mut fm = HashMap::new();
+        fm.insert("Arial_Bold_Normal".to_string(), "/XFA_Fbold".to_string());
+        config.font_map = Arc::new(fm);
 
         let s = styled_overlay_str_with_config(
             make_styled_field(
@@ -4553,6 +4568,7 @@ mod tests {
                 width: 612.0,
                 height: 792.0,
                 nodes: vec![node],
+                runtime_instantiated: false,
             }],
         };
         let tree = layout_dom_to_render_tree(&layout, &XfaRenderConfig::default());

@@ -1,0 +1,32 @@
+# PDFluent Rust SDK — golden-path example
+#
+# Pinned crate: pdfluent 1.0.0-beta.8 (workspace path during development).
+#
+# When the crate is published to crates.io, replace the `path = …` reference
+# with a registry pin:
+#
+#     [dependencies]
+#     pdfluent = "1.0.0-beta.8"
+#
+# Until then we use the in-tree workspace crate so the example builds and
+# runs against the current beta source.
+
+[package]
+name = "pdfluent-example-golden-path"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Golden-path example for the PDFluent Rust SDK"
+
+# Stand-alone crate — not a member of the main workspace so it can be
+# distributed as a copy-paste-able tarball later.
+[workspace]
+
+[[bin]]
+name = "golden_path"
+path = "src/main.rs"
+
+[dependencies]
+# Local path during development (see comment above for registry switch).
+pdfluent = { path = "../../crates/pdfluent" }

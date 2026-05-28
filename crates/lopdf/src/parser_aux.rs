@@ -661,8 +661,8 @@ mod tests {
         // M8-PAR-02: field_widths exceeding MAX_XREF_FIELD_WIDTH (8) must be
         // rejected before allocation to prevent multi-GB heap requests from
         // crafted PDFs.
-        use crate::{Dictionary, Object, Stream, xref::XrefType};
         use super::decode_xref_stream;
+        use crate::{Dictionary, Object, Stream};
 
         let mut dict = Dictionary::new();
         dict.set("Type", Object::Name(b"XRef".to_vec()));
@@ -684,8 +684,8 @@ mod tests {
     #[test]
     fn xref_stream_negative_field_width_is_rejected() {
         // Negative W values would cast to huge usize on most platforms.
-        use crate::{Dictionary, Object, Stream};
         use super::decode_xref_stream;
+        use crate::{Dictionary, Object, Stream};
 
         let mut dict = Dictionary::new();
         dict.set("Type", Object::Name(b"XRef".to_vec()));

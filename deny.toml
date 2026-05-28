@@ -1,0 +1,237 @@
+# cargo-deny configuration — PDFluent workspace license enforcement
+# Policy: MIT / Apache-2.0 / BSD-2/3-Clause / Zlib / ISC / Unicode-DFS-2016
+# GPL / AGPL / LGPL-strong are RELEASE BLOCKERS (absent from allow list → rejected).
+# Run: cargo deny check licenses bans sources
+
+[graph]
+targets = []
+all-features = false
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------
+# Advisories — security vulnerability tracking
+# ---------------------------------------------------------------------------
+[advisories]
+ignore = []
+
+# ---------------------------------------------------------------------------
+# Licenses
+# ---------------------------------------------------------------------------
+[licenses]
+# Confidence threshold for SPDX expression matching against license file text.
+confidence-threshold = 0.8
+
+# All third-party licenses must be in this list.
+# Any license NOT listed here is rejected (implicit deny).
+# GPL / AGPL / LGPL are absent → they are BLOCKED.
+allow = [
+    # Core policy tier:
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+
+    # PDFluent proprietary crates (clarified below via [[licenses.clarify]]).
+    # These are our own workspace crates, not third-party dependencies.
+    "LicenseRef-PDFluent-Commercial",
+
+    # Additional permissive licenses present in the resolved dependency tree
+    # (confirmed via `cargo license --avoid-build-deps --avoid-dev-deps`).
+    # None impose copyleft obligations on the whole project.
+    "BSL-1.0",          # ryu — Boost License, fully permissive
+    "0BSD",             # adler2 — zero-clause BSD, public-domain style
+    "MIT-0",            # dunce — MIT without attribution clause
+    "CC0-1.0",          # imgref, dunce — Creative Commons Zero (public domain)
+    "NCSA",             # libfuzzer-sys — Univ. of Illinois/NCSA (= 3-clause BSD style)
+    "Unlicense",        # aho-corasick, byteorder, memchr, walkdir, winapi-util
+    "BSD-1-Clause",     # fiat-crypto — OR expression alternative
+
+    # MPL-2.0: file-level weak copyleft only (NOT project-level copyleft).
+    # Present via Servo HTML-parsing stack: cssparser, selectors, dtoa-short,
+    # option-ext, cssparser-macros.  Modifications to those files must be
+    # shared under MPL; surrounding PDFluent engine code is unaffected.
+    "MPL-2.0",
+
+    # CDLA-Permissive-2.0: Community Data License Agreement Permissive 2.0.
+    # Present via webpki-roots (Mozilla CA certificate bundle, pulled in by
+    # reqwest's rustls-tls feature). It is a data license, fully permissive
+    # — no copyleft obligation on the consuming project — and is the
+    # license Mozilla uses for the public NSS root cert bundle. CDLA-2.0
+    # explicitly states: "The Data Recipient is free to use, modify, and
+    # distribute the Data" (§2). Equivalent permissivity to MIT/Apache-2.0
+    # for data assets. Not on the SPDX-approved deny.toml default list
+    # because it's a data-license, not a source-code license.
+    "CDLA-Permissive-2.0",
+
+    # OFL-1.1 is intentionally NOT in this global list.
+    # Permitted only for the bundled Liberation font asset crate
+    # (xfa/font-bundled-liberation, not merged at rc1).  Add a per-crate
+    # exception when that branch merges; do NOT add OFL-1.1 here globally.
+]
+
+# Per-crate exceptions for OR-compound expressions that contain a non-allowed
+# license where we exercise only the permitted branch.
+# NOTE: must be before [licenses.private] due to TOML section scoping.
+exceptions = [
+    # r-efi: "Apache-2.0 OR LGPL-2.1-or-later OR MIT"
+    # We select the Apache-2.0/MIT branch.  The LGPL variant is an alternative
+    # we never exercise.
+    { allow = ["LGPL-2.1-or-later"], crate = "r-efi" },
+]
+
+# Ignore workspace crates that declare publish = false (our own internal tools).
+[licenses.private]
+ignore = true
+
+# ---------------------------------------------------------------------------
+# Clarify — proprietary PDFluent workspace crates
+# All use license-file = "LICENSE" (PDFluent Commercial License v1.0).
+# Hash 0x559b30eb is the opaque content hash cargo-deny computed for that file.
+# ---------------------------------------------------------------------------
+[[licenses.clarify]]
+crate = "formcalc-interpreter"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-annot"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-compliance"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-docx"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-engine"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-font"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-invoice"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-manip"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-ocr"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-pptx"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-redact"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-render"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-text-format"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-xfa"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdf-xlsx"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdfluent"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdfluent-extract"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdfluent-forms"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "pdfluent-sign"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "xfa-cli"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "xfa-dom-resolver"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "xfa-js-sandboxed"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "xfa-json"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "xfa-layout-engine"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+[[licenses.clarify]]
+crate = "xfa-license"
+expression = "LicenseRef-PDFluent-Commercial"
+license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+
+# ---------------------------------------------------------------------------
+# Bans — duplicate crate versions and forbidden crates
+# ---------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+deny = []
+
+# ---------------------------------------------------------------------------
+# Sources — registry and git source allow-listing
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

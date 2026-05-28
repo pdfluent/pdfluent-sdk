@@ -1,18 +1,18 @@
 [package]
 name = "pdfluent-sign"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
 description = "PDF digital signature validation — PAdES, CMS, certificate chain, DocMDP/FieldMDP, LTV."
-repository = "https://github.com/pdfluent/examples"
+repository = "https://pdfluent.com/source"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 keywords = ["pdf", "signature", "pades", "cms", "pkcs7"]
 categories = ["authentication", "cryptography"]
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.2" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.4" }
 log = "0.4"
 sha2 = "0.10"
 sha1 = { version = "0.10", features = ["oid"] }

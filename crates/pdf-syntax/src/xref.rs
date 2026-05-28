@@ -383,6 +383,16 @@ impl XRef {
         }
     }
 
+    /// Number of cached parsed object-stream offset tables. QF2-B test
+    /// hook; not part of the public API.
+    #[cfg(test)]
+    pub(crate) fn object_stream_offsets_cache_len(&self) -> usize {
+        match &self.0 {
+            Inner::Dummy => 0,
+            Inner::Some(r) => r.data.object_stream_offsets_cache_len(),
+        }
+    }
+
     pub(crate) fn metadata(&self) -> &Metadata {
         match &self.0 {
             Inner::Dummy => unreachable!(),
@@ -580,7 +590,16 @@ impl XRef {
 
                 let stream = self.get_with::<Stream<'_>>(obj_stream_id, &ctx)?;
                 let data = repr.data.get_with(obj_stream_id, &ctx)?;
-                let object_stream = ObjectStream::new(stream, data, &ctx)?;
+                // QF2-B: re-use a cached `(obj_num, offset)` index table if
+                // we've already parsed this `/ObjStm` once for this
+                // document. The cache lives on the per-document `Data` and
+                // is dropped together with it.
+                let offsets = repr
+                    .data
+                    .get_object_stream_offsets_or_init(obj_stream_id, || {
+                        parse_object_stream_offsets(&stream, data)
+                    })?;
+                let object_stream = ObjectStream::from_cached_offsets(data, &ctx, offsets);
                 object_stream.get(index)
             }
         }
@@ -1022,34 +1041,75 @@ fn get_decryptor(trailer_dict: &Dict<'_>, password: &[u8]) -> Result<Decryptor, 
     }
 }
 
+/// Parse the `(obj_num, absolute_byte_offset)` index table that lives at the
+/// start of a compressed `/ObjStm`.
+///
+/// Returns `None` if the stream dict is missing `/N` / `/First`, or if the
+/// header is truncated. The returned table is the same value that an
+/// `ObjectStream` would have populated internally before this was split out
+/// (QF2-B). Splitting it allows the result to be cached per-document; see
+/// [`crate::data::Data::get_object_stream_offsets_or_init`].
+fn parse_object_stream_offsets(
+    inner: &Stream<'_>,
+    data: &[u8],
+) -> Option<crate::data::ObjectStreamOffsets> {
+    let num_objects = inner.dict().get::<usize>(N)?;
+    let first_offset = inner.dict().get::<usize>(FIRST)?;
+
+    let mut r = Reader::new(data);
+    let mut offsets = Vec::with_capacity(num_objects);
+
+    for _ in 0..num_objects {
+        r.skip_white_spaces_and_comments();
+        // Skip object number
+        let obj_num = r.read_without_context::<u32>()?;
+        r.skip_white_spaces_and_comments();
+        let relative_offset = r.read_without_context::<usize>()?;
+        offsets.push((obj_num, first_offset + relative_offset));
+    }
+
+    Some(offsets)
+}
+
+/// Holds a borrowed view onto the decoded bytes of an `/ObjStm` plus a
+/// (possibly cached) parsed offset table.
+///
+/// QF2-B: `offsets` is now an `Arc<...>` so the same allocation can be
+/// returned from the per-document cache on subsequent lookups, eliminating
+/// the linear re-parse hot loop reported in
+/// `QF1_A_FLAMEGRAPH_REPORT.md` (449× per main thread on the
+/// `scan_for_xfa` fallback path).
 struct ObjectStream<'a> {
     data: &'a [u8],
     ctx: ReaderContext<'a>,
-    offsets: Vec<(u32, usize)>,
+    offsets: Arc<crate::data::ObjectStreamOffsets>,
 }
 
 impl<'a> ObjectStream<'a> {
+    /// Build a fresh `ObjectStream` by parsing the index table inline (no
+    /// caching). Used by the xref-repair / trailer-fallback paths that
+    /// don't have access to a `Data` cache.
     fn new(inner: Stream<'_>, data: &'a [u8], ctx: &ReaderContext<'a>) -> Option<Self> {
-        let num_objects = inner.dict().get::<usize>(N)?;
-        let first_offset = inner.dict().get::<usize>(FIRST)?;
-
-        let mut r = Reader::new(data);
-
-        let mut offsets = vec![];
-
-        for _ in 0..num_objects {
-            r.skip_white_spaces_and_comments();
-            // Skip object number
-            let obj_num = r.read_without_context::<u32>()?;
-            r.skip_white_spaces_and_comments();
-            let relative_offset = r.read_without_context::<usize>()?;
-            offsets.push((obj_num, first_offset + relative_offset));
-        }
+        let offsets = Arc::new(parse_object_stream_offsets(&inner, data)?);
 
         let mut ctx = ctx.clone();
         ctx.set_in_object_stream(true);
 
         Some(Self { data, ctx, offsets })
+    }
+
+    /// Build an `ObjectStream` that reuses an already-parsed offsets table
+    /// (typically retrieved from the per-document cache). Cheap — does no
+    /// header scan.
+    fn from_cached_offsets(
+        data: &'a [u8],
+        ctx: &ReaderContext<'a>,
+        offsets: Arc<crate::data::ObjectStreamOffsets>,
+    ) -> Self {
+        let mut ctx = ctx.clone();
+        ctx.set_in_object_stream(true);
+
+        Self { data, ctx, offsets }
     }
 
     fn get<T>(&self, index: u32) -> Option<T>
@@ -1083,5 +1143,261 @@ fn parse_metadata(info_dict: &Dict<'_>) -> Metadata {
         producer: info_dict
             .get::<object::String>(PRODUCER)
             .map(|t| t.to_vec()),
+    }
+}
+
+#[cfg(test)]
+mod qf2b_objectstream_cache_tests {
+    //! QF2-B — end-to-end coverage for the per-document ObjectStream
+    //! offsets cache, using a real `/ObjStm`-containing fixture.
+
+    use crate::pdf::Pdf;
+    use crate::xref::parse_object_stream_offsets;
+
+    /// Path to an in-tree XFA golden that contains at least one `/ObjStm`.
+    /// Resolved relative to the pdf-syntax crate dir.
+    const FIXTURE: &str = "../xfa-golden-tests/golden/13a7b224_xfa_issue14315.pdf";
+
+    fn load_fixture() -> Option<Pdf> {
+        let bytes = std::fs::read(FIXTURE).ok()?;
+        Pdf::new(bytes).ok()
+    }
+
+    #[test]
+    fn qf2b_objstm_cache_populates_and_is_stable_on_repeat() {
+        let Some(pdf) = load_fixture() else {
+            // Fixture is in-tree, but be defensive if running with a
+            // pruned workspace.
+            return;
+        };
+
+        let xref = pdf.xref();
+
+        // `Pdf::new` resolves the trailer and catalog during construction;
+        // for PDF 1.5+ files those typically live in an `/ObjStm` so the
+        // cache is already non-empty at this point. That is itself
+        // evidence that the cache is active.
+        let after_construction = xref.object_stream_offsets_cache_len();
+        assert!(
+            after_construction >= 1,
+            "fixture is a PDF 1.5+ doc with /ObjStm; at least one offsets table should already be cached after construction; got {after_construction}"
+        );
+
+        // Resolve the catalog explicitly — must not grow the cache because
+        // the /ObjStm carrying the catalog is already a hit.
+        let _: Option<crate::object::Dict<'_>> = xref.get(xref.root_id());
+        assert_eq!(
+            xref.object_stream_offsets_cache_len(),
+            after_construction,
+            "repeated resolution of the same indirect object must reuse the cached offsets table"
+        );
+
+        // Resolve a number of additional indirect objects. Each new
+        // `/ObjStm` we touch may add one entry, but re-touching anything
+        // already seen must not.
+        for raw in 1..=20i32 {
+            let id = crate::object::ObjectIdentifier::new(raw, 0);
+            let _: Option<crate::object::Dict<'_>> = xref.get(id);
+        }
+        let after_scan = xref.object_stream_offsets_cache_len();
+
+        // Idempotency: a second sweep must not grow the cache further.
+        for raw in 1..=20i32 {
+            let id = crate::object::ObjectIdentifier::new(raw, 0);
+            let _: Option<crate::object::Dict<'_>> = xref.get(id);
+        }
+        assert_eq!(
+            xref.object_stream_offsets_cache_len(),
+            after_scan,
+            "repeated full scans must be cache-stable (no re-parse)"
+        );
+    }
+
+    #[test]
+    fn qf2b_two_pdfs_have_independent_caches() {
+        let Some(pdf_a) = load_fixture() else {
+            return;
+        };
+        let Some(pdf_b) = load_fixture() else {
+            return;
+        };
+
+        // Sanity: both start with the same construction-time count for
+        // the same fixture (same shape).
+        let base_a = pdf_a.xref().object_stream_offsets_cache_len();
+        let base_b = pdf_b.xref().object_stream_offsets_cache_len();
+        assert_eq!(base_a, base_b);
+
+        // Touch many ids in pdf_a to (likely) populate additional /ObjStm
+        // cache entries.
+        for raw in 1..=50i32 {
+            let id = crate::object::ObjectIdentifier::new(raw, 0);
+            let _: Option<crate::object::Dict<'_>> = pdf_a.xref().get(id);
+        }
+        let warm_a = pdf_a.xref().object_stream_offsets_cache_len();
+
+        // pdf_b must NOT have grown — caches are per-document.
+        assert_eq!(
+            pdf_b.xref().object_stream_offsets_cache_len(),
+            base_b,
+            "pdf_b cache must be independent of pdf_a's warming (base_a={base_a}, warm_a={warm_a}, base_b={base_b})"
+        );
+    }
+
+    #[test]
+    fn qf2b_parse_helper_returns_none_on_truncated_header() {
+        // Synthetic: dict says N=3 but data has only one (num, offset)
+        // pair. The helper must return None, and the caller must not
+        // cache a `None`.
+        use crate::object::Stream;
+        use crate::reader::{Reader, ReaderContext, ReaderExt};
+        use crate::xref::DUMMY_XREF;
+
+        // Build a minimal indirect stream object with /N 3 /First 6:
+        // "1 0 obj <</N 3/First 6/Length 4>>stream\n1 0\nendstream\nendobj\n"
+        let raw: &[u8] = b"1 0 obj <</N 3 /First 6 /Length 4>>\nstream\n1 0 \nendstream\nendobj\n";
+        let mut r = Reader::new(raw);
+        let ctx = ReaderContext::new(&DUMMY_XREF, false);
+        let stream: Stream<'_> = r
+            .read_with_context::<crate::object::indirect::IndirectObject<Stream<'_>>>(&ctx)
+            .expect("synthetic stream should parse")
+            .get();
+
+        // The stream body has only "1 0 " — three entries cannot be
+        // recovered, so the helper must return `None`.
+        let body: &[u8] = b"1 0 ";
+        assert!(
+            parse_object_stream_offsets(&stream, body).is_none(),
+            "truncated headers must not produce a partial offsets table"
+        );
+    }
+
+    /// QF2-B perf harness. Not a correctness test — it prints microbench
+    /// numbers and only runs when explicitly requested with
+    /// `--ignored qf2b_bench`. The harness compares **direct re-parse**
+    /// of /ObjStm offsets tables (what the pre-QF2-B `ObjectStream::new`
+    /// did on every `xref.get` of an /ObjStm-stored object) versus the
+    /// QF2-B cached lookup. This isolates the parse cost from the
+    /// downstream object-decoding cost, which dominates `xref.get` and
+    /// would otherwise hide the cache win.
+    #[test]
+    #[ignore = "perf measurement; run with `cargo test --release -- --ignored qf2b_bench`"]
+    fn qf2b_bench_offsets_parse_vs_cached() {
+        use std::time::Instant;
+
+        // 161 /ObjStm headers, 575 KB. Walking and decoding 30+ ObjStms
+        // here is enough to measure the parse delta cleanly.
+        let path = "../../corpus/f3800.pdf";
+        let Ok(bytes) = std::fs::read(path) else {
+            eprintln!("[qf2b_bench] fixture {path} unavailable; skipping");
+            return;
+        };
+        let pdf = Pdf::new(bytes).expect("load f3800.pdf");
+        let xref = pdf.xref();
+
+        // Warm cache via a single full sweep so we know which /ObjStms
+        // exist.
+        let max_id = (xref.len() as i32).min(3000);
+        for n in 1..=max_id {
+            let id = crate::object::ObjectIdentifier::new(n, 0);
+            let _: Option<crate::object::Object<'_>> = xref.get(id);
+        }
+        let cached_objstms = xref.object_stream_offsets_cache_len();
+        assert!(
+            cached_objstms >= 5,
+            "fixture must trigger several /ObjStms (got {cached_objstms})"
+        );
+
+        // Collect the object-stream container ids by looking them up in
+        // the xref entries. We then iterate the cache to compare timing
+        // for parse-from-scratch vs cache-hit.
+        let mut objstm_ids: Vec<crate::object::ObjectIdentifier> = Vec::new();
+        for n in 1..=max_id {
+            let id = crate::object::ObjectIdentifier::new(n, 0);
+            // Only ObjStm container ids resolve as Stream + /Type ObjStm.
+            if let Some(stream) = xref.get::<crate::object::Stream<'_>>(id)
+                && stream
+                    .dict()
+                    .get::<crate::object::Name>(crate::object::dict::keys::TYPE)
+                    .as_deref()
+                    == Some(b"ObjStm")
+            {
+                objstm_ids.push(id);
+            }
+            if objstm_ids.len() >= cached_objstms {
+                break;
+            }
+        }
+        let containers = objstm_ids.len();
+        assert!(containers > 0);
+
+        // Direct re-parse loop — mirrors pre-QF2-B behaviour: parse the
+        // offsets table from scratch every time, no cache.
+        const REPEATS: u32 = 200;
+        let mut sink_parse = 0usize;
+        let t_parse = Instant::now();
+        for _ in 0..REPEATS {
+            for id in &objstm_ids {
+                let stream = xref
+                    .get::<crate::object::Stream<'_>>(*id)
+                    .expect("stream resolves");
+                let Ok(decoded) = stream.decoded() else {
+                    continue;
+                };
+                if let Some(offs) = parse_object_stream_offsets(&stream, &decoded) {
+                    sink_parse = sink_parse.wrapping_add(offs.len());
+                }
+            }
+        }
+        let parse_elapsed = t_parse.elapsed();
+
+        // Cache-hit loop — mirrors QF2-B behaviour: retrieve the same
+        // parsed table from the per-document cache.
+        let inner = match &xref.0 {
+            crate::xref::Inner::Some(r) => r.clone(),
+            _ => unreachable!(),
+        };
+        let mut sink_cache = 0usize;
+        let t_cache = Instant::now();
+        for _ in 0..REPEATS {
+            for id in &objstm_ids {
+                let offs = inner
+                    .data
+                    .get_object_stream_offsets_or_init(*id, || {
+                        let stream = xref
+                            .get::<crate::object::Stream<'_>>(*id)
+                            .expect("stream resolves");
+                        let decoded = stream.decoded().ok()?;
+                        parse_object_stream_offsets(&stream, &decoded)
+                    })
+                    .expect("cached entry must exist after warm-up");
+                sink_cache = sink_cache.wrapping_add(offs.len());
+            }
+        }
+        let cache_elapsed = t_cache.elapsed();
+
+        assert_eq!(
+            sink_parse, sink_cache,
+            "parsed and cached results must agree on offset-count totals"
+        );
+
+        let speedup = parse_elapsed.as_secs_f64() / cache_elapsed.as_secs_f64().max(1e-9);
+        let reduction = (1.0 - cache_elapsed.as_secs_f64() / parse_elapsed.as_secs_f64()) * 100.0;
+
+        eprintln!("[qf2b_bench] fixture: f3800.pdf");
+        eprintln!("[qf2b_bench] /ObjStm containers measured: {containers}");
+        eprintln!("[qf2b_bench] iterations per container:    {REPEATS}");
+        eprintln!("[qf2b_bench] direct re-parse total:       {parse_elapsed:?}");
+        eprintln!("[qf2b_bench] cached lookup total:         {cache_elapsed:?}");
+        eprintln!("[qf2b_bench] speedup:                     {speedup:.1}x");
+        eprintln!("[qf2b_bench] parse-time reduction:        {reduction:.1}%");
+
+        // Acceptance gate: QF2-B target is ≥ 10 % reduction on parse path.
+        // The microbench should show much more than that, since the cache
+        // hit is O(1) hashmap fetch + Arc clone vs O(N) memchr+nom parse.
+        assert!(
+            reduction >= 10.0,
+            "QF2-B acceptance: ≥ 10 % parse-time reduction required; got {reduction:.2} %"
+        );
     }
 }

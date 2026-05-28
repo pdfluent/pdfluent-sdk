@@ -1,18 +1,18 @@
 [package]
 name = "pdfluent-forms"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
 description = "AcroForm engine for PDF interactive forms."
-repository = "https://github.com/pdfluent/examples"
+repository = "https://pdfluent.com/source"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 keywords = ["pdf", "forms", "acroform", "fields", "interactive"]
 categories = ["parser-implementations"]
 
 [dependencies]
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.2" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.4" }
 thiserror = { workspace = true }
 log = "0.4"
 

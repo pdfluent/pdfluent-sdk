@@ -42,6 +42,18 @@ pub enum PdfStatus {
     ErrorWatermark = 14,
     /// A compression/optimization operation failed.
     ErrorCompress = 15,
+    /// A license key is malformed or names an unknown tier.
+    ErrorInvalidLicense = 16,
+    /// A license is already set to a different tier in this process.
+    /// Restart the process to switch tiers.
+    ErrorLicenseAlreadySet = 17,
+    /// A license file could not be read from disk.
+    ErrorLicenseFile = 18,
+    /// A signed license payload has expired (its `expires_at` is in the past).
+    ErrorLicenseExpired = 19,
+    /// A signed license payload's Ed25519 signature does not verify against
+    /// the configured public key (tampered or wrong-key payload).
+    ErrorLicenseInvalidSignature = 20,
     /// An unknown error occurred.
     ErrorUnknown = 99,
 }

@@ -69,7 +69,60 @@ unsafe fn free_handle(handle: jlong) {
 // ---------------------------------------------------------------------------
 
 fn throw_pdf_exception(env: &mut JNIEnv, msg: &str) {
-    let _ = env.throw_new("com/xfa/pdf/PdfException", msg);
+    let _ = env.throw_new("com/pdfluent/PdfluentException", msg);
+}
+
+fn throw_pdf_parse_exception(env: &mut JNIEnv, msg: &str) {
+    let _ = env.throw_new("com/pdfluent/PdfluentParseException", msg);
+}
+
+/// Construct and throw a PDFluent exception subclass that carries a canonical
+/// C8 error code via the `(String message, String code)` constructor.
+///
+/// Falls back to the no-code constructor via `env.throw_new` if anything
+/// goes wrong while building the typed throwable, so a missing code never
+/// degrades into a silently-swallowed JNI error.
+fn throw_pdf_exception_with_code(env: &mut JNIEnv, class_name: &str, msg: &str, code: &str) {
+    // Try the (String, String) constructor introduced in 0.2 first.
+    let class = match env.find_class(class_name) {
+        Ok(c) => c,
+        Err(_) => {
+            let _ = env.throw_new(class_name, msg);
+            return;
+        }
+    };
+    let msg_obj = match env.new_string(msg) {
+        Ok(s) => s,
+        Err(_) => {
+            let _ = env.throw_new(class_name, msg);
+            return;
+        }
+    };
+    let code_obj = match env.new_string(code) {
+        Ok(s) => s,
+        Err(_) => {
+            let _ = env.throw_new(class_name, msg);
+            return;
+        }
+    };
+    let throwable = env.new_object(
+        &class,
+        "(Ljava/lang/String;Ljava/lang/String;)V",
+        &[
+            jni::objects::JValue::Object(&msg_obj),
+            jni::objects::JValue::Object(&code_obj),
+        ],
+    );
+    match throwable {
+        Ok(obj) => {
+            // SAFETY: obj is a freshly-constructed Throwable subclass; the
+            // JVM accepts the raw JObject and takes ownership.
+            let _ = env.throw(jni::objects::JThrowable::from(obj));
+        }
+        Err(_) => {
+            let _ = env.throw_new(class_name, msg);
+        }
+    }
 }
 
 /// Lazily initialize lopdf from the document's raw bytes.
@@ -137,7 +190,7 @@ fn parse_pdfa_level(level: &str) -> PdfALevel {
 
 /// `native long nativeOpen(byte[] data)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeOpen(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeOpen(
     mut env: JNIEnv,
     _class: JClass,
     data: JByteArray,
@@ -153,7 +206,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeOpen(
     match PdfDocument::open(bytes.clone()) {
         Ok(doc) => to_handle(doc, bytes),
         Err(e) => {
-            throw_pdf_exception(&mut env, &e.to_string());
+            throw_pdf_parse_exception(&mut env, &e.to_string());
             0
         }
     }
@@ -161,7 +214,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeOpen(
 
 /// `native long nativeOpenWithPassword(byte[] data, String password)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeOpenWithPassword(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeOpenWithPassword(
     mut env: JNIEnv,
     _class: JClass,
     data: JByteArray,
@@ -186,7 +239,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeOpenWithPassword(
     match PdfDocument::open_with_password(bytes.clone(), &pw) {
         Ok(doc) => to_handle(doc, bytes),
         Err(e) => {
-            throw_pdf_exception(&mut env, &e.to_string());
+            throw_pdf_parse_exception(&mut env, &e.to_string());
             0
         }
     }
@@ -194,7 +247,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeOpenWithPassword(
 
 /// `native void nativeClose(long handle)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeClose(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeClose(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -206,7 +259,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeClose(
 
 /// `native int nativePageCount(long handle)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageCount(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativePageCount(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -220,7 +273,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageCount(
 
 /// `native double nativePageWidth(long handle, int pageIndex)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageWidth(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativePageWidth(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -244,7 +297,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageWidth(
 
 /// `native double nativePageHeight(long handle, int pageIndex)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageHeight(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativePageHeight(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -268,7 +321,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageHeight(
 
 /// `native int nativePageRotation(long handle, int pageIndex)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageRotation(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativePageRotation(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -289,7 +342,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativePageRotation(
 
 /// `native String nativeExtractText(long handle, int pageIndex)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeExtractText<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeExtractText<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -319,7 +372,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeExtractText<'a>(
 ///
 /// Returns `[width:4 bytes BE][height:4 bytes BE][RGBA pixels…]`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeRenderPage<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeRenderPage<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -360,7 +413,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeRenderPage<'a>(
 
 /// `native byte[] nativeRenderThumbnail(long handle, int pageIndex, int maxDimension)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeRenderThumbnail<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeRenderThumbnail<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -400,7 +453,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeRenderThumbnail<'a>(
 
 /// `native String nativeGetMetadata(long handle, String key)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeGetMetadata<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeGetMetadata<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -444,7 +497,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeGetMetadata<'a>(
 
 /// `native int nativeBookmarkCount(long handle)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeBookmarkCount(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeBookmarkCount(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -460,7 +513,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeBookmarkCount(
 ///
 /// Returns 0-based page indices of pages containing the query.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeSearchText<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeSearchText<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -500,7 +553,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeSearchText<'a>(
 
 /// `native void nativeSave(long handle, String path)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeSave<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeSave<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -550,7 +603,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeSave<'a>(
 /// Returns a flat String[] with stride 4: [name, type, value, page] per field.
 /// `value` is "" if absent.  `page` is "-1" if unknown.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeGetFormFields<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeGetFormFields<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -613,7 +666,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeGetFormFields<'a>(
 
 /// `native boolean nativeSetFormField(long handle, String name, String value)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeSetFormField<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeSetFormField<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -705,7 +758,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeSetFormField<'a>(
 /// [type, x0, y0, x1, y1, contents, author].
 /// Coordinates are in PDF user-space points.  Missing values are "".
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeGetAnnotations<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeGetAnnotations<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -760,7 +813,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeGetAnnotations<'a>(
 /// `type` must be `"highlight"` or `"freetext"`.
 /// `page` is 0-based.  Rect coordinates in PDF user-space points.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeAddAnnotation<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeAddAnnotation<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -844,7 +897,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeAddAnnotation<'a>(
 /// Returns int[3]: [matchesFound, areasRedacted, pagesAffected].
 /// Pass `page = -1` to search all pages.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeRedactText<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeRedactText<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -912,7 +965,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeRedactText<'a>(
 ///
 /// Saves an RC4-128-encrypted copy of the document to `outputPath`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeEncrypt<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeEncrypt<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -997,7 +1050,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeEncrypt<'a>(
 /// Loads the document with the given password, strips encryption, and saves
 /// to `outputPath` as a plain (unencrypted) PDF.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeDecrypt<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeDecrypt<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     handle: jlong,
@@ -1049,7 +1102,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfDocument_nativeDecrypt<'a>(
 
 /// `static native void nativeMergePdfs(String[] paths, String outputPath)`
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfUtils_nativeMergePdfs<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfUtils_nativeMergePdfs<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     paths: JObjectArray<'a>,
@@ -1088,7 +1141,7 @@ pub extern "system" fn Java_com_xfa_pdf_PdfUtils_nativeMergePdfs<'a>(
 /// [0] compliant ("true"/"false"), [1] errorCount, [2] warningCount,
 /// then for each issue: rule, severity ("error"/"warning"/"info"), message.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_xfa_pdf_PdfUtils_nativeValidatePdfa<'a>(
+pub extern "system" fn Java_com_pdfluent_PdfUtils_nativeValidatePdfa<'a>(
     mut env: JNIEnv<'a>,
     _class: JClass<'a>,
     path: JString<'a>,
@@ -1151,4 +1204,173 @@ pub extern "system" fn Java_com_xfa_pdf_PdfUtils_nativeValidatePdfa<'a>(
             JObject::null().into_raw()
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// License activation — JNI surface for com.xfa.pdf.PdfluentLicensing
+// ---------------------------------------------------------------------------
+
+use std::sync::atomic::{AtomicU8, Ordering as AtomicOrdering};
+
+static JAVA_LICENSE_SOURCE: AtomicU8 = AtomicU8::new(0);
+
+fn java_record_explicit() {
+    JAVA_LICENSE_SOURCE.store(2, AtomicOrdering::Relaxed);
+}
+
+fn java_current_source() -> &'static str {
+    match JAVA_LICENSE_SOURCE.load(AtomicOrdering::Relaxed) {
+        2 => "Explicit",
+        _ => {
+            if let Ok(key) = std::env::var("PDFLUENT_LICENSE_KEY") {
+                if !key.is_empty() && pdfluent::license_info().tier != pdfluent::Tier::Trial {
+                    return "EnvVar";
+                }
+            }
+            "Default"
+        }
+    }
+}
+
+fn java_tier_to_int(t: pdfluent::Tier) -> jint {
+    match t {
+        pdfluent::Tier::Trial => 0,
+        pdfluent::Tier::Developer => 1,
+        pdfluent::Tier::Team => 2,
+        pdfluent::Tier::Business => 3,
+        pdfluent::Tier::Enterprise => 4,
+        _ => -1,
+    }
+}
+
+fn java_source_to_int(s: &str) -> jint {
+    match s {
+        "EnvVar" => 1,
+        "Explicit" => 2,
+        _ => 0,
+    }
+}
+
+fn map_license_error_for_java(env: &mut JNIEnv<'_>, e: pdfluent::Error) {
+    // Canonical C8 codes — see docs/error_catalogue.md and Rust
+    // `pdfluent::Error::code()` for the source of truth.
+    const E_LICENSE_INVALID: &str = "E-LICENSE-INVALID";
+    const E_LICENSE_FEATURE_NOT_IN_TIER: &str = "E-LICENSE-FEATURE-NOT-IN-TIER";
+    const E_LICENSE_CAPABILITY_NOT_COMPILED: &str = "E-LICENSE-CAPABILITY-NOT-COMPILED";
+
+    match e {
+        pdfluent::Error::InvalidLicense { reason } => {
+            if reason.contains("already set") {
+                let _ = env.throw_new(
+                    "java/lang/IllegalStateException",
+                    format!("license already set: {reason}"),
+                );
+            } else {
+                throw_pdf_exception_with_code(
+                    env,
+                    "com/pdfluent/PdfluentLicenseException",
+                    &format!("invalid license: {reason}"),
+                    E_LICENSE_INVALID,
+                );
+            }
+        }
+        pdfluent::Error::FeatureNotInTier { .. } => {
+            throw_pdf_exception_with_code(
+                env,
+                "com/pdfluent/PdfluentLicenseException",
+                &format!("license error: {e}"),
+                E_LICENSE_FEATURE_NOT_IN_TIER,
+            );
+        }
+        pdfluent::Error::CapabilityNotCompiled { .. } => {
+            throw_pdf_exception_with_code(
+                env,
+                "com/pdfluent/PdfluentLicenseException",
+                &format!("license error: {e}"),
+                E_LICENSE_CAPABILITY_NOT_COMPILED,
+            );
+        }
+        other => throw_pdf_exception(env, &format!("license error: {other}")),
+    }
+}
+
+/// `static native void nativeActivateKey(String key)`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentLicensing_nativeActivateKey<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    key: JString<'a>,
+) {
+    let key_str: String = match env.get_string(&key) {
+        Ok(s) => s.into(),
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("failed to read key: {e}"));
+            return;
+        }
+    };
+    match pdfluent::set_license_key(&key_str) {
+        Ok(()) => java_record_explicit(),
+        Err(e) => map_license_error_for_java(&mut env, e),
+    }
+}
+
+/// `static native void nativeActivateFile(String path)`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentLicensing_nativeActivateFile<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    path: JString<'a>,
+) {
+    let path_str: String = match env.get_string(&path) {
+        Ok(s) => s.into(),
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("failed to read path: {e}"));
+            return;
+        }
+    };
+    let contents = match std::fs::read_to_string(&path_str) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = env.throw_new(
+                "java/io/IOException",
+                format!("could not read license file: {e}"),
+            );
+            return;
+        }
+    };
+    match pdfluent::set_license_key(contents.trim()) {
+        Ok(()) => java_record_explicit(),
+        Err(e) => map_license_error_for_java(&mut env, e),
+    }
+}
+
+/// `static native int nativeEffectiveTier()`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentLicensing_nativeEffectiveTier(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    java_tier_to_int(pdfluent::license_info().tier)
+}
+
+/// `static native int[] nativeStatus()` — returns `[tier, source, outputIsMarked]`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentLicensing_nativeStatus<'a>(
+    env: JNIEnv<'a>,
+    _class: JClass<'a>,
+) -> jobject {
+    let info = pdfluent::license_info();
+    let arr = match env.new_int_array(3) {
+        Ok(a) => a,
+        Err(_) => return JObject::null().into_raw(),
+    };
+    let values: [jint; 3] = [
+        java_tier_to_int(info.tier),
+        java_source_to_int(java_current_source()),
+        if info.output_is_marked { 1 } else { 0 },
+    ];
+    if env.set_int_array_region(&arr, 0, &values).is_err() {
+        return JObject::null().into_raw();
+    }
+    arr.into_raw()
 }

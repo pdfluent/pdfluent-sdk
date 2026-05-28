@@ -37,11 +37,35 @@
 //!
 //! [`Tier::Trial`]: crate::tier::Tier::Trial
 
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 use crate::capability::{Capability, CapabilitySet};
 use crate::error::{Error, Result};
 use crate::tier::Tier;
+
+/// Build-time injected public key for verifying signed license payloads.
+///
+/// Production deployments set this via [`set_license_public_key`] once at
+/// startup. The test public key in
+/// `crates/xfa-license/tests/fixtures/test_public.key` is used for the
+/// repo's unit + integration tests.
+static LICENSE_PUBLIC_KEY: OnceLock<[u8; 32]> = OnceLock::new();
+
+/// Verified-payload metadata captured at activation time, exposed via
+/// [`license_info`].
+///
+/// Held in a `RwLock` so the umbrella can update it on successful
+/// signed-payload activation without changing the simpler
+/// `OnceLock<Tier>` for the mock `tier:X` path.
+static SIGNED_PAYLOAD_META: RwLock<Option<SignedPayloadMeta>> = RwLock::new(None);
+
+#[derive(Debug, Clone)]
+struct SignedPayloadMeta {
+    expires_at: u64,
+    licensee: String,
+    company: String,
+    features: Vec<String>,
+}
 
 /// Summary of the currently-active license.
 #[derive(Debug, Clone)]
@@ -51,13 +75,21 @@ pub struct LicenseInfo {
     pub tier: Tier,
     /// Expiration date (ISO 8601), if the license is time-bound.
     ///
-    /// Always `None` in 1.0 — time-bound keys ship with the signed-payload
-    /// format in 1.1.
+    /// `Some(ts)` when a signed payload was activated via
+    /// [`set_license_payload`]; `None` for mock `tier:X` keys (which have
+    /// no expiry concept).
     pub expires_at: Option<String>,
     /// Set of capabilities unlocked.
     pub capabilities: CapabilitySet,
     /// Whether output is currently being marked as trial output.
     pub output_is_marked: bool,
+    /// Feature names from the signed payload's optional `features`
+    /// override list, or empty when no signed payload is active.
+    pub features: Vec<String>,
+    /// Licensee name from the signed payload, if any.
+    pub licensee: Option<String>,
+    /// Company / organisation from the signed payload, if any.
+    pub company: Option<String>,
 }
 
 /// Process-global tier, set once by [`set_license_key`] or resolved from
@@ -82,6 +114,16 @@ static GLOBAL_TIER: OnceLock<Tier> = OnceLock::new();
 /// `reason: "license already set"` message. Restart the process to switch
 /// tiers.
 pub fn set_license_key(key: &str) -> Result<()> {
+    // Auto-detect: JSON payload (signed) vs mock tier:X format.
+    // A leading `{` always indicates a signed payload — we route it
+    // through the verifier and return the typed errors documented on
+    // [`set_license_payload`]. No silent fallback if the public key
+    // is not set.
+    let trimmed = key.trim();
+    if trimmed.starts_with('{') {
+        return set_license_payload(trimmed);
+    }
+
     let tier = parse_key_to_tier(key)?;
     match GLOBAL_TIER.set(tier) {
         Ok(()) => Ok(()),
@@ -103,17 +145,218 @@ pub fn set_license_key(key: &str) -> Result<()> {
 /// Inspect the currently-active license.
 ///
 /// Falls back to:
-/// 1. Process-global tier set via [`set_license_key`].
+/// 1. Process-global tier set via [`set_license_key`] /
+///    [`set_license_payload`].
 /// 2. Env var `PDFLUENT_LICENSE_KEY` (parsed per the module doc).
 /// 3. [`Tier::Trial`].
+///
+/// When a signed payload is the source of the active tier, the returned
+/// `LicenseInfo` additionally carries `expires_at` (ISO 8601), `features`
+/// (from the payload's `features` override), `licensee`, and `company`.
 pub fn license_info() -> LicenseInfo {
     let tier = effective_tier();
+    let meta = SIGNED_PAYLOAD_META.read().ok().and_then(|g| g.clone());
+    let (expires_at, features, licensee, company) = match meta {
+        Some(m) => (
+            Some(unix_to_iso8601(m.expires_at)),
+            m.features,
+            Some(m.licensee),
+            Some(m.company),
+        ),
+        None => (None, Vec::new(), None, None),
+    };
     LicenseInfo {
         tier,
-        expires_at: None,
+        expires_at,
         capabilities: tier.capabilities(),
         output_is_marked: tier.is_marked(),
+        features,
+        licensee,
+        company,
     }
+}
+
+/// Inject the public Ed25519 verification key.
+///
+/// **Must be called before [`set_license_payload`].** A real production
+/// deployment injects this once at startup with the operator's public
+/// key bytes. Tests inject the test-only key from
+/// `crates/xfa-license/tests/fixtures/test_public.key`.
+///
+/// Calling twice with the SAME key is idempotent. Calling with a
+/// different key returns [`Error::InvalidLicense`] — restart the process
+/// to swap keys.
+pub fn set_license_public_key(public_key: &[u8]) -> Result<()> {
+    let key_bytes: [u8; 32] = public_key.try_into().map_err(|_| Error::InvalidLicense {
+        reason: "public key must be exactly 32 bytes".into(),
+    })?;
+    match LICENSE_PUBLIC_KEY.set(key_bytes) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            let existing = *LICENSE_PUBLIC_KEY.get().expect("initialised");
+            if existing == key_bytes {
+                Ok(())
+            } else {
+                Err(Error::InvalidLicense {
+                    reason: "public key already set; restart the process to swap keys".into(),
+                })
+            }
+        }
+    }
+}
+
+/// Activate a signed license payload (Ed25519-verified JSON).
+///
+/// Verifies the signature against the public key set via
+/// [`set_license_public_key`], parses the payload, checks
+/// `expires_at > now`, maps the payload tier to a `pdfluent::Tier`, and
+/// stores the resulting tier + payload metadata in process-global state
+/// so [`license_info`] surfaces it.
+///
+/// # Errors
+/// - [`Error::InvalidLicense`] (`E-LICENSE-INVALID`) — public key
+///   not yet set; malformed JSON; tier name not recognised; already-set
+///   with a different resolved tier.
+/// - [`Error::LicenseInvalidSignature`] (`E-LICENSE-INVALID-SIGNATURE`) —
+///   signature does not verify (tampered or wrong-key payload).
+/// - [`Error::LicenseExpired`] (`E-LICENSE-EXPIRED`) — `expires_at` is
+///   in the past relative to the system clock.
+///
+/// On any error the process-global tier is **NOT** modified — there is
+/// no silent fallback to Trial.
+pub fn set_license_payload(license_json: &str) -> Result<()> {
+    let Some(public_key) = LICENSE_PUBLIC_KEY.get() else {
+        return Err(Error::InvalidLicense {
+            reason: "no public key configured — call set_license_public_key first".into(),
+        });
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let license_file = xfa_license::token::verify_license(public_key, license_json)
+        .map_err(map_xfa_license_error)?;
+
+    if license_file.payload.is_expired(now) {
+        return Err(Error::LicenseExpired {
+            expires_at: license_file.payload.expires_at,
+        });
+    }
+
+    let tier = map_xfa_tier(license_file.payload.tier)?;
+
+    // Reuse the same set-once contract as set_license_key.
+    match GLOBAL_TIER.set(tier) {
+        Ok(()) => {
+            // Capture the payload metadata for license_info().
+            if let Ok(mut guard) = SIGNED_PAYLOAD_META.write() {
+                *guard = Some(SignedPayloadMeta {
+                    expires_at: license_file.payload.expires_at,
+                    licensee: license_file.payload.licensee.clone(),
+                    company: license_file.payload.company.clone(),
+                    features: license_file.payload.features.clone().unwrap_or_default(),
+                });
+            }
+            Ok(())
+        }
+        Err(_existing) => {
+            let existing = *GLOBAL_TIER.get().expect("initialised");
+            if existing == tier {
+                Ok(())
+            } else {
+                Err(Error::InvalidLicense {
+                    reason: format!(
+                        "license already set to {existing:?}; restart the process to switch to {tier:?}",
+                    ),
+                })
+            }
+        }
+    }
+}
+
+/// Map an xfa-license verification error to a pdfluent typed error.
+///
+/// Discriminates by variant — never by message-string parsing.
+fn map_xfa_license_error(e: xfa_license::error::LicenseError) -> Error {
+    use xfa_license::error::LicenseError as L;
+    match e {
+        L::InvalidSignature => Error::LicenseInvalidSignature,
+        L::Expired(ts) => Error::LicenseExpired { expires_at: ts },
+        L::RateLimitExceeded(limit) => Error::LicenseRateLimited {
+            resource: "api_calls".into(),
+            used: limit as u64,
+            limit: limit as u64,
+        },
+        L::QuotaExceeded {
+            resource,
+            used,
+            limit,
+        } => Error::LicenseRateLimited {
+            resource,
+            used,
+            limit,
+        },
+        L::FeatureNotAvailable(name) => Error::InvalidLicense {
+            reason: format!("feature not available: {name}"),
+        },
+        L::InvalidPublicKey => Error::InvalidLicense {
+            reason: "invalid public key (must be 32 bytes)".into(),
+        },
+        L::MalformedToken(detail) => Error::InvalidLicense {
+            reason: format!("malformed signed-license token: {detail}"),
+        },
+        L::Json(err) => Error::InvalidLicense {
+            reason: format!("license JSON parse failure: {err}"),
+        },
+        L::Io(err) => Error::InvalidLicense {
+            reason: format!("license I/O error: {err}"),
+        },
+    }
+}
+
+/// Map an `xfa_license::Tier` to the umbrella `pdfluent::Tier`.
+///
+/// Conservative one-way mapping — see
+/// `benchmarks/runs/ga_100_closure_v3/commercial_license_e2e/SIGNED_LICENSE_PAYLOAD_ARCHITECTURE.md`
+/// Q5 for the rationale.
+fn map_xfa_tier(t: xfa_license::Tier) -> Result<Tier> {
+    use xfa_license::Tier as X;
+    match t {
+        X::Trial => Ok(Tier::Trial),
+        X::Basic => Ok(Tier::Developer),
+        X::Professional => Ok(Tier::Team),
+        X::Enterprise => Ok(Tier::Enterprise),
+        X::Archival => Ok(Tier::Business),
+    }
+}
+
+/// Format a unix timestamp as ISO 8601 (UTC, no fractional seconds).
+fn unix_to_iso8601(ts: u64) -> String {
+    // Avoid pulling in chrono just for this — implement the small
+    // calendar manually. The output is the de-facto standard
+    // "YYYY-MM-DDTHH:MM:SSZ" form.
+    let secs = ts as i64;
+    let days = secs.div_euclid(86_400);
+    let sod = secs.rem_euclid(86_400);
+    let h = sod / 3600;
+    let m = (sod / 60) % 60;
+    let s = sod % 60;
+
+    // Days since unix epoch 1970-01-01 → (year, month, day) via the
+    // proleptic Gregorian algorithm from Howard Hinnant's date library.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let month = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = y + i64::from(month <= 2);
+
+    format!("{year:04}-{month:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
 /// Resolve the effective tier for this process.
