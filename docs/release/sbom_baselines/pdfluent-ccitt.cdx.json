@@ -1,0 +1,73 @@
+{
+  "bomFormat": "CycloneDX",
+  "components": [],
+  "dependencies": [
+    {
+      "dependsOn": [],
+      "ref": "path://hayro-ccitt#pdfluent-ccitt@0.2.2"
+    }
+  ],
+  "metadata": {
+    "authors": [
+      {
+        "email": "laurenz.stampfl@gmail.com",
+        "name": "Laurenz Stampfl"
+      }
+    ],
+    "component": {
+      "author": "Laurenz Stampfl <laurenz.stampfl@gmail.com>",
+      "bom-ref": "path://hayro-ccitt#pdfluent-ccitt@0.2.2",
+      "components": [
+        {
+          "bom-ref": "path://hayro-ccitt#pdfluent-ccitt@0.2.2 bin-target-0",
+          "name": "pdfluent_ccitt",
+          "purl": "pkg:cargo/pdfluent-ccitt@0.2.2?download_url=file://.#src/lib.rs",
+          "type": "library",
+          "version": "0.2.2"
+        }
+      ],
+      "description": "A decoder for group 3 and group 4 CCITT images.",
+      "externalReferences": [
+        {
+          "type": "documentation",
+          "url": "https://pdfluent.com/docs"
+        },
+        {
+          "type": "website",
+          "url": "https://pdfluent.com"
+        },
+        {
+          "type": "vcs",
+          "url": "https://pdfluent.com/source"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "name": "pdfluent-ccitt",
+      "purl": "pkg:cargo/pdfluent-ccitt@0.2.2?download_url=file://.",
+      "scope": "required",
+      "type": "library",
+      "version": "0.2.2"
+    },
+    "properties": [
+      {
+        "name": "cdx:rustc:sbom:target:all_targets",
+        "value": "true"
+      }
+    ],
+    "timestamp": "2026-05-28T09:12:32.804225000Z",
+    "tools": [
+      {
+        "name": "cargo-cyclonedx",
+        "vendor": "CycloneDX",
+        "version": "0.5.7"
+      }
+    ]
+  },
+  "serialNumber": "urn:uuid:c5a73285-a94c-47d1-bc0f-39f8dc6c9911",
+  "specVersion": "1.3",
+  "version": 1
+}
