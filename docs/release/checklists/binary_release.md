@@ -46,10 +46,20 @@ signtool sign /tr http://timestamp.example /td sha256 /fd sha256 /a target/x86_6
 
 ## Signing verification
 
-- [ ] **macOS**: `codesign --verify --deep --strict <app>` returns no error; `spctl -a -v <app>` reports "accepted".
-- [ ] **Windows**: `signtool verify /pa /v <exe>` returns success.
+The signing *procedure* (identity acquisition, signing command, notarization,
+verification commands, CI integration) lives in:
+
+- `docs/release/SIGNING_MACOS.md` — Apple Developer ID + notarytool.
+- `docs/release/SIGNING_WINDOWS.md` — Microsoft Trusted Signing (preferred);
+  Azure Artifact Signing; USB-token EV fallback; OV fallback.
+
+This checklist *verifies* the result of those runbooks:
+
+- [ ] **macOS**: `codesign --verify --deep --strict <app>` returns no error; `spctl -a -v <app>` reports "accepted source=Notarized Developer ID".
+- [ ] **Windows**: `signtool verify /pa /v <exe>` (or `osslsigncode verify <exe>` on a non-Windows host) returns success with a non-empty signer certificate AND a valid RFC-3161 timestamp.
 - [ ] **Linux**: GPG detached signature `.asc` accompanies the artifact; `gpg --verify <artifact>.asc <artifact>` succeeds with the release key.
-- [ ] Signature key/cert thumbprint recorded in the audit report.
+- [ ] Signature key/cert thumbprint **and** timestamp-server URL recorded in the audit report.
+- [ ] `sha_ledger/binary.json` entry for this artefact is appended **after** signing — the ledger sha256 is the sha256 of the *signed* binary, which is what consumers actually download.
 
 ## Reproducibility check
 
