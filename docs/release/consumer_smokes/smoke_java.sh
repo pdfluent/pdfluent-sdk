@@ -37,9 +37,11 @@ fi
 
 MVN=$(command -v mvn 2>/dev/null || echo "./mvnw")
 
-# Auto-detect jar.
+# Auto-detect jar. `mapfile` is bash 4+; portable while-read loop for
+# macOS bash 3.2 (matches the smoke_dotnet.sh and sbom-generate.sh shape).
 if [[ -z "$JAR_PATH" ]]; then
-    mapfile -t candidates < <(find "${REPO_ROOT}/bindings/java" -name "*.jar" \
+    candidates=()
+    while IFS= read -r line; do candidates+=("$line"); done < <(find "${REPO_ROOT}/bindings/java" -name "*.jar" \
         -not -name "*javadoc*" -not -name "*sources*" 2>/dev/null | sort -r)
     if [[ ${#candidates[@]} -eq 0 ]]; then
         echo "⚠️  No .jar found under bindings/java. Build first with:"

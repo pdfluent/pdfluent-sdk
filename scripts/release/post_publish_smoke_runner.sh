@@ -102,10 +102,14 @@ run_one() {
   local rc=0
   # Each smoke knows its own argv shape; pass --artifact and --version if
   # the operator gave them, but never make them mandatory at this layer.
+  # `${args[@]+"${args[@]}"}` is the `set -u`-safe expansion of a possibly-
+  # empty bash array — a bare `"${args[@]}"` triggers "unbound variable"
+  # under `set -u` when the operator omits both --artifact and --version
+  # (the common case for the `--channel all` aggregate run).
   local args=()
   [[ -n "$ARTIFACT" ]] && args+=(--artifact "$ARTIFACT")
   [[ -n "$VERSION" ]] && args+=(--version "$VERSION")
-  if "$script" "${args[@]}" >"$log" 2>&1; then
+  if "$script" ${args[@]+"${args[@]}"} >"$log" 2>&1; then
     echo "[smokes]   $name: PASS  (log: $log)"
     rc=0
   else
@@ -158,14 +162,20 @@ fi
   echo
   echo "## Result"
   echo
+  # `${ran[*]:-none}` is set -u-safe (default-value expansion); the bare
+  # `${failed[*]}` and `${ran[*]}` on the FAIL branch are equivalent when
+  # at least one fail or one ran event was recorded (the failed-branch is
+  # only reached when fails>0), but use the safe form unconditionally.
+  ran_str="${ran[*]:-none}"
+  failed_str="${failed[*]:-none}"
   if (( fails == 0 )); then
-    echo "**PASS** (ran: ${ran[*]:-none})"
+    echo "**PASS** (ran: ${ran_str})"
   else
-    echo "**FAIL** (failed: ${failed[*]}, ran: ${ran[*]})"
+    echo "**FAIL** (failed: ${failed_str}, ran: ${ran_str})"
   fi
   echo
   echo "## Per-smoke logs"
-  for n in "${ran[@]}"; do
+  for n in ${ran[@]+"${ran[@]}"}; do
     echo "- [${n}](smoke_${n}.log)"
   done
 } > "$OUT_DIR/SUMMARY.md"
