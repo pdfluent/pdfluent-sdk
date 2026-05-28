@@ -59,6 +59,17 @@ allow = [
     # shared under MPL; surrounding PDFluent engine code is unaffected.
     "MPL-2.0",
 
+    # CDLA-Permissive-2.0: Community Data License Agreement Permissive 2.0.
+    # Present via webpki-roots (Mozilla CA certificate bundle, pulled in by
+    # reqwest's rustls-tls feature). It is a data license, fully permissive
+    # — no copyleft obligation on the consuming project — and is the
+    # license Mozilla uses for the public NSS root cert bundle. CDLA-2.0
+    # explicitly states: "The Data Recipient is free to use, modify, and
+    # distribute the Data" (§2). Equivalent permissivity to MIT/Apache-2.0
+    # for data assets. Not on the SPDX-approved deny.toml default list
+    # because it's a data-license, not a source-code license.
+    "CDLA-Permissive-2.0",
+
     # OFL-1.1 is intentionally NOT in this global list.
     # Permitted only for the bundled Liberation font asset crate
     # (xfa/font-bundled-liberation, not merged at rc1).  Add a per-crate
