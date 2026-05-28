@@ -238,4 +238,38 @@ changes (CHANGELOG + license + SBOM tooling + CI YAML + audit notes only), is re
 rc1, and the four new CI jobs are MR/tag-gated so a merge cannot introduce false-red pipelines
 on subsequent rc1 pushes. The MR-run validation of the new jobs can happen post-merge from
 any subsequent MR without re-opening Tier-1.
+
+### Three consecutive green pipelines on the branch
+| commit | jobs | result | last completion (UTC) |
+|---|---|---|---|
+| `f0999509c` (YAML fix) | 4 (3 sanity + 1 corpus auto-trigger) | **4/4 PASS** | 08:08:43 |
+| `bfbe31d08` (audit doc) | 4 (same shape) | **4/4 PASS** | 08:37:?? |
+| `8303226f4` (binary-release fix) | 4 (same shape) | **4/4 PASS** | 08:41:?? |
+
+Three independent green pipelines, no failures or cancellations on any job. The branch
+pipeline status is **passed**.
+
+### Follow-on fix (`8303226f4`) — `package:binary-release` silent host-target masquerade
+While verifying the new CI jobs would not just "report green" but actually produce correct
+artefacts, I caught a latent correctness bug in the original `package:binary-release` script:
+
+- The script called `bash scripts/release/pdfluent_cli_package.sh --target "$TARGET"`. That
+  packager accepts only `--archives`; unknown flags are silently ignored. The script would
+  succeed (`exit 0`) and the `if … then OK … else fallback` branch never reached the fallback
+  — meaning the job would have reported **green** while shipping a **host-target** binary
+  labelled as a cross-target artefact.
+- The packager packages the `pdfluent-cli` crate, while the `pdfluent` binary actually
+  shipped for end-users comes from the `xfa-cli` crate (`[[bin]] name = "pdfluent"`). That
+  binary is exactly what `package:cli-cross-platform` already cross-builds and uploads via
+  `needs.artifacts: true`.
+
+Fix in `8303226f4`: skip the packager call entirely; package the inherited
+`target/$TARGET/release/pdfluent[.exe]` artefact directly with explicit
+existence + non-empty-binary checks, version read from `crates/xfa-cli/Cargo.toml`,
+self-verifying `SHA256SUMS`, and tar.gz + `.sha256` outputs under `dist/`. The
+`allow_failure: true` on the job is the pipeline-gating allowance for downstream stages —
+the new `exit 1` paths still mark the job red so genuine failures stay visible (no
+silent-green masking). `pdfluent_cli_package.sh` itself is untouched; it remains the
+host-target release packager for `pdfluent-cli` and broadening it to cross-targets is a
+separate workstream the binary-release CI path does not need.
 Tier-1 items 1-7 are the highest-ROI path to a defensible first publish.
