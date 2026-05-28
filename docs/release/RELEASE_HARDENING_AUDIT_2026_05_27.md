@@ -143,4 +143,133 @@ the publish-step playbook is one-command and rehearsed before the first real pub
 **Bottom line.** The release-train infrastructure is **mature and Wave 1 complete**. The CLI is
 *operationally* ready. The remaining engineering gaps are well-scoped, individually small/moderate,
 and concentrated in three buckets: **SBOM, cross-platform CI, and the R3-R6 publish-process polish**.
+
+---
+
+## 6. Tier-1 delivery — CI pipeline diagnosis & fix (2026-05-28)
+
+**Branch:** `release-hardening/tier1` · **Head:** `f0999509c` (green) · **Failed head:** `5a53416b` (and
+unobservably also `0b6f26692`, the prior commit on the same branch with the same CI YAML).
+
+### Root cause (5a53416b)
+GitLab rejected the pipeline at **server-side YAML/config validation** — the runner never received any
+jobs. Evidence: zero `Checking for jobs... received` events on the self-hosted runner
+(`pdfluent-vps-ci`) between **2026-05-28 07:53:00 UTC** (push of `0b6f26692`) and
+**2026-05-28 08:05:23 UTC** (push of `f0999509c`) — a 12.4-minute window covering both pipelines.
+Compare to `f0999509c`: jobs arrived at the runner **15 seconds** after push.
+
+Two YAML shapes I introduced in the original Tier-1 CI additions tripped GitLab's semantic schema:
+
+1. **`needs.parallel.matrix` value used a runtime variable**:
+   ```yaml
+   needs:
+     - job: package:cli-cross-platform
+       parallel:
+         matrix:
+           - TARGET: $TARGET     # ← rejected; matrix values must be literal
+       optional: false
+   ```
+   GitLab requires `needs.parallel.matrix` values to be a static list. Runtime variables
+   (`$TARGET`) are not expanded here. The intent — pair each `package:binary-release` matrix
+   instance with its same-`TARGET` `package:cli-cross-platform` counterpart — is achieved
+   automatically when `needs:` lists the job by name only (matching matrix dimensions
+   auto-pair).
+2. Two `script:` blocks used a multi-line `if … then … fi` written as a single YAML list item
+   with trailing semicolons. While the YAML parses, GitLab's CI schema for `script:` line items
+   is stricter than the runner's eventual shell execution; the safe form is `|` block scalars.
+
+### Fix (`f0999509c`)
+Scoped diff, CI YAML only, no Rust code:
+1. `package:binary-release.needs:` — dropped the `parallel.matrix: TARGET: $TARGET` subkey;
+   left only `- job: package:cli-cross-platform, artifacts: true, optional: false` so GitLab
+   auto-pairs matching matrix dimensions.
+2. Both `package:node-napi-dry-run.script:` and `package:binary-release.script:` converted to
+   `|` block scalars (one-line-per-step semantics preserved; logic unchanged).
+3. Drive-by while fixing the script: `audit_package_tree.py --channel node` → `--channel npm`
+   (the audit tool's enum is `{crates_io,npm,pypi,maven,wasm,binary,gitlab,generic}` — `node`
+   would have failed at runtime).
+
+### Proof pipeline is green (`f0999509c`)
+| stage | jobs created (rules-evaluated for `push` on feature branch) | runner result |
+|---|---|---|
+| `sanity` | 3 (cargo-metadata, cargo-check, cargo-deny; cargo-fmt skipped — MR/master only) | **3/3 PASS** (180s / 182s / 3s) |
+| `quality_manual` | 0 created (all 8 jobs have MR/master/schedule/tag rules; none match a feature-branch push) | — |
+| `package_manual` | 0 created (same — Tier-1 additions intentionally MR/tag-only to avoid burning runner time on every push) | — |
+| `corpus_manual` | 1 (corpus:xfa-no-private-paths — matches `push`) | **PASS** (2s) |
+| `release_manual` | 0 created (publish jobs are tag-only by design) | — |
+
+Total: **4 jobs created, 4 jobs ran, 4 PASS, 0 FAIL.** Pipeline status = **passed**.
+
+Evidence in the runner journal (`journalctl -u gitlab-runner --since '2026-05-28 08:05:00'`):
+- Jobs `14577812204` / `14577812205` / `14577812206` / `14577812207` all `job-status=success`
+  between 08:05:24 and 08:08:43 UTC.
+- No `Job failed`, no `Job canceled`, no `stuck_or_timeout_failure` events anywhere in the window.
+
+### Why this is not a "stuck pipeline" or false-red
+- `default: interruptible: true` — but no newer pipeline existed to cancel `f0999509c`; runner
+  idle from 08:08:43 UTC onward.
+- The manual stages (`quality_manual`, `package_manual`, `release_manual`) have **zero jobs
+  instantiated** on this branch push (their rules require MR/master/schedule/tag context). An
+  empty stage advances instantly in GitLab; the pipeline reached "success" once `corpus_manual`
+  completed.
+- The new Tier-1 jobs (`package:sbom-generate`, `package:node-napi-dry-run`,
+  `package:cli-cross-platform`, `package:binary-release`) are **MR/tag-only by design** — they
+  do not run on a feature-branch push, so they cannot false-red the branch pipeline.
+
+### Remaining non-blocking follow-ups
+- **MR/tag exercise still pending.** Because the new Tier-1 jobs only fire on MR or tag, the
+  branch pipeline does not actually exercise them. To prove they work in CI before relying on
+  them at a real publish, the recommended next step is to open a draft MR
+  (`release-hardening/tier1` → `xfa/static-parity-rc1`) and trigger each new job manually from
+  the MR pipeline view. Until then the jobs are **structurally validated** (YAML lint + rules
+  + script shape) but not **runtime validated**.
+- **`package:sbom-generate` baseline first run.** The job will report `[sbom] NEW (no baseline): <name>`
+  for every publish-eligible crate on its first execution (drift exit code 3), because
+  `docs/release/sbom_baselines/` is empty by design — the first run *generates* the baseline.
+  This is documented behavior, not a CI bug; the first MR run should `cp dist/sbom/*.cdx.json
+  docs/release/sbom_baselines/` and commit that as the first baseline tranche.
+- **`cargo-cyclonedx` install on first run** — the job auto-installs (`--tool-install`); first
+  invocation will spend ~60-120s compiling cargo-cyclonedx. Subsequent runs are cached in
+  `CARGO_HOME=/var/cache/cargo-home`.
+
+### Merge advice
+**Mergeable to `xfa/static-parity-rc1`.** The branch is sanity-green, contains no Rust code
+changes (CHANGELOG + license + SBOM tooling + CI YAML + audit notes only), is rebase-clean on
+rc1, and the four new CI jobs are MR/tag-gated so a merge cannot introduce false-red pipelines
+on subsequent rc1 pushes. The MR-run validation of the new jobs can happen post-merge from
+any subsequent MR without re-opening Tier-1.
+
+### Three consecutive green pipelines on the branch
+| commit | jobs | result | last completion (UTC) |
+|---|---|---|---|
+| `f0999509c` (YAML fix) | 4 (3 sanity + 1 corpus auto-trigger) | **4/4 PASS** | 08:08:43 |
+| `bfbe31d08` (audit doc) | 4 (same shape) | **4/4 PASS** | 08:37:?? |
+| `8303226f4` (binary-release fix) | 4 (same shape) | **4/4 PASS** | 08:41:?? |
+
+Three independent green pipelines, no failures or cancellations on any job. The branch
+pipeline status is **passed**.
+
+### Follow-on fix (`8303226f4`) — `package:binary-release` silent host-target masquerade
+While verifying the new CI jobs would not just "report green" but actually produce correct
+artefacts, I caught a latent correctness bug in the original `package:binary-release` script:
+
+- The script called `bash scripts/release/pdfluent_cli_package.sh --target "$TARGET"`. That
+  packager accepts only `--archives`; unknown flags are silently ignored. The script would
+  succeed (`exit 0`) and the `if … then OK … else fallback` branch never reached the fallback
+  — meaning the job would have reported **green** while shipping a **host-target** binary
+  labelled as a cross-target artefact.
+- The packager packages the `pdfluent-cli` crate, while the `pdfluent` binary actually
+  shipped for end-users comes from the `xfa-cli` crate (`[[bin]] name = "pdfluent"`). That
+  binary is exactly what `package:cli-cross-platform` already cross-builds and uploads via
+  `needs.artifacts: true`.
+
+Fix in `8303226f4`: skip the packager call entirely; package the inherited
+`target/$TARGET/release/pdfluent[.exe]` artefact directly with explicit
+existence + non-empty-binary checks, version read from `crates/xfa-cli/Cargo.toml`,
+self-verifying `SHA256SUMS`, and tar.gz + `.sha256` outputs under `dist/`. The
+`allow_failure: true` on the job is the pipeline-gating allowance for downstream stages —
+the new `exit 1` paths still mark the job red so genuine failures stay visible (no
+silent-green masking). `pdfluent_cli_package.sh` itself is untouched; it remains the
+host-target release packager for `pdfluent-cli` and broadening it to cross-targets is a
+separate workstream the binary-release CI path does not need.
 Tier-1 items 1-7 are the highest-ROI path to a defensible first publish.
