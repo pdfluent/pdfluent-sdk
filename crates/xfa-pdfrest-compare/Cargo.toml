@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.80.0"
 description = "Visual comparison harness for PDFluent vs pdfRest renders."
+# Internal-only harness — never published. License set explicitly to satisfy
+# `cargo metadata` / `cargo deny` (workspace inherits MIT for internal crates).
+license = "MIT"
 publish = false
 
 [dependencies]
