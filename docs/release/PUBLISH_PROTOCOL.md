@@ -192,7 +192,8 @@ For each stop, write a `STOPPED.md` line at the bottom of the audit report stati
 
 ## 15. Where this protocol lives in the repository
 
-- Policy: `docs/release/PUBLISH_PROTOCOL.md` (this file).
+- **Index:** `docs/release/README.md` — single entry point for any operator; routes per-task to the right doc.
+- Policy (this file): `docs/release/PUBLISH_PROTOCOL.md`.
 - Per-channel checklists: `docs/release/checklists/<channel>.md`.
 - Templates: `docs/release/templates/`.
 - Agent instructions: `docs/agent_skills/publish_protocol/SKILL.md`.
@@ -201,6 +202,17 @@ For each stop, write a `STOPPED.md` line at the bottom of the audit report stati
 - Train guard: `scripts/release/release_train_guard.sh`.
 - Audit outputs: `benchmarks/runs/prepublish_audits/<crate>-<version>.md`.
 - Remediation reports: `benchmarks/runs/remediation/<incident>.md`.
+
+### Tier-1 additions (2026-05-28)
+- SBOM protocol + baselines: `docs/release/sbom_protocol.md` + `docs/release/sbom_baselines/`.
+- SBOM generator: `scripts/release/sbom-generate.sh` (cargo-cyclonedx 0.5.7, pinned).
+- Tier-1 audit doc: `docs/release/RELEASE_HARDENING_AUDIT_2026_05_27.md`.
+
+### Tier-2 additions (this MR)
+- **Rollback runbook**: `docs/release/ROLLBACK_PROCEDURE.md` — consolidates §12 + §13 of this protocol into an under-pressure-readable runbook with per-channel yank commands.
+- **SHA ledger**: `docs/release/sha_ledger/` — append-only per-channel JSON record of every published artefact's sha256, used for indefinite post-publish drift detection. Tools: `scripts/release/ledger_add_entry.py`, `ledger_verify.py`, `ledger_mark_yanked.py`.
+- **Post-publish smoke orchestrator**: `scripts/release/post_publish_smoke_runner.sh` — runs every applicable consumer smoke per channel, aggregates into `benchmarks/runs/post_publish_verify/<ts>/SUMMARY.md`.
+- **New consumer smokes**: `docs/release/consumer_smokes/smoke_node.sh` (NAPI binding) and `smoke_binary.sh` (binary release tarball).
 
 ## 16. Authoritative source
 
