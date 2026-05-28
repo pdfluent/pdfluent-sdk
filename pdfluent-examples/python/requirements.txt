@@ -1,0 +1,9 @@
+# PDFluent Python SDK — golden-path example requirements.
+#
+# During beta development against the in-tree maturin module, install the
+# binding from source instead:
+#
+#     pip install -e ../../crates/pdf-python
+#
+# Once the binding is published to PyPI:
+pdfluent==1.0.0b8

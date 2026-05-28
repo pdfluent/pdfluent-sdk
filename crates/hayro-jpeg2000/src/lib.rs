@@ -713,6 +713,52 @@ fn cielab_to_rgb<S: Simd>(
     Ok(())
 }
 
+#[inline(always)]
+fn sycc_to_rgb<S: Simd>(simd: S, components: &mut [ComponentData], bit_depth: u8) -> Result<()> {
+    let offset = (1_u32 << (bit_depth as u32 - 1)) as f32;
+    let max_value = ((1_u32 << bit_depth as u32) - 1) as f32;
+
+    let (head, _) = components
+        .split_at_mut_checked(3)
+        .ok_or(ColorError::SyccConversionFailed)?;
+
+    let [y, cb, cr] = head else {
+        unreachable!();
+    };
+
+    let offset_v = f32x8::splat(simd, offset);
+    let max_v = f32x8::splat(simd, max_value);
+    let zero_v = f32x8::splat(simd, 0.0);
+    let cr_to_r = f32x8::splat(simd, 1.402);
+    let cb_to_g = f32x8::splat(simd, -0.344136);
+    let cr_to_g = f32x8::splat(simd, -0.714136);
+    let cb_to_b = f32x8::splat(simd, 1.772);
+
+    for ((y_chunk, cb_chunk), cr_chunk) in y
+        .container
+        .chunks_exact_mut(SIMD_WIDTH)
+        .zip(cb.container.chunks_exact_mut(SIMD_WIDTH))
+        .zip(cr.container.chunks_exact_mut(SIMD_WIDTH))
+    {
+        let y_v = f32x8::from_slice(simd, y_chunk);
+        let cb_v = f32x8::from_slice(simd, cb_chunk) - offset_v;
+        let cr_v = f32x8::from_slice(simd, cr_chunk) - offset_v;
+
+        // r = y + 1.402 * cr
+        let r = cr_v.mul_add(cr_to_r, y_v);
+        // g = y - 0.344136 * cb - 0.714136 * cr
+        let g = cr_v.mul_add(cr_to_g, cb_v.mul_add(cb_to_g, y_v));
+        // b = y + 1.772 * cb
+        let b = cb_v.mul_add(cb_to_b, y_v);
+
+        r.min(max_v).max(zero_v).store(y_chunk);
+        g.min(max_v).max(zero_v).store(cb_chunk);
+        b.min(max_v).max(zero_v).store(cr_chunk);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -821,50 +867,4 @@ mod tests {
             DecodeError::Validation(ValidationError::ImageTooLarge)
         ));
     }
-}
-
-#[inline(always)]
-fn sycc_to_rgb<S: Simd>(simd: S, components: &mut [ComponentData], bit_depth: u8) -> Result<()> {
-    let offset = (1_u32 << (bit_depth as u32 - 1)) as f32;
-    let max_value = ((1_u32 << bit_depth as u32) - 1) as f32;
-
-    let (head, _) = components
-        .split_at_mut_checked(3)
-        .ok_or(ColorError::SyccConversionFailed)?;
-
-    let [y, cb, cr] = head else {
-        unreachable!();
-    };
-
-    let offset_v = f32x8::splat(simd, offset);
-    let max_v = f32x8::splat(simd, max_value);
-    let zero_v = f32x8::splat(simd, 0.0);
-    let cr_to_r = f32x8::splat(simd, 1.402);
-    let cb_to_g = f32x8::splat(simd, -0.344136);
-    let cr_to_g = f32x8::splat(simd, -0.714136);
-    let cb_to_b = f32x8::splat(simd, 1.772);
-
-    for ((y_chunk, cb_chunk), cr_chunk) in y
-        .container
-        .chunks_exact_mut(SIMD_WIDTH)
-        .zip(cb.container.chunks_exact_mut(SIMD_WIDTH))
-        .zip(cr.container.chunks_exact_mut(SIMD_WIDTH))
-    {
-        let y_v = f32x8::from_slice(simd, y_chunk);
-        let cb_v = f32x8::from_slice(simd, cb_chunk) - offset_v;
-        let cr_v = f32x8::from_slice(simd, cr_chunk) - offset_v;
-
-        // r = y + 1.402 * cr
-        let r = cr_v.mul_add(cr_to_r, y_v);
-        // g = y - 0.344136 * cb - 0.714136 * cr
-        let g = cr_v.mul_add(cr_to_g, cb_v.mul_add(cb_to_g, y_v));
-        // b = y + 1.772 * cb
-        let b = cb_v.mul_add(cb_to_b, y_v);
-
-        r.min(max_v).max(zero_v).store(y_chunk);
-        g.min(max_v).max(zero_v).store(cb_chunk);
-        b.min(max_v).max(zero_v).store(cr_chunk);
-    }
-
-    Ok(())
 }

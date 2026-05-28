@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <AssemblyName>PDFluent</AssemblyName>
+    <RootNamespace>PDFluent</RootNamespace>
+
+    <!-- NuGet package metadata -->
+    <PackageId>PDFluent</PackageId>
+    <Version>1.0.0-beta.8</Version>
+    <Authors>Innovation Trigger BV</Authors>
+    <Company>Innovation Trigger BV</Company>
+    <Product>PDFluent</Product>
+    <Copyright>Copyright (c) 2026 Innovation Trigger BV (operating as PDFluent)</Copyright>
+    <Description>Enterprise PDF SDK — render, extract, forms, signatures, PDF/A. Pure-Rust core via P/Invoke. Requires netstandard2.1+ (Core 3.0+, .NET 5/6/7/8/9/10, Mono 6.4+, Xamarin/MAUI, Unity 2021.2+).</Description>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://pdfluent.com</PackageProjectUrl>
+    <PackageTags>pdf;xfa;render;extract;forms;signatures;pdfa;pdfluent</PackageTags>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <!-- Reproducible builds: strip absolute paths from PDBs and source-link blobs. -->
+    <PathMap>$(MSBuildProjectDirectory)=/_/</PathMap>
+    <DeterministicSourcePaths>true</DeterministicSourcePaths>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <!-- Package-bundled metadata files -->
+  <ItemGroup>
+    <None Include="LICENSE" Pack="true" PackagePath="" />
+    <None Include="README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <!-- Native library bundling per RID -->
+  <ItemGroup>
+    <None Include="runtimes\win-x64\native\pdf_capi.dll" Pack="true" PackagePath="runtimes\win-x64\native" Condition="Exists('runtimes\win-x64\native\pdf_capi.dll')" />
+    <None Include="runtimes\linux-x64\native\libpdf_capi.so" Pack="true" PackagePath="runtimes\linux-x64\native" Condition="Exists('runtimes\linux-x64\native\libpdf_capi.so')" />
+    <None Include="runtimes\osx-arm64\native\libpdf_capi.dylib" Pack="true" PackagePath="runtimes\osx-arm64\native" Condition="Exists('runtimes\osx-arm64\native\libpdf_capi.dylib')" />
+    <None Include="runtimes\osx-x64\native\libpdf_capi.dylib" Pack="true" PackagePath="runtimes\osx-x64\native" Condition="Exists('runtimes\osx-x64\native\libpdf_capi.dylib')" />
+  </ItemGroup>
+</Project>

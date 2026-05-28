@@ -1,0 +1,25 @@
+[package]
+name = "pdfluent-cli"
+version = "1.0.0-beta.8"
+edition.workspace = true
+license-file = "LICENSE"
+repository.workspace = true
+description = "PDFluent command-line interface (public scaffold): PDF info, text extraction, validation. XFA support is experimental and feature-gated."
+keywords = ["pdf", "cli", "pdfluent", "pdf-a", "forms"]
+categories = ["command-line-utilities"]
+# Not published yet — public CLI is scaffolded; packaging is a follow-up milestone.
+publish = false
+
+[[bin]]
+name = "pdfluent-cli"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+clap_complete = "4"
+serde_json.workspace = true
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.8" }
+
+[dev-dependencies]
+serde_json.workspace = true

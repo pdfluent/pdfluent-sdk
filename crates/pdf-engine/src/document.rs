@@ -1354,6 +1354,97 @@ mod tests {
     }
 
     #[test]
+    fn render_max_pixels_none_is_unchanged_default_behavior() {
+        // Default (max_pixels = None) must be byte-identical to an explicit no-budget render.
+        let doc = PdfDocument::open(solid_fill_pdf_bytes("1 0 0 rg")).expect("open fixture");
+        let baseline = doc
+            .render_page(
+                0,
+                &RenderOptions {
+                    dpi: 144.0,
+                    ..Default::default()
+                },
+            )
+            .expect("baseline render");
+        let explicit_none = doc
+            .render_page(
+                0,
+                &RenderOptions {
+                    dpi: 144.0,
+                    max_pixels: None,
+                    ..Default::default()
+                },
+            )
+            .expect("explicit-none render");
+        assert_eq!(baseline.width, explicit_none.width);
+        assert_eq!(baseline.height, explicit_none.height);
+        assert_eq!(baseline.pixels, explicit_none.pixels);
+    }
+
+    #[test]
+    fn render_max_pixels_budget_clamps_resolution() {
+        let doc = PdfDocument::open(solid_fill_pdf_bytes("1 0 0 rg")).expect("open fixture");
+        let full = doc
+            .render_page(
+                0,
+                &RenderOptions {
+                    dpi: 288.0,
+                    ..Default::default()
+                },
+            )
+            .expect("full render");
+        let full_px = full.width * full.height;
+        // Budget well below the full pixel count must reduce output dimensions.
+        let budget = full_px / 4;
+        let capped = doc
+            .render_page(
+                0,
+                &RenderOptions {
+                    dpi: 288.0,
+                    max_pixels: Some(budget),
+                    ..Default::default()
+                },
+            )
+            .expect("capped render");
+        assert!(
+            capped.width * capped.height <= full_px,
+            "capped output must not exceed full output"
+        );
+        assert!(
+            capped.width < full.width || capped.height < full.height,
+            "budget below full pixel count must shrink at least one dimension"
+        );
+    }
+
+    #[test]
+    fn render_max_pixels_large_budget_no_clamp() {
+        // A budget larger than the rendered size must not change the output.
+        let doc = PdfDocument::open(solid_fill_pdf_bytes("1 0 0 rg")).expect("open fixture");
+        let baseline = doc
+            .render_page(
+                0,
+                &RenderOptions {
+                    dpi: 72.0,
+                    ..Default::default()
+                },
+            )
+            .expect("baseline");
+        let huge = doc
+            .render_page(
+                0,
+                &RenderOptions {
+                    dpi: 72.0,
+                    max_pixels: Some(100_000_000),
+                    ..Default::default()
+                },
+            )
+            .expect("huge-budget render");
+        assert_eq!(baseline.width, huge.width);
+        assert_eq!(baseline.height, huge.height);
+        assert_eq!(baseline.pixels, huge.pixels);
+    }
+
+    #[test]
     fn render_page_with_config_srgb_matches_legacy_render_page() {
         let doc = PdfDocument::open(solid_fill_pdf_bytes("1 0 0 rg")).expect("open rgb fixture");
         let legacy = doc

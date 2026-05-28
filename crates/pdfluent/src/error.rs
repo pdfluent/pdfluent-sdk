@@ -100,6 +100,35 @@ pub enum Error {
         /// Human-readable reason.
         reason: String,
     },
+    /// License key is well-formed and signed, but its `expires_at` is in
+    /// the past.
+    ///
+    /// Surfaced by the signed-payload pathway only — mock `tier:X` keys
+    /// have no expiry and never produce this variant.
+    LicenseExpired {
+        /// Unix timestamp from the payload's `expires_at` field.
+        expires_at: u64,
+    },
+    /// License key is structurally a signed JSON payload but the Ed25519
+    /// signature does not verify against the configured public key.
+    ///
+    /// Indicates either a tampered payload or a payload signed by a
+    /// different private key. Treat as a hard failure — never fall
+    /// through to Trial.
+    LicenseInvalidSignature,
+    /// A license-enforced rate or usage limit was exceeded at runtime.
+    ///
+    /// Returned by `LicenseGuard::record_*` calls during operation; not
+    /// an activation-time error. Carries the metered resource, used
+    /// value, and configured cap.
+    LicenseRateLimited {
+        /// Metered resource name, e.g. `"api_calls"` or `"pages"`.
+        resource: String,
+        /// How many units have been consumed in the current window.
+        used: u64,
+        /// The license's hard cap for this resource in the current window.
+        limit: u64,
+    },
 
     // ---------- Environment ----------
     /// Operation is not supported in WebAssembly builds.
@@ -265,6 +294,20 @@ impl std::fmt::Display for DecryptionFailureReason {
 
 impl Error {
     /// Stable error code (`E-<CATEGORY>-<SPECIFIC>`), frozen per snapshot test.
+    ///
+    /// # Append-only policy
+    ///
+    /// Codes are **frozen** once assigned. You may:
+    /// - Add a new variant with a new code.
+    ///
+    /// You must **never**:
+    /// - Remove a code.
+    /// - Rename an existing code.
+    /// - Reassign a code to a different variant.
+    ///
+    /// Violating this policy breaks any consumer that stores or compares codes
+    /// (logs, analytics, downstream SDKs, client-side switch statements).
+    /// See `scripts/release/error_catalogue_sync.sh` for the CI gate.
     pub const fn code(&self) -> &'static str {
         match self {
             Error::Io { .. } => "E-IO-GENERIC",
@@ -277,6 +320,9 @@ impl Error {
             Error::FeatureNotInTier { .. } => "E-LICENSE-FEATURE-NOT-IN-TIER",
             Error::CapabilityNotCompiled { .. } => "E-LICENSE-CAPABILITY-NOT-COMPILED",
             Error::InvalidLicense { .. } => "E-LICENSE-INVALID",
+            Error::LicenseExpired { .. } => "E-LICENSE-EXPIRED",
+            Error::LicenseInvalidSignature => "E-LICENSE-INVALID-SIGNATURE",
+            Error::LicenseRateLimited { .. } => "E-LICENSE-RATE-LIMITED",
             Error::UnsupportedOnWasm { .. } => "E-ENV-UNSUPPORTED-ON-WASM",
             Error::MissingDependency { .. } => "E-ENV-MISSING-DEPENDENCY",
             Error::MemoryBudgetExceeded { .. } => "E-BUDGET-MEMORY-EXCEEDED",
@@ -310,6 +356,13 @@ impl Error {
                 "https://pdfluent.com/errors/E-LICENSE-CAPABILITY-NOT-COMPILED"
             }
             Error::InvalidLicense { .. } => "https://pdfluent.com/errors/E-LICENSE-INVALID",
+            Error::LicenseExpired { .. } => "https://pdfluent.com/errors/E-LICENSE-EXPIRED",
+            Error::LicenseInvalidSignature => {
+                "https://pdfluent.com/errors/E-LICENSE-INVALID-SIGNATURE"
+            }
+            Error::LicenseRateLimited { .. } => {
+                "https://pdfluent.com/errors/E-LICENSE-RATE-LIMITED"
+            }
             Error::UnsupportedOnWasm { .. } => {
                 "https://pdfluent.com/errors/E-ENV-UNSUPPORTED-ON-WASM"
             }
@@ -372,6 +425,25 @@ impl std::fmt::Display for Error {
             Error::InvalidLicense { reason } => {
                 write!(f, "Invalid license: {reason}\n  Docs: {}", self.docs_url())
             }
+            Error::LicenseExpired { expires_at } => write!(
+                f,
+                "License expired at unix timestamp {expires_at}.\n  Renew: https://pdfluent.com/pricing\n  Docs: {}",
+                self.docs_url()
+            ),
+            Error::LicenseInvalidSignature => write!(
+                f,
+                "License signature does not verify against the configured public key — tampered or wrong-key payload.\n  Docs: {}",
+                self.docs_url()
+            ),
+            Error::LicenseRateLimited {
+                resource,
+                used,
+                limit,
+            } => write!(
+                f,
+                "Rate limit exceeded: {used}/{limit} {resource} in the current window.\n  Upgrade or wait for window reset.\n  Docs: {}",
+                self.docs_url()
+            ),
             Error::UnsupportedOnWasm { operation } => write!(
                 f,
                 "Operation `{operation}` is not supported on wasm32 targets.\n  Docs: {}",
@@ -526,5 +598,122 @@ impl From<pdf_redact::RedactError> for Error {
             byte_offset: None,
             reason: e.to_string(),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// Every Error variant must produce a unique stable code string.
+    ///
+    /// This test is the freeze-gate for RFC 0001 §5: if two variants share a
+    /// code the catalogue is broken by definition.
+    #[test]
+    fn error_codes_are_unique() {
+        use std::path::PathBuf;
+
+        // One representative instance per variant.
+        let variants: Vec<Error> = vec![
+            Error::Io {
+                source: std::io::Error::other("test"),
+                path: None,
+            },
+            Error::FileNotFound {
+                path: PathBuf::from("/tmp/test.pdf"),
+            },
+            Error::InvalidPdf {
+                byte_offset: None,
+                reason: "test".into(),
+            },
+            Error::UnsupportedPdfVersion {
+                found: "2.1".into(),
+                supported_up_to: "2.0".into(),
+            },
+            Error::PdfaValidationFailed {
+                profile: crate::compliance::PdfAProfile::A1b,
+                violations: vec![],
+            },
+            Error::DecryptionFailed {
+                reason: DecryptionFailureReason::WrongPassword,
+            },
+            Error::InvalidSignature {
+                field: "sig1".into(),
+                reason: "bad cert".into(),
+            },
+            Error::FeatureNotInTier {
+                capability: crate::capability::Capability::XfaFlatten,
+                current_tier: crate::tier::Tier::Trial,
+                required_tier: crate::tier::Tier::Developer,
+            },
+            Error::CapabilityNotCompiled {
+                capability: crate::capability::Capability::XfaFlatten,
+                feature_flag: "xfa",
+            },
+            Error::InvalidLicense {
+                reason: "expired".into(),
+            },
+            Error::LicenseExpired {
+                expires_at: 1_700_000_000,
+            },
+            Error::LicenseInvalidSignature,
+            Error::LicenseRateLimited {
+                resource: "api_calls".into(),
+                used: 1100,
+                limit: 1000,
+            },
+            Error::UnsupportedOnWasm { operation: "sign" },
+            Error::MissingDependency {
+                dep: "pdfium",
+                install_hint: "see README",
+            },
+            Error::MemoryBudgetExceeded {
+                requested: 1024,
+                limit: 512,
+            },
+            Error::ResourceLimitExceeded {
+                kind: ResourceLimitKind::FileTooLarge,
+                observed: 2000,
+                limit: 1000,
+            },
+            Error::Internal {
+                message: "test".into(),
+                crate_version: "0.0.0",
+            },
+        ];
+
+        let mut seen: HashSet<&'static str> = HashSet::new();
+        for v in &variants {
+            let code = v.code();
+            assert!(seen.insert(code), "Duplicate error code detected: {code}");
+        }
+
+        // Confirm every variant is covered (count guard).
+        assert_eq!(
+            variants.len(),
+            18,
+            "Update this test when new Error variants are added"
+        );
+    }
+
+    /// docs_url must be consistent with code() — both must use the same slug.
+    #[test]
+    fn docs_url_matches_code() {
+        use std::path::PathBuf;
+
+        let sample = Error::FileNotFound {
+            path: PathBuf::from("/tmp/x.pdf"),
+        };
+        let code = sample.code();
+        let url = sample.docs_url();
+        assert!(
+            url.ends_with(code),
+            "docs_url {url:?} must end with code {code:?}"
+        );
     }
 }

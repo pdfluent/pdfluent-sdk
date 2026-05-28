@@ -14,6 +14,7 @@ mod cmd_flatten;
 mod cmd_flatten_check;
 mod cmd_info;
 mod cmd_manpage;
+mod cmd_measure;
 mod cmd_render;
 mod cmd_sign;
 mod cmd_validate;
@@ -78,6 +79,14 @@ pub enum Commands {
         /// Write per-page layout metadata to JSON.
         #[arg(long, value_name = "PATH")]
         dump_layout: Option<PathBuf>,
+        /// XFA rendering policy for `flatten`: `saved-state` only (default).
+        /// `flatten` always applies the production SavedStateFaithful policy.
+        /// `fresh-merge` (FreshMergeExperimental) is experimental, opt-in, and
+        /// pending corpus-scale (D13) validation — it is rejected by `flatten`;
+        /// use `measure --policy fresh-merge` for experimental measurement.
+        /// No Adobe-parity claim.
+        #[arg(long, value_name = "POLICY", default_value = "saved-state")]
+        xfa_rendering_policy: String,
     },
     /// Flatten a PDF and print quality metrics comparing before and after.
     FlattenCheck {
@@ -86,6 +95,39 @@ pub enum Commands {
         /// Optional output path for the flattened PDF.
         #[arg(short, long)]
         output: Option<PathBuf>,
+    },
+    /// Measure one PDF under one XFA rendering policy and emit stable JSON
+    /// metrics for the D13 FreshMerge corpus measurement harness. Does not
+    /// change flatten behavior. Default policy is `saved-state`.
+    Measure {
+        /// Input PDF file.
+        #[arg(long)]
+        input: PathBuf,
+        /// Rendering policy: `saved-state` (default) or `fresh-merge`
+        /// (experimental, opt-in; pending corpus-scale D13 validation).
+        #[arg(long, value_name = "POLICY", default_value = "saved-state")]
+        policy: String,
+        /// Write measurement JSON to this path (else printed to stdout).
+        #[arg(long, value_name = "PATH")]
+        output_json: Option<PathBuf>,
+        /// Document identifier (defaults to the input filename stem).
+        #[arg(long, value_name = "ID")]
+        doc_id: Option<String>,
+        /// Oracle scope label: `full_document` | `first_n_pages` | `unknown`.
+        #[arg(long, value_name = "SCOPE", default_value = "unknown")]
+        oracle_scope: String,
+        /// Oracle provider label: `pdfrest` | `speedtest` | `none`.
+        #[arg(long, value_name = "PROVIDER", default_value = "none")]
+        provider: String,
+        /// Write the flattened PDF to this path (only if given).
+        #[arg(long, value_name = "PATH")]
+        output_pdf: Option<PathBuf>,
+        /// Never write a PDF, even if --output-pdf is set.
+        #[arg(long)]
+        no_write_output_pdf: bool,
+        /// Enable per-node XFA presence provenance trace on stderr.
+        #[arg(long)]
+        trace: bool,
     },
     /// Display PDF document information.
     Info {
@@ -193,10 +235,37 @@ fn run() -> Result<()> {
             input,
             output,
             dump_layout,
-        } => cmd_flatten::run(&input, &output, dump_layout.as_deref()),
+            xfa_rendering_policy,
+        } => cmd_flatten::run(
+            &input,
+            &output,
+            dump_layout.as_deref(),
+            &xfa_rendering_policy,
+        ),
         Commands::FlattenCheck { input, output } => {
             cmd_flatten_check::run(&input, output.as_deref())
         }
+        Commands::Measure {
+            input,
+            policy,
+            output_json,
+            doc_id,
+            oracle_scope,
+            provider,
+            output_pdf,
+            no_write_output_pdf,
+            trace,
+        } => cmd_measure::run(
+            &input,
+            &policy,
+            output_json.as_deref(),
+            doc_id.as_deref(),
+            &oracle_scope,
+            &provider,
+            output_pdf.as_deref(),
+            no_write_output_pdf,
+            trace,
+        ),
         Commands::Info { input, json } => cmd_info::run(&input, json),
         Commands::Validate {
             input,
@@ -212,37 +281,6 @@ fn run() -> Result<()> {
         Commands::Man => cmd_manpage::run(),
         Commands::Demo => cmd_demo::run(),
         Commands::DebugXfa { input, format } => cmd_debug_xfa::run(&input, format),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn flatten_parses_dump_layout_flag() {
-        let cli = Cli::parse_from([
-            "pdfluent",
-            "flatten",
-            "input.pdf",
-            "--output",
-            "output.pdf",
-            "--dump-layout",
-            "/tmp/layout.json",
-        ]);
-
-        match cli.command {
-            Commands::Flatten {
-                input,
-                output,
-                dump_layout,
-            } => {
-                assert_eq!(input, PathBuf::from("input.pdf"));
-                assert_eq!(output, PathBuf::from("output.pdf"));
-                assert_eq!(dump_layout, Some(PathBuf::from("/tmp/layout.json")));
-            }
-            _ => panic!("unexpected command"),
-        }
     }
 }
 
@@ -270,4 +308,96 @@ pub fn parse_page_list(s: &str, total: usize) -> Result<Vec<usize>> {
         }
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flatten_parses_dump_layout_flag() {
+        let cli = Cli::parse_from([
+            "pdfluent",
+            "flatten",
+            "input.pdf",
+            "--output",
+            "output.pdf",
+            "--dump-layout",
+            "/tmp/layout.json",
+        ]);
+
+        match cli.command {
+            Commands::Flatten {
+                input,
+                output,
+                dump_layout,
+                xfa_rendering_policy,
+            } => {
+                assert_eq!(input, PathBuf::from("input.pdf"));
+                assert_eq!(output, PathBuf::from("output.pdf"));
+                assert_eq!(dump_layout, Some(PathBuf::from("/tmp/layout.json")));
+                assert_eq!(xfa_rendering_policy, "saved-state");
+            }
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn measure_parses_with_defaults() {
+        let cli = Cli::parse_from(["pdfluent", "measure", "--input", "in.pdf"]);
+        match cli.command {
+            Commands::Measure {
+                input,
+                policy,
+                output_json,
+                output_pdf,
+                no_write_output_pdf,
+                provider,
+                oracle_scope,
+                ..
+            } => {
+                assert_eq!(input, PathBuf::from("in.pdf"));
+                // Default policy is saved-state; never fresh-merge by default.
+                assert_eq!(policy, "saved-state");
+                assert_eq!(output_json, None);
+                assert_eq!(output_pdf, None);
+                assert!(!no_write_output_pdf);
+                assert_eq!(provider, "none");
+                assert_eq!(oracle_scope, "unknown");
+            }
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn measure_parses_fresh_merge_and_flags() {
+        let cli = Cli::parse_from([
+            "pdfluent",
+            "measure",
+            "--input",
+            "in.pdf",
+            "--policy",
+            "fresh-merge",
+            "--output-json",
+            "/tmp/out.json",
+            "--doc-id",
+            "abc123",
+            "--no-write-output-pdf",
+        ]);
+        match cli.command {
+            Commands::Measure {
+                policy,
+                output_json,
+                doc_id,
+                no_write_output_pdf,
+                ..
+            } => {
+                assert_eq!(policy, "fresh-merge");
+                assert_eq!(output_json, Some(PathBuf::from("/tmp/out.json")));
+                assert_eq!(doc_id, Some("abc123".to_string()));
+                assert!(no_write_output_pdf);
+            }
+            _ => panic!("unexpected command"),
+        }
+    }
 }

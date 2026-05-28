@@ -62,7 +62,9 @@ impl Dictionary {
 /// Errors from dictionary operations.
 #[derive(Debug)]
 pub enum DictionaryError {
+    /// File I/O error while reading the character dictionary; contains the error description.
     Io(String),
+    /// The dictionary file has an unexpected format; contains the parse error description.
     Parse(String),
 }
 

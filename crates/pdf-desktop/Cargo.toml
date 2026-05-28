@@ -14,8 +14,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 image = { workspace = true }
 base64 = "0.22"
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.5" }
-pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.4" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.8" }
+pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.8" }
 lopdf = { workspace = true }
 
 [build-dependencies]

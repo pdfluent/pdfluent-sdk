@@ -2,7 +2,25 @@
 use crate::error::{Result, XfaError};
 use pdf_syntax::object::dict::keys::{ACRO_FORM, XFA};
 use pdf_syntax::object::{Array, Dict, Object, Stream};
-use pdf_syntax::Pdf;
+use pdf_syntax::{Filter, Pdf};
+
+/// Return `true` when a stream's filters indicate that it is an image or other
+/// binary blob that cannot contain XFA XML text.
+///
+/// XFA `<xdp:xdp>` packets are stored as plain XML (optionally `/FlateDecode`
+/// compressed). They are never wrapped with image codecs such as JPEG, JPEG
+/// 2000, JBIG2 or CCITT fax. Detecting these filters before invoking
+/// [`Stream::decoded`] avoids expensive image decoding during the XFA scan
+/// fallback (see PERF2-01: JPEG 2000 decode accounted for ~45% of wall-time
+/// on `edd_DE44.pdf`).
+fn is_image_only_stream(stream: &Stream<'_>) -> bool {
+    stream.filters().iter().any(|f| {
+        matches!(
+            f,
+            Filter::JpxDecode | Filter::DctDecode | Filter::Jbig2Decode | Filter::CcittFaxDecode
+        )
+    })
+}
 /// XfaPackets.
 
 #[derive(Debug, Clone, Default)]
@@ -45,10 +63,48 @@ impl XfaPackets {
         self.get_packet("localeSet")
     }
 }
+/// Outcome of probing the catalog/AcroForm structure for an XFA entry.
+///
+/// Distinguishes "AcroForm is readable but carries no XFA" from "the AcroForm
+/// structure itself was unreadable". This lets [`extract_xfa`] skip the
+/// expensive whole-document [`scan_for_xfa`] fallback when we can prove from
+/// the spec-compliant location (catalog → /AcroForm → /XFA, XFA 3.3 §3) that
+/// no XFA is present.
+///
+/// QF1-A (L-01 long-form hotspot): documents like California EDD `DE 44` carry
+/// `/AcroForm` (widget-based interactive form) without `/XFA`. The byte
+/// pre-check in `flatten_xfa_to_pdf_internal` (looking for `/AcroForm` or
+/// `xdp:xdp`) is permissive on purpose, so it falls through to
+/// `extract_xfa_from_bytes`, which previously had to walk every compressed
+/// object stream looking for `<xdp:xdp` before giving up (~775 ms / ~56 % of
+/// wall time on `edd_DE44.pdf`). With this probe we early-return
+/// [`XfaError::PacketNotFound`] for the pure-AcroForm case, leaving the
+/// `scan_for_xfa` fallback only for genuinely broken catalog/AcroForm
+/// structures.
+#[derive(Debug)]
+enum AcroformProbe {
+    /// AcroForm exists, has /XFA, and packets were successfully extracted.
+    XfaFound(XfaPackets),
+    /// Catalog read OK; no AcroForm dictionary in catalog. Per XFA 3.3 §3 the
+    /// XFA packets live inside the AcroForm dictionary, so no AcroForm =
+    /// no XFA. (A document MAY in principle carry an orphaned XFA stream
+    /// outside the spec layout; that pathology still hits the fallback via
+    /// [`AcroformProbe::Unreadable`] when the catalog itself fails.)
+    NoAcroform,
+    /// AcroForm exists and is readable, but the dictionary has no /XFA entry.
+    /// Spec-compliant pure-AcroForm form — `scan_for_xfa` would just burn
+    /// time walking every object stream and return PacketNotFound anyway.
+    AcroformNoXfa,
+    /// The catalog or AcroForm dictionary could not be read at all (truncated
+    /// PDF, repaired xref still broken, etc.). Fall through to the
+    /// best-effort whole-document scan.
+    Unreadable,
+}
+
 /// extract_xfa.
 pub fn extract_xfa(pdf: &Pdf) -> Result<XfaPackets> {
-    if let Some(mut p) = extract_xfa_from_acroform(pdf) {
-        if !p.packets.is_empty() || p.full_xml.is_some() {
+    match probe_acroform_for_xfa(pdf) {
+        AcroformProbe::XfaFound(mut p) => {
             // If the datasets packet is empty/tiny (common with incremental saves
             // where Adobe Reader writes a new datasets object but doesn't update
             // the XFA array reference), scan all objects for a larger one.
@@ -58,10 +114,52 @@ pub fn extract_xfa(pdf: &Pdf) -> Result<XfaPackets> {
                     p.packets.push(("datasets".to_string(), better_ds));
                 }
             }
-            return Ok(p);
+            Ok(p)
+        }
+        AcroformProbe::NoAcroform | AcroformProbe::AcroformNoXfa => {
+            // QF1-A: skip the expensive whole-document object scan. Per XFA 3.3 §3
+            // the XFA packets live inside the AcroForm dictionary, so a
+            // spec-compliant document without /AcroForm /XFA cannot carry XFA.
+            // The caller (`flatten_xfa_to_pdf_internal`) will route to
+            // `static_fallback`, preserving correctness while eliminating
+            // ~775 ms of wasted scan time on pure-AcroForm long-form docs like
+            // `edd_DE44.pdf`.
+            Err(XfaError::PacketNotFound("no XFA content found".to_string()))
+        }
+        AcroformProbe::Unreadable => {
+            // Best-effort fallback: the catalog/AcroForm structure could not be
+            // read, but the byte-level pre-check found XFA-like markers. Scan
+            // every non-image stream for a `<xdp:xdp` packet.
+            scan_for_xfa(pdf)
         }
     }
-    scan_for_xfa(pdf)
+}
+
+/// Probe the catalog/AcroForm structure for the presence of `/XFA`.
+///
+/// Returns the strongest outcome we can determine from a small number of
+/// xref hits, so [`extract_xfa`] can avoid the expensive whole-document
+/// fallback when we have positive evidence that no XFA can be present.
+fn probe_acroform_for_xfa(pdf: &Pdf) -> AcroformProbe {
+    let xref = pdf.xref();
+    let Some(catalog): Option<Dict<'_>> = xref.get(xref.root_id()) else {
+        return AcroformProbe::Unreadable;
+    };
+    let Some(acroform): Option<Dict<'_>> = catalog.get(ACRO_FORM) else {
+        return AcroformProbe::NoAcroform;
+    };
+    if let Some(stream) = acroform.get::<Stream<'_>>(XFA) {
+        if let Some(decoded) = decode_stream(&stream) {
+            return AcroformProbe::XfaFound(parse_xfa_xml(&decoded));
+        }
+        // /XFA stream object existed but could not be decoded — treat as
+        // unreadable so the scan fallback gets a chance.
+        return AcroformProbe::Unreadable;
+    }
+    if let Some(array) = acroform.get::<Array<'_>>(XFA) {
+        return AcroformProbe::XfaFound(extract_from_array(&array));
+    }
+    AcroformProbe::AcroformNoXfa
 }
 
 /// Scan all PDF stream objects for a datasets packet larger than `min_len`.
@@ -70,6 +168,10 @@ fn scan_for_datasets(pdf: &Pdf, min_len: usize) -> Option<String> {
     let mut best: Option<String> = None;
     for obj in pdf.objects() {
         if let Object::Stream(s) = obj {
+            // Skip image streams — they never contain XFA datasets XML.
+            if is_image_only_stream(&s) {
+                continue;
+            }
             if let Some(d) = decode_stream(&s) {
                 if d.len() > min_len
                     && d.contains("<xfa:datasets")
@@ -132,9 +234,18 @@ fn scan_for_xfa(pdf: &Pdf) -> Result<XfaPackets> {
     // Cap the number of streams we decompress to avoid multi-second stalls on
     // large non-XFA PDFs. XFA XDP streams are typically among the first few
     // hundred objects. If we haven't found one after 2000 streams, give up.
+    //
+    // PERF (PERF2-02): skip image streams (`/JPXDecode`, `/DCTDecode`,
+    // `/JBIG2Decode`, `/CCITTFaxDecode`) entirely. XFA packets are XML text
+    // wrapped at most by `/FlateDecode`; they never use image codecs. Decoding
+    // a JPEG 2000 image costs hundreds of milliseconds and dominated the
+    // wall-time on `edd_DE44.pdf` (PERF2-01 hotspot report).
     let mut streams_checked = 0u32;
     for obj in pdf.objects() {
         if let Object::Stream(s) = obj {
+            if is_image_only_stream(&s) {
+                continue;
+            }
             streams_checked += 1;
             if streams_checked > 2000 {
                 break;
@@ -292,8 +403,23 @@ pub fn validate_xfa_packets(packets: &XfaPackets) -> PacketValidation {
         warnings,
     }
 }
-/// extract_embedded_fonts.
 // ─── Embedded font extraction ────────────────────────────────────────────────
+
+/// Extract embedded font programs from a PDF parsed with pdf-syntax.
+///
+/// Returns a list of `(name, raw_font_bytes)` pairs for every `FontDescriptor`
+/// object that carries a `FontFile`, `FontFile2`, or `FontFile3` stream.
+///
+/// # Relationship to the flatten pipeline
+///
+/// The flattening pipeline (`crate::flatten`) uses a separate lopdf-based
+/// variant (internal, `#[doc(hidden)]`) that additionally captures `/Widths`
+/// arrays and encoding metadata needed for text measurement. That variant
+/// returns [`crate::font_bridge::EmbeddedFontData`] structs and is not part
+/// of the public extraction API.
+///
+/// Use this function when you only need the raw font bytes for inspection,
+/// subsetting, or external embedding outside the flatten pipeline.
 pub fn extract_embedded_fonts(pdf: &Pdf) -> Vec<(String, Vec<u8>)> {
     use pdf_syntax::object::dict::keys::{FONT_FILE, FONT_FILE2, FONT_FILE3, FONT_NAME, TYPE};
     use pdf_syntax::object::Name;

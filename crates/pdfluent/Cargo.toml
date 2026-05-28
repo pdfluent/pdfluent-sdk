@@ -1,15 +1,15 @@
 [package]
 name = "pdfluent"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 edition = "2021"
 rust-version = "1.75"
 authors = ["PDFluent Contributors <team@pdfluent.com>"]
 license-file = "LICENSE"
-repository = "https://github.com/pdfluent/examples"
+repository = "https://pdfluent.com/source"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 readme = "README.md"
-description = "Pure-Rust PDF SDK with XFA, PDF/A, digital signatures, and WASM support."
+description = "Pure-Rust PDF SDK with PDF/A, digital signatures, WASM, and experimental (feature-gated) XFA support."
 keywords = ["pdf", "sdk", "document", "forms", "signatures"]
 categories = ["text-processing", "rendering"]
 
@@ -40,12 +40,17 @@ tracing = ["dep:tracing"]
 # encrypt, permissions).
 # pdf-sign provides PAdES signing + signature validation.
 # pdf-redact provides content redaction (search + region).
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.5" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.8" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2", default-features = false }
-pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.5" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.5" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.5" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.5", optional = true }
+pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.8" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.8" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.8" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.8", optional = true }
+
+# Signed-payload activation: Ed25519 verification + payload parsing live
+# in the xfa-license crate. The umbrella consumes the verifier API only
+# (no signing key dependency at runtime).
+xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.8" }
 tokio = { version = "1", features = ["rt", "fs"], optional = true }
 tracing = { version = "0.1", optional = true }
 
@@ -54,8 +59,8 @@ tracing = { version = "0.1", optional = true }
 # vello stacks we do not compile on wasm32. On wasm32 the methods
 # surface as [`Error::UnsupportedOnWasm`].
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-pdf-docx = { path = "../pdf-docx", version = "=1.0.0-beta.5" }
-pdf-render = { path = "../pdf-render", version = "=1.0.0-beta.5" }
+pdf-docx = { path = "../pdf-docx", version = "=1.0.0-beta.8" }
+pdf-render = { path = "../pdf-render", version = "=1.0.0-beta.8" }
 # Image encoding for `to_images` — PNG via the `png` crate, JPEG via
 # `image`'s JpegEncoder. Both are already transitively present via
 # `pdf-render`; we pin direct versions so the `to_images` code is
@@ -78,6 +83,12 @@ getrandom = { version = "0.2", features = ["js"] }
 # for every field-type permutation.
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2", default-features = false }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+# Signed-payload tests need the `signing` feature of xfa-license so the
+# integration test can build test fixtures (keypair generation + payload
+# signing) at runtime, in-memory, without committing private key bytes
+# to the repo.
+xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.8", features = ["signing"] }
 
 [[bench]]
 name = "facade"

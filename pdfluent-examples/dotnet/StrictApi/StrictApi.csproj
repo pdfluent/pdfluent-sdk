@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+
+    <!--
+      PDFLUENT_TEXT_EDITING guards operations not yet available in the
+      .NET binding (form field write, annotation add, style queries).
+      Remove this constant once those APIs are released.
+    -->
+    <!-- <DefineConstants>PDFLUENT_TEXT_EDITING</DefineConstants> -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Reference the local source tree during development.
+         In production, replace with:
+         <PackageReference Include="PDFluent" Version="1.0.0-beta.8" /> -->
+    <ProjectReference Include="..\..\..\bindings\dotnet\src\PDFluent\PDFluent.csproj" />
+  </ItemGroup>
+</Project>

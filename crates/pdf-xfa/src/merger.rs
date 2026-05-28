@@ -172,25 +172,60 @@ impl<'a> FormMerger<'a> {
             match child.tag_name().name() {
                 "variables" => {
                     for var_child in child.children().filter(|n| n.is_element()) {
-                        if var_child.tag_name().name() != "script" {
-                            continue;
+                        match var_child.tag_name().name() {
+                            "script" => {
+                                let Some(name) = attr(var_child, "name") else {
+                                    continue;
+                                };
+                                let body: String = var_child
+                                    .children()
+                                    .filter(|n| n.is_text())
+                                    .filter_map(|n| n.text())
+                                    .collect::<String>();
+                                if body.trim().is_empty() {
+                                    continue;
+                                }
+                                self.form_tree.variables_scripts.push((
+                                    subform_scope.clone(),
+                                    name.to_string(),
+                                    body,
+                                ));
+                            }
+                            // W3-D RETRY: XFA 3.3 §5.5.2 — `<variables>` may
+                            // contain `<text name="X">value</text>` data items
+                            // alongside `<script>` blocks. Adobe Reader
+                            // exposes these to event scripts as form-level
+                            // mutable string containers (`X.value` reads /
+                            // writes the data item). Canonical residual:
+                            // IMM5709/IMM5257/IMM5710 declare
+                            // `<text name="globValidatePressed"/>` and event
+                            // scripts call `globValidatePressed.value = "true";`.
+                            // Pre-fix this surfaced as the post-W2-B
+                            // `implicit_function` cluster residual.
+                            //
+                            // We treat an absent / whitespace-only body as
+                            // the empty string (per spec, an empty `<text/>`
+                            // is a valid empty data item).
+                            "text" => {
+                                let Some(name) = attr(var_child, "name") else {
+                                    continue;
+                                };
+                                if name.is_empty() {
+                                    continue;
+                                }
+                                let initial: String = var_child
+                                    .children()
+                                    .filter(|n| n.is_text())
+                                    .filter_map(|n| n.text())
+                                    .collect::<String>();
+                                self.form_tree.variables_data_items.push((
+                                    subform_scope.clone(),
+                                    name.to_string(),
+                                    initial,
+                                ));
+                            }
+                            _ => {}
                         }
-                        let Some(name) = attr(var_child, "name") else {
-                            continue;
-                        };
-                        let body: String = var_child
-                            .children()
-                            .filter(|n| n.is_text())
-                            .filter_map(|n| n.text())
-                            .collect::<String>();
-                        if body.trim().is_empty() {
-                            continue;
-                        }
-                        self.form_tree.variables_scripts.push((
-                            subform_scope.clone(),
-                            name.to_string(),
-                            body,
-                        ));
                     }
                 }
                 "subform" | "area" | "exclGroup" => {
@@ -453,6 +488,11 @@ impl<'a> FormMerger<'a> {
         // may add more.
         let (_bind_ref_unused, bind_none) = parse_bind(element);
         if bind_none {
+            // Diagnostic (read-only, env-gated; no behavior change). See milestone
+            // XFA_LAYOUT_INSTANCE_EXPANSION_PARITY.
+            if std::env::var_os("XFA_IE_TRACE").is_some() {
+                eprintln!("XFA_IE_TRACE expand name={name:?} bind=none data_count=0 -> count=1 (script-instanceManager-only)");
+            }
             return Ok(vec![self.parse_node(element, data_context, is_root)?]);
         }
 
@@ -494,7 +534,34 @@ impl<'a> FormMerger<'a> {
         let data_count = data_instances.len() as u32;
         let min = occur.min;
         let max = occur.max.unwrap_or(data_count).max(min);
-        let count = data_count.clamp(min, max);
+        // XFA Spec 3.3 §7.2.18 (occur) + §9.2 (Variable Number of Subforms):
+        //   `min`     — minimum instance count after data binding.
+        //   `max`     — maximum allowed (data records exceeding this are dropped).
+        //   `initial` — instance count when the subform is rendered WITHOUT a
+        //               backing data record (defaults to `min`).
+        //
+        // When data records exist, data binding wins: `count = clamp(data_count, min, max)`.
+        // When no data records exist, render `initial` instances (which is
+        // already raised to `min` by `Occur::repeating`), clamped to `max`.
+        //
+        // This affects only subforms that explicitly set `initial > min` and
+        // have no datasets-bound records; documents that rely on `initial==min`
+        // (the default) keep their current behaviour.
+        let count = if data_count == 0 {
+            occur.initial.min(max)
+        } else {
+            data_count.clamp(min, max)
+        };
+
+        // Diagnostic (read-only, env-gated; no behavior change). See milestone
+        // XFA_LAYOUT_INSTANCE_EXPANSION_PARITY.
+        if std::env::var_os("XFA_IE_TRACE").is_some() {
+            let bind_kind = if bind_ref.is_some() { "ref" } else { "byname" };
+            eprintln!(
+                "XFA_IE_TRACE expand name={name:?} bind={bind_kind} data_count={data_count} occur(min={},max={:?},initial={}) -> count={count}",
+                min, occur.max, occur.initial
+            );
+        }
 
         let layout = area_layout(element);
         let bm = parse_box_model(element);
@@ -4064,5 +4131,150 @@ mod tests {
             }
             _ => panic!("city should be a field"),
         }
+    }
+
+    // ─── XFA §7.2.18 / §9.2: occur `initial`/`min`/`max` semantics ────────────
+    //
+    // These regression tests pin the spec-correct interaction between `occur`
+    // and data binding:
+    //   - data records present → bind drives count, clamped to [min, max];
+    //   - no data records      → render `initial` instances, clamped to max.
+    //
+    // The third test guards against regression on the dominant authoring
+    // pattern (`initial==min`, default), where the empty-data path must keep
+    // producing exactly `min` instances.
+
+    /// XFA §7.2.18 + §9.2: data binding wins over `initial` when records exist.
+    /// `occur initial=2 max=10` with 3 datasets records → 3 instances.
+    #[test]
+    fn occur_initial_yields_to_data_binding_when_records_exist() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <subform name="Row" layout="position" w="200pt" h="20pt">
+      <occur min="0" max="10" initial="2"/>
+      <field name="Item" w="100pt" h="20pt" x="0pt" y="0pt"/>
+    </subform>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form1>
+      <Row><Item>A</Item></Row>
+      <Row><Item>B</Item></Row>
+      <Row><Item>C</Item></Row>
+    </form1>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let rows: Vec<_> = tree.nodes.iter().filter(|n| n.name == "Row").collect();
+        assert_eq!(
+            rows.len(),
+            3,
+            "data binding must win over occur.initial when records exist"
+        );
+    }
+
+    /// XFA §7.2.18 + §9.2: `initial` drives instance count when no data
+    /// records exist. `occur initial=5 max=10` with 0 records → 5 instances.
+    #[test]
+    fn occur_initial_drives_count_when_no_data_records() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <subform name="Row" layout="position" w="200pt" h="20pt">
+      <occur min="0" max="10" initial="5"/>
+      <field name="Item" w="100pt" h="20pt" x="0pt" y="0pt"/>
+    </subform>
+  </subform>
+</template>"#;
+
+        // No datasets payload — initial must be honoured.
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form1/>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let rows: Vec<_> = tree.nodes.iter().filter(|n| n.name == "Row").collect();
+        assert_eq!(
+            rows.len(),
+            5,
+            "occur.initial must drive instance count when no data records bind"
+        );
+    }
+
+    /// XFA §7.2.18 + §9.2: default `initial==min` path is unchanged — a
+    /// subform with `min=0` and no records still produces a single
+    /// zero-instance skeleton (presence=Hidden) so `parent._<name>` resolves.
+    #[test]
+    fn occur_default_initial_keeps_zero_instance_skeleton_when_no_data() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <subform name="Row" layout="position" w="200pt" h="20pt">
+      <occur min="0" max="10"/>
+      <field name="Item" w="100pt" h="20pt" x="0pt" y="0pt"/>
+    </subform>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form1/>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let rows: Vec<_> = tree.nodes.iter().filter(|n| n.name == "Row").collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "default initial==min path must keep producing a single zero-instance skeleton"
+        );
+        // The skeleton must remain hidden (regression guard for the
+        // `_<name>` InstanceManager handle behaviour).
+        let row_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "Row")
+            .map(|(i, _)| FormNodeId(i))
+            .unwrap();
+        assert_eq!(tree.meta(row_id).presence, Presence::Hidden);
+        assert!(tree.meta(row_id).is_zero_instance_prototype);
     }
 }

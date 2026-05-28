@@ -1,0 +1,108 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "xfa_visual_evidence_schema.json",
+  "title": "XFA Visual Evidence Result",
+  "description": "Output schema for scripts/xfa_visual_evidence.py. Zero paid API calls — existing oracle artifacts only.",
+  "type": "object",
+  "required": ["doc_sha256", "doc_filename", "oracle_path", "per_page", "aggregate"],
+  "additionalProperties": false,
+  "properties": {
+    "doc_sha256": {
+      "type": "string",
+      "description": "SHA-256 hex digest of the input PDF document.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "doc_filename": {
+      "type": "string",
+      "description": "Basename of the input PDF document.",
+      "minLength": 1
+    },
+    "oracle_path": {
+      "type": "string",
+      "description": "Filesystem path to the oracle PNG or PDF used for comparison.",
+      "minLength": 1
+    },
+    "dry_run": {
+      "type": "boolean",
+      "description": "Whether this result was produced in dry-run mode (no outputs written).",
+      "default": true
+    },
+    "oracle_coverage_gap": {
+      "type": "boolean",
+      "description": "Set to true when no oracle artifact exists for this doc. SSIM scores are absent.",
+      "default": false
+    },
+    "gap_reason": {
+      "type": "string",
+      "description": "Human-readable explanation of oracle coverage gap (if oracle_coverage_gap is true)."
+    },
+    "per_page": {
+      "type": "array",
+      "description": "Per-page SSIM scores and output image paths.",
+      "items": {
+        "type": "object",
+        "required": ["page_index", "ssim", "image_paths"],
+        "additionalProperties": false,
+        "properties": {
+          "page_index": {
+            "type": "integer",
+            "description": "Zero-based page index.",
+            "minimum": 0
+          },
+          "ssim": {
+            "type": "number",
+            "description": "SSIM score for this page in range [0, 1]. Higher is more similar.",
+            "minimum": -1.0,
+            "maximum": 1.0
+          },
+          "image_paths": {
+            "type": "object",
+            "required": ["ours", "oracle", "diff"],
+            "additionalProperties": false,
+            "properties": {
+              "ours": {
+                "type": "string",
+                "description": "Path to PNG of our rendered page."
+              },
+              "oracle": {
+                "type": "string",
+                "description": "Path to PNG of oracle rendered page."
+              },
+              "diff": {
+                "type": "string",
+                "description": "Path to 3-panel heatmap PNG (ours/oracle/abs-diff)."
+              }
+            }
+          }
+        }
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "description": "Aggregate statistics across all compared pages.",
+      "required": ["mean_ssim", "min_ssim", "max_ssim", "page_count"],
+      "additionalProperties": false,
+      "properties": {
+        "mean_ssim": {
+          "type": ["number", "null"],
+          "description": "Mean SSIM across all pages. Null in dry-run or gap mode.",
+          "minimum": -1.0,
+          "maximum": 1.0
+        },
+        "min_ssim": {
+          "type": ["number", "null"],
+          "description": "Minimum SSIM across all pages. Null in dry-run or gap mode."
+        },
+        "max_ssim": {
+          "type": ["number", "null"],
+          "description": "Maximum SSIM across all pages. Null in dry-run or gap mode."
+        },
+        "page_count": {
+          "type": "integer",
+          "description": "Number of pages compared (0 in dry-run or gap mode).",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

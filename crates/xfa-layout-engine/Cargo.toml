@@ -1,6 +1,6 @@
 [package]
 name = "xfa-layout-engine"
-version = "1.0.0-beta.5"
+version = "1.0.0-beta.8"
 edition.workspace = true
 license-file = "LICENSE"
 readme = "README.md"
@@ -14,3 +14,6 @@ xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
 thiserror.workspace = true
 log = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+xfa-js-sandboxed.workspace = true

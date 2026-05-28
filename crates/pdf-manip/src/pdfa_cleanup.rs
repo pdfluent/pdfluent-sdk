@@ -978,6 +978,7 @@ fn fix_optional_content(doc: &mut Document) -> usize {
         return count;
     }
 
+    // SAFETY: the `ocprops_id.is_none()` branch returns early before this point.
     let ocprops_id = ocprops_id.expect("ocprops_id.is_none() branch returns above");
 
     // Get OCGs list for Order fixing.
@@ -5029,13 +5030,17 @@ fn truncate_long_strings_in_content(content: &[u8]) -> Vec<u8> {
             while i < content.len() && content[i] != b'>' {
                 i += 1;
             }
-            i += 1;
+            if i < content.len() {
+                i += 1; // skip past '>'
+            }
             let str_len = i - start;
             if str_len > MAX_STRING_LEN * 2 {
-                result.extend_from_slice(&content[start..start + MAX_STRING_LEN * 2]);
+                result.extend_from_slice(
+                    &content[start..(start + MAX_STRING_LEN * 2).min(content.len())],
+                );
                 result.push(b'>');
             } else {
-                result.extend_from_slice(&content[start..i]);
+                result.extend_from_slice(&content[start..i.min(content.len())]);
             }
         } else {
             result.push(content[i]);
@@ -5140,7 +5145,7 @@ fn fix_lang_in_content_stream(content: &[u8]) -> Vec<u8> {
                 i += 1;
             }
 
-            if content[i] == b'/' {
+            if i < content.len() && content[i] == b'/' {
                 let name_start = i;
                 i += 1;
                 while i < content.len()
@@ -5163,14 +5168,18 @@ fn fix_lang_in_content_stream(content: &[u8]) -> Vec<u8> {
                         i += 1;
                     }
 
-                    if content[i] == b'(' {
+                    if i < content.len() && content[i] == b'(' {
                         let str_start = i;
                         i += 1;
                         while i < content.len() && content[i] != b')' {
                             i += 1;
                         }
-                        i += 1;
-                        let lang = &content[str_start + 1..i - 1];
+                        if i < content.len() {
+                            i += 1; // skip past ')'
+                        }
+                        let lang_end = i.min(content.len());
+                        let lang =
+                            &content[str_start + 1..lang_end.saturating_sub(1).max(str_start + 1)];
                         let lang_str = String::from_utf8_lossy(lang);
 
                         if !is_valid_bcp47(&lang_str) {
@@ -5184,7 +5193,7 @@ fn fix_lang_in_content_stream(content: &[u8]) -> Vec<u8> {
                                 result.push(b')');
                             }
                         } else {
-                            result.extend_from_slice(&content[str_start..i]);
+                            result.extend_from_slice(&content[str_start..lang_end]);
                         }
                     } else {
                         // Not a string after /Lang, just emit as-is
@@ -5664,6 +5673,41 @@ fn normalize_date_for_xmp(date: &str) -> String {
     cleaned.to_string()
 }
 
+/// Ensure 'xref' and 'startxref' keywords are followed by proper EOL (§6.1.4).
+fn fix_xref_eol(data: &mut Vec<u8>) {
+    // 1. Fix 'xref' keyword.
+    if let Some(pos) = find_last(data, b"xref") {
+        // Check if standalone 'xref' (not part of 'startxref').
+        if pos == 0 || data[pos - 1].is_ascii_whitespace() {
+            let next = pos + 4;
+            if next < data.len() && data[next] == b' ' {
+                // Remove trailing spaces after 'xref' before EOL.
+                let mut end = next;
+                while end < data.len() && data[end] == b' ' {
+                    end += 1;
+                }
+                if end > next {
+                    data.drain(next..end);
+                }
+            }
+        }
+    }
+
+    // 2. Fix 'startxref' keyword.
+    if let Some(pos) = find_last(data, b"startxref") {
+        let next = pos + 9;
+        if next < data.len() && data[next] == b' ' {
+            let mut end = next;
+            while end < data.len() && data[end] == b' ' {
+                end += 1;
+            }
+            if end > next {
+                data.drain(next..end);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5866,8 +5910,7 @@ mod tests {
     #[test]
     fn test_remove_encryption() {
         let mut doc = make_basic_doc();
-        doc.trailer
-            .set("Encrypt", Object::Reference((99, 0).into()));
+        doc.trailer.set("Encrypt", Object::Reference((99, 0)));
 
         assert!(remove_encryption(&mut doc));
         assert!(!doc.trailer.has(b"Encrypt"));
@@ -5971,7 +6014,7 @@ mod tests {
         let mut doc = make_basic_doc();
         // Annotation with AP dict that has /D but no /N.
         let ap = dictionary! {
-            "D" => Object::Reference((99, 0).into()),
+            "D" => Object::Reference((99, 0)),
         };
         let annot = dictionary! {
             "Subtype" => Object::Name(b"Stamp".to_vec()),
@@ -6278,40 +6321,5 @@ mod tests {
         let mut data = b"%PDF-2.0\ntest".to_vec();
         fix_pdf_header(&mut data);
         assert!(data.starts_with(b"%PDF-1.7"));
-    }
-}
-
-/// Ensure 'xref' and 'startxref' keywords are followed by proper EOL (§6.1.4).
-fn fix_xref_eol(data: &mut Vec<u8>) {
-    // 1. Fix 'xref' keyword.
-    if let Some(pos) = find_last(data, b"xref") {
-        // Check if standalone 'xref' (not part of 'startxref').
-        if pos == 0 || data[pos - 1].is_ascii_whitespace() {
-            let next = pos + 4;
-            if next < data.len() && data[next] == b' ' {
-                // Remove trailing spaces after 'xref' before EOL.
-                let mut end = next;
-                while end < data.len() && data[end] == b' ' {
-                    end += 1;
-                }
-                if end > next {
-                    data.drain(next..end);
-                }
-            }
-        }
-    }
-
-    // 2. Fix 'startxref' keyword.
-    if let Some(pos) = find_last(data, b"startxref") {
-        let next = pos + 9;
-        if next < data.len() && data[next] == b' ' {
-            let mut end = next;
-            while end < data.len() && data[end] == b' ' {
-                end += 1;
-            }
-            if end > next {
-                data.drain(next..end);
-            }
-        }
     }
 }

@@ -262,4 +262,42 @@ if (PdfDocument) {
     const pages = doc.searchText('the');
     expect(Array.isArray(pages)).toBe(true);
   });
+
+  // ── Capability-matrix parity smokes (GAP-001 + GAP-002) ───────────────────
+
+  test('parity: doc.thumbnail returns RenderResult with width/height/data', async () => {
+    const doc = loadPdf(SAMPLE_PDF);
+    const thumb = await doc.thumbnail(0, 256);
+    expect(thumb.width).toBeGreaterThan(0);
+    expect(thumb.height).toBeGreaterThan(0);
+    expect(thumb.data.length).toBe(thumb.width * thumb.height * 4);
+    // maxDimension cap: at least one side must be ≤ 256
+    expect(Math.max(thumb.width, thumb.height)).toBeLessThanOrEqual(256);
+  });
+
+  test('parity: page.thumbnail respects maxDimension', async () => {
+    const doc = loadPdf(SAMPLE_PDF);
+    const page = doc.page(0);
+    const thumb = await page.thumbnail(128);
+    expect(thumb.width).toBeGreaterThan(0);
+    expect(thumb.height).toBeGreaterThan(0);
+    expect(Math.max(thumb.width, thumb.height)).toBeLessThanOrEqual(128);
+  });
+
+  test('parity: extractTextBlocks returns array of {text, spans:[{x,y,...}]}', () => {
+    const doc = loadPdf(SAMPLE_PDF);
+    const blocks = doc.extractTextBlocks(0);
+    expect(Array.isArray(blocks)).toBe(true);
+    if (blocks.length > 0) {
+      const b = blocks[0];
+      expect(typeof b.text).toBe('string');
+      expect(Array.isArray(b.spans)).toBe(true);
+      if (b.spans.length > 0) {
+        const s = b.spans[0];
+        expect(typeof s.text).toBe('string');
+        expect(typeof s.x).toBe('number');
+        expect(typeof s.y).toBe('number');
+      }
+    }
+  });
 }

@@ -41,9 +41,7 @@ pub fn collect(url_file: &Path, output_dir: &Path, limit: Option<usize>) -> anyh
     fs::create_dir_all(output_dir)?;
 
     let client = reqwest::blocking::ClientBuilder::new()
-        .user_agent(
-            "xfa-collector/0.1 (XFA research; https://github.com/jasperdew/xfa-native-rust)",
-        )
+        .user_agent("xfa-collector/0.1 (PDFluent XFA research)")
         .timeout(std::time::Duration::from_secs(60))
         .build()?;
 

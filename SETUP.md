@@ -25,8 +25,8 @@ Optional tools for specific parts of the workspace:
 ## Clone + Initial Build
 
 ```sh
-git clone https://github.com/pdfluent/pdfluent-sdk.git
-cd pdfluent-sdk
+git clone https://github.com/pdfluent/PDFluent-project.git pdfluent
+cd pdfluent
 cargo build --workspace
 ```
 

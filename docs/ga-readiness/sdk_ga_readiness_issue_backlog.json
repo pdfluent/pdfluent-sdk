@@ -1,0 +1,1571 @@
+{
+  "milestone": "SDK_GA_READINESS_3D_AUDIT_AND_ROADMAP",
+  "date": "2026-05-20",
+  "note": "Concrete issues for the first three milestones (A=DX, B=Quality, C=Performance). Planning artifact; no issue executed in this milestone.",
+  "counts": {
+    "DX": 12,
+    "Quality": 15,
+    "Performance": 15,
+    "total": 42
+  },
+  "issues": [
+    {
+      "id": "GA-DX-001",
+      "title": "Per-language 5-minute quickstart pages",
+      "axis": "DX",
+      "milestone": "A",
+      "type": "docs",
+      "scope_in": [
+        "one quickstart page per language: rust,c,wasm,node,python,dotnet,java",
+        "each ends in a verified printed output"
+      ],
+      "scope_out": [
+        "deep tutorials",
+        "XFA examples"
+      ],
+      "inputs": [
+        "pdfluent-examples/*",
+        "GOLDEN_PATH_REVALIDATION_REPORT.md"
+      ],
+      "deliverables": [
+        "7 quickstart pages",
+        "each snippet registered with the docs example checker"
+      ],
+      "acceptance_criteria": [
+        "a cold dev reaches output in <=5 steps",
+        "every snippet compiled/run in CI"
+      ],
+      "gates": [
+        "check_examples_and_snippets.py (expanded)"
+      ],
+      "stop_conditions": [
+        "a quickstart cannot reach output on a clean env"
+      ],
+      "dependencies": [
+        "GA-DX-012"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "all 7 pages exist, snippets CI-verified, checker green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_dx_100/GA-DX-001_quickstarts.md"
+    },
+    {
+      "id": "GA-DX-002",
+      "title": "Install instructions per package/channel + name consistency",
+      "axis": "DX",
+      "milestone": "A",
+      "type": "docs",
+      "scope_in": [
+        "install command per channel (crates.io,npm,PyPI,NuGet,Maven,C-ABI tarball)",
+        "package-name consistency vs GitLab migration"
+      ],
+      "scope_out": [
+        "actual publishing (Milestone D)"
+      ],
+      "inputs": [
+        "audit-all-packages.sh",
+        "release scripts"
+      ],
+      "deliverables": [
+        "install doc per channel",
+        "package-name consistency report"
+      ],
+      "acceptance_criteria": [
+        "each install line resolves the audited package name",
+        "no stale npm/crate names"
+      ],
+      "gates": [
+        "audit-all-packages.sh --dry-run",
+        "name-consistency check"
+      ],
+      "stop_conditions": [
+        "a package name mismatch is found (record, hand to D, do not fake)"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "install docs match audited names; consistency report green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_dx_100/GA-DX-002_install.md"
+    },
+    {
+      "id": "GA-DX-003",
+      "title": "All docs snippets compiled/run in CI",
+      "axis": "DX",
+      "milestone": "A",
+      "type": "test",
+      "scope_in": [
+        "every fenced code block in quickstart+cookbook compiled or marked no-run+reason"
+      ],
+      "scope_out": [
+        "XFA snippets"
+      ],
+      "inputs": [
+        "docs/cookbook",
+        "COOKBOOK_EXAMPLES_DRIFT_MATRIX.json"
+      ],
+      "deliverables": [
+        "snippet extraction+compile harness",
+        "no-run annotations where justified"
+      ],
+      "acceptance_criteria": [
+        "100% of snippets either compiled/run or explicitly no-run"
+      ],
+      "gates": [
+        "check_examples_and_snippets.py (full scope)"
+      ],
+      "stop_conditions": [
+        "a snippet neither compiles nor is justified no-run"
+      ],
+      "dependencies": [
+        "GA-DX-012"
+      ],
+      "can_run_in_parallel": "no",
+      "merge_allowed": "yes",
+      "done_definition": "checker covers all snippets and is green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_dx_100/GA-DX-003_snippets.md"
+    },
+    {
+      "id": "GA-DX-004",
+      "title": "Binding API naming/ergonomic consistency doc",
+      "axis": "DX",
+      "milestone": "A",
+      "type": "docs",
+      "scope_in": [
+        "document naming convention per language",
+        "document the 19 intentionally_unsupported per binding"
+      ],
+      "scope_out": [
+        "adding new APIs"
+      ],
+      "inputs": [
+        "check_binding_api_parity.py"
+      ],
+      "deliverables": [
+        "convention doc",
+        "per-binding unsupported-list doc"
+      ],
+      "acceptance_criteria": [
+        "every binding follows its documented convention",
+        "all 19 unsupported documented"
+      ],
+      "gates": [
+        "check_binding_api_parity.py"
+      ],
+      "stop_conditions": [
+        "an undocumented divergence is found"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "convention + unsupported docs published; parity still green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_dx_100/GA-DX-004_consistency.md"
+    },
+    {
+      "id": "GA-DX-005",
+      "title": "Error-message actionability + cross-binding code audit",
+      "axis": "DX",
+      "milestone": "A",
+      "type": "report",
+      "scope_in": [
+        "audit each Error variant message for actionability",
+        "confirm catalogue completeness"
+      ],
+      "scope_out": [
+        "per-binding mapping tests (QR-11)"
+      ],
+      "inputs": [
+        "error_codes_stable.rs",
+        "docs/error_catalogue.md"
+      ],
+      "deliverables": [
+        "message-quality report",
+        "catalogue completeness confirmation"
+      ],
+      "acceptance_criteria": [
+        "every variant has an actionable message + catalogue entry"
+      ],
+      "gates": [
+        "error_codes_stable.rs",
+        "error_catalogue_sync.sh"
+      ],
+      "stop_conditions": [
+        "a variant lacks a catalogue entry or actionable message"
+      ],
+      "dependencies": [
+        "GA-QR-011"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "catalogue complete; messages reviewed; sync gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_dx_100/GA-DX-005_error_dx.md"
+    },
+    {
+      "id": "GA-DX-006",
+      "title": "License activate/deactivate/status UX docs + example",
+      "axis": "DX",
+      "milestone": "A",
+      "type": "docs",
+      "scope_in": [
+        "documented flow per binding",
+        "runnable example",
+        "offline/expired/invalid messaging"
+      ],
+      "scope_out": [
+        "license server internals"
+      ],
+      "inputs": [
+        "check_license_e2e_parity.py",
+        "docs/licensing.md"
+      ],
+      "deliverables": [
+        "license UX doc per binding",
+        "runnable activation example"
+      ],
+      "acceptance_criteria": [
+        "a dev can activate/deactivate/check status from docs alone"
+      ],
+      "gates": [
+        "check_license_e2e_parity.py",
+        "example checker"
+      ],
+      "stop_conditions": [
+        "a documented flow does not run"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "UX docs + example run; parity green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_dx_100/GA-DX-006_license_ux.md"
+    },
+    {
+      "id": "GA-DX-007",
+      "title": "Consolidated troubleshooting guide",
+      "axis": "DX",
+      "milestone": "A",
+      "type": "docs",
+      "scope_in": [
+        "symptom->cause->fix for common failures (native lib, features, password, WASM init, license)"
+      ],
+      "scope_out": [
+        "exhaustive error reference (catalogue covers that)"
+      ],
+      "inputs": [
+        "docs/error_catalogue.md"
+      ],
+      "deliverables": [
+        "one troubleshooting page cross-linked to error codes"
+      ],
+      "acceptance_criteria": [
+        "covers the top failure classes; links resolve"
+      ],
+      "gates": [
+        "link-check"
+      ],
+      "stop_conditions": [],
+      "dependencies": [
+        "GA-DX-005"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "troubleshooting page published, links valid",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_dx_100/GA-DX-007_troubleshooting.md"
+    },
+    {
+      "id": "GA-DX-008",
+      "title": "API reference completeness + missing_docs lint",
+      "axis": "DX",
+      "milestone": "A",
+      "type": "test",
+      "scope_in": [
+        "enable missing_docs (or equivalent) on public crates",
+        "per-binding reference presence"
+      ],
+      "scope_out": [
+        "private items"
+      ],
+      "inputs": [
+        "docs/en/api-reference.md",
+        "rustdoc"
+      ],
+      "deliverables": [
+        "missing_docs lint enabled",
+        "generated reference per binding"
+      ],
+      "acceptance_criteria": [
+        "cargo doc warns->errors on missing public docs; reference builds"
+      ],
+      "gates": [
+        "cargo doc (deny missing_docs)"
+      ],
+      "stop_conditions": [
+        "a public item is undocumented and cannot be quickly documented"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "missing_docs enforced; references generated",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_dx_100/GA-DX-008_api_ref.md"
+    },
+    {
+      "id": "GA-DX-009",
+      "title": "Public feature matrix <-> internal capability matrix consistency",
+      "axis": "DX",
+      "milestone": "A",
+      "type": "test",
+      "scope_in": [
+        "cross-check public/website feature matrix vs CORE_PDF_SDK_CAPABILITY_MATRIX",
+        "XFA naming/claims overlap"
+      ],
+      "scope_out": [
+        "changing capabilities"
+      ],
+      "inputs": [
+        "CORE_PDF_SDK_CAPABILITY_MATRIX.json",
+        "public docs/site matrix"
+      ],
+      "deliverables": [
+        "consistency checker",
+        "corrected public matrix"
+      ],
+      "acceptance_criteria": [
+        "no public feature claim without a matrix-backed row"
+      ],
+      "gates": [
+        "check_core_pdf_sdk_quality.py",
+        "new consistency check"
+      ],
+      "stop_conditions": [
+        "a public claim has no matrix backing (downgrade claim, do not fake)"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "public matrix matches internal; checker green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_dx_100/GA-DX-009_feature_matrix.md"
+    },
+    {
+      "id": "GA-DX-010",
+      "title": "CHANGELOG + semver/breaking-change policy + migration notes",
+      "axis": "DX",
+      "milestone": "A",
+      "type": "docs",
+      "scope_in": [
+        "CHANGELOG for the v1 line",
+        "semver policy",
+        "migration notes for pre-GA API moves"
+      ],
+      "scope_out": [
+        "future roadmap"
+      ],
+      "inputs": [
+        "fase-*-decisions",
+        "closure reports"
+      ],
+      "deliverables": [
+        "CHANGELOG.md",
+        "versioning policy doc"
+      ],
+      "acceptance_criteria": [
+        "every pre-GA API move has a migration note; policy documented"
+      ],
+      "gates": [
+        "docs presence"
+      ],
+      "stop_conditions": [],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "changelog + policy + migration notes published",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_dx_100/GA-DX-010_changelog.md"
+    },
+    {
+      "id": "GA-DX-011",
+      "title": "Consumer-style first-run smoke per binding",
+      "axis": "DX",
+      "milestone": "A",
+      "type": "test",
+      "scope_in": [
+        "per binding: a project that depends on the (local) artifact and runs one op"
+      ],
+      "scope_out": [
+        "publishing (D)"
+      ],
+      "inputs": [
+        "capability matrix bindings_non_xfa_smoke",
+        "WASM Node runtime proof"
+      ],
+      "deliverables": [
+        "7 consumer smokes (rust,c,wasm,node,python,dotnet,java)"
+      ],
+      "acceptance_criteria": [
+        "each consumes the artifact and asserts correct output"
+      ],
+      "gates": [
+        "per-binding consumer smoke in CI"
+      ],
+      "stop_conditions": [
+        "a binding cannot be consumed as a dependency"
+      ],
+      "dependencies": [
+        "GA-DX-002"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "all consumer smokes green in CI",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_dx_100/GA-DX-011_first_run.md"
+    },
+    {
+      "id": "GA-DX-012",
+      "title": "Expand docs drift checker scope + CI-enforce",
+      "axis": "DX",
+      "milestone": "A",
+      "type": "harness",
+      "scope_in": [
+        "expand checker to snippets+feature-matrix+install+error-catalogue",
+        "wire into CI"
+      ],
+      "scope_out": [
+        "XFA docs"
+      ],
+      "inputs": [
+        "scripts/docs/check_examples_and_snippets.py"
+      ],
+      "deliverables": [
+        "expanded checker",
+        "CI job"
+      ],
+      "acceptance_criteria": [
+        "checker fails on any drift in the four scopes"
+      ],
+      "gates": [
+        "check_examples_and_snippets.py (expanded)"
+      ],
+      "stop_conditions": [
+        "a drift class cannot be mechanically checked (document why)"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "no",
+      "merge_allowed": "yes",
+      "done_definition": "expanded checker green and CI-wired",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_dx_100/GA-DX-012_drift_checker.md"
+    },
+    {
+      "id": "GA-QR-001",
+      "title": "No-panic across all public entrypoints + FFI guard",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "hostile-input matrix over every public facade method",
+        "FFI panic->typed-error guard per binding"
+      ],
+      "scope_out": [
+        "XFA paths"
+      ],
+      "inputs": [
+        "core_pdf_quality.rs",
+        "processing_limits.rs"
+      ],
+      "deliverables": [
+        "per-method no-panic test",
+        "FFI catch_unwind boundary per binding"
+      ],
+      "acceptance_criteria": [
+        "no public entrypoint panics on corpus/fuzz input; FFI converts panic->error"
+      ],
+      "gates": [
+        "new no-panic suite",
+        "binding boundary tests"
+      ],
+      "stop_conditions": [
+        "a panic crosses an FFI boundary"
+      ],
+      "dependencies": [
+        "GA-QR-014"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "all public methods + FFI proven panic-safe",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-001.md"
+    },
+    {
+      "id": "GA-QR-002",
+      "title": "Labelled malformed/corrupt corpus runner",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "malformed corpus with expected typed outcome per fixture",
+        "recoverable vs fatal classification"
+      ],
+      "scope_out": [
+        "valid-PDF perf"
+      ],
+      "inputs": [
+        "CORE_PDF_FIXTURE_MANIFEST",
+        "core_pdf_quality.rs"
+      ],
+      "deliverables": [
+        "malformed corpus + runner asserting Error variant"
+      ],
+      "acceptance_criteria": [
+        "every malformed class -> documented typed error, bounded time, no panic"
+      ],
+      "gates": [
+        "malformed corpus gate"
+      ],
+      "stop_conditions": [
+        "a class hangs or panics"
+      ],
+      "dependencies": [
+        "GA-QR-014"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "corpus runner green in CI",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-002.md"
+    },
+    {
+      "id": "GA-QR-003",
+      "title": "Encryption handler matrix",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "RC4/AESV2/AESV3 x owner/user x permissions",
+        "per-binding decrypt smoke"
+      ],
+      "scope_out": [
+        "DRM"
+      ],
+      "inputs": [
+        "security.rs",
+        "facade encrypt/decrypt"
+      ],
+      "deliverables": [
+        "encryption fixture matrix",
+        "per-binding decrypt smoke"
+      ],
+      "acceptance_criteria": [
+        "all standard handlers open/refuse correctly w/ typed errors; permissions honored"
+      ],
+      "gates": [
+        "encryption matrix test"
+      ],
+      "stop_conditions": [
+        "a handler mis-decrypts or leaks"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "encryption matrix green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-003.md"
+    },
+    {
+      "id": "GA-QR-004",
+      "title": "Hybrid + corrupt xref/objstm breadth",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "hybrid-reference + corrupt-xref-stream recovery fixtures"
+      ],
+      "scope_out": [
+        "valid-only perf"
+      ],
+      "inputs": [
+        "core_pdf_quality.rs objstm/xref",
+        "pdf-syntax/xref.rs"
+      ],
+      "deliverables": [
+        "fixtures + expected outcomes"
+      ],
+      "acceptance_criteria": [
+        "objstm/xref roundtrip preserved; corrupt -> typed error"
+      ],
+      "gates": [
+        "xref/objstm breadth test"
+      ],
+      "stop_conditions": [
+        "a corrupt variant panics"
+      ],
+      "dependencies": [
+        "GA-QR-002"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "breadth fixtures green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-004.md"
+    },
+    {
+      "id": "GA-QR-005",
+      "title": "Resource-limit exposure per binding + heavy paths",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "per-binding limit-config",
+        "apply limits on render/extract paths",
+        "default-limit docs"
+      ],
+      "scope_out": [
+        "new limit types"
+      ],
+      "inputs": [
+        "processing_limits.rs"
+      ],
+      "deliverables": [
+        "per-binding limit smoke",
+        "render/extract limit tests",
+        "limits doc"
+      ],
+      "acceptance_criteria": [
+        "documented defaults; configurable per surface; enforced on heavy paths"
+      ],
+      "gates": [
+        "processing_limits.rs + binding tests"
+      ],
+      "stop_conditions": [
+        "a heavy path ignores limits"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "limits exposed+enforced+documented",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-005.md"
+    },
+    {
+      "id": "GA-QR-006",
+      "title": "Decompression/recursion bomb guards",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "zip-bomb (Flate ratio), nested-filter, recursive-reference bombs"
+      ],
+      "scope_out": [
+        "valid perf"
+      ],
+      "inputs": [
+        "processing_limits.rs",
+        "CORE_PDF_SECURITY_HARDENING_REPORT.md"
+      ],
+      "deliverables": [
+        "bomb fixtures + bounded mem/time assertions"
+      ],
+      "acceptance_criteria": [
+        "all bomb classes bounded in mem+time -> typed limit error"
+      ],
+      "gates": [
+        "bomb test suite"
+      ],
+      "stop_conditions": [
+        "a bomb exhausts memory or time"
+      ],
+      "dependencies": [
+        "GA-QR-005"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "bomb suite green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-006.md"
+    },
+    {
+      "id": "GA-QR-007",
+      "title": "Error determinism (repeat + cross-platform)",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "same input -> same code across repeats and platforms"
+      ],
+      "scope_out": [
+        "message wording"
+      ],
+      "inputs": [
+        "error_codes_stable.rs"
+      ],
+      "deliverables": [
+        "determinism test",
+        "cross-platform CI check"
+      ],
+      "acceptance_criteria": [
+        "codes stable across N runs and platforms; catalogue in sync"
+      ],
+      "gates": [
+        "error_codes_stable.rs",
+        "error_catalogue_sync.sh"
+      ],
+      "stop_conditions": [
+        "a code is nondeterministic"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "determinism proven",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-007.md"
+    },
+    {
+      "id": "GA-QR-008",
+      "title": "Concurrency model + Send/Sync + stress",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "document threading model",
+        "Send/Sync static assertions",
+        "multi-thread stress"
+      ],
+      "scope_out": [
+        "async runtime"
+      ],
+      "inputs": [
+        "facade public types"
+      ],
+      "deliverables": [
+        "threading-model doc",
+        "static assertions",
+        "stress test"
+      ],
+      "acceptance_criteria": [
+        "documented model; no data races; assertions compile"
+      ],
+      "gates": [
+        "concurrency stress + static asserts"
+      ],
+      "stop_conditions": [
+        "a data race or unsound shared use is found"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "concurrency proven+documented",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-008.md"
+    },
+    {
+      "id": "GA-QR-009",
+      "title": "FFI memory-safety under sanitizers",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "ASAN/LSAN over C-ABI/Node/Python harness",
+        "Miri over pdf-capi unsafe",
+        "ownership contract doc"
+      ],
+      "scope_out": [
+        "pure-Rust safe code"
+      ],
+      "inputs": [
+        "pdf-capi",
+        "binding smokes"
+      ],
+      "deliverables": [
+        "sanitizer harness",
+        "ownership/lifetime doc"
+      ],
+      "acceptance_criteria": [
+        "zero leaks/UB under sanitizers on FFI surface; ownership documented"
+      ],
+      "gates": [
+        "sanitizer CI job"
+      ],
+      "stop_conditions": [
+        "a leak/UAF/double-free is detected"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "sanitizers clean on FFI",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-009.md"
+    },
+    {
+      "id": "GA-QR-010",
+      "title": "WASM runtime safety (trap/OOM/panic mapping)",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "hostile-input harness Node+headless browser",
+        "panic->JS exception",
+        "bounded memory"
+      ],
+      "scope_out": [
+        "editor UI"
+      ],
+      "inputs": [
+        "EDITOR_HANDOFF_SDK_RUNTIME_PROOF.md"
+      ],
+      "deliverables": [
+        "WASM hostile-input harness"
+      ],
+      "acceptance_criteria": [
+        "no uncatchable traps; panics surface as JS exceptions; bounded memory"
+      ],
+      "gates": [
+        "WASM safety harness"
+      ],
+      "stop_conditions": [
+        "an uncatchable trap on hostile input"
+      ],
+      "dependencies": [
+        "GA-QR-001"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "WASM safety harness green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-010.md"
+    },
+    {
+      "id": "GA-QR-011",
+      "title": "Per-binding exception mapping",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "trigger each Error class per binding; assert mapped exception type + same stable code"
+      ],
+      "scope_out": [
+        "new errors"
+      ],
+      "inputs": [
+        "binding parity",
+        "error_codes_stable.rs"
+      ],
+      "deliverables": [
+        "per-binding error-mapping test",
+        "mapping doc"
+      ],
+      "acceptance_criteria": [
+        "1:1 documented mapping; codes stable; no swallowed errors"
+      ],
+      "gates": [
+        "error-mapping tests per binding"
+      ],
+      "stop_conditions": [
+        "a binding swallows or remaps a code"
+      ],
+      "dependencies": [
+        "GA-DX-005"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "mapping tests green all bindings",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-011.md"
+    },
+    {
+      "id": "GA-QR-012",
+      "title": "External structural validation of outputs",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "run qpdf --check / veraPDF on save/merge/split/flatten outputs"
+      ],
+      "scope_out": [
+        "XFA output fidelity"
+      ],
+      "inputs": [
+        "merge.rs",
+        "validate_pdfa"
+      ],
+      "deliverables": [
+        "output-validation gate over representative outputs"
+      ],
+      "acceptance_criteria": [
+        "outputs pass an independent structural validator"
+      ],
+      "gates": [
+        "qpdf/veraPDF gate"
+      ],
+      "stop_conditions": [
+        "an output fails structural validation"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "validator gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-012.md"
+    },
+    {
+      "id": "GA-QR-013",
+      "title": "No-network/no-telemetry proof",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "zero-egress test on open/parse/save/extract/render across bindings",
+        "dep phone-home scan",
+        "license path documented offline"
+      ],
+      "scope_out": [
+        "license server"
+      ],
+      "inputs": [
+        "project policy"
+      ],
+      "deliverables": [
+        "no-network test harness",
+        "dependency egress scan"
+      ],
+      "acceptance_criteria": [
+        "provably zero egress on non-license paths; license path offline-capable+documented"
+      ],
+      "gates": [
+        "no-network harness"
+      ],
+      "stop_conditions": [
+        "any egress on a non-license path"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "no-egress proven",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-013.md"
+    },
+    {
+      "id": "GA-QR-014",
+      "title": "Non-XFA regression corpus CI gate",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "harness",
+      "scope_in": [
+        "curated non-XFA corpus subset",
+        "golden-outcome runner (open/extract/render/save)",
+        "CI gate"
+      ],
+      "scope_out": [
+        "XFA corpus"
+      ],
+      "inputs": [
+        "CORE_PDF_FIXTURE_MANIFEST",
+        "VPS corpus",
+        "corpus-mini"
+      ],
+      "deliverables": [
+        "corpus subset",
+        "runner",
+        "CI gate"
+      ],
+      "acceptance_criteria": [
+        "corpus gate runs in CI; regressions fail; corpus documented; no private paths"
+      ],
+      "gates": [
+        "corpus regression gate"
+      ],
+      "stop_conditions": [
+        "a corpus path leaks private data"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "no",
+      "merge_allowed": "yes",
+      "done_definition": "corpus gate green in CI",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-014.md"
+    },
+    {
+      "id": "GA-QR-015",
+      "title": "Security-workflow proofs (redaction/sign/active-content)",
+      "axis": "Quality",
+      "milestone": "B",
+      "type": "test",
+      "scope_in": [
+        "redaction content-removal proof (extract-after-redact)",
+        "signature verify matrix",
+        "active-content sanitization"
+      ],
+      "scope_out": [
+        "new security features"
+      ],
+      "inputs": [
+        "pdf-redact",
+        "CORE_PDF_SECURITY_HARDENING_REPORT.md"
+      ],
+      "deliverables": [
+        "redaction removal test",
+        "signature verify matrix",
+        "sanitization test"
+      ],
+      "acceptance_criteria": [
+        "redaction removes underlying content; signatures verify correctly; dangerous actions stripped"
+      ],
+      "gates": [
+        "security-workflow suite"
+      ],
+      "stop_conditions": [
+        "redacted content is still extractable"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "security workflows proven",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_quality_100/GA-QR-015.md"
+    },
+    {
+      "id": "GA-PF-015",
+      "title": "Standardized perf report schema",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "harness",
+      "scope_in": [
+        "define perf_report.schema.json (p50/p95,RSS,sizes per op/bucket/binding)"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "perf_report.schema.json",
+        "all benches emit to it"
+      ],
+      "acceptance_criteria": [
+        "all benches conform to schema"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-015.md"
+    },
+    {
+      "id": "GA-PF-001",
+      "title": "Open/parse latency baseline",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "benchmark",
+      "scope_in": [
+        "isolated open/parse bench over buckets 1p/50p/500p/large; p50/p95"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "open/parse bench + baseline"
+      ],
+      "acceptance_criteria": [
+        "p95 per bucket recorded + budgeted"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-001.md"
+    },
+    {
+      "id": "GA-PF-002",
+      "title": "Save/write latency baseline",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "benchmark",
+      "scope_in": [
+        "save-only timing incl objstm + compression variants"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "save bench + baseline"
+      ],
+      "acceptance_criteria": [
+        "p95 per bucket+variant recorded+budgeted"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-002.md"
+    },
+    {
+      "id": "GA-PF-003",
+      "title": "Text extraction throughput baseline",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "benchmark",
+      "scope_in": [
+        "full-doc chars/sec; layout vs raw"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "extract bench + baseline"
+      ],
+      "acceptance_criteria": [
+        "chars/sec floor per bucket"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-003.md"
+    },
+    {
+      "id": "GA-PF-004",
+      "title": "Render/thumbnail latency baseline",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "benchmark",
+      "scope_in": [
+        "ms/page at 72/150 DPI; thumbnail latency"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "render bench + baseline"
+      ],
+      "acceptance_criteria": [
+        "ms/page p95 per DPI budgeted"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-004.md"
+    },
+    {
+      "id": "GA-PF-005",
+      "title": "Split/merge/rotate throughput baseline",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "benchmark",
+      "scope_in": [
+        "pages/sec over buckets; large-merge memory"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "split/merge/rotate bench + baseline"
+      ],
+      "acceptance_criteria": [
+        "pages/sec floor budgeted"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-005.md"
+    },
+    {
+      "id": "GA-PF-006",
+      "title": "Memory peak/RSS + no-leak harness",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "test",
+      "scope_in": [
+        "peak RSS per op/bucket; flat RSS over N iterations (no leak)"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "RSS sampler harness + no-leak assertion"
+      ],
+      "acceptance_criteria": [
+        "peak-RSS ceiling per bucket; no leak over iterations"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015",
+        "GA-QR-009"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green ; no-leak proven",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-006.md"
+    },
+    {
+      "id": "GA-PF-007",
+      "title": "WASM binary size budget",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "benchmark",
+      "scope_in": [
+        "track .wasm + gz/br size with ceiling"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "size record + ceiling in transform-wasm-pkg.sh"
+      ],
+      "acceptance_criteria": [
+        "size within ceiling; fail on >X% growth"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-007.md"
+    },
+    {
+      "id": "GA-PF-008",
+      "title": "WASM browser load/init timing",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "benchmark",
+      "scope_in": [
+        "headless-browser fetch+instantiate+first-op timing"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "Playwright init-time bench + baseline"
+      ],
+      "acceptance_criteria": [
+        "init-time p95 ceiling"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-008.md"
+    },
+    {
+      "id": "GA-PF-009",
+      "title": "Binding overhead (Node/Python/.NET/Java)",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "benchmark",
+      "scope_in": [
+        "per-binding overhead % vs native Rust for one op"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "per-binding overhead bench"
+      ],
+      "acceptance_criteria": [
+        "overhead ceiling per binding"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-009.md"
+    },
+    {
+      "id": "GA-PF-010",
+      "title": "C ABI overhead",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "benchmark",
+      "scope_in": [
+        "C call overhead vs direct Rust"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "C micro-bench"
+      ],
+      "acceptance_criteria": [
+        "overhead ceiling"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-010.md"
+    },
+    {
+      "id": "GA-PF-011",
+      "title": "Large PDF performance baseline",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "benchmark",
+      "scope_in": [
+        "100MB+/1000p+ timing + RSS (curated big fixtures, no private paths)"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "large-file bench + baseline"
+      ],
+      "acceptance_criteria": [
+        "time+RSS ceilings for large bucket"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015",
+        "GA-QR-014"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-011.md"
+    },
+    {
+      "id": "GA-PF-012",
+      "title": "Objstm/xref perf-impact baseline",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "benchmark",
+      "scope_in": [
+        "parse-time delta classic vs xref-stream vs objstm of one doc"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "comparative bench (informational)"
+      ],
+      "acceptance_criteria": [
+        "baseline recorded (no hard budget)"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-012.md"
+    },
+    {
+      "id": "GA-PF-013",
+      "title": "Cold-start per binding",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "benchmark",
+      "scope_in": [
+        "Python import, JVM/.NET startup, WASM instantiate + first op"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "cold-start bench per binding"
+      ],
+      "acceptance_criteria": [
+        "cold-start ceiling per binding"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-015"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-013.md"
+    },
+    {
+      "id": "GA-PF-014",
+      "title": "Per-op budgets + CI regression gate",
+      "axis": "Performance",
+      "milestone": "C",
+      "type": "blocker",
+      "scope_in": [
+        "budget JSON per op/bucket; gate compares measured vs budget w/ tolerance; commit baseline"
+      ],
+      "scope_out": [
+        "optimization (post-GA unless budget breached)"
+      ],
+      "inputs": [
+        "pdf-bench crate",
+        "core_pdf_perf_gate.py",
+        "CORE_PDF_PERFORMANCE_BASELINE.json"
+      ],
+      "deliverables": [
+        "budget gate wired to CI"
+      ],
+      "acceptance_criteria": [
+        "gate fails on regression beyond tolerance; baselines committed"
+      ],
+      "gates": [
+        "perf gate vs committed baseline"
+      ],
+      "stop_conditions": [
+        "a regression beyond tolerance without re-baseline rationale"
+      ],
+      "dependencies": [
+        "GA-PF-001",
+        "GA-PF-002",
+        "GA-PF-003",
+        "GA-PF-004",
+        "GA-PF-005",
+        "GA-PF-006",
+        "GA-PF-007",
+        "GA-PF-008",
+        "GA-PF-009",
+        "GA-PF-010",
+        "GA-PF-013",
+        "GA-PF-015"
+      ],
+      "can_run_in_parallel": "yes",
+      "merge_allowed": "yes",
+      "done_definition": "baseline+budget committed; gate green",
+      "expected_report_path": "benchmarks/runs/ga_readiness_3d/ga_perf/GA-PF-014.md"
+    }
+  ]
+}

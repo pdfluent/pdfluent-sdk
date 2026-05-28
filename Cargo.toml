@@ -22,6 +22,7 @@ members = [
     "crates/xfa-dom-resolver",
     "crates/formcalc-interpreter",
     "crates/xfa-layout-engine",
+    "crates/xfa-js-sandboxed",
     "crates/xfa-json",
 
     # --- Bindings & tools ---
@@ -30,6 +31,7 @@ members = [
     "crates/pdf-java",
     "crates/xfa-wasm",
     "crates/xfa-cli",
+    "crates/pdfluent-cli",
 
     # --- Existing support crates ---
     "crates/xfa-api-server",
@@ -38,6 +40,9 @@ members = [
 
     # --- PDF manipulation ---
     "crates/pdf-manip",
+    # --- G3: Content stream parser foundation ---
+    "crates/pdf-content-stream",
+    "crates/pdf-text-format",
 
     # --- Desktop application (Fase 4) ---
     "crates/pdf-desktop",
@@ -76,7 +81,14 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.0.0-beta.3"
+# RC line is 1.0.0-beta.8. This workspace default is inherited by crates that
+# use `version.workspace = true` (e.g. pdf-ocr, xfa-license, and internal/
+# unreleased crates). It was previously pinned at beta.3 while 18 first-party
+# crates had been bumped to beta.8 individually — leaving inheritors stranded
+# at beta.3. Aligned to beta.8 so the whole first-party RC line is coherent.
+# Independently-versioned crates (pdf-syntax/-interpret/-font, pdfluent-lopdf/
+# -cff/-ccitt/-jbig2/-jpeg2000) set their own `version` and are unaffected.
+version = "1.0.0-beta.8"
 edition = "2021"
 rust-version = "1.80.0"
 # Workspace default license = MIT. Used by INTERNAL crates only (CLI tools,
@@ -87,7 +99,7 @@ rust-version = "1.80.0"
 #   - `license = "MIT"`                    (forked from upstream MIT)
 # See NOTICE in repository root for the per-crate license matrix.
 license = "MIT"
-repository = "https://github.com/pdfluent/examples"
+repository = "https://pdfluent.com/source"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 
@@ -98,7 +110,14 @@ thiserror = "2"
 image = "0.25"
 pixelmatch = "0.1"
 anyhow = "1"
-reqwest = { version = "0.12", features = ["blocking"] }
+# reqwest with rustls TLS backend instead of native-tls (default). rustls is
+# pure Rust, so the cross-target builds (x86_64-unknown-linux-musl,
+# x86_64-pc-windows-gnu) no longer need a system OpenSSL: previously
+# openssl-sys pulled native-tls -> system libssl, which the runner image
+# does not provide for musl, blocking package:cli-cross-platform. rustls
+# is the standard modern choice and is well-tested in production reqwest
+# deployments.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json", "stream", "gzip", "brotli", "deflate"] }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
@@ -110,32 +129,35 @@ subsetter = "0.2"
 xmp-writer = "0.3"
 
 # XFA proprietary crates (PDFluent Commercial License)
-xfa-dom-resolver = { path = "crates/xfa-dom-resolver", version = "=1.0.0-beta.5" }
-formcalc-interpreter = { path = "crates/formcalc-interpreter", version = "=1.0.0-beta.5" }
-xfa-layout-engine = { path = "crates/xfa-layout-engine", version = "=1.0.0-beta.5" }
-xfa-json = { path = "crates/xfa-json", version = "=1.0.0-beta.5" }
-xfa-license = { path = "crates/xfa-license", version = "=1.0.0-beta.3" }
+xfa-dom-resolver = { path = "crates/xfa-dom-resolver", version = "=1.0.0-beta.8" }
+formcalc-interpreter = { path = "crates/formcalc-interpreter", version = "=1.0.0-beta.8" }
+xfa-layout-engine = { path = "crates/xfa-layout-engine", version = "=1.0.0-beta.8" }
+xfa-js-sandboxed = { path = "crates/xfa-js-sandboxed", version = "=1.0.0-beta.8" }
+xfa-json = { path = "crates/xfa-json", version = "=1.0.0-beta.8" }
+xfa-license = { path = "crates/xfa-license", version = "=1.0.0-beta.8" }
 
 # Forked crates from hayro (open-source: MIT OR Apache-2.0)
-pdf-syntax = { path = "crates/pdf-syntax", version = "=0.5.2" }
-pdf-interpret = { path = "crates/pdf-interpret", version = "=0.5.4" }
+pdf-syntax = { path = "crates/pdf-syntax", version = "=0.5.4" }
+pdf-interpret = { path = "crates/pdf-interpret", version = "=0.5.6" }
 
 # Forked crates from hayro (substantially extended; PDFluent Commercial License)
 pdf-font = { path = "crates/pdf-font", version = "=1.0.0-beta.3" }
-pdf-render = { path = "crates/pdf-render", version = "=1.0.0-beta.5" }
+pdf-render = { path = "crates/pdf-render", version = "=1.0.0-beta.8" }
 
 # Engine + feature crates (PDFluent Commercial License)
-pdf-forms = { package = "pdfluent-forms", path = "crates/pdf-forms", version = "=1.0.0-beta.5" }
-pdf-annot = { path = "crates/pdf-annot", version = "=1.0.0-beta.4" }
-pdf-xfa = { path = "crates/pdf-xfa", version = "=1.0.0-beta.5" }
-pdf-sign = { package = "pdfluent-sign", path = "crates/pdf-sign", version = "=1.0.0-beta.5" }
-pdf-engine = { path = "crates/pdf-engine", version = "=1.0.0-beta.5" }
-pdf-compliance = { path = "crates/pdf-compliance", version = "=1.0.0-beta.5" }
-pdf-manip = { path = "crates/pdf-manip", version = "=1.0.0-beta.5" }
-pdf-invoice = { path = "crates/pdf-invoice", version = "=1.0.0-beta.1" }
-pdf-extract = { package = "pdfluent-extract", path = "crates/pdf-extract", version = "=1.0.0-beta.5" }
-pdf-redact = { path = "crates/pdf-redact", version = "=1.0.0-beta.5" }
-pdf-ocr = { path = "crates/pdf-ocr", version = "=1.0.0-beta.3" }
+pdf-forms = { package = "pdfluent-forms", path = "crates/pdf-forms", version = "=1.0.0-beta.8" }
+pdf-annot = { path = "crates/pdf-annot", version = "=1.0.0-beta.8" }
+pdf-xfa = { path = "crates/pdf-xfa", version = "=1.0.0-beta.8" }
+pdf-sign = { package = "pdfluent-sign", path = "crates/pdf-sign", version = "=1.0.0-beta.8" }
+pdf-engine = { path = "crates/pdf-engine", version = "=1.0.0-beta.8" }
+pdf-compliance = { path = "crates/pdf-compliance", version = "=1.0.0-beta.8" }
+pdf-manip = { path = "crates/pdf-manip", version = "=1.0.0-beta.8" }
+pdf-text-format = { path = "crates/pdf-text-format", version = "=1.0.0-beta.8" }
+pdf-invoice = { path = "crates/pdf-invoice", version = "=1.0.0-beta.8" }
+pdf-extract = { package = "pdfluent-extract", path = "crates/pdf-extract", version = "=1.0.0-beta.8" }
+pdf-redact = { path = "crates/pdf-redact", version = "=1.0.0-beta.8" }
+pdf-ocr = { path = "crates/pdf-ocr", version = "=1.0.0-beta.8" }
+pdf-content-stream = { path = "crates/pdf-content-stream", version = "=0.1.0" }
 
 [profile.release]
 lto = "fat"

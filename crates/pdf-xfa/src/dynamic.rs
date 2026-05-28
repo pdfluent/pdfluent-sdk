@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use crate::error::{Result, XfaError};
 use crate::javascript_policy::{self, JavaScriptEntryPoint};
 use crate::js_runtime::{
-    activity_allowed_for_sandbox, NullRuntime, RuntimeMetadata, SandboxError, XfaJsRuntime,
+    activity_allowed_for_sandbox_with_gate, presave_during_flatten_enabled, NullRuntime,
+    RuntimeMetadata, SandboxError, XfaJsRuntime,
 };
 use formcalc_interpreter::{
     interpreter::Interpreter, lexer::tokenize, parser, som_bridge::SomResolver,
@@ -44,22 +45,22 @@ pub enum JsExecutionMode {
     /// roadmap.
     SandboxedRuntime,
 }
-/// OutputQuality.
-
+/// Fidelity level of the flattened output relative to the source XFA data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputQuality {
-    /// Exact.
+    /// All data was bound and rendered without skipping any scripts or content.
     #[default]
     Exact,
-    /// BestEffort.
+    /// Some scripts were skipped (e.g. JavaScript with `BestEffortStatic` mode);
+    /// output may differ from a full Adobe Reader render.
     BestEffort,
-    /// **M3-B Phase B.** All JavaScript scripts on the document executed
-    /// inside the sandbox without runtime / timeout / OOM errors.
+    /// All JavaScript scripts on the document executed inside the sandbox
+    /// without runtime / timeout / OOM errors (requires `xfa-js-sandboxed` feature).
     Sandboxed,
 }
 
 impl OutputQuality {
-    /// as_str.
+    /// Return a short lowercase string label suitable for logging and metrics.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Exact => "exact",
@@ -68,23 +69,25 @@ impl OutputQuality {
         }
     }
 }
-/// DynamicScriptOutcome.
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Aggregate outcome of the dynamic script processing pass.
+///
+/// Returned by [`flatten_xfa_to_pdf_with_metadata`](crate::flatten_xfa_to_pdf_with_metadata)
+/// and embedded in [`FlattenMetadata`](crate::FlattenMetadata).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DynamicScriptOutcome {
-    /// changes.
+    /// Number of form field values that were mutated by scripts.
     pub changes: usize,
-    /// js_present.
+    /// True when the document contains at least one JavaScript event hook.
     pub js_present: bool,
-    /// js_skipped.
+    /// Number of JavaScript scripts that were skipped (not executed).
     pub js_skipped: usize,
-    /// other_skipped.
+    /// Number of scripts in unsupported languages (not FormCalc, not JavaScript) skipped.
     pub other_skipped: usize,
-    /// formcalc_run.
+    /// Number of FormCalc scripts that ran successfully.
     pub formcalc_run: usize,
-    /// formcalc_errors.
+    /// Number of FormCalc scripts that produced an error.
     pub formcalc_errors: usize,
-    /// output_quality.
+    /// Overall output quality after script processing.
     pub output_quality: OutputQuality,
     /// **M3-B Phase B.** Scripts that ran to completion in the sandboxed
     /// runtime. Always 0 when mode != [`JsExecutionMode::SandboxedRuntime`]
@@ -113,6 +116,220 @@ pub struct DynamicScriptOutcome {
     pub js_resolve_failures: usize,
     /// **M3-B Phase D-γ.** Successful DataDom reads (children / value / child-by-name).
     pub js_data_reads: usize,
+    /// **M3-B Phase E (XFA-JS-HOST-STUBS).** Scripts touched a host capability
+    /// that requires real viewer / user interaction (UI dialogs, signature,
+    /// submit, openList, beep, ...). The stub returned a deterministic safe
+    /// default so the script kept running; this counter records how often
+    /// such a touch happened so callers can distinguish "would-have-been
+    /// interactive" from genuine runtime errors.
+    pub js_unsupported_host_calls: usize,
+    /// **M3-B Phase D-θ.2.** Strict probe calls skipped because
+    /// `parentIds.length == 1 && chain.length == 1` (no same-name
+    /// sibling ambiguity possible). Each skipped call saves one
+    /// `resolveWithFullChainStrict` host round-trip.
+    pub js_probe_skips: usize,
+    /// **D3 (trace-only).** `<variables>` `<script>` objects collected.
+    pub variables_scripts_collected: usize,
+    /// **D3 (trace-only).** `<variables>` `<text>` data items collected.
+    pub variables_data_items_collected: usize,
+    /// **D3 (trace-only).** Script objects / data items whose registration
+    /// bound a namespace (JS-side `setVariables*` returned success).
+    pub script_objects_registered: usize,
+    /// **D3 (trace-only).** Script objects / data items that did NOT register
+    /// (Rust skip or JS-side eval failure). Observability only.
+    pub script_objects_register_failed: usize,
+    /// **D3 (trace-only).** Script objects collected under a nested subform
+    /// scope (registered to `subformVariables` only — not bare-ident visible).
+    pub script_objects_subform_scoped: usize,
+    /// **D4.** Total SOM lookups at the host resolve boundary.
+    pub som_lookups_total: usize,
+    /// **D4.** SOM lookups that resolved.
+    pub som_lookup_successes: usize,
+    /// **D4.** SOM lookups that returned NoMatch.
+    pub som_lookup_failures: usize,
+    /// **D4.** Subform-script names withheld for ambiguity (fail-closed).
+    pub som_lookup_ambiguous: usize,
+    /// **D4.** Subform-scoped script objects exposed to bare-identifier lookup.
+    pub som_subform_scripts_exposed: usize,
+    /// **D4 (trace-only).** `occur`-path SOM references (classified, not resolved).
+    pub som_occur_path_refs: usize,
+    /// **D5.** `node.occur` handle accesses (successes + failures).
+    pub occur_lookups_total: usize,
+    /// **D5.** `node.occur` accesses where the node handle was live.
+    pub occur_lookup_successes: usize,
+    /// **D5.** `node.occur` accesses where the node handle was not live.
+    pub occur_lookup_failures: usize,
+    /// **D5.** Reads of an occur property (`min`/`max`/`initial`).
+    pub occur_property_reads: usize,
+    /// **D5.** Writes to an occur property (captured, not applied).
+    pub occur_property_writes: usize,
+    /// **D5.** Writes specifically to `occur.min`.
+    pub occur_min_writes: usize,
+    /// **D5.** Writes specifically to `occur.max`.
+    pub occur_max_writes: usize,
+    /// **D5.** Occur mutations captured as intent (no layout effect).
+    pub occur_mutations_captured: usize,
+    /// **D5/D6.** Occur mutations APPLIED to layout (D5: 0; D6: >0 under `XFA_OCCUR_APPLY`).
+    pub occur_mutations_applied: usize,
+    /// **D6.** Captured occur mutations not applied (gate off / rollback / unsupported).
+    pub occur_mutations_skipped: usize,
+    /// **D6.** Captured occur mutations skipped because the target is not a
+    /// repeatable container (fail-closed).
+    pub occur_application_ambiguous: usize,
+    /// **D6.** Distinct nodes whose occur was applied.
+    pub occur_application_targets: usize,
+    /// **D7.** Presence retry was active (sandboxed + both flags + no rollback).
+    pub presence_retry_enabled: bool,
+    /// **D7.** Hidden/invisible/inactive nodes considered under occur targets.
+    pub presence_retry_candidates: usize,
+    /// **D7.** Nodes admitted (Hidden/Invisible -> Visible).
+    pub presence_retry_admitted: usize,
+    /// **D7.** Candidates skipped (e.g. Inactive, fail-closed).
+    pub presence_retry_skipped: usize,
+    /// **D7.** Total nodes under admitted subtrees (recovery breadth).
+    pub presence_retry_nodes_under_admitted: usize,
+    /// **D7.** Field/draw nodes under admitted subtrees.
+    pub presence_retry_text_nodes_admitted: usize,
+
+    // ---- Epic A: runtime observability enrichment (XFA_FLATTEN_TRACE / XFA_RUNTIME_DIAG) ----
+    /// **E-1 (XFA_FLATTEN_TRACE).** Per-script lifecycle entries (capped at 500).
+    /// Each entry records the script index, host node id/name, activity, language,
+    /// and outcome (executed|skipped_activity|skipped_mode|error|timeout).
+    pub script_lifecycle: Vec<ScriptLifecycleEntry>,
+
+    /// **E-6 (XFA_FLATTEN_TRACE).** Per-activity tally of JS scripts that were
+    /// skipped (not routed through the sandbox).
+    pub skipped_activities: SkippedActivities,
+
+    /// **E-2 (XFA_RUNTIME_DIAG).** SOM resolution misses logged at the host-binding
+    /// boundary. Capped at 200 entries.
+    pub som_fail_log: Vec<SomFailEntry>,
+
+    /// **E-3 (XFA_RUNTIME_DIAG).** Per-write instanceManager mutation log (capped at 200).
+    pub instance_write_log: Vec<InstanceWriteEntry>,
+
+    /// **E-4 (XFA_RUNTIME_DIAG).** Presence mutations observed during FormCalc
+    /// script execution (capped at 200). JS-side presence writes go through the
+    /// host binding; FormCalc goes through `set_presence` in dynamic.rs — this
+    /// captures the FormCalc path.
+    pub presence_mutation_log: Vec<PresenceMutationEntry>,
+
+    /// **E-5 (XFA_FLATTEN_TRACE).** Number of named subforms hidden by
+    /// `apply_form_dom_presence` because they had no matching form-DOM entry.
+    pub form_dom_match_failures: usize,
+
+    /// **E-5 (XFA_RUNTIME_DIAG).** Per-suppression entries from
+    /// `apply_form_dom_presence` (capped at 200).
+    pub form_dom_match_log: Vec<FormDomMatchEntry>,
+}
+
+// ---- Epic A support types ----
+
+/// E-1: one entry in `script.lifecycle[]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptLifecycleEntry {
+    /// Zero-based index of this script in document execution order.
+    pub script_idx: usize,
+    /// FormNodeId that owns the script.
+    pub node_id: usize,
+    /// `name` attribute of the owning node (may be empty).
+    pub node_name: String,
+    /// `activity` attribute of the event element (e.g. `"initialize"`), or empty.
+    pub activity: String,
+    /// Script language.
+    pub lang: &'static str,
+    /// Execution outcome.
+    pub outcome: &'static str,
+}
+
+/// E-6: per-activity skip tallies for JavaScript scripts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SkippedActivities {
+    /// Scripts with `activity="initialize"` skipped.
+    pub initialize: usize,
+    /// Scripts with `activity="calculate"` skipped.
+    pub calculate: usize,
+    /// Scripts with `activity="click"` skipped.
+    pub click: usize,
+    /// Scripts with `activity="docReady"` skipped.
+    pub doc_ready: usize,
+    /// Scripts with `activity="layoutReady"` skipped.
+    pub layout_ready: usize,
+    /// Scripts with any other (or absent) activity attribute skipped.
+    pub other: usize,
+}
+
+impl SkippedActivities {
+    fn bump(&mut self, activity: Option<&str>) {
+        match activity {
+            Some("initialize") => self.initialize += 1,
+            Some("calculate") => self.calculate += 1,
+            Some("click") => self.click += 1,
+            Some("docReady") => self.doc_ready += 1,
+            Some("layoutReady") => self.layout_ready += 1,
+            _ => self.other += 1,
+        }
+    }
+}
+
+/// E-2: one SOM-miss entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SomFailEntry {
+    /// The SOM path that failed to resolve.
+    pub path: String,
+    /// Miss category (e.g. `"resolve_miss"`, `"formcalc_miss"`).
+    pub kind: String,
+    /// Script index (matches `ScriptLifecycleEntry::script_idx`).
+    pub script_idx: usize,
+    /// Activity at the time of the miss.
+    pub activity: String,
+}
+
+/// E-3: one instanceManager write entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceWriteEntry {
+    /// Script index.
+    pub script_idx: usize,
+    /// Activity.
+    pub activity: String,
+    /// Parent container node id.
+    pub parent_node_id: usize,
+    /// Parent container node name.
+    pub parent_node_name: String,
+    /// Prototype node name (the repeated child template).
+    pub prototype_node_name: String,
+    /// Instance count before the write.
+    pub old_count: usize,
+    /// Instance count after the write.
+    pub new_count: usize,
+}
+
+/// E-4: one presence-mutation observation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresenceMutationEntry {
+    /// Script index at mutation time (best-effort; may be 0 for FormCalc).
+    pub script_idx: usize,
+    /// Activity at mutation time.
+    pub activity: String,
+    /// Node id.
+    pub node_id: usize,
+    /// Node name.
+    pub node_name: String,
+    /// Presence before the change.
+    pub old_presence: String,
+    /// Presence after the change.
+    pub new_presence: String,
+}
+
+/// E-5: one form-DOM match-failure / suppression entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormDomMatchEntry {
+    /// Template FormNodeId of the hidden subform.
+    pub template_node_id: usize,
+    /// Name of the suppressed subform.
+    pub template_node_name: String,
+    /// Short reason string.
+    pub reason: String,
 }
 
 impl Default for DynamicScriptOutcome {
@@ -136,23 +353,80 @@ impl Default for DynamicScriptOutcome {
             js_binding_errors: 0,
             js_resolve_failures: 0,
             js_data_reads: 0,
+            js_unsupported_host_calls: 0,
+            js_probe_skips: 0,
+            variables_scripts_collected: 0,
+            variables_data_items_collected: 0,
+            script_objects_registered: 0,
+            script_objects_register_failed: 0,
+            script_objects_subform_scoped: 0,
+            som_lookups_total: 0,
+            som_lookup_successes: 0,
+            som_lookup_failures: 0,
+            som_lookup_ambiguous: 0,
+            som_subform_scripts_exposed: 0,
+            som_occur_path_refs: 0,
+            occur_lookups_total: 0,
+            occur_lookup_successes: 0,
+            occur_lookup_failures: 0,
+            occur_property_reads: 0,
+            occur_property_writes: 0,
+            occur_min_writes: 0,
+            occur_max_writes: 0,
+            occur_mutations_captured: 0,
+            occur_mutations_applied: 0,
+            occur_mutations_skipped: 0,
+            occur_application_ambiguous: 0,
+            occur_application_targets: 0,
+            presence_retry_enabled: false,
+            presence_retry_candidates: 0,
+            presence_retry_admitted: 0,
+            presence_retry_skipped: 0,
+            presence_retry_nodes_under_admitted: 0,
+            presence_retry_text_nodes_admitted: 0,
+            script_lifecycle: Vec::new(),
+            skipped_activities: SkippedActivities::default(),
+            som_fail_log: Vec::new(),
+            instance_write_log: Vec::new(),
+            presence_mutation_log: Vec::new(),
+            form_dom_match_failures: 0,
+            form_dom_match_log: Vec::new(),
         }
     }
 }
 
-/// Snapshot of field values and presence states, used for rollback.
-/// NOTE: This rollback mechanism is our own heuristic — the XFA spec does not
-/// define a rollback model.  It protects against scripts that blank out all
-/// fields (broken SOM resolution, etc.).
+/// Snapshot of field values, presence states, and structural shape used for
+/// rollback after a failed script pass.
+///
+/// XFA-INST-MGR (2026-05-17): the snapshot now also captures every node's
+/// children list plus the total node count. When `restore_snapshot` runs it
+/// truncates any clones added by `instanceManager.addInstance` /
+/// `setInstances` and restores the original child ordering, so a rollback is
+/// structurally consistent end-to-end — not just at the field-value layer.
+/// This keeps the layout pass from seeing half-applied script mutations when
+/// scripts produced enough errors to invalidate the pass.
+///
+/// NOTE: The rollback policy itself is our own heuristic — the XFA spec does
+/// not define one. It protects against scripts that blank out all fields
+/// (broken SOM resolution, etc.) or that add structural clones we cannot
+/// safely keep after rejecting the pass.
 struct FormSnapshot {
     field_values: Vec<(usize, String)>,
     presences: Vec<(usize, Presence)>,
+    /// Per-node children list at snapshot time.  Indexed by `form.nodes`
+    /// position; `children[i]` is the saved `children` vec for node `i`.
+    children: Vec<Vec<FormNodeId>>,
+    /// Total node count at snapshot time.  On rollback `form.nodes` and
+    /// `form.metadata` are truncated back to this length, evicting any
+    /// runtime-created clones from the form tree.
+    node_count: usize,
     populated_count: usize,
 }
 
 fn snapshot_form(form: &FormTree) -> FormSnapshot {
     let mut field_values = Vec::new();
     let mut presences = Vec::new();
+    let mut children = Vec::with_capacity(form.nodes.len());
     let mut populated_count = 0usize;
     for (idx, node) in form.nodes.iter().enumerate() {
         if let FormNodeType::Field { value } = &node.node_type {
@@ -162,10 +436,13 @@ fn snapshot_form(form: &FormTree) -> FormSnapshot {
             }
         }
         presences.push((idx, form.metadata[idx].presence));
+        children.push(node.children.clone());
     }
     FormSnapshot {
         field_values,
         presences,
+        children,
+        node_count: form.nodes.len(),
         populated_count,
     }
 }
@@ -178,6 +455,20 @@ fn restore_snapshot(form: &mut FormTree, snapshot: &FormSnapshot) {
     }
     for (idx, presence) in &snapshot.presences {
         form.metadata[*idx].presence = *presence;
+    }
+    // XFA-INST-MGR: drop any runtime-created clones first, THEN restore the
+    // original children lists.  Truncating must happen before assignment
+    // because the saved children vec may reference indices that the snapshot
+    // already covers (clones never receive an `xfa_id`, so `node_ids` does
+    // not need pruning — see `host::clone_subtree`).
+    if form.nodes.len() > snapshot.node_count {
+        form.nodes.truncate(snapshot.node_count);
+        form.metadata.truncate(snapshot.node_count);
+    }
+    for (idx, saved_children) in snapshot.children.iter().enumerate() {
+        if let Some(node) = form.nodes.get_mut(idx) {
+            node.children = saved_children.clone();
+        }
     }
 }
 
@@ -208,7 +499,6 @@ fn should_rollback(
     }
     false
 }
-/// apply_dynamic_scripts.
 // XFA Spec 3.3 §9.3 — Dynamic Forms: after data binding, scripts run in
 // two phases: (1) initialize events fire once, (2) calculate events may
 // iterate until stable (convergence) or MAX_SCRIPT_PASSES is reached.
@@ -225,13 +515,28 @@ fn should_rollback(
 // JavaScript and unsupported-language scripts are skipped and reported, while
 // FormCalc continues to run. Use `apply_dynamic_scripts_with_mode(..., Strict)`
 // when callers need the legacy whole-form JavaScript policy gate.
+
+/// Convenience entry point: runs the script pipeline with the default
+/// [`JsExecutionMode`] (currently [`JsExecutionMode::BestEffortStatic`]).
+///
+/// Prefer [`apply_dynamic_scripts_with_runtime`] when you need explicit
+/// runtime injection (e.g. in tests or when using the sandboxed runtime).
+#[doc(hidden)]
 pub fn apply_dynamic_scripts(
     form: &mut FormTree,
     root_id: FormNodeId,
 ) -> Result<DynamicScriptOutcome> {
     apply_dynamic_scripts_with_mode(form, root_id, JsExecutionMode::default())
 }
-/// apply_dynamic_scripts_with_mode.
+
+/// Runs the script pipeline with an explicit [`JsExecutionMode`], using the
+/// internal [`NullRuntime`] (or the compiled-in QuickJS runtime for
+/// [`JsExecutionMode::SandboxedRuntime`]).
+///
+/// This is an intermediate convenience wrapper. The canonical low-level entry
+/// point is [`apply_dynamic_scripts_with_runtime`], which accepts any
+/// [`XfaJsRuntime`] implementation.
+#[doc(hidden)]
 pub fn apply_dynamic_scripts_with_mode(
     form: &mut FormTree,
     root_id: FormNodeId,
@@ -258,6 +563,63 @@ pub fn apply_dynamic_scripts_with_mode(
         }
     }
     apply_dynamic_scripts_with_runtime(form, root_id, mode, &mut NullRuntime::new())
+}
+
+/// D6: opt-in gate for applying captured `occur.min` mutations to layout.
+/// Default OFF. Even in sandboxed mode, occur application only happens when
+/// `XFA_OCCUR_APPLY=1`, so the committed default (and default sandboxed
+/// capture-only) behaviour is unchanged.
+fn occur_apply_enabled() -> bool {
+    std::env::var("XFA_OCCUR_APPLY").ok().as_deref() == Some("1")
+}
+
+/// D7: opt-in gate for presence/visibility retry. Default OFF. Requires
+/// `XFA_PRESENCE_RETRY=1`; the dispatch path additionally requires
+/// `XFA_OCCUR_APPLY=1` (occur application is the prerequisite for the retry).
+fn presence_retry_enabled() -> bool {
+    std::env::var("XFA_PRESENCE_RETRY").ok().as_deref() == Some("1")
+}
+
+/// Epic A: true when `XFA_RUNTIME_DIAG` is set to `"1"`.  Gates the verbose
+/// per-entry log arrays (E-2, E-3, E-4, E-5-log).  Default OFF so normal
+/// flattens are byte-identical and zero-cost.
+pub(crate) fn runtime_diag_enabled() -> bool {
+    std::env::var("XFA_RUNTIME_DIAG").ok().as_deref() == Some("1")
+}
+
+// Epic A E-4: thread-local accumulator for FormCalc presence mutations.
+// Active only during `apply_dynamic_scripts_with_runtime` when
+// `XFA_RUNTIME_DIAG=1`.  Using thread-local avoids threading an extra Vec
+// through `run_script_phase` / `write_formcalc_value` / `set_presence`.
+std::thread_local! {
+    static PRESENCE_MUT_LOG: std::cell::RefCell<Option<Vec<PresenceMutationEntry>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Push a presence mutation entry into the thread-local log.
+/// Called from `set_presence_inner` when an entry was created.
+fn push_presence_mutation(
+    node_id: usize,
+    node_name: &str,
+    old_presence: &'static str,
+    new_presence: &'static str,
+) {
+    PRESENCE_MUT_LOG.with(|cell| {
+        if let Some(ref mut log) = *cell.borrow_mut() {
+            if log.len() < 200 {
+                log.push(PresenceMutationEntry {
+                    // script_idx/activity are not readily available at this call
+                    // depth — report 0/"" (best-effort per Epic A spec note).
+                    script_idx: 0,
+                    activity: String::new(),
+                    node_id,
+                    node_name: node_name.to_string(),
+                    old_presence: old_presence.to_string(),
+                    new_presence: new_presence.to_string(),
+                });
+            }
+        }
+    });
 }
 
 /// Phase B entry point that lets the caller inject a sandboxed runtime
@@ -308,28 +670,72 @@ pub fn apply_dynamic_scripts_with_runtime(
     let sandbox_active = mode == JsExecutionMode::SandboxedRuntime;
     let snapshot = snapshot_form(form);
 
+    // D1.B (XFA Product Quality Wave 3 — preSave gated allow). The env-var
+    // gate is read ONCE per flatten so all scripts in this document see the
+    // same decision. Default OFF; flipping requires
+    // `XFA_PRESAVE_DURING_FLATTEN=1`. The host-binding layer is informed via
+    // `set_presave_gate` so dispatch and host stay in lock-step (defence-
+    // in-depth §2 of the policy doc).
+    let presave_gate = sandbox_active && presave_during_flatten_enabled();
+
+    // Epic A E-1/E-6: read gates once; zero cost unless env is set.
+    let trace_enabled = crate::flatten_trace::enabled();
+    let diag_enabled = runtime_diag_enabled();
+
+    // E-1: lifecycle log (cap 500).
+    let mut script_lifecycle: Vec<ScriptLifecycleEntry> = Vec::new();
+    // E-6: per-activity skip tally.
+    let mut skipped_activities = SkippedActivities::default();
+    // Running script index (mirrors host.rs next_script_idx for JS; for
+    // FormCalc scripts we share the same monotonic counter).
+    let mut dispatch_script_idx: usize = 0;
+
     if sandbox_active {
         // Best-effort init / reset; init failures are non-fatal — the
         // dispatch path will record them as runtime_errors per script.
         let _ = runtime.init();
         let _ = runtime.reset_for_new_document();
         let _ = runtime.set_form_handle(form as *mut FormTree, root_id);
+        runtime.set_presave_gate(presave_gate);
     }
 
     for (node_id, node_scripts) in all_scripts {
+        let node = form.get(node_id);
+        let node_name = if trace_enabled || diag_enabled {
+            node.name.clone()
+        } else {
+            String::new()
+        };
         let mut formcalc_scripts = Vec::new();
         for script in node_scripts {
             match script.language {
                 ScriptLanguage::FormCalc => formcalc_scripts.push(script),
                 ScriptLanguage::JavaScript => {
-                    if sandbox_active && activity_allowed_for_sandbox(script.activity.as_deref()) {
+                    let activity_str = script.activity.as_deref().unwrap_or("");
+                    if sandbox_active
+                        && activity_allowed_for_sandbox_with_gate(
+                            script.activity.as_deref(),
+                            presave_gate,
+                        )
+                    {
+                        let this_idx = dispatch_script_idx;
+                        dispatch_script_idx += 1;
                         let _ = runtime.reset_per_script(node_id, script.activity.as_deref());
-                        match runtime.execute_script(script.activity.as_deref(), &script.script) {
-                            Ok(_outcome) => {
+                        let outcome_str = match runtime
+                            .execute_script(script.activity.as_deref(), &script.script)
+                        {
+                            Ok(_) => {
                                 // Counter increment lives on `take_metadata()`.
+                                "executed"
                             }
-                            Err(SandboxError::Timeout) => js_skipped += 1,
-                            Err(SandboxError::OutOfMemory) => js_skipped += 1,
+                            Err(SandboxError::Timeout) => {
+                                js_skipped += 1;
+                                "timeout"
+                            }
+                            Err(SandboxError::OutOfMemory) => {
+                                js_skipped += 1;
+                                "error"
+                            }
                             Err(e) => {
                                 // M3-B Phase C-α: surface the per-script error
                                 // class via `log::debug!` for normal builds and
@@ -349,13 +755,60 @@ pub fn apply_dynamic_scripts_with_runtime(
                                     );
                                 }
                                 js_skipped += 1;
+                                "error"
                             }
+                        };
+                        // E-1: record lifecycle entry when tracing is on.
+                        if trace_enabled && script_lifecycle.len() < 500 {
+                            script_lifecycle.push(ScriptLifecycleEntry {
+                                script_idx: this_idx,
+                                node_id: node_id.0,
+                                node_name: node_name.clone(),
+                                activity: activity_str.to_string(),
+                                lang: "javascript",
+                                outcome: outcome_str,
+                            });
                         }
                     } else {
                         js_skipped += 1;
+                        // E-1: record skipped lifecycle entry.
+                        if trace_enabled && script_lifecycle.len() < 500 {
+                            let skip_reason = if sandbox_active {
+                                "skipped_activity"
+                            } else {
+                                "skipped_mode"
+                            };
+                            script_lifecycle.push(ScriptLifecycleEntry {
+                                script_idx: dispatch_script_idx,
+                                node_id: node_id.0,
+                                node_name: node_name.clone(),
+                                activity: activity_str.to_string(),
+                                lang: "javascript",
+                                outcome: skip_reason,
+                            });
+                        }
+                        // E-6: tally per-activity skips.
+                        if trace_enabled {
+                            skipped_activities.bump(script.activity.as_deref());
+                        }
+                        dispatch_script_idx += 1;
                     }
                 }
-                ScriptLanguage::Other => other_skipped += 1,
+                ScriptLanguage::Other => {
+                    other_skipped += 1;
+                    // E-1: log other-language skips.
+                    if trace_enabled && script_lifecycle.len() < 500 {
+                        script_lifecycle.push(ScriptLifecycleEntry {
+                            script_idx: dispatch_script_idx,
+                            node_id: node_id.0,
+                            node_name: node_name.clone(),
+                            activity: script.activity.as_deref().unwrap_or("").to_string(),
+                            lang: "other",
+                            outcome: "skipped_mode",
+                        });
+                    }
+                    dispatch_script_idx += 1;
+                }
             }
         }
         if !formcalc_scripts.is_empty() {
@@ -363,12 +816,26 @@ pub fn apply_dynamic_scripts_with_runtime(
         }
     }
 
+    let mut captured_occur: Vec<(usize, String, i64)> = Vec::new();
+    // Epic A E-2/E-3: logs drained from host bindings.
+    let mut sandbox_diag = crate::js_runtime::RuntimeDiagLogs::default();
     if sandbox_active {
         let _ = runtime.set_form_handle(std::ptr::null_mut(), root_id);
         sandbox_metadata = runtime.take_metadata();
+        captured_occur = runtime.take_occur_mutations();
+        if diag_enabled {
+            sandbox_diag = runtime.take_diag_logs();
+        }
     }
 
     let mut stats = ScriptStats::default();
+
+    // Epic A E-4: arm the thread-local presence mutation log.
+    if diag_enabled {
+        PRESENCE_MUT_LOG.with(|cell| {
+            *cell.borrow_mut() = Some(Vec::new());
+        });
+    }
 
     let mut changes = sandbox_metadata
         .mutations
@@ -392,6 +859,13 @@ pub fn apply_dynamic_scripts_with_runtime(
             &mut stats,
         )?;
 
+    // E-4: drain and disarm.
+    let presence_mutation_log = if diag_enabled {
+        PRESENCE_MUT_LOG.with(|cell| cell.borrow_mut().take().unwrap_or_default())
+    } else {
+        Vec::new()
+    };
+
     let sandbox_rollback_errors = sandbox_metadata
         .runtime_errors
         .saturating_add(sandbox_metadata.timeouts)
@@ -400,9 +874,134 @@ pub fn apply_dynamic_scripts_with_runtime(
     let rollback_errors = stats.errors.saturating_add(sandbox_rollback_errors);
     let rollback_successes = stats.successes.saturating_add(sandbox_metadata.executed);
 
-    if should_rollback(form, &snapshot, rollback_errors, rollback_successes) {
+    let rolled_back = should_rollback(form, &snapshot, rollback_errors, rollback_successes);
+    if rolled_back {
         restore_snapshot(form, &snapshot);
         changes = 0;
+    }
+
+    // D6: apply captured `occur.min` mutations to the form before layout.
+    // Strictly gated: sandboxed mode + the opt-in `XFA_OCCUR_APPLY=1` flag +
+    // the script pass did NOT roll back. Default flatten and the default
+    // sandboxed (capture-only) behaviour are unchanged. Each captured write is
+    // applied only to a live, repeatable container node (Subform/Area/ExclGroup);
+    // everything else fails closed (counted, not applied). `occur.max` writes
+    // are captured but not applied in D6 (min-only scope).
+    let mut occur_applied_targets: std::collections::HashSet<usize> =
+        std::collections::HashSet::new();
+    if sandbox_active && !rolled_back && occur_apply_enabled() && !captured_occur.is_empty() {
+        for (idx, prop, value) in &captured_occur {
+            if prop != "min" {
+                // occur.max captured but not applied in D6.
+                sandbox_metadata.occur_mutations_skipped =
+                    sandbox_metadata.occur_mutations_skipped.saturating_add(1);
+                continue;
+            }
+            if *value < 0 || *idx >= form.nodes.len() {
+                sandbox_metadata.occur_mutations_skipped =
+                    sandbox_metadata.occur_mutations_skipped.saturating_add(1);
+                continue;
+            }
+            let nid = FormNodeId(*idx);
+            let is_repeatable = matches!(
+                form.get(nid).node_type,
+                FormNodeType::Subform | FormNodeType::Area | FormNodeType::ExclGroup
+            );
+            if !is_repeatable {
+                // Fail closed: only repeatable containers may have occur applied.
+                sandbox_metadata.occur_application_ambiguous = sandbox_metadata
+                    .occur_application_ambiguous
+                    .saturating_add(1);
+                sandbox_metadata.occur_mutations_skipped =
+                    sandbox_metadata.occur_mutations_skipped.saturating_add(1);
+                continue;
+            }
+            let v = *value as u32;
+            let node = form.get_mut(nid);
+            node.occur.min = v;
+            if node.occur.initial < v {
+                node.occur.initial = v;
+            }
+            if let Some(m) = node.occur.max {
+                if m < v {
+                    node.occur.max = Some(v);
+                }
+            }
+            sandbox_metadata.occur_mutations_applied =
+                sandbox_metadata.occur_mutations_applied.saturating_add(1);
+            occur_applied_targets.insert(*idx);
+        }
+        sandbox_metadata.occur_application_targets = sandbox_metadata
+            .occur_application_targets
+            .saturating_add(occur_applied_targets.len());
+    } else if !captured_occur.is_empty() {
+        // Captured but the apply gate is closed (default capture-only path):
+        // count them as skipped for observability without touching layout.
+        sandbox_metadata.occur_mutations_skipped = sandbox_metadata
+            .occur_mutations_skipped
+            .saturating_add(captured_occur.len());
+    }
+
+    // D7: opt-in presence/visibility retry. Strictly gated: sandboxed +
+    // `XFA_PRESENCE_RETRY=1` + `XFA_OCCUR_APPLY=1` (occur application is the
+    // prerequisite) + no rollback. Admits (`Hidden`/`Invisible` -> `Visible`)
+    // ONLY nodes that are an occur-applied target or a descendant of one
+    // (occur-related, unambiguous). `Inactive` is skipped (fail-closed). Default
+    // and default-sandboxed behaviour are unchanged.
+    let mut pr_candidates = 0usize;
+    let mut pr_admitted = 0usize;
+    let mut pr_skipped = 0usize;
+    let mut pr_nodes_under_admitted = 0usize;
+    let mut pr_text_nodes_admitted = 0usize;
+    let presence_retry_active = sandbox_active
+        && !rolled_back
+        && occur_apply_enabled()
+        && presence_retry_enabled()
+        && !occur_applied_targets.is_empty();
+    if presence_retry_active {
+        let mut visited: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut stack: Vec<FormNodeId> = occur_applied_targets
+            .iter()
+            .map(|&i| FormNodeId(i))
+            .collect();
+        let mut admitted_ids: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        while let Some(nid) = stack.pop() {
+            if nid.0 >= form.nodes.len() || !visited.insert(nid.0) {
+                continue;
+            }
+            let presence = form.meta(nid).presence;
+            if presence == Presence::Hidden || presence == Presence::Invisible {
+                pr_candidates += 1;
+                // Fail-closed safety: never un-hide `Inactive` (intentionally
+                // removed); only `Hidden`/`Invisible` are admitted here.
+                form.meta_mut(nid).presence = Presence::Visible;
+                pr_admitted += 1;
+                admitted_ids.insert(nid.0);
+            } else if presence == Presence::Inactive {
+                pr_candidates += 1;
+                pr_skipped += 1;
+            }
+            for &c in &form.get(nid).children {
+                stack.push(c);
+            }
+        }
+        // Count content under admitted subtrees (observability of recovery).
+        for &aid in &admitted_ids {
+            let mut s = vec![FormNodeId(aid)];
+            let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            while let Some(n) = s.pop() {
+                if n.0 >= form.nodes.len() || !seen.insert(n.0) {
+                    continue;
+                }
+                pr_nodes_under_admitted += 1;
+                if let FormNodeType::Draw(_) | FormNodeType::Field { .. } = form.get(n).node_type {
+                    pr_text_nodes_admitted += 1;
+                }
+                for &c in &form.get(n).children {
+                    s.push(c);
+                }
+            }
+        }
     }
 
     let js_seen_count = js_skipped + sandbox_metadata.executed;
@@ -434,6 +1033,45 @@ pub fn apply_dynamic_scripts_with_runtime(
         js_binding_errors: sandbox_metadata.binding_errors,
         js_resolve_failures: sandbox_metadata.resolve_failures,
         js_data_reads: sandbox_metadata.data_reads,
+        js_unsupported_host_calls: sandbox_metadata.unsupported_host_calls,
+        js_probe_skips: sandbox_metadata.probe_skips,
+        variables_scripts_collected: sandbox_metadata.variables_scripts_collected,
+        variables_data_items_collected: sandbox_metadata.variables_data_items_collected,
+        script_objects_registered: sandbox_metadata.script_objects_registered,
+        script_objects_register_failed: sandbox_metadata.script_objects_register_failed,
+        script_objects_subform_scoped: sandbox_metadata.script_objects_subform_scoped,
+        som_lookups_total: sandbox_metadata.som_lookups_total,
+        som_lookup_successes: sandbox_metadata.som_lookup_successes,
+        som_lookup_failures: sandbox_metadata.som_lookup_failures,
+        som_lookup_ambiguous: sandbox_metadata.som_lookup_ambiguous,
+        som_subform_scripts_exposed: sandbox_metadata.som_subform_scripts_exposed,
+        som_occur_path_refs: sandbox_metadata.som_occur_path_refs,
+        occur_lookups_total: sandbox_metadata.occur_lookups_total,
+        occur_lookup_successes: sandbox_metadata.occur_lookup_successes,
+        occur_lookup_failures: sandbox_metadata.occur_lookup_failures,
+        occur_property_reads: sandbox_metadata.occur_property_reads,
+        occur_property_writes: sandbox_metadata.occur_property_writes,
+        occur_min_writes: sandbox_metadata.occur_min_writes,
+        occur_max_writes: sandbox_metadata.occur_max_writes,
+        occur_mutations_captured: sandbox_metadata.occur_mutations_captured,
+        occur_mutations_applied: sandbox_metadata.occur_mutations_applied,
+        occur_mutations_skipped: sandbox_metadata.occur_mutations_skipped,
+        occur_application_ambiguous: sandbox_metadata.occur_application_ambiguous,
+        occur_application_targets: sandbox_metadata.occur_application_targets,
+        presence_retry_enabled: presence_retry_active,
+        presence_retry_candidates: pr_candidates,
+        presence_retry_admitted: pr_admitted,
+        presence_retry_skipped: pr_skipped,
+        presence_retry_nodes_under_admitted: pr_nodes_under_admitted,
+        presence_retry_text_nodes_admitted: pr_text_nodes_admitted,
+        // Epic A fields.
+        script_lifecycle,
+        skipped_activities,
+        som_fail_log: sandbox_diag.som_fail_log,
+        instance_write_log: sandbox_diag.instance_write_log,
+        presence_mutation_log,
+        form_dom_match_failures: 0,
+        form_dom_match_log: Vec::new(),
     })
 }
 
@@ -542,6 +1180,22 @@ fn execute_event_script(
     }
 }
 
+/// Emit a stderr line when `XFA_FORMCALC_DEBUG=1` is set so that residual-scan
+/// tooling can aggregate FormCalc failures by stage (`lexer` / `parser` /
+/// `interpreter`) and message. Off by default; emits nothing otherwise.
+///
+/// Mirrors the `XFA_JS_DEBUG` opt-in pattern used by the sandbox JS runtime.
+fn formcalc_debug_emit(stage: &str, message: &str, script: &EventScript) {
+    if std::env::var("XFA_FORMCALC_DEBUG").ok().as_deref() != Some("1") {
+        return;
+    }
+    let activity = script.activity.as_deref().unwrap_or("?");
+    // Single-line, double-quoted message so the scan script's regex can parse
+    // it like `XFA_JS_DEBUG resolve_*` lines. Newlines collapsed defensively.
+    let one_line = message.replace(['\n', '\r'], " ");
+    eprintln!("XFA_FORMCALC_DEBUG stage={stage} activity=\"{activity}\" message=\"{one_line}\"");
+}
+
 fn execute_formcalc_script(
     form: &mut FormTree,
     root_id: FormNodeId,
@@ -550,26 +1204,38 @@ fn execute_formcalc_script(
     script: &EventScript,
     phase: ScriptPhase,
 ) -> ScriptResult {
-    let Ok(tokens) = tokenize(&script.script) else {
-        return ScriptResult {
-            changes: 0,
-            error: true,
-        };
+    let tokens = match tokenize(&script.script) {
+        Ok(t) => t,
+        Err(err) => {
+            formcalc_debug_emit("lexer", &format!("{err}"), script);
+            return ScriptResult {
+                changes: 0,
+                error: true,
+            };
+        }
     };
-    let Ok(ast) = parser::parse(tokens) else {
-        return ScriptResult {
-            changes: 0,
-            error: true,
-        };
+    let ast = match parser::parse(tokens) {
+        Ok(a) => a,
+        Err(err) => {
+            formcalc_debug_emit("parser", &format!("{err}"), script);
+            return ScriptResult {
+                changes: 0,
+                error: true,
+            };
+        }
     };
 
     let mut interpreter = Interpreter::new();
     let mut resolver = FormTreeSomResolver::new(form, root_id, parents, current_id);
-    let Ok(result) = interpreter.exec_with_resolver(&ast, &mut resolver) else {
-        return ScriptResult {
-            changes: resolver.changes,
-            error: true,
-        };
+    let result = match interpreter.exec_with_resolver(&ast, &mut resolver) {
+        Ok(r) => r,
+        Err(err) => {
+            formcalc_debug_emit("interpreter", &format!("{err}"), script);
+            return ScriptResult {
+                changes: resolver.changes,
+                error: true,
+            };
+        }
     };
 
     if matches!(phase, ScriptPhase::Calculate) {
@@ -1147,8 +1813,17 @@ fn set_raw_value(form: &mut FormTree, node_id: FormNodeId, value: ScriptValue) -
 }
 
 fn set_presence(form: &mut FormTree, node_id: FormNodeId, value: ScriptValue) -> usize {
+    set_presence_inner(form, node_id, value).0
+}
+
+/// Returns `(change_count, Option<(old_str, new_str)>)` for E-4 observability.
+fn set_presence_inner(
+    form: &mut FormTree,
+    node_id: FormNodeId,
+    value: ScriptValue,
+) -> (usize, Option<(&'static str, &'static str)>) {
     let value = match value {
-        ScriptValue::Null => return 0,
+        ScriptValue::Null => return (0, None),
         ScriptValue::String(value) => value,
     };
     let normalized = value.trim().to_ascii_lowercase();
@@ -1157,15 +1832,30 @@ fn set_presence(form: &mut FormTree, node_id: FormNodeId, value: ScriptValue) ->
         "hidden" => Presence::Hidden,
         "invisible" => Presence::Invisible,
         "inactive" => Presence::Inactive,
-        _ => return 0,
+        _ => return (0, None),
     };
 
     let meta = form.meta_mut(node_id);
-    if meta.presence == new_presence {
-        return 0;
+    let old_presence = meta.presence;
+    if old_presence == new_presence {
+        return (0, None);
     }
     meta.presence = new_presence;
-    1
+
+    fn pres_str(p: Presence) -> &'static str {
+        match p {
+            Presence::Visible => "visible",
+            Presence::Hidden => "hidden",
+            Presence::Invisible => "invisible",
+            Presence::Inactive => "inactive",
+        }
+    }
+    let mutation = (pres_str(old_presence), pres_str(new_presence));
+    if runtime_diag_enabled() {
+        let node_name = form.get(node_id).name.clone();
+        push_presence_mutation(node_id.0, &node_name, mutation.0, mutation.1);
+    }
+    (1, Some(mutation))
 }
 
 fn normalize_number(number: f64) -> String {
@@ -1885,5 +2575,199 @@ Details.presence = "visible"
             FormNodeType::Field { value } => assert_eq!(value, "42"),
             _ => panic!("expected field"),
         }
+    }
+
+    /// QF1-C regression: `formcalc_errors` counter MUST tick when a FormCalc
+    /// script invokes an unknown function. This is the canonical signal the
+    /// QF1-C residual scan (`scripts/xfa_formcalc_residual_scan.py`) aggregates
+    /// off the `XFA script metadata:` stderr line.
+    #[test]
+    fn formcalc_unknown_function_increments_error_counter() {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let total = add_node(
+            &mut tree,
+            "Total",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+
+        tree.get_mut(root).children = vec![total];
+        // `definitelyNotAFormCalcBuiltin(1)` triggers `FormCalcError::UnknownFunction`
+        // in `crates/formcalc-interpreter/src/interpreter.rs`.
+        tree.meta_mut(total).event_scripts = vec![formcalc_script(
+            "definitelyNotAFormCalcBuiltin(1)",
+            "calculate",
+        )];
+
+        let outcome = apply_dynamic_scripts(&mut tree, root).unwrap();
+        assert_eq!(outcome.formcalc_run, 1, "the script must be attempted");
+        assert_eq!(
+            outcome.formcalc_errors, 1,
+            "unknown-function failure must increment formcalc_errors"
+        );
+    }
+
+    // ─── Epic A enrichment tests ──────────────────────────────────────────────
+    //
+    // Environment variable writes are not `std::sync::atomic` — we serialise all
+    // three tests with a process-wide `Mutex` so they cannot race on the env.
+    static ENV_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// E-1: `script_lifecycle` is populated when `XFA_FLATTEN_TRACE=1`.
+    ///
+    /// Builds a FormTree with a single JavaScript `initialize` event on a field.
+    /// In `BestEffortStatic` mode the script is skipped but still recorded in
+    /// the lifecycle vec with outcome `"skipped_mode"`.
+    #[test]
+    fn script_lifecycle_populated_when_trace_enabled() {
+        let _guard = env_lock();
+        std::env::set_var("XFA_FLATTEN_TRACE", "1");
+
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let field = add_node(
+            &mut tree,
+            "TraceField",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+        tree.get_mut(root).children = vec![field];
+        tree.meta_mut(field).event_scripts = vec![javascript_script(
+            "xfa.host.messageBox('trace');",
+            "initialize",
+        )];
+
+        let outcome =
+            apply_dynamic_scripts_with_mode(&mut tree, root, JsExecutionMode::BestEffortStatic)
+                .unwrap();
+
+        std::env::remove_var("XFA_FLATTEN_TRACE");
+
+        assert!(
+            !outcome.script_lifecycle.is_empty(),
+            "script_lifecycle must have at least one entry when XFA_FLATTEN_TRACE=1"
+        );
+        let entry = &outcome.script_lifecycle[0];
+        assert_eq!(entry.node_name, "TraceField");
+        assert_eq!(entry.activity, "initialize");
+        assert_eq!(entry.lang, "javascript");
+        // BestEffortStatic skips JS entirely — outcome must reflect that.
+        assert_eq!(
+            entry.outcome, "skipped_mode",
+            "BestEffortStatic JS must appear as skipped_mode in lifecycle"
+        );
+    }
+
+    /// E-6: `skipped_activities` tallies correctly for a `click` script.
+    ///
+    /// A JavaScript script with `activity="click"` cannot be executed during
+    /// flatten (not in the sandbox allowlist and skipped by BestEffortStatic).
+    /// When `XFA_FLATTEN_TRACE=1` the `skipped_activities.click` counter must
+    /// increment by exactly 1.
+    #[test]
+    fn skipped_activities_tallies_click_correctly() {
+        let _guard = env_lock();
+        std::env::set_var("XFA_FLATTEN_TRACE", "1");
+
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let btn = add_node(
+            &mut tree,
+            "ClickBtn",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+        tree.get_mut(root).children = vec![btn];
+        // `click` activity — never executed during flatten regardless of mode.
+        tree.meta_mut(btn).event_scripts = vec![javascript_script(
+            "xfa.host.messageBox('clicked');",
+            "click",
+        )];
+
+        let outcome =
+            apply_dynamic_scripts_with_mode(&mut tree, root, JsExecutionMode::BestEffortStatic)
+                .unwrap();
+
+        std::env::remove_var("XFA_FLATTEN_TRACE");
+
+        assert_eq!(
+            outcome.skipped_activities.click, 1,
+            "exactly one click-activity JS script must be tallied in skipped_activities.click"
+        );
+        // Other buckets must stay at zero.
+        assert_eq!(outcome.skipped_activities.initialize, 0);
+        assert_eq!(outcome.skipped_activities.calculate, 0);
+        assert_eq!(outcome.skipped_activities.other, 0);
+    }
+
+    /// E-5: `form_dom_match_failures` increments when `apply_form_dom_presence`
+    /// suppresses a named subform absent from the form DOM.
+    ///
+    /// The FormTree contains a named `Subform` child ("Ghost") that does NOT
+    /// appear in the form XML packet.  The form XML contains a sibling child
+    /// ("Present") so that the "has_subform_children" guard inside
+    /// `apply_form_dom_presence` fires and suppression logic runs.
+    #[test]
+    fn form_dom_match_failures_increments_for_unmatched_subform() {
+        use crate::flatten::{apply_form_dom_presence, XfaRenderingPolicy};
+
+        let _guard = env_lock();
+        // E-5 diag log is armed when XFA_FLATTEN_TRACE or XFA_RUNTIME_DIAG is set.
+        std::env::set_var("XFA_FLATTEN_TRACE", "1");
+
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        // "form1" is the top-level subform that the form XML root-subform matches.
+        let form1 = add_node(&mut tree, "form1", FormNodeType::Subform);
+        // "Present" appears in the form DOM — will be matched.
+        let present = add_node(&mut tree, "Present", FormNodeType::Subform);
+        // "Ghost" is NOT in the form DOM — will be suppressed.
+        let ghost = add_node(&mut tree, "Ghost", FormNodeType::Subform);
+
+        tree.get_mut(root).children = vec![form1];
+        tree.get_mut(form1).children = vec![present, ghost];
+
+        // Minimal form XML: root subform "form1" contains one child "Present"
+        // but no "Ghost" child.  Because "Present" is listed, the
+        // `has_subform_children` guard fires and "Ghost" is suppressed.
+        let form_xml = r#"<form>
+  <subform name="form1">
+    <subform name="Present"/>
+  </subform>
+</form>"#;
+
+        let (_admitted, match_failures, match_log) = apply_form_dom_presence(
+            &mut tree,
+            root,
+            form_xml,
+            XfaRenderingPolicy::SavedStateFaithful,
+            false,
+        );
+
+        std::env::remove_var("XFA_FLATTEN_TRACE");
+
+        assert_eq!(
+            match_failures, 1,
+            "exactly one unmatched named subform (Ghost) must be counted"
+        );
+        assert_eq!(match_log.len(), 1, "match_log must contain the Ghost entry");
+        assert_eq!(match_log[0].template_node_name, "Ghost");
+        assert_eq!(match_log[0].reason, "formdom_unmatched_suppressed");
+        // Verify presence was actually suppressed on the FormTree node.
+        assert!(
+            tree.meta(ghost).presence.is_not_visible(),
+            "Ghost subform must have been hidden by apply_form_dom_presence"
+        );
     }
 }

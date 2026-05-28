@@ -17,6 +17,7 @@ use pdf_render::vello_cpu::peniko::Fill as PenikoFill;
 use pdf_render::vello_cpu::{
     Level, Pixmap, RenderContext, RenderMode, RenderSettings as CpuRenderSettings,
 };
+pub use pdf_render::RasterQuality;
 use pdf_render::{render, RenderSettings};
 
 const AXIS_EPSILON: f64 = 1e-5;
@@ -86,6 +87,23 @@ pub struct RenderOptions {
     pub width: Option<u16>,
     /// Force output height in pixels (overrides DPI for height).
     pub height: Option<u16>,
+    /// Optional **opt-in** pixel budget. When `Some(n)` and the requested scale
+    /// would produce more than `n` pixels (width × height), the effective scale
+    /// is reduced proportionally so the output fits the budget. Default `None`
+    /// preserves the exact requested scale (byte-identical to prior behavior).
+    ///
+    /// This is an explicit, caller-controlled quality/performance trade-off — it
+    /// is never applied by default and the returned `RenderedPage` reports the
+    /// actual `width`/`height` so callers see the applied resolution.
+    pub max_pixels: Option<u32>,
+    /// Rasterization precision/speed trade-off (default [`RasterQuality::Quality`]).
+    ///
+    /// [`RasterQuality::Quality`] (default) uses the higher-precision f32
+    /// compositing pipeline and is **byte-identical** to historical output.
+    /// [`RasterQuality::Speed`] is an explicit opt-in: ~1.4–1.6× faster on
+    /// content-heavy pages, with sub-perceptual rounding differences where
+    /// blending/anti-aliasing/images compose. Never changes output by default.
+    pub quality: RasterQuality,
 }
 
 impl Default for RenderOptions {
@@ -96,6 +114,8 @@ impl Default for RenderOptions {
             render_annotations: true,
             width: None,
             height: None,
+            max_pixels: None,
+            quality: RasterQuality::Quality,
         }
     }
 }
@@ -201,7 +221,9 @@ impl CmykOverlayDevice {
             cpu_settings: CpuRenderSettings {
                 level: Level::new(),
                 num_threads: 0,
-                render_mode: RenderMode::OptimizeSpeed,
+                // f32 pipeline for the exact-CMYK mask path: keeps mask coverage
+                // byte-identical to historical output (both pipelines are compiled).
+                render_mode: RenderMode::OptimizeQuality,
             },
         }
     }
@@ -636,7 +658,21 @@ fn render_rgba_pixels(
     options: &RenderOptions,
     settings: &InterpreterSettings,
 ) -> (u32, u32, Vec<u8>) {
-    let scale = (options.dpi / 72.0) as f32;
+    let mut scale = (options.dpi / 72.0) as f32;
+
+    // Opt-in pixel budget: clamp the effective scale so width*height <= max_pixels.
+    // Only active when `max_pixels` is Some AND `width`/`height` are not forced.
+    if let Some(budget) = options.max_pixels {
+        if options.width.is_none() && options.height.is_none() && budget > 0 && scale > 0.0 {
+            let (base_w, base_h) = page.render_dimensions();
+            let predicted = (base_w as f64 * scale as f64) * (base_h as f64 * scale as f64);
+            if predicted > budget as f64 {
+                let factor = (budget as f64 / predicted).sqrt() as f32;
+                scale *= factor;
+            }
+        }
+    }
+
     let bg = AlphaColor::<Srgb>::new(options.background);
 
     let rs = RenderSettings {
@@ -645,6 +681,7 @@ fn render_rgba_pixels(
         width: options.width,
         height: options.height,
         bg_color: bg,
+        quality: options.quality,
     };
 
     let mut isettings = settings.clone();
@@ -711,6 +748,10 @@ mod tests {
         assert!(opts.render_annotations);
         assert!(opts.width.is_none());
         assert!(opts.height.is_none());
+        assert!(opts.max_pixels.is_none());
+        // Default rasterization mode is Quality (f32 pipeline) — byte-identical
+        // to historical output. Speed (u8) is opt-in only.
+        assert_eq!(opts.quality, RasterQuality::Quality);
     }
 
     #[test]

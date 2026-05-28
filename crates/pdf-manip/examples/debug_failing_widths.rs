@@ -58,7 +58,7 @@ fn main() {
 
         println!("\n=== {pdf_path} / font contains: {font_substr} ===");
 
-        for (_id, obj) in &doc.objects {
+        for obj in doc.objects.values() {
             let lopdf::Object::Dictionary(dict) = obj else {
                 continue;
             };
@@ -192,7 +192,7 @@ fn main() {
                 if let Some(cff_bytes) = cff_bytes {
                     if let Some(cff) = cff_parser::Table::parse(cff_bytes) {
                         let matrix = cff.matrix();
-                        let scale = (matrix.sx as f64 * 1_000_000.0).round() / 1_000_000.0 * 1000.0;
+                        let scale = (matrix.sx * 1_000_000.0).round() / 1_000_000.0 * 1000.0;
                         let default_w = cff.default_width_x();
                         println!(
                             "  CFF matrix.sx={} scale={:.4} num_glyphs={}",
@@ -215,7 +215,7 @@ fn main() {
                             if let Some(&gid) = enc_map.get(&(code as u8)) {
                                 let glyph_name = cff.glyph_name(cff_parser::GlyphId(gid));
                                 let w = cff.glyph_width(cff_parser::GlyphId(gid));
-                                let w_scaled = w.map(|w| w as f64 * scale as f64 / 1000.0);
+                                let w_scaled = w.map(|w| w as f64 * scale / 1000.0);
                                 println!("  CFF enc[{code}] = GID {gid} ({glyph_name:?}) w={w:?} scaled={w_scaled:?}, prod_enc_map[{code}]={prod_gid:?}");
                             } else {
                                 // Try glyph_index
@@ -229,8 +229,7 @@ fn main() {
                         for gid in 0..cff.number_of_glyphs() {
                             let name = cff.glyph_name(cff_parser::GlyphId(gid));
                             let w = cff.glyph_width(cff_parser::GlyphId(gid));
-                            let w_scaled =
-                                w.map(|w| (w as f64 * scale as f64 / 1000.0).round() as i64);
+                            let w_scaled = w.map(|w| (w as f64 * scale / 1000.0).round() as i64);
                             println!("    GID {gid}: {name:?} w={w:?} scaled={w_scaled:?}");
                         }
 
@@ -241,8 +240,8 @@ fn main() {
                             for gid in 0..cff.number_of_glyphs() {
                                 if let Some(_name) = cff.glyph_name(cff_parser::GlyphId(gid)) {
                                     let w = cff.glyph_width(cff_parser::GlyphId(gid));
-                                    let _w_scaled = w
-                                        .map(|w| (w as f64 * scale as f64 / 1000.0).round() as i64);
+                                    let _w_scaled =
+                                        w.map(|w| (w as f64 * scale / 1000.0).round() as i64);
                                     // print glyphs with names that might be related
                                     let _code_str = code.to_string();
                                 }
@@ -309,10 +308,8 @@ fn extract_cff_bytes(data: &[u8]) -> Option<&[u8]> {
             data[offset + 14],
             data[offset + 15],
         ]) as usize;
-        if tag == b"CFF " {
-            if table_offset + table_len <= data.len() {
-                return Some(&data[table_offset..table_offset + table_len]);
-            }
+        if tag == b"CFF " && table_offset + table_len <= data.len() {
+            return Some(&data[table_offset..table_offset + table_len]);
         }
     }
     None

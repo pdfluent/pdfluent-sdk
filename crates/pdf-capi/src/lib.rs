@@ -4,6 +4,7 @@
 //! Mirrors PDFium-style patterns: opaque handles, status codes, free functions.
 
 mod error;
+mod license;
 mod types;
 
 use std::ffi::CStr;
@@ -12,6 +13,7 @@ use std::ptr;
 use std::slice;
 
 pub use error::*;
+pub use license::*;
 pub use types::*;
 
 // ---- Library lifecycle ---------------------------------------------------
@@ -1400,6 +1402,235 @@ pub unsafe extern "C" fn pdf_document_compress(
     }
 }
 
+// ---- Structured text-block extraction -----------------------------------
+
+/// A single text block with bounding-box coordinates in PDF user space.
+///
+/// Memory ownership: every `PdfTextBlock*` returned by
+/// `pdf_page_extract_text_blocks` is part of one heap allocation that the
+/// caller MUST release via `pdf_text_blocks_free`. The embedded
+/// `const char* text` pointers point into a parallel Rust-owned
+/// `Vec<CString>` and are freed together with the block array. Do NOT
+/// `free()` individual `text` pointers; do NOT mix allocators.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PdfTextBlock {
+    /// PDF user-space X of the block's bottom-left corner (1/72 inch).
+    pub x: f64,
+    /// PDF user-space Y of the block's bottom-left corner (1/72 inch).
+    pub y: f64,
+    /// Block width in PDF points. Always non-negative; 0 for empty blocks.
+    pub width: f64,
+    /// Block height in PDF points. Always non-negative; 0 for empty blocks.
+    pub height: f64,
+    /// UTF-8, null-terminated text content. Lifetime is tied to the
+    /// containing array; do not free individually.
+    pub text: *const c_char,
+}
+
+// SAFETY: The struct is plain old data plus an immutable C-string
+// pointer. The free function below is the only thing that mutates the
+// pointer state, and that happens after the C consumer has handed
+// ownership back to Rust.
+unsafe impl Send for PdfTextBlock {}
+unsafe impl Sync for PdfTextBlock {}
+
+/// Backing storage for a `PdfTextBlock*` array. Kept private so the C
+/// side never sees it; `Box::into_raw`+`Box::from_raw` round-trip the
+/// pointer when freeing.
+struct TextBlockBacking {
+    blocks: Box<[PdfTextBlock]>,
+    // The CStrings own the byte buffers the `text` ptrs point into.
+    // Dropping this Vec frees them; we keep it alive for the full life
+    // of `blocks`.
+    _texts: Vec<std::ffi::CString>,
+}
+
+/// Extract structured text blocks from a single page.
+///
+/// On success: `*out_blocks` is set to a heap-allocated array of
+/// `PdfTextBlock` (or `NULL` if the page has zero blocks), `*out_count`
+/// holds the number of blocks. The caller MUST release the array via
+/// `pdf_text_blocks_free(*out_blocks, *out_count)` when finished.
+///
+/// On failure: `*out_blocks` is set to `NULL`, `*out_count` to `0`, and
+/// the function returns a non-`Ok` status. The error message is
+/// available via `pdf_get_last_error()`.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*` or
+/// null. `out_blocks` and `out_count` must be valid writable pointers.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_page_extract_text_blocks(
+    doc: *const PdfDocument,
+    page_index: i32,
+    out_blocks: *mut *mut PdfTextBlock,
+    out_count: *mut usize,
+) -> PdfStatus {
+    // Defensive: even if we early-return, callers benefit from a
+    // consistent (NULL, 0) post-state.
+    if !out_blocks.is_null() {
+        unsafe { *out_blocks = ptr::null_mut() };
+    }
+    if !out_count.is_null() {
+        unsafe { *out_count = 0 };
+    }
+    if doc.is_null() {
+        error::set_last_error_str("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    if out_blocks.is_null() || out_count.is_null() {
+        error::set_last_error_str("null out_blocks or out_count");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    if page_index < 0 {
+        error::set_last_error_str("page_index must be >= 0");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+
+    let document = unsafe { &(*doc).0 };
+    let page_count = document.page_count();
+    if (page_index as usize) >= page_count {
+        error::set_last_error_str(&format!(
+            "page index {page_index} out of range (0..{page_count})"
+        ));
+        return PdfStatus::ErrorPageRange;
+    }
+
+    let engine_blocks = match document.extract_text_blocks(page_index as usize) {
+        Ok(b) => b,
+        Err(e) => {
+            error::set_last_error_str(&format!("text-block extraction failed: {e}"));
+            return PdfStatus::ErrorExtract;
+        }
+    };
+
+    // Aggregate every block's bbox and turn its text into a CString.
+    let mut blocks: Vec<PdfTextBlock> = Vec::with_capacity(engine_blocks.len());
+    let mut texts: Vec<std::ffi::CString> = Vec::with_capacity(engine_blocks.len());
+    for eb in engine_blocks {
+        let (mut x_min, mut y_min) = (f64::INFINITY, f64::INFINITY);
+        let (mut x_max, mut y_max) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for span in &eb.spans {
+            if span.x < x_min {
+                x_min = span.x;
+            }
+            if span.y < y_min {
+                y_min = span.y;
+            }
+            let right = span.x + span.width;
+            let top = span.y + span.height;
+            if right > x_max {
+                x_max = right;
+            }
+            if top > y_max {
+                y_max = top;
+            }
+        }
+        if !x_min.is_finite() {
+            x_min = 0.0;
+            y_min = 0.0;
+            x_max = 0.0;
+            y_max = 0.0;
+        }
+        let cstr = match std::ffi::CString::new(eb.text()) {
+            Ok(c) => c,
+            Err(_) => {
+                error::set_last_error_str("text contains interior null byte");
+                // We have not yet allocated any backing for the C consumer
+                // (out_blocks is still NULL), so the partial vecs simply
+                // drop here.
+                return PdfStatus::ErrorExtract;
+            }
+        };
+        let text_ptr = cstr.as_ptr();
+        texts.push(cstr);
+        blocks.push(PdfTextBlock {
+            x: x_min,
+            y: y_min,
+            width: (x_max - x_min).max(0.0),
+            height: (y_max - y_min).max(0.0),
+            text: text_ptr,
+        });
+    }
+
+    if blocks.is_empty() {
+        // Empty page → leave (NULL, 0) which we already wrote above.
+        return PdfStatus::Ok;
+    }
+
+    let count = blocks.len();
+    let backing = Box::new(TextBlockBacking {
+        blocks: blocks.into_boxed_slice(),
+        _texts: texts,
+    });
+
+    // Hand the array pointer to the C caller; keep the backing alive
+    // via Box::into_raw so it survives until pdf_text_blocks_free.
+    let backing_ptr = Box::into_raw(backing);
+    // SAFETY: TextBlockBacking { blocks: Box<[..]>, _texts: .. } — the
+    // `blocks` field's first element address equals .as_ptr().
+    let array_ptr = unsafe { (*backing_ptr).blocks.as_ptr() } as *mut PdfTextBlock;
+    // Stash backing_ptr so free can recover it. We encode the backing
+    // pointer in a side-table keyed by array_ptr.
+    register_backing(array_ptr, backing_ptr);
+    unsafe {
+        *out_blocks = array_ptr;
+        *out_count = count;
+    }
+    PdfStatus::Ok
+}
+
+/// Free an array of `PdfTextBlock`s returned by
+/// `pdf_page_extract_text_blocks`.
+///
+/// `pdf_text_blocks_free(NULL, 0)` is a no-op. The `count` argument MUST
+/// match the value `pdf_page_extract_text_blocks` wrote into
+/// `*out_count` — passing a different value is undefined behaviour.
+///
+/// # Safety
+/// `blocks` must be either null or a pointer previously returned by
+/// `pdf_page_extract_text_blocks` that has not yet been freed.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_text_blocks_free(blocks: *mut PdfTextBlock, _count: usize) {
+    if blocks.is_null() {
+        return;
+    }
+    if let Some(backing_ptr) = take_backing(blocks) {
+        // SAFETY: backing_ptr came from Box::into_raw and we only ever
+        // call take_backing exactly once per registration.
+        drop(unsafe { Box::from_raw(backing_ptr) });
+    }
+    // If take_backing returned None the pointer wasn't ours — silently
+    // ignore (safer than aborting on a double-free).
+}
+
+// ---------------------------------------------------------------------------
+// Side-table to recover the backing TextBlockBacking from the array
+// pointer the C consumer holds. Locked with a Mutex; entries are
+// inserted on extraction and removed on free.
+// ---------------------------------------------------------------------------
+
+use std::sync::Mutex;
+use std::sync::OnceLock;
+
+fn backing_table() -> &'static Mutex<std::collections::HashMap<usize, usize>> {
+    static TABLE: OnceLock<Mutex<std::collections::HashMap<usize, usize>>> = OnceLock::new();
+    TABLE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn register_backing(array_ptr: *mut PdfTextBlock, backing_ptr: *mut TextBlockBacking) {
+    if let Ok(mut g) = backing_table().lock() {
+        g.insert(array_ptr as usize, backing_ptr as usize);
+    }
+}
+
+fn take_backing(array_ptr: *mut PdfTextBlock) -> Option<*mut TextBlockBacking> {
+    let mut g = backing_table().lock().ok()?;
+    g.remove(&(array_ptr as usize))
+        .map(|v| v as *mut TextBlockBacking)
+}
+
 // ---- Tests ---------------------------------------------------------------
 
 #[cfg(test)]
@@ -1499,7 +1730,7 @@ mod tests {
 
     #[test]
     fn meta_null() {
-        let key = b"Title\0".as_ptr().cast::<c_char>();
+        let key = c"Title".as_ptr();
         assert!(unsafe { pdf_document_get_meta(ptr::null(), key) }.is_null());
     }
 
@@ -1527,7 +1758,7 @@ mod tests {
 
     #[test]
     fn search_count_null() {
-        let q = b"test\0".as_ptr().cast::<c_char>();
+        let q = c"test".as_ptr();
         assert_eq!(unsafe { pdf_document_search_count(ptr::null(), q) }, -1);
         assert_eq!(
             unsafe { pdf_document_search_count(ptr::null(), ptr::null()) },
@@ -1555,7 +1786,7 @@ mod tests {
 
     #[test]
     fn watermark_null() {
-        let text = b"DRAFT\0".as_ptr().cast::<c_char>();
+        let text = c"DRAFT".as_ptr();
         let mut out: *mut PdfDocument = ptr::null_mut();
         let s = unsafe { pdf_document_add_watermark(ptr::null(), text, &mut out) };
         assert_eq!(s, PdfStatus::ErrorInvalidArgument);

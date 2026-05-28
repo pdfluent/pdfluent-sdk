@@ -2575,7 +2575,6 @@ mod tests {
 
             let backend = best_available_backend().expect("best OCR backend");
             assert_eq!(backend.name(), "mistral");
-            return;
         }
 
         #[cfg(all(not(feature = "ocr-mistral"), feature = "ocr-google"))]

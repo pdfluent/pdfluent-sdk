@@ -1,103 +1,128 @@
 # Writing Recipes
 
-## Create a New PDF
+> All snippets use the canonical, RFC 0001-frozen public API
+> (`use pdfluent::prelude::*;` + `PdfDocument::open(...)`).
+
+## Create a New (Empty) PDF
 
 ```rust
-use pdfluent::{Sdk, PageSize};
-use pdfluent::document::DocumentBuilder;
+use pdfluent::prelude::*;
 
-let sdk = Sdk::init_with_license("license.json")?;
-
-let doc = DocumentBuilder::new()
-    .page_size(PageSize::A4)
-    .add_text("Hello, PDFluent!", 72.0, 720.0)
-    .add_text("This is a new PDF.", 72.0, 680.0)
-    .build()?;
-
-doc.save("hello.pdf")?;
-println!("Created hello.pdf");
+fn main() -> Result<()> {
+    // Create an empty document and persist it.
+    let doc = PdfDocument::create();
+    doc.save("hello.pdf")?;
+    println!("Created hello.pdf ({} page)", doc.page_count());
+    Ok(())
+}
 ```
 
----
-
-## Add Pages to PDF
-
-```rust
-use pdfluent::Sdk;
-
-let sdk = Sdk::init_with_license("license.json")?;
-let mut doc = sdk.open("existing.pdf")?;
-
-// Add a blank page
-doc.add_page(pdfluent::PageSize::A4)?;
-
-// Add page from another document
-let mut other = sdk.open("source.pdf")?;
-doc.append_pages(&other, &[0, 1, 2])?; // pages 0, 1, 2
-
-doc.save("expanded.pdf")?;
-```
-
----
-
-## Remove Pages from PDF
-
-```rust
-use pdfluent::Sdk;
-
-let sdk = Sdk::init_with_license("license.json")?;
-let mut doc = sdk.open("multi_page.pdf")?;
-
-// Remove page 2 (0-indexed)
-doc.remove_page(2)?;
-
-// Remove pages 5 through 7
-doc.remove_pages(5..=7)?;
-
-doc.save("trimmed.pdf")?;
-```
+For page-content authoring (text + graphics primitives), see the
+lower-level `pdf-syntax` / `pdf-content-stream` crates. The
+canonical `pdfluent` facade is optimised for **manipulating
+existing PDFs** (the dominant enterprise use case); authoring is
+on the public roadmap.
 
 ---
 
 ## Merge Multiple PDFs
 
 ```rust
-use pdfluent::Sdk;
+use pdfluent::prelude::*;
 
-let sdk = Sdk::init_with_license("license.json")?;
+fn main() -> Result<()> {
+    let cover = PdfDocument::open("cover.pdf")?;
+    let chap1 = PdfDocument::open("chapter1.pdf")?;
+    let chap2 = PdfDocument::open("chapter2.pdf")?;
 
-let mut merged = sdk.create_empty()?;
+    let merged = PdfMerger::new()
+        .add(cover)
+        .add(chap1)
+        .add(chap2)
+        .with_bookmarks(BookmarkMergeStrategy::Preserve)
+        .build()?;
 
-// Merge in order
-for file in ["cover.pdf", "chapter1.pdf", "chapter2.pdf"] {
-    let doc = sdk.open(file)?;
-    merged.append_document(&doc)?;
+    merged.save("book.pdf")?;
+    println!("Merged into book.pdf");
+    Ok(())
 }
-
-merged.save("book.pdf")?;
-println!("Merged 3 PDFs into book.pdf");
 ```
 
 ---
 
-## Split a PDF
+## Split a PDF Into Per-Page Documents
 
 ```rust
-use pdfluent::Sdk;
+use pdfluent::prelude::*;
 
-let sdk = Sdk::init_with_license("license.json")?;
-let doc = sdk.open("big_document.pdf")?;
+fn main() -> Result<()> {
+    let doc = PdfDocument::open("big_document.pdf")?;
+    let total_pages = doc.page_count();
 
-let total_pages = doc.page_count();
-
-// Split into chapters of 10 pages
-for (i, chunk) in doc.pages().chunks(10).enumerate() {
-    let mut new_doc = sdk.create_empty()?;
-    for page in chunk {
-        new_doc.append_page(&doc, page.number)?;
+    // split_pages() returns one PdfDocument per source page.
+    for (idx, page_doc) in doc.split_pages()?.into_iter().enumerate() {
+        page_doc.save(format!("page_{:03}.pdf", idx))?;
     }
-    new_doc.save(format!("chapter_{}.pdf", i + 1))?;
+    println!("Split into {} files", total_pages);
+    Ok(())
 }
+```
 
-println!("Split into {} files", (total_pages + 9) / 10);
+---
+
+## Rotate a Page and Save
+
+```rust
+use pdfluent::prelude::*;
+
+fn main() -> Result<()> {
+    let mut doc = PdfDocument::open("scan.pdf")?;
+    doc.rotate_page(0, Rotation::Clockwise90)?;
+    doc.save("scan-rotated.pdf")?;
+    Ok(())
+}
+```
+
+---
+
+## Stream-Compress an Existing PDF
+
+```rust
+use pdfluent::prelude::*;
+
+fn main() -> Result<()> {
+    let mut doc = PdfDocument::open("heavy.pdf")?;
+    let report = doc.compress(CompressOptions::default())?;
+    doc.save("heavy-compressed.pdf")?;
+    println!(
+        "Compressed: {} streams compressed, {} deduplicated, \
+         {} unused objects removed",
+        report.streams_compressed,
+        report.streams_deduplicated,
+        report.unused_removed
+    );
+    Ok(())
+}
+```
+
+---
+
+## Add a Diagonal Text Watermark
+
+```rust
+use pdfluent::prelude::*;
+
+fn main() -> Result<()> {
+    let mut doc = PdfDocument::open("contract.pdf")?;
+    doc.add_watermark(
+        "CONFIDENTIAL",
+        WatermarkOptions::centered()
+            .rotated(45.0)
+            .layer(Layer::Foreground)
+            .opacity(0.25)
+            .font_size(48.0),
+    )?;
+    doc.save("contract-marked.pdf")?;
+    Ok(())
+}
 ```

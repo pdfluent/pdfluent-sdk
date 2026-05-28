@@ -36,6 +36,17 @@ pub enum XfaError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// RenderingPolicyUnsupported. **D11.** The requested
+    /// [`crate::flatten::XfaRenderingPolicy`] is not available in the calling
+    /// context (e.g. a future/unknown policy, or a command such as `flatten`
+    /// that applies `SavedStateFaithful` only). Both `SavedStateFaithful` (the
+    /// default, production policy) and `FreshMergeExperimental` (experimental,
+    /// opt-in) are implemented as of D12; this variant exists so an unavailable
+    /// policy fails loudly rather than silently producing default output under
+    /// the wrong label.
+    #[error("XFA rendering policy not supported: {0}")]
+    RenderingPolicyUnsupported(String),
+
     // ---- New structured variants (XFA-F9-01 #1120) ----
     /// XFA packet extraction failed (e.g. missing /AcroForm, corrupt stream).
     #[error("XFA extraction failed: {0}")]
@@ -75,6 +86,23 @@ pub enum XfaError {
     /// Feature is intentionally unsupported by the non-interactive XFA engine.
     #[error("unsupported feature: {0}")]
     UnsupportedFeature(String),
+
+    /// XFA-JS-HOST-STUBS — A script reached a host capability that requires
+    /// genuine user / viewer interaction (e.g. `xfa.host.messageBox`,
+    /// `xfa.host.openList`, `xfa.signature.sign`). The flatten pipeline runs
+    /// non-interactively, so the call cannot be satisfied honestly. Inside the
+    /// sandbox the call is short-circuited to a safe default and counted in
+    /// [`crate::DynamicScriptOutcome::js_unsupported_host_calls`]; this error
+    /// variant exists for synchronous Rust API surfaces that want to surface
+    /// the gap to embedding callers rather than silently absorb it.
+    ///
+    /// The `capability` string is a stable, well-known identifier such as
+    /// `"xfa.host.messageBox"` and is suitable for inclusion in diagnostics.
+    #[error("unsupported host capability: {capability}")]
+    UnsupportedHostCapability {
+        /// Stable identifier of the host capability that was requested.
+        capability: String,
+    },
 }
 /// Result.
 pub type Result<T> = std::result::Result<T, XfaError>;
@@ -87,6 +115,17 @@ mod tests {
     fn error_message_extraction_failed() {
         let e = XfaError::ExtractionFailed("no /AcroForm key".to_string());
         assert_eq!(format!("{e}"), "XFA extraction failed: no /AcroForm key");
+    }
+
+    #[test]
+    fn error_message_unsupported_host_capability() {
+        let e = XfaError::UnsupportedHostCapability {
+            capability: "xfa.host.messageBox".to_string(),
+        };
+        assert_eq!(
+            format!("{e}"),
+            "unsupported host capability: xfa.host.messageBox"
+        );
     }
 
     #[test]

@@ -15,12 +15,7 @@ use super::AnnotationBuilder;
 #[cfg(feature = "write")]
 impl AnnotationBuilder {
     /// Generate a default appearance based on the annotation subtype.
-    pub(super) fn default_appearance(
-        &self,
-        builder: &mut AppearanceStreamBuilder,
-        w: f64,
-        h: f64,
-    ) {
+    pub(super) fn default_appearance(&self, builder: &mut AppearanceStreamBuilder, w: f64, h: f64) {
         let stroke = self.color.unwrap_or(AppearanceColor::new(0.0, 0.0, 0.0));
         let needs_gs = self.opacity.is_some() || matches!(self.subtype, AnnotSubtype::Highlight);
 

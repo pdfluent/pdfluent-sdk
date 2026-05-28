@@ -7,6 +7,7 @@
 
 use lopdf::Document;
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
@@ -40,7 +41,10 @@ fn main() -> ExitCode {
 
     let docs: Vec<Document> = paths
         .iter()
-        .map(|p| Document::load(p).expect("load corpus pdf"))
+        .map(|p| {
+            let bytes = fs::read(p).expect("read corpus pdf");
+            Document::load_mem(&bytes).expect("load corpus pdf")
+        })
         .collect();
 
     let start = Instant::now();

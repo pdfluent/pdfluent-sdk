@@ -1,10 +1,10 @@
 # PDFluent SDK
 
-Pure Rust PDF/A SDK with XFA support and WASM bindings.
+Pure Rust PDF/A SDK with WASM bindings and experimental, feature-gated XFA support.
 
 ![Crates.io](https://img.shields.io/crates/v/pdfluent)
 ![License](https://img.shields.io/badge/license-PDFluent%20Commercial-blue)
-![Build](https://img.shields.io/github/actions/workflow/status/pdfluent/pdfluent-sdk/ci.yml)
+![Build](https://github.com/pdfluent/PDFluent-project/badges/master/pipeline.svg)
 
 See [SETUP.md](SETUP.md) for contributor onboarding.
 
@@ -28,8 +28,8 @@ fn main() -> Result<()> {
 
 ## Features
 
-### XFA Forms
-- **Full XFA 3.3 support** — dynamic forms with scriptable calculations
+### XFA Forms (experimental, feature-gated — not production-supported)
+- **XFA 3.3 feature set** — dynamic forms with scriptable calculations (experimental, behind the `xfa` feature gate)
 - **Font embedding pipeline** — automatic resolution of embedded, system, and fallback fonts
 - **Image embedding** — JPEG/PNG XObjects with alpha transparency via SMask
 - **Layout engine** — positioned, flowed (tb/lr-tb), and table layouts with pagination
@@ -54,7 +54,7 @@ fn main() -> Result<()> {
 - **Watermarks** — text and image overlay
 
 ### WASM & Bindings
-- **WebAssembly** — runs in browser via xfa-wasm
+- **WebAssembly** — runs in browser via the `@pdfluent/sdk-wasm` npm package
 - **Node.js** — napi-rs bindings
 - **Python** — PyO3 bindings (separate crate)
 - **C FFI** — pdf-capi for C/C++ integration

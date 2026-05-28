@@ -1,0 +1,118 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "xfa_oracle_fault_classifier_schema.json",
+  "title": "XFA Oracle Fault Classification Result",
+  "description": "Output schema for scripts/xfa_oracle_fault_classifier.py. Classifies low-SSIM XFA visual-fidelity cases by likely fault source. Heuristic-based; sample inspection still required. Zero paid API calls.",
+  "type": "object",
+  "required": ["doc_sha256", "doc_filename", "oracle_path", "ssim_input", "classification", "heuristic_signals"],
+  "additionalProperties": false,
+  "properties": {
+    "doc_sha256": {
+      "type": "string",
+      "description": "SHA-256 hex digest of the input PDF document.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "doc_filename": {
+      "type": "string",
+      "description": "Basename of the input PDF document.",
+      "minLength": 1
+    },
+    "oracle_path": {
+      "type": "string",
+      "description": "Filesystem path or source descriptor of the oracle artifact used for comparison.",
+      "minLength": 1
+    },
+    "ssim_input": {
+      "type": "object",
+      "description": "SSIM values consumed from OV2-01 pipeline output (xfa_visual_evidence.py).",
+      "required": ["mean_ssim", "min_ssim", "max_ssim", "page_count"],
+      "additionalProperties": false,
+      "properties": {
+        "mean_ssim": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+        "min_ssim": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+        "max_ssim": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+        "page_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "classification": {
+      "type": "object",
+      "required": ["category", "confidence", "rationale"],
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "engine_bug",
+            "oracle_mismatch_acroform_xfa",
+            "oracle_mismatch_rendering",
+            "ambiguous",
+            "both_fail",
+            "high_fidelity_no_action"
+          ],
+          "description": "Heuristic verdict on the fault source."
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["low", "medium", "high"],
+          "description": "Heuristic confidence level."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Human-readable explanation referencing heuristic signals.",
+          "minLength": 1
+        },
+        "fine_category": {
+          "type": "string",
+          "enum": [
+            "antialias_variant",
+            "font_metric",
+            "element_position",
+            "clipping",
+            "border_rendering_delta",
+            "oracle_artifact",
+            "candidate_engine_bug",
+            "mixed_rendering"
+          ],
+          "description": "Optional sub-category for oracle_mismatch_rendering cases. Wave 1 Agent D + QF2-E + QF4-F extensions. oracle_artifact generalises border_rendering_delta; candidate_engine_bug is a conservative engine-suspect triage flag (never a confirmed engine bug)."
+        },
+        "fine_rationale": {
+          "type": "string",
+          "description": "Human-readable explanation for the fine_category assignment.",
+          "minLength": 1
+        }
+      }
+    },
+    "heuristic_signals": {
+      "type": "object",
+      "description": "Raw signals consumed by the classifier. Useful for manual review.",
+      "additionalProperties": false,
+      "properties": {
+        "pdf_has_acroform_entry": {"type": "boolean"},
+        "pdf_has_xfa_entry": {"type": "boolean"},
+        "oracle_source_kind": {
+          "type": "string",
+          "enum": ["pdfrest_flat", "pdfrest_xfa", "vps_xfa_forms", "vps_xfa_golden", "unknown_external", "missing"]
+        },
+        "diff_stats": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mean_abs_diff": {"type": "number", "minimum": 0.0},
+            "high_diff_pixel_fraction": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "diff_band_correlation": {
+              "type": "string",
+              "enum": ["geometric_shift", "text_antialiasing", "mixed", "low_signal"],
+              "description": "Spatial pattern of diff: geometric_shift = large blocky offsets, text_antialiasing = thin distributed stroke diff, mixed = both, low_signal = small."
+            },
+            "image_blank_fraction_ours": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "image_blank_fraction_oracle": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+          }
+        }
+      }
+    },
+    "manual_review_recommended": {
+      "type": "boolean",
+      "description": "True if heuristic confidence is low or ambiguous; case should be inspected by a human."
+    }
+  }
+}

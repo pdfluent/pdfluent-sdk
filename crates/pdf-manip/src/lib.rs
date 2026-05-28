@@ -5,6 +5,8 @@
 //! from a file (`Document::load`) or obtained from another `pdf-manip` call.
 //! Most functions return [`Result<_, ManipError>`].
 //!
+//! This crate's public API is panic-free. Errors are returned as `Result<T, ManipError>`.
+//!
 //! **Note on page numbering:** all page indices throughout this crate are
 //! **1-based** to match PDF conventions.
 //!
@@ -80,6 +82,7 @@ pub mod pdfa_xmp;
 pub mod pdfua;
 pub mod text_replace;
 pub mod text_run;
+pub mod text_style;
 pub mod watermark;
 
 pub use content_editor::{ContentEditor, GraphicsSnapshot, GraphicsStateTracker};

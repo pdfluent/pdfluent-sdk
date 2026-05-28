@@ -1,12 +1,12 @@
 [package]
 name = "pdfluent-ccitt"
-version = "0.2.0"
+version = "0.2.2"
 description = "A decoder for group 3 and group 4 CCITT images."
 authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 readme = "README.md"
-repository = "https://github.com/pdfluent/examples"
+repository = "https://pdfluent.com/source"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 keywords = ["pdf", "image", "ccitt", "compression", "fax"]

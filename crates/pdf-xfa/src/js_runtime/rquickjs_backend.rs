@@ -32,9 +32,11 @@ use rquickjs::function::Opt;
 use rquickjs::{CatchResultExt, Coerced, Context, Function, Object, Persistent, Runtime};
 use xfa_layout_engine::form::{FormNodeId, FormTree};
 
+use super::regex_guard::{scan_script_for_redos, RegexScanVerdict};
 use super::{
-    activity_allowed_for_sandbox, HostBindings, RuntimeMetadata, RuntimeOutcome, SandboxError,
-    XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES, DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES,
+    activity_allowed_for_sandbox_with_gate, walltime_fallback_multiplier, HostBindings,
+    RuntimeMetadata, RuntimeOutcome, SandboxError, XfaJsRuntime, DEFAULT_MEMORY_BUDGET_BYTES,
+    DEFAULT_TIME_BUDGET_MS, MAX_SCRIPT_BODY_BYTES, MAX_VARIABLES_SCRIPT_BODY_BYTES,
 };
 
 /// QuickJS-backed runtime adapter. One instance is reusable across many
@@ -48,6 +50,12 @@ pub struct QuickJsRuntime {
     /// Phase D-ι: clears all registered variables-script globals at
     /// document boundary (`reset_per_document`).
     clear_variables_scripts: Option<Persistent<Function<'static>>>,
+    /// W3-D RETRY: hook that registers a `<variables>` `<text>` data item
+    /// (XFA 3.3 §5.5.2) as a form-level mutable string container. Called
+    /// once per named data item at document load. Sibling to
+    /// [`Self::set_variables_script`] — the `clear_variables_scripts` hook
+    /// also drops the data-item namespace.
+    set_variables_data_item: Option<Persistent<Function<'static>>>,
     context: Context,
     runtime: Runtime,
     metadata: RuntimeMetadata,
@@ -55,6 +63,19 @@ pub struct QuickJsRuntime {
     memory_budget_bytes: usize,
     script_deadline: Arc<AtomicU64>,
     script_started: Arc<AtomicBool>,
+    /// QF1-E / SEC-01 — start-time of the currently executing script in
+    /// nanoseconds since [`epoch`]. Set by [`Self::set_deadline`] before
+    /// QuickJS is invoked and read by the post-execution classification
+    /// branch to compute elapsed wall-clock and decide whether to surface
+    /// [`SandboxError::WallTimeExceeded`] instead of
+    /// [`SandboxError::Timeout`]. Cleared back to 0 by
+    /// [`Self::clear_deadline`].
+    script_start_nanos: Arc<AtomicU64>,
+    /// QF1-E / SEC-01 — multiplier on `time_budget` used by the wall-time
+    /// fallback. Snapshotted at construction time from
+    /// [`super::walltime_fallback_multiplier`] so tests can toggle the env
+    /// var per-instance without racing other tests.
+    walltime_fallback_multiplier: u32,
     host: Rc<RefCell<HostBindings>>,
     bindings_registered: bool,
 }
@@ -87,6 +108,10 @@ impl QuickJsRuntime {
 
         let script_deadline = Arc::new(AtomicU64::new(0));
         let script_started = Arc::new(AtomicBool::new(false));
+        // QF1-E: independent of the deadline atomic — start-time is needed
+        // for the post-execution elapsed comparison even when the deadline
+        // has been cleared.
+        let script_start_nanos = Arc::new(AtomicU64::new(0));
 
         // Interrupt handler: poll the deadline. When the started flag is set
         // and the wall-clock has crossed the deadline, return `true` to abort
@@ -113,6 +138,7 @@ impl QuickJsRuntime {
             eval_script: None,
             set_variables_script: None,
             clear_variables_scripts: None,
+            set_variables_data_item: None,
             context,
             runtime,
             metadata: RuntimeMetadata::default(),
@@ -120,6 +146,8 @@ impl QuickJsRuntime {
             memory_budget_bytes: DEFAULT_MEMORY_BUDGET_BYTES,
             script_deadline,
             script_started,
+            script_start_nanos,
+            walltime_fallback_multiplier: walltime_fallback_multiplier(),
             host: Rc::new(RefCell::new(HostBindings::new())),
             bindings_registered: false,
         })
@@ -140,19 +168,77 @@ impl QuickJsRuntime {
         self
     }
 
+    /// QF1-E / SEC-01 — override the wall-time fallback multiplier. The
+    /// default is read from
+    /// [`super::ENV_WALLTIME_FALLBACK_MULTIPLIER`] / falls back to
+    /// [`super::WALLTIME_FALLBACK_MULTIPLIER_DEFAULT`]. Values below `2`
+    /// are clamped to `2` so a clean timeout cannot be re-labelled as
+    /// `WallTimeExceeded` by accident. Tests use this to deterministically
+    /// pin the multiplier without racing the process-global env var.
+    pub fn with_walltime_fallback_multiplier(mut self, multiplier: u32) -> Self {
+        self.walltime_fallback_multiplier = multiplier.max(2);
+        self
+    }
+
     fn set_deadline(&self) {
-        let deadline = Instant::now()
+        let now = Instant::now()
             .checked_duration_since(epoch())
-            .map(|d| d + self.time_budget)
-            .unwrap_or(self.time_budget);
+            .unwrap_or(Duration::ZERO);
+        let deadline = now + self.time_budget;
         self.script_deadline
             .store(deadline.as_nanos() as u64, Ordering::Release);
+        // QF1-E: capture start-time before flagging the script as started so
+        // the post-execution branch can compute elapsed wall-clock even if
+        // `clear_deadline` runs first.
+        self.script_start_nanos
+            .store(now.as_nanos() as u64, Ordering::Release);
         self.script_started.store(true, Ordering::Release);
     }
 
     fn clear_deadline(&self) {
         self.script_started.store(false, Ordering::Release);
         self.script_deadline.store(0, Ordering::Release);
+        // Intentionally keep `script_start_nanos` populated until the next
+        // `set_deadline` so the caller's elapsed-snapshot is stable.
+    }
+
+    /// QF1-E / SEC-01 — classify a timeout-shaped error as either the
+    /// primary [`SandboxError::Timeout`] (interrupt fired within multiplier
+    /// × budget) or the defence-in-depth [`SandboxError::WallTimeExceeded`]
+    /// (elapsed ≥ multiplier × budget at error-classification time).
+    ///
+    /// This is intentionally a no-op in the common case: the rquickjs
+    /// interrupt callback fires within a few opcodes of the deadline for
+    /// any reasonable JS source, so the elapsed time at this point is
+    /// ≈ `time_budget`, well below `multiplier × time_budget`. The
+    /// fallback variant only surfaces when execution was trapped inside a
+    /// non-interruptible C-level call long enough that the elapsed
+    /// wall-clock crossed the multiplier threshold.
+    ///
+    /// `now_nanos` is the wall-clock at the moment the post-execution
+    /// branch captured the deadline; passed in so the caller can reuse a
+    /// single `Instant::now()` snapshot for both checks.
+    fn classify_timeout_or_walltime(&self, now_nanos: u64) -> SandboxError {
+        let start = self.script_start_nanos.load(Ordering::Acquire);
+        if start == 0 || now_nanos <= start {
+            // Defensive: if the start was never set or the snapshot went
+            // backwards (impossible barring monotonic clock issues), keep
+            // the primary classification.
+            return SandboxError::Timeout;
+        }
+        let elapsed_nanos = now_nanos - start;
+        let threshold_nanos = (self.time_budget.as_nanos() as u64)
+            .saturating_mul(self.walltime_fallback_multiplier as u64);
+        if elapsed_nanos >= threshold_nanos {
+            let elapsed_ms = elapsed_nanos / 1_000_000;
+            let budget_ms = self.time_budget.as_millis();
+            SandboxError::WallTimeExceeded(format!(
+                "{elapsed_ms} ms ≥ {mult}× budget ({budget_ms} ms)",
+                mult = self.walltime_fallback_multiplier
+            ))
+        } else {
+            SandboxError::Timeout
+        }
     }
 
     fn register_host_bindings(&mut self) -> Result<(), String> {
@@ -269,6 +355,37 @@ impl QuickJsRuntime {
                 .set("resolveImplicitNodeIds", resolve_implicit_node_ids)
                 .map_err(|e| format!("set resolveImplicitNodeIds: {e}"))?;
 
+            // XFA-DATA-M3C: quiet probe for implicit identifier resolution.
+            // Same scope walk as `resolveImplicitNodeIds`; a miss returns an
+            // empty array without bumping `resolve_failures`. The JS proxy
+            // uses this when probing schema-optional underscore-shorthand
+            // globals (`_<Name>`).
+            let implicit_quiet_host = Rc::clone(&host);
+            let resolve_implicit_node_ids_quiet = Function::new(
+                ctx.clone(),
+                move |current_id: i32, name: Opt<Coerced<String>>| -> Vec<i32> {
+                    if current_id < 0 {
+                        return Vec::new();
+                    }
+                    let Some(name) = name.0 else {
+                        return Vec::new();
+                    };
+                    implicit_quiet_host
+                        .borrow_mut()
+                        .resolve_implicit_candidates_quiet(FormNodeId(current_id as usize), &name.0)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveImplicitNodeIdsQuiet: {e}"))?;
+            internal
+                .set(
+                    "resolveImplicitNodeIdsQuiet",
+                    resolve_implicit_node_ids_quiet,
+                )
+                .map_err(|e| format!("set resolveImplicitNodeIdsQuiet: {e}"))?;
+
             let child_host = Rc::clone(&host);
             let resolve_child_node_id = Function::new(
                 ctx.clone(),
@@ -314,6 +431,105 @@ impl QuickJsRuntime {
                 .set("resolveChildNodeIds", resolve_child_node_ids)
                 .map_err(|e| format!("set resolveChildNodeIds: {e}"))?;
 
+            // XFA-DATA-M3C: quiet variant of resolveChildNodeIds. Returns the
+            // same ids on success and an empty array on miss, but does not
+            // bump the `resolve_failures` metric — used by underscore-shorthand
+            // probes where a miss is the expected schema-optional path and
+            // would otherwise inflate the resolve-failure budget.
+            let child_quiet_host = Rc::clone(&host);
+            let resolve_child_node_ids_quiet = Function::new(
+                ctx.clone(),
+                move |parent_ids: Opt<Coerced<String>>, name: Opt<Coerced<String>>| -> Vec<i32> {
+                    let Some(parent_ids) = parent_ids.0 else {
+                        return Vec::new();
+                    };
+                    let Some(name) = name.0 else {
+                        return Vec::new();
+                    };
+                    child_quiet_host
+                        .borrow_mut()
+                        .resolve_child_candidates_quiet(&parse_node_id_csv(&parent_ids.0), &name.0)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveChildNodeIdsQuiet: {e}"))?;
+            internal
+                .set("resolveChildNodeIdsQuiet", resolve_child_node_ids_quiet)
+                .map_err(|e| format!("set resolveChildNodeIdsQuiet: {e}"))?;
+
+            // Phase D-θ: lookahead-hinted variants of the implicit and child
+            // resolvers. The JS proxy carries the next-segment property name
+            // and asks the host to keep only candidates whose subtree
+            // contains a descendant matching that hint. Falls back to the
+            // un-hinted candidate list when the hint disambiguates nothing,
+            // so single-token reads remain byte-for-byte compatible.
+            let implicit_hinted_host = Rc::clone(&host);
+            let resolve_implicit_node_ids_hinted = Function::new(
+                ctx.clone(),
+                move |current_id: i32,
+                      name: Opt<Coerced<String>>,
+                      hint: Opt<Coerced<String>>|
+                      -> Vec<i32> {
+                    if current_id < 0 {
+                        return Vec::new();
+                    }
+                    let Some(name) = name.0 else {
+                        return Vec::new();
+                    };
+                    let hint = hint.0.map(|s| s.0).unwrap_or_default();
+                    implicit_hinted_host
+                        .borrow_mut()
+                        .resolve_implicit_candidates_hinted(
+                            FormNodeId(current_id as usize),
+                            &name.0,
+                            &hint,
+                        )
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveImplicitNodeIdsHinted: {e}"))?;
+            internal
+                .set(
+                    "resolveImplicitNodeIdsHinted",
+                    resolve_implicit_node_ids_hinted,
+                )
+                .map_err(|e| format!("set resolveImplicitNodeIdsHinted: {e}"))?;
+
+            let child_hinted_host = Rc::clone(&host);
+            let resolve_child_node_ids_hinted = Function::new(
+                ctx.clone(),
+                move |parent_ids: Opt<Coerced<String>>,
+                      name: Opt<Coerced<String>>,
+                      hint: Opt<Coerced<String>>|
+                      -> Vec<i32> {
+                    let Some(parent_ids) = parent_ids.0 else {
+                        return Vec::new();
+                    };
+                    let Some(name) = name.0 else {
+                        return Vec::new();
+                    };
+                    let hint = hint.0.map(|s| s.0).unwrap_or_default();
+                    child_hinted_host
+                        .borrow_mut()
+                        .resolve_child_candidates_hinted(
+                            &parse_node_id_csv(&parent_ids.0),
+                            &name.0,
+                            &hint,
+                        )
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveChildNodeIdsHinted: {e}"))?;
+            internal
+                .set("resolveChildNodeIdsHinted", resolve_child_node_ids_hinted)
+                .map_err(|e| format!("set resolveChildNodeIdsHinted: {e}"))?;
+
             let scoped_candidates_host = Rc::clone(&host);
             let resolve_scoped_node_ids = Function::new(
                 ctx.clone(),
@@ -336,6 +552,85 @@ impl QuickJsRuntime {
             internal
                 .set("resolveScopedNodeIds", resolve_scoped_node_ids)
                 .map_err(|e| format!("set resolveScopedNodeIds: {e}"))?;
+
+            // Phase D-θ.2: full-chain SOM resolution with backtracking. The
+            // JS proxy accumulates property names (the SOM chain) until a
+            // terminal property is read, then asks the host to walk the
+            // entire chain in one shot. `chain_csv` is a comma-separated
+            // list of property names; commas are illegal in SOM names so the
+            // delimiter is unambiguous. Passing a `current_id` of -1 + an
+            // empty `parent_ids_csv` is invalid and yields an empty result;
+            // callers must supply either explicit parents OR a current id.
+            let full_chain_host = Rc::clone(&host);
+            let resolve_with_full_chain = Function::new(
+                ctx.clone(),
+                move |parent_ids_csv: Opt<Coerced<String>>,
+                      current_id: i32,
+                      chain_csv: Opt<Coerced<String>>|
+                      -> Vec<i32> {
+                    let parents: Vec<FormNodeId> = parent_ids_csv
+                        .0
+                        .map(|s| parse_node_id_csv(&s.0))
+                        .unwrap_or_default();
+                    let chain: Vec<String> = chain_csv
+                        .0
+                        .map(|s| s.0.split(',').map(|part| part.trim().to_string()).collect())
+                        .unwrap_or_default();
+                    let implicit_origin = if current_id >= 0 {
+                        Some(FormNodeId(current_id as usize))
+                    } else {
+                        None
+                    };
+                    full_chain_host
+                        .borrow_mut()
+                        .resolve_with_full_chain(&parents, &chain, implicit_origin)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveWithFullChain: {e}"))?;
+            internal
+                .set("resolveWithFullChain", resolve_with_full_chain)
+                .map_err(|e| format!("set resolveWithFullChain: {e}"))?;
+
+            // Strict full-chain probe: returns empty when the chain cannot
+            // be completed at full depth. Used by the JS chain proxy during
+            // accumulation to surface `undefined` for unreachable paths
+            // (so `A.B === undefined` keeps the byte-for-byte D-θ.1
+            // behaviour for forms that test dead-end chains).
+            let full_chain_strict_host = Rc::clone(&host);
+            let resolve_with_full_chain_strict = Function::new(
+                ctx.clone(),
+                move |parent_ids_csv: Opt<Coerced<String>>,
+                      current_id: i32,
+                      chain_csv: Opt<Coerced<String>>|
+                      -> Vec<i32> {
+                    let parents: Vec<FormNodeId> = parent_ids_csv
+                        .0
+                        .map(|s| parse_node_id_csv(&s.0))
+                        .unwrap_or_default();
+                    let chain: Vec<String> = chain_csv
+                        .0
+                        .map(|s| s.0.split(',').map(|part| part.trim().to_string()).collect())
+                        .unwrap_or_default();
+                    let implicit_origin = if current_id >= 0 {
+                        Some(FormNodeId(current_id as usize))
+                    } else {
+                        None
+                    };
+                    full_chain_strict_host
+                        .borrow_mut()
+                        .resolve_with_full_chain_strict(&parents, &chain, implicit_origin)
+                        .into_iter()
+                        .map(|node_id| node_id.0 as i32)
+                        .collect()
+                },
+            )
+            .map_err(|e| format!("resolveWithFullChainStrict: {e}"))?;
+            internal
+                .set("resolveWithFullChainStrict", resolve_with_full_chain_strict)
+                .map_err(|e| format!("set resolveWithFullChainStrict: {e}"))?;
 
             let get_raw_host = Rc::clone(&host);
             let get_raw_value = Function::new(
@@ -438,6 +733,104 @@ impl QuickJsRuntime {
             internal
                 .set("nodeName", node_name)
                 .map_err(|e| format!("set nodeName: {e}"))?;
+
+            // D5: occur handle resolution (liveness check + lookup counters).
+            let occur_resolve_host = Rc::clone(&host);
+            let occur_resolve =
+                Function::new(ctx.clone(), move |id: i32, generation: i64| -> bool {
+                    if id < 0 || generation < 0 {
+                        return false;
+                    }
+                    occur_resolve_host
+                        .borrow_mut()
+                        .occur_resolve(FormNodeId(id as usize), generation as u64)
+                })
+                .map_err(|e| format!("occurResolve: {e}"))?;
+            internal
+                .set("occurResolve", occur_resolve)
+                .map_err(|e| format!("set occurResolve: {e}"))?;
+
+            // D5: read an occur property (`min`/`max`/`initial`); -1 = unlimited/unknown.
+            let occur_read_host = Rc::clone(&host);
+            let occur_read = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64, prop: String| -> i64 {
+                    if id < 0 || generation < 0 {
+                        return -1;
+                    }
+                    occur_read_host.borrow_mut().occur_read(
+                        FormNodeId(id as usize),
+                        generation as u64,
+                        &prop,
+                    )
+                },
+            )
+            .map_err(|e| format!("occurRead: {e}"))?;
+            internal
+                .set("occurRead", occur_read)
+                .map_err(|e| format!("set occurRead: {e}"))?;
+
+            // D5: capture an occur property write (`min`/`max`) — trace-only, no
+            // layout effect. Returns true so the JS assignment proceeds.
+            let occur_capture_host = Rc::clone(&host);
+            let occur_capture = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64, prop: String, value: i64| -> bool {
+                    if id < 0 || generation < 0 {
+                        return false;
+                    }
+                    occur_capture_host.borrow_mut().occur_capture(
+                        FormNodeId(id as usize),
+                        generation as u64,
+                        &prop,
+                        value,
+                    )
+                },
+            )
+            .map_err(|e| format!("occurCapture: {e}"))?;
+            internal
+                .set("occurCapture", occur_capture)
+                .map_err(|e| format!("set occurCapture: {e}"))?;
+
+            // XFA-DATA-M3C: container test used by the JS proxy to decide
+            // whether `<handle>._<Name>` should fall back to an empty
+            // instance-manager sentinel (containers) or stay `undefined`
+            // (fields/draws). Mirrors XFA 3.3 §6.4.3.2.
+            let is_container_host = Rc::clone(&host);
+            let node_is_container =
+                Function::new(ctx.clone(), move |id: i32, generation: i64| -> bool {
+                    if id < 0 || generation < 0 {
+                        return false;
+                    }
+                    is_container_host
+                        .borrow_mut()
+                        .node_is_container(FormNodeId(id as usize), generation as u64)
+                })
+                .map_err(|e| format!("nodeIsContainer: {e}"))?;
+            internal
+                .set("nodeIsContainer", node_is_container)
+                .map_err(|e| format!("set nodeIsContainer: {e}"))?;
+
+            // XFA-DATA-M3C: form-tree parent lookup used by the JS proxy to
+            // materialise the bare global `parent` identifier and `<handle>.
+            // parent` chain access. Returns -1 when no parent exists, when
+            // the handle is stale, or when no form is installed.
+            let parent_node_host = Rc::clone(&host);
+            let parent_of_node =
+                Function::new(ctx.clone(), move |id: i32, generation: i64| -> i32 {
+                    if id < 0 || generation < 0 {
+                        return -1;
+                    }
+                    parent_node_host
+                        .borrow_mut()
+                        .parent_of_node(FormNodeId(id as usize), generation as u64)
+                        .map(|node_id| node_id.0 as i32)
+                        .unwrap_or(-1)
+                })
+                .map_err(|e| format!("parentOfNode: {e}"))?;
+            internal
+                .set("parentOfNode", parent_of_node)
+                .map_err(|e| format!("set parentOfNode: {e}"))?;
 
             let instance_set_host = Rc::clone(&host);
             let instance_set = Function::new(
@@ -559,6 +952,27 @@ impl QuickJsRuntime {
                 .set("boundItem", bound_item)
                 .map_err(|e| format!("set boundItem: {e}"))?;
 
+            // BE-1: `#items` — XFA 3.3 §7.7 / §8.1 choiceList item labels.
+            // Returns a JS Array of display-label strings for the field, or
+            // an empty array when the handle is stale or the node is not a
+            // field with a populated item list.
+            let get_display_items_host = Rc::clone(&host);
+            let get_display_items = Function::new(
+                ctx.clone(),
+                move |id: i32, generation: i64| -> Vec<String> {
+                    if id < 0 || generation < 0 {
+                        return Vec::new();
+                    }
+                    get_display_items_host
+                        .borrow_mut()
+                        .get_display_items(FormNodeId(id as usize), generation as u64)
+                },
+            )
+            .map_err(|e| format!("getDisplayItems: {e}"))?;
+            internal
+                .set("getDisplayItems", get_display_items)
+                .map_err(|e| format!("set getDisplayItems: {e}"))?;
+
             let num_pages_host = Rc::clone(&host);
             let num_pages =
                 Function::new(ctx.clone(), move || num_pages_host.borrow_mut().num_pages())
@@ -584,6 +998,60 @@ impl QuickJsRuntime {
             internal
                 .set("resolveFailure", resolve_failure)
                 .map_err(|e| format!("set resolveFailure: {e}"))?;
+
+            // BE-1 telemetry: `$data` bare-global resolve hit.
+            let som_data_root_hit_host = Rc::clone(&host);
+            let som_data_root_hit = Function::new(ctx.clone(), move || {
+                som_data_root_hit_host
+                    .borrow_mut()
+                    .metadata_som_data_root_hit();
+            })
+            .map_err(|e| format!("somDataRootHit: {e}"))?;
+            internal
+                .set("somDataRootHit", som_data_root_hit)
+                .map_err(|e| format!("set somDataRootHit: {e}"))?;
+
+            // BE-1 telemetry: `#items` property access resolved to non-empty list.
+            let som_items_path_hit_host = Rc::clone(&host);
+            let som_items_path_hit = Function::new(ctx.clone(), move || {
+                som_items_path_hit_host
+                    .borrow_mut()
+                    .metadata_som_items_path_hit();
+            })
+            .map_err(|e| format!("somItemsPathHit: {e}"))?;
+            internal
+                .set("somItemsPathHit", som_items_path_hit)
+                .map_err(|e| format!("set somItemsPathHit: {e}"))?;
+
+            // Phase E (XFA-JS-HOST-STUBS) — sandbox-safe accounting hook for
+            // host capabilities that require viewer / user interaction. JS
+            // callers pass an optional capability identifier purely for log
+            // forensics; the host only increments the unsupported counter.
+            // No filesystem / network / process access ever runs through
+            // this path — see benchmarks/JS_SANDBOX_SECURITY_AUDIT.md.
+            let unsupported_host_call_host = Rc::clone(&host);
+            let unsupported_host_call =
+                Function::new(ctx.clone(), move |_capability: Opt<Coerced<String>>| {
+                    unsupported_host_call_host
+                        .borrow_mut()
+                        .metadata_unsupported_host_call();
+                })
+                .map_err(|e| format!("unsupportedHostCall: {e}"))?;
+            internal
+                .set("unsupportedHostCall", unsupported_host_call)
+                .map_err(|e| format!("set unsupportedHostCall: {e}"))?;
+
+            // Phase D-θ.2 probe-skip telemetry: JS calls this when the strict
+            // probe is elided because parentIds.length == 1 && chain.length == 1
+            // (no same-name sibling ambiguity is possible in that case).
+            let probe_skip_host = Rc::clone(&host);
+            let probe_skip = Function::new(ctx.clone(), move || {
+                probe_skip_host.borrow_mut().metadata_probe_skip();
+            })
+            .map_err(|e| format!("probeSkip: {e}"))?;
+            internal
+                .set("probeSkip", probe_skip)
+                .map_err(|e| format!("set probeSkip: {e}"))?;
 
             // Phase D-γ: DataDom host bindings --------------------------------
 
@@ -674,6 +1142,26 @@ impl QuickJsRuntime {
                 .set("dataResolveNode", data_resolve_node)
                 .map_err(|e| format!("set dataResolveNode: {e}"))?;
 
+            // BE-1 tranche #1: predicate for the benign absent-declared-node
+            // façade. The implicit-globals `lookup` calls this only after the
+            // scope resolve returned 0 nodes; a `true` result means the name is
+            // a template-declared container (subform/subformSet/exclGroup/area)
+            // absent from the current scope, so `lookup` returns
+            // `makeAbsentNodeHandle()` (isNull===true, chainable) instead of
+            // `undefined`. Undeclared names → false → `undefined` (D-θ.1).
+            let idan_host = Rc::clone(&host);
+            let is_declared_absent_node =
+                Function::new(ctx.clone(), move |name: Opt<Coerced<String>>| -> bool {
+                    let Some(name) = name.0 else {
+                        return false;
+                    };
+                    idan_host.borrow().is_declared_absent_node(&name.0)
+                })
+                .map_err(|e| format!("isDeclaredAbsentNode: {e}"))?;
+            internal
+                .set("isDeclaredAbsentNode", is_declared_absent_node)
+                .map_err(|e| format!("set isDeclaredAbsentNode: {e}"))?;
+
             let drns_host = Rc::clone(&host);
             let data_resolve_nodes =
                 Function::new(ctx.clone(), move |path: Opt<Coerced<String>>| -> Vec<i32> {
@@ -703,6 +1191,10 @@ impl QuickJsRuntime {
                 .map_err(|e| format!("binding factory call: {e}"))?;
             let xfa: Object = bridge.get("xfa").map_err(|e| format!("get xfa: {e}"))?;
             let app: Object = bridge.get("app").map_err(|e| format!("get app: {e}"))?;
+            // JS2-01 (Sprint 2 Batch B): `form` is a top-level alias of
+            // `xfa.form`. Adobe Reader exposes both spellings; templates
+            // such as 60df78fe_pdf_0012 reference bare `form.X`.
+            let form: Object = bridge.get("form").map_err(|e| format!("get form: {e}"))?;
             let eval_script: Function = bridge
                 .get("evalScript")
                 .map_err(|e| format!("get evalScript: {e}"))?;
@@ -712,14 +1204,21 @@ impl QuickJsRuntime {
             let clear_variables_scripts: Function = bridge
                 .get("clearVariablesScripts")
                 .map_err(|e| format!("get clearVariablesScripts: {e}"))?;
+            let set_variables_data_item: Function = bridge
+                .get("setVariablesDataItem")
+                .map_err(|e| format!("get setVariablesDataItem: {e}"))?;
             globals
                 .set("xfa", xfa)
                 .map_err(|e| format!("set xfa global: {e}"))?;
             globals
                 .set("app", app)
                 .map_err(|e| format!("set app global: {e}"))?;
+            globals
+                .set("form", form)
+                .map_err(|e| format!("set form global: {e}"))?;
             Ok::<
                 (
+                    Persistent<Function<'static>>,
                     Persistent<Function<'static>>,
                     Persistent<Function<'static>>,
                     Persistent<Function<'static>>,
@@ -729,12 +1228,14 @@ impl QuickJsRuntime {
                 Persistent::save(&ctx, eval_script),
                 Persistent::save(&ctx, set_variables_script),
                 Persistent::save(&ctx, clear_variables_scripts),
+                Persistent::save(&ctx, set_variables_data_item),
             ))
         })?;
 
         self.eval_script = Some(eval_script.0);
         self.set_variables_script = Some(eval_script.1);
         self.clear_variables_scripts = Some(eval_script.2);
+        self.set_variables_data_item = Some(eval_script.3);
         self.bindings_registered = true;
         Ok(())
     }
@@ -814,26 +1315,48 @@ impl QuickJsRuntime {
     /// budget, an untrusted/malformed XFA template that contains
     /// `while (true) {}` inside `<variables>` could hang flatten before
     /// any normal event script runs (Codex P1 review on PR #1499).
+    /// Returns `Ok(true)` when the JS-side `setVariablesScript` bound the
+    /// namespace, `Ok(false)` when it returned `false` (eval failure caught
+    /// JS-side), or `Err` on a Rust-side skip (cap / REDOS / timeout / panic).
+    /// D3: the boolean is now propagated so `set_form_handle` can count
+    /// registration outcomes for trace observability (previously discarded).
     fn register_variables_script(
         &self,
         name: &str,
         body: &str,
         subform_scope: Option<&str>,
-    ) -> Result<(), SandboxError> {
+        expose_global: bool,
+    ) -> Result<bool, SandboxError> {
         let Some(setter) = self.set_variables_script.clone() else {
-            return Ok(());
+            return Ok(false);
         };
-        if body.len() > MAX_SCRIPT_BODY_BYTES {
+        // W2-B: variables-scripts use a higher body-size cap than event
+        // scripts because they are form-level helper libraries (XFA 3.3
+        // §5.5). The time- and memory-budgets still apply via the
+        // QuickJS interrupt handler + runtime memory limit; the larger
+        // body cap simply lets real-world government XFA libraries (e.g.
+        // `validateForm` ≈ 125 KB, `LOV` ≈ 507 KB, `CoreFunctions` ≈ 115
+        // KB) register so dependent event scripts can resolve
+        // `<scriptName>.<top_level_decl>(...)` rather than failing as
+        // `js_resolve_failure` (W1-B `implicit_function` cluster).
+        if body.len() > MAX_VARIABLES_SCRIPT_BODY_BYTES {
             return Err(SandboxError::BodyTooLarge);
+        }
+        // W3-A — REDOS-01 mitigation also gates variables-scripts.
+        // A library-level helper that defines a global function whose
+        // body contains `/(a+)+$/` would be evaluated by QuickJS at
+        // registration time, and the interrupt cannot bound it.
+        if let RegexScanVerdict::Reject { reason } = scan_script_for_redos(body) {
+            return Err(SandboxError::RegexRejected(reason));
         }
         let idents = Self::extract_top_level_idents(body);
         let scope = subform_scope.unwrap_or("").to_string();
         self.set_deadline();
         let result = catch_unwind(AssertUnwindSafe(|| {
-            self.context.with(|ctx| -> Result<(), rquickjs::Error> {
+            self.context.with(|ctx| -> Result<bool, rquickjs::Error> {
                 let setter = setter.restore(&ctx)?;
-                let _: bool = setter.call((name, body, idents, scope))?;
-                Ok(())
+                let ok: bool = setter.call((name, body, idents, scope, expose_global))?;
+                Ok(ok)
             })
         }));
         // Detect timeouts the same way `execute_script` does: if the
@@ -847,13 +1370,52 @@ impl QuickJsRuntime {
         let timed_out = deadline_now != 0 && now_nanos >= deadline_now;
         self.clear_deadline();
         match result {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(_)) if timed_out => Err(SandboxError::Timeout),
+            Ok(Ok(ok)) => Ok(ok),
+            // QF1-E / SEC-01: defence-in-depth wall-time fallback also
+            // covers `<variables>` `<script>` registration. The same
+            // classifier upgrades a `Timeout` to `WallTimeExceeded` when
+            // elapsed ≥ multiplier × budget.
+            Ok(Err(_)) if timed_out => Err(self.classify_timeout_or_walltime(now_nanos)),
             Ok(Err(e)) => Err(SandboxError::ScriptError(format!(
                 "variables-script `{name}` register: {e}"
             ))),
             Err(_) => Err(SandboxError::PanicCaptured(format!(
                 "panic registering variables-script `{name}`"
+            ))),
+        }
+    }
+
+    /// W3-D RETRY: register one `<variables>` `<text name="X">value</text>`
+    /// data item (XFA 3.3 §5.5.2) as a form-level mutable string container.
+    /// Sister of [`Self::register_variables_script`] but with no body cap,
+    /// no REDOS scan, and no time budget — data items carry text payloads,
+    /// not JavaScript code. Idempotent per `(subform_scope, name)`.
+    fn register_variables_data_item(
+        &self,
+        name: &str,
+        initial: &str,
+        subform_scope: Option<&str>,
+    ) -> Result<(), SandboxError> {
+        let Some(setter) = self.set_variables_data_item.clone() else {
+            return Ok(());
+        };
+        let initial_owned = initial.to_string();
+        let scope = subform_scope.unwrap_or("").to_string();
+        let name_owned = name.to_string();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            self.context.with(|ctx| -> Result<(), rquickjs::Error> {
+                let setter = setter.restore(&ctx)?;
+                let _: bool = setter.call((name_owned, initial_owned, scope))?;
+                Ok(())
+            })
+        }));
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(SandboxError::ScriptError(format!(
+                "variables data item `{name}` register: {e}"
+            ))),
+            Err(_) => Err(SandboxError::PanicCaptured(format!(
+                "panic registering variables data item `{name}`"
             ))),
         }
     }
@@ -938,7 +1500,7 @@ fn strip_js_comments(src: &str) -> String {
     out
 }
 
-const PHASE_C_BINDINGS_JS: &str = r#"
+const PHASE_C_BINDINGS_JS: &str = r##"
 (function(host) {
   function protoGuard() {
     return Object.freeze(Object.create(null));
@@ -969,7 +1531,11 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     "process", "RangeError", "ReferenceError", "RegExp", "require",
     "Set", "String", "Symbol", "SyntaxError", "TypeError", "undefined",
     "URIError", "WeakMap", "WeakSet", "WebSocket", "XMLHttpRequest",
-    "xfa", "event"
+    // JS2-01 (Sprint 2 Batch B): `form` is a top-level alias of `xfa.form`.
+    // It must defer to globalThis so the host SOM resolver does not first
+    // try to resolve `form` as a form-tree node, find nothing, and then
+    // surface a `js_resolve_failure` for what is really a viewer global.
+    "xfa", "event", "form"
   ].forEach(function(name) {
     deferredGlobalNames[name] = true;
   });
@@ -993,7 +1559,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   // Properties that must NOT be deferred so their specific implementations run.
   var handlePropertyExclusions = lookupObject();
   ["rawValue", "somExpression", "isNull", "clearItems", "addItem", "boundItem",
-   "$record", "nodes", "value", "length", "item"].forEach(function(name) {
+   "$record", "nodes", "value", "length", "item", "choiceList", "#items"].forEach(function(name) {
     handlePropertyExclusions[name] = true;
   });
 
@@ -1021,6 +1587,73 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       locals[match[1]] = true;
     }
     return locals;
+  }
+
+  // XFA-DATA-M3C: `<handle>.ui` returns the ui-config sub-object that
+  // Adobe templates expose for choiceList / textEdit / checkButton widget
+  // tweaking. During static flatten the widget tree is not materialised, so
+  // we hand back a minimal stub whose `choiceList` is an empty frozen
+  // array (matching the bare `handle.choiceList` fallback). Property
+  // writes are absorbed silently so scripts like
+  // `field.ui.choiceList.commitOn = "exit"` complete without TypeError.
+  function makeUiStub() {
+    var stub = nullProtoObject();
+    Object.defineProperty(stub, "choiceList", {
+      enumerable: true,
+      configurable: false,
+      get: function() { return Object.freeze([]); }
+    });
+    Object.defineProperty(stub, "textEdit", {
+      enumerable: true,
+      configurable: false,
+      get: function() { return Object.freeze({}); }
+    });
+    Object.defineProperty(stub, "checkButton", {
+      enumerable: true,
+      configurable: false,
+      get: function() { return Object.freeze({}); }
+    });
+    return new Proxy(stub, {
+      get: function(target, prop) {
+        if (typeof prop !== "string") return undefined;
+        if (prop in target) return target[prop];
+        // Sub-property writes / reads are absorbed: scripts walking
+        // unknown widget config (e.g. `ui.imageEdit.<x>`) get a chainable
+        // viewer-stub rather than crashing on undefined.
+        return makeViewerStub();
+      },
+      set: function(_t, _p, _v) { return true; },
+      has: function(_t, _p) { return true; }
+    });
+  }
+
+  // D5: minimal `node.occur` handle. Reads `min`/`max`/`initial` from the
+  // structural template (host.occurRead; -1 = unlimited/unknown). Writes to
+  // `min`/`max` are CAPTURED (host.occurCapture) as mutation intent and then
+  // discarded — no layout/pagination effect in D5. This stops
+  // `subform.occur.min = N` from throwing `cannot set property 'min' of
+  // undefined` so the script proceeds; the captured intent is for the next
+  // milestone's bounded apply path.
+  function makeOccurHandle(id, generation) {
+    var occ = nullProtoObject();
+    function defineOccurProp(name) {
+      Object.defineProperty(occ, name, {
+        enumerable: true,
+        configurable: false,
+        get: function() {
+          return host.occurRead(id, generation, name);
+        },
+        set: function(value) {
+          var n = (typeof value === "number") ? value : parseInt(value, 10);
+          if (isNaN(n)) { n = 0; }
+          host.occurCapture(id, generation, name, n);
+        }
+      });
+    }
+    defineOccurProp("min");
+    defineOccurProp("max");
+    defineOccurProp("initial");
+    return occ;
   }
 
   function makeInstanceManager(id, generation) {
@@ -1125,6 +1758,256 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     return makeCandidateSet(unique, generation);
   }
 
+  // Phase D-θ: single-segment SOM lookahead. The proxy chain `F.P1.X.rawValue`
+  // can resolve the leading `F.P1` correctly yet pick the wrong `P1` when
+  // multiple same-named siblings exist — the resolver lacks the next-segment
+  // context needed to disambiguate. These helpers return a one-step deferred
+  // wrapper that, on its next property access, asks the host's hinted
+  // resolver to drop candidates whose subtree does not contain the lookahead
+  // name. Terminal properties (rawValue, instanceManager, …) bypass the hint
+  // path entirely so single-token reads remain byte-for-byte identical.
+  function isTerminalHandleProp(name) {
+    if (handlePropertyExclusions[name] === true) return true;
+    if (reservedHandleProperties[name] === true) return true;
+    if (name.charAt(0) === "_") return true;
+    switch (name) {
+      case "rawValue":
+      case "somExpression":
+      case "instanceManager":
+      case "index":
+      case "setInstances":
+      case "addInstance":
+      case "removeInstance":
+      case "isNull":
+      case "clearItems":
+      case "addItem":
+      case "boundItem":
+      case "#items":
+      case "$record":
+      case "variables":
+      case "nodes":
+      case "length":
+      case "value":
+      case "item":
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  function makeImplicitDeferred(currentId, name, eagerIds, generation) {
+    function realize(hint) {
+      if (!hint) return eagerIds;
+      var refined = uniqueNodeIds(host.resolveImplicitNodeIdsHinted(currentId, name, hint));
+      return refined.length > 0 ? refined : eagerIds;
+    }
+    var sentinel = nullProtoObject();
+    return new Proxy(sentinel, {
+      get: function(target, prop, receiver) {
+        if (typeof prop !== "string") {
+          return Reflect.get(target, prop, receiver);
+        }
+        // XFA-DATA2-02: short-circuit caption / resolveNode pair before any
+        // host call. See captionSentinel + handleResolveNode definitions.
+        if (prop === "caption") { return captionSentinel; }
+        if (prop === "resolveNode") { return handleResolveNode; }
+        if (prop === "resolveNodes") { return handleResolveNodes; }
+        var ids = isTerminalHandleProp(prop) ? eagerIds : realize(prop);
+        var handle = makeNodeHandleFromIds(ids, generation);
+        if (handle === undefined) return undefined;
+        return handle[prop];
+      },
+      set: function(_target, prop, value) {
+        var handle = makeNodeHandleFromIds(eagerIds, generation);
+        if (handle === undefined) return true;
+        handle[prop] = value;
+        return true;
+      },
+      has: function(_target, prop) {
+        if (typeof prop !== "string") return Reflect.has(sentinel, prop);
+        return true;
+      }
+    });
+  }
+
+  function makeChildDeferred(parentIds, childName, eagerChildIds, generation) {
+    var parentList = nodeIdListArg(parentIds);
+    function realize(hint) {
+      if (!hint || parentList.length === 0) return eagerChildIds;
+      var refined = uniqueNodeIds(host.resolveChildNodeIdsHinted(parentList, childName, hint));
+      return refined.length > 0 ? refined : eagerChildIds;
+    }
+    var sentinel = nullProtoObject();
+    return new Proxy(sentinel, {
+      get: function(target, prop, receiver) {
+        if (typeof prop !== "string") {
+          return Reflect.get(target, prop, receiver);
+        }
+        // XFA-DATA2-02: short-circuit caption / resolveNode pair before any
+        // host call. See captionSentinel + handleResolveNode definitions.
+        if (prop === "caption") { return captionSentinel; }
+        if (prop === "resolveNode") { return handleResolveNode; }
+        if (prop === "resolveNodes") { return handleResolveNodes; }
+        var ids = isTerminalHandleProp(prop) ? eagerChildIds : realize(prop);
+        var handle = makeNodeHandleFromIds(ids, generation);
+        if (handle === undefined) return undefined;
+        return handle[prop];
+      },
+      set: function(_target, prop, value) {
+        var handle = makeNodeHandleFromIds(eagerChildIds, generation);
+        if (handle === undefined) return true;
+        handle[prop] = value;
+        return true;
+      },
+      has: function(_target, prop) {
+        if (typeof prop !== "string") return Reflect.has(sentinel, prop);
+        return true;
+      }
+    });
+  }
+
+  function makeChainHandle(parentIds, childName, generation) {
+    var eagerChildIds = resolveHandleChildIds(parentIds, childName);
+    if (eagerChildIds.length === 0) return undefined;
+    if (eagerChildIds.length === 1) {
+      // Singleton child with a single parent leaves the host resolver no
+      // alternatives to filter even when a hint is provided — same-name
+      // sibling disambiguation is impossible. Skip the wrapper so the
+      // common path keeps its original Proxy identity and resolve budget.
+      return makeHandle(eagerChildIds[0], generation);
+    }
+    // Phase D-θ.2: same-name siblings exist; defer through the full-chain
+    // accumulator so a deeper segment (still unread) can disambiguate.
+    return makeChainProxy(parentIds, [childName], eagerChildIds, generation, -1);
+  }
+
+  // Phase D-θ.2: lazy chain proxy. Accumulates a SOM chain (string[]) as the
+  // script walks property access; on the first terminal property read it
+  // asks the host to resolve the FULL accumulated chain in one call,
+  // letting the host backtrack and pick the same-name candidate at any
+  // depth whose subtree actually completes the chain.
+  //
+  // Compared to D-θ.1 (single-segment hint), this lets `A.B.C.D.rawValue`
+  // pick the correct same-name `A` not only when one is the parent of `B`
+  // but specifically the one whose subtree contains the full B.C.D chain.
+  //
+  // Parameters:
+  //   parentIds            — entry parent set; empty array means implicit walk.
+  //   chain                — string[] of segments accumulated so far (>=1).
+  //   eagerIds             — fallback ids returned if the host's full-chain
+  //                          resolve produces no candidate at any depth
+  //                          (preserves D-θ.1 byte-for-byte behaviour for
+  //                          chains the host cannot improve on).
+  //   generation           — handle generation to bind to.
+  //   currentId            — implicit-walk anchor (used when parentIds is empty).
+  //
+  // Terminal property names trigger immediate resolution. Non-terminal
+  // string property names return a NEW chain proxy with the property name
+  // appended; no host call happens at that point.
+  function makeChainProxy(parentIds, chain, eagerIds, generation, currentId) {
+    var sentinel = nullProtoObject();
+    function fullChain(extraSeg) {
+      var parentCsv = nodeIdListArg(parentIds);
+      var chainArr = chain;
+      if (extraSeg !== undefined) {
+        chainArr = chain.slice();
+        chainArr.push(extraSeg);
+      }
+      var chainCsv = chainArr.join(",");
+      var resolved = uniqueNodeIds(
+        host.resolveWithFullChain(parentCsv, currentId | 0, chainCsv)
+      );
+      if (resolved.length === 0) return eagerIds;
+      return resolved;
+    }
+    return new Proxy(sentinel, {
+      get: function(target, prop, receiver) {
+        if (typeof prop !== "string") {
+          // Symbol.toPrimitive and similar non-string keys must force
+          // terminal resolution so coercion (e.g. via Number(handle)) sees
+          // the resolved candidate's primitive view rather than the proxy
+          // sentinel itself.
+          var primIds = fullChain();
+          var primHandle = makeNodeHandleFromIds(primIds, generation);
+          if (primHandle === undefined) {
+            return Reflect.get(target, prop, receiver);
+          }
+          return primHandle[prop];
+        }
+        // XFA-DATA2-02: caption / resolveNode / resolveNodes short-circuit on
+        // the chain proxy. Without this branch the chain accumulator would
+        // append "caption" as a non-terminal segment, call
+        // resolveWithFullChainStrict, miss, and return `undefined` —
+        // `field.caption.value` then TypeErrors. Same null/empty-list
+        // contract as the global pair.
+        if (prop === "caption") {
+          return captionSentinel;
+        }
+        if (prop === "resolveNode") {
+          return handleResolveNode;
+        }
+        if (prop === "resolveNodes") {
+          return handleResolveNodes;
+        }
+        if (isTerminalHandleProp(prop)) {
+          var ids = fullChain();
+          var handle = makeNodeHandleFromIds(ids, generation);
+          if (handle === undefined) return undefined;
+          return handle[prop];
+        }
+        // Non-terminal: probe the extended chain in STRICT mode. If the
+        // host cannot complete `[chain..., prop]` at full depth anywhere
+        // in the form, return `undefined` — mirroring the eager D-θ.1
+        // behaviour where `A.B` resolved to `undefined` when no `A.B`
+        // existed. When the probe succeeds, return a new chain proxy
+        // with the segment appended; the lazy accumulation lets a
+        // deeper segment still disambiguate which same-name `A` to keep.
+        //
+        // D-θ.2 probe-skip: when there is exactly one parent and the chain
+        // so far has exactly one segment, no same-name sibling ambiguity is
+        // possible — the parent uniquely identifies the node, and there are
+        // no alternative subtrees for the host to choose between.  In that
+        // case the strict probe would always return the same set as eagerIds,
+        // so we skip the host round-trip and immediately build the next proxy
+        // using eagerIds as the fallback.  The host-call budget is preserved
+        // and disambiguation is unaffected because a single-parent / single-
+        // segment chain cannot be disambiguated further by the host anyway.
+        var nextChain = chain.slice();
+        nextChain.push(prop);
+        if (parentIds.length === 1 && chain.length === 1) {
+          host.probeSkip();
+          return makeChainProxy(parentIds, nextChain, eagerIds, generation, currentId);
+        }
+        var probe = host.resolveWithFullChainStrict(
+          nodeIdListArg(parentIds),
+          currentId | 0,
+          nextChain.join(",")
+        );
+        if (!probe || probe.length === 0) {
+          return undefined;
+        }
+        // The probe result becomes the new eager-fallback so future
+        // probes that the host cannot improve on still degrade
+        // gracefully. We must NOT collapse to a single makeHandle here:
+        // the chain may continue to grow and disambiguate further.
+        var nextEager = uniqueNodeIds(probe);
+        return makeChainProxy(parentIds, nextChain, nextEager, generation, currentId);
+      },
+      set: function(_target, prop, value) {
+        // Writes are always terminal: resolve the full chain and forward.
+        var ids = fullChain();
+        var handle = makeNodeHandleFromIds(ids, generation);
+        if (handle === undefined) return true;
+        handle[prop] = value;
+        return true;
+      },
+      has: function(_target, prop) {
+        if (typeof prop !== "string") return Reflect.has(sentinel, prop);
+        return true;
+      }
+    });
+  }
+
   function makeCandidateSet(ids, generation) {
     var candidates = uniqueNodeIds(ids);
     if (candidates.length === 0) return undefined;
@@ -1145,8 +2028,20 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "instanceManager") {
           return makeInstanceManager(firstId, generation);
         }
+        if (prop === "occur") {
+          host.occurResolve(firstId, generation);
+          return makeOccurHandle(firstId, generation);
+        }
         if (prop === "index") {
           return host.nodeIndex(firstId, generation);
+        }
+        // XFA-DATA-M3C: `<candidateSet>.parent` walks one form-tree level up
+        // from the leading candidate. Same semantics as `<handle>.parent`;
+        // see makeHandle for rationale.
+        if (prop === "parent") {
+          var parentId = host.parentOfNode(firstId, generation);
+          if (parentId < 0) return undefined;
+          return makeHandle(parentId, generation);
         }
         if (prop === "setInstances") {
           return function(n) {
@@ -1156,7 +2051,11 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "addInstance") {
           return function() {
             var newId = host.instanceAdd(firstId, generation);
-            return newId < 0 ? null : makeHandle(newId, generation);
+            // WP-3 F3: return a chainable null-safe sentinel rather than null
+            // so scripts that immediately access `.index` / `.value` on the
+            // newly-added handle do not throw when the instance manager
+            // refuses (min/max reached, unbound).
+            return newId < 0 ? makeNullDataHandle() : makeHandle(newId, generation);
           };
         }
         if (prop === "removeInstance") {
@@ -1203,7 +2102,9 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         }
         if (prop.charAt(0) === "_" && prop.length > 1) {
           var bareName = prop.substring(1);
-          var imIds = uniqueNodeIds(host.resolveChildNodeIds(nodeIdListArg(candidates), bareName));
+          var imIds = uniqueNodeIds(
+            host.resolveChildNodeIdsQuiet(nodeIdListArg(candidates), bareName)
+          );
           if (imIds.length > 0) {
             return makeInstanceManager(imIds[0], generation);
           }
@@ -1212,14 +2113,64 @@ const PHASE_C_BINDINGS_JS: &str = r#"
               return makeEmptyInstanceManager();
             }
           }
+          // XFA-DATA-M3C: same fallthrough as makeHandle underscore branch —
+          // expose an empty instanceManager for schema-optional same-named
+          // siblings that the merged tree omits, keeping schema-bound
+          // scripts chainable. Restricted to container candidates so
+          // field/draw candidate sets keep the original `undefined`
+          // semantics for underscored property reads.
+          if (host.nodeIsContainer(firstId, generation)) {
+            return makeEmptyInstanceManager();
+          }
+        }
+        // WP-3: choiceList is a listbox/combobox property not surfaced through
+        // the FormTree. Return an empty frozen array.
+        if (prop === "choiceList") {
+          return Object.freeze([]);
+        }
+        // BE-1: `#items` on a candidate-set — mirrors the makeHandle path.
+        // Uses the first candidate as the representative field id (same
+        // convention as boundItem / clearItems / addItem above).
+        if (prop === "#items") {
+          var csDisplayItems = host.getDisplayItems(firstId, generation);
+          if (csDisplayItems.length > 0) {
+            host.somItemsPathHit();
+          }
+          return makeItemsSubstitute(csDisplayItems);
+        }
+        // XFA-DATA-M3C: `<candidateSet>.ui` returns the widget-config stub.
+        // See makeUiStub on makeHandle for rationale.
+        if (prop === "ui") {
+          return makeUiStub();
+        }
+        if (prop === "formattedValue") {
+          var fvc = host.getRawValue(firstId, generation);
+          return fvc === undefined || fvc === null ? "" : String(fvc);
+        }
+        if (prop === "execEvent") {
+          return function() { return undefined; };
+        }
+        // XFA-DATA2-02: caption / resolveNode / resolveNodes intercept on the
+        // candidate-set path. Same rationale as makeHandle: skip the child
+        // resolver host call and its resolve_failures bump, return a frozen
+        // sentinel + the chainable method pair. Null contract preserved.
+        if (prop === "caption") {
+          return captionSentinel;
+        }
+        if (prop === "resolveNode") {
+          return handleResolveNode;
+        }
+        if (prop === "resolveNodes") {
+          return handleResolveNodes;
         }
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
         }
-        return makeNodeHandleFromIds(resolveHandleChildIds(candidates, prop), generation);
+        return makeChainHandle(candidates, prop, generation);
       },
       set: function(_target, prop, value) {
-        if (prop === "rawValue") {
+        // WP-3: `value` is an alias for rawValue on the set side.
+        if (prop === "rawValue" || prop === "value") {
           host.setRawValue(firstId, generation, value);
         }
         return true;
@@ -1232,6 +2183,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           prop === "somExpression" ||
           prop === "instanceManager" ||
           prop === "index" ||
+          prop === "parent" ||
           prop === "setInstances" ||
           prop === "addInstance" ||
           prop === "removeInstance" ||
@@ -1242,6 +2194,150 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           Reflect.has(target, prop);
       }
     });
+  }
+
+  // XFA-DATA2-02: shared caption sentinel — singleton, frozen, null-safe.
+  //
+  // XFA templates commonly inspect `field.caption.value` or
+  // `field.caption.text` to drive labels and conditional formatting. The
+  // merged FormTree does not carry the optional `<caption>` sub-element, so
+  // looking up `caption` as a normal child name would call
+  // `resolve_child_candidates` → NoMatch → bump `resolve_failures`, return
+  // `undefined`, and the very next `.value` access would throw TypeError
+  // ("cannot read property 'value' of undefined") and abort the rest of the
+  // script's initializers.
+  //
+  // We intercept `caption` BEFORE the child-resolver call and return a
+  // chainable sentinel whose terminal reads are empty strings and whose
+  // deeper reads keep chaining via `makeNullDataHandle`. This is purely
+  // read-side: writes are silently absorbed (caption sub-element is a
+  // viewer-only field, never a flatten mutation channel). The sentinel is
+  // allocated once at factory build-time and frozen, so per-call access is
+  // an `Object.freeze`d Proxy hit with no heap allocation.
+  var captionSentinel = (function() {
+    var base = nullProtoObject();
+    Object.defineProperty(base, "value",   { enumerable: true, configurable: false,
+      get: function() { return ""; }, set: function(_v) { /* viewer-only */ } });
+    Object.defineProperty(base, "text",    { enumerable: true, configurable: false,
+      get: function() { return ""; }, set: function(_v) { /* viewer-only */ } });
+    Object.defineProperty(base, "name",    { enumerable: true, configurable: false,
+      get: function() { return "caption"; } });
+    Object.defineProperty(base, "rawValue",{ enumerable: true, configurable: false,
+      get: function() { return ""; }, set: function(_v) { /* viewer-only */ } });
+    Object.defineProperty(base, "isNull",  { enumerable: true, configurable: false,
+      get: function() { return true; } });
+    return new Proxy(base, {
+      get: function(target, prop) {
+        if (prop in target || typeof prop !== "string") return target[prop];
+        // Unknown reads stay chainable so `caption.font.typeface` etc. do
+        // not throw. The sentinel is read-only and write-absorbing.
+        return makeNullDataHandle();
+      },
+      set: function(_t, _p, _v) { return true; },
+      has: function() { return true; }
+    });
+  })();
+
+  // XFA-DATA2-02: shared `resolveNode` / `resolveNodes` instance methods.
+  //
+  // Beyond the global `xfa.resolveNode(path)`, XFA scripts also call these
+  // as methods on individual handles (`field.resolveNode("Subform.X")`,
+  // `subform.resolveNodes("$.field[*]")`). Without an explicit shortcut these
+  // property reads would fall through to `makeChainHandle`, miss in the
+  // child resolver and inflate `js_resolve_failures` — the very pattern the
+  // 60df78fe corpus replay flagged.
+  //
+  // Behaviour mirrors the global pair, including the data-path routing for
+  // `data.`, `$data.`, and `xfa.datasets.data.` prefixes. The Cluster C
+  // null-return contract is preserved: a miss in the host returns native
+  // `null` for the singular form and a frozen empty array for the plural.
+  // BE-1: XFA-compatible substitute for the <items> element returned by
+  // resolveNode("FieldName.#items").  In a live viewer the result is an XFA
+  // node whose .nodes collection contains one <text> child per option label;
+  // each child exposes .value / .rawValue.  Scripts iterate:
+  //   for (var i=0; i<items.nodes.length; i++) { items.nodes.item(i).value }
+  // We materialise that shape from the host display-strings array so existing
+  // scripts complete without TypeError and can read the label list.
+  function makeItemsSubstitute(displayStrings) {
+    var nodes = [];
+    for (var k = 0; k < displayStrings.length; k++) {
+      (function(label) {
+        var textNode = nullProtoObject();
+        Object.defineProperty(textNode, "value", {
+          enumerable: true, configurable: false, writable: false, value: label
+        });
+        Object.defineProperty(textNode, "rawValue", {
+          enumerable: false, configurable: false, writable: false, value: label
+        });
+        nodes.push(Object.freeze(textNode));
+      })(displayStrings[k]);
+    }
+    var frozenNodes = Object.freeze(nodes);
+    var nodesCollection = nullProtoObject();
+    Object.defineProperty(nodesCollection, "length", {
+      enumerable: true, configurable: false, get: function() { return frozenNodes.length; }
+    });
+    Object.defineProperty(nodesCollection, "item", {
+      enumerable: false, configurable: false, writable: false,
+      value: function(idx) { return frozenNodes[idx] || null; }
+    });
+    var substitute = nullProtoObject();
+    Object.defineProperty(substitute, "nodes", {
+      enumerable: true, configurable: false, writable: false, value: Object.freeze(nodesCollection)
+    });
+    Object.defineProperty(substitute, "length", {
+      enumerable: true, configurable: false, get: function() { return frozenNodes.length; }
+    });
+    return Object.freeze(substitute);
+  }
+
+  function handleResolveNode(path) {
+    if (typeof path === "string" &&
+        (path.indexOf("data.") === 0 || path.indexOf("$data.") === 0 ||
+         path.indexOf("xfa.datasets.data.") === 0)) {
+      var rawId = host.dataResolveNode(path);
+      if (rawId < 0) return null;
+      return makeDataHandle(rawId);
+    }
+    // BE-1: intercept `FieldName.#items` (XFA 3.3 §7.7 / §8.1).
+    // `#items` is the SOM class reference for a choiceList's <items> element.
+    // The form-tree resolver has no node for it; we resolve the field part,
+    // fetch its display labels, and return an XFA-compatible substitute.
+    // Guard: path.length > 7 prevents false-positive when lastIndexOf returns
+    // -1 and path.length-7 is also -1 (paths shorter than 8 chars).
+    if (typeof path === "string" && path.length > 7 &&
+        path.lastIndexOf(".#items") === path.length - 7) {
+      var fieldPath = path.substring(0, path.length - 7);
+      var fid = host.resolveNodeId(fieldPath);
+      if (fid >= 0) {
+        var displayItems = host.getDisplayItems(fid, host.generation());
+        if (displayItems.length > 0) {
+          host.somItemsPathHit();
+        }
+        return makeItemsSubstitute(displayItems);
+      }
+      return null;
+    }
+    var nid = host.resolveNodeId(path);
+    if (nid < 0) return null;
+    return makeHandle(nid, host.generation());
+  }
+  function handleResolveNodes(path) {
+    if (typeof path === "string" &&
+        (path.indexOf("data.") === 0 || path.indexOf("$data.") === 0 ||
+         path.indexOf("xfa.datasets.data.") === 0)) {
+      var rawIds = host.dataResolveNodes(path);
+      var out = [];
+      for (var i = 0; i < rawIds.length; i++) out.push(makeDataHandle(rawIds[i]));
+      return Object.freeze(out);
+    }
+    var generation = host.generation();
+    var ids = host.resolveNodeIds(path);
+    var out2 = [];
+    for (var j = 0; j < ids.length; j++) {
+      out2.push(makeHandle(ids[j], generation));
+    }
+    return Object.freeze(out2);
   }
 
   function makeHandle(id, generation) {
@@ -1281,8 +2377,22 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "instanceManager") {
           return makeInstanceManager(id, generation);
         }
+        if (prop === "occur") {
+          host.occurResolve(id, generation);
+          return makeOccurHandle(id, generation);
+        }
         if (prop === "index") {
           return host.nodeIndex(id, generation);
+        }
+        // XFA-DATA-M3C: `<handle>.parent` returns the form-tree parent.
+        // Adobe scripts commonly chain `parent.somExpression`,
+        // `parent.index`, or `parent._Sibling.setInstances(...)` to walk
+        // one level up from a field or subform without authoring an
+        // explicit SOM path.
+        if (prop === "parent") {
+          var parentId = host.parentOfNode(id, generation);
+          if (parentId < 0) return undefined;
+          return makeHandle(parentId, generation);
         }
         if (prop === "setInstances") {
           return function(n) {
@@ -1292,7 +2402,8 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (prop === "addInstance") {
           return function() {
             var newId = host.instanceAdd(id, generation);
-            return newId < 0 ? null : makeHandle(newId, generation);
+            // WP-3 F3: chainable null-safe sentinel on failure (see candidateSet).
+            return newId < 0 ? makeNullDataHandle() : makeHandle(newId, generation);
           };
         }
         if (prop === "removeInstance") {
@@ -1356,21 +2467,87 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         // shorthand unreachable for real bound subforms.
         if (prop.charAt(0) === "_" && prop.length > 1) {
           var bareName = prop.substring(1);
-          var imChildIds = uniqueNodeIds(host.resolveChildNodeIds(String(id), bareName));
+          var imChildIds = uniqueNodeIds(host.resolveChildNodeIdsQuiet(String(id), bareName));
           if (imChildIds.length > 0) {
             return makeInstanceManager(imChildIds[0], generation);
           }
           if (host.hasZeroInstanceRun(id, generation, bareName)) {
             return makeEmptyInstanceManager();
           }
+          // XFA-DATA-M3C: when the same-named child subform is absent from
+          // the merged form tree (occur.initial=0, optional bind, or
+          // never-instantiated schema option), Adobe still hands the
+          // script an empty instanceManager so `parent._Foo.setInstances(N)`
+          // is a chainable no-op. This sentinel is ONLY safe on container
+          // handles (root, subform, area, subformSet, exclGroup) — XFA
+          // 3.3 §6.4.3.2 limits the underscore-shorthand to those node
+          // classes. Fields and draws stay `undefined` so existing
+          // narrow-handle tests (m3b_phaseC_bindings::field_handle_is_frozen_and_narrow)
+          // keep their property-isolation contract.
+          if (host.nodeIsContainer(id, generation)) {
+            return makeEmptyInstanceManager();
+          }
+        }
+        // WP-3: choiceList is a listbox/combobox property not surfaced through
+        // the FormTree. Return an empty frozen array.
+        if (prop === "choiceList") {
+          return Object.freeze([]);
+        }
+        // XFA-DATA-M3C: `<handle>.ui` exposes the widget-config sub-object.
+        // We materialise a chainable stub (see makeUiStub) so scripts like
+        // `field.ui.choiceList.commitOn = "exit"` complete without throwing.
+        if (prop === "ui") {
+          return makeUiStub();
+        }
+        // XFA-DATA-M3C: `<handle>.formattedValue` (Adobe SDK §JS A) reads
+        // the field value formatted by its picture clause. Static flatten
+        // has no live picture-clause formatter; return the raw value so
+        // scripts can compare-and-branch without TypeError.
+        if (prop === "formattedValue") {
+          var fv = host.getRawValue(id, generation);
+          return fv === undefined || fv === null ? "" : String(fv);
+        }
+        // XFA-DATA-M3C: `<handle>.execEvent("activity")` (Adobe SDK) fires
+        // an event handler. Static flatten cannot dispatch new events
+        // mid-script; absorb the call as a no-op returning undefined.
+        if (prop === "execEvent") {
+          return function() { return undefined; };
+        }
+        // XFA-DATA2-02: caption sub-element + resolveNode/resolveNodes
+        // instance methods. Intercepted BEFORE shouldDeferHandleProperty +
+        // makeChainHandle so the child-resolver host call (and its
+        // resolve_failures bump) never happens. See captionSentinel /
+        // handleResolveNode/Nodes definitions above for rationale.
+        if (prop === "caption") {
+          return captionSentinel;
+        }
+        if (prop === "resolveNode") {
+          return handleResolveNode;
+        }
+        if (prop === "resolveNodes") {
+          return handleResolveNodes;
+        }
+        // BE-1: `#items` — XFA 3.3 §7.7 / §8.1 choiceList item labels.
+        // Scripts access `fieldHandle.#items` (e.g. `Wojewodztwo.#items`) to
+        // read the display-label collection.  Returns an XFA-compatible
+        // substitute (makeItemsSubstitute) so scripts can use both direct
+        // array indexing and the `.nodes` / `.nodes.item(i)` access pattern.
+        // `#` bypasses `shouldDeferHandleProperty` via `handlePropertyExclusions`.
+        if (prop === "#items") {
+          var displayItems = host.getDisplayItems(id, generation);
+          if (displayItems.length > 0) {
+            host.somItemsPathHit();
+          }
+          return makeItemsSubstitute(displayItems);
         }
         if (shouldDeferHandleProperty(prop)) {
           return undefined;
         }
-        return makeNodeHandleFromIds(resolveHandleChildIds([id], prop), generation);
+        return makeChainHandle([id], prop, generation);
       },
       set: function(_target, prop, value) {
-        if (prop === "rawValue") {
+        // WP-3: `value` is an alias for rawValue on the set side.
+        if (prop === "rawValue" || prop === "value") {
           host.setRawValue(id, generation, value);
         }
         return true;
@@ -1383,6 +2560,10 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           prop === "somExpression" ||
           prop === "instanceManager" ||
           prop === "index" ||
+          prop === "parent" ||
+          prop === "ui" ||
+          prop === "formattedValue" ||
+          prop === "execEvent" ||
           prop === "setInstances" ||
           prop === "addInstance" ||
           prop === "removeInstance" ||
@@ -1390,6 +2571,10 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           prop === "clearItems" ||
           prop === "addItem" ||
           prop === "boundItem" ||
+          prop === "caption" ||
+          prop === "resolveNode" ||
+          prop === "resolveNodes" ||
+          prop === "#items" ||
           Reflect.has(target, prop);
       }
     });
@@ -1422,31 +2607,88 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   // rather than null, which would throw TypeError on any property access.
   function makeNullDataHandle() {
     var emptyNodes = [];
+    // XFA null-safe: item() on an empty sentinel list returns a chainable null handle,
+    // not native null, so callers can do nodes.item(0).value without TypeError.
     emptyNodes.item = function() { return makeNullDataHandle(); };
     Object.freeze(emptyNodes);
     var sentinel = nullProtoObject();
+    // WP-3: configurable:true so the Proxy set-trap can return true without
+    // triggering the ECMAScript "non-configurable accessor without setter" invariant.
     Object.defineProperty(sentinel, "value",
-      { get: function() { return null; }, enumerable: true, configurable: false });
+      { get: function() { return null; }, enumerable: true, configurable: true });
     Object.defineProperty(sentinel, "rawValue",
-      { get: function() { return null; }, enumerable: true, configurable: false });
+      { get: function() { return null; }, enumerable: true, configurable: true });
     Object.defineProperty(sentinel, "length",
-      { get: function() { return 0; }, enumerable: true, configurable: false });
+      { get: function() { return 0; }, enumerable: true, configurable: true });
     Object.defineProperty(sentinel, "nodes",
-      { get: function() { return emptyNodes; }, enumerable: true, configurable: false });
+      { get: function() { return emptyNodes; }, enumerable: true, configurable: true });
+    // WP-3: instance.index on an unbound node → 0
+    Object.defineProperty(sentinel, "index",
+      { get: function() { return 0; }, enumerable: true, configurable: true });
     sentinel.item = function() { return makeNullDataHandle(); };
     return new Proxy(sentinel, {
       get: function(target, prop) {
         if (prop in target) return target[prop];
         if (typeof prop !== "string") return undefined;
         return makeNullDataHandle();
+      },
+      // WP-3: absorb all writes — null data handles are read-only sentinels.
+      set: function(_target, _prop, _value) {
+        return true;
       }
+    });
+  }
+
+  // BE-1 tranche #1: benign "absent declared node" façade. Returned by the
+  // implicit-globals `lookup` for a bare identifier that fails the scope
+  // resolve but names a template-declared container (gated by the host
+  // `isDeclaredAbsentNode`). Mirrors Adobe semantics: a reference to a
+  // declared-but-absent node is an EMPTY node — `isNull === true`, `rawValue`/
+  // `value` null, empty `nodes`, an empty `instanceManager`, and every further
+  // SOM segment chains to another empty node. Writes are absorbed. This lets a
+  // guarded script (`if (!Sub.Child.Field.isNull) {…} else {…}`) evaluate the
+  // guard to `false` and run its else branch (e.g. `_X.setInstances(0)`,
+  // `presence = "invisible"`) instead of throwing on `undefined`. Modelled on
+  // `makeNullDataHandle`; the explicit boolean `isNull` is essential — without
+  // it, `.isNull` would chain to a truthy façade object and invert the guard.
+  function makeAbsentNodeHandle() {
+    var sentinel = nullProtoObject();
+    Object.defineProperty(sentinel, "isNull",
+      { get: function() { return true; }, enumerable: true, configurable: true });
+    Object.defineProperty(sentinel, "value",
+      { get: function() { return null; }, enumerable: true, configurable: true });
+    Object.defineProperty(sentinel, "rawValue",
+      { get: function() { return null; }, enumerable: true, configurable: true });
+    Object.defineProperty(sentinel, "length",
+      { get: function() { return 0; }, enumerable: true, configurable: true });
+    var emptyNodes = [];
+    emptyNodes.item = function() { return makeAbsentNodeHandle(); };
+    Object.freeze(emptyNodes);
+    Object.defineProperty(sentinel, "nodes",
+      { get: function() { return emptyNodes; }, enumerable: true, configurable: true });
+    Object.defineProperty(sentinel, "instanceManager",
+      { get: function() { return makeEmptyInstanceManager(); }, enumerable: true, configurable: true });
+    sentinel.item = function() { return makeAbsentNodeHandle(); };
+    return new Proxy(sentinel, {
+      get: function(target, prop) {
+        if (prop in target) return target[prop];
+        if (typeof prop !== "string") return undefined;
+        // `_<Name>` underscore-shorthand → an empty instanceManager, so chained
+        // `Sub._Child.setInstances(n)` on an absent node is a safe no-op.
+        if (prop.charAt(0) === "_" && prop.length > 1) return makeEmptyInstanceManager();
+        // any further SOM segment chains to another empty node.
+        return makeAbsentNodeHandle();
+      },
+      // absorb writes (presence, rawValue, mandatory, …) — empty nodes are inert.
+      set: function(_target, _prop, _value) { return true; }
     });
   }
 
   // Phase D-γ: Data DOM handle — wraps a raw DataDom node index and exposes
   // `.value`, `.nodes`, `.length`, `.item(i)`, and named child access via Proxy.
   function makeDataHandle(rawId) {
-    if (rawId === undefined || rawId < 0) return null;
+    // WP-3: return null-safe sentinel so callers can chain .value / .nodes safely.
+    if (rawId === undefined || rawId < 0) return makeNullDataHandle();
     var handle = nullProtoObject();
     Object.defineProperty(handle, "value", {
       get: function() {
@@ -1503,22 +2745,123 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     });
   }
 
-  var xfaHost = nullProtoObject();
-  Object.defineProperty(xfaHost, "numPages", {
-    enumerable: true,
-    configurable: false,
-    get: function() {
-      return host.numPages();
-    }
-  });
-  Object.defineProperty(xfaHost, "messageBox", {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: function() {
-      host.bindingError();
-      return null;
-    }
+  // Phase E (XFA-JS-HOST-STUBS): `xfa.host` is the most heavily used Adobe
+  // Reader viewer namespace. The previous frozen stub only exposed
+  // `numPages` + `messageBox`, so initializer scripts that touch
+  // `xfa.host.title = "..."`, `xfa.host.openList(...)`, `xfa.host.beep()`,
+  // etc. raised TypeError on the very first property access and inflated
+  // `runtime_errors`. We expose a Proxy that:
+  //   * resolves known read-only viewer properties to deterministic defaults
+  //     (numPages, version, language, platform, name, title, validationsEnabled,
+  //     calculationsEnabled, currentPage, pageCount);
+  //   * absorbs every other write silently (viewer-only state has no flatten
+  //     side-effects);
+  //   * returns a null-safe sentinel for unknown reads so chains like
+  //     `xfa.host.someVendorExt.message` don't TypeError;
+  //   * exposes the interactive function family (messageBox, openList, beep,
+  //     response, print, gotoURL, setFocus, exportData, importData,
+  //     resetData) as safe-default thunks that ALSO bump the
+  //     `unsupported_host_calls` counter so dispatch keeps observability
+  //     without claiming a fake success (no "user clicked OK" lies).
+  // No filesystem / network / process syscalls reach the host — every
+  // interactive thunk is a pure JS no-op that delegates to host.unsupported
+  // for accounting only. See benchmarks/JS_SANDBOX_SECURITY_AUDIT.md.
+  var XFA_HOST_INTERACTIVE_CALLS = {
+    "messageBox":   { kind: "ret", value: 0 },
+    "openList":     { kind: "ret", value: -1 },
+    "beep":         { kind: "ret", value: undefined },
+    "response":     { kind: "ret", value: "" },
+    "print":        { kind: "ret", value: undefined },
+    "gotoURL":      { kind: "ret", value: undefined },
+    "setFocus":     { kind: "ret", value: undefined },
+    "exportData":   { kind: "ret", value: undefined },
+    "importData":   { kind: "ret", value: undefined },
+    "resetData":    { kind: "ret", value: undefined },
+    "documentCountInBatch": { kind: "ret", value: 1 },
+    "documentInBatch":      { kind: "ret", value: 0 },
+    // JS2-01 (Sprint 2 Batch B): closeDoc is referenced by Canadian IMM
+    // and Quebec dol4n templates as an interactive viewer entry point.
+    // Static flatten cannot dismiss a document; safe-default undefined
+    // with `unsupported_host_calls` accounting keeps observability without
+    // a TypeError. Pure JS no-op — no filesystem / network reach the host.
+    "closeDoc":     { kind: "ret", value: undefined }
+  };
+
+  // Read-side defaults for viewer-readable host properties. These are pure
+  // accessors — no host call leaves the sandbox. The values mirror Adobe
+  // Reader behaviour during static, non-interactive rendering.
+  function makeXfaHostBase() {
+    var base = nullProtoObject();
+    Object.defineProperty(base, "numPages", {
+      enumerable: true, configurable: false,
+      get: function() { return host.numPages(); }
+    });
+    Object.defineProperty(base, "currentPage", {
+      enumerable: true, configurable: true,
+      get: function() { return 0; },
+      set: function(_v) { /* viewer-only */ }
+    });
+    Object.defineProperty(base, "pageCount", {
+      enumerable: true, configurable: false,
+      get: function() { return host.numPages(); }
+    });
+    // Static deterministic identity strings. We deliberately avoid claiming
+    // Acrobat compatibility — scripts that branch on `xfa.host.name` for
+    // Adobe-specific behaviour should fall through to a non-Acrobat path.
+    var SCALAR_DEFAULTS = {
+      "version":    "PDFluent-XFA",
+      "language":   "ENU",
+      "platform":   "PDFluent",
+      "name":       "PDFluent",
+      "title":      "",
+      "appType":    "Reader",
+      "variation":  "Reader",
+      "calculationsEnabled": true,
+      "validationsEnabled":  true,
+      "runtimeHighlight":    false,
+      "runtimeHighlightColor": "",
+      "viewerType":          "PDFluent",
+      "fullScreen":          false
+    };
+    Object.keys(SCALAR_DEFAULTS).forEach(function(k) {
+      var v = SCALAR_DEFAULTS[k];
+      Object.defineProperty(base, k, {
+        enumerable: true, configurable: true,
+        get: function() { return v; },
+        set: function(_v) { /* viewer-only, silently absorb */ }
+      });
+    });
+    return base;
+  }
+
+  // Install interactive function thunks. Each thunk increments the
+  // unsupported-host-call counter and returns a deterministic safe default.
+  function installXfaHostInteractive(base) {
+    Object.keys(XFA_HOST_INTERACTIVE_CALLS).forEach(function(name) {
+      var spec = XFA_HOST_INTERACTIVE_CALLS[name];
+      Object.defineProperty(base, name, {
+        enumerable: true, configurable: false, writable: false,
+        value: function() {
+          host.unsupportedHostCall(name);
+          return spec.value;
+        }
+      });
+    });
+  }
+
+  var xfaHostBase = makeXfaHostBase();
+  installXfaHostInteractive(xfaHostBase);
+  // Wrap in a Proxy so unknown property reads return a null-safe sentinel
+  // and unknown writes silently absorb. This is the "no TypeError" guarantee
+  // for vendor-specific xfa.host extensions referenced by templated scripts.
+  var xfaHost = new Proxy(xfaHostBase, {
+    get: function(target, prop) {
+      if (prop in target || typeof prop !== "string") return target[prop];
+      // Unknown read — never throw, never claim a value. Sentinel only.
+      return makeNullDataHandle();
+    },
+    set: function(_t, _p, _v) { return true; },
+    has: function() { return true; }
   });
 
   var xfaLayout = nullProtoObject();
@@ -1568,13 +2911,151 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     enumerable: true,
     configurable: false,
     writable: false,
-    value: Object.freeze(xfaHost)
+    // Note: deliberately NOT Object.freeze'd. `xfaHost` is already a Proxy
+    // with sealed semantics (writes absorbed, unknown reads return sentinels).
+    // Freezing would force every Set trap to throw under strict-mode scripts.
+    value: xfaHost
   });
   Object.defineProperty(xfa, "layout", {
     enumerable: true,
     configurable: false,
     writable: false,
     value: Object.freeze(xfaLayout)
+  });
+
+  // Phase E (XFA-JS-HOST-STUBS): viewer / interaction sub-namespaces. Each
+  // is a Proxy that silently absorbs writes and returns chainable sentinels
+  // on read so scripts can complete:
+  //
+  //   xfa.viewer        — Reader UI state (zoom, scrollbar, toolbar, ...)
+  //   xfa.appState      — Reader-wide preference cache
+  //   xfa.appearanceFilter — accessibility / high-contrast hints
+  //   xfa.connection    — `<connection>` outbound data binding stubs
+  //   xfa.signature     — interactive digital-signature panel
+  //   xfa.aliasNode     — script-time DOM alias rebinding
+  //   xfa.form          — top-level FormDOM root reference (we expose the
+  //                       same resolveNode/resolveNodes pair so the script
+  //                       feels uniform; legacy property reads sentinel)
+  //
+  // These never call out to the host other than for accounting; no
+  // filesystem / network / process syscalls reach the host bindings. Reads
+  // for known property names return spec-conforming defaults; everything
+  // else falls back to the null-safe sentinel chain.
+  function makeViewerStubNamespace(staticReads) {
+    var base = nullProtoObject();
+    if (staticReads) {
+      Object.keys(staticReads).forEach(function(k) {
+        var v = staticReads[k];
+        Object.defineProperty(base, k, {
+          enumerable: true, configurable: true,
+          get: function() { return v; },
+          set: function(_v) { /* viewer-only — silent absorb */ }
+        });
+      });
+    }
+    return new Proxy(base, {
+      get: function(target, prop) {
+        if (prop in target || typeof prop !== "string") return target[prop];
+        return makeNullDataHandle();
+      },
+      set: function(_t, _p, _v) { return true; },
+      has: function() { return true; }
+    });
+  }
+
+  function makeInteractiveStubNamespace(funcs) {
+    // funcs: { "sign": defaultRet, "verify": defaultRet, ... }
+    var base = nullProtoObject();
+    Object.keys(funcs).forEach(function(name) {
+      var def = funcs[name];
+      Object.defineProperty(base, name, {
+        enumerable: true, configurable: false, writable: false,
+        value: function() {
+          host.unsupportedHostCall(name);
+          return def;
+        }
+      });
+    });
+    return new Proxy(base, {
+      get: function(target, prop) {
+        if (prop in target || typeof prop !== "string") return target[prop];
+        return makeNullDataHandle();
+      },
+      set: function(_t, _p, _v) { return true; },
+      has: function() { return true; }
+    });
+  }
+
+  Object.defineProperty(xfa, "viewer", {
+    enumerable: true, configurable: false, writable: false,
+    value: makeViewerStubNamespace({
+      "zoomType":  "FitWidth",
+      "zoom":      100,
+      "scrollbar": "auto",
+      "toolbar":   true,
+      "menubar":   true,
+      "statusbar": true
+    })
+  });
+  Object.defineProperty(xfa, "appState", {
+    enumerable: true, configurable: false, writable: false,
+    value: makeViewerStubNamespace({
+      "highlightRequiredFields": false,
+      "fieldHighlightColor":     "",
+      "ariaEnabled":             false
+    })
+  });
+  Object.defineProperty(xfa, "appearanceFilter", {
+    enumerable: true, configurable: false, writable: false,
+    value: makeViewerStubNamespace(null)
+  });
+  Object.defineProperty(xfa, "aliasNode", {
+    enumerable: true, configurable: false, writable: false,
+    value: makeViewerStubNamespace(null)
+  });
+  Object.defineProperty(xfa, "connection", {
+    enumerable: true, configurable: false, writable: false,
+    // `<connection>` calls hit a real service endpoint in Adobe Reader.
+    // Static flatten cannot honour that — every method is unsupported.
+    value: makeInteractiveStubNamespace({
+      "execute":   null,
+      "open":      null,
+      "close":     null,
+      "send":      null
+    })
+  });
+  Object.defineProperty(xfa, "signature", {
+    enumerable: true, configurable: false, writable: false,
+    // Digital signatures require an interactive certificate picker.
+    value: makeInteractiveStubNamespace({
+      "sign":     false,
+      "verify":   "unknown",
+      "enumerate": ""
+    })
+  });
+  // WP-3 F3: `xfa.validate` is a viewer-only namespace controlling form-wide
+  // validation behaviour (Reader UI prompts on field constraint violations).
+  // Adobe initializers commonly do `xfa.validate.override = 0` /
+  // `xfa.validate.max = N` to suppress modal dialogs that have no meaning
+  // in a static flatten context. Expose a Proxy that silently absorbs every
+  // property write (`override`, `max`, `messageMode`, etc.) and returns
+  // empty defaults on read, so scripts complete without TypeError.
+  Object.defineProperty(xfa, "validate", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: new Proxy(nullProtoObject(), {
+      get: function(_t, prop) {
+        if (prop === "override" || prop === "max") return 0;
+        if (prop === "messageMode") return "";
+        if (typeof prop !== "string") return undefined;
+        // Unknown reads return a chainable null-safe sentinel so deeper
+        // access like `xfa.validate.scriptTest.message` does not throw.
+        return makeNullDataHandle();
+      },
+      set: function(_t, _prop, _value) { return true; },
+      has: function() { return true; }
+    })
   });
   Object.defineProperty(xfa, "resolveNode", {
     enumerable: true,
@@ -1589,12 +3070,91 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (rawId < 0) return null;
         return makeDataHandle(rawId);
       }
+      // BE-1: intercept `FieldName.#items` — same logic as handleResolveNode.
+      // Scripts call `xfa.resolveNode("Wojewodztwo.#items")` to get the items
+      // collection for a choiceList; the form-tree SOM cannot resolve `#items`
+      // as a node, so we resolve the field, fetch its display labels, and
+      // return an XFA-compatible substitute (makeItemsSubstitute).
+      // Guard: path.length > 7 prevents false-positive match when
+      // lastIndexOf returns -1 and path.length-7 is also -1.
+      if (typeof path === "string" && path.length > 7 &&
+          path.lastIndexOf(".#items") === path.length - 7) {
+        var fieldPath = path.substring(0, path.length - 7);
+        var fid = host.resolveNodeId(fieldPath);
+        if (fid >= 0) {
+          var xrDisplayItems = host.getDisplayItems(fid, host.generation());
+          if (xrDisplayItems.length > 0) {
+            host.somItemsPathHit();
+          }
+          return makeItemsSubstitute(xrDisplayItems);
+        }
+        return null;
+      }
       var id = host.resolveNodeId(path);
       if (id < 0) {
         return null;
       }
       return makeHandle(id, host.generation());
     }
+  });
+  // JS2-01 (Sprint 2 Batch B): `xfa.form` is the FormDOM root surface
+  // Adobe Reader exposes (XFA 3.3 §6.1.4 — the result of merging template
+  // + datasets). The previous build only commented that it should be
+  // exposed (rquickjs_backend.rs:2477) but no actual binding existed —
+  // scripts that did `xfa.form.resolveNode("Form1.Subform1")` or
+  // `form.resolveNode(...)` ran into "cannot read property of undefined"
+  // or "form is not defined". We expose a Proxy that:
+  //   * forwards `resolveNode` / `resolveNodes` to the existing
+  //     `xfa.resolveNode` / `xfa.resolveNodes` pair (cluster C contract
+  //     preserved — missing paths still return `null`, not a sentinel);
+  //   * absorbs unknown property writes (viewer-only flags) silently;
+  //   * returns a chainable null-safe sentinel for unknown reads.
+  // No new Rust closure is registered; the binding is pure JS routing.
+  function makeFormNamespace() {
+    var base = nullProtoObject();
+    Object.defineProperty(base, "resolveNode", {
+      enumerable: true, configurable: false, writable: false,
+      value: function(path) { return xfa.resolveNode(path); }
+    });
+    Object.defineProperty(base, "resolveNodes", {
+      enumerable: true, configurable: false, writable: false,
+      value: function(path) { return xfa.resolveNodes(path); }
+    });
+    // Adobe's `form` exposes `recalculate(true/false)` as a no-op trigger
+    // for the calculation cascade. Templates pass `1` (force) commonly.
+    // Static flatten already ran calculate scripts — accept the call,
+    // return undefined, no counter (it is not an interactive prompt).
+    Object.defineProperty(base, "recalculate", {
+      enumerable: true, configurable: false, writable: false,
+      value: function() { return undefined; }
+    });
+    Object.defineProperty(base, "execValidate", {
+      enumerable: true, configurable: false, writable: false,
+      value: function() { return true; }
+    });
+    Object.defineProperty(base, "execInitialize", {
+      enumerable: true, configurable: false, writable: false,
+      value: function() { return undefined; }
+    });
+    Object.defineProperty(base, "execCalculate", {
+      enumerable: true, configurable: false, writable: false,
+      value: function() { return undefined; }
+    });
+    return new Proxy(base, {
+      get: function(target, prop) {
+        if (prop in target || typeof prop !== "string") return target[prop];
+        return makeNullDataHandle();
+      },
+      set: function(_t, _p, _v) { return true; },
+      has: function() { return true; }
+    });
+  }
+  var formNamespace = makeFormNamespace();
+  Object.defineProperty(xfa, "form", {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: formNamespace
   });
   Object.defineProperty(xfa, "resolveNodes", {
     enumerable: true,
@@ -1633,24 +3193,97 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     }
   });
 
-  var app = nullProtoObject();
-  Object.defineProperty(app, "alert", {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: function() {
-      host.bindingError();
-      return null;
-    }
-  });
-  Object.defineProperty(app, "launchURL", {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: function() {
-      host.bindingError();
-      return null;
-    }
+  // Phase E (XFA-JS-HOST-STUBS): Acrobat / Reader `app` global. Adobe
+  // initializer scripts commonly do:
+  //   app.calculate.override = true;       // viewer-only flag — silent absorb
+  //   app.runtimeHighlight   = false;      // viewer-only flag — silent absorb
+  //   app.alert("submitted"); app.launchURL("…")  // interactive — counted
+  //
+  // The previous frozen `app` only stubbed two functions; every other
+  // property touch surfaced as TypeError. Wrap the whole namespace in a
+  // Proxy with the same semantics as `xfa.host`:
+  //   * known viewer properties resolve to deterministic defaults;
+  //   * known interactive functions return a safe default + bump
+  //     unsupported_host_calls (NOT runtime_errors);
+  //   * unknown reads return a null-safe sentinel chain;
+  //   * unknown writes are absorbed.
+  //
+  // `app.calculate` is itself an absorbing sub-Proxy — every assignment
+  // (`app.calculate.override = true`, `app.calculate.suspend = false`, ...)
+  // is viewer-only and has no flatten side-effect. We document this as an
+  // explicit silent no-op (not UnsupportedHostCapability) because
+  // suppressing the viewer's calculation cascade is the script author's
+  // ASKING the viewer to stop, not a UI prompt to the user. See
+  // benchmarks/JS_SANDBOX_SECURITY_AUDIT.md for the full classification.
+  var APP_INTERACTIVE_CALLS = {
+    "alert":       { kind: "ret", value: 0 },     // dialog OK pressed = 0
+    "launchURL":   { kind: "ret", value: undefined },
+    "execMenuItem":{ kind: "ret", value: undefined },
+    "beep":        { kind: "ret", value: undefined },
+    "openDoc":     { kind: "ret", value: null },
+    "response":    { kind: "ret", value: "" },
+    "mailMsg":     { kind: "ret", value: undefined },
+    // JS2-01 (Sprint 2 Batch B): Adobe Acrobat SDK exposes `app.messageBox`
+    // as a richer alias of `app.alert` (modal dialog, returns the pressed
+    // button index — 0 = OK). Safe default mirrors `app.alert`. No new
+    // capability surface; pure JS no-op with counter accounting.
+    "messageBox":  { kind: "ret", value: 0 },
+    // JS2-01: `app.closeDoc` is the Acrobat alias of `xfa.host.closeDoc`.
+    // Templates targeting both Reader and Acrobat reference both spellings;
+    // we counter-bump on each call and return undefined.
+    "closeDoc":    { kind: "ret", value: undefined }
+  };
+  function makeAppBase() {
+    var base = nullProtoObject();
+    // Read-side static defaults — never call out, never lie about identity.
+    var SCALAR_DEFAULTS = {
+      "viewerType":     "PDFluent",
+      "viewerVariation":"Reader",
+      "viewerVersion":  0,
+      "language":       "ENU",
+      "platform":       "PDFluent",
+      "fs":             null,  // file system gateway — explicitly null
+      "media":          null,  // multimedia controller — explicitly null
+      "fullscreen":     false,
+      "runtimeHighlight": false,
+      "runtimeHighlightColor": ""
+    };
+    Object.keys(SCALAR_DEFAULTS).forEach(function(k) {
+      var v = SCALAR_DEFAULTS[k];
+      Object.defineProperty(base, k, {
+        enumerable: true, configurable: true,
+        get: function() { return v; },
+        set: function(_v) { /* viewer-only, silently absorb */ }
+      });
+    });
+    // app.calculate sub-namespace: writes absorb, reads return defaults.
+    Object.defineProperty(base, "calculate", {
+      enumerable: true, configurable: false, writable: false,
+      value: makeViewerStubNamespace({
+        "override": true,
+        "suspend":  false
+      })
+    });
+    // Install interactive function thunks (same pattern as xfa.host).
+    Object.keys(APP_INTERACTIVE_CALLS).forEach(function(name) {
+      var spec = APP_INTERACTIVE_CALLS[name];
+      Object.defineProperty(base, name, {
+        enumerable: true, configurable: false, writable: false,
+        value: function() {
+          host.unsupportedHostCall(name);
+          return spec.value;
+        }
+      });
+    });
+    return base;
+  }
+  var app = new Proxy(makeAppBase(), {
+    get: function(target, prop) {
+      if (prop in target || typeof prop !== "string") return target[prop];
+      return makeNullDataHandle();
+    },
+    set: function(_t, _p, _v) { return true; },
+    has: function() { return true; }
   });
 
   // Phase C-α: viewer-only `event` global. Real Adobe Reader populates
@@ -1715,6 +3348,75 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     Object.defineProperty(ev, "selEnd", {
       enumerable: true, configurable: false,
       get: function() { return 0; }
+    });
+    // JS2-01 (Sprint 2 Batch B): the Phase E security audit §3.9 promised
+    // that `event` exposes the full Adobe Acrobat SDK event surface
+    // (`target`, `change`, `newText`, `prevText`, `fullText`, `selStart`,
+    // `selEnd`, plus `name`, `type`, `shift`, `modifier`, `commitKey`,
+    // `willCommit`, `rc`, `keyDown`, `value`, `reenter`). Only the first
+    // seven were implemented; scripts that probe `event.name` for the
+    // firing activity (`if (event.name === "calculate") {...}`) silently
+    // saw `undefined`, and scripts that chained off `event.X` could trip
+    // a "not a function" if `X` was expected to be callable.
+    //
+    // All values are deterministic spec defaults that match Adobe's
+    // behaviour during a non-interactive flatten (no firing event):
+    //   name       — current activity if known, else ""
+    //   type       — event type label (Adobe ≈ "Field"), "" if unknown
+    //   shift      — modifier-key state (false)
+    //   modifier   — modifier-key state (false)
+    //   commitKey  — 0 (no commit key pressed)
+    //   willCommit — false (no commit pending)
+    //   rc         — true (accept-by-default — same as Adobe's validate)
+    //   keyDown    — false (no key pressed)
+    //   value      — "" (current widget value, unknown during static flatten)
+    //   reenter    — false (Acrobat re-entry flag)
+    //
+    // Read-only via getter, like the existing seven. The frozen ev object
+    // means writes to these from scripts running in strict mode would throw
+    // a TypeError — but no real script writes event scalars (the only
+    // observed pattern is `event.value = ...` on a stale `event` reference
+    // which is undefined, not the frozen object). If we ever observe
+    // legitimate writes, swap getter for configurable getter+setter.
+    Object.defineProperty(ev, "name", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    Object.defineProperty(ev, "type", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    Object.defineProperty(ev, "shift", {
+      enumerable: true, configurable: false,
+      get: function() { return false; }
+    });
+    Object.defineProperty(ev, "modifier", {
+      enumerable: true, configurable: false,
+      get: function() { return false; }
+    });
+    Object.defineProperty(ev, "commitKey", {
+      enumerable: true, configurable: false,
+      get: function() { return 0; }
+    });
+    Object.defineProperty(ev, "willCommit", {
+      enumerable: true, configurable: false,
+      get: function() { return false; }
+    });
+    Object.defineProperty(ev, "rc", {
+      enumerable: true, configurable: false,
+      get: function() { return true; }
+    });
+    Object.defineProperty(ev, "keyDown", {
+      enumerable: true, configurable: false,
+      get: function() { return false; }
+    });
+    Object.defineProperty(ev, "value", {
+      enumerable: true, configurable: false,
+      get: function() { return ""; }
+    });
+    Object.defineProperty(ev, "reenter", {
+      enumerable: true, configurable: false,
+      get: function() { return false; }
     });
     return Object.freeze(ev);
   }
@@ -1872,6 +3574,28 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   // object containing that subform's named scripts. Enables
   // `subformHandle.variables.ScriptName.method()` access paths.
   var subformVariables = lookupObject();
+  // W3-D RETRY: form-level mutable string data items registered from
+  // `<variables>` `<text name="X">value</text>` blocks (XFA 3.3 §5.5.2).
+  // Each entry is `name -> { value: <string> }`. Adobe Reader exposes these
+  // as global mutable string containers — the canonical IMM5709 pattern
+  // is `<text name="globValidatePressed"/>` referenced from event scripts
+  // as `globValidatePressed.value = "true";`. Populated by
+  // `setVariablesDataItem`; cleared by `clearVariablesScripts` (shared
+  // teardown — same per-document lifecycle).
+  var variablesDataItems = lookupObject();
+  // W3-D RETRY: subform-scoped variant of `variablesDataItems`, parallel to
+  // `subformVariables` for scripts. Reserved for future subform-level data
+  // items; currently populated only at root scope but the structure is
+  // here so an upcoming pass can light it up without further refactor.
+  var subformVariablesDataItems = lookupObject();
+  // D4: flat first-wins exposure of subform-scoped named `<script>` objects to
+  // bare-identifier lookup. The host only writes an entry here for names that
+  // are unique across all subforms (ambiguous names are withheld — fail-closed
+  // — and counted Rust-side). Consulted by the `with` proxy AFTER
+  // `variablesScripts` / `variablesDataItems` (root scope wins) and BEFORE the
+  // host SOM resolver, so a subform-scoped helper such as `countryScript`
+  // resolves as a bare global instead of falling through to a SOM NoMatch.
+  var subformScriptsByName = lookupObject();
 
   function makeImplicitGlobals(body) {
     var currentId = host.currentNodeId();
@@ -1884,11 +3608,35 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       if (cachedHandles[name] !== undefined) {
         return cachedHandles[name];
       }
-      var nodeIds = host.resolveImplicitNodeIds(currentId, name);
-      if (!nodeIds || nodeIds.length === 0) {
+      var nodeIds = uniqueNodeIds(host.resolveImplicitNodeIds(currentId, name));
+      if (nodeIds.length === 0) {
+        // BE-1 tranche #1: a bare implicit identifier that fails the scope
+        // resolve but names a template-declared container resolves to a benign
+        // EMPTY node (Adobe semantics: isNull===true), not `undefined`. This
+        // lets guarded scripts such as
+        //   if (!Podmiot1.OsobaFizyczna.PESEL.isNull) {...} else {...}
+        // take the empty (else) branch and run their setInstances(0)/presence
+        // writes instead of throwing "cannot read property '…' of undefined"
+        // and aborting. Undeclared names still return `undefined`, preserving
+        // the D-θ.1 `A.B === undefined` byte-identity contract for genuine
+        // misses. Gated host-side by `isDeclaredAbsentNode`; sandboxed-only.
+        if (host.isDeclaredAbsentNode(name)) {
+          var facade = makeAbsentNodeHandle();
+          cachedHandles[name] = facade;
+          return facade;
+        }
         return undefined;
       }
-      var handle = makeNodeHandleFromIds(nodeIds, generation);
+      // Phase D-θ.2: wrap an implicit hit in the full-chain accumulator. The
+      // resulting proxy accumulates SOM property names without contacting
+      // the host until a terminal property is read; only then is the full
+      // chain resolved with backtracking. This lets `A.B.C.D.rawValue`
+      // disambiguate the same-name `A` whose subtree completes the chain,
+      // rather than relying on a single-segment hint as in D-θ.1. Terminal
+      // properties still resolve byte-for-byte identically to the
+      // un-hinted walk so single-token reads keep their existing
+      // semantics.
+      var handle = makeChainProxy([], [name], nodeIds, generation, currentId);
       cachedHandles[name] = handle;
       return handle;
     }
@@ -1898,6 +3646,25 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         if (typeof prop !== "string") {
           return false;
         }
+        // XFA-DATA-M3C: `_<Name>` and `parent` are XFA-defined globals that
+        // must be visible to `with()` lookup even when the local-names
+        // collector treats them as locals (they shadow no real var/let).
+        if (prop === "parent") {
+          return true;
+        }
+        if (prop.charAt(0) === "_" && prop.length > 1 &&
+            localNames[prop] !== true) {
+          // Probe — only claim presence when the bare-name resolves to a
+          // real subform/container; otherwise fall through to the standard
+          // defer rules so unrelated underscored locals stay undefined.
+          // Quiet probe: a miss here is the schema-optional path and must
+          // not count as a script-level resolve failure.
+          var bare = prop.substring(1);
+          if (uniqueNodeIds(host.resolveImplicitNodeIdsQuiet(currentId, bare)).length > 0 ||
+              host.hasZeroInstanceRun(currentId, generation, bare)) {
+            return true;
+          }
+        }
         if (shouldDeferGlobalName(prop, localNames)) {
           return false;
         }
@@ -1906,6 +3673,44 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       get: function(_target, prop) {
         if (typeof prop !== "string") {
           return undefined;
+        }
+        // XFA-DATA-M3C: bare `parent` resolves to the form-tree parent of
+        // the current script node. Common in calculate/initialize scripts
+        // for `parent.index`, `parent.rawValue`, and chain navigation that
+        // mirrors Adobe's implicit-scope walk one step upward.
+        if (prop === "parent") {
+          var parentId = host.parentOfNode(currentId, generation);
+          if (parentId < 0) return undefined;
+          return makeHandle(parentId, generation);
+        }
+        // XFA 3.3 §6.4.3.2 underscore shorthand at the global scope:
+        // `_<Name>` referenced as a bare identifier denotes the
+        // instanceManager of a same-named subform reachable from the
+        // current implicit scope. Adobe Reader exposes this both as a
+        // child property (`parent._Foo`) and as a bare global. Without
+        // this branch the `shouldDeferGlobalName` rule below returns
+        // `undefined` for every underscored bare ident and the calling
+        // script throws `ReferenceError: _Foo is not defined`.
+        //
+        // Only triggers when the target subform actually exists; otherwise
+        // fall through so unrelated underscored locals keep their
+        // existing deferred-undefined semantics.
+        if (prop.charAt(0) === "_" && prop.length > 1 &&
+            localNames[prop] !== true) {
+          var bareName = prop.substring(1);
+          // Quiet probe: schema-optional misses are NOT a script-level
+          // resolve failure. We surface either a live manager, an empty
+          // manager (zero-instance run or never-instantiated optional
+          // subform), or fall through to the defer rules.
+          var imIds = uniqueNodeIds(
+            host.resolveImplicitNodeIdsQuiet(currentId, bareName)
+          );
+          if (imIds.length > 0) {
+            return makeInstanceManager(imIds[0], generation);
+          }
+          if (host.hasZeroInstanceRun(currentId, generation, bareName)) {
+            return makeEmptyInstanceManager();
+          }
         }
         if (shouldDeferGlobalName(prop, localNames)) {
           return undefined;
@@ -1918,6 +3723,18 @@ const PHASE_C_BINDINGS_JS: &str = r#"
           var recRaw = host.dataBoundRecord(currentId, generation);
           if (recRaw < 0) return makeNullDataHandle();
           return makeDataHandle(recRaw);
+        }
+        // BE-1: `$data` as a bare global refers to the data-DOM root node
+        // (XFA 3.3 §3.3.2: `$data` == `xfa.datasets.data`).  Scripts write
+        // e.g. `var root = $data; root.child.value` — we intercept here
+        // before the SOM resolver so the data-dom root is returned directly.
+        // `data_resolve_node("$data")` resolves to the root of the DataDom
+        // (SomRoot::Data + zero segments -> start node) via resolve_data_som.
+        if (prop === "$data") {
+          var dataRootRaw = host.dataResolveNode("$data");
+          if (dataRootRaw < 0) return makeNullDataHandle();
+          host.somDataRootHit();
+          return makeDataHandle(dataRootRaw);
         }
         // Phase D-γ: `util` is an XFA global (Acrobat SDK §Util) that provides
         // date/number formatting functions.  `util.printd(fmt, date)` is widely
@@ -1936,6 +3753,25 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         // scripts in the same document.
         if (variablesScripts[prop] !== undefined) {
           return variablesScripts[prop];
+        }
+        // W3-D RETRY: form-level data items (XFA 3.3 §5.5.2) outrank the
+        // form-tree implicit lookup, same as scripts. This lets templates
+        // like Canadian IMM5709 reference `globValidatePressed.value`
+        // without the bare ident falling through to the SOM resolver as a
+        // `js_resolve_failure`. Scripts take precedence over data items in
+        // the unlikely case both share a name (spec-undefined; we follow
+        // declaration order, which is `setVariablesScript` first in the
+        // host loop).
+        if (variablesDataItems[prop] !== undefined) {
+          return variablesDataItems[prop];
+        }
+        // D4: subform-scoped named script objects (unique-name only) resolve as
+        // bare globals here, after root-scope scripts/data items and before the
+        // host SOM resolver. This is the minimal SOM resolution for the
+        // `countryScript` / `partNoScript` cluster (XFA 3.3 §5.5 subform
+        // variables). Ambiguous names were never written here (fail-closed).
+        if (subformScriptsByName[prop] !== undefined) {
+          return subformScriptsByName[prop];
         }
         return lookup(prop);
       },
@@ -1956,8 +3792,23 @@ const PHASE_C_BINDINGS_JS: &str = r#"
   }
 
   return {
+    // Phase E (XFA-JS-HOST-STUBS): `xfa` itself is still frozen because all
+    // of its properties were installed with `configurable: false` and writes
+    // go through inner-Proxy `set` traps that we control. `app` is a Proxy
+    // whose underlying target is non-extensible after we install the
+    // function thunks; freezing the Proxy itself would force the absorbing
+    // `set` trap to throw a TypeError (proxy invariants: writes to
+    // non-extensible targets must reject), defeating the whole point of the
+    // silent-absorb design. We therefore expose `app` unfrozen — its safety
+    // is enforced by the Proxy traps, not by Object.freeze.
     xfa: Object.freeze(xfa),
-    app: Object.freeze(app),
+    app: app,
+    // JS2-01 (Sprint 2 Batch B): top-level `form` global alias for
+    // `xfa.form`. Adobe Reader exposes both spellings; templates such as
+    // 60df78fe_pdf_0012 reference bare `form.X`. The alias is identity-equal
+    // to `xfa.form` (same Proxy), so cluster C contract preservation is
+    // shared between the two surfaces. No new Rust closure introduced.
+    form: formNamespace,
     consoleStub: Object.freeze(consoleStub),
     // Phase D-ι: register a `<variables>` `<script name="X">…` block as a
     // form-level global. Called by the host once per script body at
@@ -1982,7 +3833,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     // are intentionally NOT written to the flat dict: two subforms may
     // define the same script name, and writing both to the flat map would
     // let the second registration silently shadow the first.
-    setVariablesScript: function(name, body, identNames, subformName) {
+    setVariablesScript: function(name, body, identNames, subformName, exposeGlobal) {
       if (typeof name !== "string" || name.length === 0) return false;
       if (typeof body !== "string") return false;
       var idents = Array.isArray(identNames) ? identNames : [];
@@ -1994,15 +3845,28 @@ const PHASE_C_BINDINGS_JS: &str = r#"
         props += JSON.stringify(id) + ": typeof " + id +
                  " !== \"undefined\" ? " + id + " : undefined";
       }
-      var wrapper = "(function(){\n" + body +
-                    "\nreturn Object.freeze({" + props + "});\n})()";
+      // XFA-DATA2-02: inject `console` and `util` into the variables-script
+      // closure so the form-level helper functions registered here can
+      // reference them lexically and the dependent event scripts that call
+      // those helpers do not blow up with `console is not defined` /
+      // `util is not defined`. Both are the same sandbox-safe singletons
+      // exposed to event scripts (silent no-op console, deterministic util).
+      var wrapper = "(function(__console, __util){\n" +
+                    "var console = __console; var util = __util;\n" +
+                    body +
+                    "\nreturn Object.freeze({" + props + "});\n})";
       try {
-        var ns = (Function("return " + wrapper))();
+        var ns = (Function("return " + wrapper))()(consoleStub, xfaUtil);
         if (typeof subformName === "string" && subformName.length > 0) {
           if (subformVariables[subformName] === undefined) {
             subformVariables[subformName] = lookupObject();
           }
           subformVariables[subformName][name] = ns;
+          // D4: also expose to bare-identifier lookup when the host marked this
+          // name unique across subforms (ambiguous names are withheld).
+          if (exposeGlobal === true && subformScriptsByName[name] === undefined) {
+            subformScriptsByName[name] = ns;
+          }
         } else {
           variablesScripts[name] = ns;
         }
@@ -2020,6 +3884,67 @@ const PHASE_C_BINDINGS_JS: &str = r#"
       for (var j = 0; j < skeys.length; j++) {
         delete subformVariables[skeys[j]];
       }
+      // D4: clear the flat subform-script exposure map on the same per-document
+      // lifecycle as the scoped maps.
+      var ssnkeys = Object.keys(subformScriptsByName);
+      for (var n = 0; n < ssnkeys.length; n++) {
+        delete subformScriptsByName[ssnkeys[n]];
+      }
+      // W3-D RETRY: data items share the same per-document lifecycle as
+      // scripts. Dropping them here keeps a single bridge entry-point at
+      // `reset_for_new_document` and prevents per-document drift.
+      var dkeys = Object.keys(variablesDataItems);
+      for (var k = 0; k < dkeys.length; k++) {
+        delete variablesDataItems[dkeys[k]];
+      }
+      var sdkeys = Object.keys(subformVariablesDataItems);
+      for (var m = 0; m < sdkeys.length; m++) {
+        delete subformVariablesDataItems[sdkeys[m]];
+      }
+    },
+    // W3-D RETRY: register a `<variables>` `<text name="X">value</text>`
+    // data item (XFA 3.3 §5.5.2) as a form-level mutable string container.
+    // Idempotent per (subformName?, name): a later registration overwrites
+    // the earlier one, mirroring Adobe Reader's last-wins template merge.
+    //
+    // The returned shape is `{ value: <string> }` — minimal because real
+    // templates only read/write `.value`. Writes coerce non-string inputs
+    // to string (matching Adobe Reader's text-field semantics) so a
+    // calculate script that does `globValidatePressed.value = true` does
+    // not silently store a boolean.
+    setVariablesDataItem: function(name, initial, subformName) {
+      if (typeof name !== "string" || name.length === 0) return false;
+      var initialStr = (typeof initial === "string") ? initial : "";
+      // Use a closure-bound private slot so the `value` getter / setter
+      // can coerce on write without exposing a plain-object property that
+      // would let `delete item.value` succeed.
+      var item = (function(initStr) {
+        var current = initStr;
+        var holder = Object.create(null);
+        Object.defineProperty(holder, "value", {
+          enumerable: true,
+          configurable: false,
+          get: function() { return current; },
+          set: function(v) {
+            current = (v === undefined || v === null) ? "" : String(v);
+          }
+        });
+        // XFA 3.3 §5.5.2: data items also expose `.name`. Read-only.
+        Object.defineProperty(holder, "name", {
+          enumerable: true, configurable: false, writable: false,
+          value: name
+        });
+        return holder;
+      })(initialStr);
+      if (typeof subformName === "string" && subformName.length > 0) {
+        if (subformVariablesDataItems[subformName] === undefined) {
+          subformVariablesDataItems[subformName] = lookupObject();
+        }
+        subformVariablesDataItems[subformName][name] = item;
+      } else {
+        variablesDataItems[name] = item;
+      }
+      return true;
     },
     evalScript: function(body) {
       var id = host.currentNodeId();
@@ -2041,7 +3966,7 @@ const PHASE_C_BINDINGS_JS: &str = r#"
     }
   };
 })
-"#;
+"##;
 
 // Process-wide reference epoch; used together with `Instant::now() - EPOCH`
 // to materialise a u64 nanosecond timestamp comparable across the interrupt
@@ -2133,11 +4058,95 @@ impl XfaJsRuntime for QuickJsRuntime {
             // SAFETY: caller guarantees `form` outlives this call.
             let scripts: Vec<(Option<String>, String, String)> =
                 unsafe { (*form).variables_scripts.clone() };
+            // D3 (trace-only): count collected vs registered vs failed and the
+            // subform-scoped subset. Pure observability — no behaviour change.
+            self.metadata.variables_scripts_collected = self
+                .metadata
+                .variables_scripts_collected
+                .saturating_add(scripts.len());
+            // D4: decide which subform-scoped script names are unique (and thus
+            // eligible for bare-identifier exposure). A name declared by ≥2
+            // subforms is ambiguous and withheld (fail-closed); count each such
+            // ambiguous name once.
+            let mut subform_name_counts: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            for (subform_scope, name, _) in &scripts {
+                if subform_scope.is_some() {
+                    *subform_name_counts.entry(name.clone()).or_insert(0) += 1;
+                }
+            }
+            let ambiguous_subform_names = subform_name_counts.values().filter(|&&c| c > 1).count();
+            self.metadata.som_lookup_ambiguous = self
+                .metadata
+                .som_lookup_ambiguous
+                .saturating_add(ambiguous_subform_names);
             for (subform_scope, name, body) in scripts {
-                if let Err(e) =
-                    self.register_variables_script(&name, &body, subform_scope.as_deref())
-                {
-                    log::debug!("D-ι register `{name}` failed: {e:?}");
+                if subform_scope.is_some() {
+                    self.metadata.script_objects_subform_scoped = self
+                        .metadata
+                        .script_objects_subform_scoped
+                        .saturating_add(1);
+                }
+                // D4: expose unique-name subform-scoped scripts as bare globals.
+                let expose_global = subform_scope.is_some()
+                    && subform_name_counts.get(&name).copied().unwrap_or(0) == 1;
+                match self.register_variables_script(
+                    &name,
+                    &body,
+                    subform_scope.as_deref(),
+                    expose_global,
+                ) {
+                    Ok(true) => {
+                        self.metadata.script_objects_registered =
+                            self.metadata.script_objects_registered.saturating_add(1);
+                        // Count only scripts that actually registered AND were
+                        // exposed (JS bound the namespace into the flat map).
+                        if expose_global {
+                            self.metadata.som_subform_scripts_exposed =
+                                self.metadata.som_subform_scripts_exposed.saturating_add(1);
+                        }
+                    }
+                    Ok(false) => {
+                        self.metadata.script_objects_register_failed = self
+                            .metadata
+                            .script_objects_register_failed
+                            .saturating_add(1);
+                        log::debug!("D-ι register `{name}` returned false (JS eval failed)");
+                    }
+                    Err(e) => {
+                        self.metadata.script_objects_register_failed = self
+                            .metadata
+                            .script_objects_register_failed
+                            .saturating_add(1);
+                        log::debug!("D-ι register `{name}` failed: {e:?}");
+                    }
+                }
+            }
+            // W3-D RETRY: register `<variables><text name="X">…</text>`
+            // data items after scripts so a same-named script (declaration
+            // order) keeps precedence — matches the JS-side `get` trap
+            // which consults `variablesScripts` before `variablesDataItems`.
+            // SAFETY: same lifetime guarantee as above.
+            let data_items: Vec<(Option<String>, String, String)> =
+                unsafe { (*form).variables_data_items.clone() };
+            // D3 (trace-only): count collected vs registered vs failed.
+            self.metadata.variables_data_items_collected = self
+                .metadata
+                .variables_data_items_collected
+                .saturating_add(data_items.len());
+            for (subform_scope, name, initial) in data_items {
+                match self.register_variables_data_item(&name, &initial, subform_scope.as_deref()) {
+                    Ok(()) => {
+                        self.metadata.script_objects_registered =
+                            self.metadata.script_objects_registered.saturating_add(1);
+                    }
+                    Err(e) => {
+                        self.metadata.script_objects_register_failed = self
+                            .metadata
+                            .script_objects_register_failed
+                            .saturating_add(1);
+                        log::debug!("W3-D register data item `{name}` failed: {e:?}");
+                    }
                 }
             }
         }
@@ -2146,6 +4155,10 @@ impl XfaJsRuntime for QuickJsRuntime {
 
     fn set_data_handle(&mut self, dom: *const xfa_dom_resolver::data_dom::DataDom) {
         self.host.borrow_mut().set_data_handle(dom);
+    }
+
+    fn set_declared_subform_names(&mut self, names: std::collections::HashSet<String>) {
+        self.host.borrow_mut().set_declared_subform_names(names);
     }
 
     fn reset_per_script(
@@ -2164,12 +4177,25 @@ impl XfaJsRuntime for QuickJsRuntime {
         Ok(())
     }
 
+    fn set_presave_gate(&mut self, enabled: bool) {
+        // D1.B: mirror the dispatch decision into the host-binding layer so
+        // mutating host calls see the same gate.
+        self.host.borrow_mut().set_presave_gate(enabled);
+    }
+
     fn execute_script(
         &mut self,
         activity: Option<&str>,
         body: &str,
     ) -> Result<RuntimeOutcome, SandboxError> {
-        if !activity_allowed_for_sandbox(activity) {
+        // D1.B: when the per-flatten gate is ON, the QuickJS backend's
+        // defence-in-depth check accepts `preSave` exactly like the dispatch
+        // gate. Without the gate, behaviour is byte-identical to v4 (W3-B
+        // closure). Hard-stop: only `preSave` is unlocked; every other
+        // denylist activity stays denied. The gate value is owned by the
+        // host bindings (set via `set_presave_gate` from dispatch).
+        let presave_gate = self.host.borrow().presave_gate();
+        if !activity_allowed_for_sandbox_with_gate(activity, presave_gate) {
             return Err(SandboxError::PhaseDenied(
                 activity.unwrap_or("None").to_string(),
             ));
@@ -2177,6 +4203,16 @@ impl XfaJsRuntime for QuickJsRuntime {
         if body.len() > MAX_SCRIPT_BODY_BYTES {
             self.metadata.runtime_errors = self.metadata.runtime_errors.saturating_add(1);
             return Err(SandboxError::BodyTooLarge);
+        }
+
+        // W3-A — REDOS-01 mitigation. Reject script bodies containing
+        // catastrophic-backtracking regex shapes BEFORE handing them to
+        // QuickJS, because QuickJS's interrupt handler is polled at JS
+        // opcode boundaries — not inside the regex C code — and cannot
+        // bound a single pathological `test()` call.
+        if let RegexScanVerdict::Reject { reason } = scan_script_for_redos(body) {
+            self.metadata.runtime_errors = self.metadata.runtime_errors.saturating_add(1);
+            return Err(SandboxError::RegexRejected(reason));
         }
 
         self.set_deadline();
@@ -2245,8 +4281,14 @@ impl XfaJsRuntime for QuickJsRuntime {
                 // before clear_deadline() above; OOM via a substring scan of
                 // the error message; everything else is ScriptError.
                 if timed_out {
+                    // QF1-E / SEC-01: defence-in-depth wall-time fallback.
+                    // The interrupt fired (so this *is* a timeout shape);
+                    // re-label as `WallTimeExceeded` only if elapsed
+                    // crossed `multiplier × budget`. Both classifications
+                    // bump the same `timeouts` counter — observability of
+                    // the typed variant is via error type, not metrics.
                     self.metadata.timeouts = self.metadata.timeouts.saturating_add(1);
-                    Err(SandboxError::Timeout)
+                    Err(self.classify_timeout_or_walltime(captured_now))
                 } else {
                     let msg = other.to_string();
                     if msg.to_ascii_lowercase().contains("memory") {
@@ -2273,6 +4315,19 @@ impl XfaJsRuntime for QuickJsRuntime {
     fn take_metadata(&mut self) -> RuntimeMetadata {
         std::mem::take(&mut self.metadata)
     }
+
+    fn take_occur_mutations(&mut self) -> Vec<(usize, String, i64)> {
+        self.host
+            .borrow_mut()
+            .take_occur_mutations()
+            .into_iter()
+            .map(|(id, prop, value)| (id.0, prop, value))
+            .collect()
+    }
+
+    fn take_diag_logs(&mut self) -> crate::js_runtime::RuntimeDiagLogs {
+        self.host.borrow_mut().take_diag_logs()
+    }
 }
 
 #[cfg(test)]
@@ -2296,6 +4351,62 @@ mod tests {
         let md = rt.take_metadata();
         assert_eq!(md.executed, 1);
         assert!(md.is_clean());
+    }
+
+    // BE-1 tranche #1: a bare implicit reference to a template-declared
+    // container that has no live node resolves to a benign EMPTY node
+    // (isNull===true, chainable, writes absorbed) — so the guarded
+    // second-party pattern takes its else branch instead of throwing
+    // "cannot read property '…' of undefined" and aborting the script.
+    #[test]
+    fn absent_declared_subform_resolves_to_empty_node() {
+        let mut rt = fresh_runtime();
+        let mut names = std::collections::HashSet::new();
+        names.insert("Podmiot1".to_string());
+        rt.set_declared_subform_names(names);
+        // Mirrors the real NIP1/PESEL1 initialize script on 2ff85101.
+        rt.execute_script(
+            Some("calculate"),
+            r#"
+            if (Podmiot1.OsobaFizyczna.PESEL.isNull !== true)
+                throw new Error('expected isNull === true on absent declared node');
+            var tookElse = false;
+            if (!Podmiot1.OsobaFizyczna.PESEL.isNull) { tookElse = false; }
+            else { tookElse = true; }
+            if (!tookElse) throw new Error('guard did not take the empty (else) branch');
+            // Chained writes on the empty node must be inert (no throw).
+            Podmiot1.OsobaFizyczna.presence = "invisible";
+            Podmiot1.OsobaFizyczna.PESEL.rawValue = 2;
+            if (Podmiot1.nodes.length !== 0) throw new Error('expected empty .nodes');
+            "#,
+        )
+        .expect("absent declared subform must resolve to a benign empty node");
+    }
+
+    // BE-1 tranche #1: the discriminator is necessary — an UNDECLARED bare name
+    // must still surface as `undefined`, preserving the D-θ.1 byte-identity
+    // contract (`A.B === undefined` for genuine misses). Without the declared
+    // set installed, the same identifier stays undefined.
+    #[test]
+    fn undeclared_bare_name_stays_undefined() {
+        let mut rt = fresh_runtime();
+        // No declared names installed at all.
+        rt.execute_script(
+            Some("calculate"),
+            "if (typeof NemoNonexistent7 !== 'undefined') \
+             throw new Error('D-theta.1 violated: undeclared name became defined');",
+        )
+        .expect("undeclared bare name must remain undefined");
+        // Even with an UNRELATED declared name present, an undeclared ref stays undefined.
+        let mut names = std::collections::HashSet::new();
+        names.insert("SomeOtherSubform".to_string());
+        rt.set_declared_subform_names(names);
+        rt.execute_script(
+            Some("calculate"),
+            "if (typeof NemoNonexistent7 !== 'undefined') \
+             throw new Error('D-theta.1 violated: undeclared name became defined (declared set present)');",
+        )
+        .expect("undeclared bare name must remain undefined even when other names are declared");
     }
 
     #[test]
@@ -2392,5 +4503,96 @@ mod tests {
         // Subsequent script should still run.
         rt.execute_script(Some("calculate"), "var ok = 1;")
             .expect("recovered");
+    }
+
+    #[test]
+    fn null_receiver_silent_setter() {
+        let mut rt = fresh_runtime();
+        rt.execute_script(
+            Some("calculate"),
+            r#"
+$record.NONEXISTENT_FIELD.rawValue = "hello";
+$record.NONEXISTENT_FIELD.value = "world";
+"#,
+        )
+        .expect("WP-3 null_receiver_silent_setter: set on null DataHandle must not throw");
+    }
+
+    #[test]
+    fn null_record_returns_empty_nodelist() {
+        let mut rt = fresh_runtime();
+        rt.execute_script(
+            Some("calculate"),
+            r#"
+var nodes = $record.FIELD.nodes;
+if (nodes.length !== 0) {
+  throw new Error("expected nodes.length == 0, got " + nodes.length);
+}
+// item() on an empty null-sentinel NodeList returns a chainable null handle (not
+// native null) so callers can safely do .item(0).value without TypeError.
+var itemVal = nodes.item(0).value;
+if (itemVal !== null) {
+  throw new Error("expected nodes.item(0).value == null, got " + itemVal);
+}
+"#,
+        )
+        .expect("WP-3 null_record_returns_empty_nodelist: $record.FIELD.nodes must be empty and chainable");
+    }
+
+    // WP-3 F3: xfa.validate is a no-op viewer stub absorbing writes silently.
+    // Adobe-generated initialize scripts call `xfa.validate.override = 0`,
+    // `xfa.validate.max = N`, `xfa.validate.scriptTest.message = "…"`; without
+    // the stub these throw "Cannot set property X of undefined" because
+    // `xfa.validate` was previously not defined on the host xfa object.
+    #[test]
+    fn xfa_validate_stub_absorbs_writes_silently() {
+        let mut rt = fresh_runtime();
+        rt.execute_script(
+            Some("initialize"),
+            r#"
+xfa.validate.override = 0;
+xfa.validate.max = 5;
+xfa.validate.messageMode = "warning";
+xfa.validate.scriptTest.message = "ignored";
+xfa.validate.scriptTest.nested.deeper = true;
+// Reads must return harmless defaults, never throw.
+if (xfa.validate.override !== 0) throw new Error("override default");
+if (xfa.validate.max !== 0) throw new Error("max default");
+if (xfa.validate.messageMode !== "") throw new Error("messageMode default");
+"#,
+        )
+        .expect("WP-3 F3 xfa_validate_stub: writes must absorb and reads must not throw");
+    }
+
+    // WP-3 F3: addInstance failure returns chainable sentinel so common
+    // pattern `parent._Child.addInstance().rawValue = X` does not throw when
+    // the instance manager refuses (occur/max bounds reached or unbound).
+    // Note: this test exercises only the JS-side null-safety contract; full
+    // end-to-end instance addition lives in m3b_phaseD_instance_manager.rs.
+    #[test]
+    fn add_instance_failure_returns_chainable_null_handle() {
+        let mut rt = fresh_runtime();
+        // No FormTree is installed, so any addInstance call must fail at the
+        // host shim and surface a sentinel rather than native null.
+        rt.execute_script(
+            Some("initialize"),
+            r#"
+// Resolve a non-existent subform, addInstance() on an unbound instance
+// manager must yield a chainable handle whose `.index` is a number and
+// whose `.rawValue` setter is silent.
+var im = xfa.resolveNode("NoSuchSubform");
+if (im !== null) {
+  // If a real handle was returned (shouldn't be), addInstance still must
+  // either return a real handle or a null-safe sentinel — never throw.
+  var added = im.addInstance();
+  if (typeof added.index !== "number") {
+    throw new Error("added.index must be a number, got " + typeof added.index);
+  }
+  added.rawValue = "chained";  // silent on sentinel
+  added.value = "chained";     // silent on sentinel
+}
+"#,
+        )
+        .expect("WP-3 F3 add_instance_failure: chainable sentinel on failure path");
     }
 }

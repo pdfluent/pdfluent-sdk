@@ -1,0 +1,51 @@
+{
+  "milestone": "PDFLUENT_MAVEN_CHANNEL_POM_RECONCILIATION",
+  "verdict": "PDFLUENT_MAVEN_CHANNEL_POM_RECONCILIATION_GREEN_NO_PUBLISH",
+  "date": "2026-05-25",
+  "branch": "quality/pdfluent-maven-channel-pom-reconciliation",
+  "base": "enterprise/ga-hardening@84d858eeb",
+  "canonical_channel": {
+    "path": "bindings/java/pom.xml",
+    "coordinates": "com.pdfluent:pdfluent",
+    "version": "1.0.0-beta.8",
+    "license": "LicenseRef-PDFluent-Commercial",
+    "java_package": "com.pdfluent",
+    "native_lib": "pdfluent_java (built by Rust crate pdf-java)"
+  },
+  "deprecated_path": {
+    "path": "crates/pdf-java/pom.xml",
+    "coordinates": "com.pdfluent:xfa-pdf",
+    "version": "1.0.0-beta.1",
+    "license": "MIT",
+    "java_package": "com.xfa.pdf",
+    "publishable": false,
+    "neutralized_by": ["removed distributionManagement", "removed nexus-staging-maven-plugin", "removed always-on GPG", "maven-deploy-plugin skip=true", "DEPRECATED name/description"]
+  },
+  "rust_crate_pdf_java": "unchanged — native JNI provider (cdylib pdfluent_java) for bindings/java",
+  "changes": [
+    "deprecate + neutralize crates/pdf-java/pom.xml (non-publishable)",
+    "repoint CI package:maven-audit -> bindings/java (+ guard, + corrected audit args)",
+    "repoint scripts/publish_all.sh Maven -> bindings/java (-P release, dry-run)",
+    "repoint docs/release/consumer_smokes/smoke_java.sh -> pdfluent/bindings/java/beta.8",
+    "add scripts/release/maven_channel_guard.sh (fail-closed)",
+    "fix stale com.xfa.pdf import in docs/licensing.md -> com.pdfluent"
+  ],
+  "validation": {
+    "maven_channel_guard": "PASS (local + VPS, 8/8)",
+    "mvn_package_bindings_java_vps_jdk21": "PASS (pdfluent-1.0.0-beta.8.jar + sources + javadoc)",
+    "audit_package_tree_maven": "PASS (0 blockers, 0 warnings)",
+    "poms_xml_wellformed": true,
+    "gitlab_ci_yaml_valid": true,
+    "release_consistency_offline": "PASS (no drift)",
+    "no_private_paths": "PASS",
+    "leak_scan_changed_files": "clean (pre-existing /mnt/storagebox CI mounts only)",
+    "branch_pre_push_gate": "PASS (metadata/fmt/build/clippy 4/4)",
+    "no_publish": true,
+    "rust_or_xfa_source_changed": false
+  },
+  "decision_required": false,
+  "out_of_scope_findings": [
+    "package:python-wheel-audit and package:nuget-audit use the same pre-existing broken positional audit_package_tree.py invocation; recommend repair in a follow-up"
+  ],
+  "next_milestone": "PDFLUENT_PACKAGE_AUDIT_INVOCATION_REPAIR"
+}

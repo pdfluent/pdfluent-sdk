@@ -45,8 +45,53 @@ fn write_layout_dump(path: &Path, dump: pdf_xfa::LayoutDump) -> Result<()> {
     Ok(())
 }
 
-pub fn run(input: &Path, output: &Path, dump_layout: Option<&Path>) -> Result<()> {
+pub fn run(
+    input: &Path,
+    output: &Path,
+    dump_layout: Option<&Path>,
+    xfa_rendering_policy: &str,
+) -> Result<()> {
+    // D11/D14: explicit rendering policy. `flatten` is the production command and
+    // applies the default `SavedStateFaithful` policy only — it does not thread a
+    // policy through the flattener. `FreshMergeExperimental` is experimental,
+    // opt-in, and pending corpus-scale (D13) validation; it is reproduced for
+    // measurement via the policy-aware API
+    // (`pdf_xfa::flatten_xfa_to_pdf_with_policy`) or `pdfluent measure --policy
+    // fresh-merge`, never by `flatten`. Reject any non-saved-state token loudly
+    // rather than silently producing saved-state output under the wrong label.
+    let policy =
+        pdf_xfa::XfaRenderingPolicy::from_token(xfa_rendering_policy).with_context(|| {
+            format!(
+                "unknown --xfa-rendering-policy '{xfa_rendering_policy}' \
+             (expected 'saved-state' or 'fresh-merge')"
+            )
+        })?;
+    if policy != pdf_xfa::XfaRenderingPolicy::SavedStateFaithful {
+        eprintln!(
+            "`flatten` applies the production 'saved-state' (SavedStateFaithful) \
+             policy only. '{}' is experimental and not produced by `flatten` \
+             (pending D13 corpus-scale validation); use \
+             `pdfluent measure --policy fresh-merge` for experimental measurement. \
+             SavedStateFaithful remains the default.",
+            policy.as_str()
+        );
+        std::process::exit(2);
+    }
+
     let pdf_bytes = std::fs::read(input).context("failed to read input PDF")?;
+
+    // Reject non-PDF input loudly. `flatten_xfa_to_pdf` returns the input bytes
+    // unchanged when it finds no PDF/XFA structure, so without this guard a
+    // non-PDF file was copied through and reported as a successful flatten
+    // (exit 0) — the same class of silent failure that `info`/`measure` already
+    // reject. Encrypted PDFs carry a valid header and still pass here, so the
+    // encrypted-skip path (exit 2) below stays authoritative.
+    if !has_pdf_header(&pdf_bytes) {
+        anyhow::bail!(
+            "input is not a PDF file (missing %PDF header): {}",
+            input.display()
+        );
+    }
 
     match dump_layout {
         Some(dump_path) => match pdf_xfa::flatten_xfa_to_pdf_with_layout_dump(&pdf_bytes) {
@@ -182,4 +227,46 @@ fn flatten_acroform(doc: &mut lopdf::Document) -> usize {
     }
 
     removed
+}
+
+/// Returns `true` when `bytes` carries a PDF signature (`%PDF-`) within the
+/// first kibibyte — the tolerant window Adobe-class readers scan for the file
+/// header. Used to reject non-PDF input before flattening.
+fn has_pdf_header(bytes: &[u8]) -> bool {
+    const SIGNATURE: &[u8] = b"%PDF-";
+    const SCAN_WINDOW: usize = 1024;
+    let scan = &bytes[..bytes.len().min(SCAN_WINDOW)];
+    scan.windows(SIGNATURE.len())
+        .any(|window| window == SIGNATURE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_non_pdf_bytes() {
+        assert!(!has_pdf_header(b"not a pdf"));
+        assert!(!has_pdf_header(b""));
+        assert!(!has_pdf_header(b"%PD"));
+    }
+
+    #[test]
+    fn accepts_pdf_header_at_start() {
+        assert!(has_pdf_header(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n"));
+    }
+
+    #[test]
+    fn accepts_pdf_header_within_scan_window() {
+        let mut data = vec![b' '; 100];
+        data.extend_from_slice(b"%PDF-1.4");
+        assert!(has_pdf_header(&data));
+    }
+
+    #[test]
+    fn ignores_header_past_scan_window() {
+        let mut data = vec![b'\n'; 2000];
+        data.extend_from_slice(b"%PDF-1.4");
+        assert!(!has_pdf_header(&data));
+    }
 }

@@ -1,8 +1,8 @@
 [package]
 name = "pdf-node"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.8"
 edition = "2021"
-license = "MIT"
+license-file = "LICENSE"
 description = "Node.js bindings for the PDF engine via napi-rs."
 publish = false
 
@@ -12,14 +12,15 @@ crate-type = ["cdylib"]
 [dependencies]
 napi = { version = "2", features = ["async", "serde-json", "napi9"] }
 napi-derive = "2"
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.5" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.5" }
-pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.4" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.5" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.5" }
-pdf-syntax = { path = "../pdf-syntax", version = "=0.5.2" }
-pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.5" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.5" }
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.8" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.8" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.8" }
+pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.8" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.8" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.8" }
+pdf-syntax = { path = "../pdf-syntax", version = "=0.5.4" }
+pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.8" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.8" }
 lopdf.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -68,8 +68,18 @@ const MIN_COLUMN_GAP_SUPPORT: f64 = 0.80;
 /// Minimum fraction of non-empty column slices that must look like prose.
 const MIN_DENSE_SLICE_RATIO: f64 = 0.35;
 
+/// Whether a text span's width was computed from real font metrics or estimated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WidthSource {
+    /// Width derived from the font's actual glyph advance (hmtx, CFF, Type1 charstring).
+    Metric,
+    /// Width estimated at 50 % of font size — no glyph metric was available.
+    #[default]
+    Estimate,
+}
+
 /// A single text span at a specific position.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TextSpan {
     /// The extracted text.
     pub text: String,
@@ -83,6 +93,32 @@ pub struct TextSpan {
     pub height: f64,
     /// Font size (approximate, from transform).
     pub font_size: f64,
+
+    // ---- G1 read-only metadata (added 2026-05; backward-compatible) ----
+    /// PostScript name of the font, with any 6-character subset prefix stripped
+    /// (e.g. `Helvetica-Bold`, `TimesNewRomanPS-BoldMT`). `None` for Type1
+    /// standard-14 fonts and Type3 fonts where no embedded font data is
+    /// available through the public `pdf-interpret` API.
+    pub font_name: Option<String>,
+    /// Inferred bold style: `weight >= 700` or PostScript name suggests bold
+    /// ("bold", "demi", "semibold", "heavy", "black"). Defaults `false` when
+    /// no descriptor data is reachable.
+    pub is_bold: bool,
+    /// Inferred italic style: FontDescriptor /Italic flag set or PostScript
+    /// name suggests italic/oblique/slant. Defaults `false` when no descriptor
+    /// data is reachable.
+    pub is_italic: bool,
+    /// Fill color as sRGB RGBA, derived from `Paint::Color(c).to_rgba().to_rgba8()`
+    /// at the moment of glyph paint. `None` for `Paint::Pattern` (tiling /
+    /// shading) — the editor falls back to "auto" in that case.
+    pub color: Option<[u8; 4]>,
+
+    // ---- G2 glyph-level metrics (added 2026-05) ----
+    /// Whether glyph widths were measured from real font advance data or estimated.
+    pub width_source: WidthSource,
+    /// Per-glyph bounding boxes in user-space, one entry per source glyph.
+    /// `[x0, y0, x1, y1]` with y0 < y1 (PDF coordinate frame).
+    pub char_bounds: Vec<[f64; 4]>,
 }
 
 impl TextSpan {
@@ -443,7 +479,7 @@ impl Device<'_> for TextExtractionDevice {
         glyph: &Glyph<'_>,
         transform: Affine,
         glyph_transform: Affine,
-        _paint: &Paint<'_>,
+        paint: &Paint<'_>,
         _draw_mode: &GlyphDrawMode,
     ) {
         let text = match glyph.as_unicode() {
@@ -458,8 +494,14 @@ impl Device<'_> for TextExtractionDevice {
         let y = coeffs[5];
         let glyph_scale = (coeffs[0].powi(2) + coeffs[1].powi(2)).sqrt().abs();
         let font_size = glyph_scale * 1000.0;
-        let glyph_width = estimate_glyph_width(glyph, font_size).max(font_size * 0.25);
+
+        // G2: distinguish real advance (Metric) from estimate (Estimate).
+        let (glyph_width, glyph_ws) = glyph_width_and_source(glyph, font_size);
         let glyph_end_x = x + glyph_width;
+        let glyph_bound = [x, y, glyph_end_x, y + font_size];
+
+        let style = derive_glyph_style(glyph);
+        let color = paint_to_rgba(paint);
 
         // ANN[r17/TEX4] Feed the running sample used to derive the adaptive
         // median character width. Capped to protect against pathological
@@ -475,7 +517,21 @@ impl Device<'_> for TextExtractionDevice {
         let gap = x - self.last_end_x;
         let adjacent = same_line && gap >= -font_size * 0.25 && gap < font_size * 0.5;
 
-        if adjacent && !self.spans.is_empty() {
+        // G1: only merge into the previous span when font + style + color
+        // match. Otherwise the editor's style toolbar would render the wrong
+        // state for the cursor position.
+        let style_matches = self
+            .spans
+            .last()
+            .map(|last| {
+                last.font_name == style.font_name
+                    && last.is_bold == style.is_bold
+                    && last.is_italic == style.is_italic
+                    && last.color == color
+            })
+            .unwrap_or(false);
+
+        if adjacent && !self.spans.is_empty() && style_matches {
             // ANN[r17/TEX1] Multi-signal consensus replaces the prior
             // single-threshold rule (`gap > 0.15 * font_size`). The
             // consensus evaluates TJ offset, geometric gap, and
@@ -496,6 +552,11 @@ impl Device<'_> for TextExtractionDevice {
             last.text.push_str(&text);
             last.width = last.width.max(glyph_end_x - last.x);
             last.height = last.height.max(font_size);
+            // G2: append char_bound; downgrade width_source if this glyph is Estimate.
+            last.char_bounds.push(glyph_bound);
+            if glyph_ws == WidthSource::Estimate {
+                last.width_source = WidthSource::Estimate;
+            }
             self.last_y = y;
             self.last_end_x = glyph_end_x;
             // ANN[r17/TEX1] Consume the TJ signal: it only counts for
@@ -518,6 +579,12 @@ impl Device<'_> for TextExtractionDevice {
             width: glyph_width,
             height: font_size,
             font_size,
+            font_name: style.font_name,
+            is_bold: style.is_bold,
+            is_italic: style.is_italic,
+            color,
+            width_source: glyph_ws,
+            char_bounds: vec![glyph_bound],
         });
     }
 
@@ -530,13 +597,91 @@ impl Device<'_> for TextExtractionDevice {
     }
 }
 
-fn estimate_glyph_width(glyph: &Glyph<'_>, font_size: f64) -> f64 {
+/// Style metadata derived from a `Glyph` for the G1 text-run extension.
+#[derive(Debug, Default, Clone)]
+struct GlyphStyle {
+    font_name: Option<String>,
+    is_bold: bool,
+    is_italic: bool,
+}
+
+/// Strip a 6-character subset prefix (e.g. `AAAAAA+Helvetica` → `Helvetica`).
+fn strip_subset_prefix(name: &str) -> &str {
+    match name.split_once('+') {
+        Some((prefix, rest)) if prefix.len() == 6 => rest,
+        _ => name,
+    }
+}
+
+/// Heuristic style inference from a PostScript name when no descriptor
+/// flags are reachable. Matches the same rules `pdf-interpret` uses in
+/// `FallbackFontQuery::new`.
+fn name_style_hints(name: &str) -> (bool, bool) {
+    let lower = name.to_ascii_lowercase();
+    let italic = lower.contains("italic") || lower.contains("oblique") || lower.contains("slant");
+    let bold = lower.contains("bold")
+        || lower.contains("demi")
+        || lower.contains("semibold")
+        || lower.contains("heavy")
+        || lower.contains("black");
+    (bold, italic)
+}
+
+fn derive_glyph_style(glyph: &Glyph<'_>) -> GlyphStyle {
     match glyph {
-        Glyph::Outline(outline) => outline
-            .advance_width()
-            .map(|width| width as f64 / 1000.0 * font_size)
-            .unwrap_or(font_size * 0.5),
-        Glyph::Type3(_) => font_size * 0.5,
+        Glyph::Outline(outline) => {
+            if let Some(data) = outline.font_data() {
+                let raw = data.postscript_name.as_deref().unwrap_or("");
+                let name = strip_subset_prefix(raw).to_string();
+                let weight_bold = data.weight.is_some_and(|w| w >= 700);
+                let (name_bold, name_italic) = name_style_hints(&name);
+                GlyphStyle {
+                    font_name: if name.is_empty() { None } else { Some(name) },
+                    is_bold: weight_bold || name_bold,
+                    is_italic: data.is_italic || name_italic,
+                }
+            } else {
+                // Type1 / non-embedded font — descriptor not surfaced
+                // via font_data(). Fall back to the name-only
+                // accessor which works for standard-14 fallbacks.
+                let raw = outline.postscript_name().unwrap_or_default();
+                let name = strip_subset_prefix(&raw).to_string();
+                let (name_bold, name_italic) = name_style_hints(&name);
+                GlyphStyle {
+                    font_name: if name.is_empty() { None } else { Some(name) },
+                    is_bold: name_bold,
+                    is_italic: name_italic,
+                }
+            }
+        }
+        Glyph::Type3(_) => GlyphStyle::default(),
+    }
+}
+
+fn paint_to_rgba(paint: &Paint<'_>) -> Option<[u8; 4]> {
+    match paint {
+        Paint::Color(c) => Some(c.to_rgba().to_rgba8()),
+        Paint::Pattern(_) => None,
+    }
+}
+
+/// Returns `(advance_in_user_space, WidthSource)` for a glyph.
+///
+/// Uses the real advance from `OutlineGlyph::advance_width()` when available
+/// (returns `WidthSource::Metric`); falls back to 50% em otherwise
+/// (`WidthSource::Estimate`). The result is clamped to at least 25% em so
+/// invisible-glyph outliers do not collapse spans.
+fn glyph_width_and_source(glyph: &Glyph<'_>, font_size: f64) -> (f64, WidthSource) {
+    match glyph {
+        Glyph::Outline(outline) => {
+            if let Some(w) = outline.advance_width() {
+                let advance = (w as f64 / 1000.0 * font_size).max(font_size * 0.25);
+                (advance, WidthSource::Metric)
+            } else {
+                (font_size * 0.5, WidthSource::Estimate)
+            }
+        }
+        Glyph::Type3(_) => (font_size * 0.5, WidthSource::Estimate),
     }
 }
 
@@ -1348,22 +1493,12 @@ fn append_column_region_blocks(
             if slice.is_empty() {
                 continue;
             }
-            column_bands[column_idx].push(TextSpan {
-                text: String::new(),
-                x: 0.0,
-                y: 0.0,
-                width: 0.0,
-                height: 0.0,
-                font_size: 0.0,
-            });
+            column_bands[column_idx].push(TextSpan::default());
             let marker_idx = column_bands[column_idx].len() - 1;
             column_bands[column_idx][marker_idx] = TextSpan {
-                text: String::new(),
                 x: f64::NEG_INFINITY,
                 y: bands[band_idx].y,
-                width: 0.0,
-                height: 0.0,
-                font_size: 0.0,
+                ..TextSpan::default()
             };
             column_bands[column_idx].extend(slice);
         }
@@ -1545,6 +1680,7 @@ mod tests {
             width,
             height: 12.0,
             font_size: 12.0,
+            ..TextSpan::default()
         }
     }
 
@@ -1711,7 +1847,7 @@ mod tests {
         let threshold = compute_adaptive_column_gap(&bands);
         // median gap = 4, × 3 = 12, clamped to [10, 40] → 12
         assert!(
-            threshold >= 10.0 && threshold <= 14.0,
+            (10.0..=14.0).contains(&threshold),
             "expected ~12, got {threshold}"
         );
     }
@@ -2057,27 +2193,24 @@ mod tests {
         let spans = vec![
             TextSpan {
                 text: "small".into(),
-                x: 0.0,
-                y: 0.0,
                 width: 10.0,
                 height: 8.0,
                 font_size: 8.0,
+                ..TextSpan::default()
             },
             TextSpan {
                 text: "medium".into(),
-                x: 0.0,
-                y: 0.0,
                 width: 10.0,
                 height: 12.0,
                 font_size: 12.0,
+                ..TextSpan::default()
             },
             TextSpan {
                 text: "large".into(),
-                x: 0.0,
-                y: 0.0,
                 width: 10.0,
                 height: 24.0,
                 font_size: 24.0,
+                ..TextSpan::default()
             },
         ];
         assert!((median_font_size(&spans) - 12.0).abs() < 1e-9);
@@ -2211,5 +2344,98 @@ mod tests {
             texts,
             vec!["1 This is fakebold text.", "2 This is a fakebold word.",]
         );
+    }
+
+    // ---- G1: read-only metadata field tests ----
+
+    #[test]
+    fn g1_default_text_span_has_empty_metadata() {
+        let s = TextSpan::default();
+        assert_eq!(s.font_name, None);
+        assert!(!s.is_bold);
+        assert!(!s.is_italic);
+        assert_eq!(s.color, None);
+    }
+
+    #[test]
+    fn g1_strip_subset_prefix_handles_six_char_prefix() {
+        assert_eq!(strip_subset_prefix("AAAAAA+Helvetica"), "Helvetica");
+        // Non-6-char prefix → keep verbatim.
+        assert_eq!(strip_subset_prefix("ABC+Helvetica"), "ABC+Helvetica");
+        // No `+` → unchanged.
+        assert_eq!(strip_subset_prefix("Helvetica-Bold"), "Helvetica-Bold");
+    }
+
+    #[test]
+    fn g1_name_style_hints_match_pdf_interpret_rules() {
+        assert_eq!(name_style_hints("Helvetica-Bold"), (true, false));
+        assert_eq!(name_style_hints("Times-Italic"), (false, true));
+        assert_eq!(name_style_hints("MyFont-BoldOblique"), (true, true));
+        assert_eq!(name_style_hints("Helvetica"), (false, false));
+        // Semibold / Demi / Heavy / Black variants → bold.
+        assert_eq!(name_style_hints("Roboto-DemiBold"), (true, false));
+        assert_eq!(name_style_hints("Roboto-Black"), (true, false));
+        // Oblique / slant variants → italic.
+        assert_eq!(name_style_hints("Roboto-Oblique"), (false, true));
+        assert_eq!(name_style_hints("MyFont-Slanted"), (false, true));
+    }
+
+    // ---- G2: widthSource + char_bounds on TextSpan ----
+
+    #[test]
+    fn g2_default_text_span_has_estimate_width_source() {
+        let s = TextSpan::default();
+        assert_eq!(s.width_source, WidthSource::Estimate);
+        assert!(s.char_bounds.is_empty());
+    }
+
+    /// Verify that a single-glyph span has exactly one char_bound entry
+    /// and that the bound matches the span's x / width.
+    #[test]
+    fn g2_single_glyph_span_has_one_char_bound() {
+        let s = TextSpan {
+            text: "A".into(),
+            x: 10.0,
+            y: 100.0,
+            width: 7.22,
+            height: 10.0,
+            font_size: 10.0,
+            width_source: WidthSource::Metric,
+            char_bounds: vec![[10.0, 100.0, 17.22, 110.0]],
+            ..Default::default()
+        };
+
+        assert_eq!(s.char_bounds.len(), 1);
+        let [x0, y0, x1, y1] = s.char_bounds[0];
+        assert!((x0 - 10.0).abs() < 0.001);
+        assert!((x1 - 17.22).abs() < 0.001);
+        assert!((y1 - y0 - s.font_size).abs() < 0.001);
+    }
+
+    /// When merging glyphs into a span the width_source degrades to Estimate
+    /// if any glyph was estimated.
+    #[test]
+    fn g2_merged_span_degrades_width_source_on_estimate() {
+        let mut s = TextSpan {
+            width_source: WidthSource::Metric,
+            char_bounds: vec![[0.0, 0.0, 7.0, 10.0]],
+            ..Default::default()
+        };
+
+        // Simulate what draw_glyph does on merge: push bound + downgrade.
+        s.char_bounds.push([7.0, 0.0, 12.0, 10.0]);
+        s.width_source = WidthSource::Estimate; // second glyph had no advance
+
+        assert_eq!(s.width_source, WidthSource::Estimate);
+        assert_eq!(s.char_bounds.len(), 2);
+    }
+
+    /// Verify WidthSource enum serialises to the two expected string literals.
+    #[test]
+    fn g2_width_source_variants_are_correct() {
+        assert_eq!(format!("{:?}", WidthSource::Metric), "Metric");
+        assert_eq!(format!("{:?}", WidthSource::Estimate), "Estimate");
+        assert_ne!(WidthSource::Metric, WidthSource::Estimate);
+        assert_eq!(WidthSource::default(), WidthSource::Estimate);
     }
 }
