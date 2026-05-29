@@ -4275,7 +4275,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-font"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 dependencies = [
  "brotli",
  "log",
@@ -4593,7 +4593,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-jpeg2000"
-version = "0.3.3"
+version = "0.3.5"
 dependencies = [
  "fearless_simd",
  "image",
