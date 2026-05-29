@@ -593,6 +593,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/xfa-cli/xfa-cli-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdfluent",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdfluent-1.0.0-beta.8.crate",
+      "sha256_local": "0c2d4e977e9b4b7ce9d52a8d9a7fd5f341718ff07e07cc782018204605d1cfd3",
+      "sha256_registry": "0c2d4e977e9b4b7ce9d52a8d9a7fd5f341718ff07e07cc782018204605d1cfd3",
+      "size_bytes": 144065,
+      "published_at": "2026-05-29T20:53:26Z",
+      "verified_at": "2026-05-29T20:54:59Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/GOAL_ESCALATION_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdfluent-1.0.0-beta.8-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdfluent/pdfluent-1.0.0-beta.8.crate"
     }
   ]
 }
