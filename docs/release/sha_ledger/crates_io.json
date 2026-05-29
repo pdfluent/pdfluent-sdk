@@ -353,6 +353,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdf-docx/pdf-docx-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdfluent-lopdf",
+      "version": "0.39.4",
+      "artifact_filename": "pdfluent-lopdf-0.39.4.crate",
+      "sha256_local": "b050cb7869045257238548b2709ceda3fcdbd921bca8b0ce6670a1eb459e6e69",
+      "sha256_registry": "b050cb7869045257238548b2709ceda3fcdbd921bca8b0ce6670a1eb459e6e69",
+      "size_bytes": 157640,
+      "published_at": "2026-05-29T20:19:51Z",
+      "verified_at": "2026-05-29T20:20:20Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T9_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdfluent-lopdf-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdfluent-lopdf/pdfluent-lopdf-0.39.4.crate"
     }
   ]
 }
