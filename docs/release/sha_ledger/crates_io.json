@@ -33,6 +33,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdfluent-ccitt/pdfluent-ccitt-0.2.2.crate"
+    },
+    {
+      "package": "formcalc-interpreter",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "formcalc-interpreter-1.0.0-beta.8.crate",
+      "sha256_local": "86bd5e106f89aad87e86c6aef675a5cb4c1fc56683ecb941b53345e0f0ee3cdf",
+      "sha256_registry": "86bd5e106f89aad87e86c6aef675a5cb4c1fc56683ecb941b53345e0f0ee3cdf",
+      "size_bytes": 45942,
+      "published_at": "2026-05-29T14:10:56Z",
+      "verified_at": "2026-05-29T14:11:43Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/TRANCHE_PUBLISH_PLAN.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-formcalc-interpreter-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/formcalc-interpreter/formcalc-interpreter-1.0.0-beta.8.crate"
     }
   ]
 }
