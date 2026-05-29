@@ -209,6 +209,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdf-xfa/pdf-xfa-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdf-render",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdf-render-1.0.0-beta.8.crate",
+      "sha256_local": "42506284bf8dde27607e4a758be3664721bf248212458bc925bcd30cca9db7a7",
+      "sha256_registry": "42506284bf8dde27607e4a758be3664721bf248212458bc925bcd30cca9db7a7",
+      "size_bytes": 36006,
+      "published_at": "2026-05-29T19:28:03Z",
+      "verified_at": "2026-05-29T19:29:35Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T7_MILESTONE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdf-render-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdf-render/pdf-render-1.0.0-beta.8.crate"
     }
   ]
 }
