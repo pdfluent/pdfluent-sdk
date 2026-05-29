@@ -49,6 +49,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/formcalc-interpreter/formcalc-interpreter-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "xfa-js-sandboxed",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "xfa-js-sandboxed-1.0.0-beta.8.crate",
+      "sha256_local": "e2eff6d67b906a296dae18fe6a5c3d2c0ab614ee8a9e944b3f49150a96de2f2b",
+      "sha256_registry": "e2eff6d67b906a296dae18fe6a5c3d2c0ab614ee8a9e944b3f49150a96de2f2b",
+      "size_bytes": 17016,
+      "published_at": "2026-05-29T14:12:38Z",
+      "verified_at": "2026-05-29T14:13:46Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/TRANCHE_PUBLISH_PLAN.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-xfa-js-sandboxed-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/xfa-js-sandboxed/xfa-js-sandboxed-1.0.0-beta.8.crate"
     }
   ]
 }
