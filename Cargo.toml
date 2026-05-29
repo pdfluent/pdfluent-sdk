@@ -141,7 +141,7 @@ pdf-syntax = { path = "crates/pdf-syntax", version = "=0.5.4" }
 pdf-interpret = { path = "crates/pdf-interpret", version = "=0.5.6" }
 
 # Forked crates from hayro (substantially extended; PDFluent Commercial License)
-pdf-font = { path = "crates/pdf-font", version = "=1.0.0-beta.3" }
+pdf-font = { path = "crates/pdf-font", version = "=1.0.0-beta.4" }
 pdf-render = { path = "crates/pdf-render", version = "=1.0.0-beta.8" }
 
 # Engine + feature crates (PDFluent Commercial License)
