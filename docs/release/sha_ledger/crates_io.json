@@ -225,6 +225,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdf-render/pdf-render-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdfluent-forms",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdfluent-forms-1.0.0-beta.8.crate",
+      "sha256_local": "fc1f3f65ba3e07fe862f3693607f7b04ee45c6ad503278628339f89501a23368",
+      "sha256_registry": "fc1f3f65ba3e07fe862f3693607f7b04ee45c6ad503278628339f89501a23368",
+      "size_bytes": 38374,
+      "published_at": "2026-05-29T19:30:56Z",
+      "verified_at": "2026-05-29T19:31:51Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T7_MILESTONE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdfluent-forms-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdfluent-forms/pdfluent-forms-1.0.0-beta.8.crate"
     }
   ]
 }
