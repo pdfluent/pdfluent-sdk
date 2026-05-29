@@ -11,6 +11,10 @@
 #   fmt      : cargo fmt --all -- --check
 #   build    : scripts/ci/run_build.sh   (cargo check, CI excludes)
 #   clippy   : scripts/ci/run_clippy.sh  (-D warnings, CI excludes)
+#   licenses : scripts/release/license_registry_check.py
+#              Enforces docs/release/canonical_licenses.toml. Catches any
+#              accidental relicensing of PDFluent IP under open source, or
+#              any open-source-derivative fork being relabelled as commercial.
 #   test     : scripts/ci/run_test.sh    (--full only)
 #   audit    : scripts/ci/run_audit.sh   (--full only; needs clean tree)
 set -uo pipefail
@@ -36,6 +40,7 @@ run metadata cargo metadata --no-deps --format-version 1
 run fmt      cargo fmt --all -- --check
 run build    bash scripts/ci/run_build.sh
 run clippy   bash scripts/ci/run_clippy.sh
+run licenses python3 scripts/release/license_registry_check.py
 if [ "$FULL" = 1 ]; then
   run test  bash scripts/ci/run_test.sh
   run audit bash scripts/ci/run_audit.sh
