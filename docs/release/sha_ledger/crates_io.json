@@ -81,6 +81,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdfluent-extract/pdfluent-extract-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdfluent-jbig2",
+      "version": "0.2.3",
+      "artifact_filename": "pdfluent-jbig2-0.2.3.crate",
+      "sha256_local": "8bf15bfa7202f54a5b3970bb65fa8cdbeef900811fbf97addc71738b8f650ab9",
+      "sha256_registry": "8bf15bfa7202f54a5b3970bb65fa8cdbeef900811fbf97addc71738b8f650ab9",
+      "size_bytes": 57300,
+      "published_at": "2026-05-29T15:21:33Z",
+      "verified_at": "2026-05-29T15:22:14Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T1_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdfluent-jbig2-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdfluent-jbig2/pdfluent-jbig2-0.2.3.crate"
     }
   ]
 }
