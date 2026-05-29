@@ -193,6 +193,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdf-interpret/pdf-interpret-0.5.6.crate"
+    },
+    {
+      "package": "pdf-xfa",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdf-xfa-1.0.0-beta.8.crate",
+      "sha256_local": "03f5d4dfbf9e3127d584bde591273fc03d90e960bc8e95686cb363d2bd68de09",
+      "sha256_registry": "03f5d4dfbf9e3127d584bde591273fc03d90e960bc8e95686cb363d2bd68de09",
+      "size_bytes": 476014,
+      "published_at": "2026-05-29T18:09:23Z",
+      "verified_at": "2026-05-29T18:27:49Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T6_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdf-xfa-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdf-xfa/pdf-xfa-1.0.0-beta.8.crate"
     }
   ]
 }
