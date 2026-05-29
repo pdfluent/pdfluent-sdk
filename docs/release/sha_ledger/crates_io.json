@@ -369,6 +369,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdfluent-lopdf/pdfluent-lopdf-0.39.4.crate"
+    },
+    {
+      "package": "pdf-manip",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdf-manip-1.0.0-beta.8.crate",
+      "sha256_local": "3826b4e7d63db07d96fd9334e4918d3a1cb00f1968f06d72056e1b0d9398a72c",
+      "sha256_registry": "3826b4e7d63db07d96fd9334e4918d3a1cb00f1968f06d72056e1b0d9398a72c",
+      "size_bytes": 495696,
+      "published_at": "2026-05-29T20:25:02Z",
+      "verified_at": "2026-05-29T20:26:12Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T9_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdf-manip-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdf-manip/pdf-manip-1.0.0-beta.8.crate"
     }
   ]
 }
