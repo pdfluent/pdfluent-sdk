@@ -97,6 +97,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdfluent-jbig2/pdfluent-jbig2-0.2.3.crate"
+    },
+    {
+      "package": "xfa-layout-engine",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "xfa-layout-engine-1.0.0-beta.8.crate",
+      "sha256_local": "83650b460a556b5fa4b9839f567f6760be9b7bed3dc0ffabd5227c65d0de8736",
+      "sha256_registry": "83650b460a556b5fa4b9839f567f6760be9b7bed3dc0ffabd5227c65d0de8736",
+      "size_bytes": 95592,
+      "published_at": "2026-05-29T16:30:07Z",
+      "verified_at": "2026-05-29T16:31:21Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T1_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-xfa-layout-engine-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/xfa-layout-engine/xfa-layout-engine-1.0.0-beta.8.crate"
     }
   ]
 }
