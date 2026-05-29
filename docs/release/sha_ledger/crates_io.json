@@ -321,6 +321,38 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdfluent-sign/pdfluent-sign-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdf-annot",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdf-annot-1.0.0-beta.8.crate",
+      "sha256_local": "df46893d7de374a79576280bbc8f06c18eccc568283227cea4047b0d6d806e91",
+      "sha256_registry": "df46893d7de374a79576280bbc8f06c18eccc568283227cea4047b0d6d806e91",
+      "size_bytes": 39875,
+      "published_at": "2026-05-29T20:14:48Z",
+      "verified_at": "2026-05-29T20:16:12Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T9_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdf-annot-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdf-annot/pdf-annot-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdf-docx",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdf-docx-1.0.0-beta.8.crate",
+      "sha256_local": "ef8ca582c7f72bf8418031a292a0f6a1d7449fa40d381a70db154646fc61fed9",
+      "sha256_registry": "ef8ca582c7f72bf8418031a292a0f6a1d7449fa40d381a70db154646fc61fed9",
+      "size_bytes": 27873,
+      "published_at": "2026-05-29T20:15:41Z",
+      "verified_at": "2026-05-29T20:16:13Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T9_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdf-docx-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdf-docx/pdf-docx-1.0.0-beta.8.crate"
     }
   ]
 }
