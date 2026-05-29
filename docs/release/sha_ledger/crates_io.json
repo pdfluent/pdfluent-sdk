@@ -113,6 +113,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/xfa-layout-engine/xfa-layout-engine-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "xfa-json",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "xfa-json-1.0.0-beta.8.crate",
+      "sha256_local": "17f082cd848129e0cf777e07b35c226997a2bbeca2722b9df8d3e0bd9cba3073",
+      "sha256_registry": "17f082cd848129e0cf777e07b35c226997a2bbeca2722b9df8d3e0bd9cba3073",
+      "size_bytes": 16542,
+      "published_at": "2026-05-29T16:33:46Z",
+      "verified_at": "2026-05-29T16:34:54Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T1_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-xfa-json-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/xfa-json/xfa-json-1.0.0-beta.8.crate"
     }
   ]
 }
