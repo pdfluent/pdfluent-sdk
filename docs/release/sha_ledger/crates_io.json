@@ -545,6 +545,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdf-engine/pdf-engine-1.0.0-beta.9.crate"
+    },
+    {
+      "package": "pdf-redact",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdf-redact-1.0.0-beta.8.crate",
+      "sha256_local": "0b2a407459dc9e0d50554b0cceaa9db83bb26b9f3f3975d96ac479f31e91a0d9",
+      "sha256_registry": "0b2a407459dc9e0d50554b0cceaa9db83bb26b9f3f3975d96ac479f31e91a0d9",
+      "size_bytes": 79189,
+      "published_at": "2026-05-29T20:48:38Z",
+      "verified_at": "2026-05-29T20:49:18Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/GOAL_ESCALATION_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdf-redact-1.0.0-beta.8-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdf-redact/pdf-redact-1.0.0-beta.8.crate"
     }
   ]
 }
