@@ -289,6 +289,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/xfa-license/xfa-license-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdf-compliance",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdf-compliance-1.0.0-beta.8.crate",
+      "sha256_local": "598ea8c882a1eadf85b234a80c9181a035123caeaa6a6a443c1d9a7b80f98a60",
+      "sha256_registry": "598ea8c882a1eadf85b234a80c9181a035123caeaa6a6a443c1d9a7b80f98a60",
+      "size_bytes": 259349,
+      "published_at": "2026-05-29T20:11:54Z",
+      "verified_at": "2026-05-29T20:12:41Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T9_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdf-compliance-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdf-compliance/pdf-compliance-1.0.0-beta.8.crate"
     }
   ]
 }
