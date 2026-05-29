@@ -145,6 +145,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdfluent-jpeg2000/pdfluent-jpeg2000-0.3.5.crate"
+    },
+    {
+      "package": "pdf-font",
+      "version": "1.0.0-beta.4",
+      "artifact_filename": "pdf-font-1.0.0-beta.4.crate",
+      "sha256_local": "ff3400edf90b693e7ee85f059296bc178358d92cd1b22b7393b576f38ea61bce",
+      "sha256_registry": "ff3400edf90b693e7ee85f059296bc178358d92cd1b22b7393b576f38ea61bce",
+      "size_bytes": 323707,
+      "published_at": "2026-05-29T17:32:51Z",
+      "verified_at": "2026-05-29T17:33:34Z",
+      "audit_report": "docs/release/yanks/pdf-font_1.0.0-beta.3_yank_notice.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdf-font-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdf-font/pdf-font-1.0.0-beta.4.crate"
     }
   ]
 }
