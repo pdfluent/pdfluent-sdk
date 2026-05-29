@@ -241,6 +241,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdfluent-forms/pdfluent-forms-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdf-ocr",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdf-ocr-1.0.0-beta.8.crate",
+      "sha256_local": "2321dbced506829e51796904acdb4de1e1270a69e5452a72c750926ac9cffb70",
+      "sha256_registry": "2321dbced506829e51796904acdb4de1e1270a69e5452a72c750926ac9cffb70",
+      "size_bytes": 48411,
+      "published_at": "2026-05-29T19:59:25Z",
+      "verified_at": "2026-05-29T20:00:14Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T8_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdf-ocr-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdf-ocr/pdf-ocr-1.0.0-beta.8.crate"
     }
   ]
 }
