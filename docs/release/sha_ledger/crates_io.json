@@ -257,6 +257,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdf-ocr/pdf-ocr-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdf-engine",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdf-engine-1.0.0-beta.8.crate",
+      "sha256_local": "d50e8a7930e2c42d25f286a620fb901288cf4f6f4f74977bec96e4e08bda8f2e",
+      "sha256_registry": "d50e8a7930e2c42d25f286a620fb901288cf4f6f4f74977bec96e4e08bda8f2e",
+      "size_bytes": 119362,
+      "published_at": "2026-05-29T20:08:23Z",
+      "verified_at": "2026-05-29T20:09:54Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T9_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdf-engine-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdf-engine/pdf-engine-1.0.0-beta.8.crate"
     }
   ]
 }
