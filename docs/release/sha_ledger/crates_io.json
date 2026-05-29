@@ -65,6 +65,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/xfa-js-sandboxed/xfa-js-sandboxed-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdfluent-extract",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdfluent-extract-1.0.0-beta.8.crate",
+      "sha256_local": "8e5787481985d840939f70c33f1259c0c2e5227683a2fada5e0ef947ac0ff8f7",
+      "sha256_registry": "8e5787481985d840939f70c33f1259c0c2e5227683a2fada5e0ef947ac0ff8f7",
+      "size_bytes": 54548,
+      "published_at": "2026-05-29T14:14:51Z",
+      "verified_at": "2026-05-29T14:16:00Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/TRANCHE_PUBLISH_PLAN.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdfluent-extract-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdfluent-extract/pdfluent-extract-1.0.0-beta.8.crate"
     }
   ]
 }
