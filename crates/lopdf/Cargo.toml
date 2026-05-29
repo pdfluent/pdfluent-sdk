@@ -29,7 +29,7 @@ encoding_rs = "0.8.32"
 flate2 = "1.0"
 hayro-ccitt = { package = "pdfluent-ccitt", path = "../hayro-ccitt", optional = true, version = "=0.2.2" }
 hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.2.3" }
-hayro-jpeg2000 = { package = "pdfluent-jpeg2000", path = "../hayro-jpeg2000", optional = true, default-features = false, version = "=0.3.3" }
+hayro-jpeg2000 = { package = "pdfluent-jpeg2000", path = "../hayro-jpeg2000", optional = true, default-features = false, version = "=0.3.5" }
 image = { version = "0.25", optional = true }
 indexmap = "2.2.3"
 itoa = "1.0"
