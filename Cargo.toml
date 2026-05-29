@@ -105,7 +105,7 @@ documentation = "https://pdfluent.com/docs"
 
 [workspace.dependencies]
 roxmltree = "0.20"
-lopdf = { package = "pdfluent-lopdf", path = "crates/lopdf", version = "=0.39.2" }
+lopdf = { package = "pdfluent-lopdf", path = "crates/lopdf", version = "=0.39.4" }
 thiserror = "2"
 image = "0.25"
 pixelmatch = "0.1"

@@ -42,10 +42,10 @@ pdf-text-format = { path = "../pdf-text-format", version = "=1.0.0-beta.8" }
 # lopdf: required for text extraction; annotate uses lopdf for mutation.
 # Direct path (not workspace = true) to allow per-target default-features override.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.2" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.4" }
 # getrandom v0.2 (transitively via p12/pdf-sign) needs "js" feature on wasm32.
 getrandom = { version = "0.2", features = ["js"] }
 web-sys = { version = "0.3", features = [
@@ -72,7 +72,7 @@ wasm-bindgen-test = "0.3"
 # Used by tests/edit_handle.rs to synthesise minimal PDFs with known
 # extractable text runs (avoids dependency on specific corpus encoding).
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
 
 # npm package identity — set by scripts/release/transform-wasm-pkg.sh at
 # publish time. Cargo workspace version and npm version are independent.
