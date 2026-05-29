@@ -273,6 +273,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdf-engine/pdf-engine-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "xfa-license",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "xfa-license-1.0.0-beta.8.crate",
+      "sha256_local": "9956d7be7c54823942c6c32e5dfeed8c3f5ffdc15f0512d4a35017cfae4dfff2",
+      "sha256_registry": "9956d7be7c54823942c6c32e5dfeed8c3f5ffdc15f0512d4a35017cfae4dfff2",
+      "size_bytes": 17206,
+      "published_at": "2026-05-29T20:10:52Z",
+      "verified_at": "2026-05-29T20:11:08Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T9_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-xfa-license-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/xfa-license/xfa-license-1.0.0-beta.8.crate"
     }
   ]
 }
