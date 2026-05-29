@@ -17,6 +17,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/xfa-dom-resolver/xfa-dom-resolver-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdfluent-ccitt",
+      "version": "0.2.2",
+      "artifact_filename": "pdfluent-ccitt-0.2.2.crate",
+      "sha256_local": "307aa269500e87bfc6c5ca4fb011a88e5675c87c5139a9aa9d850dd038fdb985",
+      "sha256_registry": "307aa269500e87bfc6c5ca4fb011a88e5675c87c5139a9aa9d850dd038fdb985",
+      "size_bytes": 15968,
+      "published_at": "2026-05-29T14:08:23Z",
+      "verified_at": "2026-05-29T14:09:59Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/TRANCHE_PUBLISH_PLAN.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdfluent-ccitt-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdfluent-ccitt/pdfluent-ccitt-0.2.2.crate"
     }
   ]
 }
