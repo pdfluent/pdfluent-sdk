@@ -305,6 +305,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdf-compliance/pdf-compliance-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "pdfluent-sign",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdfluent-sign-1.0.0-beta.8.crate",
+      "sha256_local": "3a7091a5c9cccfcbcd68f504519ef60174965785d50a401b8162da5bd21369cd",
+      "sha256_registry": "3a7091a5c9cccfcbcd68f504519ef60174965785d50a401b8162da5bd21369cd",
+      "size_bytes": 71631,
+      "published_at": "2026-05-29T20:13:28Z",
+      "verified_at": "2026-05-29T20:14:08Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T9_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdfluent-sign-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdfluent-sign/pdfluent-sign-1.0.0-beta.8.crate"
     }
   ]
 }
