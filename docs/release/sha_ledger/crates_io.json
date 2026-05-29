@@ -161,6 +161,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdf-font/pdf-font-1.0.0-beta.4.crate"
+    },
+    {
+      "package": "pdf-syntax",
+      "version": "0.5.4",
+      "artifact_filename": "pdf-syntax-0.5.4.crate",
+      "sha256_local": "c8efa6d2c5acf60af05707c945211e2898c467b411eda1920e5a36f2e718e77a",
+      "sha256_registry": "c8efa6d2c5acf60af05707c945211e2898c467b411eda1920e5a36f2e718e77a",
+      "size_bytes": 116348,
+      "published_at": "2026-05-29T17:40:16Z",
+      "verified_at": "2026-05-29T17:41:01Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/SOURCE_BUMP_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdf-syntax-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdf-syntax/pdf-syntax-0.5.4.crate"
     }
   ]
 }
