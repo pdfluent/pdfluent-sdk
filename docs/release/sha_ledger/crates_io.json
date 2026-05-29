@@ -1,5 +1,22 @@
 {
   "schema_version": "1",
   "channel": "crates_io",
-  "entries": []
+  "entries": [
+    {
+      "package": "xfa-dom-resolver",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "xfa-dom-resolver-1.0.0-beta.8.crate",
+      "sha256_local": "9229db1ca885ce9e59126195f6f00a6ec50ddaa007141c926ca946d835a1ca94",
+      "sha256_registry": "9229db1ca885ce9e59126195f6f00a6ec50ddaa007141c926ca946d835a1ca94",
+      "size_bytes": 18274,
+      "published_at": "2026-05-29T12:04:32Z",
+      "verified_at": "2026-05-29T12:05:10Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/xfa-dom-resolver_readiness.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-xfa-dom-resolver-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/xfa-dom-resolver/xfa-dom-resolver-1.0.0-beta.8.crate"
+    }
+  ]
 }
