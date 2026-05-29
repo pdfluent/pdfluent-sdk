@@ -177,6 +177,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdf-syntax/pdf-syntax-0.5.4.crate"
+    },
+    {
+      "package": "pdf-interpret",
+      "version": "0.5.6",
+      "artifact_filename": "pdf-interpret-0.5.6.crate",
+      "sha256_local": "6e643b6b37d5566fc8f61ebd7755c1dd0332f33b27a94bebd0b67f2fae4ce94d",
+      "sha256_registry": "6e643b6b37d5566fc8f61ebd7755c1dd0332f33b27a94bebd0b67f2fae4ce94d",
+      "size_bytes": 424669,
+      "published_at": "2026-05-29T17:46:38Z",
+      "verified_at": "2026-05-29T17:47:37Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/T5_TRANCHE_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-pdf-interpret-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/pdf-interpret/pdf-interpret-0.5.6.crate"
     }
   ]
 }
