@@ -42,7 +42,7 @@ pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.8" }
 image = { workspace = true }
 
 # OCR (optional, requires ONNX Runtime)
-pdf-ocr = { path = "../pdf-ocr", features = ["paddle"], optional = true, version = "=1.0.0-beta.8" }
+pdf-ocr = { path = "../pdf-ocr", features = ["paddle"], optional = true, version = "=1.0.0-beta.9" }
 
 # External PDF parsing (used by pdf-extract APIs)
 lopdf = { workspace = true }

@@ -156,7 +156,7 @@ pdf-text-format = { path = "crates/pdf-text-format", version = "=1.0.0-beta.8" }
 pdf-invoice = { path = "crates/pdf-invoice", version = "=1.0.0-beta.8" }
 pdf-extract = { package = "pdfluent-extract", path = "crates/pdf-extract", version = "=1.0.0-beta.9" }
 pdf-redact = { path = "crates/pdf-redact", version = "=1.0.0-beta.8" }
-pdf-ocr = { path = "crates/pdf-ocr", version = "=1.0.0-beta.8" }
+pdf-ocr = { path = "crates/pdf-ocr", version = "=1.0.0-beta.9" }
 pdf-content-stream = { path = "crates/pdf-content-stream", version = "=0.1.0" }
 
 [profile.release]

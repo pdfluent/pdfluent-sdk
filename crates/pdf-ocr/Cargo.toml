@@ -1,6 +1,6 @@
 [package]
 name = "pdf-ocr"
-version.workspace = true
+version = "1.0.0-beta.9"
 edition.workspace = true
 license-file = "LICENSE"
 readme = "README.md"
