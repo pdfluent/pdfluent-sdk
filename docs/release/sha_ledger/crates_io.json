@@ -577,6 +577,22 @@
       "yanked_at": null,
       "yanked_reason": null,
       "registry_url": "https://static.crates.io/crates/pdf-text-format/pdf-text-format-1.0.0-beta.8.crate"
+    },
+    {
+      "package": "xfa-cli",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "xfa-cli-1.0.0-beta.8.crate",
+      "sha256_local": "b7e06a76221c5284a8b02e41562968273ef58ad5ab3b5566b0c7cbf821c3c0e1",
+      "sha256_registry": "b7e06a76221c5284a8b02e41562968273ef58ad5ab3b5566b0c7cbf821c3c0e1",
+      "size_bytes": 78274,
+      "published_at": "2026-05-29T20:52:02Z",
+      "verified_at": "2026-05-29T20:52:32Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/GOAL_ESCALATION_REPORT.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/crates_io-xfa-cli-1.0.0-beta.8-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://static.crates.io/crates/xfa-cli/xfa-cli-1.0.0-beta.8.crate"
     }
   ]
 }
