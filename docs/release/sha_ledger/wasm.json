@@ -1,5 +1,22 @@
 {
   "schema_version": "1",
   "channel": "wasm",
-  "entries": []
+  "entries": [
+    {
+      "package": "@pdfluent/sdk-wasm",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdfluent-sdk-wasm-1.0.0-beta.8.tgz",
+      "sha256_local": "0a5bb67ca0e08246612760db50e36dcf95974fa4eb6bb817cfc47b52da060234",
+      "sha256_registry": "0a5bb67ca0e08246612760db50e36dcf95974fa4eb6bb817cfc47b52da060234",
+      "size_bytes": 4426336,
+      "published_at": "2026-05-29T11:53:21Z",
+      "verified_at": "2026-05-29T11:54:05Z",
+      "audit_report": "docs/release/STAGED_BETA_PUBLISH_PLAN.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/wasm-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://registry.npmjs.org/@pdfluent/sdk-wasm/-/sdk-wasm-1.0.0-beta.8.tgz"
+    }
+  ]
 }
