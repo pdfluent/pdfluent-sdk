@@ -27,7 +27,7 @@ vello_cpu = { version = "0.0.6", default-features = false, features = ["std", "p
 
 [dev-dependencies]
 log = "0.4"
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
 
 [features]
 default = ["embed-fonts", "embed-cmaps"]

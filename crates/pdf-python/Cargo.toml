@@ -24,5 +24,5 @@ pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0
 pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.8" }
 pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.8" }
 pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.8" }
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.2" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
 pyo3 = { version = "0.24", features = ["extension-module"] }
