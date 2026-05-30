@@ -246,6 +246,13 @@
             </build>
         </profile>
 
+        <!-- Maven Central via the Sonatype Central Publishing Plugin.
+             Replaces the sunset OSSRH endpoints (s01.oss.sonatype.org went EOL
+             June 2025). The plugin uses ~/.m2/settings.xml server-id `central`
+             — that's where the Sonatype Central Portal token + username are
+             configured. `autoPublish=false` uploads to STAGING only; release
+             from the Portal UI after operator review.
+             Activate with: mvn -P release deploy -->
         <profile>
             <id>release</id>
             <build>
@@ -257,18 +264,24 @@
                             <skip>false</skip>
                         </configuration>
                     </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.6.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <!-- Staging only — operator releases from Portal UI -->
+                            <autoPublish>false</autoPublish>
+                            <waitUntil>validated</waitUntil>
+                        </configuration>
+                    </plugin>
                 </plugins>
             </build>
-            <distributionManagement>
-                <snapshotRepository>
-                    <id>ossrh</id>
-                    <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
-                </snapshotRepository>
-                <repository>
-                    <id>ossrh</id>
-                    <url>https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/</url>
-                </repository>
-            </distributionManagement>
+            <!-- No <distributionManagement>: central-publishing-maven-plugin
+                 handles upload + staging via the Sonatype Central Portal API
+                 (https://central.sonatype.com), not via the deploy:deploy
+                 lifecycle to a Sonatype Nexus repo. -->
         </profile>
     </profiles>
 </project>

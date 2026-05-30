@@ -1,5 +1,23 @@
 {
   "schema_version": "1",
   "channel": "pypi",
-  "entries": []
+  "entries": [
+    {
+      "package": "pdfluent",
+      "version": "1.0.0b8",
+      "artifact_filename": "pdfluent-1.0.0b8-cp311-cp311-macosx_11_0_arm64.whl",
+      "sha256_local": "d1bb030e208344f922cce095ea9418b0de8ac559420bb22dcba383045c1aee6e",
+      "sha256_registry": "d1bb030e208344f922cce095ea9418b0de8ac559420bb22dcba383045c1aee6e",
+      "size_bytes": 5460786,
+      "published_at": "2026-05-30T07:58:11Z",
+      "verified_at": "2026-05-30T07:58:11Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/GOAL_RELEASE_TRAIN_FINAL.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/pypi-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://files.pythonhosted.org/packages/f8/67/53d624257cb6bc08747ca2ec0c3e87240f4fcda827da436009d8c29c6ec4/pdfluent-1.0.0b8-cp311-cp311-macosx_11_0_arm64.whl",
+      "notes": "Single-platform wheel: cp311 + macosx_11_0_arm64 only. Other platforms get clean 'no matching distribution' error."
+    }
+  ]
 }

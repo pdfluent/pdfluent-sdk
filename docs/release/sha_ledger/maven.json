@@ -1,5 +1,23 @@
 {
   "schema_version": "1",
   "channel": "maven",
-  "entries": []
+  "entries": [
+    {
+      "package": "com.pdfluent:pdfluent",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "central-bundle.zip (jar+sources+javadoc+pom + 4 .asc signatures)",
+      "sha256_local": "c5d8d9702f758ad3d172b4d68169b2432d9651c44528dbf822f2ae3f8431477e",
+      "sha256_registry": "(pending \u2014 package is in Central Portal staging, not yet published to Maven Central index)",
+      "size_bytes": 4335006,
+      "published_at": "2026-05-30T08:02:23Z",
+      "verified_at": "(pending \u2014 staging only)",
+      "audit_report": "benchmarks/runs/crates_io_prep/GOAL_RELEASE_TRAIN_FINAL.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/maven-staging-verify.txt",
+      "status": "staged",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://central.sonatype.com/publishing/deployments/3ab447f7-5916-4841-a17a-51efe2d73c2a",
+      "notes": "Validated staging deployment via central-publishing-maven-plugin 0.6.0. autoPublish=false; operator MUST click 'Publish' in Central Portal UI to release to Maven Central. GPG-signed with key DA87C873\u20260B513 (PDFluent <hello@pdfluent.com>)."
+    }
+  ]
 }
