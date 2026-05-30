@@ -1,5 +1,23 @@
 {
   "schema_version": "1",
   "channel": "gitlab",
-  "entries": []
+  "entries": [
+    {
+      "package": "pdfluent-capi",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "pdfluent-capi-1.0.0-beta.8.tar.gz",
+      "sha256_local": "9f6b2ced524cfb569b70096b9b73b1963996d90e99bc5b5693509ae173fcba7b",
+      "sha256_registry": "9f6b2ced524cfb569b70096b9b73b1963996d90e99bc5b5693509ae173fcba7b",
+      "size_bytes": 4187497,
+      "published_at": "2026-05-30T08:03:15Z",
+      "verified_at": "2026-05-30T08:03:15Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/GOAL_RELEASE_TRAIN_FINAL.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/gitlab-capi-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://gitlab.com/api/v4/projects/82044173/packages/generic/pdfluent-capi/1.0.0-beta.8/pdfluent-capi-1.0.0-beta.8.tar.gz",
+      "notes": "GitLab Generic Package (no git tag created). C-ABI source tarball; consumers untar + ./configure + make. PRIVATE-TOKEN required for download (project visibility is private)."
+    }
+  ]
 }

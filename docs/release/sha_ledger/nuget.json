@@ -1,5 +1,23 @@
 {
   "schema_version": "1",
   "channel": "nuget",
-  "entries": []
+  "entries": [
+    {
+      "package": "PDFluent",
+      "version": "1.0.0-beta.8",
+      "artifact_filename": "PDFluent.1.0.0-beta.8.nupkg",
+      "sha256_local": "7409d5a03b47bd49cb288e826567dcfc1db7ac3d08cd77bc556ef40d8b792ec3",
+      "sha256_registry": "1a6dc9713aca55510a85c539b242d538788cdad83f889bac8b6fb6a460f7e9e0",
+      "size_bytes": 4145839,
+      "published_at": "2026-05-30T07:58:59Z",
+      "verified_at": "2026-05-30T07:58:59Z",
+      "audit_report": "benchmarks/runs/crates_io_prep/GOAL_RELEASE_TRAIN_FINAL.md",
+      "verify_report": "benchmarks/runs/staged_beta_smokes/nuget-postpublish-verify.txt",
+      "status": "verified",
+      "yanked_at": null,
+      "yanked_reason": null,
+      "registry_url": "https://api.nuget.org/v3-flatcontainer/pdfluent/1.0.0-beta.8/pdfluent.1.0.0-beta.8.nupkg",
+      "notes": "NuGet often re-signs uploaded packages so registry sha may diverge from local. Both verified live + downloadable."
+    }
+  ]
 }
