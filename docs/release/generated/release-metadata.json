@@ -1,0 +1,71 @@
+{
+  "schema": "pdfluent-release-metadata-v1",
+  "release_line": "1.0.0-beta",
+  "generated_from": "docs/release/canonical_releases.toml",
+  "channels": {
+    "crates_io": {
+      "package": "pdfluent",
+      "version": "1.0.0-beta.8",
+      "pin": "=1.0.0-beta.8",
+      "state": "released",
+      "install_command": "cargo add pdfluent",
+      "registry_url": "https://crates.io/crates/pdfluent/1.0.0-beta.8"
+    },
+    "npm_wasm": {
+      "package": "@pdfluent/sdk-wasm",
+      "version": "1.0.0-beta.11",
+      "pin": "1.0.0-beta.11",
+      "state": "released",
+      "install_command": "npm install @pdfluent/sdk-wasm",
+      "registry_url": "https://www.npmjs.com/package/@pdfluent/sdk-wasm/v/1.0.0-beta.11"
+    },
+    "pypi": {
+      "package": "pdfluent",
+      "version": "1.0.0b8",
+      "pin": "==1.0.0b8",
+      "state": "released",
+      "install_command": "pip install pdfluent",
+      "registry_url": "https://pypi.org/project/pdfluent/1.0.0b8/"
+    },
+    "nuget": {
+      "package": "PDFluent",
+      "version": "1.0.0-beta.8",
+      "pin": "1.0.0-beta.8",
+      "state": "released",
+      "install_command": "dotnet add package PDFluent",
+      "registry_url": "https://www.nuget.org/packages/PDFluent/1.0.0-beta.8"
+    },
+    "maven": {
+      "package": "com.pdfluent:pdfluent",
+      "version": "1.0.0-beta.8",
+      "pin": "1.0.0-beta.8",
+      "state": "staged",
+      "install_command": "<dependency><groupId>com.pdfluent</groupId><artifactId>pdfluent</artifactId><version>1.0.0-beta.8</version></dependency>",
+      "registry_url": "https://central.sonatype.com/artifact/com.pdfluent/pdfluent/1.0.0-beta.8"
+    },
+    "gitlab_generic": {
+      "package": "pdfluent-capi",
+      "version": "1.0.0-beta.8",
+      "pin": "1.0.0-beta.8",
+      "state": "released",
+      "install_command": "curl -H \"PRIVATE-TOKEN: $GITLAB_PAT\" \"https://gitlab.com/api/v4/projects/82044173/packages/generic/pdfluent-capi/1.0.0-beta.8/pdfluent-capi-1.0.0-beta.8.tar.gz\" -o pdfluent-capi.tar.gz",
+      "registry_url": "https://github.com/pdfluent/PDFluent-project/-/packages"
+    },
+    "npm_napi": {
+      "package": "@pdfluent/node",
+      "version": "not_released",
+      "pin": "(none yet)",
+      "state": "blocked_platform_incomplete",
+      "install_command": "(not yet available)",
+      "registry_url": null
+    },
+    "signed_binaries": {
+      "package": "pdfluent",
+      "version": "not_released",
+      "pin": null,
+      "state": "blocked_signing_policy",
+      "install_command": "(not yet available)",
+      "registry_url": null
+    }
+  }
+}

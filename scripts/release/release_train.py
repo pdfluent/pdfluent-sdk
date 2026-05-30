@@ -197,6 +197,7 @@ def cmd_drift(args) -> int:
         expected = ch.get("expected", "")
         if expected == "not_released":
             continue
+        state = ch.get("state", "released")
         live, err = fetch_live_version(ch_key, ch, eps)
         finding = {
             "channel": ch_key,
@@ -206,7 +207,13 @@ def cmd_drift(args) -> int:
             "error": err,
             "severity": "INFO",
         }
-        if live is None:
+        if state == "staged":
+            # A staged channel (e.g. Maven Central Portal, awaiting operator
+            # 'Publish') is not on the public registry index yet. That's the
+            # expected state, not drift — report INFO with the staging note.
+            finding["severity"] = "INFO"
+            finding["reason"] = f"staged (not on public index yet); awaits operator publish — {ch.get('staging_deployment_id', 'see manifest')}"
+        elif live is None:
             finding["severity"] = "WARN"
             finding["reason"] = err or "no live version"
         elif live != expected:
@@ -337,6 +344,56 @@ def cmd_health(_args) -> int:
     return 0
 
 
+def cmd_metadata(args) -> int:
+    """Generate the canonical release-metadata artifact + install snippets
+    from the manifest. These committed files are what consumers (website,
+    docs) read instead of hand-editing version strings — removing manual
+    drift. Idempotent: re-running with no manifest change rewrites identical
+    bytes."""
+    m = load_manifest()
+    out_dir = REPO_ROOT / "docs" / "release" / "generated"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # release-metadata.json — machine-readable, consumed by website build
+    channels_out = {}
+    for ch_key, ch in m.get("channels", {}).items():
+        channels_out[ch_key] = {
+            "package": ch.get("package"),
+            "version": ch.get("expected"),
+            "pin": ch.get("pin"),
+            "state": ch.get("state", "released"),
+            "install_command": ch.get("install_command"),
+            "registry_url": ch.get("registry_url"),
+        }
+    metadata = {
+        "schema": "pdfluent-release-metadata-v1",
+        "release_line": m.get("release_line"),
+        "generated_from": "docs/release/canonical_releases.toml",
+        "channels": channels_out,
+    }
+    meta_path = out_dir / "release-metadata.json"
+    meta_path.write_text(json.dumps(metadata, indent=2) + "\n")
+
+    # install_snippets.md — human-readable, for docs
+    lines = ["# PDFluent install snippets (generated)", "",
+             "> Generated from `docs/release/canonical_releases.toml` by",
+             "> `scripts/release/release_train.py metadata`. Do not hand-edit.", ""]
+    for ch_key, c in channels_out.items():
+        if c["version"] == "not_released":
+            continue
+        lines.append(f"## {ch_key} — `{c['package']}` `{c['version']}`")
+        lines.append("```")
+        lines.append(c["install_command"] or "(no install command)")
+        lines.append("```")
+        lines.append("")
+    snip_path = out_dir / "install_snippets.md"
+    snip_path.write_text("\n".join(lines) + "\n")
+
+    print(f"  wrote {meta_path.relative_to(REPO_ROOT)}")
+    print(f"  wrote {snip_path.relative_to(REPO_ROOT)}")
+    return 0
+
+
 def cmd_snippets(args) -> int:
     m = load_manifest()
     snippets = {}
@@ -378,11 +435,13 @@ def main() -> int:
     sub.add_parser("health", help="operator dashboard")
     p_snip = sub.add_parser("snippets", help="emit install snippets")
     p_snip.add_argument("--format", choices=["md","json"], default="md")
+    sub.add_parser("metadata", help="generate release-metadata.json + install_snippets.md artifacts")
     args = ap.parse_args()
     if args.cmd == "matrix":   return cmd_matrix(args)
     if args.cmd == "drift":    return cmd_drift(args)
     if args.cmd == "health":   return cmd_health(args)
     if args.cmd == "snippets": return cmd_snippets(args)
+    if args.cmd == "metadata": return cmd_metadata(args)
     return 2
 
 
