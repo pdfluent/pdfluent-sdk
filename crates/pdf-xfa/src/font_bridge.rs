@@ -891,12 +891,73 @@ impl XfaFontResolver {
         None
     }
 
+    /// Style-aware /DR source match. The exact-name path below collapses
+    /// `TimesNewRomanPS-ItalicMT` and `Times New Roman-Italic` to *different*
+    /// canonical keys (the `PS` infix), so a `<font posture="italic">` spec falls
+    /// through to the bare family and binds the **regular** /DR object — the
+    /// renderer then draws the italic run upright. Here we scan the /DR fonts for
+    /// one whose name carries the SAME bold/italic style as the spec and bind it
+    /// instead. Returns `None` for normal/normal specs (so regular resolution is
+    /// untouched) and when no same-style /DR font exists.
+    fn style_matched_pdf_source(&self, spec: &XfaFontSpec) -> Option<PdfWidthData> {
+        if spec.weight == FontWeight::Normal && spec.posture == FontPosture::Normal {
+            return None;
+        }
+        let want_italic = spec.posture == FontPosture::Italic;
+        let want_bold = spec.weight == FontWeight::Bold;
+        let spec_base = canonical_font_key(&spec.typeface)?;
+        let strip_style = |s: &str| -> String {
+            s.replace("italic", "")
+                .replace("oblique", "")
+                .replace("bolditalic", "")
+                .replace("bold", "")
+        };
+        let mut best: Option<(usize, &PdfWidthData)> = None;
+        for (key, data) in &self.embedded_pdf_widths {
+            if data.source_font.is_none() {
+                continue;
+            }
+            let k = key.to_lowercase();
+            let has_italic = k.contains("italic") || k.contains("oblique");
+            let has_bold = k.contains("bold");
+            if has_italic != want_italic || has_bold != want_bold {
+                continue;
+            }
+            let Some(key_canon) = canonical_font_key(key) else {
+                continue;
+            };
+            let key_family = strip_style(&key_canon);
+            if key_family.contains(&spec_base) || spec_base.contains(&key_family) {
+                let score = key_family.len().abs_diff(spec_base.len());
+                if best.is_none_or(|(s, _)| score < s) {
+                    best = Some((score, data));
+                }
+            }
+        }
+        best.map(|(_, d)| d.clone())
+    }
+
     fn attach_pdf_widths(
         &self,
         mut font: ResolvedFont,
         spec: &XfaFontSpec,
         variant_names: &[String],
     ) -> ResolvedFont {
+        // Bind a same-style /DR object for bold/italic specs with PRIORITY — this
+        // runs before the early-return below and OVERRIDES any regular source a
+        // generic upstream match (e.g. substring) already bound, otherwise the
+        // styled run borrows the regular object and the renderer draws it
+        // upright/non-bold. Returns None for normal/normal, so regular text is
+        // untouched. Opt out with XFA_PDF_SOURCE_STYLE_MATCH=0.
+        if std::env::var("XFA_PDF_SOURCE_STYLE_MATCH").as_deref() != Ok("0") {
+            if let Some(width_data) = self.style_matched_pdf_source(spec) {
+                font.pdf_widths = Some(width_data.widths);
+                font.pdf_encoding = width_data.encoding;
+                font.pdf_source_font = width_data.source_font;
+                return font;
+            }
+        }
+
         if font.pdf_widths.is_some() && font.pdf_source_font.is_some() {
             return font;
         }
@@ -1796,6 +1857,68 @@ mod tests {
         assert_eq!(
             resolved.pdf_source_font,
             Some(PdfSourceFont { object_id: (7, 0) })
+        );
+    }
+
+    #[test]
+    fn style_matched_pdf_source_binds_same_style_dr_object() {
+        // The /DR ships regular, italic and bold Times objects. A styled spec
+        // must bind the OBJECT WITH THE MATCHING STYLE — otherwise a
+        // posture="italic" run borrows the regular face and the renderer draws
+        // it upright (the original defect). Normal/normal returns None so the
+        // existing exact-name path keeps handling regular text unchanged.
+        let mk = |name: &str, obj: u32| EmbeddedFontData {
+            name: name.to_string(),
+            data: Vec::new(),
+            pdf_widths: Some((32_u16, vec![278_u16, 333, 420])),
+            pdf_encoding: None,
+            pdf_source_font: Some(PdfSourceFont {
+                object_id: (obj, 0),
+            }),
+        };
+        let resolver = XfaFontResolver::new(vec![
+            mk("TimesNewRomanPSMT", 5),
+            mk("TimesNewRomanPS-ItalicMT", 8),
+            mk("TimesNewRomanPS-BoldMT", 9),
+            mk("TimesNewRomanPS-BoldItalicMT", 10),
+        ]);
+        let src = |w: Option<&str>, p: Option<&str>| {
+            resolver
+                .style_matched_pdf_source(&XfaFontSpec::from_xfa_attrs(
+                    "Times New Roman",
+                    w,
+                    p,
+                    None,
+                    None,
+                ))
+                .and_then(|d| d.source_font)
+        };
+        assert_eq!(
+            src(None, Some("italic")),
+            Some(PdfSourceFont { object_id: (8, 0) }),
+            "italic spec must bind the italic /DR object"
+        );
+        assert_eq!(
+            src(Some("bold"), None),
+            Some(PdfSourceFont { object_id: (9, 0) }),
+            "bold spec must bind the bold /DR object"
+        );
+        assert_eq!(
+            src(Some("bold"), Some("italic")),
+            Some(PdfSourceFont { object_id: (10, 0) }),
+            "bold-italic spec must bind the bold-italic /DR object"
+        );
+        assert!(
+            resolver
+                .style_matched_pdf_source(&XfaFontSpec::from_xfa_attrs(
+                    "Times New Roman",
+                    None,
+                    None,
+                    None,
+                    None
+                ))
+                .is_none(),
+            "normal/normal must not be style-matched (regular path is untouched)"
         );
     }
 
