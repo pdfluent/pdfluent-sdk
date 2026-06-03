@@ -2049,6 +2049,8 @@ fn parse_caption(elem: Node<'_, '_>) -> Option<Caption> {
         placement,
         reserve,
         text,
+        font_family: None,
+        font_size: None,
     })
 }
 

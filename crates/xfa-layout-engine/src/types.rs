@@ -303,6 +303,12 @@ pub struct Caption {
     pub reserve: Option<f64>,
     /// Caption text.
     pub text: String,
+    /// Caption's own typeface (XFA `<caption><font typeface="...">`). The caption
+    /// styles its label text independently of the field's `<font>`; when present
+    /// it must win, otherwise an Arial caption on a Times field renders serif.
+    pub font_family: Option<String>,
+    /// Caption's own font size in points, if specified on its `<font>`.
+    pub font_size: Option<f64>,
 }
 
 impl BoxModel {
@@ -420,6 +426,8 @@ mod tests {
                 placement: CaptionPlacement::Left,
                 reserve: Some(50.0),
                 text: "Label".to_string(),
+                font_family: None,
+                font_size: None,
             }),
             max_width: f64::MAX,
             max_height: f64::MAX,
