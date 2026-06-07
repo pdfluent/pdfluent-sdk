@@ -126,6 +126,16 @@ pub struct TextSpanInfo {
     pub width_source: String,
     /// Per-glyph bounds `[x0, y0, x1, y1]` (y up), if available.
     pub char_bounds: Option<Vec<Vec<f64>>>,
+    /// Full affine transform `[a, b, c, d, e, f]` of the first glyph, if any.
+    pub transform: Option<Vec<f64>>,
+    /// Numeric font weight (~100–900) from embedded font data, if available.
+    pub font_weight: Option<u32>,
+    /// Serif flag from embedded font data, if available.
+    pub is_serif: Option<bool>,
+    /// Monospace flag from embedded font data, if available.
+    pub is_monospace: Option<bool>,
+    /// Coarse PDF text render mode: 0 fill, 1 stroke, 3 invisible.
+    pub render_mode: Option<u32>,
 }
 
 impl From<pdf_engine::TextSpan> for TextSpanInfo {
@@ -151,6 +161,11 @@ impl From<pdf_engine::TextSpan> for TextSpanInfo {
             } else {
                 Some(c.char_bounds.iter().map(|b| b.to_vec()).collect())
             },
+            transform: c.transform.map(|t| t.to_vec()),
+            font_weight: c.font_weight.map(|w| w as u32),
+            is_serif: c.is_serif,
+            is_monospace: c.is_monospace,
+            render_mode: c.render_mode.map(|m| m as u32),
         }
     }
 }
@@ -174,6 +189,11 @@ mod text_span_info_tests {
             color: Some([255, 128, 0, 255]),
             width_source: pdf_engine::WidthSource::Metric,
             char_bounds: vec![[1.0, 2.0, 3.0, 6.0]],
+            transform: Some([0.5, 0.0, 0.0, 0.5, 1.0, 2.0]),
+            font_weight: Some(400),
+            is_serif: Some(false),
+            is_monospace: Some(true),
+            render_mode: Some(3),
         };
         let canonical = pdf_engine::TextSpanInfo::from(span.clone());
         let napi = TextSpanInfo::from(span);
@@ -205,6 +225,11 @@ mod text_span_info_tests {
                     .collect::<Vec<_>>()
             )
         );
+        assert_eq!(napi.transform, canonical.transform.map(|t| t.to_vec()));
+        assert_eq!(napi.font_weight, canonical.font_weight.map(|w| w as u32));
+        assert_eq!(napi.is_serif, canonical.is_serif);
+        assert_eq!(napi.is_monospace, canonical.is_monospace);
+        assert_eq!(napi.render_mode, canonical.render_mode.map(|m| m as u32));
     }
 }
 

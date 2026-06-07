@@ -27,6 +27,11 @@ fn populated_span() -> TextSpan {
         color: Some([255, 0, 0, 255]),
         width_source: WidthSource::Metric,
         char_bounds: vec![[10.0, 20.0, 25.0, 32.0]],
+        transform: Some([0.5, 0.0, 0.0, 0.5, 10.0, 20.0]),
+        font_weight: Some(700),
+        is_serif: Some(false),
+        is_monospace: Some(false),
+        render_mode: Some(0),
     }
 }
 
@@ -59,11 +64,16 @@ fn wire_key_set_is_stable() {
             "charBounds",
             "color",
             "fontName",
+            "fontWeight",
             "font_size",
             "height",
             "isBold",
             "isItalic",
+            "isMonospace",
+            "isSerif",
+            "renderMode",
             "text",
+            "transform",
             "width",
             "widthSource",
             "x",
@@ -87,6 +97,11 @@ fn optional_fields_are_omitted_when_absent() {
         color: None,
         width_source: WidthSource::Estimate,
         char_bounds: Vec::new(),
+        transform: None,
+        font_weight: None,
+        is_serif: None,
+        is_monospace: None,
+        render_mode: None,
     };
     let value = serde_json::to_value(TextSpanInfo::from(span)).unwrap();
     let obj = value.as_object().unwrap();
@@ -101,6 +116,23 @@ fn optional_fields_are_omitted_when_absent() {
     assert!(
         !obj.contains_key("charBounds"),
         "charBounds must be omitted when empty"
+    );
+    assert!(
+        !obj.contains_key("transform"),
+        "transform omitted when None"
+    );
+    assert!(
+        !obj.contains_key("fontWeight"),
+        "fontWeight omitted when None"
+    );
+    assert!(!obj.contains_key("isSerif"), "isSerif omitted when None");
+    assert!(
+        !obj.contains_key("isMonospace"),
+        "isMonospace omitted when None"
+    );
+    assert!(
+        !obj.contains_key("renderMode"),
+        "renderMode omitted when None"
     );
     // Non-optional fields are always present.
     assert_eq!(obj["widthSource"], "Estimate");
