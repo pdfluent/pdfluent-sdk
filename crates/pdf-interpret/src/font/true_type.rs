@@ -218,8 +218,9 @@ impl TrueTypeFont {
     }
 
     /// Vertical font metrics `(ascent, descent, cap_height, x_height)` scaled to
-    /// /1000 em, from the embedded OpenType font's OS/2 / hhea tables. `None`
-    /// for non-embedded (standard-14) and text-only fonts.
+    /// /1000 em, from the embedded OpenType font's OS/2 / hhea tables. Falls
+    /// back to Standard-14 AFM values for non-embedded standard fonts. `None`
+    /// for text-only fonts.
     pub(crate) fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
         match &self.kind {
             Kind::Embedded(e) => {
@@ -234,7 +235,8 @@ impl TrueTypeFont {
                     m.x_height.map(|v| v as f64),
                 ))
             }
-            Kind::Standard(_) | Kind::TextOnly(_) => None,
+            Kind::Standard(s) => s.font_metrics(),
+            Kind::TextOnly(_) => None,
         }
     }
 

@@ -164,6 +164,37 @@ impl StandardFont {
         )
     }
 
+    /// Canonical vertical font metrics for the PDF Standard-14 faces, in /1000
+    /// em. Returns `(ascent, descent, cap_height, x_height)` where `ascent` is
+    /// positive (above the baseline) and `descent` is negative (below it).
+    ///
+    /// Source: the Adobe Core-14 AFM files (`Ascender` / `Descender` /
+    /// `CapHeight` / `XHeight` global keys; obliques share their upright face's
+    /// vertical metrics). Symbol and ZapfDingbats declare no letterform metrics
+    /// in their AFM, so `cap_height` / `x_height` are `None` and ascent/descent
+    /// are taken from the AFM `FontBBox` vertical extents.
+    ///
+    /// Used only as a fallback when no embedded font binary provides skrifa
+    /// metrics — embedded font metrics always take precedence.
+    pub(crate) fn canonical_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        match self {
+            Self::Helvetica => Some((718.0, -207.0, Some(718.0), Some(523.0))),
+            Self::HelveticaBold => Some((718.0, -207.0, Some(718.0), Some(532.0))),
+            Self::HelveticaOblique => Some((718.0, -207.0, Some(718.0), Some(523.0))),
+            Self::HelveticaBoldOblique => Some((718.0, -207.0, Some(718.0), Some(532.0))),
+            Self::Courier => Some((629.0, -157.0, Some(562.0), Some(426.0))),
+            Self::CourierBold => Some((629.0, -157.0, Some(562.0), Some(439.0))),
+            Self::CourierOblique => Some((629.0, -157.0, Some(562.0), Some(426.0))),
+            Self::CourierBoldOblique => Some((629.0, -157.0, Some(562.0), Some(439.0))),
+            Self::TimesRoman => Some((683.0, -217.0, Some(662.0), Some(450.0))),
+            Self::TimesBold => Some((683.0, -217.0, Some(676.0), Some(461.0))),
+            Self::TimesItalic => Some((683.0, -217.0, Some(653.0), Some(441.0))),
+            Self::TimesBoldItalic => Some((683.0, -217.0, Some(669.0), Some(462.0))),
+            Self::ZapfDingBats => Some((820.0, -143.0, None, None)),
+            Self::Symbol => Some((1010.0, -293.0, None, None)),
+        }
+    }
+
     /// Return suitable font data for the given standard font.
     ///
     /// Currently, this will return the corresponding Foxit font, which is a set of permissibly
@@ -626,6 +657,11 @@ impl StandardKind {
     pub(crate) fn postscript_name(&self) -> &'static str {
         self.base_font.postscript_name()
     }
+
+    /// Vertical font metrics from the Standard-14 AFM fallback table.
+    pub(crate) fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        self.base_font.canonical_metrics()
+    }
 }
 
 #[cfg(test)]
@@ -741,5 +777,199 @@ mod tests {
         assert!(standard_font_alias("LiberationSans").is_none());
         assert!(standard_font_alias("CenturySchoolbook").is_none());
         assert!(standard_font_alias("").is_none());
+    }
+
+    // ── canonical_metrics tests ──
+
+    #[test]
+    fn helvetica_metrics() {
+        let m = StandardFont::Helvetica.canonical_metrics().unwrap();
+        assert_eq!(m.0, 718.0);
+        assert_eq!(m.1, -207.0);
+        assert_eq!(m.2, Some(718.0));
+        assert_eq!(m.3, Some(523.0));
+    }
+
+    #[test]
+    fn helvetica_bold_metrics() {
+        let m = StandardFont::HelveticaBold.canonical_metrics().unwrap();
+        assert_eq!(m.0, 718.0);
+        assert_eq!(m.1, -207.0);
+        assert_eq!(m.2, Some(718.0));
+        assert_eq!(m.3, Some(532.0));
+    }
+
+    #[test]
+    fn helvetica_oblique_metrics() {
+        let m = StandardFont::HelveticaOblique.canonical_metrics().unwrap();
+        assert_eq!(m.0, 718.0);
+        assert_eq!(m.1, -207.0);
+        assert_eq!(m.2, Some(718.0));
+        assert_eq!(m.3, Some(523.0));
+    }
+
+    #[test]
+    fn helvetica_bold_oblique_metrics() {
+        let m = StandardFont::HelveticaBoldOblique
+            .canonical_metrics()
+            .unwrap();
+        assert_eq!(m.0, 718.0);
+        assert_eq!(m.1, -207.0);
+        assert_eq!(m.2, Some(718.0));
+        assert_eq!(m.3, Some(532.0));
+    }
+
+    #[test]
+    fn courier_metrics() {
+        let m = StandardFont::Courier.canonical_metrics().unwrap();
+        assert_eq!(m.0, 629.0);
+        assert_eq!(m.1, -157.0);
+        assert_eq!(m.2, Some(562.0));
+        assert_eq!(m.3, Some(426.0));
+    }
+
+    #[test]
+    fn courier_bold_metrics() {
+        let m = StandardFont::CourierBold.canonical_metrics().unwrap();
+        assert_eq!(m.0, 629.0);
+        assert_eq!(m.1, -157.0);
+        assert_eq!(m.2, Some(562.0));
+        assert_eq!(m.3, Some(439.0));
+    }
+
+    #[test]
+    fn courier_oblique_metrics() {
+        let m = StandardFont::CourierOblique.canonical_metrics().unwrap();
+        assert_eq!(m.0, 629.0);
+        assert_eq!(m.1, -157.0);
+        assert_eq!(m.2, Some(562.0));
+        assert_eq!(m.3, Some(426.0));
+    }
+
+    #[test]
+    fn courier_bold_oblique_metrics() {
+        let m = StandardFont::CourierBoldOblique
+            .canonical_metrics()
+            .unwrap();
+        assert_eq!(m.0, 629.0);
+        assert_eq!(m.1, -157.0);
+        assert_eq!(m.2, Some(562.0));
+        assert_eq!(m.3, Some(439.0));
+    }
+
+    #[test]
+    fn times_roman_metrics() {
+        let m = StandardFont::TimesRoman.canonical_metrics().unwrap();
+        assert_eq!(m.0, 683.0);
+        assert_eq!(m.1, -217.0);
+        assert_eq!(m.2, Some(662.0));
+        assert_eq!(m.3, Some(450.0));
+    }
+
+    #[test]
+    fn times_bold_metrics() {
+        let m = StandardFont::TimesBold.canonical_metrics().unwrap();
+        assert_eq!(m.0, 683.0);
+        assert_eq!(m.1, -217.0);
+        assert_eq!(m.2, Some(676.0));
+        assert_eq!(m.3, Some(461.0));
+    }
+
+    #[test]
+    fn times_italic_metrics() {
+        let m = StandardFont::TimesItalic.canonical_metrics().unwrap();
+        assert_eq!(m.0, 683.0);
+        assert_eq!(m.1, -217.0);
+        assert_eq!(m.2, Some(653.0));
+        assert_eq!(m.3, Some(441.0));
+    }
+
+    #[test]
+    fn times_bold_italic_metrics() {
+        let m = StandardFont::TimesBoldItalic.canonical_metrics().unwrap();
+        assert_eq!(m.0, 683.0);
+        assert_eq!(m.1, -217.0);
+        assert_eq!(m.2, Some(669.0));
+        assert_eq!(m.3, Some(462.0));
+    }
+
+    #[test]
+    fn symbol_metrics_no_letterform_values() {
+        let m = StandardFont::Symbol.canonical_metrics().unwrap();
+        assert_eq!(m.0, 1010.0);
+        assert_eq!(m.1, -293.0);
+        assert!(m.2.is_none(), "Symbol has no cap_height");
+        assert!(m.3.is_none(), "Symbol has no x_height");
+    }
+
+    #[test]
+    fn zapf_dingbats_metrics_no_letterform_values() {
+        let m = StandardFont::ZapfDingBats.canonical_metrics().unwrap();
+        assert_eq!(m.0, 820.0);
+        assert_eq!(m.1, -143.0);
+        assert!(m.2.is_none(), "ZapfDingbats has no cap_height");
+        assert!(m.3.is_none(), "ZapfDingbats has no x_height");
+    }
+
+    #[test]
+    fn all_14_fonts_return_some() {
+        let all = &[
+            StandardFont::Helvetica,
+            StandardFont::HelveticaBold,
+            StandardFont::HelveticaOblique,
+            StandardFont::HelveticaBoldOblique,
+            StandardFont::Courier,
+            StandardFont::CourierBold,
+            StandardFont::CourierOblique,
+            StandardFont::CourierBoldOblique,
+            StandardFont::TimesRoman,
+            StandardFont::TimesBold,
+            StandardFont::TimesItalic,
+            StandardFont::TimesBoldItalic,
+            StandardFont::Symbol,
+            StandardFont::ZapfDingBats,
+        ];
+        for font in all {
+            assert!(
+                font.canonical_metrics().is_some(),
+                "font {:?} returned None",
+                font
+            );
+        }
+    }
+
+    #[test]
+    fn ascent_always_positive_descent_always_negative() {
+        let all = &[
+            StandardFont::Helvetica,
+            StandardFont::HelveticaBold,
+            StandardFont::HelveticaOblique,
+            StandardFont::HelveticaBoldOblique,
+            StandardFont::Courier,
+            StandardFont::CourierBold,
+            StandardFont::CourierOblique,
+            StandardFont::CourierBoldOblique,
+            StandardFont::TimesRoman,
+            StandardFont::TimesBold,
+            StandardFont::TimesItalic,
+            StandardFont::TimesBoldItalic,
+            StandardFont::Symbol,
+            StandardFont::ZapfDingBats,
+        ];
+        for font in all {
+            let (ascent, descent, _, _) = font.canonical_metrics().unwrap();
+            assert!(
+                ascent > 0.0,
+                "font {:?} ascent {} not positive",
+                font,
+                ascent
+            );
+            assert!(
+                descent < 0.0,
+                "font {:?} descent {} not negative",
+                font,
+                descent
+            );
+        }
     }
 }

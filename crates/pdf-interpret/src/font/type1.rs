@@ -139,6 +139,18 @@ impl Type1Font {
         }
     }
 
+    /// Vertical font metrics in /1000 em. Returns canonical Standard-14 AFM
+    /// values when the font resolves to a known standard font, or `None` when
+    /// no metrics source is available (e.g. CFF fonts without a standard-font
+    /// fallback).
+    pub(crate) fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        match &self.1 {
+            Kind::Standard(s) => s.font_metrics(),
+            Kind::Type1(t) => t.standard_font.and_then(|sf| sf.canonical_metrics()),
+            Kind::Cff(c) => c.standard_font.and_then(|sf| sf.canonical_metrics()),
+        }
+    }
+
     pub(crate) fn char_code_to_unicode(&self, char_code: u32) -> Option<BfString> {
         if let Some(to_unicode) = &self.2
             && let Some(c) = to_unicode.lookup_bf_string(char_code)

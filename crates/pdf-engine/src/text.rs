@@ -734,10 +734,18 @@ fn derive_glyph_style(glyph: &Glyph<'_>) -> GlyphStyle {
             } else {
                 // Type1 / non-embedded font — descriptor not surfaced
                 // via font_data(). Fall back to the name-only
-                // accessor which works for standard-14 fallbacks.
+                // accessor which works for standard-14 fallbacks,
+                // and use the canonical Standard-14 AFM metrics
+                // when the outline font resolves to a known face.
                 let raw = outline.postscript_name().unwrap_or_default();
                 let name = strip_subset_prefix(&raw).to_string();
                 let (name_bold, name_italic) = name_style_hints(&name);
+                let metrics = outline.font_metrics().map(|(a, d, c, x)| FontMetrics {
+                    ascent: a,
+                    descent: d,
+                    cap_height: c,
+                    x_height: x,
+                });
                 GlyphStyle {
                     font_name: if name.is_empty() { None } else { Some(name) },
                     is_bold: name_bold,
@@ -746,7 +754,7 @@ fn derive_glyph_style(glyph: &Glyph<'_>) -> GlyphStyle {
                     font_weight: None,
                     is_serif: None,
                     is_monospace: None,
-                    font_metrics: None,
+                    font_metrics: metrics,
                 }
             }
         }
