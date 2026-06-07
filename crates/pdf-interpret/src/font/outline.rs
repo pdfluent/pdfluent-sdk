@@ -215,4 +215,14 @@ impl OutlineFont {
             }
         }
     }
+
+    /// Vertical font metrics in /1000 em, from either embedded font data
+    /// (skrifa) or the Standard-14 AFM fallback table.
+    pub(crate) fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        match self {
+            Self::Type1(t) => t.font_metrics(),
+            Self::TrueType(t) => t.font_metrics(),
+            Self::Type0(t) => t.font_metrics(),
+        }
+    }
 }

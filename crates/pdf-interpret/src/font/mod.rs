@@ -187,6 +187,17 @@ impl OutlineGlyph {
         self.font.glyph_advance_width(self.char_code)
     }
 
+    /// Vertical font metrics in /1000 em.
+    ///
+    /// Returns `(ascent, descent, cap_height, x_height)` from the font's
+    /// embedded OS/2 tables (via skrifa) when available, or from the
+    /// Standard-14 AFM fallback table for non-embedded standard fonts.
+    /// Returns `None` only when no metrics source is reachable (e.g.
+    /// CFF fonts without a standard-font fallback, Type3).
+    pub fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        self.font.font_metrics()
+    }
+
     /// Get the cache key for this glyph's font.
     ///
     /// This identifies the font uniquely, even when `font_data()` returns `None`
