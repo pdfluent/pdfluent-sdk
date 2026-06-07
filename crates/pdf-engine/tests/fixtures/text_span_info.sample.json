@@ -1,0 +1,14 @@
+{
+  "text": "Hi",
+  "x": 10.0,
+  "y": 20.0,
+  "width": 30.0,
+  "height": 12.0,
+  "font_size": 12.0,
+  "fontName": "Helvetica-Bold",
+  "isBold": true,
+  "isItalic": false,
+  "color": [1.0, 0.0, 0.0],
+  "widthSource": "Metric",
+  "charBounds": [[10.0, 20.0, 25.0, 32.0]]
+}
