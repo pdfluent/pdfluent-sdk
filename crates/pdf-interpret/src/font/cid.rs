@@ -366,6 +366,27 @@ impl Type0Font {
         }
     }
 
+    /// Vertical font metrics `(ascent, descent, cap_height, x_height)` scaled to
+    /// /1000 em, from the embedded OpenType CIDFont's OS/2 / hhea tables. `None`
+    /// for CFF and Type1 CIDFonts (no skrifa font reference).
+    pub(crate) fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        match &self.font_type {
+            FontType::OpenType(t) => {
+                let m = t.font_ref().metrics(
+                    skrifa::instance::Size::new(crate::font::UNITS_PER_EM),
+                    skrifa::instance::LocationRef::default(),
+                );
+                Some((
+                    m.ascent as f64,
+                    m.descent as f64,
+                    m.cap_height.map(|v| v as f64),
+                    m.x_height.map(|v| v as f64),
+                ))
+            }
+            FontType::Cff(_) | FontType::Type1(_) => None,
+        }
+    }
+
     pub(crate) fn code_advance(&self, code: u32) -> Vec2 {
         let cid = self.code_to_cid(code).unwrap_or(0);
         if self.horizontal {

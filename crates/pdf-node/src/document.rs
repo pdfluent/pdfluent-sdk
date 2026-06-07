@@ -136,6 +136,21 @@ pub struct TextSpanInfo {
     pub is_monospace: Option<bool>,
     /// Coarse PDF text render mode: 0 fill, 1 stroke, 3 invisible.
     pub render_mode: Option<u32>,
+    /// Vertical font metrics (/1000 em) from the embedded font, if available.
+    pub font_metrics: Option<FontMetricsInfo>,
+}
+
+/// Vertical font metrics returned to JavaScript (values in /1000 em).
+#[napi(object)]
+pub struct FontMetricsInfo {
+    /// Ascent above the baseline.
+    pub ascent: f64,
+    /// Descent below the baseline (negative).
+    pub descent: f64,
+    /// Cap height, if present in the font.
+    pub cap_height: Option<f64>,
+    /// x-height, if present in the font.
+    pub x_height: Option<f64>,
 }
 
 impl From<pdf_engine::TextSpan> for TextSpanInfo {
@@ -166,6 +181,12 @@ impl From<pdf_engine::TextSpan> for TextSpanInfo {
             is_serif: c.is_serif,
             is_monospace: c.is_monospace,
             render_mode: c.render_mode.map(|m| m as u32),
+            font_metrics: c.font_metrics.map(|m| FontMetricsInfo {
+                ascent: m.ascent,
+                descent: m.descent,
+                cap_height: m.cap_height,
+                x_height: m.x_height,
+            }),
         }
     }
 }
@@ -194,6 +215,12 @@ mod text_span_info_tests {
             is_serif: Some(false),
             is_monospace: Some(true),
             render_mode: Some(3),
+            font_metrics: Some(pdf_engine::FontMetrics {
+                ascent: 750.0,
+                descent: -250.0,
+                cap_height: Some(700.0),
+                x_height: Some(500.0),
+            }),
         };
         let canonical = pdf_engine::TextSpanInfo::from(span.clone());
         let napi = TextSpanInfo::from(span);
@@ -230,6 +257,16 @@ mod text_span_info_tests {
         assert_eq!(napi.is_serif, canonical.is_serif);
         assert_eq!(napi.is_monospace, canonical.is_monospace);
         assert_eq!(napi.render_mode, canonical.render_mode.map(|m| m as u32));
+        assert_eq!(
+            napi.font_metrics.is_some(),
+            canonical.font_metrics.is_some()
+        );
+        if let (Some(n), Some(cm)) = (&napi.font_metrics, &canonical.font_metrics) {
+            assert_eq!(n.ascent, cm.ascent);
+            assert_eq!(n.descent, cm.descent);
+            assert_eq!(n.cap_height, cm.cap_height);
+            assert_eq!(n.x_height, cm.x_height);
+        }
     }
 }
 

@@ -15,5 +15,6 @@
   "fontWeight": 700,
   "isSerif": false,
   "isMonospace": false,
-  "renderMode": 0
+  "renderMode": 0,
+  "fontMetrics": { "ascent": 750.0, "descent": -250.0, "capHeight": 700.0, "xHeight": 500.0 }
 }

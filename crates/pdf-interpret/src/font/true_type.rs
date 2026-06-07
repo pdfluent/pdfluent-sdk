@@ -217,6 +217,27 @@ impl TrueTypeFont {
         }
     }
 
+    /// Vertical font metrics `(ascent, descent, cap_height, x_height)` scaled to
+    /// /1000 em, from the embedded OpenType font's OS/2 / hhea tables. `None`
+    /// for non-embedded (standard-14) and text-only fonts.
+    pub(crate) fn font_metrics(&self) -> Option<(f64, f64, Option<f64>, Option<f64>)> {
+        match &self.kind {
+            Kind::Embedded(e) => {
+                let m = e.base_font.font_ref().metrics(
+                    skrifa::instance::Size::new(crate::font::UNITS_PER_EM),
+                    skrifa::instance::LocationRef::default(),
+                );
+                Some((
+                    m.ascent as f64,
+                    m.descent as f64,
+                    m.cap_height.map(|v| v as f64),
+                    m.x_height.map(|v| v as f64),
+                ))
+            }
+            Kind::Standard(_) | Kind::TextOnly(_) => None,
+        }
+    }
+
     pub(crate) fn map_code(&self, code: u8) -> GlyphId {
         match &self.kind {
             Kind::Embedded(e) => e.map_code(code),
