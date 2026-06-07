@@ -66,6 +66,36 @@ pub struct TextSpanInfo {
         serde(rename = "charBounds", skip_serializing_if = "Vec::is_empty")
     )]
     pub char_bounds: Vec<[f64; 4]>,
+
+    // ---- Golf 1 typographic metadata ----
+    /// Full affine transform `[a, b, c, d, e, f]` of the span's first glyph.
+    /// Captures rotation/shear discarded by `(x, y, fontSize)`.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub transform: Option<[f64; 6]>,
+    /// Numeric font weight (~100–900) from embedded font data, if available.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "fontWeight", skip_serializing_if = "Option::is_none")
+    )]
+    pub font_weight: Option<u16>,
+    /// Serif flag from embedded font data, if available.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "isSerif", skip_serializing_if = "Option::is_none")
+    )]
+    pub is_serif: Option<bool>,
+    /// Monospace flag from embedded font data, if available.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "isMonospace", skip_serializing_if = "Option::is_none")
+    )]
+    pub is_monospace: Option<bool>,
+    /// Coarse PDF text render mode: `0` fill, `1` stroke, `3` invisible.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "renderMode", skip_serializing_if = "Option::is_none")
+    )]
+    pub render_mode: Option<u8>,
 }
 
 impl From<TextSpan> for TextSpanInfo {
@@ -96,6 +126,11 @@ impl From<TextSpan> for TextSpanInfo {
             color,
             width_source: s.width_source,
             char_bounds: s.char_bounds,
+            transform: s.transform,
+            font_weight: s.font_weight,
+            is_serif: s.is_serif,
+            is_monospace: s.is_monospace,
+            render_mode: s.render_mode,
             text: s.text,
         }
     }

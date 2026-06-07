@@ -132,6 +132,27 @@ pub struct TextSpan {
     /// Per-glyph bounding boxes in user-space, one entry per source glyph.
     /// `[x0, y0, x1, y1]` with y0 < y1 (PDF coordinate frame).
     pub char_bounds: Vec<[f64; 4]>,
+
+    // ---- Golf 1 typographic metadata (added 2026-06; backward-compatible) ----
+    /// Full affine transform of the span's first glyph in user space,
+    /// `[a, b, c, d, e, f]` (kurbo coeffs of CTM × text-matrix). Captures
+    /// rotation and shear that `(x, y, font_size)` discards. `None` for spans
+    /// not built from a glyph (e.g. synthetic markers).
+    pub transform: Option<[f64; 6]>,
+    /// Numeric font weight (~100–900) from the embedded font's OS/2 table when
+    /// available. `None` for non-embedded / standard-14 fonts.
+    pub font_weight: Option<u16>,
+    /// Whether the font is serif, when determinable from embedded font data.
+    /// `None` when no embedded descriptor is reachable.
+    pub is_serif: Option<bool>,
+    /// Whether the font is monospace, when determinable from embedded font data.
+    /// `None` when no embedded descriptor is reachable.
+    pub is_monospace: Option<bool>,
+    /// Coarse PDF text render mode: `0` fill, `1` stroke, `3` invisible — the
+    /// only three values the renderer's `GlyphDrawMode` expresses (the
+    /// fill+stroke / clip modes 2 and 4–7 are not distinguished). Reflects the
+    /// span's first glyph. `None` for spans not built from a glyph.
+    pub render_mode: Option<u8>,
 }
 
 impl TextSpan {
@@ -493,7 +514,7 @@ impl Device<'_> for TextExtractionDevice {
         transform: Affine,
         glyph_transform: Affine,
         paint: &Paint<'_>,
-        _draw_mode: &GlyphDrawMode,
+        draw_mode: &GlyphDrawMode,
     ) {
         let text = match glyph.as_unicode() {
             Some(BfString::Char(c)) => c.to_string(),
@@ -598,6 +619,11 @@ impl Device<'_> for TextExtractionDevice {
             color,
             width_source: glyph_ws,
             char_bounds: vec![glyph_bound],
+            transform: Some(coeffs),
+            font_weight: style.font_weight,
+            is_serif: style.is_serif,
+            is_monospace: style.is_monospace,
+            render_mode: Some(render_mode_from_draw_mode(draw_mode)),
         });
     }
 
@@ -616,6 +642,12 @@ struct GlyphStyle {
     font_name: Option<String>,
     is_bold: bool,
     is_italic: bool,
+    /// Numeric weight from embedded font data, if available.
+    font_weight: Option<u16>,
+    /// Serif flag from embedded font data, if available.
+    is_serif: Option<bool>,
+    /// Monospace flag from embedded font data, if available.
+    is_monospace: Option<bool>,
 }
 
 /// Strip a 6-character subset prefix (e.g. `AAAAAA+Helvetica` → `Helvetica`).
@@ -652,6 +684,9 @@ fn derive_glyph_style(glyph: &Glyph<'_>) -> GlyphStyle {
                     font_name: if name.is_empty() { None } else { Some(name) },
                     is_bold: weight_bold || name_bold,
                     is_italic: data.is_italic || name_italic,
+                    font_weight: data.weight.map(|w| w.clamp(1, 1000) as u16),
+                    is_serif: Some(data.is_serif),
+                    is_monospace: Some(data.is_monospace),
                 }
             } else {
                 // Type1 / non-embedded font — descriptor not surfaced
@@ -664,6 +699,10 @@ fn derive_glyph_style(glyph: &Glyph<'_>) -> GlyphStyle {
                     font_name: if name.is_empty() { None } else { Some(name) },
                     is_bold: name_bold,
                     is_italic: name_italic,
+                    // Non-embedded font: descriptor metrics are not reachable.
+                    font_weight: None,
+                    is_serif: None,
+                    is_monospace: None,
                 }
             }
         }
@@ -675,6 +714,46 @@ fn paint_to_rgba(paint: &Paint<'_>) -> Option<[u8; 4]> {
     match paint {
         Paint::Color(c) => Some(c.to_rgba().to_rgba8()),
         Paint::Pattern(_) => None,
+    }
+}
+
+/// Map the renderer's coarse glyph draw mode to a PDF text render-mode code.
+///
+/// NOTE: the interpreter collapses the eight PDF text render modes (Tr 0–7)
+/// into three visibility classes, so only `{0, 1, 3}` are representable here —
+/// fill (0), stroke (1), and invisible (3). The fill+stroke and clip modes
+/// (2, 4–7) are not distinguished. This is sufficient to identify and filter
+/// invisible (mode-3) OCR/overlay text; recovering the full `Tr` range would
+/// require threading it through the `Device` trait (out of scope).
+fn render_mode_from_draw_mode(mode: &GlyphDrawMode) -> u8 {
+    match mode {
+        GlyphDrawMode::Fill => 0,
+        GlyphDrawMode::Stroke(_) => 1,
+        GlyphDrawMode::Invisible => 3,
+    }
+}
+
+#[cfg(test)]
+mod render_mode_tests {
+    use super::render_mode_from_draw_mode;
+    use pdf_render::pdf_interpret::{GlyphDrawMode, StrokeProps};
+
+    #[test]
+    fn render_mode_is_only_zero_one_three() {
+        assert_eq!(render_mode_from_draw_mode(&GlyphDrawMode::Fill), 0);
+        assert_eq!(
+            render_mode_from_draw_mode(&GlyphDrawMode::Stroke(StrokeProps::default())),
+            1
+        );
+        assert_eq!(render_mode_from_draw_mode(&GlyphDrawMode::Invisible), 3);
+        // Exhaustive: the mapping only ever yields 0, 1, or 3 — never 2 or 4–7.
+        for m in [
+            GlyphDrawMode::Fill,
+            GlyphDrawMode::Stroke(StrokeProps::default()),
+            GlyphDrawMode::Invisible,
+        ] {
+            assert!(matches!(render_mode_from_draw_mode(&m), 0 | 1 | 3));
+        }
     }
 }
 
