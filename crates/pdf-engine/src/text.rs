@@ -1,6 +1,6 @@
 //! Text extraction via a custom Device implementation.
 
-use kurbo::{Affine, BezPath};
+use kurbo::{Affine, BezPath, Shape};
 use pdf_render::pdf_interpret::cmap::BfString;
 use pdf_render::pdf_interpret::font::Glyph;
 use pdf_render::pdf_interpret::{
@@ -91,6 +91,28 @@ impl WidthSource {
     }
 }
 
+/// Controls the richness of per-glyph geometry extraction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GeometryMode {
+    /// Advance-based bounds only (current default).
+    #[default]
+    Basic,
+    /// Full tight glyph bounds from outline paths.
+    RichGeometry,
+}
+
+/// Provenance of per-glyph bounding boxes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BoundsSource {
+    /// Advance bounds.
+    #[default]
+    Advance,
+    /// Path-derived tight bounds.
+    Tight,
+    /// Fallback (no outline available).
+    Estimate,
+}
+
 /// Vertical font metrics in /1000 em (1000 units-per-em), sourced from the
 /// embedded font's OS/2 / hhea tables via skrifa. `ascent` is positive (above
 /// the baseline); `descent` is negative (below it). The whole struct is `None`
@@ -158,6 +180,18 @@ pub struct TextSpan {
     /// Per-glyph bounding boxes in user-space, one entry per source glyph.
     /// `[x0, y0, x1, y1]` with y0 < y1 (PDF coordinate frame).
     pub char_bounds: Vec<[f64; 4]>,
+
+    // ---- M3 rich geometry (added 2026-06; backward-compatible) ----
+    #[doc(hidden)]
+    pub geometry_mode: GeometryMode,
+    #[doc(hidden)]
+    pub bounds_source: BoundsSource,
+    #[doc(hidden)]
+    pub tight_char_bounds: Vec<[f64; 4]>,
+    #[doc(hidden)]
+    pub glyph_advances: Vec<f64>,
+    #[doc(hidden)]
+    pub glyph_bounds_sources: Vec<BoundsSource>,
 
     // ---- Golf 1 typographic metadata (added 2026-06; backward-compatible) ----
     /// Full affine transform of the span's first glyph in user space,
@@ -412,7 +446,8 @@ struct BandGap {
 /// Span accumulation still merges adjacent glyphs into one TextSpan (TEX3)
 /// so downstream reading-order logic sees logical text runs, not individual
 /// character positions.
-pub(crate) struct TextExtractionDevice {
+#[doc(hidden)]
+pub struct TextExtractionDevice {
     spans: Vec<TextSpan>,
     last_y: f64,
     last_end_x: f64,
@@ -428,6 +463,34 @@ pub(crate) struct TextExtractionDevice {
     /// insertions). Zero = not yet established, caller falls back to
     /// font-size scaling.
     cached_median_char_width: f64,
+    /// Geometry extraction mode — Basic (advance bounds) or RichGeometry (tight bounds).
+    geometry_mode: GeometryMode,
+    /// Per-glyph data recorded during extraction for deferred tight-bounds
+    /// computation. Only populated in RichGeometry mode. The index into this
+    /// vec corresponds 1:1 with the glyph order across all spans.
+    deferred_rich_glyphs: Vec<DeferredGlyph>,
+}
+
+/// Lightweight glyph data recorded during extraction for deferred tight-bounds
+/// computation. Avoids computing bounds on the hot path.
+#[derive(Clone)]
+struct DeferredGlyph {
+    /// Transform coefficients [a,b,c,d,e,f] from composed (CTM * glyph_transform)
+    coeffs: [f64; 6],
+    /// Font size in points
+    font_size: f64,
+    /// Advance width in page-space points
+    glyph_width: f64,
+    /// Whether this glyph needs transform-then-bound (rotation/shear)
+    needs_exact: bool,
+    /// The glyph outline path in raw glyph space. Retained ONLY for
+    /// rotated/sheared glyphs (`needs_exact`), where a tight bound requires
+    /// bounding the transformed path; `None` for axis-aligned glyphs (the
+    /// `font_bbox` suffices) and for ink-less glyphs (spaces, Type3).
+    outline: Option<BezPath>,
+    /// Pre-computed bounding box of the outline in raw glyph space. `None` when
+    /// the glyph has no ink (space, Type3, or empty outline) → Estimate.
+    font_bbox: Option<kurbo::Rect>,
 }
 
 const MEDIAN_REFRESH: usize = 32;
@@ -439,8 +502,13 @@ impl Default for TextExtractionDevice {
 }
 
 impl TextExtractionDevice {
-    /// Create a new text extraction device.
+    /// Create a new text extraction device with Basic geometry (default).
     pub fn new() -> Self {
+        Self::with_mode(GeometryMode::Basic)
+    }
+
+    /// Create a new text extraction device with the given geometry mode.
+    pub fn with_mode(geometry_mode: GeometryMode) -> Self {
         Self {
             spans: Vec::new(),
             last_y: f64::NEG_INFINITY,
@@ -448,6 +516,8 @@ impl TextExtractionDevice {
             pending_tj_offset: 0.0,
             glyph_widths: Vec::new(),
             cached_median_char_width: 0.0,
+            geometry_mode,
+            deferred_rich_glyphs: Vec::new(),
         }
     }
 
@@ -510,7 +580,10 @@ impl TextExtractionDevice {
     }
 
     /// Consume the device and return extracted text as a single string.
-    pub fn into_text(self) -> String {
+    pub fn into_text(mut self) -> String {
+        if self.geometry_mode == GeometryMode::RichGeometry {
+            self.compute_tight_bounds();
+        }
         let blocks = group_spans_into_blocks(self.spans);
         let lines: Vec<String> = blocks.iter().map(|b| b.text()).collect();
         let stitched = stitch_hyphenated_lines(&lines);
@@ -518,14 +591,146 @@ impl TextExtractionDevice {
     }
 
     /// Consume the device and return text blocks.
-    pub fn into_blocks(self) -> Vec<TextBlock> {
+    pub fn into_blocks(mut self) -> Vec<TextBlock> {
+        if self.geometry_mode == GeometryMode::RichGeometry {
+            self.compute_tight_bounds();
+        }
         group_spans_into_blocks(self.spans)
     }
 
     /// Consume the device and return raw spans.
     #[allow(dead_code)]
-    pub(crate) fn into_spans(self) -> Vec<TextSpan> {
+    pub(crate) fn into_spans(mut self) -> Vec<TextSpan> {
+        if self.geometry_mode == GeometryMode::RichGeometry {
+            self.compute_tight_bounds();
+        }
         self.spans
+    }
+
+    /// Record glyph-level data for deferred tight-bounds computation.
+    /// Called from draw_glyph in RichGeometry mode only.
+    fn record_deferred_glyph(
+        &mut self,
+        glyph: &Glyph<'_>,
+        composed: &Affine,
+        font_size: f64,
+        glyph_width: f64,
+    ) {
+        let coeffs = composed.as_coeffs();
+        let is_rotated = coeffs[1].abs() > ROTATION_EPSILON || coeffs[2].abs() > ROTATION_EPSILON;
+        let is_sheared = (coeffs[0] - coeffs[3]).abs() > SHEAR_EPSILON;
+        let needs_exact = is_rotated || is_sheared;
+
+        // Capture the glyph's ink bbox in raw glyph space. The full outline path
+        // is retained only when `needs_exact` (rotated/sheared), so a tight bound
+        // can bound the transformed path; axis-aligned glyphs keep only the bbox
+        // (enveloping its transformed corners is exact) to bound memory on large
+        // pages. Ink-less glyphs (spaces, Type3) carry no bbox → Estimate later.
+        let (outline, font_bbox) = match glyph {
+            Glyph::Outline(o) => {
+                let path = o.outline();
+                let bb = path.bounding_box();
+                if bb.width() <= 0.0 && bb.height() <= 0.0 {
+                    (None, None)
+                } else if needs_exact {
+                    (Some(path), Some(bb))
+                } else {
+                    (None, Some(bb))
+                }
+            }
+            Glyph::Type3(_) => (None, None),
+        };
+
+        self.deferred_rich_glyphs.push(DeferredGlyph {
+            coeffs,
+            font_size,
+            glyph_width,
+            needs_exact,
+            outline,
+            font_bbox,
+        });
+    }
+
+    /// Compute tight bounds for all recorded glyphs and populate the spans.
+    /// Called once after all glyphs have been extracted.
+    fn compute_tight_bounds(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred_rich_glyphs);
+        if deferred.is_empty() {
+            return;
+        }
+
+        let mut idx = 0usize;
+
+        for span in &mut self.spans {
+            let n = span.char_bounds.len();
+            if n == 0 {
+                continue;
+            }
+
+            let mut span_bounds_source = BoundsSource::Advance;
+
+            for _gi in 0..n {
+                if idx >= deferred.len() {
+                    break;
+                }
+                let dg = &deferred[idx];
+                idx += 1;
+
+                let composed = Affine::new(dg.coeffs);
+                let (tight_bound, source) = if let Some(font_bbox) = dg.font_bbox {
+                    // Glyph has ink. The outline/bbox is in raw glyph space and
+                    // `composed` (CTM * glyph_transform) maps it straight to page
+                    // space — exactly as the renderer fills the raw outline, with
+                    // NO upem pre-scaling. Applying any extra font_size/1000 here
+                    // would double-scale the bound.
+                    if dg.needs_exact {
+                        // Rotated/sheared: bound the transformed outline path so
+                        // the box stays tight (the transformed bbox would be
+                        // looser). Falls back to enveloping the bbox corners if
+                        // the path was not retained.
+                        let page_bbox = match dg.outline {
+                            Some(ref path) => (composed * path.clone()).bounding_box(),
+                            None => {
+                                let raw = [font_bbox.x0, font_bbox.y0, font_bbox.x1, font_bbox.y1];
+                                let b = transform_bbox_corners(&raw, &composed);
+                                kurbo::Rect::new(b[0], b[1], b[2], b[3])
+                            }
+                        };
+                        (
+                            [page_bbox.x0, page_bbox.y0, page_bbox.x1, page_bbox.y1],
+                            BoundsSource::Tight,
+                        )
+                    } else {
+                        // Axis-aligned scale + translate: enveloping the
+                        // transformed bbox corners is exact.
+                        let raw = [font_bbox.x0, font_bbox.y0, font_bbox.x1, font_bbox.y1];
+                        (transform_bbox_corners(&raw, &composed), BoundsSource::Tight)
+                    }
+                } else {
+                    // No ink (space, Type3, missing outline): fall back to the
+                    // advance box in page space, in the same frame as the span's
+                    // char_bounds ([x, y, x + advance, y + font_size]).
+                    let x = dg.coeffs[4];
+                    let y = dg.coeffs[5];
+                    (
+                        [x, y, x + dg.glyph_width, y + dg.font_size],
+                        BoundsSource::Estimate,
+                    )
+                };
+
+                span.tight_char_bounds.push(tight_bound);
+                span.glyph_advances.push(dg.glyph_width);
+                span.glyph_bounds_sources.push(source);
+
+                if source == BoundsSource::Tight && span_bounds_source != BoundsSource::Estimate {
+                    span_bounds_source = BoundsSource::Tight;
+                } else if source == BoundsSource::Estimate {
+                    span_bounds_source = BoundsSource::Estimate;
+                }
+            }
+
+            span.bounds_source = span_bounds_source;
+        }
     }
 }
 
@@ -567,6 +772,11 @@ impl Device<'_> for TextExtractionDevice {
 
         let style = derive_glyph_style(glyph);
         let color = paint_to_rgba(paint);
+
+        // M3: record glyph data for deferred tight-bounds computation.
+        if self.geometry_mode == GeometryMode::RichGeometry {
+            self.record_deferred_glyph(glyph, &composed, font_size, glyph_width);
+        }
 
         // ANN[r17/TEX4] Feed the running sample used to derive the adaptive
         // median character width. Capped to protect against pathological
@@ -637,7 +847,7 @@ impl Device<'_> for TextExtractionDevice {
         // meaningful here.
         self.pending_tj_offset = 0.0;
 
-        self.spans.push(TextSpan {
+        let span = TextSpan {
             text,
             x,
             y,
@@ -656,7 +866,14 @@ impl Device<'_> for TextExtractionDevice {
             is_monospace: style.is_monospace,
             render_mode: Some(render_mode_from_draw_mode(draw_mode)),
             font_metrics: style.font_metrics,
-        });
+            geometry_mode: self.geometry_mode,
+            bounds_source: BoundsSource::Advance,
+            tight_char_bounds: Vec::new(),
+            glyph_advances: Vec::new(),
+            glyph_bounds_sources: Vec::new(),
+        };
+
+        self.spans.push(span);
     }
 
     // ANN[r17/TEX1] Record TJ offsets. Accumulate because a single
@@ -827,6 +1044,35 @@ fn glyph_width_and_source(glyph: &Glyph<'_>, font_size: f64) -> (f64, WidthSourc
         }
         Glyph::Type3(_) => (font_size * 0.5, WidthSource::Estimate),
     }
+}
+
+/// Threshold for detecting rotation or shear in the composed transform.
+/// Any |b| or |c| above this is treated as rotation; any difference between
+/// a and d above this is treated as non-uniform scale (= shear potential).
+const ROTATION_EPSILON: f64 = 1e-6;
+const SHEAR_EPSILON: f64 = 1e-3;
+
+/// Transform a bounding-box `[x0,y0,x1,y1]` (in local space) to page space
+/// by applying the affine to its four corners and taking the envelope.
+fn transform_bbox_corners(local_bbox: &[f64; 4], affine: &Affine) -> [f64; 4] {
+    use kurbo::Point;
+    let corners = [
+        *affine * Point::new(local_bbox[0], local_bbox[1]),
+        *affine * Point::new(local_bbox[2], local_bbox[1]),
+        *affine * Point::new(local_bbox[2], local_bbox[3]),
+        *affine * Point::new(local_bbox[0], local_bbox[3]),
+    ];
+    let x0 = corners.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let y0 = corners.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let x1 = corners
+        .iter()
+        .map(|p| p.x)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let y1 = corners
+        .iter()
+        .map(|p| p.y)
+        .fold(f64::NEG_INFINITY, f64::max);
+    [x0, y0, x1, y1]
 }
 
 /// Collapse fake-bold / overprint duplicates inside one band.
@@ -2581,5 +2827,471 @@ mod tests {
         assert_eq!(format!("{:?}", WidthSource::Estimate), "Estimate");
         assert_ne!(WidthSource::Metric, WidthSource::Estimate);
         assert_eq!(WidthSource::default(), WidthSource::Estimate);
+    }
+
+    // ---- M3: RichGeometry / tight glyph bounds tests ----
+
+    #[test]
+    fn m3_default_text_span_has_basic_mode() {
+        let s = TextSpan::default();
+        assert_eq!(s.geometry_mode, GeometryMode::Basic);
+        assert_eq!(s.bounds_source, BoundsSource::Advance);
+        assert!(s.tight_char_bounds.is_empty());
+        assert!(s.glyph_advances.is_empty());
+    }
+
+    #[test]
+    fn m3_geometry_mode_default_is_basic() {
+        assert_eq!(GeometryMode::default(), GeometryMode::Basic);
+    }
+
+    #[test]
+    fn m3_bounds_source_default_is_advance() {
+        assert_eq!(BoundsSource::default(), BoundsSource::Advance);
+    }
+
+    #[test]
+    fn m3_geometry_mode_variants_are_distinct() {
+        assert_ne!(GeometryMode::Basic, GeometryMode::RichGeometry);
+        assert_eq!(format!("{:?}", GeometryMode::Basic), "Basic");
+        assert_eq!(format!("{:?}", GeometryMode::RichGeometry), "RichGeometry");
+    }
+
+    #[test]
+    fn m3_bounds_source_variants_are_distinct() {
+        assert_ne!(BoundsSource::Advance, BoundsSource::Tight);
+        assert_ne!(BoundsSource::Tight, BoundsSource::Estimate);
+        assert_eq!(format!("{:?}", BoundsSource::Advance), "Advance");
+        assert_eq!(format!("{:?}", BoundsSource::Tight), "Tight");
+        assert_eq!(format!("{:?}", BoundsSource::Estimate), "Estimate");
+    }
+
+    #[test]
+    fn m3_text_span_rich_geometry_preserves_existing_fields() {
+        let s = TextSpan {
+            text: "Hello".into(),
+            x: 10.0,
+            y: 100.0,
+            width: 30.0,
+            height: 12.0,
+            font_size: 12.0,
+            font_name: Some("Helvetica".into()),
+            is_bold: true,
+            is_italic: false,
+            color: Some([0, 0, 0, 255]),
+            width_source: WidthSource::Metric,
+            char_bounds: vec![[10.0, 100.0, 40.0, 112.0]],
+            geometry_mode: GeometryMode::RichGeometry,
+            bounds_source: BoundsSource::Tight,
+            tight_char_bounds: vec![[8.5, 98.5, 41.5, 114.0]],
+            glyph_advances: vec![30.0],
+            glyph_bounds_sources: vec![BoundsSource::Tight],
+            ..Default::default()
+        };
+
+        // Existing fields preserved.
+        assert_eq!(s.text, "Hello");
+        assert!((s.x - 10.0).abs() < 0.001);
+        assert!((s.y - 100.0).abs() < 0.001);
+        assert_eq!(s.width_source, WidthSource::Metric);
+        assert_eq!(s.char_bounds.len(), 1);
+
+        // M3 fields populated.
+        assert_eq!(s.geometry_mode, GeometryMode::RichGeometry);
+        assert_eq!(s.bounds_source, BoundsSource::Tight);
+        assert_eq!(s.tight_char_bounds.len(), 1);
+        assert_eq!(s.glyph_advances.len(), 1);
+        assert!((s.glyph_advances[0] - 30.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn m3_text_span_basic_mode_does_not_populate_tight_fields() {
+        let s = TextSpan {
+            text: "A".into(),
+            x: 0.0,
+            y: 0.0,
+            width: 7.0,
+            height: 10.0,
+            font_size: 10.0,
+            geometry_mode: GeometryMode::Basic,
+            bounds_source: BoundsSource::Advance,
+            ..Default::default()
+        };
+
+        assert!(s.tight_char_bounds.is_empty());
+        assert!(s.glyph_advances.is_empty());
+    }
+
+    #[test]
+    fn m3_tight_char_bounds_are_optional_in_basic_mode() {
+        // A span from Basic mode should have empty tight fields.
+        let s = TextSpan {
+            text: "test".into(),
+            x: 0.0,
+            y: 0.0,
+            width: 40.0,
+            height: 12.0,
+            font_size: 12.0,
+            geometry_mode: GeometryMode::Basic,
+            ..Default::default()
+        };
+        assert!(s.tight_char_bounds.is_empty());
+        assert!(s.glyph_advances.is_empty());
+    }
+
+    #[test]
+    fn m3_test_span_constructor_preserves_all_fields() {
+        // Verify the span constructor used in existing tests still works.
+        let s = span("hello", 10.0, 100.0, 30.0);
+        assert_eq!(s.geometry_mode, GeometryMode::Basic);
+        assert_eq!(s.bounds_source, BoundsSource::Advance);
+        assert!(s.tight_char_bounds.is_empty());
+    }
+
+    #[test]
+    fn m3_width_source_unchanged_by_m3() {
+        // WidthSource should not be affected by RichGeometry.
+        assert_eq!(WidthSource::Metric, WidthSource::Metric);
+        assert_eq!(WidthSource::Estimate, WidthSource::Estimate);
+        assert_eq!(WidthSource::default(), WidthSource::Estimate);
+    }
+
+    #[test]
+    fn m3_transform_bbox_corners_identity() {
+        let bbox = [0.0, 0.0, 10.0, 12.0];
+        let identity = kurbo::Affine::IDENTITY;
+        let result = transform_bbox_corners(&bbox, &identity);
+        assert!((result[0] - 0.0).abs() < 0.001);
+        assert!((result[1] - 0.0).abs() < 0.001);
+        assert!((result[2] - 10.0).abs() < 0.001);
+        assert!((result[3] - 12.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn m3_transform_bbox_corners_translation() {
+        let bbox = [0.0, 0.0, 10.0, 12.0];
+        let t = kurbo::Affine::translate((50.0, 100.0));
+        let result = transform_bbox_corners(&bbox, &t);
+        assert!((result[0] - 50.0).abs() < 0.001);
+        assert!((result[1] - 100.0).abs() < 0.001);
+        assert!((result[2] - 60.0).abs() < 0.001);
+        assert!((result[3] - 112.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn m3_transform_bbox_corners_scale() {
+        let bbox = [0.0, 0.0, 10.0, 12.0];
+        let s = kurbo::Affine::scale(2.0);
+        let result = transform_bbox_corners(&bbox, &s);
+        assert!((result[0] - 0.0).abs() < 0.001);
+        assert!((result[1] - 0.0).abs() < 0.001);
+        assert!((result[2] - 20.0).abs() < 0.001);
+        assert!((result[3] - 24.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn m3_transform_bbox_corners_with_negative_bbox() {
+        // Glyphs with descenders have negative y0 in font space.
+        let bbox = [-5.0, -200.0, 15.0, 800.0];
+        let s = kurbo::Affine::scale(0.012); // 12pt font at 1000-upem
+        let result = transform_bbox_corners(&bbox, &s);
+        assert!((result[0] - (-0.06)).abs() < 0.01);
+        assert!((result[1] - (-2.4)).abs() < 0.01);
+        assert!((result[2] - 0.18).abs() < 0.01);
+        assert!((result[3] - 9.6).abs() < 0.01);
+    }
+
+    #[test]
+    fn m3_tight_char_bounds_descender_detection() {
+        // A glyph with a descender should have tight_char_bounds.y0 < origin.y0.
+        let s = TextSpan {
+            text: "g".into(),
+            x: 100.0,
+            y: 200.0, // baseline
+            width: 8.0,
+            height: 12.0,
+            font_size: 12.0,
+            geometry_mode: GeometryMode::RichGeometry,
+            bounds_source: BoundsSource::Tight,
+            tight_char_bounds: vec![[99.0, 197.5, 109.0, 210.0]],
+            char_bounds: vec![[100.0, 200.0, 108.0, 212.0]],
+            glyph_advances: vec![8.0],
+            ..Default::default()
+        };
+
+        // Tight y0 (197.5) < span y (200.0) — descender extends below baseline.
+        assert!(
+            s.tight_char_bounds[0][1] < s.y,
+            "descender should extend below baseline"
+        );
+    }
+
+    #[test]
+    fn m3_tight_char_bounds_ascender_detection() {
+        // A glyph with an ascender should have tight_char_bounds.y1 > advance y1.
+        let s = TextSpan {
+            text: "f".into(),
+            x: 100.0,
+            y: 200.0,
+            width: 7.0,
+            height: 12.0,
+            font_size: 12.0,
+            geometry_mode: GeometryMode::RichGeometry,
+            bounds_source: BoundsSource::Tight,
+            tight_char_bounds: vec![[95.0, 200.0, 108.0, 214.0]],
+            char_bounds: vec![[100.0, 200.0, 107.0, 212.0]],
+            glyph_advances: vec![7.0],
+            ..Default::default()
+        };
+
+        // Tight y1 (214.0) > advance y1 (200.0 + 12.0 = 212.0).
+        let advance_y1 = s.y + s.height;
+        assert!(
+            s.tight_char_bounds[0][3] > advance_y1,
+            "ascender should extend above advance bounds"
+        );
+    }
+
+    #[test]
+    fn m3_tight_char_bounds_differ_from_advance() {
+        // Verify tight bounds produce a different bbox than advance bounds.
+        let s = TextSpan {
+            text: "A".into(),
+            x: 10.0,
+            y: 100.0,
+            width: 7.22,
+            height: 10.0,
+            font_size: 10.0,
+            geometry_mode: GeometryMode::RichGeometry,
+            bounds_source: BoundsSource::Tight,
+            char_bounds: vec![[10.0, 100.0, 17.22, 110.0]], // advance
+            tight_char_bounds: vec![[9.5, 100.2, 17.5, 109.5]], // tight (different)
+            glyph_advances: vec![7.22],
+            ..Default::default()
+        };
+
+        let ac = s.char_bounds[0];
+        let tc = s.tight_char_bounds[0];
+        let differs = (ac[0] - tc[0]).abs() > 0.01
+            || (ac[1] - tc[1]).abs() > 0.01
+            || (ac[2] - tc[2]).abs() > 0.01
+            || (ac[3] - tc[3]).abs() > 0.01;
+        assert!(differs, "tight bounds should differ from advance bounds");
+    }
+
+    #[test]
+    fn m3_device_new_uses_basic_mode() {
+        let dev = TextExtractionDevice::new();
+        assert_eq!(dev.geometry_mode, GeometryMode::Basic);
+        assert!(dev.deferred_rich_glyphs.is_empty());
+    }
+
+    #[test]
+    fn m3_device_with_mode_rich_geometry() {
+        let dev = TextExtractionDevice::with_mode(GeometryMode::RichGeometry);
+        assert_eq!(dev.geometry_mode, GeometryMode::RichGeometry);
+        assert!(dev.deferred_rich_glyphs.is_empty());
+    }
+
+    /// A synthetic rectangular glyph outline in raw design space, plus its
+    /// bbox. The renderer (`renderer.rs::fill_glyph`) fills this raw outline
+    /// with `composed = transform * glyph_transform` and NO upem pre-scaling,
+    /// so the page-space bbox of a tight glyph MUST equal
+    /// `(composed * outline).bounding_box()`. These tests use that as the
+    /// ground-truth oracle, which is what guards against scaling regressions.
+    #[cfg(test)]
+    fn synthetic_glyph_rect() -> (BezPath, kurbo::Rect) {
+        let mut path = BezPath::new();
+        path.move_to((100.0, 0.0));
+        path.line_to((600.0, 0.0));
+        path.line_to((600.0, 700.0));
+        path.line_to((100.0, 700.0));
+        path.close_path();
+        let bbox = path.bounding_box();
+        (path, bbox)
+    }
+
+    #[test]
+    fn m3_basic_mode_skips_tight_bounds_computation() {
+        // Basic mode must NOT compute tight bounds, even when a span is present.
+        let mut dev = TextExtractionDevice::new();
+        dev.spans.push(TextSpan {
+            text: "A".into(),
+            char_bounds: vec![[0.0, 0.0, 7.0, 10.0]],
+            ..Default::default()
+        });
+        let spans = dev.into_spans();
+        assert_eq!(spans.len(), 1);
+        assert!(spans[0].tight_char_bounds.is_empty());
+        assert!(spans[0].glyph_bounds_sources.is_empty());
+        assert_eq!(spans[0].bounds_source, BoundsSource::Advance);
+    }
+
+    #[test]
+    fn m3_rich_geometry_tight_bounds_match_rendered_outline() {
+        // Axis-aligned scale 0.01: the page-space tight bbox must equal the
+        // bbox of the transformed outline — i.e. design [100,600]x[0,700]
+        // scaled by 0.01 → [1.0, 0.0, 6.0, 7.0]. A double-scale regression
+        // (e.g. an extra font_size/1000) would yield ~[0.01, 0, 0.06, 0.07].
+        let (path, bbox) = synthetic_glyph_rect();
+        let composed = Affine::scale(0.01);
+        let oracle = (composed * path.clone()).bounding_box();
+
+        let mut dev = TextExtractionDevice::with_mode(GeometryMode::RichGeometry);
+        dev.spans.push(TextSpan {
+            text: "A".into(),
+            char_bounds: vec![[0.0, 0.0, 7.0, 10.0]],
+            geometry_mode: GeometryMode::RichGeometry,
+            ..Default::default()
+        });
+        dev.deferred_rich_glyphs.push(DeferredGlyph {
+            coeffs: composed.as_coeffs(),
+            font_size: 10.0,
+            glyph_width: 7.0,
+            needs_exact: false,
+            outline: Some(path),
+            font_bbox: Some(bbox),
+        });
+
+        let spans = dev.into_spans();
+        assert_eq!(spans[0].glyph_bounds_sources, vec![BoundsSource::Tight]);
+        assert_eq!(spans[0].bounds_source, BoundsSource::Tight);
+        let tb = spans[0].tight_char_bounds[0];
+        assert!(
+            (tb[0] - oracle.x0).abs() < 1e-6,
+            "x0: got {} want {}",
+            tb[0],
+            oracle.x0
+        );
+        assert!(
+            (tb[1] - oracle.y0).abs() < 1e-6,
+            "y0: got {} want {}",
+            tb[1],
+            oracle.y0
+        );
+        assert!(
+            (tb[2] - oracle.x1).abs() < 1e-6,
+            "x1: got {} want {}",
+            tb[2],
+            oracle.x1
+        );
+        assert!(
+            (tb[3] - oracle.y1).abs() < 1e-6,
+            "y1: got {} want {}",
+            tb[3],
+            oracle.y1
+        );
+        // Sanity: tight height (~7) is commensurate with the advance font_size
+        // (10), not ~100x smaller — the regression this test exists to catch.
+        assert!(
+            tb[3] - tb[1] > 1.0,
+            "tight height must be commensurate with font size"
+        );
+    }
+
+    #[test]
+    fn m3_rich_geometry_tight_bounds_rotation_is_exact() {
+        // 90° rotation routes through the needs_exact (transform-then-bound)
+        // path. Oracle = bbox of the rotated outline.
+        let (path, bbox) = synthetic_glyph_rect();
+        let composed = Affine::scale(0.01) * Affine::rotate(std::f64::consts::FRAC_PI_2);
+        let oracle = (composed * path.clone()).bounding_box();
+
+        let mut dev = TextExtractionDevice::with_mode(GeometryMode::RichGeometry);
+        dev.spans.push(TextSpan {
+            text: "A".into(),
+            char_bounds: vec![[0.0, 0.0, 7.0, 10.0]],
+            geometry_mode: GeometryMode::RichGeometry,
+            ..Default::default()
+        });
+        dev.deferred_rich_glyphs.push(DeferredGlyph {
+            coeffs: composed.as_coeffs(),
+            font_size: 10.0,
+            glyph_width: 7.0,
+            needs_exact: true,
+            outline: Some(path),
+            font_bbox: Some(bbox),
+        });
+
+        let spans = dev.into_spans();
+        assert_eq!(spans[0].glyph_bounds_sources, vec![BoundsSource::Tight]);
+        let tb = spans[0].tight_char_bounds[0];
+        assert!(
+            (tb[0] - oracle.x0).abs() < 1e-6,
+            "x0: got {} want {}",
+            tb[0],
+            oracle.x0
+        );
+        assert!(
+            (tb[1] - oracle.y0).abs() < 1e-6,
+            "y0: got {} want {}",
+            tb[1],
+            oracle.y0
+        );
+        assert!(
+            (tb[2] - oracle.x1).abs() < 1e-6,
+            "x1: got {} want {}",
+            tb[2],
+            oracle.x1
+        );
+        assert!(
+            (tb[3] - oracle.y1).abs() < 1e-6,
+            "y1: got {} want {}",
+            tb[3],
+            oracle.y1
+        );
+    }
+
+    #[test]
+    fn m3_empty_device_rich_geometry_no_panic() {
+        let dev = TextExtractionDevice::with_mode(GeometryMode::RichGeometry);
+        let text = dev.into_text();
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn m3_bounds_source_estimate_fallback() {
+        // Verify that BoundsSource::Estimate can be set on a span.
+        let s = TextSpan {
+            geometry_mode: GeometryMode::RichGeometry,
+            bounds_source: BoundsSource::Estimate,
+            ..Default::default()
+        };
+        assert_eq!(s.bounds_source, BoundsSource::Estimate);
+        assert_eq!(s.geometry_mode, GeometryMode::RichGeometry);
+        // Fallback still has empty tight fields (no glyphs).
+        assert!(s.tight_char_bounds.is_empty());
+    }
+
+    #[test]
+    fn m3_multiple_glyphs_tight_bounds_consistent_count() {
+        // Simulate a span with 3 glyphs — tight_char_bounds and glyph_advances
+        // should have the same length.
+        let s = TextSpan {
+            text: "abc".into(),
+            x: 0.0,
+            y: 0.0,
+            width: 25.0,
+            height: 12.0,
+            font_size: 12.0,
+            geometry_mode: GeometryMode::RichGeometry,
+            bounds_source: BoundsSource::Tight,
+            char_bounds: vec![[0., 0., 8., 12.], [8., 0., 16., 12.], [16., 0., 25., 12.]],
+            tight_char_bounds: vec![
+                [-1., -2., 9., 14.],
+                [7., -2., 17., 14.],
+                [15., -2., 26., 14.],
+            ],
+            glyph_advances: vec![8.0, 8.0, 9.0],
+            ..Default::default()
+        };
+
+        assert_eq!(s.tight_char_bounds.len(), 3);
+        assert_eq!(s.glyph_advances.len(), 3);
+        assert_eq!(s.char_bounds.len(), 3);
+        // Every glyph has advance >= 0.
+        for &adv in &s.glyph_advances {
+            assert!(adv >= 0.0, "glyph advance must be non-negative");
+        }
     }
 }
