@@ -91,6 +91,32 @@ impl WidthSource {
     }
 }
 
+/// Vertical font metrics in /1000 em (1000 units-per-em), sourced from the
+/// embedded font's OS/2 / hhea tables via skrifa. `ascent` is positive (above
+/// the baseline); `descent` is negative (below it). The whole struct is `None`
+/// on a span when no embedded font binary exposes metrics (non-embedded
+/// standard-14, CFF, Type1, Type3).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct FontMetrics {
+    /// Ascent above the baseline, in /1000 em.
+    pub ascent: f64,
+    /// Descent below the baseline (negative), in /1000 em.
+    pub descent: f64,
+    /// Cap height in /1000 em, when present in the font.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "capHeight", skip_serializing_if = "Option::is_none")
+    )]
+    pub cap_height: Option<f64>,
+    /// x-height in /1000 em, when present in the font.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "xHeight", skip_serializing_if = "Option::is_none")
+    )]
+    pub x_height: Option<f64>,
+}
+
 /// A single text span at a specific position.
 #[derive(Debug, Clone, Default)]
 pub struct TextSpan {
@@ -153,6 +179,11 @@ pub struct TextSpan {
     /// fill+stroke / clip modes 2 and 4–7 are not distinguished). Reflects the
     /// span's first glyph. `None` for spans not built from a glyph.
     pub render_mode: Option<u8>,
+
+    // ---- Golf 2 font metrics (added 2026-06; backward-compatible) ----
+    /// Vertical font metrics (ascent/descent, optional cap/x-height) in /1000
+    /// em from the embedded font binary. `None` for non-embedded fonts.
+    pub font_metrics: Option<FontMetrics>,
 }
 
 impl TextSpan {
@@ -624,6 +655,7 @@ impl Device<'_> for TextExtractionDevice {
             is_serif: style.is_serif,
             is_monospace: style.is_monospace,
             render_mode: Some(render_mode_from_draw_mode(draw_mode)),
+            font_metrics: style.font_metrics,
         });
     }
 
@@ -648,6 +680,8 @@ struct GlyphStyle {
     is_serif: Option<bool>,
     /// Monospace flag from embedded font data, if available.
     is_monospace: Option<bool>,
+    /// Vertical font metrics from embedded font data, if available.
+    font_metrics: Option<FontMetrics>,
 }
 
 /// Strip a 6-character subset prefix (e.g. `AAAAAA+Helvetica` → `Helvetica`).
@@ -687,6 +721,15 @@ fn derive_glyph_style(glyph: &Glyph<'_>) -> GlyphStyle {
                     font_weight: data.weight.map(|w| w.clamp(1, 1000) as u16),
                     is_serif: Some(data.is_serif),
                     is_monospace: Some(data.is_monospace),
+                    font_metrics: match (data.ascent, data.descent) {
+                        (Some(ascent), Some(descent)) => Some(FontMetrics {
+                            ascent,
+                            descent,
+                            cap_height: data.cap_height,
+                            x_height: data.x_height,
+                        }),
+                        _ => None,
+                    },
                 }
             } else {
                 // Type1 / non-embedded font — descriptor not surfaced
@@ -703,6 +746,7 @@ fn derive_glyph_style(glyph: &Glyph<'_>) -> GlyphStyle {
                     font_weight: None,
                     is_serif: None,
                     is_monospace: None,
+                    font_metrics: None,
                 }
             }
         }

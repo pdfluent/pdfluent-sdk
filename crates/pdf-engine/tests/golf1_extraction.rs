@@ -179,6 +179,7 @@ fn golf1_coverage_scorecard() {
             "font_weight_pct": pct(c(&|s| s.font_weight.is_some()), n),
             "is_serif_pct": pct(c(&|s| s.is_serif.is_some()), n),
             "is_monospace_pct": pct(c(&|s| s.is_monospace.is_some()), n),
+            "font_metrics_pct": pct(c(&|s| s.font_metrics.is_some()), n),
         }));
     }
 
@@ -220,7 +221,8 @@ fn embedded_font_coverage_full_corpus() {
     pdfs.sort();
     pdfs.truncate(60);
 
-    let (mut total, mut weight, mut serif, mut mono, mut scanned) = (0usize, 0, 0, 0, 0);
+    let (mut total, mut weight, mut serif, mut mono, mut metrics, mut wsome_mnone, mut scanned) =
+        (0usize, 0, 0, 0, 0, 0, 0);
     for p in &pdfs {
         let Ok(bytes) = std::fs::read(p) else {
             continue;
@@ -240,15 +242,26 @@ fn embedded_font_coverage_full_corpus() {
         weight += spans.iter().filter(|s| s.font_weight.is_some()).count();
         serif += spans.iter().filter(|s| s.is_serif.is_some()).count();
         mono += spans.iter().filter(|s| s.is_monospace.is_some()).count();
+        metrics += spans.iter().filter(|s| s.font_metrics.is_some()).count();
+        wsome_mnone += spans
+            .iter()
+            .filter(|s| s.font_weight.is_some() && s.font_metrics.is_none())
+            .count();
     }
     println!(
         "EMBEDDED_FONT_COVERAGE docs={scanned} spans={total} \
-         font_weight={:.1}% is_serif={:.1}% is_monospace={:.1}%",
+         font_weight={:.1}% is_serif={:.1}% is_monospace={:.1}% font_metrics={:.1}% \
+         weight_some_but_metrics_none={wsome_mnone}",
         pct(weight, total),
         pct(serif, total),
-        pct(mono, total)
+        pct(mono, total),
+        pct(metrics, total)
     );
     assert!(total > 0, "no spans across corpus sample");
+    assert!(
+        metrics > 0,
+        "font_metrics never populated across {scanned} docs — skrifa metrics path may be broken"
+    );
     assert!(
         weight > 0,
         "font_weight never populated across {scanned} docs — embedded-font path may be broken"

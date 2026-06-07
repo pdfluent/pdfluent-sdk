@@ -10,7 +10,7 @@
 //! serialization-agnostic; the struct and the `From` conversion are always
 //! available, so non-serde bindings (e.g. napi) consume the same source.
 
-use crate::text::{TextSpan, WidthSource};
+use crate::text::{FontMetrics, TextSpan, WidthSource};
 
 /// A positioned text span in PDF user space (origin bottom-left, y up).
 ///
@@ -96,6 +96,14 @@ pub struct TextSpanInfo {
         serde(rename = "renderMode", skip_serializing_if = "Option::is_none")
     )]
     pub render_mode: Option<u8>,
+
+    // ---- Golf 2 font metrics ----
+    /// Vertical font metrics (/1000 em) from the embedded font, if available.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "fontMetrics", skip_serializing_if = "Option::is_none")
+    )]
+    pub font_metrics: Option<FontMetrics>,
 }
 
 impl From<TextSpan> for TextSpanInfo {
@@ -131,6 +139,7 @@ impl From<TextSpan> for TextSpanInfo {
             is_serif: s.is_serif,
             is_monospace: s.is_monospace,
             render_mode: s.render_mode,
+            font_metrics: s.font_metrics,
             text: s.text,
         }
     }

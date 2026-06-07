@@ -83,7 +83,7 @@ pub use ocr::{OcrBackend, OcrError, OcrResult, OcrWord};
 pub use render::{
     ColorMode, PixelFormat, RasterQuality, RenderConfig, RenderOptions, RenderedPage,
 };
-pub use text::{TextBlock, TextSpan, WidthSource};
+pub use text::{FontMetrics, TextBlock, TextSpan, WidthSource};
 pub use text_info::TextSpanInfo;
 pub use thumbnail::ThumbnailOptions;
 

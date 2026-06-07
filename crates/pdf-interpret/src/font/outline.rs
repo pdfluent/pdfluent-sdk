@@ -26,6 +26,14 @@ pub struct OutlineFontData {
     pub is_serif: bool,
     /// Whether the font is monospace.
     pub is_monospace: bool,
+    /// Ascent above baseline in /1000 em, from font binary metrics.
+    pub ascent: Option<f64>,
+    /// Descent below baseline (negative) in /1000 em, from font binary metrics.
+    pub descent: Option<f64>,
+    /// Cap height in /1000 em, when present in the font.
+    pub cap_height: Option<f64>,
+    /// x-height in /1000 em, when present in the font.
+    pub x_height: Option<f64>,
 }
 
 pub(crate) struct OutlinePath(BezPath);
@@ -173,24 +181,38 @@ impl OutlineFont {
     pub(crate) fn font_data(&self) -> Option<OutlineFontData> {
         match self {
             Self::Type1(_) => None,
-            Self::TrueType(t) => Some(OutlineFontData {
-                data: t.font_data()?,
-                cache_key: t.cache_key(),
-                postscript_name: t.postscript_name().map(|s| s.to_string()),
-                weight: t.weight(),
-                is_italic: t.is_italic(),
-                is_serif: t.is_serif(),
-                is_monospace: t.is_monospace(),
-            }),
-            Self::Type0(t) => Some(OutlineFontData {
-                data: t.font_data()?,
-                cache_key: t.cache_key(),
-                postscript_name: t.postscript_name().map(|s| s.to_string()),
-                weight: t.weight(),
-                is_italic: t.is_italic(),
-                is_serif: t.is_serif(),
-                is_monospace: t.is_monospace(),
-            }),
+            Self::TrueType(t) => {
+                let m = t.font_metrics();
+                Some(OutlineFontData {
+                    data: t.font_data()?,
+                    cache_key: t.cache_key(),
+                    postscript_name: t.postscript_name().map(|s| s.to_string()),
+                    weight: t.weight(),
+                    is_italic: t.is_italic(),
+                    is_serif: t.is_serif(),
+                    is_monospace: t.is_monospace(),
+                    ascent: m.map(|x| x.0),
+                    descent: m.map(|x| x.1),
+                    cap_height: m.and_then(|x| x.2),
+                    x_height: m.and_then(|x| x.3),
+                })
+            }
+            Self::Type0(t) => {
+                let m = t.font_metrics();
+                Some(OutlineFontData {
+                    data: t.font_data()?,
+                    cache_key: t.cache_key(),
+                    postscript_name: t.postscript_name().map(|s| s.to_string()),
+                    weight: t.weight(),
+                    is_italic: t.is_italic(),
+                    is_serif: t.is_serif(),
+                    is_monospace: t.is_monospace(),
+                    ascent: m.map(|x| x.0),
+                    descent: m.map(|x| x.1),
+                    cap_height: m.and_then(|x| x.2),
+                    x_height: m.and_then(|x| x.3),
+                })
+            }
         }
     }
 }
