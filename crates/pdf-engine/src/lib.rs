@@ -68,6 +68,7 @@ pub mod limits;
 pub mod ocr;
 pub mod render;
 pub mod text;
+pub mod text_info;
 pub mod thumbnail;
 #[cfg(feature = "xfa")]
 pub mod xfa;
@@ -83,6 +84,7 @@ pub use render::{
     ColorMode, PixelFormat, RasterQuality, RenderConfig, RenderOptions, RenderedPage,
 };
 pub use text::{TextBlock, TextSpan, WidthSource};
+pub use text_info::TextSpanInfo;
 pub use thumbnail::ThumbnailOptions;
 
 #[cfg(not(target_arch = "wasm32"))]

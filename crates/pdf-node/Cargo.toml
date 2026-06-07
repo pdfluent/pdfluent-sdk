@@ -7,7 +7,9 @@ description = "Node.js bindings for the PDF engine via napi-rs."
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+# `rlib` is added alongside `cdylib` so the crate's Rust tests (e.g. the
+# canonical-DTO parity test) can be compiled and run with `cargo test`.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 napi = { version = "2", features = ["async", "serde-json", "napi9"] }

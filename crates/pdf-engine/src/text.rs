@@ -70,12 +70,25 @@ const MIN_DENSE_SLICE_RATIO: f64 = 0.35;
 
 /// Whether a text span's width was computed from real font metrics or estimated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum WidthSource {
     /// Width derived from the font's actual glyph advance (hmtx, CFF, Type1 charstring).
     Metric,
     /// Width estimated at 50 % of font size — no glyph metric was available.
     #[default]
     Estimate,
+}
+
+impl WidthSource {
+    /// Stable label used across SDK bindings and the JSON wire form
+    /// (`"Metric"` / `"Estimate"`). Single source of truth for the string; the
+    /// `serde` derive on the enum produces identical values.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WidthSource::Metric => "Metric",
+            WidthSource::Estimate => "Estimate",
+        }
+    }
 }
 
 /// A single text span at a specific position.

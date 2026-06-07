@@ -141,16 +141,7 @@ impl PdfPage {
             .into_iter()
             .map(|b| TextBlockInfo {
                 text: b.text(),
-                spans: b
-                    .spans
-                    .into_iter()
-                    .map(|s| TextSpanInfo {
-                        text: s.text,
-                        x: s.x,
-                        y: s.y,
-                        font_size: s.font_size,
-                    })
-                    .collect(),
+                spans: b.spans.into_iter().map(TextSpanInfo::from).collect(),
             })
             .collect())
     }

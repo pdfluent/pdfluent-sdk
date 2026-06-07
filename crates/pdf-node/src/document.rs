@@ -95,6 +95,11 @@ pub struct PageGeometry {
 }
 
 /// A text span at a specific position.
+///
+/// Field *values* are derived from the canonical [`pdf_engine::TextSpanInfo`]
+/// (the SDK single source of truth) via the `From` impl below, so the Node
+/// binding cannot drift from the Tauri/serde wire form in its value logic.
+/// (JS key casing follows napi's own camelCase convention.)
 #[napi(object)]
 pub struct TextSpanInfo {
     /// The extracted text.
@@ -103,8 +108,104 @@ pub struct TextSpanInfo {
     pub x: f64,
     /// Y position in user space.
     pub y: f64,
-    /// Approximate font size.
+    /// Span width in user space.
+    pub width: f64,
+    /// Span height in user space (font-size / ascent extent).
+    pub height: f64,
+    /// Font size in points.
     pub font_size: f64,
+    /// PostScript font name with subset prefix stripped, if known.
+    pub font_name: Option<String>,
+    /// Inferred bold style.
+    pub is_bold: bool,
+    /// Inferred italic style.
+    pub is_italic: bool,
+    /// Fill colour as sRGB `[r, g, b]` in 0.0–1.0, if resolved.
+    pub color: Option<Vec<f64>>,
+    /// Width provenance: "Metric" or "Estimate".
+    pub width_source: String,
+    /// Per-glyph bounds `[x0, y0, x1, y1]` (y up), if available.
+    pub char_bounds: Option<Vec<Vec<f64>>>,
+}
+
+impl From<pdf_engine::TextSpan> for TextSpanInfo {
+    /// Re-shape the canonical [`pdf_engine::TextSpanInfo`] into the napi object.
+    /// All value logic lives in the canonical DTO; this only adapts container
+    /// types to napi-friendly ones.
+    fn from(span: pdf_engine::TextSpan) -> Self {
+        let c = pdf_engine::TextSpanInfo::from(span);
+        TextSpanInfo {
+            text: c.text,
+            x: c.x,
+            y: c.y,
+            width: c.width,
+            height: c.height,
+            font_size: c.font_size,
+            font_name: c.font_name,
+            is_bold: c.is_bold,
+            is_italic: c.is_italic,
+            color: c.color.map(|[r, g, b]| vec![r as f64, g as f64, b as f64]),
+            width_source: c.width_source.as_str().to_string(),
+            char_bounds: if c.char_bounds.is_empty() {
+                None
+            } else {
+                Some(c.char_bounds.iter().map(|b| b.to_vec()).collect())
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod text_span_info_tests {
+    use super::TextSpanInfo;
+
+    #[test]
+    fn napi_span_derives_from_canonical_dto() {
+        let span = pdf_engine::TextSpan {
+            text: "Hi".to_string(),
+            x: 1.0,
+            y: 2.0,
+            width: 3.0,
+            height: 9.0,
+            font_size: 4.0,
+            font_name: Some("Arial".to_string()),
+            is_bold: true,
+            is_italic: false,
+            color: Some([255, 128, 0, 255]),
+            width_source: pdf_engine::WidthSource::Metric,
+            char_bounds: vec![[1.0, 2.0, 3.0, 6.0]],
+        };
+        let canonical = pdf_engine::TextSpanInfo::from(span.clone());
+        let napi = TextSpanInfo::from(span);
+
+        assert_eq!(napi.text, canonical.text);
+        assert_eq!(napi.x, canonical.x);
+        assert_eq!(napi.y, canonical.y);
+        assert_eq!(napi.width, canonical.width);
+        // height mirrors font_size in the canonical contract.
+        assert_eq!(napi.height, canonical.height);
+        assert_eq!(napi.font_size, canonical.font_size);
+        assert_eq!(napi.font_name, canonical.font_name);
+        assert_eq!(napi.is_bold, canonical.is_bold);
+        assert_eq!(napi.is_italic, canonical.is_italic);
+        assert_eq!(napi.width_source, canonical.width_source.as_str());
+        assert_eq!(
+            napi.color,
+            canonical
+                .color
+                .map(|[r, g, b]| vec![r as f64, g as f64, b as f64])
+        );
+        assert_eq!(
+            napi.char_bounds,
+            Some(
+                canonical
+                    .char_bounds
+                    .iter()
+                    .map(|b| b.to_vec())
+                    .collect::<Vec<_>>()
+            )
+        );
+    }
 }
 
 /// A block of text (grouped by vertical proximity).
@@ -414,16 +515,7 @@ impl PdfDocument {
             .into_iter()
             .map(|b| TextBlockInfo {
                 text: b.text(),
-                spans: b
-                    .spans
-                    .into_iter()
-                    .map(|s| TextSpanInfo {
-                        text: s.text,
-                        x: s.x,
-                        y: s.y,
-                        font_size: s.font_size,
-                    })
-                    .collect(),
+                spans: b.spans.into_iter().map(TextSpanInfo::from).collect(),
             })
             .collect())
     }
