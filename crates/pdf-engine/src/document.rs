@@ -153,6 +153,12 @@ impl PdfDocument {
         &self.pdf
     }
 
+    /// Structural recovery applied while loading this document (xref / page-tree
+    /// rebuild). All-`false` for a document that parsed cleanly.
+    pub fn load_recovery(&self) -> pdf_render::pdf_syntax::LoadRecovery {
+        self.pdf.load_recovery()
+    }
+
     /// Set interpreter settings (font resolver, cmap resolver, etc.).
     pub fn set_settings(&mut self, settings: InterpreterSettings) {
         self.settings = settings;
@@ -1710,5 +1716,56 @@ mod tests {
         assert_eq!(rendered.height, 1);
         assert_eq!(pixel_at(&rendered, 0, 0), [255, 0, 0, 0]);
         assert_eq!(pixel_at(&rendered, 1, 0), [0, 255, 0, 0]);
+    }
+}
+
+#[cfg(test)]
+mod load_recovery_tests {
+    use super::PdfDocument;
+
+    #[test]
+    fn broken_xref_sets_xref_rebuilt() {
+        // Objects + trailer present, but startxref points nowhere: pd-syntax
+        // rebuilds the xref by scanning, and the signal must reflect that.
+        let body: &[u8] = b"%PDF-1.7\n\
+1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n\
+2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n\
+3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>\nendobj\n\
+trailer\n<< /Root 1 0 R /Size 4 >>\nstartxref\n999999\n%%EOF";
+        let doc = PdfDocument::open(body.to_vec()).expect("recovers via xref rebuild");
+        assert!(doc.load_recovery().xref_rebuilt, "xref_rebuilt must be set");
+    }
+
+    #[test]
+    fn clean_document_reports_no_recovery() {
+        // A well-formed PDF with a correct xref must report no recovery.
+        let objs: [&[u8]; 3] = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+        ];
+        let mut buf = Vec::new();
+        let mut off = [0usize; 4];
+        buf.extend_from_slice(b"%PDF-1.7\n");
+        for (i, body) in objs.iter().enumerate() {
+            off[i + 1] = buf.len();
+            buf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            buf.extend_from_slice(body);
+            buf.extend_from_slice(b"\nendobj\n");
+        }
+        let xref_off = buf.len();
+        buf.extend_from_slice(b"xref\n0 4\n0000000000 65535 f \n");
+        for o in &off[1..4] {
+            buf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+        }
+        buf.extend_from_slice(
+            format!("trailer\n<< /Root 1 0 R /Size 4 >>\nstartxref\n{xref_off}\n%%EOF").as_bytes(),
+        );
+        let doc = PdfDocument::open(buf).expect("clean doc opens");
+        let r = doc.load_recovery();
+        assert!(
+            !r.xref_rebuilt && !r.page_tree_rebuilt,
+            "a clean document must report no recovery; got {r:?}"
+        );
     }
 }

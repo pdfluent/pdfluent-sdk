@@ -585,6 +585,9 @@ pub(crate) mod cached {
         // NOTE: `pages` references the data in `xref`, so it's important that `xref`
         // appears after `pages` in the struct definition to ensure correct drop order.
         _xref: Arc<XRef>,
+        /// `true` if the normal page-tree walk failed and pages were recovered
+        /// via brute-force scan (page order may differ from the source).
+        page_tree_rebuilt: bool,
     }
 
     impl CachedPages {
@@ -599,16 +602,29 @@ pub(crate) mod cached {
             let xref_reference: &'static XRef = unsafe { core::mem::transmute(xref.deref()) };
 
             let ctx = ReaderContext::new(xref_reference, false);
-            let pages = xref_reference
+            // Detect whether the normal page-tree walk succeeded: if it returns
+            // `None` and we fall back to a brute-force scan, the page tree was
+            // rebuilt (recovery is still always attempted).
+            let normal = xref_reference
                 .get_with(xref.trailer_data().pages_ref, &ctx)
-                .and_then(|p| Pages::new(&p, &ctx, xref_reference))
-                .or_else(|| Pages::new_brute_force(&ctx, xref_reference))?;
+                .and_then(|p| Pages::new(&p, &ctx, xref_reference));
+            let page_tree_rebuilt = normal.is_none();
+            let pages = normal.or_else(|| Pages::new_brute_force(&ctx, xref_reference))?;
 
-            Some(Self { pages, _xref: xref })
+            Some(Self {
+                pages,
+                _xref: xref,
+                page_tree_rebuilt,
+            })
         }
 
         pub(crate) fn get(&self) -> &Pages<'_> {
             &self.pages
+        }
+
+        /// Whether the page tree was recovered via brute-force scan.
+        pub(crate) fn page_tree_rebuilt(&self) -> bool {
+            self.page_tree_rebuilt
         }
     }
 }
