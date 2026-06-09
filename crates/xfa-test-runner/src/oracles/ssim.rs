@@ -1,122 +1,12 @@
-//! SSIM (Structural Similarity Index) computation and visual diff generation.
+//! SSIM (Structural Similarity Index) for visual oracle comparisons.
 //!
-//! SSIM is superior to pixel-diff because it accounts for structural patterns,
-//! luminance and contrast. Score: 1.0 = identical, 0.0 = completely different.
+//! Re-exported from the canonical `pdf-diff` implementation so the test runner
+//! and the `pdf-diff` library share a single SSIM definition (and a single
+//! differential gate). SSIM accounts for structural patterns, luminance and
+//! contrast. Score: 1.0 = identical, 0.0 = completely different.
 
-const K1: f64 = 0.01;
-const K2: f64 = 0.03;
-const L: f64 = 255.0;
-const WINDOW_SIZE: usize = 8;
+pub use pdf_diff::ssim::compute_ssim;
 
-/// Convert RGBA pixels to grayscale luminance values.
-fn to_grayscale(rgba: &[u8], width: u32, height: u32) -> Vec<f64> {
-    let len = (width * height) as usize;
-    let mut gray = Vec::with_capacity(len);
-    for i in 0..len {
-        let idx = i * 4;
-        let r = rgba[idx] as f64;
-        let g = rgba[idx + 1] as f64;
-        let b = rgba[idx + 2] as f64;
-        gray.push(0.299 * r + 0.587 * g + 0.114 * b);
-    }
-    gray
-}
-
-/// Compute mean and (co)variance for an 8x8 window at position (x, y).
-fn window_stats(
-    a: &[f64],
-    stride_a: usize,
-    b: &[f64],
-    stride_b: usize,
-    x: usize,
-    y: usize,
-) -> (f64, f64, f64, f64, f64) {
-    let n = (WINDOW_SIZE * WINDOW_SIZE) as f64;
-    let mut sum_a = 0.0;
-    let mut sum_b = 0.0;
-    let mut sum_a2 = 0.0;
-    let mut sum_b2 = 0.0;
-    let mut sum_ab = 0.0;
-
-    for dy in 0..WINDOW_SIZE {
-        for dx in 0..WINDOW_SIZE {
-            let va = a[(y + dy) * stride_a + (x + dx)];
-            let vb = b[(y + dy) * stride_b + (x + dx)];
-            sum_a += va;
-            sum_b += vb;
-            sum_a2 += va * va;
-            sum_b2 += vb * vb;
-            sum_ab += va * vb;
-        }
-    }
-
-    let mean_a = sum_a / n;
-    let mean_b = sum_b / n;
-    let var_a = sum_a2 / n - mean_a * mean_a;
-    let var_b = sum_b2 / n - mean_b * mean_b;
-    let covar = sum_ab / n - mean_a * mean_b;
-
-    (mean_a, mean_b, var_a, var_b, covar)
-}
-
-/// Compute SSIM between two RGBA images (potentially different dimensions).
-///
-/// Compares the overlapping region using 8x8 windows with 50% overlap.
-/// Returns a score between 0.0 and 1.0.
-pub fn compute_ssim(
-    img_a: &[u8],
-    width_a: u32,
-    height_a: u32,
-    img_b: &[u8],
-    width_b: u32,
-    height_b: u32,
-) -> f64 {
-    let w = width_a.min(width_b) as usize;
-    let h = height_a.min(height_b) as usize;
-
-    if w < WINDOW_SIZE || h < WINDOW_SIZE {
-        return 1.0; // Too small to compare meaningfully
-    }
-
-    let gray_a = to_grayscale(img_a, width_a, height_a);
-    let gray_b = to_grayscale(img_b, width_b, height_b);
-
-    let c1 = (K1 * L).powi(2); // 6.5025
-    let c2 = (K2 * L).powi(2); // 58.5225
-
-    let mut total_ssim = 0.0;
-    let mut window_count = 0usize;
-
-    let step = WINDOW_SIZE / 2; // 50% overlap
-
-    let mut y = 0;
-    while y + WINDOW_SIZE <= h {
-        let mut x = 0;
-        while x + WINDOW_SIZE <= w {
-            let (mean_a, mean_b, var_a, var_b, covar) =
-                window_stats(&gray_a, width_a as usize, &gray_b, width_b as usize, x, y);
-
-            let numerator = (2.0 * mean_a * mean_b + c1) * (2.0 * covar + c2);
-            let denominator = (mean_a.powi(2) + mean_b.powi(2) + c1) * (var_a + var_b + c2);
-
-            total_ssim += numerator / denominator;
-            window_count += 1;
-
-            x += step;
-        }
-        y += step;
-    }
-
-    if window_count == 0 {
-        return 1.0;
-    }
-    total_ssim / window_count as f64
-}
-
-/// Generate a visual diff image (RGBA) highlighting per-pixel differences in red.
-///
-/// Takes two RGBA images with potentially different strides, outputs the
-/// overlapping region with differences amplified 5x.
 #[cfg(test)]
 mod tests {
     use super::*;

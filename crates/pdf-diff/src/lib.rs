@@ -3,7 +3,10 @@
 //! Compares two sets of rendered page images using Structural Similarity Index (SSIM)
 //! and generates visual diff overlays highlighting changed regions.
 
-mod ssim;
+pub mod gate;
+pub mod ssim;
+
+pub use gate::{classify, DifferentialVerdict, GATE_SSIM_THRESHOLD};
 
 use thiserror::Error;
 
