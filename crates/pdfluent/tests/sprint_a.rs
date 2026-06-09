@@ -593,3 +593,143 @@ fn test_incremental_save_appends_only_changed_objects() {
          object-count-independent delta (regression: full document re-emission)"
     );
 }
+
+#[test]
+fn test_annotation_flattening_clears_irt_and_objr_references() {
+    // Flattening a markup annotation that is referenced by a reply (/IRT) and by
+    // a tagged structure-tree OBJR must leave NO dangling reference to it.
+    let original_bytes = read_and_fix_simple_pdf();
+    let mut lopdf_doc = lopdf::Document::load_mem(&original_bytes).expect("load lopdf");
+    lopdf_doc.max_id = lopdf_doc
+        .objects
+        .keys()
+        .map(|&(id, _)| id)
+        .max()
+        .unwrap_or(0);
+    use lopdf::{dictionary, Object, Stream, StringFormat};
+
+    let page_id = *lopdf_doc.get_pages().get(&1).expect("page 1 exists");
+    let ap_stream = Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Form",
+            "BBox" => vec![0.0.into(), 0.0.into(), 50.0.into(), 50.0.into()],
+        },
+        b"q 0 0 1 rg 0 0 50 50 re f Q".to_vec(),
+    );
+    let ap_id = lopdf_doc.add_object(ap_stream);
+
+    // Flattenable markup annotation.
+    let square = dictionary! {
+        "Type" => Object::Name(b"Annot".to_vec()),
+        "Subtype" => Object::Name(b"Square".to_vec()),
+        "Rect" => vec![100.0.into(), 100.0.into(), 150.0.into(), 150.0.into()],
+        "AP" => dictionary! { "N" => Object::Reference(ap_id) },
+    };
+    let square_id = lopdf_doc.add_object(square);
+
+    // A reply annotation (no /AP, so it survives flatten) pointing at the square.
+    let reply = dictionary! {
+        "Type" => Object::Name(b"Annot".to_vec()),
+        "Subtype" => Object::Name(b"Text".to_vec()),
+        "Rect" => vec![200.0.into(), 100.0.into(), 220.0.into(), 120.0.into()],
+        "IRT" => Object::Reference(square_id),
+        "Contents" => Object::String(b"a reply".to_vec(), StringFormat::Literal),
+    };
+    let reply_id = lopdf_doc.add_object(reply);
+
+    // A tagged structure-tree OBJR referencing the square.
+    let objr = dictionary! {
+        "Type" => Object::Name(b"OBJR".to_vec()),
+        "Obj" => Object::Reference(square_id),
+    };
+    let objr_id = lopdf_doc.add_object(objr);
+    let elem = dictionary! {
+        "Type" => Object::Name(b"StructElem".to_vec()),
+        "S" => Object::Name(b"Annot".to_vec()),
+        "K" => Object::Reference(objr_id),
+    };
+    let elem_id = lopdf_doc.add_object(elem);
+    let struct_root = dictionary! {
+        "Type" => Object::Name(b"StructTreeRoot".to_vec()),
+        "K" => Object::Reference(elem_id),
+    };
+    let struct_root_id = lopdf_doc.add_object(struct_root);
+
+    if let Ok(Object::Dictionary(ref mut pd)) = lopdf_doc.get_object_mut(page_id) {
+        pd.set(
+            "Annots",
+            Object::Array(vec![
+                Object::Reference(square_id),
+                Object::Reference(reply_id),
+            ]),
+        );
+    }
+    let catalog_id = lopdf_doc
+        .trailer
+        .get(b"Root")
+        .ok()
+        .and_then(|o| o.as_reference().ok())
+        .expect("catalog /Root");
+    if let Ok(Object::Dictionary(ref mut cat)) = lopdf_doc.get_object_mut(catalog_id) {
+        cat.set("StructTreeRoot", Object::Reference(struct_root_id));
+    }
+
+    let mut modified_bytes = Vec::new();
+    lopdf_doc
+        .save_to(&mut modified_bytes)
+        .expect("save modified");
+
+    let mut doc = PdfDocument::from_bytes_with(
+        &modified_bytes,
+        OpenOptions::new().with_license_key("tier:enterprise"),
+    )
+    .expect("open from bytes");
+
+    let render_before = doc
+        .render_page(1, 150, ImageFormat::Png)
+        .expect("render before");
+    doc.flatten_annotations().expect("flatten");
+    let render_after = doc
+        .render_page(1, 150, ImageFormat::Png)
+        .expect("render after");
+    assert_eq!(
+        render_before, render_after,
+        "flatten must preserve render output"
+    );
+
+    let saved = doc.to_bytes().expect("to_bytes");
+    let reopened = lopdf::Document::load_mem(&saved).expect("reopen");
+
+    assert!(
+        !reopened.objects.contains_key(&square_id),
+        "flattened square must be removed"
+    );
+    let reply_dict = reopened.get_dictionary(reply_id).expect("reply survives");
+    assert!(
+        reply_dict.get(b"IRT").is_err(),
+        "/IRT pointing at a flattened annotation must be removed"
+    );
+    let objr_dict = reopened.get_dictionary(objr_id).expect("OBJR survives");
+    assert!(
+        objr_dict.get(b"Obj").is_err(),
+        "structure-tree OBJR /Obj pointing at a flattened annotation must be removed"
+    );
+
+    // Strongest guarantee: nothing anywhere still references the deleted square.
+    fn refs_id(obj: &Object, id: lopdf::ObjectId) -> bool {
+        match obj {
+            Object::Reference(r) => *r == id,
+            Object::Array(a) => a.iter().any(|o| refs_id(o, id)),
+            Object::Dictionary(d) => d.iter().any(|(_, o)| refs_id(o, id)),
+            Object::Stream(s) => s.dict.iter().any(|(_, o)| refs_id(o, id)),
+            _ => false,
+        }
+    }
+    for obj in reopened.objects.values() {
+        assert!(
+            !refs_id(obj, square_id),
+            "no dangling reference to the flattened annotation may remain"
+        );
+    }
+}

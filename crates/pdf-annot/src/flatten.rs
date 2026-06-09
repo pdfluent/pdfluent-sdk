@@ -471,8 +471,13 @@ pub fn flatten_annotations(doc: &mut lopdf::Document) -> Result<(), crate::error
     }
 
     // Purge the deleted annotation dictionaries and their popup companions.
+    // `delete_object` also strips every remaining reference to each id across the
+    // whole document — page `/Annots`, `/IRT` reply links, structure-tree `OBJR`
+    // `/Obj` entries, and `/Popup` back-references — so no dangling reference to a
+    // flattened annotation survives. (Cost is O(deleted × objects); flattening is
+    // not a hot path.)
     for id in deleted_objects.into_iter().chain(popups_to_remove) {
-        doc.objects.remove(&id);
+        doc.delete_object(id);
     }
 
     Ok(())
