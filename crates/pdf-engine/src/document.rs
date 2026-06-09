@@ -22,11 +22,12 @@ use pdf_render::pdf_interpret::{
     interpret_page, Cache, Context, InterpreterSettings, InterpreterWarning,
 };
 use pdf_render::pdf_syntax::object::dict::keys::{FIRST, NEXT, OUTLINES, TITLE};
-use pdf_render::pdf_syntax::object::Dict;
+use pdf_render::pdf_syntax::object::{Dict, ObjectIdentifier};
 use pdf_render::pdf_syntax::page::Page;
 use pdf_render::pdf_syntax::{Pdf, PdfLoadLimits};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use std::collections::BTreeSet;
 
 use kurbo::Rect;
 
@@ -509,7 +510,11 @@ impl PdfDocument {
             None => return Vec::new(),
         };
 
-        parse_outline_items(&first)
+        // `visited` breaks cyclic /Next loops and /First back-references;
+        // `depth` bounds deep nesting so a malformed outline cannot hang or
+        // overflow the stack.
+        let mut visited = BTreeSet::new();
+        parse_outline_items(&first, 0, &mut visited)
     }
 
     /// Run OCR on a page and return the recognized text and word positions.
@@ -707,19 +712,42 @@ mod extract_all_text_tests {
     }
 }
 
+/// Maximum outline (bookmark) nesting depth. Bounds recursion on adversarial
+/// `/First` chains; real outlines are far shallower.
+const MAX_OUTLINE_DEPTH: usize = 100;
+
 /// Walk the outline linked list (FIRST → NEXT chain).
-fn parse_outline_items(item_dict: &Dict<'_>) -> Vec<BookmarkItem> {
+///
+/// `visited` (object ids of already-seen items) breaks cyclic `/Next` loops and
+/// `/First` back-references; `depth` bounds deeply nested `/First` chains. Both
+/// protect against malformed/adversarial outlines hanging or overflowing.
+fn parse_outline_items(
+    item_dict: &Dict<'_>,
+    depth: usize,
+    visited: &mut BTreeSet<ObjectIdentifier>,
+) -> Vec<BookmarkItem> {
     let mut items = Vec::new();
+    if depth >= MAX_OUTLINE_DEPTH {
+        return items;
+    }
     let mut current: Option<Dict<'_>> = Some(item_dict.clone());
 
     while let Some(dict) = current {
+        // Stop if we re-enter an item: covers a /Next chain that loops back and
+        // a /First child that references an ancestor.
+        if let Some(id) = dict.obj_id() {
+            if !visited.insert(id) {
+                break;
+            }
+        }
+
         let title = dict
             .get::<pdf_render::pdf_syntax::object::String>(TITLE)
             .map(|s| bytes_to_string(s.as_bytes()))
             .unwrap_or_default();
 
         let children = match dict.get::<Dict<'_>>(FIRST) {
-            Some(child_dict) => parse_outline_items(&child_dict),
+            Some(child_dict) => parse_outline_items(&child_dict, depth + 1, visited),
             None => Vec::new(),
         };
 
@@ -770,6 +798,53 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../corpus")
             .join(name)
+    }
+
+    /// A cyclic outline (`/Next` chain that loops back) must not hang the
+    /// bookmark walker; the cycle guard breaks it into a finite list.
+    #[test]
+    fn cyclic_outline_terminates_and_is_bounded() {
+        fn cyclic_outline_pdf() -> Vec<u8> {
+            let objs: [&[u8]; 6] = [
+                b"<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>",
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+                b"<< /Type /Outlines /First 5 0 R >>",
+                b"<< /Title (A) /Next 6 0 R >>",
+                b"<< /Title (B) /Next 5 0 R >>", // /Next back to A -> cycle
+            ];
+            let mut buf = Vec::new();
+            let mut offsets = [0usize; 7];
+            buf.extend_from_slice(b"%PDF-1.7\n");
+            for (i, body) in objs.iter().enumerate() {
+                offsets[i + 1] = buf.len();
+                buf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+                buf.extend_from_slice(body);
+                buf.extend_from_slice(b"\nendobj\n");
+            }
+            let xref_off = buf.len();
+            buf.extend_from_slice(b"xref\n0 7\n0000000000 65535 f \n");
+            for o in &offsets[1..7] {
+                buf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+            }
+            buf.extend_from_slice(
+                format!("trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref_off}\n%%EOF")
+                    .as_bytes(),
+            );
+            buf
+        }
+
+        fn count(b: &BookmarkItem) -> usize {
+            1 + b.children.iter().map(count).sum::<usize>()
+        }
+
+        let doc = PdfDocument::open(cyclic_outline_pdf()).expect("open cyclic-outline PDF");
+        let bookmarks = doc.bookmarks();
+        let total: usize = bookmarks.iter().map(count).sum();
+        assert!(
+            total <= 2,
+            "cyclic /Next outline must not loop forever; got {total} items"
+        );
     }
 
     /// Cache-on vs cache-off: the shared decoded-image cache is a pure
