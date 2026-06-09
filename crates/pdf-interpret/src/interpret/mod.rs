@@ -111,6 +111,8 @@ pub struct InterpreterSettings {
     /// `None` preserves the historical unlimited behavior for callers that do
     /// not configure processing limits.
     pub max_operator_count: Option<u64>,
+    /// A shared cache to reuse between page interpretations (specifically for images).
+    pub shared_cache: Option<crate::Cache>,
 }
 
 /// Known paths for CJK fonts, ordered by preference.
@@ -188,6 +190,7 @@ impl Default for InterpreterSettings {
             render_annotations: true,
             skip_signature_widgets: true,
             max_operator_count: None,
+            shared_cache: None,
         }
     }
 }

@@ -39,7 +39,7 @@ impl<'a> Context<'a> {
         xref: &'a XRef,
         settings: InterpreterSettings,
     ) -> Self {
-        let cache = Cache::new();
+        let cache = settings.shared_cache.clone().unwrap_or_default();
         let state = State::new(initial_transform);
 
         Self::new_with(initial_transform, bbox, cache, xref, settings, state)

@@ -354,7 +354,9 @@ impl<'a> ImageXObject<'a> {
         &self,
         target_dimension: Option<(u32, u32)>,
     ) -> Option<DecodedImageXObject> {
-        DecodedImageXObject::new(self, target_dimension)
+        let key = crate::util::hash128(&(self.stream.cache_key(), target_dimension));
+        self.cache
+            .get_or_insert_image(key, || DecodedImageXObject::new(self, target_dimension))
     }
 
     pub(crate) fn width(&self) -> u32 {
@@ -375,6 +377,7 @@ impl<'a> ImageXObject<'a> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct DecodedImageXObject {
     pub(crate) rgb_data: Option<RgbData>,
     pub(crate) cmyk_data: Option<CmykData>,
