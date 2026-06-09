@@ -293,6 +293,20 @@ fn install_diagnostics_sink(
             warning,
         ));
     }));
+
+    // Seed load-time structural-recovery diagnostics once, at open. xref /
+    // page-tree rebuilds happen during parsing — before any warning sink runs —
+    // so they are read from the engine and pushed here rather than via the sink.
+    let recovery = engine.load_recovery();
+    if recovery.xref_rebuilt || recovery.page_tree_rebuilt {
+        let mut guard = collector.lock().unwrap_or_else(|e| e.into_inner());
+        if recovery.xref_rebuilt {
+            guard.push(crate::diagnostics::Diagnostic::xref_rebuilt());
+        }
+        if recovery.page_tree_rebuilt {
+            guard.push(crate::diagnostics::Diagnostic::page_tree_rebuilt());
+        }
+    }
     collector
 }
 

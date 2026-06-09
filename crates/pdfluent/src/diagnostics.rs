@@ -79,6 +79,40 @@ impl Diagnostic {
     pub const CODE_IMAGE_DECODE_FAILED: &'static str = "IMAGE_DECODE_FAILED";
     /// Stable code for a stream whose decompressed size exceeded the limit.
     pub const CODE_STREAM_TOO_LARGE: &'static str = "STREAM_TOO_LARGE";
+    /// Stable code for an invalid cross-reference table that was rebuilt.
+    pub const CODE_XREF_REBUILT: &'static str = "XREF_REBUILT";
+    /// Stable code for an invalid page tree recovered by brute-force scan.
+    pub const CODE_PAGE_TREE_REBUILT: &'static str = "PAGE_TREE_REBUILT";
+
+    /// Diagnostic for a cross-reference table rebuilt during load.
+    pub(crate) fn xref_rebuilt() -> Self {
+        Diagnostic {
+            severity: Severity::Warning,
+            category: DiagnosticCategory::Repair,
+            code: Self::CODE_XREF_REBUILT,
+            message: "The cross-reference table was invalid and was rebuilt by \
+                      scanning the file for objects; recovery may be incomplete."
+                .to_string(),
+            page: None,
+            object: None,
+            source: None,
+        }
+    }
+
+    /// Diagnostic for a page tree recovered by brute-force scan during load.
+    pub(crate) fn page_tree_rebuilt() -> Self {
+        Diagnostic {
+            severity: Severity::Warning,
+            category: DiagnosticCategory::Repair,
+            code: Self::CODE_PAGE_TREE_REBUILT,
+            message: "The page tree was invalid and pages were recovered by a \
+                      brute-force scan; page order may differ from the source."
+                .to_string(),
+            page: None,
+            object: None,
+            source: None,
+        }
+    }
 
     /// Translate an internal interpreter warning into a stable public
     /// diagnostic. Internal: the fork type never escapes the public surface.
