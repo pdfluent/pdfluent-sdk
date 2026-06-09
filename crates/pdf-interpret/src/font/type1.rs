@@ -7,7 +7,7 @@ use crate::font::{
     read_to_unicode, synthesize_unicode_map_from_encoding,
 };
 use crate::util::decode_or_warn;
-use crate::{CMapResolverFn, CacheKey, FontResolverFn, WarningSinkFn};
+use crate::{CMapResolverFn, CacheKey, FontResolverFn, InterpreterWarning, WarningSinkFn};
 use kurbo::BezPath;
 use log::warn;
 use pdf_font::cmap::{BfString, CMap};
@@ -48,6 +48,7 @@ impl Type1Font {
                     .unwrap_or("(no name)".to_string()),
                 standard_font.as_str()
             );
+            warning_sink(InterpreterWarning::UnsupportedFont);
 
             Some(Self(
                 cache_key,

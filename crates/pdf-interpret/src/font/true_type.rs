@@ -6,7 +6,7 @@ use crate::font::{
     strip_subset_prefix, synthesize_unicode_map_from_encoding, unicode_from_name,
 };
 use crate::util::{OptionLog, decode_or_warn};
-use crate::{CMapResolverFn, CacheKey, FontResolverFn, WarningSinkFn};
+use crate::{CMapResolverFn, CacheKey, FontResolverFn, InterpreterWarning, WarningSinkFn};
 use kurbo::BezPath;
 use log::warn;
 use pdf_font::cmap::{BfString, CMap};
@@ -82,6 +82,9 @@ impl TrueTypeFont {
                     .unwrap_or("(no name)".to_string()),
                 standard_font.as_str()
             );
+            // Surface the substitution to the diagnostics sink (always reached
+            // before the text-only branch, so one emission per substituted font).
+            warning_sink(InterpreterWarning::UnsupportedFont);
 
             Some(Self {
                 cache_key,
