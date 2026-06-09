@@ -5,6 +5,7 @@ edition.workspace = true
 license-file = "LICENSE"
 repository.workspace = true
 description = "Form data exchange (FDF/XFDF) and ZUGFeRD/Factur-X e-invoicing"
+readme = "README.md"
 
 [dependencies]
 lopdf.workspace = true

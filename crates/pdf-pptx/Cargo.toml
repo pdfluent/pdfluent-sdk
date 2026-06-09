@@ -5,6 +5,7 @@ edition.workspace = true
 license-file = "LICENSE"
 repository.workspace = true
 description = "PDF to PowerPoint PPTX conversion"
+readme = "README.md"
 
 [dependencies]
 lopdf.workspace = true
