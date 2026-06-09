@@ -1,0 +1,151 @@
+//! Integration tests for public diagnostics collection.
+
+use pdfluent::diagnostics::{Diagnostic, Severity};
+use pdfluent::prelude::*;
+use pdfluent::{OpenOptions, ProcessingLimits};
+use std::path::PathBuf;
+
+fn mini(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus-mini")
+        .join(name)
+}
+
+fn open(name: &str) -> PdfDocument {
+    PdfDocument::open_with(
+        mini(name),
+        OpenOptions::new().with_license_key("tier:enterprise"),
+    )
+    .expect("open")
+}
+
+fn open_with_stream_cap(name: &str, cap: u64) -> PdfDocument {
+    PdfDocument::open_with(
+        mini(name),
+        OpenOptions::new()
+            .with_license_key("tier:enterprise")
+            .with_processing_limits(ProcessingLimits::new().max_stream_bytes(cap)),
+    )
+    .expect("open")
+}
+
+#[test]
+fn clean_document_has_no_diagnostics() {
+    let doc = open("simple.pdf");
+    let _ = doc.render_page(1, 150, ImageFormat::Png).expect("render");
+    let diags = doc.diagnostics();
+    assert!(
+        diags.is_empty(),
+        "clean document must have no diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn stream_too_large_is_reported_as_diagnostic() {
+    let doc = open_with_stream_cap("scanned.pdf", 64);
+    let result = doc.render_page(1, 150, ImageFormat::Png);
+    assert!(
+        result.is_err(),
+        "a tiny per-stream cap should make the render fail"
+    );
+    let diags = doc.diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == Diagnostic::CODE_STREAM_TOO_LARGE && d.severity == Severity::Error),
+        "expected a STREAM_TOO_LARGE diagnostic; got {diags:?}"
+    );
+}
+
+#[test]
+fn take_diagnostics_drains_the_buffer() {
+    let doc = open_with_stream_cap("scanned.pdf", 64);
+    let _ = doc.render_page(1, 150, ImageFormat::Png);
+    let first = doc.take_diagnostics();
+    assert!(
+        !first.is_empty(),
+        "first take should return the collected diagnostics"
+    );
+    let second = doc.take_diagnostics();
+    assert!(
+        second.is_empty(),
+        "take must drain; the second take is empty"
+    );
+}
+
+#[test]
+fn corrupt_image_drop_is_reported_as_diagnostic() {
+    use lopdf::{dictionary, Object, Stream};
+    let mut doc = lopdf::Document::with_version("1.7");
+    let pages_id = doc.new_object_id();
+    // A DCTDecode (JPEG) image whose payload is not a valid JPEG.
+    let img = Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Image",
+            "Width" => 4, "Height" => 4, "BitsPerComponent" => 8,
+            "ColorSpace" => "DeviceRGB", "Filter" => "DCTDecode",
+        },
+        b"this is not a valid jpeg payload".to_vec(),
+    );
+    let img_id = doc.add_object(img);
+    let content = Stream::new(dictionary! {}, b"q 100 0 0 100 10 10 cm /Im0 Do Q".to_vec());
+    let content_id = doc.add_object(content);
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 120.into(), 120.into()],
+        "Resources" => dictionary! {
+            "XObject" => dictionary! { "Im0" => Object::Reference(img_id) },
+        },
+        "Contents" => Object::Reference(content_id),
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages", "Kids" => vec![page_id.into()], "Count" => 1,
+        }),
+    );
+    let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog_id);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+
+    let pdoc = PdfDocument::from_bytes_with(
+        &bytes,
+        OpenOptions::new().with_license_key("tier:enterprise"),
+    )
+    .expect("open corrupt-image PDF");
+    // Renders (the undecodable image is dropped) and reports the drop.
+    let _ = pdoc.render_page(1, 72, ImageFormat::Png).expect("render");
+    let diags = pdoc.diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == Diagnostic::CODE_IMAGE_DECODE_FAILED),
+        "expected IMAGE_DECODE_FAILED; got {diags:?}"
+    );
+}
+
+#[test]
+fn with_repair_does_not_change_load_behaviour() {
+    // Recovery is always-on; the advisory flag must not alter load success.
+    let with = PdfDocument::open_with(
+        mini("multi-page.pdf"),
+        OpenOptions::new()
+            .with_license_key("tier:enterprise")
+            .with_repair(true),
+    )
+    .expect("open repair=true");
+    let without = PdfDocument::open_with(
+        mini("multi-page.pdf"),
+        OpenOptions::new()
+            .with_license_key("tier:enterprise")
+            .with_repair(false),
+    )
+    .expect("open repair=false");
+    assert_eq!(
+        with.page_count(),
+        without.page_count(),
+        "with_repair must not change load behaviour (recovery is always-on)"
+    );
+}
