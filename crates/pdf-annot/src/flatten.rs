@@ -7,6 +7,21 @@
 use lopdf::{dictionary, Object, ObjectId, Stream};
 use std::collections::HashSet;
 
+/// Pick a `/XObject` resource name of the form `FlatAnnotN` that is not already
+/// present in `xobjects`. `next` is advanced past the chosen index so repeated
+/// calls stay monotonic. This makes flattening collision-proof: it never
+/// overwrites a pre-existing XObject, and a second flatten pass on an
+/// already-flattened page cannot clobber the names from the first.
+fn unique_xobject_name(xobjects: &lopdf::Dictionary, next: &mut usize) -> String {
+    loop {
+        let candidate = format!("FlatAnnot{}", *next);
+        *next += 1;
+        if !xobjects.has(candidate.as_bytes()) {
+            return candidate;
+        }
+    }
+}
+
 /// Convert a PDF object to a f64 number.
 fn as_number(obj: &Object) -> Option<f64> {
     match obj {
@@ -400,9 +415,10 @@ pub fn flatten_annotations(doc: &mut lopdf::Document) -> Result<(), crate::error
                 }
             };
 
-            // Insert into Resources /XObject
-            let ap_name = format!("FlatAnnot{}", flat_annot_count);
-            flat_annot_count += 1;
+            // Insert into Resources /XObject under a name that does not collide
+            // with any existing entry (including names left by a previous flatten
+            // pass), so flattening never overwrites an unrelated XObject.
+            let ap_name = unique_xobject_name(&xobjects, &mut flat_annot_count);
             xobjects.set(ap_name.as_bytes().to_vec(), Object::Reference(stream_id));
 
             // Append Do operator
@@ -460,4 +476,33 @@ pub fn flatten_annotations(doc: &mut lopdf::Document) -> Result<(), crate::error
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unique_xobject_name;
+    use lopdf::{Dictionary, Object};
+
+    #[test]
+    fn unique_xobject_name_skips_existing_entries() {
+        let mut xobjects = Dictionary::new();
+        xobjects.set("FlatAnnot0", Object::Null);
+        xobjects.set("FlatAnnot1", Object::Null);
+
+        // FlatAnnot0/1 already exist, so the first free name is FlatAnnot2.
+        let mut next = 0usize;
+        assert_eq!(unique_xobject_name(&xobjects, &mut next), "FlatAnnot2");
+
+        // After registering it, the next call stays monotonic and skips it.
+        xobjects.set("FlatAnnot2", Object::Null);
+        assert_eq!(unique_xobject_name(&xobjects, &mut next), "FlatAnnot3");
+    }
+
+    #[test]
+    fn unique_xobject_name_empty_dict_starts_at_zero() {
+        let xobjects = Dictionary::new();
+        let mut next = 0usize;
+        assert_eq!(unique_xobject_name(&xobjects, &mut next), "FlatAnnot0");
+        assert_eq!(unique_xobject_name(&xobjects, &mut next), "FlatAnnot1");
+    }
 }

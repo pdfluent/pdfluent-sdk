@@ -491,3 +491,76 @@ fn test_annotation_flattening_removes_popup_companion_no_dangling_parent() {
         }
     }
 }
+
+#[test]
+fn test_annotation_flattening_is_idempotent() {
+    // Flattening an already-flattened document must be a safe no-op: there are
+    // no flattenable annotations left, so the rendered output is unchanged and
+    // no FlatAnnot name collision can corrupt the page.
+    let original_bytes = read_and_fix_simple_pdf();
+
+    let mut lopdf_doc = lopdf::Document::load_mem(&original_bytes).expect("load lopdf");
+    lopdf_doc.max_id = lopdf_doc
+        .objects
+        .keys()
+        .map(|&(id, _)| id)
+        .max()
+        .unwrap_or(0);
+    use lopdf::{dictionary, Object, Stream};
+
+    let page_id = *lopdf_doc.get_pages().get(&1).expect("page 1 exists");
+    let ap_stream = Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Form",
+            "BBox" => vec![0.0.into(), 0.0.into(), 50.0.into(), 50.0.into()],
+        },
+        b"q 0 0 1 rg 0 0 50 50 re f Q".to_vec(),
+    );
+    let ap_id = lopdf_doc.add_object(ap_stream);
+    let square = dictionary! {
+        "Type" => Object::Name(b"Annot".to_vec()),
+        "Subtype" => Object::Name(b"Square".to_vec()),
+        "Rect" => vec![100.0.into(), 100.0.into(), 150.0.into(), 150.0.into()],
+        "AP" => dictionary! { "N" => Object::Reference(ap_id) },
+    };
+    let square_id = lopdf_doc.add_object(square);
+    if let Ok(Object::Dictionary(ref mut pd)) = lopdf_doc.get_object_mut(page_id) {
+        pd.set("Annots", Object::Array(vec![Object::Reference(square_id)]));
+    }
+    let mut modified_bytes = Vec::new();
+    lopdf_doc
+        .save_to(&mut modified_bytes)
+        .expect("save modified");
+
+    let mut doc = PdfDocument::from_bytes_with(
+        &modified_bytes,
+        OpenOptions::new().with_license_key("tier:enterprise"),
+    )
+    .expect("open from bytes");
+
+    // First flatten bakes the appearance and removes the annotation.
+    doc.flatten_annotations().expect("first flatten");
+    let render_once = doc
+        .render_page(1, 150, ImageFormat::Png)
+        .expect("render once");
+
+    // Second flatten must not error and must not change the rendering.
+    doc.flatten_annotations()
+        .expect("second flatten must not error");
+    let render_twice = doc
+        .render_page(1, 150, ImageFormat::Png)
+        .expect("render twice");
+
+    assert_eq!(
+        render_once, render_twice,
+        "repeated flattening must be idempotent"
+    );
+
+    let saved = doc.to_bytes().expect("to_bytes");
+    let reopened = lopdf::Document::load_mem(&saved).expect("reopen");
+    assert!(
+        !reopened.objects.contains_key(&square_id),
+        "flattened annotation must stay removed across repeated flattening"
+    );
+}
