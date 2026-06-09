@@ -1,3 +1,7 @@
+//! Integration tests for Sprint A/B/C SDK hardening: the image cache,
+//! incremental save, and annotation flattening (including idempotency and
+//! reference-stripping).
+
 use pdfluent::prelude::*;
 use pdfluent::{Error, ImageFormat, OpenOptions, SaveOptions};
 use std::path::PathBuf;

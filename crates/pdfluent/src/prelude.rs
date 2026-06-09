@@ -5,6 +5,7 @@
 pub use crate::capability::Capability;
 pub use crate::compliance::{PdfAProfile, PdfAValidationReport};
 pub use crate::decoration::PageDecoration;
+pub use crate::diagnostics::{Diagnostic, DiagnosticCategory, Severity};
 pub use crate::document::{OpenOptions, PdfDocument, SaveOptions, TextBlock};
 pub use crate::encrypt::{EncryptOptions, EncryptionAlgorithm, Permissions};
 pub use crate::error::{Error, Result};
@@ -19,5 +20,7 @@ pub use crate::parity::{
 pub use crate::redact::RedactOptions;
 pub use crate::signer::{PadesProfile, PdfSigner, Pkcs12Signer, SignOptions};
 pub use crate::structure::{AnnotationInfo, Attachment, Outline};
+#[cfg(feature = "pdfa")]
+pub use crate::tagged::{DocumentStructure, StructureNode};
 pub use crate::tier::Tier;
 pub use crate::watermark::{Layer, Position, Rotation, WatermarkOptions};
