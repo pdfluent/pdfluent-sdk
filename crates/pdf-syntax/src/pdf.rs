@@ -16,7 +16,13 @@ use crate::metadata::Metadata;
 /// Recovery is always attempted automatically; these flags let a caller learn
 /// that it happened, so a repaired document is distinguishable from a clean
 /// one. They never change the (always-on) recovery behaviour.
+///
+/// Marked `#[non_exhaustive]` so future recovery categories (e.g. an
+/// object-stream rebuild flag) can be added without a breaking change.
+/// Downstream crates read fields by name; they must not construct or
+/// exhaustively destructure this struct.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LoadRecovery {
     /// The cross-reference table was invalid and rebuilt by scanning the file
     /// for objects. Object recovery may be incomplete.

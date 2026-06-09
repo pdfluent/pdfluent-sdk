@@ -53,7 +53,8 @@ If you discover a security vulnerability in PDFluent, please report it responsib
 
 ### Fuzzing
 
-17 fuzz targets covering all input-facing APIs:
+19 libfuzzer targets (declared in `fuzz/Cargo.toml`, sources in
+`fuzz/fuzz_targets/`) cover the input-facing APIs:
 
 - `fuzz_pdf_parser` — PDF parsing and xref resolution
 - `fuzz_content_stream` — Content stream operator parsing
@@ -66,13 +67,22 @@ If you discover a security vulnerability in PDFluent, please report it responsib
 - `fuzz_text_replace` — Text replacement in content streams
 - `fuzz_redact` — Text and area redaction
 - `fuzz_pdfa_convert` — PDF/A conversion pipeline
+- `fuzz_pdfa_validate` — PDF/A validation
 - `fuzz_lopdf_roundtrip` — lopdf load/save roundtrip
 - `fuzz_form_fill` — AcroForm field writing
 - `fuzz_annot_create` — Annotation creation
-- `fuzz_sign` — Digital signature creation
-- `fuzz_xfa_template` — XFA template parsing
+- `fuzz_sign` — Detached signature creation
+- `fuzz_sign_document` — Document signing pipeline
+- `fuzz_xfa_extract` — XFA template/data extraction
+- `fuzz_g3_content_stream` — Content-stream tokenizer
 
-Fuzzing runs nightly in CI (300 seconds per target) and on every PR (smoke test, 60 seconds).
+A scheduled GitHub Actions workflow (`.github/workflows/fuzz.yml`) runs a
+seven-target core subset (`fuzz_pdf_parser`, `fuzz_content_stream`,
+`fuzz_xref`, `fuzz_filters`, `fuzz_data_dom`, `fuzz_formcalc`, `fuzz_som_path`)
+on a weekly schedule at 300 seconds per target, and can be dispatched manually
+(`workflow_dispatch`) for any target and duration. Crashes are uploaded as
+artifacts and fail the job. Any target can be run locally with
+`cargo +nightly fuzz run <target>`.
 
 ### Dependency management
 
