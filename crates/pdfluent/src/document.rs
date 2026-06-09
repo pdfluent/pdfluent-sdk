@@ -1878,6 +1878,16 @@ impl PdfDocument {
         Ok(buf)
     }
 
+    /// Flatten all non-widget and non-link annotations containing appearance
+    /// streams (`/AP` `/N`) directly into the page content streams, removing them
+    /// from the pages' annotation catalogs and from the document.
+    pub fn flatten_annotations(&mut self) -> Result<()> {
+        self.require_capability(Capability::PdfWrite)?;
+        pdf_annot::flatten_annotations(&mut self.lopdf)
+            .map_err(|e| internal_error(format!("Failed to flatten annotations: {e}")))?;
+        self.refresh_from_lopdf()
+    }
+
     /// Write the document to a [`std::io::Write`] sink.
     pub fn write_to<W: Write>(&self, mut writer: W) -> Result<()> {
         self.require_capability(Capability::PdfWrite)?;

@@ -4530,6 +4530,7 @@ dependencies = [
  "criterion",
  "getrandom 0.2.17",
  "image",
+ "pdf-annot",
  "pdf-compliance",
  "pdf-docx",
  "pdf-engine",

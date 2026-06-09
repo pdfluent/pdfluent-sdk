@@ -9,6 +9,8 @@ mod appearance;
 pub mod appearance_writer;
 pub mod builder;
 pub mod error;
+#[cfg(feature = "write")]
+pub mod flatten;
 mod geometric;
 mod link;
 mod markup;
@@ -17,6 +19,8 @@ mod types;
 
 pub use annotation::*;
 pub use appearance::*;
+#[cfg(feature = "write")]
+pub use flatten::flatten_annotations;
 pub use geometric::*;
 pub use link::*;
 pub use markup::*;
