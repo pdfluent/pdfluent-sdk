@@ -19,7 +19,7 @@ anyhow.workspace = true
 clap.workspace = true
 clap_complete = "4"
 serde_json.workspace = true
-pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.8" }
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.9" }
 
 [dev-dependencies]
 serde_json.workspace = true
