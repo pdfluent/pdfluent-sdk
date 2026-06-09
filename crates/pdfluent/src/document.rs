@@ -23,7 +23,7 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::capability::Capability;
 use crate::decoration::PageDecoration;
@@ -65,7 +65,17 @@ impl OpenOptions {
         self
     }
 
-    /// Enable repair of malformed PDFs.
+    /// Request best-effort repair of a malformed PDF.
+    ///
+    /// **Recovery is always on.** The engine *unconditionally* attempts to
+    /// recover from a damaged cross-reference table or page tree (brute-force
+    /// object/page scanning) when normal parsing fails — independent of this
+    /// flag. This option is therefore advisory: it never disables recovery and
+    /// does not currently change load behaviour. It is retained for API
+    /// compatibility and reserved for future control of repair *diagnostics*
+    /// verbosity (see [`PdfDocument::diagnostics`](crate::PdfDocument::diagnostics)).
+    /// It is intentionally **not** a hidden switch: recovery already happens for
+    /// every document, reported or not.
     pub fn with_repair(mut self, repair: bool) -> Self {
         self.repair = repair;
         self
@@ -261,6 +271,29 @@ pub struct PdfDocument {
     /// loaded buffer. This does not clone the buffer in memory, but rather
     /// shares the existing allocation that was already read into memory.
     original_bytes: Option<Arc<Vec<u8>>>,
+    /// Diagnostics collected from interpreter warnings during render/extract.
+    /// Shared with the warning sink installed on `engine`; interior-mutable so
+    /// read-side operations on `&self` can accumulate into it.
+    diagnostics: Arc<Mutex<Vec<crate::diagnostics::Diagnostic>>>,
+}
+
+/// Build a diagnostics collector, install a warning sink on `engine` that
+/// translates each interpreter warning into a public [`Diagnostic`] and pushes
+/// it, and return the shared collector. The sink is poison-tolerant so a
+/// panicked holder of the lock never cascades into the render path.
+fn install_diagnostics_sink(
+    engine: &mut pdf_engine::PdfDocument,
+) -> Arc<Mutex<Vec<crate::diagnostics::Diagnostic>>> {
+    let collector: Arc<Mutex<Vec<crate::diagnostics::Diagnostic>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let sink_target = Arc::clone(&collector);
+    engine.set_warning_sink(Arc::new(move |warning| {
+        let mut guard = sink_target.lock().unwrap_or_else(|e| e.into_inner());
+        guard.push(crate::diagnostics::Diagnostic::from_interpreter_warning(
+            warning,
+        ));
+    }));
+    collector
 }
 
 impl std::fmt::Debug for PdfDocument {
@@ -453,11 +486,12 @@ impl PdfDocument {
         }
 
         let shared = Arc::new(bytes.to_vec());
-        let engine = open_engine_from_shared_bytes(
+        let mut engine = open_engine_from_shared_bytes(
             shared.clone(),
             opts.password.as_deref(),
             opts.processing_limits.as_ref(),
         )?;
+        let diagnostics = install_diagnostics_sink(&mut engine);
         let lopdf = load_lopdf_from_shared_bytes(&shared, opts.password.as_deref())?;
 
         Ok(Self {
@@ -466,6 +500,7 @@ impl PdfDocument {
             license_key_override: opts.license_key.clone(),
             processing_limits: opts.processing_limits.clone(),
             original_bytes: Some(shared),
+            diagnostics,
         })
     }
 
@@ -533,6 +568,47 @@ impl PdfDocument {
     /// Total number of pages.
     pub fn page_count(&self) -> usize {
         self.engine.page_count()
+    }
+
+    // ---------- Diagnostics ----------
+
+    /// Diagnostics collected so far from render and text-extraction operations.
+    ///
+    /// Each [`Diagnostic`](crate::diagnostics::Diagnostic) records a
+    /// degradation the engine recovered from — a substituted font, a dropped
+    /// image, an exceeded resource limit — that would otherwise be invisible to
+    /// the caller. A document that processed cleanly returns an empty list.
+    ///
+    /// Diagnostics accumulate across operations on this document; use
+    /// [`take_diagnostics`](Self::take_diagnostics) to drain them (for example
+    /// to scope diagnostics to a single render). The returned list is a
+    /// snapshot copy.
+    pub fn diagnostics(&self) -> Vec<crate::diagnostics::Diagnostic> {
+        self.diagnostics
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Take and clear the collected diagnostics, returning them.
+    ///
+    /// Like [`diagnostics`](Self::diagnostics) but drains the buffer, so the
+    /// next call only sees diagnostics raised after this one. Useful to attach
+    /// diagnostics to a specific operation:
+    ///
+    /// ```no_run
+    /// # use pdfluent::prelude::*;
+    /// # fn run(doc: &PdfDocument) -> pdfluent::Result<()> {
+    /// let _ = doc.take_diagnostics(); // clear
+    /// let _png = doc.render_page(1, 150, ImageFormat::Png)?;
+    /// for d in doc.take_diagnostics() {
+    ///     eprintln!("[{}] {}", d.code, d.message);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn take_diagnostics(&self) -> Vec<crate::diagnostics::Diagnostic> {
+        std::mem::take(&mut *self.diagnostics.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// PDF version declared in the document header.
@@ -2335,6 +2411,21 @@ mod tests {
         let mut bytes = Vec::new();
         doc.save_to(&mut bytes).expect("build minimal fixture");
         bytes
+    }
+
+    #[test]
+    fn diagnostics_survive_a_poisoned_lock() {
+        let doc = super::PdfDocument::from_bytes(&minimal_pdf_bytes()).expect("open minimal pdf");
+        // Poison the diagnostics mutex: a thread panics while holding the lock.
+        let handle = Arc::clone(&doc.diagnostics);
+        let _ = std::thread::spawn(move || {
+            let _guard = handle.lock().expect("acquire before poisoning");
+            panic!("intentionally poison the diagnostics lock");
+        })
+        .join();
+        // The public accessors must recover the poisoned guard, not cascade-panic.
+        let _ = doc.diagnostics();
+        let _ = doc.take_diagnostics();
     }
 
     #[test]
