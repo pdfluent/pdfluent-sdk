@@ -59,6 +59,7 @@ pub mod form;
 pub mod license;
 pub mod merger;
 pub mod metadata;
+mod page_labels;
 pub mod parity;
 pub mod prelude;
 pub mod redact;

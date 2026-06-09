@@ -1697,6 +1697,18 @@ impl PdfDocument {
         Ok(crate::structure::read_attachments(&self.lopdf))
     }
 
+    /// Compute the display label of every page from the document's
+    /// `/PageLabels` (ISO 32000-1 §12.4.2).
+    ///
+    /// Returns exactly [`page_count`](Self::page_count) entries, in page order.
+    /// Documents commonly label front matter as `i, ii, iii` and the body as
+    /// `1, 2, 3`, or use prefixes like `A-1`. If the document declares no page
+    /// labels, every page gets its decimal physical number (`"1"`, `"2"`, …),
+    /// matching the viewer default.
+    pub fn page_labels(&self) -> Vec<String> {
+        crate::page_labels::read_page_labels(&self.lopdf, self.page_count())
+    }
+
     /// Extract the bytes of the embedded file with the given name, or
     /// `None` if no attachment with that name exists.
     pub fn attachment_bytes(&self, name: &str) -> Result<Option<Vec<u8>>> {
