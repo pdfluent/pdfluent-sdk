@@ -1,66 +1,65 @@
-# Diagnostics & Repair Reporting — Deferred (B) items
+# Diagnostics & Repair Reporting — status
 
-Engineering note accompanying the public diagnostics layer
-(`pdfluent::diagnostics`). The A-slice — collecting and exposing the three
-interpreter warnings that the engine already emits — is implemented. The items
-below are deferred: they require a recovery/decode **signal that does not exist
-yet** in the read path, which is a fork-level change, not a bounded patch.
+Engineering note for the public diagnostics layer (`pdfluent::diagnostics`).
+Tracks which recovery/degradation signals are now observable and which remain
+deferred. Recovery behaviour is unchanged throughout — these items add
+*observability*, never strictness.
 
-## Implemented (A)
-- Public `Diagnostic { severity, category, code, message, page, object, source }`
-  with `Severity` / `DiagnosticCategory` enums and stable `CODE_*` strings.
-- A collecting, poison-tolerant warning sink installed on the engine at open;
-  `PdfDocument::diagnostics()` / `take_diagnostics()`.
-- Codes: `FONT_UNSUPPORTED`, `IMAGE_DECODE_FAILED`, `STREAM_TOO_LARGE`.
-- `OpenOptions::with_repair` clarified (recovery is always-on; flag advisory).
+## Implemented
+
+Public model `Diagnostic { severity, category, code, message, page, object,
+source }` + `Severity` / `DiagnosticCategory`; collected via
+`PdfDocument::diagnostics()` / `take_diagnostics()` (poison-tolerant sink).
+
+| Code | Category | Source | Status |
+|---|---|---|---|
+| `FONT_UNSUPPORTED` | Font | pd-interpret font fallback (TrueType/Type1/CID) emits at the substitution sites | **done** |
+| `IMAGE_DECODE_FAILED` | Image | image decode error path | **done** |
+| `STREAM_TOO_LARGE` | Limit | `max_stream_bytes` cap | **done** |
+| `XREF_REBUILT` | Repair | `Pdf::load_recovery().xref_rebuilt` (top-level xref fallback) | **done** |
+| `PAGE_TREE_REBUILT` | Repair | `Pdf::load_recovery().page_tree_rebuilt` (`CachedPages` brute-force) | **done** |
+
+Signal plumbing: pd-syntax `LoadRecovery` → `pd_engine::PdfDocument::load_recovery()`
+→ seeded into the pdfluent collector once at open.
 
 ## Deferred (B)
 
-### B1 — Page-tree brute-force recovery reporting
-- **Problem:** `pdf-syntax` reconstructs a broken page tree via
-  `Pages::new_brute_force` and only emits a `log::warn!` — no programmatic
-  signal reaches `pdf-engine`/`pdfluent`. A caller cannot learn that page order
-  was reconstructed.
-- **Why B:** the loader (`CachedPages::new`) returns `Option<Pages>` with no
-  recovery flag; reporting needs a `RepairReport { pages_brute_forced, … }`
-  threaded out of `pdf-syntax` → `pdf-engine` → `pdfluent`. Fork-level signal +
-  load-chain plumbing.
-- **Maps to code:** future `DiagnosticCategory::Repair`, e.g. `PAGE_TREE_REBUILT`.
+### B-decode — Content-stream decode-leniency reporting
+- **Finding:** `Stream::decoded()` returns `Err(DecodeFailure)` only for hard
+  failures; the **filter** decoders (e.g. Flate) are lenient and return partial
+  `Ok` bytes on malformed input (verified: a bad zlib header still yields
+  `Some` from `page_stream`). So there is no signal that a content stream was
+  decoded leniently.
+- **Why B:** surfacing it needs a `recovered`/`lenient` flag produced by the
+  filter decoders and threaded through `decoded()`/`decoded_image()` to its
+  **18 call sites** — and the leniency must be *preserved* (going strict is a
+  forbidden behaviour change). Broad fork change, not a bounded patch.
+- **Would map to:** `CONTENT_DECODE_DEGRADED` (category `Decode`).
 
-### B2 — Xref / object repair reporting
-- **Problem:** `pdf-syntax` rebuilds an invalid xref by brute-force object scan
-  (`xref::fallback`), again only `log::warn!`. Recovered/lost object counts are
-  not surfaced (qpdf reports per-object repairs).
-- **Why B:** same as B1 — the recovery is inside the fork loader with no return
-  channel; needs `XRefRepairInfo { objects_recovered, objects_lost }` propagated
-  through the load chain.
-- **Maps to code:** `XREF_REBUILT`.
+### B-xref-detail — Granular xref / object repair counts
+- `XREF_REBUILT` reports *that* the xref was rebuilt, not which objects were
+  recovered/lost, and the deeper in-stream "broken xref, attempting to repair"
+  paths are not itemised. A per-object `XRefRepairInfo { recovered, lost }`
+  needs more return channels out of the fork's xref builder. Low marginal value
+  over the boolean already shipped.
+- **Note:** `XREF_REBUILT` is surfaced via pdfluent only when **lopdf also**
+  loads the document (pdfluent loads pd-syntax *and* lopdf, and lopdf's reader
+  is stricter on broken xrefs). The fork signal itself is validated at the
+  pd-engine level regardless (`load_recovery().xref_rebuilt`).
 
-### B3 — Decode-leniency reporting
-- **Problem:** `Stream::decoded()` is intentionally lenient — a corrupt content
-  stream returns best-effort bytes (verified: `page_stream()` returns `Some`
-  even on an invalid zlib header), so a *content*-stream decode failure leaves
-  no signal. (`ImageDecodeFailure` exists because image decode is a separate,
-  error-returning path — and is already surfaced here.)
-- **Why B:** distinguishing a clean decode from a lenient one needs the decode
-  path to return a `recovered` flag (or emit through a sink) without removing
-  the leniency that handles real-world broken PDFs. Fork-level change to the
-  decode API + every consumer.
-- **Maps to code:** `CONTENT_DECODE_DEGRADED`.
+### B-object-attr — Object-id attribution
+- Diagnostics carry an `object: Option<u32>` field, currently always `None`.
+  Populating it needs the warning variants to carry the object id, which breaks
+  `InterpreterWarning`'s `Copy` derive (relied on by the limit-collector), i.e.
+  a variant redesign. Deferred.
 
-### B4 — Comprehensive font-substitution reporting + per-page/object attribution
-- **Problem:** `UnsupportedFont` is emitted for some cases (e.g. CID
-  non-identity) but the descriptor-based fallback to a standard font is mostly
-  silent, and warnings carry no page/object id (the `Diagnostic.page`/`object`
-  fields are populated as `None`).
-- **Why B:** richer emission requires adding warning calls at the silent
-  fallback sites in `pdf-interpret` (fork), and per-page/object attribution
-  requires per-operation context threading that is race-safe under the `&self`
-  (shareable) render API — more than a bounded patch.
-- **Maps to code:** extend `FONT_UNSUPPORTED` payload + `FONT_SUBSTITUTED`.
+## Rejected (C)
 
-## Note
-None of the B-items change recovery *behaviour* — recovery is and stays
-always-on. They add **observability** of recovery that currently happens
-silently. They are gated on fork-level signal plumbing, which is why they are
-deferred rather than bundled into this bounded A-slice.
+### Page-number attribution
+- Attaching a page index to interpreter warnings is **unreliable under the
+  current architecture**: `render_page` / `extract_text` take `&self`, so the
+  same document can be rendered concurrently, and any per-operation "current
+  page" context shared through the collector would race across threads. Per the
+  project rule (avoid attribution that is unreliable), the `page` field is left
+  `None` rather than populated incorrectly. Revisit only if the render API gains
+  a per-call diagnostic context.
