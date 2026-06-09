@@ -7,12 +7,13 @@ use crate::object::Name;
 use crate::object::Rect;
 use crate::object::Stream;
 use crate::object::dict::keys::*;
-use crate::object::{Object, ObjectLike};
+use crate::object::{Object, ObjectIdentifier, ObjectLike};
 use crate::reader::ReaderContext;
 use crate::sync::OnceLock;
 use crate::util::FloatExt;
 use crate::xref::XRef;
 use alloc::boxed::Box;
+use alloc::collections::BTreeSet;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Deref;
@@ -124,7 +125,16 @@ fn resolve_pages<'a>(
         .map(|d| d as usize)
         .unwrap_or(MAX_PAGE_TREE_DEPTH);
 
-    resolve_pages_depth(pages_dict, entries, ctx, resources, 0, max_depth)
+    let mut visited = BTreeSet::new();
+    resolve_pages_depth(
+        pages_dict,
+        entries,
+        ctx,
+        resources,
+        0,
+        max_depth,
+        &mut visited,
+    )
 }
 
 fn resolve_pages_depth<'a>(
@@ -134,10 +144,22 @@ fn resolve_pages_depth<'a>(
     resources: Resources<'a>,
     depth: usize,
     max_depth: usize,
+    visited: &mut BTreeSet<ObjectIdentifier>,
 ) -> Option<()> {
     if depth > max_depth {
         log::warn!("Page tree depth exceeds {max_depth}, stopping traversal");
         return None;
+    }
+
+    // Cycle protection: a /Pages node reachable from itself (directly or via a
+    // /Kids back-reference) would otherwise be re-walked, duplicating pages and
+    // wasting work up to the depth cap. Stop the first time a node is re-entered.
+    // Inline (non-indirect) nodes have no object id and are simply not tracked.
+    if let Some(node_id) = pages_dict.obj_id()
+        && !visited.insert(node_id)
+    {
+        log::warn!("Page tree cycle detected at {node_id:?}, stopping traversal");
+        return Some(());
     }
 
     if let Some(media_box) = pages_dict.get::<Rect>(MEDIA_BOX) {
@@ -176,6 +198,7 @@ fn resolve_pages_depth<'a>(
                     resources.clone(),
                     depth + 1,
                     max_depth,
+                    visited,
                 );
             }
             // Let's be lenient and assume it's a `Page` in case it's `None` or something else
@@ -587,5 +610,53 @@ pub(crate) mod cached {
         pub(crate) fn get(&self) -> &Pages<'_> {
             &self.pages
         }
+    }
+}
+
+#[cfg(test)]
+mod cycle_tests {
+    use crate::pdf::Pdf;
+    use alloc::format;
+    use alloc::vec::Vec;
+
+    /// Build a minimal PDF whose page tree contains a self-cycle: the single
+    /// `/Pages` node lists a real `/Page` followed by a back-reference to
+    /// itself. Without cycle detection the walker re-enters the node up to the
+    /// depth cap, duplicating the page hundreds of times.
+    fn cyclic_pages_pdf() -> Vec<u8> {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut offsets = [0usize; 4];
+        buf.extend_from_slice(b"%PDF-1.7\n");
+        offsets[1] = buf.len();
+        buf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        offsets[2] = buf.len();
+        buf.extend_from_slice(
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R 2 0 R] /Count 1 >>\nendobj\n",
+        );
+        offsets[3] = buf.len();
+        buf.extend_from_slice(
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n",
+        );
+        let xref_off = buf.len();
+        buf.extend_from_slice(b"xref\n0 4\n0000000000 65535 f \n");
+        for off in &offsets[1..4] {
+            buf.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+        }
+        buf.extend_from_slice(
+            format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref_off}\n%%EOF").as_bytes(),
+        );
+        buf
+    }
+
+    #[test]
+    fn cyclic_page_tree_yields_one_page_without_runaway() {
+        let pdf = Pdf::new(cyclic_pages_pdf()).expect("cyclic PDF should still load");
+        // Exactly the one real page; the /Kids self-reference is detected and
+        // skipped. Without cycle detection this would be hundreds of duplicates.
+        assert_eq!(
+            pdf.pages().len(),
+            1,
+            "page-tree cycle must not duplicate pages"
+        );
     }
 }
