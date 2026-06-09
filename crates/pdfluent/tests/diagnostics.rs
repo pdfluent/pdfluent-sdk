@@ -1,6 +1,6 @@
 //! Integration tests for public diagnostics collection.
 
-use pdfluent::diagnostics::{Diagnostic, Severity};
+use pdfluent::diagnostics::{Diagnostic, DiagnosticCategory, Severity};
 use pdfluent::prelude::*;
 use pdfluent::{OpenOptions, ProcessingLimits};
 use std::path::PathBuf;
@@ -147,5 +147,57 @@ fn with_repair_does_not_change_load_behaviour() {
         with.page_count(),
         without.page_count(),
         "with_repair must not change load behaviour (recovery is always-on)"
+    );
+}
+
+#[test]
+fn broken_page_tree_reports_page_tree_rebuilt() {
+    // Valid xref (both loaders parse it) but the catalog's /Pages points at a
+    // missing object; pd-syntax recovers pages via brute-force scan.
+    fn broken_page_tree_pdf() -> Vec<u8> {
+        let objs: [&[u8]; 3] = [
+            b"<< /Type /Catalog /Pages 99 0 R >>", // 99 missing -> page tree broken
+            b"<< /Type /Page /MediaBox [0 0 100 100] /Contents 3 0 R >>",
+            b"<< /Length 5 >>\nstream\nBT ET\nendstream",
+        ];
+        let mut buf = Vec::new();
+        let mut off = [0usize; 4];
+        buf.extend_from_slice(b"%PDF-1.7\n");
+        for (i, body) in objs.iter().enumerate() {
+            off[i + 1] = buf.len();
+            buf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            buf.extend_from_slice(body);
+            buf.extend_from_slice(b"\nendobj\n");
+        }
+        let xref_off = buf.len();
+        buf.extend_from_slice(b"xref\n0 4\n0000000000 65535 f \n");
+        for o in &off[1..4] {
+            buf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+        }
+        buf.extend_from_slice(
+            format!("trailer\n<< /Root 1 0 R /Size 4 >>\nstartxref\n{xref_off}\n%%EOF").as_bytes(),
+        );
+        buf
+    }
+
+    let doc = PdfDocument::from_bytes_with(
+        &broken_page_tree_pdf(),
+        OpenOptions::new().with_license_key("tier:enterprise"),
+    )
+    .expect("open should recover the page tree");
+    let diags = doc.diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == Diagnostic::CODE_PAGE_TREE_REBUILT
+                && d.category == DiagnosticCategory::Repair),
+        "expected PAGE_TREE_REBUILT; got {diags:?}"
+    );
+    // The xref is valid, so it must NOT falsely report an xref rebuild.
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.code == Diagnostic::CODE_XREF_REBUILT),
+        "xref is valid; must not report XREF_REBUILT: {diags:?}"
     );
 }
