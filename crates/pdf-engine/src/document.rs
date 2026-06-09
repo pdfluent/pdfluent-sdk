@@ -18,7 +18,9 @@ use crate::thumbnail::ThumbnailOptions;
 use pdf_forms::parse::parse_acroform;
 use pdf_forms::tree::{FieldType, FieldValue};
 use pdf_render::pdf_interpret::PageExt;
-use pdf_render::pdf_interpret::{interpret_page, Context, InterpreterSettings, InterpreterWarning};
+use pdf_render::pdf_interpret::{
+    interpret_page, Cache, Context, InterpreterSettings, InterpreterWarning,
+};
 use pdf_render::pdf_syntax::object::dict::keys::{FIRST, NEXT, OUTLINES, TITLE};
 use pdf_render::pdf_syntax::object::Dict;
 use pdf_render::pdf_syntax::page::Page;
@@ -71,10 +73,11 @@ impl PdfDocument {
             }
             _ => EngineError::InvalidPdf(format!("{e:?}")),
         })?;
-        Ok(Self {
-            pdf,
-            settings: InterpreterSettings::default(),
-        })
+        let settings = InterpreterSettings {
+            shared_cache: Some(Cache::new()),
+            ..InterpreterSettings::default()
+        };
+        Ok(Self { pdf, settings })
     }
 
     /// Open a PDF from bytes with processing limits.
@@ -94,6 +97,7 @@ impl PdfDocument {
         })?;
         let settings = InterpreterSettings {
             max_operator_count: Some(limits.max_operator_count),
+            shared_cache: Some(Cache::new()),
             ..InterpreterSettings::default()
         };
         Ok(Self { pdf, settings })
@@ -110,10 +114,11 @@ impl PdfDocument {
             }
             _ => EngineError::InvalidPdf(format!("{e:?}")),
         })?;
-        Ok(Self {
-            pdf,
-            settings: InterpreterSettings::default(),
-        })
+        let settings = InterpreterSettings {
+            shared_cache: Some(Cache::new()),
+            ..InterpreterSettings::default()
+        };
+        Ok(Self { pdf, settings })
     }
 
     /// Open a password-protected PDF with processing limits.
@@ -136,6 +141,7 @@ impl PdfDocument {
         )?;
         let settings = InterpreterSettings {
             max_operator_count: Some(limits.max_operator_count),
+            shared_cache: Some(Cache::new()),
             ..InterpreterSettings::default()
         };
         Ok(Self { pdf, settings })
