@@ -65,6 +65,8 @@ pub mod prelude;
 pub mod redact;
 pub mod signer;
 pub mod structure;
+#[cfg(feature = "pdfa")]
+pub mod tagged;
 pub mod tier;
 pub mod watermark;
 

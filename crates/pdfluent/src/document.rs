@@ -1606,6 +1606,21 @@ impl PdfDocument {
         Ok(crate::compliance::report_from_compliance(raw, profile))
     }
 
+    /// Read the logical structure tree of a tagged PDF (ISO 32000-1 §14.7).
+    ///
+    /// Returns the document's semantic structure — headings, paragraphs,
+    /// tables, lists, figures — in reading order, with accessibility attributes
+    /// (alternate text, replacement text, language). Returns `None` if the
+    /// document is not tagged (no `/StructTreeRoot`).
+    ///
+    /// This is a read-only inspection of the existing structure; it does not
+    /// generate or repair tags. Useful for accessibility auditing (heading
+    /// outline, alt-text coverage) and structure-aware extraction.
+    #[cfg(feature = "pdfa")]
+    pub fn structure_tree(&self) -> Option<crate::tagged::DocumentStructure> {
+        pdf_compliance::tagged::parse(self.engine.pdf()).map(crate::tagged::from_structure_tree)
+    }
+
     // ---------- Split / extract (Epic 2 #1243) ----------
 
     /// Split the document into individual one-page documents.
