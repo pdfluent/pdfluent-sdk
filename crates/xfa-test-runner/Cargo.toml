@@ -28,6 +28,7 @@ pdf-docx = { path = "../pdf-docx", version = "=1.0.0-beta.9" }
 pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0-beta.8" }
 pdf-xlsx = { path = "../pdf-xlsx", version = "=1.0.0-beta.8" }
 pdf-invoice = { path = "../pdf-invoice", version = "=1.0.0-beta.8" }
+pdf-diff = { path = "../pdf-diff" }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.9" }
 pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.9" }

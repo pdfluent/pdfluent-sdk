@@ -8978,6 +8978,7 @@ dependencies = [
  "num_cpus",
  "pdf-annot",
  "pdf-compliance",
+ "pdf-diff",
  "pdf-docx",
  "pdf-engine",
  "pdf-invoice",
