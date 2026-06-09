@@ -564,3 +564,32 @@ fn test_annotation_flattening_is_idempotent() {
         "flattened annotation must stay removed across repeated flattening"
     );
 }
+
+#[test]
+fn test_incremental_save_appends_only_changed_objects() {
+    // A metadata-only change must append only the changed object(s) plus a fresh
+    // xref/trailer — never re-emit the whole document. Verified on a 53-object
+    // document: the appended increment stays small and independent of the total
+    // object count, proving refresh_from_lopdf does not cause re-emission bloat.
+    let path = mini("multi-page.pdf");
+    let original = std::fs::read(&path).expect("read original bytes");
+
+    let mut doc = open_doc("multi-page.pdf");
+    doc.metadata_mut()
+        .set_title("Incremental Bloat Guard")
+        .commit()
+        .expect("commit metadata");
+
+    let incr = doc.to_incremental_bytes().expect("incremental save");
+    assert_eq!(
+        &incr[..original.len()],
+        &original[..],
+        "original prefix must be preserved verbatim"
+    );
+    let appended = incr.len() - original.len();
+    assert!(
+        appended < 4096,
+        "metadata-only increment appended {appended} bytes; expected a small, \
+         object-count-independent delta (regression: full document re-emission)"
+    );
+}
