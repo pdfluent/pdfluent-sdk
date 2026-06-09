@@ -53,7 +53,7 @@ If you discover a security vulnerability in PDFluent, please report it responsib
 
 ### Fuzzing
 
-19 libfuzzer targets (declared in `fuzz/Cargo.toml`, sources in
+20 libfuzzer targets (declared in `fuzz/Cargo.toml`, sources in
 `fuzz/fuzz_targets/`) cover the input-facing APIs:
 
 - `fuzz_pdf_parser` — PDF parsing and xref resolution
@@ -75,14 +75,23 @@ If you discover a security vulnerability in PDFluent, please report it responsib
 - `fuzz_sign_document` — Document signing pipeline
 - `fuzz_xfa_extract` — XFA template/data extraction
 - `fuzz_g3_content_stream` — Content-stream tokenizer
+- `fuzz_xfa_template` — XFA DOM data-XML parsing
 
-A scheduled GitHub Actions workflow (`.github/workflows/fuzz.yml`) runs a
-seven-target core subset (`fuzz_pdf_parser`, `fuzz_content_stream`,
-`fuzz_xref`, `fuzz_filters`, `fuzz_data_dom`, `fuzz_formcalc`, `fuzz_som_path`)
-on a weekly schedule at 300 seconds per target, and can be dispatched manually
-(`workflow_dispatch`) for any target and duration. Crashes are uploaded as
-artifacts and fail the job. Any target can be run locally with
-`cargo +nightly fuzz run <target>`.
+The GitHub Actions workflow (`.github/workflows/fuzz.yml`) has three jobs:
+
+- **build** — `cargo +nightly fuzz build` on every trigger; fails on bit-rot
+  (so no declared target can silently stop compiling).
+- **smoke** — a 60-second run over the seven core targets (`fuzz_pdf_parser`,
+  `fuzz_content_stream`, `fuzz_xref`, `fuzz_filters`, `fuzz_data_dom`,
+  `fuzz_formcalc`, `fuzz_som_path`) on a nightly schedule.
+- **deep** — a 300-second run (configurable) over all 20 targets on a weekly
+  schedule.
+
+Both run jobs upload crash reproducers as artifacts (30-day retention) and fail
+the job on any crash. The workflow can be dispatched manually
+(`workflow_dispatch`) for any target and duration. Run a target locally with
+`cargo +nightly fuzz run <target>`; see `fuzz/README.md` for the crash-triage
+process.
 
 ### Dependency management
 
