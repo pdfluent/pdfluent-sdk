@@ -170,6 +170,10 @@ pub enum Error {
         limit: u64,
     },
 
+    // ---------- Unsupported ----------
+    /// The requested operation or parameter is unsupported.
+    Unsupported(String),
+
     // ---------- Internal ----------
     /// Internal safety-net. Should never fire under normal operation.
     Internal {
@@ -327,6 +331,7 @@ impl Error {
             Error::MissingDependency { .. } => "E-ENV-MISSING-DEPENDENCY",
             Error::MemoryBudgetExceeded { .. } => "E-BUDGET-MEMORY-EXCEEDED",
             Error::ResourceLimitExceeded { .. } => "E-BUDGET-RESOURCE-LIMIT",
+            Error::Unsupported(_) => "E-UNSUPPORTED",
             Error::Internal { .. } => "E-INTERNAL",
         }
     }
@@ -375,6 +380,7 @@ impl Error {
             Error::ResourceLimitExceeded { .. } => {
                 "https://pdfluent.com/errors/E-BUDGET-RESOURCE-LIMIT"
             }
+            Error::Unsupported(_) => "https://pdfluent.com/errors/E-UNSUPPORTED",
             Error::Internal { .. } => "https://pdfluent.com/errors/E-INTERNAL",
         }
     }
@@ -470,6 +476,7 @@ impl std::fmt::Display for Error {
                 "Resource limit exceeded: {kind} (observed {observed}, limit {limit}).\n  Docs: {}",
                 self.docs_url()
             ),
+            Error::Unsupported(reason) => write!(f, "Unsupported operation: {reason}"),
             Error::Internal { message, crate_version } => write!(
                 f,
                 "Internal error (please report): {message} [pdfluent {crate_version}]"
@@ -681,6 +688,7 @@ mod tests {
                 observed: 2000,
                 limit: 1000,
             },
+            Error::Unsupported("test".into()),
             Error::Internal {
                 message: "test".into(),
                 crate_version: "0.0.0",
@@ -696,7 +704,7 @@ mod tests {
         // Confirm every variant is covered (count guard).
         assert_eq!(
             variants.len(),
-            18,
+            19,
             "Update this test when new Error variants are added"
         );
     }
