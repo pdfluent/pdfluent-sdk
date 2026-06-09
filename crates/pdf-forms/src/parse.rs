@@ -3,8 +3,13 @@
 use crate::flags::FieldFlags;
 use crate::tree::*;
 use pdf_syntax::object::dict::keys;
-use pdf_syntax::object::{Array, Dict, Name, Object, Rect};
+use pdf_syntax::object::{Array, Dict, Name, Object, ObjectIdentifier, Rect};
 use pdf_syntax::Pdf;
+use std::collections::BTreeSet;
+
+/// Maximum AcroForm field-tree depth. Bounds `/Kids` recursion on adversarial
+/// or malformed forms; real field hierarchies are shallow.
+const MAX_FIELD_DEPTH: usize = 100;
 
 /// Parse the AcroForm dictionary from a PDF document and build a field tree.
 pub fn parse_acroform(pdf: &Pdf) -> Option<FieldTree> {
@@ -27,8 +32,11 @@ pub fn parse_acroform(pdf: &Pdf) -> Option<FieldTree> {
     }
 
     if let Some(fields_arr) = acroform.get::<Array<'_>>(keys::FIELDS) {
+        // `visited` breaks cyclic /Kids references and shared-node blowups;
+        // `depth` bounds deep nesting.
+        let mut visited = BTreeSet::new();
         for field_dict in fields_arr.iter::<Dict<'_>>() {
-            parse_field_recursive(&field_dict, &mut tree, None);
+            parse_field_recursive(&field_dict, &mut tree, None, 0, &mut visited);
         }
     }
 
@@ -49,7 +57,24 @@ pub fn parse_acroform(pdf: &Pdf) -> Option<FieldTree> {
     Some(tree)
 }
 
-fn parse_field_recursive(dict: &Dict<'_>, tree: &mut FieldTree, parent: Option<FieldId>) {
+fn parse_field_recursive(
+    dict: &Dict<'_>,
+    tree: &mut FieldTree,
+    parent: Option<FieldId>,
+    depth: usize,
+    visited: &mut BTreeSet<ObjectIdentifier>,
+) {
+    // Bound deep nesting and break cyclic/shared /Kids references so a malformed
+    // form cannot overflow the stack or blow up memory.
+    if depth >= MAX_FIELD_DEPTH {
+        return;
+    }
+    if let Some(id) = dict.obj_id() {
+        if !visited.insert(id) {
+            return;
+        }
+    }
+
     let partial_name = get_string_value(dict, keys::T).unwrap_or_default();
     let field_type = dict.get::<Name>(keys::FT).and_then(|n| match n.as_ref() {
         b"Tx" => Some(FieldType::Text),
@@ -99,7 +124,7 @@ fn parse_field_recursive(dict: &Dict<'_>, tree: &mut FieldTree, parent: Option<F
     }
     if let Some(kids_arr) = dict.get::<Array<'_>>(keys::KIDS) {
         for kid_dict in kids_arr.iter::<Dict<'_>>() {
-            parse_field_recursive(&kid_dict, tree, Some(id));
+            parse_field_recursive(&kid_dict, tree, Some(id), depth + 1, visited);
         }
     }
 }
@@ -244,5 +269,48 @@ mod tests {
         assert_eq!(parse_quadding(0), Quadding::Left);
         assert_eq!(parse_quadding(1), Quadding::Center);
         assert_eq!(parse_quadding(2), Quadding::Right);
+    }
+
+    #[test]
+    fn cyclic_field_tree_terminates_and_is_bounded() {
+        // Two fields whose /Kids reference each other form a cycle; without the
+        // visited/depth guard parsing recurses until stack overflow.
+        fn cyclic_form_pdf() -> Vec<u8> {
+            let objs: [&[u8]; 6] = [
+                b"<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+                b"<< /Fields [5 0 R] >>",
+                b"<< /T (A) /Kids [6 0 R] >>",
+                b"<< /T (B) /Kids [5 0 R] >>", // /Kids back to A -> cycle
+            ];
+            let mut buf = Vec::new();
+            let mut offsets = [0usize; 7];
+            buf.extend_from_slice(b"%PDF-1.7\n");
+            for (i, body) in objs.iter().enumerate() {
+                offsets[i + 1] = buf.len();
+                buf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+                buf.extend_from_slice(body);
+                buf.extend_from_slice(b"\nendobj\n");
+            }
+            let xref_off = buf.len();
+            buf.extend_from_slice(b"xref\n0 7\n0000000000 65535 f \n");
+            for o in &offsets[1..7] {
+                buf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+            }
+            buf.extend_from_slice(
+                format!("trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref_off}\n%%EOF")
+                    .as_bytes(),
+            );
+            buf
+        }
+
+        let pdf = Pdf::new(cyclic_form_pdf()).expect("load cyclic-form PDF");
+        let tree = parse_acroform(&pdf).expect("acroform parses");
+        assert!(
+            tree.len() <= 2,
+            "cyclic /Kids must not inflate the field tree; got {}",
+            tree.len()
+        );
     }
 }

@@ -5,9 +5,14 @@
 //! table/list structure.
 
 use pdf_syntax::object::dict::keys;
-use pdf_syntax::object::{Dict, Name, Object};
+use pdf_syntax::object::{Dict, Name, Object, ObjectIdentifier};
 use pdf_syntax::Pdf;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+
+/// Maximum structure-tree depth. Bounds recursion on deeply nested or
+/// adversarial `/K` trees so a malformed tagged PDF cannot overflow the stack.
+/// Real structure trees are far shallower (tables/lists rarely exceed ~30).
+const MAX_STRUCTURE_DEPTH: usize = 100;
 
 /// A parsed structure tree.
 #[derive(Debug, Clone)]
@@ -154,8 +159,10 @@ pub fn parse(pdf: &Pdf) -> Option<StructureTree> {
     // Parse role mapping
     let role_map = parse_role_map(&tree_root);
 
-    // Parse children (K entry)
-    let root_elements = parse_children(&tree_root, &role_map);
+    // Parse children (K entry). `visited` guards against cyclic /K references
+    // and shared-node "tree bombs"; `depth` bounds deep nesting.
+    let mut visited = BTreeSet::new();
+    let root_elements = parse_children(&tree_root, &role_map, 0, &mut visited);
 
     // Get document language
     let lang = catalog
@@ -185,7 +192,12 @@ fn parse_role_map(tree_root: &Dict<'_>) -> HashMap<String, String> {
 }
 
 /// Parse children from a structure element's /K entry.
-fn parse_children(dict: &Dict<'_>, role_map: &HashMap<String, String>) -> Vec<StructElement> {
+fn parse_children(
+    dict: &Dict<'_>,
+    role_map: &HashMap<String, String>,
+    depth: usize,
+    visited: &mut BTreeSet<ObjectIdentifier>,
+) -> Vec<StructElement> {
     let mut elements = Vec::new();
 
     let Some(k) = dict.get::<Object<'_>>(keys::K) else {
@@ -194,7 +206,7 @@ fn parse_children(dict: &Dict<'_>, role_map: &HashMap<String, String>) -> Vec<St
 
     match k {
         Object::Dict(child_dict) => {
-            if let Some(elem) = parse_struct_elem(&child_dict, role_map) {
+            if let Some(elem) = parse_struct_elem(&child_dict, role_map, depth, visited) {
                 elements.push(elem);
             }
         }
@@ -202,7 +214,8 @@ fn parse_children(dict: &Dict<'_>, role_map: &HashMap<String, String>) -> Vec<St
             for item in arr.iter::<Object<'_>>() {
                 match item {
                     Object::Dict(child_dict) => {
-                        if let Some(elem) = parse_struct_elem(&child_dict, role_map) {
+                        if let Some(elem) = parse_struct_elem(&child_dict, role_map, depth, visited)
+                        {
                             elements.push(elem);
                         }
                     }
@@ -223,7 +236,24 @@ fn parse_children(dict: &Dict<'_>, role_map: &HashMap<String, String>) -> Vec<St
 }
 
 /// Parse a single StructElem dictionary.
-fn parse_struct_elem(dict: &Dict<'_>, role_map: &HashMap<String, String>) -> Option<StructElement> {
+fn parse_struct_elem(
+    dict: &Dict<'_>,
+    role_map: &HashMap<String, String>,
+    depth: usize,
+    visited: &mut BTreeSet<ObjectIdentifier>,
+) -> Option<StructElement> {
+    // Bound deep nesting (defends against adversarial chains of distinct nodes).
+    if depth >= MAX_STRUCTURE_DEPTH {
+        return None;
+    }
+    // Break cycles and shared-node "tree bombs": a struct element reachable from
+    // itself (directly or via a /K back-reference) is parsed once.
+    if let Some(id) = dict.obj_id() {
+        if !visited.insert(id) {
+            return None;
+        }
+    }
+
     // Check it's a StructElem
     let type_name = dict.get::<Name>(keys::TYPE);
     if let Some(ref t) = type_name {
@@ -263,7 +293,7 @@ fn parse_struct_elem(dict: &Dict<'_>, role_map: &HashMap<String, String>) -> Opt
     let mcids = collect_mcids(dict);
 
     // Parse child structure elements
-    let children = parse_children(dict, role_map);
+    let children = parse_children(dict, role_map, depth + 1, visited);
 
     Some(StructElement {
         struct_type,
@@ -341,6 +371,55 @@ mod tests {
         assert!(!elem.is_heading());
         assert!(!elem.is_figure());
         assert!(!elem.is_table_element());
+    }
+
+    #[test]
+    fn cyclic_structure_tree_terminates_and_is_bounded() {
+        // Two struct elements whose /K entries reference each other form a cycle;
+        // without the visited/depth guard parsing recurses until stack overflow.
+        fn cyclic_pdf() -> Vec<u8> {
+            let objs: [&[u8]; 6] = [
+                b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R >>",
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+                b"<< /Type /StructElem /S /Sect /K [6 0 R] >>",
+                b"<< /Type /StructTreeRoot /K [4 0 R] >>",
+                b"<< /Type /StructElem /S /Sect /K [4 0 R] >>",
+            ];
+            let mut buf = Vec::new();
+            let mut offsets = [0usize; 7];
+            buf.extend_from_slice(b"%PDF-1.7\n");
+            for (i, body) in objs.iter().enumerate() {
+                offsets[i + 1] = buf.len();
+                buf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+                buf.extend_from_slice(body);
+                buf.extend_from_slice(b"\nendobj\n");
+            }
+            let xref_off = buf.len();
+            buf.extend_from_slice(b"xref\n0 7\n0000000000 65535 f \n");
+            for o in &offsets[1..7] {
+                buf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+            }
+            buf.extend_from_slice(
+                format!("trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref_off}\n%%EOF")
+                    .as_bytes(),
+            );
+            buf
+        }
+
+        fn count(e: &StructElement) -> usize {
+            1 + e.children.iter().map(count).sum::<usize>()
+        }
+
+        let pdf = Pdf::new(cyclic_pdf()).expect("load cyclic-structure PDF");
+        let tree = parse(&pdf).expect("structure tree parses");
+        // Terminates (no stack overflow) and the cycle is broken into a finite,
+        // small tree (the two distinct elements, each parsed once).
+        let total: usize = tree.root_elements.iter().map(count).sum();
+        assert!(
+            total <= 3,
+            "cycle/shared nodes must not inflate the tree; got {total} nodes"
+        );
     }
 
     #[test]
