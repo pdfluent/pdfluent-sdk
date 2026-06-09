@@ -186,6 +186,7 @@ impl OpenOptions {
 pub struct SaveOptions {
     pub(crate) linearize: bool,
     pub(crate) overwrite: bool,
+    pub(crate) incremental: bool,
 }
 
 impl SaveOptions {
@@ -216,6 +217,17 @@ impl SaveOptions {
         self.overwrite = v;
         self
     }
+
+    /// Enable incremental save.
+    ///
+    /// When set to true, only changes made to the PDF will be appended
+    /// to the original file. This preserves signatures and avoids rewriting the
+    /// entire file. Returns an error if the document is encrypted or was not loaded
+    /// from bytes.
+    pub fn with_incremental(mut self, v: bool) -> Self {
+        self.incremental = v;
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -244,6 +256,11 @@ pub struct PdfDocument {
     /// (or env, or Trial) applies.
     license_key_override: Option<String>,
     processing_limits: Option<pdf_engine::ProcessingLimits>,
+    /// The original bytes of the PDF document. Used for incremental save.
+    /// Memory impact: We hold a single reference count `Arc<Vec<u8>>` to the
+    /// loaded buffer. This does not clone the buffer in memory, but rather
+    /// shares the existing allocation that was already read into memory.
+    original_bytes: Option<Arc<Vec<u8>>>,
 }
 
 impl std::fmt::Debug for PdfDocument {
@@ -448,6 +465,7 @@ impl PdfDocument {
             lopdf,
             license_key_override: opts.license_key.clone(),
             processing_limits: opts.processing_limits.clone(),
+            original_bytes: Some(shared),
         })
     }
 
@@ -503,7 +521,11 @@ impl PdfDocument {
         let mut buf: Vec<u8> = Vec::new();
         doc.save_to(&mut buf)
             .expect("serialising an in-memory lopdf::Document is infallible");
-        Self::from_bytes(&buf).expect("freshly-built PDF must re-parse")
+        // A from-scratch document has no backing original bytes, so incremental
+        // save is unsupported for it.
+        let mut new_doc = Self::from_bytes(&buf).expect("freshly-built PDF must re-parse");
+        new_doc.original_bytes = None;
+        new_doc
     }
 
     // ---------- Read-only content access ----------
@@ -1528,7 +1550,23 @@ impl PdfDocument {
         clone
             .save_to(&mut buf)
             .map_err(|source| Error::Io { source, path: None })?;
-        *self = Self::from_bytes(&buf)?;
+
+        // Preserve the per-document license override, processing limits, and the
+        // original backing bytes (needed for incremental save) across the
+        // re-parse; `from_bytes` alone would reset them.
+        let mut opts = OpenOptions::new();
+        if let Some(ref key) = self.license_key_override {
+            opts = opts.with_license_key(key.clone());
+        }
+        if let Some(ref limits) = self.processing_limits {
+            opts = opts.with_processing_limits(limits.clone());
+        }
+        let original_bytes = self.original_bytes.clone();
+
+        let mut new_doc = Self::from_bytes_with(&buf, opts)?;
+        new_doc.original_bytes = original_bytes;
+
+        *self = new_doc;
         Ok(())
     }
 
@@ -1722,7 +1760,11 @@ impl PdfDocument {
                 path: Some(path_ref.to_path_buf()),
             });
         }
-        let bytes = self.to_bytes()?;
+        let bytes = if opts.incremental {
+            self.to_incremental_bytes()?
+        } else {
+            self.to_bytes()?
+        };
         fs::write(path_ref, bytes).map_err(|source| Error::Io {
             source,
             path: Some(path_ref.to_path_buf()),
@@ -1758,6 +1800,79 @@ impl PdfDocument {
         // streaming serialisation is a post-1.0 optimisation.
         let mut clone = self.lopdf.clone();
         clone
+            .save_to(&mut buf)
+            .map_err(|source| Error::Io { source, path: None })?;
+        Ok(buf)
+    }
+
+    /// Serialise only the incremental changes to a byte vector.
+    ///
+    /// The original bytes are preserved verbatim as the file prefix and only the
+    /// changed/new objects are appended as an incremental update section. This
+    /// keeps any existing digital signatures valid (their signed byte range is
+    /// untouched).
+    ///
+    /// Returns [`Error::Unsupported`] if the document is encrypted or was not
+    /// loaded from existing bytes (e.g. created from scratch).
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(target = "pdfluent", skip(self))
+    )]
+    pub fn to_incremental_bytes(&self) -> Result<Vec<u8>> {
+        self.require_capability(Capability::PdfWrite)?;
+
+        // 1. Encryption check: refuse if encrypted.
+        if self.lopdf.is_encrypted() {
+            return Err(Error::Unsupported(
+                "Incremental save for encrypted PDFs is currently unsupported".into(),
+            ));
+        }
+
+        // 2. Original-bytes availability check: refuse if created from scratch.
+        let original_bytes = match &self.original_bytes {
+            Some(bytes) => bytes,
+            None => {
+                return Err(Error::Unsupported(
+                    "Incremental save requires a document loaded from existing bytes".into(),
+                ));
+            }
+        };
+
+        // 3. Load the original document and build an incremental update over it.
+        let original_lopdf = lopdf::Document::load_mem(original_bytes.as_slice())
+            .map_err(|e| internal_error(format!("Failed to load original bytes: {e}")))?;
+        let mut incremental_doc = lopdf::IncrementalDocument::create_from(
+            original_bytes.as_ref().clone(),
+            original_lopdf.clone(),
+        );
+
+        // 4. Emit only changed or new objects.
+        for (&object_id, object) in &self.lopdf.objects {
+            let is_changed_or_new = match original_lopdf.objects.get(&object_id) {
+                Some(orig_object) => orig_object != object,
+                None => true,
+            };
+            if is_changed_or_new {
+                incremental_doc
+                    .new_document
+                    .set_object(object_id, object.clone());
+            }
+        }
+
+        // 5. Carry over version and trailer (lopdf manages Prev/Size).
+        incremental_doc.new_document.version = self.lopdf.version.clone();
+        for (key, val) in &self.lopdf.trailer {
+            if key != b"Prev" && key != b"Size" {
+                incremental_doc
+                    .new_document
+                    .trailer
+                    .set(key.clone(), val.clone());
+            }
+        }
+        incremental_doc.new_document.max_id = self.lopdf.max_id;
+
+        let mut buf = Vec::with_capacity(64 * 1024);
+        incremental_doc
             .save_to(&mut buf)
             .map_err(|source| Error::Io { source, path: None })?;
         Ok(buf)
