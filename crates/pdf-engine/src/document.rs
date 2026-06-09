@@ -158,6 +158,16 @@ impl PdfDocument {
         self.settings = settings;
     }
 
+    /// Install a warning sink that receives [`InterpreterWarning`]s raised
+    /// during subsequent render / text-extraction operations.
+    ///
+    /// Replaces any previously installed sink; all other settings (cache,
+    /// limits, resolvers) are preserved. The sink is preserved across the
+    /// extraction-settings clone, so it covers both rendering and extraction.
+    pub fn set_warning_sink(&mut self, sink: pdf_render::pdf_interpret::WarningSinkFn) {
+        self.settings.warning_sink = sink;
+    }
+
     /// Number of pages.
     pub fn page_count(&self) -> usize {
         self.pdf.pages().len()

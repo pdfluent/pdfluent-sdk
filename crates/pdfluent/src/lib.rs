@@ -52,6 +52,7 @@ pub mod async_io;
 pub mod capability;
 pub mod compliance;
 pub mod decoration;
+pub mod diagnostics;
 pub mod document;
 pub mod encrypt;
 pub mod error;
