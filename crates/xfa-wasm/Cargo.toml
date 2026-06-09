@@ -36,7 +36,7 @@ kurbo = "0.13"
 pdf-manip = { path = "../pdf-manip", features = ["pdfa-convert"], version = "=1.0.0-beta.8" }
 pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.8" }
 pdf-forms = { workspace = true }
-pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.8" }
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.9" }
 pdf-text-format = { path = "../pdf-text-format", version = "=1.0.0-beta.8" }
 
 # lopdf: required for text extraction; annotate uses lopdf for mutation.
