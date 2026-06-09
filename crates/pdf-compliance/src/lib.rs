@@ -378,6 +378,47 @@ mod tests {
         assert_eq!(preferred_pdfa_level(&pdf), PdfALevel::A2b);
     }
 
+    #[test]
+    fn cyclic_acroform_aa_validation_terminates() {
+        // AcroForm fields whose /Kids reference each other form a cycle, and a
+        // field carries /AA so the §6.6.2 check recurses. Without the depth
+        // guard this overflows the stack during validation.
+        fn cyclic_aa_pdf() -> Vec<u8> {
+            let objs: [&[u8]; 6] = [
+                b"<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+                b"<< /Fields [5 0 R] >>",
+                b"<< /T (A) /FT /Tx /AA << >> /Kids [6 0 R] >>",
+                b"<< /T (B) /Kids [5 0 R] >>", // /Kids back to A -> cycle
+            ];
+            let mut buf = Vec::new();
+            let mut offsets = [0usize; 7];
+            buf.extend_from_slice(b"%PDF-1.7\n");
+            for (i, body) in objs.iter().enumerate() {
+                offsets[i + 1] = buf.len();
+                buf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+                buf.extend_from_slice(body);
+                buf.extend_from_slice(b"\nendobj\n");
+            }
+            let xref_off = buf.len();
+            buf.extend_from_slice(b"xref\n0 7\n0000000000 65535 f \n");
+            for o in &offsets[1..7] {
+                buf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+            }
+            buf.extend_from_slice(
+                format!("trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref_off}\n%%EOF")
+                    .as_bytes(),
+            );
+            buf
+        }
+
+        let pdf = parse_pdf(cyclic_aa_pdf());
+        // Termination is the assertion: the depth guard bounds the cyclic /Kids
+        // recursion so validation returns instead of overflowing the stack.
+        let _report = crate::validate_pdfa(&pdf, PdfALevel::A2b);
+    }
+
     fn parse_pdf(bytes: Vec<u8>) -> Pdf {
         Pdf::new(bytes).unwrap()
     }

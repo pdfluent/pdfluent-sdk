@@ -3577,11 +3577,18 @@ fn check_widget_aa_pdfa23(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRe
     let Some(fields) = acroform.get::<Array<'_>>(keys::FIELDS) else {
         return;
     };
-    check_field_aa_recursive(&fields, report);
+    check_field_aa_recursive(&fields, report, 0);
 }
 
+/// Maximum AcroForm field-tree depth for the /AA check. Bounds recursion on
+/// cyclic or adversarially deep `/Kids` so validation cannot overflow the stack.
+const FIELD_AA_MAX_DEPTH: usize = 100;
+
 /// Recursively check AcroForm field nodes for forbidden /AA entries (§6.6.2).
-fn check_field_aa_recursive(fields: &Array<'_>, report: &mut ComplianceReport) {
+fn check_field_aa_recursive(fields: &Array<'_>, report: &mut ComplianceReport, depth: usize) {
+    if depth >= FIELD_AA_MAX_DEPTH {
+        return;
+    }
     for field in fields.iter::<Dict<'_>>() {
         if field.contains_key(b"AA" as &[u8]) {
             // Only report on field nodes (those with /FT or /T), not widget-only annots.
@@ -3596,7 +3603,7 @@ fn check_field_aa_recursive(fields: &Array<'_>, report: &mut ComplianceReport) {
             }
         }
         if let Some(kids) = field.get::<Array<'_>>(keys::KIDS) {
-            check_field_aa_recursive(&kids, report);
+            check_field_aa_recursive(&kids, report, depth + 1);
         }
     }
 }

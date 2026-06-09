@@ -6779,10 +6779,17 @@ pub fn check_field_aa_pdfa1(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(fields) = acroform.get::<Array<'_>>(keys::FIELDS) else {
         return;
     };
-    check_field_aa_recursive(&fields, report);
+    check_field_aa_recursive(&fields, report, 0);
 }
 
-fn check_field_aa_recursive(fields: &Array<'_>, report: &mut ComplianceReport) {
+/// Maximum AcroForm field-tree depth for the /AA check. Bounds recursion on
+/// cyclic or adversarially deep `/Kids` so validation cannot overflow the stack.
+const FIELD_AA_MAX_DEPTH: usize = 100;
+
+fn check_field_aa_recursive(fields: &Array<'_>, report: &mut ComplianceReport, depth: usize) {
+    if depth >= FIELD_AA_MAX_DEPTH {
+        return;
+    }
     for (idx, field) in fields.iter::<Dict<'_>>().enumerate() {
         if field.contains_key(b"AA" as &[u8]) {
             error_at(
@@ -6794,7 +6801,7 @@ fn check_field_aa_recursive(fields: &Array<'_>, report: &mut ComplianceReport) {
         }
         // Recurse into Kids
         if let Some(kids) = field.get::<Array<'_>>(keys::KIDS) {
-            check_field_aa_recursive(&kids, report);
+            check_field_aa_recursive(&kids, report, depth + 1);
         }
     }
 }
