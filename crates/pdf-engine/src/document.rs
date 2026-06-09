@@ -772,6 +772,50 @@ mod tests {
             .join(name)
     }
 
+    /// Cache-on vs cache-off: the shared decoded-image cache is a pure
+    /// performance optimisation, so rendering with it enabled must produce
+    /// pixel-identical output to rendering with it disabled. Exercised against a
+    /// committed image-bearing fixture.
+    #[test]
+    fn shared_image_cache_is_render_neutral() {
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus-mini/scanned.pdf");
+        let data = std::fs::read(&path).expect("read scanned.pdf fixture");
+        let cfg = RenderConfig::default();
+
+        // Cache ON: `PdfDocument::open` installs a shared cache, so the second
+        // render of the same page is a cache hit.
+        let doc_on = PdfDocument::open(data.clone()).expect("open cache-on");
+        let miss = doc_on
+            .render_page_with_config(0, &cfg)
+            .expect("cold render (cache miss)");
+        let hit = doc_on
+            .render_page_with_config(0, &cfg)
+            .expect("warm render (cache hit)");
+
+        // Cache OFF: default settings carry `shared_cache: None`, so every render
+        // decodes images from scratch.
+        let mut doc_off = PdfDocument::open(data).expect("open cache-off");
+        doc_off.set_settings(InterpreterSettings::default());
+        let uncached = doc_off
+            .render_page_with_config(0, &cfg)
+            .expect("render with cache disabled");
+
+        assert_eq!(
+            (miss.width, miss.height),
+            (uncached.width, uncached.height),
+            "render dimensions must match"
+        );
+        assert_eq!(
+            miss.pixels, hit.pixels,
+            "a cache hit must return exactly the freshly-decoded render"
+        );
+        assert_eq!(
+            miss.pixels, uncached.pixels,
+            "cache-enabled render must equal cache-disabled render"
+        );
+    }
+
     fn normalize_text(text: &str) -> String {
         text.split_whitespace().collect::<Vec<_>>().join(" ")
     }
