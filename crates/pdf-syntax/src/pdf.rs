@@ -11,12 +11,28 @@ use crate::xref::{XRef, XRefError, fallback, root_xref};
 pub use crate::crypto::DecryptionError;
 use crate::metadata::Metadata;
 
+/// Structural recovery that occurred while loading a [`Pdf`].
+///
+/// Recovery is always attempted automatically; these flags let a caller learn
+/// that it happened, so a repaired document is distinguishable from a clean
+/// one. They never change the (always-on) recovery behaviour.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LoadRecovery {
+    /// The cross-reference table was invalid and rebuilt by scanning the file
+    /// for objects. Object recovery may be incomplete.
+    pub xref_rebuilt: bool,
+    /// The page tree was invalid and pages were recovered by a brute-force
+    /// scan. Page order may differ from the source.
+    pub page_tree_rebuilt: bool,
+}
+
 /// A PDF file.
 pub struct Pdf {
     xref: Arc<XRef>,
     header_version: PdfVersion,
     pages: CachedPages,
     data: PdfData,
+    recovery: LoadRecovery,
 }
 
 /// Maximum number of xref entries (indirect objects) allowed in a single PDF.
@@ -181,10 +197,13 @@ impl Pdf {
         let data = data.into();
         let password = password.as_bytes();
         let version = find_version(data.as_ref()).unwrap_or(PdfVersion::Pdf10);
+        let mut xref_rebuilt = false;
         let xref = match root_xref(data.clone(), password, limits) {
             Ok(x) => x,
             Err(e) => match e {
                 XRefError::Unknown => {
+                    // The xref table was invalid; rebuild it by scanning objects.
+                    xref_rebuilt = true;
                     fallback(data.clone(), password, limits).ok_or(LoadPdfError::Invalid)?
                 }
                 XRefError::Encryption(e) => return Err(LoadPdfError::Decryption(e)),
@@ -211,12 +230,24 @@ impl Pdf {
             return Err(LoadPdfError::TooLarge(object_count, page_count));
         }
 
+        let recovery = LoadRecovery {
+            xref_rebuilt,
+            page_tree_rebuilt: pages.page_tree_rebuilt(),
+        };
+
         Ok(Self {
             xref,
             header_version: version,
             pages,
             data,
+            recovery,
         })
+    }
+
+    /// Structural recovery applied while loading this document (xref / page-tree
+    /// rebuild). All-`false` for a document that parsed cleanly.
+    pub fn load_recovery(&self) -> LoadRecovery {
+        self.recovery
     }
 
     /// Return the number of objects present in the PDF file.
