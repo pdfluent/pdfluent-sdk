@@ -12,14 +12,17 @@ libfuzzer-sys = "0.4"
 pdf-syntax = { path = "../crates/pdf-syntax", features = ["std", "images"] }
 xfa-dom-resolver = { path = "../crates/xfa-dom-resolver" }
 formcalc-interpreter = { path = "../crates/formcalc-interpreter" }
-lopdf = { path = "../crates/lopdf" }
+# Four crates were renamed for the commercial rebrand (pdfluent-*); keep the
+# local dependency name so fuzz targets can still `use lopdf::`, `pdf_sign::`,
+# etc. via cargo's `package =` rename.
+lopdf = { path = "../crates/lopdf", package = "pdfluent-lopdf" }
 pdf-manip = { path = "../crates/pdf-manip" }
 pdf-redact = { path = "../crates/pdf-redact" }
 pdf-annot = { path = "../crates/pdf-annot" }
-pdf-forms = { path = "../crates/pdf-forms" }
-pdf-sign = { path = "../crates/pdf-sign" }
+pdf-forms = { path = "../crates/pdf-forms", package = "pdfluent-forms" }
+pdf-sign = { path = "../crates/pdf-sign", package = "pdfluent-sign" }
 pdf-compliance = { path = "../crates/pdf-compliance" }
-pdf-extract = { path = "../crates/pdf-extract" }
+pdf-extract = { path = "../crates/pdf-extract", package = "pdfluent-extract" }
 pdf-content-stream = { path = "../crates/pdf-content-stream" }
 
 # Prevent this from interfering with workspaces
@@ -122,4 +125,9 @@ doc = false
 [[bin]]
 name = "fuzz_g3_content_stream"
 path = "fuzz_targets/fuzz_g3_content_stream.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_xfa_template"
+path = "fuzz_targets/fuzz_xfa_template.rs"
 doc = false

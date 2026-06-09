@@ -1,12 +1,13 @@
-name: Nightly Fuzzing
+name: Fuzzing
 
 on:
   schedule:
-    - cron: '30 2 * * 0'    # weekly Sunday 02:30 UTC (was: '30 2 * * *' daily)
+    - cron: '30 2 * * *'    # nightly smoke: build all + 60s on core targets
+    - cron: '30 3 * * 0'    # weekly deep: all targets, full duration
   workflow_dispatch:
     inputs:
       duration:
-        description: 'Fuzzing duration in seconds per target'
+        description: 'Deep-run seconds per target'
         default: '300'
         type: string
       target:
@@ -22,8 +23,26 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  fuzz:
-    name: Fuzz ${{ matrix.target }}
+  # Bit-rot gate: every declared target must compile. Cheap, no fuzzing.
+  # Runs on every trigger (nightly, weekly, manual).
+  build:
+    name: Build all fuzz targets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: Build all targets
+        working-directory: fuzz
+        run: cargo +nightly fuzz build
+
+  # Nightly smoke: short run on the seven core targets to catch immediate
+  # regressions quickly. Runs on the nightly schedule and on manual dispatch.
+  smoke:
+    name: Smoke ${{ matrix.target }}
+    needs: build
+    if: github.event.schedule == '30 2 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -38,12 +57,72 @@ jobs:
           - fuzz_som_path
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@nightly
-
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
+      - name: Smoke run (60s)
+        working-directory: fuzz
+        run: |
+          TARGET="${{ inputs.target }}"
+          if [[ -n "$TARGET" && "$TARGET" != "${{ matrix.target }}" ]]; then
+            echo "Skipping ${{ matrix.target }} (only running $TARGET)"
+            exit 0
+          fi
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=60 \
+            -max_len=65536
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-smoke-crashes-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          retention-days: 30
+      - name: Check for crashes
+        if: always()
+        run: |
+          CRASH_DIR="fuzz/artifacts/${{ matrix.target }}"
+          if [[ -d "$CRASH_DIR" ]] && [[ $(ls "$CRASH_DIR" 2>/dev/null | wc -l) -gt 0 ]]; then
+            echo "CRASHES FOUND in ${{ matrix.target }}:"; ls -la "$CRASH_DIR"; exit 1
+          fi
+          echo "No crashes found in ${{ matrix.target }}"
 
+  # Weekly deep: full-duration run over all declared targets.
+  # Runs on the weekly schedule and on manual dispatch.
+  deep:
+    name: Deep ${{ matrix.target }}
+    needs: build
+    if: github.event.schedule == '30 3 * * 0' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_pdf_parser
+          - fuzz_content_stream
+          - fuzz_xref
+          - fuzz_filters
+          - fuzz_data_dom
+          - fuzz_formcalc
+          - fuzz_som_path
+          - fuzz_content_editor
+          - fuzz_text_replace
+          - fuzz_redact
+          - fuzz_pdfa_convert
+          - fuzz_lopdf_roundtrip
+          - fuzz_form_fill
+          - fuzz_annot_create
+          - fuzz_sign
+          - fuzz_pdfa_validate
+          - fuzz_xfa_extract
+          - fuzz_sign_document
+          - fuzz_g3_content_stream
+          - fuzz_xfa_template
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
       - name: Restore fuzz corpus cache
         uses: actions/cache@v4
         with:
@@ -51,39 +130,31 @@ jobs:
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_number }}
           restore-keys: |
             fuzz-corpus-${{ matrix.target }}-
-
       - name: Run fuzzer
         working-directory: fuzz
         run: |
           DURATION="${{ inputs.duration || '300' }}"
           TARGET="${{ inputs.target }}"
-
           if [[ -n "$TARGET" && "$TARGET" != "${{ matrix.target }}" ]]; then
             echo "Skipping ${{ matrix.target }} (only running $TARGET)"
             exit 0
           fi
-
           echo "Fuzzing ${{ matrix.target }} for ${DURATION}s..."
           cargo +nightly fuzz run ${{ matrix.target }} -- \
             -max_total_time="$DURATION" \
             -max_len=65536
-
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-crashes-${{ matrix.target }}
-          path: |
-            fuzz/artifacts/${{ matrix.target }}/
+          path: fuzz/artifacts/${{ matrix.target }}/
           retention-days: 30
-
       - name: Check for crashes
         if: always()
         run: |
           CRASH_DIR="fuzz/artifacts/${{ matrix.target }}"
           if [[ -d "$CRASH_DIR" ]] && [[ $(ls "$CRASH_DIR" 2>/dev/null | wc -l) -gt 0 ]]; then
-            echo "CRASHES FOUND in ${{ matrix.target }}:"
-            ls -la "$CRASH_DIR"
-            exit 1
+            echo "CRASHES FOUND in ${{ matrix.target }}:"; ls -la "$CRASH_DIR"; exit 1
           fi
           echo "No crashes found in ${{ matrix.target }}"
