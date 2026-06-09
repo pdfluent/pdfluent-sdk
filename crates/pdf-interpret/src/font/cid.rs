@@ -6,7 +6,7 @@ use crate::font::{
     strip_subset_prefix,
 };
 use crate::util::decode_or_warn;
-use crate::{CMapResolverFn, CacheKey, FontResolverFn, WarningSinkFn};
+use crate::{CMapResolverFn, CacheKey, FontResolverFn, InterpreterWarning, WarningSinkFn};
 use kurbo::{BezPath, Vec2};
 use log::warn;
 use pdf_font::cmap::{BfString, CMap, CidFamily, WritingMode};
@@ -83,6 +83,7 @@ impl Type0Font {
                             query.post_script_name.as_deref().unwrap_or("(no name)"),
                             dict.obj_id()
                         );
+                        warning_sink(InterpreterWarning::UnsupportedFont);
 
                         (FontQuery::Fallback(query), false)
                     };

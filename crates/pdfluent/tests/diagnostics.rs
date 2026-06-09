@@ -201,3 +201,62 @@ fn broken_page_tree_reports_page_tree_rebuilt() {
         "xref is valid; must not report XREF_REBUILT: {diags:?}"
     );
 }
+
+#[test]
+fn unsupported_font_substitution_is_reported() {
+    // A non-embedded font whose BaseFont is not one of the standard 14 forces a
+    // fallback substitution while rendering text.
+    fn unsupported_font_pdf() -> Vec<u8> {
+        let content: &[u8] = b"BT /F1 12 Tf 10 50 Td (Hi) Tj ET";
+        let obj4 = b"<< /Type /Font /Subtype /TrueType /BaseFont /NonexistentFontXYZ >>".to_vec();
+        let obj3 = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] \
+/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+            .to_vec();
+        let obj5 = format!(
+            "<< /Length {} >>\nstream\n{}\nendstream",
+            content.len(),
+            std::str::from_utf8(content).unwrap()
+        )
+        .into_bytes();
+        let objs: [&[u8]; 5] = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            &obj3,
+            &obj4,
+            &obj5,
+        ];
+        let mut buf = Vec::new();
+        let mut off = [0usize; 6];
+        buf.extend_from_slice(b"%PDF-1.7\n");
+        for (i, body) in objs.iter().enumerate() {
+            off[i + 1] = buf.len();
+            buf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            buf.extend_from_slice(body);
+            buf.extend_from_slice(b"\nendobj\n");
+        }
+        let xref_off = buf.len();
+        buf.extend_from_slice(b"xref\n0 6\n0000000000 65535 f \n");
+        for o in &off[1..6] {
+            buf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+        }
+        buf.extend_from_slice(
+            format!("trailer\n<< /Root 1 0 R /Size 6 >>\nstartxref\n{xref_off}\n%%EOF").as_bytes(),
+        );
+        buf
+    }
+
+    let doc = PdfDocument::from_bytes_with(
+        &unsupported_font_pdf(),
+        OpenOptions::new().with_license_key("tier:enterprise"),
+    )
+    .expect("open");
+    let _ = doc.render_page(1, 72, ImageFormat::Png).expect("render");
+    let diags = doc.diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == Diagnostic::CODE_FONT_UNSUPPORTED
+                && d.category == DiagnosticCategory::Font),
+        "expected FONT_UNSUPPORTED; got {diags:?}"
+    );
+}
