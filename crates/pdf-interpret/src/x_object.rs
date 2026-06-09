@@ -355,8 +355,11 @@ impl<'a> ImageXObject<'a> {
         target_dimension: Option<(u32, u32)>,
     ) -> Option<DecodedImageXObject> {
         let key = crate::util::hash128(&(self.stream.cache_key(), target_dimension));
-        self.cache
-            .get_or_insert_image(key, || DecodedImageXObject::new(self, target_dimension))
+        self.cache.get_or_insert_image(
+            key,
+            || DecodedImageXObject::new(self, target_dimension),
+            DecodedImageXObject::byte_size,
+        )
     }
 
     pub(crate) fn width(&self) -> u32 {
@@ -385,6 +388,14 @@ pub(crate) struct DecodedImageXObject {
 }
 
 impl DecodedImageXObject {
+    /// Approximate retained heap size of the decoded pixel buffers, in bytes.
+    /// Used by the document-level image cache to enforce its byte budget.
+    pub(crate) fn byte_size(&self) -> usize {
+        self.rgb_data.as_ref().map_or(0, |d| d.data.len())
+            + self.cmyk_data.as_ref().map_or(0, |d| d.data.len())
+            + self.luma_data.as_ref().map_or(0, |d| d.data.len())
+    }
+
     fn new(obj: &ImageXObject<'_>, target_dimension: Option<(u32, u32)>) -> Option<Self> {
         let dict = obj.stream.dict();
 

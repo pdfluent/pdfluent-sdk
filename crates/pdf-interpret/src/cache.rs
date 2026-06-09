@@ -10,21 +10,30 @@ type CacheMap = HashMap<u128, Option<Box<dyn Any + Send + Sync>>>;
 
 /// Maximum number of decoded images retained by the document-level image cache.
 ///
-/// The cache is bounded by entry COUNT rather than total bytes. This is a
-/// deliberate Sprint-A choice: the cache is per-`PdfDocument` and lives only as
-/// long as that document, individual decoded-image size is already bounded in
-/// practice by the render target dimensions (and by `ProcessingLimits::
-/// max_image_pixels` when processing limits are configured), and a small fixed
-/// count keeps eviction O(1)-ish without per-variant byte accounting. A
-/// byte-budgeted policy (summing `DecodedImageXObject` sizes) is the natural
-/// follow-up if profiling shows image-heavy documents exceeding the memory
-/// envelope; until then 32 is a conservative working-set size for repeated
-/// images (logos, headers/footers) across pages.
+/// The cache is bounded by BOTH entry count (this constant) and total decoded
+/// bytes ([`IMAGE_CACHE_MAX_BYTES`]); an insertion evicts least-recently-used
+/// entries until both bounds hold. The count cap catches "many small images"
+/// (logos, headers/footers repeated across pages); the byte cap catches "few
+/// but huge images" that would otherwise pass the count cap while consuming
+/// hundreds of MB. The cache is per-`PdfDocument` and lives only as long as
+/// that document.
 const IMAGE_CACHE_CAPACITY: usize = 32;
 
+/// Maximum total decoded-image bytes retained by the document-level image cache.
+///
+/// 256 MiB is a conservative working-set ceiling for image-heavy documents: it
+/// comfortably holds typical repeated assets while bounding peak transient
+/// memory for pathological inputs (e.g. a handful of full-page scans). An entry
+/// larger than the whole budget is returned to the caller but not retained.
+const IMAGE_CACHE_MAX_BYTES: usize = 256 * 1024 * 1024;
+
 struct ImageCache {
-    map: HashMap<u128, Box<dyn Any + Send + Sync>>,
+    /// Maps a cache key to the decoded value and its accounted byte weight.
+    map: HashMap<u128, (Box<dyn Any + Send + Sync>, usize)>,
+    /// Least-recently-used order; front = oldest, back = most recently used.
     order: VecDeque<u128>,
+    /// Sum of the byte weights of all entries currently in `map`.
+    total_bytes: usize,
 }
 
 /// A cache to store decoded images and other objects to avoid parsing/decoding them repeatedly.
@@ -48,6 +57,7 @@ impl Cache {
             images: Arc::new(Mutex::new(ImageCache {
                 map: HashMap::new(),
                 order: VecDeque::new(),
+                total_bytes: 0,
             })),
         }
     }
@@ -80,10 +90,18 @@ impl Cache {
         }
     }
 
+    /// Look up a decoded image by `id`, or compute it with `f` and cache it.
+    ///
+    /// `weight` returns the byte size of a freshly-computed value; it is used to
+    /// keep the cache within [`IMAGE_CACHE_MAX_BYTES`]. The cache is also bounded
+    /// to [`IMAGE_CACHE_CAPACITY`] entries. After an insertion, least-recently-
+    /// used entries are evicted until both bounds hold (a single value larger
+    /// than the whole budget is returned but not retained).
     pub(crate) fn get_or_insert_image<T: Clone + Send + Sync + 'static>(
         &self,
         id: u128,
         f: impl FnOnce() -> Option<T>,
+        weight: impl FnOnce(&T) -> usize,
     ) -> Option<T> {
         let mut locked = self.images.lock().unwrap();
         if locked.map.contains_key(&id) {
@@ -91,29 +109,53 @@ impl Cache {
                 locked.order.remove(pos);
             }
             locked.order.push_back(id);
-            let val = locked.map.get(&id).unwrap();
+            let (val, _) = locked.map.get(&id).unwrap();
             return val.downcast_ref::<T>().cloned();
         }
 
         drop(locked);
         let val = f();
         if let Some(ref v) = val {
+            let w = weight(v);
             let mut locked = self.images.lock().unwrap();
-            locked
+            // A repeated key would otherwise leak its old weight; subtract it.
+            if let Some((_, old_w)) = locked
                 .map
-                .insert(id, Box::new(v.clone()) as Box<dyn Any + Send + Sync>);
-            if let Some(pos) = locked.order.iter().position(|&x| x == id) {
-                locked.order.remove(pos);
+                .insert(id, (Box::new(v.clone()) as Box<dyn Any + Send + Sync>, w))
+            {
+                locked.total_bytes = locked.total_bytes.saturating_sub(old_w);
+                if let Some(pos) = locked.order.iter().position(|&x| x == id) {
+                    locked.order.remove(pos);
+                }
             }
+            locked.total_bytes += w;
             locked.order.push_back(id);
 
-            while locked.order.len() > IMAGE_CACHE_CAPACITY {
-                if let Some(oldest_id) = locked.order.pop_front() {
-                    locked.map.remove(&oldest_id);
+            // Evict least-recently-used entries until both the count and the
+            // byte budget are satisfied.
+            while !locked.order.is_empty()
+                && (locked.order.len() > IMAGE_CACHE_CAPACITY
+                    || locked.total_bytes > IMAGE_CACHE_MAX_BYTES)
+            {
+                if let Some(oldest_id) = locked.order.pop_front()
+                    && let Some((_, evicted_w)) = locked.map.remove(&oldest_id)
+                {
+                    locked.total_bytes = locked.total_bytes.saturating_sub(evicted_w);
                 }
             }
         }
         val
+    }
+
+    /// Current image-cache occupancy as `(entry_count, total_bytes)`.
+    ///
+    /// Exposed for measurement and tests; both values are always within
+    /// [`IMAGE_CACHE_CAPACITY`] and [`IMAGE_CACHE_MAX_BYTES`] respectively after
+    /// any completed `get_or_insert_image` call.
+    #[cfg(test)]
+    pub(crate) fn image_cache_stats(&self) -> (usize, usize) {
+        let locked = self.images.lock().unwrap();
+        (locked.map.len(), locked.total_bytes)
     }
 }
 
@@ -241,37 +283,124 @@ mod tests {
         assert_eq!(cached, Some("hello".to_string()));
     }
 
+    // A small weight; keeps these count-focused cases far below the byte budget.
+    fn tiny(_: &i32) -> usize {
+        4
+    }
+
     #[test]
     fn test_image_cache_lru_eviction() {
         let cache = Cache::new();
 
         // 1. Insert 32 unique items
         for i in 0..32 {
-            let val = cache.get_or_insert_image(i as u128, || Some(i));
+            let val = cache.get_or_insert_image(i as u128, || Some(i), tiny);
             assert_eq!(val, Some(i));
         }
 
         // Verify all 32 items are still there
         for i in 0..32 {
-            let cached = cache.get_or_insert_image::<i32>(i as u128, || None);
+            let cached = cache.get_or_insert_image::<i32>(i as u128, || None, tiny);
             assert_eq!(cached, Some(i));
         }
 
         // 2. Access key 0 to make it recently used (brings it to the back)
-        let first_accessed = cache.get_or_insert_image::<i32>(0, || None);
+        let first_accessed = cache.get_or_insert_image::<i32>(0, || None, tiny);
         assert_eq!(first_accessed, Some(0));
 
-        // 3. Insert a new item (key 32)
-        // This should cause an eviction. The oldest item (which is key 1, since key 0 was recently used) should be evicted.
-        let val32 = cache.get_or_insert_image(32, || Some(32));
+        // 3. Insert a new item (key 32). This evicts the oldest entry, which is
+        //    key 1 (key 0 was just touched).
+        let val32 = cache.get_or_insert_image(32, || Some(32), tiny);
         assert_eq!(val32, Some(32));
 
         // Key 1 should be None (evicted)
-        let evicted1 = cache.get_or_insert_image::<i32>(1, || None);
+        let evicted1 = cache.get_or_insert_image::<i32>(1, || None, tiny);
         assert_eq!(evicted1, None);
 
         // Key 0 should still be Some(0) (since we touched it)
-        let kept0 = cache.get_or_insert_image::<i32>(0, || None);
+        let kept0 = cache.get_or_insert_image::<i32>(0, || None, tiny);
         assert_eq!(kept0, Some(0));
+    }
+
+    #[test]
+    fn test_image_cache_evicts_by_byte_budget() {
+        let cache = Cache::new();
+        let big = 100 * 1024 * 1024; // 100 MiB each; three => 300 MiB > 256 MiB.
+
+        cache.get_or_insert_image(1u128, || Some(1i32), |_| big);
+        cache.get_or_insert_image(2u128, || Some(2i32), |_| big);
+        cache.get_or_insert_image(3u128, || Some(3i32), |_| big);
+
+        // Only three entries (far under the 32 count cap), but their bytes exceed
+        // the budget, so the least-recently-used (key 1) is evicted.
+        let (count, bytes) = cache.image_cache_stats();
+        assert_eq!(count, 2, "byte budget should drop the cache to two entries");
+        assert!(
+            bytes <= IMAGE_CACHE_MAX_BYTES,
+            "total bytes must stay within budget"
+        );
+        assert_eq!(
+            cache.get_or_insert_image::<i32>(1, || None, |_| 0),
+            None,
+            "oldest entry evicted by byte budget"
+        );
+        assert_eq!(cache.get_or_insert_image::<i32>(2, || None, |_| 0), Some(2));
+        assert_eq!(cache.get_or_insert_image::<i32>(3, || None, |_| 0), Some(3));
+    }
+
+    #[test]
+    fn test_image_cache_byte_budget_respects_lru_touch() {
+        let cache = Cache::new();
+        let big = 100 * 1024 * 1024;
+
+        cache.get_or_insert_image(1u128, || Some(1i32), |_| big);
+        cache.get_or_insert_image(2u128, || Some(2i32), |_| big);
+        // Touch key 1 so it becomes most-recently-used.
+        assert_eq!(cache.get_or_insert_image::<i32>(1, || None, |_| 0), Some(1));
+        // Inserting key 3 pushes bytes over budget; the LRU victim is now key 2.
+        cache.get_or_insert_image(3u128, || Some(3i32), |_| big);
+
+        assert_eq!(
+            cache.get_or_insert_image::<i32>(2, || None, |_| 0),
+            None,
+            "least-recently-used key 2 evicted, not the touched key 1"
+        );
+        assert_eq!(cache.get_or_insert_image::<i32>(1, || None, |_| 0), Some(1));
+        assert_eq!(cache.get_or_insert_image::<i32>(3, || None, |_| 0), Some(3));
+    }
+
+    #[test]
+    fn test_image_cache_oversized_item_not_retained() {
+        let cache = Cache::new();
+        let huge = IMAGE_CACHE_MAX_BYTES + 1; // larger than the whole budget
+
+        // The value is still returned to the caller for this call...
+        assert_eq!(
+            cache.get_or_insert_image(1u128, || Some(1i32), |_| huge),
+            Some(1)
+        );
+        // ...but it is evicted immediately, so the cache retains nothing.
+        let (count, bytes) = cache.image_cache_stats();
+        assert_eq!(count, 0, "an item larger than the budget is not retained");
+        assert_eq!(bytes, 0);
+        assert_eq!(cache.get_or_insert_image::<i32>(1, || None, |_| 0), None);
+    }
+
+    #[test]
+    fn test_image_cache_stats_stay_within_both_bounds() {
+        let cache = Cache::new();
+        // 100 small (1 KiB) items: the count cap bounds entries to 32; bytes
+        // stay tiny. This is the measurement asserting both bounds hold.
+        for i in 0..100u128 {
+            cache.get_or_insert_image(i, || Some(i as i32), |_| 1024);
+        }
+        let (count, bytes) = cache.image_cache_stats();
+        assert_eq!(count, IMAGE_CACHE_CAPACITY, "count cap holds at 32 entries");
+        assert_eq!(
+            bytes,
+            IMAGE_CACHE_CAPACITY * 1024,
+            "32 retained * 1 KiB each"
+        );
+        assert!(bytes <= IMAGE_CACHE_MAX_BYTES);
     }
 }
