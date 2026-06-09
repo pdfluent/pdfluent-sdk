@@ -5,6 +5,7 @@ edition.workspace = true
 license-file = "LICENSE"
 repository.workspace = true
 description = "PDFluent — PDF and XFA processing CLI: render, extract, fill, flatten, validate, sign."
+readme = "README.md"
 
 keywords = ["pdf", "xfa", "forms", "rendering", "cli"]
 categories = ["command-line-utilities"]
