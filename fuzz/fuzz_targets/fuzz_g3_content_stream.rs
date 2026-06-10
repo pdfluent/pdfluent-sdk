@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use pdf_content_stream::{ContentStreamParser, ContentStateMachine, serialize, verify_round_trip};
+use pdf_content_stream::{ContentStreamParser, ContentStateMachine, serialize};
 
 fuzz_target!(|data: &[u8]| {
     // Parse in lenient mode so we can test round-trip on partial inputs.
