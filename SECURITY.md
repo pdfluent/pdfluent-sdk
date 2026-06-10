@@ -77,19 +77,21 @@ If you discover a security vulnerability in PDFluent, please report it responsib
 - `fuzz_g3_content_stream` — Content-stream tokenizer
 - `fuzz_xfa_template` — XFA DOM data-XML parsing
 
-The GitHub Actions workflow (`.github/workflows/fuzz.yml`) has three jobs:
+`.gitlab-ci.yml` defines three fuzz jobs in the `fuzz_manual` stage:
 
-- **build** — `cargo +nightly fuzz build` on every trigger; fails on bit-rot
-  (so no declared target can silently stop compiling).
-- **smoke** — a 60-second run over the seven core targets (`fuzz_pdf_parser`,
+- **fuzz:build** — `cargo +nightly fuzz build` over all 20 targets; auto-triggered
+  when `fuzz/` or `crates/` change in an MR, manual otherwise; fails on bit-rot.
+- **fuzz:smoke** — 60-second run over the seven core targets (`fuzz_pdf_parser`,
   `fuzz_content_stream`, `fuzz_xref`, `fuzz_filters`, `fuzz_data_dom`,
-  `fuzz_formcalc`, `fuzz_som_path`) on a nightly schedule.
-- **deep** — a 300-second run (configurable) over all 20 targets on a weekly
-  schedule.
+  `fuzz_formcalc`, `fuzz_som_path`); nightly schedule (cron `30 2 * * *` UTC)
+  and manual dispatch.
+- **fuzz:deep** — 120-second run over all 20 targets; weekly schedule
+  (cron `30 3 * * 0` UTC Sunday) and manual dispatch.
 
-Both run jobs upload crash reproducers as artifacts (30-day retention) and fail
-the job on any crash. The workflow can be dispatched manually
-(`workflow_dispatch`) for any target and duration. Run a target locally with
+Schedules are configured in GitLab: Settings → CI/CD → Schedules.
+Both fuzz:smoke and fuzz:deep upload crash reproducers as artifacts (30-day
+retention) and fail on any crash. Trigger manually from the pipeline view
+(play button on the job). Run a target locally with
 `cargo +nightly fuzz run <target>`; see `fuzz/README.md` for the crash-triage
 process.
 
