@@ -14,7 +14,9 @@ mod dashboard;
 mod db;
 #[allow(dead_code)]
 mod github_issues;
+mod harness;
 mod oracle_db;
+mod oracle_fault;
 mod oracles;
 mod pool;
 mod retest;
@@ -419,6 +421,47 @@ enum Command {
         /// Output path for the converted PDF bytes
         #[arg(long)]
         output: PathBuf,
+    },
+
+    /// Run the differential quality harness against a render oracle (mutool).
+    ///
+    /// Renders each PDF with our engine and with `mutool draw`, computes
+    /// per-page SSIM, and aggregates results into a structured JSON report.
+    /// Optionally compares the effective pass rate against a frozen baseline
+    /// (CI_BASELINE.json) and exits with code 1 on regression.
+    ///
+    /// Requires `mutool` in PATH. If not found, all docs are reported as
+    /// OracleUnavailable and no regression can be detected.
+    Diff {
+        /// Directory containing PDF files to process (recursive)
+        #[arg(long)]
+        corpus: PathBuf,
+
+        /// Output path for the JSON DifferentialReport.
+        /// If omitted, the JSON report is written to stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+
+        /// Path to a CI_BASELINE.json baseline file for regression comparison.
+        /// If omitted, runs in first-run mode (no regression check).
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+
+        /// Number of parallel workers (0 = nproc-2, default: 4)
+        #[arg(short = 'j', long, default_value_t = 4_usize)]
+        workers: usize,
+
+        /// Render DPI for mutool (default: 150)
+        #[arg(long, default_value_t = 150.0_f64)]
+        dpi: f64,
+
+        /// Enable text oracle comparison via pdftotext / poppler
+        #[arg(long)]
+        with_text: bool,
+
+        /// Cap the number of documents processed (for quick spot checks)
+        #[arg(long)]
+        limit: Option<usize>,
     },
 
     /// Check for regression between two runs (exit code 1 = regression)
@@ -1334,6 +1377,98 @@ fn main() {
                 timeout,
                 workers,
             );
+        }
+
+        Command::Diff {
+            corpus,
+            out,
+            baseline,
+            workers,
+            dpi,
+            with_text,
+            limit,
+        } => {
+            let run_id = format!("diff-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+
+            let git_commit = std::process::Command::new("git")
+                .args(["rev-parse", "--short", "HEAD"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            let effective_workers = if workers == 0 {
+                num_cpus::get().saturating_sub(2).max(1)
+            } else {
+                workers
+            };
+
+            let cfg = harness::HarnessConfig {
+                dpi,
+                baseline_path: baseline,
+                with_text,
+                limit,
+                ..harness::HarnessConfig::default()
+            };
+
+            let report =
+                harness::run_corpus(&corpus, &cfg, effective_workers, &run_id, &git_commit);
+
+            // Human-readable summary → stderr so JSON on stdout stays clean.
+            let s = &report.summary;
+            eprintln!("Differential Harness — {run_id} @ {git_commit}");
+            eprintln!("{}", "─".repeat(52));
+            eprintln!("  Total:          {:>6}", s.total);
+            eprintln!("  Match:          {:>6}", s.render_pass);
+            eprintln!("  Regression:     {:>6}", s.render_fail);
+            eprintln!("  Oracle faults:  {:>6}", s.oracle_faults);
+            eprintln!("  Skipped:        {:>6}", s.skipped);
+            if let Some(mean) = s.mean_render_ssim {
+                eprintln!("  Mean SSIM:    {mean:>8.4}");
+            }
+            eprintln!(
+                "  Effective pass: {:>7.1}%",
+                s.effective_render_pass_rate * 100.0
+            );
+            if let Some(bd) = &report.baseline_delta {
+                let verdict = if bd.regressed { "REGRESSION" } else { "OK" };
+                eprintln!(
+                    "  Baseline:   {:.4} → {:.4}  delta {:+.4}  tol {:.4}  {}",
+                    bd.baseline_pass_rate, bd.current_pass_rate, bd.delta, bd.tolerance, verdict
+                );
+            }
+
+            // Write JSON report to --out or stdout.
+            let json = serde_json::to_string_pretty(&report).expect("JSON serialization failed");
+            match &out {
+                Some(path) => {
+                    if let Some(parent) = path.parent() {
+                        if !parent.as_os_str().is_empty() {
+                            std::fs::create_dir_all(parent).ok();
+                        }
+                    }
+                    if let Err(e) = std::fs::write(path, &json) {
+                        eprintln!("ERROR: cannot write report to {}: {e}", path.display());
+                        std::process::exit(1);
+                    }
+                    eprintln!("Report written to {}", path.display());
+                }
+                None => {
+                    println!("{json}");
+                }
+            }
+
+            // Exit 1 if regression was detected vs baseline.
+            if report
+                .baseline_delta
+                .as_ref()
+                .is_some_and(|bd| bd.regressed)
+            {
+                eprintln!("REGRESSION detected vs baseline — exit 1");
+                std::process::exit(1);
+            }
         }
 
         Command::CheckRegression { db, run_a, run_b } => {
