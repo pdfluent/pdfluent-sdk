@@ -72,3 +72,6 @@ libc = "0.2"
 # LLM vision oracle (render_llm_review test).
 reqwest.workspace = true
 base64.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
