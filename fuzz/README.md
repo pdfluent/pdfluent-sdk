@@ -35,8 +35,8 @@ cd fuzz
 # Smoke: a short run to catch immediate regressions.
 cargo +nightly fuzz run fuzz_pdf_parser -- -max_total_time=60 -max_len=65536
 
-# Deep: a longer scheduled run (CI uses 300s).
-cargo +nightly fuzz run fuzz_pdf_parser -- -max_total_time=300 -max_len=65536
+# Deep: a longer scheduled run (CI uses 120s).
+cargo +nightly fuzz run fuzz_pdf_parser -- -max_total_time=120 -max_len=65536
 ```
 
 Corpus and crash artifacts live under `fuzz/corpus/<target>/` and
@@ -88,9 +88,36 @@ see `scripts/` corpus tooling. Keep committed seeds small.
 - **fuzz:deep** — 120 s run over all 20 targets; weekly schedule
   (cron `30 3 * * 0` UTC Sunday) and manual dispatch.
 
-Schedules are configured in GitLab: Settings → CI/CD → Schedules.
-Trigger manually from the pipeline view (play button on the fuzz job).
 Crash artifacts are uploaded on job failure (30-day retention).
+Trigger any job manually from the pipeline view (play button on the job row).
+
+### Configuring GitLab schedules (one-time setup)
+
+Go to **Settings → CI/CD → Schedules** in the GitLab project and create two
+entries:
+
+**Schedule 1 — nightly smoke**
+
+| Field | Value |
+|-------|-------|
+| Description | `Fuzz nightly smoke` |
+| Cron | `30 2 * * *` (02:30 UTC every day) |
+| Target branch | `xfa/text-span-ssot` |
+| Active | ✓ |
+
+**Schedule 2 — weekly deep**
+
+| Field | Value |
+|-------|-------|
+| Description | `Fuzz weekly deep` |
+| Cron | `30 3 * * 0` (03:30 UTC every Sunday) |
+| Target branch | `xfa/text-span-ssot` |
+| Active | ✓ |
+
+No pipeline variables are needed — both jobs trigger automatically on any
+`$CI_PIPELINE_SOURCE == "schedule"` pipeline regardless of which schedule fired.
+The `fuzz:build` job runs automatically on the same schedule pipelines, so
+every scheduled run also validates that all 20 targets compile.
 
 The `.github/workflows/fuzz.yml` file is retained for historical reference
 but is not executed (GitHub remote is not active).
