@@ -62,6 +62,40 @@ ocr-azure = ["dep:reqwest", "dep:base64", "dep:image", "dep:serde", "dep:serde_j
 ocr-cloud = ["ocr-mistral", "ocr-google", "ocr-aws", "ocr-azure"]
 ocr-onnx = ["dep:pdf-ocr"]
 full = ["parallel", "xfa", "ocr", "ocr-onnx", "ocr-cloud"]
+# Research spikes — not compiled in normal CI.  Build explicitly with `--features spike`.
+spike = []
+
+[[example]]
+name = "chunk_dump"
+required-features = ["spike"]
+
+[[example]]
+name = "logical_compare"
+required-features = ["spike"]
+
+[[example]]
+name = "structtree_measure"
+required-features = ["spike"]
+
+[[example]]
+name = "structtree_spike"
+required-features = ["spike"]
+
+[[example]]
+name = "structtree_table"
+required-features = ["spike"]
+
+[[example]]
+name = "structured_demo"
+required-features = ["spike"]
+
+[[example]]
+name = "table_audit"
+required-features = ["spike"]
+
+[[example]]
+name = "table_dump"
+required-features = ["spike"]
 
 [dev-dependencies]
 image = { workspace = true }

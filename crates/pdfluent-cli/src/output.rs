@@ -6,7 +6,7 @@
 use serde_json::{json, Value};
 
 /// Stable CLI version string (RC line).
-pub const CLI_VERSION: &str = "1.0.0-beta.8";
+pub const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Exit-code contract (see `docs/en/cli.md`).
 pub mod exit {

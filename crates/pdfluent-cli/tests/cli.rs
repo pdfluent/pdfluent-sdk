@@ -41,20 +41,25 @@ fn help_works() {
 }
 
 #[test]
-fn version_is_beta8() {
+fn version_matches_package_version() {
+    let expected = env!("CARGO_PKG_VERSION");
     let (ok, stdout, _) = run(&["--version"]);
     assert!(ok);
     assert!(
-        stdout.contains("1.0.0-beta.8"),
-        "version should be 1.0.0-beta.8, got: {stdout}"
+        stdout.contains(expected),
+        "version should be {expected}, got: {stdout}"
     );
 }
 
 #[test]
 fn doctor_exits_zero() {
+    let expected = env!("CARGO_PKG_VERSION");
     let (ok, stdout, _) = run(&["doctor"]);
     assert!(ok, "doctor should exit 0");
-    assert!(stdout.contains("cli_version:  1.0.0-beta.8"));
+    assert!(
+        stdout.contains(&format!("cli_version:  {expected}")),
+        "expected cli_version {expected} in doctor output"
+    );
     assert!(
         stdout.contains("experimental"),
         "doctor notes XFA experimental"
@@ -274,9 +279,13 @@ fn validate_missing_is_exit_3() {
 
 #[test]
 fn doctor_json_shape() {
+    let expected = env!("CARGO_PKG_VERSION");
     let (ok, stdout, _) = run(&["doctor", "--json"]);
     assert!(ok);
-    assert!(stdout.contains("\"cli_version\": \"1.0.0-beta.8\""));
+    assert!(
+        stdout.contains(&format!("\"cli_version\": \"{expected}\"")),
+        "expected cli_version {expected} in JSON output"
+    );
     assert!(stdout.contains("\"xfa\""));
 }
 
@@ -345,7 +354,11 @@ fn json_outputs_are_valid_documents() {
         let v: serde_json::Value =
             serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{args:?} invalid JSON: {e}"));
         assert_eq!(v["ok"], serde_json::Value::Bool(true), "{args:?} ok=true");
-        assert_eq!(v["version"], "1.0.0-beta.8", "{args:?} stable version");
+        assert_eq!(
+            v["version"],
+            env!("CARGO_PKG_VERSION"),
+            "{args:?} stable version"
+        );
         assert!(v.get("command").is_some(), "{args:?} has command");
         assert!(v.get("data").is_some(), "{args:?} has data");
     }

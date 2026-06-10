@@ -238,48 +238,20 @@ public class PdfluentDocument implements AutoCloseable {
     public java.util.List<TextBlock> extractTextBlocks(int pageIndex) {
         ensureOpen();
         checkPageIndex(pageIndex);
-
-        com.sun.jna.Pointer docPtr = new com.sun.jna.Pointer(handle);
-        com.sun.jna.ptr.PointerByReference outBlocks = new com.sun.jna.ptr.PointerByReference();
-        com.sun.jna.ptr.NativeLongByReference outCount = new com.sun.jna.ptr.NativeLongByReference();
-        int rc = NativeLoader.get().pdf_page_extract_text_blocks(
-            docPtr, pageIndex, outBlocks, outCount);
-
-        if (rc != 0) {
-            // 1 ErrorInvalidArgument · 5 ErrorPageRange · 12 ErrorExtract.
-            // Defensive: ErrorPageRange maps to the existing typed exception.
-            if (rc == 5) {
-                throw new PdfluentPageRangeException(
-                    "page index " + pageIndex + " out of range");
-            }
-            throw new PdfluentException(
-                "text-block extraction failed (status " + rc + ")");
-        }
-
-        com.sun.jna.Pointer blocksPtr = outBlocks.getValue();
-        long count = outCount.getValue().longValue();
-        if (count <= 0L || blocksPtr == null) {
-            // Free is still safe with (null, 0).
-            NativeLoader.get().pdf_text_blocks_free(blocksPtr, new com.sun.jna.NativeLong(0));
+        String[] flat = nativeExtractTextBlocks(handle, pageIndex);
+        if (flat == null || flat.length == 0) {
             return java.util.Collections.emptyList();
         }
-
-        try {
-            // Materialise the array via JNA's Structure helpers.
-            PdfCapiLibrary.PdfTextBlock prototype =
-                new PdfCapiLibrary.PdfTextBlock(blocksPtr);
-            PdfCapiLibrary.PdfTextBlock[] array =
-                (PdfCapiLibrary.PdfTextBlock[]) prototype.toArray((int) count);
-            java.util.List<TextBlock> result = new java.util.ArrayList<>((int) count);
-            for (PdfCapiLibrary.PdfTextBlock nb : array) {
-                String text = nb.text == null ? "" : nb.text.getString(0, "UTF-8");
-                result.add(new TextBlock(nb.x, nb.y, nb.width, nb.height, text));
-            }
-            return java.util.Collections.unmodifiableList(result);
-        } finally {
-            NativeLoader.get().pdf_text_blocks_free(
-                blocksPtr, new com.sun.jna.NativeLong(count));
+        java.util.List<TextBlock> result = new java.util.ArrayList<>(flat.length / 5);
+        for (int i = 0; i + 4 < flat.length; i += 5) {
+            double x = Double.parseDouble(flat[i]);
+            double y = Double.parseDouble(flat[i + 1]);
+            double w = Double.parseDouble(flat[i + 2]);
+            double h = Double.parseDouble(flat[i + 3]);
+            String text = flat[i + 4];
+            result.add(new TextBlock(x, y, w, h, text));
         }
+        return java.util.Collections.unmodifiableList(result);
     }
 
     // =========================================================================
@@ -482,6 +454,7 @@ public class PdfluentDocument implements AutoCloseable {
     private static native double nativePageHeight(long handle, int pageIndex);
     private static native int nativePageRotation(long handle, int pageIndex);
     private static native String nativeExtractText(long handle, int pageIndex);
+    private static native String[] nativeExtractTextBlocks(long handle, int pageIndex);
     private static native byte[] nativeRenderPage(long handle, int pageIndex, double dpi);
     private static native byte[] nativeRenderThumbnail(long handle, int pageIndex, int maxDimension);
     private static native String nativeGetMetadata(long handle, String key);
