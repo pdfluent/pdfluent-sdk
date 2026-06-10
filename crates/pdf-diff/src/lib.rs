@@ -4,9 +4,14 @@
 //! and generates visual diff overlays highlighting changed regions.
 
 pub mod gate;
+pub mod report;
 pub mod ssim;
 
 pub use gate::{classify, DifferentialVerdict, GATE_SSIM_THRESHOLD};
+pub use report::{
+    build_report, build_summary, compute_baseline_delta, BaselineDelta, DifferentialReport,
+    DocDifferential, HarnessSummary, TextVerdict,
+};
 
 use thiserror::Error;
 

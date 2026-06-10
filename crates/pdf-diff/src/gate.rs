@@ -24,7 +24,7 @@ use crate::PageImage;
 pub const GATE_SSIM_THRESHOLD: f64 = 0.75;
 
 /// The outcome of a single differential comparison.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DifferentialVerdict {
     /// SSIM >= [`GATE_SSIM_THRESHOLD`]: our render matches the reference.
     Match,
