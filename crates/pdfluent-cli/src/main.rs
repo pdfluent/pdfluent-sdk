@@ -305,7 +305,7 @@ fn cmd_validate(input: &Path, json: bool) -> u8 {
 fn cmd_doctor(json: bool) -> u8 {
     let data = json!({
         "cli_version": CLI_VERSION,
-        "sdk": "pdfluent facade (=1.0.0-beta.8)",
+        "sdk": format!("pdfluent facade (={})", pdfluent::api_version()),
         "target_os": std::env::consts::OS,
         "target_arch": std::env::consts::ARCH,
         "license": "PDFluent Commercial License (evaluation use permitted)",
@@ -315,7 +315,10 @@ fn cmd_doctor(json: bool) -> u8 {
     output::success("doctor", json, data, vec![], || {
         println!("pdfluent CLI doctor");
         println!("  cli_version:  {CLI_VERSION}");
-        println!("  sdk:          pdfluent facade (=1.0.0-beta.8)");
+        println!(
+            "  sdk:          pdfluent facade (={})",
+            pdfluent::api_version()
+        );
         println!("  target_os:    {}", std::env::consts::OS);
         println!("  target_arch:  {}", std::env::consts::ARCH);
         println!("  license:      PDFluent Commercial License (evaluation use permitted)");

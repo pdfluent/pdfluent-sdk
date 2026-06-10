@@ -1374,3 +1374,68 @@ pub extern "system" fn Java_com_pdfluent_PdfluentLicensing_nativeStatus<'a>(
     }
     arr.into_raw()
 }
+
+/// `native String[] nativeExtractTextBlocks(long handle, int pageIndex)`
+///
+/// Returns a flat `String[]` with stride 5: `[x, y, width, height, text]` per
+/// text block. The bounding box is the union of all spans in the block.
+/// Returns an empty array for pages with no text.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeExtractTextBlocks<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    page_index: jint,
+) -> jobject {
+    if handle == 0 {
+        throw_pdf_exception(&mut env, "document is closed");
+        return JObject::null().into_raw();
+    }
+    let doc = unsafe { from_handle(handle) };
+    let blocks = match doc.engine.extract_text_blocks(page_index as usize) {
+        Ok(b) => b,
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("text-block extraction failed: {e}"));
+            return JObject::null().into_raw();
+        }
+    };
+    let mut items: Vec<String> = Vec::with_capacity(blocks.len() * 5);
+    for block in &blocks {
+        let (mut x_min, mut y_min) = (f64::INFINITY, f64::INFINITY);
+        let (mut x_max, mut y_max) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for span in &block.spans {
+            if span.x < x_min {
+                x_min = span.x;
+            }
+            if span.y < y_min {
+                y_min = span.y;
+            }
+            let right = span.x + span.width;
+            let top = span.y + span.height;
+            if right > x_max {
+                x_max = right;
+            }
+            if top > y_max {
+                y_max = top;
+            }
+        }
+        if !x_min.is_finite() {
+            x_min = 0.0;
+            y_min = 0.0;
+            x_max = 0.0;
+            y_max = 0.0;
+        }
+        items.push(x_min.to_string());
+        items.push(y_min.to_string());
+        items.push((x_max - x_min).max(0.0).to_string());
+        items.push((y_max - y_min).max(0.0).to_string());
+        items.push(block.text());
+    }
+    match new_string_array(&mut env, &items) {
+        Ok(arr) => arr.into_raw(),
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("array creation error: {e}"));
+            JObject::null().into_raw()
+        }
+    }
+}
