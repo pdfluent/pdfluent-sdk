@@ -306,12 +306,6 @@ fn install_diagnostics_sink(
         if recovery.page_tree_rebuilt {
             guard.push(crate::diagnostics::Diagnostic::page_tree_rebuilt());
         }
-        // Drain any low-level leniency events accumulated during parsing
-        // (stream fallback, indirect cycles, filter leniency at load time).
-        // Caller must have called leniency::activate() before opening the engine.
-        for event in pdf_render::pdf_syntax::leniency::drain() {
-            guard.push(crate::diagnostics::Diagnostic::from_leniency_event(event));
-        }
     }
     collector
 }
@@ -528,14 +522,25 @@ impl PdfDocument {
 
         let shared = Arc::new(bytes.to_vec());
         // Activate leniency collector before parsing so load-time filter and
-        // structural recovery events are captured. Drained inside install_diagnostics_sink.
+        // structural recovery events are captured. Always drain — even on error —
+        // so the thread-local collector is never left in an active state.
         pdf_render::pdf_syntax::leniency::activate();
-        let mut engine = open_engine_from_shared_bytes(
+        let engine_result = open_engine_from_shared_bytes(
             shared.clone(),
             opts.password.as_deref(),
             opts.processing_limits.as_ref(),
-        )?;
+        );
+        // Drain load-time events before checking the result so the collector is
+        // never leaked when open_engine_from_shared_bytes returns an error.
+        let load_events = pdf_render::pdf_syntax::leniency::drain();
+        let mut engine = engine_result?;
         let diagnostics = install_diagnostics_sink(&mut engine);
+        {
+            let mut guard = diagnostics.lock().unwrap_or_else(|e| e.into_inner());
+            for event in load_events {
+                guard.push(crate::diagnostics::Diagnostic::from_leniency_event(event));
+            }
+        }
         let lopdf = load_lopdf_from_shared_bytes(&shared, opts.password.as_deref())?;
 
         Ok(Self {
