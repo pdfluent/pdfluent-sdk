@@ -100,6 +100,9 @@ pub(crate) fn decode(
     if result.is_err() && decoder.decoded_rows == 0 {
         return None;
     }
+    if result.is_err() {
+        crate::leniency::emit(crate::leniency::CCITT_PARTIAL_DECODE);
+    }
 
     Some(FilterResult {
         data: decoder.output,

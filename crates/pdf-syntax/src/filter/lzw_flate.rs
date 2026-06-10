@@ -42,7 +42,7 @@ pub(crate) mod flate {
             .or_else(|| deflate_stream(data))
             .or_else(|| {
                 warn!("flate stream is broken, decoding with fallback");
-
+                crate::leniency::emit(crate::leniency::FLATE_BROKEN_FALLBACK);
                 fallback::decode(data)
             })?;
         let params = PredictorParams::from_params(&params);
@@ -199,6 +199,7 @@ pub(crate) mod flate {
                     Some(h) => h,
                     None => {
                         warn!("bad block header in flate stream");
+                        crate::leniency::emit(crate::leniency::FLATE_BAD_BLOCK);
                         self.eof = true;
                         return;
                     }
@@ -216,6 +217,7 @@ pub(crate) mod flate {
                     2 => self.read_compressed_block(false),
                     _ => {
                         warn!("unknown block type in flate stream");
+                        crate::leniency::emit(crate::leniency::FLATE_BAD_BLOCK);
                         self.eof = true;
                     }
                 }
@@ -621,6 +623,7 @@ pub(crate) mod lzw {
                 Some(code) => code as usize,
                 None => {
                     warn!("premature EOF in LZW stream, EOD code missing");
+                    crate::leniency::emit(crate::leniency::LZW_PREMATURE_EOF);
                     return Some(decoded);
                 }
             };
@@ -635,6 +638,7 @@ pub(crate) mod lzw {
                 new => {
                     if new > table.size() {
                         warn!("invalid LZW code: {} (table size: {})", new, table.size());
+                        crate::leniency::emit(crate::leniency::LZW_INVALID_CODE);
                         return None;
                     }
 

@@ -81,6 +81,7 @@ pub(crate) mod util;
 
 pub mod content;
 mod crypto;
+pub mod leniency;
 pub mod metadata;
 pub mod object;
 pub mod page;

@@ -5,7 +5,7 @@
 pub use crate::capability::Capability;
 pub use crate::compliance::{PdfAProfile, PdfAValidationReport};
 pub use crate::decoration::PageDecoration;
-pub use crate::diagnostics::{Diagnostic, DiagnosticCategory, Severity};
+pub use crate::diagnostics::{Diagnostic, DiagnosticCategory, LeniencyReport, Severity};
 pub use crate::document::{OpenOptions, PdfDocument, SaveOptions, TextBlock};
 pub use crate::encrypt::{EncryptOptions, EncryptionAlgorithm, Permissions};
 pub use crate::error::{Error, Result};

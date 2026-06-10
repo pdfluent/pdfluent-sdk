@@ -13,6 +13,7 @@
 //! [`PdfDocument::take_diagnostics`]: crate::PdfDocument::take_diagnostics
 
 use pdf_render::pdf_interpret::InterpreterWarning;
+use pdf_render::pdf_syntax::leniency::{LeniencyEvent, LeniencySeverity};
 
 /// How serious a [`Diagnostic`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -83,6 +84,24 @@ impl Diagnostic {
     pub const CODE_XREF_REBUILT: &'static str = "XREF_REBUILT";
     /// Stable code for an invalid page tree recovered by brute-force scan.
     pub const CODE_PAGE_TREE_REBUILT: &'static str = "PAGE_TREE_REBUILT";
+    /// Stable code for a flate stream decoded via the pure-Rust fallback.
+    pub const CODE_FLATE_BROKEN_FALLBACK: &'static str = "FLATE_BROKEN_FALLBACK";
+    /// Stable code for a bad block header encountered in a flate stream.
+    pub const CODE_FLATE_BAD_BLOCK: &'static str = "FLATE_BAD_BLOCK";
+    /// Stable code for premature EOF in an LZW stream.
+    pub const CODE_LZW_PREMATURE_EOF: &'static str = "LZW_PREMATURE_EOF";
+    /// Stable code for an invalid code in an LZW stream.
+    pub const CODE_LZW_INVALID_CODE: &'static str = "LZW_INVALID_CODE";
+    /// Stable code for an ASCII-85 1-character terminal group accepted leniently.
+    pub const CODE_ASCII85_LENIENT_PARTIAL: &'static str = "ASCII85_LENIENT_PARTIAL";
+    /// Stable code for partial CCITT row decode.
+    pub const CODE_CCITT_PARTIAL_DECODE: &'static str = "CCITT_PARTIAL_DECODE";
+    /// Stable code for the stream manual fallback parser being used.
+    pub const CODE_STREAM_PARSE_FALLBACK: &'static str = "STREAM_PARSE_FALLBACK";
+    /// Stable code for a cycle detected in indirect object references.
+    pub const CODE_INDIRECT_CYCLE: &'static str = "INDIRECT_CYCLE";
+    /// Stable code for indirect object resolution depth exceeding 512.
+    pub const CODE_INDIRECT_DEPTH_EXCEEDED: &'static str = "INDIRECT_DEPTH_EXCEEDED";
 
     /// Diagnostic for a cross-reference table rebuilt during load.
     pub(crate) fn xref_rebuilt() -> Self {
@@ -156,6 +175,93 @@ impl Diagnostic {
             },
         }
     }
+
+    /// Translate a low-level [`LeniencyEvent`] into a stable public diagnostic.
+    ///
+    /// Called by the document façade after draining the thread-local leniency
+    /// collector following a load or decode operation.
+    pub(crate) fn from_leniency_event(event: LeniencyEvent) -> Self {
+        let severity = match event.severity {
+            LeniencySeverity::Info => Severity::Info,
+            LeniencySeverity::Warning => Severity::Warning,
+            LeniencySeverity::Critical => Severity::Error,
+        };
+        let category = match event.code {
+            "FLATE_BROKEN_FALLBACK"
+            | "FLATE_BAD_BLOCK"
+            | "LZW_PREMATURE_EOF"
+            | "LZW_INVALID_CODE"
+            | "ASCII85_LENIENT_PARTIAL"
+            | "CCITT_PARTIAL_DECODE"
+            | "STREAM_PARSE_FALLBACK" => DiagnosticCategory::Decode,
+            "INDIRECT_CYCLE" | "INDIRECT_DEPTH_EXCEEDED" => DiagnosticCategory::Repair,
+            _ => DiagnosticCategory::Other,
+        };
+        Diagnostic {
+            severity,
+            category,
+            code: event.code,
+            message: event.message.to_string(),
+            page: None,
+            object: None,
+            source: None,
+        }
+    }
+}
+
+/// An aggregated summary of decode-leniency diagnostics for a document.
+///
+/// Computed from the diagnostics buffer via [`LeniencyReport::from_diagnostics`].
+/// Provides quick access to counts without iterating the full list.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct LeniencyReport {
+    /// All leniency-related diagnostics (Repair + Decode categories).
+    pub events: Vec<Diagnostic>,
+    /// Number of distinct event codes present.
+    pub unique_event_count: usize,
+    /// Number of events at [`Severity::Warning`] level.
+    pub warning_count: usize,
+    /// Number of events at [`Severity::Error`] level (Critical in the parser layer).
+    pub critical_count: usize,
+}
+
+impl LeniencyReport {
+    /// Build a report from the diagnostics collected on a document.
+    ///
+    /// Filters to Repair and Decode categories (the leniency-relevant subset).
+    pub fn from_diagnostics(diagnostics: &[Diagnostic]) -> Self {
+        let events: Vec<Diagnostic> = diagnostics
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d.category,
+                    DiagnosticCategory::Repair | DiagnosticCategory::Decode
+                )
+            })
+            .cloned()
+            .collect();
+        let unique_event_count = events.len();
+        let warning_count = events
+            .iter()
+            .filter(|d| d.severity == Severity::Warning)
+            .count();
+        let critical_count = events
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .count();
+        LeniencyReport {
+            events,
+            unique_event_count,
+            warning_count,
+            critical_count,
+        }
+    }
+
+    /// Returns `true` if no leniency events were recorded (clean document).
+    pub fn is_clean(&self) -> bool {
+        self.events.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -182,5 +288,124 @@ mod tests {
         assert_eq!(s.severity, Severity::Error);
         assert!(s.message.contains("9000"));
         assert!(s.message.contains("100"));
+    }
+
+    #[test]
+    fn from_leniency_event_maps_severity_and_category() {
+        use pdf_render::pdf_syntax::leniency::{LeniencyEvent, LeniencySeverity};
+
+        let warn_event = LeniencyEvent {
+            code: "FLATE_BROKEN_FALLBACK",
+            severity: LeniencySeverity::Warning,
+            message: "test warn",
+        };
+        let d = Diagnostic::from_leniency_event(warn_event);
+        assert_eq!(d.code, "FLATE_BROKEN_FALLBACK");
+        assert_eq!(d.severity, Severity::Warning);
+        assert_eq!(d.category, DiagnosticCategory::Decode);
+
+        let critical_event = LeniencyEvent {
+            code: "INDIRECT_CYCLE",
+            severity: LeniencySeverity::Critical,
+            message: "test critical",
+        };
+        let d = Diagnostic::from_leniency_event(critical_event);
+        assert_eq!(d.code, "INDIRECT_CYCLE");
+        assert_eq!(d.severity, Severity::Error);
+        assert_eq!(d.category, DiagnosticCategory::Repair);
+
+        let info_event = LeniencyEvent {
+            code: "ASCII85_LENIENT_PARTIAL",
+            severity: LeniencySeverity::Info,
+            message: "test info",
+        };
+        let d = Diagnostic::from_leniency_event(info_event);
+        assert_eq!(d.severity, Severity::Info);
+        assert_eq!(d.category, DiagnosticCategory::Decode);
+    }
+
+    #[test]
+    fn leniency_report_filters_repair_and_decode_categories() {
+        let diagnostics = vec![
+            Diagnostic {
+                severity: Severity::Warning,
+                category: DiagnosticCategory::Font,
+                code: Diagnostic::CODE_FONT_UNSUPPORTED,
+                message: "font sub".to_string(),
+                page: None,
+                object: None,
+                source: None,
+            },
+            Diagnostic::xref_rebuilt(),
+            Diagnostic {
+                severity: Severity::Warning,
+                category: DiagnosticCategory::Decode,
+                code: Diagnostic::CODE_FLATE_BROKEN_FALLBACK,
+                message: "flate fallback".to_string(),
+                page: None,
+                object: None,
+                source: None,
+            },
+        ];
+
+        let report = LeniencyReport::from_diagnostics(&diagnostics);
+        // Font diag excluded; xref_rebuilt (Repair) + flate (Decode) included.
+        assert_eq!(report.events.len(), 2);
+        assert_eq!(report.unique_event_count, 2);
+        assert_eq!(report.warning_count, 2);
+        assert_eq!(report.critical_count, 0);
+        assert!(!report.is_clean());
+    }
+
+    #[test]
+    fn leniency_report_is_clean_when_no_repair_or_decode() {
+        let diagnostics = vec![Diagnostic {
+            severity: Severity::Warning,
+            category: DiagnosticCategory::Font,
+            code: Diagnostic::CODE_FONT_UNSUPPORTED,
+            message: "font sub".to_string(),
+            page: None,
+            object: None,
+            source: None,
+        }];
+        let report = LeniencyReport::from_diagnostics(&diagnostics);
+        assert!(report.is_clean());
+    }
+
+    #[test]
+    fn leniency_report_counts_severities_correctly() {
+        let diagnostics = vec![
+            Diagnostic {
+                severity: Severity::Warning,
+                category: DiagnosticCategory::Decode,
+                code: "CODE_A",
+                message: String::new(),
+                page: None,
+                object: None,
+                source: None,
+            },
+            Diagnostic {
+                severity: Severity::Error,
+                category: DiagnosticCategory::Repair,
+                code: "CODE_B",
+                message: String::new(),
+                page: None,
+                object: None,
+                source: None,
+            },
+            Diagnostic {
+                severity: Severity::Info,
+                category: DiagnosticCategory::Decode,
+                code: "CODE_C",
+                message: String::new(),
+                page: None,
+                object: None,
+                source: None,
+            },
+        ];
+        let report = LeniencyReport::from_diagnostics(&diagnostics);
+        assert_eq!(report.warning_count, 1);
+        assert_eq!(report.critical_count, 1);
+        assert_eq!(report.unique_event_count, 3);
     }
 }

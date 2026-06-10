@@ -298,7 +298,7 @@ fn install_diagnostics_sink(
     // page-tree rebuilds happen during parsing — before any warning sink runs —
     // so they are read from the engine and pushed here rather than via the sink.
     let recovery = engine.load_recovery();
-    if recovery.xref_rebuilt || recovery.page_tree_rebuilt {
+    {
         let mut guard = collector.lock().unwrap_or_else(|e| e.into_inner());
         if recovery.xref_rebuilt {
             guard.push(crate::diagnostics::Diagnostic::xref_rebuilt());
@@ -306,8 +306,35 @@ fn install_diagnostics_sink(
         if recovery.page_tree_rebuilt {
             guard.push(crate::diagnostics::Diagnostic::page_tree_rebuilt());
         }
+        // Drain any low-level leniency events accumulated during parsing
+        // (stream fallback, indirect cycles, filter leniency at load time).
+        // Caller must have called leniency::activate() before opening the engine.
+        for event in pdf_render::pdf_syntax::leniency::drain() {
+            guard.push(crate::diagnostics::Diagnostic::from_leniency_event(event));
+        }
     }
     collector
+}
+
+/// Activate the thread-local leniency collector, run `f`, then drain any
+/// accumulated events into the diagnostics buffer.
+///
+/// Used around operations that trigger stream or filter decoding (text
+/// extraction, page rendering) where low-level leniency events can fire.
+fn with_leniency<T>(
+    diagnostics: &Arc<Mutex<Vec<crate::diagnostics::Diagnostic>>>,
+    f: impl FnOnce() -> T,
+) -> T {
+    pdf_render::pdf_syntax::leniency::activate();
+    let result = f();
+    let events = pdf_render::pdf_syntax::leniency::drain();
+    if !events.is_empty() {
+        let mut guard = diagnostics.lock().unwrap_or_else(|e| e.into_inner());
+        for event in events {
+            guard.push(crate::diagnostics::Diagnostic::from_leniency_event(event));
+        }
+    }
+    result
 }
 
 impl std::fmt::Debug for PdfDocument {
@@ -500,6 +527,9 @@ impl PdfDocument {
         }
 
         let shared = Arc::new(bytes.to_vec());
+        // Activate leniency collector before parsing so load-time filter and
+        // structural recovery events are captured. Drained inside install_diagnostics_sink.
+        pdf_render::pdf_syntax::leniency::activate();
         let mut engine = open_engine_from_shared_bytes(
             shared.clone(),
             opts.password.as_deref(),
@@ -684,12 +714,13 @@ impl PdfDocument {
     pub fn extract_text(&self) -> Result<String> {
         self.require_capability(Capability::TextExtract)?;
         let count = self.engine.page_count();
-        let mut parts: Vec<String> = Vec::with_capacity(count);
-        for idx in 0..count {
-            let page_text = self.engine.extract_text(idx)?;
-            parts.push(page_text);
-        }
-        Ok(parts.join("\n\n"))
+        with_leniency(&self.diagnostics, || -> Result<String> {
+            let mut parts: Vec<String> = Vec::with_capacity(count);
+            for idx in 0..count {
+                parts.push(self.engine.extract_text(idx)?);
+            }
+            Ok(parts.join("\n\n"))
+        })
     }
 
     /// Extract text grouped into structured blocks with coordinates.
@@ -1171,16 +1202,17 @@ impl PdfDocument {
             ..Default::default()
         };
 
-        let rendered = self
-            .engine
-            .render_page(page - 1, &render_opts)
-            .map_err(|e| {
-                use pdf_engine::EngineError;
-                if let EngineError::LimitExceeded(ref le) = e {
-                    return Error::from(le.clone());
-                }
-                internal_error(format!("render page {page} failed: {e}"))
-            })?;
+        let rendered = with_leniency(&self.diagnostics, || {
+            self.engine
+                .render_page(page - 1, &render_opts)
+                .map_err(|e| {
+                    use pdf_engine::EngineError;
+                    if let EngineError::LimitExceeded(ref le) = e {
+                        return Error::from(le.clone());
+                    }
+                    internal_error(format!("render page {page} failed: {e}"))
+                })
+        })?;
 
         if !matches!(rendered.pixel_format, PixelFormat::Rgba8) {
             return Err(internal_error(format!(

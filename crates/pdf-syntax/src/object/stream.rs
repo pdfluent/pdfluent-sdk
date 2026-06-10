@@ -244,7 +244,7 @@ impl<'a> Readable<'a> for Stream<'a> {
         parse_proper(r, &dict, stream_byte_limit)
             .or_else(|| {
                 warn!("failed to parse stream, trying to parse it manually");
-
+                crate::leniency::emit(crate::leniency::STREAM_PARSE_FALLBACK);
                 r.jump(offset);
                 parse_fallback(r, &dict, stream_byte_limit)
             })
