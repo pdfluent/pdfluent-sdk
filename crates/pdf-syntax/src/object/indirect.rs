@@ -29,11 +29,13 @@ where
 
         if ctx.parent_chain_contains(&id) {
             warn!("cycle detected in indirect object: {id:?}");
+            crate::leniency::emit(crate::leniency::INDIRECT_CYCLE);
             return None;
         }
 
         if ctx.parent_chain_depth() > 512 {
             warn!("indirect object resolution depth exceeds 512 for {id:?}");
+            crate::leniency::emit(crate::leniency::INDIRECT_DEPTH_EXCEEDED);
             return None;
         }
 

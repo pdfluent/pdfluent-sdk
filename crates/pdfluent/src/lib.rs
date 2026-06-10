@@ -78,6 +78,7 @@ pub mod watermark;
 pub use crate::capability::{Capability, CapabilitySet};
 pub use crate::compliance::{PdfAProfile, PdfAValidationReport, Violation};
 pub use crate::decoration::PageDecoration;
+pub use crate::diagnostics::{Diagnostic, DiagnosticCategory, LeniencyReport, Severity};
 pub use crate::document::{
     OpenOptions, Page, Pages, PdfDocument, PdfVersion, SaveOptions, TextBlock,
 };
