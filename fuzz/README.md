@@ -79,13 +79,18 @@ see `scripts/` corpus tooling. Keep committed seeds small.
 
 ## CI
 
-`.github/workflows/fuzz.yml` defines three jobs:
+`.gitlab-ci.yml` defines three fuzz jobs in the `fuzz_manual` stage:
 
-- **build** — `cargo +nightly fuzz build` on every trigger; fails on bit-rot.
-- **smoke** — short run (60s) over the seven core targets; runs on the nightly
-  schedule and on manual dispatch.
-- **deep** — full run (300s, configurable) over all targets; runs on the weekly
-  schedule and on manual dispatch.
+- **fuzz:build** — `cargo +nightly fuzz build` over all 20 targets; auto when
+  `fuzz/` or `crates/` change in an MR, manual otherwise; fails on bit-rot.
+- **fuzz:smoke** — 60 s run over the seven core targets; nightly schedule
+  (cron `30 2 * * *` UTC) and manual dispatch.
+- **fuzz:deep** — 120 s run over all 20 targets; weekly schedule
+  (cron `30 3 * * 0` UTC Sunday) and manual dispatch.
 
-Trigger manually from the Actions tab (`workflow_dispatch`), optionally pinning
-a single `target` and `duration`.
+Schedules are configured in GitLab: Settings → CI/CD → Schedules.
+Trigger manually from the pipeline view (play button on the fuzz job).
+Crash artifacts are uploaded on job failure (30-day retention).
+
+The `.github/workflows/fuzz.yml` file is retained for historical reference
+but is not executed (GitHub remote is not active).
