@@ -4225,6 +4225,8 @@ dependencies = [
 name = "pdf-diff"
 version = "1.0.0-beta.1"
 dependencies = [
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -9001,6 +9003,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "strsim",
+ "tempfile",
  "tikv-jemallocator",
  "walkdir",
  "zip 2.4.2",

@@ -220,7 +220,11 @@ pub fn run_doc(pdf_data: &[u8], path: &Path, cfg: &HarnessConfig) -> DocDifferen
 
     doc.render_ssim = Some(min_ssim);
     doc.pages_compared = pages_compared;
-    doc.render_verdict = pdf_diff::gate::classify(min_ssim);
+    doc.render_verdict = if min_ssim >= cfg.render_ssim_threshold {
+        DifferentialVerdict::Match
+    } else {
+        DifferentialVerdict::Regression
+    };
 
     // Optional text oracle
     if cfg.with_text {
