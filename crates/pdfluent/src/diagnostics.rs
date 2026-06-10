@@ -241,7 +241,13 @@ impl LeniencyReport {
             })
             .cloned()
             .collect();
-        let unique_event_count = events.len();
+        // Count distinct codes — `events` may contain one entry per render/extract
+        // call for the same code (each operation has its own activate/drain session).
+        let mut seen_codes = std::collections::HashSet::new();
+        for e in &events {
+            seen_codes.insert(e.code);
+        }
+        let unique_event_count = seen_codes.len();
         let warning_count = events
             .iter()
             .filter(|d| d.severity == Severity::Warning)
