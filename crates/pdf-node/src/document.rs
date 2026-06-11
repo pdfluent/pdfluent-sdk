@@ -37,6 +37,23 @@ impl PdfDocument {
         let mut doc = arc.lock().unwrap();
         f(&mut doc)
     }
+
+    /// Rebuild the rendering engine from the current lopdf state.
+    ///
+    /// Call this after any mutation so that `render_page` reflects the change.
+    /// Outstanding `PdfPage` handles obtained before this call are stale.
+    fn rebuild_inner(&mut self) -> napi::Result<()> {
+        if let Some(arc) = &self.doc {
+            let mut buf = Vec::with_capacity(64 * 1024);
+            arc.lock()
+                .unwrap()
+                .clone()
+                .save_to(&mut buf)
+                .map_err(|e| napi::Error::from_reason(format!("engine refresh failed: {e}")))?;
+            self.inner = Arc::new(RustDocument::open(buf).map_err(to_napi_error)?);
+        }
+        Ok(())
+    }
 }
 
 /// Document metadata.
@@ -607,7 +624,7 @@ impl PdfDocument {
     /// The change is persisted to the document — a subsequent `save()` will
     /// write the updated value.
     #[napi]
-    pub fn set_field_value(&self, name: String, value: String) -> Result<()> {
+    pub fn set_field_value(&mut self, name: String, value: String) -> Result<()> {
         let fe = self
             .form_engine
             .as_ref()
@@ -623,7 +640,7 @@ impl PdfDocument {
                 }
             }
         }
-        Ok(())
+        self.rebuild_inner()
     }
 
     /// Get annotations on a specific page (0-based index).
@@ -683,7 +700,7 @@ impl PdfDocument {
     /// For `"freetext"`, `content` becomes the visible text.
     #[napi]
     pub fn add_annotation(
-        &self,
+        &mut self,
         page: u32,
         annot_type: String,
         rect: Vec<f64>,
@@ -729,7 +746,8 @@ impl PdfDocument {
             // page is 0-based in our API; lopdf uses 1-based
             pdf_annot::builder::add_annotation_to_page(doc, page + 1, annot_id)
                 .map_err(|e| napi::Error::from_reason(format!("add annotation to page: {e}")))
-        })
+        })?;
+        self.rebuild_inner()
     }
 
     /// Redact all occurrences of `search_term` on a page (0-based index).
@@ -739,8 +757,8 @@ impl PdfDocument {
     ///
     /// Returns a summary of what was redacted.
     #[napi]
-    pub fn redact_text(&self, search_term: String, page: Option<u32>) -> Result<RedactionResult> {
-        self.with_doc_mut(|doc| {
+    pub fn redact_text(&mut self, search_term: String, page: Option<u32>) -> Result<RedactionResult> {
+        let result = self.with_doc_mut(|doc| {
             let mut opts = pdf_redact::RedactSearchOptions::exact(&search_term);
             if let Some(p) = page {
                 opts = opts.pages(vec![p + 1]); // convert to 1-based
@@ -752,7 +770,9 @@ impl PdfDocument {
                 areas_redacted: report.areas_redacted as u32,
                 pages_affected: report.pages_affected as u32,
             })
-        })
+        })?;
+        self.rebuild_inner()?;
+        Ok(result)
     }
 
     /// Encrypt the document and write it to `output_path`.
