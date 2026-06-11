@@ -91,10 +91,10 @@ pub fn replace_text(
     for cm in &cross_matches {
         // Silently skip cross-run replacements that fail encoding; the
         // single-run fast path already handles the easy cases above.
-        if apply_cross_run_replacement(&mut new_editor, &runs, cm, search, replacement, fonts)
-            .is_ok()
+        if let Ok(n) =
+            apply_cross_run_replacement(&mut new_editor, &runs, cm, search, replacement, fonts)
         {
-            count += 1;
+            count += n;
         }
     }
 
@@ -195,8 +195,24 @@ fn find_cross_run_matches(runs: &[TextRun], search: &str) -> Vec<CrossRunMatch> 
     matches
 }
 
-/// Apply a cross-run replacement: put full replacement text in the first
-/// run's operator and empty out subsequent runs' operators.
+/// Apply a cross-run replacement, rewriting ONLY the runs the match overlaps.
+///
+/// The match offsets within the group's combined text are mapped back to the
+/// individual runs:
+///   - text before/after a match stays in its original run,
+///   - the replacement text lands in the run where its match starts,
+///   - runs fully covered by a match are emptied (operator kept, string empty),
+///   - runs outside every match are left completely untouched.
+///
+/// Runs in a group frequently sit on different baselines (one run per visual
+/// line, positioned by Td/TD/T*/Tm between them). Rewriting the whole group
+/// into the first run — the previous behaviour — concatenated entire
+/// paragraphs onto the first line. Mapping by offsets keeps every line's text
+/// in the operator that draws that line, so the layout stays intact.
+///
+/// Returns the number of occurrences replaced. The rewrite is atomic per
+/// group: if any affected run's new text cannot be encoded, no operator in
+/// the group is modified.
 fn apply_cross_run_replacement(
     editor: &mut crate::content_editor::ContentEditor,
     runs: &[TextRun],
@@ -204,72 +220,129 @@ fn apply_cross_run_replacement(
     search: &str,
     replacement: &str,
     fonts: &FontMap,
-) -> Result<()> {
+) -> Result<usize> {
     let group_runs = &runs[cm.run_start..cm.run_end];
     let font_name = &group_runs[0].font_name;
 
     // Combine text from all runs in the group.
     let combined: String = group_runs.iter().map(|r| r.text.as_str()).collect();
-    let new_text = combined.replace(search, replacement);
 
-    // Encode the full replacement text.
-    let new_bytes = encode_text_for_font(font_name, &new_text, fonts)?;
-
-    // Put the full text in the first run's text-showing operator.
-    let first_op_idx = group_runs[0].ops_range.start;
-    if let Some(op) = editor.operations().get(first_op_idx).cloned() {
-        let new_op = match op.operator.as_str() {
-            "TJ" => {
-                // Preserve as TJ with single string element.
-                Operation::new(
-                    "TJ",
-                    vec![Object::Array(vec![Object::String(
-                        new_bytes,
-                        lopdf::StringFormat::Literal,
-                    )])],
-                )
-            }
-            _ => Operation::new(
-                "Tj",
-                vec![Object::String(new_bytes, lopdf::StringFormat::Literal)],
-            ),
-        };
-        editor.replace_operation(first_op_idx, vec![new_op]);
+    // Non-overlapping match ranges (byte offsets into `combined`).
+    let match_ranges: Vec<(usize, usize)> = combined
+        .match_indices(search)
+        .map(|(start, _)| (start, start + search.len()))
+        .collect();
+    if match_ranges.is_empty() {
+        return Ok(0);
     }
 
-    // Empty out subsequent runs' text-showing operators.
-    for run in &group_runs[1..] {
-        let op_idx = run.ops_range.start;
-        if let Some(op) = editor.operations().get(op_idx).cloned() {
-            let empty_op = make_empty_text_op(&op);
-            editor.replace_operation(op_idx, vec![empty_op]);
+    // Byte offset of each run's start within `combined` (+ end sentinel).
+    let mut run_bounds = Vec::with_capacity(group_runs.len() + 1);
+    let mut acc = 0usize;
+    for run in group_runs {
+        run_bounds.push(acc);
+        acc += run.text.len();
+    }
+    run_bounds.push(acc);
+
+    let run_containing = |offset: usize| -> usize {
+        match run_bounds.binary_search(&offset) {
+            Ok(i) => i.min(group_runs.len() - 1),
+            Err(i) => i - 1,
         }
+    };
+
+    // Build each run's new text by walking `combined` once.
+    let mut new_texts: Vec<String> = vec![String::new(); group_runs.len()];
+    let mut pos = 0usize;
+    for &(start, end) in &match_ranges {
+        distribute_kept_text(&mut new_texts, &run_bounds, &combined, pos, start);
+        new_texts[run_containing(start)].push_str(replacement);
+        pos = end;
+    }
+    distribute_kept_text(&mut new_texts, &run_bounds, &combined, pos, combined.len());
+
+    // Encode all changed runs first so the group rewrite is atomic.
+    let mut pending: Vec<(usize, Operation)> = Vec::new();
+    for (ri, run) in group_runs.iter().enumerate() {
+        if new_texts[ri] == run.text {
+            continue; // untouched run — original operator (incl. TJ kerning) kept
+        }
+        let op_idx = run.ops_range.start;
+        let Some(op) = editor.operations().get(op_idx).cloned() else {
+            continue;
+        };
+        let bytes = if new_texts[ri].is_empty() {
+            Vec::new()
+        } else {
+            encode_text_for_font(font_name, &new_texts[ri], fonts)?
+        };
+        pending.push((op_idx, build_run_text_op(&op, bytes)));
     }
 
-    Ok(())
+    // All replacements are 1:1 operator swaps, so indices stay stable.
+    for (op_idx, new_op) in pending {
+        editor.replace_operation(op_idx, vec![new_op]);
+    }
+
+    Ok(match_ranges.len())
 }
 
-/// Create an empty version of a text-showing operator (preserves operator type).
-fn make_empty_text_op(op: &Operation) -> Operation {
+/// Append the kept (non-matched) byte range `[from, to)` of `combined` to the
+/// per-run new texts, splitting at run boundaries so every kept character
+/// stays in the run that originally drew it.
+fn distribute_kept_text(
+    new_texts: &mut [String],
+    run_bounds: &[usize],
+    combined: &str,
+    from: usize,
+    to: usize,
+) {
+    if from >= to {
+        return;
+    }
+    let mut ri = match run_bounds.binary_search(&from) {
+        Ok(i) => i,
+        Err(i) => i - 1,
+    };
+    let mut cursor = from;
+    while cursor < to && ri < new_texts.len() {
+        let run_end = run_bounds[ri + 1];
+        let segment_end = to.min(run_end);
+        if cursor < segment_end {
+            new_texts[ri].push_str(&combined[cursor..segment_end]);
+            cursor = segment_end;
+        }
+        if cursor >= run_end {
+            ri += 1;
+        }
+    }
+}
+
+/// Rebuild a text-showing operator with new string bytes, preserving the
+/// operator type. `'` and `"` keep their line-advance semantics; `"` also
+/// keeps its word/char spacing operands. An empty `bytes` empties the
+/// operator without disturbing the positioning state around it.
+fn build_run_text_op(op: &Operation, bytes: Vec<u8>) -> Operation {
     match op.operator.as_str() {
         "TJ" => Operation::new(
             "TJ",
             vec![Object::Array(vec![Object::String(
-                vec![],
+                bytes,
                 lopdf::StringFormat::Literal,
             )])],
         ),
         "\"" => {
             let mut operands = op.operands.clone();
             if operands.len() >= 3 {
-                operands[2] = Object::String(vec![], lopdf::StringFormat::Literal);
+                operands[2] = Object::String(bytes, lopdf::StringFormat::Literal);
             }
             Operation::new("\"", operands)
         }
         // Tj, '
         _ => Operation::new(
             &op.operator,
-            vec![Object::String(vec![], lopdf::StringFormat::Literal)],
+            vec![Object::String(bytes, lopdf::StringFormat::Literal)],
         ),
     }
 }
@@ -1196,6 +1269,91 @@ mod tests {
         let editor = editor_for_page(&doc, 1).unwrap();
         let runs = extract_text_runs(&editor, &fonts);
         assert_eq!(runs[0].text, "Hallo World");
+    }
+
+    #[test]
+    fn replace_cross_run_multiline_preserves_other_lines() {
+        // Regression (PDFluent multiline collapse): a text block of three lines,
+        // each positioned with its own Td, all in the same font. The middle line
+        // is split across two Tj operators, so editing it must go through the
+        // cross-run path. Runs of the OTHER lines must keep their own text —
+        // the rewrite must not concatenate the whole same-font group into the
+        // first run (which draws the entire block on line 1, off-screen).
+        let mut doc = make_doc_with_text(
+            b"BT /F1 12 Tf 72 700 Td (First line here.) Tj 0 -14 Td (Some words to ) Tj (edit now.) Tj 0 -14 Td (Third line stays.) Tj ET",
+        );
+        let fonts = FontMap::from_page(&doc, 1).unwrap();
+        let count = replace_text(
+            &mut doc,
+            1,
+            "Some words to edit now.",
+            "Some words to edit.",
+            &fonts,
+        )
+        .unwrap();
+        assert_eq!(count, 1);
+
+        let editor = editor_for_page(&doc, 1).unwrap();
+        let runs = extract_text_runs(&editor, &fonts);
+
+        // Untouched lines keep their own operators and text.
+        assert_eq!(
+            runs.first().map(|r| r.text.as_str()),
+            Some("First line here."),
+            "first line must keep only its own text"
+        );
+        assert_eq!(
+            runs.last().map(|r| r.text.as_str()),
+            Some("Third line stays."),
+            "third line must not be emptied"
+        );
+
+        // The edited line carries the replacement; nothing else changed.
+        let combined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            combined,
+            "First line here.Some words to edit.Third line stays."
+        );
+
+        // Lines stay on distinct baselines (positioning ops untouched).
+        let first_y = runs.first().unwrap().y;
+        let last_y = runs.last().unwrap().y;
+        assert!(
+            (first_y - last_y).abs() > 20.0,
+            "lines collapsed onto one baseline: first_y={first_y} last_y={last_y}"
+        );
+    }
+
+    #[test]
+    fn replace_cross_run_keeps_prefix_and_suffix_in_their_runs() {
+        // Match starts mid-run-0 and ends mid-run-1: the prefix stays in run 0,
+        // the suffix stays in run 1, and the replacement lands in run 0.
+        let mut doc = make_doc_with_text(b"BT /F1 12 Tf 72 700 Td (AAA xx) Tj (yy BBB) Tj ET");
+        let fonts = FontMap::from_page(&doc, 1).unwrap();
+        let count = replace_text(&mut doc, 1, "xxyy", "Q", &fonts).unwrap();
+        assert_eq!(count, 1);
+
+        let editor = editor_for_page(&doc, 1).unwrap();
+        let runs = extract_text_runs(&editor, &fonts);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].text, "AAA Q");
+        assert_eq!(runs[1].text, " BBB");
+    }
+
+    #[test]
+    fn replace_cross_run_multiple_occurrences_in_group() {
+        // Two occurrences inside one same-font group, each straddling a run
+        // boundary. Both are replaced; each replacement lands in the run where
+        // its match starts.
+        let mut doc = make_doc_with_text(b"BT /F1 12 Tf 72 700 Td (ab) Tj (cab) Tj (c) Tj ET");
+        let fonts = FontMap::from_page(&doc, 1).unwrap();
+        let count = replace_text(&mut doc, 1, "abc", "X", &fonts).unwrap();
+        assert_eq!(count, 2);
+
+        let editor = editor_for_page(&doc, 1).unwrap();
+        let runs = extract_text_runs(&editor, &fonts);
+        let combined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(combined, "XX");
     }
 
     // ── CID font tests ────────────────────────────────────────────────────────
