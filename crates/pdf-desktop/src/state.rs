@@ -1,4 +1,4 @@
-use pdf_engine::{PdfDocument, RenderOptions, ThumbnailOptions};
+use pdf_engine::{PdfDocument, RasterQuality, RenderOptions, ThumbnailOptions};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -76,6 +76,8 @@ pub fn render_page_png(doc: &PdfDocument, page_index: usize, dpi: f64) -> Result
         render_annotations: true,
         width: None,
         height: None,
+        max_pixels: None,
+        quality: RasterQuality::Quality,
     };
     let rendered = doc
         .render_page(page_index, &opts)
