@@ -2716,8 +2716,8 @@ mod tests {
     /// `page_geometry` returns the updated rotation rather than the stale state.
     #[test]
     fn rotate_page_refreshes_engine() {
-        use pdf_engine::geometry::PageRotation;
         use crate::Rotation;
+        use pdf_engine::geometry::PageRotation;
 
         let mut doc = super::PdfDocument::from_bytes(&rect_pdf_bytes()).expect("open rect pdf");
 
@@ -2775,7 +2775,9 @@ mod tests {
             let info_id = doc.lopdf.add_object(lopdf::Object::Dictionary(
                 lopdf::dictionary! { "Producer" => lopdf::Object::string_literal(b"test-sync") },
             ));
-            doc.lopdf.trailer.set("Info", lopdf::Object::Reference(info_id));
+            doc.lopdf
+                .trailer
+                .set("Info", lopdf::Object::Reference(info_id));
         }
 
         // Engine pdf bytes must still equal pre-mutation (stale).
@@ -2793,7 +2795,10 @@ mod tests {
 
         // After sync, the lopdf and engine are consistent: serialize both and compare.
         let mut lopdf_bytes = Vec::new();
-        doc.lopdf.clone().save_to(&mut lopdf_bytes).expect("lopdf serialize");
+        doc.lopdf
+            .clone()
+            .save_to(&mut lopdf_bytes)
+            .expect("lopdf serialize");
 
         let engine_bytes_after: &[u8] = doc.engine.pdf().data().as_ref();
 
@@ -2801,7 +2806,8 @@ mod tests {
         // We compare length as a proxy (exact bytes may differ due to lopdf
         // cross-reference rebuilding, but the length delta must shrink significantly).
         assert_ne!(
-            engine_bytes_after, engine_bytes_before.as_slice(),
+            engine_bytes_after,
+            engine_bytes_before.as_slice(),
             "engine must no longer be stale after sync_engine"
         );
     }
