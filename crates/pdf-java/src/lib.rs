@@ -1254,30 +1254,42 @@ fn java_source_to_int(s: &str) -> jint {
 fn map_license_error_for_java(env: &mut JNIEnv<'_>, e: pdfluent::Error) {
     // Canonical C8 codes — see docs/error_catalogue.md and Rust
     // `pdfluent::Error::code()` for the source of truth.
+    const LICENSE_EXCEPTION: &str = "com/pdfluent/PdfluentLicenseException";
     const E_LICENSE_INVALID: &str = "E-LICENSE-INVALID";
+    const E_LICENSE_EXPIRED: &str = "E-LICENSE-EXPIRED";
+    const E_LICENSE_INVALID_SIGNATURE: &str = "E-LICENSE-INVALID-SIGNATURE";
     const E_LICENSE_FEATURE_NOT_IN_TIER: &str = "E-LICENSE-FEATURE-NOT-IN-TIER";
     const E_LICENSE_CAPABILITY_NOT_COMPILED: &str = "E-LICENSE-CAPABILITY-NOT-COMPILED";
 
     match e {
         pdfluent::Error::InvalidLicense { reason } => {
-            if reason.contains("already set") {
-                let _ = env.throw_new(
-                    "java/lang/IllegalStateException",
-                    format!("license already set: {reason}"),
-                );
-            } else {
-                throw_pdf_exception_with_code(
-                    env,
-                    "com/pdfluent/PdfluentLicenseException",
-                    &format!("invalid license: {reason}"),
-                    E_LICENSE_INVALID,
-                );
-            }
+            throw_pdf_exception_with_code(
+                env,
+                LICENSE_EXCEPTION,
+                &format!("invalid license: {reason}"),
+                E_LICENSE_INVALID,
+            );
+        }
+        pdfluent::Error::LicenseExpired { expires_at } => {
+            throw_pdf_exception_with_code(
+                env,
+                LICENSE_EXCEPTION,
+                &format!("license expired at unix timestamp {expires_at}"),
+                E_LICENSE_EXPIRED,
+            );
+        }
+        pdfluent::Error::LicenseInvalidSignature => {
+            throw_pdf_exception_with_code(
+                env,
+                LICENSE_EXCEPTION,
+                "license signature does not verify against the configured public key",
+                E_LICENSE_INVALID_SIGNATURE,
+            );
         }
         pdfluent::Error::FeatureNotInTier { .. } => {
             throw_pdf_exception_with_code(
                 env,
-                "com/pdfluent/PdfluentLicenseException",
+                LICENSE_EXCEPTION,
                 &format!("license error: {e}"),
                 E_LICENSE_FEATURE_NOT_IN_TIER,
             );
@@ -1285,7 +1297,7 @@ fn map_license_error_for_java(env: &mut JNIEnv<'_>, e: pdfluent::Error) {
         pdfluent::Error::CapabilityNotCompiled { .. } => {
             throw_pdf_exception_with_code(
                 env,
-                "com/pdfluent/PdfluentLicenseException",
+                LICENSE_EXCEPTION,
                 &format!("license error: {e}"),
                 E_LICENSE_CAPABILITY_NOT_COMPILED,
             );
@@ -1339,6 +1351,51 @@ pub extern "system" fn Java_com_pdfluent_PdfluentLicensing_nativeActivateFile<'a
         }
     };
     match pdfluent::set_license_key(contents.trim()) {
+        Ok(()) => java_record_explicit(),
+        Err(e) => map_license_error_for_java(&mut env, e),
+    }
+}
+
+/// `static native void nativeSetPublicKey(byte[] key)`
+///
+/// Configure the 32-byte Ed25519 public key for signed-payload verification.
+/// Must be called before [`Java_com_pdfluent_PdfluentLicensing_nativeActivatePayload`].
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentLicensing_nativeSetPublicKey<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    key: JByteArray<'a>,
+) {
+    let key_bytes: Vec<u8> = match env.convert_byte_array(key) {
+        Ok(b) => b,
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("failed to read key bytes: {e}"));
+            return;
+        }
+    };
+    if let Err(e) = pdfluent::set_license_public_key(&key_bytes) {
+        map_license_error_for_java(&mut env, e);
+    }
+}
+
+/// `static native void nativeActivatePayload(String payloadJson)`
+///
+/// Activate a cryptographically-signed JSON license payload (SDK 1.1+).
+/// [`Java_com_pdfluent_PdfluentLicensing_nativeSetPublicKey`] must be called first.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentLicensing_nativeActivatePayload<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    payload_json: JString<'a>,
+) {
+    let json_str: String = match env.get_string(&payload_json) {
+        Ok(s) => s.into(),
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("failed to read payload JSON: {e}"));
+            return;
+        }
+    };
+    match pdfluent::set_license_payload(&json_str) {
         Ok(()) => java_record_explicit(),
         Err(e) => map_license_error_for_java(&mut env, e),
     }
