@@ -611,6 +611,30 @@ impl PdfDoc {
         Ok(PdfDoc { pdf, engine })
     }
 
+    /// Replace this document's content with new bytes in-place.
+    ///
+    /// Call this after [`PdfDocMut.save`] to update the render handle with
+    /// the mutated PDF bytes so that subsequent [`renderPage`] calls reflect
+    /// the changes, without needing to create a new `PdfDoc` object.
+    ///
+    /// ```js
+    /// const handle = PdfDocMut.open(bytes);
+    /// handle.replaceTextSpan(1, "old", "new");
+    /// const newBytes = handle.save();
+    /// doc.refresh(newBytes);          // engine now renders the edited content
+    /// doc.renderPage(0, 1.5);         // ← shows "new" instead of "old"
+    /// ```
+    pub fn refresh(&mut self, data: &[u8]) -> Result<(), JsValue> {
+        let raw = Arc::new(data.to_vec());
+        let pdf = pdf_syntax::Pdf::new(raw.clone())
+            .map_err(|e| wasm_err_with_op("INVALID_PDF", &format!("{e:?}"), "PdfDoc.refresh"))?;
+        let engine = PdfDocument::open(raw)
+            .map_err(|e| pdfluent_error::pdf_engine_error("PdfDoc.refresh", e))?;
+        self.pdf = pdf;
+        self.engine = engine;
+        Ok(())
+    }
+
     /// Number of pages.
     #[wasm_bindgen(js_name = "pageCount")]
     pub fn page_count(&self) -> usize {
