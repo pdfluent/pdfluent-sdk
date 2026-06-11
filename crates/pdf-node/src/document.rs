@@ -757,7 +757,11 @@ impl PdfDocument {
     ///
     /// Returns a summary of what was redacted.
     #[napi]
-    pub fn redact_text(&mut self, search_term: String, page: Option<u32>) -> Result<RedactionResult> {
+    pub fn redact_text(
+        &mut self,
+        search_term: String,
+        page: Option<u32>,
+    ) -> Result<RedactionResult> {
         let result = self.with_doc_mut(|doc| {
             let mut opts = pdf_redact::RedactSearchOptions::exact(&search_term);
             if let Some(p) = page {
