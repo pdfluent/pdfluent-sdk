@@ -36,7 +36,11 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use pdfluent::{license_info as pdfl_license_info, set_license_key as pdfl_set_license_key, Tier};
+use pdfluent::{
+    license_info as pdfl_license_info, set_license_key as pdfl_set_license_key,
+    set_license_payload as pdfl_set_license_payload,
+    set_license_public_key as pdfl_set_license_public_key, Tier,
+};
 
 use crate::error::pdfluent_err_to_napi;
 
@@ -128,6 +132,47 @@ pub fn activate(license_key: String) -> Result<()> {
 #[napi]
 pub fn set_license_key(license_key: String) -> Result<()> {
     activate(license_key)
+}
+
+/// Configure the Ed25519 public key used to verify signed JSON license
+/// payloads (SDK 1.1+).
+///
+/// Must be called **once**, before [`set_license_payload`] or before passing
+/// a JSON payload to [`activate`].  The key is exactly 32 raw bytes (not
+/// base64, not PEM, not PKCS#8).
+///
+/// Subsequent calls with the **same** key are idempotent no-ops; calls with a
+/// **different** key throw `PdfluentError` with `code === "E-LICENSE-INVALID"`.
+///
+/// Throws a `PdfluentError` with one of:
+///   - `code === "E-LICENSE-INVALID"` — key is not 32 bytes, or a different
+///     key was already configured.
+#[napi]
+pub fn set_license_public_key(key: Buffer) -> Result<()> {
+    pdfl_set_license_public_key(&key)
+        .map_err(|e| pdfluent_err_to_napi(e, "setLicensePublicKey"))?;
+    Ok(())
+}
+
+/// Activate a cryptographically-signed JSON license payload (SDK 1.1+).
+///
+/// The public key must be configured first via [`set_license_public_key`].
+/// This is the explicit 1.1 entry point; [`activate`] also accepts signed
+/// JSON payloads automatically when the string starts with `{`.
+///
+/// Throws a `PdfluentError` with one of:
+///   - `code === "E-LICENSE-INVALID"` — malformed JSON, no public key, or
+///     conflicting tier already set.
+///   - `code === "E-LICENSE-EXPIRED"` — payload's `expires_at` is in the
+///     past.
+///   - `code === "E-LICENSE-INVALID-SIGNATURE"` — Ed25519 signature does not
+///     verify against the configured public key.
+#[napi]
+pub fn set_license_payload(payload_json: String) -> Result<()> {
+    pdfl_set_license_payload(&payload_json)
+        .map_err(|e| pdfluent_err_to_napi(e, "setLicensePayload"))?;
+    record_source_explicit();
+    Ok(())
 }
 
 /// Return the current canonical license state.

@@ -58,6 +58,7 @@ crates/xfa-wasm/pkg/*.d.ts
 bindings/dotnet/**/bin/
 bindings/dotnet/**/obj/
 bindings/java/target/
+crates/pdf-java/target/
 
 # .NET runtime-specific native bundles (regenerated at release time)
 bindings/dotnet/**/runtimes/
@@ -94,3 +95,35 @@ benchmarks/runs/xfa_enterprise_plan/sprint2/heatmaps_demo/
 crates/pdf-capi/tests/test_text_blocks
 benchmarks/runs/xfa_enterprise_plan/custom_defects/xfa_test_flatten/artifacts/
 /dist/
+
+# ── Fuzz build outputs ────────────────────────────────────────────────────────
+# The root /target rule only covers the workspace target. Every fuzz crate builds
+# its own target/ under its fuzz/ subdirectory and these are never source.
+/fuzz/target/
+**/fuzz/target/
+
+# ── WASM pkg-release directory ────────────────────────────────────────────────
+# /crates/xfa-wasm/pkg/ is already covered above; pkg-release/ is the optimised
+# release variant produced by wasm-pack --release and is equally reproducible.
+/crates/xfa-wasm/pkg-release/
+
+# ── Native binary artifacts (belt-and-suspenders) ─────────────────────────────
+# Specific directories are already covered above (bindings/**/runtimes/, etc.).
+# These global patterns guard against any new crate that adds a native output
+# path not yet covered by a directory rule.
+# Exceptions: none expected — no legitimate source file has these extensions.
+*.dylib
+*.dylib.dSYM/
+**/*.dSYM/
+*.dll
+*.so
+# *.rlib and *.rmeta live inside target/ (already ignored) but cover edge cases
+# where cargo or fuzz builds emit them outside the workspace target directory.
+*.rlib
+*.rmeta
+
+# ── pdfluent-examples example node_modules ───────────────────────────────────
+# The top-level node_modules/ rule covers workspace root, but examples that run
+# npm install inside their own subdirectory need this explicit pattern.
+pdfluent-examples/**/node_modules/
+crates/pdf-node/node_modules/
