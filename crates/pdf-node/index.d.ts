@@ -353,8 +353,22 @@ export declare class PdfDocument {
   /**
    * Set the value of a form field by its fully qualified name.
    *
-   * The change is persisted to the document — a subsequent `save()` will
-   * write the updated value.
+   * Supports text, checkbox, radio, and choice (combo/list) fields.
+   * Hierarchical names (`"parent.child"`) are resolved through `/Kids`
+   * recursion.
+   *
+   * The complete writeback chain runs on every call:
+   * - `/V` — ASCII literal for pure-ASCII values; UTF-16BE+BOM otherwise.
+   * - `/AS` — set per widget to the on-state name, or `Off` if the state is
+   *   absent from the widget's own `/AP /N` dictionary.
+   * - `/AP /N` — regenerated as a self-contained Form XObject so the fill is
+   *   visible in all viewers without `/NeedAppearances` processing.
+   *
+   * **Checkbox / radio:** pass the on-state name (`"On"`, `"Yes"`, `"NL"`, …).
+   * **Choice fields:** pass the export value from the field's option list.
+   * **Read-only fields:** throws with code `"E-FORM-READONLY"`.
+   *
+   * The change is persisted to the document — a subsequent `save()` writes it.
    */
   setFieldValue(name: string, value: string): void
   /** Get annotations on a specific page (0-based index). */

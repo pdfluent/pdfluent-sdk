@@ -73,7 +73,7 @@ decrypt_pdf("sensitive_enc.pdf", "sensitive_dec.pdf", password="s3cr3t")
 | **Render** | Pages to RGBA pixels, PIL Images, or NumPy arrays at any DPI |
 | **Text extraction** | Plain text or structured `TextBlock`/`TextSpan` with position |
 | **Text search** | Find pages containing a query string |
-| **Forms (AcroForm)** | Read and fill text, checkbox, and dropdown fields |
+| **Forms (AcroForm)** | Read and fill text, checkbox, radio, combo/list fields; hierarchical names; appearance-stream regeneration |
 | **Annotations** | Read existing annotations; add highlights and free-text notes |
 | **Redaction** | Search-and-redact: black-box all occurrences of a string |
 | **Encryption** | AES-256 (PDF 2.0) encrypt/decrypt with user + owner passwords |
@@ -101,6 +101,24 @@ doc = Document("encrypted.pdf", password="pw")
 `add_annotation(page, type, rect, content)`, `redact_text(term, page=None)`,
 `encrypt(path, password)`, `decrypt(path, password)`  
 **Protocols:** `len(doc)`, `doc[0]`, `for page in doc`, `with Document(...) as doc`
+
+#### AcroForm fill behaviour
+
+`set_form_field(name, value)` supports text, checkbox, radio, and choice
+(combo/list) fields.  Hierarchical names (`"parent.child"`) are resolved
+through `/Kids` recursion.  Every call keeps `/V`, `/AS`, and `/AP` consistent
+so the fill is visible in all PDF viewers without needing `/NeedAppearances`
+processing.
+
+```python
+doc.set_form_field("Name", "Jane Doe")          # text field
+doc.set_form_field("Agree", "On")               # checkbox — pass on-state name
+doc.set_form_field("Country", "NL")             # radio group — export value
+doc.set_form_field("Category", "Urgent")        # combo / list — option value
+doc.save("form_filled.pdf")
+```
+
+Read-only fields raise `PdfluentError`.
 
 ### `Page`
 

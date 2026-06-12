@@ -237,8 +237,8 @@ Invalid keys throw `Error`. The key string is never logged.
 
 | Method | Description |
 |--------|-------------|
-| `setFormField(path, value)` | Set a single AcroForm text field; returns new bytes |
-| `setFormFields(jsonObject)` | Bulk-set form fields from a JSON `{path: value}` map |
+| `setFormField(path, value)` | Fill a single AcroForm **text** field; updates `/V`, `/AS`, and `/AP`; returns new bytes. For checkbox/radio/choice use `PdfDocMut`. |
+| `setFormFields(jsonObject)` | Bulk-fill **text** fields from a JSON `{path: value}` map; returns new bytes |
 | `addHighlight(pageIndex, x, y, w, h, colorHex?)` | Highlight annotation (feature: annotate) |
 | `addStickyNote(pageIndex, x, y, contents)` | Sticky note annotation (feature: annotate) |
 | `addFreeText(pageIndex, x, y, w, h, contents)` | Free-text annotation (feature: annotate) |
@@ -266,8 +266,8 @@ operations to the same document, **`PdfDocMut` is dramatically faster**:
 | `rotatePage(pageIndex, degrees)` | In place |
 | `reorderPages(newOrder)` | In place |
 | `extractPages(pages)` | Returns bytes for a NEW subdocument; current editor unchanged |
-| `setFormField(path, value)` | In place |
-| `setFormFields(jsonObject)` | In place, bulk |
+| `setFormField(path, value)` | In place — text, checkbox, radio, and choice; updates `/V`, `/AS`, and `/AP` |
+| `setFormFields(jsonObject)` | In place, bulk — same full chain for each entry |
 | `addHighlight(pageIndex, x, y, w, h, colorHex?)` | In place (feature: annotate) |
 | `addStickyNote(pageIndex, x, y, contents)` | In place (feature: annotate) |
 | `addFreeText(pageIndex, x, y, w, h, contents)` | In place (feature: annotate) |

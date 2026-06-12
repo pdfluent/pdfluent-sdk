@@ -203,7 +203,100 @@ let doc = try PdfDocument(path: "/path/to/file.pdf", password: "mypassword")
 val doc = PdfDocument.openWithPassword(data, "mypassword")
 ```
 
-## 10. WASM PDF/A Validation
+## 10. Fill AcroForm Fields
+
+All bindings route through the same writeback chain: `/V`, per-widget `/AS`,
+and a regenerated `/AP` appearance stream are kept consistent in a single call,
+so the filled form looks correct in every viewer without `/NeedAppearances`
+processing.
+
+Supported field types: **text**, **checkbox**, **radio**, **combo/list**.
+Hierarchical names (`"parent.child"`) are resolved through `/Kids`.
+Read-only fields are rejected.
+
+### Java
+
+```java
+try (PdfDocument doc = PdfDocument.open(data)) {
+    doc.setFormField("Name", "Jane Doe");     // text field
+    doc.setFormField("Agree", "On");          // checkbox — pass on-state name
+    doc.setFormField("Country", "NL");        // radio group — export value
+    doc.setFormField("Category", "Urgent");   // combo / list — option value
+    doc.save("form_filled.pdf");
+}
+```
+
+### Python
+
+```python
+from pdfluent import Document
+
+doc = Document("form.pdf")
+doc.set_form_field("Name", "Jane Doe")
+doc.set_form_field("Agree", "On")       # checkbox
+doc.set_form_field("Country", "NL")     # radio
+doc.save("form_filled.pdf")
+```
+
+### Node.js
+
+```js
+const { PdfDocument } = require('@pdfluent/node');
+const fs = require('fs');
+
+const doc = PdfDocument.open(fs.readFileSync('form.pdf'));
+doc.setFieldValue('Name', 'Jane Doe');
+doc.setFieldValue('Agree', 'On');       // checkbox
+doc.setFieldValue('Country', 'NL');     // radio
+doc.save('form_filled.pdf');
+```
+
+### WASM (PdfDocMut — recommended for multi-field fills)
+
+`PdfDocMut.setFormField` supports all field types (text, checkbox, radio,
+choice) via type-aware dispatch.  For text-only workflows the stateless
+`PdfDoc.setFormField` also works.
+
+```js
+import init, { PdfDocMut } from '@pdfluent/sdk-wasm';
+await init();
+
+const bytes = new Uint8Array(await (await fetch('/form.pdf')).arrayBuffer());
+const editor = PdfDocMut.open(bytes);
+
+editor.setFormField('Name', 'Jane Doe');   // text
+editor.setFormField('Agree', 'On');        // checkbox
+editor.setFormField('Country', 'NL');      // radio
+editor.setFormFields(JSON.stringify({      // bulk
+    'Address.Street': '42 Main St',
+    'Address.City':   'Amsterdam',
+}));
+
+const out = editor.save();
+editor.free();
+// out is a Uint8Array of the filled PDF
+```
+
+### Rust
+
+```rust
+use pdfluent::prelude::*;
+
+let mut doc = PdfDocument::open("form.pdf")?;
+doc.form_mut()
+   .set_text("Name", "Jane Doe")?
+   .set_checkbox("Agree", true)?
+   .set_radio("Country", "NL")?
+   .set_dropdown("Category", "Urgent")?;
+doc.save("form_filled.pdf")?;
+
+// Inspect form structure before filling
+for field in doc.form_model()? {
+    println!("[{:?}] {} = {:?}", field.kind, field.name, field.value);
+}
+```
+
+## 11. WASM PDF/A Validation
 
 ```js
 const doc = PdfDoc.open(pdfBytes);

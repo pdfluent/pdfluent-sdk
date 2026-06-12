@@ -62,7 +62,7 @@ const doc = openPdf('/path/to/document.pdf');
 - **Rendering** — rasterise pages to RGBA pixels at any DPI, generate thumbnails
 - **Text extraction** — plain text per page or structured `TextBlockInfo[]` with coordinates
 - **Text search** — returns page indices containing the query string
-- **Forms (AcroForm)** — enumerate, read, and write field values
+- **Forms (AcroForm)** — enumerate, read, and fill fields (text/checkbox/radio/choice); hierarchical names; appearance-stream regeneration
 - **Annotations** — read existing annotations, add highlight / freetext
 - **Redaction** — permanently remove text by search term
 - **Encryption** — encrypt with AES-256, decrypt password-protected PDFs
@@ -127,7 +127,17 @@ const fields = doc.formFields(); // FormFieldInfo[]
 // fields[0] → { name, fieldType, value, readOnly }
 
 const value = doc.getFieldValue('Address.Street');
+
+// setFieldValue supports text, checkbox, radio, and choice fields.
+// Hierarchical names ("parent.child") are resolved through /Kids recursion.
+// The call updates /V (UTF-16BE+BOM for non-ASCII), per-widget /AS, and
+// regenerates the /AP appearance stream so the fill is visible in all viewers
+// without /NeedAppearances processing.
+// Read-only fields are rejected (throws).
 doc.setFieldValue('Address.Street', '123 Main St');
+doc.setFieldValue('Agree', 'On');        // checkbox — pass the on-state name
+doc.setFieldValue('Country', 'NL');      // radio group — pass the export value
+doc.setFieldValue('Category', 'Option2'); // combo/list — pass the option value
 doc.save('filled.pdf');
 ```
 

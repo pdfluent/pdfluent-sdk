@@ -199,9 +199,18 @@ pub trait DocumentOps {
 └─────────────────────────────────────┘
 ```
 
-**10 modules:** actions, appearance, button, choice, facade, flags, flatten, parse, text, tree
-**Types:** FieldType (Text, Button, Choice, Signature), FieldValue (Text, StringArray), FieldId(usize)
+**14 modules:** actions, appearance, button, choice, encoding, facade, flags, flatten, metrics, model, parse, text, tree, writeback
+**Types:** FieldType (Text, Button, Choice, Signature), FieldValue (Text, StringArray), FieldId(usize),
+FormFieldModel (editor-facing typed model), WriteValue, WriteOutcome, WritebackError
 **Pattern:** `Vec<FieldNode>` + `FieldId(usize)` — arena-based, cache-friendly
+
+**Writeback chain (acroform/sdk-foundation, 2026-06-12):** `writeback::apply_field_value` is the single
+SDK-level writeback operation for all field types. Keeps `/V`, per-widget `/AS`, and regenerated `/AP`
+consistent in one call; self-contained `WinAnsiEncoding` font resources; embedded Standard-14 AFM widths
+(metrics.rs); read-only enforcement at set-time; inline `/AcroForm` promotion.
+**Editor model (model.rs):** `build_form_model` / `FormFieldModel` provides the complete per-field
+typed model (kind with flags, per-page widget rects, on-state names, options, resolved DA info) for
+language bindings and UI overlays.
 
 ### Oorspronkelijk plan (ter referentie)
 
