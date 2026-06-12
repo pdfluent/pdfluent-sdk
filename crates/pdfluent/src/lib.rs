@@ -70,6 +70,7 @@ pub mod structure;
 pub mod tagged;
 pub mod tier;
 pub mod watermark;
+pub mod xfa;
 
 // ---------------------------------------------------------------------------
 // Top-level re-exports (public API surface)
@@ -101,6 +102,10 @@ pub use crate::signer::{
 };
 pub use crate::tier::Tier;
 pub use crate::watermark::{Layer, Position, Rotation, WatermarkOptions};
+pub use crate::xfa::{
+    XfaField, XfaFieldOption, XfaFieldType, XfaFieldValue, XfaFormModel, XfaRect, XfaSetOutcome,
+    XfaWidget,
+};
 /// Re-export of [`pdf_engine::ProcessingLimits`] for use with
 /// [`OpenOptions::with_processing_limits`].
 pub use pdf_engine::ProcessingLimits;

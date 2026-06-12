@@ -123,6 +123,9 @@ contract as §3.1:
 | Method | Added | Tracking |
 |---|---|---|
 | `PdfDocument::extract_text` — Stable | 1.0.1 | #1316 (M4-FACADE-01) |
+| `PdfDocument::has_xfa_form` — Stable | `xfa/sdk-phase1-fill-foundation` | XFA Phase 1 |
+| `PdfDocument::xfa_form_model` + `pdfluent::xfa::*` DTOs — Stable | `xfa/sdk-phase1-fill-foundation` | XFA Phase 1; `XfaFieldType` is `#[non_exhaustive]` |
+| `PdfDocument::set_xfa_field_value` — Stable | `xfa/sdk-phase1-fill-foundation` | XFA Phase 1; no event scripts / reflow (documented scope) |
 
 ### 3.2 Unstable items in 1.0
 

@@ -8,6 +8,10 @@ use crate::PdfDocument;
 
 pub use pdf_xfa::error::XfaError;
 pub use pdf_xfa::extract::XfaPackets;
+pub use pdf_xfa::session::{
+    XfaFieldModel, XfaFieldOption, XfaFieldType, XfaRect, XfaSession, XfaSetOutcome, XfaWidget,
+    XfaWriteValue, XfaWritebackReport,
+};
 pub use xfa_json::{export_schema, form_tree_to_json, form_tree_to_value, FormData, FormSchema};
 pub use xfa_layout_engine::form::{FormNodeId, FormTree};
 

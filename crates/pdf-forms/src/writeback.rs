@@ -457,7 +457,9 @@ pub fn apply_choice_multi(
             choice_options(doc, d)
         };
         for v in values {
-            let known = options.iter().any(|(export, display)| export == v || display == v);
+            let known = options
+                .iter()
+                .any(|(export, display)| export == v || display == v);
             if !known {
                 return Err(WritebackError::InvalidOption {
                     name: name.to_string(),

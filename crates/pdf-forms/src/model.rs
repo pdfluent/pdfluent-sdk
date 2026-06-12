@@ -165,7 +165,7 @@ fn field_model(tree: &FieldTree, id: FieldId) -> Option<FormFieldModel> {
         Some(FieldValue::StringArray(arr)) => Some(arr.clone()),
         _ => None,
     };
-    let value = raw_value.map(|v| value_to_string(&v));
+    let value = raw_value.map(value_to_string);
     let default_value = node.default_value.as_ref().map(value_to_string);
 
     let kind = match ft {
