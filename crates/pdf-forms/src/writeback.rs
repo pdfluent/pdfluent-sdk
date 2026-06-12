@@ -403,6 +403,87 @@ pub fn apply_field_value(
     }
 }
 
+/// Set multiple selected values on a multi-select list box (`/Ff` bit 22).
+///
+/// Writes `/V` as an array of text strings and removes the stale `/I` index
+/// cache. Appearance regeneration is left to the viewer via `NeedAppearances`
+/// because per-option highlight rendering is viewer-native.
+///
+/// Rejects read-only fields, non-choice fields, single-select list boxes, and
+/// (for non-editable fields) values absent from `/Opt`.
+pub fn apply_choice_multi(
+    doc: &mut Document,
+    name: &str,
+    values: &[String],
+) -> Result<WriteOutcome, WritebackError> {
+    ensure_indirect_acroform(doc);
+    let fields = collect_fields(doc)?;
+    let located = fields
+        .iter()
+        .find(|l| l.fqn == name)
+        .cloned()
+        .ok_or_else(|| WritebackError::FieldNotFound(name.to_string()))?;
+
+    let dict = doc
+        .get_object(located.id)
+        .and_then(|o| o.as_dict())
+        .map_err(|_| WritebackError::Malformed("field object is not a dictionary".into()))?;
+
+    if effective_flags(doc, dict) & 0x1 != 0 {
+        return Err(WritebackError::ReadOnly(name.to_string()));
+    }
+
+    let ft = effective_field_type(doc, dict).unwrap_or_else(|| b"Tx".to_vec());
+    let flags = effective_flags(doc, dict);
+    // Bit 22 (0-indexed) = multi-select flag.
+    if ft.as_slice() != b"Ch" || flags & 0x200000 == 0 {
+        return Err(WritebackError::WrongType {
+            name: name.to_string(),
+            actual: match ft.as_slice() {
+                b"Ch" => "single-select choice",
+                b"Tx" => "text",
+                b"Btn" => "button",
+                _ => "unknown",
+            },
+            requested: "multi-select choice",
+        });
+    }
+
+    // Validate all values against /Opt for non-editable list boxes.
+    let editable = flags & 0x40000 != 0;
+    if !editable {
+        let options = {
+            let d = field_dict(doc, &located)?;
+            choice_options(doc, d)
+        };
+        for v in values {
+            let known = options.iter().any(|(export, display)| export == v || display == v);
+            if !known {
+                return Err(WritebackError::InvalidOption {
+                    name: name.to_string(),
+                    value: v.clone(),
+                });
+            }
+        }
+    }
+
+    // Write /V as an array of text strings.
+    let v_obj = Object::Array(values.iter().map(|s| lopdf::text_string(s)).collect());
+    set_field_v(doc, located.id, v_obj)?;
+    // Remove stale /I (selected-index cache).
+    if let Ok(Object::Dictionary(d)) = doc.get_object_mut(located.id) {
+        d.remove(b"I");
+    }
+    // Multi-select appearance is viewer-native; delegate via NeedAppearances.
+    set_need_appearances(doc, true)?;
+
+    Ok(WriteOutcome {
+        appearances_generated: 0,
+        appearance_states_set: 0,
+        need_appearances_fallback: true,
+    })
+}
+
 /// Regenerate `/AP /N` for every filled text/choice field in the document.
 ///
 /// For documents filled by tools that only wrote `/V` (+`/NeedAppearances`),

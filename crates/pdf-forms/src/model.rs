@@ -93,8 +93,12 @@ pub struct FormFieldModel {
     /// Typed kind with kind-specific data.
     pub kind: FormFieldKind,
     /// Current value: text fields the text, buttons the on-state name or
-    /// `Off`, choice fields the selected export value.
+    /// `Off`, choice fields the selected export value (joined with `", "` for
+    /// multi-select list boxes — use `selected_values` for the array form).
     pub value: Option<String>,
+    /// Selected export values for multi-select list boxes (`/Ff` bit 22 set).
+    /// `None` for all other field types. Empty vec means nothing selected.
+    pub selected_values: Option<Vec<String>>,
     /// Default value (`/DV`).
     pub default_value: Option<String>,
     /// User-facing label (`/TU`, the accessibility/tooltip name).
@@ -156,7 +160,12 @@ fn field_model(tree: &FieldTree, id: FieldId) -> Option<FormFieldModel> {
     let flags = effective_flags_deep(tree, id);
 
     let widgets = collect_widgets(tree, id);
-    let value = tree.effective_value(id).map(value_to_string);
+    let raw_value = tree.effective_value(id);
+    let selected_values = match &raw_value {
+        Some(FieldValue::StringArray(arr)) => Some(arr.clone()),
+        _ => None,
+    };
+    let value = raw_value.map(|v| value_to_string(&v));
     let default_value = node.default_value.as_ref().map(value_to_string);
 
     let kind = match ft {
@@ -208,6 +217,7 @@ fn field_model(tree: &FieldTree, id: FieldId) -> Option<FormFieldModel> {
         name: tree.fully_qualified_name(id),
         kind,
         value,
+        selected_values,
         default_value,
         tooltip: node.alternate_name.clone(),
         read_only: flags.read_only(),
