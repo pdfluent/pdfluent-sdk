@@ -513,17 +513,24 @@ pub(crate) fn write_packets_into_pdf(
     let acro_obj = catalog
         .get(b"AcroForm")
         .map_err(|_| XfaError::WritebackFailed("no /AcroForm in catalog".to_string()))?;
-    let acro_dict = match acro_obj {
-        Object::Reference(r) => doc
-            .get_object(*r)
-            .and_then(|o| o.as_dict())
-            .map_err(|e| XfaError::WritebackFailed(format!("AcroForm deref: {e}")))?,
-        Object::Dictionary(d) => d,
+    let acro_ref = match acro_obj {
+        Object::Reference(r) => Some(*r),
+        Object::Dictionary(_) => None,
         _ => {
             return Err(XfaError::WritebackFailed(
                 "unsupported /AcroForm object type".to_string(),
             ))
         }
+    };
+    let acro_dict = match acro_ref {
+        Some(r) => doc
+            .get_object(r)
+            .and_then(|o| o.as_dict())
+            .map_err(|e| XfaError::WritebackFailed(format!("AcroForm deref: {e}")))?,
+        None => match catalog.get(b"AcroForm") {
+            Ok(Object::Dictionary(d)) => d,
+            _ => unreachable!("checked above"),
+        },
     };
     let xfa_obj = acro_dict
         .get(b"XFA")
@@ -558,16 +565,24 @@ pub(crate) fn write_packets_into_pdf(
                     i += 1;
                 }
             }
-            if !found_datasets {
-                return Err(XfaError::WritebackFailed(
-                    "no datasets entry in /XFA array".to_string(),
-                ));
-            }
             for (id, content) in replacements {
-                let mut stream = lopdf::Stream::new(lopdf::dictionary! {}, content);
-                // Smaller files; ignore failures (raw stream is also valid).
-                let _ = stream.compress();
-                doc.objects.insert(id, Object::Stream(stream));
+                doc.objects
+                    .insert(id, Object::Stream(make_packet_stream(content)));
+            }
+            if !found_datasets {
+                // The source form shipped without a datasets packet (values
+                // never saved). Append a `("datasets", stream)` pair so the
+                // filled values have a home — the layout Adobe writes on the
+                // first save of such a form.
+                let stream_id =
+                    doc.add_object(Object::Stream(make_packet_stream(new_datasets.into())));
+                let mut new_arr = arr.clone();
+                new_arr.push(Object::String(
+                    b"datasets".to_vec(),
+                    lopdf::StringFormat::Literal,
+                ));
+                new_arr.push(Object::Reference(stream_id));
+                set_xfa_entry(doc, catalog_id, acro_ref, Object::Array(new_arr))?;
             }
             Ok(())
         }
@@ -586,25 +601,76 @@ pub(crate) fn write_packets_into_pdf(
                     ))
                 }
             };
-            let mut updated = replace_packet_section(&existing_xml, "datasets", new_datasets)
-                .ok_or_else(|| {
-                    XfaError::WritebackFailed(
-                        "datasets section not found in consolidated XDP".to_string(),
-                    )
-                })?;
+            let mut updated = match replace_packet_section(&existing_xml, "datasets", new_datasets)
+            {
+                Some(u) => u,
+                // No datasets section yet: insert one before the closing
+                // </xdp:xdp> wrapper tag.
+                None => match existing_xml.rfind("</") {
+                    Some(close) => {
+                        let mut u = existing_xml.clone();
+                        u.insert_str(close, new_datasets);
+                        u
+                    }
+                    None => {
+                        return Err(XfaError::WritebackFailed(
+                            "consolidated XDP has no closing tag to anchor a datasets section"
+                                .to_string(),
+                        ))
+                    }
+                },
+            };
             if let Some(form) = new_form {
                 if let Some(u) = replace_packet_section(&updated, "form", form) {
                     updated = u;
                 }
             }
-            let mut stream = lopdf::Stream::new(lopdf::dictionary! {}, updated.into_bytes());
-            let _ = stream.compress();
-            doc.objects.insert(r, Object::Stream(stream));
+            doc.objects
+                .insert(r, Object::Stream(make_packet_stream(updated.into_bytes())));
             Ok(())
         }
         _ => Err(XfaError::WritebackFailed(
             "unsupported /XFA object type".to_string(),
         )),
+    }
+}
+
+fn make_packet_stream(content: Vec<u8>) -> lopdf::Stream {
+    let mut stream = lopdf::Stream::new(lopdf::dictionary! {}, content);
+    // Smaller files; ignore failures (raw stream is also valid).
+    let _ = stream.compress();
+    stream
+}
+
+/// Write a new `/XFA` value into the AcroForm dictionary, whether the
+/// dictionary is an indirect object or inlined in the catalog.
+fn set_xfa_entry(
+    doc: &mut Document,
+    catalog_id: ObjectId,
+    acro_ref: Option<ObjectId>,
+    value: Object,
+) -> Result<()> {
+    match acro_ref {
+        Some(r) => {
+            if let Ok(Object::Dictionary(d)) = doc.get_object_mut(r) {
+                d.set(b"XFA".to_vec(), value);
+                return Ok(());
+            }
+            Err(XfaError::WritebackFailed(
+                "AcroForm dictionary not mutable".to_string(),
+            ))
+        }
+        None => {
+            if let Ok(Object::Dictionary(catalog)) = doc.get_object_mut(catalog_id) {
+                if let Ok(Object::Dictionary(acro)) = catalog.get_mut(b"AcroForm") {
+                    acro.set(b"XFA".to_vec(), value);
+                    return Ok(());
+                }
+            }
+            Err(XfaError::WritebackFailed(
+                "inline AcroForm dictionary not mutable".to_string(),
+            ))
+        }
     }
 }
 

@@ -269,9 +269,14 @@ impl XfaSession {
             .ok_or_else(|| XfaError::PacketNotFound("template".to_string()))?
             .to_string();
 
+        // A malformed or empty datasets packet must not block the session —
+        // the form is still fillable; the writeback regenerates a canonical
+        // packet from scratch (Adobe tolerates both).
         let data_dom = match packets.datasets() {
-            Some(ds) => DataDom::from_xml(ds)
-                .map_err(|e| XfaError::ParseFailed(format!("datasets parse: {e}")))?,
+            Some(ds) => DataDom::from_xml(ds).unwrap_or_else(|e| {
+                log::warn!("XfaSession: datasets packet unparseable ({e}); starting empty");
+                DataDom::new()
+            }),
             None => DataDom::new(),
         };
 
@@ -651,6 +656,16 @@ impl XfaSession {
                 cursor = self.parent_of(p);
             }
         }
+        if parent_group.is_none() {
+            // No bound ancestor at all (empty or absent datasets): synthesize
+            // the group chain from the data root along the field's named
+            // path — the same tree Adobe Reader creates on first save.
+            // Explicit `<bind ref>` fields are skipped: their data home is
+            // not the name chain.
+            if self.tree.meta(field_node).data_bind_ref.is_none() {
+                parent_group = self.synthesize_group_chain(idx)?;
+            }
+        }
         let Some(group) = parent_group else {
             return Ok(false);
         };
@@ -680,6 +695,68 @@ impl XfaSession {
         self.created_data.push(id);
         self.tree.meta_mut(self.fields[idx].node).bound_data_node = Some(id.as_raw());
         Ok(true)
+    }
+
+    /// Create (or find) the data-group chain `root → seg[0] → … → seg[n-2]`
+    /// for the field at `idx`, creating a `<data>` root when the DataDom is
+    /// empty. Returns the deepest group, or `None` when an indexed segment
+    /// (`name[i>0]`) is missing — repeated-instance synthesis is out of
+    /// Phase-1 scope.
+    fn synthesize_group_chain(&mut self, idx: usize) -> Result<Option<DataNodeId>> {
+        let segments = self.fields[idx].segments.clone();
+        if segments.len() < 2 {
+            // A root-level field still needs a root group to live under.
+            if segments.is_empty() {
+                return Ok(None);
+            }
+        }
+
+        let root = match self.data_dom.root() {
+            Some(r)
+                if self
+                    .data_dom
+                    .get(r)
+                    .map(DataNode::is_group)
+                    .unwrap_or(false) =>
+            {
+                r
+            }
+            _ => {
+                let r = self.data_dom.alloc(DataNode::DataGroup {
+                    name: "data".to_string(),
+                    namespace: None,
+                    children: Vec::new(),
+                    is_record: false,
+                    parent: None,
+                });
+                self.data_dom.set_root(r);
+                r
+            }
+        };
+
+        let mut cursor = root;
+        for (name, index) in &segments[..segments.len() - 1] {
+            let groups: Vec<DataNodeId> = self
+                .data_dom
+                .children_by_name(cursor, name)
+                .into_iter()
+                .filter(|&c| {
+                    self.data_dom
+                        .get(c)
+                        .map(DataNode::is_group)
+                        .unwrap_or(false)
+                })
+                .collect();
+            cursor = match groups.get(*index) {
+                Some(&g) => g,
+                None if *index == 0 => self
+                    .data_dom
+                    .create_group(cursor, name)
+                    .map_err(|e| XfaError::WritebackFailed(e.to_string()))?,
+                None => return Ok(None),
+            };
+        }
+        Ok(Some(cursor))
     }
 
     fn parent_of(&self, node: FormNodeId) -> Option<FormNodeId> {
