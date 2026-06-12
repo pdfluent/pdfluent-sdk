@@ -92,8 +92,9 @@ fn parse_field_recursive(
         .map(|r| [r.x0 as f32, r.y0 as f32, r.x1 as f32, r.y1 as f32]);
     let appearance_state = dict
         .get::<Name>(keys::AS)
-        .map(|n| String::from_utf8_lossy(n.as_ref()).into_owned());
+        .map(|n| crate::encoding::decode_name_bytes(n.as_ref()));
     let object_id = dict.obj_id().map(|oid| (oid.obj_number, oid.gen_number));
+    let on_state = parse_on_state(dict);
 
     let node = FieldNode {
         partial_name,
@@ -110,6 +111,7 @@ fn parse_field_recursive(
         top_index: dict.get::<u32>(keys::TI),
         rect,
         appearance_state,
+        on_state,
         page_index: None,
         parent,
         children: vec![],
@@ -129,21 +131,38 @@ fn parse_field_recursive(
     }
 }
 
+/// Extract the on-state for a button widget: the first non-`Off` key of the
+/// widget's `/AP /N` sub-dictionary (the same resolution rule pdfium's
+/// `GetOnStateName` and mupdf's `pdf_button_field_on_state` use).
+fn parse_on_state(dict: &Dict<'_>) -> Option<String> {
+    let ap: Dict<'_> = dict.get(keys::AP)?;
+    let n: Dict<'_> = ap.get(keys::N)?;
+    let mut found = None;
+    for key in n.keys() {
+        let bytes: &[u8] = key.as_ref();
+        if bytes != b"Off" {
+            found = Some(crate::encoding::decode_name_bytes(bytes));
+            break;
+        }
+    }
+    found
+}
+
 fn parse_field_value(dict: &Dict<'_>, key: &[u8]) -> Option<FieldValue> {
     let obj: Object<'_> = dict.get(key)?;
     match obj {
-        Object::String(s) => Some(FieldValue::Text(
-            String::from_utf8_lossy(s.as_bytes()).into_owned(),
-        )),
-        Object::Name(n) => Some(FieldValue::Text(
-            String::from_utf8_lossy(n.as_ref()).into_owned(),
-        )),
+        Object::String(s) => Some(FieldValue::Text(crate::encoding::decode_pdf_text_bytes(
+            s.as_bytes(),
+        ))),
+        Object::Name(n) => Some(FieldValue::Text(crate::encoding::decode_name_bytes(
+            n.as_ref(),
+        ))),
         Object::Array(arr) => {
             let vals: Vec<String> = arr
                 .iter::<Object<'_>>()
                 .filter_map(|o| match o {
-                    Object::String(s) => Some(String::from_utf8_lossy(s.as_bytes()).into_owned()),
-                    Object::Name(n) => Some(String::from_utf8_lossy(n.as_ref()).into_owned()),
+                    Object::String(s) => Some(crate::encoding::decode_pdf_text_bytes(s.as_bytes())),
+                    Object::Name(n) => Some(crate::encoding::decode_name_bytes(n.as_ref())),
                     _ => None,
                 })
                 .collect();
@@ -160,7 +179,7 @@ fn parse_options(dict: &Dict<'_>) -> Vec<ChoiceOption> {
     arr.iter::<Object<'_>>()
         .filter_map(|obj| match obj {
             Object::String(s) => {
-                let text = String::from_utf8_lossy(s.as_bytes()).into_owned();
+                let text = crate::encoding::decode_pdf_text_bytes(s.as_bytes());
                 Some(ChoiceOption {
                     export: text.clone(),
                     display: text,
@@ -230,8 +249,8 @@ fn get_string_value(dict: &Dict<'_>, key: &[u8]) -> Option<String> {
 
 fn obj_to_string(obj: &Object<'_>) -> Option<String> {
     match obj {
-        Object::String(s) => Some(String::from_utf8_lossy(s.as_bytes()).into_owned()),
-        Object::Name(n) => Some(String::from_utf8_lossy(n.as_ref()).into_owned()),
+        Object::String(s) => Some(crate::encoding::decode_pdf_text_bytes(s.as_bytes())),
+        Object::Name(n) => Some(crate::encoding::decode_name_bytes(n.as_ref())),
         _ => None,
     }
 }
