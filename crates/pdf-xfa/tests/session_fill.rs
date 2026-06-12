@@ -410,6 +410,52 @@ fn writeback_splices_and_preserves_datadescription() {
 }
 
 #[test]
+fn roundtrip_form_without_datasets_packet() {
+    // A pristine form: /XFA array has only a template stream — no datasets.
+    // Filling must synthesize the data chain AND create the datasets entry.
+    let mut doc = Document::with_version("1.4");
+    let t_id = doc.add_object(Object::Stream(Stream::new(
+        dictionary! {},
+        TEMPLATE.as_bytes().to_vec(),
+    )));
+    let arr = Object::Array(vec![
+        Object::String(b"template".to_vec(), lopdf::StringFormat::Literal),
+        Object::Reference(t_id),
+    ]);
+    let pdf = finish_pdf(doc, arr);
+
+    let mut session = XfaSession::open(&pdf).expect("open session");
+    let outcome = session
+        .set_value("form1.applicant.name", XfaWriteValue::Text("FirstSave"))
+        .expect("set");
+    assert!(
+        outcome.persisted_to_datasets,
+        "synthesized chain must anchor the value"
+    );
+    let saved = session.save_to_bytes().expect("save");
+
+    let packets = pdf_xfa::extract::extract_xfa_from_bytes(saved.clone()).expect("extract");
+    let ds = packets.datasets().expect("datasets packet must now exist");
+    assert!(ds.contains("<name>FirstSave</name>"), "datasets: {ds}");
+
+    let reopened = XfaSession::open(&saved).expect("reopen");
+    assert_eq!(field(&reopened, "form1.applicant.name").value, "FirstSave");
+}
+
+#[test]
+fn empty_datasets_packet_does_not_block_session() {
+    // Unparseable datasets (no root node) must degrade to an empty DataDom.
+    let pdf = build_array_pdf(TEMPLATE, "   ");
+    let mut session = XfaSession::open(&pdf).expect("open must tolerate empty datasets");
+    session
+        .set_value("form1.applicant.name", XfaWriteValue::Text("Tolerant"))
+        .expect("set");
+    let saved = session.save_to_bytes().expect("save");
+    let reopened = XfaSession::open(&saved).expect("reopen");
+    assert_eq!(field(&reopened, "form1.applicant.name").value, "Tolerant");
+}
+
+#[test]
 fn save_without_changes_is_noop_clean() {
     let pdf = build_single_stream_pdf(&consolidated_xdp());
     let session = XfaSession::open(&pdf).expect("open session");
