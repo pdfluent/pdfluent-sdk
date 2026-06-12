@@ -14,7 +14,7 @@ the SDK they claim to demonstrate.
 |---|---|---|
 | [`encrypt-pdf-rust`](./encrypt_pdf_rust.md) | **WEBSITE_PROMISES_UNSUPPORTED_BEHAVIOR** | Replace snippet. API uses imaginary builder method chain. |
 | [`extract-text-pdf-rust`](./extract_text_pdf_rust.md) | **NEEDS_ENGLISH_UPDATE** | Replace `page.extract_text()` with `page.text()` (the actual SDK method). |
-| [`fill-pdf-form-rust`](./fill_pdf_form_rust.md) | **WEBSITE_OLDER_THAN_SDK** | Remove `?` after `form_mut()` — the accessor is infallible per RFC v1.1. |
+| [`fill-pdf-form-rust`](./fill_pdf_form_rust.md) | **NEEDS_WEBSITE_UPDATE** | Three fixes applied in `acroform/sdk-foundation`: (1) `form_mut()` is infallible — remove `?`; (2) per-widget `/AS` and `/AP` are now synced in every `set_*` call — remove the stale "visual state may lag" caveat; (3) hierarchical names (`Address.Street`) are fully supported via `/Kids` recursion — remove the top-level-only limitation note. |
 | [`merge-pdfs-rust`](./merge_pdfs_rust.md) | **WEBSITE_PROMISES_UNSUPPORTED_BEHAVIOR** | Replace snippet. `PdfMerger::merge(path)` signature differs; field access `output.page_count` is a method call. |
 | [`render-pdf-to-png-rust`](./render_pdf_to_png_rust.md) | **WEBSITE_PROMISES_UNSUPPORTED_BEHAVIOR** | Replace snippet. No per-page `page.render()`; use `PdfDocument::to_images()`. |
 
