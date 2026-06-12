@@ -28,7 +28,7 @@ editor session. See `benchmarks/runs/wasm_sdk_dx/ROUND3_PERFORMANCE_BENCHMARK.md
 | 7 | Render page directly to Canvas2D | `pdf-render` + custom device | ✅ | n/a | `renderPageToCanvas(canvas, index, scale)` |
 | 8 | Render thumbnail | `pdf-render` | ✅ | ✅ | `renderThumbnail(index, maxDim)` |
 | 9 | Read AcroForm fields | `pdf-forms` | ✅ | ✅ | exposed via `metadata()` for inspection; full API on native |
-| 10 | **Write AcroForm fields** | `pdf-forms` + `pdfluent::PdfFormMut` | ✅ **(Wave 2)** | ✅ | `setFormField`, `setFormFields` |
+| 10 | **Write AcroForm fields** | `pdf-forms` (unified writeback chain) | ✅ **(Wave 2)** | ✅ | `PdfDoc.setFormField`: text fields only; `PdfDocMut.setFormField`: all types (text/checkbox/radio/choice) |
 | 11 | XFA detection + parse | `xfa-dom-resolver` + `formcalc-interpreter` | ✅ | ✅ | `XfaEngine.fromJson` etc. |
 | 12 | XFA flatten | `pdf-xfa` (via xfa-wasm engine) | ✅ | ✅ | `flattenXfa()` |
 | 13 | Read annotations | `pdf-annot` | ✅ | ✅ | `getAnnotations(pageIndex)` |

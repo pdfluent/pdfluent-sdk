@@ -6,6 +6,54 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — acroform/sdk-foundation — 2026-06-12
+
+### Added
+
+- **`PdfDocument::form_model() -> Result<Vec<FormFieldModel>>`** — inspect form
+  structure before writing. Returns one `FormFieldModel` per logical field with
+  typed kind (`Text{multiline, comb, password}`, `Checkbox{on_state, checked}`,
+  `RadioGroup{options}`, `ComboBox`, `ListBox`, `PushButton`, `Signature`),
+  kind-specific data, per-page widget rectangles, current/default values,
+  read-only/required flags, `/MaxLen`, quadding, and resolved `/DA` font info.
+  Returns empty `Vec` for documents without an AcroForm.
+
+- **`PdfDocument::regenerate_form_appearances() -> Result<WriteOutcome>`** —
+  materialises trustworthy `/AP /N` streams for every filled text and choice
+  field; useful for PDFs filled by tools that only wrote `/V` + `/NeedAppearances`.
+
+- **`PdfDocument::sync_engine()`** — re-parses the in-memory lopdf document and
+  rebuilds the rendering engine so mutations are visible in subsequent
+  `render_page()` calls on the same handle.
+
+### Changed
+
+- **`form_mut()` writeback chain unified.** All four setters (`set_text`,
+  `set_checkbox`, `set_radio`, `set_dropdown`) now route through a single
+  `apply_field_value` implementation in the `pdfluent-forms` crate. Every call
+  updates `/V`, per-widget `/AS`, and a regenerated `/AP` appearance stream in
+  one atomic operation. Previous behaviour was partially implemented across
+  several independent code paths.
+
+- **Hierarchical field names** (`"parent.child"`) are resolved through `/Kids`
+  recursion in all four setters. Previously only flat top-level names were
+  reliably supported.
+
+- **Appearance encoding**: text appearance streams use WinAnsiEncoding with
+  embedded Standard-14 AFM widths. Non-WinAnsi values (Cyrillic, CJK, etc.)
+  fall back to `/NeedAppearances true` with the stale `/AP` removed.
+
+- **Inline `/AcroForm` promotion**: AcroForm dictionaries stored inline in the
+  document catalog are promoted to indirect objects before any mutation, matching
+  how Adobe-generated forms are stored and ensuring compatibility with
+  conforming readers.
+
+- **Read-only enforcement**: fields with the `ReadOnly` flag set are rejected at
+  set-time with `WritebackError::ReadOnly`, stricter than pdfium/mupdf which
+  only enforce in the UI layer.
+
+---
+
 ## [1.0.0-beta.4] — 2026-05-05
 
 ### Documentation
