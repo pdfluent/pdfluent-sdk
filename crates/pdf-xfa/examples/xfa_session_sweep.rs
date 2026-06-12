@@ -92,10 +92,15 @@ fn classify(path: &std::path::Path) -> (String, usize, usize, String) {
 }
 
 fn main() {
-    let dir = std::env::args()
+    let arg = std::env::args()
         .nth(1)
-        .expect("usage: xfa_session_sweep <dir>");
-    let mut paths: Vec<_> = walkdir(&std::path::PathBuf::from(&dir));
+        .expect("usage: xfa_session_sweep <dir-or-pdf>");
+    let root = std::path::PathBuf::from(&arg);
+    let mut paths: Vec<_> = if root.is_file() {
+        vec![root]
+    } else {
+        walkdir(&root)
+    };
     paths.sort();
 
     let mut tally: std::collections::BTreeMap<String, usize> = Default::default();
