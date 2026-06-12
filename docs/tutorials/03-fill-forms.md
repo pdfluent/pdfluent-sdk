@@ -71,7 +71,9 @@ doc.flatten_forms()?;
 doc.save("final_filled_form.pdf")?;
 ```
 
-> `flatten_forms` converts all interactive fields to static page content.
+> `flatten_forms` is on the public surface but its runtime is deferred —
+> calling it returns `Error::MissingDependency`. Fill and save your fields
+> normally; the fill path covered in this tutorial is fully functional.
 
 ## Summary
 
