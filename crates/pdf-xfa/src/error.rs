@@ -103,6 +103,31 @@ pub enum XfaError {
         /// Stable identifier of the host capability that was requested.
         capability: String,
     },
+
+    // ---- XfaSession field API (Phase 1 SDK foundation) ----
+    /// No XFA field with the given name exists in the current layout.
+    #[error("XFA field not found: {0}")]
+    FieldNotFound(String),
+
+    /// The field (or one of its ancestor containers) is `access="readOnly"`,
+    /// `"protected"`, or `"nonInteractive"` — value writes are rejected.
+    #[error("XFA field is read-only: {0}")]
+    FieldReadOnly(String),
+
+    /// The value is not assignable to the field (wrong kind, unknown choice
+    /// item, unknown radio on-value, …).
+    #[error("invalid value for XFA field {name}: {reason}")]
+    InvalidFieldValue {
+        /// Fully-qualified field name.
+        name: String,
+        /// Human-readable reason.
+        reason: String,
+    },
+
+    /// The datasets writeback could not locate or rewrite the XFA packet
+    /// stream in the PDF.
+    #[error("XFA datasets writeback failed: {0}")]
+    WritebackFailed(String),
 }
 /// Result.
 pub type Result<T> = std::result::Result<T, XfaError>;

@@ -24,6 +24,8 @@
 /// Appearance stream generation for XFA form fields (internal bridge).
 pub mod appearance_bridge;
 pub mod classify;
+/// Faithful datasets/form packet writeback (surgical XML splice + PDF stream swap).
+mod datasets_writeback;
 /// Dynamic XFA script processing — binding, mode selection, and outcome reporting.
 pub mod dynamic;
 pub mod error;
@@ -42,6 +44,8 @@ pub mod merger;
 pub mod paint_bridge;
 /// PDF content-stream rendering from layout DOM (internal bridge).
 pub mod render_bridge;
+/// Parse-once interactive fill session (Phase 1 SDK foundation).
+pub mod session;
 pub mod template_parser;
 
 pub use classify::{detect_xfa_type, detect_xfa_type_from_packets, XfaType};

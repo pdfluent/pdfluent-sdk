@@ -24,3 +24,4 @@ pub use crate::structure::{AnnotationInfo, Attachment, Outline};
 pub use crate::tagged::{DocumentStructure, StructureNode};
 pub use crate::tier::Tier;
 pub use crate::watermark::{Layer, Position, Rotation, WatermarkOptions};
+pub use crate::xfa::{XfaField, XfaFieldType, XfaFieldValue, XfaFormModel, XfaSetOutcome};
