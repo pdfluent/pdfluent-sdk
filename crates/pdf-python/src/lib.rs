@@ -6,13 +6,14 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use lopdf::{
-    Document as LopdfDocument, Object as LopdfObject, Permissions as LopdfPermissions, StringFormat,
-};
+use lopdf::{Document as LopdfDocument, Permissions as LopdfPermissions};
 
 use pdf_annot::builder::{add_annotation_to_page, AnnotRect, AnnotationBuilder};
 use pdf_annot::Annotation;
-use pdf_forms::{parse_acroform, FieldType, FieldValue};
+use pdf_forms::{
+    apply_field_value, parse_acroform, FieldType, FieldValue, WriteOutcome, WriteValue,
+    WritebackError,
+};
 use pdf_manip::encrypt::remove_encryption;
 use pdf_redact::{search_and_redact, RedactSearchOptions};
 
@@ -105,6 +106,36 @@ pyo3::create_exception!(
 
 fn manip_err_to_py(e: pdf_manip::error::ManipError) -> PyErr {
     PdfluentError::new_err(e.to_string())
+}
+
+/// Apply a string value with type-aware dispatch, mirroring the CLI's
+/// `fill_one` (crates/xfa-cli/src/cmd_fill.rs): try Text first (the common
+/// case), then on a `/FT` type mismatch fall through to Radio, Choice, and
+/// finally Checkbox with a bool-ish string.
+///
+/// All writes go through [`pdf_forms::apply_field_value`] — the single SDK
+/// writeback chain — keeping `/V` encoding, per-widget `/AS`, and `/AP`
+/// regeneration consistent.
+fn apply_string_value(
+    doc: &mut LopdfDocument,
+    name: &str,
+    value: &str,
+) -> Result<WriteOutcome, WritebackError> {
+    match apply_field_value(doc, name, WriteValue::Text(value)) {
+        Err(WritebackError::WrongType { .. }) => {}
+        other => return other,
+    }
+    match apply_field_value(doc, name, WriteValue::Radio(value)) {
+        Err(WritebackError::WrongType { .. }) => {}
+        other => return other,
+    }
+    match apply_field_value(doc, name, WriteValue::Choice(value)) {
+        Err(WritebackError::WrongType { .. }) => {}
+        other => return other,
+    }
+    // Checkbox via bool-ish string ("true"/"Yes"/"Off"/"false").
+    let on = !matches!(value, "false" | "Off" | "0" | "");
+    apply_field_value(doc, name, WriteValue::Checkbox(on))
 }
 
 fn engine_err_to_py(e: EngineError) -> PyErr {
@@ -480,55 +511,46 @@ impl PyDocument {
 
     /// Set the value of a form field by its fully-qualified name.
     ///
+    /// Routes through the single SDK writeback chain
+    /// (``pdf_forms::apply_field_value``): correct ``/V`` encoding (ASCII
+    /// literal else UTF-16BE+BOM), ``/V``-as-Name for buttons, per-widget
+    /// ``/AS`` sync, ``/AP`` regeneration, recursive fully-qualified name
+    /// lookup, and read-only rejection.
+    ///
     /// Parameters
     /// ----------
     /// name : str
     ///     Fully-qualified field name (e.g. ``"Address.Street"``).
     /// value : str
-    ///     New text value.
+    ///     New value, dispatched by the field's actual type: text, radio
+    ///     export name, choice option, or bool-ish checkbox state
+    ///     (``"true"``/``"false"``/``"Off"``/``"0"``).
     ///
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` if the field was found and updated.
-    #[allow(clippy::collapsible_match)]
+    ///     ``True`` if the field was found and updated; ``False`` when the
+    ///     document has no form or no field matches ``name``.
+    ///
+    /// Raises
+    /// ------
+    /// PdfluentError
+    ///     If the field is read-only, the value is not a valid option for
+    ///     the field, or the form structure cannot be mutated (e.g. an
+    ///     inline ``/AcroForm`` dictionary).
     fn set_form_field(&self, name: &str, value: &str) -> PyResult<bool> {
-        let Some(tree) = parse_acroform(self.inner.pdf()) else {
+        // No form at all → field cannot be found (False), not an error.
+        if parse_acroform(self.inner.pdf()).is_none() {
             return Ok(false);
-        };
-        let Some(field_id) = tree.find_by_name(name) else {
-            return Ok(false);
-        };
-        let Some((obj_num, gen_num)) = tree.get(field_id).object_id else {
-            return Ok(false);
-        };
-        let lopdf_oid = (obj_num as u32, gen_num as u16);
-
+        }
         let mut guard = self.init_lopdf()?;
         let doc = guard.as_mut().unwrap();
-
-        if let Ok(LopdfObject::Dictionary(ref mut dict)) = doc.get_object_mut(lopdf_oid) {
-            dict.set(
-                "V",
-                LopdfObject::String(value.as_bytes().to_vec(), StringFormat::Literal),
-            );
-            // Mark NeedsAppearances so viewers regenerate widget visuals.
-            if let Ok(obj) = doc.get_object_mut(
-                doc.trailer
-                    .get(b"Root")
-                    .ok()
-                    .and_then(|o| o.as_reference().ok())
-                    .unwrap_or((0, 0)),
-            ) {
-                if let LopdfObject::Dictionary(ref mut catalog) = obj {
-                    if let Ok(LopdfObject::Dictionary(ref mut af)) = catalog.get_mut(b"AcroForm") {
-                        af.set("NeedsAppearances", LopdfObject::Boolean(true));
-                    }
-                }
-            }
-            Ok(true)
-        } else {
-            Ok(false)
+        match apply_string_value(doc, name, value) {
+            Ok(_) => Ok(true),
+            Err(WritebackError::FieldNotFound(_)) => Ok(false),
+            Err(e) => Err(PdfluentError::new_err(format!(
+                "set_form_field '{name}': {e}"
+            ))),
         }
     }
 
@@ -1712,4 +1734,165 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(set_license_payload, m)?)?;
     m.add_function(wrap_pyfunction!(native_license_info, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod writeback_dispatch_tests {
+    //! Pin the new writeback behavior of `set_form_field`'s dispatch helper:
+    //! correct /V encoding (ASCII literal else UTF-16BE+BOM), /V-as-Name +
+    //! /AS sync for buttons, and read-only rejection — replacing the old
+    //! raw-bytes /V write + bogus "NeedsAppearances" key (extra `s`).
+
+    use super::apply_string_value;
+    use lopdf::{dictionary, Document, Object, Stream};
+    use pdf_forms::WritebackError;
+
+    /// Minimal indirect-AcroForm document: text field, read-only text
+    /// field, and a checkbox whose on-state (`On1`) lives on a kid widget.
+    fn form_doc() -> Document {
+        let mut doc = Document::with_version("1.4");
+        let content_id = doc.add_object(Stream::new(dictionary! {}, Vec::new()));
+        let pages_id = doc.new_object_id();
+
+        let text_field = doc.add_object(dictionary! {
+            "FT" => "Tx",
+            "T" => Object::string_literal("first_name"),
+            "V" => Object::string_literal(""),
+        });
+        // /Ff bit 1 = ReadOnly.
+        let readonly_field = doc.add_object(dictionary! {
+            "FT" => "Tx",
+            "Ff" => 1i64,
+            "T" => Object::string_literal("locked"),
+            "V" => Object::string_literal("frozen"),
+        });
+        let checkbox_kid = doc.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Widget",
+            "Rect" => vec![100.into(), 700.into(), 115.into(), 715.into()],
+            "AP" => dictionary! {
+                "N" => dictionary! {
+                    "Off" => Object::Null,
+                    "On1" => Object::Null,
+                },
+            },
+        });
+        let checkbox_field = doc.add_object(dictionary! {
+            "FT" => "Btn",
+            "T" => Object::string_literal("subscribe"),
+            "V" => Object::Name(b"Off".to_vec()),
+            "Kids" => vec![checkbox_kid.into()],
+        });
+
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => content_id,
+            "Resources" => dictionary! {},
+            "Annots" => vec![checkbox_kid.into()],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let acroform_id = doc.add_object(dictionary! {
+            "Fields" => vec![
+                text_field.into(),
+                readonly_field.into(),
+                checkbox_field.into(),
+            ],
+        });
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+            "AcroForm" => acroform_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc
+    }
+
+    fn field_v(doc: &Document, name: &str) -> Object {
+        doc.objects
+            .values()
+            .filter_map(|o| o.as_dict().ok())
+            .find(|d| {
+                d.get(b"T")
+                    .ok()
+                    .and_then(|t| lopdf::decode_text_string(t).ok())
+                    .as_deref()
+                    == Some(name)
+            })
+            .and_then(|d| d.get(b"V").ok())
+            .cloned()
+            .unwrap_or_else(|| panic!("field '{name}' has no /V"))
+    }
+
+    #[test]
+    fn ascii_text_stays_literal() {
+        let mut doc = form_doc();
+        apply_string_value(&mut doc, "first_name", "Jane").expect("apply ASCII");
+        match field_v(&doc, "first_name") {
+            Object::String(v, _) => assert_eq!(v, b"Jane"),
+            other => panic!("expected /V string, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn non_ascii_text_writes_utf16be_bom() {
+        let mut doc = form_doc();
+        apply_string_value(&mut doc, "first_name", "Café").expect("apply non-ASCII");
+        match field_v(&doc, "first_name") {
+            Object::String(v, _) => assert!(
+                v.starts_with(&[0xFE, 0xFF]),
+                "non-ASCII /V must be UTF-16BE with BOM, got {v:02X?}"
+            ),
+            other => panic!("expected /V string, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn checkbox_dispatch_sets_name_value_and_widget_as() {
+        let mut doc = form_doc();
+        let outcome = apply_string_value(&mut doc, "subscribe", "true").expect("apply checkbox");
+        assert_eq!(field_v(&doc, "subscribe"), Object::Name(b"On1".to_vec()));
+        assert!(
+            outcome.appearance_states_set >= 1,
+            "kid widget /AS must be synced"
+        );
+        let widget_synced = doc
+            .objects
+            .values()
+            .filter_map(|o| o.as_dict().ok())
+            .filter(|d| d.has(b"AP") && !d.has(b"T"))
+            .any(|d| matches!(d.get(b"AS"), Ok(Object::Name(n)) if n == b"On1"));
+        assert!(widget_synced, "kid widget /AS must be the on-state On1");
+    }
+
+    #[test]
+    fn checkbox_dispatch_bool_ish_off_strings() {
+        let mut doc = form_doc();
+        apply_string_value(&mut doc, "subscribe", "true").expect("check");
+        apply_string_value(&mut doc, "subscribe", "false").expect("uncheck");
+        assert_eq!(field_v(&doc, "subscribe"), Object::Name(b"Off".to_vec()));
+    }
+
+    #[test]
+    fn readonly_field_is_rejected() {
+        let mut doc = form_doc();
+        let err = apply_string_value(&mut doc, "locked", "new value")
+            .expect_err("read-only field must be rejected");
+        assert!(
+            matches!(err, WritebackError::ReadOnly(ref n) if n == "locked"),
+            "expected ReadOnly error, got {err:?}"
+        );
+        match field_v(&doc, "locked") {
+            Object::String(v, _) => assert_eq!(v, b"frozen", "value must be unchanged"),
+            other => panic!("expected /V string, got {other:?}"),
+        }
+    }
 }

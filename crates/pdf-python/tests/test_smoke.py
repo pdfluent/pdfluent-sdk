@@ -93,6 +93,12 @@ def test_form_fields_read():
 
 
 # ---------- Scenario 6: Fill text field, save ----------
+#
+# set_form_field routes through the single SDK writeback chain
+# (pdf_forms::apply_field_value): correct /V encoding (ASCII literal else
+# UTF-16BE+BOM), per-widget /AS sync, and /AP regeneration — replacing the
+# old raw-bytes /V write (mojibake on non-ASCII) + bogus "NeedsAppearances"
+# key (extra `s`).
 
 def test_form_field_write(tmp_path):
     doc = Document(ACROFORM_PDF)
@@ -102,13 +108,22 @@ def test_form_field_write(tmp_path):
     if not text_fields:
         pytest.skip("no text fields in acroform.pdf")
     field_name = text_fields[0].name
-    result = doc.set_form_field(field_name, "Test Value")
-    assert isinstance(result, bool)
-    # Save and reload to verify structure preserved
+    # Non-ASCII value: the writeback chain must encode /V as UTF-16BE+BOM.
+    assert doc.set_form_field(field_name, "Café Test") is True
+    # Save and reload: the value must round-trip without mojibake (the old
+    # raw-bytes write produced UTF-8 bytes misread as PDFDocEncoding).
     out = str(tmp_path / "filled.pdf")
     doc.save(out)
     reloaded = Document(out)
+    values = {f.name: f.value for f in reloaded.get_form_fields()}
+    assert values[field_name] == "Café Test"
     assert reloaded.page_count == doc.page_count
+
+
+def test_form_field_write_unknown_field_returns_false():
+    doc = Document(SAMPLE_PDF)
+    # sample.pdf has no form: contract is False (not found), not an error.
+    assert doc.set_form_field("does.not.exist", "x") is False
 
 
 # ---------- Scenario 7: Read annotations ----------

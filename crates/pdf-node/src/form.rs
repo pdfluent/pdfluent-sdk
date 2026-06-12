@@ -67,13 +67,6 @@ impl FormEngine {
         tree.get_value(name)
     }
 
-    /// Return the lopdf ObjectId `(object_number, generation_number)` for the field.
-    pub fn object_id_for(&self, name: &str) -> Option<(i32, i32)> {
-        let tree = self.tree.lock().unwrap();
-        let id = tree.find_by_name(name)?;
-        tree.get(id).object_id
-    }
-
     pub fn set_value(&self, name: &str, value: &str) -> napi::Result<()> {
         let mut tree = self.tree.lock().unwrap();
         tree.set_value(name, value)

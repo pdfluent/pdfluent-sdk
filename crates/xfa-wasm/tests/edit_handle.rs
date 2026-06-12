@@ -450,3 +450,303 @@ fn editor_round_trip_smoke_format_then_save_then_reopen() {
         "text runs must remain after format"
     );
 }
+
+// ---- Forms: single writeback chain (pdf_forms::apply_field_value) ---------
+//
+// `setFormField` / `setFormFields` now route through the SDK writeback
+// chain: /V encoding (ASCII literal else UTF-16BE+BOM), /V-as-Name for
+// buttons, per-widget /AS sync, /Kids-recursive FQN lookup, and read-only
+// rejection. These tests pin the *new* correct behavior (the old path wrote
+// raw UTF-8 bytes into /V on top-level text fields only).
+
+/// Build a minimal indirect-AcroForm PDF with a text field, a read-only
+/// text field, a checkbox whose on-state (`On1`) lives on a kid widget,
+/// and a radio group with `Red`/`Blue` kid widgets.
+///
+/// Mirrors the fixture builders in `pdfluent/tests/form_mutation.rs`.
+#[cfg(not(target_arch = "wasm32"))]
+fn synthetic_form_pdf() -> Vec<u8> {
+    use lopdf::{dictionary, Document, Object, Stream};
+
+    let mut doc = Document::with_version("1.4");
+    let content_id = doc.add_object(Stream::new(dictionary! {}, Vec::new()));
+    let pages_id = doc.new_object_id();
+
+    let text_field = doc.add_object(dictionary! {
+        "FT" => "Tx",
+        "T" => Object::string_literal("first_name"),
+        "V" => Object::string_literal(""),
+    });
+
+    // /Ff bit 1 = ReadOnly (ISO 32000-1 §12.7.3.1).
+    let readonly_field = doc.add_object(dictionary! {
+        "FT" => "Tx",
+        "Ff" => 1i64,
+        "T" => Object::string_literal("locked"),
+        "V" => Object::string_literal("frozen"),
+    });
+
+    // Checkbox: on-state declared on the kid widget's /AP /N — the common
+    // real-world shape that the old top-level walk could not handle.
+    let checkbox_kid = doc.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Rect" => vec![100.into(), 700.into(), 115.into(), 715.into()],
+        "AP" => dictionary! {
+            "N" => dictionary! {
+                "Off" => Object::Null,
+                "On1" => Object::Null,
+            },
+        },
+    });
+    let checkbox_field = doc.add_object(dictionary! {
+        "FT" => "Btn",
+        "T" => Object::string_literal("subscribe"),
+        "V" => Object::Name(b"Off".to_vec()),
+        "Kids" => vec![checkbox_kid.into()],
+    });
+
+    // Radio group: /Ff bit 16 (0x8000) = Radio; export states on kids.
+    let radio_kid_red = doc.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Rect" => vec![100.into(), 650.into(), 115.into(), 665.into()],
+        "AS" => Object::Name(b"Off".to_vec()),
+        "AP" => dictionary! {
+            "N" => dictionary! {
+                "Off" => Object::Null,
+                "Red" => Object::Null,
+            },
+        },
+    });
+    let radio_kid_blue = doc.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "Rect" => vec![130.into(), 650.into(), 145.into(), 665.into()],
+        "AS" => Object::Name(b"Off".to_vec()),
+        "AP" => dictionary! {
+            "N" => dictionary! {
+                "Off" => Object::Null,
+                "Blue" => Object::Null,
+            },
+        },
+    });
+    let radio_field = doc.add_object(dictionary! {
+        "FT" => "Btn",
+        "Ff" => 0x8000i64,
+        "T" => Object::string_literal("preferred_color"),
+        "V" => Object::Name(b"Off".to_vec()),
+        "Kids" => vec![radio_kid_red.into(), radio_kid_blue.into()],
+    });
+
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Contents" => content_id,
+        "Resources" => dictionary! {},
+        "Annots" => vec![
+            checkbox_kid.into(),
+            radio_kid_red.into(),
+            radio_kid_blue.into(),
+        ],
+    });
+    doc.objects.insert(
+        pages_id,
+        lopdf::Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page_id.into()],
+            "Count" => 1,
+        }),
+    );
+
+    let acroform_id = doc.add_object(dictionary! {
+        "Fields" => vec![
+            text_field.into(),
+            readonly_field.into(),
+            checkbox_field.into(),
+            radio_field.into(),
+        ],
+    });
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+        "AcroForm" => acroform_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf).expect("serialise form fixture");
+    buf
+}
+
+/// Find a field dictionary by its `/T` partial name in saved PDF bytes.
+#[cfg(not(target_arch = "wasm32"))]
+fn field_dict_by_name(bytes: &[u8], name: &str) -> lopdf::Dictionary {
+    let doc = lopdf::Document::load_mem(bytes).expect("reload saved bytes");
+    doc.objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .find(|d| {
+            d.get(b"T")
+                .ok()
+                .and_then(|t| lopdf::decode_text_string(t).ok())
+                .as_deref()
+                == Some(name)
+        })
+        .cloned()
+        .unwrap_or_else(|| panic!("field '{name}' not found in saved bytes"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn set_form_field_ascii_text_stays_literal() {
+    let mut editor = PdfDocMut::open(&synthetic_form_pdf()).expect("open form fixture");
+    editor
+        .set_form_field("first_name", "Jane")
+        .expect("set ASCII text");
+    let bytes = editor.save().expect("save");
+
+    let field = field_dict_by_name(&bytes, "first_name");
+    match field.get(b"V").expect("/V present") {
+        lopdf::Object::String(v, _) => assert_eq!(v, b"Jane", "ASCII value stays a plain literal"),
+        other => panic!("expected /V string, got {other:?}"),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn set_form_field_non_ascii_text_writes_utf16be_bom() {
+    let mut editor = PdfDocMut::open(&synthetic_form_pdf()).expect("open form fixture");
+    editor
+        .set_form_field("first_name", "Café")
+        .expect("set non-ASCII text");
+    let bytes = editor.save().expect("save");
+
+    let field = field_dict_by_name(&bytes, "first_name");
+    match field.get(b"V").expect("/V present") {
+        lopdf::Object::String(v, _) => {
+            assert!(
+                v.starts_with(&[0xFE, 0xFF]),
+                "non-ASCII /V must be UTF-16BE with BOM, got {v:02X?}"
+            );
+            let decoded = lopdf::decode_text_string(&lopdf::Object::String(
+                v.clone(),
+                lopdf::StringFormat::Literal,
+            ))
+            .expect("decode UTF-16BE");
+            assert_eq!(decoded, "Café", "value must round-trip without mojibake");
+        }
+        other => panic!("expected /V string, got {other:?}"),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn set_form_field_checkbox_sets_name_value_and_widget_as() {
+    let mut editor = PdfDocMut::open(&synthetic_form_pdf()).expect("open form fixture");
+    // String "true" dispatches to Checkbox(true); on-state resolved from
+    // the kid widget's /AP /N keys.
+    editor
+        .set_form_field("subscribe", "true")
+        .expect("set checkbox");
+    let bytes = editor.save().expect("save");
+
+    let field = field_dict_by_name(&bytes, "subscribe");
+    assert_eq!(
+        field.get(b"V").ok(),
+        Some(&lopdf::Object::Name(b"On1".to_vec())),
+        "/V must be the on-state as a Name object"
+    );
+
+    // The kid widget's /AS must be synced to the on-state.
+    let doc = lopdf::Document::load_mem(&bytes).expect("reload");
+    let widget_as = doc
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter(|d| d.has(b"AP") && !d.has(b"T"))
+        .filter_map(|d| d.get(b"AS").ok())
+        .find(|a| matches!(a, lopdf::Object::Name(n) if n == b"On1"));
+    assert!(
+        widget_as.is_some(),
+        "kid widget /AS must be set to the on-state On1"
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn set_form_field_radio_selects_export_state() {
+    let mut editor = PdfDocMut::open(&synthetic_form_pdf()).expect("open form fixture");
+    editor
+        .set_form_field("preferred_color", "Blue")
+        .expect("set radio");
+    let bytes = editor.save().expect("save");
+
+    let field = field_dict_by_name(&bytes, "preferred_color");
+    assert_eq!(
+        field.get(b"V").ok(),
+        Some(&lopdf::Object::Name(b"Blue".to_vec())),
+        "/V must be the selected export state as a Name"
+    );
+
+    // Exactly one kid widget carries /AS Blue; the other must be /Off.
+    let doc = lopdf::Document::load_mem(&bytes).expect("reload");
+    let as_values: Vec<Vec<u8>> = doc
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter(|d| d.has(b"AP") && !d.has(b"T"))
+        .filter_map(|d| match d.get(b"AS") {
+            Ok(lopdf::Object::Name(n)) => Some(n.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        as_values.iter().any(|n| n == b"Blue"),
+        "selected kid must have /AS Blue, got {as_values:?}"
+    );
+    assert!(
+        as_values.iter().any(|n| n == b"Off"),
+        "unselected kid must have /AS Off, got {as_values:?}"
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn set_form_fields_bulk_json_fills_multiple_fields() {
+    let mut editor = PdfDocMut::open(&synthetic_form_pdf()).expect("open form fixture");
+    editor
+        .set_form_fields(r#"{"first_name": "Renée", "subscribe": "true"}"#)
+        .expect("bulk set");
+    let bytes = editor.save().expect("save");
+
+    let text = field_dict_by_name(&bytes, "first_name");
+    match text.get(b"V").expect("/V present") {
+        lopdf::Object::String(v, _) => {
+            assert!(
+                v.starts_with(&[0xFE, 0xFF]),
+                "non-ASCII bulk value gets BOM"
+            )
+        }
+        other => panic!("expected /V string, got {other:?}"),
+    }
+    let checkbox = field_dict_by_name(&bytes, "subscribe");
+    assert_eq!(
+        checkbox.get(b"V").ok(),
+        Some(&lopdf::Object::Name(b"On1".to_vec())),
+    );
+}
+
+// Error paths construct JsError, which panics off-wasm — keep wasm32-gated
+// (same pattern as the other error-path tests in this file).
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen_test::wasm_bindgen_test]
+fn set_form_field_readonly_rejected() {
+    // SIMPLE_PDF has no form, so build nothing fancy here: the writeback
+    // chain's read-only rejection is covered natively in pdf-forms; this
+    // gate just pins that the wasm surface maps the error (not a panic).
+    let mut editor = PdfDocMut::open(SIMPLE_PDF).expect("open");
+    assert!(editor.set_form_field("anything", "x").is_err());
+}

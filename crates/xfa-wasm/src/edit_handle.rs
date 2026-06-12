@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 
 use lopdf::Document as LopdfDocument;
+use pdf_forms::{apply_field_value, WriteOutcome, WriteValue, WritebackError};
 use pdf_manip::text_run::extract_page_text_runs;
 use pdf_manip::text_style::{set_text_run_style, StateIsolationStrategy, StyleResult};
 use pdf_text_format::{
@@ -181,33 +182,28 @@ impl PdfDocMut {
 
     // ------ Forms ----------------------------------------------------------
 
-    /// Set a single AcroForm text-field value.
+    /// Set a single AcroForm field value (text, checkbox, radio, or choice).
     ///
-    /// Note: pdfluent's high-level `PdfFormMut` requires a
-    /// `pdfluent::PdfDocument`. To stay in-place on this handle, we use
-    /// the lower-level lopdf walk via the `pdf-forms` engine. For 1.0,
-    /// this supports flat top-level field hierarchies (no `/Kids`
-    /// recursion) — same constraint as the Rust core.
+    /// Delegates to [`pdf_forms::apply_field_value`] — the single SDK
+    /// writeback chain. It keeps `/V` (ASCII literal else UTF-16BE+BOM),
+    /// per-widget `/AS`, and regenerated `/AP` streams consistent, resolves
+    /// fully-qualified names through `/Kids`, and rejects read-only fields.
     #[wasm_bindgen(js_name = "setFormField")]
     pub fn set_form_field(&mut self, path: &str, value: &str) -> Result<(), JsError> {
-        set_text_field_inplace(&mut self.doc, path, value)
+        apply_string_value(&mut self.doc, path, value)
+            .map(|_| ())
+            .map_err(|e| JsError::new(&format!("setFormField: {e}")))
     }
 
-    /// Bulk-set multiple AcroForm text fields from a JSON object
+    /// Bulk-set multiple AcroForm fields from a JSON object
     /// `{"field.path": "value", ...}`.
     #[wasm_bindgen(js_name = "setFormFields")]
     pub fn set_form_fields(&mut self, fields_json: &str) -> Result<(), JsError> {
         let parsed: BTreeMap<String, String> = serde_json::from_str(fields_json)
             .map_err(|e| JsError::new(&format!("setFormFields: invalid JSON: {e}")))?;
         for (path, value) in &parsed {
-            // Cannot format JsError directly; rewrap with the field name
-            // for context.
-            if let Err(e) = set_text_field_inplace(&mut self.doc, path, value) {
-                let _ = e; // discard the WASM JsError to keep type clean
-                return Err(JsError::new(&format!(
-                    "setFormFields ({path}): field not writable"
-                )));
-            }
+            apply_string_value(&mut self.doc, path, value)
+                .map_err(|e| JsError::new(&format!("setFormFields ({path}): {e}")))?;
         }
         Ok(())
     }
@@ -621,122 +617,36 @@ fn parse_color_hex(hex: Option<&str>) -> Option<(f64, f64, f64)> {
     Some((r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0))
 }
 
-// ---------- in-place AcroForm text setter ---------------------------------
-//
-// We can't borrow pdfluent::PdfFormMut here because that wraps a
-// pdfluent::PdfDocument, which would force us to round-trip bytes again.
-// Instead we walk the AcroForm /Fields array directly and write /V on
-// the matching field dict. Same 1.0 scope constraint as the Rust core:
-// no /Kids recursion. The implementation mirrors pdfluent::form's
-// `set_field_value` path but operates directly on our owned
-// lopdf::Document.
+// ---------- in-place AcroForm value setter ---------------------------------
 
-fn set_text_field_inplace(
-    doc: &mut lopdf::Document,
+/// Apply a string value with type-aware dispatch, mirroring the CLI's
+/// `fill_one` (crates/xfa-cli/src/cmd_fill.rs): try Text first (the common
+/// case), then on a `/FT` type mismatch fall through to Radio, Choice, and
+/// finally Checkbox with a bool-ish string.
+///
+/// All writes go through [`pdf_forms::apply_field_value`] — the single SDK
+/// writeback chain — so `/V` encoding, per-widget `/AS`, and `/AP`
+/// regeneration stay consistent on this handle's owned `lopdf::Document`.
+fn apply_string_value(
+    doc: &mut LopdfDocument,
     name: &str,
     value: &str,
-) -> Result<(), JsError> {
-    use lopdf::{Object, ObjectId};
-
-    // Resolve the /AcroForm/Fields array as references to field dicts.
-    let catalog_id = doc
-        .trailer
-        .get(b"Root")
-        .ok()
-        .and_then(|o| match o {
-            Object::Reference(id) => Some(*id),
-            _ => None,
-        })
-        .ok_or_else(|| JsError::new("setFormField: catalog not found"))?;
-
-    let acroform_id: ObjectId = {
-        let catalog = doc
-            .get_object(catalog_id)
-            .map_err(|e| JsError::new(&format!("setFormField: catalog: {e}")))?;
-        let catalog_dict = catalog
-            .as_dict()
-            .map_err(|e| JsError::new(&format!("setFormField: catalog not a dict: {e}")))?;
-        let af = catalog_dict.get(b"AcroForm").map_err(|_| {
-            JsError::new(&format!(
-                "setFormField: field '{name}' not found (no AcroForm)"
-            ))
-        })?;
-        match af {
-            Object::Reference(id) => *id,
-            _ => {
-                return Err(JsError::new(
-                    "setFormField: inline /AcroForm not supported (use indirect)",
-                ))
-            }
-        }
-    };
-
-    let field_ids: Vec<ObjectId> = {
-        let acroform = doc
-            .get_object(acroform_id)
-            .map_err(|e| JsError::new(&format!("setFormField: AcroForm: {e}")))?;
-        let af_dict = acroform
-            .as_dict()
-            .map_err(|e| JsError::new(&format!("setFormField: AcroForm not a dict: {e}")))?;
-        let fields = af_dict.get(b"Fields").map_err(|_| {
-            JsError::new(&format!(
-                "setFormField: field '{name}' not found (no /Fields)"
-            ))
-        })?;
-        let arr = match fields {
-            Object::Array(a) => a.clone(),
-            Object::Reference(id) => {
-                let obj = doc
-                    .get_object(*id)
-                    .map_err(|e| JsError::new(&format!("setFormField: /Fields ref: {e}")))?;
-                match obj {
-                    Object::Array(a) => a.clone(),
-                    _ => return Err(JsError::new("setFormField: /Fields is not an array")),
-                }
-            }
-            _ => return Err(JsError::new("setFormField: /Fields is not an array")),
-        };
-        arr.into_iter()
-            .filter_map(|o| match o {
-                Object::Reference(id) => Some(id),
-                _ => None,
-            })
-            .collect()
-    };
-
-    // Find the matching top-level field by /T.
-    let mut target: Option<ObjectId> = None;
-    for fid in &field_ids {
-        let obj = doc
-            .get_object(*fid)
-            .map_err(|e| JsError::new(&format!("setFormField: field: {e}")))?;
-        if let Object::Dictionary(d) = obj {
-            if let Ok(Object::String(bytes, _)) = d.get(b"T") {
-                if bytes == name.as_bytes() {
-                    target = Some(*fid);
-                    break;
-                }
-            }
-        }
+) -> Result<WriteOutcome, WritebackError> {
+    match apply_field_value(doc, name, WriteValue::Text(value)) {
+        Err(WritebackError::WrongType { .. }) => {}
+        other => return other,
     }
-    let target_id =
-        target.ok_or_else(|| JsError::new(&format!("setFormField: field '{name}' not found")))?;
-
-    // Write /V on the target dict.
-    let target_obj = doc
-        .get_object_mut(target_id)
-        .map_err(|e| JsError::new(&format!("setFormField: get_mut: {e}")))?;
-    if let Object::Dictionary(d) = target_obj {
-        d.set(
-            b"V".to_vec(),
-            Object::String(value.as_bytes().to_vec(), lopdf::StringFormat::Literal),
-        );
-        Ok(())
-    } else {
-        Err(JsError::new(&format!(
-            "setFormField: target '{name}' is not a dict"
-        )))
+    match apply_field_value(doc, name, WriteValue::Radio(value)) {
+        Err(WritebackError::WrongType { .. }) => {}
+        other => return other,
     }
+    match apply_field_value(doc, name, WriteValue::Choice(value)) {
+        Err(WritebackError::WrongType { .. }) => {}
+        other => return other,
+    }
+    // Checkbox via bool-ish string ("true"/"Yes"/"Off"/"false").
+    let on = !matches!(value, "false" | "Off" | "0" | "");
+    apply_field_value(doc, name, WriteValue::Checkbox(on))
 }
 
 // ---- G3: ReplaceTextSpan JSON projection ----------------------------------

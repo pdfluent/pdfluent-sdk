@@ -8,7 +8,38 @@ use lopdf::Document as LopdfDocument;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use pdf_engine::{PdfDocument as RustDocument, RenderOptions, RenderedPage, ThumbnailOptions};
+use pdf_forms::{apply_field_value, WriteOutcome, WriteValue, WritebackError};
 use std::sync::{Arc, Mutex};
+
+/// Apply a string value with type-aware dispatch, mirroring the CLI's
+/// `fill_one` (crates/xfa-cli/src/cmd_fill.rs): try Text first (the common
+/// case), then on a `/FT` type mismatch fall through to Radio, Choice, and
+/// finally Checkbox with a bool-ish string.
+///
+/// All writes go through [`pdf_forms::apply_field_value`] — the single SDK
+/// writeback chain — keeping `/V` encoding, per-widget `/AS`, and `/AP`
+/// regeneration consistent.
+fn apply_string_value(
+    doc: &mut LopdfDocument,
+    name: &str,
+    value: &str,
+) -> std::result::Result<WriteOutcome, WritebackError> {
+    match apply_field_value(doc, name, WriteValue::Text(value)) {
+        Err(WritebackError::WrongType { .. }) => {}
+        other => return other,
+    }
+    match apply_field_value(doc, name, WriteValue::Radio(value)) {
+        Err(WritebackError::WrongType { .. }) => {}
+        other => return other,
+    }
+    match apply_field_value(doc, name, WriteValue::Choice(value)) {
+        Err(WritebackError::WrongType { .. }) => {}
+        other => return other,
+    }
+    // Checkbox via bool-ish string ("true"/"Yes"/"Off"/"false").
+    let on = !matches!(value, "false" | "Off" | "0" | "");
+    apply_field_value(doc, name, WriteValue::Checkbox(on))
+}
 
 /// A PDF document handle.
 ///
@@ -621,24 +652,22 @@ impl PdfDocument {
 
     /// Set the value of a form field by its fully qualified name.
     ///
-    /// The change is persisted to the document — a subsequent `save()` will
-    /// write the updated value.
+    /// Routes through [`pdf_forms::apply_field_value`] — the single SDK
+    /// writeback chain — so `/V` encoding (ASCII literal else UTF-16BE+BOM),
+    /// per-widget `/AS` sync, and `/AP` regeneration stay consistent, and
+    /// read-only fields are rejected. The change is persisted to the
+    /// document — a subsequent `save()` will write the updated value.
     #[napi]
     pub fn set_field_value(&mut self, name: String, value: String) -> Result<()> {
-        let fe = self
-            .form_engine
-            .as_ref()
-            .ok_or_else(|| napi::Error::from_reason("document has no form fields"))?;
-        fe.set_value(&name, &value)?;
-        // Sync the new value to the lopdf document so save() persists it.
-        if let Some(obj_id) = fe.object_id_for(&name) {
-            if let Some(arc) = &self.doc {
-                let mut doc = arc.lock().unwrap();
-                let lopdf_id = (obj_id.0 as u32, obj_id.1 as u16);
-                if let Ok(lopdf::Object::Dictionary(dict)) = doc.get_object_mut(lopdf_id) {
-                    dict.set("V", lopdf::Object::string_literal(value.as_bytes()));
-                }
-            }
+        self.with_doc_mut(|doc| {
+            apply_string_value(doc, &name, &value)
+                .map(|_| ())
+                .map_err(|e| napi::Error::from_reason(format!("setFieldValue '{name}': {e}")))
+        })?;
+        // Keep the form engine's in-memory view in sync so getFieldValue()
+        // reflects the write without reloading the document.
+        if let Some(fe) = &self.form_engine {
+            fe.set_value(&name, &value)?;
         }
         self.rebuild_inner()
     }
@@ -865,5 +894,166 @@ pub(crate) fn compliance_to_info(report: pdf_compliance::ComplianceReport) -> Co
                 message: i.message,
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod writeback_dispatch_tests {
+    //! Pin the new writeback behavior of `setFieldValue`'s dispatch helper:
+    //! correct /V encoding (ASCII literal else UTF-16BE+BOM), /V-as-Name +
+    //! /AS sync for buttons, and read-only rejection — replacing the old
+    //! raw `string_literal(value.as_bytes())` write (mojibake, no /AS).
+
+    use super::apply_string_value;
+    use lopdf::{dictionary, Document, Object, Stream};
+    use pdf_forms::WritebackError;
+
+    /// Minimal indirect-AcroForm document: text field, read-only text
+    /// field, and a checkbox whose on-state (`On1`) lives on a kid widget.
+    fn form_doc() -> Document {
+        let mut doc = Document::with_version("1.4");
+        let content_id = doc.add_object(Stream::new(dictionary! {}, Vec::new()));
+        let pages_id = doc.new_object_id();
+
+        let text_field = doc.add_object(dictionary! {
+            "FT" => "Tx",
+            "T" => Object::string_literal("first_name"),
+            "V" => Object::string_literal(""),
+        });
+        // /Ff bit 1 = ReadOnly.
+        let readonly_field = doc.add_object(dictionary! {
+            "FT" => "Tx",
+            "Ff" => 1i64,
+            "T" => Object::string_literal("locked"),
+            "V" => Object::string_literal("frozen"),
+        });
+        let checkbox_kid = doc.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Widget",
+            "Rect" => vec![100.into(), 700.into(), 115.into(), 715.into()],
+            "AP" => dictionary! {
+                "N" => dictionary! {
+                    "Off" => Object::Null,
+                    "On1" => Object::Null,
+                },
+            },
+        });
+        let checkbox_field = doc.add_object(dictionary! {
+            "FT" => "Btn",
+            "T" => Object::string_literal("subscribe"),
+            "V" => Object::Name(b"Off".to_vec()),
+            "Kids" => vec![checkbox_kid.into()],
+        });
+
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => content_id,
+            "Resources" => dictionary! {},
+            "Annots" => vec![checkbox_kid.into()],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let acroform_id = doc.add_object(dictionary! {
+            "Fields" => vec![
+                text_field.into(),
+                readonly_field.into(),
+                checkbox_field.into(),
+            ],
+        });
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+            "AcroForm" => acroform_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc
+    }
+
+    fn field_v(doc: &Document, name: &str) -> Object {
+        doc.objects
+            .values()
+            .filter_map(|o| o.as_dict().ok())
+            .find(|d| {
+                d.get(b"T")
+                    .ok()
+                    .and_then(|t| lopdf::decode_text_string(t).ok())
+                    .as_deref()
+                    == Some(name)
+            })
+            .and_then(|d| d.get(b"V").ok())
+            .cloned()
+            .unwrap_or_else(|| panic!("field '{name}' has no /V"))
+    }
+
+    #[test]
+    fn ascii_text_stays_literal() {
+        let mut doc = form_doc();
+        apply_string_value(&mut doc, "first_name", "Jane").expect("apply ASCII");
+        match field_v(&doc, "first_name") {
+            Object::String(v, _) => assert_eq!(v, b"Jane"),
+            other => panic!("expected /V string, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn non_ascii_text_writes_utf16be_bom() {
+        let mut doc = form_doc();
+        apply_string_value(&mut doc, "first_name", "Café").expect("apply non-ASCII");
+        match field_v(&doc, "first_name") {
+            Object::String(v, _) => assert!(
+                v.starts_with(&[0xFE, 0xFF]),
+                "non-ASCII /V must be UTF-16BE with BOM, got {v:02X?}"
+            ),
+            other => panic!("expected /V string, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn checkbox_dispatch_sets_name_value_and_widget_as() {
+        let mut doc = form_doc();
+        let outcome = apply_string_value(&mut doc, "subscribe", "true").expect("apply checkbox");
+        assert_eq!(field_v(&doc, "subscribe"), Object::Name(b"On1".to_vec()));
+        assert!(
+            outcome.appearance_states_set >= 1,
+            "kid widget /AS must be synced"
+        );
+        let widget_synced = doc
+            .objects
+            .values()
+            .filter_map(|o| o.as_dict().ok())
+            .filter(|d| d.has(b"AP") && !d.has(b"T"))
+            .any(|d| matches!(d.get(b"AS"), Ok(Object::Name(n)) if n == b"On1"));
+        assert!(widget_synced, "kid widget /AS must be the on-state On1");
+    }
+
+    #[test]
+    fn checkbox_dispatch_bool_ish_off_strings() {
+        let mut doc = form_doc();
+        apply_string_value(&mut doc, "subscribe", "true").expect("check");
+        apply_string_value(&mut doc, "subscribe", "false").expect("uncheck");
+        assert_eq!(field_v(&doc, "subscribe"), Object::Name(b"Off".to_vec()));
+    }
+
+    #[test]
+    fn readonly_field_is_rejected() {
+        let mut doc = form_doc();
+        let err = apply_string_value(&mut doc, "locked", "new value")
+            .expect_err("read-only field must be rejected");
+        assert!(
+            matches!(err, WritebackError::ReadOnly(ref n) if n == "locked"),
+            "expected ReadOnly error, got {err:?}"
+        );
+        match field_v(&doc, "locked") {
+            Object::String(v, _) => assert_eq!(v, b"frozen", "value must be unchanged"),
+            other => panic!("expected /V string, got {other:?}"),
+        }
     }
 }
