@@ -18,7 +18,7 @@ use crate::x_object::{
 use kurbo::{Affine, Point, Shape};
 use log::warn;
 use pdf_syntax::content::ops::TypedInstruction;
-use pdf_syntax::object::dict::keys::{ANNOTS, AP, F, FT, MCID, N, OC, RECT};
+use pdf_syntax::object::dict::keys::{ANNOTS, AP, AS, F, FT, MCID, N, OC, PARENT, RECT, V};
 use pdf_syntax::object::{Array, Dict, Name, Object, Rect, Stream, dict_or_stream};
 use pdf_syntax::page::{Page, Resources};
 use smallvec::smallvec;
@@ -217,6 +217,57 @@ pub enum InterpreterWarning {
     },
 }
 
+/// Resolve the normal (`/N`) appearance stream of an annotation.
+///
+/// Per ISO 32000 §12.5.5 and Table 168, the `/N` entry of the `/AP`
+/// dictionary is either an appearance stream or an appearance *subdictionary*
+/// mapping appearance-state names to streams (the latter is used by every
+/// checkbox and radio button, e.g. `/N << /Yes <stream> /Off <stream> >>`).
+///
+/// In the subdictionary case the stream is selected by the annotation's
+/// `/AS` entry (Table 168: "The annotation's appearance state, which
+/// selects the applicable appearance stream from an appearance
+/// subdictionary"). When `/AS` is absent, this follows pdfium's
+/// `GetAnnotAPInternal` fallback: the widget's own `/V` value as a name,
+/// then the `/Parent`'s `/V` (one level), accepting a candidate only if it
+/// exists as a key in the subdictionary. If no candidate resolves to an
+/// existing key, `None` is returned and nothing is rendered for the
+/// annotation (correct for e.g. `/AS /Off` when the subdictionary has no
+/// `/Off` entry).
+///
+/// All key matching is done on raw name bytes — appearance-state names may
+/// contain non-ASCII bytes and must never go through a lossy UTF-8
+/// conversion.
+fn normal_appearance_stream<'a>(annot: &Dict<'a>) -> Option<Stream<'a>> {
+    let ap = annot.get::<Dict<'_>>(AP)?;
+
+    // Single appearance stream: use it directly.
+    if let Some(stream) = ap.get::<Stream<'_>>(N) {
+        return Some(stream);
+    }
+
+    // Appearance subdictionary: select the stream by appearance state.
+    let states = ap.get::<Dict<'_>>(N)?;
+
+    if let Some(state) = annot.get::<Name>(AS) {
+        // An explicit /AS is authoritative; if its entry is missing, no
+        // appearance is rendered.
+        return states.get::<Stream<'_>>(state.as_ref());
+    }
+
+    // pdfium V-fallback: the widget's own /V, then the parent's /V, the
+    // first candidate that exists as a key in the subdictionary wins.
+    let candidates = [
+        annot.get::<Name>(V),
+        annot.get::<Dict<'_>>(PARENT).and_then(|p| p.get::<Name>(V)),
+    ];
+
+    candidates
+        .into_iter()
+        .flatten()
+        .find_map(|state| states.get::<Stream<'_>>(state.as_ref()))
+}
+
 /// interpret the contents of the page and render them into the device.
 pub fn interpret_page<'a>(
     page: &Page<'a>,
@@ -250,9 +301,7 @@ pub fn interpret_page<'a>(
                 continue;
             }
 
-            if let Some(apx) = annot
-                .get::<Dict<'_>>(AP)
-                .and_then(|ap| ap.get::<Stream<'_>>(N))
+            if let Some(apx) = normal_appearance_stream(&annot)
                 .and_then(|o| FormXObject::new(&o, &context.settings.warning_sink))
             {
                 let Some(rect) = annot.get::<Rect>(RECT) else {
@@ -278,6 +327,15 @@ pub fn interpret_page<'a>(
                     )
                     .to_path(0.1))
                 .bounding_box();
+
+                // A degenerate (zero-width or zero-height) transformed
+                // appearance box would make the scale computation below
+                // divide by zero, producing a non-finite (inf/NaN) affine.
+                // Skip such annotations entirely.
+                let (tw, th) = (transformed_rect.width(), transformed_rect.height());
+                if !(tw.is_finite() && tw > 0.0 && th.is_finite() && th > 0.0) {
+                    continue;
+                }
 
                 // 2) A matrix A shall be computed that scales and translates
                 // the transformed appearance box to align with the edges
@@ -855,5 +913,246 @@ pub fn interpret<'a, 'b>(
 
     while context.num_states() > num_states {
         context.restore_state(device);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::device::Device;
+    use crate::font::Glyph;
+    use crate::soft_mask::SoftMask;
+    use crate::util::PageExt;
+    use crate::{
+        BlendMode, ClipPath, Context, GlyphDrawMode, Image, InterpreterSettings, Paint,
+        PathDrawMode, interpret_page,
+    };
+    use kurbo::{Affine, BezPath, Shape};
+    use pdf_syntax::Pdf;
+
+    /// A device that records the bounding-box width (in path coordinates) of
+    /// every filled/stroked path, so tests can assert exactly which appearance
+    /// stream's marks were interpreted.
+    #[derive(Default)]
+    struct CountingDevice {
+        path_widths: Vec<f64>,
+    }
+
+    impl Device<'_> for CountingDevice {
+        fn set_soft_mask(&mut self, _: Option<SoftMask<'_>>) {}
+        fn set_blend_mode(&mut self, _: BlendMode) {}
+        fn draw_path(&mut self, path: &BezPath, _: Affine, _: &Paint<'_>, _: &PathDrawMode) {
+            self.path_widths.push(path.bounding_box().width());
+        }
+        fn push_clip_path(&mut self, _: &ClipPath) {}
+        fn push_transparency_group(&mut self, _: f32, _: Option<SoftMask<'_>>, _: BlendMode) {}
+        fn draw_glyph(
+            &mut self,
+            _: &Glyph<'_>,
+            _: Affine,
+            _: Affine,
+            _: &Paint<'_>,
+            _: &GlyphDrawMode,
+        ) {
+        }
+        fn draw_image(&mut self, _: Image<'_, '_>, _: Affine) {}
+        fn pop_clip_path(&mut self) {}
+        fn pop_transparency_group(&mut self) {}
+    }
+
+    /// Assemble a PDF from numbered object bodies (index `i` becomes object
+    /// `i + 1`), computing byte-accurate xref offsets.
+    fn build_pdf(objects: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::with_capacity(objects.len());
+
+        for (i, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+
+        let xref_pos = out.len();
+        out.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+        out.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+
+        out
+    }
+
+    /// Build a Form XObject stream object body.
+    fn form_stream(bbox: &str, content: &str) -> Vec<u8> {
+        format!(
+            "<< /Type /XObject /Subtype /Form /BBox {bbox} /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        )
+        .into_bytes()
+    }
+
+    /// Build a single-page PDF with one widget annotation.
+    ///
+    /// Object layout: 1 catalog, 2 page tree, 3 page, 4 the annotation
+    /// (`annot_body`), 5 the "on" appearance stream (two fills, path widths
+    /// 10 and 4), 6 the "off" appearance stream (one fill, path width 7),
+    /// 7 empty page contents, 8.. `extra_objects`. The "on" stream's BBox is
+    /// `on_bbox` so degenerate-BBox behaviour can be exercised.
+    fn checkbox_pdf(annot_body: &[u8], on_bbox: &str, extra_objects: &[Vec<u8>]) -> Vec<u8> {
+        let mut objects = vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] \
+              /Annots [4 0 R] /Contents 7 0 R >>"
+                .to_vec(),
+            annot_body.to_vec(),
+            form_stream(on_bbox, "0 0 10 10 re f\n12 12 4 4 re f"),
+            form_stream("[0 0 20 20]", "0 0 7 7 re f"),
+            b"<< /Length 0 >>\nstream\n\nendstream".to_vec(),
+        ];
+        objects.extend_from_slice(extra_objects);
+        build_pdf(&objects)
+    }
+
+    /// Interpret the first page of `pdf_bytes` and return the recorded path
+    /// widths.
+    fn interpret_widths(pdf_bytes: Vec<u8>) -> Vec<f64> {
+        let pdf = Pdf::new(pdf_bytes).expect("test PDF must parse");
+        let pages = pdf.pages();
+        let page = pages.first().expect("test PDF must have one page");
+
+        let settings = InterpreterSettings::default();
+        let initial_transform = page.initial_transform(true);
+        let bbox = kurbo::Rect::new(0.0, 0.0, 100.0, 100.0);
+        let mut context = Context::new(initial_transform, bbox, page.xref(), settings);
+        let mut device = CountingDevice::default();
+
+        interpret_page(page, &mut context, &mut device);
+        device.path_widths
+    }
+
+    fn assert_widths(widths: &[f64], expected: &[f64]) {
+        assert_eq!(
+            widths.len(),
+            expected.len(),
+            "expected {expected:?}, got {widths:?}"
+        );
+        for (got, want) in widths.iter().zip(expected) {
+            assert!(
+                (got - want).abs() < 1e-6,
+                "expected {expected:?}, got {widths:?}"
+            );
+        }
+    }
+
+    /// /AP /N substate dictionary with /AS /Yes: the Yes stream (and only the
+    /// Yes stream) must be drawn.
+    #[test]
+    fn widget_substate_as_on_state() {
+        let pdf = checkbox_pdf(
+            b"<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [10 10 30 30] \
+              /AP << /N << /Yes 5 0 R /Off 6 0 R >> >> /AS /Yes >>",
+            "[0 0 20 20]",
+            &[],
+        );
+        assert_widths(&interpret_widths(pdf), &[10.0, 4.0]);
+    }
+
+    /// Same widget with /AS /Off: the Off stream is drawn, and none of the
+    /// Yes stream's marks appear.
+    #[test]
+    fn widget_substate_as_off_state() {
+        let pdf = checkbox_pdf(
+            b"<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [10 10 30 30] \
+              /AP << /N << /Yes 5 0 R /Off 6 0 R >> >> /AS /Off >>",
+            "[0 0 20 20]",
+            &[],
+        );
+        assert_widths(&interpret_widths(pdf), &[7.0]);
+    }
+
+    /// /N has only the on-state and /AS is /Off: nothing must be drawn and
+    /// nothing must panic (ISO 32000 §12.5.5 — no applicable appearance).
+    #[test]
+    fn widget_substate_as_off_without_off_entry() {
+        let pdf = checkbox_pdf(
+            b"<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [10 10 30 30] \
+              /AP << /N << /Yes 5 0 R >> >> /AS /Off >>",
+            "[0 0 20 20]",
+            &[],
+        );
+        assert_widths(&interpret_widths(pdf), &[]);
+    }
+
+    /// /AS absent but /V /Yes on the widget: the pdfium V-fallback selects
+    /// the Yes stream.
+    #[test]
+    fn widget_substate_v_fallback() {
+        let pdf = checkbox_pdf(
+            b"<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [10 10 30 30] \
+              /AP << /N << /Yes 5 0 R /Off 6 0 R >> >> /V /Yes >>",
+            "[0 0 20 20]",
+            &[],
+        );
+        assert_widths(&interpret_widths(pdf), &[10.0, 4.0]);
+    }
+
+    /// /AS and /V absent but the /Parent field dict carries /V /Yes (radio
+    /// button group pattern): the one-level parent V-fallback selects the Yes
+    /// stream.
+    #[test]
+    fn widget_substate_parent_v_fallback() {
+        let pdf = checkbox_pdf(
+            b"<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [10 10 30 30] \
+              /AP << /N << /Yes 5 0 R /Off 6 0 R >> >> /Parent 8 0 R >>",
+            "[0 0 20 20]",
+            &[b"<< /FT /Btn /V /Yes >>".to_vec()],
+        );
+        assert_widths(&interpret_widths(pdf), &[10.0, 4.0]);
+    }
+
+    /// Non-ASCII appearance-state name: the /N dict key contains raw byte
+    /// 0xF6 and /AS spells the identical bytes via a #F6 hex escape. Matching
+    /// must happen on raw decoded name bytes, never through lossy UTF-8.
+    #[test]
+    fn widget_substate_non_ascii_state_name() {
+        let annot = b"<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [10 10 30 30] \
+              /AP << /N << /Stra\xf6m 5 0 R /Off 6 0 R >> >> /AS /Stra#F6m >>";
+        // Sanity: the raw 0xF6 byte really is in the annotation dict bytes.
+        assert!(annot.contains(&0xf6));
+        let pdf = checkbox_pdf(annot, "[0 0 20 20]", &[]);
+        assert_widths(&interpret_widths(pdf), &[10.0, 4.0]);
+    }
+
+    /// A degenerate (zero-width) appearance BBox must not produce a
+    /// non-finite scale matrix: the annotation is skipped without panicking.
+    #[test]
+    fn widget_degenerate_bbox_skipped() {
+        let pdf = checkbox_pdf(
+            b"<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [10 10 30 30] \
+              /AP << /N << /Yes 5 0 R /Off 6 0 R >> >> /AS /Yes >>",
+            "[0 0 0 20]",
+            &[],
+        );
+        assert_widths(&interpret_widths(pdf), &[]);
+    }
+
+    /// Regression guard: a plain (non-substate) /AP /N stream still renders.
+    #[test]
+    fn widget_direct_stream_still_renders() {
+        let pdf = checkbox_pdf(
+            b"<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [10 10 30 30] \
+              /AP << /N 6 0 R >> >>",
+            "[0 0 20 20]",
+            &[],
+        );
+        assert_widths(&interpret_widths(pdf), &[7.0]);
     }
 }
