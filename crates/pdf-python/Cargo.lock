@@ -1566,6 +1566,7 @@ dependencies = [
  "pdf-manip",
  "pdf-redact",
  "pdf-render",
+ "pdfluent-forms",
  "pdfluent-lopdf",
  "pdfluent-sign",
  "png 0.17.16",

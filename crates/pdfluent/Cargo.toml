@@ -46,6 +46,7 @@ pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.8" }
 pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.9" }
 pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.8" }
 pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.9" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.9" }
 pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.9", optional = true }
 
 # Signed-payload activation: Ed25519 verification + payload parsing live

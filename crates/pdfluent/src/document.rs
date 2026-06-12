@@ -945,14 +945,50 @@ impl PdfDocument {
         Ok(crate::form::read_acroform_fields(&self.lopdf))
     }
 
+    /// Complete AcroForm model for interactive form UIs.
+    ///
+    /// One [`pdf_forms::FormFieldModel`] per *logical* field — a radio group
+    /// with N option widgets is one entry — carrying the typed kind
+    /// (text/checkbox/radio/combo/listbox with kind-specific data such as
+    /// comb/multiline flags, on-state names and choice options), per-page
+    /// widget rectangles, current and default values, read-only/required
+    /// flags, `/MaxLen`, alignment, and resolved `/DA` font info.
+    ///
+    /// Returns an empty `Vec` when the document has no AcroForm (including
+    /// XFA-only documents).
+    ///
+    /// Field `name` values are fully qualified (`parent.kid`) and are
+    /// accepted verbatim by the [`form_mut`](Self::form_mut) setters.
+    pub fn form_model(&self) -> Result<Vec<pdf_forms::FormFieldModel>> {
+        self.require_capability(Capability::AcroFormRead)?;
+        Ok(pdf_forms::parse_acroform(self.engine.pdf())
+            .map(|tree| pdf_forms::build_form_model(&tree))
+            .unwrap_or_default())
+    }
+
+    /// Regenerate `/AP` appearance streams for all filled text/choice fields.
+    ///
+    /// Documents filled by tools that only write `/V` (often paired with
+    /// `/NeedAppearances true`) show stale or missing values in viewers that
+    /// do not regenerate appearances — including this SDK's renderer. This
+    /// method materialises trustworthy appearance streams for every filled
+    /// field; call [`sync_engine`](Self::sync_engine) afterwards if you need
+    /// the change reflected in rendering on this same handle.
+    pub fn regenerate_form_appearances(&mut self) -> Result<pdf_forms::WriteOutcome> {
+        self.require_capability(Capability::AcroFormFill)?;
+        pdf_forms::regenerate_appearances(&mut self.lopdf)
+            .map_err(|e| crate::error::internal_error(e.to_string()))
+    }
+
     /// Mutable form handle.
     ///
     /// Returns unconditionally — the handle is always constructable, even
     /// on documents without an AcroForm. Capability enforcement and field
     /// lookups happen on the individual setter calls.
     ///
-    /// See [`PdfFormMut`] for the 1.0 scope notes (flat AcroForm walk,
-    /// no `/Kids` recursion).
+    /// Setters accept fully-qualified field names (`parent.kid`) and
+    /// update the complete chain: `/V`, widget `/AS`, regenerated `/AP`,
+    /// with a `/NeedAppearances` fallback for non-WinAnsi text.
     ///
     /// # Rendering after mutations
     ///

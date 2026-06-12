@@ -46,6 +46,7 @@ xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
 xfa-layout-engine.workspace = true
 pdf-xfa.workspace = true
+pdf-forms.workspace = true
 xfa-license = { workspace = true, features = ["signing"] }
 anyhow.workspace = true
 reqwest.workspace = true

@@ -61,10 +61,14 @@ fn build_full_form_pdf() -> Vec<u8> {
         "Ff" => 0x20000i64,
         "T" => Object::string_literal("country"),
         "V" => Object::string_literal(""),
+        // NB: includes a non-ASCII option — the writeback chain validates
+        // non-editable combo values against /Opt (ISO 32000 §12.7.4.4), so
+        // the unicode round-trip test must use a declared option.
         "Opt" => vec![
             Object::string_literal("US"),
             Object::string_literal("NL"),
             Object::string_literal("DE"),
+            lopdf::text_string("日本"),
         ],
     });
 
