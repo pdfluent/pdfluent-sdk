@@ -129,7 +129,7 @@ Append to the SDK section:
 ```
 PDFluent browser SDK Wave 2 (1.0.0-beta.9):
 - Pages: deletePages, rotatePage, reorderPages, extractPages
-- Forms: setFormField, setFormFields (AcroForm text fields)
+- Forms: setFormField, setFormFields (AcroForm text fields; Wave 3 `PdfDocMut.setFormField` extends this to all types: text, checkbox, radio, choice)
 - Annotations: addHighlight, addStickyNote, addFreeText
 - Watermark: addTextWatermark
 - Redaction: redactRegion, redactSearch (GDPR-safe permanent removal)

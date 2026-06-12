@@ -35,10 +35,10 @@ Website copy should acknowledge the gap without alarming users.
 | Method | Caveat |
 |---|---|
 | `SaveOptions::with_linearize(true)` | Accepted but currently a no-op at save time. Use it to keep your code forward-compatible. |
-| `PdfFormMut::set_checkbox` on kid-widget checkboxes | `/V` is written correctly. The per-kid `/AS` appearance state is **not** synced. Viewers that honour `/AS` may show stale visual state. Opening in a viewer that rebuilds appearances from `/V` (most major PDF viewers do this) works. |
-| `PdfFormMut::set_radio` on kid-widget radio groups | Same pattern as above. |
+| ~~`PdfFormMut::set_checkbox` on kid-widget checkboxes — `/AS` not synced~~ | **Promoted to Stable** in `acroform/sdk-foundation`. The unified writeback chain now updates per-widget `/AS` and regenerates `/AP` appearance streams in every `set_*` call. No longer a caveat. |
+| ~~`PdfFormMut::set_radio` on kid-widget radio groups — `/AS` not synced~~ | **Promoted to Stable** in `acroform/sdk-foundation`. Same as above — full `/AS` sync included. |
 | `EncryptOptions::aes128()` | The algorithm tag is accepted, but the current backend always emits AES-256 state. If your interop contract strictly requires 128-bit encryption, track this as a known deviation. |
-| `PdfFormMut` on hierarchical field names | Only top-level `/AcroForm/Fields` entries are addressable. Fields nested under `/Kids` with fully-qualified names like `Address.Street` aren't reachable in 1.0. |
+| ~~`PdfFormMut` on hierarchical field names — only top-level `/AcroForm/Fields`~~ | **Promoted to Stable** in `acroform/sdk-foundation`. Hierarchical names like `Address.Street` are fully resolved via `/Kids` recursion in all four `set_*` setters. |
 
 ## wasm32 notes
 
