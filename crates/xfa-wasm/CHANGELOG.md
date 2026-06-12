@@ -18,6 +18,10 @@ and this package adheres to [Semantic Versioning](https://semver.org/).
   `rotatePage`, `reorderPages`, `extractPages`, `setFormField`,
   `setFormFields`, `addHighlight`, `addStickyNote`, `addFreeText`,
   `addTextWatermark`, `redactRegion`, `redactSearch`, `compress`.
+- **`setFormField` on `PdfDocMut` is type-aware**: supports text, checkbox,
+  radio, and choice fields via the unified `apply_string_value` dispatch.
+  Unlike `PdfDoc.setFormField` (Wave 2, text-only), `PdfDocMut.setFormField`
+  auto-detects the field type and applies the correct writeback path.
 - `save()` is non-consuming — take intermediate snapshots and keep editing.
 - `extractPages` returns bytes for a NEW subdocument; current editor unchanged.
 - Performance benchmark demonstrates **2.7× wall-clock speedup** vs.

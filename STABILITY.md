@@ -150,8 +150,7 @@ silent no-op. Users MUST check the result.
 | `PdfDocument::add_watermark(..)` | same as above (delegates) | #1223 |
 | `PdfDocument::flatten_forms()` | `Error::MissingDependency { dep: "pdf-manip::flatten_forms", .. }` | #1223 |
 | `SaveOptions::with_linearize(true)` | Accepted, currently a no-op on save | 1.1 |
-| `PdfFormMut::set_checkbox` on kid-widget checkboxes | Writes `/V` correctly; widget annotations' `/AS` are **not** synced. Appearance may lag in viewers that honour `/AS`. | 1.1 follow-up to #1245 |
-| `PdfFormMut::set_radio` on kid-widget radio groups | Same — `/V` on parent; kid `/AS` not synced. | 1.1 follow-up to #1245 |
+| ~~`PdfFormMut::set_checkbox` / `set_radio` — `/AS` not synced~~ | **Promoted to Stable** in `acroform/sdk-foundation`. The unified writeback chain now updates per-widget `/AS` and regenerates `/AP` appearance streams in every `set_*` call. No longer deferred. | Closed #1245 |
 | `EncryptOptions::aes128()` | Backend currently uses `aes256_encryption_state` regardless of algorithm tag. Output is AES-256. | 1.1 follow-up to #1244 |
 
 **flatten_forms GA-blocker is resolved.** The method previously
