@@ -139,7 +139,7 @@ mod tests {
         // Write PNG magic header + garbage body (>= 100 bytes so file-size check passes)
         let mut data = Vec::new();
         data.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]); // PNG magic
-        data.extend(std::iter::repeat(0xFFu8).take(200)); // garbage
+        data.extend(std::iter::repeat_n(0xFFu8, 200)); // garbage
         f.write_all(&data).expect("write");
         let result = check_mutool_output(f.path(), 5000);
         assert!(result.is_fault, "corrupt PNG body should be fault");
