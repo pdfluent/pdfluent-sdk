@@ -70,5 +70,6 @@ pub use model::{build_form_model, DaInfo, FormFieldKind, FormFieldModel, WidgetM
 pub use parse::parse_acroform;
 pub use tree::{FieldId, FieldNode, FieldTree, FieldType, FieldValue, Quadding};
 pub use writeback::{
-    apply_field_value, regenerate_appearances, WriteOutcome, WriteValue, WritebackError,
+    apply_choice_multi, apply_field_value, regenerate_appearances, WriteOutcome, WriteValue,
+    WritebackError,
 };
