@@ -2,6 +2,104 @@
 
 All notable changes to PDFluent are documented here.
 
+## [acroform/sdk-foundation] — 2026-06-12
+
+### Added
+
+- **`PdfDocument::form_model()`** (`pdfluent`): returns one `FormFieldModel` per
+  logical field — typed kind (text/checkbox/radio-group/combo/listbox) with
+  kind-specific data (comb/multiline/password flags, on-state names per widget,
+  choice options), per-page widget rectangles, current and default values,
+  read-only/required flags, `/MaxLen`, quadding, and resolved `/DA` font info.
+  Fully-qualified names are accepted by all `form_mut()` setters without any
+  additional lookups. Empty `Vec` for documents without an AcroForm (including
+  XFA-only documents). Commits `d884fc649`, `aaf3e9d97`.
+
+- **`PdfDocument::regenerate_form_appearances()`** (`pdfluent`): materialises
+  trustworthy `/AP /N` appearance streams for every filled text and choice field
+  in the document. Necessary for PDFs filled by tools that only write `/V` (often
+  paired with `/NeedAppearances true`) — such documents display stale or empty
+  values in viewers that do not regenerate appearances, including the SDK's own
+  renderer. Call [`sync_engine`] afterwards to see the change in rendering on the
+  same handle. Commit `aaf3e9d97`.
+
+- **`PdfDocument::sync_engine()`** (`pdfluent`): re-parses the in-memory lopdf
+  document and rebuilds the rendering engine, so mutations applied through
+  `form_mut()` or `regenerate_form_appearances()` are visible in subsequent
+  `render_page()` calls on the same handle. Commit `aaf3e9d97`.
+
+- **`pdf_forms::apply_field_value`**: single writeback chain owned by the
+  `pdfluent-forms` crate. Handles text, checkbox, radio, and choice fields;
+  updates `/V`, per-widget `/AS`, and regenerated `/AP` streams in one call.
+  UTF-16BE+BOM encoding for non-ASCII, WinAnsiEncoding-aware appearance streams
+  with embedded Standard-14 AFM widths, comb/multiline/quadding support.
+  Previously there were seven independent writeback paths across the SDK, all
+  incomplete. Commit `d884fc649`.
+
+- **`pdf_forms::regenerate_appearances`**: stand-alone function that regenerates
+  all appearance streams in a `lopdf::Document`; used by
+  `regenerate_form_appearances()` above. Commit `d884fc649`.
+
+- **`pdf_forms::build_form_model`**: builds the `Vec<FormFieldModel>` from a
+  parsed `FieldTree`. Used by `PdfDocument::form_model()`. Commit `d884fc649`.
+
+- **`pdf_forms::WriteValue`**, **`pdf_forms::WriteOutcome`**,
+  **`pdf_forms::WritebackError`**: public types accompanying `apply_field_value`
+  for callers that need typed writeback. Commit `d884fc649`.
+
+- **Renderer `/AP /N` substate fix** (`pdf-interpret`): widget annotation
+  appearance streams whose `/AP /N` is a sub-state dictionary (radio buttons,
+  checkboxes) are now rendered by selecting the entry whose name matches `/AS`.
+  Previously, dictionary-valued `/AP /N` entries were silently dropped and both
+  states appeared blank. Includes byte-exact matching, a pdfium `/V`→Parent-`/V`
+  fallback, and a zero-area bounding-box guard. Commit `ef122d4c7`.
+
+### Changed
+
+- **All seven SDK writeback surfaces rewired** to `apply_field_value`:
+  `pdfluent::PdfFormMut`, `xfa-cli fill`, `pdf-node setFieldValue`,
+  `pdf-python set_form_field`, `pdf-java setFormField`, and both
+  `xfa-wasm PdfDoc.setFormField` / `PdfDocMut.setFormField`.
+  Behaviour improvements shared by all surfaces:
+  - Hierarchical field names (`parent.kid`) resolved through `/Kids` recursion
+    (previously top-level-only on most surfaces).
+  - `/AP` appearance stream regenerated; field value is now visible in all
+    viewers including the SDK's own renderer without needing viewer-side
+    `/NeedAppearances` processing.
+  - `/AS` kept consistent per widget (mupdf `set_check_grp` rule).
+  - Text encoding: ASCII → PDF literal, non-ASCII → UTF-16BE+BOM whole string;
+    `pdf-python` and `pdf-java` previously wrote a misspelled
+    `/NeedsAppearances` key via an inline-dict-only path that silently did
+    nothing.
+  - Inline `/AcroForm` dictionaries (92% of the hybrid corpus are LiveCycle
+    static shells with inline AcroForms) promoted to indirect objects before
+    mutation.
+  Commits `aaf3e9d97`, `d884fc649`.
+
+- **`rotate_page` and `set_outlines`** (`pdfluent::PdfDocument`) now call
+  `refresh_from_lopdf()` after mutating the lopdf layer, keeping the rendering
+  engine in sync. Previously the engine was left stale, causing subsequent
+  renders to show the pre-mutation state. Commit `a39de08bb`.
+
+### Notes
+
+- **No breaking API changes.** All new methods are additive. The writeback
+  behaviour change is a correctness fix; the only semantic tightening is that
+  **read-only fields are now rejected at set-time** (`WritebackError::ReadOnly`)
+  rather than written through silently. pdfium and mupdf enforce read-only in
+  their UI layers only; our SDK has no UI layer, so the set-time check is the
+  only place the constraint can be enforced.
+
+- **Non-WinAnsi values** (Cyrillic, CJK, …): `/V` is always lossless via
+  UTF-16BE+BOM; appearance generation falls back to `/NeedAppearances true`
+  (stale `/AP` removed). The SDK renderer does not honour `/NeedAppearances` —
+  call `regenerate_form_appearances()` after opening such documents for correct
+  rendering.
+
+- **Widget rotation** (`/MK /R`): not yet applied in generated appearances.
+  `flatten_forms` (deferred to post-freeze) will handle full widget rendering
+  with rotation.
+
 ## [@pdfluent/sdk-wasm@1.0.0-beta.11] — 2026-05-16
 
 ### Changed

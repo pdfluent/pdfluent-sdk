@@ -270,6 +270,7 @@ doc.free();
 | `doc.convertToPdfa(level)` | Convert to PDF/A (returns `Uint8Array`) |
 | `doc.validatePdfA(level)` | Validate compliance (returns JSON report) |
 | `doc.flattenXfa()` | Flatten XFA form to static PDF |
+| `doc.setFormField(path, value)` | Fill a text AcroForm field (returns new bytes); for checkbox/radio/choice use `PdfDocMut` |
 | `doc.merge(otherBytes)` | Merge another PDF |
 | `doc.metadata()` | Document metadata as JSON |
 | `doc.signatures()` | Digital signature info as JSON |

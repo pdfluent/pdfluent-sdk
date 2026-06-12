@@ -129,7 +129,14 @@ impl PdfDoc {
 
     // ------ AcroForm writes -------------------------------------------------
 
-    /// Set a single AcroForm text-field value. Returns the new PDF bytes.
+    /// Set a single AcroForm **text** field value. Returns the new PDF bytes.
+    ///
+    /// Updates `/V` (ASCII literal or UTF-16BE+BOM), per-widget `/AS`, and
+    /// regenerates the `/AP` appearance stream so the fill is visible without
+    /// `/NeedAppearances` processing. Read-only fields throw.
+    ///
+    /// **Text fields only.** For checkbox, radio, and choice fields use
+    /// `PdfDocMut.setFormField`, which runs the full type-aware dispatch.
     #[wasm_bindgen(js_name = "setFormField")]
     pub fn set_form_field(&self, path: &str, value: &str) -> Result<Vec<u8>, JsError> {
         let bytes = self.pdf.data().as_ref().to_vec();
@@ -144,7 +151,7 @@ impl PdfDoc {
             .map_err(|e| JsError::new(&format!("save failed: {e}")))
     }
 
-    /// Bulk-set multiple AcroForm text fields from a JSON object
+    /// Bulk-set multiple AcroForm **text** fields from a JSON object
     /// `{"field.path": "value", ...}`. Returns the new PDF bytes.
     #[wasm_bindgen(js_name = "setFormFields")]
     pub fn set_form_fields(&self, fields_json: &str) -> Result<Vec<u8>, JsError> {

@@ -81,8 +81,15 @@ All instance methods throw `PdfException` on failure.  Implements
 | Method | Description |
 |--------|-------------|
 | `doc.getFormFields()` | All AcroForm fields → `List<FormField>` |
-| `doc.setFormField(name, value)` | Update a field's text value |
+| `doc.setFormField(name, value)` | Fill a field (text, checkbox, radio, or choice); updates `/V`, `/AS`, and `/AP` |
 | `doc.getAnnotations(page)` | All annotations on page n → `List<Annotation>` |
+
+`setFormField` supports hierarchical names (`"parent.child"`) resolved through
+`/Kids` recursion.  The call keeps `/V`, `/AS`, and `/AP` consistent so the
+fill is visible in all viewers without `/NeedAppearances` processing.
+Read-only fields throw `PdfException`.  For checkbox and radio fields pass the
+on-state export name (e.g. `"On"`, `"Yes"`, `"NL"`); for choice fields pass
+the option value.
 | `doc.addAnnotation(page, type, x0, y0, x1, y1, content)` | Add `"highlight"` or `"freetext"` |
 | `doc.redactText(page, term)` | Redact all occurrences; `page=-1` → all pages |
 | `doc.encrypt(outputPath, password)` | Save RC4-128 encrypted copy |
