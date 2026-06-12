@@ -53,14 +53,22 @@ pub mod actions;
 pub mod appearance;
 pub mod button;
 pub mod choice;
+mod encoding;
 pub mod facade;
 pub mod flags;
 pub mod flatten;
+mod metrics;
+pub mod model;
 pub mod parse;
 pub mod text;
 pub mod tree;
+pub mod writeback;
 
 pub use facade::{DocumentOps, FormAccess, FormError, FormKind};
 pub use flags::FieldFlags;
+pub use model::{build_form_model, DaInfo, FormFieldKind, FormFieldModel, WidgetModel};
 pub use parse::parse_acroform;
 pub use tree::{FieldId, FieldNode, FieldTree, FieldType, FieldValue, Quadding};
+pub use writeback::{
+    apply_field_value, regenerate_appearances, WriteOutcome, WriteValue, WritebackError,
+};

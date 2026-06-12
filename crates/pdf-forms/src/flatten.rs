@@ -583,6 +583,7 @@ mod tests {
                 top_index: None,
                 rect: Some([100.0, 700.0, 220.0, 730.0]),
                 appearance_state: None,
+                on_state: None,
                 page_index: Some(0),
                 parent: None,
                 children: vec![],

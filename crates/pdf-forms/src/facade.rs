@@ -134,6 +134,7 @@ mod tests {
             top_index: None,
             rect: None,
             appearance_state: None,
+            on_state: None,
             page_index: None,
             parent: None,
             children: vec![],

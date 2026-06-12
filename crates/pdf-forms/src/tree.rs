@@ -41,7 +41,7 @@ pub enum FieldValue {
 }
 
 /// An option in a choice field (/Opt entry).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ChoiceOption {
     /// Export value (sent when form is submitted).
     pub export: String,
@@ -117,6 +117,10 @@ pub struct FieldNode {
     pub rect: Option<[f32; 4]>,
     /// Current appearance state (/AS).
     pub appearance_state: Option<String>,
+    /// On-state name for button widgets: the first non-`Off` key of this
+    /// widget's `/AP /N` sub-dictionary. `None` for non-button widgets or
+    /// when no appearance dictionary is present.
+    pub on_state: Option<String>,
     /// Page index (0-based) this widget appears on.
     pub page_index: Option<usize>,
     /// Parent node in the field tree.
@@ -333,6 +337,7 @@ mod tests {
             top_index: None,
             rect: None,
             appearance_state: None,
+            on_state: None,
             page_index: None,
             parent: None,
             children: vec![],

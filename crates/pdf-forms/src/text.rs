@@ -104,6 +104,7 @@ mod tests {
             top_index: None,
             rect: Some([0.0, 0.0, 200.0, 20.0]),
             appearance_state: None,
+            on_state: None,
             page_index: None,
             parent: None,
             children: vec![],
