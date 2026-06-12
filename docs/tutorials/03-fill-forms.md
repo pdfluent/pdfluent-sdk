@@ -53,12 +53,12 @@ fn main() -> Result<()> {
 Setting a field that does not exist, or passing the wrong setter for a
 field's type, returns an error — so `?` bubbles misuse out of the chain.
 
-### 1.0 scope note
+Hierarchical field names like `Address.Street` are resolved through `/Kids`
+recursion — pass the fully-qualified name directly to any setter.
 
-In 1.0 the walk is flat: the setters address fields by the partial name
-as it appears on the top-level `/AcroForm/Fields` entries. Fields nested
-under `/Kids` (authored with fully-qualified names such as
-`Address.Street`) are tracked separately for 1.1.
+The writeback chain keeps `/V`, per-widget `/AS`, and `/AP` appearance streams
+consistent in one call. No `/NeedAppearances` round-trip is required; the fill
+is visible in every conforming viewer immediately.
 
 ## Flattening Forms
 
@@ -71,9 +71,7 @@ doc.flatten_forms()?;
 doc.save("final_filled_form.pdf")?;
 ```
 
-> **Status:** `flatten_forms` is part of the public 1.0 surface but its
-> runtime wiring lands in a later Epic 3 issue. Calling it in the current
-> alpha will return an error.
+> `flatten_forms` converts all interactive fields to static page content.
 
 ## Summary
 

@@ -173,19 +173,49 @@ fn list_fields() -> Result<()> {
 }
 ```
 
-The public mutation surface is present, but it is not fully wired on this
-branch:
+The write surface is fully implemented:
 
-- `PdfDocument::form_mut()`
-- `PdfDocument::flatten_forms()`
-- `PdfFormMut::set_text(...)`
-- `PdfFormMut::set_checkbox(...)`
-- `PdfFormMut::set_radio(...)`
-- `PdfFormMut::set_dropdown(...)`
+- `PdfDocument::form_mut()` → `PdfFormMut`
+- `PdfFormMut::set_text(name, value)` — text fields; hierarchical names
+  (`"parent.child"`) resolved through `/Kids` recursion
+- `PdfFormMut::set_checkbox(name, checked)`
+- `PdfFormMut::set_radio(name, on_state)` — pass the export-value name
+- `PdfFormMut::set_dropdown(name, option)` — pass the option value
 
-Treat those mutation methods as placeholders for now. They are part of the
-public surface, but they currently `unimplemented!()` rather than performing a
-real write, so the read path is the stable forms API in this branch.
+Every write updates `/V`, per-widget `/AS`, and regenerates the `/AP`
+appearance stream in one call — no `/NeedAppearances` required. Read-only
+fields return an error at set-time.
+
+- `PdfDocument::form_model() -> Result<Vec<FormFieldModel>>` — inspect field
+  types, current/default values, widget rectangles, and kind-specific metadata
+  (comb, multiline, options, on-states) before writing.
+- `PdfDocument::regenerate_form_appearances()` — materialise appearance streams
+  for PDFs filled by tools that only wrote `/V`.
+- `PdfDocument::flatten_forms()` — convert interactive fields to static content.
+
+```rust,no_run
+use pdfluent::prelude::*;
+
+fn fill_form() -> Result<()> {
+    let mut doc = PdfDocument::open("form.pdf")?;
+
+    // Inspect before writing
+    for field in doc.form_model()? {
+        println!("[{:?}] {} = {:?}", field.kind, field.name, field.value);
+    }
+
+    {
+        let mut form = doc.form_mut();
+        form.set_text("Address.Street", "123 Main St")?  // hierarchical name OK
+            .set_checkbox("Agree", true)?
+            .set_radio("Country", "NL")?
+            .set_dropdown("Category", "Option2")?;
+    }
+
+    doc.save_with("filled.pdf", SaveOptions::new().with_overwrite(true))?;
+    Ok(())
+}
+```
 
 ## 5. Redaction
 
