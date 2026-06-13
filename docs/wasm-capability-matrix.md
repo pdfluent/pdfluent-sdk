@@ -54,6 +54,7 @@ editor session. See `benchmarks/runs/wasm_sdk_dx/ROUND3_PERFORMANCE_BENCHMARK.md
 | 33 | OCR (PaddleOCR / Tesseract) | `pdf-ocr` | ❌ never (use `tesseract.js`) | ✅ | C++ engines + model files |
 | 34 | Export to DOCX / XLSX / PPTX | `pdf-docx`, `pdf-xlsx`, `pdf-pptx` | ❌ blocked on native | ⏳ scaffolded | wait until native produces output |
 | 35 | License activation | `pdfluent::license` | ✅ | ✅ | `activateLicenseKey(key)`, `licenseStatus()` |
+| 36 | XFA field fill (enumerate + set + datasets save) | `pdf-xfa` `XfaSession` via `pdfluent::xfa` | ❌ planned (bindings follow-up) | ✅ (Rust, Phase 1) | `PdfDocument::xfa_form_model` / `set_xfa_field_value`; WASM/Node/Python/Java/C-API wiring tracked as XFA Phase-1 follow-up |
 
 Legend:
 - ✅ available

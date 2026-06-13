@@ -275,6 +275,11 @@ pub struct PdfDocument {
     /// Shared with the warning sink installed on `engine`; interior-mutable so
     /// read-side operations on `&self` can accumulate into it.
     diagnostics: Arc<Mutex<Vec<crate::diagnostics::Diagnostic>>>,
+    /// Lazily-created XFA fill session (parse-once cache of the XFA
+    /// template/data/form/layout state). Built on first
+    /// [`xfa_form_model`](Self::xfa_form_model) /
+    /// [`set_xfa_field_value`](Self::set_xfa_field_value) call.
+    xfa_session: Option<Box<pdf_engine::xfa::XfaSession>>,
 }
 
 /// Build a diagnostics collector, install a warning sink on `engine` that
@@ -550,6 +555,7 @@ impl PdfDocument {
             processing_limits: opts.processing_limits.clone(),
             original_bytes: Some(shared),
             diagnostics,
+            xfa_session: None,
         })
     }
 
@@ -1022,6 +1028,108 @@ impl PdfDocument {
             install_hint: "AcroForm flatten runtime tracked on #1223; lands in a 1.x MINOR. Use \
                  pdf_manip::flatten_forms directly for now if you need the raw pipeline.",
         })
+    }
+
+    // ---------- XFA forms (Phase 1 fill foundation) ----------
+
+    /// Whether the document carries an XFA form (an active `/AcroForm /XFA`
+    /// entry with a template packet).
+    ///
+    /// Cheap detection probe — no capability gate, no session construction.
+    pub fn has_xfa_form(&self) -> bool {
+        pdf_engine::xfa::has_xfa(&self.engine)
+    }
+
+    /// The XFA form model: the layout page count and one entry per logical
+    /// field (radio groups fold their member widgets into a single
+    /// [`crate::xfa::XfaField`]), with values, read-only/required/multiline
+    /// flags, choice options, per-widget page mapping and geometry.
+    ///
+    /// The first call parses the XFA packets, merges template with data,
+    /// applies the saved form state, and lays the form out; the resulting
+    /// session is cached on this handle, so subsequent model reads and
+    /// [`set_xfa_field_value`](Self::set_xfa_field_value) calls are cheap.
+    ///
+    /// Values written through [`set_xfa_field_value`](Self::set_xfa_field_value)
+    /// are reflected in later model reads. The layout is **not** recomputed
+    /// after value writes in this phase (no reflow, no change/click event
+    /// scripts) — geometry stays that of the opened document.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Unsupported`] when the document has no XFA form;
+    /// [`Error::FeatureNotInTier`] without the `XfaParse` capability.
+    pub fn xfa_form_model(&mut self) -> Result<crate::xfa::XfaFormModel> {
+        self.require_capability(Capability::XfaParse)?;
+        self.ensure_xfa_session()?;
+        let session = self.xfa_session.as_ref().expect("session ensured above");
+        Ok(crate::xfa::XfaFormModel {
+            page_count: session.page_count(),
+            fields: session
+                .fields()
+                .iter()
+                .map(crate::xfa::field_from_engine)
+                .collect(),
+        })
+    }
+
+    /// Set the value of one XFA form field.
+    ///
+    /// `name` is a fully-qualified field name as reported by
+    /// [`xfa_form_model`](Self::xfa_form_model) — either the display form
+    /// (`form1.applicant.name`) or the explicit SOM path
+    /// (`form1[0].applicant[0].name[0]`).
+    ///
+    /// The write updates the in-memory form tree, writes through to the
+    /// bound `datasets` node (creating it on demand for default-bound
+    /// fields), keeps an Adobe-saved form packet's value in sync, and swaps
+    /// the updated packets into the PDF — a subsequent
+    /// [`save`](Self::save) / [`to_bytes`](Self::to_bytes) produces a PDF
+    /// that Adobe Acrobat/Reader reopens with the filled values.
+    ///
+    /// Read-only fields (template or saved-state `access` locks) are
+    /// rejected. No change/click event scripts run in this phase.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Unsupported`] for unknown fields, read-only fields, values
+    /// not assignable to the field's type, or non-XFA documents;
+    /// [`Error::FeatureNotInTier`] without the `XfaFill` capability.
+    pub fn set_xfa_field_value(
+        &mut self,
+        name: &str,
+        value: crate::xfa::XfaFieldValue<'_>,
+    ) -> Result<crate::xfa::XfaSetOutcome> {
+        self.require_capability(Capability::XfaFill)?;
+        self.ensure_xfa_session()?;
+        let session = self.xfa_session.as_mut().expect("session ensured above");
+        let engine_value = match value {
+            crate::xfa::XfaFieldValue::Text(s) => pdf_engine::xfa::XfaWriteValue::Text(s),
+            crate::xfa::XfaFieldValue::Checkbox(b) => pdf_engine::xfa::XfaWriteValue::Checkbox(b),
+            crate::xfa::XfaFieldValue::Radio(s) => pdf_engine::xfa::XfaWriteValue::Radio(s),
+        };
+        let outcome = session
+            .set_value(name, engine_value)
+            .map_err(crate::xfa::map_xfa_err)?;
+        session
+            .write_into_document(&mut self.lopdf)
+            .map_err(crate::xfa::map_xfa_err)?;
+        self.sync_engine()?;
+        Ok(crate::xfa::XfaSetOutcome {
+            raw_value: outcome.raw_value,
+            persisted_to_datasets: outcome.persisted_to_datasets,
+        })
+    }
+
+    /// Build the cached XFA session from the document's current bytes.
+    fn ensure_xfa_session(&mut self) -> Result<()> {
+        if self.xfa_session.is_none() {
+            let bytes = self.to_bytes()?;
+            let session =
+                pdf_engine::xfa::XfaSession::open(&bytes).map_err(crate::xfa::map_xfa_err)?;
+            self.xfa_session = Some(Box::new(session));
+        }
+        Ok(())
     }
 
     // ---------- Decoration (Epic 2 #1223 / Epic 3 #1225) ----------

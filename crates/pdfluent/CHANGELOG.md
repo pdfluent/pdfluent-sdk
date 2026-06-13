@@ -30,6 +30,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   — the exact AcroForm support contract (field types, writeback behaviour,
   guarantees, exclusions, per-surface availability).
 
+---
+
+## [Unreleased] — xfa/sdk-phase1-fill-foundation — 2026-06-12
+
+### Added — XFA fill API (Phase 1)
+
+- **`PdfDocument::has_xfa_form() -> bool`** — cheap detection of an active
+  `/AcroForm /XFA` template.
+- **`PdfDocument::xfa_form_model() -> Result<XfaFormModel>`** — enumerate the
+  currently layouted XFA fields: fully-qualified names + SOM paths, typed
+  kinds (text/checkbox/radio-group/dropdown/date/numeric/…), values,
+  read-only (template + saved-state `access` locks), required, multiline,
+  hidden, choice options, checkbox on/off values, per-widget page mapping
+  and geometry (XFA layout space), and data-binding state. Reports the XFA
+  layout page count (a dynamic form's real page count, not the 1-page
+  viewer-shell of the PDF container). The underlying parse/merge/layout
+  session is built once per handle and cached.
+- **`PdfDocument::set_xfa_field_value(name, XfaFieldValue) -> Result<XfaSetOutcome>`**
+  — fill a field: updates the form tree, writes through to the bound
+  `datasets` node (created on demand for default-bound fields), keeps an
+  Adobe-saved form packet's values in sync (including radio-member
+  semantics), and swaps the updated packets into the PDF. A subsequent
+  `save()`/`to_bytes()` yields a PDF whose values Adobe Acrobat/Reader
+  reads back from the datasets packet. Datasets writeback is a surgical
+  XML splice (original packet preserved byte-for-byte outside the changed
+  values) with a wrapper-preserving regeneration fallback. Read-only
+  fields are rejected. New public DTOs in `pdfluent::xfa`:
+  `XfaFormModel`, `XfaField`, `XfaFieldType`, `XfaFieldValue`,
+  `XfaFieldOption`, `XfaWidget`, `XfaRect`, `XfaSetOutcome`.
+- Both methods are gated on the existing `XfaParse` / `XfaFill`
+  capabilities (Developer tier and up).
+
+### Phase-1 scope notes
+
+- No change/click/enter/exit event scripts run on value writes, the layout
+  is not re-flowed after writes, and instanceManager add/remove is not
+  exposed. `bind="none"` field values persist only to the saved form
+  packet (matching Adobe), reported via
+  `XfaSetOutcome::persisted_to_datasets == false`.
+- Bindings follow-up: the XFA fill API is Rust-only in this phase —
+  C-API/Python/Node/Java/WASM wiring is tracked as follow-up work.
+
 ## [Unreleased] — acroform/sdk-foundation — 2026-06-12
 
 ### Added

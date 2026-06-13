@@ -40,7 +40,7 @@ tracing = ["dep:tracing"]
 # encrypt, permissions).
 # pdf-sign provides PAdES signing + signature validation.
 # pdf-redact provides content redaction (search + region).
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.9" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.9", features = ["xfa"] }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4", default-features = false }
 pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.8" }
 pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.9" }
