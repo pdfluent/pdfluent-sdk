@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * A PDF document backed by the native PDFluent engine.
@@ -361,6 +363,112 @@ public class PdfluentDocument implements AutoCloseable {
     }
 
     // =========================================================================
+    // Persistence
+    // =========================================================================
+
+    /**
+     * Write the document (including any form-field mutations) to a file.
+     *
+     * <p>When the document has been mutated (e.g. via {@link #setFormField})
+     * the updated state is serialised; otherwise the original bytes are
+     * written verbatim.
+     *
+     * @param path destination file path; must not be {@code null}
+     * @throws PdfluentException if serialisation or the file write fails
+     * @throws IllegalStateException if the document has been closed
+     */
+    public void save(Path path) {
+        ensureOpen();
+        nativeSave(handle, path.toString());
+    }
+
+    // =========================================================================
+    // AcroForm
+    // =========================================================================
+
+    /**
+     * Enumerate the document's interactive AcroForm fields.
+     *
+     * <p>Returns one {@link FormField} per terminal field, with its
+     * fully-qualified name, type ({@code text}/{@code button}/{@code choice}/
+     * {@code signature}), current value, and 0-based page index (or -1 when
+     * unknown). XFA-only documents and documents without an AcroForm return
+     * an empty list.
+     *
+     * @return the form fields; never {@code null}
+     * @throws IllegalStateException if the document has been closed
+     */
+    public List<FormField> getFormFields() {
+        ensureOpen();
+        String[] flat = nativeGetFormFields(handle);
+        if (flat == null || flat.length == 0) {
+            return new ArrayList<>();
+        }
+        // Stride 4: [name, type, value, page] per field.
+        List<FormField> fields = new ArrayList<>(flat.length / 4);
+        for (int i = 0; i + 3 < flat.length; i += 4) {
+            int page;
+            try {
+                page = Integer.parseInt(flat[i + 3]);
+            } catch (NumberFormatException e) {
+                page = -1;
+            }
+            fields.add(new FormField(flat[i], flat[i + 1], flat[i + 2], page));
+        }
+        return fields;
+    }
+
+    /**
+     * Fill a single AcroForm field by its fully-qualified name.
+     *
+     * <p>Routes through the single SDK writeback chain
+     * ({@code pdf_forms::apply_field_value}): the field type is detected from
+     * {@code /FT} and the value is applied as text, a radio export name, a
+     * choice option, or a bool-ish checkbox state
+     * ({@code "true"}/{@code "false"}/{@code "Off"}/{@code "0"}). The chain
+     * keeps {@code /V}, per-widget {@code /AS}, and {@code /AP} consistent and
+     * rejects read-only fields. The mutation is persisted to the in-memory
+     * document; a subsequent {@code save} writes it out.
+     *
+     * @param name  fully-qualified field name (e.g. {@code "Address.Street"});
+     *              must not be {@code null}
+     * @param value the value to apply; must not be {@code null}
+     * @return {@code true} if the field was found and updated; {@code false}
+     *         when the document has no form or no field matches {@code name}
+     * @throws PdfluentException if the field is read-only or the value is not
+     *                           valid for the field
+     * @throws IllegalStateException if the document has been closed
+     */
+    public boolean setFormField(String name, String value) {
+        ensureOpen();
+        return nativeSetFormField(handle, name, value);
+    }
+
+    /**
+     * Select multiple options on a multi-select list box.
+     *
+     * <p>Routes through {@code pdf_forms::apply_choice_multi}: writes
+     * {@code /V} as an array of text strings and rebuilds {@code /I} (the
+     * sorted selected-index cache) to match what Adobe Acrobat produces. Pass
+     * an empty array to clear the selection. For a non-editable list box every
+     * value must be one of the field's {@code /Opt} options.
+     *
+     * @param name   fully-qualified field name of a multi-select list box;
+     *               must not be {@code null}
+     * @param values export (or display) values of the options to select;
+     *               must not be {@code null}
+     * @return {@code true} if the field was found and updated; {@code false}
+     *         when the document has no form or no field matches {@code name}
+     * @throws PdfluentException if the field is not a multi-select list box,
+     *                           is read-only, or a value is not a valid option
+     * @throws IllegalStateException if the document has been closed
+     */
+    public boolean setMultiSelect(String name, String[] values) {
+        ensureOpen();
+        return nativeSetMultiSelect(handle, name, values);
+    }
+
+    // =========================================================================
     // AutoCloseable
     // =========================================================================
 
@@ -460,4 +568,8 @@ public class PdfluentDocument implements AutoCloseable {
     private static native String nativeGetMetadata(long handle, String key);
     private static native int nativeBookmarkCount(long handle);
     private static native Object nativeSearchText(long handle, String query);
+    private static native void nativeSave(long handle, String path);
+    private static native String[] nativeGetFormFields(long handle);
+    private static native boolean nativeSetFormField(long handle, String name, String value);
+    private static native boolean nativeSetMultiSelect(long handle, String name, String[] values);
 }

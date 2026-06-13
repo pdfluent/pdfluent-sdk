@@ -354,6 +354,28 @@ class Document:
         """
         ...
 
+    def set_form_field_multi(self, name: str, values: List[str]) -> bool:
+        """Select multiple options on a multi-select list box.
+
+        Writes ``/V`` as an array of text strings and rebuilds ``/I`` (the
+        sorted selected-index cache) to match Adobe Acrobat. Pass an empty
+        list to clear the selection.
+
+        Parameters
+        ----------
+        name:
+            Fully-qualified field name of a multi-select list box.
+        values:
+            Export (or display) values of the options to select; for a
+            non-editable list box every value must be in ``/Opt``.
+
+        Returns
+        -------
+        bool
+            ``True`` if the field was found and updated.
+        """
+        ...
+
     def get_annotations(self, page: int) -> List[Annotation]:
         """Return all annotations on the given page (0-based).
 

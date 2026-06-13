@@ -726,6 +726,65 @@ pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeSetFormField<'a>
     }
 }
 
+/// `native boolean nativeSetMultiSelect(long handle, String name, String[] values)`
+///
+/// Sets multiple selected values on a multi-select list box via
+/// [`pdf_forms::apply_choice_multi`] — writes `/V` as an array of text
+/// strings and rebuilds the sorted `/I` selected-index cache. Returns
+/// `false` (no throw) when the document has no form or no field matches.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeSetMultiSelect<'a>(
+    mut env: JNIEnv<'a>,
+    _class: JClass<'a>,
+    handle: jlong,
+    name: JString<'a>,
+    values: JObjectArray<'a>,
+) -> jboolean {
+    if handle == 0 {
+        throw_pdf_exception(&mut env, "document is closed");
+        return JNI_FALSE;
+    }
+    let doc = unsafe { from_handle(handle) };
+
+    let name_str: String = match env.get_string(&name) {
+        Ok(s) => s.into(),
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("name string error: {e}"));
+            return JNI_FALSE;
+        }
+    };
+    let values_vec: Vec<String> = match read_string_array(&mut env, &values) {
+        Ok(v) => v,
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("values array error: {e}"));
+            return JNI_FALSE;
+        }
+    };
+
+    // No form at all → field cannot be found; preserve the boolean contract.
+    if parse_acroform(doc.engine.pdf()).is_none() {
+        return JNI_FALSE;
+    }
+
+    let mut guard = match ensure_lopdf(doc) {
+        Ok(g) => g,
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("lopdf init failed: {e}"));
+            return JNI_FALSE;
+        }
+    };
+    let lopdf_doc = guard.as_mut().unwrap();
+
+    match pdf_forms::apply_choice_multi(lopdf_doc, &name_str, &values_vec) {
+        Ok(_) => JNI_TRUE,
+        Err(WritebackError::FieldNotFound(_)) => JNI_FALSE,
+        Err(e) => {
+            throw_pdf_exception(&mut env, &format!("setMultiSelect '{name_str}': {e}"));
+            JNI_FALSE
+        }
+    }
+}
+
 /// Apply a string value with type-aware dispatch, mirroring the CLI's
 /// `fill_one` (crates/xfa-cli/src/cmd_fill.rs): try Text first (the common
 /// case), then on a `/FT` type mismatch fall through to Radio, Choice, and

@@ -71,6 +71,7 @@ convergent behaviour of pdfium, mupdf, and pdf.js:
 | `parse_acroform(pdf)` | Parse an AcroForm from a `pdf_syntax::Pdf`; `None` if absent |
 | `build_form_model(tree)` | Build `Vec<FormFieldModel>` from a parsed `FieldTree` |
 | `apply_field_value(doc, name, value)` | Fill one field in a `lopdf::Document` |
+| `apply_choice_multi(doc, name, &[String])` | Fill a multi-select list box: `/V` array + rebuilt sorted `/I` index cache |
 | `regenerate_appearances(doc)` | Regenerate all appearance streams in a `lopdf::Document` |
 
 ### Key types

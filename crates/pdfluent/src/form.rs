@@ -157,6 +157,31 @@ impl<'a> PdfFormMut<'a> {
         Ok(self)
     }
 
+    /// Select multiple options on a multi-select list box (`/Ff` MultiSelect
+    /// bit 22).
+    ///
+    /// Each entry of `values` must match an export or display value in the
+    /// field's `/Opt` array (for non-editable list boxes). The SDK writes
+    /// `/V` as an array of text strings and rebuilds `/I` as the sorted
+    /// selected-index cache, matching what Adobe Acrobat produces. Pass an
+    /// empty slice to clear the selection.
+    ///
+    /// Per-option highlight rendering is viewer-native, so this path sets
+    /// `/NeedAppearances` rather than synthesising an appearance stream.
+    ///
+    /// # Errors
+    ///
+    /// As for [`set_text`](Self::set_text), plus the same tier check. Returns
+    /// an error if the field is not a multi-select list box or if any value
+    /// is not in `/Opt` (non-editable fields).
+    pub fn set_multi_select(&mut self, name: &str, values: &[&str]) -> Result<&mut Self> {
+        self.require_fill()?;
+        let owned: Vec<String> = values.iter().map(|s| (*s).to_string()).collect();
+        pdf_forms::apply_choice_multi(self.lopdf, name, &owned)
+            .map_err(|e| internal_error(e.to_string()))?;
+        Ok(self)
+    }
+
     fn require_fill(&self) -> Result<()> {
         license::require_capability_with_override(Capability::AcroFormFill, self.license_override)
     }

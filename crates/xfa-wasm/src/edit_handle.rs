@@ -208,6 +208,21 @@ impl PdfDocMut {
         Ok(())
     }
 
+    /// Select multiple options on a multi-select list box.
+    ///
+    /// Delegates to [`pdf_forms::apply_choice_multi`]: writes `/V` as an array
+    /// of text strings and rebuilds `/I` (the sorted selected-index cache) to
+    /// match what Adobe Acrobat produces. `values` is a JS array of strings;
+    /// pass an empty array to clear the selection. The field must be a
+    /// multi-select list box (`/Ff` MultiSelect flag); for non-editable list
+    /// boxes every value must be one of the field's `/Opt` options.
+    #[wasm_bindgen(js_name = "setMultiSelect")]
+    pub fn set_multi_select(&mut self, path: &str, values: Vec<String>) -> Result<(), JsError> {
+        pdf_forms::apply_choice_multi(&mut self.doc, path, &values)
+            .map(|_| ())
+            .map_err(|e| JsError::new(&format!("setMultiSelect: {e}")))
+    }
+
     // ------ Annotations ----------------------------------------------------
 
     /// Add a highlight annotation over the given page rectangle.

@@ -487,6 +487,136 @@ fn checkbox_on_state_resolves_from_kid_widget() {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-select list box (set_multi_select → apply_choice_multi)
+// ---------------------------------------------------------------------------
+
+/// A PDF with one multi-select list box (`Ff` MultiSelect bit 22 = 0x200000).
+fn build_multiselect_pdf() -> Vec<u8> {
+    let mut doc = Document::with_version("1.4");
+    let content_id = doc.add_object(Stream::new(dictionary! {}, Vec::new()));
+    let pages_id = doc.new_object_id();
+
+    let listbox = doc.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Widget",
+        "FT" => "Ch",
+        "Ff" => 0x200000i64, // MultiSelect
+        "T" => Object::string_literal("languages"),
+        "Rect" => vec![100.into(), 400.into(), 300.into(), 520.into()],
+        "Opt" => vec![
+            Object::string_literal("EN"),
+            Object::string_literal("NL"),
+            Object::string_literal("DE"),
+            Object::string_literal("FR"),
+        ],
+    });
+
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Contents" => content_id,
+        "Resources" => dictionary! {},
+        "Annots" => vec![listbox.into()],
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page_id.into()],
+            "Count" => 1,
+        }),
+    );
+    let acroform_id = doc.add_object(dictionary! {
+        "Fields" => vec![listbox.into()],
+        "DA" => Object::string_literal("/Helv 0 Tf 0 g"),
+    });
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+        "AcroForm" => acroform_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf).expect("serialise fixture");
+    buf
+}
+
+#[test]
+fn set_multi_select_writes_array_and_index_cache_through_facade() {
+    let bytes = build_multiselect_pdf();
+    let mut doc = dev_doc(&bytes);
+
+    doc.form_mut()
+        .set_multi_select("languages", &["FR", "EN"])
+        .expect("set_multi_select");
+
+    // Re-serialise and inspect /V + /I structurally.
+    let saved = doc.to_bytes().expect("to_bytes");
+    let reloaded = Document::load_mem(&saved).expect("reload");
+
+    // Find the field object.
+    let af = match reloaded.catalog().unwrap().get(b"AcroForm").unwrap() {
+        Object::Reference(id) => reloaded.get_object(*id).unwrap().as_dict().unwrap(),
+        Object::Dictionary(d) => d,
+        _ => panic!("acroform"),
+    };
+    let field_id = match &af.get(b"Fields").unwrap().as_array().unwrap()[0] {
+        Object::Reference(id) => *id,
+        _ => panic!("field ref"),
+    };
+    let fld = reloaded.get_object(field_id).unwrap().as_dict().unwrap();
+
+    let v: Vec<String> = match fld.get(b"V").unwrap() {
+        Object::Array(a) => a
+            .iter()
+            .filter_map(|o| lopdf::decode_text_string(o).ok())
+            .collect(),
+        _ => panic!("/V must be an array for multi-select"),
+    };
+    assert_eq!(v, vec!["FR".to_string(), "EN".to_string()]);
+
+    let i: Vec<i64> = match fld.get(b"I").unwrap() {
+        Object::Array(a) => a
+            .iter()
+            .filter_map(|o| match o {
+                Object::Integer(n) => Some(*n),
+                _ => None,
+            })
+            .collect(),
+        _ => panic!("/I must be present"),
+    };
+    // EN=0, FR=3 → sorted [0, 3].
+    assert_eq!(i, vec![0, 3]);
+}
+
+#[test]
+fn set_multi_select_rejects_unknown_option() {
+    let bytes = build_multiselect_pdf();
+    let mut doc = dev_doc(&bytes);
+    let err = doc
+        .form_mut()
+        .set_multi_select("languages", &["KL"])
+        .expect_err("unknown option must error");
+    // Mapped onto the facade error surface.
+    assert!(!err.to_string().is_empty());
+}
+
+#[test]
+fn set_multi_select_requires_fill_capability() {
+    let bytes = build_multiselect_pdf();
+    // Trial tier lacks AcroFormFill.
+    let mut doc =
+        PdfDocument::from_bytes_with(&bytes, OpenOptions::new().with_license_key("tier:trial"))
+            .expect("parse");
+    let err = doc
+        .form_mut()
+        .set_multi_select("languages", &["EN"])
+        .expect_err("trial lacks fill capability");
+    assert_eq!(err.code(), "E-LICENSE-FEATURE-NOT-IN-TIER");
+}
+
+// ---------------------------------------------------------------------------
 // GA blocker (FASE B) — flatten_forms no longer panics
 // ---------------------------------------------------------------------------
 

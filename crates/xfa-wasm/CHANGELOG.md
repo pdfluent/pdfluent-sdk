@@ -22,6 +22,10 @@ and this package adheres to [Semantic Versioning](https://semver.org/).
   radio, and choice fields via the unified `apply_string_value` dispatch.
   Unlike `PdfDoc.setFormField` (Wave 2, text-only), `PdfDocMut.setFormField`
   auto-detects the field type and applies the correct writeback path.
+- **`PdfDocMut.setMultiSelect(path, values)`** (`acroform/sdk-closure`):
+  select multiple options on a multi-select list box. `values` is a
+  `string[]`; writes the `/V` array and rebuilds the sorted `/I` index cache
+  (Acrobat-faithful). Completes AcroForm field-type coverage in WASM.
 - `save()` is non-consuming — take intermediate snapshots and keep editing.
 - `extractPages` returns bytes for a NEW subdocument; current editor unchanged.
 - Performance benchmark demonstrates **2.7× wall-clock speedup** vs.

@@ -1,5 +1,13 @@
 # pdf-java — XFA Java SDK
 
+> **Deprecated / non-publishable.** This crate's `com.xfa.pdf.*` Java classes
+> are legacy. The canonical, published Java binding is
+> **`com.pdfluent:pdfluent`** under [`bindings/java/`](../../bindings/java/)
+> (the JNI symbols built here are `Java_com_pdfluent_PdfluentDocument_*`, which
+> only the `com.pdfluent.PdfluentDocument` class can bind). Use the canonical
+> binding for AcroForm fill (`getFormFields` / `setFormField` /
+> `setMultiSelect`) and all other features.
+
 Java JNI bindings for the XFA PDF engine.  Provides the same feature set as
 the Python and Node.js SDKs.
 

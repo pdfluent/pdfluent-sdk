@@ -2,7 +2,12 @@ package com.pdfluent;
 
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
+import java.util.List;
+
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -48,6 +53,22 @@ class PdfluentDocumentTest {
     // -------------------------------------------------------------------------
     // AutoCloseable / lifecycle
     // -------------------------------------------------------------------------
+
+
+    // Embedded synthetic AcroForm fixtures (from pdfluent-forms
+    // gen_acroform_corpus) so form tests need no external files.
+    private static final String MULTISELECT_PDF_B64 =
+        "JVBERi0xLjcKJbutwN4KMSAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMiAwIG9iago8PC9MZW5ndGggMD4+c3RyZWFtCgplbmRzdHJlYW0gCmVuZG9iagozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvTWVkaWFCb3hbMCAwIDYxMiA3OTJdL0NvbnRlbnRzIDIgMCBSL1Jlc291cmNlczw8Pj4vQW5ub3RzWzQgMCBSXT4+CmVuZG9iago0IDAgb2JqCjw8L1R5cGUvQW5ub3QvU3VidHlwZS9XaWRnZXQvRlQvQ2gvVChsYW5ndWFnZXMpL0ZmIDIwOTcxNTIvUmVjdFsxMDAgNDAwIDMyMCA1MjBdL09wdFsoRU4pKE5MKShERSkoRlIpXT4+CmVuZG9iago1IDAgb2JqCjw8L0ZpZWxkc1s0IDAgUl0vREEoL0hlbHYgMCBUZiAwIGcpPj4KZW5kb2JqCjYgMCBvYmoKPDwvVHlwZS9DYXRhbG9nL1BhZ2VzIDEgMCBSL0Fjcm9Gb3JtIDUgMCBSPj4KZW5kb2JqCjcgMCBvYmoKPDwvUm9vdCA2IDAgUi9UeXBlL1hSZWYvU2l6ZSA4L1dbMSA0IDJdL0luZGV4WzEgN10vTGVuZ3RoIDQ5Pj5zdHJlYW0KAQAAAA8AAAEAAABCAAABAAAAcQAAAQAAAN0AAAEAAAFVAAABAAABigAAAQAAAcYAAAplbmRzdHJlYW0gCmVuZG9iagoKc3RhcnR4cmVmCjQ1NAolJUVPRg==";
+    private static final String PURE_TEXT_PDF_B64 =
+        "JVBERi0xLjcKJbutwN4KMSAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMiAwIG9iago8PC9MZW5ndGggMD4+c3RyZWFtCgplbmRzdHJlYW0gCmVuZG9iagozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvTWVkaWFCb3hbMCAwIDYxMiA3OTJdL0NvbnRlbnRzIDIgMCBSL1Jlc291cmNlczw8Pj4vQW5ub3RzWzQgMCBSXT4+CmVuZG9iago0IDAgb2JqCjw8L1R5cGUvQW5ub3QvU3VidHlwZS9XaWRnZXQvRlQvVHgvVChmdWxsX25hbWUpL1JlY3RbMTAwIDcwMCAzMjAgNzIwXT4+CmVuZG9iago1IDAgb2JqCjw8L0ZpZWxkc1s0IDAgUl0vREEoL0hlbHYgMCBUZiAwIGcpPj4KZW5kb2JqCjYgMCBvYmoKPDwvVHlwZS9DYXRhbG9nL1BhZ2VzIDEgMCBSL0Fjcm9Gb3JtIDUgMCBSPj4KZW5kb2JqCjcgMCBvYmoKPDwvUm9vdCA2IDAgUi9UeXBlL1hSZWYvU2l6ZSA4L1dbMSA0IDJdL0luZGV4WzEgN10vTGVuZ3RoIDQ5Pj5zdHJlYW0KAQAAAA8AAAEAAABCAAABAAAAcQAAAQAAAN0AAAEAAAE0AAABAAABaQAAAQAAAaUAAAplbmRzdHJlYW0gCmVuZG9iagoKc3RhcnR4cmVmCjQyMQolJUVPRg==";
+
+    private static byte[] multiselectPdf() {
+        return Base64.getDecoder().decode(MULTISELECT_PDF_B64);
+    }
+
+    private static byte[] pureTextPdf() {
+        return Base64.getDecoder().decode(PURE_TEXT_PDF_B64);
+    }
 
     @Test
     void openAndCloseIsIdempotent() {
@@ -265,12 +286,60 @@ class PdfluentDocumentTest {
     // -------------------------------------------------------------------------
 
     @Test
-    @org.junit.jupiter.api.Disabled("AcroForm field reading not yet exposed in Java binding")
-    void readFormFields() { }
+    void readFormFields() {
+        try (PdfluentDocument doc = PdfluentDocument.open(multiselectPdf())) {
+            List<FormField> fields = doc.getFormFields();
+            assertFalse(fields.isEmpty(), "multiselect fixture exposes a field");
+            FormField languages = fields.stream()
+                .filter(f -> f.name.equals("languages"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("languages field missing"));
+            assertEquals("choice", languages.fieldType);
+        }
+    }
 
     @Test
-    @org.junit.jupiter.api.Disabled("Form field writing not yet exposed in Java binding")
-    void writeFormField() { }
+    void writeTextFormFieldRoundTrips(@TempDir Path tmp) throws Exception {
+        Path out = tmp.resolve("text-filled.pdf");
+        try (PdfluentDocument doc = PdfluentDocument.open(pureTextPdf())) {
+            assertTrue(doc.setFormField("full_name", "Jane Doe"));
+            doc.save(out);
+        }
+        try (PdfluentDocument doc = PdfluentDocument.open(Files.readAllBytes(out))) {
+            String value = doc.getFormFields().stream()
+                .filter(f -> f.name.equals("full_name"))
+                .map(f -> f.value)
+                .findFirst()
+                .orElse("");
+            assertEquals("Jane Doe", value);
+        }
+    }
+
+    @Test
+    void writeMultiSelectRoundTrips(@TempDir Path tmp) throws Exception {
+        Path out = tmp.resolve("ms-filled.pdf");
+        try (PdfluentDocument doc = PdfluentDocument.open(multiselectPdf())) {
+            assertTrue(doc.setMultiSelect("languages", new String[] {"FR", "EN"}));
+            doc.save(out);
+        }
+        try (PdfluentDocument doc = PdfluentDocument.open(Files.readAllBytes(out))) {
+            String value = doc.getFormFields().stream()
+                .filter(f -> f.name.equals("languages"))
+                .map(f -> f.value)
+                .findFirst()
+                .orElse("");
+            assertTrue(value.contains("FR") && value.contains("EN"),
+                "both selected options present, got: " + value);
+        }
+    }
+
+    @Test
+    void setMultiSelectRejectsUnknownOption() {
+        try (PdfluentDocument doc = PdfluentDocument.open(multiselectPdf())) {
+            assertThrows(PdfluentException.class,
+                () -> doc.setMultiSelect("languages", new String[] {"KL"}));
+        }
+    }
 
     @Test
     @org.junit.jupiter.api.Disabled("Annotation reading not yet exposed in Java binding")

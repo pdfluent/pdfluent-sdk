@@ -371,6 +371,16 @@ export declare class PdfDocument {
    * The change is persisted to the document — a subsequent `save()` writes it.
    */
   setFieldValue(name: string, value: string): void
+  /**
+   * Select multiple options on a multi-select list box.
+   *
+   * Writes `/V` as an array of text strings and rebuilds `/I` (the sorted
+   * selected-index cache) to match Adobe Acrobat. Pass an empty array to
+   * clear the selection. The field must be a multi-select list box
+   * (`/Ff` MultiSelect flag); for a non-editable list box every value must
+   * be one of the field's `/Opt` options.
+   */
+  setMultiSelect(name: string, values: Array<string>): void
   /** Get annotations on a specific page (0-based index). */
   annotations(pageIndex: number): Array<AnnotationInfo>
   /** Validate all digital signatures in the document. */
