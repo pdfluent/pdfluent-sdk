@@ -526,6 +526,49 @@ pub struct FormNodeMeta {
     /// when the flowing-body queue is exhausted (it is the runtime's record
     /// of an already-paginated page).
     pub runtime_instantiated_page: bool,
+    /// XFA `access` attribute (XFA 3.3 §6.1) when explicitly set on this
+    /// node. `None` means not specified — the effective access is inherited
+    /// from the nearest ancestor container that sets one (default `Open`).
+    pub access: Option<Access>,
+    /// True when the field's `<ui><textEdit>` declares `multiLine="1"`.
+    pub multiline: bool,
+    /// True when the field's `<validate>` declares `nullTest="error"`
+    /// (XFA 3.3 §6.3 — a mandatory field).
+    pub required: bool,
+}
+
+/// XFA `access` attribute values (XFA 3.3 §6.1, `field`/`exclGroup`/
+/// `subform` elements). Controls interactive mutability of a node and,
+/// for containers, of all contained fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Access {
+    /// Default: the field is interactive and writable.
+    #[default]
+    Open,
+    /// Visible, value selectable/copyable, but not writable.
+    ReadOnly,
+    /// Not interactive at all (no focus, no writes).
+    Protected,
+    /// Rendered like a regular field but excluded from interaction.
+    NonInteractive,
+}
+
+impl Access {
+    /// Parse the template attribute string. Unknown values map to `Open`
+    /// (spec default).
+    pub fn parse(s: &str) -> Access {
+        match s.trim() {
+            "readOnly" => Access::ReadOnly,
+            "protected" => Access::Protected,
+            "nonInteractive" => Access::NonInteractive,
+            _ => Access::Open,
+        }
+    }
+
+    /// Whether a value write should be rejected for this access level.
+    pub fn denies_writes(self) -> bool {
+        !matches!(self, Access::Open)
+    }
 }
 
 /// XFA `anchorType` attribute (XFA 3.3 §2.6, Appendix A p1510).

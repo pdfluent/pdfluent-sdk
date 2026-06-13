@@ -1732,7 +1732,7 @@ fn renumber_layout_dump_pages(dump: &mut LayoutDump) {
 /// XFA `<image href=".\filename.jpg">` references are resolved against this
 /// tree at merge time (XFA Spec 3.3 §2.3).  The returned map is keyed by
 /// the filename as it appears in the Names array (e.g. `.\lintje.jpg`).
-fn extract_embedded_images(doc: &Document) -> HashMap<String, Vec<u8>> {
+pub(crate) fn extract_embedded_images(doc: &Document) -> HashMap<String, Vec<u8>> {
     let mut images = HashMap::new();
 
     // Helper: resolve a potentially indirect object.
@@ -2526,7 +2526,10 @@ fn generate_tounicode_cmap(gid_to_unicode: &[(u16, char)]) -> Vec<u8> {
 /// weight, and posture so that "Arial bold" and "Arial regular" are resolved
 /// separately. Called BEFORE layout so that resolved metrics can be injected
 /// into the `FormTree`.
-fn resolve_template_fonts(template_xml: &str, pdf_bytes: &[u8]) -> HashMap<String, ResolvedFont> {
+pub(crate) fn resolve_template_fonts(
+    template_xml: &str,
+    pdf_bytes: &[u8],
+) -> HashMap<String, ResolvedFont> {
     let mut resolved = HashMap::new();
     let entries = collect_template_font_entries(template_xml);
     if entries.is_empty() {
@@ -2571,7 +2574,7 @@ fn resolve_template_fonts(template_xml: &str, pdf_bytes: &[u8]) -> HashMap<Strin
 /// and `resolved_descender` fields on the node's `FontMetrics`.
 /// This makes `measure_width()` and `line_height_pt()` in the layout engine use
 /// actual font data instead of generic AFM tables.
-fn inject_resolved_metrics(
+pub(crate) fn inject_resolved_metrics(
     tree: &mut xfa_layout_engine::form::FormTree,
     resolved: &HashMap<String, ResolvedFont>,
 ) {

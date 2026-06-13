@@ -49,7 +49,7 @@ use roxmltree::Node;
 use xfa_dom_resolver::data_dom::{DataDom, DataNodeId};
 use xfa_dom_resolver::som::resolve_data_path;
 use xfa_layout_engine::form::{
-    AnchorType, ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId,
+    Access, AnchorType, ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId,
     FormNodeMeta, FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence, RichTextSpan,
     ScriptLanguage,
 };
@@ -2057,10 +2057,16 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
     let style = parse_node_style(elem);
     let (data_bind_ref, data_bind_none) = parse_bind(elem);
     let anchor_type = parse_anchor_type(elem);
+    let access = attr(elem, "access").map(Access::parse);
+    let multiline = parse_multiline(elem);
+    let required = parse_required(elem);
 
     FormNodeMeta {
         xfa_id,
         presence,
+        access,
+        multiline,
+        required,
         page_break_before,
         page_break_after,
         break_target,
@@ -2274,6 +2280,26 @@ fn parse_items_lists(elem: Node<'_, '_>) -> (Vec<String>, Vec<String>) {
             }
         }
     }
+}
+
+/// XFA 3.3 §6.1 — a field is multiline when its `<ui><textEdit>` declares
+/// `multiLine="1"` (or the non-canonical `"true"` some producers emit).
+fn parse_multiline(elem: Node<'_, '_>) -> bool {
+    let Some(ui) = find_first_child_by_name(elem, "ui") else {
+        return false;
+    };
+    let Some(te) = find_first_child_by_name(ui, "textEdit") else {
+        return false;
+    };
+    matches!(attr(te, "multiLine"), Some("1") | Some("true"))
+}
+
+/// XFA 3.3 §6.3 — `<validate nullTest="error">` marks a mandatory field.
+fn parse_required(elem: Node<'_, '_>) -> bool {
+    find_first_child_by_name(elem, "validate")
+        .and_then(|v| attr(v, "nullTest"))
+        .map(|s| s == "error")
+        .unwrap_or(false)
 }
 
 fn detect_field_kind(elem: Node<'_, '_>) -> FieldKind {
