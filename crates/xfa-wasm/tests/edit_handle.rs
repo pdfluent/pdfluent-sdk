@@ -296,6 +296,51 @@ fn invalid_json_for_set_form_fields_errors() {
     assert!(editor.set_form_fields("{ not json }").is_err());
 }
 
+// Multi-select list box fixture: one "languages" field, /Opt ["EN","NL","DE","FR"].
+static MULTISELECT_PDF: &[u8] =
+    include_bytes!("../../../tests/corpus-mini/acroform-multiselect.pdf");
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn set_multi_select_selects_and_persists() {
+    let mut editor = PdfDocMut::open(MULTISELECT_PDF).expect("open");
+    editor
+        .set_multi_select("languages", vec!["FR".to_string(), "EN".to_string()])
+        .expect("set_multi_select");
+    let bytes = editor.save().expect("save");
+    // Reopen the saved bytes and confirm the field carries an array /V.
+    let doc = lopdf::Document::load_mem(&bytes).expect("reload");
+    let af = match doc.catalog().unwrap().get(b"AcroForm").unwrap() {
+        lopdf::Object::Reference(id) => doc.get_object(*id).unwrap().as_dict().unwrap(),
+        lopdf::Object::Dictionary(d) => d,
+        _ => panic!("acroform"),
+    };
+    let field_id = match &af.get(b"Fields").unwrap().as_array().unwrap()[0] {
+        lopdf::Object::Reference(id) => *id,
+        _ => panic!("field ref"),
+    };
+    let fld = doc.get_object(field_id).unwrap().as_dict().unwrap();
+    let v: Vec<String> = match fld.get(b"V").unwrap() {
+        lopdf::Object::Array(a) => a
+            .iter()
+            .filter_map(|o| lopdf::decode_text_string(o).ok())
+            .collect(),
+        _ => panic!("/V array"),
+    };
+    assert_eq!(v, vec!["FR".to_string(), "EN".to_string()]);
+}
+
+// JsError construction only works under wasm32, so the error-path assertion
+// is wasm-gated (matching the other `*_errors` tests in this file).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen_test::wasm_bindgen_test]
+fn set_multi_select_rejects_unknown_option() {
+    let mut editor = PdfDocMut::open(MULTISELECT_PDF).expect("open");
+    assert!(editor
+        .set_multi_select("languages", vec!["KL".to_string()])
+        .is_err());
+}
+
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen_test::wasm_bindgen_test]
 fn empty_redact_search_query_errors() {

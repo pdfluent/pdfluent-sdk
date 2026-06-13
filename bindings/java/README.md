@@ -145,4 +145,27 @@ The `PDFLUENT_LICENSE_KEY` environment variable is honoured automatically.
 | `getMetadata(String)` | Get metadata value |
 | `getBookmarkCount()` | Number of bookmarks |
 | `searchText(String)` | Search across all pages |
+| `save(Path)` | Write the document (incl. form mutations) to a file |
+| `getFormFields()` | All AcroForm fields → `List<FormField>` |
+| `setFormField(String, String)` | Fill a field (text, checkbox, radio, or choice); keeps `/V`, `/AS`, `/AP` consistent |
+| `setMultiSelect(String, String[])` | Select multiple options on a multi-select list box (writes `/V` array + sorted `/I`) |
 | `close()` | Free native resources |
+
+### Forms
+
+```java
+try (PdfluentDocument doc = PdfluentDocument.open(Files.readAllBytes(path))) {
+    for (FormField f : doc.getFormFields()) {
+        System.out.println(f.name + " [" + f.fieldType + "] = " + f.value);
+    }
+    doc.setFormField("Address.Street", "Damrak 1");      // text
+    doc.setFormField("Agree", "Yes");                     // checkbox on-state
+    doc.setMultiSelect("Languages", new String[] {"EN", "NL"}); // multi-select
+    doc.save(Path.of("filled.pdf"));
+}
+```
+
+`setFormField` detects the field type from `/FT` and applies the value as
+text, a radio export name, a choice option, or a bool-ish checkbox state.
+Hierarchical names (`"parent.child"`) are resolved through `/Kids`. Read-only
+fields throw `PdfluentException`.

@@ -6,6 +6,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — acroform/sdk-closure — 2026-06-13
+
+### Added
+
+- **`PdfFormMut::set_multi_select(name, &[&str])`** — fill a multi-select list
+  box. Writes `/V` as an array of text strings and rebuilds `/I` (the sorted
+  selected-index cache) to match Adobe Acrobat. Pass an empty slice to clear.
+  Completes AcroForm field-type coverage on the facade (the last unreachable
+  type, previously only callable via `pdf_forms::apply_choice_multi`).
+- Multi-select fill is now reachable from **every** language binding:
+  `setMultiSelect` (Node, Java, WASM `PdfDocMut`) and `set_form_field_multi`
+  (Python).
+- **Canonical Java binding (`com.pdfluent.PdfluentDocument`) gains AcroForm
+  support**: `getFormFields()`, `setFormField()`, `setMultiSelect()`, `save()`,
+  and a `FormField` value class. These JNI entry points existed but were never
+  declared on the canonical class; Java form fill is now wired end-to-end
+  (fill → save → reopen verified via JUnit).
+
+### Documentation
+
+- New [`docs/acroform-support-contract.md`](../../docs/acroform-support-contract.md)
+  — the exact AcroForm support contract (field types, writeback behaviour,
+  guarantees, exclusions, per-surface availability).
+
 ## [Unreleased] — acroform/sdk-foundation — 2026-06-12
 
 ### Added

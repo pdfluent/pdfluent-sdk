@@ -405,12 +405,17 @@ pub fn apply_field_value(
 
 /// Set multiple selected values on a multi-select list box (`/Ff` bit 22).
 ///
-/// Writes `/V` as an array of text strings and removes the stale `/I` index
-/// cache. Appearance regeneration is left to the viewer via `NeedAppearances`
-/// because per-option highlight rendering is viewer-native.
+/// Writes `/V` as an array of text strings and rebuilds `/I` as the sorted,
+/// de-duplicated zero-based indices of the selected values within `/Opt`
+/// (PDF 32000-1 §12.7.4.4 — Acrobat writes both, and a consistent `/I`
+/// drives correct visual selection in viewers that honour it, disambiguating
+/// duplicate display strings). Per-option highlight appearance is viewer-native,
+/// so `/NeedAppearances` is set rather than synthesising an `/AP`.
 ///
 /// Rejects read-only fields, non-choice fields, single-select list boxes, and
-/// (for non-editable fields) values absent from `/Opt`.
+/// (for non-editable fields) values absent from `/Opt`. Passing an empty
+/// `values` slice clears the selection (`/V` becomes an empty array and `/I`
+/// is removed).
 pub fn apply_choice_multi(
     doc: &mut Document,
     name: &str,
@@ -449,15 +454,17 @@ pub fn apply_choice_multi(
         });
     }
 
-    // Validate all values against /Opt for non-editable list boxes.
+    // Resolve /Opt once: it validates non-editable selections and rebuilds /I.
+    let options = {
+        let d = field_dict(doc, &located)?;
+        choice_options(doc, d)
+    };
     let editable = flags & 0x40000 != 0;
     if !editable {
-        let options = {
-            let d = field_dict(doc, &located)?;
-            choice_options(doc, d)
-        };
         for v in values {
-            let known = options.iter().any(|(export, display)| export == v || display == v);
+            let known = options
+                .iter()
+                .any(|(export, display)| export == v || display == v);
             if !known {
                 return Err(WritebackError::InvalidOption {
                     name: name.to_string(),
@@ -470,11 +477,34 @@ pub fn apply_choice_multi(
     // Write /V as an array of text strings.
     let v_obj = Object::Array(values.iter().map(|s| lopdf::text_string(s)).collect());
     set_field_v(doc, located.id, v_obj)?;
-    // Remove stale /I (selected-index cache).
+
+    // Rebuild /I as the sorted, de-duplicated zero-based indices into /Opt of
+    // the selected values. Values not present in /Opt (free-text entries on an
+    // editable list box) contribute no index and live in /V only.
+    let mut indices: Vec<i64> = values
+        .iter()
+        .filter_map(|v| {
+            options
+                .iter()
+                .position(|(export, display)| export == v || display == v)
+                .map(|i| i as i64)
+        })
+        .collect();
+    indices.sort_unstable();
+    indices.dedup();
     if let Ok(Object::Dictionary(d)) = doc.get_object_mut(located.id) {
-        d.remove(b"I");
+        if indices.is_empty() {
+            // No resolvable indices — drop the stale cache so it can't
+            // contradict /V.
+            d.remove(b"I");
+        } else {
+            d.set(
+                b"I".to_vec(),
+                Object::Array(indices.into_iter().map(Object::Integer).collect()),
+            );
+        }
     }
-    // Multi-select appearance is viewer-native; delegate via NeedAppearances.
+    // Per-option highlight appearance is viewer-native; delegate via NeedAppearances.
     set_need_appearances(doc, true)?;
 
     Ok(WriteOutcome {

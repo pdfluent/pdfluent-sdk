@@ -2,6 +2,28 @@
 
 All notable changes are documented here.
 
+## [acroform/sdk-closure] — 2026-06-13
+
+### Changed
+
+- `apply_choice_multi(doc, name, &[String])` now **rebuilds `/I`** as the
+  sorted, de-duplicated zero-based `/Opt` indices of the selection, matching
+  what Adobe Acrobat produces (previously `/I` was only removed). Handles
+  export/display option pairs, editable free-text entries (kept in `/V`, no
+  index), and clearing (empty slice → empty `/V`, `/I` removed).
+
+### Tests
+
+- `tests/corpus_gate.rs` — in-CI AcroForm corpus gate: fill → save → reopen →
+  verify for every support-contract category (pure text, multiline+comb,
+  checkbox, radio, combo, single + multi-select list box, non-ASCII WinAnsi +
+  UTF-16BE fallback, `/NeedAppearances` repair, signature reject, static-XFA
+  shell, hierarchical names, read-only reject).
+- `tests/common/acroform_fixtures.rs` — shared synthetic fixtures; consumed by
+  the gate, the `gen_acroform_corpus` / `fill_acroform_corpus` examples, and
+  the language-binding tests.
+- 7 new `apply_choice_multi` round-trip tests in `tests/writeback_roundtrip.rs`.
+
 ## [acroform/sdk-foundation] — 2026-06-12
 
 ### Added

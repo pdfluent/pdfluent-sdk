@@ -8,7 +8,7 @@ use lopdf::Document as LopdfDocument;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use pdf_engine::{PdfDocument as RustDocument, RenderOptions, RenderedPage, ThumbnailOptions};
-use pdf_forms::{apply_field_value, WriteOutcome, WriteValue, WritebackError};
+use pdf_forms::{apply_choice_multi, apply_field_value, WriteOutcome, WriteValue, WritebackError};
 use std::sync::{Arc, Mutex};
 
 /// Apply a string value with type-aware dispatch, mirroring the CLI's
@@ -669,6 +669,24 @@ impl PdfDocument {
         if let Some(fe) = &self.form_engine {
             fe.set_value(&name, &value)?;
         }
+        self.rebuild_inner()
+    }
+
+    /// Set multiple selected values on a multi-select list box.
+    ///
+    /// Routes through [`pdf_forms::apply_choice_multi`]: writes `/V` as an
+    /// array of text strings and rebuilds `/I` (the sorted selected-index
+    /// cache) to match what Adobe Acrobat produces. Pass an empty array to
+    /// clear the selection. The field must be a multi-select list box
+    /// (`/Ff` MultiSelect flag); for non-editable list boxes every value must
+    /// be one of the field's `/Opt` options.
+    #[napi]
+    pub fn set_multi_select(&mut self, name: String, values: Vec<String>) -> Result<()> {
+        self.with_doc_mut(|doc| {
+            apply_choice_multi(doc, &name, &values)
+                .map(|_| ())
+                .map_err(|e| napi::Error::from_reason(format!("setMultiSelect '{name}': {e}")))
+        })?;
         self.rebuild_inner()
     }
 

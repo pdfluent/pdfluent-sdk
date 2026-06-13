@@ -138,6 +138,10 @@ doc.setFieldValue('Address.Street', '123 Main St');
 doc.setFieldValue('Agree', 'On');        // checkbox — pass the on-state name
 doc.setFieldValue('Country', 'NL');      // radio group — pass the export value
 doc.setFieldValue('Category', 'Option2'); // combo/list — pass the option value
+
+// Multi-select list box: pass an array of option values. Writes /V as an
+// array and rebuilds the sorted /I index cache (Acrobat-faithful).
+doc.setMultiSelect('Languages', ['EN', 'NL']);
 doc.save('filled.pdf');
 ```
 

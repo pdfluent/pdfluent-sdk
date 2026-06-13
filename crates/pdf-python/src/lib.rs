@@ -11,8 +11,8 @@ use lopdf::{Document as LopdfDocument, Permissions as LopdfPermissions};
 use pdf_annot::builder::{add_annotation_to_page, AnnotRect, AnnotationBuilder};
 use pdf_annot::Annotation;
 use pdf_forms::{
-    apply_field_value, parse_acroform, FieldType, FieldValue, WriteOutcome, WriteValue,
-    WritebackError,
+    apply_choice_multi, apply_field_value, parse_acroform, FieldType, FieldValue, WriteOutcome,
+    WriteValue, WritebackError,
 };
 use pdf_manip::encrypt::remove_encryption;
 use pdf_redact::{search_and_redact, RedactSearchOptions};
@@ -550,6 +550,48 @@ impl PyDocument {
             Err(WritebackError::FieldNotFound(_)) => Ok(false),
             Err(e) => Err(PdfluentError::new_err(format!(
                 "set_form_field '{name}': {e}"
+            ))),
+        }
+    }
+
+    /// Set multiple selected values on a multi-select list box.
+    ///
+    /// Routes through ``pdf_forms::apply_choice_multi``: writes ``/V`` as an
+    /// array of text strings and rebuilds ``/I`` (the sorted selected-index
+    /// cache) to match what Adobe Acrobat produces. Pass an empty list to
+    /// clear the selection.
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     Fully-qualified field name of a multi-select list box
+    ///     (``/Ff`` MultiSelect flag, bit 22).
+    /// values : list[str]
+    ///     Export (or display) values of the options to select. For a
+    ///     non-editable list box every value must appear in ``/Opt``.
+    ///
+    /// Returns
+    /// -------
+    /// bool
+    ///     ``True`` if the field was found and updated; ``False`` when the
+    ///     document has no form or no field matches ``name``.
+    ///
+    /// Raises
+    /// ------
+    /// PdfluentError
+    ///     If the field is not a multi-select list box, is read-only, or any
+    ///     value is not a valid option (non-editable list boxes).
+    fn set_form_field_multi(&self, name: &str, values: Vec<String>) -> PyResult<bool> {
+        if parse_acroform(self.inner.pdf()).is_none() {
+            return Ok(false);
+        }
+        let mut guard = self.init_lopdf()?;
+        let doc = guard.as_mut().unwrap();
+        match apply_choice_multi(doc, name, &values) {
+            Ok(_) => Ok(true),
+            Err(WritebackError::FieldNotFound(_)) => Ok(false),
+            Err(e) => Err(PdfluentError::new_err(format!(
+                "set_form_field_multi '{name}': {e}"
             ))),
         }
     }
