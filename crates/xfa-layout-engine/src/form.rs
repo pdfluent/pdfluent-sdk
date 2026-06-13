@@ -733,6 +733,11 @@ pub struct FormNodeStyle {
     pub caption_placement: Option<String>,
     /// Caption reserve width/height in points.
     pub caption_reserve: Option<f64>,
+    /// Caption's own typeface (XFA `<caption><font typeface>`), independent of
+    /// the field's font. When set, the caption label is drawn in this face.
+    pub caption_font_family: Option<String>,
+    /// Caption's own font size in points (XFA `<caption><font size>`).
+    pub caption_font_size: Option<f64>,
     /// CheckButton mark style (XFA `<checkButton mark="...">`).
     /// Values: "check", "circle", "cross", "diamond", "square", "star".
     pub check_button_mark: Option<String>,
@@ -787,6 +792,8 @@ impl Default for FormNodeStyle {
             caption_text: None,
             caption_placement: None,
             caption_reserve: None,
+            caption_font_family: None,
+            caption_font_size: None,
             check_button_mark: None,
             check_button_on_value: None,
             check_button_off_value: None,
