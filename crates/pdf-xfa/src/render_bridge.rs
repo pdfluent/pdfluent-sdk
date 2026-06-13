@@ -1404,12 +1404,22 @@ fn build_font_metrics(
     metrics
 }
 
+/// Whether a caption's own `<font>` styles its label (XFA 3.3 §7.4). Default-ON;
+/// opt out with `XFA_CAPTION_OWN_FONT=0|off|false` to restore the legacy
+/// behaviour where the caption borrowed the field's font.
+fn caption_own_font_enabled() -> bool {
+    !matches!(
+        std::env::var("XFA_CAPTION_OWN_FONT").as_deref(),
+        Ok("0") | Ok("off") | Ok("false") | Ok("OFF") | Ok("FALSE")
+    )
+}
+
 fn caption_font_for_content(
     content: &LayoutContent,
     node_style: &FormNodeStyle,
     config: &XfaRenderConfig,
 ) -> (f64, FontFamily) {
-    match content {
+    let (field_size, field_family) = match content {
         LayoutContent::Field {
             font_size,
             font_family,
@@ -1424,7 +1434,18 @@ fn caption_font_for_content(
             node_style.font_size.unwrap_or(config.default_font_size),
             FontFamily::SansSerif,
         ),
+    };
+    // The caption's own typeface wins over the field's — otherwise an Arial
+    // caption on a Times field is classified Serif and renders serif.
+    if caption_own_font_enabled() {
+        if let Some(cap_face) = &node_style.caption_font_family {
+            return (
+                node_style.caption_font_size.unwrap_or(field_size),
+                classify_font_family(cap_face),
+            );
+        }
     }
+    (field_size, field_family)
 }
 
 fn effective_caption_reserve(
@@ -1506,9 +1527,23 @@ fn render_caption(
     } else {
         config.default_font_size
     };
-    let metrics = build_font_metrics(fs, font_family, node_style, config);
-    let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
-    let idh_metrics = lookup_font_metrics(node_style, config);
+    // Resolve the caption's font from ITS OWN typeface when specified, so it is
+    // not drawn in the field's face (the field's `<font>` styles the value, not
+    // the caption). Layout/placement still uses the field's node_style.
+    let cap_owned;
+    let cap_style: &FormNodeStyle = match &node_style.caption_font_family {
+        Some(cf) if caption_own_font_enabled() => {
+            cap_owned = FormNodeStyle {
+                font_family: Some(cf.clone()),
+                ..node_style.clone()
+            };
+            &cap_owned
+        }
+        _ => node_style,
+    };
+    let metrics = build_font_metrics(fs, font_family, cap_style, config);
+    let font_ref = resolve_font_ref(&config.font_map, cap_style, font_family);
+    let idh_metrics = lookup_font_metrics(cap_style, config);
 
     // Determine the caption bounding box.
     let (cap_x, cap_y, cap_w, cap_h) = match caption_placement {
@@ -3694,6 +3729,62 @@ mod tests {
             s.contains("(Click) Tj"),
             "button caption should render as label: {s}"
         );
+    }
+
+    #[test]
+    fn caption_uses_its_own_font_not_the_field_font() {
+        // Field font = Times New Roman (serif); caption font = Arial (sans).
+        // The caption label must bind the Arial resource, otherwise it renders
+        // serif (the dominant residual defect family on dense gov forms).
+        let mk = || {
+            let mut cfg = XfaRenderConfig::default();
+            let mut fm = HashMap::new();
+            fm.insert("Times New Roman".to_string(), "/Fserif".to_string());
+            fm.insert("Arial".to_string(), "/Fsans".to_string());
+            cfg.font_map = Arc::new(fm);
+            let style = FormNodeStyle {
+                font_family: Some("Times New Roman".to_string()),
+                caption_text: Some("Name".to_string()),
+                caption_placement: Some("top".to_string()),
+                caption_reserve: Some(12.0),
+                caption_font_family: Some("Arial".to_string()),
+                ..Default::default()
+            };
+            (make_styled_field(10.0, 10.0, 200.0, 30.0, "", style), cfg)
+        };
+        // resource of the Tf governing the "(Name)" caption draw
+        let font_of_name = |s: &str| -> String {
+            let i = s.find("(Name) Tj").expect("caption must render");
+            let pre = &s[..i];
+            let tf = pre.rfind(" Tf").expect("a Tf before the caption");
+            pre[..tf]
+                .rsplit('/')
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .to_string()
+        };
+
+        // Default-ON: caption binds the Arial (sans) resource.
+        std::env::remove_var("XFA_CAPTION_OWN_FONT");
+        let (node, cfg) = mk();
+        assert_eq!(
+            font_of_name(&styled_overlay_str_with_config(node, cfg)),
+            "Fsans",
+            "caption must render in its own Arial face"
+        );
+
+        // Opt-out restores the legacy field-font behaviour (serif).
+        std::env::set_var("XFA_CAPTION_OWN_FONT", "0");
+        let (node, cfg) = mk();
+        assert_eq!(
+            font_of_name(&styled_overlay_str_with_config(node, cfg)),
+            "Fserif",
+            "opt-out must restore the field font for the caption"
+        );
+        std::env::remove_var("XFA_CAPTION_OWN_FONT");
     }
 
     #[test]

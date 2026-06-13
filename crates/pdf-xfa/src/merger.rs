@@ -1863,10 +1863,22 @@ fn parse_caption(elem: Node<'_, '_>) -> Option<Caption> {
     let reserve = attr(cap_elem, "reserve")
         .and_then(Measurement::parse)
         .map(|m| m.to_points());
+    // The caption styles its own label text via its `<font>` child, independent
+    // of the field's `<font>`. Capture typeface/size so the caption is not drawn
+    // in the field's face (XFA 3.3 §7.4 / §6.5).
+    let cap_font = find_first_child_by_name(cap_elem, "font");
+    let font_family = cap_font
+        .and_then(|f| attr(f, "typeface"))
+        .map(|s| s.to_string());
+    let font_size = cap_font
+        .and_then(|f| attr(f, "size"))
+        .and_then(parse_font_size);
     Some(Caption {
         placement,
         reserve,
         text,
+        font_family,
+        font_size,
     })
 }
 
@@ -2607,6 +2619,8 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
             .to_string(),
         );
         style.caption_reserve = cap.reserve;
+        style.caption_font_family = cap.font_family;
+        style.caption_font_size = cap.font_size;
     }
 
     style
