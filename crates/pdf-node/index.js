@@ -316,13 +316,28 @@ module.exports.PdfDocument = PdfDocument
 module.exports.openPdf = openPdf
 module.exports.mergePdfs = mergePdfs
 module.exports.validatePdfa = validatePdfa
+module.exports.activate = activate
+module.exports.setLicenseKey = setLicenseKey
+module.exports.setLicensePublicKey = setLicensePublicKey
+module.exports.setLicensePayload = setLicensePayload
 module.exports.status = status
 module.exports.licenseStatus = licenseStatus
 module.exports.PdfPage = PdfPage
 
-// ------------------------------------------------------------------
-// Typed error classes
-// ------------------------------------------------------------------
+// @pdfluent-typed-error-layer
+// ---------------------------------------------------------------------------
+// Hand-maintained typed-error layer for the Node binding.
+//
+// SOURCE OF TRUTH: this file. `napi build` regenerates `index.js` from the Rust
+// source and does NOT know about these classes/wrappers, so `scripts/build/
+// postbuild.cjs` appends this block to the generated `index.js` after every
+// build (idempotent — keyed on the marker comment on the first line above).
+// Do NOT edit the copy inside `index.js`; edit THIS file.
+//
+// It relies on `nativeBinding` being in scope (the module-level const that the
+// napi-generated `index.js` defines) and overrides the raw license exports with
+// versions that parse the Rust JSON error payload into typed errors.
+// ---------------------------------------------------------------------------
 
 class PdfluentError extends Error {
   constructor(message, opts) {
@@ -346,11 +361,8 @@ class PdfluentLicenseError extends PdfluentError {
 module.exports.PdfluentError = PdfluentError
 module.exports.PdfluentLicenseError = PdfluentLicenseError
 
-// ------------------------------------------------------------------
-// License function wrappers — parse the structured JSON payload that
-// the Rust layer embeds in error.message and re-throw as typed errors.
-// ------------------------------------------------------------------
-
+// License function wrappers — parse the structured JSON payload that the Rust
+// layer embeds in error.message and re-throw as typed errors.
 function _unwrapLicenseError(err, defaultOperation) {
   let parsed = null
   try { parsed = JSON.parse(err.message) } catch (_) {}

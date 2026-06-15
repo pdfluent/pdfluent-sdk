@@ -79,13 +79,13 @@ if (PdfDocument) {
 
   test('5. read form fields', () => {
     const doc = loadPdf(ACROFORM_PDF);
-    const fields = doc.formFields();
+    const fields = doc.getFormFields();
     expect(Array.isArray(fields)).toBe(true);
   });
 
   test('5b. form field structure', () => {
     const doc = loadPdf(ACROFORM_PDF);
-    const fields = doc.formFields();
+    const fields = doc.getFormFields();
     if (fields.length > 0) {
       const f = fields[0];
       expect(typeof f.name).toBe('string');
@@ -96,20 +96,20 @@ if (PdfDocument) {
 
   // ── 6. Form field write + save ────────────────────────────────────────────
   //
-  // setFieldValue routes through the single SDK writeback chain
+  // setFormField routes through the single SDK writeback chain
   // (pdf_forms::apply_field_value): correct /V encoding (ASCII literal else
   // UTF-16BE+BOM), per-widget /AS sync, and /AP regeneration — replacing
   // the old raw-bytes /V write (mojibake on non-ASCII).
 
   test('6. set form field and save round-trips non-ASCII', () => {
     const doc = loadPdf(ACROFORM_PDF);
-    const fields = doc.formFields();
+    const fields = doc.getFormFields();
     const textField = fields.find(f => f.fieldType === 'text');
     if (!textField) {
       // no text field in fixture — skip gracefully
       return;
     }
-    expect(() => doc.setFieldValue(textField.name, 'Café Test')).not.toThrow();
+    expect(() => doc.setFormField(textField.name, 'Café Test')).not.toThrow();
     // The in-memory engine view reflects the write immediately.
     expect(doc.getFieldValue(textField.name)).toBe('Café Test');
     // Save and reload: the value must round-trip without mojibake.
@@ -117,7 +117,7 @@ if (PdfDocument) {
     doc.save(out);
     expect(fs.existsSync(out)).toBe(true);
     const reloaded = PdfDocument.open(fs.readFileSync(out));
-    const after = reloaded.formFields().find(f => f.name === textField.name);
+    const after = reloaded.getFormFields().find(f => f.name === textField.name);
     expect(after).toBeDefined();
     expect(after.value).toBe('Café Test');
     fs.unlinkSync(out);

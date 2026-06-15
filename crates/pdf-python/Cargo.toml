@@ -1,11 +1,10 @@
 [package]
 name = "pdf-python"
-version = "1.0.0-beta.8"
+version = "1.0.0-beta.14"
 edition = "2021"
 # publish = false: Python bindings are distributed via PyPI/maturin, not crates.io.
-# Also has stale MIT license — fix license-file before enabling publish.
 publish = false
-license-file = "LICENSE"
+license-file = "LICENSE"  # PDFluent Commercial License (see ./LICENSE)
 description = "Python bindings for the PDF engine via PyO3."
 
 [lib]
@@ -15,14 +14,14 @@ crate-type = ["cdylib"]
 [workspace]
 
 [dependencies]
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.9" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.9" }
-pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.8" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.9" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.14" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.14" }
+pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.14" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.14" }
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.4" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.9" }
-pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.9" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.8" }
-pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.9" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.14" }
+pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.14" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.14" }
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.14" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
 pyo3 = { version = "0.24", features = ["extension-module"] }

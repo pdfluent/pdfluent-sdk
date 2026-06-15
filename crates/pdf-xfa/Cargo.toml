@@ -1,6 +1,6 @@
 [package]
 name = "pdf-xfa"
-version = "1.0.0-beta.9"
+version = "1.0.0-beta.14"
 edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
@@ -12,10 +12,10 @@ documentation = "https://pdfluent.com/docs"
 keywords = ["pdf", "xfa", "forms", "adobe"]
 categories = ["rendering"]
 [dependencies]
-xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.8" }
-formcalc-interpreter = { path = "../formcalc-interpreter", version = "=1.0.0-beta.8" }
-xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.8" }
-xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.8" }
+xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.14" }
+formcalc-interpreter = { path = "../formcalc-interpreter", version = "=1.0.0-beta.14" }
+xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.14" }
+xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.14" }
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.4" }
 pdf-font = { path = "../pdf-font", version = "=1.0.0-beta.4" }
 pdf-interpret = { path = "../pdf-interpret", version = "=0.5.6" }

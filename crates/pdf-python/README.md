@@ -37,7 +37,7 @@ for page in doc:
 doc = Document("form.pdf")
 doc.set_form_field("Name", "Jane Doe")
 # Multi-select list box: select several options at once
-doc.set_form_field_multi("Languages", ["EN", "NL"])
+doc.set_multi_select("Languages", ["EN", "NL"])
 doc.save("form_filled.pdf")
 
 # Search-and-redact
@@ -75,7 +75,7 @@ decrypt_pdf("sensitive_enc.pdf", "sensitive_dec.pdf", password="s3cr3t")
 | **Render** | Pages to RGBA pixels, PIL Images, or NumPy arrays at any DPI |
 | **Text extraction** | Plain text or structured `TextBlock`/`TextSpan` with position |
 | **Text search** | Find pages containing a query string |
-| **Forms (AcroForm)** | Read and fill text, checkbox, radio, combo/list fields; **multi-select list boxes** (`set_form_field_multi`); hierarchical names; appearance-stream regeneration |
+| **Forms (AcroForm)** | Read and fill text, checkbox, radio, combo/list fields; **multi-select list boxes** (`set_multi_select`); hierarchical names; appearance-stream regeneration |
 | **Annotations** | Read existing annotations; add highlights and free-text notes |
 | **Redaction** | Search-and-redact: black-box all occurrences of a string |
 | **Encryption** | AES-256 (PDF 2.0) encrypt/decrypt with user + owner passwords |

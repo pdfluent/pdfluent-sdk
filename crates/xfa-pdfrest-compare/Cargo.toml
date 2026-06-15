@@ -10,8 +10,8 @@ license = "MIT"
 publish = false
 
 [dependencies]
-pdf-xfa = { path = "../pdf-xfa", version = "=1.0.0-beta.9" }
-pdf-engine = { path = "../pdf-engine", features = ["xfa"], version = "=1.0.0-beta.9" }
+pdf-xfa = { path = "../pdf-xfa", version = "=1.0.0-beta.14" }
+pdf-engine = { path = "../pdf-engine", features = ["xfa"], version = "=1.0.0-beta.14" }
 lopdf = "0.34"
 rusqlite = { version = "0.31", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }

@@ -354,7 +354,7 @@ class Document:
         """
         ...
 
-    def set_form_field_multi(self, name: str, values: List[str]) -> bool:
+    def set_multi_select(self, name: str, values: List[str]) -> bool:
         """Select multiple options on a multi-select list box.
 
         Writes ``/V`` as an array of text strings and rebuilds ``/I`` (the
@@ -373,6 +373,16 @@ class Document:
         -------
         bool
             ``True`` if the field was found and updated.
+        """
+        ...
+
+    def set_form_field_multi(self, name: str, values: List[str]) -> bool:
+        """Deprecated alias for :meth:`set_multi_select`.
+
+        .. deprecated::
+            Use :meth:`set_multi_select` — the canonical cross-language name
+            (``setMultiSelect`` in JS/Java/WASM). Kept for backward
+            compatibility; will be removed in 1.0.0.
         """
         ...
 
