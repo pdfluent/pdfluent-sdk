@@ -10,7 +10,7 @@
 
     <!-- NuGet package metadata -->
     <PackageId>PDFluent</PackageId>
-    <Version>1.0.0-beta.8</Version>
+    <Version>1.0.0-beta.14</Version>
     <Authors>Innovation Trigger BV</Authors>
     <Company>Innovation Trigger BV</Company>
     <Product>PDFluent</Product>
