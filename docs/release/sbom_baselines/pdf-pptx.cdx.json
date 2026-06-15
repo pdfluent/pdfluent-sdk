@@ -61,7 +61,7 @@
     },
     {
       "author": "Laurenz Stampfl <laurenz.stampfl@gmail.com>",
-      "bom-ref": "path://hayro-jpeg2000#pdfluent-jpeg2000@0.3.3",
+      "bom-ref": "path://hayro-jpeg2000#pdfluent-jpeg2000@0.3.5",
       "description": "A memory-safe, pure-Rust JPEG 2000 decoder.",
       "externalReferences": [
         {
@@ -83,14 +83,14 @@
         }
       ],
       "name": "pdfluent-jpeg2000",
-      "purl": "pkg:cargo/pdfluent-jpeg2000@0.3.3?download_url=file://../hayro-jpeg2000",
+      "purl": "pkg:cargo/pdfluent-jpeg2000@0.3.5?download_url=file://../hayro-jpeg2000",
       "scope": "required",
       "type": "library",
-      "version": "0.3.3"
+      "version": "0.3.5"
     },
     {
       "author": "Junfeng Liu <china.liujunfeng@gmail.com>, Emulator <emulator@hotmail.it>",
-      "bom-ref": "path://lopdf#pdfluent-lopdf@0.39.2",
+      "bom-ref": "path://lopdf#pdfluent-lopdf@0.39.4",
       "description": "A Rust library for PDF document manipulation.",
       "externalReferences": [
         {
@@ -112,13 +112,13 @@
         }
       ],
       "name": "pdfluent-lopdf",
-      "purl": "pkg:cargo/pdfluent-lopdf@0.39.2?download_url=file://../lopdf",
+      "purl": "pkg:cargo/pdfluent-lopdf@0.39.4?download_url=file://../lopdf",
       "scope": "required",
       "type": "library",
-      "version": "0.39.2"
+      "version": "0.39.4"
     },
     {
-      "bom-ref": "path://pdf-extract#pdfluent-extract@1.0.0-beta.8",
+      "bom-ref": "path://pdf-extract#pdfluent-extract@1.0.0-beta.14",
       "description": "PDF content extraction: images, text with positions, and full-text search",
       "externalReferences": [
         {
@@ -146,10 +146,10 @@
         }
       ],
       "name": "pdfluent-extract",
-      "purl": "pkg:cargo/pdfluent-extract@1.0.0-beta.8?download_url=file://../pdf-extract",
+      "purl": "pkg:cargo/pdfluent-extract@1.0.0-beta.14?download_url=file://../pdf-extract",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.8"
+      "version": "1.0.0-beta.14"
     },
     {
       "author": "Jonas Schievink <jonasschievink@gmail.com>, oyvindln <oyvindln@users.noreply.github.com>",
@@ -5879,7 +5879,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#image@0.25.10",
         "registry+https://github.com/rust-lang/crates.io-index#moxcms@0.7.11"
       ],
-      "ref": "path://hayro-jpeg2000#pdfluent-jpeg2000@0.3.3"
+      "ref": "path://hayro-jpeg2000#pdfluent-jpeg2000@0.3.5"
     },
     {
       "dependsOn": [
@@ -5901,7 +5901,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#nom_locate@5.0.0",
         "path://hayro-ccitt#pdfluent-ccitt@0.2.2",
         "path://hayro-jbig2#pdfluent-jbig2@0.2.3",
-        "path://hayro-jpeg2000#pdfluent-jpeg2000@0.3.3",
+        "path://hayro-jpeg2000#pdfluent-jpeg2000@0.3.5",
         "registry+https://github.com/rust-lang/crates.io-index#rand@0.9.4",
         "registry+https://github.com/rust-lang/crates.io-index#rangemap@1.7.1",
         "registry+https://github.com/rust-lang/crates.io-index#rayon@1.12.0",
@@ -5912,26 +5912,26 @@
         "registry+https://github.com/rust-lang/crates.io-index#ttf-parser@0.25.1",
         "registry+https://github.com/rust-lang/crates.io-index#weezl@0.1.12"
       ],
-      "ref": "path://lopdf#pdfluent-lopdf@0.39.2"
+      "ref": "path://lopdf#pdfluent-lopdf@0.39.4"
     },
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#flate2@1.1.9",
-        "path://lopdf#pdfluent-lopdf@0.39.2",
+        "path://lopdf#pdfluent-lopdf@0.39.4",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
         "registry+https://github.com/rust-lang/crates.io-index#unicode-normalization@0.1.25"
       ],
-      "ref": "path://pdf-extract#pdfluent-extract@1.0.0-beta.8"
+      "ref": "path://pdf-extract#pdfluent-extract@1.0.0-beta.14"
     },
     {
       "dependsOn": [
-        "path://pdf-extract#pdfluent-extract@1.0.0-beta.8",
-        "path://lopdf#pdfluent-lopdf@0.39.2",
+        "path://pdf-extract#pdfluent-extract@1.0.0-beta.14",
+        "path://lopdf#pdfluent-lopdf@0.39.4",
         "registry+https://github.com/rust-lang/crates.io-index#quick-xml@0.37.5",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
         "registry+https://github.com/rust-lang/crates.io-index#zip@2.4.2"
       ],
-      "ref": "path://pdf-pptx#1.0.0-beta.8"
+      "ref": "path://pdf-pptx#1.0.0-beta.14"
     },
     {
       "dependsOn": [],
@@ -7143,14 +7143,14 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "path://pdf-pptx#1.0.0-beta.8",
+      "bom-ref": "path://pdf-pptx#1.0.0-beta.14",
       "components": [
         {
-          "bom-ref": "path://pdf-pptx#1.0.0-beta.8 bin-target-0",
+          "bom-ref": "path://pdf-pptx#1.0.0-beta.14 bin-target-0",
           "name": "pdf_pptx",
-          "purl": "pkg:cargo/pdf-pptx@1.0.0-beta.8?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/pdf-pptx@1.0.0-beta.14?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "1.0.0-beta.8"
+          "version": "1.0.0-beta.14"
         }
       ],
       "description": "PDF to PowerPoint PPTX conversion",
@@ -7172,10 +7172,10 @@
         }
       ],
       "name": "pdf-pptx",
-      "purl": "pkg:cargo/pdf-pptx@1.0.0-beta.8?download_url=file://.",
+      "purl": "pkg:cargo/pdf-pptx@1.0.0-beta.14?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.8"
+      "version": "1.0.0-beta.14"
     },
     "properties": [
       {
@@ -7183,7 +7183,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-05-28T09:12:33.107607000Z",
+    "timestamp": "2026-06-15T08:48:56.776098761Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -7192,7 +7192,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:65903af4-907d-4097-a912-85242fcc1289",
+  "serialNumber": "urn:uuid:451a1a75-bd42-4828-b686-03e87ab9bbbd",
   "specVersion": "1.3",
   "version": 1
 }

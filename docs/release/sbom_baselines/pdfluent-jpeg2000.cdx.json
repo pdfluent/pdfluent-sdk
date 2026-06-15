@@ -3852,7 +3852,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#image@0.25.10",
         "registry+https://github.com/rust-lang/crates.io-index#moxcms@0.7.11"
       ],
-      "ref": "path://hayro-jpeg2000#pdfluent-jpeg2000@0.3.3"
+      "ref": "path://hayro-jpeg2000#pdfluent-jpeg2000@0.3.5"
     },
     {
       "dependsOn": [],
@@ -4671,14 +4671,14 @@
     ],
     "component": {
       "author": "Laurenz Stampfl <laurenz.stampfl@gmail.com>",
-      "bom-ref": "path://hayro-jpeg2000#pdfluent-jpeg2000@0.3.3",
+      "bom-ref": "path://hayro-jpeg2000#pdfluent-jpeg2000@0.3.5",
       "components": [
         {
-          "bom-ref": "path://hayro-jpeg2000#pdfluent-jpeg2000@0.3.3 bin-target-0",
+          "bom-ref": "path://hayro-jpeg2000#pdfluent-jpeg2000@0.3.5 bin-target-0",
           "name": "pdfluent_jpeg2000",
-          "purl": "pkg:cargo/pdfluent-jpeg2000@0.3.3?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/pdfluent-jpeg2000@0.3.5?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "0.3.3"
+          "version": "0.3.5"
         }
       ],
       "description": "A memory-safe, pure-Rust JPEG 2000 decoder.",
@@ -4702,10 +4702,10 @@
         }
       ],
       "name": "pdfluent-jpeg2000",
-      "purl": "pkg:cargo/pdfluent-jpeg2000@0.3.3?download_url=file://.",
+      "purl": "pkg:cargo/pdfluent-jpeg2000@0.3.5?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "0.3.3"
+      "version": "0.3.5"
     },
     "properties": [
       {
@@ -4713,7 +4713,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-05-28T09:12:32.816031000Z",
+    "timestamp": "2026-06-15T08:48:56.197410056Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -4722,7 +4722,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:b72d114a-33ff-4aa9-9646-3c0d90b57588",
+  "serialNumber": "urn:uuid:b54768fe-c732-4263-b204-7156a3d1ac41",
   "specVersion": "1.3",
   "version": 1
 }

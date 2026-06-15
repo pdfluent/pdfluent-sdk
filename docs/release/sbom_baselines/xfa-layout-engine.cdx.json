@@ -2,7 +2,7 @@
   "bomFormat": "CycloneDX",
   "components": [
     {
-      "bom-ref": "path://formcalc-interpreter#1.0.0-beta.8",
+      "bom-ref": "path://formcalc-interpreter#1.0.0-beta.14",
       "description": "FormCalc expression interpreter for XFA dynamic forms. Experimental \u2014 part of the PDFluent XFA stack, under active development.",
       "externalReferences": [
         {
@@ -30,13 +30,13 @@
         }
       ],
       "name": "formcalc-interpreter",
-      "purl": "pkg:cargo/formcalc-interpreter@1.0.0-beta.8?download_url=file://../formcalc-interpreter",
+      "purl": "pkg:cargo/formcalc-interpreter@1.0.0-beta.14?download_url=file://../formcalc-interpreter",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.8"
+      "version": "1.0.0-beta.14"
     },
     {
-      "bom-ref": "path://xfa-dom-resolver#1.0.0-beta.8",
+      "bom-ref": "path://xfa-dom-resolver#1.0.0-beta.14",
       "description": "XFA template and data DOM with SOM-path resolution. Experimental \u2014 part of the PDFluent XFA stack, under active development.",
       "externalReferences": [
         {
@@ -64,13 +64,13 @@
         }
       ],
       "name": "xfa-dom-resolver",
-      "purl": "pkg:cargo/xfa-dom-resolver@1.0.0-beta.8?download_url=file://../xfa-dom-resolver",
+      "purl": "pkg:cargo/xfa-dom-resolver@1.0.0-beta.14?download_url=file://../xfa-dom-resolver",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.8"
+      "version": "1.0.0-beta.14"
     },
     {
-      "bom-ref": "path://xfa-js-sandboxed#1.0.0-beta.8",
+      "bom-ref": "path://xfa-js-sandboxed#1.0.0-beta.14",
       "description": "Sandboxed QuickJS runtime for XFA JavaScript calculate scripts. Part of the PDFluent XFA stack.",
       "externalReferences": [
         {
@@ -98,10 +98,10 @@
         }
       ],
       "name": "xfa-js-sandboxed",
-      "purl": "pkg:cargo/xfa-js-sandboxed@1.0.0-beta.8?download_url=file://../xfa-js-sandboxed",
+      "purl": "pkg:cargo/xfa-js-sandboxed@1.0.0-beta.14?download_url=file://../xfa-js-sandboxed",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.8"
+      "version": "1.0.0-beta.14"
     },
     {
       "author": "Nick Fitzgerald <fitzgen@gmail.com>",
@@ -1760,33 +1760,33 @@
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
-        "path://xfa-dom-resolver#1.0.0-beta.8"
+        "path://xfa-dom-resolver#1.0.0-beta.14"
       ],
-      "ref": "path://formcalc-interpreter#1.0.0-beta.8"
+      "ref": "path://formcalc-interpreter#1.0.0-beta.14"
     },
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#roxmltree@0.20.0",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://xfa-dom-resolver#1.0.0-beta.8"
+      "ref": "path://xfa-dom-resolver#1.0.0-beta.14"
     },
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#rquickjs@0.8.1",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://xfa-js-sandboxed#1.0.0-beta.8"
+      "ref": "path://xfa-js-sandboxed#1.0.0-beta.14"
     },
     {
       "dependsOn": [
-        "path://formcalc-interpreter#1.0.0-beta.8",
+        "path://formcalc-interpreter#1.0.0-beta.14",
         "registry+https://github.com/rust-lang/crates.io-index#log@0.4.29",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
-        "path://xfa-dom-resolver#1.0.0-beta.8",
-        "path://xfa-js-sandboxed#1.0.0-beta.8"
+        "path://xfa-dom-resolver#1.0.0-beta.14",
+        "path://xfa-js-sandboxed#1.0.0-beta.14"
       ],
-      "ref": "path://xfa-layout-engine#1.0.0-beta.8"
+      "ref": "path://xfa-layout-engine#1.0.0-beta.14"
     },
     {
       "dependsOn": [],
@@ -2118,14 +2118,14 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "path://xfa-layout-engine#1.0.0-beta.8",
+      "bom-ref": "path://xfa-layout-engine#1.0.0-beta.14",
       "components": [
         {
-          "bom-ref": "path://xfa-layout-engine#1.0.0-beta.8 bin-target-0",
+          "bom-ref": "path://xfa-layout-engine#1.0.0-beta.14 bin-target-0",
           "name": "xfa_layout_engine",
-          "purl": "pkg:cargo/xfa-layout-engine@1.0.0-beta.8?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/xfa-layout-engine@1.0.0-beta.14?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "1.0.0-beta.8"
+          "version": "1.0.0-beta.14"
         }
       ],
       "description": "Box-model and pagination layout engine for XFA forms. Experimental \u2014 part of the PDFluent XFA stack, under active development.",
@@ -2155,10 +2155,10 @@
         }
       ],
       "name": "xfa-layout-engine",
-      "purl": "pkg:cargo/xfa-layout-engine@1.0.0-beta.8?download_url=file://.",
+      "purl": "pkg:cargo/xfa-layout-engine@1.0.0-beta.14?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.8"
+      "version": "1.0.0-beta.14"
     },
     "properties": [
       {
@@ -2166,7 +2166,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-05-28T09:12:32.898551000Z",
+    "timestamp": "2026-06-15T08:48:56.357600310Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -2175,7 +2175,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:6a23a66f-f664-417d-b646-829bf9e7c55d",
+  "serialNumber": "urn:uuid:334a18c4-e762-4d74-ad6c-aacb20bc0532",
   "specVersion": "1.3",
   "version": 1
 }
