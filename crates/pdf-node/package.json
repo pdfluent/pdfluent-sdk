@@ -1,6 +1,6 @@
 {
   "name": "@pdfluent/node",
-  "version": "1.0.0-beta.14",
+  "version": "1.0.0-beta.15",
   "description": "Enterprise PDF SDK for Node.js — rendering, text extraction, forms, annotations, redaction, encryption, and PDF/A compliance.",
   "main": "index.js",
   "types": "index.d.ts",
@@ -71,12 +71,12 @@
     "access": "public"
   },
   "optionalDependencies": {
-    "@pdfluent/node-darwin-arm64": "1.0.0-beta.14",
-    "@pdfluent/node-darwin-x64": "1.0.0-beta.14",
-    "@pdfluent/node-linux-arm64-gnu": "1.0.0-beta.14",
-    "@pdfluent/node-linux-x64-gnu": "1.0.0-beta.14",
-    "@pdfluent/node-linux-x64-musl": "1.0.0-beta.14",
-    "@pdfluent/node-win32-x64-msvc": "1.0.0-beta.14"
+    "@pdfluent/node-darwin-arm64": "1.0.0-beta.15",
+    "@pdfluent/node-darwin-x64": "1.0.0-beta.15",
+    "@pdfluent/node-linux-arm64-gnu": "1.0.0-beta.15",
+    "@pdfluent/node-linux-x64-gnu": "1.0.0-beta.15",
+    "@pdfluent/node-linux-x64-musl": "1.0.0-beta.15",
+    "@pdfluent/node-win32-x64-msvc": "1.0.0-beta.15"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0",
