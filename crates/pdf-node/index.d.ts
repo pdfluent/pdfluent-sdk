@@ -347,37 +347,43 @@ export declare class PdfDocument {
   /** Extract structured text blocks from a page. */
   extractTextBlocks(index: number): Array<TextBlockInfo>
   /** Get all form fields in the document. */
+  getFormFields(): Array<FormFieldInfo>
+  /**
+   * Get all form fields in the document.
+   *
+   * @deprecated Use {@link getFormFields} instead — the canonical
+   * cross-language name (snake_case `get_form_fields` in Rust/Python).
+   * Kept for backward compatibility; will be removed in 1.0.0.
+   */
   formFields(): Array<FormFieldInfo>
   /** Get the value of a form field by its fully qualified name. */
   getFieldValue(name: string): string | null
   /**
    * Set the value of a form field by its fully qualified name.
    *
-   * Supports text, checkbox, radio, and choice (combo/list) fields.
-   * Hierarchical names (`"parent.child"`) are resolved through `/Kids`
-   * recursion.
+   * Routes through [`pdf_forms::apply_field_value`] — the single SDK
+   * writeback chain — so `/V` encoding (ASCII literal else UTF-16BE+BOM),
+   * per-widget `/AS` sync, and `/AP` regeneration stay consistent, and
+   * read-only fields are rejected. The change is persisted to the
+   * document — a subsequent `save()` will write the updated value.
+   */
+  setFormField(name: string, value: string): void
+  /**
+   * Set the value of a form field by its fully qualified name.
    *
-   * The complete writeback chain runs on every call:
-   * - `/V` — ASCII literal for pure-ASCII values; UTF-16BE+BOM otherwise.
-   * - `/AS` — set per widget to the on-state name, or `Off` if the state is
-   *   absent from the widget's own `/AP /N` dictionary.
-   * - `/AP /N` — regenerated as a self-contained Form XObject so the fill is
-   *   visible in all viewers without `/NeedAppearances` processing.
-   *
-   * **Checkbox / radio:** pass the on-state name (`"On"`, `"Yes"`, `"NL"`, …).
-   * **Choice fields:** pass the export value from the field's option list.
-   * **Read-only fields:** throws with code `"E-FORM-READONLY"`.
-   *
-   * The change is persisted to the document — a subsequent `save()` writes it.
+   * @deprecated Use {@link setFormField} instead — the canonical
+   * cross-language name (snake_case `set_form_field` in Rust/Python).
+   * Kept for backward compatibility; will be removed in 1.0.0.
    */
   setFieldValue(name: string, value: string): void
   /**
-   * Select multiple options on a multi-select list box.
+   * Set multiple selected values on a multi-select list box.
    *
-   * Writes `/V` as an array of text strings and rebuilds `/I` (the sorted
-   * selected-index cache) to match Adobe Acrobat. Pass an empty array to
+   * Routes through [`pdf_forms::apply_choice_multi`]: writes `/V` as an
+   * array of text strings and rebuilds `/I` (the sorted selected-index
+   * cache) to match what Adobe Acrobat produces. Pass an empty array to
    * clear the selection. The field must be a multi-select list box
-   * (`/Ff` MultiSelect flag); for a non-editable list box every value must
+   * (`/Ff` MultiSelect flag); for non-editable list boxes every value must
    * be one of the field's `/Opt` options.
    */
   setMultiSelect(name: string, values: Array<string>): void
@@ -389,7 +395,7 @@ export declare class PdfDocument {
    * Save the document to a file path.
    *
    * Writes the current (possibly modified) document to disk. Any changes
-   * from `setFieldValue`, `addAnnotation`, or `redactText` are included.
+   * from `setFormField`, `addAnnotation`, or `redactText` are included.
    */
   save(path: string): void
   /**
@@ -433,23 +439,6 @@ export declare class PdfDocument {
    */
   validatePdfa(level: string): ComplianceReportInfo
 }
-/**
- * Base class for all PDFluent SDK errors.
- *
- * Always branch on `.code` — never on `.message`.
- */
-export declare class PdfluentError extends Error {
-  /** Stable machine-readable error code from the C8 error catalogue. */
-  readonly code: string | null
-  /** Short verb describing the operation that failed (e.g. "activate"). */
-  readonly operation: string | null
-  /** Optional human-readable detail string. May be `null`. */
-  readonly cause: string | null
-}
-
-/** License-specific error subclass thrown by all license activation surfaces. */
-export declare class PdfluentLicenseError extends PdfluentError {}
-
 /** A handle to a single page within a PDF document. */
 export declare class PdfPage {
   /** Page index (0-based). */
@@ -475,3 +464,26 @@ export declare class PdfPage {
   /** Get annotations on this page. */
   annotations(): Array<AnnotationInfo>
 }
+
+// @pdfluent-typed-error-layer
+// Hand-maintained typings for the typed-error layer (see typed-error-layer.js).
+// `scripts/build/postbuild.cjs` appends this to the napi-generated `index.d.ts`
+// after every build. SOURCE OF TRUTH: this file — do not edit the copy inside
+// `index.d.ts`.
+
+/**
+ * Base class for all PDFluent SDK errors.
+ *
+ * Always branch on `.code` — never on `.message`.
+ */
+export declare class PdfluentError extends Error {
+  /** Stable machine-readable error code from the C8 error catalogue. */
+  readonly code: string | null
+  /** Short verb describing the operation that failed (e.g. "activate"). */
+  readonly operation: string | null
+  /** Optional human-readable detail string. May be `null`. */
+  readonly cause: string | null
+}
+
+/** License-specific error subclass thrown by all license activation surfaces. */
+export declare class PdfluentLicenseError extends PdfluentError {}

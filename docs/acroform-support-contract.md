@@ -131,12 +131,23 @@ either separate APIs or explicit non-goals.
 
 ## 6. Surface availability
 
+Each AcroForm operation has one canonical name per language idiom — snake_case
+in Rust/Python, camelCase in Node/Java/WASM. The four language bindings
+(Node/Python/Java/WASM) are now mutually consistent (resolved in
+`1.0.0-beta.14`); the Rust facade follows Rust's getter convention (`form_fields()`,
+no `get_` prefix, per API guideline C-GETTER):
+
 | Capability | Rust SDK | Node | Python | Java | WASM |
 |---|---|---|---|---|---|
-| Enumerate / read fields | `form_model` / `form_fields` | `formFields` | `get_form_fields` | `getFormFields` | via `metadata` (read), native full |
-| Fill text/checkbox/radio/choice | `form_mut().set_*` | `setFieldValue` | `set_form_field` | `setFormField` | `PdfDocMut.setFormField` |
-| **Fill multi-select list box** | `form_mut().set_multi_select` | `setMultiSelect` | `set_form_field_multi` | `setMultiSelect` | `PdfDocMut.setMultiSelect` |
+| Enumerate / read fields | `form_fields` / `form_model` | `getFormFields` | `get_form_fields` | `getFormFields` | via `metadata` (read), native full |
+| Fill text/checkbox/radio/choice | `form_mut().set_*` | `setFormField` | `set_form_field` | `setFormField` | `PdfDocMut.setFormField` |
+| **Fill multi-select list box** | `form_mut().set_multi_select` | `setMultiSelect` | `set_multi_select` | `setMultiSelect` | `PdfDocMut.setMultiSelect` |
 | Regenerate appearances | `regenerate_form_appearances` | — | — | — | — |
+
+**Deprecated aliases** (kept working through the beta line, removed in `1.0.0`):
+the pre-`beta.14` names `formFields`/`setFieldValue` (Node) and
+`set_form_field_multi` (Python) still forward to the canonical names above. New
+code should use the canonical names; existing beta code keeps working.
 
 The C-API exposes form **enumeration** only (`pdf_form_field_count` /
 `pdf_form_field_name`); form fill via the C-API is not exposed and is tracked

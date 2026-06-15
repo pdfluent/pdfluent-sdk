@@ -123,27 +123,31 @@ const hits = doc.searchText('invoice'); // number[] of page indices
 #### Forms (AcroForm)
 
 ```js
-const fields = doc.formFields(); // FormFieldInfo[]
+const fields = doc.getFormFields(); // FormFieldInfo[]
 // fields[0] → { name, fieldType, value, readOnly }
 
 const value = doc.getFieldValue('Address.Street');
 
-// setFieldValue supports text, checkbox, radio, and choice fields.
+// setFormField supports text, checkbox, radio, and choice fields.
 // Hierarchical names ("parent.child") are resolved through /Kids recursion.
 // The call updates /V (UTF-16BE+BOM for non-ASCII), per-widget /AS, and
 // regenerates the /AP appearance stream so the fill is visible in all viewers
 // without /NeedAppearances processing.
 // Read-only fields are rejected (throws).
-doc.setFieldValue('Address.Street', '123 Main St');
-doc.setFieldValue('Agree', 'On');        // checkbox — pass the on-state name
-doc.setFieldValue('Country', 'NL');      // radio group — pass the export value
-doc.setFieldValue('Category', 'Option2'); // combo/list — pass the option value
+doc.setFormField('Address.Street', '123 Main St');
+doc.setFormField('Agree', 'On');        // checkbox — pass the on-state name
+doc.setFormField('Country', 'NL');      // radio group — pass the export value
+doc.setFormField('Category', 'Option2'); // combo/list — pass the option value
 
 // Multi-select list box: pass an array of option values. Writes /V as an
 // array and rebuilds the sorted /I index cache (Acrobat-faithful).
 doc.setMultiSelect('Languages', ['EN', 'NL']);
 doc.save('filled.pdf');
 ```
+
+> The pre-`1.0.0-beta.14` names `formFields()` and `setFieldValue()` still work as
+> deprecated aliases for `getFormFields()` and `setFormField()`, but will be
+> removed in `1.0.0`. Use the canonical names above.
 
 #### Annotations
 

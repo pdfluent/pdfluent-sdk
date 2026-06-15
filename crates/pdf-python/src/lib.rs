@@ -581,7 +581,7 @@ impl PyDocument {
     /// PdfluentError
     ///     If the field is not a multi-select list box, is read-only, or any
     ///     value is not a valid option (non-editable list boxes).
-    fn set_form_field_multi(&self, name: &str, values: Vec<String>) -> PyResult<bool> {
+    fn set_multi_select(&self, name: &str, values: Vec<String>) -> PyResult<bool> {
         if parse_acroform(self.inner.pdf()).is_none() {
             return Ok(false);
         }
@@ -591,9 +591,19 @@ impl PyDocument {
             Ok(_) => Ok(true),
             Err(WritebackError::FieldNotFound(_)) => Ok(false),
             Err(e) => Err(PdfluentError::new_err(format!(
-                "set_form_field_multi '{name}': {e}"
+                "set_multi_select '{name}': {e}"
             ))),
         }
+    }
+
+    /// Deprecated alias for :meth:`set_multi_select`.
+    ///
+    /// .. deprecated::
+    ///    Use :meth:`set_multi_select` — the canonical cross-language name
+    ///    (``setMultiSelect`` in JS/Java/WASM). Kept for backward
+    ///    compatibility; will be removed in 1.0.0.
+    fn set_form_field_multi(&self, name: &str, values: Vec<String>) -> PyResult<bool> {
+        self.set_multi_select(name, values)
     }
 
     // ------------------------------------------------------------------

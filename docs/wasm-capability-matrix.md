@@ -3,10 +3,11 @@
 Status of each SDK capability in the `@pdfluent/sdk-wasm` browser build,
 versus the native Rust crates / Tauri-side bindings.
 
-Versions: `1.0.0-beta.11` of `@pdfluent/sdk-wasm`; corresponding Rust crates
-at `1.0.0-beta.5` (engine) / `1.0.0-beta.4` (pdf-annot). (Package was
-previously published as `@pdfluent/xfa-wasm`; renamed to `@pdfluent/sdk-wasm`
-in `1.0.0-beta.11`.)
+Versions: the next coordinated release is `1.0.0-beta.14` across all channels
+(Rust, npm Node, PyPI, Maven, npm WASM). npm `@pdfluent/sdk-wasm` is currently
+published through `1.0.0-beta.13`; `beta.14` is the first version free on every
+channel. (Package was previously published as `@pdfluent/xfa-wasm`; renamed to
+`@pdfluent/sdk-wasm`.)
 
 Wave 3 adds the stateful `PdfDocMut` editing handle. All mutating
 methods are available on **both** classes:
@@ -17,7 +18,7 @@ methods are available on **both** classes:
 `PdfDocMut` is **2.7× faster** than the stateless chain for a 4-mutation
 editor session. See `benchmarks/runs/wasm_sdk_dx/ROUND3_PERFORMANCE_BENCHMARK.md`.
 
-| # | Capability | Rust crate | WASM (1.0.0-beta.11) | Native | Notes |
+| # | Capability | Rust crate | WASM (1.0.0-beta.14) | Native | Notes |
 |---|------------|------------|---------------------|--------|-------|
 | 1 | Open PDF from bytes | `pdf-engine` + `pdf-syntax` | ✅ | ✅ | `PdfDoc.open(bytes)` |
 | 2 | Page count, dimensions | `pdf-engine` | ✅ | ✅ | `pageCount()`, `pageWidth()`, `pageHeight()` |

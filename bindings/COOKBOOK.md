@@ -245,9 +245,9 @@ const { PdfDocument } = require('@pdfluent/node');
 const fs = require('fs');
 
 const doc = PdfDocument.open(fs.readFileSync('form.pdf'));
-doc.setFieldValue('Name', 'Jane Doe');
-doc.setFieldValue('Agree', 'On');       // checkbox
-doc.setFieldValue('Country', 'NL');     // radio
+doc.setFormField('Name', 'Jane Doe');
+doc.setFormField('Agree', 'On');       // checkbox
+doc.setFormField('Country', 'NL');     // radio
 doc.save('form_filled.pdf');
 ```
 
