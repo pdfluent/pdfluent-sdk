@@ -2,8 +2,9 @@
 name = "pdf-capi"
 version = "1.0.0-beta.14"
 edition = "2021"
-# publish = false: license field is stale (MIT) and the crate has never been
-# published. Fix license-file + metadata before enabling publish.
+# publish = false: the C ABI is distributed as a tarball via
+# scripts/release/package_cabi.sh (with the bundled commercial LICENSE), not via
+# crates.io. license-file points to the PDFluent Commercial License (see ./LICENSE).
 publish = false
 license-file = "LICENSE"
 description = "C-compatible API for the PDF engine (PDFium-compatible interface)."
