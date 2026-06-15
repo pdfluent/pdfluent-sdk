@@ -6,6 +6,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — sdk/api-contract-alignment — 2026-06-15
+
+### Changed
+
+- **Canonical cross-language AcroForm API names.** The same operation now has
+  one name in every binding (camelCase in Node/Java/WASM, snake_case in
+  Python): `getFormFields` / `get_form_fields`, `setFormField` /
+  `set_form_field`, `setMultiSelect` / `set_multi_select`. This reconciles the
+  three pre-`beta.14` inconsistencies (Node `formFields`/`setFieldValue`, Python
+  `set_form_field_multi`). See `docs/acroform-support-contract.md` §6.
+- **Coordinated release version → `1.0.0-beta.14`.** The channels had drifted to
+  different published versions (crates.io `pdf-engine`/`pdfluent-forms` at
+  `beta.9`; PyPI at `b10`; npm `@pdfluent/node` at `beta.10`; npm
+  `@pdfluent/sdk-wasm` at `beta.13`). `beta.14` is the first version free on
+  every channel (crates.io, npm, PyPI, Maven), so all product crates and binding
+  package manifests are aligned to it for the next coordinated release.
+
+### Fixed
+
+- **Node build no longer drops the typed-error layer.** `napi build` regenerates
+  `index.js` / `index.d.ts` and used to wipe the hand-maintained
+  `PdfluentError` / `PdfluentLicenseError` classes and license wrappers. They now
+  live in `scripts/build/typed-error-layer.{js,d.ts}` and are re-applied by an
+  explicit, idempotent postbuild step (`scripts/build/postbuild.cjs`), guarded by
+  `tests/typed_error_layer.test.js`.
+- **Node ESM entry (`index.mjs`) fixed** to re-export exactly the real CJS
+  surface — dropped six phantom error classes (`PdfluentIoError` etc.) that were
+  `undefined`, and added the missing `setLicensePublicKey` / `setLicensePayload`.
+
+### Deprecated
+
+- Node `formFields()` → use `getFormFields()`; Node `setFieldValue()` → use
+  `setFormField()`; Python `set_form_field_multi()` → use `set_multi_select()`.
+  The old names still work as forwarding aliases through the beta line and are
+  removed in `1.0.0`.
+
 ## [Unreleased] — acroform/sdk-closure — 2026-06-13
 
 ### Added

@@ -56,20 +56,20 @@ const page = doc.page(0);
 console.log(`Width: ${page.width.toFixed(1)} pt  Height: ${page.height.toFixed(1)} pt`);
 
 // ── 6. Form fields (read) ─────────────────────────────────────────────────────
-banner('6. document.formFields()');
+banner('6. document.getFormFields()');
 if (fs.existsSync(acroformPath)) {
   const formDoc = openPdf(acroformPath);
-  const fields = formDoc.formFields();
+  const fields = formDoc.getFormFields();
   console.log(`Found ${fields.length} form fields`);
   fields.slice(0, 3).forEach(f =>
     console.log(`  ${f.fieldType.padEnd(9)} ${f.name} = ${f.value ?? '(empty)'}`)
   );
 
   // ── 7. Set form field value ────────────────────────────────────────────────
-  banner('7. document.setFieldValue(name, value)');
+  banner('7. document.setFormField(name, value)');
   const textField = fields.find(f => f.fieldType === 'text');
   if (textField) {
-    formDoc.setFieldValue(textField.name, 'filled by pdf-node');
+    formDoc.setFormField(textField.name, 'filled by pdf-node');
     const updated = formDoc.getFieldValue(textField.name);
     console.log(`Set '${textField.name}' → '${updated}'`);
     const savedForm = path.join(os.tmpdir(), 'pdf-node-demo-form.pdf');

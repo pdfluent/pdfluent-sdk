@@ -21,9 +21,9 @@ def _fixture(tmp_path):
     return str(p)
 
 
-def test_set_form_field_multi_round_trips(tmp_path):
+def test_set_multi_select_round_trips(tmp_path):
     doc = Document(_fixture(tmp_path))
-    assert doc.set_form_field_multi("languages", ["FR", "EN"]) is True
+    assert doc.set_multi_select("languages", ["FR", "EN"]) is True
     out = tmp_path / "filled.pdf"
     doc.save(str(out))
 
@@ -35,17 +35,30 @@ def test_set_form_field_multi_round_trips(tmp_path):
     assert "EN" in values["languages"]
 
 
-def test_set_form_field_multi_rejects_unknown_option(tmp_path):
+def test_set_multi_select_rejects_unknown_option(tmp_path):
     doc = Document(_fixture(tmp_path))
     with pytest.raises(Exception):
-        doc.set_form_field_multi("languages", ["KL"])
+        doc.set_multi_select("languages", ["KL"])
 
 
-def test_set_form_field_multi_empty_clears(tmp_path):
+def test_set_multi_select_empty_clears(tmp_path):
     doc = Document(_fixture(tmp_path))
-    assert doc.set_form_field_multi("languages", []) is True
+    assert doc.set_multi_select("languages", []) is True
 
 
-def test_set_form_field_multi_unknown_field_returns_false(tmp_path):
+def test_set_multi_select_unknown_field_returns_false(tmp_path):
     doc = Document(_fixture(tmp_path))
-    assert doc.set_form_field_multi("does_not_exist", ["EN"]) is False
+    assert doc.set_multi_select("does_not_exist", ["EN"]) is False
+
+
+def test_deprecated_alias_set_form_field_multi_still_works(tmp_path):
+    """The pre-beta.9 name forwards to set_multi_select (removed in 1.0.0)."""
+    doc = Document(_fixture(tmp_path))
+    assert hasattr(doc, "set_form_field_multi")
+    assert doc.set_form_field_multi("languages", ["FR", "EN"]) is True
+    out = tmp_path / "filled_alias.pdf"
+    doc.save(str(out))
+    reloaded = Document(str(out))
+    values = {f.name: f.value for f in reloaded.get_form_fields()}
+    assert "FR" in values["languages"]
+    assert "EN" in values["languages"]

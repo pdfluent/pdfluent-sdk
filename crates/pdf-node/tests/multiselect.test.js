@@ -28,7 +28,7 @@ d('AcroForm multi-select list box', () => {
     const out = tmp();
     doc.save(out);
     const reloaded = PdfDocument.open(fs.readFileSync(out));
-    const field = reloaded.formFields().find(f => f.name === 'languages');
+    const field = reloaded.getFormFields().find(f => f.name === 'languages');
     expect(field).toBeDefined();
     // /V is an array → the flat read surface joins it; both options present.
     expect(field.value).toContain('FR');

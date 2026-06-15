@@ -1,6 +1,6 @@
 [package]
 name = "pdf-engine"
-version = "1.0.0-beta.9"
+version = "1.0.0-beta.14"
 edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
@@ -18,12 +18,12 @@ crate-type = ["rlib", "cdylib"]
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.4" }
 pdf-interpret = { path = "../pdf-interpret", version = "=0.5.6" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, version = "=0.39.4" }
-pdf-render = { path = "../pdf-render", version = "=1.0.0-beta.9" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.9" }
-pdf-xfa = { path = "../pdf-xfa", optional = true, version = "=1.0.0-beta.9" }
-xfa-layout-engine = { path = "../xfa-layout-engine", optional = true, version = "=1.0.0-beta.8" }
-formcalc-interpreter = { path = "../formcalc-interpreter", optional = true, version = "=1.0.0-beta.8" }
-xfa-json = { path = "../xfa-json", optional = true, version = "=1.0.0-beta.8" }
+pdf-render = { path = "../pdf-render", version = "=1.0.0-beta.14" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.14" }
+pdf-xfa = { path = "../pdf-xfa", optional = true, version = "=1.0.0-beta.14" }
+xfa-layout-engine = { path = "../xfa-layout-engine", optional = true, version = "=1.0.0-beta.14" }
+formcalc-interpreter = { path = "../formcalc-interpreter", optional = true, version = "=1.0.0-beta.14" }
+xfa-json = { path = "../xfa-json", optional = true, version = "=1.0.0-beta.14" }
 thiserror = { workspace = true }
 kurbo = "0.13.0"
 rayon = { version = "1", optional = true }

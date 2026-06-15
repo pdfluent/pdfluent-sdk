@@ -358,6 +358,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
+name = "convert_case"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec182b0ca2f35d8fc196cf3404988fd8b8c739a4d270ff118a398feb0cbec1ca"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -770,6 +779,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fnv"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
 name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -791,6 +806,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73829a7b5c91198af28a99159b7ae4afbb252fb906159ff7f189f3a2ceaa3df2"
 dependencies = [
  "bytemuck",
+]
+
+[[package]]
+name = "formcalc-interpreter"
+version = "1.0.0-beta.14"
+dependencies = [
+ "thiserror",
+ "xfa-dom-resolver",
 ]
 
 [[package]]
@@ -912,6 +935,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ident_case"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
+
+[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -959,6 +988,8 @@ checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
 dependencies = [
  "equivalent",
  "hashbrown",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -1404,7 +1435,7 @@ checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
 name = "pdf-annot"
-version = "1.0.0-beta.9"
+version = "1.0.0-beta.14"
 dependencies = [
  "log",
  "pdf-syntax",
@@ -1414,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-compliance"
-version = "1.0.0-beta.9"
+version = "1.0.0-beta.14"
 dependencies = [
  "flate2",
  "log",
@@ -1427,7 +1458,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-docx"
-version = "1.0.0-beta.9"
+version = "1.0.0-beta.14"
 dependencies = [
  "pdfluent-extract",
  "pdfluent-lopdf",
@@ -1438,15 +1469,19 @@ dependencies = [
 
 [[package]]
 name = "pdf-engine"
-version = "1.0.0-beta.9"
+version = "1.0.0-beta.14"
 dependencies = [
+ "formcalc-interpreter",
  "kurbo 0.13.0",
  "pdf-interpret",
  "pdf-render",
  "pdf-syntax",
+ "pdf-xfa",
  "pdfluent-forms",
  "pdfluent-lopdf",
  "thiserror",
+ "xfa-json",
+ "xfa-layout-engine",
 ]
 
 [[package]]
@@ -1479,7 +1514,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-manip"
-version = "1.0.0-beta.8"
+version = "1.0.0-beta.14"
 dependencies = [
  "flate2",
  "image",
@@ -1500,7 +1535,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-python"
-version = "1.0.0-beta.8"
+version = "1.0.0-beta.14"
 dependencies = [
  "pdf-annot",
  "pdf-compliance",
@@ -1517,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-redact"
-version = "1.0.0-beta.8"
+version = "1.0.0-beta.14"
 dependencies = [
  "flate2",
  "pdf-manip",
@@ -1529,7 +1564,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-render"
-version = "1.0.0-beta.9"
+version = "1.0.0-beta.14"
 dependencies = [
  "bytemuck",
  "fast_image_resize",
@@ -1554,8 +1589,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdf-xfa"
+version = "1.0.0-beta.14"
+dependencies = [
+ "base64",
+ "flate2",
+ "formcalc-interpreter",
+ "image",
+ "log",
+ "pdf-font",
+ "pdf-interpret",
+ "pdf-syntax",
+ "pdfluent-lopdf",
+ "roxmltree",
+ "thiserror",
+ "ttf-parser",
+ "xfa-dom-resolver",
+ "xfa-json",
+ "xfa-layout-engine",
+]
+
+[[package]]
 name = "pdfluent"
-version = "1.0.0-beta.9"
+version = "1.0.0-beta.14"
 dependencies = [
  "getrandom 0.2.17",
  "image",
@@ -1583,7 +1639,7 @@ version = "0.2.0"
 
 [[package]]
 name = "pdfluent-extract"
-version = "1.0.0-beta.9"
+version = "1.0.0-beta.14"
 dependencies = [
  "flate2",
  "pdfluent-lopdf",
@@ -1593,7 +1649,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-forms"
-version = "1.0.0-beta.9"
+version = "1.0.0-beta.14"
 dependencies = [
  "log",
  "pdf-syntax",
@@ -1653,7 +1709,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-sign"
-version = "1.0.0-beta.9"
+version = "1.0.0-beta.14"
 dependencies = [
  "der",
  "digest",
@@ -1813,6 +1869,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "353e1ca18966c16d9deb1c69278edbc5f194139612772bd9537af60ac231e1e6"
 dependencies = [
  "elliptic-curve",
+]
+
+[[package]]
+name = "proc-macro-crate"
+version = "1.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f4c021e1093a56626774e81216a4ce732a735e5bad4868a03f3ed65ca0c3919"
+dependencies = [
+ "once_cell",
+ "toml_edit",
 ]
 
 [[package]]
@@ -2145,6 +2211,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "relative-path"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
+
+[[package]]
 name = "rfc6979"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2165,6 +2237,52 @@ name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
+
+[[package]]
+name = "rquickjs"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d16661bff09e9ed8e01094a188b463de45ec0693ade55b92ed54027d7ba7c40c"
+dependencies = [
+ "rquickjs-core",
+ "rquickjs-macro",
+]
+
+[[package]]
+name = "rquickjs-core"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c8db6379e204ef84c0811e90e7cc3e3e4d7688701db68a00d14a6db6849087b"
+dependencies = [
+ "relative-path",
+ "rquickjs-sys",
+]
+
+[[package]]
+name = "rquickjs-macro"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6041104330c019fcd936026ae05e2446f5e8a2abef329d924f25424b7052a2f3"
+dependencies = [
+ "convert_case",
+ "fnv",
+ "ident_case",
+ "indexmap",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "rquickjs-core",
+ "syn",
+]
+
+[[package]]
+name = "rquickjs-sys"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bc352c6b663604c3c186c000cfcc6c271f4b50bc135a285dd6d4f2a42f9790a"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "rsa"
@@ -2524,6 +2642,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
+name = "toml_datetime"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+
+[[package]]
+name = "toml_edit"
+version = "0.19.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b5bb770da30e5cbfde35a2d7b9b8a2c4b8ef89548a7a6aeab5c9a576e3e7421"
+dependencies = [
+ "indexmap",
+ "toml_datetime",
+ "winnow",
+]
+
+[[package]]
 name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2561,6 +2696,12 @@ name = "unicode-properties"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7df058c713841ad818f1dc5d3fd88063241cc61f49f5fbea4b951e8cf5a8d71d"
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
 name = "unindent"
@@ -2751,6 +2892,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "winnow"
+version = "0.5.40"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f593a95398737aeed53e489c785df13f3618e41dbcd6718c6addbf1395aa6876"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "wit-bindgen"
 version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2770,8 +2920,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "xfa-dom-resolver"
+version = "1.0.0-beta.14"
+dependencies = [
+ "roxmltree",
+ "thiserror",
+]
+
+[[package]]
+name = "xfa-js-sandboxed"
+version = "1.0.0-beta.14"
+dependencies = [
+ "rquickjs",
+ "thiserror",
+]
+
+[[package]]
+name = "xfa-json"
+version = "1.0.0-beta.14"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_json",
+ "xfa-layout-engine",
+]
+
+[[package]]
+name = "xfa-layout-engine"
+version = "1.0.0-beta.14"
+dependencies = [
+ "formcalc-interpreter",
+ "log",
+ "thiserror",
+ "xfa-dom-resolver",
+ "xfa-js-sandboxed",
+]
+
+[[package]]
 name = "xfa-license"
-version = "1.0.0-beta.8"
+version = "1.0.0-beta.14"
 dependencies = [
  "base64",
  "ed25519-dalek",
