@@ -58,7 +58,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-05-28T09:12:32.804225000Z",
+    "timestamp": "2026-06-15T08:48:56.173436197Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -67,7 +67,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:c5a73285-a94c-47d1-bc0f-39f8dc6c9911",
+  "serialNumber": "urn:uuid:e1b18aa0-926f-4e7d-a14e-1fe25c2d2347",
   "specVersion": "1.3",
   "version": 1
 }
