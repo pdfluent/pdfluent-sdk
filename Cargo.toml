@@ -81,14 +81,14 @@ members = [
 resolver = "2"
 
 [workspace.package]
-# RC line is 1.0.0-beta.14. This workspace default is inherited by crates that
+# RC line is 1.0.0-beta.15. This workspace default is inherited by crates that
 # use `version.workspace = true` (e.g. pdf-ocr, xfa-license, and internal/
 # unreleased crates). It was previously pinned at beta.3 while 18 first-party
 # crates had been bumped to beta.8 individually — leaving inheritors stranded
 # at beta.3. Aligned to beta.8 so the whole first-party RC line is coherent.
 # Independently-versioned crates (pdf-syntax/-interpret/-font, pdfluent-lopdf/
 # -cff/-ccitt/-jbig2/-jpeg2000) set their own `version` and are unaffected.
-version = "1.0.0-beta.14"
+version = "1.0.0-beta.15"
 edition = "2021"
 rust-version = "1.80.0"
 # Workspace default license = MIT. Used by INTERNAL crates only (CLI tools,
@@ -129,12 +129,12 @@ subsetter = "0.2"
 xmp-writer = "0.3"
 
 # XFA proprietary crates (PDFluent Commercial License)
-xfa-dom-resolver = { path = "crates/xfa-dom-resolver", version = "=1.0.0-beta.14" }
-formcalc-interpreter = { path = "crates/formcalc-interpreter", version = "=1.0.0-beta.14" }
-xfa-layout-engine = { path = "crates/xfa-layout-engine", version = "=1.0.0-beta.14" }
-xfa-js-sandboxed = { path = "crates/xfa-js-sandboxed", version = "=1.0.0-beta.14" }
-xfa-json = { path = "crates/xfa-json", version = "=1.0.0-beta.14" }
-xfa-license = { path = "crates/xfa-license", version = "=1.0.0-beta.14" }
+xfa-dom-resolver = { path = "crates/xfa-dom-resolver", version = "=1.0.0-beta.15" }
+formcalc-interpreter = { path = "crates/formcalc-interpreter", version = "=1.0.0-beta.15" }
+xfa-layout-engine = { path = "crates/xfa-layout-engine", version = "=1.0.0-beta.15" }
+xfa-js-sandboxed = { path = "crates/xfa-js-sandboxed", version = "=1.0.0-beta.15" }
+xfa-json = { path = "crates/xfa-json", version = "=1.0.0-beta.15" }
+xfa-license = { path = "crates/xfa-license", version = "=1.0.0-beta.15" }
 
 # Forked crates from hayro (open-source: MIT OR Apache-2.0)
 pdf-syntax = { path = "crates/pdf-syntax", version = "=0.5.4" }
@@ -142,21 +142,21 @@ pdf-interpret = { path = "crates/pdf-interpret", version = "=0.5.6" }
 
 # Forked crates from hayro (substantially extended; PDFluent Commercial License)
 pdf-font = { path = "crates/pdf-font", version = "=1.0.0-beta.4" }
-pdf-render = { path = "crates/pdf-render", version = "=1.0.0-beta.14" }
+pdf-render = { path = "crates/pdf-render", version = "=1.0.0-beta.15" }
 
 # Engine + feature crates (PDFluent Commercial License)
-pdf-forms = { package = "pdfluent-forms", path = "crates/pdf-forms", version = "=1.0.0-beta.14" }
-pdf-annot = { path = "crates/pdf-annot", version = "=1.0.0-beta.14" }
-pdf-xfa = { path = "crates/pdf-xfa", version = "=1.0.0-beta.14" }
-pdf-sign = { package = "pdfluent-sign", path = "crates/pdf-sign", version = "=1.0.0-beta.14" }
-pdf-engine = { path = "crates/pdf-engine", version = "=1.0.0-beta.14" }
-pdf-compliance = { path = "crates/pdf-compliance", version = "=1.0.0-beta.14" }
-pdf-manip = { path = "crates/pdf-manip", version = "=1.0.0-beta.14" }
-pdf-text-format = { path = "crates/pdf-text-format", version = "=1.0.0-beta.14" }
-pdf-invoice = { path = "crates/pdf-invoice", version = "=1.0.0-beta.14" }
-pdf-extract = { package = "pdfluent-extract", path = "crates/pdf-extract", version = "=1.0.0-beta.14" }
-pdf-redact = { path = "crates/pdf-redact", version = "=1.0.0-beta.14" }
-pdf-ocr = { path = "crates/pdf-ocr", version = "=1.0.0-beta.14" }
+pdf-forms = { package = "pdfluent-forms", path = "crates/pdf-forms", version = "=1.0.0-beta.15" }
+pdf-annot = { path = "crates/pdf-annot", version = "=1.0.0-beta.15" }
+pdf-xfa = { path = "crates/pdf-xfa", version = "=1.0.0-beta.15" }
+pdf-sign = { package = "pdfluent-sign", path = "crates/pdf-sign", version = "=1.0.0-beta.15" }
+pdf-engine = { path = "crates/pdf-engine", version = "=1.0.0-beta.15" }
+pdf-compliance = { path = "crates/pdf-compliance", version = "=1.0.0-beta.15" }
+pdf-manip = { path = "crates/pdf-manip", version = "=1.0.0-beta.15" }
+pdf-text-format = { path = "crates/pdf-text-format", version = "=1.0.0-beta.15" }
+pdf-invoice = { path = "crates/pdf-invoice", version = "=1.0.0-beta.15" }
+pdf-extract = { package = "pdfluent-extract", path = "crates/pdf-extract", version = "=1.0.0-beta.15" }
+pdf-redact = { path = "crates/pdf-redact", version = "=1.0.0-beta.15" }
+pdf-ocr = { path = "crates/pdf-ocr", version = "=1.0.0-beta.15" }
 pdf-content-stream = { path = "crates/pdf-content-stream", version = "=0.1.0" }
 
 [profile.release]

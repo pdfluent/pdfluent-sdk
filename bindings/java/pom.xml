@@ -9,7 +9,7 @@
          ================================================================ -->
     <groupId>com.pdfluent</groupId>
     <artifactId>pdfluent</artifactId>
-    <version>1.0.0-beta.14</version>
+    <version>1.0.0-beta.15</version>
     <packaging>jar</packaging>
 
     <name>PDFluent Java SDK</name>

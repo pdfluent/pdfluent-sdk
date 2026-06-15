@@ -1,6 +1,6 @@
 [package]
 name = "pdf-capi"
-version = "1.0.0-beta.14"
+version = "1.0.0-beta.15"
 edition = "2021"
 # publish = false: the C ABI is distributed as a tarball via
 # scripts/release/package_cabi.sh (with the bundled commercial LICENSE), not via
@@ -13,12 +13,12 @@ description = "C-compatible API for the PDF engine (PDFium-compatible interface)
 crate-type = ["cdylib", "staticlib", "lib"]
 
 [dependencies]
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.14" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.14" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.14" }
-pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.14" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.14" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.14" }
-pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.14" }
-pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.14" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.15" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.15" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.15" }
+pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.15" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.15" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.15" }
+pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.15" }
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.15" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
