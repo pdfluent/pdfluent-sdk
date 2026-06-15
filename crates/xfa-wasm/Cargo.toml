@@ -1,10 +1,10 @@
 [package]
 name = "xfa-wasm"
 # Explicit version (not workspace-inherited): the @pdfluent/sdk-wasm npm package
-# is aligned to the RC line 1.0.0-beta.8 across channels. The Rust workspace
+# is aligned to the RC line 1.0.0-beta.14 across channels. The Rust workspace
 # version is intentionally a different, independent value; wasm-pack derives the
 # generated package.json version from this [package] version.
-version = "1.0.0-beta.8"
+version = "1.0.0-beta.14"
 edition.workspace = true
 license-file = "LICENSE"
 repository.workspace = true
@@ -25,19 +25,19 @@ pdf-syntax.workspace = true
 pdf-engine = { workspace = true, features = ["xfa"] }
 pdf-sign.workspace = true
 pdf-compliance.workspace = true
-pdf-render = { path = "../pdf-render", optional = true, version = "=1.0.0-beta.9" }
-pdf-annot = { path = "../pdf-annot", optional = true, version = "=1.0.0-beta.9" }
+pdf-render = { path = "../pdf-render", optional = true, version = "=1.0.0-beta.14" }
+pdf-annot = { path = "../pdf-annot", optional = true, version = "=1.0.0-beta.14" }
 wasm-bindgen = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 indexmap.workspace = true
 js-sys = "0.3"
 kurbo = "0.13"
-pdf-manip = { path = "../pdf-manip", features = ["pdfa-convert"], version = "=1.0.0-beta.8" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.8" }
+pdf-manip = { path = "../pdf-manip", features = ["pdfa-convert"], version = "=1.0.0-beta.14" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.14" }
 pdf-forms = { workspace = true }
-pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.9" }
-pdf-text-format = { path = "../pdf-text-format", version = "=1.0.0-beta.8" }
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.14" }
+pdf-text-format = { path = "../pdf-text-format", version = "=1.0.0-beta.14" }
 
 # lopdf: required for text extraction; annotate uses lopdf for mutation.
 # Direct path (not workspace = true) to allow per-target default-features override.
@@ -78,7 +78,7 @@ lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
 # publish time. Cargo workspace version and npm version are independent.
 [package.metadata.npm]
 name = "@pdfluent/sdk-wasm"
-version = "1.0.0-beta.8"
+version = "1.0.0-beta.14"
 
 [package.metadata.wasm-pack.profile.release]
 # B3 — wasm-opt -O3 enabled after evaluation. See

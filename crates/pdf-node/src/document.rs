@@ -637,11 +637,21 @@ impl PdfDocument {
 
     /// Get all form fields in the document.
     #[napi]
-    pub fn form_fields(&self) -> Vec<FormFieldInfo> {
+    pub fn get_form_fields(&self) -> Vec<FormFieldInfo> {
         match &self.form_engine {
             Some(fe) => fe.fields(),
             None => Vec::new(),
         }
+    }
+
+    /// Get all form fields in the document.
+    ///
+    /// @deprecated Use {@link getFormFields} instead — the canonical
+    /// cross-language name (snake_case `get_form_fields` in Rust/Python).
+    /// Kept for backward compatibility; will be removed in 1.0.0.
+    #[napi]
+    pub fn form_fields(&self) -> Vec<FormFieldInfo> {
+        self.get_form_fields()
     }
 
     /// Get the value of a form field by its fully qualified name.
@@ -658,11 +668,11 @@ impl PdfDocument {
     /// read-only fields are rejected. The change is persisted to the
     /// document — a subsequent `save()` will write the updated value.
     #[napi]
-    pub fn set_field_value(&mut self, name: String, value: String) -> Result<()> {
+    pub fn set_form_field(&mut self, name: String, value: String) -> Result<()> {
         self.with_doc_mut(|doc| {
             apply_string_value(doc, &name, &value)
                 .map(|_| ())
-                .map_err(|e| napi::Error::from_reason(format!("setFieldValue '{name}': {e}")))
+                .map_err(|e| napi::Error::from_reason(format!("setFormField '{name}': {e}")))
         })?;
         // Keep the form engine's in-memory view in sync so getFieldValue()
         // reflects the write without reloading the document.
@@ -670,6 +680,16 @@ impl PdfDocument {
             fe.set_value(&name, &value)?;
         }
         self.rebuild_inner()
+    }
+
+    /// Set the value of a form field by its fully qualified name.
+    ///
+    /// @deprecated Use {@link setFormField} instead — the canonical
+    /// cross-language name (snake_case `set_form_field` in Rust/Python).
+    /// Kept for backward compatibility; will be removed in 1.0.0.
+    #[napi]
+    pub fn set_field_value(&mut self, name: String, value: String) -> Result<()> {
+        self.set_form_field(name, value)
     }
 
     /// Set multiple selected values on a multi-select list box.
@@ -722,7 +742,7 @@ impl PdfDocument {
     /// Save the document to a file path.
     ///
     /// Writes the current (possibly modified) document to disk. Any changes
-    /// from `setFieldValue`, `addAnnotation`, or `redactText` are included.
+    /// from `setFormField`, `addAnnotation`, or `redactText` are included.
     #[napi]
     pub fn save(&self, path: String) -> Result<()> {
         if let Some(arc) = &self.doc {
@@ -917,7 +937,7 @@ pub(crate) fn compliance_to_info(report: pdf_compliance::ComplianceReport) -> Co
 
 #[cfg(test)]
 mod writeback_dispatch_tests {
-    //! Pin the new writeback behavior of `setFieldValue`'s dispatch helper:
+    //! Pin the new writeback behavior of `setFormField`'s dispatch helper:
     //! correct /V encoding (ASCII literal else UTF-16BE+BOM), /V-as-Name +
     //! /AS sync for buttons, and read-only rejection — replacing the old
     //! raw `string_literal(value.as_bytes())` write (mojibake, no /AS).

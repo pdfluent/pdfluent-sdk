@@ -60,17 +60,17 @@ const preview = text.trim().slice(0, 200).replace(/\n/g, ' ');
 console.log(`Text: ${preview || '(no text)'}`);
 
 // ── 5. Form fields (read) ──────────────────────────────────────────────────
-banner('5. formFields() + setFieldValue()');
+banner('5. getFormFields() + setFormField()');
 if (fs.existsSync(acroformPath)) {
   const formDoc: PdfDocument = openPdf(acroformPath);
-  const fields: FormFieldInfo[] = formDoc.formFields();
+  const fields: FormFieldInfo[] = formDoc.getFormFields();
   console.log(`Found ${fields.length} form fields`);
   fields.slice(0, 3).forEach(f =>
     console.log(`  ${f.fieldType.padEnd(9)} ${f.name} = ${f.value ?? '(empty)'}`)
   );
   const textField = fields.find(f => f.fieldType === 'text');
   if (textField) {
-    formDoc.setFieldValue(textField.name, 'filled by pdf-node TS');
+    formDoc.setFormField(textField.name, 'filled by pdf-node TS');
     console.log(`Updated '${textField.name}'`);
     const savedForm = path.join(os.tmpdir(), 'pdf-node-ts-demo-form.pdf');
     formDoc.save(savedForm);

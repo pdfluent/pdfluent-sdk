@@ -1,6 +1,6 @@
 [package]
 name = "xfa-layout-engine"
-version = "1.0.0-beta.8"
+version = "1.0.0-beta.14"
 edition.workspace = true
 license-file = "LICENSE"
 readme = "README.md"
