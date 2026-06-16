@@ -6852,7 +6852,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#spki@0.7.3",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://pdf-sign#pdfluent-sign@1.0.0-beta.14"
+      "ref": "path://pdf-sign#pdfluent-sign@1.0.0-beta.15"
     },
     {
       "dependsOn": [
@@ -8306,14 +8306,14 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "path://pdf-sign#pdfluent-sign@1.0.0-beta.14",
+      "bom-ref": "path://pdf-sign#pdfluent-sign@1.0.0-beta.15",
       "components": [
         {
-          "bom-ref": "path://pdf-sign#pdfluent-sign@1.0.0-beta.14 bin-target-0",
+          "bom-ref": "path://pdf-sign#pdfluent-sign@1.0.0-beta.15 bin-target-0",
           "name": "pdfluent_sign",
-          "purl": "pkg:cargo/pdfluent-sign@1.0.0-beta.14?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/pdfluent-sign@1.0.0-beta.15?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "1.0.0-beta.14"
+          "version": "1.0.0-beta.15"
         }
       ],
       "description": "PDF digital signature validation \u2014 PAdES, CMS, certificate chain, DocMDP/FieldMDP, LTV.",
@@ -8343,10 +8343,10 @@
         }
       ],
       "name": "pdfluent-sign",
-      "purl": "pkg:cargo/pdfluent-sign@1.0.0-beta.14?download_url=file://.",
+      "purl": "pkg:cargo/pdfluent-sign@1.0.0-beta.15?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.14"
+      "version": "1.0.0-beta.15"
     },
     "properties": [
       {
@@ -8354,7 +8354,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-06-15T08:48:56.406869374Z",
+    "timestamp": "2026-06-16T06:14:11.146004000Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -8363,7 +8363,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:515833ca-6a8a-4c7d-a8f9-96bacf4a44db",
+  "serialNumber": "urn:uuid:76024106-b6e9-4085-be19-d1172bf63e17",
   "specVersion": "1.3",
   "version": 1
 }
