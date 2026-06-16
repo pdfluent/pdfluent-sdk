@@ -50,9 +50,31 @@ fi
 CRATE_NAME="$1"
 
 # ----------------------------------------------------------------------
-# Step 1 — working tree must be clean.
+# Step 0 — internal-only crates are never published.
+# A crate declared `publish = false` has no crates.io tarball, so the
+# published-tarball licence-file gate does not apply to it. `cargo metadata`
+# reports `publish = false` as an empty array ([]) and a publishable crate as
+# null. Short-circuit internal crates cleanly (before the clean-tree gate, as
+# `cargo metadata` does not need a clean tree) so they cannot register as a
+# false licence blocker. If such a crate is later flipped to publishable, the
+# field becomes null and the full audit below runs again.
 # ----------------------------------------------------------------------
 cd "${REPO_ROOT}"
+PY_PREFLIGHT=$(command -v python3 || command -v python || true)
+if [[ -n "${PY_PREFLIGHT}" ]]; then
+    IS_INTERNAL=$(cargo metadata --no-deps --format-version 1 2>/dev/null \
+        | "${PY_PREFLIGHT}" -c "import sys,json; m=json.load(sys.stdin); p=[k.get('publish') for k in m['packages'] if k['name']=='${CRATE_NAME}']; print('yes' if (p and p[0]==[]) else 'no')" 2>/dev/null || true)
+    if [[ "${IS_INTERNAL}" == "yes" ]]; then
+        echo "SKIP: ${CRATE_NAME} is declared 'publish = false' (internal-only)."
+        echo "      Internal crates are never published to crates.io, so the"
+        echo "      published-tarball licence-file audit does not apply. Nothing to audit."
+        exit 0
+    fi
+fi
+
+# ----------------------------------------------------------------------
+# Step 1 — working tree must be clean.
+# ----------------------------------------------------------------------
 DIRTY=$(git status --porcelain || true)
 if [[ -n "${DIRTY}" ]]; then
     echo "error: working tree is dirty. Commit or stash before running the audit." >&2
