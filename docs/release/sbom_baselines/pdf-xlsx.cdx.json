@@ -118,7 +118,7 @@
       "version": "0.39.4"
     },
     {
-      "bom-ref": "path://pdf-extract#pdfluent-extract@1.0.0-beta.14",
+      "bom-ref": "path://pdf-extract#pdfluent-extract@1.0.0-beta.15",
       "description": "PDF content extraction: images, text with positions, and full-text search",
       "externalReferences": [
         {
@@ -146,10 +146,10 @@
         }
       ],
       "name": "pdfluent-extract",
-      "purl": "pkg:cargo/pdfluent-extract@1.0.0-beta.14?download_url=file://../pdf-extract",
+      "purl": "pkg:cargo/pdfluent-extract@1.0.0-beta.15?download_url=file://../pdf-extract",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.14"
+      "version": "1.0.0-beta.15"
     },
     {
       "author": "Jonas Schievink <jonasschievink@gmail.com>, oyvindln <oyvindln@users.noreply.github.com>",
@@ -5918,16 +5918,16 @@
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
         "registry+https://github.com/rust-lang/crates.io-index#unicode-normalization@0.1.25"
       ],
-      "ref": "path://pdf-extract#pdfluent-extract@1.0.0-beta.14"
+      "ref": "path://pdf-extract#pdfluent-extract@1.0.0-beta.15"
     },
     {
       "dependsOn": [
-        "path://pdf-extract#pdfluent-extract@1.0.0-beta.14",
+        "path://pdf-extract#pdfluent-extract@1.0.0-beta.15",
         "path://lopdf#pdfluent-lopdf@0.39.4",
         "registry+https://github.com/rust-lang/crates.io-index#rust_xlsxwriter@0.94.1",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://pdf-xlsx#1.0.0-beta.14"
+      "ref": "path://pdf-xlsx#1.0.0-beta.15"
     },
     {
       "dependsOn": [],
@@ -7131,14 +7131,14 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "path://pdf-xlsx#1.0.0-beta.14",
+      "bom-ref": "path://pdf-xlsx#1.0.0-beta.15",
       "components": [
         {
-          "bom-ref": "path://pdf-xlsx#1.0.0-beta.14 bin-target-0",
+          "bom-ref": "path://pdf-xlsx#1.0.0-beta.15 bin-target-0",
           "name": "pdf_xlsx",
-          "purl": "pkg:cargo/pdf-xlsx@1.0.0-beta.14?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/pdf-xlsx@1.0.0-beta.15?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "1.0.0-beta.14"
+          "version": "1.0.0-beta.15"
         }
       ],
       "description": "PDF table extraction and XLSX conversion",
@@ -7160,10 +7160,10 @@
         }
       ],
       "name": "pdf-xlsx",
-      "purl": "pkg:cargo/pdf-xlsx@1.0.0-beta.14?download_url=file://.",
+      "purl": "pkg:cargo/pdf-xlsx@1.0.0-beta.15?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.14"
+      "version": "1.0.0-beta.15"
     },
     "properties": [
       {
@@ -7171,7 +7171,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-06-15T08:48:56.759577324Z",
+    "timestamp": "2026-06-16T06:14:11.331947000Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -7180,7 +7180,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:20c45327-739c-420f-a495-e3df6740ce65",
+  "serialNumber": "urn:uuid:46b51a88-279e-4681-8089-65b6024ca5ca",
   "specVersion": "1.3",
   "version": 1
 }
