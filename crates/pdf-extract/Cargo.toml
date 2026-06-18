@@ -1,6 +1,6 @@
 [package]
 name = "pdfluent-extract"
-version = "1.0.0-beta.16"
+version = "1.0.0-beta.17"
 edition.workspace = true
 license-file = "LICENSE"
 readme = "README.md"
@@ -15,6 +15,9 @@ categories = ["text-processing", "parser-implementations"]
 thiserror.workspace = true
 flate2 = "1"
 unicode-normalization = "0.1"
+# Re-encode raw PDF image samples into valid PNG for document export (DOCX/PPTX/XLSX).
+# PNG-only + no default features to stay light and wasm-compatible.
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # lopdf: full-featured on native, wasm_js backend (no rayon) on wasm32.
 # Direct path used (not workspace = true) to allow default-features = false override.

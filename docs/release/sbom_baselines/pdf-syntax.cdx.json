@@ -3989,7 +3989,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.1",
         "registry+https://github.com/rust-lang/crates.io-index#zune-jpeg@0.5.15"
       ],
-      "ref": "path://pdf-syntax#0.5.4"
+      "ref": "path://pdf-syntax#0.5.6"
     },
     {
       "dependsOn": [],
@@ -4812,14 +4812,14 @@
     ],
     "component": {
       "author": "Laurenz Stampfl <laurenz.stampfl@gmail.com>",
-      "bom-ref": "path://pdf-syntax#0.5.4",
+      "bom-ref": "path://pdf-syntax#0.5.6",
       "components": [
         {
-          "bom-ref": "path://pdf-syntax#0.5.4 bin-target-0",
+          "bom-ref": "path://pdf-syntax#0.5.6 bin-target-0",
           "name": "pdf_syntax",
-          "purl": "pkg:cargo/pdf-syntax@0.5.4?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/pdf-syntax@0.5.6?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "0.5.4"
+          "version": "0.5.6"
         }
       ],
       "description": "A low-level crate for reading PDF files.",
@@ -4843,10 +4843,10 @@
         }
       ],
       "name": "pdf-syntax",
-      "purl": "pkg:cargo/pdf-syntax@0.5.4?download_url=file://.",
+      "purl": "pkg:cargo/pdf-syntax@0.5.6?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "0.5.4"
+      "version": "0.5.6"
     },
     "properties": [
       {
@@ -4854,7 +4854,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-06-15T08:48:56.161166357Z",
+    "timestamp": "2026-06-18T20:09:44.603193000Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -4863,7 +4863,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:a9f2e15a-dbe8-4a84-8d26-97c1816f97d2",
+  "serialNumber": "urn:uuid:71ba3f1d-711f-4663-b0f8-26fdcdbab1e2",
   "specVersion": "1.3",
   "version": 1
 }

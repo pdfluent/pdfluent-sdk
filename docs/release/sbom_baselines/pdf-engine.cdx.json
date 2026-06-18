@@ -2,7 +2,7 @@
   "bomFormat": "CycloneDX",
   "components": [
     {
-      "bom-ref": "path://formcalc-interpreter#1.0.0-beta.16",
+      "bom-ref": "path://formcalc-interpreter#1.0.0-beta.17",
       "description": "FormCalc expression interpreter for XFA dynamic forms. Experimental \u2014 part of the PDFluent XFA stack, under active development.",
       "externalReferences": [
         {
@@ -30,10 +30,10 @@
         }
       ],
       "name": "formcalc-interpreter",
-      "purl": "pkg:cargo/formcalc-interpreter@1.0.0-beta.16?download_url=file://../formcalc-interpreter",
+      "purl": "pkg:cargo/formcalc-interpreter@1.0.0-beta.17?download_url=file://../formcalc-interpreter",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.16"
+      "version": "1.0.0-beta.17"
     },
     {
       "author": "Laurenz Stampfl <laurenz.stampfl@gmail.com>",
@@ -153,7 +153,7 @@
     },
     {
       "author": "PDFluent Contributors <team@pdfluent.com>, Laurenz Stampfl <laurenz.stampfl@gmail.com>",
-      "bom-ref": "path://pdf-font#1.0.0-beta.4",
+      "bom-ref": "path://pdf-font#1.0.0-beta.5",
       "description": "PDF font handling: CFF/Type1 parsing, CMap parsing, and PostScript scanning.",
       "externalReferences": [
         {
@@ -175,13 +175,13 @@
         }
       ],
       "name": "pdf-font",
-      "purl": "pkg:cargo/pdf-font@1.0.0-beta.4?download_url=file://../pdf-font",
+      "purl": "pkg:cargo/pdf-font@1.0.0-beta.5?download_url=file://../pdf-font",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.4"
+      "version": "1.0.0-beta.5"
     },
     {
-      "bom-ref": "path://pdf-forms#pdfluent-forms@1.0.0-beta.16",
+      "bom-ref": "path://pdf-forms#pdfluent-forms@1.0.0-beta.17",
       "description": "AcroForm engine for PDF interactive forms.",
       "externalReferences": [
         {
@@ -209,14 +209,14 @@
         }
       ],
       "name": "pdfluent-forms",
-      "purl": "pkg:cargo/pdfluent-forms@1.0.0-beta.16?download_url=file://../pdf-forms",
+      "purl": "pkg:cargo/pdfluent-forms@1.0.0-beta.17?download_url=file://../pdf-forms",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.16"
+      "version": "1.0.0-beta.17"
     },
     {
       "author": "Laurenz Stampfl <laurenz.stampfl@gmail.com>",
-      "bom-ref": "path://pdf-interpret#0.5.6",
+      "bom-ref": "path://pdf-interpret#0.5.7",
       "description": "A crate for interpreting PDF files.",
       "externalReferences": [
         {
@@ -238,14 +238,14 @@
         }
       ],
       "name": "pdf-interpret",
-      "purl": "pkg:cargo/pdf-interpret@0.5.6?download_url=file://../pdf-interpret",
+      "purl": "pkg:cargo/pdf-interpret@0.5.7?download_url=file://../pdf-interpret",
       "scope": "required",
       "type": "library",
-      "version": "0.5.6"
+      "version": "0.5.7"
     },
     {
       "author": "PDFluent Contributors <team@pdfluent.com>, Laurenz Stampfl <laurenz.stampfl@gmail.com>",
-      "bom-ref": "path://pdf-render#1.0.0-beta.16",
+      "bom-ref": "path://pdf-render#1.0.0-beta.17",
       "description": "A PDF rasterizer in pure Rust.",
       "externalReferences": [
         {
@@ -267,14 +267,14 @@
         }
       ],
       "name": "pdf-render",
-      "purl": "pkg:cargo/pdf-render@1.0.0-beta.16?download_url=file://../pdf-render",
+      "purl": "pkg:cargo/pdf-render@1.0.0-beta.17?download_url=file://../pdf-render",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.16"
+      "version": "1.0.0-beta.17"
     },
     {
       "author": "Laurenz Stampfl <laurenz.stampfl@gmail.com>",
-      "bom-ref": "path://pdf-syntax#0.5.4",
+      "bom-ref": "path://pdf-syntax#0.5.6",
       "description": "A low-level crate for reading PDF files.",
       "externalReferences": [
         {
@@ -296,13 +296,13 @@
         }
       ],
       "name": "pdf-syntax",
-      "purl": "pkg:cargo/pdf-syntax@0.5.4?download_url=file://../pdf-syntax",
+      "purl": "pkg:cargo/pdf-syntax@0.5.6?download_url=file://../pdf-syntax",
       "scope": "required",
       "type": "library",
-      "version": "0.5.4"
+      "version": "0.5.6"
     },
     {
-      "bom-ref": "path://pdf-xfa#1.0.0-beta.16",
+      "bom-ref": "path://pdf-xfa#1.0.0-beta.17",
       "description": "XFA engine \u2014 extraction, layout rendering, font resolution. Experimental and under active development.",
       "externalReferences": [
         {
@@ -330,13 +330,13 @@
         }
       ],
       "name": "pdf-xfa",
-      "purl": "pkg:cargo/pdf-xfa@1.0.0-beta.16?download_url=file://../pdf-xfa",
+      "purl": "pkg:cargo/pdf-xfa@1.0.0-beta.17?download_url=file://../pdf-xfa",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.16"
+      "version": "1.0.0-beta.17"
     },
     {
-      "bom-ref": "path://xfa-dom-resolver#1.0.0-beta.16",
+      "bom-ref": "path://xfa-dom-resolver#1.0.0-beta.17",
       "description": "XFA template and data DOM with SOM-path resolution. Experimental \u2014 part of the PDFluent XFA stack, under active development.",
       "externalReferences": [
         {
@@ -364,13 +364,13 @@
         }
       ],
       "name": "xfa-dom-resolver",
-      "purl": "pkg:cargo/xfa-dom-resolver@1.0.0-beta.16?download_url=file://../xfa-dom-resolver",
+      "purl": "pkg:cargo/xfa-dom-resolver@1.0.0-beta.17?download_url=file://../xfa-dom-resolver",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.16"
+      "version": "1.0.0-beta.17"
     },
     {
-      "bom-ref": "path://xfa-js-sandboxed#1.0.0-beta.16",
+      "bom-ref": "path://xfa-js-sandboxed#1.0.0-beta.17",
       "description": "Sandboxed QuickJS runtime for XFA JavaScript calculate scripts. Part of the PDFluent XFA stack.",
       "externalReferences": [
         {
@@ -398,13 +398,13 @@
         }
       ],
       "name": "xfa-js-sandboxed",
-      "purl": "pkg:cargo/xfa-js-sandboxed@1.0.0-beta.16?download_url=file://../xfa-js-sandboxed",
+      "purl": "pkg:cargo/xfa-js-sandboxed@1.0.0-beta.17?download_url=file://../xfa-js-sandboxed",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.16"
+      "version": "1.0.0-beta.17"
     },
     {
-      "bom-ref": "path://xfa-json#1.0.0-beta.16",
+      "bom-ref": "path://xfa-json#1.0.0-beta.17",
       "description": "JSON import/export for XFA form data. Experimental \u2014 part of the PDFluent XFA stack, under active development.",
       "externalReferences": [
         {
@@ -432,13 +432,13 @@
         }
       ],
       "name": "xfa-json",
-      "purl": "pkg:cargo/xfa-json@1.0.0-beta.16?download_url=file://../xfa-json",
+      "purl": "pkg:cargo/xfa-json@1.0.0-beta.17?download_url=file://../xfa-json",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.16"
+      "version": "1.0.0-beta.17"
     },
     {
-      "bom-ref": "path://xfa-layout-engine#1.0.0-beta.16",
+      "bom-ref": "path://xfa-layout-engine#1.0.0-beta.17",
       "description": "Box-model and pagination layout engine for XFA forms. Experimental \u2014 part of the PDFluent XFA stack, under active development.",
       "externalReferences": [
         {
@@ -466,10 +466,10 @@
         }
       ],
       "name": "xfa-layout-engine",
-      "purl": "pkg:cargo/xfa-layout-engine@1.0.0-beta.16?download_url=file://../xfa-layout-engine",
+      "purl": "pkg:cargo/xfa-layout-engine@1.0.0-beta.17?download_url=file://../xfa-layout-engine",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.16"
+      "version": "1.0.0-beta.17"
     },
     {
       "author": "Jonas Schievink <jonasschievink@gmail.com>, oyvindln <oyvindln@users.noreply.github.com>",
@@ -7629,9 +7629,9 @@
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
-        "path://xfa-dom-resolver#1.0.0-beta.16"
+        "path://xfa-dom-resolver#1.0.0-beta.17"
       ],
-      "ref": "path://formcalc-interpreter#1.0.0-beta.16"
+      "ref": "path://formcalc-interpreter#1.0.0-beta.17"
     },
     {
       "dependsOn": [],
@@ -7686,19 +7686,19 @@
     },
     {
       "dependsOn": [
-        "path://formcalc-interpreter#1.0.0-beta.16",
+        "path://formcalc-interpreter#1.0.0-beta.17",
         "registry+https://github.com/rust-lang/crates.io-index#kurbo@0.13.1",
-        "path://pdf-interpret#0.5.6",
-        "path://pdf-render#1.0.0-beta.16",
-        "path://pdf-syntax#0.5.4",
-        "path://pdf-xfa#1.0.0-beta.16",
-        "path://pdf-forms#pdfluent-forms@1.0.0-beta.16",
+        "path://pdf-interpret#0.5.7",
+        "path://pdf-render#1.0.0-beta.17",
+        "path://pdf-syntax#0.5.6",
+        "path://pdf-xfa#1.0.0-beta.17",
+        "path://pdf-forms#pdfluent-forms@1.0.0-beta.17",
         "path://lopdf#pdfluent-lopdf@0.39.4",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
-        "path://xfa-json#1.0.0-beta.16",
-        "path://xfa-layout-engine#1.0.0-beta.16"
+        "path://xfa-json#1.0.0-beta.17",
+        "path://xfa-layout-engine#1.0.0-beta.17"
       ],
-      "ref": "path://pdf-engine#1.0.0-beta.16"
+      "ref": "path://pdf-engine#1.0.0-beta.17"
     },
     {
       "dependsOn": [
@@ -7706,16 +7706,16 @@
         "registry+https://github.com/rust-lang/crates.io-index#log@0.4.29",
         "registry+https://github.com/rust-lang/crates.io-index#phf@0.13.1"
       ],
-      "ref": "path://pdf-font#1.0.0-beta.4"
+      "ref": "path://pdf-font#1.0.0-beta.5"
     },
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#log@0.4.29",
-        "path://pdf-syntax#0.5.4",
+        "path://pdf-syntax#0.5.6",
         "path://lopdf#pdfluent-lopdf@0.39.4",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://pdf-forms#pdfluent-forms@1.0.0-beta.16"
+      "ref": "path://pdf-forms#pdfluent-forms@1.0.0-beta.17"
     },
     {
       "dependsOn": [
@@ -7723,8 +7723,8 @@
         "registry+https://github.com/rust-lang/crates.io-index#kurbo@0.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#log@0.4.29",
         "registry+https://github.com/rust-lang/crates.io-index#moxcms@0.7.11",
-        "path://pdf-font#1.0.0-beta.4",
-        "path://pdf-syntax#0.5.4",
+        "path://pdf-font#1.0.0-beta.5",
+        "path://pdf-syntax#0.5.6",
         "registry+https://github.com/rust-lang/crates.io-index#phf@0.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.2",
         "registry+https://github.com/rust-lang/crates.io-index#siphasher@1.0.3",
@@ -7733,7 +7733,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#ttf-parser@0.25.1",
         "registry+https://github.com/rust-lang/crates.io-index#yoke@0.8.2"
       ],
-      "ref": "path://pdf-interpret#0.5.6"
+      "ref": "path://pdf-interpret#0.5.7"
     },
     {
       "dependsOn": [
@@ -7741,10 +7741,10 @@
         "registry+https://github.com/rust-lang/crates.io-index#fast_image_resize@6.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#image@0.25.10",
         "registry+https://github.com/rust-lang/crates.io-index#kurbo@0.13.1",
-        "path://pdf-interpret#0.5.6",
+        "path://pdf-interpret#0.5.7",
         "registry+https://github.com/rust-lang/crates.io-index#vello_cpu@0.0.6"
       ],
-      "ref": "path://pdf-render#1.0.0-beta.16"
+      "ref": "path://pdf-render#1.0.0-beta.17"
     },
     {
       "dependsOn": [
@@ -7757,60 +7757,60 @@
         "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.1",
         "registry+https://github.com/rust-lang/crates.io-index#zune-jpeg@0.5.15"
       ],
-      "ref": "path://pdf-syntax#0.5.4"
+      "ref": "path://pdf-syntax#0.5.6"
     },
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#base64@0.22.1",
         "registry+https://github.com/rust-lang/crates.io-index#flate2@1.1.9",
-        "path://formcalc-interpreter#1.0.0-beta.16",
+        "path://formcalc-interpreter#1.0.0-beta.17",
         "registry+https://github.com/rust-lang/crates.io-index#image@0.25.10",
         "registry+https://github.com/rust-lang/crates.io-index#log@0.4.29",
-        "path://pdf-font#1.0.0-beta.4",
-        "path://pdf-interpret#0.5.6",
-        "path://pdf-syntax#0.5.4",
+        "path://pdf-font#1.0.0-beta.5",
+        "path://pdf-interpret#0.5.7",
+        "path://pdf-syntax#0.5.6",
         "path://lopdf#pdfluent-lopdf@0.39.4",
         "registry+https://github.com/rust-lang/crates.io-index#roxmltree@0.20.0",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
         "registry+https://github.com/rust-lang/crates.io-index#ttf-parser@0.25.1",
-        "path://xfa-dom-resolver#1.0.0-beta.16",
-        "path://xfa-json#1.0.0-beta.16",
-        "path://xfa-layout-engine#1.0.0-beta.16"
+        "path://xfa-dom-resolver#1.0.0-beta.17",
+        "path://xfa-json#1.0.0-beta.17",
+        "path://xfa-layout-engine#1.0.0-beta.17"
       ],
-      "ref": "path://pdf-xfa#1.0.0-beta.16"
+      "ref": "path://pdf-xfa#1.0.0-beta.17"
     },
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#roxmltree@0.20.0",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://xfa-dom-resolver#1.0.0-beta.16"
+      "ref": "path://xfa-dom-resolver#1.0.0-beta.17"
     },
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#rquickjs@0.8.1",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://xfa-js-sandboxed#1.0.0-beta.16"
+      "ref": "path://xfa-js-sandboxed#1.0.0-beta.17"
     },
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.228",
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.149",
-        "path://xfa-layout-engine#1.0.0-beta.16"
+        "path://xfa-layout-engine#1.0.0-beta.17"
       ],
-      "ref": "path://xfa-json#1.0.0-beta.16"
+      "ref": "path://xfa-json#1.0.0-beta.17"
     },
     {
       "dependsOn": [
-        "path://formcalc-interpreter#1.0.0-beta.16",
+        "path://formcalc-interpreter#1.0.0-beta.17",
         "registry+https://github.com/rust-lang/crates.io-index#log@0.4.29",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
-        "path://xfa-dom-resolver#1.0.0-beta.16",
-        "path://xfa-js-sandboxed#1.0.0-beta.16"
+        "path://xfa-dom-resolver#1.0.0-beta.17",
+        "path://xfa-js-sandboxed#1.0.0-beta.17"
       ],
-      "ref": "path://xfa-layout-engine#1.0.0-beta.16"
+      "ref": "path://xfa-layout-engine#1.0.0-beta.17"
     },
     {
       "dependsOn": [],
@@ -9344,14 +9344,14 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "path://pdf-engine#1.0.0-beta.16",
+      "bom-ref": "path://pdf-engine#1.0.0-beta.17",
       "components": [
         {
-          "bom-ref": "path://pdf-engine#1.0.0-beta.16 bin-target-0",
+          "bom-ref": "path://pdf-engine#1.0.0-beta.17 bin-target-0",
           "name": "pdf_engine",
-          "purl": "pkg:cargo/pdf-engine@1.0.0-beta.16?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/pdf-engine@1.0.0-beta.17?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "1.0.0-beta.16"
+          "version": "1.0.0-beta.17"
         }
       ],
       "description": "Unified PDF rendering engine \u2014 page rendering, text extraction, thumbnails.",
@@ -9381,10 +9381,10 @@
         }
       ],
       "name": "pdf-engine",
-      "purl": "pkg:cargo/pdf-engine@1.0.0-beta.16?download_url=file://.",
+      "purl": "pkg:cargo/pdf-engine@1.0.0-beta.17?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.16"
+      "version": "1.0.0-beta.17"
     },
     "properties": [
       {
@@ -9392,7 +9392,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-06-18T18:11:03.391906000Z",
+    "timestamp": "2026-06-18T20:09:44.661162000Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -9401,7 +9401,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:bdafaeb0-88f9-412d-b6eb-ca1404449638",
+  "serialNumber": "urn:uuid:120fef14-fa54-49f4-8402-e7e9337a738d",
   "specVersion": "1.3",
   "version": 1
 }

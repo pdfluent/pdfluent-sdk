@@ -47,6 +47,143 @@ pub struct ExtractedImage {
     pub data: Vec<u8>,
 }
 
+/// A document-ready encoded image: valid PNG or JPEG bytes together with the
+/// matching MIME type and file extension. Produced by
+/// [`encode_image_for_document`] for embedding in OOXML packages (DOCX/PPTX/XLSX).
+#[derive(Debug, Clone)]
+pub struct EncodedImage {
+    /// Encoded image bytes — a real PNG (`\x89PNG…`) or JPEG (`\xFF\xD8…`).
+    pub data: Vec<u8>,
+    /// MIME type of [`Self::data`]: `"image/png"` or `"image/jpeg"`.
+    pub mime: &'static str,
+    /// File extension matching [`Self::mime`]: `"png"` or `"jpeg"`.
+    pub ext: &'static str,
+}
+
+/// Encode an [`ExtractedImage`] into document-ready bytes (a valid PNG or JPEG)
+/// suitable for embedding in an OOXML package.
+///
+/// PDF image streams are not directly embeddable: a `FlateDecode` stream holds
+/// *raw, decompressed pixel samples* (no PNG container), so writing those bytes
+/// with a `.png` name produces a file Word/PowerPoint reject as corrupt. This
+/// helper turns each supported image into a real encoded file:
+///
+/// - **JPEG** (`DCTDecode`): the stream already is a JPEG → passed through as
+///   `image/jpeg` (after a `\xFF\xD8` signature check).
+/// - **Flate / Raw** raw samples: re-encoded as a real PNG using
+///   `width`/`height`/`bits_per_component`/`color_space`. DeviceGray → 8-bit
+///   grayscale, DeviceRGB → RGB, DeviceCMYK → RGB (naive conversion). When the
+///   colour-space name is opaque (e.g. `ICCBased`), the component count is
+///   inferred from the byte length.
+/// - **Everything else** (JPX/JBIG2/CCITT, non-8-bit depths, indexed palettes,
+///   or a sample buffer too short for the declared geometry): returns `None` so
+///   the caller embeds *nothing* rather than corrupt bytes.
+///
+/// This function never returns raw, unencoded bytes labelled as an image.
+pub fn encode_image_for_document(img: &ExtractedImage) -> Option<EncodedImage> {
+    match &img.filter {
+        // DCTDecode streams are already a JPEG bitstream.
+        ImageFilter::Jpeg => {
+            if img.data.starts_with(&[0xFF, 0xD8]) {
+                Some(EncodedImage {
+                    data: img.data.clone(),
+                    mime: "image/jpeg",
+                    ext: "jpeg",
+                })
+            } else {
+                None
+            }
+        }
+        // Raw decompressed samples — encode a real PNG.
+        ImageFilter::Flate | ImageFilter::Raw => encode_samples_as_png(img),
+        // JPX/JBIG2/CCITT/Unknown carry compressed bytes we can't decode to
+        // samples here; never embed them as a PNG.
+        _ => None,
+    }
+}
+
+/// Number of colour components implied by a PDF colour-space *name*, or `None`
+/// when the name is opaque (ICCBased/Indexed/Separation/…) and the caller should
+/// infer from the data length instead.
+fn components_for_color_space(cs: &str) -> Option<usize> {
+    match cs {
+        "DeviceGray" | "CalGray" | "G" => Some(1),
+        "DeviceRGB" | "CalRGB" | "RGB" => Some(3),
+        "DeviceCMYK" | "CMYK" => Some(4),
+        _ => None,
+    }
+}
+
+/// Infer component count from total sample bytes and pixel count (8-bit only).
+fn infer_components(byte_len: usize, pixels: usize) -> Option<usize> {
+    if pixels == 0 {
+        return None;
+    }
+    match byte_len / pixels {
+        1 => Some(1),
+        3 => Some(3),
+        4 => Some(4),
+        _ => None,
+    }
+}
+
+/// Naive DeviceCMYK→RGB conversion (additive complement). 4 bytes → 3 bytes.
+fn cmyk_to_rgb(samples: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(samples.len() / 4 * 3);
+    for px in samples.chunks_exact(4) {
+        let (c, m, y, k) = (px[0] as u32, px[1] as u32, px[2] as u32, px[3] as u32);
+        out.push(((255 - c) * (255 - k) / 255) as u8);
+        out.push(((255 - m) * (255 - k) / 255) as u8);
+        out.push(((255 - y) * (255 - k) / 255) as u8);
+    }
+    out
+}
+
+/// Encode 8-bit raw samples into a real PNG. Returns `None` for unsupported
+/// depths/geometries so the caller can skip rather than embed garbage.
+fn encode_samples_as_png(img: &ExtractedImage) -> Option<EncodedImage> {
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use image::{ExtendedColorType, ImageEncoder};
+
+    // Only 8-bit components are supported; other depths need bit-unpacking we
+    // don't (yet) perform — skip rather than emit a wrong image.
+    if img.bits_per_component != 8 || img.width == 0 || img.height == 0 {
+        return None;
+    }
+    let pixels = (img.width as usize).checked_mul(img.height as usize)?;
+
+    // Prefer the named colour space; fall back to inferring from byte length
+    // (covers ICCBased and similar opaque names).
+    let components = components_for_color_space(&img.color_space)
+        .or_else(|| infer_components(img.data.len(), pixels))?;
+
+    let expected = pixels.checked_mul(components)?;
+    if img.data.len() < expected {
+        // Not enough data for the declared geometry — don't emit a corrupt PNG.
+        return None;
+    }
+    let samples = &img.data[..expected];
+
+    let (buf, color) = match components {
+        1 => (samples.to_vec(), ExtendedColorType::L8),
+        3 => (samples.to_vec(), ExtendedColorType::Rgb8),
+        4 => (cmyk_to_rgb(samples), ExtendedColorType::Rgb8),
+        _ => return None,
+    };
+
+    let mut out = Vec::new();
+    // Fast compression keeps export latency low for full-page rasters; the
+    // bytes are still a fully valid PNG.
+    PngEncoder::new_with_quality(&mut out, CompressionType::Fast, FilterType::Adaptive)
+        .write_image(&buf, img.width, img.height, color)
+        .ok()?;
+    Some(EncodedImage {
+        data: out,
+        mime: "image/png",
+        ext: "png",
+    })
+}
+
 /// Extract all images from all pages of a PDF document.
 pub fn extract_all_images(doc: &Document) -> Result<Vec<ExtractedImage>> {
     let page_map = build_page_image_map(doc);
@@ -323,6 +460,128 @@ fn collect_page_xobject_ids(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> 
 mod tests {
     use super::*;
     use lopdf::{dictionary, Document, Object, Stream};
+
+    // ── encode_image_for_document ──────────────────────────────────────
+
+    fn mk_img(
+        filter: ImageFilter,
+        cs: &str,
+        bpc: u32,
+        w: u32,
+        h: u32,
+        data: Vec<u8>,
+    ) -> ExtractedImage {
+        ExtractedImage {
+            object_id: (1, 0),
+            page: 1,
+            width: w,
+            height: h,
+            bits_per_component: bpc,
+            color_space: cs.to_string(),
+            filter,
+            data,
+        }
+    }
+
+    fn assert_decodes_to(enc: &EncodedImage, w: u32, h: u32) {
+        assert_eq!(
+            &enc.data[..8],
+            b"\x89PNG\r\n\x1a\n",
+            "missing PNG signature"
+        );
+        let decoded = image::load_from_memory(&enc.data).expect("encoded PNG must decode");
+        assert_eq!((decoded.width(), decoded.height()), (w, h));
+    }
+
+    #[test]
+    fn encode_rgb_flate_samples_produce_valid_png() {
+        // 2x2 DeviceRGB = 12 raw bytes (what FlateDecode yields after decompression).
+        let img = mk_img(ImageFilter::Flate, "DeviceRGB", 8, 2, 2, vec![10u8; 12]);
+        let enc = encode_image_for_document(&img).expect("RGB samples should encode");
+        assert_eq!(enc.mime, "image/png");
+        assert_eq!(enc.ext, "png");
+        assert_decodes_to(&enc, 2, 2);
+    }
+
+    #[test]
+    fn encode_grayscale_samples_produce_valid_png() {
+        // 2x2 DeviceGray = 4 raw bytes.
+        let img = mk_img(ImageFilter::Flate, "DeviceGray", 8, 2, 2, vec![200u8; 4]);
+        let enc = encode_image_for_document(&img).expect("gray samples should encode");
+        assert_eq!(enc.mime, "image/png");
+        assert_decodes_to(&enc, 2, 2);
+    }
+
+    #[test]
+    fn encode_cmyk_samples_produce_valid_rgb_png() {
+        // 2x2 DeviceCMYK = 16 raw bytes → converted to RGB PNG.
+        let img = mk_img(ImageFilter::Flate, "DeviceCMYK", 8, 2, 2, vec![0u8; 16]);
+        let enc = encode_image_for_document(&img).expect("cmyk samples should encode");
+        assert_eq!(enc.mime, "image/png");
+        assert_decodes_to(&enc, 2, 2);
+    }
+
+    #[test]
+    fn encode_iccbased_infers_components_from_length() {
+        // Opaque colour-space name; 12 bytes / 4 px = 3 components → RGB.
+        let img = mk_img(ImageFilter::Flate, "ICCBased", 8, 2, 2, vec![55u8; 12]);
+        let enc = encode_image_for_document(&img).expect("ICCBased should infer RGB");
+        assert_decodes_to(&enc, 2, 2);
+    }
+
+    #[test]
+    fn encode_raw_uncompressed_samples_produce_valid_png() {
+        let img = mk_img(ImageFilter::Raw, "DeviceRGB", 8, 2, 2, vec![255u8; 12]);
+        let enc = encode_image_for_document(&img).expect("raw samples should encode");
+        assert_decodes_to(&enc, 2, 2);
+    }
+
+    #[test]
+    fn encode_jpeg_stream_passes_through() {
+        // A minimal JPEG-signed buffer is embedded as-is.
+        let mut data = vec![0xFF, 0xD8, 0xFF, 0xE0];
+        data.extend_from_slice(&[1, 2, 3, 4]);
+        let img = mk_img(ImageFilter::Jpeg, "DeviceRGB", 8, 10, 10, data.clone());
+        let enc = encode_image_for_document(&img).expect("jpeg should pass through");
+        assert_eq!(enc.mime, "image/jpeg");
+        assert_eq!(enc.ext, "jpeg");
+        assert_eq!(enc.data, data, "jpeg bytes must be preserved verbatim");
+    }
+
+    #[test]
+    fn encode_jpeg_without_signature_is_skipped() {
+        let img = mk_img(ImageFilter::Jpeg, "DeviceRGB", 8, 10, 10, vec![0u8; 8]);
+        assert!(encode_image_for_document(&img).is_none());
+    }
+
+    #[test]
+    fn encode_short_buffer_is_skipped_not_corrupted() {
+        // Declares 2x2 RGB (needs 12 bytes) but only 6 present → must skip.
+        let img = mk_img(ImageFilter::Flate, "DeviceRGB", 8, 2, 2, vec![1u8; 6]);
+        assert!(encode_image_for_document(&img).is_none());
+    }
+
+    #[test]
+    fn encode_non_8bit_depth_is_skipped() {
+        let img = mk_img(ImageFilter::Flate, "DeviceGray", 1, 8, 8, vec![0u8; 8]);
+        assert!(encode_image_for_document(&img).is_none());
+    }
+
+    #[test]
+    fn encode_unsupported_filters_are_skipped() {
+        for f in [
+            ImageFilter::Jpx,
+            ImageFilter::Jbig2,
+            ImageFilter::CcittFax,
+            ImageFilter::Unknown("Foo".into()),
+        ] {
+            let img = mk_img(f, "DeviceRGB", 8, 2, 2, vec![0u8; 12]);
+            assert!(
+                encode_image_for_document(&img).is_none(),
+                "compressed/unknown filters must never be embedded as PNG"
+            );
+        }
+    }
 
     /// Helper: create a minimal PDF document with a JPEG image on page 1.
     fn make_doc_with_jpeg_image() -> Document {

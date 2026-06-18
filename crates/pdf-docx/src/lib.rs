@@ -13,7 +13,7 @@ pub use layout::{DocxImage, PageElement, Paragraph, Run, Table};
 
 use layout::analyze_page;
 use lopdf::Document;
-use pdf_extract::{extract_page_images, extract_text, ImageFilter};
+use pdf_extract::{encode_image_for_document, extract_page_images, extract_text};
 use writer::write_docx;
 
 /// Maximum number of pages to convert to DOCX. Massive documents (e.g. 1000+
@@ -107,18 +107,27 @@ fn pdf_to_docx_inner(doc: &Document, skip_images: bool) -> Result<Vec<u8>> {
         if !skip_images {
             if let Ok(images) = extract_page_images(doc, page_num) {
                 for img in images {
-                    let (content_type, ext) = match img.filter {
-                        ImageFilter::Jpeg => ("image/jpeg", "jpeg"),
-                        _ => ("image/png", "png"),
+                    // Re-encode raw PDF samples into a real PNG/JPEG. Skipping an
+                    // unsupported image is correct: embedding raw bytes labelled
+                    // `image/png` makes Word/PowerPoint reject the whole package.
+                    let Some(encoded) = encode_image_for_document(&img) else {
+                        log::warn!(
+                            "pdf-docx: skipping page {page_num} image ({}x{}, cs={}, {:?}) — unsupported for embedding",
+                            img.width,
+                            img.height,
+                            img.color_space,
+                            img.filter
+                        );
+                        continue;
                     };
 
-                    let id = format!("image{}_{}.{}", page_num, all_images.len(), ext);
+                    let id = format!("image{}_{}.{}", page_num, all_images.len(), encoded.ext);
 
                     all_images.push(DocxImage {
-                        data: img.data,
+                        data: encoded.data,
                         width: img.width,
                         height: img.height,
-                        content_type: content_type.to_string(),
+                        content_type: encoded.mime.to_string(),
                         id: id.clone(),
                     });
 
@@ -126,7 +135,7 @@ fn pdf_to_docx_inner(doc: &Document, skip_images: bool) -> Result<Vec<u8>> {
                         data: Vec::new(), // data stored in all_images
                         width: img.width,
                         height: img.height,
-                        content_type: content_type.to_string(),
+                        content_type: encoded.mime.to_string(),
                         id,
                     }));
                 }
@@ -405,5 +414,159 @@ mod tests {
 
         assert!(xml.contains("ContentType"));
         assert!(xml.contains("wordprocessingml"));
+    }
+
+    // ── embedded-image validity (the DOCX corruption regression) ───────
+
+    /// Build a one-page PDF whose single content stream draws image `Im0`,
+    /// using the given image XObject dict + (possibly compressed) stream data.
+    fn make_pdf_with_image(img_dict: lopdf::Dictionary, stream_data: Vec<u8>) -> Document {
+        let mut doc = Document::with_version("1.7");
+        let img_id = doc.add_object(Object::Stream(Stream::new(img_dict, stream_data)));
+        let resources = dictionary! {
+            "XObject" => Object::Dictionary(dictionary! { "Im0" => Object::Reference(img_id) }),
+        };
+        let content_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! {},
+            b"q 100 0 0 100 0 0 cm /Im0 Do Q".to_vec(),
+        )));
+        let page_dict = dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Resources" => Object::Dictionary(resources),
+            "Contents" => Object::Reference(content_id),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+        let pages_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        }));
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+        let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        doc
+    }
+
+    fn flate(raw: &[u8]) -> Vec<u8> {
+        let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut e, raw).unwrap();
+        e.finish().unwrap()
+    }
+
+    fn read_zip_bytes(data: &[u8], name: &str) -> Option<Vec<u8>> {
+        let cursor = std::io::Cursor::new(data);
+        let mut archive = zip::ZipArchive::new(cursor).ok()?;
+        let mut file = archive.by_name(name).ok()?;
+        let mut content = Vec::new();
+        file.read_to_end(&mut content).ok()?;
+        Some(content)
+    }
+
+    fn media_names(data: &[u8]) -> Vec<String> {
+        zip_file_names(data)
+            .into_iter()
+            .filter(|n| n.starts_with("word/media/"))
+            .collect()
+    }
+
+    #[test]
+    fn flate_rgb_image_is_embedded_as_valid_decodable_png() {
+        // 4x4 DeviceRGB raw samples, flate-compressed — the Canva case that
+        // previously produced an unreadable .png and made Word reject the file.
+        let img_dict = dictionary! {
+            "Type" => "XObject", "Subtype" => "Image",
+            "Width" => 4_i64, "Height" => 4_i64,
+            "BitsPerComponent" => 8_i64, "ColorSpace" => "DeviceRGB",
+            "Filter" => "FlateDecode",
+        };
+        let docx = pdf_to_docx(&make_pdf_with_image(img_dict, flate(&[123u8; 4 * 4 * 3]))).unwrap();
+
+        let media = media_names(&docx);
+        assert_eq!(media.len(), 1, "expected one embedded image, got {media:?}");
+        assert!(media[0].ends_with(".png"));
+        let bytes = read_zip_bytes(&docx, &media[0]).unwrap();
+        assert_eq!(
+            &bytes[..8],
+            b"\x89PNG\r\n\x1a\n",
+            "embedded media must be a real PNG, not raw samples"
+        );
+        let decoded = image::load_from_memory(&bytes).expect("embedded PNG must decode");
+        assert_eq!((decoded.width(), decoded.height()), (4, 4));
+
+        let ct = read_zip_entry(&docx, "[Content_Types].xml").unwrap();
+        assert!(ct.contains("Extension=\"png\""));
+    }
+
+    #[test]
+    fn jpeg_image_is_embedded_as_jpeg_passthrough() {
+        let jpeg = vec![
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F', 0x00,
+        ];
+        let img_dict = dictionary! {
+            "Type" => "XObject", "Subtype" => "Image",
+            "Width" => 8_i64, "Height" => 8_i64,
+            "BitsPerComponent" => 8_i64, "ColorSpace" => "DeviceRGB",
+            "Filter" => "DCTDecode",
+        };
+        let docx = pdf_to_docx(&make_pdf_with_image(img_dict, jpeg.clone())).unwrap();
+
+        let media = media_names(&docx);
+        assert_eq!(media.len(), 1);
+        assert!(media[0].ends_with(".jpeg"));
+        let bytes = read_zip_bytes(&docx, &media[0]).unwrap();
+        assert_eq!(
+            &bytes[..2],
+            &[0xFF, 0xD8],
+            "jpeg media must keep its signature"
+        );
+        assert_eq!(bytes, jpeg, "DCTDecode stream must be embedded verbatim");
+        assert!(read_zip_entry(&docx, "[Content_Types].xml")
+            .unwrap()
+            .contains("image/jpeg"));
+    }
+
+    #[test]
+    fn every_image_embed_resolves_to_a_relationship() {
+        let img_dict = dictionary! {
+            "Type" => "XObject", "Subtype" => "Image",
+            "Width" => 4_i64, "Height" => 4_i64,
+            "BitsPerComponent" => 8_i64, "ColorSpace" => "DeviceRGB",
+            "Filter" => "FlateDecode",
+        };
+        let docx = pdf_to_docx(&make_pdf_with_image(img_dict, flate(&[7u8; 4 * 4 * 3]))).unwrap();
+        let document = read_zip_entry(&docx, "word/document.xml").unwrap();
+        let rels = read_zip_entry(&docx, "word/_rels/document.xml.rels").unwrap();
+
+        let needle = "r:embed=\"";
+        let mut idx = 0;
+        let mut embeds = 0;
+        while let Some(pos) = document[idx..].find(needle) {
+            let start = idx + pos + needle.len();
+            let end = start + document[start..].find('"').unwrap();
+            let id = &document[start..end];
+            assert!(
+                rels.contains(&format!("Id=\"{id}\"")),
+                "embed {id} has no matching relationship"
+            );
+            embeds += 1;
+            idx = end;
+        }
+        assert_eq!(embeds, 1, "expected exactly one image embed");
+    }
+
+    #[test]
+    fn text_only_pdf_has_no_media_and_stays_valid() {
+        let docx = pdf_to_docx(&make_test_pdf(b"BT /F1 12 Tf (No images here) Tj ET")).unwrap();
+        assert!(
+            media_names(&docx).is_empty(),
+            "text-only docx must embed no media"
+        );
+        assert_eq!(&docx[0..2], b"PK");
     }
 }

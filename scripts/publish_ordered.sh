@@ -105,50 +105,37 @@ print(match)
 # cargo publish -p <name> looks up by package name, not by directory.
 # ---------------------------------------------------------------------------
 CRATES=(
-    # --- Image codec forks (no internal deps) ---
+    # Topologically sorted (deps strictly before dependents), regenerated from
+    # `cargo metadata`. Fixes two bugs that broke the beta.16 publish: the
+    # `xfa-js-sandboxed` dependency was missing, and `pdf-engine` was ordered
+    # before its dependencies `pdf-xfa` / `pdfluent-forms`. Image-codec forks
+    # sit at independent versions and are skipped at publish time if unchanged.
+    "xfa-dom-resolver"
+    "formcalc-interpreter"
     "pdfluent-ccitt"
     "pdfluent-jbig2"
     "pdfluent-jpeg2000"
-
-    # --- lopdf fork + CFF parser ---
-    "pdfluent-lopdf"
-    "pdfluent-cff"
-
-    # --- Core parse/interpret/font layer ---
     "pdf-syntax"
+    "pdfluent-lopdf"
+    "pdf-annot"
+    "pdfluent-cff"
+    "pdf-compliance"
+    "pdfluent-extract"
+    "pdf-docx"
     "pdf-font"
     "pdf-interpret"
+    "pdf-ocr"
     "pdf-render"
-
-    # --- XFA stack (ordered by dependency depth) ---
-    "xfa-dom-resolver"
-    "formcalc-interpreter"
+    "xfa-js-sandboxed"
     "xfa-layout-engine"
     "xfa-json"
-
-    # --- Compliance + annot ---
-    "pdf-compliance"
-    "pdf-annot"
-
-    # --- Engine layer ---
-    "pdf-engine"
-
-    # --- Feature crates ---
-    "pdfluent-sign"
-    "pdfluent-forms"
-    "pdfluent-extract"
-    "pdf-ocr"
-    "xfa-license"
-
-    # --- Manipulation + conversion + redaction (depend on extract/manip/xfa-license) ---
-    "pdf-manip"
-    "pdf-docx"
-    "pdf-redact"
-
-    # --- XFA integration ---
     "pdf-xfa"
-
-    # --- Umbrella ---
+    "pdfluent-forms"
+    "pdf-engine"
+    "xfa-license"
+    "pdf-manip"
+    "pdf-redact"
+    "pdfluent-sign"
     "pdfluent"
 )
 
@@ -264,7 +251,7 @@ for CRATE in "${CRATES[@]}"; do
     # Real publish
     # ------------------------------------------------------------------
     log "  Publishing $CRATE${CRATE_VER:+@$CRATE_VER}..."
-    if cargo publish -p "$CRATE" --allow-dirty >> "$LOGFILE" 2>&1; then
+    if cargo publish -p "$CRATE" >> "$LOGFILE" 2>&1; then
         log "  Published $CRATE ✅"
         PUBLISHED+=("$CRATE")
         # Record to state file for post-mortem / human review
@@ -276,7 +263,7 @@ for CRATE in "${CRATES[@]}"; do
     fi
 
     # Wait for crates.io index propagation before publishing dependents
-    if [[ "$CRATE" != "${CRATES[-1]}" ]]; then
+    if [[ "$CRATE" != "${CRATES[$((${#CRATES[@]} - 1))]}" ]]; then
         log "  Waiting ${WAIT_SECS}s for crates.io index propagation..."
         sleep "$WAIT_SECS"
     fi

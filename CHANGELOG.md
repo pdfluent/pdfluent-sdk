@@ -2,6 +2,32 @@
 
 All notable changes to PDFluent are documented here.
 
+## [1.0.0-beta.17] — 2026-06-18
+
+Repairs the OSS-fork dependency drift that blocked beta.16 from publishing to
+crates.io (beta.16 was yanked after 13 sub-crates published but the facade hit
+the wall). Functionally identical to beta.16 (the cross-binding parity closure
+below) plus:
+
+### Fixed
+
+- **OSS forks republished with their actual APIs.** `pdf-syntax` (→ 0.5.6),
+  `pdf-interpret` (→ 0.5.7) and `pdf-font` (→ 1.0.0-beta.5) carried local APIs
+  (`Cache`, `LoadRecovery`, `OutlineFontData::ascent`, interpreter cache
+  settings, load-recovery) that had never been published under their prior
+  version numbers — so `pdf-engine` and the `pdfluent` facade could not build
+  against the published forks. The forks are bumped so those APIs ship, and all
+  product crates re-pin to the new fork versions.
+- **`publish_ordered.sh`**: added the missing `xfa-js-sandboxed` crate, fixed
+  the topological order (`pdf-engine` was listed before its dependencies
+  `pdf-xfa` / `pdfluent-forms`), dropped `--allow-dirty`, and made the negative
+  array index bash-3.2 compatible.
+
+### Changed
+
+- Product line re-versioned beta.16 → **beta.17** (beta.16 product versions are
+  spent/yanked). Independent OSS image-codec forks unchanged.
+
 ## [1.0.0-beta.16] — 2026-06-18
 
 Coherent release train across all product channels. Closes the remaining

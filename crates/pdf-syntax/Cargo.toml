@@ -1,6 +1,6 @@
 [package]
 name = "pdf-syntax"
-version = "0.5.4"
+version = "0.5.6"
 description = "A low-level crate for reading PDF files."
 authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
 edition = "2024"
