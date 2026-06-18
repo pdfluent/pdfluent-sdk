@@ -2,6 +2,61 @@
 
 All notable changes to PDFluent are documented here.
 
+## [1.0.0-beta.16] — 2026-06-18
+
+Coherent release train across all product channels. Closes the remaining
+commercial-license/signing parity gaps so every language binding exposes the
+same capability surface, and ships the SDK features accumulated since the last
+published binding release (beta.10).
+
+### Added — cross-binding commercial-license & signing parity
+
+- **Java** (`com.pdfluent:pdfluent`, canonical `bindings/java`): license
+  public-key injection (`PdfluentLicensing.setPublicKey`), signed-payload
+  activation (`PdfluentLicensing.activatePayload`), document signing
+  (`PdfDocument.sign`), and signature inspection (`signatureCount`,
+  `isSignatureValid`, `verifySignatures`) — all bound to the C ABI with typed
+  `PdfluentException` mapping. (Previously these existed only in the
+  deploy-disabled legacy `xfa-pdf` artifact.)
+- **Python** (`pdfluent`): signature verification on the document
+  (`validate_signatures`/`verify_signatures`/`signatures` returning
+  `SignatureResult`); license `set_license_public_key`/`set_license_payload`
+  surfaced at the top-level package and fully declared in the `.pyi` stubs.
+- **.NET** (`PDFluent`): `Licensing.SetPublicKey`/`ActivatePayload`,
+  `PdfDocument.Sign`/`SignatureCount`/`IsSignatureValid`/`VerifySignatures`
+  with the typed `PdfluentException` hierarchy preserved; the previously
+  skipped signature-verification test is now implemented.
+- **WASM** (`@pdfluent/sdk-wasm`): `setLicensePublicKey`/`setLicensePayload`
+  exports; every editing/annotation error now uses the typed error model
+  (code/operation/help) instead of ad-hoc `JsError` (61 sites converted).
+- **Node** (`@pdfluent/node`): already parity-complete — the reference surface.
+
+### Fixed
+
+- **wasm32 build of the `pdfluent` facade**: diagnostics now import the
+  leniency/interpreter-warning types directly from `pdf-syntax`/`pdf-interpret`
+  (lightweight, wasm-safe) instead of through the native-only `pdf-render`
+  re-export, which broke `cargo build --target wasm32-unknown-unknown` since
+  the Phase-1 fill foundation landed.
+
+### Changed
+
+- **`xfa-cli` is now `publish = false`** — it bundles internal research
+  binaries; the user-facing `pdfluent` CLI is distributed as signed platform
+  binaries, not as crates.io source.
+- Independent OSS-fork crates (`pdf-syntax`, `pdf-interpret`, `pdf-font`,
+  `pdfluent-lopdf`, and the image-codec forks) keep their own semver and are
+  **not** rebumped — already current and published on crates.io.
+
+### Included since the last published binding release (beta.10)
+
+AcroForm multi-select on every binding; a public diagnostics model
+(decode-leniency + interpreter-warning collection); tagged-PDF logical
+structure tree; `/PageLabels` reading; public incremental-save; idempotent
+annotation flattening; XFA interactive-fill foundation; and an expanded
+text/font-metrics surface (glyph transforms, ascent/descent, Standard-14 AFM
+fallback).
+
 ## [acroform/sdk-foundation] — 2026-06-12
 
 ### Added

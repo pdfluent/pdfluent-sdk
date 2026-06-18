@@ -13,13 +13,13 @@ name = "pdfluent_java"
 crate-type = ["cdylib"]
 
 [dependencies]
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.15" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.15" }
-pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.15" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.15" }
-pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.15" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.15" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.16" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.16" }
+pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.16" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.16" }
+pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.16" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.16" }
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.4" }
-pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.15" }
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.16" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
 jni = "0.21"

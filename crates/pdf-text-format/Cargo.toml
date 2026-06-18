@@ -1,6 +1,6 @@
 [package]
 name = "pdf-text-format"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 edition.workspace = true
 license-file = "LICENSE"
 readme = "README.md"
@@ -10,6 +10,6 @@ documentation = "https://pdfluent.com/docs"
 description = "Text run formatting: inject font-size and color changes with state isolation"
 
 [dependencies]
-pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.15" }
+pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.16" }
 lopdf = { workspace = true }
 thiserror.workspace = true

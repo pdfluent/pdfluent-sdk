@@ -1,5 +1,7 @@
 package com.pdfluent;
 
+import com.sun.jna.NativeLong;
+
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -102,8 +104,12 @@ public final class PdfluentLicensing {
         }
     }
 
+    /** Required length, in bytes, of a raw Ed25519 verification key. */
+    private static final int ED25519_PUBLIC_KEY_LEN = 32;
+
     // ---- Status codes returned by the native layer ----
     private static final int STATUS_OK = 0;
+    private static final int STATUS_INVALID_ARG = 1;
     private static final int STATUS_INVALID_LICENSE = 16;
     private static final int STATUS_LICENSE_ALREADY_SET = 17;
     private static final int STATUS_LICENSE_FILE = 18;
@@ -164,12 +170,65 @@ public final class PdfluentLicensing {
         return Tier.fromCode(LIB.pdfluent_license_effective_tier());
     }
 
+    // ---- Signed-payload activation (parity with Node / .NET / Python / WASM) ----
+
+    /**
+     * Inject the process-global Ed25519 public key used to verify signed
+     * license payloads.
+     *
+     * <p>Must be called once, before {@link #activatePayload(String)}. The key
+     * is exactly 32 raw bytes — not base64, PEM, or PKCS#8. Calling twice with
+     * the <em>same</em> key is an idempotent no-op; calling with a
+     * <em>different</em> key throws.
+     *
+     * @param publicKey the raw 32-byte Ed25519 verifying key; must not be
+     *                  {@code null}
+     * @throws PdfluentLicenseException if {@code publicKey} is not 32 bytes
+     *         ({@link PdfluentException#getCode()} returns
+     *         {@code "E-LICENSE-INVALID"}) or a different key was already
+     *         injected in this JVM (also {@code "E-LICENSE-INVALID"})
+     */
+    public static void setPublicKey(byte[] publicKey) {
+        Objects.requireNonNull(publicKey, "publicKey");
+        int status = LIB.pdfluent_license_set_public_key(
+            publicKey, new NativeLong(publicKey.length));
+        throwIfStatus(status);
+    }
+
+    /**
+     * Activate the process-global license from a cryptographically-signed
+     * JSON payload of the form {@code {"payload": {...}, "signature": "..."}},
+     * where {@code signature} is the base64-encoded Ed25519 signature over the
+     * canonical payload JSON.
+     *
+     * <p>{@link #setPublicKey(byte[])} must have been called first.
+     *
+     * @param payloadJson the signed payload JSON; must not be {@code null}
+     * @throws PdfluentLicenseException if the payload is malformed, the public
+     *         key is missing, or a different tier is already active
+     *         ({@code getCode() == "E-LICENSE-INVALID"}); if the signature does
+     *         not verify ({@code "E-LICENSE-INVALID-SIGNATURE"}); or if the
+     *         payload has expired ({@code "E-LICENSE-EXPIRED"})
+     */
+    public static void activatePayload(String payloadJson) {
+        Objects.requireNonNull(payloadJson, "payloadJson");
+        int status = LIB.pdfluent_license_activate_payload(payloadJson);
+        throwIfStatus(status);
+    }
+
     // ---- helpers ----
 
     private static void throwIfStatus(int status) {
         switch (status) {
             case STATUS_OK:
                 return;
+            case STATUS_INVALID_ARG:
+                // Bad argument shape from the signed-payload surface, e.g. a
+                // public key that is not exactly 32 bytes, or a null payload.
+                // Mirror Node/.NET/Python/WASM: surface as the canonical
+                // E-LICENSE-INVALID typed code.
+                throw new PdfluentLicenseException(
+                    "invalid license argument: " + lastError(), "E-LICENSE-INVALID");
             case STATUS_INVALID_LICENSE:
                 // Canonical C8 catalogue: E-LICENSE-INVALID
                 throw new PdfluentLicenseException(

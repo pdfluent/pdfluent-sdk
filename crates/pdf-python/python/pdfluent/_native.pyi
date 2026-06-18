@@ -83,7 +83,9 @@ class _NativeLicenseInfo:
 def set_license_key(key: str) -> None:
     """Activate the process-global license key in the Rust core.
 
-    Accepts the simple 1.0 evaluation format ``"tier:<name>"``.
+    Accepts the simple 1.0 evaluation format ``"tier:<name>"`` as well as a
+    full signed JSON payload (auto-routed to :func:`set_license_payload` when
+    the string starts with ``{``).
     First call locks the tier; subsequent calls with the same tier are
     idempotent.  A different tier raises :exc:`PdfluentLicenseError`.
 
@@ -91,6 +93,51 @@ def set_license_key(key: str) -> None:
     ------
     PdfluentLicenseError
         On invalid format or tier conflict.
+    """
+    ...
+
+def set_license_public_key(key: bytes) -> None:
+    """Configure the Ed25519 public key used to verify signed JSON license
+    payloads.
+
+    Must be called **once**, before :func:`set_license_payload` (or before
+    passing a JSON payload to :func:`set_license_key`). The key must be exactly
+    32 raw bytes (not base64, not PEM, not PKCS#8). Calling again with the same
+    key is an idempotent no-op; a different key raises
+    :exc:`PdfluentLicenseError`.
+
+    Parameters
+    ----------
+    key:
+        32-byte raw Ed25519 public key.
+
+    Raises
+    ------
+    PdfluentLicenseError
+        If the key is not 32 bytes, or a different key was already configured
+        (``code == "E-LICENSE-INVALID"``).
+    """
+    ...
+
+def set_license_payload(payload_json: str) -> None:
+    """Activate a cryptographically-signed JSON license payload.
+
+    The public key must be configured first via :func:`set_license_public_key`.
+    This is the explicit signed-payload entry point; :func:`set_license_key`
+    also accepts signed JSON payloads automatically.
+
+    Parameters
+    ----------
+    payload_json:
+        JSON string produced by the PDFluent licence-generator tool.
+
+    Raises
+    ------
+    PdfluentLicenseError
+        If the JSON is malformed, no public key is configured, or a conflicting
+        tier is already set (``code == "E-LICENSE-INVALID"``); if the signature
+        does not verify (``code == "E-LICENSE-INVALID-SIGNATURE"``); or if the
+        payload is past its expiry (``code == "E-LICENSE-EXPIRED"``).
     """
     ...
 
@@ -160,6 +207,9 @@ class Document:
     def search(self, query: str) -> List[int]: ...
     def extract_text(self, page_num: int) -> str: ...
     def save(self, path: str) -> None: ...
+    def validate_signatures(self) -> List[SignatureResult]: ...
+    def verify_signatures(self) -> List[SignatureResult]: ...
+    def signatures(self) -> List[SignatureResult]: ...
     def get_form_fields(self) -> List[FormField]: ...
     def set_form_field(self, name: str, value: str) -> bool: ...
     def set_multi_select(self, name: str, values: List[str]) -> bool: ...
@@ -472,5 +522,39 @@ class RedactReport:
 
     @property
     def pages_affected(self) -> int: ...
+
+    def __repr__(self) -> str: ...
+
+# ---------------------------------------------------------------------------
+# SignatureResult
+# ---------------------------------------------------------------------------
+
+class SignatureResult:
+    """The validation result for a single digital signature."""
+
+    @property
+    def status(self) -> str:
+        """Validation status: ``"valid"``, ``"invalid"``, or ``"unknown"``."""
+        ...
+
+    @property
+    def reason(self) -> Optional[str]:
+        """Reason for an ``"invalid"`` / ``"unknown"`` status, else ``None``."""
+        ...
+
+    @property
+    def field_name(self) -> str:
+        """Fully qualified signature field name."""
+        ...
+
+    @property
+    def signer(self) -> Optional[str]:
+        """Signer common name (from the certificate), if available."""
+        ...
+
+    @property
+    def timestamp(self) -> Optional[str]:
+        """Signing timestamp as a string, if available."""
+        ...
 
     def __repr__(self) -> str: ...

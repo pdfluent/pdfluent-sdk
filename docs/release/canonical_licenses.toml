@@ -129,17 +129,6 @@ forbidden_change = true
 heritage = "PDFluent original. Runtime licence-token validation."
 
 [[crate]]
-published_name = "xfa-cli"
-workspace_dir  = "xfa-cli"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
-required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
-forbidden_change = true
-heritage = "PDFluent original. CLI front-end for the XFA stack."
-
-[[crate]]
 published_name = "pdf-annot"
 workspace_dir  = "pdf-annot"
 license_kind   = "commercial"

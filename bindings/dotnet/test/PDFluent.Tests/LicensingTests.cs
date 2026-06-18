@@ -124,6 +124,48 @@ namespace PDFluent.Tests
         }
 
         [Fact]
+        public void SetPublicKey_NullThrowsArgumentNull()
+        {
+            Assert.Throws<ArgumentNullException>(() => Licensing.SetPublicKey(null!));
+        }
+
+        [Fact]
+        public void ActivatePayload_NullThrowsArgumentNull()
+        {
+            Assert.Throws<ArgumentNullException>(() => Licensing.ActivatePayload(null!));
+        }
+
+        [Fact]
+        public void SetPublicKey_WrongLengthThrowsValidation()
+        {
+            // The C ABI requires exactly 32 bytes; anything else is
+            // ErrorInvalidArgument -> PdfluentValidationException. This proves
+            // the byte[]+length marshalling reaches native code.
+            var ex = Assert.Throws<PdfluentValidationException>(
+                () => Licensing.SetPublicKey(new byte[16]));
+            Assert.Equal(PdfStatus.ErrorInvalidArgument, ex.NativeStatus);
+        }
+
+        [Fact]
+        public void ActivatePayload_MalformedJsonThrowsLicense()
+        {
+            // Without a public key (or with malformed JSON) the payload path
+            // rejects with a typed license exception. We tolerate either the
+            // signature-verify or generic-invalid status depending on whether a
+            // key was injected earlier in this process.
+            try
+            {
+                Licensing.ActivatePayload("{ not valid json");
+                Assert.Fail("malformed payload should not activate");
+            }
+            catch (PdfluentLicenseException ex)
+            {
+                Assert.NotNull(ex.Code);
+                Assert.StartsWith("E-LICENSE", ex.Code);
+            }
+        }
+
+        [Fact]
         public void ActivateFile_ReadsKey()
         {
             string tmp = Path.Combine(Path.GetTempPath(), $"pdfluent-fake-{Guid.NewGuid()}.lic");

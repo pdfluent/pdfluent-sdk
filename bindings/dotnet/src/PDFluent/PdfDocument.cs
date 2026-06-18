@@ -350,6 +350,103 @@ namespace PDFluent
             }
         }
 
+        // ---- Digital signing ----
+
+        /// <summary>
+        /// Digitally signs the document with a PKCS#12 (.p12/.pfx) credential
+        /// bundle and returns a new, signed document.
+        /// </summary>
+        /// <remarks>
+        /// The source document is not modified; signing produces a brand-new
+        /// <see cref="PdfDocument"/> that the caller owns and must dispose.
+        /// </remarks>
+        /// <param name="pkcs12Path">Path to the <c>.p12</c>/<c>.pfx</c> bundle.</param>
+        /// <param name="pkcs12Password">Password for the bundle, or
+        /// <see langword="null"/> for a password-less bundle.</param>
+        /// <returns>A new signed <see cref="PdfDocument"/>.</returns>
+        /// <exception cref="ArgumentNullException">If <paramref name="pkcs12Path"/> is <see langword="null"/>.</exception>
+        /// <exception cref="PdfluentIoException">If the PKCS#12 file cannot be found.</exception>
+        /// <exception cref="PdfluentValidationException">If an argument is structurally invalid.</exception>
+        /// <exception cref="PdfluentException">If PKCS#12 loading, signing, or the PDF write-back fails (<see cref="PdfStatus.ErrorSign"/>).</exception>
+        /// <exception cref="ObjectDisposedException">If the document has been disposed.</exception>
+        public PdfDocument Sign(string pkcs12Path, string? pkcs12Password = null)
+        {
+            ThrowIfDisposed();
+            if (pkcs12Path is null) throw new ArgumentNullException(nameof(pkcs12Path));
+            PdfStatus status = NativeMethods.pdf_document_sign(
+                _handle.DangerousGetHandle(), pkcs12Path, pkcs12Password, out IntPtr ptr);
+            if (status != PdfStatus.Ok)
+                throw ThrowForStatus(status, $"failed to sign with '{pkcs12Path}'");
+            return new PdfDocument(new PdfDocumentHandle(ptr));
+        }
+
+        // ---- Signature verification ----
+
+        /// <summary>
+        /// Returns the number of signature fields present in the document.
+        /// </summary>
+        /// <returns>The signature-field count (≥ 0).</returns>
+        /// <exception cref="ObjectDisposedException">If the document has been disposed.</exception>
+        public int SignatureCount()
+        {
+            ThrowIfDisposed();
+            int count = NativeMethods.pdf_signature_count(_handle.DangerousGetHandle());
+            return count < 0 ? 0 : count;
+        }
+
+        /// <summary>
+        /// Validates the digital signature at <paramref name="index"/>.
+        /// </summary>
+        /// <param name="index">Zero-based signature index.</param>
+        /// <returns>
+        /// <see langword="true"/> if the signature is cryptographically valid,
+        /// <see langword="false"/> if it is invalid, tampered, or the validity
+        /// could not be determined (unknown / out-of-range).
+        /// </returns>
+        /// <exception cref="ObjectDisposedException">If the document has been disposed.</exception>
+        public bool IsSignatureValid(int index)
+        {
+            ThrowIfDisposed();
+            return NativeMethods.pdf_signature_is_valid(
+                _handle.DangerousGetHandle(), index) == 1;
+        }
+
+        /// <summary>
+        /// Validates every digital signature in the document and returns a
+        /// structured result per signature field.
+        /// </summary>
+        /// <remarks>
+        /// The result list has one <see cref="SignatureValidation"/> entry per
+        /// signature field, ordered by index. An empty list means the document
+        /// carries no signatures. Use <see cref="SignatureValidation.AllValid"/>
+        /// on the returned collection, or inspect each entry's
+        /// <see cref="SignatureValidation.Status"/>.
+        /// </remarks>
+        /// <returns>An ordered, read-only list of per-signature validations.</returns>
+        /// <exception cref="ObjectDisposedException">If the document has been disposed.</exception>
+        public IReadOnlyList<SignatureValidation> VerifySignatures()
+        {
+            ThrowIfDisposed();
+            IntPtr docPtr = _handle.DangerousGetHandle();
+            int count = NativeMethods.pdf_signature_count(docPtr);
+            if (count <= 0)
+                return Array.Empty<SignatureValidation>();
+
+            var result = new SignatureValidation[count];
+            for (int i = 0; i < count; i++)
+            {
+                int raw = NativeMethods.pdf_signature_is_valid(docPtr, i);
+                SignatureStatus status = raw switch
+                {
+                    1 => SignatureStatus.Valid,
+                    0 => SignatureStatus.Invalid,
+                    _ => SignatureStatus.Unknown,
+                };
+                result[i] = new SignatureValidation(i, status);
+            }
+            return result;
+        }
+
         // ---- IDisposable ----
 
         /// <summary>

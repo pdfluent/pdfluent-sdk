@@ -1848,7 +1848,7 @@ dependencies = [
 
 [[package]]
 name = "formcalc-interpreter"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "thiserror 2.0.18",
  "xfa-dom-resolver",
@@ -4142,7 +4142,7 @@ checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "pdf-annot"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "log",
  "pdf-syntax",
@@ -4152,7 +4152,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-bench"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "criterion",
  "formcalc-interpreter",
@@ -4171,7 +4171,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-capi"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "pdf-compliance",
  "pdf-engine",
@@ -4186,7 +4186,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-compliance"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "flate2",
  "log",
@@ -4206,7 +4206,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-desktop"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -4232,7 +4232,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-docx"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "pdfluent-extract",
  "pdfluent-lopdf",
@@ -4244,7 +4244,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-engine"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "base64 0.22.1",
  "dirs-sys 0.3.7",
@@ -4306,7 +4306,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-invoice"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "chrono",
  "flate2",
@@ -4337,7 +4337,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-manip"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "flate2",
  "image",
@@ -4362,7 +4362,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-node"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "napi",
  "napi-build",
@@ -4384,7 +4384,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-ocr"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "dirs-next",
  "image",
@@ -4399,7 +4399,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-pptx"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "pdfluent-extract",
  "pdfluent-lopdf",
@@ -4411,7 +4411,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-redact"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "flate2",
  "pdf-font",
@@ -4425,7 +4425,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-render"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "bytemuck",
  "fast_image_resize",
@@ -4457,7 +4457,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-text-format"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "pdf-manip",
  "pdfluent-lopdf",
@@ -4466,7 +4466,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-xfa"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -4488,7 +4488,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-xlsx"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "pdfluent-extract",
  "pdfluent-lopdf",
@@ -4527,7 +4527,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "criterion",
  "getrandom 0.2.17",
@@ -4536,9 +4536,11 @@ dependencies = [
  "pdf-compliance",
  "pdf-docx",
  "pdf-engine",
+ "pdf-interpret",
  "pdf-manip",
  "pdf-redact",
  "pdf-render",
+ "pdf-syntax",
  "pdfluent-forms",
  "pdfluent-lopdf",
  "pdfluent-sign",
@@ -4558,7 +4560,7 @@ version = "0.2.0"
 
 [[package]]
 name = "pdfluent-cli"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "anyhow",
  "clap",
@@ -4569,7 +4571,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-extract"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "flate2",
  "pdfluent-lopdf",
@@ -4580,7 +4582,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-forms"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "log",
  "pdf-syntax",
@@ -4645,7 +4647,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent-sign"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "der",
  "digest",
@@ -8831,7 +8833,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-api-server"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "axum",
  "indexmap 2.14.0",
@@ -8854,7 +8856,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-cli"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -8882,7 +8884,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-dom-resolver"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "roxmltree",
  "thiserror 2.0.18",
@@ -8890,7 +8892,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-golden-tests"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "image",
  "pdf-engine",
@@ -8901,7 +8903,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-js-sandboxed"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "rquickjs",
  "thiserror 2.0.18",
@@ -8909,7 +8911,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-json"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "indexmap 2.14.0",
  "serde",
@@ -8919,7 +8921,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-layout-engine"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "formcalc-interpreter",
  "log",
@@ -8930,7 +8932,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-license"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -8942,7 +8944,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-license-gen"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "anyhow",
  "clap",
@@ -8971,7 +8973,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-test-runner"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -9013,7 +9015,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-wasm"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 dependencies = [
  "formcalc-interpreter",
  "getrandom 0.2.17",

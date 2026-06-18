@@ -20,6 +20,20 @@ use pdf_text_format::{
 };
 use wasm_bindgen::prelude::*;
 
+use crate::pdfluent_error::{code, legacy_code, pdfluent_error};
+
+/// Build a typed `PdfluentError` for a `PdfDocMut` operation.
+///
+/// Mirrors the `wasm_err_*` helpers in `lib.rs`: every fallible method on
+/// this handle routes its failure through the shared `pdfluent_error` model
+/// so JS consumers get a stable `code` / `operation` / `legacyCode` instead
+/// of an untyped `Error`. `c8` is the canonical `E-<CATEGORY>-<SPECIFIC>`
+/// catalogue code; `legacy` is the SCREAMING_SNAKE_CASE identifier kept for
+/// backward compatibility.
+fn err(operation: &str, c8: &str, legacy: &str, message: &str) -> JsValue {
+    pdfluent_error(operation, c8, legacy, message, "")
+}
+
 // ---------- the handle -----------------------------------------------------
 
 /// Stateful editing handle.
@@ -70,9 +84,15 @@ fn style_result_to_js(r: &StyleResult) -> StyleResultJs {
 #[wasm_bindgen]
 impl PdfDocMut {
     /// Open a PDF for editing.
-    pub fn open(bytes: &[u8]) -> Result<PdfDocMut, JsError> {
-        let doc = LopdfDocument::load_mem(bytes)
-            .map_err(|e| JsError::new(&format!("open failed: {e}")))?;
+    pub fn open(bytes: &[u8]) -> Result<PdfDocMut, JsValue> {
+        let doc = LopdfDocument::load_mem(bytes).map_err(|e| {
+            err(
+                "PdfDocMut.open",
+                code::PARSE_INVALID_PDF,
+                legacy_code::INVALID_PDF,
+                &format!("open failed: {e}"),
+            )
+        })?;
         Ok(PdfDocMut { doc })
     }
 
@@ -86,14 +106,19 @@ impl PdfDocMut {
     ///
     /// Non-consuming: subsequent mutations are still possible on the
     /// same handle.
-    pub fn save(&self) -> Result<Vec<u8>, JsError> {
+    pub fn save(&self) -> Result<Vec<u8>, JsValue> {
         let mut buf = Vec::new();
         // lopdf save_to takes &mut Document; clone the doc structure to
         // keep save() non-consuming on &self.
         let mut clone = self.doc.clone();
-        clone
-            .save_to(&mut buf)
-            .map_err(|e| JsError::new(&format!("save failed: {e}")))?;
+        clone.save_to(&mut buf).map_err(|e| {
+            err(
+                "PdfDocMut.save",
+                code::WASM_SAVE_FAILED,
+                legacy_code::SAVE_FAILED,
+                &format!("save failed: {e}"),
+            )
+        })?;
         Ok(buf)
     }
 
@@ -101,35 +126,59 @@ impl PdfDocMut {
 
     /// Delete the listed pages (0-based) from the document.
     #[wasm_bindgen(js_name = "deletePages")]
-    pub fn delete_pages(&mut self, pages: &[u32]) -> Result<(), JsError> {
+    pub fn delete_pages(&mut self, pages: &[u32]) -> Result<(), JsValue> {
         let one_based = one_based(pages);
-        pdf_manip::pages::delete_pages(&mut self.doc, &one_based)
-            .map_err(|e| JsError::new(&format!("deletePages failed: {e}")))?;
+        pdf_manip::pages::delete_pages(&mut self.doc, &one_based).map_err(|e| {
+            err(
+                "PdfDocMut.deletePages",
+                code::INTERNAL,
+                legacy_code::OPERATION_FAILED,
+                &format!("deletePages failed: {e}"),
+            )
+        })?;
         Ok(())
     }
 
     /// Rotate a single page by 90/180/270 (or negative). Multiples of 90 only.
     #[wasm_bindgen(js_name = "rotatePage")]
-    pub fn rotate_page(&mut self, page_index: u32, degrees: i32) -> Result<(), JsError> {
+    pub fn rotate_page(&mut self, page_index: u32, degrees: i32) -> Result<(), JsValue> {
         let normalised = degrees.rem_euclid(360);
         if normalised % 90 != 0 {
-            return Err(JsError::new("rotatePage: degrees must be a multiple of 90"));
+            return Err(err(
+                "PdfDocMut.rotatePage",
+                code::WASM_INVALID_ARGUMENT,
+                legacy_code::INVALID_ARGUMENT,
+                "rotatePage: degrees must be a multiple of 90",
+            ));
         }
         pdf_manip::pages::rotate_page(
             &mut self.doc,
             page_index.saturating_add(1),
             normalised as i64,
         )
-        .map_err(|e| JsError::new(&format!("rotatePage failed: {e}")))?;
+        .map_err(|e| {
+            err(
+                "PdfDocMut.rotatePage",
+                code::INTERNAL,
+                legacy_code::OPERATION_FAILED,
+                &format!("rotatePage failed: {e}"),
+            )
+        })?;
         Ok(())
     }
 
     /// Re-order pages. `new_order` is a permutation of `0..page_count`.
     #[wasm_bindgen(js_name = "reorderPages")]
-    pub fn reorder_pages(&mut self, new_order: &[u32]) -> Result<(), JsError> {
+    pub fn reorder_pages(&mut self, new_order: &[u32]) -> Result<(), JsValue> {
         let one_based = one_based(new_order);
-        let reordered = pdf_manip::pages::rearrange_pages(&self.doc, &one_based)
-            .map_err(|e| JsError::new(&format!("reorderPages failed: {e}")))?;
+        let reordered = pdf_manip::pages::rearrange_pages(&self.doc, &one_based).map_err(|e| {
+            err(
+                "PdfDocMut.reorderPages",
+                code::INTERNAL,
+                legacy_code::OPERATION_FAILED,
+                &format!("reorderPages failed: {e}"),
+            )
+        })?;
         self.doc = reordered;
         Ok(())
     }
@@ -140,13 +189,25 @@ impl PdfDocMut {
     /// Use for split-style workflows where the original keeps the full
     /// set of pages and a subset is exported.
     #[wasm_bindgen(js_name = "extractPages")]
-    pub fn extract_pages(&self, pages: &[u32]) -> Result<Vec<u8>, JsError> {
+    pub fn extract_pages(&self, pages: &[u32]) -> Result<Vec<u8>, JsValue> {
         let one_based = one_based(pages);
-        let mut sub = pdf_manip::pages::extract_pages(&self.doc, &one_based)
-            .map_err(|e| JsError::new(&format!("extractPages failed: {e}")))?;
+        let mut sub = pdf_manip::pages::extract_pages(&self.doc, &one_based).map_err(|e| {
+            err(
+                "PdfDocMut.extractPages",
+                code::INTERNAL,
+                legacy_code::OPERATION_FAILED,
+                &format!("extractPages failed: {e}"),
+            )
+        })?;
         let mut buf = Vec::new();
-        sub.save_to(&mut buf)
-            .map_err(|e| JsError::new(&format!("extractPages save failed: {e}")))?;
+        sub.save_to(&mut buf).map_err(|e| {
+            err(
+                "PdfDocMut.extractPages",
+                code::WASM_SAVE_FAILED,
+                legacy_code::SAVE_FAILED,
+                &format!("extractPages save failed: {e}"),
+            )
+        })?;
         Ok(buf)
     }
 
@@ -154,12 +215,20 @@ impl PdfDocMut {
 
     /// Apply a diagonal text watermark to every page.
     #[wasm_bindgen(js_name = "addTextWatermark")]
-    pub fn add_text_watermark(&mut self, text: &str, opacity: f32) -> Result<(), JsError> {
+    pub fn add_text_watermark(&mut self, text: &str, opacity: f32) -> Result<(), JsValue> {
         if text.is_empty() {
-            return Err(JsError::new("addTextWatermark: text must be non-empty"));
+            return Err(err(
+                "PdfDocMut.addTextWatermark",
+                code::WASM_INVALID_ARGUMENT,
+                legacy_code::INVALID_ARGUMENT,
+                "addTextWatermark: text must be non-empty",
+            ));
         }
         if !(0.0..=1.0).contains(&opacity) {
-            return Err(JsError::new(
+            return Err(err(
+                "PdfDocMut.addTextWatermark",
+                code::WASM_INVALID_ARGUMENT,
+                legacy_code::INVALID_ARGUMENT,
                 "addTextWatermark: opacity must be in 0.0..=1.0",
             ));
         }
@@ -175,8 +244,14 @@ impl PdfDocMut {
             position: Position::Center,
             layer: Layer::Foreground,
         };
-        apply_text_watermark(&mut self.doc, &wm, &PageSelection::All)
-            .map_err(|e| JsError::new(&format!("addTextWatermark failed: {e}")))?;
+        apply_text_watermark(&mut self.doc, &wm, &PageSelection::All).map_err(|e| {
+            err(
+                "PdfDocMut.addTextWatermark",
+                code::INTERNAL,
+                legacy_code::OPERATION_FAILED,
+                &format!("addTextWatermark failed: {e}"),
+            )
+        })?;
         Ok(())
     }
 
@@ -189,21 +264,40 @@ impl PdfDocMut {
     /// per-widget `/AS`, and regenerated `/AP` streams consistent, resolves
     /// fully-qualified names through `/Kids`, and rejects read-only fields.
     #[wasm_bindgen(js_name = "setFormField")]
-    pub fn set_form_field(&mut self, path: &str, value: &str) -> Result<(), JsError> {
+    pub fn set_form_field(&mut self, path: &str, value: &str) -> Result<(), JsValue> {
         apply_string_value(&mut self.doc, path, value)
             .map(|_| ())
-            .map_err(|e| JsError::new(&format!("setFormField: {e}")))
+            .map_err(|e| {
+                err(
+                    "PdfDocMut.setFormField",
+                    code::INTERNAL,
+                    legacy_code::OPERATION_FAILED,
+                    &format!("setFormField: {e}"),
+                )
+            })
     }
 
     /// Bulk-set multiple AcroForm fields from a JSON object
     /// `{"field.path": "value", ...}`.
     #[wasm_bindgen(js_name = "setFormFields")]
-    pub fn set_form_fields(&mut self, fields_json: &str) -> Result<(), JsError> {
-        let parsed: BTreeMap<String, String> = serde_json::from_str(fields_json)
-            .map_err(|e| JsError::new(&format!("setFormFields: invalid JSON: {e}")))?;
+    pub fn set_form_fields(&mut self, fields_json: &str) -> Result<(), JsValue> {
+        let parsed: BTreeMap<String, String> = serde_json::from_str(fields_json).map_err(|e| {
+            err(
+                "PdfDocMut.setFormFields",
+                code::WASM_INVALID_JSON,
+                legacy_code::INVALID_JSON,
+                &format!("setFormFields: invalid JSON: {e}"),
+            )
+        })?;
         for (path, value) in &parsed {
-            apply_string_value(&mut self.doc, path, value)
-                .map_err(|e| JsError::new(&format!("setFormFields ({path}): {e}")))?;
+            apply_string_value(&mut self.doc, path, value).map_err(|e| {
+                err(
+                    "PdfDocMut.setFormFields",
+                    code::INTERNAL,
+                    legacy_code::OPERATION_FAILED,
+                    &format!("setFormFields ({path}): {e}"),
+                )
+            })?;
         }
         Ok(())
     }
@@ -217,10 +311,17 @@ impl PdfDocMut {
     /// multi-select list box (`/Ff` MultiSelect flag); for non-editable list
     /// boxes every value must be one of the field's `/Opt` options.
     #[wasm_bindgen(js_name = "setMultiSelect")]
-    pub fn set_multi_select(&mut self, path: &str, values: Vec<String>) -> Result<(), JsError> {
+    pub fn set_multi_select(&mut self, path: &str, values: Vec<String>) -> Result<(), JsValue> {
         pdf_forms::apply_choice_multi(&mut self.doc, path, &values)
             .map(|_| ())
-            .map_err(|e| JsError::new(&format!("setMultiSelect: {e}")))
+            .map_err(|e| {
+                err(
+                    "PdfDocMut.setMultiSelect",
+                    code::INTERNAL,
+                    legacy_code::OPERATION_FAILED,
+                    &format!("setMultiSelect: {e}"),
+                )
+            })
     }
 
     // ------ Annotations ----------------------------------------------------
@@ -237,7 +338,7 @@ impl PdfDocMut {
         w: f64,
         h: f64,
         color_hex: Option<String>,
-    ) -> Result<(), JsError> {
+    ) -> Result<(), JsValue> {
         use pdf_annot::builder::{add_annotation_to_page, AnnotRect, AnnotationBuilder};
         let (r, g, b) = parse_color_hex(color_hex.as_deref()).unwrap_or((1.0, 0.92, 0.23));
         let rect = AnnotRect::new(x, y, x + w, y + h);
@@ -245,9 +346,24 @@ impl PdfDocMut {
             .color(r, g, b)
             .opacity(0.4)
             .build(&mut self.doc)
-            .map_err(|e| JsError::new(&format!("addHighlight build failed: {e}")))?;
-        add_annotation_to_page(&mut self.doc, page_index.saturating_add(1), annot_id)
-            .map_err(|e| JsError::new(&format!("addHighlight attach failed: {e}")))?;
+            .map_err(|e| {
+                err(
+                    "PdfDocMut.addHighlight",
+                    code::INTERNAL,
+                    legacy_code::OPERATION_FAILED,
+                    &format!("addHighlight build failed: {e}"),
+                )
+            })?;
+        add_annotation_to_page(&mut self.doc, page_index.saturating_add(1), annot_id).map_err(
+            |e| {
+                err(
+                    "PdfDocMut.addHighlight",
+                    code::INTERNAL,
+                    legacy_code::OPERATION_FAILED,
+                    &format!("addHighlight attach failed: {e}"),
+                )
+            },
+        )?;
         Ok(())
     }
 
@@ -260,15 +376,30 @@ impl PdfDocMut {
         x: f64,
         y: f64,
         contents: &str,
-    ) -> Result<(), JsError> {
+    ) -> Result<(), JsValue> {
         use pdf_annot::builder::{add_annotation_to_page, AnnotRect, AnnotationBuilder, TextIcon};
         let rect = AnnotRect::new(x, y, x + 24.0, y + 24.0);
         let annot_id = AnnotationBuilder::sticky_note(rect, TextIcon::Comment)
             .contents(contents)
             .build(&mut self.doc)
-            .map_err(|e| JsError::new(&format!("addStickyNote build failed: {e}")))?;
-        add_annotation_to_page(&mut self.doc, page_index.saturating_add(1), annot_id)
-            .map_err(|e| JsError::new(&format!("addStickyNote attach failed: {e}")))?;
+            .map_err(|e| {
+                err(
+                    "PdfDocMut.addStickyNote",
+                    code::INTERNAL,
+                    legacy_code::OPERATION_FAILED,
+                    &format!("addStickyNote build failed: {e}"),
+                )
+            })?;
+        add_annotation_to_page(&mut self.doc, page_index.saturating_add(1), annot_id).map_err(
+            |e| {
+                err(
+                    "PdfDocMut.addStickyNote",
+                    code::INTERNAL,
+                    legacy_code::OPERATION_FAILED,
+                    &format!("addStickyNote attach failed: {e}"),
+                )
+            },
+        )?;
         Ok(())
     }
 
@@ -283,14 +414,29 @@ impl PdfDocMut {
         w: f64,
         h: f64,
         contents: &str,
-    ) -> Result<(), JsError> {
+    ) -> Result<(), JsValue> {
         use pdf_annot::builder::{add_annotation_to_page, AnnotRect, AnnotationBuilder};
         let rect = AnnotRect::new(x, y, x + w, y + h);
         let annot_id = AnnotationBuilder::free_text(rect, contents, 12.0)
             .build(&mut self.doc)
-            .map_err(|e| JsError::new(&format!("addFreeText build failed: {e}")))?;
-        add_annotation_to_page(&mut self.doc, page_index.saturating_add(1), annot_id)
-            .map_err(|e| JsError::new(&format!("addFreeText attach failed: {e}")))?;
+            .map_err(|e| {
+                err(
+                    "PdfDocMut.addFreeText",
+                    code::INTERNAL,
+                    legacy_code::OPERATION_FAILED,
+                    &format!("addFreeText build failed: {e}"),
+                )
+            })?;
+        add_annotation_to_page(&mut self.doc, page_index.saturating_add(1), annot_id).map_err(
+            |e| {
+                err(
+                    "PdfDocMut.addFreeText",
+                    code::INTERNAL,
+                    legacy_code::OPERATION_FAILED,
+                    &format!("addFreeText attach failed: {e}"),
+                )
+            },
+        )?;
         Ok(())
     }
 
@@ -305,36 +451,58 @@ impl PdfDocMut {
         y: f64,
         w: f64,
         h: f64,
-    ) -> Result<(), JsError> {
+    ) -> Result<(), JsValue> {
         let area =
             pdf_redact::RedactionArea::new(page_index.saturating_add(1), [x, y, x + w, y + h]);
         let mut redactor = pdf_redact::Redactor::new();
         redactor.mark(area);
-        redactor
-            .apply(&mut self.doc)
-            .map_err(|e| JsError::new(&format!("redactRegion failed: {e}")))?;
+        redactor.apply(&mut self.doc).map_err(|e| {
+            err(
+                "PdfDocMut.redactRegion",
+                code::INTERNAL,
+                legacy_code::OPERATION_FAILED,
+                &format!("redactRegion failed: {e}"),
+            )
+        })?;
         Ok(())
     }
 
     /// Search-and-redact: every literal match of `query` is permanently
     /// removed from every page.
     #[wasm_bindgen(js_name = "redactSearch")]
-    pub fn redact_search(&mut self, query: &str) -> Result<(), JsError> {
+    pub fn redact_search(&mut self, query: &str) -> Result<(), JsValue> {
         if query.is_empty() {
-            return Err(JsError::new("redactSearch: query must be non-empty"));
+            return Err(err(
+                "PdfDocMut.redactSearch",
+                code::WASM_INVALID_ARGUMENT,
+                legacy_code::INVALID_ARGUMENT,
+                "redactSearch: query must be non-empty",
+            ));
         }
         let opts = pdf_redact::RedactSearchOptions::default();
-        pdf_redact::search_and_redact(&mut self.doc, query, &opts)
-            .map_err(|e| JsError::new(&format!("redactSearch failed: {e}")))?;
+        pdf_redact::search_and_redact(&mut self.doc, query, &opts).map_err(|e| {
+            err(
+                "PdfDocMut.redactSearch",
+                code::INTERNAL,
+                legacy_code::OPERATION_FAILED,
+                &format!("redactSearch failed: {e}"),
+            )
+        })?;
         Ok(())
     }
 
     // ------ Compress -------------------------------------------------------
 
     /// Re-encode content streams with deflate compression.
-    pub fn compress(&mut self) -> Result<(), JsError> {
-        pdf_manip::optimize::compress_streams(&mut self.doc)
-            .map_err(|e| JsError::new(&format!("compress failed: {e}")))?;
+    pub fn compress(&mut self) -> Result<(), JsValue> {
+        pdf_manip::optimize::compress_streams(&mut self.doc).map_err(|e| {
+            err(
+                "PdfDocMut.compress",
+                code::INTERNAL,
+                legacy_code::OPERATION_FAILED,
+                &format!("compress failed: {e}"),
+            )
+        })?;
         Ok(())
     }
 
@@ -349,20 +517,45 @@ impl PdfDocMut {
         run_index: usize,
         bold: Option<bool>,
         italic: Option<bool>,
-    ) -> Result<String, JsError> {
-        let runs = extract_page_text_runs(&self.doc, page_num)
-            .map_err(|e| JsError::new(&format!("extract runs: {e}")))?;
+    ) -> Result<String, JsValue> {
+        let runs = extract_page_text_runs(&self.doc, page_num).map_err(|e| {
+            err(
+                "PdfDocMut.setTextRunStyle",
+                code::WASM_TEXT_EXTRACT_FAILED,
+                legacy_code::TEXT_EXTRACT_FAILED,
+                &format!("extract runs: {e}"),
+            )
+        })?;
         let run = runs.get(run_index).ok_or_else(|| {
-            JsError::new(&format!(
-                "run index {run_index} out of range (page has {} runs)",
-                runs.len()
-            ))
+            err(
+                "PdfDocMut.setTextRunStyle",
+                code::WASM_PAGE_OUT_OF_RANGE,
+                legacy_code::PAGE_OUT_OF_RANGE,
+                &format!(
+                    "run index {run_index} out of range (page has {} runs)",
+                    runs.len()
+                ),
+            )
         })?;
         let _ = runs_json;
-        let result = set_text_run_style(&mut self.doc, page_num, run, bold, italic)
-            .map_err(|e| JsError::new(&format!("{e}")))?;
+        let result =
+            set_text_run_style(&mut self.doc, page_num, run, bold, italic).map_err(|e| {
+                err(
+                    "PdfDocMut.setTextRunStyle",
+                    code::INTERNAL,
+                    legacy_code::OPERATION_FAILED,
+                    &format!("{e}"),
+                )
+            })?;
         let js = style_result_to_js(&result);
-        serde_json::to_string(&js).map_err(|e| JsError::new(&format!("serialize: {e}")))
+        serde_json::to_string(&js).map_err(|e| {
+            err(
+                "PdfDocMut.setTextRunStyle",
+                code::WASM_INVALID_JSON,
+                legacy_code::SERIALIZE_ERROR,
+                &format!("serialize: {e}"),
+            )
+        })
     }
 
     /// Convenience: open bytes, apply style, return new bytes.
@@ -373,7 +566,7 @@ impl PdfDocMut {
         run_index: usize,
         bold: Option<bool>,
         italic: Option<bool>,
-    ) -> Result<Vec<u8>, JsError> {
+    ) -> Result<Vec<u8>, JsValue> {
         let mut handle = PdfDocMut::open(data)?;
         handle.set_text_run_style_js(page_num, "[]", run_index, bold, italic)?;
         handle.save()
@@ -405,32 +598,59 @@ impl PdfDocMut {
         run_index: usize,
         font_size: Option<f32>,
         color: Option<String>,
-    ) -> Result<String, JsError> {
-        let runs = extract_page_text_runs(&self.doc, page_num)
-            .map_err(|e| JsError::new(&format!("formatTextSpan: extract runs: {e}")))?;
+    ) -> Result<String, JsValue> {
+        let runs = extract_page_text_runs(&self.doc, page_num).map_err(|e| {
+            err(
+                "PdfDocMut.formatTextSpan",
+                code::WASM_TEXT_EXTRACT_FAILED,
+                legacy_code::TEXT_EXTRACT_FAILED,
+                &format!("formatTextSpan: extract runs: {e}"),
+            )
+        })?;
         let run = runs.get(run_index).ok_or_else(|| {
-            JsError::new(&format!(
-                "formatTextSpan: run index {run_index} out of range (page has {} runs)",
-                runs.len()
-            ))
+            err(
+                "PdfDocMut.formatTextSpan",
+                code::WASM_PAGE_OUT_OF_RANGE,
+                legacy_code::PAGE_OUT_OF_RANGE,
+                &format!(
+                    "formatTextSpan: run index {run_index} out of range (page has {} runs)",
+                    runs.len()
+                ),
+            )
         })?;
         let locator = TextRunLocator::from_run(run);
 
         let color_rgb = match color.as_deref() {
             Some(hex) => Some(parse_color_hex_f32(Some(hex)).ok_or_else(|| {
-                JsError::new(&format!(
-                    "formatTextSpan: invalid color hex '{hex}' (expected '#RRGGBB')"
-                ))
+                err(
+                    "PdfDocMut.formatTextSpan",
+                    code::WASM_INVALID_ARGUMENT,
+                    legacy_code::INVALID_ARGUMENT,
+                    &format!("formatTextSpan: invalid color hex '{hex}' (expected '#RRGGBB')"),
+                )
             })?),
             None => None,
         };
 
         let result = format_text_run(&mut self.doc, page_num, locator, font_size, color_rgb)
-            .map_err(|e| JsError::new(&format!("formatTextSpan: {e}")))?;
+            .map_err(|e| {
+                err(
+                    "PdfDocMut.formatTextSpan",
+                    code::INTERNAL,
+                    legacy_code::OPERATION_FAILED,
+                    &format!("formatTextSpan: {e}"),
+                )
+            })?;
 
         let js = format_result_to_js(&result);
-        serde_json::to_string(&js)
-            .map_err(|e| JsError::new(&format!("formatTextSpan: serialize: {e}")))
+        serde_json::to_string(&js).map_err(|e| {
+            err(
+                "PdfDocMut.formatTextSpan",
+                code::WASM_INVALID_JSON,
+                legacy_code::SERIALIZE_ERROR,
+                &format!("formatTextSpan: serialize: {e}"),
+            )
+        })
     }
 
     /// Convenience: open bytes, format a single run, return new bytes.
@@ -443,7 +663,7 @@ impl PdfDocMut {
         run_index: usize,
         font_size: Option<f32>,
         color: Option<String>,
-    ) -> Result<Vec<u8>, JsError> {
+    ) -> Result<Vec<u8>, JsValue> {
         let mut handle = PdfDocMut::open(data)?;
         handle.format_text_span_js(page_num, run_index, font_size, color)?;
         handle.save()
@@ -496,7 +716,7 @@ impl PdfDocMut {
         page_num: u32,
         original_text: &str,
         replacement_text: &str,
-    ) -> Result<String, JsError> {
+    ) -> Result<String, JsValue> {
         // Capture byte length BEFORE the mutation so we can report
         // the delta if the replacement succeeds. The cheapest way
         // to do this is to ask lopdf to serialise the current state.

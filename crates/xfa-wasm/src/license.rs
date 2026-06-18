@@ -75,10 +75,13 @@ impl LicenseStatus {
 }
 
 fn map_license_error(e: pdfluent::Error) -> JsValue {
+    map_license_error_op(e, "license.activate")
+}
+
+fn map_license_error_op(e: pdfluent::Error, operation: &str) -> JsValue {
     use crate::pdfluent_error::{code, legacy_code, pdfluent_error};
     let c8 = e.code();
     let message = e.to_string();
-    let operation = "license.activate";
     match e {
         pdfluent::Error::InvalidLicense { reason } => {
             if reason.contains("already set") {
@@ -170,4 +173,39 @@ pub fn license_status() -> LicenseStatus {
         source: current_source_str().to_string(),
         output_is_marked: info.output_is_marked,
     }
+}
+
+/// Inject the Ed25519 public verification key for signed license payloads.
+///
+/// Mirrors the Node binding `setLicensePublicKey` and the Rust core
+/// [`pdfluent::set_license_public_key`]. Must be called **before**
+/// [`set_license_payload`]. `public_key` must be exactly 32 bytes.
+///
+/// Calling twice with the same key bytes is idempotent; calling with a
+/// different key throws (`E-LICENSE-INVALID`) — restart the worker/page to
+/// swap keys.
+#[wasm_bindgen(js_name = "setLicensePublicKey")]
+pub fn set_license_public_key(public_key: &[u8]) -> Result<(), JsValue> {
+    pdfluent::set_license_public_key(public_key)
+        .map_err(|e| map_license_error_op(e, "license.setPublicKey"))
+}
+
+/// Activate a signed license payload (Ed25519-verified JSON).
+///
+/// Mirrors the Node binding `setLicensePayload` and the Rust core
+/// [`pdfluent::set_license_payload`]. Verifies the signature against the key
+/// set via [`set_license_public_key`], checks `expires_at > now`, and stores
+/// the resolved tier process-wide so [`license_status`] surfaces it.
+///
+/// Throws `E-LICENSE-INVALID` (no public key configured, malformed JSON,
+/// unrecognised tier, or already set to a different tier),
+/// `E-LICENSE-INVALID-SIGNATURE` (signature does not verify), or
+/// `E-LICENSE-EXPIRED` (payload expired). On any error the process-global
+/// tier is **not** modified.
+#[wasm_bindgen(js_name = "setLicensePayload")]
+pub fn set_license_payload(payload_json: &str) -> Result<(), JsValue> {
+    pdfluent::set_license_payload(payload_json)
+        .map_err(|e| map_license_error_op(e, "license.setPayload"))?;
+    record_explicit();
+    Ok(())
 }

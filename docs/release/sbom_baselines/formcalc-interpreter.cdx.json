@@ -2,7 +2,7 @@
   "bomFormat": "CycloneDX",
   "components": [
     {
-      "bom-ref": "path://xfa-dom-resolver#1.0.0-beta.15",
+      "bom-ref": "path://xfa-dom-resolver#1.0.0-beta.16",
       "description": "XFA template and data DOM with SOM-path resolution. Experimental \u2014 part of the PDFluent XFA stack, under active development.",
       "externalReferences": [
         {
@@ -30,10 +30,10 @@
         }
       ],
       "name": "xfa-dom-resolver",
-      "purl": "pkg:cargo/xfa-dom-resolver@1.0.0-beta.15?download_url=file://../xfa-dom-resolver",
+      "purl": "pkg:cargo/xfa-dom-resolver@1.0.0-beta.16?download_url=file://../xfa-dom-resolver",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.15"
+      "version": "1.0.0-beta.16"
     },
     {
       "author": "David Tolnay <dtolnay@gmail.com>, Alex Crichton <alex@alexcrichton.com>",
@@ -253,16 +253,16 @@
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
-        "path://xfa-dom-resolver#1.0.0-beta.15"
+        "path://xfa-dom-resolver#1.0.0-beta.16"
       ],
-      "ref": "path://formcalc-interpreter#1.0.0-beta.15"
+      "ref": "path://formcalc-interpreter#1.0.0-beta.16"
     },
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#roxmltree@0.20.0",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://xfa-dom-resolver#1.0.0-beta.15"
+      "ref": "path://xfa-dom-resolver#1.0.0-beta.16"
     },
     {
       "dependsOn": [
@@ -309,14 +309,14 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "path://formcalc-interpreter#1.0.0-beta.15",
+      "bom-ref": "path://formcalc-interpreter#1.0.0-beta.16",
       "components": [
         {
-          "bom-ref": "path://formcalc-interpreter#1.0.0-beta.15 bin-target-0",
+          "bom-ref": "path://formcalc-interpreter#1.0.0-beta.16 bin-target-0",
           "name": "formcalc_interpreter",
-          "purl": "pkg:cargo/formcalc-interpreter@1.0.0-beta.15?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/formcalc-interpreter@1.0.0-beta.16?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "1.0.0-beta.15"
+          "version": "1.0.0-beta.16"
         }
       ],
       "description": "FormCalc expression interpreter for XFA dynamic forms. Experimental \u2014 part of the PDFluent XFA stack, under active development.",
@@ -346,10 +346,10 @@
         }
       ],
       "name": "formcalc-interpreter",
-      "purl": "pkg:cargo/formcalc-interpreter@1.0.0-beta.15?download_url=file://.",
+      "purl": "pkg:cargo/formcalc-interpreter@1.0.0-beta.16?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.15"
+      "version": "1.0.0-beta.16"
     },
     "properties": [
       {
@@ -357,7 +357,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-06-16T06:14:11.083455000Z",
+    "timestamp": "2026-06-18T18:11:03.398616000Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -366,7 +366,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:067d374e-dc7f-4a1e-8410-19bea0b82ce5",
+  "serialNumber": "urn:uuid:a65d843c-76a3-47ec-b708-e92a7be94425",
   "specVersion": "1.3",
   "version": 1
 }

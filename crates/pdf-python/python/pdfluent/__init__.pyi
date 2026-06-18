@@ -142,6 +142,47 @@ def license_status() -> str:
     """
     ...
 
+def set_license_public_key(key: bytes) -> None:
+    """Configure the Ed25519 public key used to verify signed JSON license
+    payloads.
+
+    Must be called **once**, before :func:`set_license_payload`. The key must
+    be exactly 32 raw bytes. Re-calling with the same key is idempotent; a
+    different key raises :exc:`PdfluentLicenseError`.
+
+    Parameters
+    ----------
+    key:
+        32-byte raw Ed25519 public key.
+
+    Raises
+    ------
+    PdfluentLicenseError
+        If the key is not 32 bytes, or a different key was already configured.
+    """
+    ...
+
+def set_license_payload(payload_json: str) -> None:
+    """Activate a cryptographically-signed JSON license payload.
+
+    The public key must be configured first via :func:`set_license_public_key`.
+
+    Parameters
+    ----------
+    payload_json:
+        JSON string produced by the PDFluent licence-generator tool.
+
+    Raises
+    ------
+    PdfluentLicenseError
+        If the JSON is malformed, no public key is configured, a conflicting
+        tier is already set, the signature does not verify, or the payload is
+        past its expiry. The exception carries a canonical ``code`` (e.g.
+        ``"E-LICENSE-INVALID"``, ``"E-LICENSE-INVALID-SIGNATURE"``,
+        ``"E-LICENSE-EXPIRED"``).
+    """
+    ...
+
 # ---------------------------------------------------------------------------
 # Module-level functions
 # ---------------------------------------------------------------------------
@@ -330,6 +371,35 @@ class Document:
         ------
         PdfluentIoError
             If the file cannot be written.
+        """
+        ...
+
+    def validate_signatures(self) -> List[SignatureResult]:
+        """Cryptographically validate every digital signature in the document.
+
+        Each signature field is returned as a :class:`SignatureResult` with its
+        validation ``status`` (``"valid"``, ``"invalid"``, or ``"unknown"``), an
+        optional ``reason``, the ``field_name``, and — when present — the
+        ``signer`` common name and signing ``timestamp``.
+
+        A document with no signatures returns an empty list (never raises).
+        """
+        ...
+
+    def verify_signatures(self) -> List[SignatureResult]:
+        """Alias for :meth:`validate_signatures`.
+
+        Mirrors the Rust core ``PdfDocument::verify_signatures`` method name.
+        """
+        ...
+
+    def signatures(self) -> List[SignatureResult]:
+        """Lightweight list of signatures present in the document.
+
+        Metadata only — **no cryptographic validation**. Each entry's
+        ``status`` is ``"unknown"`` and ``reason`` is ``None``; use
+        :meth:`validate_signatures` for the validated report. Returns an empty
+        list when the document has no signatures.
         """
         ...
 
@@ -918,5 +988,44 @@ class RedactReport:
 
     @property
     def pages_affected(self) -> int: ...
+
+    def __repr__(self) -> str: ...
+
+# ---------------------------------------------------------------------------
+# SignatureResult
+# ---------------------------------------------------------------------------
+
+class SignatureResult:
+    """The validation result for a single digital signature.
+
+    Returned by :meth:`Document.validate_signatures` (full cryptographic
+    validation) and :meth:`Document.signatures` (metadata only, ``status`` is
+    always ``"unknown"``).
+    """
+
+    @property
+    def status(self) -> str:
+        """Validation status: ``"valid"``, ``"invalid"``, or ``"unknown"``."""
+        ...
+
+    @property
+    def reason(self) -> Optional[str]:
+        """Reason for an ``"invalid"`` / ``"unknown"`` status, else ``None``."""
+        ...
+
+    @property
+    def field_name(self) -> str:
+        """Fully qualified signature field name."""
+        ...
+
+    @property
+    def signer(self) -> Optional[str]:
+        """Signer common name (from the certificate), if available."""
+        ...
+
+    @property
+    def timestamp(self) -> Optional[str]:
+        """Signing timestamp as a string, if available."""
+        ...
 
     def __repr__(self) -> str: ...

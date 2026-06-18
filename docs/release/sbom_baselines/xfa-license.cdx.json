@@ -1984,7 +1984,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.149",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://xfa-license#1.0.0-beta.15"
+      "ref": "path://xfa-license#1.0.0-beta.16"
     },
     {
       "dependsOn": [],
@@ -2389,14 +2389,14 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "path://xfa-license#1.0.0-beta.15",
+      "bom-ref": "path://xfa-license#1.0.0-beta.16",
       "components": [
         {
-          "bom-ref": "path://xfa-license#1.0.0-beta.15 bin-target-0",
+          "bom-ref": "path://xfa-license#1.0.0-beta.16 bin-target-0",
           "name": "xfa_license",
-          "purl": "pkg:cargo/xfa-license@1.0.0-beta.15?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/xfa-license@1.0.0-beta.16?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "1.0.0-beta.15"
+          "version": "1.0.0-beta.16"
         }
       ],
       "description": "Runtime license-token validation for the PDFluent SDK.",
@@ -2426,10 +2426,10 @@
         }
       ],
       "name": "xfa-license",
-      "purl": "pkg:cargo/xfa-license@1.0.0-beta.15?download_url=file://.",
+      "purl": "pkg:cargo/xfa-license@1.0.0-beta.16?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.15"
+      "version": "1.0.0-beta.16"
     },
     "properties": [
       {
@@ -2437,7 +2437,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-06-16T06:14:11.193765000Z",
+    "timestamp": "2026-06-18T18:11:03.510479000Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -2446,7 +2446,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:ecea5511-ba07-4243-9f10-ac2de6cb61aa",
+  "serialNumber": "urn:uuid:85683a8c-f9b9-4141-822e-1a7b86f4a1f3",
   "specVersion": "1.3",
   "version": 1
 }

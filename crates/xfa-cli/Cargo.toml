@@ -2,6 +2,13 @@
 name = "xfa-cli"
 version.workspace = true
 edition.workspace = true
+# Deliberately non-publishable to crates.io. This crate bundles internal
+# research/corpus binaries (xfa-collector, corpus-render, edge-case-analyzer,
+# accuracy-report, xfa-license-tool) alongside the user `pdfluent` CLI binary.
+# The user-facing CLI is distributed as signed platform binaries via
+# scripts/release/pdfluent_cli_package.sh, NOT as crates.io source. (A legacy
+# 1.0.0-beta.8 was published before this governance was set; it is superseded.)
+publish = false
 license-file = "LICENSE"
 repository.workspace = true
 description = "PDFluent — PDF and XFA processing CLI: render, extract, fill, flatten, validate, sign."

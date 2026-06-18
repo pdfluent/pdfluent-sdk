@@ -5892,7 +5892,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.149",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://pdf-invoice#1.0.0-beta.15"
+      "ref": "path://pdf-invoice#1.0.0-beta.16"
     },
     {
       "dependsOn": [],
@@ -7091,14 +7091,14 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "path://pdf-invoice#1.0.0-beta.15",
+      "bom-ref": "path://pdf-invoice#1.0.0-beta.16",
       "components": [
         {
-          "bom-ref": "path://pdf-invoice#1.0.0-beta.15 bin-target-0",
+          "bom-ref": "path://pdf-invoice#1.0.0-beta.16 bin-target-0",
           "name": "pdf_invoice",
-          "purl": "pkg:cargo/pdf-invoice@1.0.0-beta.15?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/pdf-invoice@1.0.0-beta.16?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "1.0.0-beta.15"
+          "version": "1.0.0-beta.16"
         }
       ],
       "description": "Form data exchange (FDF/XFDF) and ZUGFeRD/Factur-X e-invoicing",
@@ -7120,10 +7120,10 @@
         }
       ],
       "name": "pdf-invoice",
-      "purl": "pkg:cargo/pdf-invoice@1.0.0-beta.15?download_url=file://.",
+      "purl": "pkg:cargo/pdf-invoice@1.0.0-beta.16?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.15"
+      "version": "1.0.0-beta.16"
     },
     "properties": [
       {
@@ -7131,7 +7131,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-06-16T06:14:11.347809000Z",
+    "timestamp": "2026-06-18T18:11:03.667872000Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -7140,7 +7140,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:7e4c81c5-c779-4fa8-8d5d-c2d83211c876",
+  "serialNumber": "urn:uuid:dcf92a9f-b022-403d-9ca6-e21b39db4cf4",
   "specVersion": "1.3",
   "version": 1
 }
