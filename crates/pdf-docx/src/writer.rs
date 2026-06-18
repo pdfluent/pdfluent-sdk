@@ -232,20 +232,23 @@ fn write_styles() -> Result<Vec<u8>> {
     w.write_event(Event::End(BytesEnd::new("w:rPrDefault")))?;
     w.write_event(Event::End(BytesEnd::new("w:docDefaults")))?;
 
-    // Normal style
+    // Normal style (default paragraph style). `w:name` is an attribute, not
+    // element text — `<w:name>Normal</w:name>` is the schema violation that
+    // made Word report "unreadable content" and offer to repair the document.
     let mut style = BytesStart::new("w:style");
     style.push_attribute(("w:type", "paragraph"));
     style.push_attribute(("w:styleId", "Normal"));
     style.push_attribute(("w:default", "1"));
     w.write_event(Event::Start(style))?;
-
-    w.write_event(Event::Start(BytesStart::new("w:name")))?;
-    w.write_event(Event::Text(BytesText::new("Normal")))?;
-    w.write_event(Event::End(BytesEnd::new("w:name")))?;
-
+    let mut name = BytesStart::new("w:name");
+    name.push_attribute(("w:val", "Normal"));
+    w.write_event(Event::Empty(name))?;
+    w.write_event(Event::Empty(BytesStart::new("w:qFormat")))?;
     w.write_event(Event::End(BytesEnd::new("w:style")))?;
 
-    // Heading styles
+    // Heading styles, written in the canonical built-in form Word accepts
+    // without repair: name → basedOn → next → uiPriority → qFormat → pPr → rPr
+    // (CT_Style child order).
     for level in 1..=6u8 {
         let style_id = format!("Heading{level}");
         let mut style = BytesStart::new("w:style");
@@ -254,9 +257,32 @@ fn write_styles() -> Result<Vec<u8>> {
         w.write_event(Event::Start(style))?;
 
         let name = format!("heading {level}");
-        w.write_event(Event::Start(BytesStart::new("w:name")))?;
-        w.write_event(Event::Text(BytesText::new(&name)))?;
-        w.write_event(Event::End(BytesEnd::new("w:name")))?;
+        let mut name_el = BytesStart::new("w:name");
+        name_el.push_attribute(("w:val", name.as_str()));
+        w.write_event(Event::Empty(name_el))?;
+
+        let mut based_on = BytesStart::new("w:basedOn");
+        based_on.push_attribute(("w:val", "Normal"));
+        w.write_event(Event::Empty(based_on))?;
+
+        let mut next = BytesStart::new("w:next");
+        next.push_attribute(("w:val", "Normal"));
+        w.write_event(Event::Empty(next))?;
+
+        let mut ui = BytesStart::new("w:uiPriority");
+        ui.push_attribute(("w:val", "9"));
+        w.write_event(Event::Empty(ui))?;
+
+        w.write_event(Event::Empty(BytesStart::new("w:qFormat")))?;
+
+        // Paragraph properties: keep-with-next + outline level for navigation.
+        w.write_event(Event::Start(BytesStart::new("w:pPr")))?;
+        w.write_event(Event::Empty(BytesStart::new("w:keepNext")))?;
+        w.write_event(Event::Empty(BytesStart::new("w:keepLines")))?;
+        let mut outline = BytesStart::new("w:outlineLvl");
+        outline.push_attribute(("w:val", (level - 1).to_string().as_str()));
+        w.write_event(Event::Empty(outline))?;
+        w.write_event(Event::End(BytesEnd::new("w:pPr")))?;
 
         w.write_event(Event::Start(BytesStart::new("w:rPr")))?;
         w.write_event(Event::Empty(BytesStart::new("w:b")))?;
@@ -324,7 +350,13 @@ fn write_document(pages: &[Vec<PageElement>], images: &[DocxImage]) -> Result<Ve
         for element in page_elements {
             match element {
                 PageElement::Para(para) => write_paragraph(&mut w, para)?,
-                PageElement::Tbl(table) => write_table(&mut w, table)?,
+                PageElement::Tbl(table) => {
+                    write_table(&mut w, table)?;
+                    // Word requires a paragraph after a table: two adjacent
+                    // tables (or a table as the body's final block) is reported
+                    // as unreadable content. An empty paragraph guarantees both.
+                    write_empty_paragraph(&mut w)?;
+                }
                 PageElement::Img(img) => {
                     let rid = format!("rId{}", find_image_rid(images, &img.id) + 2);
                     write_image_paragraph(&mut w, img, &rid, img_idx)?;
@@ -334,9 +366,38 @@ fn write_document(pages: &[Vec<PageElement>], images: &[DocxImage]) -> Result<Ve
         }
     }
 
+    // The body must terminate with section properties; omitting `w:sectPr`
+    // makes Word treat the document as damaged.
+    write_section_properties(&mut w)?;
+
     w.write_event(Event::End(BytesEnd::new("w:body")))?;
     w.write_event(Event::End(BytesEnd::new("w:document")))?;
     Ok(buf.into_inner())
+}
+
+fn write_empty_paragraph(w: &mut Writer<&mut Cursor<Vec<u8>>>) -> Result<()> {
+    w.write_event(Event::Empty(BytesStart::new("w:p")))?;
+    Ok(())
+}
+
+/// Terminal Letter-size section properties for the document body.
+fn write_section_properties(w: &mut Writer<&mut Cursor<Vec<u8>>>) -> Result<()> {
+    w.write_event(Event::Start(BytesStart::new("w:sectPr")))?;
+    let mut pgsz = BytesStart::new("w:pgSz");
+    pgsz.push_attribute(("w:w", "12240")); // 8.5in × 1440 twips
+    pgsz.push_attribute(("w:h", "15840")); // 11in × 1440 twips
+    w.write_event(Event::Empty(pgsz))?;
+    let mut pgmar = BytesStart::new("w:pgMar");
+    pgmar.push_attribute(("w:top", "1440"));
+    pgmar.push_attribute(("w:right", "1440"));
+    pgmar.push_attribute(("w:bottom", "1440"));
+    pgmar.push_attribute(("w:left", "1440"));
+    pgmar.push_attribute(("w:header", "720"));
+    pgmar.push_attribute(("w:footer", "720"));
+    pgmar.push_attribute(("w:gutter", "0"));
+    w.write_event(Event::Empty(pgmar))?;
+    w.write_event(Event::End(BytesEnd::new("w:sectPr")))?;
+    Ok(())
 }
 
 fn write_page_break(w: &mut Writer<&mut Cursor<Vec<u8>>>) -> Result<()> {
@@ -446,12 +507,10 @@ fn write_run(w: &mut Writer<&mut Cursor<Vec<u8>>>, run: &Run) -> Result<()> {
 fn write_table(w: &mut Writer<&mut Cursor<Vec<u8>>>, table: &Table) -> Result<()> {
     w.write_event(Event::Start(BytesStart::new("w:tbl")))?;
 
-    // Table properties
+    // Table properties. Borders are written inline below, so no named table
+    // style is referenced (avoiding a dependency on a built-in style Word would
+    // otherwise try to repair).
     w.write_event(Event::Start(BytesStart::new("w:tblPr")))?;
-
-    let mut style = BytesStart::new("w:tblStyle");
-    style.push_attribute(("w:val", "TableGrid"));
-    w.write_event(Event::Empty(style))?;
 
     let mut width = BytesStart::new("w:tblW");
     width.push_attribute(("w:w", "0"));

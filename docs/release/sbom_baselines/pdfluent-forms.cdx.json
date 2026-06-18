@@ -119,7 +119,7 @@
     },
     {
       "author": "Laurenz Stampfl <laurenz.stampfl@gmail.com>",
-      "bom-ref": "path://pdf-syntax#0.5.4",
+      "bom-ref": "path://pdf-syntax#0.5.6",
       "description": "A low-level crate for reading PDF files.",
       "externalReferences": [
         {
@@ -141,10 +141,10 @@
         }
       ],
       "name": "pdf-syntax",
-      "purl": "pkg:cargo/pdf-syntax@0.5.4?download_url=file://../pdf-syntax",
+      "purl": "pkg:cargo/pdf-syntax@0.5.6?download_url=file://../pdf-syntax",
       "scope": "required",
       "type": "library",
-      "version": "0.5.4"
+      "version": "0.5.6"
     },
     {
       "author": "Jonas Schievink <jonasschievink@gmail.com>, oyvindln <oyvindln@users.noreply.github.com>",
@@ -5817,11 +5817,11 @@
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#log@0.4.29",
-        "path://pdf-syntax#0.5.4",
+        "path://pdf-syntax#0.5.6",
         "path://lopdf#pdfluent-lopdf@0.39.4",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://pdf-forms#pdfluent-forms@1.0.0-beta.16"
+      "ref": "path://pdf-forms#pdfluent-forms@1.0.0-beta.17"
     },
     {
       "dependsOn": [
@@ -5834,7 +5834,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.1",
         "registry+https://github.com/rust-lang/crates.io-index#zune-jpeg@0.5.15"
       ],
-      "ref": "path://pdf-syntax#0.5.4"
+      "ref": "path://pdf-syntax#0.5.6"
     },
     {
       "dependsOn": [],
@@ -7012,14 +7012,14 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "path://pdf-forms#pdfluent-forms@1.0.0-beta.16",
+      "bom-ref": "path://pdf-forms#pdfluent-forms@1.0.0-beta.17",
       "components": [
         {
-          "bom-ref": "path://pdf-forms#pdfluent-forms@1.0.0-beta.16 bin-target-0",
+          "bom-ref": "path://pdf-forms#pdfluent-forms@1.0.0-beta.17 bin-target-0",
           "name": "pdfluent_forms",
-          "purl": "pkg:cargo/pdfluent-forms@1.0.0-beta.16?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/pdfluent-forms@1.0.0-beta.17?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "1.0.0-beta.16"
+          "version": "1.0.0-beta.17"
         }
       ],
       "description": "AcroForm engine for PDF interactive forms.",
@@ -7049,10 +7049,10 @@
         }
       ],
       "name": "pdfluent-forms",
-      "purl": "pkg:cargo/pdfluent-forms@1.0.0-beta.16?download_url=file://.",
+      "purl": "pkg:cargo/pdfluent-forms@1.0.0-beta.17?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.16"
+      "version": "1.0.0-beta.17"
     },
     "properties": [
       {
@@ -7060,7 +7060,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-06-18T18:11:03.411042000Z",
+    "timestamp": "2026-06-18T20:09:44.680561000Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -7069,7 +7069,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:341055c7-7269-4685-b0a3-dde7829c71e1",
+  "serialNumber": "urn:uuid:80941506-eef2-44fd-a8a3-072a0e2760ca",
   "specVersion": "1.3",
   "version": 1
 }

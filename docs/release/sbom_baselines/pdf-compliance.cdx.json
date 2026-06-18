@@ -148,7 +148,7 @@
     },
     {
       "author": "Laurenz Stampfl <laurenz.stampfl@gmail.com>",
-      "bom-ref": "path://pdf-syntax#0.5.4",
+      "bom-ref": "path://pdf-syntax#0.5.6",
       "description": "A low-level crate for reading PDF files.",
       "externalReferences": [
         {
@@ -170,10 +170,10 @@
         }
       ],
       "name": "pdf-syntax",
-      "purl": "pkg:cargo/pdf-syntax@0.5.4?download_url=file://../pdf-syntax",
+      "purl": "pkg:cargo/pdf-syntax@0.5.6?download_url=file://../pdf-syntax",
       "scope": "required",
       "type": "library",
-      "version": "0.5.4"
+      "version": "0.5.6"
     },
     {
       "author": "Jonas Schievink <jonasschievink@gmail.com>, oyvindln <oyvindln@users.noreply.github.com>",
@@ -5851,13 +5851,13 @@
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#flate2@1.1.9",
         "registry+https://github.com/rust-lang/crates.io-index#log@0.4.29",
-        "path://pdf-syntax#0.5.4",
+        "path://pdf-syntax#0.5.6",
         "path://cff-parser#pdfluent-cff@0.2.0",
         "path://lopdf#pdfluent-lopdf@0.39.4",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
         "registry+https://github.com/rust-lang/crates.io-index#ttf-parser@0.25.1"
       ],
-      "ref": "path://pdf-compliance#1.0.0-beta.16"
+      "ref": "path://pdf-compliance#1.0.0-beta.17"
     },
     {
       "dependsOn": [
@@ -5870,7 +5870,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.1",
         "registry+https://github.com/rust-lang/crates.io-index#zune-jpeg@0.5.15"
       ],
-      "ref": "path://pdf-syntax#0.5.4"
+      "ref": "path://pdf-syntax#0.5.6"
     },
     {
       "dependsOn": [],
@@ -7048,28 +7048,28 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "path://pdf-compliance#1.0.0-beta.16",
+      "bom-ref": "path://pdf-compliance#1.0.0-beta.17",
       "components": [
         {
-          "bom-ref": "path://pdf-compliance#1.0.0-beta.16 bin-target-0",
+          "bom-ref": "path://pdf-compliance#1.0.0-beta.17 bin-target-0",
           "name": "pdf_compliance",
-          "purl": "pkg:cargo/pdf-compliance@1.0.0-beta.16?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/pdf-compliance@1.0.0-beta.17?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "1.0.0-beta.16"
+          "version": "1.0.0-beta.17"
         },
         {
-          "bom-ref": "path://pdf-compliance#1.0.0-beta.16 bin-target-1",
+          "bom-ref": "path://pdf-compliance#1.0.0-beta.17 bin-target-1",
           "name": "debug_transparency",
-          "purl": "pkg:cargo/pdf-compliance@1.0.0-beta.16?download_url=file://.#src/bin/debug_transparency.rs",
+          "purl": "pkg:cargo/pdf-compliance@1.0.0-beta.17?download_url=file://.#src/bin/debug_transparency.rs",
           "type": "application",
-          "version": "1.0.0-beta.16"
+          "version": "1.0.0-beta.17"
         },
         {
-          "bom-ref": "path://pdf-compliance#1.0.0-beta.16 bin-target-2",
+          "bom-ref": "path://pdf-compliance#1.0.0-beta.17 bin-target-2",
           "name": "profile_compliance",
-          "purl": "pkg:cargo/pdf-compliance@1.0.0-beta.16?download_url=file://.#src/bin/profile_compliance.rs",
+          "purl": "pkg:cargo/pdf-compliance@1.0.0-beta.17?download_url=file://.#src/bin/profile_compliance.rs",
           "type": "application",
-          "version": "1.0.0-beta.16"
+          "version": "1.0.0-beta.17"
         }
       ],
       "description": "PDF compliance checking (PDF/A, PDF/UA).",
@@ -7099,10 +7099,10 @@
         }
       ],
       "name": "pdf-compliance",
-      "purl": "pkg:cargo/pdf-compliance@1.0.0-beta.16?download_url=file://.",
+      "purl": "pkg:cargo/pdf-compliance@1.0.0-beta.17?download_url=file://.",
       "scope": "required",
       "type": "application",
-      "version": "1.0.0-beta.16"
+      "version": "1.0.0-beta.17"
     },
     "properties": [
       {
@@ -7110,7 +7110,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-06-18T18:11:03.471087000Z",
+    "timestamp": "2026-06-18T20:09:44.740960000Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -7119,7 +7119,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:4ff9f211-d854-4f22-bdf8-f1bf111b4c78",
+  "serialNumber": "urn:uuid:c376c6b4-bb77-4d66-9a6d-b0293e0e22b0",
   "specVersion": "1.3",
   "version": 1
 }

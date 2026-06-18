@@ -90,7 +90,7 @@
     },
     {
       "author": "PDFluent Contributors <team@pdfluent.com>, Laurenz Stampfl <laurenz.stampfl@gmail.com>",
-      "bom-ref": "path://pdf-font#1.0.0-beta.4",
+      "bom-ref": "path://pdf-font#1.0.0-beta.5",
       "description": "PDF font handling: CFF/Type1 parsing, CMap parsing, and PostScript scanning.",
       "externalReferences": [
         {
@@ -112,14 +112,14 @@
         }
       ],
       "name": "pdf-font",
-      "purl": "pkg:cargo/pdf-font@1.0.0-beta.4?download_url=file://../pdf-font",
+      "purl": "pkg:cargo/pdf-font@1.0.0-beta.5?download_url=file://../pdf-font",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.4"
+      "version": "1.0.0-beta.5"
     },
     {
       "author": "Laurenz Stampfl <laurenz.stampfl@gmail.com>",
-      "bom-ref": "path://pdf-syntax#0.5.4",
+      "bom-ref": "path://pdf-syntax#0.5.6",
       "description": "A low-level crate for reading PDF files.",
       "externalReferences": [
         {
@@ -141,10 +141,10 @@
         }
       ],
       "name": "pdf-syntax",
-      "purl": "pkg:cargo/pdf-syntax@0.5.4?download_url=file://../pdf-syntax",
+      "purl": "pkg:cargo/pdf-syntax@0.5.6?download_url=file://../pdf-syntax",
       "scope": "required",
       "type": "library",
-      "version": "0.5.4"
+      "version": "0.5.6"
     },
     {
       "author": "Jonas Schievink <jonasschievink@gmail.com>, oyvindln <oyvindln@users.noreply.github.com>",
@@ -4718,7 +4718,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#log@0.4.29",
         "registry+https://github.com/rust-lang/crates.io-index#phf@0.13.1"
       ],
-      "ref": "path://pdf-font#1.0.0-beta.4"
+      "ref": "path://pdf-font#1.0.0-beta.5"
     },
     {
       "dependsOn": [
@@ -4726,8 +4726,8 @@
         "registry+https://github.com/rust-lang/crates.io-index#kurbo@0.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#log@0.4.29",
         "registry+https://github.com/rust-lang/crates.io-index#moxcms@0.7.11",
-        "path://pdf-font#1.0.0-beta.4",
-        "path://pdf-syntax#0.5.4",
+        "path://pdf-font#1.0.0-beta.5",
+        "path://pdf-syntax#0.5.6",
         "registry+https://github.com/rust-lang/crates.io-index#phf@0.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.2",
         "registry+https://github.com/rust-lang/crates.io-index#siphasher@1.0.3",
@@ -4736,7 +4736,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#ttf-parser@0.25.1",
         "registry+https://github.com/rust-lang/crates.io-index#yoke@0.8.2"
       ],
-      "ref": "path://pdf-interpret#0.5.6"
+      "ref": "path://pdf-interpret#0.5.7"
     },
     {
       "dependsOn": [
@@ -4749,7 +4749,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.1",
         "registry+https://github.com/rust-lang/crates.io-index#zune-jpeg@0.5.15"
       ],
-      "ref": "path://pdf-syntax#0.5.4"
+      "ref": "path://pdf-syntax#0.5.6"
     },
     {
       "dependsOn": [],
@@ -5728,14 +5728,14 @@
     ],
     "component": {
       "author": "Laurenz Stampfl <laurenz.stampfl@gmail.com>",
-      "bom-ref": "path://pdf-interpret#0.5.6",
+      "bom-ref": "path://pdf-interpret#0.5.7",
       "components": [
         {
-          "bom-ref": "path://pdf-interpret#0.5.6 bin-target-0",
+          "bom-ref": "path://pdf-interpret#0.5.7 bin-target-0",
           "name": "pdf_interpret",
-          "purl": "pkg:cargo/pdf-interpret@0.5.6?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/pdf-interpret@0.5.7?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "0.5.6"
+          "version": "0.5.7"
         }
       ],
       "description": "A crate for interpreting PDF files.",
@@ -5759,10 +5759,10 @@
         }
       ],
       "name": "pdf-interpret",
-      "purl": "pkg:cargo/pdf-interpret@0.5.6?download_url=file://.",
+      "purl": "pkg:cargo/pdf-interpret@0.5.7?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "0.5.6"
+      "version": "0.5.7"
     },
     "properties": [
       {
@@ -5770,7 +5770,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-06-15T08:48:56.212942218Z",
+    "timestamp": "2026-06-18T20:09:44.628692000Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -5779,7 +5779,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:4c7c9088-bedd-4a38-91c7-03b3097acfbb",
+  "serialNumber": "urn:uuid:1a0a6f6e-456d-41ba-ac94-2d1b2d186159",
   "specVersion": "1.3",
   "version": 1
 }
