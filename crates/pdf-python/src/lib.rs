@@ -16,6 +16,7 @@ use pdf_forms::{
 };
 use pdf_manip::encrypt::remove_encryption;
 use pdf_redact::{search_and_redact, RedactSearchOptions};
+use pdf_sign::{signature_fields, validate_signatures, ValidationStatus};
 
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -468,6 +469,83 @@ impl PyDocument {
     }
 
     // ------------------------------------------------------------------
+    // Digital signatures
+    // ------------------------------------------------------------------
+
+    /// Cryptographically validate every digital signature in the document.
+    ///
+    /// Mirrors the Rust core
+    /// [`PdfDocument::verify_signatures`](pdfluent::PdfDocument) and the
+    /// Node ``validateSignatures()`` parity surface. Each signature field is
+    /// returned as a :class:`SignatureResult` carrying its validation
+    /// ``status`` (``"valid"``, ``"invalid"``, or ``"unknown"``), an optional
+    /// ``reason``, the ``field_name``, and — when present — the ``signer``
+    /// common name and signing ``timestamp``.
+    ///
+    /// A document with no signatures returns an empty list (never raises).
+    ///
+    /// Returns
+    /// -------
+    /// list[SignatureResult]
+    ///     One entry per signature field found, in document order.
+    fn validate_signatures(&self) -> Vec<PySignatureResult> {
+        validate_signatures(self.inner.pdf())
+            .into_iter()
+            .map(|r| {
+                let (status, reason) = match r.status {
+                    ValidationStatus::Valid => ("valid".to_string(), None),
+                    ValidationStatus::Invalid(msg) => ("invalid".to_string(), Some(msg)),
+                    ValidationStatus::Unknown(msg) => ("unknown".to_string(), Some(msg)),
+                };
+                PySignatureResult {
+                    status,
+                    reason,
+                    field_name: r.field_name,
+                    signer: r.signer,
+                    timestamp: r.timestamp,
+                }
+            })
+            .collect()
+    }
+
+    /// Alias for :meth:`validate_signatures`.
+    ///
+    /// Provided for parity with the Rust core
+    /// [`PdfDocument::verify_signatures`](pdfluent::PdfDocument) method name.
+    /// Returns the same :class:`SignatureResult` list with full cryptographic
+    /// validation.
+    fn verify_signatures(&self) -> Vec<PySignatureResult> {
+        self.validate_signatures()
+    }
+
+    /// Lightweight list of signatures present in the document.
+    ///
+    /// Mirrors the Rust core
+    /// [`PdfDocument::signatures`](pdfluent::PdfDocument): metadata only, with
+    /// **no cryptographic validation**. Each entry's ``status`` is
+    /// ``"unknown"`` and ``reason`` is ``None``; use
+    /// :meth:`validate_signatures` for the validated report.
+    ///
+    /// A document with no signatures returns an empty list.
+    ///
+    /// Returns
+    /// -------
+    /// list[SignatureResult]
+    ///     One entry per signature field found, in document order.
+    fn signatures(&self) -> Vec<PySignatureResult> {
+        signature_fields(self.inner.pdf())
+            .into_iter()
+            .map(|f| PySignatureResult {
+                status: "unknown".to_string(),
+                reason: None,
+                field_name: f.field_name,
+                signer: f.sig.signer_name(),
+                timestamp: f.sig.signing_time(),
+            })
+            .collect()
+    }
+
+    // ------------------------------------------------------------------
     // Form fields
     // ------------------------------------------------------------------
 
@@ -819,6 +897,44 @@ impl PyDocument {
             }
         }
         Ok(guard)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SignatureResult
+// ---------------------------------------------------------------------------
+
+/// The validation result for a single digital signature.
+///
+/// Returned by :meth:`Document.validate_signatures` (full cryptographic
+/// validation) and :meth:`Document.signatures` (metadata only, ``status`` is
+/// always ``"unknown"``). Mirrors the Node ``SignatureResult`` parity surface.
+#[pyclass(name = "SignatureResult")]
+struct PySignatureResult {
+    /// Validation status: ``"valid"``, ``"invalid"``, or ``"unknown"``.
+    #[pyo3(get)]
+    status: String,
+    /// Reason for an ``"invalid"`` / ``"unknown"`` status, else ``None``.
+    #[pyo3(get)]
+    reason: Option<String>,
+    /// Fully qualified signature field name.
+    #[pyo3(get)]
+    field_name: String,
+    /// Signer common name (from the certificate), if available.
+    #[pyo3(get)]
+    signer: Option<String>,
+    /// Signing timestamp as a string, if available.
+    #[pyo3(get)]
+    timestamp: Option<String>,
+}
+
+#[pymethods]
+impl PySignatureResult {
+    fn __repr__(&self) -> String {
+        format!(
+            "SignatureResult(status={:?}, field_name={:?}, signer={:?})",
+            self.status, self.field_name, self.signer
+        )
     }
 }
 
@@ -1775,6 +1891,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFormField>()?;
     m.add_class::<PyAnnotation>()?;
     m.add_class::<PyRedactReport>()?;
+    m.add_class::<PySignatureResult>()?;
     m.add_class::<PyNativeLicenseInfo>()?;
     // Functions
     m.add_function(wrap_pyfunction!(open_pdf, m)?)?;

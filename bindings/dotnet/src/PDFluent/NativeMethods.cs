@@ -179,5 +179,37 @@ namespace PDFluent
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern PdfStatus pdfluent_license_status(
             out PdfluentLicenseStatusNative status);
+
+        // ---- Signed-license public key + payload activation ----
+
+        // public_key is a raw byte buffer (BORROWED); key_len is a size_t.
+        // byte[] + UIntPtr is the correct marshalling for (const unsigned char*, size_t).
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdfluent_license_set_public_key(
+            byte[] publicKey,
+            UIntPtr keyLen);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdfluent_license_activate_payload(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string payloadJson);
+
+        // ---- Digital signing + signature verification ----
+
+        // doc, pkcs12_path, pkcs12_password are BORROWED; *out is a NEW document
+        // the caller must free with pdf_document_free.
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdf_document_sign(
+            IntPtr doc,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string pkcs12Path,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string? pkcs12Password,
+            out IntPtr outDoc);
+
+        // Returns signature-field count (>= 0), or -1 if doc is NULL.
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int pdf_signature_count(IntPtr doc);
+
+        // Returns 1 (valid), 0 (invalid), or -1 (unknown / error / out-of-range).
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int pdf_signature_is_valid(IntPtr doc, int index);
     }
 }

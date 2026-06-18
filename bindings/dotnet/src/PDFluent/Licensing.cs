@@ -150,6 +150,65 @@ namespace PDFluent
         }
 
         /// <summary>
+        /// Inject the Ed25519 public key used to verify signed JSON license
+        /// payloads passed to <see cref="ActivatePayload"/>.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The key is process-global and may only be set once. Re-injecting the
+        /// <em>same</em> 32-byte key is idempotent; injecting a <em>different</em>
+        /// key after one is already set raises <see cref="PdfluentLicenseException"/>.
+        /// </para>
+        /// </remarks>
+        /// <param name="publicKey">The raw 32-byte Ed25519 public key.</param>
+        /// <exception cref="ArgumentNullException">If <paramref name="publicKey"/> is <c>null</c>.</exception>
+        /// <exception cref="PdfluentValidationException">If the key length is not
+        /// exactly 32 bytes (C ABI <see cref="PdfStatus.ErrorInvalidArgument"/>).</exception>
+        /// <exception cref="PdfluentLicenseException">If a different key was
+        /// already injected this process.</exception>
+        public static void SetPublicKey(byte[] publicKey)
+        {
+            if (publicKey is null) throw new ArgumentNullException(nameof(publicKey));
+            PdfStatus s = NativeMethods.pdfluent_license_set_public_key(
+                publicKey, (UIntPtr)publicKey.Length);
+            ThrowOnStatus(s);
+        }
+
+        /// <summary>
+        /// Activate the process-global license from a cryptographically-signed
+        /// JSON payload.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The payload is the full signed license JSON —
+        /// <c>{"payload": {...}, "signature": "..."}</c> — where
+        /// <c>signature</c> is the base64-encoded Ed25519 signature over the
+        /// canonical payload JSON. <see cref="SetPublicKey"/> must have been
+        /// called first.
+        /// </para>
+        /// </remarks>
+        /// <param name="payloadJson">The signed payload JSON string.</param>
+        /// <exception cref="ArgumentNullException">If <paramref name="payloadJson"/> is <c>null</c>.</exception>
+        /// <exception cref="PdfluentLicenseException">
+        /// If the Ed25519 signature does not verify
+        /// (<see cref="PdfStatus.ErrorLicenseInvalidSignature"/>, C8 code
+        /// <c>E-LICENSE-INVALID-SIGNATURE</c>); if the payload has expired
+        /// (<see cref="PdfStatus.ErrorLicenseExpired"/>, <c>E-LICENSE-EXPIRED</c>);
+        /// if a different tier is already active
+        /// (<see cref="PdfStatus.ErrorLicenseAlreadySet"/>); or if the JSON is
+        /// malformed / the public key was never set
+        /// (<see cref="PdfStatus.ErrorInvalidLicense"/>, <c>E-LICENSE-INVALID</c>).
+        /// </exception>
+        /// <exception cref="PdfluentValidationException">If the C ABI rejects the
+        /// argument as structurally invalid.</exception>
+        public static void ActivatePayload(string payloadJson)
+        {
+            if (payloadJson is null) throw new ArgumentNullException(nameof(payloadJson));
+            PdfStatus s = NativeMethods.pdfluent_license_activate_payload(payloadJson);
+            ThrowOnStatus(s);
+        }
+
+        /// <summary>
         /// Return the current license status. Always succeeds — returns a
         /// Trial-tier snapshot when no key has been activated.
         /// </summary>

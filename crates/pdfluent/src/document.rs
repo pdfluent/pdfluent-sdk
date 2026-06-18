@@ -324,9 +324,9 @@ fn with_leniency<T>(
     diagnostics: &Arc<Mutex<Vec<crate::diagnostics::Diagnostic>>>,
     f: impl FnOnce() -> T,
 ) -> T {
-    pdf_render::pdf_syntax::leniency::activate();
+    pdf_syntax::leniency::activate();
     let result = f();
-    let events = pdf_render::pdf_syntax::leniency::drain();
+    let events = pdf_syntax::leniency::drain();
     if !events.is_empty() {
         let mut guard = diagnostics.lock().unwrap_or_else(|e| e.into_inner());
         for event in events {
@@ -529,7 +529,7 @@ impl PdfDocument {
         // Activate leniency collector before parsing so load-time filter and
         // structural recovery events are captured. Always drain — even on error —
         // so the thread-local collector is never left in an active state.
-        pdf_render::pdf_syntax::leniency::activate();
+        pdf_syntax::leniency::activate();
         let engine_result = open_engine_from_shared_bytes(
             shared.clone(),
             opts.password.as_deref(),
@@ -537,7 +537,7 @@ impl PdfDocument {
         );
         // Drain load-time events before checking the result so the collector is
         // never leaked when open_engine_from_shared_bytes returns an error.
-        let load_events = pdf_render::pdf_syntax::leniency::drain();
+        let load_events = pdf_syntax::leniency::drain();
         let mut engine = engine_result?;
         let diagnostics = install_diagnostics_sink(&mut engine);
         {
@@ -825,6 +825,8 @@ impl PdfDocument {
     /// caller's `max_image_pixels` cap.  This fires BEFORE rasterisation
     /// so that a pathological image dictionary cannot cause an OOM during
     /// render.
+    // Only called from the native-only `to_images` path; dead on wasm32.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn check_image_pixel_limits(&self) -> Result<()> {
         let Some(ref limits) = self.processing_limits else {
             return Ok(());

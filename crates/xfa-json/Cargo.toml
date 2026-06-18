@@ -1,6 +1,6 @@
 [package]
 name = "xfa-json"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 edition.workspace = true
 license-file = "LICENSE"
 readme = "README.md"

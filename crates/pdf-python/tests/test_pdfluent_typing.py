@@ -30,12 +30,15 @@ from pdfluent import (
     PageGeometry,
     RedactReport,
     RenderedImage,
+    SignatureResult,
     TextBlock,
     TextSpan,
     activate_license,
     decrypt_pdf,
     merge_pdfs,
     open_pdf,
+    set_license_payload,
+    set_license_public_key,
     validate_pdfa,
 )
 from pdfluent import (
@@ -366,12 +369,48 @@ def use_activate_license(key: str) -> Optional[LicenseInfo]:
         _licensee: str = info.licensee
         _company: str = info.company
         _tier: str = info.tier
-        _exp: int = info.expires_at
+        _exp: Optional[str] = info.expires_at
         _seats: int = info.seats
         _ = (_licensee, _company, _tier, _exp, _seats)
         return info
     except PdfluentLicenseError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Digital signatures
+# ---------------------------------------------------------------------------
+
+def use_validate_signatures(doc: Document) -> List[SignatureResult]:
+    results: List[SignatureResult] = doc.validate_signatures()
+    for r in results:
+        _status: str = r.status
+        _reason: Optional[str] = r.reason
+        _field: str = r.field_name
+        _signer: Optional[str] = r.signer
+        _ts: Optional[str] = r.timestamp
+        _repr: str = repr(r)
+        _ = (_status, _reason, _field, _signer, _ts, _repr)
+    return results
+
+
+def use_verify_signatures(doc: Document) -> List[SignatureResult]:
+    results: List[SignatureResult] = doc.verify_signatures()
+    return results
+
+
+def use_signatures(doc: Document) -> List[SignatureResult]:
+    results: List[SignatureResult] = doc.signatures()
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Signed-payload license activation
+# ---------------------------------------------------------------------------
+
+def use_signed_license(public_key: bytes, payload: str) -> None:
+    set_license_public_key(public_key)
+    set_license_payload(payload)
 
 
 # ---------------------------------------------------------------------------

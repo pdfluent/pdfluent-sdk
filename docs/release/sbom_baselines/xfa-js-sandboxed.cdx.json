@@ -1598,7 +1598,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#rquickjs@0.8.1",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://xfa-js-sandboxed#1.0.0-beta.15"
+      "ref": "path://xfa-js-sandboxed#1.0.0-beta.16"
     },
     {
       "dependsOn": [],
@@ -1922,14 +1922,14 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "path://xfa-js-sandboxed#1.0.0-beta.15",
+      "bom-ref": "path://xfa-js-sandboxed#1.0.0-beta.16",
       "components": [
         {
-          "bom-ref": "path://xfa-js-sandboxed#1.0.0-beta.15 bin-target-0",
+          "bom-ref": "path://xfa-js-sandboxed#1.0.0-beta.16 bin-target-0",
           "name": "xfa_js_sandboxed",
-          "purl": "pkg:cargo/xfa-js-sandboxed@1.0.0-beta.15?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/xfa-js-sandboxed@1.0.0-beta.16?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "1.0.0-beta.15"
+          "version": "1.0.0-beta.16"
         }
       ],
       "description": "Sandboxed QuickJS runtime for XFA JavaScript calculate scripts. Part of the PDFluent XFA stack.",
@@ -1959,10 +1959,10 @@
         }
       ],
       "name": "xfa-js-sandboxed",
-      "purl": "pkg:cargo/xfa-js-sandboxed@1.0.0-beta.15?download_url=file://.",
+      "purl": "pkg:cargo/xfa-js-sandboxed@1.0.0-beta.16?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.15"
+      "version": "1.0.0-beta.16"
     },
     "properties": [
       {
@@ -1970,7 +1970,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-06-16T06:14:11.130515000Z",
+    "timestamp": "2026-06-18T18:11:03.447741000Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -1979,7 +1979,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:9641a357-0110-4775-9979-d1fdea3cc293",
+  "serialNumber": "urn:uuid:3e22fd36-7b04-474b-968b-f8c24673d7ba",
   "specVersion": "1.3",
   "version": 1
 }

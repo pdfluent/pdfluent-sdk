@@ -12,8 +12,8 @@
 //! [`PdfDocument::diagnostics`]: crate::PdfDocument::diagnostics
 //! [`PdfDocument::take_diagnostics`]: crate::PdfDocument::take_diagnostics
 
-use pdf_render::pdf_interpret::InterpreterWarning;
-use pdf_render::pdf_syntax::leniency::{LeniencyEvent, LeniencySeverity};
+use pdf_interpret::InterpreterWarning;
+use pdf_syntax::leniency::{LeniencyEvent, LeniencySeverity};
 
 /// How serious a [`Diagnostic`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn from_leniency_event_maps_severity_and_category() {
-        use pdf_render::pdf_syntax::leniency::{LeniencyEvent, LeniencySeverity};
+        use pdf_syntax::leniency::{LeniencyEvent, LeniencySeverity};
 
         let warn_event = LeniencyEvent {
             code: "FLATE_BROKEN_FALLBACK",

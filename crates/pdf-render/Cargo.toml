@@ -1,6 +1,6 @@
 [package]
 name = "pdf-render"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.16"
 description = "A PDF rasterizer in pure Rust."
 edition = "2024"
 license = "Apache-2.0 OR MIT"

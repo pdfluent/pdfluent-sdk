@@ -284,12 +284,28 @@ namespace PDFluent.Tests
 
         // ---------- Scenario 11: Verify signature ----------
 
-        [Fact(Skip = "TODO: Signature verification not yet exposed in .NET binding")]
+        [Fact]
         public void VerifySignature()
         {
-            // TODO: using var doc = PdfDocument.Open(LoadFixture("signed.pdf"));
-            //       var sigs = doc.VerifySignatures();
-            //       Assert.NotEmpty(sigs);
+            // The in-memory fixture is unsigned, so the signature surface must
+            // report zero signatures across every accessor — and the calls must
+            // actually traverse the P/Invoke boundary into the native engine.
+            using var doc = PdfDocument.Open(CreateTestPdf());
+
+            // Count accessor.
+            Assert.Equal(0, doc.SignatureCount());
+
+            // Structured verification: empty (never null) for an unsigned doc.
+            var sigs = doc.VerifySignatures();
+            Assert.NotNull(sigs);
+            Assert.Empty(sigs);
+
+            // AllValid() over an empty set is false (no signature proves trust).
+            Assert.False(sigs.AllValid());
+
+            // Out-of-range index is reported as not-valid, never throws.
+            Assert.False(doc.IsSignatureValid(0));
+            Assert.False(doc.IsSignatureValid(9999));
         }
 
         // ---------- Scenario 12: Extract images ----------

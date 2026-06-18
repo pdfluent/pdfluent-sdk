@@ -1424,6 +1424,9 @@ fn collect_font_files(dir: &std::path::Path, out: &mut Vec<PathBuf>, depth: u32)
 }
 
 fn system_font_dirs() -> Vec<PathBuf> {
+    // On wasm32 (target_os = "unknown") none of the OS cfg blocks below push,
+    // so `dirs` is never mutated there.
+    #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
     let mut dirs = Vec::new();
     #[cfg(target_os = "macos")]
     {

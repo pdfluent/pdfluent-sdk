@@ -55,12 +55,15 @@ from pdfluent._native import (
     FormField,
     Annotation,
     RedactReport,
+    SignatureResult,
     open_pdf,
     merge_pdfs,
     validate_pdfa,
     decrypt_pdf,
     # License activation — wired to the Rust core
     set_license_key as _native_set_license_key,
+    set_license_public_key,
+    set_license_payload,
     native_license_info as _native_license_info,
     # Exception hierarchy from Rust
     PdfluentError,
@@ -289,6 +292,7 @@ __all__ = [
     "FormField",
     "Annotation",
     "RedactReport",
+    "SignatureResult",
     # License
     "LicenseInfo",
     # Functions
@@ -298,6 +302,8 @@ __all__ = [
     "decrypt_pdf",
     "activate_license",
     "license_status",
+    "set_license_public_key",
+    "set_license_payload",
     # Exception hierarchy
     "PdfluentError",
     "PdfluentParseError",

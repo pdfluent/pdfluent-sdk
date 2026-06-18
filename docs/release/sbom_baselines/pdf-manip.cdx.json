@@ -176,7 +176,7 @@
       "version": "1.0.0-beta.4"
     },
     {
-      "bom-ref": "path://xfa-license#1.0.0-beta.15",
+      "bom-ref": "path://xfa-license#1.0.0-beta.16",
       "description": "Runtime license-token validation for the PDFluent SDK.",
       "externalReferences": [
         {
@@ -204,10 +204,10 @@
         }
       ],
       "name": "xfa-license",
-      "purl": "pkg:cargo/xfa-license@1.0.0-beta.15?download_url=file://../xfa-license",
+      "purl": "pkg:cargo/xfa-license@1.0.0-beta.16?download_url=file://../xfa-license",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.15"
+      "version": "1.0.0-beta.16"
     },
     {
       "author": "Jonas Schievink <jonasschievink@gmail.com>, oyvindln <oyvindln@users.noreply.github.com>",
@@ -7095,10 +7095,10 @@
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18",
         "registry+https://github.com/rust-lang/crates.io-index#ttf-parser@0.25.1",
         "registry+https://github.com/rust-lang/crates.io-index#weezl@0.1.12",
-        "path://xfa-license#1.0.0-beta.15",
+        "path://xfa-license#1.0.0-beta.16",
         "registry+https://github.com/rust-lang/crates.io-index#xmp-writer@0.3.3"
       ],
-      "ref": "path://pdf-manip#1.0.0-beta.15"
+      "ref": "path://pdf-manip#1.0.0-beta.16"
     },
     {
       "dependsOn": [
@@ -7109,7 +7109,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.149",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.18"
       ],
-      "ref": "path://xfa-license#1.0.0-beta.15"
+      "ref": "path://xfa-license#1.0.0-beta.16"
     },
     {
       "dependsOn": [],
@@ -8554,14 +8554,14 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "path://pdf-manip#1.0.0-beta.15",
+      "bom-ref": "path://pdf-manip#1.0.0-beta.16",
       "components": [
         {
-          "bom-ref": "path://pdf-manip#1.0.0-beta.15 bin-target-0",
+          "bom-ref": "path://pdf-manip#1.0.0-beta.16 bin-target-0",
           "name": "pdf_manip",
-          "purl": "pkg:cargo/pdf-manip@1.0.0-beta.15?download_url=file://.#src/lib.rs",
+          "purl": "pkg:cargo/pdf-manip@1.0.0-beta.16?download_url=file://.#src/lib.rs",
           "type": "library",
-          "version": "1.0.0-beta.15"
+          "version": "1.0.0-beta.16"
         }
       ],
       "description": "PDF manipulation: pages, encryption, watermarks, optimization, bookmarks",
@@ -8591,10 +8591,10 @@
         }
       ],
       "name": "pdf-manip",
-      "purl": "pkg:cargo/pdf-manip@1.0.0-beta.15?download_url=file://.",
+      "purl": "pkg:cargo/pdf-manip@1.0.0-beta.16?download_url=file://.",
       "scope": "required",
       "type": "library",
-      "version": "1.0.0-beta.15"
+      "version": "1.0.0-beta.16"
     },
     "properties": [
       {
@@ -8602,7 +8602,7 @@
         "value": "true"
       }
     ],
-    "timestamp": "2026-06-16T06:14:11.187053000Z",
+    "timestamp": "2026-06-18T18:11:03.503646000Z",
     "tools": [
       {
         "name": "cargo-cyclonedx",
@@ -8611,7 +8611,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:6ecbe228-e5d7-45f5-b8c1-b089758a4c1e",
+  "serialNumber": "urn:uuid:c2893259-e20f-4a83-b0fa-e2abbaac59a7",
   "specVersion": "1.3",
   "version": 1
 }

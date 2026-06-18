@@ -51,6 +51,34 @@ interface PdfCapiLibrary extends Library {
     /** Number of pages; -1 if doc is null. */
     int pdf_document_page_count(Pointer doc);
 
+    // ---- Digital signing & signature verification ---------------------------
+
+    /**
+     * Sign a document with a PKCS#12 identity bundle, producing a new document.
+     *
+     * <p>C ABI: {@code PdfStatus pdf_document_sign(const PdfDocument *doc,
+     * const char *pkcs12_path, const char *pkcs12_password, PdfDocument
+     * **out)}. The source {@code doc} is BORROWED and not modified. On success
+     * {@code out} receives a NEW heap document handle the caller must free with
+     * {@link #pdf_document_free}. {@code pkcs12Password} may be {@code null} for
+     * password-less bundles.
+     *
+     * @return 0 OK · 1 ErrorInvalidArgument · 2 ErrorFileNotFound ·
+     *         9 ErrorSign.
+     */
+    int pdf_document_sign(Pointer doc, String pkcs12Path, String pkcs12Password, PointerByReference out);
+
+    /** Number of signature fields in the document; -1 if {@code doc} is null. */
+    int pdf_signature_count(Pointer doc);
+
+    /**
+     * Validate the digital signature at zero-based {@code index}.
+     *
+     * @return 1 valid · 0 invalid · -1 unknown / error (null doc or
+     *         out-of-range index).
+     */
+    int pdf_signature_is_valid(Pointer doc, int index);
+
     // ---- Content ------------------------------------------------------------
 
     /**
@@ -102,6 +130,33 @@ interface PdfCapiLibrary extends Library {
 
     /** Fill the output struct with the current license status. */
     int pdfluent_license_status(PdfluentLicenseStatus.ByReference out);
+
+    // ---- Signed-payload license activation (Wave 2) -------------------------
+
+    /**
+     * Inject the process-global Ed25519 verification key.
+     *
+     * <p>C ABI: {@code PdfStatus pdfluent_license_set_public_key(const unsigned
+     * char *public_key, size_t key_len)}. The key buffer is BORROWED; the
+     * library copies what it needs. {@code keyLen} must equal 32.
+     *
+     * @return 0 OK · 1 ErrorInvalidArgument (null or not 32 bytes) ·
+     *         16 ErrorInvalidLicense (a different key was already injected).
+     */
+    int pdfluent_license_set_public_key(byte[] publicKey, NativeLong keyLen);
+
+    /**
+     * Activate the process-global license from a signed JSON payload.
+     *
+     * <p>C ABI: {@code PdfStatus pdfluent_license_activate_payload(const char
+     * *payload_json)}. {@link #pdfluent_license_set_public_key} must have been
+     * called first. The payload is BORROWED.
+     *
+     * @return 0 OK · 1 ErrorInvalidArgument · 16 ErrorInvalidLicense ·
+     *         17 ErrorLicenseAlreadySet · 19 ErrorLicenseExpired ·
+     *         20 ErrorLicenseInvalidSignature.
+     */
+    int pdfluent_license_activate_payload(String payloadJson);
 
     // ---- Structured text-block extraction ----------------------------------
 

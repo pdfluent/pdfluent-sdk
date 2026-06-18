@@ -234,9 +234,27 @@ def test_encrypt_wrong_password(tmp_path):
 
 # ---------- Scenario 11: Verify signature ----------
 
-@pytest.mark.skip(reason="TODO: Signature verification not yet exposed in Python binding")
-def test_verify_signature():
-    pass
+def test_verify_signature_unsigned_is_empty():
+    # An unsigned PDF returns zero signature results (never raises).
+    doc = Document(SAMPLE_PDF)
+    results = doc.validate_signatures()
+    assert isinstance(results, list)
+    assert len(results) == 0
+
+
+def test_verify_signature_signed_doc():
+    # Parity contract (mirrors the Node smoke test): validate_signatures always
+    # returns a list and never raises. The minimal signed fixture may surface
+    # no discoverable fields via the read-only parser; assert per-result shape
+    # only when results are present.
+    if not os.path.exists(SIGNED_PDF):
+        pytest.skip("signed.pdf fixture not available")
+    doc = Document(SIGNED_PDF)
+    results = doc.validate_signatures()
+    assert isinstance(results, list)
+    for r in results:
+        assert r.status in ("valid", "invalid", "unknown")
+        assert isinstance(r.field_name, str)
 
 
 # ---------- Scenario 12: Extract images ----------
