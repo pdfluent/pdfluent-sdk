@@ -1,6 +1,6 @@
 {
   "name": "@pdfluent/node",
-  "version": "1.0.0-beta.17",
+  "version": "1.0.0-beta.17.1",
   "description": "Enterprise PDF SDK for Node.js — rendering, text extraction, forms, annotations, redaction, encryption, and PDF/A compliance.",
   "main": "index.js",
   "types": "index.d.ts",
@@ -15,7 +15,6 @@
     "index.js",
     "index.mjs",
     "index.d.ts",
-    "*.node",
     "LICENSE",
     "README.md"
   ],
@@ -38,7 +37,10 @@
     "build:debug": "napi build --platform && node scripts/build/postbuild.cjs",
     "postbuild:errors": "node scripts/build/postbuild.cjs",
     "test": "jest tests/",
-    "prepublishOnly": "napi prepublish -t npm"
+    "release:gen": "node scripts/release/generate-npm-dirs.cjs",
+    "release:validate": "node scripts/release/validate-main-tarball.cjs",
+    "release:publish": "bash scripts/release/publish.sh",
+    "prepublishOnly": "node scripts/release/guard-prepublish.cjs"
   },
   "keywords": [
     "pdf",
