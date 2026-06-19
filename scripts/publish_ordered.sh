@@ -63,6 +63,13 @@ log()  { echo "[$(date -u '+%H:%M:%S')] $*" | tee -a "$LOGFILE"; }
 die()  { log "ERROR: $*"; exit 1; }
 warn() { log "WARN:  $*"; }
 
+# Live publishing NEVER uses --allow-dirty: the real `cargo publish` below
+# enforces a clean per-crate tree, and the `cargo package` inspection step is
+# held to the same standard in --live mode. Only the default dry-run (which is
+# meant to validate work-in-progress) permits a dirty tree for `cargo package`.
+PKG_DIRTY_FLAG="--allow-dirty"
+$LIVE && PKG_DIRTY_FLAG=""
+
 # Check whether a specific crate version exists on crates.io.
 # Returns 0 (true) if published, 1 (false) if not yet published.
 # On network error: returns 2 and logs a warning.
@@ -106,10 +113,11 @@ print(match)
 # ---------------------------------------------------------------------------
 CRATES=(
     # Topologically sorted (deps strictly before dependents), regenerated from
-    # `cargo metadata`. Fixes two bugs that broke the beta.16 publish: the
-    # `xfa-js-sandboxed` dependency was missing, and `pdf-engine` was ordered
-    # before its dependencies `pdf-xfa` / `pdfluent-forms`. Image-codec forks
-    # sit at independent versions and are skipped at publish time if unchanged.
+    # `cargo metadata`. Encodes two ordering fixes proven necessary by an
+    # earlier failed train: the `xfa-js-sandboxed` dependency must be present,
+    # and `pdf-engine` must follow its dependencies `pdf-xfa` / `pdfluent-forms`.
+    # Image-codec forks sit at independent versions and are skipped at publish
+    # time if unchanged.
     "xfa-dom-resolver"
     "formcalc-interpreter"
     "pdfluent-ccitt"
@@ -215,7 +223,7 @@ for CRATE in "${CRATES[@]}"; do
     # cause "failed to select a version" — expected, publish order handles it.
     # ------------------------------------------------------------------
     log "  Packaging $CRATE..."
-    if cargo package -p "$CRATE" --no-verify --allow-dirty >> "$LOGFILE" 2>&1; then
+    if cargo package -p "$CRATE" --no-verify $PKG_DIRTY_FLAG >> "$LOGFILE" 2>&1; then
         log "  Package OK"
     elif tail -20 "$LOGFILE" | grep -q "failed to select a version for the requirement"; then
         log "  Package SKIP (cascade dep not yet on crates.io — OK, publish order handles this)"
