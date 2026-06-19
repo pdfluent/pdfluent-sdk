@@ -22,6 +22,19 @@ below) plus:
   the topological order (`pdf-engine` was listed before its dependencies
   `pdf-xfa` / `pdfluent-forms`), dropped `--allow-dirty`, and made the negative
   array index bash-3.2 compatible.
+- **Node npm packaging hotfix → `@pdfluent/node@1.0.0-beta.17.1`.** The
+  `1.0.0-beta.17` main meta-package shipped with only 3 of 6 platform
+  `optionalDependencies`: the `prepublishOnly: napi prepublish` lifecycle hook
+  rewrote `package.json` during `npm publish`. Recovered as a packaging-only
+  **beta.17.1** (same native build) pinning the six already-correct
+  `1.0.0-beta.17` platform packages; the broken `beta.17` main is deprecated.
+- **Hardened, deterministic Node release process** (`crates/pdf-node/scripts/release/`):
+  single-source-of-truth platform matrix; deterministic `npm/` generation;
+  a **non-mutating** read-only prepublish guard replacing `napi prepublish`;
+  actual-tarball validation (full 6-platform matrix, no native binary in the
+  meta-package, LICENSE/README, no leakage); idempotent `--ignore-scripts`
+  publishing; regression tests. `*.node` removed from the main `files` so the
+  meta-package is binary-free by construction.
 
 ### Changed
 
