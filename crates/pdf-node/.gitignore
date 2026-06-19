@@ -1,0 +1,9 @@
+# Local N-API build artefacts. The loader (index.js) requires `./index.<tag>.node`
+# from disk during local dev, but the main meta-package never ships a binary
+# (`*.node` is excluded from package.json "files"); binaries ship only via the
+# per-platform sub-packages. Never commit them.
+*.node
+
+# Generated per-platform sub-package directories
+# (scripts/release/generate-npm-dirs.cjs writes these from built binaries).
+/npm/
