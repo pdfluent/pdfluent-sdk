@@ -224,9 +224,32 @@ if (PdfDocument) {
     fs.unlinkSync(out);
   });
 
-  // Test 12b: full round-trip depends on encrypt_and_save producing a
-  // lopdf-compatible ciphertext. Skipped until that is verified.
-  test.skip('12b. decrypt saves a file (encrypt round-trip not yet verified)', () => {});
+  // Test 12b: full encrypt → decrypt round-trip. encrypt() writes an
+  // AES-256 password-protected file; openWithPassword() reads it back; decrypt()
+  // writes a plaintext file that opens without a password. Page count is
+  // preserved end-to-end.
+  test('12b. decrypt round-trip (encrypt -> openWithPassword -> decrypt -> reopen)', () => {
+    const orig = loadPdf(SAMPLE_PDF);
+    const origPages = orig.pageCount;
+    const enc = tmpPath('encrypt-rt');
+    orig.encrypt(enc, 'secret123');
+
+    // The encrypted file must reject opening without the password.
+    expect(() => loadPdf(enc)).toThrow();
+
+    // Re-open with the correct password; page count is preserved.
+    const encrypted = PdfDocument.openWithPassword(fs.readFileSync(enc), 'secret123');
+    expect(encrypted.pageCount).toBe(origPages);
+
+    // Decrypt to a plaintext file that opens without a password.
+    const dec = tmpPath('decrypt-rt');
+    encrypted.decrypt(dec);
+    const decrypted = loadPdf(dec);
+    expect(decrypted.pageCount).toBe(origPages);
+
+    fs.unlinkSync(enc);
+    fs.unlinkSync(dec);
+  });
 
   // ── 13. Signature verification ────────────────────────────────────────────
 

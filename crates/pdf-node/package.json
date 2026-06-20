@@ -36,7 +36,7 @@
     "build": "napi build --release --platform && node scripts/build/postbuild.cjs",
     "build:debug": "napi build --platform && node scripts/build/postbuild.cjs",
     "postbuild:errors": "node scripts/build/postbuild.cjs",
-    "test": "jest tests/",
+    "test": "jest tests/ --testPathIgnorePatterns tests/license && jest tests/license.test.js && jest tests/license_signed_payload.test.js",
     "release:gen": "node scripts/release/generate-npm-dirs.cjs",
     "release:validate": "node scripts/release/validate-main-tarball.cjs",
     "release:publish": "bash scripts/release/publish.sh",
