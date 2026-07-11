@@ -19,6 +19,13 @@ those crates are NOT governed by this License and may be used under their
 respective open-source terms. See the NOTICE file for the list of crates
 covered by each license.
 
+Note: this License is separate from the license for the PDFluent desktop
+editor application. A license to use the PDFluent editor, including a free
+one, does not grant any rights under this License. If you are embedding,
+linking against, or programmatically calling the Software described below,
+this License applies regardless of whether you also use the editor. See
+https://pdfluent.com/sdk/pricing for SDK licensing options.
+
 ----------------------------------------------------------------------------
 
 1. DEFINITIONS
