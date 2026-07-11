@@ -58,3 +58,15 @@ fn main() -> Result<()> {
 - **Node.js** — napi-rs bindings
 - **Python** — PyO3 bindings (separate crate)
 - **C FFI** — pdf-capi for C/C++ integration
+
+## License
+
+PDFluent crates are commercially licensed (see [LICENSE](LICENSE)); a few
+dependencies are separately available under MIT or Apache-2.0 (see
+[NOTICE](NOTICE)).
+
+**Is the SDK covered by the free PDFluent editor license?** No. The PDFluent
+desktop editor is free to use, including at work, but that license covers
+the application itself. Embedding, linking, or calling this SDK (or any of
+its crates or language bindings) from your own software requires a separate
+SDK license. See [pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing).

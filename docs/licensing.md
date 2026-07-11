@@ -5,6 +5,12 @@ needed to evaluate the SDK and marks output via the `/Producer` metadata
 field. To remove the watermark and unlock the full capability set, activate
 a license key.
 
+This page covers the SDK's license activation, not the desktop editor. The
+PDFluent editor is free to use, including at work, but that license doesn't
+extend to the SDK. If you're embedding PDFluent or calling it from your own
+code, you need an SDK license. See
+[pdfluent.com/sdk/pricing](https://pdfluent.com/sdk/pricing).
+
 Each binding exposes the same three operations:
 
 1. **Activate from a key string** — primary path
