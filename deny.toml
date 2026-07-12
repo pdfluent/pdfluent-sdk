@@ -98,27 +98,27 @@ ignore = true
 [[licenses.clarify]]
 crate = "formcalc-interpreter"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdf-annot"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdf-compliance"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdf-docx"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdf-engine"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdf-font"
@@ -128,27 +128,27 @@ license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
 [[licenses.clarify]]
 crate = "pdf-invoice"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdf-manip"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdf-ocr"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdf-pptx"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdf-redact"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdf-render"
@@ -158,67 +158,67 @@ license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
 [[licenses.clarify]]
 crate = "pdf-text-format"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdf-xfa"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdf-xlsx"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdfluent"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdfluent-extract"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdfluent-forms"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "pdfluent-sign"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "xfa-cli"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "xfa-dom-resolver"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "xfa-js-sandboxed"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "xfa-json"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "xfa-layout-engine"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 [[licenses.clarify]]
 crate = "xfa-license"
 expression = "LicenseRef-PDFluent-Commercial"
-license-files = [{ path = "LICENSE", hash = 0x559b30eb }]
+license-files = [{ path = "LICENSE", hash = 0x99a4b539 }]
 
 # ---------------------------------------------------------------------------
 # Bans — duplicate crate versions and forbidden crates
