@@ -6,7 +6,10 @@
 #   1. refuse to run on a dirty tree (never publish uncommitted state);
 #   2. deterministically (re)generate all six npm/<tag>/ platform dirs;
 #   3. publish each platform package — idempotent: a version already on the
-#      registry is SKIPPED, so a re-run after a partial failure is safe;
+#      registry is SKIPPED, so a re-run after a partial failure is safe; each
+#      package's generated LICENSE is asserted byte-identical to
+#      crates/pdf-node/LICENSE before it ships (catches silent drift between
+#      the source LICENSE and the generated per-platform copies);
 #   4. validate the EXACT main tarball (6 platforms, no binary, LICENSE/README);
 #   5. publish the main meta-package with --ignore-scripts (no lifecycle script
 #      can mutate the manifest);
@@ -51,10 +54,16 @@ for t in "${TAGS[@]}"; do
     log "SKIP $name@$PLAT_VER (already on registry)"
     continue
   fi
-  # per-package audit: exactly one binary + LICENSE
+  # per-package audit: exactly one binary + LICENSE, and the LICENSE is not
+  # allowed to drift from the source copy — npm/$t/LICENSE is a generated
+  # file (generate-npm-dirs.cjs copies it fresh every run), so a mismatch
+  # here means either that step was skipped or the generator changed
+  # underneath us. Either way, publishing a stale LICENSE is exactly the
+  # silent-drift failure mode nobody notices until it's already live.
   bins=$(find "npm/$t" -name '*.node' | wc -l | tr -d ' ')
   [[ "$bins" == "1" ]] || die "$name must contain exactly one .node (found $bins)"
   [[ -f "npm/$t/LICENSE" ]] || die "$name missing LICENSE"
+  cmp -s "npm/$t/LICENSE" LICENSE || die "$name LICENSE has drifted from crates/pdf-node/LICENSE — rerun generate-npm-dirs.cjs"
   if [[ "$DRY_RUN" == 1 ]]; then
     log "DRY-RUN would publish $name@$PLAT_VER"; ( cd "npm/$t" && npm pack --ignore-scripts --dry-run >/dev/null )
   else
