@@ -256,4 +256,5 @@ Without a license key the SDK is fully functional; output PDFs carry an evaluati
 
 - **Documentation:** <https://pdfluent.com/docs>
 - **Issues:** <https://pdfluent.com/support>
+- **PDFluent editor** (source-available): <https://github.com/pdfluent/pdfluent>. The free desktop app this SDK powers.
 - Built by [Innovation Trigger BV](https://pdfluent.com)

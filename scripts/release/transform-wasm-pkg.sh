@@ -4,11 +4,19 @@
 #
 # wasm-pack copies fields from Cargo.toml verbatim. The crate is called
 # `xfa-wasm` (no `@scope/` allowed in Rust crate names) and the workspace
-# repository field is on the SDK monorepo. None of those are correct for
-# the published npm package, so this script rewrites them after wasm-pack.
+# repository field used to point at the private GitLab monorepo (a dead link
+# for a public npm reader). None of those are correct for the published npm
+# package, so this script rewrites them after wasm-pack.
+#
+# Reciprocal backlink to github.com/pdfluent/pdfluent (source-available
+# mirror, for SEO/GEO): only written when WASM_REPO_PUBLIC=1 is set. That repo
+# is NOT public yet (Phase 0.5 dependency) — a link to a private repo 404s and
+# actively hurts SEO/GEO, so the field is omitted by default. Set
+# WASM_REPO_PUBLIC=1 only after confirming github.com/pdfluent/pdfluent is live.
 #
 # Usage:
 #   ./scripts/release/transform-wasm-pkg.sh <pkg-dir> <target-version>
+#   WASM_REPO_PUBLIC=1 ./scripts/release/transform-wasm-pkg.sh <pkg-dir> <target-version>
 #
 # Exits non-zero if any required field is missing or wrong after rewrite.
 
@@ -25,7 +33,7 @@ if [[ ! -f "$PKG_JSON" ]]; then
 fi
 
 python3 - "$PKG_JSON" "$VERSION" <<'PY'
-import json, sys, pathlib
+import json, os, sys, pathlib
 
 pkg_path = pathlib.Path(sys.argv[1])
 version  = sys.argv[2]
@@ -40,8 +48,13 @@ d["homepage"] = "https://pdfluent.com"
 d["description"] = "PDFluent browser SDK — read, edit, annotate, redact, sign, and validate PDFs (including XFA) entirely client-side via WASM."
 d["author"] = "Innovation Trigger BV <team@pdfluent.com>"
 
-# Strip GitHub or any external repo reference
-d.pop("repository", None)
+# Reciprocal repository backlink — gated on WASM_REPO_PUBLIC=1 (see header).
+if os.environ.get("WASM_REPO_PUBLIC") == "1":
+    d["repository"] = {"type": "git", "url": "https://github.com/pdfluent/pdfluent"}
+else:
+    d.pop("repository", None)
+    print("note: repository field omitted (set WASM_REPO_PUBLIC=1 once "
+          "github.com/pdfluent/pdfluent is confirmed public)", file=sys.stderr)
 d.pop("bugs", None)
 
 # Cleaner keyword set
@@ -77,7 +90,14 @@ for s in "@pdfluent/sdk-wasm" "$VERSION" "SEE LICENSE IN LICENSE" "https://pdflu
         ok=0
     fi
 done
-for forbidden in "github.com" "/Users/" "/home/"; do
+forbidden_list=("/Users/" "/home/")
+if [[ "${WASM_REPO_PUBLIC:-}" != "1" ]]; then
+    forbidden_list+=("github.com")
+elif ! grep -q -F "github.com/pdfluent/pdfluent" "$PKG_JSON"; then
+    echo "  WASM_REPO_PUBLIC=1 set but repository field is missing/wrong" >&2
+    ok=0
+fi
+for forbidden in "${forbidden_list[@]}"; do
     if grep -q -F "$forbidden" "$PKG_JSON"; then
         echo "  FORBIDDEN (must not appear): $forbidden" >&2
         ok=0

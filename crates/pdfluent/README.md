@@ -81,6 +81,7 @@ See the `LICENSE` file in this crate, or read the full commercial terms at <http
 - **Pricing:** <https://pdfluent.com/pricing>
 - **Commercial terms:** <https://pdfluent.com/terms>
 - **Support:** <https://pdfluent.com/support>
+- **PDFluent editor** (source-available): <https://github.com/pdfluent/pdfluent>. The free desktop app this SDK powers.
 
 ---
 

@@ -63,7 +63,7 @@
   "licenseUrl": "https://pdfluent.com/terms",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pdfluent/PDFluent-project"
+    "url": "https://github.com/pdfluent/pdfluent"
   },
   "homepage": "https://pdfluent.com",
   "bugs": {

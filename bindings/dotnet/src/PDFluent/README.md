@@ -152,3 +152,10 @@ The project generates a NuGet package with native library bundling per platform:
 | `RenderThumbnail(int, int)` | Render thumbnail |
 | `GetMetadata(string)` | Get metadata value |
 | `Dispose()` | Free native resources |
+
+## Links
+
+- **Documentation:** <https://pdfluent.com/docs>
+- **Pricing:** <https://pdfluent.com/pricing>
+- **PDFluent editor** (source-available): <https://github.com/pdfluent/pdfluent>. The free desktop app this SDK powers.
+- Built by [Innovation Trigger BV](https://pdfluent.com)

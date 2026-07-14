@@ -38,6 +38,8 @@ classifiers = [
 Homepage = "https://pdfluent.com"
 "Bug Tracker" = "https://pdfluent.com/support"
 Documentation = "https://pdfluent.com/docs"
+# Not public yet (Phase 0.5 dependency) — do not publish until confirmed live.
+Repository = "https://github.com/pdfluent/pdfluent"
 
 [project.optional-dependencies]
 pillow = ["Pillow"]
