@@ -169,3 +169,10 @@ try (PdfluentDocument doc = PdfluentDocument.open(Files.readAllBytes(path))) {
 text, a radio export name, a choice option, or a bool-ish checkbox state.
 Hierarchical names (`"parent.child"`) are resolved through `/Kids`. Read-only
 fields throw `PdfluentException`.
+
+## Links
+
+- **Documentation:** <https://pdfluent.com/docs>
+- **Pricing:** <https://pdfluent.com/pricing>
+- **PDFluent editor** (source-available): <https://github.com/pdfluent/pdfluent>. The free desktop app this SDK powers.
+- Built by [Innovation Trigger BV](https://pdfluent.com)

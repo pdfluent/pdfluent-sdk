@@ -320,3 +320,10 @@ const merged = doc.merge(otherBytes);   // single op, one-shot
 
 Wave 2 added 13 new methods for ~0.2 MB of binary growth. Well under the
 15 MB hard limit and well under the 5 MB gzipped soft target.
+
+## Links
+
+- **Documentation:** <https://pdfluent.com/docs>
+- **Pricing:** <https://pdfluent.com/pricing>
+- **PDFluent editor** (source-available): <https://github.com/pdfluent/pdfluent>. The free desktop app this SDK powers.
+- Built by [Innovation Trigger BV](https://pdfluent.com)

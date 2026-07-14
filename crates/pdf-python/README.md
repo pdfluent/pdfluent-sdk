@@ -314,3 +314,10 @@ maturin build --release            # build wheel in ./dist/
 ## License
 
 PDFluent Commercial License. See LICENSE.
+
+## Links
+
+- **Documentation:** <https://pdfluent.com/docs>
+- **Pricing:** <https://pdfluent.com/pricing>
+- **PDFluent editor** (source-available): <https://github.com/pdfluent/pdfluent>. The free desktop app this SDK powers.
+- Built by [Innovation Trigger BV](https://pdfluent.com)
