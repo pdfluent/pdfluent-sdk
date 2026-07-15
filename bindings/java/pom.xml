@@ -9,7 +9,7 @@
          ================================================================ -->
     <groupId>com.pdfluent</groupId>
     <artifactId>pdfluent</artifactId>
-    <version>1.0.0-beta.17.1</version>
+    <version>1.0.0-beta.17.2</version>
     <packaging>jar</packaging>
 
     <name>PDFluent Java SDK</name>
@@ -45,19 +45,16 @@
         </developer>
     </developers>
 
-    <!-- github.com/pdfluent/pdfluent is not public yet (Phase 0.5 dependency).
-         Do not release this POM until that repo is confirmed live — a link to
-         a private repo 404s and actively hurts SEO/GEO. -->
     <scm>
-        <connection>scm:git:https://github.com/pdfluent/pdfluent.git</connection>
-        <developerConnection>scm:git:https://github.com/pdfluent/pdfluent.git</developerConnection>
-        <url>https://github.com/pdfluent/pdfluent</url>
+        <connection>scm:git:https://github.com/pdfluent/pdfluent-sdk.git</connection>
+        <developerConnection>scm:git:https://github.com/pdfluent/pdfluent-sdk.git</developerConnection>
+        <url>https://github.com/pdfluent/pdfluent-sdk</url>
         <tag>HEAD</tag>
     </scm>
 
     <issueManagement>
         <system>GitHub</system>
-        <url>https://github.com/pdfluent/pdfluent/issues</url>
+        <url>https://github.com/pdfluent/pdfluent-sdk/issues</url>
     </issueManagement>
 
     <!-- ================================================================

@@ -1,6 +1,6 @@
 {
   "name": "@pdfluent/node",
-  "version": "1.0.0-beta.17.2",
+  "version": "1.0.0-beta.17.3",
   "description": "Enterprise PDF SDK for Node.js — rendering, text extraction, forms, annotations, redaction, encryption, and PDF/A compliance.",
   "main": "index.js",
   "types": "index.d.ts",
@@ -63,7 +63,7 @@
   "licenseUrl": "https://pdfluent.com/terms",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pdfluent/pdfluent"
+    "url": "https://github.com/pdfluent/pdfluent-sdk"
   },
   "homepage": "https://pdfluent.com",
   "bugs": {

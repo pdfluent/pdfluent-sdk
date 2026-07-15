@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pdfluent"
-version = "1.0.0b17.post2"
+version = "1.0.0b17.post3"
 description = "Enterprise PDF SDK — render, extract, annotate, sign, and validate PDFs. Pure Rust, zero system dependencies."
 readme = "README.md"
 license = { text = "PDFluent Commercial License" }
@@ -38,7 +38,7 @@ classifiers = [
 Homepage = "https://pdfluent.com"
 "Bug Tracker" = "https://pdfluent.com/support"
 Documentation = "https://pdfluent.com/docs"
-Repository = "https://github.com/pdfluent/pdfluent"
+Repository = "https://github.com/pdfluent/pdfluent-sdk"
 
 [project.optional-dependencies]
 pillow = ["Pillow"]
