@@ -77,7 +77,7 @@ See the `LICENSE` file in this crate, or read the full commercial terms at <http
 ## Links
 
 - **Documentation:** <https://pdfluent.com/docs>
-- **30-day clean trial key:** <https://pdfluent.com/trial>
+- **30-day evaluation key** (full features, no output watermark): <https://pdfluent.com/trial>
 - **Pricing:** <https://pdfluent.com/pricing>
 - **Commercial terms:** <https://pdfluent.com/terms>
 - **Support:** <https://pdfluent.com/support>
