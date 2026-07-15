@@ -246,7 +246,7 @@ await sharp(result.data, {
 
 **PDFluent Commercial License** — free for evaluation; a valid license is required for production use.
 
-- **30-day trial:** <https://pdfluent.com/trial>
+- **30-day evaluation key** (full features, no output watermark): <https://pdfluent.com/trial>
 - **Pricing:** <https://pdfluent.com/pricing>
 - **Commercial terms:** <https://pdfluent.com/terms>
 
