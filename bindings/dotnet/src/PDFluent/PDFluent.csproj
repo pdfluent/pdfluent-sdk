@@ -10,7 +10,7 @@
 
     <!-- NuGet package metadata -->
     <PackageId>PDFluent</PackageId>
-    <Version>1.0.0-beta.17.1</Version>
+    <Version>1.0.0-beta.17.2</Version>
     <Authors>Innovation Trigger BV</Authors>
     <Company>Innovation Trigger BV</Company>
     <Product>PDFluent</Product>
@@ -19,10 +19,9 @@
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageProjectUrl>https://pdfluent.com</PackageProjectUrl>
-    <!-- Not public yet (Phase 0.5 dependency) — do not publish until confirmed live. -->
     <RepositoryUrl>https://github.com/pdfluent/pdfluent</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <PackageTags>pdf;xfa;render;extract;forms;signatures;pdfa;pdfluent</PackageTags>
+    <PackageTags>pdf;xfa;acroform;render;extract;forms;signatures;pdfa;pdfluent</PackageTags>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
     <!-- Reproducible builds: strip absolute paths from PDBs and source-link blobs. -->
     <PathMap>$(MSBuildProjectDirectory)=/_/</PathMap>
