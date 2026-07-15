@@ -1,6 +1,6 @@
 [package]
 name = "pdfluent"
-version = "1.0.0-beta.17.1"
+version = "1.0.0-beta.17.2"
 edition = "2021"
 rust-version = "1.75"
 authors = ["PDFluent Contributors <team@pdfluent.com>"]
@@ -10,8 +10,8 @@ homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 readme = "README.md"
 description = "Pure-Rust PDF SDK with PDF/A, digital signatures, WASM, and experimental (feature-gated) XFA support."
-keywords = ["pdf", "sdk", "document", "forms", "signatures"]
-categories = ["text-processing", "rendering"]
+keywords = ["pdf", "xfa", "acroform", "pdf-forms", "pades"]
+categories = ["rendering", "text-processing", "parser-implementations", "encoding"]
 
 [features]
 default = ["signing", "pdfa", "redaction"]

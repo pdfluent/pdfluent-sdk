@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 napi = { version = "2", features = ["async", "serde-json", "napi9"] }
 napi-derive = "2"
-pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.17.1" }
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.17.2" }
 pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.17" }
 pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.17" }
 pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.17" }
