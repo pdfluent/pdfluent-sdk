@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pdfluent"
-version = "1.0.0b17.post1"
+version = "1.0.0b17.post2"
 description = "Enterprise PDF SDK — render, extract, annotate, sign, and validate PDFs. Pure Rust, zero system dependencies."
 readme = "README.md"
 license = { text = "PDFluent Commercial License" }
@@ -13,7 +13,7 @@ authors = [
     { name = "Innovation Trigger BV", email = "team@pdfluent.com" },
 ]
 requires-python = ">=3.8"
-keywords = ["pdf", "render", "text-extraction", "forms", "pdf-a", "annotations", "redaction", "rust", "pdfluent"]
+keywords = ["pdf", "xfa", "acroform", "render", "text-extraction", "forms", "pdf-a", "annotations", "redaction", "rust", "pdfluent"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -38,7 +38,6 @@ classifiers = [
 Homepage = "https://pdfluent.com"
 "Bug Tracker" = "https://pdfluent.com/support"
 Documentation = "https://pdfluent.com/docs"
-# Not public yet (Phase 0.5 dependency) — do not publish until confirmed live.
 Repository = "https://github.com/pdfluent/pdfluent"
 
 [project.optional-dependencies]
