@@ -20,6 +20,6 @@ pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.17" }
 pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.17" }
 pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.17" }
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.6" }
-pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.17.1" }
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.17.2" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
 jni = "0.21"
