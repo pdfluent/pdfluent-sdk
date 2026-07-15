@@ -1,6 +1,6 @@
 {
   "name": "@pdfluent/node",
-  "version": "1.0.0-beta.17.1",
+  "version": "1.0.0-beta.17.2",
   "description": "Enterprise PDF SDK for Node.js — rendering, text extraction, forms, annotations, redaction, encryption, and PDF/A compliance.",
   "main": "index.js",
   "types": "index.d.ts",

@@ -4530,7 +4530,7 @@ dependencies = [
 
 [[package]]
 name = "pdfluent"
-version = "1.0.0-beta.17"
+version = "1.0.0-beta.17.1"
 dependencies = [
  "criterion",
  "getrandom 0.2.17",
