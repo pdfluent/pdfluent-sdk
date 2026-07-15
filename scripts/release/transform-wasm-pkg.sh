@@ -50,7 +50,7 @@ d["author"] = "Innovation Trigger BV <team@pdfluent.com>"
 
 # Reciprocal repository backlink — gated on WASM_REPO_PUBLIC=1 (see header).
 if os.environ.get("WASM_REPO_PUBLIC") == "1":
-    d["repository"] = {"type": "git", "url": "https://github.com/pdfluent/pdfluent"}
+    d["repository"] = {"type": "git", "url": "https://github.com/pdfluent/pdfluent-sdk"}
 else:
     d.pop("repository", None)
     print("note: repository field omitted (set WASM_REPO_PUBLIC=1 once "
@@ -93,7 +93,7 @@ done
 forbidden_list=("/Users/" "/home/")
 if [[ "${WASM_REPO_PUBLIC:-}" != "1" ]]; then
     forbidden_list+=("github.com")
-elif ! grep -q -F "github.com/pdfluent/pdfluent" "$PKG_JSON"; then
+elif ! grep -q -F "github.com/pdfluent/pdfluent-sdk" "$PKG_JSON"; then
     echo "  WASM_REPO_PUBLIC=1 set but repository field is missing/wrong" >&2
     ok=0
 fi

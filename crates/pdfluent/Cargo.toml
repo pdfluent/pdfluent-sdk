@@ -1,11 +1,11 @@
 [package]
 name = "pdfluent"
-version = "1.0.0-beta.17.2"
+version = "1.0.0-beta.17.3"
 edition = "2021"
 rust-version = "1.75"
 authors = ["PDFluent Contributors <team@pdfluent.com>"]
 license-file = "LICENSE"
-repository = "https://github.com/pdfluent/pdfluent"
+repository = "https://github.com/pdfluent/pdfluent-sdk"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 readme = "README.md"

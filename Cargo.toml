@@ -99,10 +99,7 @@ rust-version = "1.80.0"
 #   - `license = "MIT"`                    (forked from upstream MIT)
 # See NOTICE in repository root for the per-crate license matrix.
 license = "MIT"
-# NOTE: github.com/pdfluent/pdfluent is not public yet (Phase 0.5 dependency).
-# Do not cut a new release with this value until that repo is confirmed live —
-# a link to a private repo 404s and actively hurts SEO/GEO.
-repository = "https://github.com/pdfluent/pdfluent"
+repository = "https://github.com/pdfluent/pdfluent-sdk"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 

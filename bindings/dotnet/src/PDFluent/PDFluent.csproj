@@ -10,7 +10,7 @@
 
     <!-- NuGet package metadata -->
     <PackageId>PDFluent</PackageId>
-    <Version>1.0.0-beta.17.2</Version>
+    <Version>1.0.0-beta.17.3</Version>
     <Authors>Innovation Trigger BV</Authors>
     <Company>Innovation Trigger BV</Company>
     <Product>PDFluent</Product>
@@ -19,7 +19,7 @@
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageProjectUrl>https://pdfluent.com</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/pdfluent/pdfluent</RepositoryUrl>
+    <RepositoryUrl>https://github.com/pdfluent/pdfluent-sdk</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>pdf;xfa;acroform;render;extract;forms;signatures;pdfa;pdfluent</PackageTags>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
