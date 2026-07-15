@@ -58,7 +58,7 @@ else:
 d.pop("bugs", None)
 
 # Cleaner keyword set
-d["keywords"] = ["pdf", "wasm", "pdfluent", "browser", "sdk", "xfa", "forms", "annotate", "redact"]
+d["keywords"] = ["pdf", "wasm", "pdfluent", "browser", "sdk", "xfa", "acroform", "pades", "forms", "annotate", "redact"]
 
 # `files:` array — wasm-pack defaults to ["<crate>_bg.wasm", "<crate>.js",
 # "<crate>.d.ts"] which OMITS the `snippets/` directory. xfa_wasm.js line 2
