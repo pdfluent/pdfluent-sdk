@@ -308,19 +308,59 @@ fn write_charset(sids: &[u16]) -> Vec<u8> {
 /// Returns `None` when the font already has the glyph, when anything about the
 /// structure is not fully understood, when a new offset will not fit the width
 /// of the operand it replaces, or when the result fails its own sanity check —
-/// the caller then keeps the original bytes.
+/// the caller then keeps the original bytes. Use [`try_append_blank_glyph`]
+/// when you need to know which of those it was.
 pub fn append_blank_glyph(data: &[u8], width: f64) -> Option<Vec<u8>> {
-    let (charset_span, charstrings_span, charset_off, charstrings_off) = top_dict_spans(data)?;
+    try_append_blank_glyph(data, width).ok()
+}
 
-    let charstrings = parse_index(data, charstrings_off)?;
+/// Why a font could not be given a `space` glyph.
+///
+/// Every variant means "left the font untouched". They are worth
+/// distinguishing only when investigating why a document still fails
+/// validation after the repair pass ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppendRefused {
+    /// The Top DICT is missing, malformed, or names a CID-keyed font.
+    TopDict,
+    /// The CharStrings INDEX could not be parsed.
+    CharStrings,
+    /// The charset is predefined or in a format this code does not read.
+    Charset,
+    /// The charset does not describe exactly one SID per non-`.notdef` glyph.
+    CharsetGlyphCountMismatch,
+    /// The font already has a `space` glyph.
+    AlreadyPresent,
+    /// The Private DICT's width defaults could not be read.
+    PrivateDict,
+    /// A new offset does not fit the byte width of the operand it replaces.
+    OffsetTooWide,
+    /// The rewritten font failed its own re-parse check.
+    SanityCheck,
+}
+
+/// [`append_blank_glyph`], but reporting which precondition failed.
+pub fn try_append_blank_glyph(
+    data: &[u8],
+    width: f64,
+) -> std::result::Result<Vec<u8>, AppendRefused> {
+    use AppendRefused as R;
+
+    let (charset_span, charstrings_span, charset_off, charstrings_off) =
+        top_dict_spans(data).ok_or(R::TopDict)?;
+
+    let charstrings = parse_index(data, charstrings_off).ok_or(R::CharStrings)?;
     let n_glyphs = charstrings.entries.len();
-    let sids = parse_charset(data, charset_off, n_glyphs)?;
-    if sids.len() + 1 != n_glyphs || sids.contains(&SID_SPACE) {
-        return None;
+    let sids = parse_charset(data, charset_off, n_glyphs).ok_or(R::Charset)?;
+    if sids.len() + 1 != n_glyphs {
+        return Err(R::CharsetGlyphCountMismatch);
+    }
+    if sids.contains(&SID_SPACE) {
+        return Err(R::AlreadyPresent);
     }
 
     // Width operand for the blank glyph, relative to nominalWidthX.
-    let (nominal_width, default_width) = private_widths(data)?;
+    let (nominal_width, default_width) = private_widths(data).ok_or(R::PrivateDict)?;
     let w = width.round() as i32;
     let mut charstring = Vec::new();
     if w != default_width {
@@ -339,29 +379,135 @@ pub fn append_blank_glyph(data: &[u8], width: f64) -> Option<Vec<u8>> {
     let new_charstrings_off = out.len();
     out.extend_from_slice(&write_index(&new_charstrings));
 
-    // Rewrite both offsets without changing the Top DICT's length.
-    patch_operand_in_place(&mut out, &charset_span, new_charset_off as i32)?;
-    patch_operand_in_place(&mut out, &charstrings_span, new_charstrings_off as i32)?;
+    // Preferred path: rewrite both offsets without changing the Top DICT's
+    // length, so nothing in the file moves.
+    let in_place = patch_operand_in_place(&mut out, &charset_span, new_charset_off as i32)
+        .and_then(|()| {
+            patch_operand_in_place(&mut out, &charstrings_span, new_charstrings_off as i32)
+        });
+    let out = match in_place {
+        Some(()) => out,
+        // The operands are encoded too narrowly to hold an offset near the end
+        // of the file — the common case for small subsets, where the original
+        // offsets fit in one or two bytes. Rebuild the Top DICT with full-width
+        // operands and shift everything after it. (60 of the 60 fonts blocked
+        // here on the govdocs sample were this case.)
+        None => {
+            rebuild_with_wide_offsets(data, &new_sids, &new_charstrings).ok_or(R::OffsetTooWide)?
+        }
+    };
+    let (new_charset_off, new_charstrings_off) = {
+        let (_, _, cs, chs) = top_dict_spans(&out).ok_or(R::SanityCheck)?;
+        (cs, chs)
+    };
 
     // Sanity: the result must re-parse, expose exactly one more glyph, and keep
     // every original charstring byte-identical.
-    let (_, _, chk_charset, chk_charstrings) = top_dict_spans(&out)?;
-    if chk_charset != new_charset_off || chk_charstrings != new_charstrings_off {
-        return None;
-    }
-    let check = parse_index(&out, new_charstrings_off)?;
+    let check = parse_index(&out, new_charstrings_off).ok_or(R::SanityCheck)?;
     if check.entries.len() != n_glyphs + 1 {
-        return None;
+        return Err(R::SanityCheck);
     }
     for (a, b) in charstrings.entries.iter().zip(check.entries.iter()) {
         if a != b {
-            return None;
+            return Err(R::SanityCheck);
         }
     }
-    if parse_charset(&out, new_charset_off, n_glyphs + 1)? != new_sids {
+    if parse_charset(&out, new_charset_off, n_glyphs + 1).ok_or(R::SanityCheck)? != new_sids {
+        return Err(R::SanityCheck);
+    }
+    Ok(out)
+}
+
+/// Rebuild the file with a Top DICT whose offsets are wide enough to reach the
+/// appended charset and CharStrings.
+///
+/// The in-place path is preferred because it moves nothing. When the original
+/// operands are too narrow, every absolute offset in the Top DICT is re-encoded
+/// as a 5-byte integer and everything after the Top DICT INDEX shifts by the
+/// resulting size delta. Only the Top DICT holds absolute offsets: the Private
+/// DICT's local-Subrs offset is relative to the Private DICT itself, and the
+/// String and Global Subr INDEXes hold none, so shifting the tail wholesale is
+/// safe.
+fn rebuild_with_wide_offsets(
+    data: &[u8],
+    new_sids: &[u16],
+    new_charstrings: &[Vec<u8>],
+) -> Option<Vec<u8>> {
+    let hdr_size = *data.get(2)? as usize;
+    let name_index = parse_index(data, hdr_size)?;
+    let top_index = parse_index(data, name_index.end)?;
+    let tail_start = top_index.end;
+    let entries = parse_dict(top_index.entries.first()?)?;
+
+    // Operators whose operands are absolute file offsets. Encoding (16) and
+    // charset (15) also accept small predefined constants, which must not be
+    // shifted; charset ≤ 2 is already refused upstream, and Encoding 0/1 is
+    // handled below.
+    let build = |delta: usize, charset_off: usize, charstrings_off: usize| -> Option<Vec<u8>> {
+        let mut dict = Vec::new();
+        for e in &entries {
+            let vals = decode_operands(&e.operands);
+            match e.operator.as_slice() {
+                [15] => dict.extend_from_slice(&wide_int(charset_off as i32)),
+                [17] => dict.extend_from_slice(&wide_int(charstrings_off as i32)),
+                [16] => {
+                    let v = *vals.first()?;
+                    // 0 = Standard, 1 = Expert: constants, not offsets.
+                    let shifted = if v <= 1 { v } else { v + delta as i32 };
+                    dict.extend_from_slice(&wide_int(shifted));
+                }
+                [18] => {
+                    // Private: size then offset. Only the offset shifts.
+                    let size = *vals.first()?;
+                    let off = *vals.get(1)?;
+                    dict.extend_from_slice(&wide_int(size));
+                    dict.extend_from_slice(&wide_int(off + delta as i32));
+                }
+                _ => dict.extend_from_slice(&e.operands),
+            }
+            dict.extend_from_slice(&e.operator);
+        }
+        Some(dict)
+    };
+
+    // The delta depends on the rebuilt dict's length, which depends on the
+    // delta. Every offset is written at a fixed 5 bytes, so one pass with
+    // placeholder values gives the final length.
+    let probe = build(0, 0, 0)?;
+    let new_top_index = write_index(&[probe]);
+    let delta = new_top_index
+        .len()
+        .checked_sub(top_index.end - name_index.end)?;
+
+    // Layout: header + Name INDEX + new Top DICT INDEX + shifted tail +
+    // new charset + new CharStrings.
+    let prefix_len = name_index.end;
+    let tail_len = data.len() - tail_start;
+    let charset_off = prefix_len + new_top_index.len() + tail_len;
+    let charset_bytes = write_charset(new_sids);
+    let charstrings_off = charset_off + charset_bytes.len();
+
+    let dict = build(delta, charset_off, charstrings_off)?;
+    let top_index = write_index(&[dict]);
+    // The two builds must agree in length or the offsets above are wrong.
+    if top_index.len() != new_top_index.len() {
         return None;
     }
+
+    let mut out = Vec::with_capacity(data.len() + top_index.len() + charset_bytes.len() + 256);
+    out.extend_from_slice(&data[..prefix_len]);
+    out.extend_from_slice(&top_index);
+    out.extend_from_slice(&data[tail_start..]);
+    out.extend_from_slice(&charset_bytes);
+    out.extend_from_slice(&write_index(new_charstrings));
     Some(out)
+}
+
+/// A DICT integer in the always-5-byte form, so re-encoding never changes the
+/// operand's width between passes.
+fn wide_int(v: i32) -> [u8; 5] {
+    let b = v.to_be_bytes();
+    [29, b[0], b[1], b[2], b[3]]
 }
 
 /// Byte span of a DICT operand inside the file.
@@ -495,6 +641,131 @@ fn patch_operand_in_place(buf: &mut [u8], span: &OperandSpan, value: i32) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a minimal but structurally real CFF: header, Name INDEX, Top DICT
+    /// INDEX, String INDEX, Global Subr INDEX, charset, CharStrings, Private
+    /// DICT.
+    ///
+    /// `charstring_pad` inflates each charstring. That is what decides whether
+    /// the appended data lands beyond the reach of the existing offset
+    /// operands: the charset sits near the start of the file and encodes in one
+    /// byte, while a fat CharStrings INDEX pushes the append site past 1131,
+    /// where DICT integers need three. That is exactly the shape of the real
+    /// subsets this path exists for.
+    fn synth_cff(glyph_names: &[u16], charstring_pad: usize) -> Vec<u8> {
+        let mut charset_off = 0usize;
+        let mut charstrings_off = 0usize;
+        let mut private_off = 0usize;
+        let mut out = Vec::new();
+
+        // The offsets feed back into the operand widths, so iterate to a fixed
+        // point rather than assuming one pass converges.
+        for _ in 0..4 {
+            out = vec![1, 0, 4, 2]; // major, minor, hdrSize, offSize
+            out.extend_from_slice(&write_index(&[b"Test".to_vec()]));
+
+            let mut dict = Vec::new();
+            dict.extend_from_slice(&t2_int(charset_off as i32));
+            dict.push(15);
+            dict.extend_from_slice(&t2_int(charstrings_off as i32));
+            dict.push(17);
+            dict.extend_from_slice(&t2_int(4)); // Private DICT size
+            dict.extend_from_slice(&t2_int(private_off as i32));
+            dict.push(18);
+            out.extend_from_slice(&write_index(&[dict]));
+
+            out.extend_from_slice(&write_index(&[])); // String INDEX
+            out.extend_from_slice(&write_index(&[])); // Global Subr INDEX
+
+            charset_off = out.len();
+            out.extend_from_slice(&write_charset(glyph_names));
+            charstrings_off = out.len();
+            // .notdef plus one charstring per named glyph, each ending in endchar.
+            let entries: Vec<Vec<u8>> = (0..=glyph_names.len())
+                .map(|_| {
+                    let mut cs = vec![139u8; charstring_pad];
+                    cs.push(14);
+                    cs
+                })
+                .collect();
+            out.extend_from_slice(&write_index(&entries));
+            private_off = out.len();
+            // nominalWidthX = 0 (op 21), defaultWidthX = 0 (op 20).
+            out.extend_from_slice(&[139, 21, 139, 20]);
+        }
+        out
+    }
+
+    #[test]
+    fn appends_space_in_place_when_the_operands_have_room() {
+        let font = synth_cff(&[5, 6, 7], 0);
+        let out = try_append_blank_glyph(&font, 250.0).expect("should append");
+
+        // In-place means nothing moved: only the two offset operands inside the
+        // Top DICT changed, and everything after it is byte-identical.
+        let name_index = parse_index(&font, font[2] as usize).unwrap();
+        let tail = parse_index(&font, name_index.end).unwrap().end;
+        assert_eq!(
+            &out[tail..font.len()],
+            &font[tail..],
+            "in-place path must not disturb anything after the Top DICT"
+        );
+        assert!(out.len() > font.len(), "the new glyph has to go somewhere");
+
+        let (_, _, charset_off, charstrings_off) =
+            top_dict_spans(&out).expect("patched font must re-parse");
+        assert_eq!(parse_index(&out, charstrings_off).unwrap().entries.len(), 5);
+        assert_eq!(
+            parse_charset(&out, charset_off, 5).unwrap(),
+            vec![5, 6, 7, SID_SPACE]
+        );
+    }
+
+    /// The case that blocked 60 fonts on the govdocs sample: the offset
+    /// operands are encoded too narrowly to reach the end of the file, so the
+    /// Top DICT has to be rebuilt with wide operands and the tail shifted.
+    #[test]
+    fn rebuilds_top_dict_when_offsets_are_too_narrow() {
+        let font = synth_cff(&[5, 6, 7], 800);
+
+        // Confirm the premise before testing the remedy.
+        let (cs_span, _, _, _) = top_dict_spans(&font).unwrap();
+        let mut probe = font.clone();
+        assert!(
+            patch_operand_in_place(&mut probe, &cs_span, font.len() as i32).is_none(),
+            "fixture must have operands too narrow for the in-place path"
+        );
+
+        let out = try_append_blank_glyph(&font, 250.0).expect("rebuild path should append");
+        let (_, _, charset_off, charstrings_off) = top_dict_spans(&out).unwrap();
+        let charstrings = parse_index(&out, charstrings_off).unwrap();
+        assert_eq!(charstrings.entries.len(), 5);
+        assert_eq!(
+            parse_charset(&out, charset_off, 5).unwrap(),
+            vec![5, 6, 7, SID_SPACE]
+        );
+
+        // Every original charstring must survive byte-identical.
+        let original = parse_index(&font, top_dict_spans(&font).unwrap().3).unwrap();
+        assert_eq!(&charstrings.entries[..4], &original.entries[..]);
+
+        // The Private DICT offset must have shifted with the tail, or the
+        // font's width defaults would be read from the wrong bytes.
+        assert_eq!(
+            private_widths(&out),
+            private_widths(&font),
+            "Private DICT must still resolve after the shift"
+        );
+    }
+
+    #[test]
+    fn refuses_a_font_that_already_has_space() {
+        let font = synth_cff(&[SID_SPACE, 6], 0);
+        assert_eq!(
+            try_append_blank_glyph(&font, 250.0),
+            Err(AppendRefused::AlreadyPresent)
+        );
+    }
 
     #[test]
     fn t2_int_round_trips_known_encodings() {

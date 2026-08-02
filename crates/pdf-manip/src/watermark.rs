@@ -518,16 +518,93 @@ pub(crate) fn ensure_page_resource(
     }
 }
 
-/// Ensure a page has a Helvetica font registered as the given name.
+/// Register the watermark font on a page, creating it once per document.
+///
+/// The font object is shared across every watermarked page. It used to be
+/// created per page, and since the PDF/A pipeline embeds every non-embedded
+/// font, a 4-page document ended up carrying four separate 423 KB copies of
+/// Helvetica. Reusing one object keeps that at one copy however many pages
+/// are stamped.
+///
+/// `/Widths` and a `/FontDescriptor` are written out rather than left to the
+/// standard-14 default: PDF/A requires them on every font, and relying on a
+/// later pipeline pass to fill them in means the watermark is only conformant
+/// when it happens to run inside that pipeline.
 pub(crate) fn ensure_page_font(doc: &mut Document, page_id: ObjectId, name: &str) {
-    let font_dict = dictionary! {
+    let font_id = find_or_create_watermark_font(doc);
+    ensure_page_resource(doc, page_id, "Font", name, font_id);
+}
+
+/// The shared watermark font object, created on first use.
+fn find_or_create_watermark_font(doc: &mut Document) -> ObjectId {
+    // A previous page in this same run already made it. Matching on the exact
+    // shape we write — not just "some Helvetica" — keeps us from adopting a
+    // font the source document defined with a different encoding, which would
+    // change what the watermark text draws.
+    let name_is = |d: &lopdf::Dictionary, key: &[u8], want: &[u8]| {
+        d.get(key).ok().and_then(|o| o.as_name().ok()) == Some(want)
+    };
+    let int_is = |d: &lopdf::Dictionary, key: &[u8], want: i64| {
+        d.get(key).ok().and_then(|o| o.as_i64().ok()) == Some(want)
+    };
+    for (id, obj) in &doc.objects {
+        let Object::Dictionary(d) = obj else { continue };
+        if name_is(d, b"Type", b"Font")
+            && name_is(d, b"BaseFont", b"Helvetica")
+            && name_is(d, b"Encoding", b"WinAnsiEncoding")
+            && int_is(d, b"FirstChar", 32)
+            && int_is(d, b"LastChar", 126)
+            && d.has(b"FontDescriptor")
+        {
+            return *id;
+        }
+    }
+
+    let descriptor = dictionary! {
+        "Type" => "FontDescriptor",
+        "FontName" => "Helvetica",
+        // Non-symbolic (bit 6), the flag every Latin text font carries.
+        "Flags" => 32,
+        "FontBBox" => vec![(-166).into(), (-225).into(), 1000.into(), 931.into()],
+        "ItalicAngle" => 0,
+        "Ascent" => 718,
+        "Descent" => (-207),
+        "CapHeight" => 718,
+        "StemV" => 88,
+        "MissingWidth" => 0,
+    };
+    let descriptor_id = doc.add_object(Object::Dictionary(descriptor));
+
+    let widths: Vec<Object> = HELVETICA_WIDTHS_32_126
+        .iter()
+        .map(|w| Object::Integer(*w as i64))
+        .collect();
+
+    let font = dictionary! {
         "Type" => "Font",
         "Subtype" => "Type1",
         "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+        "FirstChar" => 32,
+        "LastChar" => 126,
+        "Widths" => widths,
+        "FontDescriptor" => descriptor_id,
     };
-    let font_id = doc.add_object(Object::Dictionary(font_dict));
-    ensure_page_resource(doc, page_id, "Font", name, font_id);
+    doc.add_object(Object::Dictionary(font))
 }
+
+/// Helvetica advance widths for codes 32..=126, from the Adobe AFM metrics.
+///
+/// Watermark text is ASCII, so the printable range is all that is needed. Any
+/// character outside it falls back to the descriptor's `/MissingWidth`.
+const HELVETICA_WIDTHS_32_126: [u16; 95] = [
+    278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, // 32-47
+    556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, // 48-63
+    1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, // 64-79
+    667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, // 80-95
+    333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, // 96-111
+    556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584, // 112-126
+];
 
 /// Add a content stream to a page, either prepending (background) or appending (foreground).
 pub(crate) fn add_content_to_page(
@@ -570,6 +647,101 @@ pub(crate) fn add_content_to_page(
 
 #[cfg(test)]
 mod tests {
+
+    /// The watermark font is created once and shared, not once per page.
+    ///
+    /// It used to be per page, and because the PDF/A pipeline embeds every
+    /// non-embedded font, each copy pulled in its own ~423 KB Helvetica.
+    #[test]
+    fn watermark_font_is_shared_across_pages() {
+        let mut doc = make_test_doc(6);
+        apply_text_watermark(&mut doc, &TextWatermark::default(), &PageSelection::All).unwrap();
+
+        let fonts: Vec<_> = doc
+            .objects
+            .iter()
+            .filter(|(_, o)| {
+                matches!(o, Object::Dictionary(d)
+                    if d.get(b"BaseFont").ok().and_then(|o| o.as_name().ok()) == Some(b"Helvetica"))
+            })
+            .collect();
+        assert_eq!(fonts.len(), 1, "one Helvetica per document, not per page");
+
+        // Every page must still resolve /F_WM to that one object.
+        let font_id = *fonts[0].0;
+        let pages = doc.get_pages();
+        assert_eq!(pages.len(), 6);
+        for page_id in pages.values() {
+            let res = resolve_or_create_page_resources(&mut doc, *page_id).unwrap();
+            let Some(Object::Dictionary(res)) = doc.objects.get(&res) else {
+                panic!("no resources")
+            };
+            let Ok(Object::Dictionary(font_res)) = res.get(b"Font") else {
+                panic!("no /Font resources")
+            };
+            assert_eq!(
+                font_res.get(b"F_WM").ok(),
+                Some(&Object::Reference(font_id))
+            );
+        }
+    }
+
+    /// PDF/A requires /Widths and a /FontDescriptor on every font. Writing them
+    /// here rather than leaving them to a later pipeline pass means a
+    /// watermarked document is conformant regardless of what runs after.
+    #[test]
+    fn watermark_font_carries_pdfa_required_keys() {
+        let mut doc = make_test_doc(1);
+        apply_text_watermark(&mut doc, &TextWatermark::default(), &PageSelection::All).unwrap();
+
+        let font = doc
+            .objects
+            .values()
+            .find_map(|o| match o {
+                Object::Dictionary(d)
+                    if d.get(b"BaseFont").ok().and_then(|o| o.as_name().ok())
+                        == Some(b"Helvetica") =>
+                {
+                    Some(d)
+                }
+                _ => None,
+            })
+            .expect("watermark font");
+
+        assert_eq!(font.get(b"FirstChar").unwrap().as_i64().unwrap(), 32);
+        assert_eq!(font.get(b"LastChar").unwrap().as_i64().unwrap(), 126);
+        let Ok(Object::Array(widths)) = font.get(b"Widths") else {
+            panic!("no /Widths")
+        };
+        assert_eq!(widths.len(), 95, "one width per code 32..=126");
+        // Spot-check against the Adobe AFM metrics: space, 'A', 'a'.
+        assert_eq!(widths[0].as_i64().unwrap(), 278);
+        assert_eq!(widths[(b'A' - 32) as usize].as_i64().unwrap(), 667);
+        assert_eq!(widths[(b'a' - 32) as usize].as_i64().unwrap(), 556);
+
+        let Ok(Object::Reference(fd_id)) = font.get(b"FontDescriptor") else {
+            panic!("no /FontDescriptor")
+        };
+        let Some(Object::Dictionary(fd)) = doc.objects.get(fd_id) else {
+            panic!("descriptor missing")
+        };
+        for key in [
+            &b"Flags"[..],
+            b"FontBBox",
+            b"ItalicAngle",
+            b"Ascent",
+            b"Descent",
+            b"CapHeight",
+            b"StemV",
+        ] {
+            assert!(
+                fd.has(key),
+                "descriptor missing /{}",
+                String::from_utf8_lossy(key)
+            );
+        }
+    }
+
     use super::*;
 
     fn make_test_doc(num_pages: usize) -> Document {
