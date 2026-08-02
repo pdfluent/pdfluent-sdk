@@ -410,6 +410,7 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_type1_subset_missing_glyphs(&mut doc)
         }));
 
+        // 3a2d4. The step above repairs a missing glyph by substituting a space,
         // 3a2e. Ensure undefined WinAnsi codes have Differences entries.
         set_progress("undef_encoding");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -474,6 +475,12 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_missing_cidtogidmap(&mut doc)
         }));
 
+        // Must run after every width pass above: the glyph this appends carries
+        // the width the font dictionary declares, so reading that width before
+        // the width fixes have settled bakes in a stale value and *creates* a
+        // 6.2.11.5 mismatch. Complements fix_type1_subset_missing_glyphs, which
+        // repairs a missing glyph by substituting a space and therefore cannot
+        // help when the space is itself the glyph the subsetter dropped.
         // 3b. Normalize color spaces: add sRGB OutputIntent if missing.
         set_progress("colorspace");
         fix_wrong_root(&mut doc);
@@ -511,6 +518,11 @@ impl PdfTest for PdfAConvertTest {
         set_progress("fixups");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_fixups::run_fixups(&mut doc)
+        }));
+
+        set_progress("cff_missing_space");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_cff_subset_missing_space(&mut doc)
         }));
 
         // 3c1. Re-normalize color spaces after fixups. Some fixups can introduce
@@ -1075,6 +1087,16 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     // before the pipeline and were REMOVED (not modified) during processing.
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::restore_stripped_encodings(&mut doc, &encoding_snapshot);
+    }));
+
+    // Must run *after* the encoding restore above: this pass adds a
+    // `/Differences` entry pointing the space code at a glyph it appends to the
+    // font program, and restoring the pre-pipeline encoding would drop it.
+    // Complements fix_type1_subset_missing_glyphs, which repairs a missing
+    // glyph by substituting a space and so cannot help when the space is
+    // itself the glyph the subsetter dropped.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_cff_subset_missing_space(&mut doc)
     }));
 
     dbg_step!("colorspace");

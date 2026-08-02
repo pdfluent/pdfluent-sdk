@@ -53,6 +53,7 @@
 //! | [`header_footer`] | Add headers and footers to pages |
 
 pub mod bookmarks;
+pub mod cff_append;
 pub mod content_editor;
 #[cfg(feature = "image-insert")]
 pub mod downsample;
