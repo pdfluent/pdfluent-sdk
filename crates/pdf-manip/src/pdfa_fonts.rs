@@ -13001,6 +13001,15 @@ fn compute_cff_single_width(
     )
 }
 
+/// Escape hatch for measuring the old absent-glyph width behaviour against the
+/// new one on a corpus. Off by default; see the call site for why.
+fn notdef_width_mirror_enabled() -> bool {
+    matches!(
+        std::env::var("PDFA_NOTDEF_WIDTH_MIRROR").as_deref(),
+        Ok("1") | Ok("true")
+    )
+}
+
 /// Look up the CFF glyph width for a character code, trying multiple strategies:
 /// 1. PDF encoding → glyph name → CFF name lookup
 /// 2. CFF internal encoding (direct parse, no Standard Encoding fallback)
@@ -13398,6 +13407,18 @@ fn cff_width_for_code(
     //
     // Case 4: cff_enc_explicit_notdef=false: code absent from CFF encoding → None.
     if cff_enc_explicit_notdef {
+        // The glyph is absent from the program. Writing the .notdef advance
+        // here "fixes" §6.2.11.5 by making the dictionary agree with a glyph
+        // that draws nothing — and since simple-font rendering takes its
+        // advances from /Widths, that visibly reflows the text. Measured on the
+        // govdocs sample it corrupted Symbol 250 -> 0, ZapfDingbats 278 -> 0 and
+        // CMR10 494 -> 0 without making any of those documents conformant. The
+        // repair for an absent glyph is to add the glyph, not to restate its
+        // width. (Set PDFA_NOTDEF_WIDTH_MIRROR=1 to restore the old behaviour
+        // for A/B measurement.)
+        if !notdef_width_mirror_enabled() {
+            return None;
+        }
         if has_pdf_encoding {
             if pdf_glyph_name.is_empty() {
                 // Case 2: undefined encoding code.
