@@ -512,13 +512,6 @@ const STANDARD_14: &[&str] = &[
 ];
 
 /// Fallback font paths for any font that cannot be found (tried in order).
-const FALLBACK_FONTS: &[&str] = &[
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/System/Library/Fonts/Supplemental/Arial.ttf",
-];
-
 /// Shared in-repo font pack used to keep local and VPS embedding deterministic.
 const REPO_FONT_PACK_REL: &str = "../../.font-pack";
 
@@ -983,10 +976,10 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
     }
 
     for info in &non_embedded {
-        let font_path = find_system_font(&info.name).or_else(find_fallback_font);
+        let font_source = find_font_source(&info.name).or_else(fallback_font_source);
 
-        match font_path {
-            Some(path) => match embed_font_on_target(doc, info, &path) {
+        match font_source {
+            Some(source) => match embed_font_on_target(doc, info, &source) {
                 Ok(()) => {
                     report.fonts_embedded += 1;
                 }
@@ -1357,27 +1350,13 @@ fn embed_via_font_descriptors(doc: &mut Document) -> usize {
 
     let mut embedded = 0usize;
     for (fd_id, font_name) in to_embed {
-        let Some(path) = find_system_font(&font_name).or_else(find_fallback_font) else {
+        let Some(source) = find_font_source(&font_name).or_else(fallback_font_source) else {
             continue;
         };
-        let Ok(font_data) = std::fs::read(&path) else {
+        let Some(font_data) = source.bytes() else {
             continue;
         };
-
-        // Detect font type: TrueType (.ttf/.otf with TT outlines) or CFF.
-        let ext = std::path::Path::new(&path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        let is_truetype = ext.eq_ignore_ascii_case("ttf")
-            || font_data.starts_with(b"\x00\x01\x00\x00")
-            || font_data.starts_with(b"true");
-
-        let (ff_key, subtype): (&[u8], Option<&[u8]>) = if is_truetype {
-            (b"FontFile2", None)
-        } else {
-            (b"FontFile3", Some(b"OpenType"))
-        };
+        let (ff_key, subtype) = source.font_file_kind(&font_data);
 
         let mut stream = lopdf::Stream::new(
             lopdf::dictionary! {
@@ -1444,24 +1423,14 @@ fn embed_bare_fonts(doc: &mut Document) -> usize {
 
     let mut embedded = 0usize;
     for (font_dict_id, font_name) in to_embed {
-        let Some(path) = find_system_font(&font_name).or_else(find_fallback_font) else {
+        let Some(source) = find_font_source(&font_name).or_else(fallback_font_source) else {
             continue;
         };
-        let Ok(font_data) = std::fs::read(&path) else {
+        let Some(font_data) = source.bytes() else {
             continue;
         };
-
-        // Detect font type.
-        let is_truetype = font_data.starts_with(b"\x00\x01\x00\x00")
-            || font_data.starts_with(b"true")
-            || path.ends_with(".ttf")
-            || path.ends_with(".TTF");
-
-        let (ff_key, ff_subtype): (&[u8], Option<&[u8]>) = if is_truetype {
-            (b"FontFile2", None)
-        } else {
-            (b"FontFile3", Some(b"OpenType"))
-        };
+        let (ff_key, ff_subtype) = source.font_file_kind(&font_data);
+        let is_truetype = ff_key == b"FontFile2";
 
         // Create font file stream.
         let mut stream = lopdf::Stream::new(
@@ -1577,9 +1546,14 @@ fn strip_subset_prefix(name: &str) -> &str {
 
 /// Embed a font file, targeting the correct dictionary for Type0 vs simple fonts.
 /// Also updates the font Subtype to match the embedded program type.
-fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &str) -> Result<()> {
-    let raw_data = std::fs::read(font_path)
-        .map_err(|e| ManipError::Other(format!("failed to read font file: {e}")))?;
+fn embed_font_on_target(
+    doc: &mut Document,
+    info: &NonEmbeddedFont,
+    source: &FontSource,
+) -> Result<()> {
+    let raw_data = source
+        .bytes()
+        .ok_or_else(|| ManipError::Other(format!("failed to read font {}", source.describe())))?;
 
     // If the file is a TrueType Collection (.ttc), extract the matching face
     // into a standalone TrueType font. PDF FontFile2 does not accept TTC data.
@@ -1588,28 +1562,25 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
         extract_ttc_face(&raw_data, face_index).ok_or_else(|| {
             ManipError::Other(format!(
                 "failed to extract face {} from TTC {}",
-                face_index, font_path
+                face_index,
+                source.describe()
             ))
         })?
     } else {
         raw_data
     };
 
-    let is_truetype = font_path.ends_with(".ttf")
-        || font_path.ends_with(".ttc")
-        || (font_data.len() >= 4
-            && (&font_data[0..4] == b"\x00\x01\x00\x00" || &font_data[0..4] == b"true"));
-
-    let is_otf =
-        font_path.ends_with(".otf") || (font_data.len() >= 4 && &font_data[0..4] == b"OTTO");
-
-    let font_file_key = if is_truetype {
-        "FontFile2"
-    } else if is_otf {
-        "FontFile3"
-    } else {
-        "FontFile"
-    };
+    let (ff_key, ff_subtype) = source.font_file_kind(&font_data);
+    let is_truetype = ff_key == b"FontFile2";
+    // Any CFF-based program, whether bare (`/Type1C`) or SFNT-wrapped
+    // (`/OpenType`). Decides whether the font dictionary's /Subtype has to be
+    // corrected to Type1.
+    let is_cff = ff_key == b"FontFile3";
+    // Parseable by ttf-parser, which needs an SFNT wrapper. A bare CFF is not,
+    // so metric extraction below has to skip it; the later CFF-aware width
+    // passes handle those fonts instead.
+    let is_otf = matches!(ff_subtype, Some(b"OpenType"));
+    let font_file_key = std::str::from_utf8(ff_key).unwrap_or("FontFile");
 
     // Create font stream.
     let mut stream_dict = dictionary! {
@@ -1618,8 +1589,8 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
     if is_truetype {
         stream_dict.set("Length1", Object::Integer(font_data.len() as i64));
     }
-    if is_otf {
-        stream_dict.set("Subtype", Object::Name(b"OpenType".to_vec()));
+    if let Some(sub) = ff_subtype {
+        stream_dict.set("Subtype", Object::Name(sub.to_vec()));
     }
 
     let font_stream = Stream::new(stream_dict, font_data.clone());
@@ -1677,9 +1648,9 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
             }
         }
     }
-    if is_otf && !info.is_type0 {
-        // For simple fonts: TrueType → Type1 when embedding .otf (CFF-based OpenType).
-        // veraPDF checks that FontFile3 with /Subtype /OpenType matches Type1.
+    if is_cff && !info.is_type0 {
+        // For simple fonts: TrueType → Type1 when the program is CFF.
+        // veraPDF checks that a FontFile3 program matches a Type1 /Subtype.
         if info.subtype == "TrueType" {
             if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&info.font_id) {
                 font.set("Subtype", Object::Name(b"Type1".to_vec()));
@@ -1714,6 +1685,12 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
     // Update Widths and FontDescriptor metrics from the embedded font.
     if is_truetype || is_otf {
         update_metrics_from_font(doc, info, &font_data);
+    } else if is_cff {
+        // A bare CFF has no SFNT wrapper, so ttf-parser cannot read it. Take
+        // the one metric a viewer uses for codes the /Widths array does not
+        // cover; the remaining descriptor entries are filled by
+        // `fix_font_descriptor_metrics` later in the pipeline.
+        update_metrics_from_cff(doc, info, &font_data);
     }
 
     // If we embedded a non-symbolic font (e.g., DejaVuSans) for a symbolic-named
@@ -1993,6 +1970,88 @@ fn extract_ttc_face(data: &[u8], face_index: u32) -> Option<Vec<u8>> {
 }
 
 /// Update font metrics (Widths, FontBBox, etc.) from the embedded font data.
+/// Rewrite `/Widths` and `/MissingWidth` from a bare CFF program.
+///
+/// The SFNT path does this through ttf-parser, which cannot read a bare CFF.
+/// Skipping it is not an option: §6.2.11.5 compares the dictionary's widths
+/// against the program's, and leaving the source document's widths in place
+/// while embedding a different program is exactly the mismatch the rule
+/// catches. Measured, omitting this cost nine documents on the govdocs sample.
+///
+/// Widths are resolved through the same encoding the dictionary declares, so
+/// the two cannot disagree.
+fn update_metrics_from_cff(doc: &mut Document, info: &NonEmbeddedFont, font_data: &[u8]) {
+    let Some(cff) = cff_parser::Table::parse(font_data) else {
+        return;
+    };
+    // Standard 14 CFF charstrings are already in 1000-unit text space.
+    const SCALE: f64 = 1.0;
+
+    let fd_id = doc
+        .objects
+        .get(&info.target_id)
+        .and_then(|o| o.as_dict().ok())
+        .and_then(|target| target.get(b"FontDescriptor").ok())
+        .and_then(|o| o.as_reference().ok());
+
+    // `.notdef` is what a viewer draws for a code the font does not cover, so
+    // its advance is the width the descriptor should promise for those codes.
+    if let (Some(fd_id), Some(width)) = (
+        fd_id,
+        cff_glyph_width_f64(&cff, cff_parser::GlyphId(0), SCALE),
+    ) {
+        if let Some(Object::Dictionary(fd)) = doc.objects.get_mut(&fd_id) {
+            fd.set("MissingWidth", Object::Integer(width.round() as i64));
+        }
+    }
+
+    // CID fonts keep their widths in /W on the descendant; leave those to the
+    // dedicated CID passes.
+    if info.is_type0 {
+        return;
+    }
+
+    let (enc_name, differences) = {
+        let Some(Object::Dictionary(font)) = doc.objects.get(&info.font_id) else {
+            return;
+        };
+        get_simple_encoding_info(doc, font)
+    };
+
+    let first_char: u32 = 0;
+    let last_char: u32 = 255;
+    let mut widths = Vec::with_capacity((last_char - first_char + 1) as usize);
+    let mut resolved_any = false;
+    for code in first_char..=last_char {
+        let w = cff_width_for_code(
+            &cff,
+            font_data,
+            code,
+            &enc_name,
+            &differences,
+            SCALE,
+            false,
+            None,
+            None,
+        );
+        if w.is_some() {
+            resolved_any = true;
+        }
+        // An unresolvable code falls back to the descriptor's /MissingWidth,
+        // which a 0 here defers to.
+        widths.push(Object::Integer(w.unwrap_or(0.0).round() as i64));
+    }
+    if !resolved_any {
+        return;
+    }
+
+    if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&info.font_id) {
+        font.set("FirstChar", Object::Integer(first_char as i64));
+        font.set("LastChar", Object::Integer(last_char as i64));
+        font.set("Widths", Object::Array(widths));
+    }
+}
+
 fn update_metrics_from_font(doc: &mut Document, info: &NonEmbeddedFont, font_data: &[u8]) {
     let Ok(face) = ttf_parser::Face::parse(font_data, 0) else {
         return;
@@ -2644,13 +2703,75 @@ fn resolve_font_candidate_path(candidate: &str) -> Option<String> {
     None
 }
 
-fn find_fallback_font() -> Option<String> {
-    for candidate in FALLBACK_FONTS {
-        if let Some(path) = resolve_font_candidate_path(candidate) {
-            return Some(path);
+/// Where a substitute font's bytes come from.
+///
+/// Reading substitutes off the host filesystem makes conversion output depend
+/// on which fonts happen to be installed: the same 300 documents scored
+/// 286/300 on macOS and 275/300 on Debian purely because the substitute
+/// differed. Anything in the Standard 14 now comes from the compiled-in set
+/// instead, which has the exact AFM metrics §6.2.11.5 compares against.
+pub(crate) enum FontSource {
+    /// One of the Standard 14, compiled in. Always bare CFF.
+    Bundled(pdf_standard_fonts::StandardFont),
+    /// A font file found on the host, for typefaces we do not bundle.
+    File(String),
+}
+
+impl FontSource {
+    fn bytes(&self) -> Option<Vec<u8>> {
+        match self {
+            Self::Bundled(font) => Some(font.data().to_vec()),
+            Self::File(path) => std::fs::read(path).ok(),
         }
     }
-    None
+
+    /// A label for error messages; not a path for `Bundled`.
+    fn describe(&self) -> String {
+        match self {
+            Self::Bundled(font) => format!("<bundled {}>", font.postscript_name()),
+            Self::File(path) => path.clone(),
+        }
+    }
+
+    /// The `/FontFile*` key and optional `/Subtype` for this program.
+    ///
+    /// The bundled set is bare CFF, so it is `/FontFile3` `/Subtype /Type1C`.
+    /// `/OpenType` would be wrong: that is for a full OTF wrapper.
+    fn font_file_kind(&self, data: &[u8]) -> (&'static [u8], Option<&'static [u8]>) {
+        match self {
+            Self::Bundled(_) => (b"FontFile3", Some(b"Type1C")),
+            Self::File(path) => {
+                let is_truetype = path.ends_with(".ttf")
+                    || path.ends_with(".TTF")
+                    || path.ends_with(".ttc")
+                    || (data.len() >= 4
+                        && (&data[0..4] == b"\x00\x01\x00\x00" || &data[0..4] == b"true"));
+                if is_truetype {
+                    (b"FontFile2", None)
+                } else if path.ends_with(".otf") || (data.len() >= 4 && &data[0..4] == b"OTTO") {
+                    (b"FontFile3", Some(b"OpenType"))
+                } else {
+                    (b"FontFile", None)
+                }
+            }
+        }
+    }
+}
+
+/// Resolve a font name to a substitute, preferring the compiled-in Standard 14.
+pub(crate) fn find_font_source(name: &str) -> Option<FontSource> {
+    if let Some(font) = pdf_standard_fonts::StandardFont::from_base_font(name) {
+        return Some(FontSource::Bundled(font));
+    }
+    find_system_font(name).map(FontSource::File)
+}
+
+/// Last resort when nothing matched by name: a bundled sans face, so the
+/// outcome does not depend on the host either.
+pub(crate) fn fallback_font_source() -> Option<FontSource> {
+    Some(FontSource::Bundled(
+        pdf_standard_fonts::StandardFont::Helvetica,
+    ))
 }
 
 fn standard14_system_path(clean_name: &str) -> Option<String> {
@@ -22690,19 +22811,20 @@ mod tests {
             .into_iter()
             .next()
             .expect("expected one non-embedded font");
-        let font_path = find_system_font(&info.name)
-            .or_else(find_fallback_font)
-            .expect("expected a fallback font file");
-        let font_bytes = std::fs::read(&font_path).expect("read fallback font");
+        let source = find_font_source(&info.name)
+            .or_else(fallback_font_source)
+            .expect("expected a substitute font");
+        let font_bytes = source.bytes().expect("read substitute font");
 
-        embed_font_on_target(&mut doc, &info, &font_path).expect("embed font");
+        embed_font_on_target(&mut doc, &info, &source).expect("embed font");
 
-        let face = ttf_parser::Face::parse(&font_bytes, 0).expect("parse fallback font");
-        let scale = 1000.0 / face.units_per_em() as f64;
-        let expected_missing_width = face
-            .glyph_hor_advance(ttf_parser::GlyphId(0))
-            .map(|w| (w as f64 * scale).round() as i64)
-            .unwrap_or(0);
+        // The substitute is now a bundled bare CFF, which ttf-parser cannot
+        // read; its charstrings are already in 1000-unit text space.
+        let cff = cff_parser::Table::parse(&font_bytes).expect("parse substitute CFF");
+        let expected_missing_width = cff
+            .glyph_width_f64(cff_parser::GlyphId(0))
+            .map(|w| w.round() as i64)
+            .expect("substitute must define .notdef");
 
         let font = doc
             .objects

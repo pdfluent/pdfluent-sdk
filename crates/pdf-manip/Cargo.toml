@@ -12,6 +12,7 @@ description = "PDF manipulation: pages, encryption, watermarks, optimization, bo
 [dependencies]
 lopdf = { workspace = true, features = ["embed_image"] }
 pdf-font.workspace = true
+pdf-standard-fonts = { path = "../pdf-standard-fonts", version = "=1.0.0-beta.17" }
 thiserror.workspace = true
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
