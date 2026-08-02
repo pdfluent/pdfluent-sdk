@@ -22171,6 +22171,47 @@ pub fn fix_type1_standard_encoding(doc: &mut Document) -> usize {
     count
 }
 
+/// Whether `code` already draws something in this font's embedded CFF program.
+///
+/// Mirrors the resolution order a viewer uses for a simple font: an explicit
+/// `/Differences` name wins, then the `/BaseEncoding` name, and only if neither
+/// names a glyph the program actually contains does the CFF's own built-in
+/// encoding decide. A `false` here means the code renders nothing today, which
+/// is what makes appending a blank glyph safe.
+fn cff_code_resolves_to_glyph(
+    doc: &Document,
+    font: &lopdf::Dictionary,
+    fd_id: ObjectId,
+    code: u32,
+) -> bool {
+    let Some(data) = read_embedded_font_data(doc, fd_id) else {
+        // Unreadable program: assume it has the glyph rather than modify a font
+        // we cannot inspect.
+        return true;
+    };
+    let Some(cff) = cff_parser::Table::parse(&data) else {
+        return true;
+    };
+
+    let (enc_name, differences) = get_simple_encoding_info(doc, font);
+    let named = differences
+        .get(&code)
+        .cloned()
+        .or_else(|| cff_pdf_base_glyph_name(code, &enc_name));
+    if let Some(name) = named {
+        if name != ".notdef" && cff_has_named_glyph(&cff, &name) {
+            return true;
+        }
+    }
+
+    if let Some(&gid) = parse_cff_encoding_map(&data).get(&(code as u8)) {
+        if gid != 0 {
+            return true;
+        }
+    }
+    matches!(cff.glyph_index(code as u8), Some(g) if g.0 != 0)
+}
+
 /// Give CFF (Type1C) subsets a real `space` glyph when the space code would
 /// otherwise fall through to `.notdef`.
 ///
@@ -22222,7 +22263,17 @@ pub fn fix_cff_subset_missing_space(doc: &mut Document) -> usize {
             continue;
         };
 
-        // The width the dictionary already promises for the space code.
+        // Only act when the space code genuinely has no glyph. Appending one
+        // rewrites what code 32 draws, so doing it to a font that already maps
+        // 32 to something visible would blank out real content.
+        if cff_code_resolves_to_glyph(doc, font, fd_id, SPACE_CODE as u32) {
+            continue;
+        }
+
+        // The width the dictionary promises for the space code. When /Widths
+        // does not cover the code the effective width is /MissingWidth, which
+        // defaults to 0 — a zero-width blank glyph is then exactly what the
+        // dictionary already claims, so it is consistent, not a guess.
         // /FirstChar and /Widths are both routinely indirect.
         let first_char = font
             .get(b"FirstChar")
@@ -22230,28 +22281,50 @@ pub fn fix_cff_subset_missing_space(doc: &mut Document) -> usize {
             .map(|o| deref(doc, o))
             .and_then(|o| o.as_i64().ok())
             .unwrap_or(0);
-        let widths = match font.get(b"Widths").ok().map(|o| deref(doc, o)) {
-            Some(Object::Array(ws)) => ws.clone(),
-            _ => continue,
+        let declared = match font.get(b"Widths").ok().map(|o| deref(doc, o)) {
+            Some(Object::Array(ws)) => {
+                let idx = SPACE_CODE - first_char;
+                if idx >= 0 && (idx as usize) < ws.len() {
+                    Some(deref(doc, &ws[idx as usize]).as_float().unwrap_or(0.0) as f64)
+                } else {
+                    None
+                }
+            }
+            _ => None,
         };
-        let idx = SPACE_CODE - first_char;
-        if idx < 0 || idx as usize >= widths.len() {
-            continue;
-        }
-        let width = deref(doc, &widths[idx as usize]).as_float().unwrap_or(0.0) as f64;
-        if width <= 0.0 {
-            continue;
-        }
+        let width = declared.unwrap_or_else(|| {
+            doc.objects
+                .get(&fd_id)
+                .and_then(|o| o.as_dict().ok())
+                .and_then(|fd| fd.get(b"MissingWidth").ok())
+                .and_then(|o| o.as_float().ok())
+                .unwrap_or(0.0) as f64
+        });
 
         jobs.push((*font_id, fd_id, *ff_id, width));
     }
 
-    let mut fixed = 0usize;
-    for (font_id, fd_id, ff_id, width) in jobs {
-        // Rewrite the font program. `append_blank_glyph` refuses anything it
-        // does not fully understand, so a `None` here simply leaves the font as
-        // it was.
-        let Some(original) = doc.objects.get(&ff_id).and_then(|o| match o {
+    // One font program is routinely shared by several font dictionaries. Patch
+    // each program once, then update *every* dictionary that points at it —
+    // updating only the first leaves the others declaring a /CharSet that no
+    // longer matches the program, which is its own violation (6.2.11.4.2:1).
+    let mut programs: std::collections::HashMap<ObjectId, Vec<f64>> =
+        std::collections::HashMap::new();
+    for (_, _, ff_id, width) in &jobs {
+        programs.entry(*ff_id).or_default().push(*width);
+    }
+
+    let mut patched_programs: std::collections::HashSet<ObjectId> =
+        std::collections::HashSet::new();
+    for (ff_id, widths) in &programs {
+        // A single appended glyph carries one advance. When the sharing
+        // dictionaries disagree about what code 32 measures, no one width is
+        // right for all of them — leave the font alone.
+        let first = widths[0];
+        if widths.iter().any(|w| (*w - first).abs() > f64::EPSILON) {
+            continue;
+        }
+        let Some(original) = doc.objects.get(ff_id).and_then(|o| match o {
             Object::Stream(s) => {
                 let mut s = s.clone();
                 let _ = s.decompress();
@@ -22261,14 +22334,21 @@ pub fn fix_cff_subset_missing_space(doc: &mut Document) -> usize {
         }) else {
             continue;
         };
-        let Some(patched) = crate::cff_append::append_blank_glyph(&original, width) else {
+        // `append_blank_glyph` refuses anything it does not fully understand,
+        // so a `None` here simply leaves the font as it was.
+        let Some(patched) = crate::cff_append::append_blank_glyph(&original, first) else {
             continue;
         };
-
-        if let Some(Object::Stream(stream)) = doc.objects.get_mut(&ff_id) {
+        if let Some(Object::Stream(stream)) = doc.objects.get_mut(ff_id) {
             stream.set_plain_content(patched);
             let _ = stream.compress();
-        } else {
+            patched_programs.insert(*ff_id);
+        }
+    }
+
+    let mut fixed = 0usize;
+    for (font_id, fd_id, ff_id, _width) in jobs {
+        if !patched_programs.contains(&ff_id) {
             continue;
         }
 
@@ -22303,14 +22383,45 @@ pub fn fix_cff_subset_missing_space(doc: &mut Document) -> usize {
             }
         }
 
-        // Keep /CharSet consistent with the program (6.2.11.4.2:1).
-        if let Some(Object::Dictionary(fd)) = doc.objects.get_mut(&fd_id) {
-            if let Ok(Object::String(cs, fmt)) = fd.get(b"CharSet") {
-                let text = String::from_utf8_lossy(cs).to_string();
+        // Keep /CharSet consistent with the program (6.2.11.4.2:1). The entry
+        // is routinely an indirect reference, and a /CharSet that no longer
+        // matches the program is itself a violation — so this has to follow the
+        // reference rather than quietly skip it.
+        let charset_target = match doc.objects.get(&fd_id) {
+            Some(Object::Dictionary(fd)) => match fd.get(b"CharSet") {
+                Ok(Object::Reference(id)) => Some(*id),
+                Ok(Object::String(..)) => Some(fd_id),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(target) = charset_target {
+            let current = if target == fd_id {
+                doc.objects
+                    .get(&fd_id)
+                    .and_then(|o| o.as_dict().ok())
+                    .and_then(|fd| fd.get(b"CharSet").ok())
+                    .and_then(|o| match o {
+                        Object::String(cs, fmt) => Some((cs.clone(), *fmt)),
+                        _ => None,
+                    })
+            } else {
+                doc.objects.get(&target).and_then(|o| match o {
+                    Object::String(cs, fmt) => Some((cs.clone(), *fmt)),
+                    _ => None,
+                })
+            };
+            if let Some((cs, fmt)) = current {
+                let text = String::from_utf8_lossy(&cs).to_string();
                 if !text.contains("/space") {
-                    let fmt = *fmt;
-                    let merged = format!("{text}/space");
-                    fd.set("CharSet", Object::String(merged.into_bytes(), fmt));
+                    let merged = Object::String(format!("{text}/space").into_bytes(), fmt);
+                    if target == fd_id {
+                        if let Some(Object::Dictionary(fd)) = doc.objects.get_mut(&fd_id) {
+                            fd.set("CharSet", merged);
+                        }
+                    } else {
+                        doc.objects.insert(target, merged);
+                    }
                 }
             }
         }
