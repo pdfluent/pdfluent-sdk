@@ -1911,6 +1911,59 @@ impl PdfDocument {
         Ok(crate::compliance::report_from_compliance(raw, profile))
     }
 
+    /// Convert this document to PDF/A and return the converted document.
+    ///
+    /// Runs the full conversion pipeline: font embedding and repair, colour
+    /// space normalization with an OutputIntent, removal of constructs PDF/A
+    /// forbids (JavaScript, embedded files, transfer functions), and XMP
+    /// metadata. The source document is unchanged.
+    ///
+    /// Conversion is best-effort on damaged input: a broken xref table or page
+    /// tree is repaired first where possible. Validate the result with
+    /// [`validate_pdfa`](Self::validate_pdfa) rather than assuming success —
+    /// some source documents cannot be made conformant without changing how
+    /// they look, which an archival converter must not do silently.
+    ///
+    /// Requires the `pdfa` feature and a license tier granting the matching
+    /// [`Capability::PdfaConvertA1b`]/[`A2b`](Capability::PdfaConvertA2b)/[`A3b`](Capability::PdfaConvertA3b).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::prelude::*;
+    ///
+    /// let doc = PdfDocument::open("invoice.pdf").unwrap();
+    /// let archived = doc.convert_to_pdfa(PdfAProfile::A2b).unwrap();
+    /// assert!(archived.validate_pdfa(PdfAProfile::A2b).unwrap().is_compliant());
+    /// archived.save("invoice_pdfa.pdf").unwrap();
+    /// ```
+    #[cfg(feature = "pdfa")]
+    pub fn convert_to_pdfa(&self, profile: crate::compliance::PdfAProfile) -> Result<PdfDocument> {
+        use crate::compliance::PdfAProfile;
+
+        self.require_capability(match profile {
+            PdfAProfile::A1b => Capability::PdfaConvertA1b,
+            PdfAProfile::A2b => Capability::PdfaConvertA2b,
+            PdfAProfile::A3b => Capability::PdfaConvertA3b,
+        })?;
+
+        let opts = pdf_manip::pdfa::PdfAConvertOptions {
+            conformance: match profile {
+                PdfAProfile::A1b => pdf_manip::pdfa_xmp::PdfAConformance::A1b,
+                PdfAProfile::A2b => pdf_manip::pdfa_xmp::PdfAConformance::A2b,
+                PdfAProfile::A3b => pdf_manip::pdfa_xmp::PdfAConformance::A3b,
+            },
+            ..Default::default()
+        };
+
+        let converted = pdf_manip::pdfa::convert_bytes(self.engine.pdf().data().as_ref(), &opts)
+            .map_err(|e| Error::InvalidPdf {
+                byte_offset: None,
+                reason: e.to_string(),
+            })?;
+        Self::from_bytes(&converted)
+    }
+
     /// Read the logical structure tree of a tagged PDF (ISO 32000-1 §14.7).
     ///
     /// Returns the document's semantic structure — headings, paragraphs,

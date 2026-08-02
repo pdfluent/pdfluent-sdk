@@ -1130,24 +1130,14 @@ impl PdfDoc {
                 ))
             }
         };
-        let self_bytes = self.pdf.data().as_ref();
-        let mut doc = lopdf::Document::load_mem(self_bytes)
-            .map_err(|e| wasm_err_simple("OPERATION_FAILED", &format!("{e}")))?;
-        let is_pdfa1 = matches!(conformance, PdfAConformance::A1b);
-        let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, is_pdfa1)
-            .map_err(|e| wasm_err_simple("PDFA_CLEANUP_FAILED", &format!("pdfa cleanup: {e}")))?;
-        let _ = pdf_manip::pdfa_fonts::enforce_pdfa_font_compliance(&mut doc);
-        let _ = pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc)
-            .map_err(|e| wasm_err_simple("COLORSPACE_ERROR", &format!("colorspace: {e}")))?;
-        pdf_manip::pdfa_fixups::run_fixups(&mut doc);
-        let _ = pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, conformance, None)
-            .map_err(|e| wasm_err_simple("XMP_REPAIR_FAILED", &format!("xmp repair: {e}")))?;
-        let mut buf = Vec::new();
-        doc.save_to(&mut buf)
-            .map_err(|e| wasm_err_simple("SAVE_FAILED", &format!("save: {e}")))?;
-        pdf_manip::pdfa_cleanup::fix_pdf_header(&mut buf);
-        pdf_manip::pdfa_cleanup::fix_startxref(&mut buf);
-        Ok(buf)
+        let opts = pdf_manip::pdfa::PdfAConvertOptions {
+            conformance,
+            // No external repair tool in a browser; the library's own
+            // byte-level repairs still apply.
+            ..Default::default()
+        };
+        pdf_manip::pdfa::convert_bytes(self.pdf.data().as_ref(), &opts)
+            .map_err(|e| wasm_err_simple("PDFA_CONVERT_FAILED", &format!("pdfa convert: {e}")))
     }
 }
 
