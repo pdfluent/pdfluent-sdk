@@ -195,6 +195,21 @@ forbidden_change = true
 heritage = "PDFluent original. PDF manipulation (merge, split, page ops)."
 
 [[crate]]
+published_name = "pdf-standard-fonts"
+workspace_dir  = "pdf-standard-fonts"
+license_kind   = "commercial"
+license_decl   = "license-file"
+license_value  = "LICENSE"
+required_files = ["LICENSE", "LICENSE-FOXIT"]
+license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+forbidden_change = true
+heritage = """PDFluent original code. Bundles the 14 Standard-14 font programs \
+extracted from PDFium ((c) 2014 Foxit Software Inc.), BSD-3-Clause. That \
+licence requires the copyright notice to accompany binary redistributions, so \
+LICENSE-FOXIT ships inside the crate and is listed in required_files. The same \
+bytes also live in crates/pdf-interpret/assets under a .pfb extension."""
+
+[[crate]]
 published_name = "pdf-ocr"
 workspace_dir  = "pdf-ocr"
 license_kind   = "commercial"
