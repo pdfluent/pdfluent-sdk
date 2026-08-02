@@ -22171,6 +22171,179 @@ pub fn fix_type1_standard_encoding(doc: &mut Document) -> usize {
     count
 }
 
+/// Give CFF (Type1C) subsets a real `space` glyph when the space code would
+/// otherwise fall through to `.notdef`.
+///
+/// [`fix_type1_subset_missing_glyphs`] repairs missing glyphs by rewriting the
+/// offending code in the content stream to a space. That has a blind spot: when
+/// the *space itself* is the glyph the subsetter dropped, there is nothing to
+/// substitute, and the code keeps resolving to `.notdef`. veraPDF then reports
+/// both
+///
+/// - 6.2.11.4.1:2, because no glyph is defined for a code used in rendering, and
+/// - 6.2.11.5:1, because it compares `.notdef`'s advance against the `/Widths`
+///   entry and finds them inconsistent.
+///
+/// Three things have to change together, or the document still fails:
+///
+/// 1. the font program gains a blank glyph whose advance equals the width the
+///    font dictionary already declares for the code,
+/// 2. `/Encoding /Differences` maps the code to `/space`, since without it the
+///    built-in encoding keeps pointing at `.notdef`,
+/// 3. `/CharSet` in the descriptor lists the new glyph, which 6.2.11.4.2:1
+///    requires to match the program exactly.
+///
+/// Only code 32 is handled. A single appended glyph can carry one advance
+/// width, and code 32 is where subsetters actually drop the space.
+pub fn fix_cff_subset_missing_space(doc: &mut Document) -> usize {
+    const SPACE_CODE: i64 = 32;
+
+    // Collect work first: the document is mutated afterwards.
+    let mut jobs: Vec<(ObjectId, ObjectId, ObjectId, f64)> = Vec::new(); // font, descriptor, fontfile, width
+
+    for (font_id, obj) in &doc.objects {
+        let Object::Dictionary(font) = obj else {
+            continue;
+        };
+        let subtype = get_name(font, b"Subtype").unwrap_or_default();
+        if subtype != "Type1" && subtype != "MMType1" {
+            continue;
+        }
+        let Some(fd_id) = (match font.get(b"FontDescriptor") {
+            Ok(Object::Reference(id)) => Some(*id),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let Some(Object::Dictionary(fd)) = doc.objects.get(&fd_id) else {
+            continue;
+        };
+        let Ok(Object::Reference(ff_id)) = fd.get(b"FontFile3") else {
+            continue;
+        };
+
+        // The width the dictionary already promises for the space code.
+        // /FirstChar and /Widths are both routinely indirect.
+        let first_char = font
+            .get(b"FirstChar")
+            .ok()
+            .map(|o| deref(doc, o))
+            .and_then(|o| o.as_i64().ok())
+            .unwrap_or(0);
+        let widths = match font.get(b"Widths").ok().map(|o| deref(doc, o)) {
+            Some(Object::Array(ws)) => ws.clone(),
+            _ => continue,
+        };
+        let idx = SPACE_CODE - first_char;
+        if idx < 0 || idx as usize >= widths.len() {
+            continue;
+        }
+        let width = deref(doc, &widths[idx as usize]).as_float().unwrap_or(0.0) as f64;
+        if width <= 0.0 {
+            continue;
+        }
+
+        jobs.push((*font_id, fd_id, *ff_id, width));
+    }
+
+    let mut fixed = 0usize;
+    for (font_id, fd_id, ff_id, width) in jobs {
+        // Rewrite the font program. `append_blank_glyph` refuses anything it
+        // does not fully understand, so a `None` here simply leaves the font as
+        // it was.
+        let Some(original) = doc.objects.get(&ff_id).and_then(|o| match o {
+            Object::Stream(s) => {
+                let mut s = s.clone();
+                let _ = s.decompress();
+                Some(s.content)
+            }
+            _ => None,
+        }) else {
+            continue;
+        };
+        let Some(patched) = crate::cff_append::append_blank_glyph(&original, width) else {
+            continue;
+        };
+
+        if let Some(Object::Stream(stream)) = doc.objects.get_mut(&ff_id) {
+            stream.set_plain_content(patched);
+            let _ = stream.compress();
+        } else {
+            continue;
+        }
+
+        // Point the space code at the new glyph.
+        let encoding_id = match doc.objects.get(&font_id) {
+            Some(Object::Dictionary(font)) => match font.get(b"Encoding") {
+                Ok(Object::Reference(id)) => Some(*id),
+                _ => None,
+            },
+            _ => None,
+        };
+        match encoding_id {
+            Some(enc_id) => {
+                if let Some(Object::Dictionary(enc)) = doc.objects.get_mut(&enc_id) {
+                    append_space_difference(enc, SPACE_CODE);
+                }
+            }
+            None => {
+                let mut enc = lopdf::Dictionary::new();
+                enc.set("Type", Object::Name(b"Encoding".to_vec()));
+                // Preserve an inline base encoding name if there was one.
+                if let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) {
+                    if let Ok(Object::Name(n)) = font.get(b"Encoding") {
+                        enc.set("BaseEncoding", Object::Name(n.clone()));
+                    }
+                }
+                append_space_difference(&mut enc, SPACE_CODE);
+                let enc_id = doc.add_object(Object::Dictionary(enc));
+                if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
+                    font.set("Encoding", Object::Reference(enc_id));
+                }
+            }
+        }
+
+        // Keep /CharSet consistent with the program (6.2.11.4.2:1).
+        if let Some(Object::Dictionary(fd)) = doc.objects.get_mut(&fd_id) {
+            if let Ok(Object::String(cs, fmt)) = fd.get(b"CharSet") {
+                let text = String::from_utf8_lossy(cs).to_string();
+                if !text.contains("/space") {
+                    let fmt = *fmt;
+                    let merged = format!("{text}/space");
+                    fd.set("CharSet", Object::String(merged.into_bytes(), fmt));
+                }
+            }
+        }
+
+        fixed += 1;
+    }
+
+    fixed
+}
+
+/// Follow an indirect reference once, returning the object it points at.
+///
+/// `/Widths`, `/FirstChar` and individual width entries are all routinely
+/// written as indirect objects; matching only on the direct form silently
+/// skips those fonts.
+fn deref<'a>(doc: &'a Document, obj: &'a Object) -> &'a Object {
+    match obj {
+        Object::Reference(id) => doc.objects.get(id).unwrap_or(obj),
+        other => other,
+    }
+}
+
+/// Append `<code> /space` to an encoding dictionary's `/Differences`.
+fn append_space_difference(enc: &mut lopdf::Dictionary, code: i64) {
+    let mut diffs = match enc.get(b"Differences") {
+        Ok(Object::Array(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    diffs.push(Object::Integer(code));
+    diffs.push(Object::Name(b"space".to_vec()));
+    enc.set("Differences", Object::Array(diffs));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
