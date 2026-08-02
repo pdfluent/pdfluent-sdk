@@ -1,0 +1,21 @@
+[package]
+name = "pdf-standard-fonts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file = "LICENSE"
+readme = "README.md"
+repository.workspace = true
+homepage = "https://pdfluent.com"
+documentation = "https://pdfluent.com/docs"
+description = "The PDF Standard 14 font programs, compiled in, so conversion output does not depend on host fonts"
+keywords = ["pdf", "fonts", "standard-14", "pdfa", "helvetica"]
+categories = ["rendering::data-formats"]
+# The font programs are data, not code, and cargo's default include would ship
+# them anyway; listing them keeps the tarball auditable.
+include = ["src/**/*", "assets/*.cff", "LICENSE", "LICENSE-FOXIT", "README.md"]
+
+[dependencies]
+
+[package.metadata.docs.rs]
+all-features = true
