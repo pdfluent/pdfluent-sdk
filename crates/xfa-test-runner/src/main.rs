@@ -279,6 +279,20 @@ enum Command {
         oracle_db: Option<PathBuf>,
     },
 
+    /// Convert one PDF to PDF/A and write the result, without validating.
+    ///
+    /// Diagnosis tool: gives you the exact bytes the pipeline produces so you
+    /// can point veraPDF (or any other inspector) at them directly.
+    ConvertOne {
+        /// PDF to convert
+        #[arg(short, long)]
+        path: PathBuf,
+
+        /// Where to write the converted PDF
+        #[arg(short, long)]
+        out: PathBuf,
+    },
+
     /// Run corpus using a pool of N child processes (one process per PDF).
     ///
     /// Each child gets RLIMIT_AS=4 GB (Linux) and a hard 120 s kill timeout.
@@ -874,6 +888,33 @@ fn main() {
             }
         }
 
+        Command::ConvertOne { path, out } => {
+            let data = match std::fs::read(&path) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("read {}: {e}", path.display());
+                    std::process::exit(1);
+                }
+            };
+            match tests::pdfa_convert::convert_to_pdfa_bytes(&data, &path) {
+                Some(converted) => {
+                    if let Err(e) = std::fs::write(&out, &converted) {
+                        eprintln!("write {}: {e}", out.display());
+                        std::process::exit(1);
+                    }
+                    println!(
+                        "{} -> {} ({} bytes)",
+                        path.display(),
+                        out.display(),
+                        converted.len()
+                    );
+                }
+                None => {
+                    eprintln!("conversion failed: {}", path.display());
+                    std::process::exit(1);
+                }
+            }
+        }
         Command::SinglePdf {
             path,
             timeout,

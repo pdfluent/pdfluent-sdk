@@ -7,7 +7,7 @@ use crate::error::Result;
 use lopdf::{Document, Object, ObjectId};
 
 /// Report from PDF/A cleanup pass.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PdfACleanupReport {
     /// Number of JavaScript actions removed.
     pub js_actions_removed: usize,

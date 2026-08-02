@@ -555,24 +555,21 @@ pub unsafe extern "C" fn pdf_document_convert_pdfa(
         return PdfStatus::ErrorInvalidArgument;
     }
     let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
-    let mut lopdf_doc = match lopdf::Document::load_mem(&raw_bytes) {
-        Ok(d) => d,
-        Err(e) => {
-            error::set_last_error_str(&format!("lopdf load: {e}"));
+    let opts = pdf_manip::pdfa::PdfAConvertOptions {
+        conformance: level.to_convert_conformance(),
+        ..Default::default()
+    };
+    let buf = match pdf_manip::pdfa::convert_bytes(&raw_bytes, &opts) {
+        Ok(b) => b,
+        Err(e @ pdf_manip::pdfa::PdfAConvertError::LoadFailed) => {
+            error::set_last_error_str(&e.to_string());
             return PdfStatus::ErrorCorruptPdf;
         }
+        Err(e) => {
+            error::set_last_error_str(&e.to_string());
+            return PdfStatus::ErrorConvert;
+        }
     };
-    // cleanup_for_pdfa applies PDF/A-incompatible element removal; is_pdfa1
-    // enables stricter PDF/A-1 rules (e.g. no transparency at all).
-    if let Err(e) = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut lopdf_doc, level.is_part1()) {
-        error::set_last_error_str(&e.to_string());
-        return PdfStatus::ErrorConvert;
-    }
-    let mut buf = Vec::new();
-    if let Err(e) = lopdf_doc.save_to(&mut buf) {
-        error::set_last_error_str(&format!("save: {e}"));
-        return PdfStatus::ErrorConvert;
-    }
     match pdf_engine::PdfDocument::open(buf) {
         Ok(new_doc) => {
             unsafe { *out = Box::into_raw(Box::new(PdfDocument(new_doc))) };

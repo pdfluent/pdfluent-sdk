@@ -69,6 +69,8 @@ pub mod image_insert;
 pub mod optimize;
 pub mod pages;
 #[cfg(feature = "pdfa-convert")]
+pub mod pdfa;
+#[cfg(feature = "pdfa-convert")]
 pub mod pdfa_cleanup;
 #[cfg(feature = "pdfa-convert")]
 pub mod pdfa_colorspace;
@@ -76,6 +78,8 @@ pub mod pdfa_colorspace;
 pub mod pdfa_fixups;
 #[cfg(feature = "pdfa-convert")]
 pub mod pdfa_fonts;
+#[cfg(feature = "pdfa-convert")]
+pub(crate) mod pdfa_repair;
 #[cfg(feature = "pdfa-convert")]
 pub mod pdfa_structure;
 #[cfg(feature = "pdfa-convert")]

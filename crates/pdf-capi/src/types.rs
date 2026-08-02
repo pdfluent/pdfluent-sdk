@@ -106,8 +106,21 @@ impl PdfALevel {
         }
     }
 
-    /// Whether this level targets PDF/A part 1 (stricter subset of PDF 1.4).
-    pub(crate) fn is_part1(self) -> bool {
-        matches!(self, Self::A1b | Self::A1a)
+    /// The conformance the conversion pipeline should write.
+    ///
+    /// The pipeline writes B-level XMP for every part. The A and U levels add
+    /// requirements (a tagged structure tree, complete Unicode mapping) that
+    /// conversion cannot manufacture from an untagged source, so claiming them
+    /// in the metadata would produce a file that fails validation for the level
+    /// it advertises. Part 4 has no separate B level and maps to A3b, the
+    /// closest profile the pipeline can actually produce.
+    pub(crate) fn to_convert_conformance(self) -> pdf_manip::pdfa_xmp::PdfAConformance {
+        use pdf_manip::pdfa_xmp::PdfAConformance;
+        match self {
+            Self::A1b | Self::A1a => PdfAConformance::A1b,
+            Self::A2b | Self::A2u | Self::A2a => PdfAConformance::A2b,
+            Self::A3b | Self::A3u | Self::A3a => PdfAConformance::A3b,
+            Self::A4 | Self::A4f | Self::A4e => PdfAConformance::A3b,
+        }
     }
 }
