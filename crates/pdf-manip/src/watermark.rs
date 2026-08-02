@@ -401,6 +401,84 @@ fn resolve_position(pos: &Position, page_width: f32, page_height: f32) -> (f32, 
 }
 
 /// Ensure a page has a named resource entry in the given sub-dictionary.
+/// Resolve the dictionary that a page's `/Resources` actually lives in, so a
+/// caller can mutate it.
+///
+/// `/Resources` reaches a page in three shapes, and all three occur in the
+/// wild:
+///
+/// 1. a direct dictionary on the page,
+/// 2. an **indirect reference** to a separate object (very common, and often
+///    shared between pages),
+/// 3. **inherited** from an ancestor `/Pages` node, with no `/Resources` key on
+///    the page at all (ISO 32000-2 §7.7.3.4).
+///
+/// Returns the object id holding the resources dictionary, creating one on the
+/// page when needed. For the inherited case the ancestor's dictionary is copied
+/// down onto the page first: writing a fresh dictionary containing only our own
+/// entry would *shadow* the inherited resources and break every other operator
+/// on the page.
+fn resolve_or_create_page_resources(doc: &mut Document, page_id: ObjectId) -> Option<ObjectId> {
+    let existing = match doc.objects.get(&page_id) {
+        Some(Object::Dictionary(page_dict)) => page_dict.get(b"Resources").ok().cloned(),
+        _ => return None,
+    };
+
+    match existing {
+        // Already an indirect object: mutate that object directly.
+        Some(Object::Reference(res_id)) => Some(res_id),
+
+        // Direct dictionary on the page: promote it to its own object so we
+        // have a stable id to hand back.
+        Some(Object::Dictionary(res)) => {
+            let res_id = doc.add_object(Object::Dictionary(res));
+            if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
+                page_dict.set("Resources", Object::Reference(res_id));
+            }
+            Some(res_id)
+        }
+
+        // Absent: inherited from an ancestor /Pages node, or genuinely missing.
+        _ => {
+            let inherited = find_inherited_resources(doc, page_id);
+            let res_id = doc.add_object(Object::Dictionary(inherited.unwrap_or_default()));
+            if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
+                page_dict.set("Resources", Object::Reference(res_id));
+            }
+            Some(res_id)
+        }
+    }
+}
+
+/// Walk the `/Parent` chain looking for an inherited `/Resources` dictionary.
+fn find_inherited_resources(doc: &Document, page_id: ObjectId) -> Option<lopdf::Dictionary> {
+    let mut current = page_id;
+    // Bounded walk: malformed files can contain /Parent cycles.
+    for _ in 0..32 {
+        let parent = match doc.objects.get(&current) {
+            Some(Object::Dictionary(d)) => match d.get(b"Parent") {
+                Ok(Object::Reference(pid)) => *pid,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        match doc.objects.get(&parent) {
+            Some(Object::Dictionary(pd)) => match pd.get(b"Resources") {
+                Ok(Object::Dictionary(res)) => return Some(res.clone()),
+                Ok(Object::Reference(rid)) => {
+                    if let Some(Object::Dictionary(res)) = doc.objects.get(rid) {
+                        return Some(res.clone());
+                    }
+                }
+                _ => {}
+            },
+            _ => return None,
+        }
+        current = parent;
+    }
+    None
+}
+
 pub(crate) fn ensure_page_resource(
     doc: &mut Document,
     page_id: ObjectId,
@@ -408,32 +486,35 @@ pub(crate) fn ensure_page_resource(
     name: &str,
     obj_id: ObjectId,
 ) {
-    if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
-        // Check if Resources exists and has the category sub-dict.
-        let has_resources = page_dict.get(b"Resources").ok().is_some();
+    let Some(res_id) = resolve_or_create_page_resources(doc, page_id) else {
+        return;
+    };
 
-        if !has_resources {
-            let mut cat_dict = lopdf::Dictionary::new();
-            cat_dict.set(name, Object::Reference(obj_id));
-            let mut res_dict = lopdf::Dictionary::new();
-            res_dict.set(category, Object::Dictionary(cat_dict));
-            page_dict.set("Resources", Object::Dictionary(res_dict));
+    // The resources dictionary may itself hold the category as an indirect
+    // reference; resolve that too before writing.
+    let cat_ref = match doc.objects.get(&res_id) {
+        Some(Object::Dictionary(res)) => match res.get(category.as_bytes()) {
+            Ok(Object::Reference(cid)) => Some(*cid),
+            _ => None,
+        },
+        _ => return,
+    };
+
+    if let Some(cid) = cat_ref {
+        if let Some(Object::Dictionary(ref mut cat_d)) = doc.objects.get_mut(&cid) {
+            cat_d.set(name, Object::Reference(obj_id));
             return;
         }
+    }
 
-        // Resources exists — get or create the category sub-dict.
-        if let Ok(Object::Dictionary(ref mut res)) = page_dict.get_mut(b"Resources") {
-            let has_cat = res.get(category.as_bytes()).ok().is_some();
-            if has_cat {
-                if let Ok(Object::Dictionary(ref mut cat_d)) = res.get_mut(category.as_bytes()) {
-                    cat_d.set(name, Object::Reference(obj_id));
-                }
-            } else {
-                let mut cat_dict = lopdf::Dictionary::new();
-                cat_dict.set(name, Object::Reference(obj_id));
-                res.set(category, Object::Dictionary(cat_dict));
-            }
+    if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_id) {
+        if let Ok(Object::Dictionary(ref mut cat_d)) = res.get_mut(category.as_bytes()) {
+            cat_d.set(name, Object::Reference(obj_id));
+            return;
         }
+        let mut cat_dict = lopdf::Dictionary::new();
+        cat_dict.set(name, Object::Reference(obj_id));
+        res.set(category, Object::Dictionary(cat_dict));
     }
 }
 
