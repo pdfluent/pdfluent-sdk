@@ -13,6 +13,13 @@ random draw each run makes the number move for reasons that have nothing to do
 with the code, and a gate that moves on its own is a gate people learn to
 ignore.
 
+Why the baseline is keyed by operating system: font embedding substitutes a
+*system* font for every non-embedded font, and the search paths differ per OS
+(URW/Liberation on Debian, the real Helvetica and Times on macOS). Different
+substitute, different glyph widths, different §6.2.11.5 outcome — measured, the
+same commit scores 286/300 on macOS and 275/300 on the CI host. One absolute
+number would make the gate fail on a machine change rather than a code change.
+
 Usage:
     pdfa_conformance_gate.py --corpus-dir /mnt/storagebox/corpus/general/govdocs
                              --binary target/release/xfa-test-runner
@@ -28,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import sqlite3
 import subprocess
 import sys
@@ -130,6 +138,7 @@ def main() -> None:
     passed = counts.get("pass", 0)
     measured = {
         "corpus": "govdocs (fixed 300-document sample)",
+        "platform": platform_key(),
         "sample_size": len(names),
         "measured_total": total,
         "pass": passed,
@@ -146,14 +155,28 @@ def main() -> None:
     (out_dir / "measured.json").write_text(json.dumps(measured, indent=2) + "\n")
     print(json.dumps(measured, indent=2))
 
+    key = platform_key()
+
     if args.update_baseline:
-        BASELINE.write_text(json.dumps(measured, indent=2) + "\n")
-        print(f"[pdfa-gate] baseline updated: {BASELINE}")
+        doc = json.loads(BASELINE.read_text()) if BASELINE.is_file() else {"platforms": {}}
+        doc.setdefault("platforms", {})[key] = measured
+        doc["note"] = BASELINE_NOTE
+        BASELINE.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+        print(f"[pdfa-gate] baseline for {key} updated: {BASELINE}")
         return
 
     if not BASELINE.is_file():
         die(f"no baseline at {BASELINE}; run once with --update-baseline")
-    baseline = json.loads(BASELINE.read_text())
+    doc = json.loads(BASELINE.read_text())
+    baseline = doc.get("platforms", {}).get(key)
+    if baseline is None:
+        die(
+            f"no baseline recorded for platform {key!r} "
+            f"(have: {sorted(doc.get('platforms', {}))}). Font substitution is "
+            "OS-dependent, so a baseline from another platform would be wrong. "
+            "Run once with --update-baseline on this host.",
+            1,
+        )
 
     if total != baseline["sample_size"]:
         die(
@@ -163,7 +186,7 @@ def main() -> None:
         )
 
     expected = baseline["pass"]
-    print(f"[pdfa-gate] pass {passed}/{total}, baseline {expected}/{baseline['sample_size']}")
+    print(f"[pdfa-gate] {key}: pass {passed}/{total}, baseline {expected}/{baseline['sample_size']}")
     if passed < expected:
         print(f"[pdfa-gate] REGRESSION: {expected - passed} document(s) stopped converting")
         for f in failures:
@@ -175,6 +198,20 @@ def main() -> None:
             f"Re-run with --update-baseline to lock the improvement in."
         )
     print("[pdfa-gate] OK")
+
+
+BASELINE_NOTE = (
+    "Per-OS because font embedding substitutes a system font and the available "
+    "fonts differ per platform, which changes glyph widths and therefore "
+    "6.2.11.5 conformance. Raise a number only after a measured improvement on "
+    "that same platform; never to turn a red gate green."
+)
+
+
+def platform_key() -> str:
+    """Coarse OS key. Deliberately not versioned: the font *sets* differ between
+    macOS and Linux, not meaningfully between releases of either."""
+    return platform.system().lower()
 
 
 def verapdf_version(path: str) -> str:
