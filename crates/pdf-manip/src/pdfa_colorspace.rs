@@ -155,49 +155,48 @@ fn existing_output_intent_has_n(doc: &Document, expected_n: i64) -> bool {
     false
 }
 
-/// Add an sRGB OutputIntent to the document for PDF/A compliance.
+/// Find the DestOutputProfile indirect reference of any OutputIntent
+/// already present in the document, regardless of colour space.
 ///
 /// PDF/A-2 §6.2.3:2 requires that all OutputIntent entries with a
-/// DestOutputProfile key reference the **same** indirect ICC object. To
-/// satisfy this, we reuse the existing DestOutputProfile from any
-/// already-present OutputIntent (e.g. GTS_PDFX) instead of creating a new
-/// ICC stream, if one is found.
-pub fn add_srgb_output_intent(doc: &mut Document) -> Result<()> {
-    // Look for an existing DestOutputProfile indirect reference in any
-    // OutputIntent already in the document. Reusing it avoids the rule
-    // 6.2.3:2 failure caused by multiple OutputIntents with different
-    // ICC profile objects.
-    let existing_icc_ref: Option<lopdf::ObjectId> = {
-        let catalog = get_catalog(doc);
-        catalog.and_then(|cat| {
-            let intents = match cat.get(b"OutputIntents").ok()? {
-                Object::Array(arr) => arr.clone(),
-                _ => return None,
-            };
-            for item in &intents {
-                let dict = match item {
-                    Object::Reference(id) => match doc.objects.get(id) {
-                        Some(Object::Dictionary(d)) => d,
-                        _ => continue,
-                    },
-                    Object::Dictionary(d) => d,
+/// DestOutputProfile key reference the **same** indirect ICC object,
+/// unconditionally — the rule makes no exception for entries that use
+/// different colour spaces (an all-too-common source PDF is a print-ready
+/// CMYK doc with an existing FOGRA/CMYK OutputIntent; adding a *second*,
+/// sRGB one used to violate 6.2.3:2 on essentially every such document,
+/// and vice versa for CMYK-adding on an RGB source). Both
+/// `add_srgb_output_intent` and `add_cmyk_output_intent` must reuse
+/// whatever is already there instead of minting a new ICC stream.
+fn find_existing_dest_output_profile(doc: &Document) -> Option<lopdf::ObjectId> {
+    let catalog = get_catalog(doc);
+    catalog.and_then(|cat| {
+        let intents = match cat.get(b"OutputIntents").ok()? {
+            Object::Array(arr) => arr.clone(),
+            _ => return None,
+        };
+        for item in &intents {
+            let dict = match item {
+                Object::Reference(id) => match doc.objects.get(id) {
+                    Some(Object::Dictionary(d)) => d,
                     _ => continue,
-                };
-                if let Ok(Object::Reference(icc_id)) = dict.get(b"DestOutputProfile") {
-                    // Only reuse if it's an RGB profile (N=3). A CMYK profile
-                    // (N=4) must not be shared with an sRGB OutputIntent.
-                    if let Some(Object::Stream(s)) = doc.objects.get(icc_id) {
-                        if s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok()) == Some(3) {
-                            return Some(*icc_id);
-                        }
-                    } else {
-                        return Some(*icc_id);
-                    }
-                }
+                },
+                Object::Dictionary(d) => d,
+                _ => continue,
+            };
+            if let Ok(Object::Reference(icc_id)) = dict.get(b"DestOutputProfile") {
+                return Some(*icc_id);
             }
-            None
-        })
-    };
+        }
+        None
+    })
+}
+
+/// Add an sRGB OutputIntent to the document for PDF/A compliance.
+///
+/// See [`find_existing_dest_output_profile`] for why an existing
+/// DestOutputProfile (of any colour space) is reused when present.
+pub fn add_srgb_output_intent(doc: &mut Document) -> Result<()> {
+    let existing_icc_ref = find_existing_dest_output_profile(doc);
 
     let icc_id = match existing_icc_ref {
         Some(id) => id,
@@ -542,15 +541,22 @@ fn content_has_cmyk(content: &[u8]) -> bool {
 }
 
 /// Add a CMYK OutputIntent to the document for PDF/A compliance.
+///
+/// See [`find_existing_dest_output_profile`] for why an existing
+/// DestOutputProfile (of any colour space) is reused when present.
 fn add_cmyk_output_intent(doc: &mut Document) -> Result<()> {
-    let icc_bytes = cmyk_icc_profile_bytes();
-
-    let icc_dict = dictionary! {
-        "N" => Object::Integer(4),
-        "Alternate" => Object::Name(b"DeviceCMYK".to_vec()),
+    let icc_id = match find_existing_dest_output_profile(doc) {
+        Some(id) => id,
+        None => {
+            let icc_bytes = cmyk_icc_profile_bytes();
+            let icc_dict = dictionary! {
+                "N" => Object::Integer(4),
+                "Alternate" => Object::Name(b"DeviceCMYK".to_vec()),
+            };
+            let icc_stream = Stream::new(icc_dict, icc_bytes);
+            doc.add_object(Object::Stream(icc_stream))
+        }
     };
-    let icc_stream = Stream::new(icc_dict, icc_bytes);
-    let icc_id = doc.add_object(Object::Stream(icc_stream));
 
     let intent = dictionary! {
         "Type" => Object::Name(b"OutputIntent".to_vec()),
