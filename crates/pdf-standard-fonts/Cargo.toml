@@ -17,5 +17,8 @@ include = ["src/**/*", "assets/*.cff", "LICENSE", "LICENSE-FOXIT", "README.md"]
 
 [dependencies]
 
+[dev-dependencies]
+cff-parser = { workspace = true }
+
 [package.metadata.docs.rs]
 all-features = true
