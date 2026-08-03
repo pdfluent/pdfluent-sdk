@@ -4347,6 +4347,7 @@ dependencies = [
  "pdf-compliance",
  "pdf-engine",
  "pdf-font",
+ "pdf-standard-fonts",
  "pdf-syntax",
  "pdfluent-cff",
  "pdfluent-jbig2",
@@ -4438,6 +4439,13 @@ dependencies = [
  "pdf-interpret",
  "pdfluent-lopdf",
  "vello_cpu",
+]
+
+[[package]]
+name = "pdf-standard-fonts"
+version = "1.0.0-beta.17"
+dependencies = [
+ "pdfluent-cff",
 ]
 
 [[package]]

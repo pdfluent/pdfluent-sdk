@@ -140,6 +140,27 @@ impl StandardFont {
         matches!(self, Self::Symbol | Self::ZapfDingbats)
     }
 
+    /// The face's built-in encoding as fixed by ISO 32000-1, Annex D.5
+    /// (Symbol) and D.6 (Zapf Dingbats): `(code, glyph name)` pairs in
+    /// ascending code order. Codes not listed are undefined.
+    ///
+    /// `None` for the twelve text faces — they take their encoding from the
+    /// PDF (`/Encoding`), not from the program.
+    ///
+    /// The bundled Foxit programs carry the right glyphs for these faces but
+    /// declare StandardEncoding as their built-in CFF encoding, so a font
+    /// dictionary without an `/Encoding` resolves e.g. code 108 to `l`
+    /// instead of `a71`. Writing this table out as an explicit
+    /// `/Encoding /Differences` restates the encoding the face is required
+    /// to have.
+    pub fn encoding_table(self) -> Option<&'static [(u8, &'static str)]> {
+        match self {
+            Self::Symbol => Some(SYMBOL_ENCODING),
+            Self::ZapfDingbats => Some(ZAPF_DINGBATS_ENCODING),
+            _ => None,
+        }
+    }
+
     /// Resolve a `/BaseFont` name to a Standard 14 font.
     ///
     /// Handles a leading `ABCDEF+` subset prefix, the canonical names, and the
@@ -211,6 +232,405 @@ fn strip_subset_prefix(name: &str) -> &str {
         name
     }
 }
+
+/// Symbol encoding, ISO 32000-1 Annex D.5. Codes 0–31, 127–159, 240 and 255
+/// are undefined.
+const SYMBOL_ENCODING: &[(u8, &str)] = &[
+    (32, "space"),
+    (33, "exclam"),
+    (34, "universal"),
+    (35, "numbersign"),
+    (36, "existential"),
+    (37, "percent"),
+    (38, "ampersand"),
+    (39, "suchthat"),
+    (40, "parenleft"),
+    (41, "parenright"),
+    (42, "asteriskmath"),
+    (43, "plus"),
+    (44, "comma"),
+    (45, "minus"),
+    (46, "period"),
+    (47, "slash"),
+    (48, "zero"),
+    (49, "one"),
+    (50, "two"),
+    (51, "three"),
+    (52, "four"),
+    (53, "five"),
+    (54, "six"),
+    (55, "seven"),
+    (56, "eight"),
+    (57, "nine"),
+    (58, "colon"),
+    (59, "semicolon"),
+    (60, "less"),
+    (61, "equal"),
+    (62, "greater"),
+    (63, "question"),
+    (64, "congruent"),
+    (65, "Alpha"),
+    (66, "Beta"),
+    (67, "Chi"),
+    (68, "Delta"),
+    (69, "Epsilon"),
+    (70, "Phi"),
+    (71, "Gamma"),
+    (72, "Eta"),
+    (73, "Iota"),
+    (74, "theta1"),
+    (75, "Kappa"),
+    (76, "Lambda"),
+    (77, "Mu"),
+    (78, "Nu"),
+    (79, "Omicron"),
+    (80, "Pi"),
+    (81, "Theta"),
+    (82, "Rho"),
+    (83, "Sigma"),
+    (84, "Tau"),
+    (85, "Upsilon"),
+    (86, "sigma1"),
+    (87, "Omega"),
+    (88, "Xi"),
+    (89, "Psi"),
+    (90, "Zeta"),
+    (91, "bracketleft"),
+    (92, "therefore"),
+    (93, "bracketright"),
+    (94, "perpendicular"),
+    (95, "underscore"),
+    (96, "radicalex"),
+    (97, "alpha"),
+    (98, "beta"),
+    (99, "chi"),
+    (100, "delta"),
+    (101, "epsilon"),
+    (102, "phi"),
+    (103, "gamma"),
+    (104, "eta"),
+    (105, "iota"),
+    (106, "phi1"),
+    (107, "kappa"),
+    (108, "lambda"),
+    (109, "mu"),
+    (110, "nu"),
+    (111, "omicron"),
+    (112, "pi"),
+    (113, "theta"),
+    (114, "rho"),
+    (115, "sigma"),
+    (116, "tau"),
+    (117, "upsilon"),
+    (118, "omega1"),
+    (119, "omega"),
+    (120, "xi"),
+    (121, "psi"),
+    (122, "zeta"),
+    (123, "braceleft"),
+    (124, "bar"),
+    (125, "braceright"),
+    (126, "similar"),
+    (160, "Euro"),
+    (161, "Upsilon1"),
+    (162, "minute"),
+    (163, "lessequal"),
+    (164, "fraction"),
+    (165, "infinity"),
+    (166, "florin"),
+    (167, "club"),
+    (168, "diamond"),
+    (169, "heart"),
+    (170, "spade"),
+    (171, "arrowboth"),
+    (172, "arrowleft"),
+    (173, "arrowup"),
+    (174, "arrowright"),
+    (175, "arrowdown"),
+    (176, "degree"),
+    (177, "plusminus"),
+    (178, "second"),
+    (179, "greaterequal"),
+    (180, "multiply"),
+    (181, "proportional"),
+    (182, "partialdiff"),
+    (183, "bullet"),
+    (184, "divide"),
+    (185, "notequal"),
+    (186, "equivalence"),
+    (187, "approxequal"),
+    (188, "ellipsis"),
+    (189, "arrowvertex"),
+    (190, "arrowhorizex"),
+    (191, "carriagereturn"),
+    (192, "aleph"),
+    (193, "Ifraktur"),
+    (194, "Rfraktur"),
+    (195, "weierstrass"),
+    (196, "circlemultiply"),
+    (197, "circleplus"),
+    (198, "emptyset"),
+    (199, "intersection"),
+    (200, "union"),
+    (201, "propersuperset"),
+    (202, "reflexsuperset"),
+    (203, "notsubset"),
+    (204, "propersubset"),
+    (205, "reflexsubset"),
+    (206, "element"),
+    (207, "notelement"),
+    (208, "angle"),
+    (209, "gradient"),
+    (210, "registerserif"),
+    (211, "copyrightserif"),
+    (212, "trademarkserif"),
+    (213, "product"),
+    (214, "radical"),
+    (215, "dotmath"),
+    (216, "logicalnot"),
+    (217, "logicaland"),
+    (218, "logicalor"),
+    (219, "arrowdblboth"),
+    (220, "arrowdblleft"),
+    (221, "arrowdblup"),
+    (222, "arrowdblright"),
+    (223, "arrowdbldown"),
+    (224, "lozenge"),
+    (225, "angleleft"),
+    (226, "registersans"),
+    (227, "copyrightsans"),
+    (228, "trademarksans"),
+    (229, "summation"),
+    (230, "parenlefttp"),
+    (231, "parenleftex"),
+    (232, "parenleftbt"),
+    (233, "bracketlefttp"),
+    (234, "bracketleftex"),
+    (235, "bracketleftbt"),
+    (236, "bracelefttp"),
+    (237, "braceleftmid"),
+    (238, "braceleftbt"),
+    (239, "braceex"),
+    (241, "angleright"),
+    (242, "integral"),
+    (243, "integraltp"),
+    (244, "integralex"),
+    (245, "integralbt"),
+    (246, "parenrighttp"),
+    (247, "parenrightex"),
+    (248, "parenrightbt"),
+    (249, "bracketrighttp"),
+    (250, "bracketrightex"),
+    (251, "bracketrightbt"),
+    (252, "bracerighttp"),
+    (253, "bracerightmid"),
+    (254, "bracerightbt"),
+];
+
+/// Zapf Dingbats encoding, ISO 32000-1 Annex D.6. Codes 0–31 and 232–255
+/// are undefined.
+const ZAPF_DINGBATS_ENCODING: &[(u8, &str)] = &[
+    (32, "space"),
+    (33, "a1"),
+    (34, "a2"),
+    (35, "a202"),
+    (36, "a3"),
+    (37, "a4"),
+    (38, "a5"),
+    (39, "a119"),
+    (40, "a118"),
+    (41, "a117"),
+    (42, "a11"),
+    (43, "a12"),
+    (44, "a13"),
+    (45, "a14"),
+    (46, "a15"),
+    (47, "a16"),
+    (48, "a105"),
+    (49, "a17"),
+    (50, "a18"),
+    (51, "a19"),
+    (52, "a20"),
+    (53, "a21"),
+    (54, "a22"),
+    (55, "a23"),
+    (56, "a24"),
+    (57, "a25"),
+    (58, "a26"),
+    (59, "a27"),
+    (60, "a28"),
+    (61, "a6"),
+    (62, "a7"),
+    (63, "a8"),
+    (64, "a9"),
+    (65, "a10"),
+    (66, "a29"),
+    (67, "a30"),
+    (68, "a31"),
+    (69, "a32"),
+    (70, "a33"),
+    (71, "a34"),
+    (72, "a35"),
+    (73, "a36"),
+    (74, "a37"),
+    (75, "a38"),
+    (76, "a39"),
+    (77, "a40"),
+    (78, "a41"),
+    (79, "a42"),
+    (80, "a43"),
+    (81, "a44"),
+    (82, "a45"),
+    (83, "a46"),
+    (84, "a47"),
+    (85, "a48"),
+    (86, "a49"),
+    (87, "a50"),
+    (88, "a51"),
+    (89, "a52"),
+    (90, "a53"),
+    (91, "a54"),
+    (92, "a55"),
+    (93, "a56"),
+    (94, "a57"),
+    (95, "a58"),
+    (96, "a59"),
+    (97, "a60"),
+    (98, "a61"),
+    (99, "a62"),
+    (100, "a63"),
+    (101, "a64"),
+    (102, "a65"),
+    (103, "a66"),
+    (104, "a67"),
+    (105, "a68"),
+    (106, "a69"),
+    (107, "a70"),
+    (108, "a71"),
+    (109, "a72"),
+    (110, "a73"),
+    (111, "a74"),
+    (112, "a203"),
+    (113, "a75"),
+    (114, "a204"),
+    (115, "a76"),
+    (116, "a77"),
+    (117, "a78"),
+    (118, "a79"),
+    (119, "a81"),
+    (120, "a82"),
+    (121, "a83"),
+    (122, "a84"),
+    (123, "a85"),
+    (124, "a86"),
+    (125, "a87"),
+    (126, "a88"),
+    (127, "a89"),
+    (128, "a90"),
+    (129, "a91"),
+    (130, "a92"),
+    (131, "a93"),
+    (132, "a94"),
+    (133, "a95"),
+    (134, "a96"),
+    (135, "a97"),
+    (136, "a98"),
+    (137, "a99"),
+    (138, "a100"),
+    (139, "a101"),
+    (140, "a102"),
+    (141, "a103"),
+    (142, "a104"),
+    (143, "a106"),
+    (144, "a107"),
+    (145, "a108"),
+    (146, "a109"),
+    (147, "a110"),
+    (148, "a111"),
+    (149, "a112"),
+    (150, "a120"),
+    (151, "a121"),
+    (152, "a122"),
+    (153, "a123"),
+    (154, "a124"),
+    (155, "a125"),
+    (156, "a126"),
+    (157, "a127"),
+    (158, "a128"),
+    (159, "a129"),
+    (160, "a130"),
+    (161, "a131"),
+    (162, "a132"),
+    (163, "a133"),
+    (164, "a134"),
+    (165, "a135"),
+    (166, "a136"),
+    (167, "a137"),
+    (168, "a138"),
+    (169, "a139"),
+    (170, "a140"),
+    (171, "a141"),
+    (172, "a142"),
+    (173, "a143"),
+    (174, "a144"),
+    (175, "a145"),
+    (176, "a146"),
+    (177, "a147"),
+    (178, "a148"),
+    (179, "a149"),
+    (180, "a150"),
+    (181, "a151"),
+    (182, "a152"),
+    (183, "a153"),
+    (184, "a154"),
+    (185, "a155"),
+    (186, "a156"),
+    (187, "a157"),
+    (188, "a158"),
+    (189, "a159"),
+    (190, "a160"),
+    (191, "a161"),
+    (192, "a163"),
+    (193, "a164"),
+    (194, "a196"),
+    (195, "a165"),
+    (196, "a192"),
+    (197, "a166"),
+    (198, "a167"),
+    (199, "a168"),
+    (200, "a169"),
+    (201, "a170"),
+    (202, "a171"),
+    (203, "a172"),
+    (204, "a173"),
+    (205, "a162"),
+    (206, "a174"),
+    (207, "a175"),
+    (208, "a176"),
+    (209, "a177"),
+    (210, "a178"),
+    (211, "a179"),
+    (212, "a193"),
+    (213, "a180"),
+    (214, "a199"),
+    (215, "a181"),
+    (216, "a200"),
+    (217, "a182"),
+    (218, "a201"),
+    (219, "a183"),
+    (220, "a184"),
+    (221, "a197"),
+    (222, "a185"),
+    (223, "a194"),
+    (224, "a198"),
+    (225, "a186"),
+    (226, "a195"),
+    (227, "a187"),
+    (228, "a188"),
+    (229, "a189"),
+    (230, "a190"),
+    (231, "a191"),
+];
 
 #[cfg(test)]
 mod tests {
@@ -323,5 +743,57 @@ mod tests {
         assert!(StandardFont::Symbol.is_symbolic());
         assert!(StandardFont::ZapfDingbats.is_symbolic());
         assert!(!StandardFont::Helvetica.is_symbolic());
+    }
+
+    #[test]
+    fn encoding_tables_match_annex_d() {
+        let symbol = StandardFont::Symbol.encoding_table().unwrap();
+        let dingbats = StandardFont::ZapfDingbats.encoding_table().unwrap();
+
+        fn lookup(table: &[(u8, &'static str)], code: u8) -> Option<&'static str> {
+            table.iter().find(|(c, _)| *c == code).map(|(_, n)| *n)
+        }
+
+        // Spot-checked against ISO 32000-1 Annex D.5 and D.6.
+        assert_eq!(lookup(symbol, 34), Some("universal"));
+        assert_eq!(lookup(symbol, 97), Some("alpha"));
+        assert_eq!(lookup(symbol, 65), Some("Alpha"));
+        assert_eq!(lookup(symbol, 108), Some("lambda"));
+        assert_eq!(lookup(symbol, 229), Some("summation"));
+        assert_eq!(lookup(symbol, 240), None); // undefined in Annex D.5
+
+        assert_eq!(lookup(dingbats, 33), Some("a1"));
+        assert_eq!(lookup(dingbats, 108), Some("a71"));
+        assert_eq!(lookup(dingbats, 143), Some("a106")); // a113 does not exist
+        assert_eq!(lookup(dingbats, 231), Some("a191"));
+        assert_eq!(lookup(dingbats, 232), None); // undefined in Annex D.6
+
+        // The twelve text faces have no built-in table.
+        assert!(StandardFont::TimesRoman.encoding_table().is_none());
+
+        // Tables are sorted and duplicate-free, or a Differences array built
+        // from them would be malformed.
+        for table in [symbol, dingbats] {
+            for pair in table.windows(2) {
+                assert!(pair[0].0 < pair[1].0, "table not strictly ascending");
+            }
+        }
+    }
+
+    #[test]
+    fn encoding_tables_only_name_glyphs_the_program_has() {
+        // A /Differences entry pointing at a glyph the embedded program does
+        // not contain is its own validation failure (§6.2.11.4.1). Every name
+        // in the Annex D tables must resolve in the bundled CFF's charset.
+        for font in [StandardFont::Symbol, StandardFont::ZapfDingbats] {
+            let cff = cff_parser::Table::parse(font.data()).expect("bundled CFF parses");
+            for (code, name) in font.encoding_table().unwrap() {
+                assert!(
+                    cff.glyph_index_by_name(name).is_some(),
+                    "{}: table maps code {code} to /{name}, absent from the bundled program",
+                    font.postscript_name()
+                );
+            }
+        }
     }
 }
