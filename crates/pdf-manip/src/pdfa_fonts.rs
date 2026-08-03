@@ -1686,9 +1686,18 @@ fn embed_font_on_target(
     if is_truetype || is_otf {
         update_metrics_from_font(doc, info, &font_data);
     } else if is_cff {
-        // A bare CFF has no SFNT wrapper, so ttf-parser cannot read it. Take
-        // the one metric a viewer uses for codes the /Widths array does not
-        // cover; the remaining descriptor entries are filled by
+        // Settle the encoding *before* the widths. A font dictionary with no
+        // /Encoding falls back to the program's built-in one, which for the
+        // Standard 14 is StandardEncoding — and a later pass then writes
+        // /BaseEncoding /WinAnsiEncoding over the top, leaving widths that were
+        // computed for entirely different glyphs. The two encodings disagree on
+        // exactly the codes that failed: 177 is endash (500) in one and
+        // plusminus (564) in the other, 174 is fi (556) versus registered (760).
+        // Nine documents on the govdocs sample failed on precisely those codes.
+        ensure_winansi_for_bundled_substitute(doc, info);
+
+        // A bare CFF has no SFNT wrapper, so ttf-parser cannot read it. The
+        // remaining descriptor entries are filled by
         // `fix_font_descriptor_metrics` later in the pipeline.
         update_metrics_from_cff(doc, info, &font_data);
     }
@@ -1970,6 +1979,29 @@ fn extract_ttc_face(data: &[u8], face_index: u32) -> Option<Vec<u8>> {
 }
 
 /// Update font metrics (Widths, FontBBox, etc.) from the embedded font data.
+/// Give a non-symbolic font dictionary an explicit `/Encoding` before its
+/// widths are computed.
+///
+/// Only when it has none: an encoding the document already states is the
+/// author's, and overriding it would change which glyph each code draws.
+/// Symbolic faces (Symbol, Zapf Dingbats) are left alone entirely — they use
+/// the program's built-in encoding, and imposing a text encoding on them maps
+/// unrelated Latin codepoints onto symbols.
+fn ensure_winansi_for_bundled_substitute(doc: &mut Document, info: &NonEmbeddedFont) {
+    if info.is_type0 || is_symbolic_font_name(&info.name) {
+        return;
+    }
+    let Some(Object::Dictionary(font)) = doc.objects.get(&info.font_id) else {
+        return;
+    };
+    if font.has(b"Encoding") || is_font_symbolic(doc, font) {
+        return;
+    }
+    if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&info.font_id) {
+        font.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+    }
+}
+
 /// Rewrite `/Widths` and `/MissingWidth` from a bare CFF program.
 ///
 /// The SFNT path does this through ttf-parser, which cannot read a bare CFF.
