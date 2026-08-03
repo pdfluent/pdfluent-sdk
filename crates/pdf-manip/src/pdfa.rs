@@ -405,10 +405,6 @@ fn run_font_steps(
         crate::pdfa_fonts::fix_truetype_encoding(doc)
     );
     font_step!(
-        "type1_std_encoding",
-        crate::pdfa_fonts::fix_type1_standard_encoding(doc)
-    );
-    font_step!(
         "symbolic_cmap",
         crate::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(doc)
     );
