@@ -485,6 +485,20 @@ fn run_font_steps(
         "cidtogidmap",
         crate::pdfa_fonts::fix_missing_cidtogidmap(doc)
     );
+
+    // Runs last among the font steps: which code of a duplicated
+    // supplement/main pair is actually used is only stable once every
+    // content-rewriting pass has run.
+    font_step!(
+        "cff_enc_supplements",
+        crate::pdfa_fonts::fix_cff_encoding_supplements(doc)
+    );
+    // Must follow the supplement pass: it validates against the CFF encoding
+    // the supplements were just folded into.
+    font_step!(
+        "custom_cff_enc_widths",
+        crate::pdfa_fonts::fix_custom_cff_encoding_widths(doc)
+    );
 }
 
 /// Run a step whose failure means the output cannot be conformant.
