@@ -2144,10 +2144,12 @@ fn update_metrics_from_cff(doc: &mut Document, info: &NonEmbeddedFont, font_data
 
     // `.notdef` is what a viewer draws for a code the font does not cover, so
     // its advance is the width the descriptor should promise for those codes.
-    if let (Some(fd_id), Some(width)) = (
-        fd_id,
-        cff_glyph_width_f64(&cff, cff_parser::GlyphId(0), SCALE),
-    ) {
+    // veraPDF compares the /Widths *entry* against the program for codes in
+    // FirstChar..LastChar — it does not defer a 0 to /MissingWidth (measured:
+    // Symbol code 13 → gid 0 → 250 vs our 0 on govdocs 002_002202). Writing
+    // the .notdef advance directly agrees with both readings.
+    let notdef_advance = cff_glyph_width_f64(&cff, cff_parser::GlyphId(0), SCALE);
+    if let (Some(fd_id), Some(width)) = (fd_id, notdef_advance) {
         if let Some(Object::Dictionary(fd)) = doc.objects.get_mut(&fd_id) {
             fd.set("MissingWidth", Object::Integer(width.round() as i64));
         }
@@ -2185,9 +2187,11 @@ fn update_metrics_from_cff(doc: &mut Document, info: &NonEmbeddedFont, font_data
         if w.is_some() {
             resolved_any = true;
         }
-        // An unresolvable code falls back to the descriptor's /MissingWidth,
-        // which a 0 here defers to.
-        widths.push(Object::Integer(w.unwrap_or(0.0).round() as i64));
+        // An unresolvable code draws .notdef; write its advance rather than
+        // 0 (see the MissingWidth comment above).
+        widths.push(Object::Integer(
+            w.or(notdef_advance).unwrap_or(0.0).round() as i64
+        ));
     }
     if !resolved_any {
         return;
@@ -3599,7 +3603,7 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
 
             if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
                 let missing_width = cff
-                    .glyph_width_f64(cff_parser::GlyphId(0))
+                    .glyph_width_f64_verapdf(cff_parser::GlyphId(0))
                     .map(|w| (w * 1000.0 / upem).round() as i64)
                     .unwrap_or(0);
                 let current_missing = match fd.get(b"MissingWidth").ok() {
@@ -4073,7 +4077,7 @@ fn fix_cid_widths_from_cff(
     for gid in 0..num_glyphs {
         let glyph_id = cff_parser::GlyphId(gid);
         if let Some(scaled) = cff
-            .glyph_width_f64(glyph_id)
+            .glyph_width_f64_verapdf(glyph_id)
             .map(|w| (w * cff_matrix_scale(cff.glyph_fd_matrix(glyph_id).sx)).round() as i64)
         {
             // For CIDFontType0 (CID-keyed CFF), every valid glyph must have a
@@ -4106,7 +4110,7 @@ fn fix_cid_widths_from_cff(
     // (notdef_dw is recomputed after the by_cid loop using per-FD matrix)
     let notdef_dw_for_dedup: Option<i64> = {
         let g0 = cff_parser::GlyphId(0);
-        cff.glyph_width_f64(g0)
+        cff.glyph_width_f64_verapdf(g0)
             .map(|w| (w * cff_matrix_scale(cff.glyph_fd_matrix(g0).sx)).round() as i64)
     };
 
@@ -4149,7 +4153,7 @@ fn fix_cid_widths_from_cff(
     // Mode fallback for fonts where .notdef width is unavailable.
     let notdef_dw = {
         let g0 = cff_parser::GlyphId(0);
-        cff.glyph_width_f64(g0)
+        cff.glyph_width_f64_verapdf(g0)
             .map(|w| (w * cff_matrix_scale(cff.glyph_fd_matrix(g0).sx)).round() as i64)
     };
     let mut freq: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
@@ -5781,7 +5785,20 @@ fn collect_simple_invalid_codes(
     let mut invalid_codes = HashSet::new();
     let parse_was_conclusive = parsed.is_some() || available_glyphs.is_some();
     for code in 0u8..=255 {
-        let glyph_name = if let Some(name) = differences.get(&(code as u32)) {
+        // Resolve a glyph name for this code: PDF /Differences first, then
+        // the program's own built-in encoding, then a named base encoding.
+        // The program's built-in outranks a *named* base: ISO 32000 makes a
+        // missing /BaseEncoding mean the built-in, and a base the pipeline
+        // materialized itself (StandardEncoding) must not override the
+        // mapping the document actually uses (govdocs 002_002385: one-glyph
+        // Aip1 subset renders code 149 as /bullet through the program's own
+        // encoding array).
+        let glyph_name: String = if let Some(name) = differences.get(&(code as u32)) {
+            name.clone()
+        } else if let Some(name) = parsed
+            .as_ref()
+            .and_then(|parsed| parsed.encoding.get(&code))
+        {
             name.clone()
         } else if !enc_name.is_empty() {
             let ch = encoding_to_char(code as u32, &enc_name);
@@ -5789,9 +5806,7 @@ fn collect_simple_invalid_codes(
                 .or_else(|| unicode_to_agl_name(ch))
                 .unwrap_or_else(|| ".notdef".to_string())
         } else if let Some(parsed) = parsed.as_ref() {
-            if let Some(name) = parsed.encoding.get(&code) {
-                name.clone()
-            } else if !parsed.base_encoding_name.is_empty() {
+            if !parsed.base_encoding_name.is_empty() {
                 let ch = encoding_to_char(code as u32, &parsed.base_encoding_name);
                 unicode_to_glyph_name(ch)
                     .or_else(|| unicode_to_agl_name(ch))
@@ -12391,12 +12406,16 @@ fn cff_glyph_width_f64(
     gid: cff_parser::GlyphId,
     scale: f64,
 ) -> Option<f64> {
-    cff.glyph_width_f64(gid).map(|w| w * scale)
+    // veraPDF truncates a fractional nominalWidthX when it applies it
+    // (measured on TeX subset CFFs); dictionary widths must match the
+    // validator's arithmetic, not the spec's. See cff-parser's
+    // `glyph_width_f64_verapdf`.
+    cff.glyph_width_f64_verapdf(gid).map(|w| w * scale)
 }
 
 /// Get CFF Private DICT defaultWidthX as scaled PDF text-space `f64`.
 fn cff_default_width_f64(cff: &cff_parser::Table, scale: f64) -> Option<f64> {
-    cff.default_width_x_f64().map(|w| w * scale)
+    cff.default_width_x_f64().map(|w| w.trunc() * scale)
 }
 
 /// Per-font CFF cache built once and shared across all per-code width lookups.
@@ -18058,8 +18077,21 @@ pub fn fix_remaining_tt_width_mismatches(doc: &mut Document) -> usize {
                 .unwrap_or_else(|| encoding_to_char(code, &enc_name));
 
             // SAFETY: only correct if the glyph IS present in the font.
-            let Some(gid) = face.glyph_index(ch) else {
-                continue; // glyph absent → leave original width
+            // veraPDF resolves non-symbolic TrueType through the (3,1) cmap
+            // when the font has one; ttf_parser's glyph_index may pick a
+            // different subtable (measured: macOS Helvetica maps U+00AB to
+            // guillemotleft (556) in (0,3) but to a 333-wide stub glyph in
+            // (3,1) — govdocs 002_002315).
+            let gid = if has_cmap_31(&face) {
+                match lookup_unicode_cmap_31(&face, ch as u32) {
+                    Some(g) => g,
+                    None => continue, // absent or .notdef in (3,1) → leave as-is
+                }
+            } else {
+                match face.glyph_index(ch) {
+                    Some(g) => g,
+                    None => continue, // glyph absent → leave original width
+                }
             };
             let expected = face
                 .glyph_hor_advance(gid)
@@ -18307,7 +18339,11 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
                         let mut new_op = op.clone();
                         let str_idx = if op.operator == "\"" { 2 } else { 0 };
                         if let Some(Object::String(bytes, _)) = new_op.operands.get_mut(str_idx) {
-                            if strip_control_bytes(bytes, !has_type0_font) {
+                            if strip_control_bytes(
+                                bytes,
+                                !has_type0_font,
+                                &std::collections::HashSet::new(),
+                            ) {
                                 modified = true;
                             }
                         }
@@ -18318,7 +18354,11 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
                         if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
                             for item in arr.iter_mut() {
                                 if let Object::String(bytes, _) = item {
-                                    if strip_control_bytes(bytes, !has_type0_font) {
+                                    if strip_control_bytes(
+                                        bytes,
+                                        !has_type0_font,
+                                        &std::collections::HashSet::new(),
+                                    ) {
                                         modified = true;
                                     }
                                 }
@@ -18347,7 +18387,11 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
     total_fixed
 }
 
-fn strip_control_bytes(bytes: &mut Vec<u8>, allow_collapse: bool) -> bool {
+fn strip_control_bytes(
+    bytes: &mut Vec<u8>,
+    allow_collapse: bool,
+    preserve: &std::collections::HashSet<u8>,
+) -> bool {
     let mut changed = false;
 
     // Some malformed PDFs encode simple-font text as 2-byte pairs where one
@@ -18367,7 +18411,7 @@ fn strip_control_bytes(bytes: &mut Vec<u8>, allow_collapse: bool) -> bool {
                 } else {
                     bytes[i]
                 };
-                if code < 32 && !matches!(code, 9 | 10 | 13) {
+                if code < 32 && !matches!(code, 9 | 10 | 13) && !preserve.contains(&code) {
                     // Replace forbidden character code with space (remap from .notdef).
                     if code_in_odd_lane {
                         bytes[i + 1] = 32;
@@ -18387,7 +18431,7 @@ fn strip_control_bytes(bytes: &mut Vec<u8>, allow_collapse: bool) -> bool {
     }
 
     for b in bytes.iter_mut() {
-        if *b < 32 && !matches!(*b, 9 | 10 | 13) {
+        if *b < 32 && !matches!(*b, 9 | 10 | 13) && !preserve.contains(b) {
             // Replace forbidden character code with space (remap from .notdef).
             *b = 32;
             changed = true;
@@ -19515,25 +19559,33 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                     }
                 }
             } else if let Some(parsed) = parse_type1_program(&font_data) {
-                // Classic Type1.
+                // Classic Type1. The program's own built-in encoding outranks
+                // a *named* PDF base encoding: a missing /BaseEncoding means
+                // the built-in, and a base the pipeline materialized itself
+                // must not override the mapping the document actually uses
+                // (govdocs 002_002385: one-glyph Aip1 subset, /bullet at 149
+                // via the program's encoding array).
                 let (enc_name, differences) = get_simple_encoding_info(doc, dict);
                 let available_glyphs = &parsed.charstring_widths;
 
                 for code in 0..=255u8 {
                     let glyph_name = if let Some(name) = differences.get(&(code as u32)) {
                         name.clone()
+                    } else if let Some(name) = parsed.encoding.get(&code) {
+                        name.clone()
                     } else if !enc_name.is_empty() {
                         let ch = encoding_to_char(code as u32, &enc_name);
                         unicode_to_glyph_name(ch)
                             .or_else(|| unicode_to_agl_name(ch))
                             .unwrap_or_else(|| ".notdef".to_string())
+                    } else if !parsed.base_encoding_name.is_empty() {
+                        let ch = encoding_to_char(code as u32, &parsed.base_encoding_name);
+                        unicode_to_glyph_name(ch)
+                            .or_else(|| unicode_to_agl_name(ch))
+                            .unwrap_or_else(|| ".notdef".to_string())
                     } else {
                         // Symbolic Type1 usually has its own encoding in the program.
-                        parsed
-                            .encoding
-                            .get(&code)
-                            .cloned()
-                            .unwrap_or_else(|| ".notdef".to_string())
+                        ".notdef".to_string()
                     };
 
                     if glyph_name == ".notdef" || !available_glyphs.contains_key(&glyph_name) {
@@ -19850,6 +19902,12 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
         can_strip: bool,
         /// FirstChar/LastChar range (TrueType/Type1/MMType1 only).
         range: Option<(u8, u8)>,
+        /// Control codes the font's /Differences maps to a real glyph. A
+        /// Type3 font may legitimately put a visible glyph on code 1
+        /// (govdocs 000_000816: thindash), and a Type1 Differences array may
+        /// do the same; stripping those bytes to 0x20 changes what the page
+        /// draws and leaves code 32 pointing at nothing.
+        preserve_ctrl: std::collections::HashSet<u8>,
     }
 
     #[derive(Clone, Copy)]
@@ -19965,7 +20023,33 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
                 } else {
                     None
                 };
-                map.insert(res_name, FontInfo { can_strip, range });
+                let preserve_ctrl = if can_strip {
+                    let (_, differences) = get_simple_encoding_info(doc, fd);
+                    differences
+                        .iter()
+                        .filter(|(code, name)| {
+                            **code < 32
+                                && !matches!(**code, 9 | 10 | 13)
+                                && name.as_str() != ".notdef"
+                                // A /space mapping (usually pipeline-generated
+                                // .notdef avoidance) draws a blank either way;
+                                // stripping it to 32 is what keeps the width
+                                // consistent (govdocs 003_003411, cmr9 code 11).
+                                && name.as_str() != "space"
+                        })
+                        .map(|(code, _)| *code as u8)
+                        .collect()
+                } else {
+                    std::collections::HashSet::new()
+                };
+                map.insert(
+                    res_name,
+                    FontInfo {
+                        can_strip,
+                        range,
+                        preserve_ctrl,
+                    },
+                );
             }
             map
         };
@@ -20025,7 +20109,9 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
                                         did_range = true;
                                     }
                                 }
-                                if fi.can_strip && strip_control_bytes(bytes, !has_type0) {
+                                if fi.can_strip
+                                    && strip_control_bytes(bytes, !has_type0, &fi.preserve_ctrl)
+                                {
                                     did_ctrl = true;
                                 }
                             }
@@ -20048,7 +20134,13 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
                                                 did_range = true;
                                             }
                                         }
-                                        if fi.can_strip && strip_control_bytes(bytes, !has_type0) {
+                                        if fi.can_strip
+                                            && strip_control_bytes(
+                                                bytes,
+                                                !has_type0,
+                                                &fi.preserve_ctrl,
+                                            )
+                                        {
                                             did_ctrl = true;
                                         }
                                     }
@@ -21249,9 +21341,18 @@ fn fix_notdef_in_type1(
             base_encoding = String::from_utf8(n.clone()).unwrap_or_default();
         }
     }
-    if base_encoding.is_empty() {
+    if base_encoding.is_empty() && !cff_has_custom_encoding(font_data) {
+        // A missing /BaseEncoding means "the program's built-in encoding".
+        // For a Standard/Expert-encoding CFF that is StandardEncoding; saying
+        // so explicitly keeps every later pass on the same resolution.
         base_encoding = "StandardEncoding".to_string();
     }
+    // For a CFF with a CUSTOM encoding, veraPDF treats that encoding as
+    // authoritative for §6.2.11.5 (see cff_width_for_code). Materializing any
+    // text base here would send our own width passes down the PDF-name path
+    // while the validator stays on the CFF encoding — the measured 002_002202
+    // mismatch. An empty base means "built-in", which is exactly that custom
+    // encoding, so leave it empty.
 
     // Phase 1: Replace .notdef entries and entries referencing glyphs
     // not present in the font program (which veraPDF treats as .notdef).
@@ -21618,7 +21719,17 @@ fn fix_notdef_in_type1_fontfile(
             base_encoding = String::from_utf8(n.clone()).unwrap_or_default();
         }
     }
-    if base_encoding.is_empty() {
+    // A missing /BaseEncoding means "the program's built-in encoding". Only
+    // restate that when the program does not declare one of its own: for a
+    // PFB with its own encoding, declaring StandardEncoding both sends our
+    // own invalid-code resolution down the wrong path (govdocs 002_002385,
+    // Aip1 bullet at 149) and lets veraPDF fall through to the built-in
+    // encoding where an undeclared one left the check vacuous (govdocs
+    // 003_003411, cmr9 ff at code 11).
+    if base_encoding.is_empty()
+        && parsed.encoding.is_empty()
+        && parsed.base_encoding_name.is_empty()
+    {
         base_encoding = "StandardEncoding".to_string();
     }
 
@@ -22222,11 +22333,15 @@ fn apply_encoding_fixes(
         prev_code = Some(*code);
     }
 
-    // Determine the base encoding to use.
+    // Determine the base encoding to use. An empty base_encoding means the
+    // program's built-in encoding — for a custom-encoding CFF that is the
+    // encoding veraPDF validates against, so no BaseEncoding key is written
+    // at all. WinAnsi is only the fallback for fonts where the pipeline
+    // computes widths through WinAnsi assumptions.
     let effective_base = if base_encoding.is_empty() {
-        "WinAnsiEncoding"
+        None
     } else {
-        base_encoding
+        Some(base_encoding)
     };
 
     let shared_encoding_ref =
@@ -22236,10 +22351,14 @@ fn apply_encoding_fixes(
     if let Some(ref_id) = enc_ref {
         if !shared_encoding_ref {
             if let Some(Object::Dictionary(ref mut enc)) = doc.objects.get_mut(&ref_id) {
-                enc.set(
-                    "BaseEncoding",
-                    Object::Name(effective_base.as_bytes().to_vec()),
-                );
+                match effective_base {
+                    Some(base) => {
+                        enc.set("BaseEncoding", Object::Name(base.as_bytes().to_vec()));
+                    }
+                    None => {
+                        enc.remove(b"BaseEncoding");
+                    }
+                }
                 enc.set("Differences", Object::Array(diff_array));
                 return true;
             }
@@ -22247,14 +22366,14 @@ fn apply_encoding_fixes(
     }
 
     // Build new encoding dict.
-    let enc_dict = lopdf::Dictionary::from_iter(vec![
-        ("Type".to_string(), Object::Name(b"Encoding".to_vec())),
-        (
-            "BaseEncoding".to_string(),
-            Object::Name(effective_base.as_bytes().to_vec()),
-        ),
-        ("Differences".to_string(), Object::Array(diff_array)),
-    ]);
+    let mut enc_dict = lopdf::Dictionary::from_iter(vec![(
+        "Type".to_string(),
+        Object::Name(b"Encoding".to_vec()),
+    )]);
+    if let Some(base) = effective_base {
+        enc_dict.set("BaseEncoding", Object::Name(base.as_bytes().to_vec()));
+    }
+    enc_dict.set("Differences", Object::Array(diff_array));
 
     if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&font_id) {
         dict.set("Encoding", Object::Dictionary(enc_dict));
@@ -22262,6 +22381,530 @@ fn apply_encoding_fixes(
     }
 
     false
+}
+
+/// Tolerant used-code collection for the supplement conflict rule.
+///
+/// `collect_simple_font_used_codes` runs the full ContentEditor parser, and
+/// some converted streams no longer parse (measured: 002_002202 page 0,
+/// where an inline-image re-encode trips lopdf's content parser). For a
+/// preference hint we do not need a perfect parse — a best-effort scan of
+/// `/F.. Tf` switches and the strings shown after them is enough, and it
+/// never aborts wholesale on a construct it does not understand.
+fn collect_used_codes_tolerant(
+    doc: &Document,
+) -> std::collections::HashMap<ObjectId, std::collections::HashSet<u8>> {
+    let mut used: std::collections::HashMap<ObjectId, std::collections::HashSet<u8>> =
+        Default::default();
+    for (_, page_id) in doc.get_pages() {
+        let Some(resources) = resolve_page_resources_local(doc, page_id) else {
+            continue;
+        };
+        let fonts = match resources.get(b"Font").ok() {
+            Some(Object::Dictionary(d)) => d.clone(),
+            Some(Object::Reference(r)) => match doc.get_object(*r) {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => continue,
+            },
+            _ => continue,
+        };
+        let mut font_map: std::collections::HashMap<Vec<u8>, ObjectId> = Default::default();
+        for (key, val) in fonts.iter() {
+            if let Object::Reference(font_id) = val {
+                font_map.insert(key.clone(), *font_id);
+            }
+        }
+        if font_map.is_empty() {
+            continue;
+        }
+        for cs_id in crate::content_editor::get_content_stream_ids(doc, page_id) {
+            let data = match doc.objects.get(&cs_id) {
+                Some(Object::Stream(s)) => {
+                    let mut s = s.clone();
+                    let _ = s.decompress();
+                    s.content
+                }
+                _ => continue,
+            };
+            scan_content_for_used_codes(&data, &font_map, &mut used);
+        }
+    }
+    used
+}
+
+/// Best-effort scan of one content stream: track `/name … Tf` and collect
+/// the bytes of every string shown with Tj/TJ/'/". Never fails.
+fn scan_content_for_used_codes(
+    data: &[u8],
+    font_map: &std::collections::HashMap<Vec<u8>, ObjectId>,
+    used: &mut std::collections::HashMap<ObjectId, std::collections::HashSet<u8>>,
+) {
+    // Token kinds: 0 word/operator, 1 name, 2 string, 3 '[', 4 ']'.
+    let mut raw: Vec<(u8, Vec<u8>)> = Vec::new();
+    let mut i = 0usize;
+    while i < data.len() {
+        let b = data[i];
+        match b {
+            b' ' | b'\t' | b'\r' | b'\n' | 0x0c | 0x00 => i += 1,
+            b'%' => {
+                while i < data.len() && data[i] != b'\n' && data[i] != b'\r' {
+                    i += 1;
+                }
+            }
+            b'(' => {
+                let mut depth = 1usize;
+                let mut out = Vec::new();
+                i += 1;
+                while i < data.len() && depth > 0 {
+                    let c = data[i];
+                    if c == b'\\' && i + 1 < data.len() {
+                        let n = data[i + 1];
+                        match n {
+                            b'(' => out.push(b'('),
+                            b')' => out.push(b')'),
+                            b'\\' => out.push(b'\\'),
+                            b'n' => out.push(b'\n'),
+                            b'r' => out.push(b'\r'),
+                            b't' => out.push(b'\t'),
+                            b'0'..=b'7' => {
+                                let mut v = (n - b'0') as u32;
+                                let mut k = 1;
+                                while k < 3 && i + 1 + k < data.len() {
+                                    let d = data[i + 1 + k];
+                                    if !(b'0'..=b'7').contains(&d) {
+                                        break;
+                                    }
+                                    v = v * 8 + (d - b'0') as u32;
+                                    k += 1;
+                                }
+                                out.push(v as u8);
+                                i += k - 1;
+                            }
+                            _ => out.push(n),
+                        }
+                        i += 2;
+                    } else if c == b'(' {
+                        depth += 1;
+                        out.push(c);
+                        i += 1;
+                    } else if c == b')' {
+                        depth -= 1;
+                        if depth > 0 {
+                            out.push(c);
+                        }
+                        i += 1;
+                    } else {
+                        out.push(c);
+                        i += 1;
+                    }
+                }
+                raw.push((2, out));
+            }
+            b'<' => {
+                if data.get(i + 1) == Some(&b'<') {
+                    raw.push((0, b"<<".to_vec()));
+                    i += 2;
+                } else {
+                    let start = i + 1;
+                    while i < data.len() && data[i] != b'>' {
+                        i += 1;
+                    }
+                    let hex: Vec<u8> = data[start..i.min(data.len())]
+                        .iter()
+                        .filter(|c| c.is_ascii_hexdigit())
+                        .copied()
+                        .collect();
+                    i += 1;
+                    let mut bytes = Vec::with_capacity(hex.len() / 2);
+                    for pair in hex.chunks(2) {
+                        if pair.len() == 2 {
+                            let hi = (pair[0] as char).to_digit(16).unwrap_or(0) as u8;
+                            let lo = (pair[1] as char).to_digit(16).unwrap_or(0) as u8;
+                            bytes.push(hi << 4 | lo);
+                        }
+                    }
+                    raw.push((2, bytes));
+                }
+            }
+            b'[' => {
+                raw.push((3, vec![b'[']));
+                i += 1;
+            }
+            b']' => {
+                raw.push((4, vec![b']']));
+                i += 1;
+            }
+            b'/' => {
+                let start = i + 1;
+                let mut end = start;
+                while end < data.len()
+                    && !matches!(
+                        data[end],
+                        b' ' | b'\t'
+                            | b'\r'
+                            | b'\n'
+                            | 0x0c
+                            | b'('
+                            | b')'
+                            | b'<'
+                            | b'>'
+                            | b'['
+                            | b']'
+                            | b'{'
+                            | b'}'
+                            | b'/'
+                            | b'%'
+                    )
+                {
+                    end += 1;
+                }
+                raw.push((1, data[start..end].to_vec()));
+                i = end;
+            }
+            _ => {
+                // Inline images: BI .. EI content is binary; skip it as one
+                // opaque span so its bytes are never mistaken for text ops.
+                if b == b'B'
+                    && data.get(i + 1) == Some(&b'I')
+                    && matches!(data.get(i + 2), Some(b' ' | b'\t' | b'\r' | b'\n'))
+                {
+                    let mut j = i + 2;
+                    while j + 1 < data.len() && !(data[j] == b'E' && data[j + 1] == b'I') {
+                        j += 1;
+                    }
+                    i = (j + 2).min(data.len());
+                    raw.push((0, b"BI".to_vec()));
+                    continue;
+                }
+                let start = i;
+                let mut end = start;
+                while end < data.len()
+                    && !matches!(
+                        data[end],
+                        b' ' | b'\t'
+                            | b'\r'
+                            | b'\n'
+                            | 0x0c
+                            | b'('
+                            | b')'
+                            | b'<'
+                            | b'>'
+                            | b'['
+                            | b']'
+                            | b'{'
+                            | b'}'
+                            | b'/'
+                            | b'%'
+                    )
+                {
+                    end += 1;
+                }
+                // A lone delimiter byte (stray ')', '>', '{', '}') is not a
+                // word — consume it so the scan always makes progress.
+                if end == start {
+                    end = start + 1;
+                }
+                raw.push((0, data[start..end].to_vec()));
+                i = end;
+            }
+        }
+    }
+
+    let mut current_font: Option<Vec<u8>> = None;
+    let mut last_name: Option<Vec<u8>> = None;
+    let mut pending_strings: Vec<Vec<u8>> = Vec::new();
+    let mut in_array = false;
+    for (kind, bytes) in &raw {
+        match kind {
+            1 => last_name = Some(bytes.clone()),
+            2 => pending_strings.push(bytes.clone()),
+            3 => {
+                pending_strings.clear();
+                in_array = true;
+            }
+            4 => in_array = false,
+            _ => {
+                let w = bytes.as_slice();
+                if w == b"Tf" {
+                    current_font = last_name.clone();
+                    pending_strings.clear();
+                } else if w == b"Tj" || w == b"'" || w == b"\"" {
+                    if let (Some(font), Some(s)) = (&current_font, pending_strings.last()) {
+                        if let Some(font_id) = font_map.get(font) {
+                            let set = used.entry(*font_id).or_default();
+                            for b in s {
+                                set.insert(*b);
+                            }
+                        }
+                    }
+                    pending_strings.clear();
+                } else if w == b"TJ" {
+                    if let Some(font) = &current_font {
+                        if let Some(font_id) = font_map.get(font) {
+                            let set = used.entry(*font_id).or_default();
+                            for s in &pending_strings {
+                                for b in s {
+                                    set.insert(*b);
+                                }
+                            }
+                        }
+                    }
+                    pending_strings.clear();
+                    in_array = false;
+                } else {
+                    // Numbers inside a TJ array leave the collected strings
+                    // in place; any other operator discards them.
+                    let is_number = w
+                        .first()
+                        .is_some_and(|c| c.is_ascii_digit() || matches!(c, b'+' | b'-' | b'.'));
+                    if !is_number && !in_array {
+                        pending_strings.clear();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Align /Widths with veraPDF's resolution for custom-encoding CFF fonts.
+///
+/// For a simple font whose embedded Type1C program has a custom CFF encoding
+/// (enc_offset > 1), veraPDF's width check ignores the PDF /Encoding and
+/// resolves every code through the CFF encoding (its `getWidth` consults the
+/// PDF encoding only for Standard/Expert CFFs). Codes a supplement used to
+/// hide are in the main table once `fix_cff_encoding_supplements` has run;
+/// this pass rewrites the dictionary entries for codes the CFF encoding
+/// actually maps, where the dictionary disagrees. Codes the encoding does
+/// not map are left alone — veraPDF's behavior for those (defaultWidthX
+/// versus its gid-1 array quirk) is not worth mirroring blind.
+pub fn fix_custom_cff_encoding_widths(doc: &mut Document) -> usize {
+    let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut fixed = 0;
+
+    for font_id in font_ids {
+        let (fd_id, first_char, widths_id, enc_name, differences) = {
+            let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            let subtype = get_name(font, b"Subtype").unwrap_or_default();
+            if subtype != "Type1" && subtype != "MMType1" {
+                continue;
+            }
+            let fd_id = match font.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(id)) => *id,
+                _ => continue,
+            };
+            let first_char = match font.get(b"FirstChar").ok() {
+                Some(Object::Integer(i)) => *i as u32,
+                _ => continue,
+            };
+            let widths_id = match font.get(b"Widths").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                Some(Object::Array(_)) => None,
+                _ => continue,
+            };
+            let (enc_name, differences) = get_simple_encoding_info(doc, font);
+            (fd_id, first_char, widths_id, enc_name, differences)
+        };
+
+        let Some(font_data) = read_embedded_font_data(doc, fd_id) else {
+            continue;
+        };
+        // Bare CFF with a custom encoding only.
+        if font_data.len() < 4 || font_data[0] != 1 || !cff_has_custom_encoding(&font_data) {
+            continue;
+        }
+        let Some(cff) = cff_parser::Table::parse(&font_data) else {
+            continue;
+        };
+        let enc_map = parse_cff_encoding_map(&font_data);
+        if enc_map.is_empty() {
+            continue;
+        }
+        let scale = cff_matrix_scale(cff.matrix().sx);
+
+        // The validator's per-code resolution for these fonts: a PDF
+        // /Encoding name the charset has wins (measured on govdocs
+        // 002_002708's AdvP subsets, where codes 1-4 hang on /C20, /C21,
+        // /C18, /C19 — resolving those through the CFF encoding instead
+        // produces C1..C4 widths and breaks a passing document); otherwise
+        // veraPDF falls back to the CFF encoding, which after
+        // fix_cff_encoding_supplements also covers former supplement codes
+        // (the TeX subsets of 002_002202).
+        let expected_for = |code: u32| -> Option<f64> {
+            if code > 255 {
+                return None;
+            }
+            let name = differences.get(&code).cloned().or_else(|| {
+                if enc_name.is_empty() {
+                    None
+                } else {
+                    cff_pdf_base_glyph_name(code, &enc_name)
+                }
+            });
+            if let Some(name) = name {
+                if name != ".notdef" {
+                    if let Some(gid) = cff.glyph_index_by_name(&name) {
+                        if let Some(w) = cff_glyph_width_f64(&cff, gid, scale) {
+                            return Some(w);
+                        }
+                    }
+                }
+            }
+            let gid = enc_map.get(&(code as u8))?;
+            if *gid == 0 {
+                return None;
+            }
+            cff_glyph_width_f64(&cff, cff_parser::GlyphId(*gid), scale)
+        };
+
+        let mut updates: Vec<(usize, i64)> = Vec::new();
+        let consider = |arr: &[Object], code: u32, updates: &mut Vec<(usize, i64)>| {
+            if code < first_char {
+                return;
+            }
+            let idx = (code - first_char) as usize;
+            let current = match arr.get(idx) {
+                Some(Object::Integer(v)) => *v,
+                Some(Object::Real(r)) => *r as i64,
+                _ => return,
+            };
+            let Some(expected) = expected_for(code).map(|w| w.round() as i64) else {
+                return;
+            };
+            if (current - expected).abs() > 1 {
+                updates.push((idx, expected));
+            }
+        };
+
+        let changed = {
+            let snapshot: Vec<Object> = if let Some(wid) = widths_id {
+                match doc.objects.get(&wid) {
+                    Some(Object::Array(a)) => a.clone(),
+                    _ => continue,
+                }
+            } else {
+                match doc.objects.get(&font_id) {
+                    Some(Object::Dictionary(font)) => match font.get(b"Widths").ok() {
+                        Some(Object::Array(a)) => a.clone(),
+                        _ => continue,
+                    },
+                    _ => continue,
+                }
+            };
+            for &code in enc_map.keys() {
+                consider(&snapshot, code as u32, &mut updates);
+            }
+            // Codes the PDF encoding names but the CFF encoding does not map
+            // deserve the same check (the Differences-first path above).
+            for &code in differences.keys() {
+                if !enc_map.contains_key(&(code as u8)) {
+                    consider(&snapshot, code, &mut updates);
+                }
+            }
+            !updates.is_empty()
+        };
+
+        if changed {
+            if let Some(wid) = widths_id {
+                if let Some(Object::Array(arr)) = doc.objects.get_mut(&wid) {
+                    for (idx, w) in &updates {
+                        arr[*idx] = Object::Integer(*w);
+                    }
+                    fixed += 1;
+                }
+            } else if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
+                if let Ok(Object::Array(arr)) = font.get_mut(b"Widths") {
+                    for (idx, w) in &updates {
+                        arr[*idx] = Object::Integer(*w);
+                    }
+                    fixed += 1;
+                }
+            }
+        }
+    }
+    fixed
+}
+
+/// Inline CFF encoding supplements in embedded Type1C programs.
+///
+/// Encoding supplements (code → SID) are legal CFF, but veraPDF 1.28.2 reads
+/// the SID where a GID−1 belongs, so every supplement-defined code falls back
+/// to the .notdef advance in its §6.2.11.5 width check. Measured on govdocs
+/// 002_002202: nine failing codes across five TeX subset fonts, all of them
+/// supplement codes. Folding the supplements into the main encoding table
+/// changes nothing about the mapping — only its representation.
+pub fn fix_cff_encoding_supplements(doc: &mut Document) -> usize {
+    let candidates: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(&id, obj)| {
+            let Object::Stream(s) = obj else {
+                return None;
+            };
+            let is_type1c =
+                s.dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok()) == Some(b"Type1C");
+            if is_type1c {
+                Some(id)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Codes each font actually uses, keyed by its FontFile3 stream. A
+    // supplement that duplicates a main-table code is only inlined when the
+    // document uses the supplement's code and not the main one.
+    let used_by_font = collect_used_codes_tolerant(doc);
+    let mut preferred_by_stream: std::collections::HashMap<
+        ObjectId,
+        std::collections::HashSet<u8>,
+    > = Default::default();
+    for (font_id, codes) in &used_by_font {
+        let ff_id = doc
+            .objects
+            .get(font_id)
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|font| font.get(b"FontDescriptor").ok())
+            .and_then(|o| o.as_reference().ok())
+            .and_then(|fd_id| doc.objects.get(&fd_id))
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|fd| fd.get(b"FontFile3").ok())
+            .and_then(|o| o.as_reference().ok());
+        let Some(ff_id) = ff_id else { continue };
+        let entry = preferred_by_stream.entry(ff_id).or_default();
+        for code in codes {
+            entry.insert(*code);
+        }
+    }
+
+    let mut fixed = 0;
+    for id in candidates {
+        let data = match doc.objects.get(&id) {
+            Some(Object::Stream(s)) => {
+                let mut s = s.clone();
+                let _ = s.decompress();
+                s.content
+            }
+            _ => continue,
+        };
+        // Bare CFF only — an OpenType wrapper would need its table directory
+        // updated too, which this surgery does not do.
+        if data.len() < 4 || data[0] != 1 {
+            continue;
+        }
+        let preferred = preferred_by_stream.get(&id).cloned().unwrap_or_default();
+        let Some(patched) = crate::cff_append::inline_encoding_supplements(&data, &preferred)
+        else {
+            continue;
+        };
+        if let Some(Object::Stream(s)) = doc.objects.get_mut(&id) {
+            s.set_plain_content(patched);
+            let _ = s.compress();
+            fixed += 1;
+        }
+    }
+    fixed
 }
 
 /// Fix Type3 fonts where CharProcs defines a `.notdef` glyph procedure.
@@ -22940,7 +23583,7 @@ mod tests {
         // read; its charstrings are already in 1000-unit text space.
         let cff = cff_parser::Table::parse(&font_bytes).expect("parse substitute CFF");
         let expected_missing_width = cff
-            .glyph_width_f64(cff_parser::GlyphId(0))
+            .glyph_width_f64_verapdf(cff_parser::GlyphId(0))
             .map(|w| w.round() as i64)
             .expect("substitute must define .notdef");
 
@@ -23501,6 +24144,94 @@ end
             widths_entry(&doc, font_id, 212),
             333,
             "sync must resolve MacRoman 212 through the PDF encoding (/quoteleft)"
+        );
+    }
+
+    #[test]
+    fn test_control_strip_preserves_type3_glyphs_on_control_codes() {
+        // govdocs 000_000816: a Type3 font puts a real glyph (thindash) on
+        // code 1. Stripping that byte to 0x20 changes what the page draws and
+        // leaves code 32 outside the font's declared range (6.2.11.5:1).
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+
+        let charproc = Stream::new(dictionary! {}, b"100 0 d0 0 0 m 100 100 l S".to_vec());
+        let charproc_id = doc.add_object(Object::Stream(charproc));
+        let mut charprocs = lopdf::Dictionary::new();
+        charprocs.set("thindash", Object::Reference(charproc_id));
+        let enc = dictionary! {
+            "Type" => "Encoding",
+            "Differences" => Object::Array(vec![
+                Object::Integer(1),
+                Object::Name(b"thindash".to_vec()),
+            ]),
+        };
+        let type3 = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type3",
+            "Name" => "T1",
+            "FirstChar" => Object::Integer(1),
+            "LastChar" => Object::Integer(1),
+            "Widths" => Object::Array(vec![Object::Integer(100)]),
+            "Encoding" => Object::Dictionary(enc),
+            "CharProcs" => Object::Dictionary(charprocs),
+            "FontBBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(100), Object::Integer(100),
+            ]),
+            "FontMatrix" => Object::Array(vec![
+                Object::Real(0.01), Object::Integer(0),
+                Object::Integer(0), Object::Real(0.01),
+                Object::Integer(0), Object::Integer(0),
+            ]),
+            "Resources" => Object::Dictionary(lopdf::Dictionary::new()),
+        };
+        let font_id = doc.add_object(Object::Dictionary(type3));
+
+        let content = Stream::new(dictionary! {}, b"BT /T1 1 Tf (\x01\x02) Tj ET".to_vec());
+        let content_id = doc.add_object(Object::Stream(content));
+
+        let mut font_res = lopdf::Dictionary::new();
+        font_res.set("T1", Object::Reference(font_id));
+        let mut res = lopdf::Dictionary::new();
+        res.set("Font", Object::Dictionary(font_res));
+        let page = dictionary! {
+            "Type" => "Page",
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Dictionary(res),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page));
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Count" => Object::Integer(1),
+            "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let _ = fix_simple_font_streams(&mut doc);
+
+        let mut stream = doc
+            .objects
+            .get(&content_id)
+            .and_then(|o| o.as_stream().ok())
+            .cloned()
+            .expect("content stream");
+        let _ = stream.decompress();
+        let text = String::from_utf8_lossy(&stream.content);
+        assert!(
+            text.contains("(\x01 )") || text.contains("(\x01\x20)"),
+            "code 1 (thindash) must survive, code 2 must become space; got {text:?}"
         );
     }
 }
