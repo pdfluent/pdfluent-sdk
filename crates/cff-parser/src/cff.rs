@@ -1163,6 +1163,47 @@ impl<'a> Table<'a> {
         self.glyph_width_f64(glyph_id).map(|w| w as f32)
     }
 
+    /// The advance as veraPDF 1.28.2 computes it for a Type2 charstring.
+    ///
+    /// veraPDF truncates a fractional `nominalWidthX` to an integer when it
+    /// applies it (measured on TeX subset CFFs: 384.77777 is applied as 384,
+    /// 501.4375 as 501, so its reported advance is the true advance minus the
+    /// fractional part). The CFF specification adds the full value, which is
+    /// what [`glyph_width_f64`] returns. Both values sit well within the
+    /// §6.2.11.5 tolerance of ±1 of each other, but a dictionary width that
+    /// matches the *spec* value can exceed the tolerance against the
+    /// *validator's* value — so dictionary widths written to satisfy veraPDF
+    /// must use the same truncated arithmetic.
+    pub fn glyph_width_f64_verapdf(&self, glyph_id: GlyphId) -> Option<f64> {
+        match self.kind {
+            FontKind::SID(ref sid) => {
+                let data = self.char_strings.get(u32::from(glyph_id.0))?;
+                let (_, width) =
+                    parse_char_string(data, self, glyph_id, true, &mut DummyOutline).ok()?;
+                let width = width
+                    .map(|w| sid.nominal_width.trunc() + w)
+                    .unwrap_or(sid.default_width.trunc());
+                Some(width)
+            }
+            FontKind::CID(ref cid) => {
+                let cs_data = self.char_strings.get(u32::from(glyph_id.0))?;
+                let (_, width) =
+                    parse_char_string(cs_data, self, glyph_id, true, &mut DummyOutline).ok()?;
+                let font_dict_index = cid.fd_select.font_dict_index(glyph_id)?;
+                let font_dict_data = cid.fd_array.get(u32::from(font_dict_index))?;
+                let private_dict_range = parse_font_dict(font_dict_data)?;
+                let private_dict_data = self.table_data.get(private_dict_range)?;
+                let private_dict = parse_private_dict(private_dict_data);
+                let nominal_width = private_dict.nominal_width.unwrap_or(0.0);
+                let default_width = private_dict.default_width.unwrap_or(0.0);
+                let width = width
+                    .map(|w| nominal_width.trunc() + w)
+                    .unwrap_or(default_width.trunc());
+                Some(width)
+            }
+        }
+    }
+
     /// Returns a glyph ID by a name.
     pub fn glyph_index_by_name(&self, name: &str) -> Option<GlyphId> {
         match self.kind {
