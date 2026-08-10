@@ -126,30 +126,42 @@ def main() -> None:
             measured[name] = round(100.0 * o / s, 1)
 
     if args.update_baseline:
+        # Per-platform documents map: font substitution differs per host, so a
+        # baseline recorded on one OS says nothing about another (the same
+        # reason conformance_baseline.json is keyed by platform).
+        existing: dict = {}
+        if BASELINE.is_file():
+            existing = json.loads(BASELINE.read_text())
+        platforms = existing.get("platforms", {})
+        platforms[platform.system().lower()] = measured
         BASELINE.write_text(
             json.dumps(
                 {
                     "note": (
                         "Characters mutool extracts, converted over source, per "
-                        "document. The gate fails on a drop against these numbers, "
-                        "not against 100%: several documents never reached 100% and "
-                        "repaired encodings legitimately push others above it."
+                        "document, per platform. The gate fails on a drop against "
+                        "these numbers, not against 100%: several documents never "
+                        "reached 100% and repaired encodings legitimately push "
+                        "others above it."
                     ),
-                    "platform": platform.system().lower(),
                     "tolerance_pp": TOLERANCE_PP,
-                    "documents": measured,
+                    "platforms": platforms,
                 },
                 indent=2,
                 sort_keys=True,
             )
             + "\n"
         )
-        print(f"[retention] baseline written: {BASELINE} ({len(measured)} documents)")
+        print(f"[retention] baseline written: {BASELINE} ({len(measured)} documents, {platform.system().lower()})")
         return
 
     if not BASELINE.is_file():
         die(f"no baseline at {BASELINE}; run once with --update-baseline")
-    base = json.loads(BASELINE.read_text())["documents"]
+    baseline_json = json.loads(BASELINE.read_text())
+    # Per-platform shape, with the original flat shape as fallback.
+    base = baseline_json.get("platforms", {}).get(platform.system().lower())
+    if base is None:
+        base = baseline_json.get("documents", {})
 
     regressed = []
     for name, now in sorted(measured.items()):
