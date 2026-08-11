@@ -178,7 +178,8 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
 #[derive(Debug, Clone, Default)]
 pub struct FixupReport {
     /// PDF/A §6.2.11.6 — `/StandardEncoding` references replaced with
-    /// `/WinAnsiEncoding` on non-symbolic simple fonts.
+    /// `/WinAnsiEncoding` on non-symbolic TrueType fonts (the clause does
+    /// not apply to Type1) plus explicit encodings on encoding-less fonts.
     pub standard_encoding_fixed: usize,
     /// PDF/A §6.2.11.6:2 — TrueType font `/Encoding` `/Differences`
     /// entries normalized so each glyph name resolves under the chosen
@@ -341,9 +342,19 @@ pub struct FixupReport {
 // ---------------------------------------------------------------------------
 //
 // PDF/A §6.2.11.6 only allows /WinAnsiEncoding and /MacRomanEncoding as
-// BaseEncoding for non-symbolic simple fonts.  /StandardEncoding is forbidden.
-// This pass replaces it everywhere — both as a direct Encoding name and as a
-// BaseEncoding value inside an Encoding dictionary.
+// BaseEncoding for non-symbolic **TrueType** fonts. /StandardEncoding is
+// forbidden there. (veraPDF's PDF/A-2b profile implements the clause on
+// PDTrueTypeFont/TrueTypeFontProgram objects only.)
+//
+// For Type1/MMType1 fonts StandardEncoding is *not* forbidden — for the
+// Standard 14 it is the program's built-in encoding, and ISO 32000-1 makes
+// a missing /BaseEncoding mean exactly that. Replacing it after the width
+// passes ran declares one encoding while /Widths describes the other;
+// measured as §6.2.11.5:1 failures on govdocs 001_001376, 002_002231 and
+// 002_002617. This pass therefore leaves Type1 encodings alone, except for
+// giving a non-symbolic Type1 font that has *no* /Encoding at all an
+// explicit WinAnsiEncoding (the pipeline computes those widths through
+// WinAnsi assumptions).
 
 fn fix_standard_encoding(doc: &mut Document) -> usize {
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
@@ -362,6 +373,7 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
             ) {
                 continue;
             }
+            let is_truetype = subtype.as_deref() == Some("TrueType");
             // For direct /Encoding /StandardEncoding (Name), skip symbolic
             // subset fonts — changing the entire encoding mapping is risky
             // when the subset may lack glyphs expected by WinAnsiEncoding.
@@ -378,16 +390,19 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
             match dict.get(b"Encoding").ok() {
                 // Missing /Encoding for non-symbolic simple font: default is StandardEncoding (forbidden).
                 None if !symbolic => StdEncAction::ReplaceName,
-                // /Encoding /StandardEncoding — skip symbolic subsets
+                // /Encoding /StandardEncoding — skip symbolic subsets; only
+                // forbidden on TrueType (see the section comment).
                 Some(Object::Name(n)) if n == b"StandardEncoding" => {
-                    if symbolic && is_subset {
+                    if (symbolic && is_subset) || !is_truetype {
                         StdEncAction::None
                     } else {
                         StdEncAction::ReplaceName
                     }
                 }
-                // /Encoding << ... >>
-                Some(Object::Dictionary(enc)) => {
+                // /Encoding << ... >> — the StandardEncoding base is only
+                // forbidden on TrueType; on Type1 it is the program's
+                // built-in encoding and replacing it desynchronizes /Widths.
+                Some(Object::Dictionary(enc)) if is_truetype => {
                     match enc.get(b"BaseEncoding").ok() {
                         Some(Object::Name(n)) if n == b"StandardEncoding" => {
                             StdEncAction::ReplaceInlineBase
@@ -398,7 +413,7 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
                     }
                 }
                 // /Encoding is an indirect reference — always fix BaseEncoding
-                Some(Object::Reference(enc_id)) => match doc.objects.get(enc_id) {
+                Some(Object::Reference(enc_id)) if is_truetype => match doc.objects.get(enc_id) {
                     Some(Object::Dictionary(enc)) => match enc.get(b"BaseEncoding").ok() {
                         Some(Object::Name(n)) if n == b"StandardEncoding" => {
                             StdEncAction::ReplaceRefBase(*enc_id)
@@ -7634,6 +7649,44 @@ mod tests {
         let (fixed, count) = rewrite_concatenated_operators(data).expect("rewrite");
         assert_eq!(count, 1);
         assert_eq!(fixed, b"10 20 30 40 re f 354.48");
+    }
+
+    fn doc_with_simple_font(subtype: &str, encoding: lopdf::Object) -> lopdf::Document {
+        use lopdf::dictionary;
+        let mut doc = lopdf::Document::with_version("1.7");
+        let font = lopdf::dictionary! {
+            "Type" => "Font",
+            "Subtype" => subtype,
+            "BaseFont" => "TestFont",
+            "Encoding" => encoding,
+        };
+        doc.add_object(lopdf::Object::Dictionary(font));
+        doc
+    }
+
+    #[test]
+    fn standard_encoding_replacement_is_truetype_only() {
+        use lopdf::Object;
+
+        // §6.2.11.6 forbids StandardEncoding only for TrueType fonts. On
+        // Type1 it is the Standard 14's built-in encoding; replacing it
+        // there desynchronizes /Widths (govdocs 002_002231 c.s.).
+        let mut type1 = doc_with_simple_font("Type1", Object::Name(b"StandardEncoding".to_vec()));
+        assert_eq!(super::fix_standard_encoding(&mut type1), 0);
+        let font = type1.objects.values().next().unwrap().as_dict().unwrap();
+        assert_eq!(
+            font.get(b"Encoding").unwrap().as_name().unwrap(),
+            b"StandardEncoding"
+        );
+
+        let mut truetype =
+            doc_with_simple_font("TrueType", Object::Name(b"StandardEncoding".to_vec()));
+        assert_eq!(super::fix_standard_encoding(&mut truetype), 1);
+        let font = truetype.objects.values().next().unwrap().as_dict().unwrap();
+        assert_eq!(
+            font.get(b"Encoding").unwrap().as_name().unwrap(),
+            b"WinAnsiEncoding"
+        );
     }
 }
 
