@@ -18851,7 +18851,10 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
 
             // If no space glyph found by name, use the first valid CID.
             if !clear_unparseable_text && space_cid == 0 && predefined_ranges.is_none() {
-                if let Some(&first_valid) = valid_cids.iter().next() {
+                // Deterministic: HashSet iteration order varies per process,
+                // and this fallback lands in the output bytes (measured on
+                // govdocs 000_000338, where three runs gave three outputs).
+                if let Some(&first_valid) = valid_cids.iter().min() {
                     space_cid = first_valid;
                 }
             }
@@ -21341,18 +21344,21 @@ fn fix_notdef_in_type1(
             base_encoding = String::from_utf8(n.clone()).unwrap_or_default();
         }
     }
-    if base_encoding.is_empty() && !cff_has_custom_encoding(font_data) {
+    if base_encoding.is_empty() {
         // A missing /BaseEncoding means "the program's built-in encoding".
         // For a Standard/Expert-encoding CFF that is StandardEncoding; saying
         // so explicitly keeps every later pass on the same resolution.
+        //
+        // For a custom-encoding CFF the declared base does NOT drive the
+        // validator — veraPDF's width check resolves custom-encoding CFFs
+        // through the CFF encoding regardless of the PDF base — but it DOES
+        // drive rendering and text extraction. Leaving it undeclared made
+        // letters resolve through the permuted subset encoding and rendered
+        // 002_002202's body text as dots (−34% characters). The width side is
+        // re-aligned afterwards by fix_custom_cff_encoding_widths, so the
+        // declared base costs no conformance.
         base_encoding = "StandardEncoding".to_string();
     }
-    // For a CFF with a CUSTOM encoding, veraPDF treats that encoding as
-    // authoritative for §6.2.11.5 (see cff_width_for_code). Materializing any
-    // text base here would send our own width passes down the PDF-name path
-    // while the validator stays on the CFF encoding — the measured 002_002202
-    // mismatch. An empty base means "built-in", which is exactly that custom
-    // encoding, so leave it empty.
 
     // Phase 1: Replace .notdef entries and entries referencing glyphs
     // not present in the font program (which veraPDF treats as .notdef).
@@ -21439,7 +21445,9 @@ fn fix_notdef_in_type1(
         if code < 32 {
             if available_glyphs.contains("space") {
                 new_diffs.push((code, "space".to_string()));
-            } else if let Some(name) = available_glyphs.iter().next() {
+            } else if let Some(name) = available_glyphs.iter().min() {
+                // .min(), not .next(): HashSet order varies per process and
+                // the choice lands in the output (govdocs 000_000338).
                 new_diffs.push((code, name.clone()));
             }
             continue;
@@ -21518,8 +21526,9 @@ fn fix_notdef_in_type1(
             new_diffs.push((code, replacement));
         }
         if is_subset && replacement_is_space && !available_glyphs.contains("space") {
-            // Last-resort for subset fonts: choose any available glyph.
-            if let Some(name) = available_glyphs.iter().next() {
+            // Last-resort for subset fonts: choose any available glyph, but a
+            // deterministic one — HashSet order varies per process.
+            if let Some(name) = available_glyphs.iter().min() {
                 new_diffs.push((code, name.clone()));
             }
         }
@@ -21852,7 +21861,7 @@ fn fix_notdef_in_type1_fontfile(
                 if available_glyphs.contains("space") {
                     new_diffs.push((32, "space".to_string()));
                 } else if is_subset {
-                    if let Some(name) = available_glyphs.iter().next() {
+                    if let Some(name) = available_glyphs.iter().min() {
                         new_diffs.push((32, name.clone()));
                     }
                 }
@@ -22334,14 +22343,17 @@ fn apply_encoding_fixes(
     }
 
     // Determine the base encoding to use. An empty base_encoding means the
-    // program's built-in encoding — for a custom-encoding CFF that is the
-    // encoding veraPDF validates against, so no BaseEncoding key is written
-    // at all. WinAnsi is only the fallback for fonts where the pipeline
-    // computes widths through WinAnsi assumptions.
+    // program's built-in encoding; StandardEncoding is the declaration that
+    // restates that for the validator (veraPDF treats a declared StandardEncoding
+    // on a Type1 font as "use the built-in", measured on govdocs 001_001696,
+    // where WinAnsi instead forces the Latin table and turns built-in glyphs
+    // into .notdef). For custom-encoding CFFs the declared base does not drive
+    // the width check at all, but it does drive rendering and extraction
+    // (002_002202).
     let effective_base = if base_encoding.is_empty() {
-        None
+        "StandardEncoding"
     } else {
-        Some(base_encoding)
+        base_encoding
     };
 
     let shared_encoding_ref =
@@ -22351,14 +22363,10 @@ fn apply_encoding_fixes(
     if let Some(ref_id) = enc_ref {
         if !shared_encoding_ref {
             if let Some(Object::Dictionary(ref mut enc)) = doc.objects.get_mut(&ref_id) {
-                match effective_base {
-                    Some(base) => {
-                        enc.set("BaseEncoding", Object::Name(base.as_bytes().to_vec()));
-                    }
-                    None => {
-                        enc.remove(b"BaseEncoding");
-                    }
-                }
+                enc.set(
+                    "BaseEncoding",
+                    Object::Name(effective_base.as_bytes().to_vec()),
+                );
                 enc.set("Differences", Object::Array(diff_array));
                 return true;
             }
@@ -22370,9 +22378,10 @@ fn apply_encoding_fixes(
         "Type".to_string(),
         Object::Name(b"Encoding".to_vec()),
     )]);
-    if let Some(base) = effective_base {
-        enc_dict.set("BaseEncoding", Object::Name(base.as_bytes().to_vec()));
-    }
+    enc_dict.set(
+        "BaseEncoding",
+        Object::Name(effective_base.as_bytes().to_vec()),
+    );
     enc_dict.set("Differences", Object::Array(diff_array));
 
     if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&font_id) {
@@ -22724,38 +22733,40 @@ pub fn fix_custom_cff_encoding_widths(doc: &mut Document) -> usize {
         let scale = cff_matrix_scale(cff.matrix().sx);
 
         // The validator's per-code resolution for these fonts: a PDF
-        // /Encoding name the charset has wins (measured on govdocs
+        // /Differences name the charset has wins (measured on govdocs
         // 002_002708's AdvP subsets, where codes 1-4 hang on /C20, /C21,
-        // /C18, /C19 — resolving those through the CFF encoding instead
-        // produces C1..C4 widths and breaks a passing document); otherwise
-        // veraPDF falls back to the CFF encoding, which after
-        // fix_cff_encoding_supplements also covers former supplement codes
-        // (the TeX subsets of 002_002202).
+        // /C18, /C19). For everything else the CFF encoding decides — it
+        // outranks any named base, which for custom-encoding CFFs is a
+        // rendering/extraction declaration, not the validator's resolution
+        // (the supplement codes of 002_002202, folded in by
+        // fix_cff_encoding_supplements).
         let expected_for = |code: u32| -> Option<f64> {
             if code > 255 {
                 return None;
             }
-            let name = differences.get(&code).cloned().or_else(|| {
-                if enc_name.is_empty() {
-                    None
-                } else {
-                    cff_pdf_base_glyph_name(code, &enc_name)
-                }
-            });
-            if let Some(name) = name {
+            if let Some(name) = differences.get(&code) {
                 if name != ".notdef" {
-                    if let Some(gid) = cff.glyph_index_by_name(&name) {
+                    if let Some(gid) = cff.glyph_index_by_name(name) {
                         if let Some(w) = cff_glyph_width_f64(&cff, gid, scale) {
                             return Some(w);
                         }
                     }
                 }
             }
-            let gid = enc_map.get(&(code as u8))?;
-            if *gid == 0 {
+            if let Some(gid) = enc_map.get(&(code as u8)) {
+                if *gid != 0 {
+                    return cff_glyph_width_f64(&cff, cff_parser::GlyphId(*gid), scale);
+                }
+            }
+            if enc_name.is_empty() {
                 return None;
             }
-            cff_glyph_width_f64(&cff, cff_parser::GlyphId(*gid), scale)
+            let name = cff_pdf_base_glyph_name(code, &enc_name)?;
+            if name == ".notdef" {
+                return None;
+            }
+            let gid = cff.glyph_index_by_name(&name)?;
+            cff_glyph_width_f64(&cff, gid, scale)
         };
 
         let mut updates: Vec<(usize, i64)> = Vec::new();
