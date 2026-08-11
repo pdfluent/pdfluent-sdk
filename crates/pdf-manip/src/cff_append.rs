@@ -200,13 +200,38 @@ fn decode_operands(d: &[u8]) -> Vec<i32> {
                 i += 5;
             }
             30 => {
+                // Nibble-encoded real number (CFF spec §6). Private DICTs of
+                // TeX-derived CFFs store nominalWidthX/defaultWidthX as reals
+                // (e.g. 501.4375); skipping them made `private_widths` read 0
+                // and write a blank glyph whose advance came out nominalWidthX
+                // too wide. Decode and truncate toward zero — the same
+                // arithmetic veraPDF applies, and within ±1 of the full value.
                 i += 1;
+                let mut s = String::new();
                 while i < d.len() {
                     let b = d[i];
                     i += 1;
-                    if b & 0x0f == 0x0f || b & 0xf0 == 0xf0 {
+                    let mut done = false;
+                    for nib in [b >> 4, b & 0x0f] {
+                        match nib {
+                            0x0..=0x9 => s.push((b'0' + nib) as char),
+                            0xa => s.push('.'),
+                            0xb => s.push('E'),
+                            0xc => s.push_str("E-"),
+                            0xe => s.push('-'),
+                            0xf => {
+                                done = true;
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    if done {
                         break;
                     }
+                }
+                if let Ok(v) = s.parse::<f64>() {
+                    out.push(v.trunc() as i32);
                 }
             }
             32..=246 => {
@@ -416,6 +441,260 @@ pub fn try_append_blank_glyph(
         return Err(R::SanityCheck);
     }
     Ok(out)
+}
+
+/// Inline a CFF Encoding's supplement section into the main table.
+///
+/// Encoding supplements (format flag 0x80) map code → SID, and the consumer
+/// must resolve SID → GID through the charset. veraPDF 1.28.2 does not: it
+/// stores the raw SID where a GID−1 belongs, so every supplement-defined code
+/// falls back to the .notdef advance in its width check (measured on govdocs
+/// 002_002202 — all nine failing codes across five TeX subset fonts were
+/// supplement codes). Folding the supplements into the main encoding table
+/// changes nothing about the mapping — only its representation moves.
+///
+/// A supplement whose glyph already has a main-table code is a *duplicate*:
+/// format 0 holds one code per gid, so one of the two has to win. `preferred`
+/// is the set of codes the document actually uses with this font; a
+/// supplement only replaces the main code when the supplement's code is used
+/// and the main code is not. Otherwise the supplement is left in place
+/// (govdocs 002_002202's Times-Roman subset maps both 32 and 160 to the
+/// space glyph — inlining 160 over 32 broke code 32).
+///
+/// Returns `None` for anything that is not a supplemented custom encoding,
+/// when no supplement needs inlining, or when the merged mapping cannot be
+/// represented as one format 0 table (a gid without a code — format 0 cannot
+/// skip gids).
+pub fn inline_encoding_supplements(
+    data: &[u8],
+    preferred: &std::collections::HashSet<u8>,
+) -> Option<Vec<u8>> {
+    let (enc_span, enc_off) = top_dict_encoding_span(data)?;
+    if enc_off <= 1 {
+        return None; // predefined Standard/Expert encoding: no supplements
+    }
+    let fmt = *data.get(enc_off)? as usize;
+    if fmt & 0x80 == 0 {
+        return None; // no supplement section
+    }
+
+    // Main table: gid (1-based) → code, per spec index+1.
+    let mut gid_code: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+    let mut p = enc_off + 1;
+    match fmt & 0x7f {
+        0 => {
+            let n = *data.get(p)? as usize;
+            p += 1;
+            for (i, code) in data.get(p..p + n)?.iter().enumerate() {
+                gid_code.insert(i + 1, *code as usize);
+            }
+            p += n;
+        }
+        1 => {
+            let n_ranges = *data.get(p)? as usize;
+            p += 1;
+            let mut gid = 1usize;
+            for _ in 0..n_ranges {
+                let first = *data.get(p)? as usize;
+                let n_left = *data.get(p + 1)? as usize;
+                p += 2;
+                for j in 0..=n_left {
+                    gid_code.insert(gid, first + j);
+                    gid += 1;
+                }
+            }
+        }
+        _ => return None,
+    }
+
+    // Supplements: code → SID, resolved to a GID through the charset.
+    let cff = cff_parser::Table::parse(data)?;
+    let n_sups = *data.get(p)? as usize;
+    p += 1;
+    let mut remaining_sups: Vec<(u8, u16)> = Vec::new();
+    let mut inlined = 0usize;
+    for _ in 0..n_sups {
+        let code = *data.get(p)? as usize;
+        let sid = u16::from_be_bytes([*data.get(p + 1)?, *data.get(p + 2)?]);
+        p += 3;
+        let gid = cff.charset.sid_to_gid(cff_parser::StringId(sid))?;
+        let gid = gid.0 as usize;
+        match gid_code.get(&gid) {
+            // Pure addition: the glyph has no main-table code.
+            None => {
+                gid_code.insert(gid, code);
+                inlined += 1;
+            }
+            // Duplicate. Inline only when the supplement's code is the used
+            // one; otherwise keep the original supplement entry untouched.
+            Some(&main_code) => {
+                if main_code != code
+                    && preferred.contains(&(code as u8))
+                    && !preferred.contains(&(main_code as u8))
+                {
+                    gid_code.insert(gid, code);
+                    inlined += 1;
+                } else {
+                    remaining_sups.push((code as u8, sid));
+                }
+            }
+        }
+    }
+    if inlined == 0 {
+        return None;
+    }
+
+    // Emit the main table as format 0: codes[gid-1] = code. A gid without a
+    // code cannot be skipped in this format — refuse rather than guess.
+    let max_gid = *gid_code.keys().next_back()?;
+    if max_gid > 255 {
+        return None;
+    }
+    let mut codes = Vec::with_capacity(max_gid);
+    for gid in 1..=max_gid {
+        codes.push(*gid_code.get(&gid)? as u8);
+    }
+    let mut block = vec![0u8, codes.len() as u8];
+    block.extend_from_slice(&codes);
+    if !remaining_sups.is_empty() {
+        block[0] = 0x80;
+        block.push(remaining_sups.len() as u8);
+        for (code, sid) in &remaining_sups {
+            block.push(*code);
+            block.extend_from_slice(&sid.to_be_bytes());
+        }
+    }
+
+    // Preferred path: point the Top DICT's encoding operand at an appended
+    // block without moving anything. Fall back to rebuilding the Top DICT
+    // with wide offsets when the operand is too narrow to reach EOF.
+    let mut out = data.to_vec();
+    let new_off = out.len();
+    out.extend_from_slice(&block);
+    let out = match patch_operand_in_place(&mut out, &enc_span, new_off as i32) {
+        Some(()) => out,
+        None => rebuild_top_dict_with_encoding(data, &block)?,
+    };
+
+    // Sanity: the result must re-parse and resolve every inlined code to the
+    // gid the charset gave it, and every kept main-table code must survive.
+    let check = cff_parser::Table::parse(&out)?;
+    for (gid, code) in &gid_code {
+        let got = check.encoding.code_to_gid(&check.charset, *code as u8)?;
+        if got.0 as usize != *gid {
+            return None;
+        }
+    }
+    for (code, sid) in &remaining_sups {
+        let want = cff.charset.sid_to_gid(cff_parser::StringId(*sid))?;
+        let got = check.encoding.code_to_gid(&check.charset, *code)?;
+        if got != want {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+/// Locate the encoding operand (Top DICT op 16) inside the file.
+fn top_dict_encoding_span(data: &[u8]) -> Option<(OperandSpan, usize)> {
+    let hdr_size = *data.get(2)? as usize;
+    let name_index = parse_index(data, hdr_size)?;
+
+    let td_pos = name_index.end;
+    let count = read_u16(data, td_pos)? as usize;
+    if count != 1 {
+        return None;
+    }
+    let off_size = read_u8(data, td_pos + 2)?;
+    if !(1..=4).contains(&off_size) {
+        return None;
+    }
+    let offsets_start = td_pos + 3;
+    let data_start = offsets_start + 2 * off_size as usize - 1;
+    let first = read_offset(data, offsets_start, off_size)?;
+    let last = read_offset(data, offsets_start + off_size as usize, off_size)?;
+    let dict_start = data_start.checked_add(first)?;
+    let dict_end = data_start.checked_add(last)?;
+    let dict = data.get(dict_start..dict_end)?;
+
+    let entries = parse_dict(dict)?;
+    let mut cursor = dict_start;
+    for e in &entries {
+        let span = OperandSpan {
+            start: cursor,
+            len: e.operands.len(),
+        };
+        cursor += e.operands.len() + e.operator.len();
+        if e.operator.as_slice() == [16] {
+            let vals = decode_operands(&e.operands);
+            return Some((span, *vals.first()? as usize));
+        }
+    }
+    None
+}
+
+/// Rebuild the file with a Top DICT whose operands are wide enough for the
+/// appended encoding block. Mirrors `rebuild_with_wide_offsets`: every
+/// absolute offset is re-encoded at 5 bytes and the tail shifts.
+fn rebuild_top_dict_with_encoding(data: &[u8], new_encoding: &[u8]) -> Option<Vec<u8>> {
+    let hdr_size = *data.get(2)? as usize;
+    let name_index = parse_index(data, hdr_size)?;
+    let top_index = parse_index(data, name_index.end)?;
+    let tail_start = top_index.end;
+    let entries = parse_dict(top_index.entries.first()?)?;
+
+    let build = |delta: usize, enc_off: usize| -> Option<Vec<u8>> {
+        let mut dict = Vec::new();
+        for e in &entries {
+            let vals = decode_operands(&e.operands);
+            match e.operator.as_slice() {
+                // charset ≤ 2 and Encoding ≤ 1 are predefined constants, not
+                // offsets; Private's first operand is a size.
+                [15] => {
+                    let v = *vals.first()?;
+                    let shifted = if v <= 2 { v } else { v + delta as i32 };
+                    dict.extend_from_slice(&wide_int(shifted));
+                }
+                [16] => dict.extend_from_slice(&wide_int(enc_off as i32)),
+                [17] => {
+                    let v = *vals.first()?;
+                    dict.extend_from_slice(&wide_int(v + delta as i32));
+                }
+                [18] => {
+                    let size = *vals.first()?;
+                    let off = *vals.get(1)?;
+                    dict.extend_from_slice(&wide_int(size));
+                    dict.extend_from_slice(&wide_int(off + delta as i32));
+                }
+                _ => dict.extend_from_slice(&e.operands),
+            }
+            dict.extend_from_slice(&e.operator);
+        }
+        Some(dict)
+    };
+
+    let probe = build(0, 0)?;
+    let new_top_index = write_index(&[probe]);
+    let delta = new_top_index
+        .len()
+        .checked_sub(top_index.end - name_index.end)?;
+
+    let prefix_len = name_index.end;
+    let tail_len = data.len() - tail_start;
+    let enc_off = prefix_len + new_top_index.len() + tail_len;
+
+    let dict = build(delta, enc_off)?;
+    let top_index = write_index(&[dict]);
+    if top_index.len() != new_top_index.len() {
+        return None;
+    }
+
+    let mut out = Vec::with_capacity(data.len() + top_index.len() + new_encoding.len());
+    out.extend_from_slice(&data[..prefix_len]);
+    out.extend_from_slice(&top_index);
+    out.extend_from_slice(&data[tail_start..]);
+    out.extend_from_slice(new_encoding);
+    Some(out)
 }
 
 /// Rebuild the file with a Top DICT whose offsets are wide enough to reach the
@@ -694,6 +973,82 @@ mod tests {
             out.extend_from_slice(&[139, 21, 139, 20]);
         }
         out
+    }
+
+    /// A CFF with a custom encoding whose supplement section maps `supp.0`
+    /// to `supp.1` (a SID). `main_codes[i]` is the code for gid i+1.
+    fn synth_cff_with_supplement(
+        glyph_names: &[u16],
+        main_codes: &[u8],
+        supp: (u8, u16),
+    ) -> Vec<u8> {
+        let mut charset_off = 0usize;
+        let mut charstrings_off = 0usize;
+        let mut private_off = 0usize;
+        let mut encoding_off = 0usize;
+        let mut out = Vec::new();
+        for _ in 0..4 {
+            out = vec![1, 0, 4, 2];
+            out.extend_from_slice(&write_index(&[b"Test".to_vec()]));
+            let mut dict = Vec::new();
+            dict.extend_from_slice(&t2_int(charset_off as i32));
+            dict.push(15);
+            dict.extend_from_slice(&t2_int(charstrings_off as i32));
+            dict.push(17);
+            dict.extend_from_slice(&t2_int(encoding_off as i32));
+            dict.push(16);
+            dict.extend_from_slice(&t2_int(4));
+            dict.extend_from_slice(&t2_int(private_off as i32));
+            dict.push(18);
+            out.extend_from_slice(&write_index(&[dict]));
+            out.extend_from_slice(&write_index(&[]));
+            out.extend_from_slice(&write_index(&[]));
+            charset_off = out.len();
+            out.extend_from_slice(&write_charset(glyph_names));
+            charstrings_off = out.len();
+            let entries: Vec<Vec<u8>> = (0..=glyph_names.len()).map(|_| vec![139u8, 14]).collect();
+            out.extend_from_slice(&write_index(&entries));
+            private_off = out.len();
+            out.extend_from_slice(&[139, 21, 139, 20]);
+            encoding_off = out.len();
+            // Format 0 with one supplement.
+            out.push(0x80);
+            out.push(main_codes.len() as u8);
+            out.extend_from_slice(main_codes);
+            out.push(1); // nSups
+            out.push(supp.0);
+            out.extend_from_slice(&supp.1.to_be_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn inlines_a_supplement_for_an_uncoded_glyph() {
+        // gid 3 (SID 7) has no main-table code; supplement 161 -> SID 7.
+        let font = synth_cff_with_supplement(&[5, 6, 7], &[65, 66], (161, 7));
+        let out = inline_encoding_supplements(&font, &Default::default())
+            .expect("pure addition must inline");
+        let cff = cff_parser::Table::parse(&out).unwrap();
+        let gid = cff.encoding.code_to_gid(&cff.charset, 161).unwrap();
+        assert_eq!(gid.0, 3);
+    }
+
+    #[test]
+    fn inlines_a_duplicate_only_when_the_supplement_code_is_used() {
+        // gid 2 (SID 6) has main code 66 and supplement code 161.
+        let font = synth_cff_with_supplement(&[5, 6], &[65, 66], (161, 6));
+
+        // Document uses 161, not 66: inline (replaces the main code).
+        let preferred: std::collections::HashSet<u8> = [161].into_iter().collect();
+        let out = inline_encoding_supplements(&font, &preferred).expect("inline");
+        let cff = cff_parser::Table::parse(&out).unwrap();
+        assert_eq!(cff.encoding.code_to_gid(&cff.charset, 161).unwrap().0, 2);
+
+        // Document uses 66 (or we cannot tell): leave the font untouched.
+        let preferred: std::collections::HashSet<u8> = [66].into_iter().collect();
+        assert!(inline_encoding_supplements(&font, &preferred).is_none());
+        let preferred: std::collections::HashSet<u8> = Default::default();
+        assert!(inline_encoding_supplements(&font, &preferred).is_none());
     }
 
     #[test]

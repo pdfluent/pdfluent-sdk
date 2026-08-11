@@ -10,6 +10,7 @@ members = [
     "crates/hayro-ccitt",
 
     # --- New engine crates ---
+    "crates/pdf-standard-fonts",
     "crates/pdf-engine",
     "crates/pdf-forms",
     "crates/pdf-annot",
