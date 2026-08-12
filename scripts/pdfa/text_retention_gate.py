@@ -147,26 +147,27 @@ def main() -> None:
         for name, value in measured.items():
             merged[name] = min(value, previous.get(name, value))
         platforms[plat] = merged
-        BASELINE.write_text(
-            json.dumps(
-                {
-                    "note": (
+        # Rebuild only the keys this script owns. Anything else a human added —
+        # floor_notes explaining an accepted per-document floor, for instance —
+        # has to survive, or re-recording the baseline silently deletes the
+        # reasoning behind it. (It did, once.)
+        out = dict(existing)
+        out.update(
+            {
+                "note": (
                         "Characters mutool extracts, converted over source, per "
                         "document, per platform. The gate fails on a drop against "
                         "these numbers, not against 100%: several documents never "
                         "reached 100% and repaired encodings legitimately push "
                         "others above it. Values are per-document minima over "
                         "repeated runs of the reference build, because the "
-                        "converter is not fully deterministic on every document."
-                    ),
-                    "tolerance_pp": TOLERANCE_PP,
-                    "platforms": platforms,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n"
+                    "converter is not fully deterministic on every document."
+                ),
+                "tolerance_pp": TOLERANCE_PP,
+                "platforms": platforms,
+            }
         )
+        BASELINE.write_text(json.dumps(out, indent=2, sort_keys=True) + "\n")
         print(
             f"[retention] baseline written: {BASELINE} ({len(measured)} documents, {plat}, merged)"
         )
