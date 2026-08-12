@@ -49,7 +49,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-SAMPLE_LIST = REPO / "benchmarks" / "pdfa" / "govdocs_sample_300.txt"
+DEFAULT_SAMPLE_LIST = REPO / "benchmarks" / "pdfa" / "govdocs_sample_300.txt"
+SAMPLE_LIST = DEFAULT_SAMPLE_LIST
 BASELINE = REPO / "benchmarks" / "pdfa" / "text_retention_baseline.json"
 
 # Retention is noisy at the margin: extractors differ by a character or two on
@@ -77,12 +78,30 @@ def chars(mutool: str, pdf: Path) -> int:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--sample-list",
+        type=Path,
+        default=DEFAULT_SAMPLE_LIST,
+        help="file of PDF basenames, one per line; defaults to the committed 300",
+    )
+    ap.add_argument(
+        "--baseline",
+        type=Path,
+        default=None,
+        help="where to read/write the baseline; defaults to the one beside the sample list",
+    )
     ap.add_argument("--corpus-dir", required=True)
     ap.add_argument("--binary", default="target/release/xfa-test-runner")
     ap.add_argument("--mutool", default="mutool")
     ap.add_argument("--update-baseline", action="store_true")
     ap.add_argument("--only", help="comma-separated basenames, for a quick check")
     args = ap.parse_args()
+
+    # Module-level defaults stay for readability; the run uses whatever the
+    # caller asked for, so a holdout set can be measured with the same code.
+    global SAMPLE_LIST, BASELINE
+    SAMPLE_LIST = args.sample_list
+    BASELINE = args.baseline if args.baseline else BASELINE
 
     binary = Path(args.binary)
     if not binary.is_file():
