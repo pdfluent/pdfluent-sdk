@@ -639,3 +639,40 @@ timeout→pass), zero regressions. The single crash is identical on both
 sides and is a pre-existing `u32::pow` overflow in
 `pdf_interpret::function::type0` during **extraction** (tracked separately;
 not a text-edit issue).
+
+---
+
+## 12. Shipped (2026-08-13)
+
+Merged to `master` (`fb770ebb6`) and pushed to both remotes (GitLab `origin`,
+GitHub `github`). Local CI gate green on push: metadata, fmt, build, clippy,
+licenses.
+
+**Published:** `@pdfluent/sdk-wasm@1.0.0-beta.17.4` (npm, dist-tag `latest`),
+the first release carrying `TextEditor`. Verified after publish by pulling the
+tarball back from the registry: `TextEditor` present in the typings, zero
+private-path strings in the shipped `.wasm`.
+
+Functional proof on the built package (Node, `--target web`): open a PDF,
+`findText` one occurrence, pass its id through a JSON round-trip as a
+translation service would, `replaceMatches`, `save` — output contains the new
+text, no longer contains the old text, and carries the trial notice (the smoke
+ran unlicensed, i.e. Trial tier).
+
+### Deliberately not done here
+
+- **Website WASM pin.** `pdfluent.com` pins `@pdfluent/sdk-wasm@1.0.0-beta.11`
+  (`public/wasm/sdk-wasm-manifest.json`). That lag predates this work by six
+  releases. Refreshing it changes what runs for live visitors, and the website
+  deploys its working tree straight to Cloudflare Pages, so the jump belongs in
+  its own reviewed change (`scripts/wasm/sync-sdk-wasm-from-npm.sh` +
+  `check-sdk-wasm-canonical.sh`).
+- **C-ABI / Python / Node / Java / .NET surfaces.** Each wraps the `pdfluent`
+  facade, so each inherits licensing and the trial notice for free by
+  following the `xfa-wasm::text_edit` pattern; their publish channels are
+  CI-gated and out of scope for this round. Nothing regressed for them: they
+  pick up the engine through the existing `replace_text` wrapper.
+- **A2 SHA-256 anchor refresh.** Gate E is informational while the local
+  version differs from the ledger anchor (`1.0.0-beta.11`). Now that
+  `1.0.0-beta.17.4` is published, the anchor can be refreshed to make Gate E
+  strict again (GA-R1-3-α).
