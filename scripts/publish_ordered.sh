@@ -141,6 +141,12 @@ CRATES=(
     "pdfluent-forms"
     "pdf-engine"
     "xfa-license"
+    # pdf-standard-fonts has no runtime dependencies of its own, but pdf-manip
+    # gained a hard `=` dependency on it after the beta.17 publish, so it must
+    # reach crates.io before pdf-manip can even be packaged. It was missing
+    # from this list entirely, which is what check_release_consistency.py has
+    # been flagging as "not found on crates.io but publish=true".
+    "pdf-standard-fonts"
     "pdf-manip"
     "pdf-redact"
     "pdfluent-sign"
