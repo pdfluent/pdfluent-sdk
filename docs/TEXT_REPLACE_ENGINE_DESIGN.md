@@ -733,11 +733,23 @@ not: each ships native code per platform.
 - **NuGet** bundles a native library per RID and has the same shape.
 
 The matrices exist in CI (`.github/workflows/build-wheels.yml`,
-`node-bindings.yml`). Blockers as of this round: **`NPM_TOKEN` is not
-configured in the GitHub repository secrets** (only `CARGO_REGISTRY_TOKEN`
-is), which gates the Node publish job off entirely; PyPI publishing uses
-trusted publishing (OIDC) and needs the publisher to be configured on the
-project side. Neither is something to paper over from a laptop.
+`node-bindings.yml`). Running the wheel matrix for the first time surfaced one
+unrelated breakage and left two blockers:
+
+- **aarch64 Linux wheel was broken** — `rquickjs-sys` vendors `quickjs.c`,
+  which uses C99 `for` loop declarations, and the aarch64 cross-compiler in
+  the manylinux image defaults to gnu89. Not caused by anything here: x86_64,
+  macOS and Windows all default to a newer standard and built fine. Fixed by
+  asking for `-std=gnu99` on that target only, and the matrix no longer
+  fail-fasts (the aarch64 failure had cancelled x86_64 mid-build, hiding
+  whether it was healthy).
+- **`NPM_TOKEN` is not configured in the GitHub repository secrets** (only
+  `CARGO_REGISTRY_TOKEN` is), which gates the Node publish job off entirely.
+- **PyPI publishing uses trusted publishing (OIDC)** and needs the publisher
+  configured on the project side.
+
+The last two are credential configuration, not something to paper over from a
+laptop.
 
 ### Java
 
