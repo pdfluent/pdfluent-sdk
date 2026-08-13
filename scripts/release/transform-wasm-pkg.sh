@@ -45,7 +45,7 @@ d["name"]    = "@pdfluent/sdk-wasm"
 d["version"] = version
 d["license"] = "SEE LICENSE IN LICENSE"
 d["homepage"] = "https://pdfluent.com"
-d["description"] = "PDFluent browser SDK — read, edit, annotate, redact, sign, and validate PDFs (including XFA) entirely client-side via WASM."
+d["description"] = "PDFluent browser SDK — find and replace PDF text programmatically while preserving fonts and layout, plus edit, annotate, redact, sign and validate PDFs (including XFA), entirely client-side via WASM."
 d["author"] = "Innovation Trigger BV <team@pdfluent.com>"
 
 # Reciprocal repository backlink — gated on WASM_REPO_PUBLIC=1 (see header).
@@ -58,7 +58,7 @@ else:
 d.pop("bugs", None)
 
 # Cleaner keyword set
-d["keywords"] = ["pdf", "wasm", "pdfluent", "browser", "sdk", "xfa", "acroform", "pades", "forms", "annotate", "redact"]
+d["keywords"] = ["pdf", "wasm", "pdfluent", "browser", "sdk", "pdf-text-replace", "find-and-replace", "edit-pdf-text", "pdf-editor", "xfa", "acroform", "pades", "forms", "annotate", "redact"]
 
 # `files:` array — wasm-pack defaults to ["<crate>_bg.wasm", "<crate>.js",
 # "<crate>.d.ts"] which OMITS the `snippets/` directory. xfa_wasm.js line 2

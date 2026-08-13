@@ -9029,7 +9029,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-wasm"
-version = "1.0.0-beta.17.3"
+version = "1.0.0-beta.17.4"
 dependencies = [
  "formcalc-interpreter",
  "getrandom 0.2.17",
