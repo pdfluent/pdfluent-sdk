@@ -4182,6 +4182,8 @@ dependencies = [
  "pdfluent-forms",
  "pdfluent-lopdf",
  "pdfluent-sign",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

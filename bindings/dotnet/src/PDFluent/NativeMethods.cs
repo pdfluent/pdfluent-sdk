@@ -85,6 +85,50 @@ namespace PDFluent
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void pdf_string_free(IntPtr s);
 
+        // ---- Text editing (layout-aware find & replace) ----
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdf_text_editor_open_from_bytes(
+            byte[] data,
+            UIntPtr len,
+            out IntPtr editor);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void pdf_text_editor_free(IntPtr editor);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern UIntPtr pdf_text_editor_page_count(IntPtr editor);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdf_text_editor_find(
+            IntPtr editor,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string queryJson,
+            out IntPtr outJson);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdf_text_editor_replace(
+            IntPtr editor,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string queryJson,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string replacement,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string optionsJson,
+            out IntPtr outJson);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdf_text_editor_replace_matches(
+            IntPtr editor,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string editsJson,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string optionsJson,
+            out IntPtr outJson);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdf_text_editor_to_bytes(
+            IntPtr editor,
+            out IntPtr outData,
+            out UIntPtr outLen);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void pdf_text_editor_bytes_free(IntPtr data, UIntPtr len);
+
         // ---- Structured text-block extraction ----
 
         /// <summary>

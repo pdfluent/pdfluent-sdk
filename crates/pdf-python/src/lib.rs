@@ -19,6 +19,8 @@ use pdf_redact::{search_and_redact, RedactSearchOptions};
 use pdf_sign::{signature_fields, validate_signatures, ValidationStatus};
 
 use pyo3::prelude::*;
+
+mod text_edit;
 use pyo3::types::PyBytes;
 
 use pdf_compliance::{detect_pdfa_level, validate_pdfa as compliance_validate_pdfa, PdfALevel};
@@ -1893,6 +1895,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRedactReport>()?;
     m.add_class::<PySignatureResult>()?;
     m.add_class::<PyNativeLicenseInfo>()?;
+    m.add_class::<text_edit::PyTextEditor>()?;
     // Functions
     m.add_function(wrap_pyfunction!(open_pdf, m)?)?;
     m.add_function(wrap_pyfunction!(merge_pdfs, m)?)?;

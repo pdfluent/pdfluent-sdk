@@ -4,8 +4,8 @@ build-backend = "maturin"
 
 [project]
 name = "pdfluent"
-version = "1.0.0b17.post3"
-description = "Enterprise PDF SDK — render, extract, annotate, sign, and validate PDFs. Pure Rust, zero system dependencies."
+version = "1.0.0b17.post4"
+description = "Enterprise PDF SDK — find and replace PDF text while preserving fonts and layout, plus render, extract, annotate, sign, and validate PDFs. Pure Rust, zero system dependencies."
 readme = "README.md"
 license = { text = "PDFluent Commercial License" }
 license-files = ["LICENSE"]
@@ -13,7 +13,7 @@ authors = [
     { name = "Innovation Trigger BV", email = "team@pdfluent.com" },
 ]
 requires-python = ">=3.8"
-keywords = ["pdf", "xfa", "acroform", "render", "text-extraction", "forms", "pdf-a", "annotations", "redaction", "rust", "pdfluent"]
+keywords = ["pdf-text-replace", "find-and-replace", "edit-pdf-text", "pdf", "xfa", "acroform", "render", "text-extraction", "forms", "pdf-a", "annotations", "redaction", "rust", "pdfluent"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
