@@ -704,9 +704,26 @@ ran unlicensed, i.e. Trial tier).
 
 ### What is published where
 
-Rust crates are not on crates.io at all — nothing in the workspace is
-published there, so "update the crates" means version bumps in-tree, not a
-release. Distribution happens through the language channels:
+**Correction (2026-08-13).** An earlier version of this section claimed the
+Rust crates are not on crates.io. That was wrong, and the way it went wrong is
+worth recording: the check queried names that do not exist (`pdfluent-manip`
+rather than `pdf-manip`), and crates.io answers a request without a
+`User-Agent` with an API-policy error rather than a 404 — which the one-liner
+turned into "not published". `scripts/check_release_consistency.py`, which the
+repo already ships, had the right answer all along. Prefer the repo's own
+tooling over an ad-hoc query.
+
+Twenty-eight crates are published on crates.io, including all three that this
+work changed:
+
+| Crate | crates.io | Contains |
+|---|---|---|
+| `pdf-manip` | 1.0.0-beta.17 | the `text_edit` engine, migrated `text_replace` |
+| `pdfluent` | 1.0.0-beta.17.3 | the SDK facade, `Capability::TextEdit`, trial notice |
+| `pdf-interpret` | 0.5.7 | the Type0 overflow fix |
+
+Until those are republished, Rust users of the SDK do not have text
+replacement. The other channels:
 
 | Channel | Package | Before | Now |
 |---|---|---|---|
