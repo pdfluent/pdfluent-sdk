@@ -1,529 +1,86 @@
-//! Text replacement in PDF content streams.
+//! Text replacement in PDF content streams (legacy convenience API).
 //!
-//! Find and replace text with correct spacing by re-encoding replacement
-//! strings into the original font encoding.
+//! Since Phase 1C these functions are thin wrappers over the
+//! [`crate::text_edit`] engine (see `docs/TEXT_REPLACE_ENGINE_DESIGN.md` §9).
+//! They keep the historical count-only contract: per-occurrence failures are
+//! not errors, they simply do not count. Callers that need per-edit
+//! diagnostics, single-occurrence selection, signature protection or stream
+//! preservation guarantees should use [`crate::text_edit`] directly.
+//!
+//! Behaviour changes relative to the pre-1C implementation (deliberate,
+//! each covered by a flipped characterization test):
+//! - multiple `/Contents` streams are preserved instead of collapsed;
+//! - text covered by `/ActualText` is left untouched instead of desynced;
+//! - cross-run matches whose replacement needs a fallback font now succeed;
+//! - TJ kerning outside the edited region is preserved;
+//! - encrypted documents whose permissions forbid modification are refused.
 
-use crate::content_editor::{as_number, editor_for_page, write_editor_to_page};
 use crate::error::{ManipError, Result};
-use crate::text_run::{extract_text_runs, FontMap, TextRun};
-use lopdf::content::Operation;
+use crate::text_edit::{
+    self, CommitPolicy, DocumentRevision, FontFallback, ReplaceOptions, SignaturePolicy,
+    TextEditError, TextQuery,
+};
+use crate::text_run::FontMap;
 use lopdf::{Document, Object};
 
-/// Replace all occurrences of `search` with `replacement` in a page's content stream.
+/// Replace all occurrences of `search` with `replacement` in a page's content.
 ///
-/// Returns the number of replacements made. The replacement string is encoded
-/// using the same font encoding as the original text. Returns an error if the
-/// replacement contains characters that cannot be encoded in the font.
+/// Returns the number of occurrences replaced. Occurrences that cannot be
+/// replaced (unencodable characters, unsupported containers such as Form
+/// XObjects, `/ActualText`-covered spans) do not count and are not errors.
+/// The replacement is encoded in the original font when possible; otherwise a
+/// Helvetica/WinAnsiEncoding fallback font is injected and reported through
+/// the [`crate::text_edit`] API (this wrapper only returns the count).
+///
+/// The `fonts` parameter is retained for signature compatibility; the engine
+/// builds its own font map.
 pub fn replace_text(
     doc: &mut Document,
     page_num: u32,
     search: &str,
     replacement: &str,
-    fonts: &FontMap,
+    _fonts: &FontMap,
 ) -> Result<usize> {
-    let editor = editor_for_page(doc, page_num)?;
-    let runs = extract_text_runs(&editor, fonts);
-
-    // Try single-run matching first (fast path).
-    let matches = find_matching_runs(&runs, search);
-    if !matches.is_empty() {
-        let mut new_editor = editor;
-        let mut offset: i64 = 0;
-        let mut count = 0;
-
-        for m in &matches {
-            let run = &runs[m.run_index];
-            let adjusted_start = (run.ops_range.start as i64 + offset) as usize;
-
-            let op = match new_editor.operations().get(adjusted_start) {
-                Some(op) => op.clone(),
-                None => continue,
-            };
-
-            // Try to encode the replacement in the matched font.  If that fails
-            // (e.g. subset font whose reverse map doesn't contain the replacement
-            // chars), attempt a font-fallback path. Fixes #466 bugs 1–4.
-            let new_ops =
-                match build_replacement_ops(&op, search, replacement, &run.font_name, fonts) {
-                    Ok(ops) => ops,
-                    Err(_) => {
-                        let fallback =
-                            find_or_inject_fallback_font(doc, page_num, &run.font_name, fonts);
-                        match fallback {
-                            Some(ref fb) => match build_replacement_ops_with_fallback(
-                                &op,
-                                search,
-                                replacement,
-                                &run.font_name,
-                                run.font_size,
-                                fb,
-                                fonts,
-                            ) {
-                                Some(ops) => ops,
-                                None => continue,
-                            },
-                            None => continue,
-                        }
-                    }
-                };
-            let ops_count_diff = new_ops.len() as i64 - 1;
-
-            new_editor.replace_operation(adjusted_start, new_ops);
-            offset += ops_count_diff;
-            count += 1;
-        }
-
-        if count > 0 {
-            write_editor_to_page(doc, page_num, &new_editor)?;
-        }
-        return Ok(count);
+    let total = doc.get_pages().len();
+    if page_num == 0 || page_num as usize > total {
+        return Err(ManipError::PageOutOfRange(page_num as usize, total));
     }
-
-    // Fall back to cross-run matching for text split across Tj/TJ operators.
-    let cross_matches = find_cross_run_matches(&runs, search);
-    if cross_matches.is_empty() {
-        return Ok(0);
-    }
-
-    let mut new_editor = editor;
-    let mut count = 0;
-
-    for cm in &cross_matches {
-        // Silently skip cross-run replacements that fail encoding; the
-        // single-run fast path already handles the easy cases above.
-        if let Ok(n) =
-            apply_cross_run_replacement(&mut new_editor, &runs, cm, search, replacement, fonts)
-        {
-            count += n;
-        }
-    }
-
-    if count > 0 {
-        write_editor_to_page(doc, page_num, &new_editor)?;
-    }
-    Ok(count)
+    legacy_replace(
+        doc,
+        TextQuery::exact(search).pages(page_num..=page_num),
+        replacement,
+    )
 }
 
 /// Replace text across all pages in a document.
 ///
-/// Pages where the replacement text cannot be encoded in the font are
-/// silently skipped (e.g. subset fonts missing glyphs for the replacement).
+/// Same contract as [`replace_text`]: returns the total count; occurrences
+/// that cannot be replaced simply do not count.
 pub fn replace_text_all_pages(
     doc: &mut Document,
     search: &str,
     replacement: &str,
 ) -> Result<usize> {
-    let page_count = doc.get_pages().len() as u32;
-    let mut total = 0;
-
-    for page_num in 1..=page_count {
-        let fonts = match FontMap::from_page(doc, page_num) {
-            Ok(f) => f,
-            Err(_) => continue,
-        };
-        match replace_text(doc, page_num, search, replacement, &fonts) {
-            Ok(n) => total += n,
-            Err(_) => continue, // skip pages with encoding issues
-        }
-    }
-
-    Ok(total)
+    legacy_replace(doc, TextQuery::exact(search), replacement)
 }
 
-// ---------------------------------------------------------------------------
-// Match finding
-// ---------------------------------------------------------------------------
-
-struct TextMatch {
-    run_index: usize,
-}
-
-fn find_matching_runs(runs: &[TextRun], search: &str) -> Vec<TextMatch> {
-    let mut matches = Vec::new();
-    for (i, run) in runs.iter().enumerate() {
-        if run.text.contains(search) {
-            matches.push(TextMatch { run_index: i });
-        }
+fn legacy_replace(doc: &mut Document, query: TextQuery, replacement: &str) -> Result<usize> {
+    // Match tokens never leave this call, so an internal-only revision
+    // suffices; persistence workflows go through `text_edit` directly.
+    let revision = DocumentRevision::from_source_bytes(&[]);
+    let options = ReplaceOptions::default()
+        .font_fallback(FontFallback::InjectStandard)
+        .signature_policy(SignaturePolicy::AllowPostSignatureChange)
+        .commit_policy(CommitPolicy::BestEffort);
+    match text_edit::replace_text(doc, revision, query, replacement, options) {
+        Ok(report) => Ok(report.replacements_applied),
+        Err(e) => match e.error {
+            TextEditError::Document(m) => Err(m),
+            other => Err(ManipError::Other(format!(
+                "text replacement failed: {other}"
+            ))),
+        },
     }
-    matches
-}
-
-// ---------------------------------------------------------------------------
-// Cross-run matching (text split across multiple Tj/TJ operators)
-// ---------------------------------------------------------------------------
-
-/// A match that spans multiple consecutive same-font text runs.
-struct CrossRunMatch {
-    /// First run index (inclusive).
-    run_start: usize,
-    /// Last run index (exclusive).
-    run_end: usize,
-}
-
-/// Find matches that span multiple consecutive same-font text runs.
-///
-/// Groups consecutive runs with the same font name, concatenates their text,
-/// and searches for the pattern. Only returns matches that span 2+ runs
-/// (single-run matches are handled by `find_matching_runs`).
-fn find_cross_run_matches(runs: &[TextRun], search: &str) -> Vec<CrossRunMatch> {
-    let mut matches = Vec::new();
-    if runs.len() < 2 {
-        return matches;
-    }
-
-    let mut i = 0;
-    while i < runs.len() {
-        let font = &runs[i].font_name;
-        let group_start = i;
-        let mut combined = runs[i].text.clone();
-        i += 1;
-
-        while i < runs.len() && runs[i].font_name == *font {
-            combined.push_str(&runs[i].text);
-            i += 1;
-        }
-
-        // Only consider multi-run groups.
-        if i - group_start >= 2 && combined.contains(search) {
-            matches.push(CrossRunMatch {
-                run_start: group_start,
-                run_end: i,
-            });
-        }
-    }
-
-    matches
-}
-
-/// Apply a cross-run replacement, rewriting ONLY the runs the match overlaps.
-///
-/// The match offsets within the group's combined text are mapped back to the
-/// individual runs:
-///   - text before/after a match stays in its original run,
-///   - the replacement text lands in the run where its match starts,
-///   - runs fully covered by a match are emptied (operator kept, string empty),
-///   - runs outside every match are left completely untouched.
-///
-/// Runs in a group frequently sit on different baselines (one run per visual
-/// line, positioned by Td/TD/T*/Tm between them). Rewriting the whole group
-/// into the first run — the previous behaviour — concatenated entire
-/// paragraphs onto the first line. Mapping by offsets keeps every line's text
-/// in the operator that draws that line, so the layout stays intact.
-///
-/// Returns the number of occurrences replaced. The rewrite is atomic per
-/// group: if any affected run's new text cannot be encoded, no operator in
-/// the group is modified.
-fn apply_cross_run_replacement(
-    editor: &mut crate::content_editor::ContentEditor,
-    runs: &[TextRun],
-    cm: &CrossRunMatch,
-    search: &str,
-    replacement: &str,
-    fonts: &FontMap,
-) -> Result<usize> {
-    let group_runs = &runs[cm.run_start..cm.run_end];
-    let font_name = &group_runs[0].font_name;
-
-    // Combine text from all runs in the group.
-    let combined: String = group_runs.iter().map(|r| r.text.as_str()).collect();
-
-    // Non-overlapping match ranges (byte offsets into `combined`).
-    let match_ranges: Vec<(usize, usize)> = combined
-        .match_indices(search)
-        .map(|(start, _)| (start, start + search.len()))
-        .collect();
-    if match_ranges.is_empty() {
-        return Ok(0);
-    }
-
-    // Byte offset of each run's start within `combined` (+ end sentinel).
-    let mut run_bounds = Vec::with_capacity(group_runs.len() + 1);
-    let mut acc = 0usize;
-    for run in group_runs {
-        run_bounds.push(acc);
-        acc += run.text.len();
-    }
-    run_bounds.push(acc);
-
-    let run_containing = |offset: usize| -> usize {
-        match run_bounds.binary_search(&offset) {
-            Ok(i) => i.min(group_runs.len() - 1),
-            Err(i) => i - 1,
-        }
-    };
-
-    // Build each run's new text by walking `combined` once.
-    let mut new_texts: Vec<String> = vec![String::new(); group_runs.len()];
-    let mut pos = 0usize;
-    for &(start, end) in &match_ranges {
-        distribute_kept_text(&mut new_texts, &run_bounds, &combined, pos, start);
-        new_texts[run_containing(start)].push_str(replacement);
-        pos = end;
-    }
-    distribute_kept_text(&mut new_texts, &run_bounds, &combined, pos, combined.len());
-
-    // Encode all changed runs first so the group rewrite is atomic.
-    let mut pending: Vec<(usize, Operation)> = Vec::new();
-    for (ri, run) in group_runs.iter().enumerate() {
-        if new_texts[ri] == run.text {
-            continue; // untouched run — original operator (incl. TJ kerning) kept
-        }
-        let op_idx = run.ops_range.start;
-        let Some(op) = editor.operations().get(op_idx).cloned() else {
-            continue;
-        };
-        let bytes = if new_texts[ri].is_empty() {
-            Vec::new()
-        } else {
-            encode_text_for_font(font_name, &new_texts[ri], fonts)?
-        };
-        pending.push((op_idx, build_run_text_op(&op, bytes)));
-    }
-
-    // All replacements are 1:1 operator swaps, so indices stay stable.
-    for (op_idx, new_op) in pending {
-        editor.replace_operation(op_idx, vec![new_op]);
-    }
-
-    Ok(match_ranges.len())
-}
-
-/// Append the kept (non-matched) byte range `[from, to)` of `combined` to the
-/// per-run new texts, splitting at run boundaries so every kept character
-/// stays in the run that originally drew it.
-fn distribute_kept_text(
-    new_texts: &mut [String],
-    run_bounds: &[usize],
-    combined: &str,
-    from: usize,
-    to: usize,
-) {
-    if from >= to {
-        return;
-    }
-    let mut ri = match run_bounds.binary_search(&from) {
-        Ok(i) => i,
-        Err(i) => i - 1,
-    };
-    let mut cursor = from;
-    while cursor < to && ri < new_texts.len() {
-        let run_end = run_bounds[ri + 1];
-        let segment_end = to.min(run_end);
-        if cursor < segment_end {
-            new_texts[ri].push_str(&combined[cursor..segment_end]);
-            cursor = segment_end;
-        }
-        if cursor >= run_end {
-            ri += 1;
-        }
-    }
-}
-
-/// Rebuild a text-showing operator with new string bytes, preserving the
-/// operator type. `'` and `"` keep their line-advance semantics; `"` also
-/// keeps its word/char spacing operands. An empty `bytes` empties the
-/// operator without disturbing the positioning state around it.
-fn build_run_text_op(op: &Operation, bytes: Vec<u8>) -> Operation {
-    match op.operator.as_str() {
-        "TJ" => Operation::new(
-            "TJ",
-            vec![Object::Array(vec![Object::String(
-                bytes,
-                lopdf::StringFormat::Literal,
-            )])],
-        ),
-        "\"" => {
-            let mut operands = op.operands.clone();
-            if operands.len() >= 3 {
-                operands[2] = Object::String(bytes, lopdf::StringFormat::Literal);
-            }
-            Operation::new("\"", operands)
-        }
-        // Tj, '
-        _ => Operation::new(
-            &op.operator,
-            vec![Object::String(bytes, lopdf::StringFormat::Literal)],
-        ),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Replacement operation building
-// ---------------------------------------------------------------------------
-
-fn build_replacement_ops(
-    original_op: &Operation,
-    search: &str,
-    replacement: &str,
-    font_name: &str,
-    fonts: &FontMap,
-) -> Result<Vec<Operation>> {
-    match original_op.operator.as_str() {
-        "Tj" => build_tj_replacement(original_op, search, replacement, font_name, fonts),
-        "TJ" => build_tj_array_replacement(original_op, search, replacement, font_name, fonts),
-        "'" => build_tj_replacement(original_op, search, replacement, font_name, fonts),
-        "\"" => {
-            // For " operator, the string is the third operand.
-            build_quote_replacement(original_op, search, replacement, font_name, fonts)
-        }
-        _ => Ok(vec![original_op.clone()]),
-    }
-}
-
-fn build_tj_replacement(
-    op: &Operation,
-    search: &str,
-    replacement: &str,
-    font_name: &str,
-    fonts: &FontMap,
-) -> Result<Vec<Operation>> {
-    let bytes = match op.operands.first() {
-        Some(Object::String(ref b, _)) => b,
-        _ => return Ok(vec![op.clone()]),
-    };
-
-    let decoded = fonts.decode_string(font_name, bytes);
-    let new_text = decoded.replace(search, replacement);
-
-    // Re-encode the replacement text.
-    let new_bytes = encode_text_for_font(font_name, &new_text, fonts)?;
-
-    Ok(vec![Operation::new(
-        &op.operator,
-        vec![Object::String(new_bytes, lopdf::StringFormat::Literal)],
-    )])
-}
-
-fn build_tj_array_replacement(
-    op: &Operation,
-    search: &str,
-    replacement: &str,
-    font_name: &str,
-    fonts: &FontMap,
-) -> Result<Vec<Operation>> {
-    let arr = match op.operands.first() {
-        Some(Object::Array(ref a)) => a,
-        _ => return Ok(vec![op.clone()]),
-    };
-
-    // Decode the entire TJ array into a single string, tracking segments.
-    let mut full_text = String::new();
-    let mut segments: Vec<TjSegment> = Vec::new();
-
-    for item in arr {
-        match item {
-            Object::String(ref bytes, _) => {
-                let text = fonts.decode_string(font_name, bytes);
-                let start = full_text.len();
-                full_text.push_str(&text);
-                segments.push(TjSegment::Text {
-                    start,
-                    end: full_text.len(),
-                    original_bytes: bytes.clone(),
-                });
-            }
-            _ => {
-                if let Some(adj) = as_number(item) {
-                    segments.push(TjSegment::Spacing(adj));
-                }
-            }
-        }
-    }
-
-    if !full_text.contains(search) {
-        return Ok(vec![op.clone()]);
-    }
-
-    // Replace in the combined text.
-    let new_text = full_text.replace(search, replacement);
-
-    // Simple approach: encode entire new text as a single Tj.
-    // This loses inter-character spacing adjustments but is correct.
-    let new_bytes = encode_text_for_font(font_name, &new_text, fonts)?;
-
-    // If the original had spacing adjustments, we try to preserve structure.
-    // For simplicity, if lengths match exactly we preserve segments.
-    if new_text.len() == full_text.len() && search.len() == replacement.len() {
-        // Lengths match — can preserve TJ array structure.
-        let new_arr =
-            rebuild_tj_array_same_length(&segments, &full_text, &new_text, font_name, fonts)?;
-        return Ok(vec![Operation::new("TJ", vec![Object::Array(new_arr)])]);
-    }
-
-    // Different lengths — emit as single Tj string.
-    Ok(vec![Operation::new(
-        "Tj",
-        vec![Object::String(new_bytes, lopdf::StringFormat::Literal)],
-    )])
-}
-
-fn build_quote_replacement(
-    op: &Operation,
-    search: &str,
-    replacement: &str,
-    font_name: &str,
-    fonts: &FontMap,
-) -> Result<Vec<Operation>> {
-    if op.operands.len() < 3 {
-        return Ok(vec![op.clone()]);
-    }
-
-    let bytes = match &op.operands[2] {
-        Object::String(ref b, _) => b,
-        _ => return Ok(vec![op.clone()]),
-    };
-
-    let decoded = fonts.decode_string(font_name, bytes);
-    let new_text = decoded.replace(search, replacement);
-    let new_bytes = encode_text_for_font(font_name, &new_text, fonts)?;
-
-    Ok(vec![Operation::new(
-        "\"",
-        vec![
-            op.operands[0].clone(),
-            op.operands[1].clone(),
-            Object::String(new_bytes, lopdf::StringFormat::Literal),
-        ],
-    )])
-}
-
-// ---------------------------------------------------------------------------
-// TJ array helpers
-// ---------------------------------------------------------------------------
-
-enum TjSegment {
-    Text {
-        start: usize,
-        end: usize,
-        #[allow(dead_code)]
-        original_bytes: Vec<u8>,
-    },
-    Spacing(f64),
-}
-
-fn rebuild_tj_array_same_length(
-    segments: &[TjSegment],
-    _old_text: &str,
-    new_text: &str,
-    font_name: &str,
-    fonts: &FontMap,
-) -> Result<Vec<Object>> {
-    let mut result = Vec::new();
-
-    for seg in segments {
-        match seg {
-            TjSegment::Text { start, end, .. } => {
-                let new_segment = &new_text[*start..*end];
-                let new_bytes = encode_text_for_font(font_name, new_segment, fonts)?;
-                result.push(Object::String(new_bytes, lopdf::StringFormat::Literal));
-            }
-            TjSegment::Spacing(adj) => {
-                result.push(Object::Real(*adj as f32));
-            }
-        }
-    }
-
-    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -539,7 +96,11 @@ fn rebuild_tj_array_same_length(
 /// 3. Latin-1 fallback for full (non-subset) fonts only.  Subset fonts
 ///    (BaseFont prefix like "ABCDEF+") have unknown glyph inventories,
 ///    so we return an error to avoid silently writing unrenderable bytes.
-fn encode_text_for_font(font_name: &str, text: &str, fonts: &FontMap) -> Result<Vec<u8>> {
+pub(crate) fn encode_text_for_font(
+    font_name: &str,
+    text: &str,
+    fonts: &FontMap,
+) -> Result<Vec<u8>> {
     if fonts.is_cid_font(font_name) {
         return encode_cid_text(font_name, text, fonts);
     }
@@ -648,7 +209,7 @@ fn encode_cid_text(font_name: &str, text: &str, fonts: &FontMap) -> Result<Vec<u
 // ---------------------------------------------------------------------------
 
 /// Encode text as Latin-1 (ISO 8859-1) bytes.
-fn encode_latin1(text: &str) -> Result<Vec<u8>> {
+pub(crate) fn encode_latin1(text: &str) -> Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(text.len());
     for ch in text.chars() {
         let code = ch as u32;
@@ -664,166 +225,12 @@ fn encode_latin1(text: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Build replacement ops using a font fallback when the primary font cannot
-/// encode the replacement text (e.g. subset fonts whose ToUnicode reverse map
-/// doesn't contain the replacement characters).
-///
-/// Emits the unchanged prefix/suffix bytes in the original font and wraps the
-/// replacement string in `Tf` / `Tj` operators that switch to `fallback_name`.
-/// Handles Tj, ', and TJ operators, and both single-byte and CID (2-byte) fonts.
-/// Returns `None` when the byte layout is too complex to split safely.
-fn build_replacement_ops_with_fallback(
-    original_op: &Operation,
-    search: &str,
-    replacement: &str,
-    font_name: &str,
-    font_size: f64,
-    fallback_name: &str,
-    fonts: &FontMap,
-) -> Option<Vec<Operation>> {
-    let is_cid = fonts.is_cid_font(font_name);
-
-    // Extract raw bytes and decoded text. For TJ arrays, concatenate all
-    // string elements (dropping spacing adjustments — they're discarded when
-    // we rewrite the operator as individual Tj ops).
-    let (orig_bytes, decoded): (Vec<u8>, String) = match original_op.operator.as_str() {
-        "Tj" | "'" => {
-            let bytes = match original_op.operands.first() {
-                Some(Object::String(ref b, _)) => b.clone(),
-                _ => return None,
-            };
-            let decoded = fonts.decode_string(font_name, &bytes);
-            (bytes, decoded)
-        }
-        "TJ" => {
-            let arr = match original_op.operands.first() {
-                Some(Object::Array(ref a)) => a,
-                _ => return None,
-            };
-            let mut all_bytes = Vec::new();
-            let mut full_decoded = String::new();
-            for item in arr {
-                if let Object::String(ref bytes, _) = item {
-                    full_decoded.push_str(&fonts.decode_string(font_name, bytes));
-                    all_bytes.extend_from_slice(bytes);
-                }
-            }
-            (all_bytes, full_decoded)
-        }
-        _ => return None,
-    };
-
-    let search_byte_pos = decoded.find(search)?;
-    let prefix_char_count = decoded[..search_byte_pos].chars().count();
-    let suffix_char_start = prefix_char_count + search.chars().count();
-
-    let replacement_bytes = encode_latin1(replacement).ok()?;
-
-    // Compute prefix/suffix byte ranges.  CID fonts use 2 bytes per code
-    // but a single code may decode to multiple Unicode chars (ligatures,
-    // surrogate pairs); the strict orig_bytes.len()/2 == char_count guard
-    // that was here before would reject such fonts.  Use the CMap-aware
-    // helper instead.  Single-byte fonts keep the strict 1:1 check.
-    let (prefix_bytes, suffix_bytes) = if is_cid {
-        if orig_bytes.len() % 2 != 0 {
-            return None;
-        }
-        let prefix_end = fonts.cid_byte_offset_for_chars(font_name, &orig_bytes, prefix_char_count);
-        let suffix_start =
-            fonts.cid_byte_offset_for_chars(font_name, &orig_bytes, suffix_char_start);
-        (
-            orig_bytes[..prefix_end].to_vec(),
-            if suffix_start <= orig_bytes.len() {
-                orig_bytes[suffix_start..].to_vec()
-            } else {
-                vec![]
-            },
-        )
-    } else {
-        if orig_bytes.len() != decoded.chars().count() {
-            return None;
-        }
-        (
-            orig_bytes[..prefix_char_count].to_vec(),
-            if suffix_char_start <= orig_bytes.len() {
-                orig_bytes[suffix_char_start..].to_vec()
-            } else {
-                vec![]
-            },
-        )
-    };
-
-    let mut ops: Vec<Operation> = Vec::new();
-
-    if !prefix_bytes.is_empty() {
-        ops.push(Operation::new(
-            "Tj",
-            vec![Object::String(prefix_bytes, lopdf::StringFormat::Literal)],
-        ));
-    }
-
-    // Switch to the fallback font for the replacement string.
-    ops.push(Operation::new(
-        "Tf",
-        vec![
-            Object::Name(fallback_name.as_bytes().to_vec()),
-            Object::Real(font_size as f32),
-        ],
-    ));
-    ops.push(Operation::new(
-        "Tj",
-        vec![Object::String(
-            replacement_bytes,
-            lopdf::StringFormat::Literal,
-        )],
-    ));
-
-    // Restore the original font so subsequent text is unaffected.
-    ops.push(Operation::new(
-        "Tf",
-        vec![
-            Object::Name(font_name.as_bytes().to_vec()),
-            Object::Real(font_size as f32),
-        ],
-    ));
-
-    if !suffix_bytes.is_empty() {
-        ops.push(Operation::new(
-            "Tj",
-            vec![Object::String(suffix_bytes, lopdf::StringFormat::Literal)],
-        ));
-    }
-
-    Some(ops)
-}
-
-/// Return a font resource name that can encode Latin-1 text.
-///
-/// Prefers an existing non-subset, non-symbolic, single-byte font on the page.
-/// Falls back to injecting a Helvetica/WinAnsiEncoding resource if none is
-/// available.
-fn find_or_inject_fallback_font(
-    doc: &mut Document,
-    page_num: u32,
-    _original_font: &str,
-    _fonts: &FontMap,
-) -> Option<String> {
-    // Always inject a known-safe Helvetica/WinAnsiEncoding font rather than
-    // reusing an existing page font.  Existing "non-symbolic Builtin" fonts
-    // may still have custom or Symbol-like encodings that map standard ASCII
-    // bytes to non-ASCII characters, causing garbled replacement text when
-    // the output is re-read by pdf-engine.  Helvetica + WinAnsiEncoding is
-    // guaranteed to decode bytes 0x20–0x7E as the matching ASCII characters.
-    // Fixes #466: Symbol-encoded fallback produced __ΞΦΑ_ΡΕΠΛΑΧΕ∆__.
-    inject_fallback_font(doc, page_num)
-}
-
 /// Inject a Helvetica/WinAnsiEncoding font resource named `"F__Helv"` into
 /// the page's Resources/Font dictionary, creating sub-dictionaries as needed.
 ///
 /// Returns `None` if the injection could not be confirmed (e.g. Resources dict
 /// is not writable), so callers can avoid referencing an unknown font.
-fn inject_fallback_font(doc: &mut Document, page_num: u32) -> Option<String> {
+pub(crate) fn inject_fallback_font(doc: &mut Document, page_num: u32) -> Option<String> {
     const FALLBACK: &str = "F__Helv";
 
     let pages = doc.get_pages();
@@ -942,6 +349,8 @@ fn inject_fallback_font(doc: &mut Document, page_num: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::content_editor::editor_for_page;
+    use crate::text_run::extract_text_runs;
     use lopdf::content::{Content, Operation};
     use lopdf::{dictionary, Document, Object, Stream};
 
