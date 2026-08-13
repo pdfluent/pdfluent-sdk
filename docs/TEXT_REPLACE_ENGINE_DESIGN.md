@@ -697,3 +697,51 @@ ran unlicensed, i.e. Trial tier).
   version differs from the ledger anchor (`1.0.0-beta.11`). Now that
   `1.0.0-beta.17.4` is published, the anchor can be refreshed to make Gate E
   strict again (GA-R1-3-α).
+
+---
+
+## 13. Bindings and distribution (2026-08-13, second round)
+
+### What is published where
+
+Rust crates are not on crates.io at all — nothing in the workspace is
+published there, so "update the crates" means version bumps in-tree, not a
+release. Distribution happens through the language channels:
+
+| Channel | Package | Before | Now |
+|---|---|---|---|
+| npm | `@pdfluent/sdk-wasm` | 1.0.0-beta.17.3 | **1.0.0-beta.17.4 published** |
+| PyPI | `pdfluent` | 1.0.0b17.post3 | 1.0.0b17.post4 in-tree, publish pending |
+| npm | `@pdfluent/node` | 1.0.0-beta.17.3 | 1.0.0-beta.17.4 in-tree, publish blocked |
+| NuGet | `pdfluent` | 1.0.0-beta.17.3 | 1.0.0-beta.17.4 in-tree, publish pending |
+| Maven | (java) | not on Central | 1.0.0-beta.17.2, unchanged |
+
+### Why only WASM could be published from a workstation
+
+`@pdfluent/sdk-wasm` is a single portable artefact, so building and publishing
+it locally produces exactly what every consumer gets. The FFI bindings are
+not: each ships native code per platform.
+
+- **PyPI** carries five wheels per release (macOS x64 + arm64, manylinux x64 +
+  aarch64, Windows amd64). A macOS-only upload would leave every other
+  platform on "no matching distribution".
+- **npm `@pdfluent/node`** is a thin JS wrapper that loads
+  `@pdfluent/node-<platform>` packages, all currently pinned at
+  `1.0.0-beta.17`. Publishing the wrapper alone would ship type definitions
+  advertising `TextEditor` against a native binary that does not have it —
+  worse than not publishing.
+- **NuGet** bundles a native library per RID and has the same shape.
+
+The matrices exist in CI (`.github/workflows/build-wheels.yml`,
+`node-bindings.yml`). Blockers as of this round: **`NPM_TOKEN` is not
+configured in the GitHub repository secrets** (only `CARGO_REGISTRY_TOKEN`
+is), which gates the Node publish job off entirely; PyPI publishing uses
+trusted publishing (OIDC) and needs the publisher to be configured on the
+project side. Neither is something to paper over from a laptop.
+
+### Java
+
+`bindings/java` sits at 1.0.0-beta.17.2 and is not on Maven Central. It was
+left untouched: adding a surface to a binding nobody can install yet is work
+without a consumer, and the C ABI it would wrap is now in place whenever that
+changes.
