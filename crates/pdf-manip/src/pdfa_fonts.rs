@@ -513,6 +513,7 @@ const STANDARD_14: &[&str] = &[
 
 /// Fallback font paths for any font that cannot be found (tried in order).
 /// Shared in-repo font pack used to keep local and VPS embedding deterministic.
+#[cfg(not(target_arch = "wasm32"))]
 const REPO_FONT_PACK_REL: &str = "../../.font-pack";
 
 /// Font subtypes that indicate a Font dictionary.
@@ -2830,8 +2831,21 @@ macro_rules! mac {
     };
 }
 
+/// Directory of the in-repo shared font pack.
+///
+/// `env!("CARGO_MANIFEST_DIR")` bakes the absolute build directory into the
+/// binary, and `--remap-path-prefix` does not rewrite it (it only remaps the
+/// paths rustc records for debug info and panic locations). On wasm32 there
+/// is no filesystem to read the pack from, so the constant is omitted there
+/// rather than shipped to browsers as a build-machine path.
+#[cfg(not(target_arch = "wasm32"))]
 fn repo_font_pack_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(REPO_FONT_PACK_REL)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn repo_font_pack_dir() -> PathBuf {
+    PathBuf::new()
 }
 
 /// Resolve a font candidate path with deterministic priority:
