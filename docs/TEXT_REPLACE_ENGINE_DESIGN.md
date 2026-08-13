@@ -774,3 +774,52 @@ laptop.
 left untouched: adding a surface to a binding nobody can install yet is work
 without a consumer, and the C ABI it would wrap is now in place whenever that
 changes.
+
+---
+
+## 14. Release state after the crates round (2026-08-13)
+
+The workspace is bumped and audited for a crates.io release, but **not
+published**: all three remaining channels are blocked on credentials or on
+defects that predate this work. None of the blockers is in the engine code.
+
+### Prepared and committed
+
+- Workspace `1.0.0-beta.17` → `1.0.0-beta.18`, 22 explicit crate versions,
+  108 exact pins, `pdf-interpret` `0.5.7` → `0.5.8` (+5 pins), `pdfluent`
+  `1.0.0-beta.17.3` → `1.0.0-beta.18` (+6 pins). Both workspaces resolve;
+  668 tests green.
+- Prepublish audits under `benchmarks/runs/prepublish_audits/` for every crate
+  that can currently be packaged: `pdf-standard-fonts`, `xfa-dom-resolver`,
+  `pdfluent-ccitt`, `pdfluent-jbig2`, `pdfluent-jpeg2000`, `pdf-syntax`,
+  `pdfluent-cff`, `pdf-font`. All clean, 0 blockers.
+- `pdf-standard-fonts` added to the ordered publish list. `pdf-manip` grew a
+  hard `=` dependency on it after the beta.17 publish while the crate itself
+  was never published, so `cargo package -p pdf-manip` fails outright until it
+  lands. This is the hard failure `check_release_consistency.py` reports.
+
+Dependents cannot be audited before their dependencies are live — exact pins
+mean `cargo package` resolves against the registry — so the remaining audits
+interleave with the publish, one crate at a time, in the order in
+`scripts/publish_ordered.sh`.
+
+### Blockers, none of them in this work
+
+| Channel | Blocker |
+|---|---|
+| crates.io | The local cargo token is rejected (`403 authentication failed`). The CI path (`publish-crates.yml`) targets `runs-on: self-hosted`, and the only self-hosted runner (`vps-xfa-corpus`) is **offline**. |
+| PyPI | Trusted publishing is not configured: `invalid-publisher — valid token, but no corresponding publisher`. All six build jobs pass; only the upload step fails, so nothing was published. |
+| npm `@pdfluent/node` | `NPM_TOKEN` is now configured and the workflow parses, but the publish job gates on `build-and-test`, which fails on Windows in **pre-existing** smoke tests: `setFormField` and the annotation tests raise "document is not writable". That is the older `PdfDocument` handle, whose lopdf document is `None` on that platform — untouched by this work. |
+
+### To finish the release
+
+1. **PyPI** — add a trusted publisher on the `pdfluent` project: owner
+   `jasperdew`, repository `xfa-native-rust`, workflow `build-wheels.yml`,
+   environment `pypi`. Then `gh workflow run build-wheels.yml -f publish=true`.
+2. **crates.io** — either refresh the local token (`cargo login`) and run
+   `scripts/publish_ordered.sh --live`, or bring the self-hosted runner back
+   and dispatch `publish-crates.yml`; switching that workflow to
+   `ubuntu-latest` would remove the runner dependency entirely.
+3. **npm node** — fix the Windows "document is not writable" smoke failures,
+   or scope the publish gate so a platform-specific pre-existing failure does
+   not block an unrelated release.
