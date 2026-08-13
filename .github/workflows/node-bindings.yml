@@ -136,9 +136,11 @@ jobs:
   publish-npm:
     name: Publish to npm
     needs: [build-and-test, build-release]
-    if: |
-      (startsWith(github.ref, 'refs/tags/v') || inputs.publish_npm == 'true') &&
-      secrets.NPM_TOKEN != ''
+    # `secrets` is not a valid context in a job-level `if:` — GitHub rejects
+    # the whole file with "Unrecognized named-value: 'secrets'", so this
+    # workflow could not be dispatched at all. The token check moved to the
+    # publish step, where `secrets` is available.
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_npm == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -175,6 +177,11 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          if [ -z "${NPM_TOKEN}" ]; then
+            echo "NPM_TOKEN is not configured in repository secrets — refusing to publish." >&2
+            echo "Add it at Settings → Secrets and variables → Actions." >&2
+            exit 1
+          fi
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> ~/.npmrc
           npx napi publish
           echo "npm publish complete"
