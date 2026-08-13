@@ -47,9 +47,12 @@ impl Type0 {
             .iter::<u32>()
             .collect::<IntVec>();
 
-        let encode = dict
-            .get::<TupleVec>(ENCODE)
-            .unwrap_or(sizes.iter().map(|s| (0.0, (*s - 1) as f32)).collect());
+        let encode = dict.get::<TupleVec>(ENCODE).unwrap_or(
+            sizes
+                .iter()
+                .map(|s| (0.0, s.saturating_sub(1) as f32))
+                .collect(),
+        );
 
         let decode = dict.get::<TupleVec>(DECODE).unwrap_or(range.clone());
 
@@ -65,7 +68,14 @@ impl Type0 {
             buf
         };
 
-        let num_expected_entries = sizes.iter().fold(1, |i1, i2| i1 * *i2 as usize) * range.len();
+        let num_expected_entries = sizes
+            .iter()
+            .try_fold(1usize, |acc, s| acc.checked_mul(*s as usize))
+            .and_then(|n| n.checked_mul(range.len()));
+        let Some(num_expected_entries) = num_expected_entries else {
+            warn!("Type0 function /Size product overflows; rejecting function.");
+            return None;
+        };
 
         if data.len() != num_expected_entries {
             warn!("Type0 function didn't have the expected number of sample entries.");
@@ -127,7 +137,9 @@ impl Type0 {
                 interpolate(
                     *x,
                     0.0,
-                    (2_u32.pow(self.bits_per_sample as u32) - 1) as f32,
+                    // BitsPerSample may legally be 32; 2u32.pow(32) overflows,
+                    // so compute the maximum sample value in u64 space.
+                    ((1u64 << self.bits_per_sample) - 1) as f32,
                     decode.0,
                     decode.1,
                 )
@@ -301,5 +313,96 @@ impl Key {
         }
 
         Some(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::function::Function;
+    use pdf_syntax::Pdf;
+    use pdf_syntax::object::{Object, ObjectIdentifier};
+    use smallvec::smallvec;
+
+    /// Minimal valid PDF (catalog + one page) whose object 4 is the given
+    /// function stream, resolvable through the normal xref path.
+    fn pdf_with_function(function_body: &[u8]) -> Pdf {
+        let objects: Vec<Vec<u8>> = vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>".to_vec(),
+            function_body.to_vec(),
+        ];
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let xref_pos = out.len();
+        out.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+        out.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        Pdf::new(out).expect("test PDF parses")
+    }
+
+    /// Regression: BitsPerSample = 32 is spec-legal, but the decode scaling
+    /// used `2u32.pow(32)` which overflows (panic in debug builds). Seen on
+    /// corpus file 528_528868.pdf during text extraction.
+    #[test]
+    fn type0_bits_per_sample_32_does_not_overflow() {
+        let mut body =
+            b"<< /FunctionType 0 /Domain [0 1] /Range [0 1] /Size [2] /BitsPerSample 32 /Length 8 >>\nstream\n"
+                .to_vec();
+        body.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF]);
+        body.extend_from_slice(b"\nendstream");
+
+        let pdf = pdf_with_function(&body);
+        let obj: Object<'_> = pdf
+            .xref()
+            .get(ObjectIdentifier::new(4, 0))
+            .expect("function object resolves");
+        let function = Function::new(&obj).expect("Type0 with 32 bps parses");
+
+        for x in [0.0f32, 0.25, 0.5, 0.75, 1.0] {
+            let out = function.eval(smallvec![x]).expect("eval succeeds");
+            assert!(
+                (0.0..=1.0).contains(&out[0]),
+                "output in range for x={x}: {out:?}"
+            );
+        }
+    }
+
+    /// A /Size entry of 0 must not underflow the default /Encode range, and
+    /// a pathological /Size product must be rejected instead of overflowing.
+    #[test]
+    fn type0_pathological_sizes_rejected_without_panic() {
+        let zero_size =
+            b"<< /FunctionType 0 /Domain [0 1] /Range [0 1] /Size [0] /BitsPerSample 8 /Length 0 >>\nstream\n\nendstream"
+                .to_vec();
+        let pdf = pdf_with_function(&zero_size);
+        let obj: Object<'_> = pdf.xref().get(ObjectIdentifier::new(4, 0)).unwrap();
+        // Must not panic; rejection (None) is acceptable.
+        let _ = Function::new(&obj);
+
+        let huge =
+            b"<< /FunctionType 0 /Domain [0 1 0 1 0 1] /Range [0 1] /Size [4000000000 4000000000 4000000000] /BitsPerSample 8 /Length 0 >>\nstream\n\nendstream"
+                .to_vec();
+        let pdf = pdf_with_function(&huge);
+        let obj: Object<'_> = pdf.xref().get(ObjectIdentifier::new(4, 0)).unwrap();
+        assert!(
+            Function::new(&obj).is_none(),
+            "overflowing /Size product is rejected"
+        );
     }
 }
