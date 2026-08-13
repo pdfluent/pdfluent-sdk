@@ -1,6 +1,6 @@
 [package]
 name = "pdf-python"
-version = "1.0.0-beta.17"
+version = "1.0.0-beta.18"
 edition = "2021"
 # publish = false: Python bindings are distributed via PyPI/maturin, not crates.io.
 publish = false
@@ -14,15 +14,15 @@ crate-type = ["cdylib"]
 [workspace]
 
 [dependencies]
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.17" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.17" }
-pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.17" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.17" }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.18" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.18" }
+pdf-manip = { path = "../pdf-manip", default-features = false, version = "=1.0.0-beta.18" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.18" }
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.6" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.17" }
-pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.17" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.17" }
-pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.17.3" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.18" }
+pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.18" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.18" }
+pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.18" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }

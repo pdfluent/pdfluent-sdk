@@ -1,6 +1,6 @@
 [package]
 name = "pdfluent"
-version = "1.0.0-beta.17.3"
+version = "1.0.0-beta.18"
 edition = "2021"
 rust-version = "1.75"
 authors = ["PDFluent Contributors <team@pdfluent.com>"]
@@ -40,26 +40,26 @@ tracing = ["dep:tracing"]
 # encrypt, permissions).
 # pdf-sign provides PAdES signing + signature validation.
 # pdf-redact provides content redaction (search + region).
-pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.17", features = ["xfa"] }
+pdf-engine = { path = "../pdf-engine", version = "=1.0.0-beta.18", features = ["xfa"] }
 # Diagnostics (load-recovery leniency events + interpreter warnings) read from
 # `pdf-syntax`/`pdf-interpret` directly. These are lightweight (no vello/zip/fs)
 # and compile on wasm32, so they live in the all-target dependency block —
 # unlike `pdf-render` (native-only, see below), which formerly re-exported them
 # and broke the wasm32 build.
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.6" }
-pdf-interpret = { path = "../pdf-interpret", version = "=0.5.7" }
+pdf-interpret = { path = "../pdf-interpret", version = "=0.5.8" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4", default-features = false }
-pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.17" }
-pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.17" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.17" }
-pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.17" }
-pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.17" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.17", optional = true }
+pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.18" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.18" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.18" }
+pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.18" }
+pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0-beta.18" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.18", optional = true }
 
 # Signed-payload activation: Ed25519 verification + payload parsing live
 # in the xfa-license crate. The umbrella consumes the verifier API only
 # (no signing key dependency at runtime).
-xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.17" }
+xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.18" }
 tokio = { version = "1", features = ["rt", "fs"], optional = true }
 tracing = { version = "0.1", optional = true }
 
@@ -68,8 +68,8 @@ tracing = { version = "0.1", optional = true }
 # vello stacks we do not compile on wasm32. On wasm32 the methods
 # surface as [`Error::UnsupportedOnWasm`].
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-pdf-docx = { path = "../pdf-docx", version = "=1.0.0-beta.17" }
-pdf-render = { path = "../pdf-render", version = "=1.0.0-beta.17" }
+pdf-docx = { path = "../pdf-docx", version = "=1.0.0-beta.18" }
+pdf-render = { path = "../pdf-render", version = "=1.0.0-beta.18" }
 # Image encoding for `to_images` — PNG via the `png` crate, JPEG via
 # `image`'s JpegEncoder. Both are already transitively present via
 # `pdf-render`; we pin direct versions so the `to_images` code is
@@ -97,7 +97,7 @@ criterion = { version = "0.5", default-features = false, features = ["cargo_benc
 # integration test can build test fixtures (keypair generation + payload
 # signing) at runtime, in-memory, without committing private key bytes
 # to the repo.
-xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.17", features = ["signing"] }
+xfa-license = { path = "../xfa-license", version = "=1.0.0-beta.18", features = ["signing"] }
 
 [[bench]]
 name = "facade"

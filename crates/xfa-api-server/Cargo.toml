@@ -26,8 +26,8 @@ thiserror.workspace = true
 uuid = { version = "1", features = ["v4"] }
 
 # Internal crates
-pdf-xfa = { path = "../pdf-xfa", version = "=1.0.0-beta.17" }
+pdf-xfa = { path = "../pdf-xfa", version = "=1.0.0-beta.18" }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
-xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.17" }
-xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.17" }
-xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.17" }
+xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.18" }
+xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.18" }
+xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.18" }
