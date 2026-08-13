@@ -17,6 +17,7 @@ thiserror.workspace = true
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 flate2 = "1"
+sha2 = "0.10"
 weezl = "0.1"
 image = { workspace = true, optional = true }
 subsetter = { workspace = true, optional = true }
@@ -38,6 +39,7 @@ pdfa-convert = ["dep:xmp-writer", "dep:hayro-jbig2"]
 [dev-dependencies]
 tempfile = "3"
 pdf-syntax = { path = "../pdf-syntax" }
+pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign" }
 pdf-compliance = { path = "../pdf-compliance" }
 pdf-engine = { path = "../pdf-engine" }
 

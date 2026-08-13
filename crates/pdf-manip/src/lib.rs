@@ -85,6 +85,7 @@ pub mod pdfa_structure;
 #[cfg(feature = "pdfa-convert")]
 pub mod pdfa_xmp;
 pub mod pdfua;
+pub mod text_edit;
 pub mod text_replace;
 pub mod text_run;
 pub mod text_style;
