@@ -21,6 +21,9 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     strategy:
+      # One target failing should not cancel the others: a partial matrix
+      # still tells us which platforms are healthy.
+      fail-fast: false
       matrix:
         target: [x86_64, aarch64]
     steps:
@@ -35,6 +38,15 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --strip --out dist
           manylinux: auto
+          # rquickjs-sys vendors quickjs.c, which uses C99 `for` loop
+          # declarations. The aarch64 cross-compiler in the manylinux image
+          # defaults to gnu89 and rejects them; the x86_64, macOS and Windows
+          # toolchains all default to a newer standard, which is why only this
+          # target failed. cc-rs appends CFLAGS_<target> to the compiler
+          # invocation, so ask for gnu99 there and leave every other target
+          # untouched.
+          before-script-linux: |
+            export CFLAGS_aarch64_unknown_linux_gnu="${CFLAGS_aarch64_unknown_linux_gnu:-} -std=gnu99"
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.target }}
