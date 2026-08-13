@@ -35,6 +35,7 @@ pub mod canvas2d_device;
 pub mod edits;
 pub mod license;
 pub mod pdfluent_error;
+pub mod text_edit;
 
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use crate::canvas2d_device::Canvas2DDevice;
@@ -75,7 +76,7 @@ fn wasm_err_simple(legacy: &str, msg: &str) -> JsValue {
     wasm_err_with_op(legacy, msg, infer_operation(legacy))
 }
 
-fn wasm_err_with_op(legacy: &str, msg: &str, operation: &str) -> JsValue {
+pub(crate) fn wasm_err_with_op(legacy: &str, msg: &str, operation: &str) -> JsValue {
     use pdfluent_error::{code, legacy_code};
     let c8 = match legacy {
         legacy_code::INVALID_PDF => code::PARSE_INVALID_PDF,
