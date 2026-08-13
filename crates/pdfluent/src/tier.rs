@@ -46,7 +46,8 @@ impl Tier {
             .with(PageOps)
             .with(TextExtract)
             .with(AcroFormRead)
-            .with(PdfaValidate);
+            .with(PdfaValidate)
+            .with(TextEdit);
 
         match self {
             Tier::Trial => trial,

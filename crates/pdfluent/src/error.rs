@@ -136,6 +136,12 @@ pub enum Error {
         /// Name of the attempted operation.
         operation: &'static str,
     },
+    /// A text-edit transaction failed (see [`crate::text_edit`] for the
+    /// typed per-edit errors this message summarizes).
+    TextEditFailed {
+        /// Human-readable failure description from the engine.
+        reason: String,
+    },
     /// A native dependency is required but not installed or discoverable.
     MissingDependency {
         /// Name of the missing dependency.
@@ -327,6 +333,7 @@ impl Error {
             Error::LicenseExpired { .. } => "E-LICENSE-EXPIRED",
             Error::LicenseInvalidSignature => "E-LICENSE-INVALID-SIGNATURE",
             Error::LicenseRateLimited { .. } => "E-LICENSE-RATE-LIMITED",
+            Error::TextEditFailed { .. } => "E-EDIT-TEXT-FAILED",
             Error::UnsupportedOnWasm { .. } => "E-ENV-UNSUPPORTED-ON-WASM",
             Error::MissingDependency { .. } => "E-ENV-MISSING-DEPENDENCY",
             Error::MemoryBudgetExceeded { .. } => "E-BUDGET-MEMORY-EXCEEDED",
@@ -368,6 +375,7 @@ impl Error {
             Error::LicenseRateLimited { .. } => {
                 "https://pdfluent.com/errors/E-LICENSE-RATE-LIMITED"
             }
+            Error::TextEditFailed { .. } => "https://pdfluent.com/errors/E-EDIT-TEXT-FAILED",
             Error::UnsupportedOnWasm { .. } => {
                 "https://pdfluent.com/errors/E-ENV-UNSUPPORTED-ON-WASM"
             }
@@ -450,6 +458,9 @@ impl std::fmt::Display for Error {
                 "Rate limit exceeded: {used}/{limit} {resource} in the current window.\n  Upgrade or wait for window reset.\n  Docs: {}",
                 self.docs_url()
             ),
+            Error::TextEditFailed { reason } => {
+                write!(f, "Text edit failed: {reason}")
+            }
             Error::UnsupportedOnWasm { operation } => write!(
                 f,
                 "Operation `{operation}` is not supported on wasm32 targets.\n  Docs: {}",

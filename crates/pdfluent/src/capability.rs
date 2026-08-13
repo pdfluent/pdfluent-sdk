@@ -86,6 +86,12 @@ pub enum Capability {
     // ---------- Advanced ----------
     /// Redaction of text and content.
     Redaction,
+    /// Layout-aware programmatic text editing (find & replace).
+    ///
+    /// Available in every tier, including Trial. Trial-tier edits stamp a
+    /// small "PDFluent trial" notice on each modified page; licensed tiers
+    /// edit without the notice.
+    TextEdit,
     /// OCR using Tesseract.
     OcrTesseract,
     /// OCR using PaddleOCR.

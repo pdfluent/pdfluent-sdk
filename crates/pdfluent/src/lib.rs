@@ -47,6 +47,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 /// Async I/O wrappers via Tokio's blocking pool.
+/// Layout-aware text replacement engine (find & replace by match id).
+pub use pdf_manip::text_edit;
+
 #[cfg(feature = "async-tokio")]
 pub mod async_io;
 pub mod capability;

@@ -280,6 +280,11 @@ pub struct PdfDocument {
     /// [`xfa_form_model`](Self::xfa_form_model) /
     /// [`set_xfa_field_value`](Self::set_xfa_field_value) call.
     xfa_session: Option<Box<pdf_engine::xfa::XfaSession>>,
+    /// Current text-edit revision (design §10.1 of the text-replace design
+    /// doc): SHA-256 of the source bytes plus a commit counter. Lazily
+    /// initialised on the first text-edit call; advanced by every applied
+    /// text-edit commit.
+    text_edit_revision: Option<pdf_manip::text_edit::DocumentRevision>,
 }
 
 /// Build a diagnostics collector, install a warning sink on `engine` that
@@ -556,6 +561,7 @@ impl PdfDocument {
             original_bytes: Some(shared),
             diagnostics,
             xfa_session: None,
+            text_edit_revision: None,
         })
     }
 
@@ -1846,6 +1852,208 @@ impl PdfDocument {
         self.refresh_from_lopdf()
     }
 
+    // ---------- Text editing (Layout-Aware Text Replacement, Phase 1C) ----------
+
+    /// The document's current text-edit revision, initialised from the
+    /// original bytes (or the serialized state for created documents).
+    fn current_text_edit_revision(&mut self) -> Result<pdf_manip::text_edit::DocumentRevision> {
+        if let Some(rev) = self.text_edit_revision {
+            return Ok(rev);
+        }
+        let rev = match &self.original_bytes {
+            Some(bytes) => pdf_manip::text_edit::DocumentRevision::from_source_bytes(bytes),
+            None => {
+                let mut buf = Vec::new();
+                let mut clone = self.lopdf.clone();
+                clone
+                    .save_to(&mut buf)
+                    .map_err(|source| Error::Io { source, path: None })?;
+                pdf_manip::text_edit::DocumentRevision::from_source_bytes(&buf)
+            }
+        };
+        self.text_edit_revision = Some(rev);
+        Ok(rev)
+    }
+
+    /// Bookkeeping after a text-edit commit: stamp the trial notice when the
+    /// effective tier is Trial, advance the stored revision, and re-sync the
+    /// engine view when the commit touched the document.
+    ///
+    /// The trial notice is the deliberate trade for having
+    /// [`Capability::TextEdit`] available in every tier including Trial: the
+    /// feature is fully usable for evaluation, and licensed tiers edit
+    /// without the notice.
+    fn after_text_edit_commit(
+        &mut self,
+        report: &pdf_manip::text_edit::TextReplacementReport,
+    ) -> Result<()> {
+        if report.replacements_applied == 0 {
+            return Ok(());
+        }
+        let tier = license::effective_tier_with_override(self.license_key_override.as_deref());
+        if tier == crate::Tier::Trial && !report.pages_modified.is_empty() {
+            use pdf_manip::watermark::{
+                apply_text_watermark, Color, Layer, PageSelection, Position, TextWatermark,
+            };
+            let notice = TextWatermark {
+                text: "Edited with PDFluent trial - pdfluent.com".into(),
+                font_size: 8.0,
+                rotation: 0.0,
+                opacity: 0.6,
+                color: Color::Gray(0.45),
+                position: Position::BottomLeft(24.0, 12.0),
+                layer: Layer::Foreground,
+            };
+            let selection = PageSelection::Pages(report.pages_modified.clone());
+            apply_text_watermark(&mut self.lopdf, &notice, &selection)?;
+        }
+        self.text_edit_revision = Some(report.next_revision);
+        self.sync_engine()?;
+        Ok(())
+    }
+
+    /// Find text occurrences for programmatic replacement.
+    ///
+    /// Each returned [`text_edit::TextMatch`](pdf_manip::text_edit::TextMatch)
+    /// carries an opaque, serializable
+    /// [`MatchId`](pdf_manip::text_edit::MatchId) that stays valid until the
+    /// next applied text edit on this document — find, translate or transform
+    /// the text externally, then apply with
+    /// [`replace_text_matches`](Self::replace_text_matches).
+    ///
+    /// Matches inside Form XObjects, style-mixed spans or `/ActualText`
+    /// regions are found and reported with `editable = false` rather than
+    /// silently omitted.
+    ///
+    /// Available in every tier ([`Capability::TextEdit`]); searching never
+    /// modifies the document.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::PdfDocument;
+    /// use pdfluent::text_edit::TextQuery;
+    ///
+    /// let mut doc = PdfDocument::open("contract.pdf").unwrap();
+    /// let matches = doc.find_text(TextQuery::exact("Acme B.V.")).unwrap();
+    /// println!("{} occurrence(s)", matches.len());
+    /// ```
+    pub fn find_text(
+        &mut self,
+        query: pdf_manip::text_edit::TextQuery,
+    ) -> Result<Vec<pdf_manip::text_edit::TextMatch>> {
+        self.require_capability(Capability::TextEdit)?;
+        let revision = self.current_text_edit_revision()?;
+        let mut session = pdf_manip::text_edit::begin_text_edit(&mut self.lopdf, revision)
+            .map_err(|e| Error::TextEditFailed {
+                reason: e.to_string(),
+            })?;
+        session.find_text(query).map_err(|e| Error::TextEditFailed {
+            reason: e.to_string(),
+        })
+    }
+
+    /// Find and replace text in one call, preserving fonts, positioning and
+    /// the surrounding page content.
+    ///
+    /// Every found occurrence is accounted for in the returned report —
+    /// applied or failed with a reason, never silently skipped. Signed
+    /// documents are refused unless
+    /// [`SignaturePolicy::AllowPostSignatureChange`](pdf_manip::text_edit::SignaturePolicy)
+    /// is set in `options`.
+    ///
+    /// Available in every tier ([`Capability::TextEdit`]). **Trial-tier
+    /// edits stamp a small "PDFluent trial" notice on each modified page**;
+    /// licensed tiers edit without the notice.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::PdfDocument;
+    /// use pdfluent::text_edit::{ReplaceOptions, TextQuery};
+    ///
+    /// let mut doc = PdfDocument::open("template.pdf").unwrap();
+    /// let report = doc
+    ///     .replace_text(TextQuery::exact("{{customer}}"), "Acme B.V.", ReplaceOptions::default())
+    ///     .unwrap();
+    /// assert_eq!(report.replacements_failed, 0);
+    /// doc.save("filled.pdf").unwrap();
+    /// ```
+    pub fn replace_text(
+        &mut self,
+        query: pdf_manip::text_edit::TextQuery,
+        replacement: &str,
+        options: pdf_manip::text_edit::ReplaceOptions,
+    ) -> Result<pdf_manip::text_edit::TextReplacementReport> {
+        self.require_capability(Capability::TextEdit)?;
+        let revision = self.current_text_edit_revision()?;
+        let report = pdf_manip::text_edit::replace_text(
+            &mut self.lopdf,
+            revision,
+            query,
+            replacement,
+            options,
+        )
+        .map_err(|e| Error::TextEditFailed {
+            reason: e.to_string(),
+        })?;
+        self.after_text_edit_commit(&report)?;
+        Ok(report)
+    }
+
+    /// Apply per-match replacements previously located with
+    /// [`find_text`](Self::find_text) — the asynchronous workflow: find,
+    /// produce replacement text externally (translation, personalisation),
+    /// then apply by match id in one atomic transaction.
+    ///
+    /// All edits commit under `options` (default: `AllOrNothing` — any
+    /// invalid edit aborts the whole transaction with a typed error).
+    ///
+    /// Available in every tier ([`Capability::TextEdit`]). **Trial-tier
+    /// edits stamp a small "PDFluent trial" notice on each modified page**;
+    /// licensed tiers edit without the notice.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pdfluent::PdfDocument;
+    /// use pdfluent::text_edit::{ReplaceOptions, TextQuery};
+    ///
+    /// let mut doc = PdfDocument::open("letter.pdf").unwrap();
+    /// let matches = doc.find_text(TextQuery::exact("Dear customer")).unwrap();
+    /// let edits: Vec<_> = matches
+    ///     .iter()
+    ///     .filter(|m| m.editable)
+    ///     .map(|m| (m.id.clone(), "Beste klant".to_string()))
+    ///     .collect();
+    /// let report = doc.replace_text_matches(&edits, ReplaceOptions::default()).unwrap();
+    /// assert_eq!(report.replacements_applied, edits.len());
+    /// ```
+    pub fn replace_text_matches(
+        &mut self,
+        edits: &[(pdf_manip::text_edit::MatchId, String)],
+        options: pdf_manip::text_edit::ReplaceOptions,
+    ) -> Result<pdf_manip::text_edit::TextReplacementReport> {
+        self.require_capability(Capability::TextEdit)?;
+        let revision = self.current_text_edit_revision()?;
+        let mut session = pdf_manip::text_edit::begin_text_edit(&mut self.lopdf, revision)
+            .map_err(|e| Error::TextEditFailed {
+                reason: e.to_string(),
+            })?;
+        for (id, replacement) in edits {
+            session
+                .stage_replace(id, replacement, options.clone())
+                .map_err(|e| Error::TextEditFailed {
+                    reason: e.to_string(),
+                })?;
+        }
+        let report = session.commit().map_err(|e| Error::TextEditFailed {
+            reason: e.to_string(),
+        })?;
+        self.after_text_edit_commit(&report)?;
+        Ok(report)
+    }
+
     /// Re-parse the engine-side from the current lopdf state. Used after
     /// in-place lopdf mutations (decrypt, redact) to keep the two
     /// representations consistent.
@@ -1870,6 +2078,7 @@ impl PdfDocument {
 
         let mut new_doc = Self::from_bytes_with(&buf, opts)?;
         new_doc.original_bytes = original_bytes;
+        new_doc.text_edit_revision = self.text_edit_revision;
 
         *self = new_doc;
         Ok(())
