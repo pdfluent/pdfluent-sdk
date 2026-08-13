@@ -416,6 +416,16 @@ fn parse_key_to_tier(key: &str) -> Result<Tier> {
 /// `required_tier` is the minimum **paid** tier that grants the
 /// capability (Trial is excluded so the upgrade hint never says
 /// "upgrade to Trial").
+/// The tier that applies to a document, honouring a per-document license
+/// override. A malformed override degrades to Trial (the capability check
+/// will already have surfaced the parse error to the caller).
+pub(crate) fn effective_tier_with_override(override_key: Option<&str>) -> Tier {
+    match override_key {
+        Some(key) => parse_key_to_tier(key).unwrap_or(Tier::Trial),
+        None => effective_tier(),
+    }
+}
+
 pub(crate) fn require_capability_with_override(
     cap: Capability,
     override_key: Option<&str>,

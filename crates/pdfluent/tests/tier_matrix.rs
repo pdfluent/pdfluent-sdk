@@ -45,6 +45,9 @@ fn trial_grants_core_only() {
     assert!(!caps.contains(C::EInvoiceFacturX));
     assert!(!caps.contains(C::EInvoiceXRechnung));
     assert!(!caps.contains(C::Redaction));
+    // TextEdit is deliberately in Trial: trial edits are usable but stamped
+    // with a trial notice (enforced in PdfDocument::after_text_edit_commit).
+    assert!(caps.contains(C::TextEdit));
     assert!(!caps.contains(C::OcrTesseract));
     assert!(!caps.contains(C::OcrPaddle));
     assert!(!caps.contains(C::Html2Pdf));
@@ -78,6 +81,7 @@ fn developer_grants_trial_plus_dev_tier() {
     assert!(caps.contains(C::AcroFormFlatten));
     assert!(caps.contains(C::PdfaConvertA2b));
     assert!(caps.contains(C::Redaction));
+    assert!(caps.contains(C::TextEdit));
     assert!(caps.contains(C::XfaParse));
     assert!(caps.contains(C::XfaFill));
     assert!(caps.contains(C::EncryptionRead));
@@ -124,6 +128,7 @@ fn team_grants_developer_plus_team_tier() {
     assert!(caps.contains(C::TextExtract));
     assert!(caps.contains(C::TextExtractWithLayout));
     assert!(caps.contains(C::Redaction));
+    assert!(caps.contains(C::TextEdit));
     assert!(caps.contains(C::XfaParse));
     assert!(caps.contains(C::XfaFill));
     assert!(caps.contains(C::EncryptionRead));
@@ -233,6 +238,7 @@ fn enterprise_grants_all_capabilities() {
         C::EInvoiceFacturX,
         C::EInvoiceXRechnung,
         C::Redaction,
+        C::TextEdit,
         C::OcrTesseract,
         C::OcrPaddle,
         C::Html2Pdf,
