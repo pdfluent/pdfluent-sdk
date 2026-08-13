@@ -44,6 +44,7 @@ from typing import NoReturn, Optional
 from pdfluent._native import (
     Document,
     Page,
+    TextEditor,
     RenderedImage,
     TextBlock,
     TextSpan,
@@ -281,6 +282,7 @@ __all__ = [
     # Core classes
     "Document",
     "Page",
+    "TextEditor",
     "RenderedImage",
     "TextBlock",
     "TextSpan",

@@ -5,6 +5,7 @@
 
 mod error;
 mod license;
+mod text_edit;
 mod types;
 
 use std::ffi::CStr;

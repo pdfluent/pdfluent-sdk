@@ -464,6 +464,51 @@ export declare class PdfPage {
   /** Get annotations on this page. */
   annotations(): Array<AnnotationInfo>
 }
+/**
+ * Find and replace PDF text while preserving fonts, positioning and the
+ * surrounding page content.
+ */
+export declare class TextEditor {
+  /** Open a PDF from a Buffer. */
+  static open(data: Buffer): TextEditor
+  /** Number of pages. */
+  pageCount(): number
+  /**
+   * Find text occurrences. `queryJson` is a JSON object:
+   *
+   * ```json
+   * {
+   *   "text": "Acme B.V.",
+   *   "caseInsensitive": false,
+   *   "pages": [1, 5],
+   *   "region": { "page": 1, "rect": [x0, y0, x1, y1], "relation": "intersects" },
+   *   "limit": 100
+   * }
+   * ```
+   *
+   * Returns a JSON array of matches; each carries an opaque `id` valid
+   * until the next applied edit on this document, and an `editable` flag.
+   */
+  findText(queryJson: string): string
+  /**
+   * Find and replace in one call. Returns the JSON replacement report.
+   *
+   * `optionsJson` may be `"{}"`; see the README for the option surface.
+   */
+  replaceText(queryJson: string, replacement: string, optionsJson: string): string
+  /**
+   * Apply replacements to matches located earlier with `findText`.
+   *
+   * `editsJson` is a JSON array of `{"id": "<match id>", "text": "<new>"}`.
+   * They commit as one transaction; by default any invalid edit aborts the
+   * whole batch and the document stays untouched.
+   */
+  replaceMatches(editsJson: string, optionsJson: string): string
+  /** Serialize the (possibly edited) document to a Buffer. */
+  toBuffer(): Buffer
+  /** Write the (possibly edited) document to `path`. */
+  save(path: string): void
+}
 
 // @pdfluent-typed-error-layer
 // Hand-maintained typings for the typed-error layer (see typed-error-layer.js).

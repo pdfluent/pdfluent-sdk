@@ -149,6 +149,10 @@ namespace PDFluent
         /// <summary>
         /// An unclassified error occurred. Maps to <see cref="PdfluentException"/>.
         /// </summary>
+        /// <summary>A text-edit operation failed (stale match id, unsupported
+        /// container, encoding failure, signed document refused, …).</summary>
+        ErrorTextEdit = 21,
+
         ErrorUnknown = 99,
     }
 }

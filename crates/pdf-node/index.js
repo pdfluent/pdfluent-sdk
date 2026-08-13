@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { PdfDocument, openPdf, mergePdfs, validatePdfa, activate, setLicenseKey, setLicensePublicKey, setLicensePayload, status, licenseStatus, PdfPage } = nativeBinding
+const { PdfDocument, openPdf, mergePdfs, validatePdfa, activate, setLicenseKey, setLicensePublicKey, setLicensePayload, status, licenseStatus, PdfPage, TextEditor } = nativeBinding
 
 module.exports.PdfDocument = PdfDocument
 module.exports.openPdf = openPdf
@@ -323,6 +323,7 @@ module.exports.setLicensePayload = setLicensePayload
 module.exports.status = status
 module.exports.licenseStatus = licenseStatus
 module.exports.PdfPage = PdfPage
+module.exports.TextEditor = TextEditor
 
 // @pdfluent-typed-error-layer
 // ---------------------------------------------------------------------------

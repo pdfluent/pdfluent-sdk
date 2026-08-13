@@ -607,7 +607,7 @@ Two product surfaces share the engine; enforcement lives at exactly one:
 
 | Surface | Path | Enforcement |
 |---|---|---|
-| **SDK** (licensed) | `pdfluent::PdfDocument::{find_text, replace_text, replace_text_matches}` — and every language binding, since pdf-capi/node/python/xfa-wasm all wrap the `pdfluent` crate | `Capability::TextEdit` (all tiers) + trial notice on modified pages when the effective tier is Trial |
+| **SDK** (licensed) | `pdfluent::PdfDocument::{find_text, replace_text, replace_text_matches}` and the `TextEditor` handle in each binding, which owns a `pdfluent::PdfDocument` | `Capability::TextEdit` (all tiers) + trial notice on modified pages when the effective tier is Trial |
 | **Free desktop editor** | `pdf_manip::text_replace` wrapper and `xfa-wasm::edit_handle` (the editor's WASM edit path) | none, deliberately — the editor is free without watermarks (product rule) |
 
 `pdf_manip::text_edit` itself stays enforcement-free: it cannot distinguish
@@ -617,11 +617,32 @@ documents. Direct use of `pdf-manip` by third parties is restricted legally
 (LICENSE.md §3), not technically — consistent with the crate being
 source-published.
 
-WASM SDK exposure shipped: `xfa_wasm::text_edit::TextEditor`
-(`open`/`findText`/`replaceText`/`replaceMatches`/`save`), JSON in/out,
-opaque match tokens across the JS boundary, licensing via the existing
-`activate_license_key` flow. C-ABI/Python/Node exposure follows the same
-pattern (wrap the facade).
+**Correction (2026-08-13).** An earlier draft of this table claimed every
+binding inherits enforcement "since they all wrap the `pdfluent` crate". That
+was wrong, and worth recording: pdf-capi, pdf-node and pdf-python *depend* on
+the `pdfluent` crate but their existing document handles call `pdf_engine`,
+`lopdf` and the engine crates directly, and **none of them checks a capability
+for any operation**. Depending on the crate is not the same as going through
+the facade.
+
+Every text-edit surface therefore ships as its own `TextEditor` handle that
+owns a `pdfluent::PdfDocument`, which is what actually routes it through
+`require_capability` and the trial notice:
+
+| Binding | Handle | Verified end-to-end |
+|---|---|---|
+| WASM | `xfa_wasm::text_edit::TextEditor` | Node, `--target web` |
+| Python | `pdfluent.TextEditor` (PyO3) | arm64 venv, built wheel |
+| Node | `TextEditor` (napi) | built native module |
+| C ABI | `pdf_text_editor_*` + `PdfStatus::ErrorTextEdit` (21) | C program against the dylib |
+| .NET | `PDFluent.TextEditor` | x86_64 dotnet against the C ABI |
+
+Each was checked the same way: open, find one occurrence, round-trip the match
+id through JSON, apply, save, then confirm in the output that the new text is
+present, the old text is gone, and the trial notice is stamped (all smokes ran
+unlicensed). Stale-id refusal was asserted in every binding that can express
+it. The pre-existing handles in those crates are left as they are — retrofitting
+capability checks onto them is a separate, breaking change.
 
 ### Corpus validation (legacy migration A/B)
 

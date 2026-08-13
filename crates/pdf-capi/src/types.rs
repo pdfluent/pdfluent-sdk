@@ -55,6 +55,10 @@ pub enum PdfStatus {
     /// the configured public key (tampered or wrong-key payload).
     ErrorLicenseInvalidSignature = 20,
     /// An unknown error occurred.
+    /// A text-edit operation failed (stale match id, unsupported container,
+    /// encoding failure, signed document refused, …). The detail is available
+    /// via `pdf_last_error_message`.
+    ErrorTextEdit = 21,
     ErrorUnknown = 99,
 }
 

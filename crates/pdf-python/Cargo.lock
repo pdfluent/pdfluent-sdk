@@ -1520,12 +1520,14 @@ dependencies = [
  "flate2",
  "image",
  "pdf-font",
+ "pdf-standard-fonts",
  "pdfluent-cff",
  "pdfluent-jbig2",
  "pdfluent-lopdf",
  "roxmltree",
  "serde",
  "serde_json",
+ "sha2",
  "subsetter",
  "thiserror",
  "ttf-parser",
@@ -1549,6 +1551,8 @@ dependencies = [
  "pdfluent-lopdf",
  "pdfluent-sign",
  "pyo3",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1574,6 +1578,10 @@ dependencies = [
  "pdf-interpret",
  "vello_cpu",
 ]
+
+[[package]]
+name = "pdf-standard-fonts"
+version = "1.0.0-beta.17"
 
 [[package]]
 name = "pdf-syntax"
