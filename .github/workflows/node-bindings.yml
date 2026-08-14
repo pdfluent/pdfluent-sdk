@@ -24,8 +24,12 @@ on:
         options: ['true', 'false']
 
 concurrency:
-  group: node-bindings-${{ github.ref }}
-  cancel-in-progress: true
+  # A publish run gets its own group and is never cancelled. With one shared
+  # group and cancel-in-progress, any push to the same ref killed a release
+  # mid-flight — a docs commit cancelled a full publish run, and the result
+  # reads as "cancelled" rather than as anything having gone wrong.
+  group: node-bindings-${{ github.ref }}-${{ inputs.publish_npm == 'true' && 'publish' || 'ci' }}
+  cancel-in-progress: ${{ inputs.publish_npm != 'true' }}
 
 env:
   CARGO_TERM_COLOR: always
