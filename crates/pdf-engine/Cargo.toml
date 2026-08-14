@@ -14,12 +14,6 @@ categories = ["rendering", "text-processing"]
 [lib]
 crate-type = ["rlib", "cdylib"]
 
-# golf1_extraction.rs drives an internal corpus through a repo-relative path,
-# so it cannot run from a published crate and only carried that path into the
-# tarball. Excluded by name rather than via `include`: cargo auto-discovers
-# test targets and ships their sources even when `include` omits them.
-exclude = ["tests/golf1_extraction.rs"]
-
 [dependencies]
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.6" }
 pdf-interpret = { path = "../pdf-interpret", version = "=0.5.8" }

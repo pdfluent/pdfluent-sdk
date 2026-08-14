@@ -78,10 +78,22 @@ fn spans_of(bytes: Vec<u8>) -> Vec<TextSpan> {
         .collect()
 }
 
-fn corpus_path(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/corpus-mini")
-        .join(name)
+/// Locate a repository fixture. Published crates do not carry the repository's
+/// fixture tree, so callers skip when this returns `None` rather than failing a
+/// consumer's `cargo test`. Override the root with PDFLUENT_TEST_FIXTURES.
+fn corpus_path(name: &str) -> Option<std::path::PathBuf> {
+    let root = std::env::var("PDFLUENT_TEST_FIXTURES").map_or_else(
+        |_| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join("tests")
+        },
+        std::path::PathBuf::from,
+    );
+    let path = root.join("corpus").join(name);
+    let path = if path.exists() { path } else { root.join("corpus-mini").join(name) };
+    path.exists().then_some(path)
 }
 
 #[test]
@@ -107,7 +119,11 @@ fn transform_captures_rotation() {
 
 #[test]
 fn golf1_fields_consistent_on_real_pdf() {
-    let bytes = std::fs::read(corpus_path("simple.pdf")).expect("read simple.pdf");
+    let Some(path) = corpus_path("simple.pdf") else {
+        eprintln!("skipping: repository fixture tree not present");
+        return;
+    };
+    let bytes = std::fs::read(path).expect("read simple.pdf");
     let spans = spans_of(bytes);
     assert!(!spans.is_empty(), "simple.pdf yielded no spans");
     for s in &spans {
@@ -151,7 +167,10 @@ fn golf1_coverage_scorecard() {
     let (mut total, mut tf, mut rmode) = (0usize, 0usize, 0usize);
 
     for name in docs {
-        let Ok(bytes) = std::fs::read(corpus_path(name)) else {
+        let Some(path) = corpus_path(name) else {
+            continue;
+        };
+        let Ok(bytes) = std::fs::read(path) else {
             continue;
         };
         let Ok(doc) = PdfDocument::open(bytes) else {
