@@ -823,3 +823,58 @@ interleave with the publish, one crate at a time, in the order in
 3. **npm node** — fix the Windows "document is not writable" smoke failures,
    or scope the publish gate so a platform-specific pre-existing failure does
    not block an unrelated release.
+
+---
+
+## 15. Crates.io release (2026-08-14)
+
+Published. `check_release_consistency.py` reports 0 failures, down from 1.
+
+| Crate | Version |
+|---|---|
+| `pdfluent` | 1.0.0-beta.18 |
+| `pdf-manip` | 1.0.0-beta.18 |
+| `pdf-engine` | 1.0.0-beta.18 |
+| `pdf-interpret` | 0.5.8 |
+| `pdf-compliance` | 1.0.0-beta.18.1 |
+| `pdfluent-cff` | 0.2.1 |
+| `pdf-standard-fonts` | 1.0.0-beta.18 (first publish) |
+
+…plus the rest of the workspace line at 1.0.0-beta.18. Every crate has a
+committed audit report under `benchmarks/runs/prepublish_audits/`.
+
+### What the audit gate caught
+
+It stopped the train six times. Two findings mattered:
+
+- **Version drift on an immutable registry.** `pdfluent-cff` 0.2.0 in this
+  repository had a method (`glyph_width_f64_verapdf`) that the published 0.2.0
+  does not. The same version number meant two different things, and anyone
+  building `pdf-manip` from the registry would not have compiled. The train
+  could not see it — it skips crates whose version already exists, and the
+  version had not changed. Diffing every skipped crate against its published
+  tarball found this one and cleared the other six.
+- **A PEM header in shipped source.** `pdf-engine/src/ocr.rs` carried a literal
+  `-----BEGIN PRIVATE KEY-----`. The body reads TEST_PLACEHOLDER_NOT_A_REAL_KEY
+  and it is a unit-test fixture, but a PEM header in published source trips
+  every secret scanner. Now assembled from parts.
+
+The rest were internal corpus paths reaching the tarball. Two patterns worth
+remembering:
+
+- Whatever explains an exclusion must not repeat what is being excluded —
+  cargo copies the manifest into `Cargo.toml.orig`, so an `exclude` list or a
+  comment naming a corpus path puts that path straight back in.
+- `include`/`exclude` do not reliably drop auto-discovered test targets; cargo
+  ships their sources anyway. Where that bit, the fix was to change the content:
+  `pdf-engine` and `pdf-sign` now resolve fixtures at runtime (overridable with
+  `PDFLUENT_TEST_FIXTURES`) and skip when the repository tree is absent, so
+  those tests are survivable for a consumer running `cargo test` — which they
+  never were.
+
+### Ordering lesson
+
+`pdf-compliance` had to be re-cut as 1.0.0-beta.18.1: it went out early, then
+`pdfluent-cff` had to be bumped, and its published manifest still pinned the
+old exact version. Settle dependency versions before the first publish, or
+expect to re-cut whatever went out ahead of the change.
