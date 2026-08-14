@@ -13,8 +13,10 @@ const { execFileSync } = require('child_process')
 
 // On Windows `npm` is a .cmd shim; execFileSync does no PATHEXT resolution, so
 // spawning it by the bare name fails with ENOENT. `node` is a real .exe and
-// needs no such treatment.
+// needs no such treatment. Even with the .cmd name, Windows refuses to spawn
+// a .cmd/.bat file directly (EINVAL) unless it goes through a shell.
 const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+const NPM_SHELL_OPT = process.platform === 'win32' ? { shell: true } : {}
 const {
   MATRIX,
   PLATFORM_PKG_NAMES,
@@ -31,6 +33,7 @@ function mainPackFiles() {
   const out = execFileSync(NPM, ['pack', '--ignore-scripts', '--dry-run', '--json'], {
     cwd: ROOT,
     encoding: 'utf8',
+    ...NPM_SHELL_OPT,
   })
   return JSON.parse(out)[0].files.map((f) => f.path)
 }
