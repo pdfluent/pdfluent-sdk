@@ -92,7 +92,11 @@ fn corpus_path(name: &str) -> Option<std::path::PathBuf> {
         std::path::PathBuf::from,
     );
     let path = root.join("corpus").join(name);
-    let path = if path.exists() { path } else { root.join("corpus-mini").join(name) };
+    let path = if path.exists() {
+        path
+    } else {
+        root.join("corpus-mini").join(name)
+    };
     path.exists().then_some(path)
 }
 
