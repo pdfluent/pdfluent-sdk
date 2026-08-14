@@ -13,6 +13,11 @@ description = "Pure-Rust PDF SDK with PDF/A, digital signatures, WASM, and exper
 keywords = ["pdf", "xfa", "acroform", "pdf-forms", "pades"]
 categories = ["rendering", "text-processing", "parser-implementations", "encoding"]
 
+# The integration suite drives the repository fixture tree by relative path
+# and cannot run from a published crate. Excluded so those paths do not
+# ship; the unit tests in src/ still travel with the package.
+exclude = ["tests/"]
+
 [features]
 default = ["signing", "pdfa", "redaction"]
 async-tokio = ["dep:tokio"]
@@ -31,11 +36,6 @@ xfa-flatten = []
 wasm = []
 internal-legacy = []
 tracing = ["dep:tracing"]
-
-# The integration suite drives the repository fixture tree by relative path
-# and cannot run from a published crate. Excluded so those paths do not
-# ship; the unit tests in src/ still travel with the package.
-exclude = ["tests/"]
 
 [dependencies]
 # Epic 2 wiring: underlying PDF crates.
