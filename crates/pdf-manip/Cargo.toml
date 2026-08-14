@@ -9,6 +9,11 @@ homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 description = "PDF manipulation: pages, encryption, watermarks, optimization, bookmarks"
 
+# tests/ga_integration_tests.rs reaches into the sibling xfa-golden-tests
+# crate by relative path; it cannot run from a published crate, and
+# shipping it put an internal corpus name in the tarball.
+exclude = ["tests/ga_integration_tests.rs"]
+
 [dependencies]
 lopdf = { workspace = true, features = ["embed_image"] }
 pdf-font.workspace = true

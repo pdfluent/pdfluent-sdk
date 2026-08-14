@@ -12,7 +12,7 @@ Implements the XFA (XML Forms Architecture) processing pipeline used by Dutch go
 
 ## Status
 
-**Experimental.** XFA support is still under active development. Structural flatten and the public XFA API are panic-free and propagate all errors as typed Results. Crash-safety and timeout gates are verified on the 1150-document internal corpus (xfa-forms, xfa-golden, and xfa-extra subsets). Visual fidelity versus reference output is not yet a published claim; validate on your specific corpus before relying on rendering parity. Use behind a feature flag.
+**Experimental.** XFA support is still under active development. Structural flatten and the public XFA API are panic-free and propagate all errors as typed Results. Crash-safety and timeout gates are verified on a 1150-document internal corpus. Visual fidelity versus reference output is not yet a published claim; validate on your specific corpus before relying on rendering parity. Use behind a feature flag.
 
 For non-XFA PDF processing, the rest of the SDK is production-grade.
 
