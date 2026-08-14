@@ -867,10 +867,24 @@ mod tests {
     /// performance optimisation, so rendering with it enabled must produce
     /// pixel-identical output to rendering with it disabled. Exercised against a
     /// committed image-bearing fixture.
+    /// Locate a repository test fixture. Published crates do not carry the
+    /// repository's fixture tree, so callers skip when this returns `None`
+    /// rather than failing a consumer's `cargo test`.
+    fn repo_fixture(name: &str) -> Option<PathBuf> {
+        let dir = std::env::var("PDFLUENT_TEST_FIXTURES").ok().map_or_else(
+            || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("tests"),
+            PathBuf::from,
+        );
+        let path = dir.join(name);
+        path.exists().then_some(path)
+    }
+
     #[test]
     fn shared_image_cache_is_render_neutral() {
-        let path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus-mini/scanned.pdf");
+        let Some(path) = repo_fixture("corpus-mini/scanned.pdf") else {
+            eprintln!("skipping: repository fixture tree not present");
+            return;
+        };
         let data = std::fs::read(&path).expect("read scanned.pdf fixture");
         let cfg = RenderConfig::default();
 
