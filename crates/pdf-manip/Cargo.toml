@@ -9,9 +9,10 @@ homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"
 description = "PDF manipulation: pages, encryption, watermarks, optimization, bookmarks"
 
-# tests/ga_integration_tests.rs reaches into the sibling xfa-golden-tests
-# crate by relative path; it cannot run from a published crate, and
-# shipping it put an internal corpus name in the tarball.
+# This integration test reaches a sibling fixture crate by relative path, so
+# it cannot run from a published crate. Keep the reason generic: naming the
+# internal directory here would put that path straight back into the packaged
+# manifest, which is what the prepublish audit flags.
 exclude = ["tests/ga_integration_tests.rs"]
 
 [dependencies]
