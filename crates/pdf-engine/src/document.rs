@@ -872,7 +872,12 @@ mod tests {
     /// rather than failing a consumer's `cargo test`.
     fn repo_fixture(name: &str) -> Option<PathBuf> {
         let dir = std::env::var("PDFLUENT_TEST_FIXTURES").ok().map_or_else(
-            || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("tests"),
+            || {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("..")
+                    .join("tests")
+            },
             PathBuf::from,
         );
         let path = dir.join(name);

@@ -2344,9 +2344,13 @@ mod tests {
             // shipped source trips secret scanners (including our own
             // prepublish audit) even when the body is obviously fake.
             private_key = concat!(
-                "-----BEGIN ", "PRIVATE KEY", "-----\n",
+                "-----BEGIN ",
+                "PRIVATE KEY",
+                "-----\n",
                 "TEST_PLACEHOLDER_NOT_A_REAL_KEY\n",
-                "-----END ", "PRIVATE KEY", "-----\n",
+                "-----END ",
+                "PRIVATE KEY",
+                "-----\n",
             ),
             token_uri = server.url("/token"),
         );
