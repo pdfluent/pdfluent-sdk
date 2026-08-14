@@ -10,6 +10,11 @@
 const fs = require('fs')
 const path = require('path')
 const { execFileSync } = require('child_process')
+
+// On Windows `npm` is a .cmd shim; execFileSync does no PATHEXT resolution, so
+// spawning it by the bare name fails with ENOENT. `node` is a real .exe and
+// needs no such treatment.
+const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const {
   MATRIX,
   PLATFORM_PKG_NAMES,
@@ -23,7 +28,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'ut
 
 // Pack the EXACT main tarball file list once (lifecycle scripts disabled).
 function mainPackFiles() {
-  const out = execFileSync('npm', ['pack', '--ignore-scripts', '--dry-run', '--json'], {
+  const out = execFileSync(NPM, ['pack', '--ignore-scripts', '--dry-run', '--json'], {
     cwd: ROOT,
     encoding: 'utf8',
   })
