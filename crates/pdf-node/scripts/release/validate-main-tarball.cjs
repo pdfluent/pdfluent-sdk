@@ -29,12 +29,15 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pdfnode-validate-'))
 try {
   // `npm pack --ignore-scripts` → produces the real tarball with NO lifecycle
   // script execution (the manifest cannot be mutated during validation).
-  // On Windows `npm` is a .cmd shim and execFileSync does no PATHEXT
-  // resolution, so the bare name fails with ENOENT.
+  // On Windows `npm` is a .cmd shim: execFileSync does no PATHEXT resolution
+  // (bare name fails with ENOENT), and even the .cmd name needs `shell: true`
+  // since Node refuses to spawn a .cmd/.bat file directly (EINVAL).
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+  const shellOpt = process.platform === 'win32' ? { shell: true } : {}
   const out = execFileSync(npm, ['pack', '--ignore-scripts', '--json', '--pack-destination', tmp], {
     cwd: ROOT,
     encoding: 'utf8',
+    ...shellOpt,
   })
   const meta = JSON.parse(out)[0]
   const tgz = path.join(tmp, meta.filename)
