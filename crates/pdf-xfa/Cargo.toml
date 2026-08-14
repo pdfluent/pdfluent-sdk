@@ -11,6 +11,12 @@ documentation = "https://pdfluent.com/docs"
 
 keywords = ["pdf", "xfa", "forms", "adobe"]
 categories = ["rendering"]
+# Ship the library only. The integration tests and examples drive the
+# internal golden corpus through repo-relative paths, so they cannot run
+# from a published crate; including them only carried internal corpus
+# names into the tarball (flagged by the prepublish audit).
+include = ["src/**/*", "LICENSE", "README.md"]
+
 [dependencies]
 xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.18" }
 formcalc-interpreter = { path = "../formcalc-interpreter", version = "=1.0.0-beta.18" }
