@@ -35,7 +35,7 @@ pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0
 pdf-annot = { path = "../pdf-annot", version = "=1.0.0-beta.18" }
 pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0-beta.18" }
 pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0-beta.18" }
-pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.18" }
+pdf-compliance = { path = "../pdf-compliance", version = "=1.0.0-beta.18.1" }
 pdf-manip = { path = "../pdf-manip", version = "=1.0.0-beta.18" }
 pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.18" }
 
