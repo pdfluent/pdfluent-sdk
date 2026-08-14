@@ -52,6 +52,10 @@ pub struct PdfDocument {
     /// Mutable lopdf document for write operations (annotations, redact, encrypt, save).
     /// `None` if the PDF could not be loaded by lopdf (rare edge case).
     doc: Option<Arc<Mutex<LopdfDocument>>>,
+    /// Why `doc` is `None`, when it is. Kept so write operations can say what
+    /// actually went wrong instead of only that the document is unwritable —
+    /// a corrupted checkout used to surface here as a bare "not writable".
+    doc_load_error: Option<String>,
 }
 
 impl PdfDocument {
@@ -61,10 +65,12 @@ impl PdfDocument {
     where
         F: FnOnce(&mut LopdfDocument) -> napi::Result<T>,
     {
-        let arc = self
-            .doc
-            .as_ref()
-            .ok_or_else(|| napi::Error::from_reason("document is not writable"))?;
+        let arc = self.doc.as_ref().ok_or_else(|| {
+            napi::Error::from_reason(match &self.doc_load_error {
+                Some(why) => format!("document is not writable: {why}"),
+                None => "document is not writable".to_string(),
+            })
+        })?;
         let mut doc = arc.lock().unwrap();
         f(&mut doc)
     }
@@ -438,13 +444,15 @@ impl PdfDocument {
         let bytes: Vec<u8> = data.to_vec();
         let doc = RustDocument::open(bytes.clone()).map_err(to_napi_error)?;
         let form_engine = FormEngine::from_pdf(doc.pdf()).map(Arc::new);
-        let lopdf_doc = LopdfDocument::load_mem(&bytes)
-            .ok()
-            .map(|d| Arc::new(Mutex::new(d)));
+        let (lopdf_doc, doc_load_error) = match LopdfDocument::load_mem(&bytes) {
+            Ok(d) => (Some(Arc::new(Mutex::new(d))), None),
+            Err(e) => (None, Some(e.to_string())),
+        };
         Ok(PdfDocument {
             inner: Arc::new(doc),
             form_engine,
             doc: lopdf_doc,
+            doc_load_error,
         })
     }
 
@@ -454,18 +462,23 @@ impl PdfDocument {
         let bytes: Vec<u8> = data.to_vec();
         let doc = tokio::task::spawn_blocking(move || {
             let pdf = RustDocument::open(bytes.clone())?;
-            let lopdf = LopdfDocument::load_mem(&bytes).ok();
+            let lopdf = LopdfDocument::load_mem(&bytes).map_err(|e| e.to_string());
             Ok::<_, pdf_engine::EngineError>((pdf, lopdf))
         })
         .await
         .map_err(|e| napi::Error::from_reason(format!("join error: {e}")))?
         .map_err(to_napi_error)?;
-        let (pdf_doc, lopdf_doc) = doc;
+        let (pdf_doc, lopdf_result) = doc;
         let form_engine = FormEngine::from_pdf(pdf_doc.pdf()).map(Arc::new);
+        let (lopdf_doc, doc_load_error) = match lopdf_result {
+            Ok(d) => (Some(Arc::new(Mutex::new(d))), None),
+            Err(e) => (None, Some(e)),
+        };
         Ok(PdfDocument {
             inner: Arc::new(pdf_doc),
             form_engine,
-            doc: lopdf_doc.map(|d| Arc::new(Mutex::new(d))),
+            doc: lopdf_doc,
+            doc_load_error,
         })
     }
 
@@ -476,13 +489,16 @@ impl PdfDocument {
         let doc =
             RustDocument::open_with_password(bytes.clone(), &password).map_err(to_napi_error)?;
         let form_engine = FormEngine::from_pdf(doc.pdf()).map(Arc::new);
-        let lopdf_doc = LopdfDocument::load_mem_with_password(&bytes, &password)
-            .ok()
-            .map(|d| Arc::new(Mutex::new(d)));
+        let (lopdf_doc, doc_load_error) =
+            match LopdfDocument::load_mem_with_password(&bytes, &password) {
+                Ok(d) => (Some(Arc::new(Mutex::new(d))), None),
+                Err(e) => (None, Some(e.to_string())),
+            };
         Ok(PdfDocument {
             inner: Arc::new(doc),
             form_engine,
             doc: lopdf_doc,
+            doc_load_error,
         })
     }
 

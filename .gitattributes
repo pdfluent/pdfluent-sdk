@@ -1,3 +1,24 @@
+# Binary formats: never apply end-of-line conversion.
+#
+# Git decides text-vs-binary by looking for a NUL byte in the first 8000
+# bytes. Small PDFs often have none, so git calls them text and, on a Windows
+# checkout with core.autocrlf=true, rewrites every LF as CRLF. That shifts
+# every byte offset after the first newline and invalidates the xref table:
+# the file still opens through lenient parsing but can no longer be written,
+# which surfaced as "document is not writable" in the Windows Node smoke tests
+# while Linux and macOS passed.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.p12 binary
+*.pfx binary
+*.cff binary
+*.ttf binary
+*.otf binary
+*.crate binary
+*.wasm binary
+
 # Git LFS tracking for large test corpus files
 corpus/**/*.pdf filter=lfs diff=lfs merge=lfs -text
 corpus/pdfjs/**/*.pdf filter=lfs diff=lfs merge=lfs -text
