@@ -32,6 +32,11 @@ wasm = []
 internal-legacy = []
 tracing = ["dep:tracing"]
 
+# The integration suite drives the repository fixture tree by relative path
+# and cannot run from a published crate. Excluded so those paths do not
+# ship; the unit tests in src/ still travel with the package.
+exclude = ["tests/"]
+
 [dependencies]
 # Epic 2 wiring: underlying PDF crates.
 # pdf-engine provides read-side (parse, page_count, text extraction, render).
