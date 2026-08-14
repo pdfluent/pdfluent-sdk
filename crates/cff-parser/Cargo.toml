@@ -1,7 +1,7 @@
 [package]
 edition = "2021"
 name = "pdfluent-cff"
-version = "0.2.0"
+version = "0.2.1"
 authors = [
     "Evgeniy Reizner <razrfalcon@gmail.com>",
     "Jeff Muizelaar <jrmuizel@gmail.com>",
