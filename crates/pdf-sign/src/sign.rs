@@ -853,10 +853,27 @@ mod tests {
             .join(name)
     }
 
-    fn corpus_path(name: &str) -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/corpus-mini")
-            .join(name)
+    /// Locate a repository fixture. A published crate does not carry the
+    /// repository's fixture tree, so tests skip when this returns `None`
+    /// rather than failing a consumer's `cargo test`. Override the root with
+    /// PDFLUENT_TEST_FIXTURES.
+    fn corpus_path(name: &str) -> Option<std::path::PathBuf> {
+        let root = std::env::var("PDFLUENT_TEST_FIXTURES").map_or_else(
+            |_| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("..")
+                    .join("tests")
+            },
+            std::path::PathBuf::from,
+        );
+        for sub in ["corpus", "corpus-mini"] {
+            let path = root.join(sub).join(name);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        None
     }
 
     fn load_rsa_signer() -> Pkcs12Signer {
@@ -871,7 +888,11 @@ mod tests {
 
     #[test]
     fn sign_and_validate_roundtrip_rsa() {
-        let pdf = std::fs::read(corpus_path("simple.pdf")).unwrap();
+        let Some(fixture) = corpus_path("simple.pdf") else {
+            eprintln!("skipping: repository fixture tree not present");
+            return;
+        };
+        let pdf = std::fs::read(fixture).unwrap();
         let signer = load_rsa_signer();
         let signed = sign_pdf(&pdf, &signer, &SignOptions::default()).unwrap();
 
@@ -888,7 +909,11 @@ mod tests {
 
     #[test]
     fn sign_and_validate_roundtrip_ec() {
-        let pdf = std::fs::read(corpus_path("simple.pdf")).unwrap();
+        let Some(fixture) = corpus_path("simple.pdf") else {
+            eprintln!("skipping: repository fixture tree not present");
+            return;
+        };
+        let pdf = std::fs::read(fixture).unwrap();
         let signer = load_ec_signer();
         let signed = sign_pdf(&pdf, &signer, &SignOptions::default()).unwrap();
 
@@ -904,7 +929,11 @@ mod tests {
 
     #[test]
     fn sign_with_reason_and_location() {
-        let pdf = std::fs::read(corpus_path("simple.pdf")).unwrap();
+        let Some(fixture) = corpus_path("simple.pdf") else {
+            eprintln!("skipping: repository fixture tree not present");
+            return;
+        };
+        let pdf = std::fs::read(fixture).unwrap();
         let signer = load_rsa_signer();
         let options = SignOptions {
             reason: Some("Approved".into()),
@@ -921,7 +950,11 @@ mod tests {
 
     #[test]
     fn sign_visible_signature() {
-        let pdf = std::fs::read(corpus_path("simple.pdf")).unwrap();
+        let Some(fixture) = corpus_path("simple.pdf") else {
+            eprintln!("skipping: repository fixture tree not present");
+            return;
+        };
+        let pdf = std::fs::read(fixture).unwrap();
         let signer = load_rsa_signer();
         let options = SignOptions {
             visible_rect: Some((1, [72.0, 700.0, 250.0, 750.0])),
@@ -934,7 +967,11 @@ mod tests {
 
     #[test]
     fn certification_signature_sets_docmdp() {
-        let pdf = std::fs::read(corpus_path("simple.pdf")).unwrap();
+        let Some(fixture) = corpus_path("simple.pdf") else {
+            eprintln!("skipping: repository fixture tree not present");
+            return;
+        };
+        let pdf = std::fs::read(fixture).unwrap();
         let signer = load_rsa_signer();
         let options = SignOptions {
             certification: Some(DocMdpPermission::FormFillAndSign),
@@ -967,7 +1004,11 @@ mod tests {
 
     #[test]
     fn signed_pdf_is_valid_pdf() {
-        let pdf = std::fs::read(corpus_path("simple.pdf")).unwrap();
+        let Some(fixture) = corpus_path("simple.pdf") else {
+            eprintln!("skipping: repository fixture tree not present");
+            return;
+        };
+        let pdf = std::fs::read(fixture).unwrap();
         let signer = load_rsa_signer();
         let signed = sign_pdf(&pdf, &signer, &SignOptions::default()).unwrap();
 
@@ -986,11 +1027,10 @@ mod tests {
     /// with OpenSSL as an independent external oracle. Covers issue #536 Task 3.
     #[test]
     fn sign_xfa_form_roundtrip() {
-        let path = corpus_path("xfa-form.pdf");
-        if !path.exists() {
-            // corpus-mini is optional in CI; skip gracefully.
+        let Some(path) = corpus_path("xfa-form.pdf") else {
+            // The repository fixture tree is optional; skip gracefully.
             return;
-        }
+        };
         let pdf = std::fs::read(&path).expect("read xfa-form.pdf");
         let signer = load_rsa_signer();
 
@@ -1052,7 +1092,11 @@ mod tests {
     #[cfg(feature = "tsa")]
     #[test]
     fn extract_cms_from_signed_roundtrip() {
-        let pdf = std::fs::read(corpus_path("simple.pdf")).unwrap();
+        let Some(fixture) = corpus_path("simple.pdf") else {
+            eprintln!("skipping: repository fixture tree not present");
+            return;
+        };
+        let pdf = std::fs::read(fixture).unwrap();
         let signer = load_rsa_signer();
         let signed = sign_pdf(&pdf, &signer, &SignOptions::default()).unwrap();
 
@@ -1071,7 +1115,11 @@ mod tests {
 
     #[test]
     fn embed_dss_incremental_preserves_signature() {
-        let pdf = std::fs::read(corpus_path("simple.pdf")).unwrap();
+        let Some(fixture) = corpus_path("simple.pdf") else {
+            eprintln!("skipping: repository fixture tree not present");
+            return;
+        };
+        let pdf = std::fs::read(fixture).unwrap();
         let signer = load_rsa_signer();
         let signed = sign_pdf(&pdf, &signer, &SignOptions::default()).unwrap();
 
