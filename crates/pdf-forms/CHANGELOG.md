@@ -14,7 +14,7 @@ All notable changes are documented here.
 
 ### Tests
 
-- `tests/corpus_gate.rs` — in-CI AcroForm corpus gate: fill → save → reopen →
+- In-CI AcroForm corpus gate: fill → save → reopen →
   verify for every support-contract category (pure text, multiline+comb,
   checkbox, radio, combo, single + multi-select list box, non-ASCII WinAnsi +
   UTF-16BE fallback, `/NeedAppearances` repair, signature reject, static-XFA
@@ -49,7 +49,7 @@ All notable changes are documented here.
 - `metrics` module: `StandardFace` enum with `glyph_width` and `text_width` helpers
   backed by embedded Standard-14 WinAnsiEncoding AFM tables.
 - Integration tests: `crates/pdf-forms/tests/writeback_roundtrip.rs` (14 tests).
-- Corpus gate example: `crates/pdf-forms/examples/corpus_gate.rs`.
+- Corpus gate example (repository only, not shipped in the package).
 
 ### Changed
 

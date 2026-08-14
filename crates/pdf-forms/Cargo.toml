@@ -11,17 +11,13 @@ documentation = "https://pdfluent.com/docs"
 keywords = ["pdf", "forms", "acroform", "fields", "interactive"]
 categories = ["parser-implementations"]
 
-# The corpus-driven examples and gate test read and write an internal
-# AcroForm corpus through repo-relative paths and feed a validator script
-# that does not ship. They cannot run from a published crate, and cargo
-# auto-discovers them into the generated manifest, which put internal
-# corpus paths in the tarball (flagged by the prepublish audit).
-exclude = [
-    "examples/corpus_gate.rs",
-    "examples/gen_acroform_corpus.rs",
-    "examples/fill_acroform_corpus.rs",
-    "tests/corpus_gate.rs",
-]
+# Ship the library, licence and docs. The corpus-driven examples and gate
+# test read and write an internal AcroForm corpus through repo-relative
+# paths and feed a validator script that does not ship, so they cannot run
+# from a published crate. `include` rather than `exclude`: an exclude list
+# would itself have to name those files, which puts the same internal paths
+# back into the packaged manifest.
+include = ["src/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
 
 [dependencies]
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.6" }
