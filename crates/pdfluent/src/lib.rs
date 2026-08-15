@@ -49,6 +49,11 @@
 /// Async I/O wrappers via Tokio's blocking pool.
 /// Layout-aware text replacement engine (find & replace by match id).
 pub use pdf_manip::text_edit;
+/// Embedding a caller-supplied Unicode font, so a replacement can contain
+/// scripts the document itself never had. See
+/// [`text_edit::FontFallback::EmbedUnicode`].
+#[cfg(feature = "font-subset")]
+pub use pdf_manip::unicode_font;
 
 #[cfg(feature = "async-tokio")]
 pub mod async_io;

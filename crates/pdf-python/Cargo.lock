@@ -1445,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-compliance"
-version = "1.0.0-beta.18"
+version = "1.0.0-beta.18.1"
 dependencies = [
  "flate2",
  "log",
@@ -1646,7 +1646,7 @@ version = "0.2.2"
 
 [[package]]
 name = "pdfluent-cff"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "pdfluent-extract"

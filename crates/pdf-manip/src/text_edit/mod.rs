@@ -294,7 +294,21 @@ pub enum FontFallback {
     /// Use the named font (must exist in the page resources).
     Explicit(String),
     /// Inject a Helvetica/WinAnsiEncoding resource and use it.
+    ///
+    /// Bounded by WinAnsi: nothing above U+00FF can be written this way.
     InjectStandard,
+    /// Embed the caller-supplied font as a Type0/`Identity-H` composite font
+    /// and write the replacement through it.
+    ///
+    /// This is the only policy that can write scripts the document never
+    /// contained — Polish, Greek, Cyrillic, CJK and so on — because the
+    /// reachable characters are those of the supplied font rather than of a
+    /// 256-entry encoding. See [`crate::unicode_font`].
+    ///
+    /// The font is embedded (subsetted to the glyphs actually used), so the
+    /// caller must hold a licence permitting embedding.
+    #[cfg(feature = "font-subset")]
+    EmbedUnicode(crate::unicode_font::UnicodeFont),
 }
 
 /// Transaction policy (design §10.4). Strictest-wins across the staged
@@ -1084,7 +1098,22 @@ impl TextEditSession<'_> {
         // Swap phase: inject fallback fonts first, then rewrite the touched
         // streams. Only stream objects are mutated; /Contents structure and
         // untouched streams keep their exact bytes.
-        for (page, p) in &prepared {
+        let mut prepared = prepared;
+        for (page, p) in &mut prepared {
+            // An embedded Unicode font takes precedence: when one is present
+            // the rebuilt streams already reference it by name, and the
+            // Helvetica resource would be dead weight.
+            #[cfg(feature = "font-subset")]
+            if let Some(encoder) = p.unicode_encoder.take() {
+                if let Err(e) = encoder.embed(self.doc, *page) {
+                    let error = TextEditError::Internal {
+                        detail: format!("embedding the Unicode font on page {page} failed: {e}"),
+                    };
+                    let results = self.all_failed_results(&format!("{error}"));
+                    return Err(CommitError { error, results });
+                }
+                continue;
+            }
             if p.inject_fallback && inject_fallback_font(self.doc, *page).is_none() {
                 let error = TextEditError::Internal {
                     detail: format!("fallback font injection failed on page {page}"),
@@ -1093,6 +1122,7 @@ impl TextEditSession<'_> {
                 return Err(CommitError { error, results });
             }
         }
+        let prepared = prepared;
         let mut containers_modified = Vec::new();
         for (page, p) in &prepared {
             for (idx, (stream_id, bytes)) in p.touched_streams.iter().enumerate() {
