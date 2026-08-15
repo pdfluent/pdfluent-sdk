@@ -286,7 +286,12 @@ pub enum FitPolicy {
     /// the floor — shrinking further would trade one defect for an
     /// unreadable one.
     ShrinkToFit,
-    /// Re-break lines within the original rectangle (Phase 2).
+    /// Re-break the replacement onto more lines inside the width the
+    /// original occupied, keeping the font size — Acrobat's behaviour when
+    /// you edit inside a text box, and the natural choice for translations.
+    ///
+    /// Added lines are not pushed away from content below; like Acrobat, no
+    /// other object on the page moves. Reported as a `reflowed` diagnostic.
     ReflowInBounds,
     /// Expand the text box within caller-supplied bounds (Phase 2).
     ExpandBounds,
@@ -949,7 +954,10 @@ impl TextEditSession<'_> {
         replacement: &str,
         options: ReplaceOptions,
     ) -> Result<(), TextEditError> {
-        if !matches!(options.fit, FitPolicy::Exact | FitPolicy::ShrinkToFit) {
+        if !matches!(
+            options.fit,
+            FitPolicy::Exact | FitPolicy::ShrinkToFit | FitPolicy::ReflowInBounds
+        ) {
             return Err(TextEditError::UnsupportedFitPolicy {
                 policy: options.fit,
             });

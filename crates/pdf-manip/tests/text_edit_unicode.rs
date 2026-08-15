@@ -473,3 +473,133 @@ fn the_floor_is_reported_rather_than_silently_overrunning() {
         "hitting the floor must be reported, not hidden, got {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// ReflowInBounds — Acrobat's gedrag
+// ---------------------------------------------------------------------------
+
+/// Number of text-showing operators on the page, i.e. how many pieces the
+/// text was drawn in.
+fn draw_ops(doc: &Document) -> usize {
+    use lopdf::content::Content;
+    let mut n = 0;
+    for obj in doc.objects.values() {
+        let Object::Stream(s) = obj else { continue };
+        let data = s
+            .decompressed_content()
+            .unwrap_or_else(|_| s.content.clone());
+        if let Ok(content) = Content::decode(&data) {
+            n += content
+                .operations
+                .iter()
+                .filter(|o| matches!(o.operator.as_str(), "Tj" | "TJ" | "'" | "\""))
+                .count();
+        }
+    }
+    n
+}
+
+#[test]
+fn reflow_adds_lines_and_keeps_the_font_size() {
+    use pdf_manip::text_edit::FitPolicy;
+    let Some(data) = host_font() else { return };
+    let font = UnicodeFont::from_bytes(data).unwrap();
+    let long = "Съешь ещё этих мягких французских булок да выпей чаю пожалуйста";
+    if !font.covers(long) {
+        return;
+    }
+
+    let (saved, codes) = replace_with_fit(
+        "Eat some more of these soft French rolls",
+        long,
+        font,
+        FitPolicy::ReflowInBounds,
+    );
+    assert!(
+        codes.iter().any(|c| c == "reflowed"),
+        "reflow must report itself, got {codes:?}"
+    );
+
+    let doc = Document::load_mem(&saved).expect("reopen");
+    assert!(
+        draw_ops(&doc) > 1,
+        "a rewrapped replacement should be drawn as several lines"
+    );
+    // The whole point of reflow over shrinking: the size stays put.
+    assert!(
+        tf_sizes(&doc).iter().all(|s| (*s - 12.0).abs() < 0.01),
+        "reflow must keep the original 12pt, got {:?}",
+        tf_sizes(&doc)
+    );
+}
+
+#[test]
+fn reflow_leaves_text_that_already_fits_on_one_line() {
+    use pdf_manip::text_edit::FitPolicy;
+    let Some(data) = host_font() else { return };
+    let font = UnicodeFont::from_bytes(data).unwrap();
+    if !font.covers("Да") {
+        return;
+    }
+
+    let (_, codes) = replace_with_fit(
+        "Eat some more of these soft French rolls",
+        "Да",
+        font,
+        FitPolicy::ReflowInBounds,
+    );
+    assert!(
+        !codes.iter().any(|c| c == "reflowed"),
+        "a short replacement needs no rewrap, got {codes:?}"
+    );
+}
+
+#[test]
+fn reflow_restores_the_text_position_for_whatever_follows() {
+    use lopdf::content::Content;
+    use pdf_manip::text_edit::FitPolicy;
+    let Some(data) = host_font() else { return };
+    let font = UnicodeFont::from_bytes(data).unwrap();
+    let long = "Съешь ещё этих мягких французских булок да выпей чаю пожалуйста";
+    if !font.covers(long) {
+        return;
+    }
+
+    let (saved, _) = replace_with_fit(
+        "Eat some more of these soft French rolls",
+        long,
+        font,
+        FitPolicy::ReflowInBounds,
+    );
+    let doc = Document::load_mem(&saved).expect("reopen");
+
+    // Every Td the reflow emitted must cancel out, or all following content
+    // on the page drifts downward.
+    let mut net = 0.0f64;
+    for obj in doc.objects.values() {
+        let Object::Stream(s) = obj else { continue };
+        let data = s
+            .decompressed_content()
+            .unwrap_or_else(|_| s.content.clone());
+        let Ok(content) = Content::decode(&data) else {
+            continue;
+        };
+        let mut seen_first_td = false;
+        for op in &content.operations {
+            if op.operator == "Td" {
+                if !seen_first_td {
+                    // The run's own positioning Td, not ours.
+                    seen_first_td = true;
+                    continue;
+                }
+                if let Some(Object::Real(dy)) = op.operands.get(1) {
+                    net += f64::from(*dy);
+                }
+            }
+        }
+    }
+    assert!(
+        net.abs() < 0.01,
+        "the vertical offsets reflow emits must sum to zero, got {net}"
+    );
+}

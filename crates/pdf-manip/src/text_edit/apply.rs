@@ -505,6 +505,31 @@ fn rebuild_run(
         }
     }
 
+    // ReflowInBounds: Acrobat's behaviour — keep the font size and let the
+    // text rewrap onto more lines inside the width the original occupied.
+    // For a translation this reads naturally where shrinking does not: one
+    // line more looks like typesetting, smaller type looks like a defect.
+    if fit_policy == FitPolicy::ReflowInBounds {
+        if let Some(reflowed) = reflow_ops(
+            op,
+            run,
+            segments,
+            fonts,
+            font,
+            fallback_font.as_deref(),
+            &mut diagnostics,
+            #[cfg(feature = "font-subset")]
+            unicode_encoder,
+        ) {
+            return Ok(RebuiltRun {
+                ops: reflowed,
+                used_fallback,
+                fallback_font,
+                diagnostics,
+            });
+        }
+    }
+
     let ops = if encoded.iter().all(|s| !s.fallback) && fit_scale >= 1.0 {
         let all_bytes: Vec<u8> = encoded.iter().flat_map(|s| s.bytes.clone()).collect();
         if op.operator == "TJ" {
@@ -872,4 +897,159 @@ fn measure_segments(
     }
 
     (original_em, new_em)
+}
+
+/// Line advance as a multiple of the font size, used when reflow adds lines.
+///
+/// The run itself carries no leading (`TL` is document state, not run state),
+/// so a conventional single-spacing factor is the honest default. It matches
+/// what most producers emit for body text.
+const REFLOW_LEADING: f64 = 1.2;
+
+/// Rebuild a run as several stacked lines that fit the original width, keeping
+/// the font size — the behaviour Acrobat has when you edit inside a text box.
+///
+/// Returns `None` when reflow does not apply (no replacement, or it already
+/// fits), so the caller falls through to the ordinary single-line path.
+///
+/// Like Acrobat, this does **not** move anything else on the page: added lines
+/// can fall over content below. That is reported rather than hidden, because
+/// the alternative — repositioning unrelated content — is a far more invasive
+/// change than the caller asked for.
+#[allow(clippy::too_many_arguments)]
+fn reflow_ops(
+    op: &Operation,
+    run: &TextRun,
+    segments: &[Segment],
+    fonts: &FontMap,
+    font: &str,
+    fallback_font: Option<&str>,
+    diagnostics: &mut Vec<Diagnostic>,
+    #[cfg(feature = "font-subset")] unicode_encoder: &mut Option<
+        crate::unicode_font::UnicodeEncoder,
+    >,
+) -> Option<Vec<Operation>> {
+    // Reflow only makes sense for a run that is one replacement, which is the
+    // translation case. A run with kept text on either side would need the
+    // surrounding words re-laid out too, and that is a different problem.
+    let replacement = match segments {
+        [Segment::Repl { text, .. }] if !text.is_empty() => text.as_str(),
+        _ => return None,
+    };
+
+    // The original run's width is the space available: it is what the block
+    // occupied before the edit.
+    let available_em = fonts.text_width_em(font, &run.text);
+    if available_em <= 0.0 {
+        return None;
+    }
+
+    #[cfg(feature = "font-subset")]
+    let measure = |t: &str| match unicode_encoder.as_ref() {
+        Some(enc) => enc.width_em(t),
+        None => fonts.text_width_em(font, t),
+    };
+    #[cfg(not(feature = "font-subset"))]
+    let measure = |t: &str| fonts.text_width_em(font, t);
+
+    if measure(replacement) <= available_em {
+        return None; // fits as one line; nothing to reflow
+    }
+
+    // Greedy wrap on whitespace. A word longer than the line gets its own line
+    // and overruns: breaking inside a word would need hyphenation rules per
+    // language, and a wrong hyphen is worse than a long line.
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in replacement.split_whitespace() {
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{current} {word}")
+        };
+        if measure(&candidate) <= available_em || current.is_empty() {
+            current = candidate;
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.len() <= 1 {
+        return None;
+    }
+
+    let target_font = fallback_font.unwrap_or(font);
+    let advance = -(run.font_size * REFLOW_LEADING);
+    let mut ops = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        let bytes = {
+            #[cfg(feature = "font-subset")]
+            {
+                match unicode_encoder.as_mut() {
+                    Some(enc) => enc.encode(line).ok()?,
+                    None => encode_text_for_font(font, line, fonts).ok()?,
+                }
+            }
+            #[cfg(not(feature = "font-subset"))]
+            {
+                encode_text_for_font(font, line, fonts).ok()?
+            }
+        };
+
+        if i == 0 {
+            if fallback_font.is_some() {
+                ops.push(Operation::new(
+                    "Tf",
+                    vec![
+                        Object::Name(target_font.as_bytes().to_vec()),
+                        Object::Real(run.font_size as f32),
+                    ],
+                ));
+            }
+            ops.push(rebuild_simple_op(op, bytes));
+        } else {
+            // Move down one line, then draw. Td is relative to the current
+            // line start, so each step is one advance rather than cumulative.
+            ops.push(Operation::new(
+                "Td",
+                vec![Object::Real(0.0), Object::Real(advance as f32)],
+            ));
+            ops.push(Operation::new(
+                "Tj",
+                vec![Object::String(bytes, StringFormat::Literal)],
+            ));
+        }
+    }
+
+    // Put the text position back where the caller's stream expects it, or
+    // everything after this run drifts down the page.
+    let restore = -advance * (lines.len() - 1) as f64;
+    ops.push(Operation::new(
+        "Td",
+        vec![Object::Real(0.0), Object::Real(restore as f32)],
+    ));
+    if fallback_font.is_some() {
+        ops.push(Operation::new(
+            "Tf",
+            vec![
+                Object::Name(font.as_bytes().to_vec()),
+                Object::Real(run.font_size as f32),
+            ],
+        ));
+    }
+
+    diagnostics.push(Diagnostic {
+        code: "reflowed".to_string(),
+        message: format!(
+            "replacement rewrapped onto {} lines at the original size; \
+             added lines may overlap content below, which is not moved",
+            lines.len()
+        ),
+    });
+
+    Some(ops)
 }
