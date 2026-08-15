@@ -325,6 +325,25 @@ impl UnicodeEncoder {
         Ok(bytes)
     }
 
+    /// Advance width of `text` in em units (1.0 = the font size), using this
+    /// font's own metrics.
+    ///
+    /// Used to decide whether a replacement fits where the original sat. The
+    /// substitute font is never exactly as wide as the one it replaces, so a
+    /// translated block needs measuring rather than assuming.
+    #[must_use]
+    pub fn width_em(&self, text: &str) -> f64 {
+        let Ok(face) = ttf_parser::Face::parse(&self.font.data, 0) else {
+            return 0.0;
+        };
+        let upem = f64::from(self.font.units_per_em);
+        text.chars()
+            .filter_map(|c| face.glyph_index(c))
+            .filter_map(|g| face.glyph_hor_advance(g))
+            .map(|a| f64::from(a) / upem)
+            .sum()
+    }
+
     /// Whether anything was encoded, i.e. whether a font needs writing.
     #[must_use]
     pub fn is_empty(&self) -> bool {

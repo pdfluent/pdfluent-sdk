@@ -241,6 +241,27 @@ impl FontMap {
             .unwrap_or(1000.0)
     }
 
+    /// Advance width of `text` in em units (1.0 = one font size) for `font`.
+    ///
+    /// Used by ShrinkToFit to compare a replacement against the space the
+    /// original occupied. Characters the font cannot encode fall back to a
+    /// nominal 0.5 em rather than being skipped: a missing character that
+    /// counts as zero would make an overrunning replacement look like it fits.
+    pub(crate) fn text_width_em(&self, font: &str, text: &str) -> f64 {
+        let Some(info) = self.fonts.get(font) else {
+            return text.chars().count() as f64 * 0.5;
+        };
+        let reverse = self.build_reverse_map(font);
+        text.chars()
+            .map(|ch| {
+                reverse
+                    .get(&ch)
+                    .map(|&code| info.widths.width_for_code(code) / 1000.0)
+                    .unwrap_or(0.5)
+            })
+            .sum()
+    }
+
     /// Check if a font uses 2-byte CID encoding.
     pub(crate) fn is_cid_font(&self, font_name: &str) -> bool {
         self.fonts

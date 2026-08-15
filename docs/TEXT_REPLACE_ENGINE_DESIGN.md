@@ -967,3 +967,60 @@ extraction; verify with a reader that did not write the file. Pinned by
   `kerning-dropped-in-match-region` diagnostic). Documentwide replacement
   makes that documentwide.
 - One Type0 font per page; a document-level batch route does not exist.
+
+---
+
+## §17 Phase 2B — width-aware fitting
+
+Shipped 2026-08-15. Closes the second and last blocker the [redacted] assessment
+named: a translation is usually longer than its source, and `FitPolicy::Exact`
+let the surplus run straight over whatever sat next to it.
+
+### What `ShrinkToFit` does
+
+Measures the replacement against the space the original occupied and scales
+the font size down until it fits, to a floor of 50%.
+
+Measuring is the point. Two things make estimating useless here: a
+translation's length is unpredictable (German and Finnish commonly run 30–40%
+long), and the substitute font is never exactly as wide as the one it
+replaces. `measure_segments` therefore measures each piece **in the font it
+will actually be drawn in** — kept text through the run's own font, replaced
+text through the embedded Unicode font's own advances. Measuring a Cyrillic
+replacement against the Latin font it replaces would compare against widths
+that do not exist.
+
+### Decisions worth keeping
+
+- **Only replaced text is scaled.** Kept text keeps the run's size, so
+  shrinking one phrase never resizes the sentence around it.
+- **It shrinks, never grows.** Enlarging short translations to fill space
+  would restyle a document nobody asked to restyle.
+- **The floor is 50% and hitting it is reported**, not hidden. Below that,
+  shrinking stops being a fix and becomes a different defect: text that
+  technically fits and nobody can read. `shrink-floor-reached` carries the
+  size that *would* have been needed, so the caller can see the block still
+  overruns instead of finding out in print.
+- **`Exact` stays the default** and is pinned by a test to resize nothing.
+  Silent reflow of a document the caller asked to leave alone is worse than
+  an overrun they can see.
+- The text state is restored after a scaled run, so the rest of the stream is
+  unaffected by the substitution.
+
+### Verified
+
+- 4 acceptance tests on top of the Phase 2A set (10 total in
+  `tests/text_edit_unicode.rs`): shrinks when longer, leaves `Exact` alone,
+  never enlarges, and reports the floor.
+- Rendered before/after and compared: at `Exact` the Russian sample runs the
+  full width; at `ShrinkToFit` it is visibly contained.
+- Reachable from Python: `fit="shrink_to_fit"`.
+
+### Still open
+
+- `AdjustSpacing`, `ReflowInBounds` and `ExpandBounds` remain reserved and
+  are rejected. Real line-breaking inside a bounding box is a layout problem
+  rather than an encoding one; shrink-to-fit covers headings and table cells,
+  which is where overrun hurts most.
+- Kerning inside an edited region is still dropped.
+- One Type0 font per page; no document-level batch route.

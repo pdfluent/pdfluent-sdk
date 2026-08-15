@@ -323,3 +323,153 @@ fn latin1_replacements_still_take_the_original_font_route() {
         "no font should be embedded when the original can encode the text"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Fase 2B — breedtebewust passen
+// ---------------------------------------------------------------------------
+
+/// Width of the drawn text on page 1, in em units summed over the run.
+/// Derived from the emitted `Tf` sizes, which is what actually governs how
+/// much room the text takes.
+fn tf_sizes(doc: &Document) -> Vec<f64> {
+    use lopdf::content::Content;
+    let mut sizes = Vec::new();
+    for obj in doc.objects.values() {
+        let Object::Stream(s) = obj else { continue };
+        let Ok(data) = s
+            .decompressed_content()
+            .or_else(|_| Ok::<_, ()>(s.content.clone()))
+        else {
+            continue;
+        };
+        let Ok(content) = Content::decode(&data) else {
+            continue;
+        };
+        for op in &content.operations {
+            if op.operator == "Tf" {
+                if let Some(Object::Real(v)) = op.operands.get(1) {
+                    sizes.push(f64::from(*v));
+                }
+            }
+        }
+    }
+    sizes
+}
+
+fn replace_with_fit(
+    source: &str,
+    replacement: &str,
+    font: UnicodeFont,
+    fit: pdf_manip::text_edit::FitPolicy,
+) -> (Vec<u8>, Vec<String>) {
+    let mut doc = make_doc(source);
+    let rev = revision_for(&mut doc);
+    let mut session = begin_text_edit(&mut doc, rev).expect("begin");
+    let matches = session.find_text(TextQuery::exact(source)).expect("find");
+    session
+        .stage_replace(
+            &matches[0].id,
+            replacement,
+            ReplaceOptions::default()
+                .font_fallback(FontFallback::EmbedUnicode(font))
+                .fit(fit),
+        )
+        .expect("stage");
+    let report = session.commit().expect("commit");
+    let codes: Vec<String> = report
+        .results
+        .iter()
+        .flat_map(|r| r.diagnostics.iter().map(|d| d.code.clone()))
+        .collect();
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("save");
+    (out, codes)
+}
+
+#[test]
+fn a_longer_replacement_is_scaled_down_to_fit() {
+    use pdf_manip::text_edit::FitPolicy;
+    let Some(data) = host_font() else { return };
+    let font = UnicodeFont::from_bytes(data).unwrap();
+    let long = "Съешь ещё этих мягких французских булок да выпей чаю";
+    if !font.covers(long) {
+        return;
+    }
+
+    let (saved, codes) = replace_with_fit("Hello", long, font, FitPolicy::ShrinkToFit);
+    assert!(
+        codes
+            .iter()
+            .any(|c| c == "shrunk-to-fit" || c == "shrink-floor-reached"),
+        "the engine must say that it resized, got {codes:?}"
+    );
+
+    let doc = Document::load_mem(&saved).expect("reopen");
+    let sizes = tf_sizes(&doc);
+    assert!(
+        sizes.iter().any(|s| *s < 12.0),
+        "a much longer replacement should be drawn smaller than the original 12pt, got {sizes:?}"
+    );
+}
+
+#[test]
+fn exact_fit_leaves_the_size_alone() {
+    use pdf_manip::text_edit::FitPolicy;
+    let Some(data) = host_font() else { return };
+    let font = UnicodeFont::from_bytes(data).unwrap();
+    let long = "Съешь ещё этих мягких французских булок да выпей чаю";
+    if !font.covers(long) {
+        return;
+    }
+
+    // Same replacement, default policy: the engine must not silently resize.
+    let (saved, codes) = replace_with_fit("Hello", long, font, FitPolicy::Exact);
+    assert!(
+        !codes
+            .iter()
+            .any(|c| c.starts_with("shrunk") || c.starts_with("shrink")),
+        "Exact must not resize anything, got {codes:?}"
+    );
+    let doc = Document::load_mem(&saved).expect("reopen");
+    assert!(
+        tf_sizes(&doc).iter().all(|s| (*s - 12.0).abs() < 0.01),
+        "Exact should keep every Tf at the original 12pt"
+    );
+}
+
+#[test]
+fn a_shorter_replacement_is_not_enlarged() {
+    use pdf_manip::text_edit::FitPolicy;
+    let Some(data) = host_font() else { return };
+    let font = UnicodeFont::from_bytes(data).unwrap();
+    if !font.covers("Да") {
+        return;
+    }
+
+    // ShrinkToFit shrinks; it must never grow text to fill space, which would
+    // change the look of every short translation for no reason.
+    let (saved, _) = replace_with_fit("Hello world", "Да", font, FitPolicy::ShrinkToFit);
+    let doc = Document::load_mem(&saved).expect("reopen");
+    assert!(
+        tf_sizes(&doc).iter().all(|s| *s <= 12.01),
+        "no Tf should exceed the original size"
+    );
+}
+
+#[test]
+fn the_floor_is_reported_rather_than_silently_overrunning() {
+    use pdf_manip::text_edit::FitPolicy;
+    let Some(data) = host_font() else { return };
+    let font = UnicodeFont::from_bytes(data).unwrap();
+    // Far longer than the original: no reasonable size makes this fit.
+    let huge = "Съешь ещё этих мягких французских булок да выпей чаю ".repeat(6);
+    if !font.covers(&huge) {
+        return;
+    }
+
+    let (_, codes) = replace_with_fit("Hi", &huge, font, FitPolicy::ShrinkToFit);
+    assert!(
+        codes.iter().any(|c| c == "shrink-floor-reached"),
+        "hitting the floor must be reported, not hidden, got {codes:?}"
+    );
+}
