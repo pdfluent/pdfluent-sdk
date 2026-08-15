@@ -12,7 +12,9 @@ use pdf_manip::text_edit::{
 };
 use pdf_manip::unicode_font::UnicodeFont;
 
-const SOURCE: &str = "REPLACE ME";
+fn source() -> String {
+    std::env::var("DEMO_SOURCE").unwrap_or_else(|_| "REPLACE ME".to_string())
+}
 
 fn make_doc() -> Document {
     let mut doc = Document::with_version("1.7");
@@ -30,7 +32,7 @@ fn make_doc() -> Document {
             Operation::new(
                 "Tj",
                 vec![Object::String(
-                    SOURCE.as_bytes().to_vec(),
+                    source().as_bytes().to_vec(),
                     StringFormat::Literal,
                 )],
             ),
@@ -88,17 +90,17 @@ fn main() {
     };
 
     let mut session = begin_text_edit(&mut doc, rev).expect("begin");
-    let matches = session.find_text(TextQuery::exact(SOURCE)).expect("find");
+    let matches = session.find_text(TextQuery::exact(source())).expect("find");
     session
         .stage_replace(
             &matches[0].id,
             &replacement,
             ReplaceOptions::default()
                 .font_fallback(FontFallback::EmbedUnicode(font))
-                .fit(if std::env::var("DEMO_SHRINK").is_ok() {
-                    FitPolicy::ShrinkToFit
-                } else {
-                    FitPolicy::Exact
+                .fit(match std::env::var("DEMO_FIT").as_deref() {
+                    Ok("shrink") => FitPolicy::ShrinkToFit,
+                    Ok("reflow") => FitPolicy::ReflowInBounds,
+                    _ => FitPolicy::Exact,
                 }),
         )
         .expect("stage");

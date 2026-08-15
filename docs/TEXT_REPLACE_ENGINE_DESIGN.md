@@ -1024,3 +1024,66 @@ that do not exist.
   which is where overrun hurts most.
 - Kerning inside an edited region is still dropped.
 - One Type0 font per page; no document-level batch route.
+
+---
+
+## §18 Phase 2B+ — ReflowInBounds, derived from what Acrobat does
+
+Added 2026-08-15 after comparing against the competition rather than deciding
+the requirements ourselves (`PDFluent/CONCURRENTIE_TEKSTVERVANGING.md`).
+
+### What the comparison showed
+
+- **Adobe PDF Services API has no text replacement at all.** Adobe's own
+  guidance is to use a PDF library, and that even then it is "very unlikely"
+  to work, because a replacement only fits when it occupies exactly the same
+  space. Their recommendation is to regenerate from source.
+- **PDF.co has it, but thinner than ours**: no font selection, no size or
+  colour, nothing documented about Unicode, nothing about reflow. The only
+  alignment aid is a manual vertical nudge (`YAdjustmentForReplacementText`).
+- **Acrobat's desktop editor is the real bar**, and it does one thing we did
+  not: longer text **rewraps inside its text box at the original font size**.
+  Adjacent boxes do not move, and there is no reflow to the next page.
+
+So `ShrinkToFit` solved the problem the wrong way round for prose. Shrinking
+is right for a heading or a table cell, where an extra line is impossible.
+For body text a smaller typeface reads as a defect, while one more line reads
+as typesetting.
+
+### What was added
+
+`FitPolicy::ReflowInBounds` — greedy word wrap into lines that fit the width
+the original occupied, drawn stacked at the original size, with the text
+position restored afterwards so nothing downstream drifts.
+
+Deliberate limits, matching Acrobat rather than exceeding it:
+
+- **Nothing else on the page moves.** Added lines can fall over content below.
+  Acrobat has the same behaviour; repositioning unrelated objects is a far
+  more invasive change than the caller asked for. Reported as `reflowed`.
+- **A word longer than the line gets its own line and overruns.** Breaking
+  inside a word needs per-language hyphenation, and a wrong hyphen is worse
+  than a long line.
+- **Only whole-run replacements reflow.** Kept text on either side would need
+  the surrounding words re-laid out, which is a different problem.
+
+### The honest gap that remains
+
+Acrobat reflows within a **text box** it reconstructed by grouping the
+paragraph. We reflow within the **run** we replaced. When the caller replaces
+a full line — the translation case — these are the same thing and the result
+matches Acrobat. When a short phrase inside a wide column is replaced, our
+available width is that phrase's width, so we wrap harder than Acrobat would.
+
+Closing that means paragraph/column detection: grouping runs into blocks by
+geometry and leading. That is the heuristic layer Adobe itself describes as
+the hard part, and it is worth doing separately rather than bolting onto this.
+
+### Verified
+
+- 3 acceptance tests on top of the existing set (13 total): adds lines while
+  keeping the size, leaves short replacements alone, and the vertical offsets
+  it emits sum to zero.
+- Rendered and inspected: a realistic ~30% longer translation wraps onto a
+  second line at the original size and looks like ordinary typesetting.
+- Reachable from Python: `fit="reflow"`.

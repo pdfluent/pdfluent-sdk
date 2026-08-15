@@ -144,9 +144,13 @@ fn build_options(
         // and scales the font down, to a 50% floor. Reports what it did in
         // the per-edit diagnostics.
         Some("shrink_to_fit") => options.fit = FitPolicy::ShrinkToFit,
+        // Acrobat's behaviour: rewrap onto more lines at the original size.
+        // The natural choice for translations; shrink_to_fit is for headings
+        // and table cells where an extra line is not an option.
+        Some("reflow") => options.fit = FitPolicy::ReflowInBounds,
         Some(other) => {
             return Err(PyValueError::new_err(format!(
-                "fit must be 'exact' or 'shrink_to_fit', got {other:?}"
+                "fit must be 'exact', 'shrink_to_fit' or 'reflow', got {other:?}"
             )))
         }
     }
