@@ -878,3 +878,92 @@ remembering:
 `pdfluent-cff` had to be bumped, and its published manifest still pinned the
 old exact version. Settle dependency versions before the first publish, or
 expect to re-cut whatever went out ahead of the change.
+
+---
+
+## §16 Phase 2A — writing scripts the document never contained
+
+Shipped 2026-08-15. Closes the first of the two blockers the [redacted]
+assessment (13 Aug 2026) named against using Text Replace as a translation
+substrate: everything above U+00FF was unreachable.
+
+### The ceiling, and where it was
+
+Two encoding routes existed, and both were bounded by what the document
+already had. The primary route re-encodes through the original font's reverse
+map — only glyphs the source already carries. `FontFallback::InjectStandard`
+falls back to Helvetica/WinAnsi, which stops at U+00FF (`encode_latin1`,
+`text_replace.rs`). German, French, Spanish and Dutch fit inside that; Polish,
+Czech, Russian, Greek, Turkish, CJK and Arabic do not.
+
+### What was added
+
+`FontFallback::EmbedUnicode(UnicodeFont)` — a third route that embeds a
+**caller-supplied** font as a Type0/`Identity-H` composite font. Character
+codes become 2-byte glyph indices, so the reachable set is whatever the
+supplied font covers rather than a 256-entry encoding.
+
+New module: `pdf_manip::unicode_font` (feature `font-subset`).
+
+### Why the caller supplies the font
+
+Embedding redistributes the font. Bundling one would inherit its licence
+terms and its size — a full CJK face is tens of megabytes — and would still
+be the wrong face for some languages. Taking bytes from the caller sidesteps
+both, lets them pick per language, and leaves room to add a bundled default
+later without changing this API.
+
+### Design points worth keeping
+
+- **Encoding and embedding are one object.** `UnicodeEncoder` accumulates
+  glyphs during `prepare_page` and is carried on `PreparedPage` into the swap
+  phase. The codes already written into the rebuilt streams are *post-subset*
+  glyph indices, so encoder and streams are only valid together. Splitting
+  them would produce a file that opens cleanly and renders the wrong glyphs.
+- **One encoder per page**, so a character repeated across edits shares a
+  glyph id and the subset stays the size of the page's real alphabet.
+- **Missing glyphs fail loudly.** A font without the requested characters
+  errors and names them, rather than emitting `.notdef` boxes — in a
+  translated document a row of blank rectangles is worse than a refusal.
+- **`/ToUnicode` is mandatory, not optional.** Without it the page renders
+  and yields nothing on copy, search or screen-reader. For a translation
+  product that is a total loss of the actual deliverable.
+- **Latin-1 still takes the original-font route.** Embedding for text the
+  document can already encode would bloat every ordinary edit; a test pins
+  that no font is embedded in that case.
+- **CFF-flavoured OpenType is rejected up front** with an actionable message
+  (use the family's `.ttf`), rather than writing a `CIDFontType2` around CFF
+  outlines that no reader will draw.
+
+### The bug that only an outside tool could see
+
+The first implementation appended to the `/ToUnicode` entry on every
+occurrence of a glyph, so a character used twice mapped back as `"aa"`.
+Every structural assertion passed — `Identity-H` present, descendant well
+formed, `/W` correct, document reopens — and rendering was pixel-perfect.
+Only `pdftotext` and `mutool` showed it: `zażółć` extracted as `zaażółć`.
+
+The lesson is the same one the PDF/A track learned in round 3: a document can
+look conformant and still have lost the product. Structural tests cannot see
+extraction; verify with a reader that did not write the file. Pinned by
+`a_repeated_character_maps_back_to_one_character`.
+
+### Verified
+
+- 6 unit tests + 6 acceptance tests (`tests/text_edit_unicode.rs`), all
+  skipping rather than failing when the host has no suitable font.
+- Round-tripped through **poppler** and **mutool** independently: Polish,
+  Czech, Russian, Greek, Turkish and CJK all extract byte-exact.
+- Rendered to PNG and inspected: correct glyph shapes and spacing.
+- Subsetting cuts a 23 MB face to a ~15 KB embedded program.
+- Reachable from Python: `font_fallback="embed_unicode"`, `unicode_font=<bytes>`.
+
+### Still open (Phase 2B/2C)
+
+- **No width-aware fitting.** `FitPolicy::Exact` remains the only policy;
+  a longer translation still overruns its neighbours. This is the second
+  blocker from the assessment and is untouched.
+- Kerning inside an edited region is still dropped (reported as a
+  `kerning-dropped-in-match-region` diagnostic). Documentwide replacement
+  makes that documentwide.
+- One Type0 font per page; a document-level batch route does not exist.

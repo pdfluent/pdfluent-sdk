@@ -51,6 +51,15 @@ pub(crate) struct PreparedPage {
     /// Whether the standard fallback font must be injected into the page
     /// resources before the streams are swapped in.
     pub inject_fallback: bool,
+    /// Glyphs accumulated for an embedded Unicode font, when any edit on this
+    /// page used [`FontFallback::EmbedUnicode`].
+    ///
+    /// Carried rather than applied here because `prepare_page` must not touch
+    /// the document: the character codes already written into the rebuilt
+    /// streams are post-subset glyph indices, so this encoder and those
+    /// streams are only valid together and must land in the same swap.
+    #[cfg(feature = "font-subset")]
+    pub unicode_encoder: Option<crate::unicode_font::UnicodeEncoder>,
     /// Per-edit outcomes, in `staged_index` order of the input.
     pub outcomes: Vec<EditOutcome>,
     /// Stream indices (into the page's `/Contents` order) that were touched.
@@ -81,6 +90,8 @@ pub(crate) fn prepare_page(
 
     let mut outcomes: Vec<EditOutcome> = Vec::with_capacity(edits.len());
     let mut inject_fallback = false;
+    #[cfg(feature = "font-subset")]
+    let mut unicode_encoder: Option<crate::unicode_font::UnicodeEncoder> = None;
 
     // Per-run collected segments-to-replace: run index -> (range in run text,
     // Option<(replacement, staged_index, fallback)>).
@@ -156,7 +167,14 @@ pub(crate) fn prepare_page(
             .map(|p| p.fallback.clone())
             .unwrap_or(FontFallback::Deny);
 
-        match rebuild_run(scan, run, &segments, &fallback_policy) {
+        match rebuild_run(
+            scan,
+            run,
+            &segments,
+            &fallback_policy,
+            #[cfg(feature = "font-subset")]
+            &mut unicode_encoder,
+        ) {
             Ok(rebuilt) => {
                 if rebuilt.used_fallback {
                     inject_fallback = true;
@@ -214,6 +232,10 @@ pub(crate) fn prepare_page(
             inject_fallback: false,
             outcomes,
             touched_stream_indices: Vec::new(),
+            // Deliberately dropped: no streams are being swapped, so an
+            // embedded font would be an orphan referenced by nothing.
+            #[cfg(feature = "font-subset")]
+            unicode_encoder: None,
         });
     }
 
@@ -254,6 +276,8 @@ pub(crate) fn prepare_page(
         inject_fallback,
         outcomes,
         touched_stream_indices,
+        #[cfg(feature = "font-subset")]
+        unicode_encoder,
     })
 }
 
@@ -292,6 +316,9 @@ fn rebuild_run(
     run: &TextRun,
     segments: &[Segment],
     fallback_policy: &FontFallback,
+    #[cfg(feature = "font-subset")] unicode_encoder: &mut Option<
+        crate::unicode_font::UnicodeEncoder,
+    >,
 ) -> Result<RebuiltRun, (usize, TextEditError)> {
     let content = &scan.content;
     let op = &content.ops[run.ops_range.start];
@@ -390,6 +417,32 @@ fn rebuild_run(
                             })?;
                             used_fallback = true;
                             fallback_font = Some(name.clone());
+                            encoded.push(EncodedSegment {
+                                bytes,
+                                fallback: true,
+                            });
+                        }
+                        #[cfg(feature = "font-subset")]
+                        FontFallback::EmbedUnicode(font) => {
+                            // One encoder per page: repeated characters across
+                            // edits then share a glyph id and the subset stays
+                            // as small as the page's real alphabet.
+                            let enc = unicode_encoder.get_or_insert_with(|| {
+                                crate::unicode_font::UnicodeEncoder::new(font.clone())
+                            });
+                            let bytes = enc.encode(text).map_err(|e| {
+                                (
+                                    *staged_index,
+                                    TextEditError::EncodingFailed {
+                                        match_id: None,
+                                        font: font.name().to_string(),
+                                        detail: e.to_string(),
+                                    },
+                                )
+                            })?;
+                            used_fallback = true;
+                            fallback_font =
+                                Some(crate::unicode_font::UNICODE_FONT_RESOURCE.to_string());
                             encoded.push(EncodedSegment {
                                 bytes,
                                 fallback: true,

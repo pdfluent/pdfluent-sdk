@@ -19,8 +19,13 @@ categories = ["rendering", "text-processing", "parser-implementations", "encodin
 exclude = ["tests/"]
 
 [features]
-default = ["signing", "pdfa", "redaction"]
+default = ["signing", "pdfa", "redaction", "font-subset"]
 async-tokio = ["dep:tokio"]
+
+# Embedding a caller-supplied Unicode font for text replacement, so a
+# replacement can contain scripts the document itself never had. Forwards to
+# pdf-manip rather than being re-implemented here.
+font-subset = ["pdf-manip/font-subset"]
 
 # Capability feature families (see RFC 0001 §10 D8)
 signing = []

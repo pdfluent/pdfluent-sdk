@@ -89,6 +89,10 @@ pub mod text_edit;
 pub mod text_replace;
 pub mod text_run;
 pub mod text_style;
+/// Embedding a caller-supplied Unicode font, so a replacement can contain
+/// characters the document's own fonts have no glyph for.
+#[cfg(feature = "font-subset")]
+pub mod unicode_font;
 pub mod watermark;
 
 pub use content_editor::{ContentEditor, GraphicsSnapshot, GraphicsStateTracker};

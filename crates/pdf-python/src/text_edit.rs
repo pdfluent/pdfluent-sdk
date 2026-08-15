@@ -15,6 +15,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 
+use pdfluent::unicode_font::UnicodeFont;
 use pdfluent::text_edit::{
     CommitPolicy, FontFallback, MatchId, RegionRelation, ReplaceOptions, SignaturePolicy, TextQuery,
 };
@@ -98,6 +99,7 @@ fn build_query(
 fn build_options(
     font_fallback: Option<&str>,
     fallback_font_name: Option<&str>,
+    unicode_font: Option<&[u8]>,
     signature_policy: Option<&str>,
     commit_policy: Option<&str>,
 ) -> PyResult<ReplaceOptions> {
@@ -113,9 +115,24 @@ fn build_options(
             })?;
             options.font_fallback = FontFallback::Explicit(name.to_string());
         }
+        Some("embed_unicode") => {
+            // The only route that can write scripts the document never had.
+            // The caller supplies the font because embedding redistributes it,
+            // and the licence to do so is theirs to hold.
+            let data = unicode_font.ok_or_else(|| {
+                PyValueError::new_err(
+                    "font_fallback='embed_unicode' requires unicode_font=<TrueType font bytes>",
+                )
+            })?;
+            let font = UnicodeFont::from_bytes(data.to_vec()).map_err(|e| {
+                PyValueError::new_err(format!("unicode_font is not usable: {e}"))
+            })?;
+            options.font_fallback = FontFallback::EmbedUnicode(font);
+        }
         Some(other) => {
             return Err(PyValueError::new_err(format!(
-                "font_fallback must be 'deny', 'inject_standard' or 'explicit', got {other:?}"
+                "font_fallback must be 'deny', 'inject_standard', 'explicit' or \
+                 'embed_unicode', got {other:?}"
             )))
         }
     }
@@ -225,6 +242,7 @@ impl PyTextEditor {
         limit = None,
         font_fallback = None,
         fallback_font_name = None,
+        unicode_font = None,
         signature_policy = None,
         commit_policy = None,
     ))]
@@ -241,6 +259,7 @@ impl PyTextEditor {
         limit: Option<usize>,
         font_fallback: Option<&str>,
         fallback_font_name: Option<&str>,
+        unicode_font: Option<&[u8]>,
         signature_policy: Option<&str>,
         commit_policy: Option<&str>,
     ) -> PyResult<PyObject> {
@@ -255,6 +274,7 @@ impl PyTextEditor {
         let options = build_options(
             font_fallback,
             fallback_font_name,
+            unicode_font,
             signature_policy,
             commit_policy,
         )?;
@@ -275,6 +295,7 @@ impl PyTextEditor {
         *,
         font_fallback = None,
         fallback_font_name = None,
+        unicode_font = None,
         signature_policy = None,
         commit_policy = None,
     ))]
@@ -284,12 +305,14 @@ impl PyTextEditor {
         edits: Vec<(String, String)>,
         font_fallback: Option<&str>,
         fallback_font_name: Option<&str>,
+        unicode_font: Option<&[u8]>,
         signature_policy: Option<&str>,
         commit_policy: Option<&str>,
     ) -> PyResult<PyObject> {
         let options = build_options(
             font_fallback,
             fallback_font_name,
+            unicode_font,
             signature_policy,
             commit_policy,
         )?;
