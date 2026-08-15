@@ -267,7 +267,9 @@ pub struct CommitError {
 // ===========================================================================
 
 /// What the engine may do when replacement text does not fit (design §4.3).
-/// Phase 1B implements only [`FitPolicy::Exact`].
+///
+/// Implemented: [`FitPolicy::Exact`] and [`FitPolicy::ShrinkToFit`]. The rest
+/// are reserved and rejected with [`TextEditError::UnsupportedFitPolicy`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -276,7 +278,13 @@ pub enum FitPolicy {
     Exact,
     /// Adjust character/word spacing within limits (Phase 2).
     AdjustSpacing,
-    /// Shrink font size down to a minimum (Phase 2).
+    /// Measure the replacement against the space the original occupied and
+    /// scale the font size down until it fits, to a floor of 50%.
+    ///
+    /// Reports what it did: a `shrunk-to-fit` diagnostic with the applied
+    /// percentage, or `shrink-floor-reached` when the text still overruns at
+    /// the floor — shrinking further would trade one defect for an
+    /// unreadable one.
     ShrinkToFit,
     /// Re-break lines within the original rectangle (Phase 2).
     ReflowInBounds,
@@ -358,7 +366,8 @@ pub enum RegionRelation {
 /// Options for one staged replacement.
 #[derive(Debug, Clone)]
 pub struct ReplaceOptions {
-    /// Fit policy (Phase 1B: [`FitPolicy::Exact`] only).
+    /// Fit policy. [`FitPolicy::Exact`] (default) or
+    /// [`FitPolicy::ShrinkToFit`].
     pub fit: FitPolicy,
     /// Font fallback policy.
     pub font_fallback: FontFallback,
@@ -383,6 +392,13 @@ impl Default for ReplaceOptions {
 }
 
 impl ReplaceOptions {
+    /// Set the fit policy.
+    #[must_use]
+    pub fn fit(mut self, fit: FitPolicy) -> Self {
+        self.fit = fit;
+        self
+    }
+
     /// Set the font fallback policy.
     #[must_use]
     pub fn font_fallback(mut self, fallback: FontFallback) -> Self {
@@ -933,7 +949,7 @@ impl TextEditSession<'_> {
         replacement: &str,
         options: ReplaceOptions,
     ) -> Result<(), TextEditError> {
-        if options.fit != FitPolicy::Exact {
+        if !matches!(options.fit, FitPolicy::Exact | FitPolicy::ShrinkToFit) {
             return Err(TextEditError::UnsupportedFitPolicy {
                 policy: options.fit,
             });
@@ -1230,6 +1246,7 @@ impl TextEditSession<'_> {
                     chr: (s.payload.chr[0] as usize, s.payload.chr[1] as usize),
                     replacement: s.replacement.clone(),
                     fallback: s.options.font_fallback.clone(),
+                    fit: s.options.fit,
                 })
                 .collect();
             let p = apply::prepare_page(scan, &requests)?;

@@ -12,7 +12,7 @@ use crate::text_replace::{encode_latin1, encode_text_for_font};
 use crate::text_run::{FontMap, TextRun};
 
 use super::scan::PageScan;
-use super::{Diagnostic, FontFallback, TextEditError};
+use super::{Diagnostic, FitPolicy, FontFallback, TextEditError};
 
 /// Resource name used for the injected standard fallback font.
 pub(crate) const FALLBACK_FONT_NAME: &str = "F__Helv";
@@ -28,7 +28,17 @@ pub(crate) struct EditRequest {
     pub replacement: String,
     /// Font fallback policy for this edit.
     pub fallback: FontFallback,
+    /// Fit policy for this edit.
+    pub fit: FitPolicy,
 }
+
+/// Smallest fraction of the original font size ShrinkToFit will go to.
+///
+/// Below this, shrinking stops being a fix and starts being a different
+/// defect: text that technically fits but nobody can read. The edit is
+/// applied at the floor and the shortfall is reported, so the caller can see
+/// that the block still overruns rather than discovering it in print.
+const MIN_SHRINK: f64 = 0.5;
 
 /// Per-edit outcome of preparing a page.
 pub(crate) struct EditOutcome {
@@ -100,6 +110,7 @@ pub(crate) fn prepare_page(
         replacement: Option<&'a str>,
         staged_index: usize,
         fallback: &'a FontFallback,
+        fit: FitPolicy,
     }
     let mut per_run: std::collections::BTreeMap<usize, Vec<RunEditPart>> =
         std::collections::BTreeMap::new();
@@ -120,6 +131,7 @@ pub(crate) fn prepare_page(
                 replacement: (ri == ri0).then_some(edit.replacement.as_str()),
                 staged_index: edit.staged_index,
                 fallback: &edit.fallback,
+                fit: edit.fit,
             });
         }
     }
@@ -166,12 +178,14 @@ pub(crate) fn prepare_page(
             .first()
             .map(|p| p.fallback.clone())
             .unwrap_or(FontFallback::Deny);
+        let fit_policy = sorted.first().map_or(FitPolicy::Exact, |p| p.fit);
 
         match rebuild_run(
             scan,
             run,
             &segments,
             &fallback_policy,
+            fit_policy,
             #[cfg(feature = "font-subset")]
             &mut unicode_encoder,
         ) {
@@ -316,6 +330,7 @@ fn rebuild_run(
     run: &TextRun,
     segments: &[Segment],
     fallback_policy: &FontFallback,
+    fit_policy: FitPolicy,
     #[cfg(feature = "font-subset")] unicode_encoder: &mut Option<
         crate::unicode_font::UnicodeEncoder,
     >,
@@ -454,7 +469,43 @@ fn rebuild_run(
         }
     }
 
-    let ops = if encoded.iter().all(|s| !s.fallback) {
+    // ShrinkToFit: measure what the replacement needs against the space the
+    // original occupied, and scale the font down if it overruns. Measured, not
+    // estimated — a substitute font is never exactly as wide as the one it
+    // replaces, and a translation is usually longer on top of that.
+    let mut fit_scale = 1.0f64;
+    if fit_policy == FitPolicy::ShrinkToFit {
+        let (orig_em, new_em) = measure_segments(
+            run,
+            segments,
+            fonts,
+            font,
+            #[cfg(feature = "font-subset")]
+            unicode_encoder.as_ref(),
+        );
+        if new_em > orig_em && new_em > 0.0 {
+            let needed = orig_em / new_em;
+            fit_scale = needed.max(MIN_SHRINK);
+            if needed < MIN_SHRINK {
+                diagnostics.push(Diagnostic {
+                    code: "shrink-floor-reached".to_string(),
+                    message: format!(
+                        "replacement needs {:.0}% of the original size to fit; \
+                         stopped at the {:.0}% floor, so it still overruns",
+                        needed * 100.0,
+                        MIN_SHRINK * 100.0
+                    ),
+                });
+            } else {
+                diagnostics.push(Diagnostic {
+                    code: "shrunk-to-fit".to_string(),
+                    message: format!("font size scaled to {:.0}% to fit", fit_scale * 100.0),
+                });
+            }
+        }
+    }
+
+    let ops = if encoded.iter().all(|s| !s.fallback) && fit_scale >= 1.0 {
         let all_bytes: Vec<u8> = encoded.iter().flat_map(|s| s.bytes.clone()).collect();
         if op.operator == "TJ" {
             match rebuild_tj_preserving(op, run, segments, fonts, font) {
@@ -492,6 +543,7 @@ fn rebuild_run(
             &encoded,
             font,
             run.font_size,
+            run.font_size * fit_scale,
             fallback_font.as_deref().unwrap_or(FALLBACK_FONT_NAME),
         )
     };
@@ -708,29 +760,39 @@ fn build_mixed_font_ops(
     encoded: &[EncodedSegment],
     font: &str,
     font_size: f64,
+    replaced_size: f64,
     fallback_name: &str,
 ) -> Vec<Operation> {
-    let tf = |name: &str| {
+    let tf = |name: &str, size: f64| {
         Operation::new(
             "Tf",
             vec![
                 Object::Name(name.as_bytes().to_vec()),
-                Object::Real(font_size as f32),
+                Object::Real(size as f32),
             ],
         )
     };
 
     let mut ops = Vec::new();
-    let mut current_fallback = false;
+    // `None` = no Tf emitted yet, so the first segment always states its font.
+    let mut current: Option<(bool, u64)> = None;
     let mut first = true;
 
     for seg in encoded {
         if seg.bytes.is_empty() {
             continue;
         }
-        if seg.fallback != current_fallback {
-            ops.push(tf(if seg.fallback { fallback_name } else { font }));
-            current_fallback = seg.fallback;
+        // Kept text keeps the run's own size; only replaced text is scaled,
+        // so shrinking one phrase never resizes the sentence around it.
+        let size = if seg.fallback {
+            replaced_size
+        } else {
+            font_size
+        };
+        let key = (seg.fallback, size.to_bits());
+        if current != Some(key) {
+            ops.push(tf(if seg.fallback { fallback_name } else { font }, size));
+            current = Some(key);
         }
         if first {
             // Preserve the original operator semantics on the first piece.
@@ -759,8 +821,10 @@ fn build_mixed_font_ops(
             ));
         }
     }
-    if current_fallback {
-        ops.push(tf(font));
+    // Restore the run's own font and size if the last piece changed either,
+    // so the text state after this run is what the rest of the stream expects.
+    if current.is_some_and(|(fb, size)| fb || size != font_size.to_bits()) {
+        ops.push(tf(font, font_size));
     }
     if first {
         // Every segment was empty: keep an empty operator so the positioning
@@ -768,4 +832,44 @@ fn build_mixed_font_ops(
         ops.push(rebuild_simple_op(op, Vec::new()));
     }
     ops
+}
+
+/// Width of the original text versus the replacement, both in em units
+/// (1.0 = one font size), for the segments of one run.
+///
+/// Kept text is measured once and counted on both sides — it is unchanged, so
+/// it cancels out of the comparison but still occupies space the replacement
+/// has to share.
+fn measure_segments(
+    run: &TextRun,
+    segments: &[Segment],
+    fonts: &FontMap,
+    font: &str,
+    #[cfg(feature = "font-subset")] unicode_encoder: Option<&crate::unicode_font::UnicodeEncoder>,
+) -> (f64, f64) {
+    let original_em = fonts.text_width_em(font, &run.text);
+    let mut new_em = 0.0;
+
+    for segment in segments {
+        match segment {
+            Segment::Kept { start, end } => {
+                new_em += fonts.text_width_em(font, &run.text[*start..*end]);
+            }
+            Segment::Repl { text, .. } => {
+                // Measure with the font the text will actually be drawn in.
+                // Measuring a Cyrillic replacement against the Latin font it
+                // replaces would compare against widths that do not exist.
+                #[cfg(feature = "font-subset")]
+                let width = match unicode_encoder {
+                    Some(enc) => enc.width_em(text),
+                    None => fonts.text_width_em(font, text),
+                };
+                #[cfg(not(feature = "font-subset"))]
+                let width = fonts.text_width_em(font, text);
+                new_em += width;
+            }
+        }
+    }
+
+    (original_em, new_em)
 }

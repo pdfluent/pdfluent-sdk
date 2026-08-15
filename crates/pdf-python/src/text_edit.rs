@@ -16,6 +16,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 
 use pdfluent::unicode_font::UnicodeFont;
+use pdfluent::text_edit::FitPolicy;
 use pdfluent::text_edit::{
     CommitPolicy, FontFallback, MatchId, RegionRelation, ReplaceOptions, SignaturePolicy, TextQuery,
 };
@@ -100,6 +101,7 @@ fn build_options(
     font_fallback: Option<&str>,
     fallback_font_name: Option<&str>,
     unicode_font: Option<&[u8]>,
+    fit: Option<&str>,
     signature_policy: Option<&str>,
     commit_policy: Option<&str>,
 ) -> PyResult<ReplaceOptions> {
@@ -133,6 +135,18 @@ fn build_options(
             return Err(PyValueError::new_err(format!(
                 "font_fallback must be 'deny', 'inject_standard', 'explicit' or \
                  'embed_unicode', got {other:?}"
+            )))
+        }
+    }
+    match fit {
+        None | Some("exact") => {}
+        // Measures the replacement against the space the original occupied
+        // and scales the font down, to a 50% floor. Reports what it did in
+        // the per-edit diagnostics.
+        Some("shrink_to_fit") => options.fit = FitPolicy::ShrinkToFit,
+        Some(other) => {
+            return Err(PyValueError::new_err(format!(
+                "fit must be 'exact' or 'shrink_to_fit', got {other:?}"
             )))
         }
     }
@@ -243,6 +257,7 @@ impl PyTextEditor {
         font_fallback = None,
         fallback_font_name = None,
         unicode_font = None,
+        fit = None,
         signature_policy = None,
         commit_policy = None,
     ))]
@@ -260,6 +275,7 @@ impl PyTextEditor {
         font_fallback: Option<&str>,
         fallback_font_name: Option<&str>,
         unicode_font: Option<&[u8]>,
+        fit: Option<&str>,
         signature_policy: Option<&str>,
         commit_policy: Option<&str>,
     ) -> PyResult<PyObject> {
@@ -275,6 +291,7 @@ impl PyTextEditor {
             font_fallback,
             fallback_font_name,
             unicode_font,
+            fit,
             signature_policy,
             commit_policy,
         )?;
@@ -296,6 +313,7 @@ impl PyTextEditor {
         font_fallback = None,
         fallback_font_name = None,
         unicode_font = None,
+        fit = None,
         signature_policy = None,
         commit_policy = None,
     ))]
@@ -306,6 +324,7 @@ impl PyTextEditor {
         font_fallback: Option<&str>,
         fallback_font_name: Option<&str>,
         unicode_font: Option<&[u8]>,
+        fit: Option<&str>,
         signature_policy: Option<&str>,
         commit_policy: Option<&str>,
     ) -> PyResult<PyObject> {
@@ -313,6 +332,7 @@ impl PyTextEditor {
             font_fallback,
             fallback_font_name,
             unicode_font,
+            fit,
             signature_policy,
             commit_policy,
         )?;

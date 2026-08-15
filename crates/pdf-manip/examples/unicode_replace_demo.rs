@@ -8,7 +8,7 @@
 use lopdf::content::{Content, Operation};
 use lopdf::{dictionary, Dictionary, Document, Object, Stream, StringFormat};
 use pdf_manip::text_edit::{
-    begin_text_edit, DocumentRevision, FontFallback, ReplaceOptions, TextQuery,
+    begin_text_edit, DocumentRevision, FitPolicy, FontFallback, ReplaceOptions, TextQuery,
 };
 use pdf_manip::unicode_font::UnicodeFont;
 
@@ -93,13 +93,24 @@ fn main() {
         .stage_replace(
             &matches[0].id,
             &replacement,
-            ReplaceOptions::default().font_fallback(FontFallback::EmbedUnicode(font)),
+            ReplaceOptions::default()
+                .font_fallback(FontFallback::EmbedUnicode(font))
+                .fit(if std::env::var("DEMO_SHRINK").is_ok() {
+                    FitPolicy::ShrinkToFit
+                } else {
+                    FitPolicy::Exact
+                }),
         )
         .expect("stage");
     let report = session.commit().expect("commit");
 
     doc.save(&args[2]).expect("save");
     println!("replacements applied: {}", report.replacements_applied);
+    for r in &report.results {
+        for d in &r.diagnostics {
+            println!("  [{}] {}", d.code, d.message);
+        }
+    }
     println!("wrote {}", args[2]);
     println!("expected text: {replacement}");
 }
