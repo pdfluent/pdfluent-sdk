@@ -76,7 +76,21 @@ pub struct UnicodeFont {
     /// comparing whole font programs.
     fingerprint: [u8; 8],
     postscript_name: String,
+    /// Variation axis settings to instance to before subsetting. Empty for a
+    /// static font.
+    ///
+    /// A variable font embedded as-is renders at its *default* instance, and
+    /// that default is not always the weight a reader expects: Noto Sans SC
+    /// defaults to wght 100 (Thin), so body text embedded from it comes out
+    /// hairline. Defaulting this to Regular absorbs that trap instead of
+    /// leaving every caller to discover it from a printed page.
+    variations: Vec<([u8; 4], f32)>,
 }
+
+/// The `wght` variation axis.
+const WGHT: [u8; 4] = *b"wght";
+/// Conventional "Regular" weight.
+const REGULAR_WEIGHT: f32 = 400.0;
 
 impl std::fmt::Debug for UnicodeFont {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -157,12 +171,42 @@ impl UnicodeFont {
             fp
         };
 
+        // Aim a variable font at Regular unless its own default already is.
+        // Clamped to the axis range so a family that stops below 400 gets its
+        // heaviest available weight rather than an out-of-range request.
+        let variations = face
+            .variation_axes()
+            .into_iter()
+            .find(|a| a.tag.to_bytes() == WGHT)
+            .filter(|a| (a.def_value - REGULAR_WEIGHT).abs() > f32::EPSILON)
+            .map(|a| vec![(WGHT, REGULAR_WEIGHT.clamp(a.min_value, a.max_value))])
+            .unwrap_or_default();
+
         Ok(Self {
             data: Arc::new(data),
             units_per_em,
             fingerprint,
             postscript_name,
+            variations,
         })
+    }
+
+    /// Pin a variation axis, e.g. `wght` 700 for bold.
+    ///
+    /// Overrides the automatic Regular targeting. No-op on a static font.
+    #[must_use]
+    pub fn with_variation(mut self, axis: &[u8; 4], value: f32) -> Self {
+        self.variations.retain(|(t, _)| t != axis);
+        self.variations.push((*axis, value));
+        self
+    }
+
+    /// Whether this font is variable and will be instanced before embedding.
+    #[must_use]
+    pub fn is_variable(&self) -> bool {
+        ttf_parser::Face::parse(&self.data, 0)
+            .map(|f| !f.variation_axes().is_empty())
+            .unwrap_or(false)
     }
 
     /// Characters in `text` this font has no glyph for, in first-seen order
@@ -296,8 +340,21 @@ impl UnicodeEncoder {
             ));
         }
 
-        let subset = subsetter::subset(&self.font.data, 0, &self.remapper)
-            .map_err(|e| ManipError::Other(format!("font subsetting failed: {e}")))?;
+        let subset = if self.font.variations.is_empty() {
+            subsetter::subset(&self.font.data, 0, &self.remapper)
+        } else {
+            // Instancing collapses the variable font to one weight; without
+            // this the embedded program renders at the family's default,
+            // which for several Noto CJK builds is Thin.
+            let coords: Vec<(subsetter::Tag, f32)> = self
+                .font
+                .variations
+                .iter()
+                .map(|(tag, value)| (subsetter::Tag::new(tag), *value))
+                .collect();
+            subsetter::subset_with_variations(&self.font.data, 0, &coords, &self.remapper)
+        }
+        .map_err(|e| ManipError::Other(format!("font subsetting failed: {e}")))?;
 
         // Metrics come from the ORIGINAL face: subsetting rewrites glyph ids,
         // and reading head/hhea from the subset would be equivalent but adds a
@@ -649,6 +706,44 @@ mod tests {
             mapped, "a",
             "one glyph must map back to exactly one character, got {mapped:?}"
         );
+    }
+
+    #[test]
+    fn a_variable_font_is_aimed_at_regular_not_its_own_default() {
+        // Noto Sans SC's variable build defaults to wght 100 (Thin), so
+        // embedding it as-is gives hairline body text that looks like a
+        // rendering fault rather than a font choice. Measured on the real
+        // file; the axis default is data, not an assumption.
+        let Some(data) = host_font() else { return };
+        let font = UnicodeFont::from_bytes(data).unwrap();
+
+        if !font.is_variable() {
+            // Static face: nothing to instance, and nothing to assert.
+            assert!(font.variations.is_empty());
+            return;
+        }
+        for (axis, value) in &font.variations {
+            if axis == &WGHT {
+                assert!(
+                    (*value - REGULAR_WEIGHT).abs() < f32::EPSILON,
+                    "a variable font should be pinned to Regular, got {value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_explicit_variation_overrides_the_automatic_one() {
+        let Some(data) = host_font() else { return };
+        let font = UnicodeFont::from_bytes(data)
+            .unwrap()
+            .with_variation(b"wght", 700.0);
+        let weight = font
+            .variations
+            .iter()
+            .find(|(a, _)| a == &WGHT)
+            .map(|(_, v)| *v);
+        assert_eq!(weight, Some(700.0), "caller's weight must win");
     }
 
     #[test]
