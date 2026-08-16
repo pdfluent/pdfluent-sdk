@@ -311,12 +311,13 @@ pub fn encrypt_and_save<W: Write>(
 
 fn ensure_document_id(doc: &mut Document) {
     if doc.trailer.get(b"ID").is_err() {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let id: Vec<u8> = (0..16).map(|i| ((nanos >> (i * 8)) & 0xFF) as u8).collect();
+        // Not SystemTime: it panics on wasm32. Seconds rather than nanos is
+        // coarser, so the low bytes are mixed with the document's own object
+        // count to keep two ids from one second apart distinguishable.
+        let seconds = u128::from(crate::clock::unix_now_secs());
+        let salt = doc.objects.len() as u128;
+        let seed = (seconds << 32) ^ salt.wrapping_mul(0x9E37_79B9);
+        let id: Vec<u8> = (0..16).map(|i| ((seed >> (i * 8)) & 0xFF) as u8).collect();
         let id_obj = Object::String(id, lopdf::StringFormat::Hexadecimal);
         doc.trailer
             .set("ID", Object::Array(vec![id_obj.clone(), id_obj]));

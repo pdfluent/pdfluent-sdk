@@ -4346,6 +4346,7 @@ version = "1.0.0-beta.18"
 dependencies = [
  "flate2",
  "image",
+ "js-sys",
  "pdf-compliance",
  "pdf-engine",
  "pdf-font",
