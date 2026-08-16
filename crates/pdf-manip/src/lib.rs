@@ -54,6 +54,8 @@
 
 pub mod bookmarks;
 pub mod cff_append;
+/// Wall-clock time that is safe on wasm32, where `SystemTime::now()` panics.
+pub mod clock;
 pub mod content_editor;
 #[cfg(feature = "image-insert")]
 pub mod downsample;

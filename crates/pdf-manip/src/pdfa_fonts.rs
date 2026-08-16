@@ -923,10 +923,9 @@ pub fn promote_inline_font_dicts(doc: &mut Document) -> usize {
 /// Embed fonts from system font files into the document.
 pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
     // --- License check & Watermarking ---
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    // Not SystemTime: it panics on wasm32 and took the whole PDF/A path
+    // down in the browser build. See crate::clock.
+    let now = crate::clock::unix_now_secs();
 
     let guard = match LicenseGuard::load_from_env(&PUBLIC_KEY, now) {
         Ok(g) => g,
