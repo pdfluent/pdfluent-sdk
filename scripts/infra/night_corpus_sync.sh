@@ -41,6 +41,12 @@ MIN_FREE_GB="${MIN_FREE_GB:-50}"
 #   pdfluent   — a May tar backup of the corpus; genuinely duplicate, so last
 SOURCES=(corpus safedocs pdfluent)
 
+# pdfluent/ holds 187 GB of backup data plus 1.7 GB of CI cache. The cache was
+# deliberately left behind in the migration (it regenerates, and the desktop
+# keeps its caches on the internal SSD anyway), so pulling it now would both
+# contradict that decision and spend window time on data we do not want.
+EXCLUDES=(--exclude 'pdfluent/ci/' --exclude 'ci/')
+
 log() { echo "$(date -Iseconds) $*"; }
 
 # A job that cannot set up its own state must say so and stop. Failing soft
@@ -111,6 +117,7 @@ for src in "${SOURCES[@]}"; do
     # --partial keeps half-copied large files (that May tar is 231 GB; without
     # it, every night would restart it from zero and it would never finish).
     timeout "${remaining}" rsync -a --partial --info=progress2 --no-inc-recursive \
+        "${EXCLUDES[@]}" \
         -e "ssh -o ConnectTimeout=20 -o BatchMode=yes" \
         "${VPS}:${SRC_ROOT}/${src}/" "${DST_ROOT}/${src}/"
     rc=$?
