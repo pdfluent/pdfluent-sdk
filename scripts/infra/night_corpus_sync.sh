@@ -116,7 +116,12 @@ for src in "${SOURCES[@]}"; do
     # -a preserves times so the next night can tell what it already has.
     # --partial keeps half-copied large files (that May tar is 231 GB; without
     # it, every night would restart it from zero and it would never finish).
-    timeout "${remaining}" rsync -a --partial --info=progress2 --no-inc-recursive \
+    # progress2 draws a live counter with carriage returns, which is useful on a
+    # terminal and actively harmful in a logfile: measured 32 MB per night, all
+    # of it one single line, with the real status messages buried inside it. From
+    # cron we want the closing summary instead.
+    if [[ -t 1 ]]; then rsync_info="--info=progress2"; else rsync_info="--info=stats2"; fi
+    timeout "${remaining}" rsync -a --partial "${rsync_info}" --no-inc-recursive \
         "${EXCLUDES[@]}" \
         -e "ssh -o ConnectTimeout=20 -o BatchMode=yes" \
         "${VPS}:${SRC_ROOT}/${src}/" "${DST_ROOT}/${src}/"
