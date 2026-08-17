@@ -40,14 +40,40 @@ STORAGEBOX_CI_ROOT="${STORAGEBOX_MOUNT}/pdfluent/ci"
 
 echo "===================================================================="
 echo "[runner_disk_guard] PDFluent VPS runner pre-flight disk check"
-echo "[runner_disk_guard] hard-fail threshold: <${HARD_FAIL_GB} GB on /"
-echo "[runner_disk_guard] warn threshold:      <${WARN_GB} GB on /"
+echo "[runner_disk_guard] hard-fail threshold: <${HARD_FAIL_GB} GB"
+echo "[runner_disk_guard] warn threshold:      <${WARN_GB} GB"
 echo "===================================================================="
 
-# Root filesystem
-root_avail_gb=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
-echo "[runner_disk_guard] root (/) free: ${root_avail_gb} GB"
-df -h / | sed 's/^/[runner_disk_guard]   /'
+# Root filesystem.
+#
+# On WSL the root filesystem is a sparse virtual disk (ext4.vhdx) that lives on
+# the Windows volume and grows on demand. `df /` therefore reports the vhdx's
+# MAXIMUM size — measured 945 GB "free" while the host volume had only 102 GB
+# left. Guarding on that number is worse than not guarding: it reports healthy
+# right up to the moment the host volume fills and WSL, Windows and the build
+# all fail together.
+#
+# So on WSL the binding constraint is the Windows volume, and that is what we
+# check. Elsewhere (the VPS, any normal Linux host) nothing changes.
+GUARD_FS="/"
+GUARD_LABEL="root (/)"
+if [[ -r /proc/version ]] && grep -qiE "microsoft|wsl" /proc/version 2>/dev/null; then
+    for host_mount in /mnt/c /mnt/d; do
+        if [[ -d "${host_mount}" ]] && df -BG "${host_mount}" >/dev/null 2>&1; then
+            GUARD_FS="${host_mount}"
+            GUARD_LABEL="Windows-volume (${host_mount}) — WSL root is a sparse vhdx on it"
+            break
+        fi
+    done
+    if [[ "${GUARD_FS}" == "/" ]]; then
+        echo "[runner_disk_guard] WARNING: WSL detected but no host volume found;"
+        echo "[runner_disk_guard]   falling back to / , which over-reports free space"
+    fi
+fi
+
+root_avail_gb=$(df -BG --output=avail "${GUARD_FS}" | tail -1 | tr -dc '0-9')
+echo "[runner_disk_guard] ${GUARD_LABEL} free: ${root_avail_gb} GB"
+df -h "${GUARD_FS}" | sed 's/^/[runner_disk_guard]   /'
 echo "[runner_disk_guard] cache env: CARGO_HOME=${CARGO_HOME:-unset} CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-unset} TMPDIR=${TMPDIR:-unset}"
 
 # Storagebox
@@ -75,8 +101,18 @@ if [[ -d "${STORAGEBOX_CI_ROOT}" ]]; then
         echo "[runner_disk_guard]   recovery: umount ${STORAGEBOX_MOUNT} && mount -a"
         exit 2
     fi
+elif [[ "${CARGO_TARGET_DIR:-}" == "${STORAGEBOX_MOUNT}"/* ]]; then
+    # Caches are configured to live on the storagebox but the layout is not
+    # there. That is a genuine fault, and it is worth being explicit about.
+    echo "[runner_disk_guard] WARNING: ${STORAGEBOX_CI_ROOT} missing while CARGO_TARGET_DIR points at the storagebox"
+    echo "[runner_disk_guard]   runner storage layout not initialised"
 else
-    echo "[runner_disk_guard] WARNING: ${STORAGEBOX_CI_ROOT} missing — runner storage layout not initialised"
+    # Not a fault: the WSL desktop runner keeps its caches on the internal SSD
+    # on purpose (cargo's SQLite locking breaks on external/network storage),
+    # so it has no storagebox CI layout at all. Warning about a layout this
+    # host deliberately does not use is noise, and noise is what makes real
+    # warnings easy to miss.
+    echo "[runner_disk_guard] storagebox CI layout not in use on this host (caches: ${CARGO_TARGET_DIR:-unset})"
 fi
 
 # Observability (warn-only): surface a concurrent corpus-archival `tar`.
@@ -115,15 +151,29 @@ echo "[runner_disk_guard] gitlab-runner builds + cache (storagebox):"
 
 echo ""
 
+# Surface anything the periodic monitor saw between pipelines.
+#
+# check-disk.sh runs from cron every 30 minutes and drops this marker when a
+# volume crosses its threshold. Printing it here is the point: the old monitor
+# wrote warnings to a logfile nobody opened, so a filling disk stayed invisible
+# until a build died on it. Job output is a place we actually look.
+DISK_MARKER="${DISK_MARKER_DIR:-/var/tmp/xfa-disk-monitor}/breach"
+if [[ -f "${DISK_MARKER}" ]]; then
+    echo "[runner_disk_guard] ATTENTION: the periodic disk monitor recorded a breach"
+    sed 's/^/[runner_disk_guard]   /' "${DISK_MARKER}"
+    echo "[runner_disk_guard]   (marker clears itself once usage drops back under threshold)"
+    echo ""
+fi
+
 # Decide verdict
 if (( root_avail_gb < HARD_FAIL_GB )); then
-    echo "[runner_disk_guard] HARD FAIL: root has only ${root_avail_gb} GB free (<${HARD_FAIL_GB} GB)"
+    echo "[runner_disk_guard] HARD FAIL: ${GUARD_LABEL} has only ${root_avail_gb} GB free (<${HARD_FAIL_GB} GB)"
     echo "[runner_disk_guard]   run: bash scripts/ci/runner_cleanup_safe.sh --apply"
     exit 2
 fi
 
 if (( root_avail_gb < WARN_GB )); then
-    echo "[runner_disk_guard] WARN: root has ${root_avail_gb} GB free (<${WARN_GB} GB)"
+    echo "[runner_disk_guard] WARN: ${GUARD_LABEL} has ${root_avail_gb} GB free (<${WARN_GB} GB)"
     echo "[runner_disk_guard]   consider: bash scripts/ci/runner_cleanup_safe.sh --apply"
     # Warning only; do not exit non-zero.
 fi
