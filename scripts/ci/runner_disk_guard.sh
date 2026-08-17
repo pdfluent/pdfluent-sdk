@@ -7,19 +7,14 @@
 # "No space left on device" instead of failing fast).
 #
 # Exit codes:
-#   0 — both root and storagebox have enough free space
-#   2 — root < HARD_FAIL_GB free OR storagebox not writable: HARD FAIL
-#   3 — root < WARN_GB free: WARN (does not fail; printed loudly)
+#   0 — enough free space (a WARN also exits 0; it is printed, not fatal)
+#   2 — below HARD_FAIL_GB free, OR storagebox present but not writable
 #
-# Thresholds (defaults are tuned for the transition phase while
-# /opt/xfa-corpus (216 GB) is still on root):
-#   - HARD_FAIL_GB = 5  : enough for /tmp + GitLab clone + log spill
-#   - WARN_GB      = 15 : healthy headroom
-# Post corpus migration these should be raised to 30 / 50 respectively.
+# Thresholds: HARD_FAIL_GB = 10, WARN_GB = 20 (see the note below on why 10).
 #
 # Usage:
 #   bash scripts/ci/runner_disk_guard.sh         # default thresholds
-#   bash scripts/ci/runner_disk_guard.sh 30 50   # post-corpus-migration
+#   bash scripts/ci/runner_disk_guard.sh 30 50   # stricter
 #
 # Reports the top 10 disk consumers on root and on the storagebox so a
 # triager can see at a glance what's eating space.
@@ -157,7 +152,17 @@ echo ""
 # volume crosses its threshold. Printing it here is the point: the old monitor
 # wrote warnings to a logfile nobody opened, so a filling disk stayed invisible
 # until a build died on it. Job output is a place we actually look.
-DISK_MARKER="${DISK_MARKER_DIR:-/var/tmp/xfa-disk-monitor}/breach"
+DISK_MARKER_DIR_="${DISK_MARKER_DIR:-/var/tmp/xfa-disk-monitor}"
+DISK_MARKER="${DISK_MARKER_DIR_}/breach"
+
+# Report whether the monitor is running at all. A silent healthy monitor and a
+# monitor whose cron entry vanished look identical, so say which one it is.
+if [[ -f "${DISK_MARKER_DIR_}/last-run" ]]; then
+    echo "[runner_disk_guard] disk monitor last ran: $(grep -m1 '^last_run=' "${DISK_MARKER_DIR_}/last-run" | cut -d= -f2-)"
+else
+    echo "[runner_disk_guard] NOTE: no disk-monitor heartbeat found — is its cron entry installed?"
+fi
+
 if [[ -f "${DISK_MARKER}" ]]; then
     echo "[runner_disk_guard] ATTENTION: the periodic disk monitor recorded a breach"
     sed 's/^/[runner_disk_guard]   /' "${DISK_MARKER}"
