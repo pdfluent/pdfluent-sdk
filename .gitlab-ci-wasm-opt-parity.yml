@@ -28,11 +28,24 @@ wasm-opt-parity:
     - |
       cp crates/xfa-wasm/Cargo.toml crates/xfa-wasm/Cargo.toml.bak
       python3 -c "
-      import re, pathlib
+      import re, pathlib, tomllib, sys
       p = pathlib.Path('crates/xfa-wasm/Cargo.toml')
       t = p.read_text()
-      t = re.sub(r'^wasm-opt = .*$', 'wasm-opt = false', t, count=1, flags=re.M)
-      p.write_text(t)
+      # wasm-opt is a MULTI-LINE array since B3 enabled -O3 with validator
+      # allowance flags. The old pattern (^wasm-opt = .*\$) replaced only the
+      # opening 'wasm-opt = [' line and left the array elements orphaned, so
+      # cargo saw '\"-O3\",' as a key with no value and every run of this job
+      # died with 'error: key with no value, expected =' before building
+      # anything. Match the whole array, or a plain scalar value.
+      t2, n = re.subn(r'^wasm-opt\s*=\s*\[[^]]*\]', 'wasm-opt = false', t, count=1, flags=re.M)
+      if n == 0:
+          t2, n = re.subn(r'^wasm-opt\s*=.*\$', 'wasm-opt = false', t, count=1, flags=re.M)
+      if n == 0:
+          sys.exit('wasm-opt setting not found in Cargo.toml - parity job cannot build a reference')
+      # Parse before writing. A malformed edit here fails several steps later
+      # inside cargo, where the message says nothing about this substitution.
+      tomllib.loads(t2)
+      p.write_text(t2)
       "
     - wasm-pack build --release --target web --out-dir /tmp/ref/pkg
         crates/xfa-wasm -- --no-default-features --features wasm
