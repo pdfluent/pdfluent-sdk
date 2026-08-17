@@ -1,0 +1,28 @@
+# WSL2-instellingen voor de PDFluent-bouwmachine.
+#
+# Standaard pakt WSL de helft van het RAM (8 van 16 GB). Het release-profiel
+# van de workspace gebruikt lto = "fat" met codegen-units = 1, en dat is
+# geheugenintensief; met 8 GB gaat de linker swappen of omvallen. 12 GB laat
+# 4 GB over voor Windows zelf, wat voor deze machine genoeg is.
+[wsl2]
+memory=12GB
+processors=4
+swap=8GB
+
+# ZONDER DEZE REGEL DRAAIT DE CI NIET.
+#
+# WSL legt de virtuele machine stil zodra de laatste wsl.exe-sessie sluit --
+# standaard 60 seconden daarna. Het telt daarvoor aangekoppelde clients, NIET
+# de processen binnenin: een systemd-service als de GitLab-runner houdt de
+# machine dus niet in de lucht.
+#
+# Gemeten gevolg: de distro startte 8 keer in 30 minuten op en draaide telkens
+# 1 tot 3 minuten -- precies de momenten waarop iemand een commando uitvoerde.
+# Daartussen was de runner weg. GitLab bleef hem "online" noemen omdat het
+# laatste contact binnen het venster lag, terwijl wachtende jobs nooit werden
+# opgepakt (een sanity-job stond 149 seconden te wachten zonder runner).
+#
+# -1 schakelt het stilleggen uit. De keepalive-taak in Windows houdt daarnaast
+# een sessie open, zodat dit ook goed gaat als een toekomstige WSL-versie deze
+# instelling anders uitlegt.
+vmIdleTimeout=-1
