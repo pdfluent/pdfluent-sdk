@@ -5,7 +5,7 @@
 // of its components (including the embedded PDF engine), requires a licence.
 // See https://pdfluent.com/license for terms.
 
-//! Embedding a caller-supplied Unicode font as a Type0/CIDFontType2 composite
+//! Embedding a caller-supplied Unicode font as a Type0 composite
 //! font, so a replacement can contain characters the original font has no
 //! glyph for.
 //!
@@ -58,6 +58,18 @@
 //! [`UnicodeEncoder`].
 
 use crate::error::{ManipError, Result};
+
+/// Which outline format the font program carries.
+///
+/// This decides the whole descendant-font shape in the PDF, so it is read once
+/// from the program and carried along rather than re-derived at write time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outlines {
+    /// `glyf` outlines — a `CIDFontType2` descendant with `/FontFile2`.
+    TrueType,
+    /// CFF outlines — a `CIDFontType0` descendant with `/FontFile3`.
+    Cff,
+}
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -72,6 +84,8 @@ pub(crate) const UNICODE_FONT_RESOURCE: &str = "F__Uni";
 pub struct UnicodeFont {
     data: Arc<Vec<u8>>,
     units_per_em: u16,
+    /// Decides the descendant-font shape; see [`Outlines`].
+    outlines: Outlines,
     /// Short stable identity, used for equality and diagnostics rather than
     /// comparing whole font programs.
     fingerprint: [u8; 8],
@@ -134,20 +148,27 @@ impl UnicodeFont {
     /// producing a file that opens but renders wrongly:
     ///
     /// - the program must parse as OpenType/TrueType;
-    /// - it must carry TrueType (`glyf`) outlines. CFF-flavoured OpenType
-    ///   needs a `CIDFontType0`/`FontFile3` descendant, which this version
-    ///   does not write. Most families ship a `.ttf` alongside the `.otf`.
+    /// - it must carry outlines in a format we can embed: TrueType (`glyf`)
+    ///   becomes a `CIDFontType2`/`FontFile2` descendant, CFF becomes
+    ///   `CIDFontType0`/`FontFile3`. A program with neither has nothing to
+    ///   embed and is refused.
     pub fn from_bytes(data: Vec<u8>) -> Result<Self> {
         let face = ttf_parser::Face::parse(&data, 0)
             .map_err(|e| ManipError::Other(format!("not a usable font program: {e}")))?;
 
-        if face.tables().glyf.is_none() {
+        // Both flavours are embeddable, but they take different shapes in the
+        // PDF, so decide here and carry the answer rather than guessing later.
+        let outlines = if face.tables().glyf.is_some() {
+            Outlines::TrueType
+        } else if face.tables().cff.is_some() {
+            Outlines::Cff
+        } else {
             return Err(ManipError::Other(
-                "font has no TrueType outlines (glyf); CFF-flavoured OpenType is not \
-                 supported by this writer — use the .ttf build of the family"
+                "font carries neither TrueType (glyf) nor CFF outlines, so there is \
+                 nothing to embed"
                     .to_string(),
             ));
-        }
+        };
 
         let units_per_em = face.units_per_em();
         if units_per_em == 0 {
@@ -185,6 +206,7 @@ impl UnicodeFont {
         Ok(Self {
             data: Arc::new(data),
             units_per_em,
+            outlines,
             fingerprint,
             postscript_name,
             variations,
@@ -432,17 +454,34 @@ impl UnicodeEncoder {
         face: &ttf_parser::Face,
         to_pdf: impl Fn(f64) -> i64,
     ) -> Result<ObjectId> {
-        let mut stream = Stream::new(
-            dictionary! { "Length1" => Object::Integer(subset.len() as i64) },
-            subset.to_vec(),
-        );
+        // The stream dictionary differs per flavour, and PDF/A checks it.
+        //
+        // /Length1 is the uncompressed length of a TrueType program and belongs
+        // only on /FontFile2. A /FontFile3 stream instead needs its own
+        // /Subtype naming the format it carries: the subsetter emits an OTTO
+        // (CFF-flavoured OpenType) container, so that is /OpenType — bare CFF
+        // would be /CIDFontType0C.
+        //
+        // Leaving the /Subtype off is not cosmetic. veraPDF rejects the file
+        // under PDF/A-2 clause 6.2.11.4.1 with "Invalid subtype of the embedded
+        // font stream", while every reader still opens and draws it — so
+        // without the conformance test this would have shipped looking fine.
+        let stream_dict = match self.font.outlines {
+            Outlines::TrueType => {
+                dictionary! { "Length1" => Object::Integer(subset.len() as i64) }
+            }
+            Outlines::Cff => {
+                dictionary! { "Subtype" => Object::Name(b"OpenType".to_vec()) }
+            }
+        };
+        let mut stream = Stream::new(stream_dict, subset.to_vec());
         // Ignore compression failure: an uncompressed program is valid, just
         // larger, and is strictly better than failing the whole edit.
         let _ = stream.compress();
         let file_id = doc.add_object(Object::Stream(stream));
 
         let bbox = face.global_bounding_box();
-        let descriptor = dictionary! {
+        let mut descriptor = dictionary! {
             "Type" => Object::Name(b"FontDescriptor".to_vec()),
             "FontName" => Object::Name(self.subset_base_font_name().into_bytes()),
             // Symbolic: Identity-H codes are glyph indices, not a Latin
@@ -465,8 +504,17 @@ impl UnicodeEncoder {
             // used only as a rendering hint, so a conventional mid value is
             // the honest choice; deriving a fake precise number would not be.
             "StemV" => Object::Integer(80),
-            "FontFile2" => Object::Reference(file_id),
         };
+        // Where the program hangs depends on its outline format. A CFF program
+        // under /FontFile2 produces a file that opens and shows nothing.
+        match self.font.outlines {
+            Outlines::TrueType => {
+                descriptor.set("FontFile2", Object::Reference(file_id));
+            }
+            Outlines::Cff => {
+                descriptor.set("FontFile3", Object::Reference(file_id));
+            }
+        }
         Ok(doc.add_object(Object::Dictionary(descriptor)))
     }
 
@@ -476,9 +524,16 @@ impl UnicodeEncoder {
         descriptor_id: ObjectId,
         to_pdf: impl Fn(f64) -> i64,
     ) -> ObjectId {
-        let cid_font = dictionary! {
+        // CIDFontType2 wraps TrueType outlines, CIDFontType0 wraps CFF. Naming
+        // the wrong one is the classic way to produce a PDF that every reader
+        // accepts and no reader draws.
+        let subtype: &[u8] = match self.font.outlines {
+            Outlines::TrueType => b"CIDFontType2",
+            Outlines::Cff => b"CIDFontType0",
+        };
+        let mut cid_font = dictionary! {
             "Type" => Object::Name(b"Font".to_vec()),
-            "Subtype" => Object::Name(b"CIDFontType2".to_vec()),
+            "Subtype" => Object::Name(subtype.to_vec()),
             "BaseFont" => Object::Name(self.subset_base_font_name().into_bytes()),
             "CIDSystemInfo" => dictionary! {
                 "Registry" => Object::string_literal("Adobe"),
@@ -486,10 +541,18 @@ impl UnicodeEncoder {
                 "Supplement" => Object::Integer(0),
             },
             "FontDescriptor" => Object::Reference(descriptor_id),
-            "CIDToGIDMap" => Object::Name(b"Identity".to_vec()),
+
             "DW" => Object::Integer(1000),
             "W" => Object::Array(self.build_w_array(to_pdf)),
         };
+
+        // /CIDToGIDMap is a CIDFontType2 key. On a CIDFontType0 the CFF charset
+        // already carries the CID-to-glyph relation, so the key does not belong
+        // there — but leaving it out of the TrueType case breaks that font, as
+        // the existing Identity-H test caught the moment it went missing.
+        if self.font.outlines == Outlines::TrueType {
+            cid_font.set("CIDToGIDMap", Object::Name(b"Identity".to_vec()));
+        }
         doc.add_object(Object::Dictionary(cid_font))
     }
 

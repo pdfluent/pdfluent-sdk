@@ -430,11 +430,23 @@ impl ReplaceOptions {
 // Query
 // ===========================================================================
 
+/// What `TextQuery` looks for: a literal string, or a compiled regular
+/// expression.
+///
+/// The regex is compiled once, when the query is built, so a malformed pattern
+/// is reported at that point rather than surfacing later from inside a search
+/// over a document.
+#[derive(Debug, Clone)]
+enum Pattern {
+    Literal(String),
+    Regex(Box<regex::Regex>),
+}
+
 /// A text search query. Matching operates on the decoded visual text of the
 /// logical reading sequence per container (design §10 / Phase 1B narrowing).
 #[derive(Debug, Clone)]
 pub struct TextQuery {
-    needle: String,
+    pattern: Pattern,
     case_insensitive: bool,
     pages: Option<(u32, u32)>,
     region: Option<(u32, [f64; 4], RegionRelation)>,
@@ -445,7 +457,7 @@ impl TextQuery {
     /// Search for this exact text.
     pub fn exact(text: impl Into<String>) -> Self {
         Self {
-            needle: text.into(),
+            pattern: Pattern::Literal(text.into()),
             case_insensitive: false,
             pages: None,
             region: None,
@@ -453,10 +465,75 @@ impl TextQuery {
         }
     }
 
+    /// Search with a regular expression.
+    ///
+    /// Uses the `regex` crate, which matches in time linear in the input and
+    /// has no backtracking — a pattern from an untrusted source cannot be made
+    /// to hang the search, which matters because these patterns often come
+    /// straight from an end user.
+    ///
+    /// Case-insensitivity is applied through the regex engine itself when you
+    /// combine this with [`TextQuery::case_insensitive`], so it follows the
+    /// same Unicode rules as the rest of the pattern.
+    ///
+    /// # Errors
+    ///
+    /// [`TextEditError::InvalidQuery`] if the pattern does not compile, or if
+    /// it can match the empty string. The second case is rejected on purpose:
+    /// a pattern such as `a*` matches at every position, so a replace would
+    /// insert text between every pair of characters in the document. That is
+    /// never what the caller meant, and it is far cheaper to say so here than
+    /// to let them discover it in the output.
+    pub fn regex(pattern: &str) -> Result<Self, TextEditError> {
+        Self::regex_inner(pattern, false)
+    }
+
+    fn regex_inner(pattern: &str, case_insensitive: bool) -> Result<Self, TextEditError> {
+        let compiled = regex::RegexBuilder::new(pattern)
+            .case_insensitive(case_insensitive)
+            .build()
+            .map_err(|e| TextEditError::InvalidQuery {
+                reason: format!("regex does not compile: {e}"),
+            })?;
+
+        if compiled.is_match("") {
+            return Err(TextEditError::InvalidQuery {
+                reason: format!(
+                    "regex {pattern:?} matches the empty string, so it would match at every \
+                     position in the document; anchor it or require at least one character"
+                ),
+            });
+        }
+
+        Ok(Self {
+            pattern: Pattern::Regex(Box::new(compiled)),
+            case_insensitive,
+            pages: None,
+            region: None,
+            limit: None,
+        })
+    }
+
     /// Unicode-simple case-insensitive matching.
+    ///
+    /// For a regex query this recompiles the pattern with the flag set, so the
+    /// engine applies its own Unicode case folding rather than a second,
+    /// different rule bolted on afterwards.
     #[must_use]
     pub fn case_insensitive(mut self, yes: bool) -> Self {
         self.case_insensitive = yes;
+        if let Pattern::Regex(rx) = &self.pattern {
+            // The pattern compiled once already, so rebuilding it with one flag
+            // flipped cannot fail for any reason the caller could act on. If it
+            // somehow does, keep the pattern we have rather than silently
+            // searching for something else.
+            if let Ok(rebuilt) = regex::RegexBuilder::new(rx.as_str())
+                .case_insensitive(yes)
+                .build()
+            {
+                self.pattern = Pattern::Regex(Box::new(rebuilt));
+            }
+        }
         self
     }
 
@@ -853,7 +930,9 @@ impl TextEditSession<'_> {
     /// Find matches for `query` across the requested pages, including inside
     /// Form XObjects (reported non-editable in Phase 1B).
     pub fn find_text(&mut self, query: TextQuery) -> Result<Vec<TextMatch>, TextEditError> {
-        if query.needle.is_empty() {
+        // A regex query cannot be empty: TextQuery::regex rejects patterns that
+        // match the empty string when it compiles them.
+        if matches!(&query.pattern, Pattern::Literal(n) if n.is_empty()) {
             return Err(TextEditError::InvalidQuery {
                 reason: "empty search text".to_string(),
             });
@@ -867,15 +946,17 @@ impl TextEditSession<'_> {
             self.ensure_scan(page)?;
             let scan = &self.scans[&page];
 
-            for (s, e) in find_all(
+            for (s, e) in find_all_pattern(
                 &scan.content.combined,
-                &query.needle,
+                &query.pattern,
                 query.case_insensitive,
             ) {
                 matches.push(build_match(&self.revision, scan, ScanTarget::Page, (s, e)));
             }
             for (xi, xobj) in scan.xobjects.iter().enumerate() {
-                for (s, e) in find_all(&xobj.scan.combined, &query.needle, query.case_insensitive) {
+                for (s, e) in
+                    find_all_pattern(&xobj.scan.combined, &query.pattern, query.case_insensitive)
+                {
                     matches.push(build_match(
                         &self.revision,
                         scan,
@@ -1644,6 +1725,24 @@ fn region_matches(bbox: &[f64; 4], rect: &[f64; 4], relation: RegionRelation) ->
                 && bbox[2] <= rect[2] + REGION_EPSILON
                 && bbox[3] <= rect[3] + REGION_EPSILON
         }
+    }
+}
+
+/// Non-overlapping occurrences of `pattern` in `haystack` as byte ranges.
+///
+/// Regex matching is delegated to the engine, which already returns
+/// non-overlapping leftmost matches — the same rule the literal path uses.
+fn find_all_pattern(
+    haystack: &str,
+    pattern: &Pattern,
+    case_insensitive: bool,
+) -> Vec<(usize, usize)> {
+    match pattern {
+        Pattern::Literal(needle) => find_all(haystack, needle, case_insensitive),
+        Pattern::Regex(rx) => rx
+            .find_iter(haystack)
+            .map(|m| (m.start(), m.end()))
+            .collect(),
     }
 }
 
