@@ -33,8 +33,16 @@ endif
 # targets a different architecture than the host (e.g. x86_64 toolchain
 # on an arm64 Mac produces binaries in target/release/, not
 # target/aarch64-apple-darwin/release/).
-TARGET_DIR_TRIPLE  := ../../../target/$(TARGET_TRIPLE)/release
-TARGET_DIR_GENERIC := ../../../target/release
+# CARGO_TARGET_DIR moves cargo's output somewhere else entirely, and CI sets it
+# (the desktop runner keeps a warm cache at /var/cache/cargo-target). Hardcoding
+# ../../../target means the link step looks in a directory cargo never wrote to:
+# `cannot find -lpdf_capi`, with the library sitting happily elsewhere. Same
+# class of bug as the -arch flag that kept these tests macOS-only -- a Makefile
+# quietly assuming the environment it was written on.
+CARGO_OUT := $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),../../../target)
+
+TARGET_DIR_TRIPLE  := $(CARGO_OUT)/$(TARGET_TRIPLE)/release
+TARGET_DIR_GENERIC := $(CARGO_OUT)/release
 
 HAS_DYLIB_TRIPLE  := $(wildcard $(TARGET_DIR_TRIPLE)/libpdf_capi.dylib \
                                 $(TARGET_DIR_TRIPLE)/libpdf_capi.so)
