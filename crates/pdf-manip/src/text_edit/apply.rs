@@ -513,6 +513,7 @@ fn rebuild_run(
         if let Some(reflowed) = reflow_ops(
             op,
             run,
+            block_width_for(&scan.content.runs, run),
             segments,
             fonts,
             font,
@@ -906,6 +907,108 @@ fn measure_segments(
 /// what most producers emit for body text.
 const REFLOW_LEADING: f64 = 1.2;
 
+/// The width available for reflow: the enclosing text block, not just the run.
+///
+/// WHY THIS EXISTS
+///
+/// Reflow used the width of the run being replaced. When a whole line is
+/// replaced — the translation case — that is the right answer and this changes
+/// nothing. When a short phrase inside a wide column is replaced, the run is a
+/// fraction of the column, so the text wrapped far earlier than the page had
+/// room for. Acrobat reflows inside a text frame it infers from the page; this
+/// is the same idea, kept deliberately timid.
+///
+/// PDF has no paragraphs. Everything here is inference from geometry, so the
+/// rules are conservative and the failure mode is chosen: when the evidence is
+/// weak we return the run's own width and behave exactly as before.
+///
+///   * same font size (within 5%) — a size change usually marks a different
+///     role, e.g. a heading above body text;
+///   * consecutive baselines separated by 0.8–2.0 × font size — a plausible
+///     leading, not an unrelated element that happens to sit nearby;
+///   * horizontally overlapping by at least half the narrower run — same
+///     column, not the next column across;
+///   * at least two runs. One run is not evidence of a block.
+///
+/// The result is never narrower than the run itself, so this can only ever give
+/// reflow *more* room. That bound is what makes the heuristic safe to ship: the
+/// worst case is the behaviour we already had.
+fn block_width_for(runs: &[TextRun], target: &TextRun) -> f64 {
+    const SIZE_TOLERANCE: f64 = 0.05;
+    const MIN_LEADING: f64 = 0.8;
+    const MAX_LEADING: f64 = 2.0;
+    const MIN_OVERLAP: f64 = 0.5;
+
+    if target.font_size <= 0.0 {
+        return target.width;
+    }
+
+    let overlaps = |a: &TextRun, b: &TextRun| {
+        let (a0, a1) = (a.x, a.x + a.width);
+        let (b0, b1) = (b.x, b.x + b.width);
+        let shared = a1.min(b1) - a0.max(b0);
+        let narrower = a.width.min(b.width);
+        narrower > 0.0 && shared / narrower >= MIN_OVERLAP
+    };
+    let same_size = |a: &TextRun, b: &TextRun| {
+        (a.font_size - b.font_size).abs() <= b.font_size * SIZE_TOLERANCE
+    };
+    let plausible_leading = |a: &TextRun, b: &TextRun| {
+        let gap = (a.y - b.y).abs();
+        gap >= b.font_size * MIN_LEADING && gap <= b.font_size * MAX_LEADING
+    };
+
+    // Walk outward from the target line by line. Stopping at the first row that
+    // does not qualify keeps an unrelated block further down the page from
+    // being pulled in through a chain of coincidences.
+    let mut block: Vec<&TextRun> = vec![target];
+    let mut frontier_up = target;
+    let mut frontier_down = target;
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for r in runs {
+            if std::ptr::eq(r, target) || block.iter().any(|b| std::ptr::eq(*b, r)) {
+                continue;
+            }
+            if !same_size(r, target) {
+                continue;
+            }
+            if r.y > frontier_up.y && plausible_leading(r, frontier_up) && overlaps(r, frontier_up)
+            {
+                block.push(r);
+                frontier_up = r;
+                grew = true;
+            } else if r.y < frontier_down.y
+                && plausible_leading(r, frontier_down)
+                && overlaps(r, frontier_down)
+            {
+                block.push(r);
+                frontier_down = r;
+                grew = true;
+            }
+        }
+    }
+
+    if block.len() < 2 {
+        return target.width;
+    }
+
+    let left = block.iter().map(|r| r.x).fold(f64::INFINITY, f64::min);
+    let right = block
+        .iter()
+        .map(|r| r.x + r.width)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let width = right - left;
+
+    // Never narrower than the run: this may only add room.
+    if width.is_finite() && width > target.width {
+        width
+    } else {
+        target.width
+    }
+}
+
 /// Rebuild a run as several stacked lines that fit the original width, keeping
 /// the font size — the behaviour Acrobat has when you edit inside a text box.
 ///
@@ -920,6 +1023,9 @@ const REFLOW_LEADING: f64 = 1.2;
 fn reflow_ops(
     op: &Operation,
     run: &TextRun,
+    // Width to wrap inside, in user-space units: the enclosing block when we
+    // could infer one, otherwise the run's own width.
+    available_width: f64,
     segments: &[Segment],
     fonts: &FontMap,
     font: &str,
@@ -937,9 +1043,18 @@ fn reflow_ops(
         _ => return None,
     };
 
-    // The original run's width is the space available: it is what the block
-    // occupied before the edit.
-    let available_em = fonts.text_width_em(font, &run.text);
+    // Space available for the rewrapped text.
+    //
+    // Measured in em so it can be compared against measure() below, which works
+    // in em too. The run's text gives us the em-per-user-unit scale; the width
+    // itself comes from the enclosing block when one could be inferred, which
+    // is what stops a short phrase in a wide column from wrapping at the
+    // phrase's own width. See block_width_for.
+    let run_em = fonts.text_width_em(font, &run.text);
+    if run_em <= 0.0 || run.width <= 0.0 {
+        return None;
+    }
+    let available_em = run_em * (available_width / run.width);
     if available_em <= 0.0 {
         return None;
     }
