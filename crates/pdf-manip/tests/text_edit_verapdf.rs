@@ -272,3 +272,61 @@ fn the_validator_rejects_a_file_that_is_not_pdfa() {
          if it does, the verdict parsing is wrong and the other tests prove nothing"
     );
 }
+
+/// The CFF descendant shape, held to the same standard.
+///
+/// CFF takes a different route through the PDF than TrueType — CIDFontType0,
+/// /FontFile3, no /CIDToGIDMap — so it needs its own conformance check rather
+/// than inheriting confidence from the TrueType case.
+#[test]
+fn a_cff_replacement_keeps_the_file_pdfa_conformant() {
+    if verapdf().is_none() {
+        skip("veraPDF not installed");
+        return;
+    }
+    let candidates = [
+        "/System/Library/Fonts/Supplemental/STIXGeneral.otf",
+        "/usr/share/fonts/opentype/urw-base35/NimbusSans-Regular.otf",
+        "/usr/share/fonts/opentype/freefont/FreeSans.otf",
+    ];
+    let mut cff = None;
+    for path in candidates {
+        if let Ok(d) = std::fs::read(path) {
+            if d.len() >= 4 && &d[..4] == b"OTTO" {
+                cff = Some(d);
+                break;
+            }
+        }
+    }
+    let Some(data) = cff else {
+        skip("no CFF-flavoured OpenType font on this host");
+        return;
+    };
+    let font = UnicodeFont::from_bytes(data).expect("CFF font parses");
+    // Above Latin-1, so the Unicode route is actually taken.
+    let replacement = "Γειά σου";
+    if !font.covers(replacement) {
+        skip("CFF font on this host does not cover Greek");
+        return;
+    }
+
+    let mut doc = make_doc("Hello world");
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf).unwrap();
+    let converted = to_pdfa(&buf);
+    assert!(
+        validate(&converted, "cff-before")
+            .expect("veraPDF ran")
+            .compliant,
+        "baseline must be conformant, otherwise this test measures nothing"
+    );
+
+    let edited = replace_unicode(&converted, "Hello world", replacement, font);
+    let after = validate(&edited, "cff-after").expect("veraPDF ran");
+    assert!(
+        after.compliant,
+        "the embedded CFF font took the file out of PDF/A conformance.\n\
+         veraPDF objected to:\n{:#?}",
+        after.failed_rules
+    );
+}
