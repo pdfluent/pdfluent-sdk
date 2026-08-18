@@ -4,7 +4,7 @@ name = "xfa-wasm"
 # is aligned to the RC line 1.0.0-beta.17 across channels. The Rust workspace
 # version is intentionally a different, independent value; wasm-pack derives the
 # generated package.json version from this [package] version.
-version = "1.0.0-beta.17.4"
+version = "1.0.0-beta.17.5"
 edition.workspace = true
 license-file = "LICENSE"
 repository.workspace = true
@@ -78,7 +78,7 @@ lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
 # publish time. Cargo workspace version and npm version are independent.
 [package.metadata.npm]
 name = "@pdfluent/sdk-wasm"
-version = "1.0.0-beta.17.4"
+version = "1.0.0-beta.17.5"
 
 [package.metadata.wasm-pack.profile.release]
 # B3 — wasm-opt -O3 enabled after evaluation. See
