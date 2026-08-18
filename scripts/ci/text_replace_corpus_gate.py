@@ -215,8 +215,23 @@ def main() -> None:
         sys.exit(0)
 
     if not baseline_path.exists():
-        die(f"no baseline at {baseline_path}; run once with --write-baseline "
-            "and commit the result, so later runs have something to be judged against")
+        # First run: there is nothing to judge against yet, so record what we
+        # found and say plainly that this run proved nothing about regressions.
+        #
+        # This is not the same as tolerating a *missing* baseline. The file is
+        # committed to the repo, so its absence is visible in git — and the
+        # banner below makes a re-baseline impossible to mistake for a pass in
+        # the job log.
+        baseline_path.parent.mkdir(parents=True, exist_ok=True)
+        baseline_path.write_text(json.dumps(current, indent=2, sort_keys=True))
+        print()
+        print("=" * 68)
+        print("[text_replace_gate] BASELINE ESTABLISHED — THIS RUN JUDGED NOTHING")
+        print(f"[text_replace_gate] no baseline existed at {baseline_path}")
+        print("[text_replace_gate] the numbers above are the starting point, not a verdict.")
+        print("[text_replace_gate] Commit the baseline; the next run compares against it.")
+        print("=" * 68)
+        sys.exit(0)
 
     baseline = json.loads(baseline_path.read_text())
     regressions = []
