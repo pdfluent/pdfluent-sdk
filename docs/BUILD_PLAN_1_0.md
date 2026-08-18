@@ -46,11 +46,31 @@ about a day each, mostly test-writing.
 | B11 | timestamp / TSA | **`rasn-cms`** 0.28 (MIT/Apache, pure Rust) — or extend what we have | **not a new stack**: `pdf-sign` already uses `der`, `rsa`, `p256`, `sha2`. RFC 3161 is a CMS structure fetched over HTTP and embedded in the signature dictionary |
 | B12 | annotation authoring | none needed | `pdf-annot` reads every ISO 32000-2 type and has styling setters; it has no `add`. Appearance-stream generation is the real work |
 
-### Large — one to two weeks each
+### Correction: PDF/UA and PDF/X are mostly built
 
-| # | capability | open source | why large |
-|---|---|---|---|
-| B10 | **PDF/UA and PDF/X** | veraPDF for validation (already integrated) | PDF/A took four rounds of corpus work. UA needs a tagged structure tree with correct reading order and alternative text; X needs colour-management and output intents. Validation is the easy half — creating conformant output is where the rounds go. MR !17 is already open on PDF/UA |
+I sized these at one to two weeks. That was wrong, and Jasper's recollection that
+we already had something was right.
+
+`pdf-compliance` carries dedicated `pdfua.rs`, `pdfx.rs`, `pdfx_gen.rs`,
+`tagged.rs`, `tagged_gen.rs` and `xmp.rs` — around 29,000 lines — with
+`validate_pdfua()` and `validate_pdfx(level)` as public entry points, and the
+generation side present too: `add_heading`, `add_paragraph`, `add_table`,
+`add_list`, `add_figure`, `add_role_mapping` and `bdc_operator` for tagged
+structure, `add_output_intent`, `add_bleed_boxes`, `add_trim_boxes` and
+`add_pdfx_xmp` for PDF/X.
+
+**The facade exposes none of it.** Same shape as Excel and PowerPoint: built,
+tested, published, unreachable from the crate customers are told to use.
+
+| # | capability | revised size |
+|---|---|---|
+| B10a | surface `validate_pdfua` / `validate_pdfx` on the facade | **S** — wiring |
+| B10b | a conversion entry point (`convert_to_pdfua`) on top of the existing tagged generators | **M** |
+| B10c | corpus rounds to find where conformant output actually breaks | **L**, and this is the part that took PDF/A four rounds |
+
+The lesson is the one from the XFA limitations doc again: I sized a capability
+from its absence in the facade instead of checking the crate behind it. The
+`codebase-questions` skill exists for exactly this, and I did not follow it here.
 
 ### The special case
 
@@ -78,12 +98,41 @@ the reason they all weigh hundreds of megabytes. Anyone converting real web page
 needs this and will not accept a subset.
 
 **Track 2 — a pure-Rust document subset (L to XL).**
-`html5ever` (MIT/Apache) parses, `taffy` (MIT) lays out, `cssparser` and
-`selectors` (both MPL-2.0 — usable, only the modified files would need
-publishing) match styles. Scope it honestly: text, tables, images, page breaks,
-basic CSS; no JavaScript, no floats, no grid edge cases. That covers invoices,
-reports and letters — most of the actual demand — with no external runtime, no
-browser to install, and deterministic output.
+
+Fair question: if the crates exist, why is this weeks rather than days?
+
+Because of what they do *not* cover. The four crates give you:
+
+| crate | gives you |
+|---|---|
+| `html5ever` | a DOM tree from HTML bytes |
+| `cssparser` | CSS text into parsed rules |
+| `selectors` | which rules match which element |
+| `taffy` | box positions, given a tree of boxes with known sizes |
+
+Between "rules that match" and "boxes with known sizes" sits everything that
+makes a browser a browser, and none of it is in those crates:
+
+- **The cascade.** Turning matched rules into one computed value per property per
+  element: specificity, inheritance, initial values, units, `em` relative to
+  which parent. Servo has a whole crate for this (`stylo`); it is not small.
+- **Text layout.** Line breaking, font fallback, shaping, baselines. We have
+  pieces of this from `pdf-render` and the text engine, which helps — but it must
+  be driven from computed CSS rather than from PDF text runs.
+- **Pagination.** `taffy` lays out one continuous area. It has no concept of a
+  page, so page breaks, widows and orphans, repeated table headers and content
+  that overflows onto the next page are all ours. For a *document* renderer this
+  is the central problem, not an edge case.
+- **Painting.** Turning the laid-out boxes into PDF operators: backgrounds,
+  borders, images, clipping, z-order.
+
+So the crates carry parsing and box layout — real work, genuinely saved — and we
+build the cascade, pagination and paint. That is the L to XL.
+
+Scope it honestly and it shrinks: text, tables, images, page breaks, basic CSS;
+no JavaScript, no floats, no grid edge cases. That covers invoices, reports and
+letters — most of the actual demand — with no external runtime, no browser to
+install, and deterministic output.
 
 **Recommendation:** build track 1 first. It is smaller, it is what the market
 expects, and it lets you keep the promise now. Track 2 then becomes the
