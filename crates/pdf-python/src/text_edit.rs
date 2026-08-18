@@ -74,8 +74,19 @@ fn build_query(
     region: Option<(u32, [f64; 4])>,
     region_relation: Option<&str>,
     limit: Option<usize>,
+    regex: bool,
 ) -> PyResult<TextQuery> {
-    let mut query = TextQuery::exact(text).case_insensitive(case_insensitive);
+    // A regex that does not compile, or one that matches the empty string, is
+    // rejected here rather than surfacing later from inside the search. The
+    // engine has no backtracking, so a pattern from an end user cannot hang
+    // the call.
+    let mut query = if regex {
+        TextQuery::regex(text)
+            .map_err(|e| PyValueError::new_err(format!("regex=True: {e}")))?
+            .case_insensitive(case_insensitive)
+    } else {
+        TextQuery::exact(text).case_insensitive(case_insensitive)
+    };
     if let Some((lo, hi)) = pages {
         query = query.pages(lo..=hi);
     }
@@ -222,6 +233,7 @@ impl PyTextEditor {
         region = None,
         region_relation = None,
         limit = None,
+        regex = false,
     ))]
     fn find_text(
         &mut self,
@@ -232,6 +244,7 @@ impl PyTextEditor {
         region: Option<(u32, [f64; 4])>,
         region_relation: Option<&str>,
         limit: Option<usize>,
+        regex: bool,
     ) -> PyResult<PyObject> {
         let query = build_query(
             text,
@@ -240,6 +253,7 @@ impl PyTextEditor {
             region,
             region_relation,
             limit,
+            regex,
         )?;
         let matches = self.doc.find_text(query).map_err(runtime_err)?;
         to_py(py, &matches)
@@ -258,6 +272,7 @@ impl PyTextEditor {
         region = None,
         region_relation = None,
         limit = None,
+        regex = false,
         font_fallback = None,
         fallback_font_name = None,
         unicode_font = None,
@@ -276,6 +291,7 @@ impl PyTextEditor {
         region: Option<(u32, [f64; 4])>,
         region_relation: Option<&str>,
         limit: Option<usize>,
+        regex: bool,
         font_fallback: Option<&str>,
         fallback_font_name: Option<&str>,
         unicode_font: Option<&[u8]>,
@@ -290,6 +306,7 @@ impl PyTextEditor {
             region,
             region_relation,
             limit,
+            regex,
         )?;
         let options = build_options(
             font_fallback,
