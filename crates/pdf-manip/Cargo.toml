@@ -16,6 +16,7 @@ description = "PDF manipulation: pages, encryption, watermarks, optimization, bo
 exclude = ["tests/ga_integration_tests.rs"]
 
 [dependencies]
+regex = "1"
 lopdf = { workspace = true, features = ["embed_image"] }
 pdf-font.workspace = true
 pdf-standard-fonts = { path = "../pdf-standard-fonts", version = "=1.0.0-beta.18" }
