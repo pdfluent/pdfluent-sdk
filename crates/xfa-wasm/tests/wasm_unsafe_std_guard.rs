@@ -74,6 +74,11 @@ fn workspace_crates_dir() -> PathBuf {
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
+        eprintln!(
+            "SKIPPED (not a pass): precondition not met at {}:{}",
+            file!(),
+            line!()
+        );
         return;
     };
     for entry in entries.flatten() {

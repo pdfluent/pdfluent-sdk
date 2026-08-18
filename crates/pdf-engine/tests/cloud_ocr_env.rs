@@ -19,6 +19,11 @@ use pdf_engine::MistralOcrBackend;
 #[test]
 fn mistral_env_live_smoke() {
     if std::env::var_os("MISTRAL_API_KEY").is_none() {
+        eprintln!(
+            "SKIPPED (not a pass): precondition not met at {}:{}",
+            file!(),
+            line!()
+        );
         return;
     }
 

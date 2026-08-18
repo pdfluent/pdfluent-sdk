@@ -49,18 +49,40 @@ fn qr15_signature_read_and_verify_is_typed_no_panic() {
 #[test]
 fn qr15_redaction_removes_content() {
     let Some(doc) = open("multi-page.pdf") else {
+        eprintln!(
+            "SKIPPED (not a pass): precondition not met at {}:{}",
+            file!(),
+            line!()
+        );
         return;
     };
-    let Ok(text) = doc.extract_text() else { return };
+    let Ok(text) = doc.extract_text() else {
+        eprintln!(
+            "SKIPPED (not a pass): precondition not met at {}:{}",
+            file!(),
+            line!()
+        );
+        return;
+    };
     let Some(token) = text
         .split(|c: char| !c.is_ascii_alphabetic())
         .find(|w| w.len() >= 4)
         .map(str::to_string)
     else {
+        eprintln!(
+            "SKIPPED (not a pass): precondition not met at {}:{}",
+            file!(),
+            line!()
+        );
         return;
     };
     let mut doc = open("multi-page.pdf").unwrap();
     if doc.redact(&token, RedactOptions::new()).is_err() {
+        eprintln!(
+            "SKIPPED (not a pass): precondition not met at {}:{}",
+            file!(),
+            line!()
+        );
         return;
     }
     let out = doc.to_bytes().expect("persist redacted");
@@ -75,9 +97,21 @@ fn qr15_redaction_removes_content() {
 #[test]
 fn qr15_attachment_extraction_size_matches_bytes() {
     let Some(doc) = open("zugferd.pdf") else {
+        eprintln!(
+            "SKIPPED (not a pass): precondition not met at {}:{}",
+            file!(),
+            line!()
+        );
         return;
     };
-    let Ok(list) = doc.attachments() else { return };
+    let Ok(list) = doc.attachments() else {
+        eprintln!(
+            "SKIPPED (not a pass): precondition not met at {}:{}",
+            file!(),
+            line!()
+        );
+        return;
+    };
     for att in list {
         if let Ok(Some(bytes)) = doc.attachment_bytes(&att.name) {
             assert_eq!(
