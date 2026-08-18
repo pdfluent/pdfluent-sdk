@@ -221,12 +221,13 @@ fn build_font_correction_plan(
         // text encoding (WinAnsi/MacRoman with AGL-safe Differences) is a
         // text font with junk Symbolic flags — stripping its /Encoding
         // blanks every glyph it draws (govdocs holdout 452_452315 c.s.,
-        // where Flags=4 sat on ordinary TimesNewRoman subsets). Mirror the
-        // protection fix_truetype_encoding has.
-        if is_symbolic_font_name(base_font) || !truetype_has_safe_text_encoding(doc, dict) {
-            ResolvedEncoding::RemoveEntirely
-        } else {
+        // where Flags=4 sat on ordinary TimesNewRoman subsets). The full
+        // predicate also requires a post table with glyph names, or the
+        // encoding is unverifiable junk and must go (001_001370).
+        if truetype_is_misflagged_text_font(doc, dict) {
             ResolvedEncoding::NoChange
+        } else {
+            ResolvedEncoding::RemoveEntirely
         }
     } else if !is_subset && has_ff2 && !is_symbolic {
         // Non-subset TrueType substitute: enforce WinAnsi
@@ -319,7 +320,7 @@ fn compute_plan_widths(
             first_char,
             &existing_widths,
             &enc_info,
-            false,
+            is_font_symbolic(doc, dict),
         );
         return corrections
             .into_iter()
@@ -2471,6 +2472,18 @@ fn update_simple_widths(
     // This is the same algorithm for both TrueType and CFF fonts.
     let is_truetype_outline = face.tables().glyf.is_some();
 
+    // A symbolic TrueType font without a usable text encoding resolves its
+    // codes through the (3,0) Symbol cmap, and veraPDF's §6.2.11.5 width
+    // check does the same. Resolving through WinAnsi/Unicode instead writes
+    // the width of a *different* glyph (govdocs 000_000763: code 150 got
+    // endash's 500 from the (3,1) cmap where the symbol cmap says 556).
+    let is_symbolic_tt = is_truetype_outline && {
+        let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+            return;
+        };
+        encoding_name.is_empty() && differences.is_empty() && is_font_symbolic(doc, font)
+    };
+
     let mut widths = Vec::new();
     for code in first_char..=last_char {
         // Differences override takes priority over base encoding.
@@ -2487,6 +2500,15 @@ fn update_simple_widths(
                     .map(|w| (w as f64 * scale).round() as i64)
             })
             .unwrap_or(0)
+        } else if is_symbolic_tt {
+            // (3,0) first; when the pipeline has not built it yet, the (1,0)
+            // Mac cmap carries the same raw-code mapping it will be built
+            // from (PUA shift of the byte codes).
+            lookup_symbol_cmap_30(face, code)
+                .or_else(|| lookup_mac_cmap(face, code))
+                .and_then(|gid| face.glyph_hor_advance(gid))
+                .map(|w| (w as f64 * scale).round() as i64)
+                .unwrap_or(0)
         } else {
             let ch = encoding_to_char(code, &encoding_name);
             if let Some(glyph_id) = face.glyph_index(ch) {
@@ -10443,6 +10465,20 @@ fn get_truetype_glyph_width_fractional_inner(
         }
     }
 
+    // Symbolic TrueType without a text encoding: codes resolve through the
+    // (3,0) Symbol cmap, and veraPDF's §6.2.11.5 width check follows the
+    // same path — so it must win over the (3,1) Unicode lookup below. A
+    // producer-leftover (3,1) maps the code to a different glyph (govdocs
+    // 000_000763: code 150 is gid 120 = 556 via the symbol cmap, but the
+    // (3,1) called it endash = 500). When no (3,0) exists yet, the (1,0) Mac
+    // cmap carries the raw-code mapping the pipeline builds the (3,0) from.
+    if is_symbolic && enc_name.is_empty() && differences.is_empty() {
+        if let Some(gid) = lookup_symbol_cmap_30(face, code).or_else(|| lookup_mac_cmap(face, code))
+        {
+            return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+        }
+    }
+
     // Map code → Unicode via PDF Encoding, then look up in the (3,1) cmap
     // specifically. veraPDF uses only the (3,1) cmap for non-symbolic TrueType
     // font width validation. Using the general glyph_index() would search all
@@ -14402,9 +14438,36 @@ fn truetype_is_misflagged_text_font(doc: &Document, dict: &lopdf::Dictionary) ->
     }
 
     let base_font = get_name(dict, b"BaseFont").unwrap_or_default();
-    is_font_symbolic(doc, dict)
-        && !is_symbolic_font_name(&base_font)
-        && truetype_has_safe_text_encoding(doc, dict)
+    if !is_font_symbolic(doc, dict)
+        || is_symbolic_font_name(&base_font)
+        || !truetype_has_safe_text_encoding(doc, dict)
+    {
+        return false;
+    }
+    // The treatment this predicate gates — keep /Encoding, rebuild the cmap
+    // from it, clear the Symbolic flag — is only sound when the Differences
+    // names can be resolved against the program, i.e. the post table carries
+    // glyph names. Without names (post format 3.0) the codes are glyph ids
+    // in disguise, the encoding is descriptive junk, and the font's own cmap
+    // is the authoritative mapping: keeping the encoding renders garbage and
+    // desyncs the width checks (govdocs 001_001370: pages rendered as
+    // "jjjjjPj jjj…" until the predicate required post names).
+    truetype_has_post_glyph_names(doc, dict)
+}
+
+/// Whether the embedded TrueType program has a post table with glyph names.
+fn truetype_has_post_glyph_names(doc: &Document, dict: &lopdf::Dictionary) -> bool {
+    let fd_id = match dict.get(b"FontDescriptor").ok() {
+        Some(Object::Reference(id)) => *id,
+        _ => return false,
+    };
+    let Some(font_data) = read_embedded_font_data(doc, fd_id) else {
+        return false;
+    };
+    let Ok(face) = ttf_parser::Face::parse(&font_data, 0) else {
+        return false;
+    };
+    (1..face.number_of_glyphs()).any(|g| face.glyph_name(ttf_parser::GlyphId(g)).is_some())
 }
 
 /// Fix TrueType font encoding for PDF/A compliance (rules 6.2.11.6:2, 6.2.11.6:3).
@@ -14426,20 +14489,15 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
             continue;
         }
 
-        let base_font = get_name(dict, b"BaseFont").unwrap_or_default();
-        let symbolic_by_name = is_symbolic_font_name(&base_font);
-
-        let safe_text_encoding = truetype_has_safe_text_encoding(doc, dict);
-
         // Some real text fonts ship with incorrect Symbolic flags set in the
         // original PDF (e.g. subset Times New Roman). If the font name is not
         // symbolic and it already carries a safe text encoding, do not strip
         // /Encoding here — later width/notdef passes depend on that mapping.
-        let is_symbolic = if is_font_symbolic(doc, dict) {
-            symbolic_by_name || !safe_text_encoding
-        } else {
-            false
-        };
+        // The shared predicate also requires a post table with glyph names;
+        // without them the encoding is unverifiable junk and the font is
+        // treated as symbolic like any other (001_001370).
+        let is_symbolic =
+            is_font_symbolic(doc, dict) && !truetype_is_misflagged_text_font(doc, dict);
         if is_symbolic {
             // Symbolic fonts must NOT have Encoding (6.2.11.6:3).
             if dict.has(b"Encoding") {
@@ -18269,6 +18327,16 @@ pub fn fix_remaining_tt_width_mismatches(doc: &mut Document) -> usize {
                 .get(&code)
                 .copied()
                 .unwrap_or_else(|| encoding_to_char(code, &enc_name));
+            // veraPDF canonicalizes U+00AD (soft hyphen) to U+002D
+            // (hyphen-minus) before its cmap lookup — always, so the width
+            // it checks against is the hyphen's, not whatever the (3,1)
+            // cmap hangs on U+00AD (govdocs 002_002154: notequal at 549 vs
+            // hyphen at 333; embed_fonts had already written the right 333
+            // and this pass overwrote it with 549).
+            let ch = match ch {
+                '\u{00AD}' => '-',
+                other => other,
+            };
 
             // SAFETY: only correct if the glyph IS present in the font.
             // veraPDF resolves non-symbolic TrueType through the (3,1) cmap
@@ -20281,7 +20349,7 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
                 };
                 let preserve_ctrl = if can_strip {
                     let (_, differences) = get_simple_encoding_info(doc, fd);
-                    differences
+                    let mut keep: std::collections::HashSet<u8> = differences
                         .iter()
                         .filter(|(code, name)| {
                             **code < 32
@@ -20294,7 +20362,35 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
                                 && name.as_str() != "space"
                         })
                         .map(|(code, _)| *code as u8)
-                        .collect()
+                        .collect();
+                    // A symbolic TrueType subset may put real glyphs on
+                    // control codes without any /Differences saying so —
+                    // the (3,0)/(1,0) cmap is the evidence (govdocs
+                    // 002_002193: OpenSymbol keeps a visible symbol on code
+                    // 1; stripping it to 0x20 references a glyph the font
+                    // does NOT have, tripping 6.2.11.4.1).
+                    if subtype == "TrueType" && is_font_symbolic(doc, fd) && differences.is_empty()
+                    {
+                        if let Ok(Object::Reference(fd_id)) = fd.get(b"FontDescriptor") {
+                            if let Some(font_data) = read_embedded_font_data(doc, *fd_id) {
+                                if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
+                                    for code in 0..32u32 {
+                                        if matches!(code, 9 | 10 | 13) {
+                                            continue;
+                                        }
+                                        let gid = lookup_symbol_cmap_30(&face, code)
+                                            .or_else(|| lookup_mac_cmap(&face, code));
+                                        if gid.is_some_and(|g| {
+                                            g.0 != 0 && tt_glyph_has_data(&face, g)
+                                        }) {
+                                            keep.insert(code as u8);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    keep
                 } else {
                     std::collections::HashSet::new()
                 };
@@ -23534,18 +23630,32 @@ pub fn fix_cff_subset_missing_space(doc: &mut Document) -> usize {
                 }
             }
             None => {
-                let mut enc = lopdf::Dictionary::new();
-                enc.set("Type", Object::Name(b"Encoding".to_vec()));
-                // Preserve an inline base encoding name if there was one.
-                if let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) {
-                    if let Ok(Object::Name(n)) = font.get(b"Encoding") {
-                        enc.set("BaseEncoding", Object::Name(n.clone()));
+                // Inline dict: extend it in place. Replacing it with a fresh
+                // dict silently dropped /BaseEncoding and all existing
+                // /Differences, re-basing the font on the program's built-in
+                // encoding and turning WinAnsi-mapped glyphs into .notdef
+                // (govdocs 001_001688: minus signs vanished from the table).
+                let mut handled = false;
+                if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
+                    if let Ok(Object::Dictionary(old)) = font.get_mut(b"Encoding") {
+                        append_space_difference(old, SPACE_CODE);
+                        handled = true;
                     }
                 }
-                append_space_difference(&mut enc, SPACE_CODE);
-                let enc_id = doc.add_object(Object::Dictionary(enc));
-                if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
-                    font.set("Encoding", Object::Reference(enc_id));
+                if !handled {
+                    let mut enc = lopdf::Dictionary::new();
+                    enc.set("Type", Object::Name(b"Encoding".to_vec()));
+                    // Preserve an inline base encoding name if there was one.
+                    if let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) {
+                        if let Ok(Object::Name(n)) = font.get(b"Encoding") {
+                            enc.set("BaseEncoding", Object::Name(n.clone()));
+                        }
+                    }
+                    append_space_difference(&mut enc, SPACE_CODE);
+                    let enc_id = doc.add_object(Object::Dictionary(enc));
+                    if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
+                        font.set("Encoding", Object::Reference(enc_id));
+                    }
                 }
             }
         }
