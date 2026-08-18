@@ -268,6 +268,7 @@ fn qf1e_env_helper_returns_default_when_unset() {
     // some other test set the var to a valid override, observed != default
     // is still in-contract.
     if std::env::var("XFA_JS_WALLTIME_FALLBACK_MULTIPLIER").is_err() {
+        eprintln!("SKIPPED (not a pass): precondition not met at {}:{}", file!(), line!());
         assert_eq!(
             observed, WALLTIME_FALLBACK_MULTIPLIER_DEFAULT,
             "absent env var must return documented default"

@@ -192,6 +192,7 @@ fn flatten_corpus_doc(name: &str) -> Option<usize> {
 #[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_13275420_pagearea_expansion_holds() {
     let Some(pages) = flatten_corpus_doc("13275420") else {
+        eprintln!("SKIPPED (not a pass): precondition not met at {}:{}", file!(), line!());
         return;
     };
     assert!(
@@ -206,6 +207,7 @@ fn corpus_13275420_pagearea_expansion_holds() {
 #[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_927d2419_stays_improved() {
     let Some(pages) = flatten_corpus_doc("927d2419") else {
+        eprintln!("SKIPPED (not a pass): precondition not met at {}:{}", file!(), line!());
         return;
     };
     assert!(
@@ -219,6 +221,7 @@ fn corpus_927d2419_stays_improved() {
 #[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_778a1138_stays_at_two_pages() {
     let Some(pages) = flatten_corpus_doc("778a1138") else {
+        eprintln!("SKIPPED (not a pass): precondition not met at {}:{}", file!(), line!());
         return;
     };
     assert_eq!(pages, 2, "778a1138: expected 2 pages, got {pages}");
@@ -229,6 +232,7 @@ fn corpus_778a1138_stays_at_two_pages() {
 #[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_d9ec06f8_post_sprint1_floor() {
     let Some(pages) = flatten_corpus_doc("d9ec06f8") else {
+        eprintln!("SKIPPED (not a pass): precondition not met at {}:{}", file!(), line!());
         return;
     };
     assert!(
@@ -242,6 +246,7 @@ fn corpus_d9ec06f8_post_sprint1_floor() {
 #[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_3963b9b6_stays_at_three_pages() {
     let Some(pages) = flatten_corpus_doc("3963b9b6") else {
+        eprintln!("SKIPPED (not a pass): precondition not met at {}:{}", file!(), line!());
         return;
     };
     assert_eq!(pages, 3, "3963b9b6: expected 3 pages, got {pages}");
@@ -254,6 +259,7 @@ fn corpus_3963b9b6_stays_at_three_pages() {
 #[ignore = "requires local corpus; set XFA_CORPUS_INPUT_DIR"]
 fn corpus_ce382c3d_stays_at_one_or_more_pages() {
     let Some(pages) = flatten_corpus_doc("ce382c3d") else {
+        eprintln!("SKIPPED (not a pass): precondition not met at {}:{}", file!(), line!());
         return;
     };
     assert!(pages >= 1, "ce382c3d: at least 1 page, got {pages}");

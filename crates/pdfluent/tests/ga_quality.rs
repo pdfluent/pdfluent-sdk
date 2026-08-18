@@ -118,6 +118,7 @@ fn qr1_corpus_open_paths_never_panic() {
 #[test]
 fn qr1_encrypted_without_password_is_typed_not_panic() {
     let Some(bytes) = read_mini("encrypted.pdf") else {
+        eprintln!("SKIPPED (not a pass): precondition not met at {}:{}", file!(), line!());
         return; // fixture optional
     };
     // Opening an encrypted document without a password must yield a typed
@@ -147,6 +148,7 @@ fn qr8_pdfdocument_is_send_and_sync() {
 #[test]
 fn qr8_concurrent_open_and_read_is_consistent() {
     let Some(bytes) = read_mini("multi-page.pdf") else {
+        eprintln!("SKIPPED (not a pass): precondition not met at {}:{}", file!(), line!());
         return;
     };
     let shared = Arc::new(bytes);
