@@ -5202,7 +5202,13 @@ fn fix_lang_in_content_stream(content: &[u8]) -> Vec<u8> {
                     result.extend_from_slice(name);
                 }
             } else {
-                result.extend_from_slice(&content[tok_start..i]);
+                // No property-list name follows the BDC: the token and the
+                // whitespace after it were already emitted above. Emitting
+                // `content[tok_start..i]` here would duplicate the BDC
+                // operator itself (govdocs holdout 087_087333, 426_426895:
+                // every `/Span <</MCID n >> BDC` became `BDC BDC`, leaving
+                // marked-content nesting unbalanced and the page's text
+                // unextractable).
             }
         } else {
             result.extend_from_slice(token);
@@ -6321,5 +6327,27 @@ mod tests {
         let mut data = b"%PDF-2.0\ntest".to_vec();
         fix_pdf_header(&mut data);
         assert!(data.starts_with(b"%PDF-1.7"));
+    }
+
+    /// Regression: fix_lang_in_content_stream used to re-emit the BDC token
+    /// and its trailing whitespace when no /Lang name followed, duplicating
+    /// every BDC (`/Span <</MCID 0 >> BDC` → `BDC BDC`) and leaving
+    /// marked-content nesting unbalanced (govdocs holdout 087_087333,
+    /// 426_426895).
+    #[test]
+    fn fix_lang_does_not_duplicate_bdc_without_lang() {
+        let input = b"/Span <</MCID 0 >> BDC (x) Tj EMC\n";
+        let out = fix_lang_in_content_stream(input);
+        assert_eq!(out.as_slice(), input);
+    }
+
+    /// Regression: an /ActualText hex string inside a marked-content dict
+    /// must survive the pass untouched (hex strings inside dicts were not
+    /// always handled by byte-level content rewriters).
+    #[test]
+    fn fix_lang_preserves_actualtext_dict() {
+        let input = b"/Span<</ActualText<FEFF0020>>> BDC ( ) Tj EMC\n";
+        let out = fix_lang_in_content_stream(input);
+        assert_eq!(out.as_slice(), input);
     }
 }
