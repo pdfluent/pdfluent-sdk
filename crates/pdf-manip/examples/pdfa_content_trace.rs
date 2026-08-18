@@ -4,26 +4,25 @@ use lopdf::{Document, Object};
 fn title(doc: &Document, font_res: &str) -> String {
     let needle = format!("/{} ", font_res);
     let pages = doc.get_pages();
-    let Some((_, page_id)) = pages.iter().next() else {
-        return "no pages".into();
-    };
-    let Some(Object::Dictionary(_page)) = doc.objects.get(page_id) else {
-        return "no page".into();
-    };
-    let content_ids = pdf_manip::content_editor::get_content_stream_ids(doc, *page_id);
-    for cs_id in content_ids {
-        let Some(Object::Stream(s)) = doc.objects.get(&cs_id) else {
+    for page_id in pages.values() {
+        let Some(Object::Dictionary(_page)) = doc.objects.get(page_id) else {
             continue;
         };
-        let mut s = s.clone();
-        let _ = s.decompress();
-        let data = s.content;
-        if let Some(i) = data
-            .windows(needle.len())
-            .position(|w| w == needle.as_bytes())
-        {
-            let end = (i + 160).min(data.len());
-            return format!("{:?}", &data[i..end]);
+        let content_ids = pdf_manip::content_editor::get_content_stream_ids(doc, *page_id);
+        for cs_id in content_ids {
+            let Some(Object::Stream(s)) = doc.objects.get(&cs_id) else {
+                continue;
+            };
+            let mut s = s.clone();
+            let _ = s.decompress();
+            let data = s.content;
+            if let Some(i) = data
+                .windows(needle.len())
+                .position(|w| w == needle.as_bytes())
+            {
+                let end = (i + 160).min(data.len());
+                return format!("{:?}", &data[i..end]);
+            }
         }
     }
     "not found".into()
