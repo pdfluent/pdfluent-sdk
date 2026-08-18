@@ -6143,6 +6143,18 @@ fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
                     i += 1;
                     continue;
                 }
+                b'<' if i + 1 < decompressed.len() && decompressed[i + 1] == b'<' => {
+                    // Dict begin, not a hex string. Emit both angle brackets:
+                    // if the second '<' enters hex-string mode, the dict's
+                    // key bytes are stripped as non-hex garbage (govdocs
+                    // holdout 087_087333: `/Span<</ActualText<FEFF0020>>>`
+                    // became `<<AcaeFEFF0020>>`, a corrupt marked-content
+                    // dict that makes the rest of the stream unparseable).
+                    new_content.push(b'<');
+                    new_content.push(b'<');
+                    i += 2;
+                    continue;
+                }
                 b'<' if i + 1 < decompressed.len() && decompressed[i + 1] != b'<' => {
                     in_hex_string = true;
                     new_content.push(b);
@@ -6388,6 +6400,18 @@ fn fix_non_finite_numbers_in_streams(doc: &mut Document) -> usize {
                     string_depth = 1;
                     new_content.push(b);
                     i += 1;
+                    continue;
+                }
+                b'<' if i + 1 < decompressed.len() && decompressed[i + 1] == b'<' => {
+                    // Dict begin, not a hex string. Emit both angle brackets:
+                    // if the second '<' enters hex-string mode, the dict's
+                    // key bytes are stripped as non-hex garbage (govdocs
+                    // holdout 087_087333: `/Span<</ActualText<FEFF0020>>>`
+                    // became `<<AcaeFEFF0020>>`, a corrupt marked-content
+                    // dict that makes the rest of the stream unparseable).
+                    new_content.push(b'<');
+                    new_content.push(b'<');
+                    i += 2;
                     continue;
                 }
                 b'<' if i + 1 < decompressed.len() && decompressed[i + 1] != b'<' => {
@@ -7688,6 +7712,72 @@ mod tests {
             b"WinAnsiEncoding"
         );
     }
+
+    /// Regression: strip_unknown_ops_in_stream's dict scanner mistook the
+    /// '>' closing a hex string inside an inline dict for half of the dict's
+    /// '>>', eating one bracket and leaving an unclosed dict (govdocs holdout
+    /// 087_087333: mutool "invalid key in dict", rest of page unextractable).
+    #[test]
+    fn strip_unknown_ops_preserves_hex_string_in_inline_dict() {
+        let input = b"/Span <</ActualText<FEFF0020>>> BDC ( ) Tj EMC\n";
+        assert!(super::strip_unknown_ops_in_stream(input).is_none());
+    }
+
+    fn doc_with_content(content: &[u8]) -> lopdf::Document {
+        use lopdf::{dictionary, Object, Stream};
+        let mut doc = lopdf::Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let content_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! {},
+            content.to_vec(),
+        )));
+        let page = dictionary! {
+            "Type" => "Page",
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Contents" => Object::Reference(content_id),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page));
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Count" => Object::Integer(1),
+            "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        doc
+    }
+
+    /// Regression: fix_tiny_floats_in_streams treated the second '<' of a
+    /// '<<' dict opener as a hex-string start and stripped the dict key's
+    /// non-hex bytes (`/ActualText` → "Acae"), corrupting the marked-content
+    /// dict (govdocs holdout 087_087333, 426_426895).
+    #[test]
+    fn tiny_floats_preserves_inline_dict_with_hex_string() {
+        let content = b"/Span<</ActualText<FEFF0020>>> BDC \r( )Tj\rEMC\n(1e-50) Tj\n";
+        let mut doc = doc_with_content(content);
+        super::fix_tiny_floats_in_streams(&mut doc);
+        let page_id = *doc.get_pages().values().next().unwrap();
+        let ids = crate::content_editor::get_content_stream_ids(&doc, page_id);
+        let lopdf::Object::Stream(s) = doc.objects.get(&ids[0]).unwrap() else {
+            panic!("content stream gone")
+        };
+        let mut s = s.clone();
+        let _ = s.decompress();
+        let text = String::from_utf8_lossy(&s.content);
+        assert!(
+            text.contains("/ActualText<FEFF0020>"),
+            "ActualText dict mangled: {text}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -8562,6 +8652,20 @@ fn strip_unknown_ops_in_stream(data: &[u8]) -> Option<Vec<u8>> {
                 if data[i] == b'<' && data[i + 1] == b'<' {
                     depth += 1;
                     i += 2;
+                } else if data[i] == b'<' {
+                    // Hex string inside the dict: skip to its closing '>' or
+                    // that '>' is mistaken for half of the dict's '>>' and the
+                    // dict loses a bracket (govdocs holdout 087_087333:
+                    // `<</ActualText<FEFF0020>>>` lost its third '>', leaving
+                    // an unclosed dict and "invalid key in dict" errors that
+                    // abort text extraction for the rest of the page).
+                    i += 1;
+                    while i < data.len() && data[i] != b'>' {
+                        i += 1;
+                    }
+                    if i < data.len() {
+                        i += 1;
+                    }
                 } else if data[i] == b'>' && data[i + 1] == b'>' {
                     depth -= 1;
                     i += 2;
