@@ -1,6 +1,12 @@
 # XFA SDK — Known Limitations
 
-Enterprise reference document. Last updated: 2026-04-19.
+Enterprise reference document. Last updated: **2026-08-18**.
+
+**Every entry below was re-verified against the source on 2026-08-18**, method
+recorded per item. The previous revision was four months old and one entry
+(L-001) described a deliberate security policy in the language of a defect,
+which reads to a buyer as something we failed to build rather than something we
+chose. That is corrected here; the technical facts were and are accurate.
 
 ---
 
@@ -13,7 +19,21 @@ customers) or **Minor** (low-frequency edge cases).
 
 ## Critical Limitations
 
-### L-001: JavaScript Not Executed
+### L-001: JavaScript Is Never Executed (by design)
+
+> **This is a security policy, not a missing feature.** Document-supplied
+> JavaScript is parsed for inspection and never run — see
+> `crates/pdf-xfa/src/javascript_policy.rs`, which denies execution for every
+> document entrypoint and strips JavaScript during flattening. A PDF processing
+> service that executes script from an untrusted upload is a liability, and for
+> most enterprise intake pipelines this behaviour is the requirement rather than
+> the compromise. It is listed here because it has consequences for output, not
+> because it is a defect to be fixed.
+>
+> **FormCalc is a different matter and is implemented**: a full lexer, parser
+> and interpreter (~5,800 lines, 135 built-in functions, SOM resolution) runs
+> `calculate` and `validate` events per XFA 3.3 §14.3.2. Forms scripted in
+> FormCalc — the majority of forms authored in LiveCycle/Designer — do compute.
 
 **Description:** Scripts with `contentType="application/x-javascript"` are not executed.
 The form is processed with field values as-bound from the XFA data packet, ignoring any
@@ -30,9 +50,13 @@ forms.
 pre-process forms to inline final field values into the XFA data packet before submitting
 to the SDK, so the rendered output reflects the intended state.
 
-**Roadmap:** Not planned for the current release cycle. JavaScript support requires
-embedding a JS runtime and implementing the XFA object model as a JS API surface.
-See Coverage Roadmap item #2 in `benchmarks/ENTERPRISE_FEATURE_COVERAGE.md`.
+**Roadmap:** Deliberately not planned. Executing document-supplied JavaScript would
+undo the policy above. If a customer needs JS-driven values, the supported route is to
+resolve them upstream and submit the resulting data packet.
+
+**Verified 2026-08-18:** `javascript_policy.rs` — `execution_policy()` denies all
+document entrypoints; `strip_javascript_for_flatten()` removes it; the flatten path logs
+the denial. Unchanged.
 
 ---
 
@@ -56,6 +80,14 @@ barcode data extraction from the source XFA with the post-processing step.
 `<barcode>` attributes (`symbology`, `dataLength`, `wideNarrowRatio`, `dataColumnCount`)
 to a barcode encoding library.
 
+**Verified 2026-08-18: still accurate.** Barcode fields are fully recognised —
+`<ui><barcode>` parses to `FieldKind::Barcode`, layout honours the no-split rule
+(XFA 3.3 §8.7), and they are correctly excluded from the fillable-field count.
+Only the last step is missing: there is no encoder anywhere in the workspace (no
+Code128/Code39/EAN/QR/PDF417/DataMatrix, no barcode dependency, no module-width
+or quiet-zone handling). The scaffolding is in place, so this is bounded work
+rather than research.
+
 ---
 
 ### L-003: Digital Signature Fields Stripped
@@ -77,6 +109,10 @@ byte-range signing is supported by downstream signing tools.
 **Roadmap:** Rendering a visible placeholder box (without cryptographic signing) is planned.
 Actual cryptographic signing is out of scope for the flattening SDK.
 
+**Verified 2026-08-18: still accurate.** `<signature>` parses to
+`FieldKind::Signature`, the flatten path logs "elements skipped", and no
+appearance stream is generated.
+
 ---
 
 ### L-004: Password-Protected PDFs Return Error
@@ -96,6 +132,12 @@ protection before submitting to the SDK. This can be automated in an intake pipe
 **Roadmap:** An API parameter for supplying a user password at call time is planned, allowing
 the SDK to decrypt and process the form without requiring a separate pre-processing step.
 
+**Verified 2026-08-18: still accurate.** The decrypt path returns
+`DecryptResult::NeedsPassword` for user-password files; the explicit
+`load_mem_with_password(bytes, "")` call covers exactly the empty-user-password
+case described above. Neither `flattenXfa()` nor the native session takes a
+password argument.
+
 ---
 
 ## Minor Limitations
@@ -111,6 +153,9 @@ leader content will not appear on each page. Affected forms are rare in practice
 
 **Workaround:** Redesign the form template to use per-page leaders via standard overflow
 leader/trailer, which is supported on a per-page basis (see L-008).
+
+**Verified 2026-08-18: still accurate.** `layout.rs` records §8.10 as
+"✅ per-page leader/trailer; ⚠️ overflow/bookend".
 
 ---
 
@@ -128,6 +173,12 @@ fields.
 **Workaround:** Review FormCalc expressions in affected forms. Simplify or replace complex
 expressions with pre-computed values in the XFA data packet where possible.
 
+**Verified 2026-08-18: accurate, but the heading understates what exists.** The
+interpreter is complete enough to matter — ~5,800 lines across lexer, parser,
+interpreter, builtins and a SOM bridge, with 135 built-in functions. Individual
+builtins that are not fully implemented raise a specific spec-referenced error
+rather than failing quietly, so a form hitting one is diagnosable.
+
 ---
 
 ### L-007: Rich Text / XHTML Rendering Partial
@@ -144,6 +195,10 @@ text, nested lists) may render with reduced fidelity.
 **Workaround:** Review rich text fields in affected forms. For critical content, replace
 XHTML rich text with plain text or simplified markup.
 
+**Verified 2026-08-18: still accurate.** `RichTextSpan` parses
+`<exData contentType="text/html">`, so support is partial as described rather
+than absent.
+
 ---
 
 ### L-008: Overflow Leader/Trailer Scoped Per-Page Only
@@ -157,6 +212,10 @@ supported.
 fully supported. Only the "bookend" repeating variant is affected.
 
 **Workaround:** None required for standard overflow leader/trailer usage.
+
+**Verified 2026-08-18: still accurate.** `layout.rs` resolves `<overflow leader
+trailer>` SOM references, and the same §8.10 line marks overflow scope as
+partial.
 
 ---
 
