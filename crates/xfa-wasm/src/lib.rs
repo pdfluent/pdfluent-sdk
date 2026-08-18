@@ -325,9 +325,35 @@ impl XfaEngine {
     #[wasm_bindgen(js_name = "runCalculations")]
     pub fn run_calculations(&mut self) -> Result<(), JsValue> {
         #[cfg(not(target_arch = "wasm32"))]
-        scripting::run_calculations(&mut self.tree)
-            .map_err(|e| wasm_err_simple("FORMCALC_ERROR", &format!("scripting error: {e}")))?;
-        Ok(())
+        {
+            scripting::run_calculations(&mut self.tree)
+                .map_err(|e| wasm_err_simple("FORMCALC_ERROR", &format!("scripting error: {e}")))?;
+            Ok(())
+        }
+
+        // FormCalc needs a JavaScript engine, and rquickjs/QuickJS does not
+        // compile to wasm32-unknown-unknown — see 26e91f0e4, which gated the
+        // scripting module for this target so wasm-pack build would succeed.
+        //
+        // That gate was correct; what followed it was not. The body was left
+        // returning Ok(()), so in the browser this method quietly did nothing
+        // and reported success: calculated fields stayed empty while every
+        // caller was told the calculation had run. A method that cannot do its
+        // work must say so — silently succeeding is worse than failing, because
+        // the caller has no way to find out.
+        //
+        // The first run of the WASM smoke suite (which had existed since
+        // 2026-05-15 but was never executed by CI) caught this on scenario 21.
+        #[cfg(target_arch = "wasm32")]
+        {
+            Err(wasm_err_simple(
+                "FORMCALC_ERROR",
+                "FormCalc calculations are not available in the WebAssembly build: \
+                 the QuickJS scripting engine cannot target wasm32-unknown-unknown. \
+                 Field values are unchanged. Run calculations server-side via the \
+                 native SDK (Python, Node, or the Rust crate) instead.",
+            ))
+        }
     }
 
     /// Export all field values as a JSON string.
