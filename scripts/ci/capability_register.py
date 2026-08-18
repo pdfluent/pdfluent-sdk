@@ -88,7 +88,13 @@ def facade_deps() -> set[str]:
     """Crates reachable from the facade. `cargo tree`, never a Cargo.toml grep:
     dependencies live in several sections and some are platform-gated, which is
     how docx was once reported as unreachable when it was not."""
-    tree = run(["cargo", "tree", "-p", "pdfluent", "--depth", "1", "--edges", "normal"])
+    # --target all is not a nicety: without it `cargo tree` resolves for the HOST,
+    # so a macOS laptop and the Linux runner produce different answers and the
+    # drift gate fails on every push regardless of the code. A register whose
+    # content depends on who generated it cannot be a gate. (Found the honest
+    # way: the job went red on its first real run.)
+    tree = run(["cargo", "tree", "-p", "pdfluent", "--depth", "1",
+                "--edges", "normal", "--target", "all"])
     return {m.group(1) for m in re.finditer(r"^[│├└─\s]*([a-z0-9_-]+) v", tree, re.M)}
 
 
@@ -508,9 +514,23 @@ def main() -> None:
         print(f"[capability_register] FAIL: {OUT.relative_to(REPO)} is missing; "
               "run without --check and commit it", file=sys.stderr)
         sys.exit(1)
-    if OUT.read_text() != current:
+    committed = OUT.read_text()
+    if committed != current:
         print("[capability_register] FAIL: the register no longer matches the code.")
         print("[capability_register] Something shipped, broke, moved, or lost its CI job.")
+        print()
+        # Print the diff. The first version of this job said "the diff is the
+        # news" and then made the reader go and find it, which on a CI runner
+        # means reproducing the whole run locally. Show it here.
+        import difflib
+        diff = list(difflib.unified_diff(
+            committed.splitlines(), current.splitlines(),
+            fromfile="committed", tofile="generated", lineterm="", n=1))
+        for line in diff[:120]:
+            print(f"[capability_register] {line}")
+        if len(diff) > 120:
+            print(f"[capability_register] ... and {len(diff) - 120} more diff lines")
+        print()
         print("[capability_register] Run: python3 scripts/ci/capability_register.py")
         print("[capability_register] and commit the result in the same change.")
         sys.exit(1)
