@@ -155,14 +155,38 @@ def main() -> None:
             print(f"  GAP  {feature:22} geen test in {crates} vindt {symbols}")
             missing.append(feature)
 
+    # Second axis: a promise can have tests in a crate a customer cannot reach.
+    # OCR, Excel and PowerPoint all have tests in their own crates while the
+    # `pdfluent` facade does not depend on them at all — so the SDK claim on the
+    # features page is not met even though the test count looks fine. Coverage
+    # without reachability is not a kept promise.
+    facade = subprocess.run(
+        ["cargo", "tree", "-p", "pdfluent", "--depth", "1", "--edges", "normal"],
+        capture_output=True, text=True, cwd=REPO,
+    ).stdout
+    unreachable = []
+    for feature, (blurb, crates, symbols) in PROMISES.items():
+        impl = [c for c in crates if c != "pdfluent"]
+        if impl and not any(c in facade for c in impl):
+            unreachable.append((feature, impl))
+
+    if unreachable:
+        print("-" * 72)
+        print("  NIET BEREIKBAAR vanuit de pdfluent-facade (wel getest, wel gepubliceerd):")
+        for feature, impl in unreachable:
+            print(f"    {feature:22} zit alleen in {impl}")
+        print("  Een klant die de facade gebruikt, krijgt deze niet zonder de crate")
+        print("  er handmatig bij te zetten. Zie docs/SYSTEM_MAP.md.")
+
     print("-" * 72)
     print(f"  {len(PROMISES) - len(missing)}/{len(PROMISES)} beloften hebben een test")
+    print(f"  {len(PROMISES) - len(unreachable)}/{len(PROMISES)} beloften zijn bereikbaar vanuit de facade")
     print()
     print("  Let op: dit toetst dat er een test BESTAAT die de functie aanraakt.")
     print("  Of die test iets zinnigs beweert, en of hij in CI draait, zijn")
     print("  aparte vragen — zie de Definition of Done in CLAUDE.md.")
 
-    sys.exit(1 if missing else 0)
+    sys.exit(1 if (missing or unreachable) else 0)
 
 
 if __name__ == "__main__":

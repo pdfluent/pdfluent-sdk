@@ -2,7 +2,7 @@
 //!
 //! Covers the 7 methods added in 3C-2:
 //!
-//! - `to_docx` — writes a non-empty .docx file
+//! - `to_docx` / `to_xlsx` / `to_pptx` — write non-empty OOXML packages
 //! - `to_images` — renders each page to a PNG or JPEG
 //! - `compress` — runs the optimisation stack and returns a report
 //! - `subset_fonts` — returns a FontSubsetReport
@@ -298,4 +298,57 @@ fn to_images_on_zero_page_document_returns_empty_report() {
     assert!(report.paths.is_empty());
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------
+// to_xlsx / to_pptx
+//
+// Both crates were published and tested long before the facade depended on
+// them, so "PDF to Excel" and "PDF to PowerPoint" were advertised as SDK
+// capabilities while a customer using the pdfluent crate could not reach them.
+// These tests exist to keep that from silently regressing: they assert the
+// method is on the facade AND that it writes a real OOXML package, not that the
+// call merely returns Ok.
+// ---------------------------------------------------------------------------
+
+/// A valid OOXML package is a ZIP whose central directory names the part that
+/// makes it that document type. Checking only for "PK" would pass on any zip,
+/// including an empty one.
+fn assert_ooxml(path: &std::path::Path, expected_part: &str, label: &str) {
+    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{label}: read failed: {e}"));
+    assert!(
+        bytes.len() > 200,
+        "{label}: {} bytes is too small to be a real package",
+        bytes.len()
+    );
+    assert_eq!(&bytes[..2], b"PK", "{label}: OOXML packages are ZIPs");
+    let as_text = String::from_utf8_lossy(&bytes);
+    assert!(
+        as_text.contains(expected_part),
+        "{label}: package should contain {expected_part}"
+    );
+}
+
+#[test]
+fn to_xlsx_writes_a_real_spreadsheet() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    let out = std::env::temp_dir().join("pdfluent-parity-sample.xlsx");
+    let _ = std::fs::remove_file(&out);
+
+    doc.to_xlsx(&out).expect("to_xlsx");
+    assert_ooxml(&out, "xl/", "xlsx");
+
+    let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn to_pptx_writes_a_real_presentation() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    let out = std::env::temp_dir().join("pdfluent-parity-sample.pptx");
+    let _ = std::fs::remove_file(&out);
+
+    doc.to_pptx(&out).expect("to_pptx");
+    assert_ooxml(&out, "ppt/", "pptx");
+
+    let _ = std::fs::remove_file(&out);
 }
