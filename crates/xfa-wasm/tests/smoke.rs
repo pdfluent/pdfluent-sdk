@@ -215,10 +215,35 @@ fn test_xfa_engine_basic() {
     let mut engine = XfaEngine::from_fields(fields).expect("from_fields");
     assert_eq!(engine.node_count(), 3);
 
-    engine.run_calculations().expect("run calculations");
+    // Building the tree and reading plain values works here; evaluating
+    // FormCalc does not. QuickJS cannot target wasm32-unknown-unknown, so the
+    // scripting module is compiled out of this build (see 26e91f0e4).
+    //
+    // This test asserts the CONTRACT, not the wish. It used to expect "30" and
+    // pass by never being run: nothing in CI executed the WASM suite, while the
+    // method quietly returned Ok(()) and left the field empty. Any browser
+    // caller was told the calculation had succeeded and got an empty field.
+    //
+    // So: the call must fail, it must explain why, and it must leave the field
+    // as it was rather than half-written.
+    let err = engine
+        .run_calculations()
+        .expect_err("FormCalc must report that it cannot run here, not claim success");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("not available in the WebAssembly build"),
+        "error should say why FormCalc is unavailable, got: {msg}"
+    );
+
     assert_eq!(
         engine.get_field_value("form1.Total"),
-        Some("30".to_string())
+        Some(String::new()),
+        "the calculated field must be untouched, not partially written"
+    );
+    assert_eq!(
+        engine.get_field_value("form1.Name"),
+        Some("Alice".to_string()),
+        "plain field values must still be readable"
     );
 }
 
