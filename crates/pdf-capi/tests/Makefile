@@ -56,11 +56,18 @@ endif
 DYLIB_ARCH_RAW := $(shell file $(TARGET_DIR)/libpdf_capi.dylib \
                                $(TARGET_DIR)/libpdf_capi.so 2>/dev/null \
                   | grep -o 'x86_64\|arm64\|aarch64' | head -1)
-# Normalise aarch64 → arm64 for -arch flag (clang uses arm64, not aarch64).
-ifeq ($(DYLIB_ARCH_RAW),aarch64)
-  CFLAGS += -arch arm64
-else ifneq ($(DYLIB_ARCH_RAW),)
-  CFLAGS += -arch $(DYLIB_ARCH_RAW)
+# -arch is a clang/Apple flag; gcc on Linux rejects it outright, which is why
+# these tests had only ever run on macOS ("unrecognized command-line option
+# '-arch'" the first time CI executed them on the Linux runner). On Linux the
+# host compiler already matches the library, so nothing is needed.
+#
+# Normalise aarch64 → arm64 for the flag (clang uses arm64, not aarch64).
+ifeq ($(UNAME_S),Darwin)
+  ifeq ($(DYLIB_ARCH_RAW),aarch64)
+    CFLAGS += -arch arm64
+  else ifneq ($(DYLIB_ARCH_RAW),)
+    CFLAGS += -arch $(DYLIB_ARCH_RAW)
+  endif
 endif
 
 LDFLAGS  := -L$(TARGET_DIR)
