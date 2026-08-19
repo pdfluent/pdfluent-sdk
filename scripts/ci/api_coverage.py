@@ -230,7 +230,39 @@ def main() -> None:
     print("  Let op: 'aangeroepen door een test' is een lage lat en met opzet zo.")
     print("  Het zegt dat de binding de oversteek overleeft, niet dat het gedrag klopt.")
 
-    sys.exit(0 if total_covered == total_exported else 1)
+    # A floor that only moves up.
+    #
+    # This job was allow_failure because 100% is not today's reality, and a job
+    # that always fails is a job everybody ignores. But "allowed to fail" also
+    # means allowed to slide: coverage could drop from 198 to 150 and the output
+    # would look exactly the same. A ratchet fixes both -- the job passes at
+    # today's number and fails the moment it drops, so it can be a hard gate
+    # while the remaining gaps are closed one at a time.
+    #
+    # Raise FLOOR when you close gaps. Never lower it: lowering it is the thing
+    # this exists to prevent, and if a binding legitimately loses a method the
+    # right change is removing it from the export list.
+    FLOOR = 198
+
+    if total_covered < FLOOR:
+        print()
+        print(f"  FAIL: coverage dropped to {total_covered}, below the floor of {FLOOR}.")
+        print("  Something that had a test no longer does. The list above names it.")
+        print("  If a method was deliberately removed, lower FLOOR in this file in the")
+        print("  same commit and say why -- deliberately, not as a reflex.")
+        sys.exit(1)
+
+    if total_covered > FLOOR:
+        print()
+        print(f"  Coverage is {total_covered}, above the floor of {FLOOR}.")
+        print(f"  Raise FLOOR to {total_covered} in scripts/ci/api_coverage.py so the")
+        print("  gain cannot be lost again silently.")
+
+    if total_covered == total_exported:
+        print()
+        print("  Every exported method is called by a test. Retire the floor.")
+
+    sys.exit(0)
 
 
 if __name__ == "__main__":

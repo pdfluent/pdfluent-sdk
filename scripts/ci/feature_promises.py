@@ -60,12 +60,12 @@ PROMISES: dict[str, tuple[str, list[str], list[str]]] = {
     "Split PDF": (
         "Divide a document by page range to create separate files",
         ["pdf-manip", "pdfluent", "pdf-capi", "pdf-node", "pdf-python"],
-        ["split_pdf", "split_range", "extract_pages", "split"],
+        ["split_pdf", "split_range", "extract_pages", "split", "split_pages"],
     ),
     "Organize PDF pages": (
         "Reorder, rotate, or delete pages without leaving the app",
         ["pdf-manip", "pdfluent", "pdf-node", "pdf-python"],
-        ["rotate_pages", "rotate", "delete_pages", "reorder_pages", "remove_pages"],
+        ["rotate_pages", "rotate", "delete_pages", "reorder_pages", "remove_pages", "rotate_page"],
     ),
     "Compress PDF": (
         "Reduce file size",
@@ -90,17 +90,32 @@ PROMISES: dict[str, tuple[str, list[str], list[str]]] = {
     "PDF to Excel": (
         "Convert PDF to Excel",
         ["pdf-xlsx", "pdfluent"],
-        ["pdf_to_xlsx", "convert_pdf_bytes_to_xlsx", "extract_tables"],
+        ["pdf_to_xlsx", "convert_pdf_bytes_to_xlsx", "extract_tables", "to_xlsx"],
     ),
     "PDF to PowerPoint": (
         "Convert PDF to PowerPoint",
         ["pdf-pptx", "pdfluent"],
-        ["pdf_to_pptx", "convert_pdf_bytes_to_pptx"],
+        ["pdf_to_pptx", "convert_pdf_bytes_to_pptx", "to_pptx"],
     ),
     "PDF to image": (
         "Convert PDF to image",
         ["pdf-render", "pdf-engine", "pdfluent", "xfa-wasm"],
-        ["render_page", "render_thumbnail", "render_to_image"],
+        ["render_page", "render_thumbnail", "render_to_image", "to_images"],
+    ),
+    # Redaction and signing were absent from this list until 2026-08-19, which is
+    # the scaling hole the register is meant to expose: both are headline SDK
+    # capabilities with their own crates, both are default features, and neither
+    # was tracked as a promise. Nothing was wrong with the code — the list of
+    # things we claim simply did not include two of the things we claim.
+    "Redact PDF": (
+        "Permanently remove text or regions, not just cover them",
+        ["pdf-redact", "pdfluent"],
+        ["redact", "redact_region", "redact_text"],
+    ),
+    "Digitally sign PDF": (
+        "PAdES signatures, and verification of existing ones",
+        ["pdf-sign", "pdfluent"],
+        ["sign", "verify_signatures", "signatures"],
     ),
     "PDF to PDF/A": (
         "Convert PDF to PDF/A",
