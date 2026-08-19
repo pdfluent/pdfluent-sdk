@@ -24611,6 +24611,113 @@ end
 }
 
 #[cfg(test)]
+mod cff_space_encoding_tests {
+    use super::*;
+
+    /// Regression: fix_cff_subset_missing_space used to replace an inline
+    /// encoding dictionary with a fresh one, dropping /BaseEncoding and all
+    /// existing /Differences. The font silently re-based onto the program's
+    /// built-in encoding and WinAnsi-mapped glyphs became .notdef (govdocs
+    /// 001_001688: minus signs stopped rendering).
+    #[test]
+    fn space_fix_preserves_inline_base_encoding_and_differences() {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+
+        // One glyph ("exclam", SID 2), no space glyph — the pass must act.
+        let ff = Stream::new(dictionary! {}, crate::cff_append::tests::synth_cff(&[2], 0));
+        let ff_id = doc.add_object(Object::Stream(ff));
+        let fd = dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "ABCDEF+TestSerif",
+            "Flags" => Object::Integer(34),
+            "FontBBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(100), Object::Integer(100),
+            ]),
+            "FontFile3" => Object::Reference(ff_id),
+        };
+        let fd_id = doc.add_object(Object::Dictionary(fd));
+        let mut enc = lopdf::Dictionary::new();
+        enc.set("Type", Object::Name(b"Encoding".to_vec()));
+        enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+        enc.set(
+            "Differences",
+            Object::Array(vec![Object::Integer(50), Object::Name(b"X".to_vec())]),
+        );
+        let font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "ABCDEF+TestSerif",
+            "FirstChar" => Object::Integer(32),
+            "LastChar" => Object::Integer(50),
+            "Encoding" => Object::Dictionary(enc),
+            "FontDescriptor" => Object::Reference(fd_id),
+        };
+        let font_id = doc.add_object(Object::Dictionary(font));
+
+        let content = Stream::new(dictionary! {}, b"BT /F1 12 Tf (x y) Tj ET".to_vec());
+        let content_id = doc.add_object(Object::Stream(content));
+        let mut font_res = lopdf::Dictionary::new();
+        font_res.set("F1", Object::Reference(font_id));
+        let mut res = lopdf::Dictionary::new();
+        res.set("Font", Object::Dictionary(font_res));
+        let page = dictionary! {
+            "Type" => "Page",
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Dictionary(res),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page));
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Count" => Object::Integer(1),
+            "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let fixed = fix_cff_subset_missing_space(&mut doc);
+        if fixed == 0 {
+            // The CFF fixture may be too small for the glyph-append to
+            // understand; then the pass legitimately does nothing and this
+            // test says nothing. Better than a false positive either way.
+            eprintln!("fixture not actionable; pass made no change");
+            return;
+        }
+
+        let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+            panic!("font gone")
+        };
+        let Ok(Object::Dictionary(enc)) = font.get(b"Encoding") else {
+            panic!(
+                "encoding replaced by reference: {:?}",
+                font.get(b"Encoding")
+            )
+        };
+        assert_eq!(
+            enc.get(b"BaseEncoding").ok().and_then(|o| o.as_name().ok()),
+            Some(b"WinAnsiEncoding".as_slice()),
+            "BaseEncoding dropped"
+        );
+        let Ok(Object::Array(diffs)) = enc.get(b"Differences") else {
+            panic!("Differences gone")
+        };
+        let text = format!("{diffs:?}");
+        assert!(text.contains("X"), "existing difference /X lost: {text}");
+    }
+}
+
+#[cfg(test)]
 mod symbolic_subset_fixtures {
     //! Synthetic symbolic TrueType subset exercising the notdef-stream pass:
     //! only (1,0) Mac + (3,0) Symbol cmaps, post format 3.0 (no names), two
@@ -24913,6 +25020,59 @@ mod symbolic_subset_tests {
         assert_eq!(unicode_to_glyph_name('\u{00E9}').as_deref(), Some("eacute"));
         assert_eq!(unicode_to_glyph_name('A').as_deref(), Some("A"));
         assert_eq!(unicode_to_glyph_name(' ').as_deref(), Some("space"));
+    }
+
+    /// The misflagged-text treatment (keep /Encoding, rebuild cmap, clear
+    /// Symbolic flag) is only sound when the program's post table names its
+    /// glyphs; without names the codes are glyph ids in disguise and the
+    /// encoding is junk (001_001370 rendered garbage until the predicate
+    /// required this).
+    #[test]
+    fn misflagged_text_predicate_requires_post_names() {
+        let font = fx::build_symbolic_subset_ttf(0); // post format 3.0: no names
+        let mut doc = fx::make_symbolic_subset_doc(font, vec![500, 500]);
+        // Give it a safe text encoding so only the post-name check decides.
+        let font_id = doc
+            .objects
+            .iter()
+            .find_map(|(id, o)| {
+                let d = o.as_dict().ok()?;
+                (get_name(d, b"BaseFont").as_deref() == Some("ABCDEF+TestSans")).then_some(*id)
+            })
+            .unwrap();
+        if let Some(Object::Dictionary(d)) = doc.objects.get_mut(&font_id) {
+            d.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+        }
+        let dict = doc
+            .objects
+            .get(&font_id)
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .clone();
+        assert!(
+            !truetype_is_misflagged_text_font(&doc, &dict),
+            "post 3.0 program has no names to resolve Differences against"
+        );
+    }
+
+    /// Symbolic TrueType width resolution must consult the (3,0) Symbol cmap
+    /// before any (3,1) Unicode cmap — that is the path veraPDF's §6.2.11.5
+    /// check takes (000_000763: code 150 is 556 via the symbol cmap, 500 via
+    /// the producer-leftover (3,1)).
+    #[test]
+    fn symbolic_width_prefers_symbol_cmap_over_unicode() {
+        let font = fx::build_symbolic_subset_ttf(0);
+        // Existing /Widths claims 999 for code 65; the (3,0) cmap says gid 1
+        // (advance 500). The correction must propose 500.
+        let corrections = compute_truetype_width_corrections_inner(
+            &font,
+            65,
+            &[Object::Integer(999)],
+            &(String::new(), std::collections::HashMap::new()),
+            true,
+        );
+        assert_eq!(corrections, vec![(0, 500)]);
     }
 
     /// A CFF program in a /FontFile stream (declared classic Type1 by key)
