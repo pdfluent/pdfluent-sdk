@@ -2170,8 +2170,26 @@ fn ensure_symbolic_encoding_for_bundled_substitute(
         let Some(Object::Dictionary(font_dict)) = doc.objects.get(&info.font_id) else {
             return;
         };
-        if font_dict.has(b"Encoding") {
-            return;
+        // Only a Differences-bearing encoding is the author's real mapping.
+        // A plain WinAnsi/MacRoman/StandardEncoding *name* on a Symbol or
+        // ZapfDingbats face is producer junk — those faces' byte codes are
+        // not Latin — and leaving it means a later pass strips it, after
+        // which widths written against it no longer match the program
+        // (govdocs holdout 196_196635: /Symbol with /WinAnsiEncoding,
+        // code 149 measured 460 against WinAnsi's bullet and 250 by veraPDF
+        // against the built-in encoding).
+        match font_dict.get(b"Encoding") {
+            // No encoding yet: write ours.
+            Err(_) => {}
+            // Junk name encodings on a symbolic face: overwrite.
+            Ok(Object::Name(n))
+                if n == b"WinAnsiEncoding"
+                    || n == b"MacRomanEncoding"
+                    || n == b"MacExpertEncoding"
+                    || n == b"StandardEncoding" => {}
+            // Anything else (a real Differences dict, a reference) is the
+            // author's mapping — leave it.
+            _ => return,
         }
     }
 
@@ -8694,6 +8712,69 @@ pub fn fix_symbolic_flags(doc: &mut Document) -> usize {
     fixed
 }
 
+/// Build the `/Differences` array that replaces a stripped name encoding on a
+/// classic symbolic face.
+///
+/// Three inputs, in order of authority:
+///
+/// * `table` — the face's Annex D built-in encoding. The default answer.
+/// * `available` — glyph names the embedded program actually carries, or
+///   `None` when the program is not the author's (a bundled substitute) or
+///   could not be read. Codes whose Annex D name is absent are left undefined
+///   rather than pointed at a glyph the subset dropped.
+/// * `stripped` — the name encoding being removed. Consulted only when
+///   `available` is known: where the author's encoding names a glyph the
+///   program carries, that is the mapping their content and `/Widths` were
+///   written against, and it overrides Annex D for that code.
+///
+/// The last rule is what separates the two documents this pass was measured
+/// on. In govdocs holdout 201_201188 a `JAPAEJ+Symbol` subset carries `mu`,
+/// which the producer's WinAnsi encoding puts at 181; Annex D calls 181
+/// `proportional` and the subset dropped it, so Annex D alone left 181
+/// undefined against a declared width of 576 (§6.2.11.5:1). In 196_196635 the
+/// face is not embedded at all, `available` is `None`, and Annex D stands.
+fn restate_symbolic_encoding(
+    table: &[(u8, &'static str)],
+    available: Option<&std::collections::HashSet<String>>,
+    stripped: Option<&str>,
+) -> Vec<Object> {
+    let mut by_code: std::collections::BTreeMap<u8, String> = std::collections::BTreeMap::new();
+
+    for &(code, name) in table {
+        if let Some(avail) = available {
+            if !avail.contains(name) {
+                continue;
+            }
+        }
+        by_code.insert(code, name.to_string());
+    }
+
+    if let (Some(avail), Some(stripped)) = (available, stripped) {
+        for code in 0u8..=255 {
+            let ch = encoding_to_char(code as u32, stripped);
+            let Some(name) = unicode_to_agl_name(ch).or_else(|| unicode_to_glyph_name(ch)) else {
+                continue;
+            };
+            if avail.contains(&name) {
+                by_code.insert(code, name);
+            }
+        }
+    }
+
+    // Differences syntax: a code integer starts a run, names assign
+    // consecutive codes, so every gap starts a new run.
+    let mut differences = Vec::with_capacity(by_code.len() * 2);
+    let mut prev_code: Option<u8> = None;
+    for (code, name) in by_code {
+        if prev_code != code.checked_sub(1) {
+            differences.push(Object::Integer(code as i64));
+        }
+        differences.push(Object::Name(name.as_bytes().to_vec()));
+        prev_code = Some(code);
+    }
+    differences
+}
+
 /// Strip named standard encodings from classic base-14 symbolic fonts.
 ///
 /// For Type1 fonts without an Encoding entry, PDF falls back to the font's
@@ -8706,7 +8787,9 @@ pub fn fix_classic_symbolic_base14_encoding(doc: &mut Document) -> usize {
     let mut fixed = 0;
 
     for font_id in ids {
-        let should_strip = {
+        // The base encoding being stripped, kept because the restatement below
+        // consults it: on a subset it is the author's own mapping, not junk.
+        let stripped_encoding = {
             let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
                 continue;
             };
@@ -8728,55 +8811,130 @@ pub fn fix_classic_symbolic_base14_encoding(doc: &mut Document) -> usize {
                 continue;
             }
 
+            // StandardEncoding is as wrong here as the others: Symbol fonts use
+            // their own internal encoding, and applying StandardEncoding maps
+            // codes to Latin glyph names that produce wrong widths when the
+            // program is replaced with a non-Latin alternative (e.g.
+            // StandardSymbolsPS).
+            fn strippable(name: &[u8]) -> Option<String> {
+                matches!(
+                    name,
+                    b"WinAnsiEncoding"
+                        | b"MacRomanEncoding"
+                        | b"MacExpertEncoding"
+                        | b"StandardEncoding"
+                )
+                .then(|| String::from_utf8_lossy(name).into_owned())
+            }
+            // A /Differences array is an explicit custom encoding: untouched.
+            fn strippable_dict(enc: &lopdf::Dictionary) -> Option<String> {
+                if enc.has(b"Differences") {
+                    return None;
+                }
+                match enc.get(b"BaseEncoding").ok() {
+                    Some(Object::Name(n)) => strippable(n),
+                    _ => None,
+                }
+            }
+
             match dict.get(b"Encoding").ok() {
-                Some(Object::Name(n))
-                    if n == b"WinAnsiEncoding"
-                        || n == b"MacRomanEncoding"
-                        || n == b"MacExpertEncoding"
-                        // StandardEncoding is also wrong for Symbol/ZapfDingbats.
-                        // Symbol fonts use their own internal encoding; applying
-                        // StandardEncoding maps codes to Latin glyph names that
-                        // produce wrong widths when the font program is replaced
-                        // with a non-Latin alternative (e.g. StandardSymbolsPS).
-                        || n == b"StandardEncoding" =>
-                {
-                    true
-                }
-                Some(Object::Dictionary(enc)) => {
-                    !enc.has(b"Differences")
-                        && matches!(
-                            enc.get(b"BaseEncoding").ok(),
-                            Some(Object::Name(n))
-                                if n == b"WinAnsiEncoding"
-                                    || n == b"MacRomanEncoding"
-                                    || n == b"MacExpertEncoding"
-                                    || n == b"StandardEncoding"
-                        )
-                }
+                Some(Object::Name(n)) => strippable(n),
+                Some(Object::Dictionary(enc)) => strippable_dict(enc),
                 Some(Object::Reference(enc_id)) => match doc.objects.get(enc_id) {
-                    Some(Object::Dictionary(enc)) => {
-                        !enc.has(b"Differences")
-                            && matches!(
-                                enc.get(b"BaseEncoding").ok(),
-                                Some(Object::Name(n))
-                                    if n == b"WinAnsiEncoding"
-                                        || n == b"MacRomanEncoding"
-                                        || n == b"MacExpertEncoding"
-                                        || n == b"StandardEncoding"
-                            )
-                    }
-                    _ => false,
+                    Some(Object::Dictionary(enc)) => strippable_dict(enc),
+                    _ => None,
                 },
-                _ => false,
+                _ => None,
             }
         };
 
-        if !should_strip {
+        if stripped_encoding.is_none() {
             continue;
         }
 
+        // Restate the face's Annex D built-in encoding as an explicit
+        // /Encoding /Differences instead of leaving nothing. With no
+        // /Encoding at all, veraPDF and renderers fall back to the embedded
+        // program's built-in encoding, which in a subset typically maps only
+        // the space — every other used code then measures as .notdef
+        // (govdocs holdout 201_201188: degree/mu glyphs exist in the CFF
+        // subset but were unreachable, failing §6.2.11.5:1). In a subset,
+        // keep only the names the program actually carries: the full table
+        // would reference glyphs that were dropped.
+        //
+        // For a *subset* the stripped encoding gets a second hearing. A subset
+        // program is the author's own — we never subset — so where their
+        // encoding names a glyph the program actually carries, that is the
+        // mapping the content and /Widths were written against, and Annex D
+        // would move the glyph out from under both. Same document: WinAnsi
+        // put `mu` at 181 and the subset carries `mu`; Annex D calls 181
+        // `proportional`, which the subset dropped, so restating Annex D
+        // alone left 181 undefined against a declared width of 576. Annex D
+        // still fills every code the author's encoding does not resolve.
+        // Non-subset faces are left on Annex D: a bundled substitute's
+        // program is ours, not theirs, and its built-in encoding is what
+        // veraPDF reads (196_196635).
+        let restated = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            let base_font = get_name(dict, b"BaseFont").unwrap_or_default();
+            let is_subset = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
+            let table = pdf_standard_fonts::StandardFont::from_base_font(&base_font)
+                .and_then(|face| face.encoding_table());
+            let available: Option<std::collections::HashSet<String>> = if is_subset {
+                dict.get(b"FontDescriptor")
+                    .ok()
+                    .and_then(|o| o.as_reference().ok())
+                    .and_then(|fd_id| doc.objects.get(&fd_id))
+                    .and_then(|o| {
+                        if let Object::Dictionary(fd) = o {
+                            fd.get(b"FontFile3")
+                                .ok()
+                                .and_then(|o| o.as_reference().ok())
+                        } else {
+                            None
+                        }
+                    })
+                    .and_then(|ff_id| doc.objects.get(&ff_id))
+                    .and_then(|o| {
+                        if let Object::Stream(s) = o {
+                            let mut s = s.clone();
+                            let _ = s.decompress();
+                            Some(s.content)
+                        } else {
+                            None
+                        }
+                    })
+                    .and_then(|data| {
+                        cff_parser::Table::parse(&data).map(|cff| {
+                            (0..cff.number_of_glyphs())
+                                .filter_map(|g| cff.glyph_name(cff_parser::GlyphId(g)))
+                                .map(|n| n.to_string())
+                                .collect::<std::collections::HashSet<String>>()
+                        })
+                    })
+            } else {
+                None
+            };
+            table.map(|table| {
+                restate_symbolic_encoding(table, available.as_ref(), stripped_encoding.as_deref())
+            })
+        };
+
         if let Some(Object::Dictionary(dict)) = doc.objects.get_mut(&font_id) {
-            dict.remove(b"Encoding");
+            match restated {
+                Some(differences) => {
+                    let enc = lopdf::dictionary! {
+                        "Type" => Object::Name(b"Encoding".to_vec()),
+                        "Differences" => Object::Array(differences),
+                    };
+                    dict.set("Encoding", Object::Dictionary(enc));
+                }
+                None => {
+                    dict.remove(b"Encoding");
+                }
+            }
             fixed += 1;
         }
     }
@@ -9642,8 +9800,14 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             let to_unicode_map = read_font_to_unicode_map(doc, dict);
 
             // Detect symbolic TrueType fonts (Flags bit 2) that use (3,0) Symbol
-            // cmap for width validation instead of (3,1) Unicode cmap.
-            let symbolic_tt = subtype == "TrueType" && is_font_symbolic(doc, dict);
+            // cmap for width validation instead of (3,1) Unicode cmap. The
+            // Symbol/ZapfDingbats *names* count too: their flags are routinely
+            // still non-symbolic at this point and only get flipped later in
+            // the pipeline, after which veraPDF resolves widths through the
+            // (3,0) cmap (govdocs holdout 526_526454).
+            let symbolic_tt = subtype == "TrueType"
+                && (is_font_symbolic(doc, dict)
+                    || is_symbolic_font_name(&get_name(dict, b"BaseFont").unwrap_or_default()));
 
             (
                 subtype,
@@ -11977,29 +12141,81 @@ fn parse_type1_font_matrix(cleartext: &[u8]) -> Option<f64> {
     }
 }
 
-/// Parse Encoding array from Type 1 cleartext.
-fn parse_type1_encoding(cleartext: &[u8]) -> std::collections::HashMap<u8, String> {
-    let mut encoding = std::collections::HashMap::new();
-    let Ok(text) = std::str::from_utf8(cleartext) else {
-        return encoding;
-    };
+/// Split PostScript source into tokens: whitespace separates, and `/` and the
+/// bracket delimiters start a token of their own.
+///
+/// `dup 32 /space put` is four tokens however the producer spaced or wrapped
+/// it, which is the point: Type 1 programs are free-form PostScript and the
+/// only reliable unit is the token, not the line.
+fn type1_tokens(data: &[u8]) -> Vec<&[u8]> {
+    const DELIMITERS: &[u8] = b"/[]{}()<>%";
+    let is_space = |b: u8| matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0x0c | 0);
 
-    // Look for patterns like: dup <code> /<name> put
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with("dup ") || !trimmed.ends_with(" put") {
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    while i < data.len() {
+        let b = data[i];
+        if is_space(b) {
+            i += 1;
             continue;
         }
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        if parts.len() >= 4 && parts[0] == "dup" && parts[3] == "put" {
-            if let Ok(code) = parts[1].parse::<u8>() {
-                if let Some(name) = parts[2].strip_prefix('/') {
-                    if name != ".notdef" {
-                        encoding.insert(code, name.to_string());
-                    }
-                }
+        let start = i;
+        if b == b'/' {
+            // A name runs to the next whitespace or delimiter.
+            i += 1;
+            while i < data.len() && !is_space(data[i]) && !DELIMITERS.contains(&data[i]) {
+                i += 1;
+            }
+        } else if DELIMITERS.contains(&b) {
+            i += 1;
+        } else {
+            while i < data.len() && !is_space(data[i]) && !DELIMITERS.contains(&data[i]) {
+                i += 1;
             }
         }
+        tokens.push(&data[start..i]);
+    }
+    tokens
+}
+
+/// Parse the `dup <code> /<name> put` entries of a Type 1 /Encoding array.
+///
+/// Scans tokens rather than lines. Line scanning missed two shapes that are
+/// both common: programs written with bare CR line endings — every classic-Mac
+/// Fontographer font — where `str::lines()` returns the entire encoding as one
+/// line, and programs that pack several `dup` triples onto one line. Either
+/// way the result was an empty encoding, which is not inert: the width passes
+/// read "no encoding" as "every code is .notdef" and write .notdef's advance
+/// over all of /Widths (govdocs holdout 392_392456, LemonadeICG-Bold: 256
+/// CR-separated entries, none seen, all 118 distinct widths flattened to
+/// .notdef's 1000 — §6.2.11.5:1 on the space).
+///
+/// Takes bytes, not `&str`: the decrypted eexec section this also runs over is
+/// binary, and a UTF-8 check there rejected the whole section.
+fn parse_type1_encoding(cleartext: &[u8]) -> std::collections::HashMap<u8, String> {
+    let mut encoding = std::collections::HashMap::new();
+    let tokens = type1_tokens(cleartext);
+
+    for window in tokens.windows(4) {
+        if window[0] != b"dup" || window[3] != b"put" {
+            continue;
+        }
+        let Ok(code) = std::str::from_utf8(window[1]).map(str::trim) else {
+            continue;
+        };
+        let Ok(code) = code.parse::<u8>() else {
+            continue;
+        };
+        let Some(name) = window[2].strip_prefix(b"/") else {
+            continue;
+        };
+        let Ok(name) = std::str::from_utf8(name) else {
+            continue;
+        };
+        if name.is_empty() || name == ".notdef" {
+            continue;
+        }
+        encoding.insert(code, name.to_string());
     }
 
     encoding
@@ -17930,24 +18146,21 @@ fn compute_symbolic_truetype_width_corrections(
 
         let code = first_char + i as u32;
 
-        // Symbolic TrueType: veraPDF maps code via (3,0) cmap at 0xF000+code,
-        // or (1,0) cmap at code directly. Some subset symbol fonts are encoded
-        // as direct code->GID without usable cmap entries; in that case, fall
-        // back to GID == code.
-        let gid = face
-            .glyph_index(char::from_u32(0xF000 + code).unwrap_or('\0'))
+        // Symbolic TrueType: veraPDF maps the raw byte through the (1,0) Mac
+        // cmap or the (3,0) Symbol cmap (0xF000+code) — byte-level lookups,
+        // never the (3,1) Unicode table. ttf_parser's glyph_index only reads
+        // Unicode subtables, so consult the byte-level maps first; the
+        // Unicode PUA lookup is a later fallback (govdocs holdout 526_526454:
+        // the (3,1) also maps the PUA range but to *different* glyphs than
+        // the (1,0), and veraPDF follows the (1,0)).
+        let gid = u8::try_from(code)
+            .ok()
+            .and_then(|byte| mac_map.get(&byte).copied())
+            .filter(|gid| *gid > 0)
+            .map(ttf_parser::GlyphId)
+            .or_else(|| lookup_symbol_cmap_30(&face, code))
+            .or_else(|| face.glyph_index(char::from_u32(0xF000 + code).unwrap_or('\0')))
             .or_else(|| face.glyph_index(char::from_u32(code).unwrap_or('\0')))
-            .or_else(|| {
-                if code <= 255 {
-                    mac_map
-                        .get(&(code as u8))
-                        .copied()
-                        .filter(|gid| *gid > 0)
-                        .map(ttf_parser::GlyphId)
-                } else {
-                    None
-                }
-            })
             .or_else(|| {
                 if is_subset && code < face.number_of_glyphs() as u32 {
                     Some(ttf_parser::GlyphId(code as u16))
@@ -24430,8 +24643,14 @@ end
     }
 
     #[test]
-    fn test_embed_symbolic_bundled_keeps_existing_encoding() {
-        // An /Encoding the document states is the author's; do not replace it.
+    fn test_embed_symbolic_bundled_replaces_name_encoding() {
+        // A bare /WinAnsiEncoding *name* on a dingbat face is producer default,
+        // not the author speaking: the Latin glyph names it implies do not
+        // exist in a dingbat program at all. Keeping it only defers the
+        // problem — a later pass strips it, and the widths written against it
+        // then match nothing (govdocs holdout 196_196635, §6.2.11.5:1 on code
+        // 149: 460 against WinAnsi's bullet, 250 by veraPDF against the
+        // built-in encoding). Replace it with the Annex D table.
         let (mut doc, font_id) = make_doc_with_named_font(
             "ZapfDingbats",
             Some(Object::Name(b"WinAnsiEncoding".to_vec())),
@@ -24447,10 +24666,64 @@ end
         let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
             panic!("font dict missing");
         };
-        match font.get(b"Encoding") {
-            Ok(Object::Name(n)) => assert_eq!(n, b"WinAnsiEncoding"),
-            other => panic!("existing encoding must be preserved, got {other:?}"),
-        }
+        let Ok(Object::Dictionary(enc)) = font.get(b"Encoding") else {
+            panic!("name encoding must be replaced by a Differences dict");
+        };
+        let Ok(Object::Array(differences)) = enc.get(b"Differences") else {
+            panic!("replacement must carry /Differences");
+        };
+        // The dingbat names are what the bundled program actually has.
+        assert!(
+            differences
+                .iter()
+                .any(|o| matches!(o, Object::Name(n) if n == b"a9")),
+            "Annex D ZapfDingbats names expected, got {differences:?}"
+        );
+        assert!(
+            !differences
+                .iter()
+                .any(|o| matches!(o, Object::Name(n) if n == b"bullet")),
+            "WinAnsi Latin names must not survive"
+        );
+    }
+
+    #[test]
+    fn test_embed_symbolic_bundled_keeps_differences_encoding() {
+        // The other half of the same rule: a /Differences array *is* the
+        // author speaking about specific codes, and is preserved untouched.
+        // Without this, replacing name encodings would slide into replacing
+        // real ones.
+        let enc = dictionary! {
+            "Type" => "Encoding",
+            "Differences" => Object::Array(vec![
+                Object::Integer(65),
+                Object::Name(b"a9".to_vec()),
+            ]),
+        };
+        let (mut doc, font_id) =
+            make_doc_with_named_font("ZapfDingbats", Some(Object::Dictionary(enc)));
+        let info = find_non_embedded_fonts_detailed(&doc)
+            .into_iter()
+            .next()
+            .expect("one non-embedded font");
+        let source = find_font_source(&info.name).expect("bundled ZapfDingbats");
+
+        embed_font_on_target(&mut doc, &info, &source).expect("embed font");
+
+        let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+            panic!("font dict missing");
+        };
+        let (_, differences) = get_simple_encoding_info(&doc, font);
+        assert_eq!(
+            differences.get(&65).map(String::as_str),
+            Some("a9"),
+            "the author's Differences entry must survive embedding"
+        );
+        assert_eq!(
+            differences.len(),
+            1,
+            "no Annex D table may be merged over the author's mapping"
+        );
     }
 
     #[test]
@@ -25082,5 +25355,163 @@ mod symbolic_subset_tests {
     #[test]
     fn cff_in_fontfile_stream_is_sniffed_as_cff() {
         assert!(parse_subset_font_program_glyphs(super::tests::MINIMAL_CID_CFF, false).is_none());
+    }
+}
+
+#[cfg(test)]
+mod round4_encoding_resolution_tests {
+    use super::*;
+
+    /// Type 1 programs are free-form PostScript, and their line endings are
+    /// whatever the producer used. Fontographer's classic-Mac output separates
+    /// every `dup N /name put` with a bare CR, which `str::lines()` does not
+    /// split on — the whole encoding arrived as one line and nothing matched
+    /// the old `starts_with("dup ")` test.
+    ///
+    /// The failure is not inert. An empty built-in encoding makes the width
+    /// passes resolve every code to `.notdef` and write its advance over all
+    /// of `/Widths` (govdocs holdout 392_392456: LemonadeICG-Bold's 118
+    /// distinct widths all became .notdef's 1000, and veraPDF failed
+    /// §6.2.11.5:1 on the space, 211 against the declared 1000).
+    #[test]
+    fn type1_encoding_survives_bare_cr_line_endings() {
+        let cleartext = b"/FontName /Test def\r/Encoding 256 array\r\
+                          dup 0/NUL put\rdup 32/space put\rdup 65/A put\r\
+                          readonly def\r";
+
+        let encoding = parse_type1_encoding(cleartext);
+
+        assert_eq!(
+            encoding.get(&32).map(String::as_str),
+            Some("space"),
+            "CR-separated entries must be seen; got {encoding:?}"
+        );
+        assert_eq!(encoding.get(&65).map(String::as_str), Some("A"));
+        assert_eq!(encoding.get(&0).map(String::as_str), Some("NUL"));
+    }
+
+    /// The same parser has to cope with several triples on one line and with
+    /// the code and name run together (`0/NUL`), both of which appear in the
+    /// wild. Tokens, not lines, are the unit that survives either.
+    #[test]
+    fn type1_encoding_reads_packed_and_lf_separated_entries() {
+        let packed = parse_type1_encoding(b"dup 32 /space put dup 33 /exclam put\n");
+        assert_eq!(packed.get(&32).map(String::as_str), Some("space"));
+        assert_eq!(packed.get(&33).map(String::as_str), Some("exclam"));
+
+        let classic = parse_type1_encoding(b"dup 48 /zero put\ndup 49 /one put\n");
+        assert_eq!(classic.get(&48).map(String::as_str), Some("zero"));
+        assert_eq!(classic.get(&49).map(String::as_str), Some("one"));
+    }
+
+    /// `.notdef` is not a mapping — a code pointing at it is an undefined code,
+    /// and recording it would make later passes treat it as a resolvable glyph.
+    #[test]
+    fn type1_encoding_skips_notdef_entries() {
+        let encoding = parse_type1_encoding(b"dup 1 /.notdef put\rdup 2 /space put\r");
+        assert!(!encoding.contains_key(&1), "got {encoding:?}");
+        assert_eq!(encoding.get(&2).map(String::as_str), Some("space"));
+    }
+
+    /// Malformed input must yield nothing rather than a wrong mapping: a code
+    /// out of byte range, a missing `put`, and a nameless slot.
+    #[test]
+    fn type1_encoding_rejects_malformed_triples() {
+        let encoding = parse_type1_encoding(
+            b"dup 300 /space put\rdup 40 /parenleft def\rdup 41 put\rdup 42 /a put\r",
+        );
+        assert_eq!(encoding.len(), 1, "got {encoding:?}");
+        assert_eq!(encoding.get(&42).map(String::as_str), Some("a"));
+    }
+
+    fn names(set: &[&str]) -> std::collections::HashSet<String> {
+        set.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn differences_map(differences: &[Object]) -> std::collections::BTreeMap<u8, String> {
+        let mut out = std::collections::BTreeMap::new();
+        let mut code: Option<u8> = None;
+        for obj in differences {
+            match obj {
+                Object::Integer(i) => code = u8::try_from(*i).ok(),
+                Object::Name(n) => {
+                    if let Some(c) = code {
+                        out.insert(c, String::from_utf8_lossy(n).into_owned());
+                        code = c.checked_add(1);
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// govdocs holdout 201_201188: a `JAPAEJ+Symbol` subset whose CFF carries
+    /// `space`, `mu` and `degree`, with the producer's `/WinAnsiEncoding`
+    /// putting `mu` at 181. Annex D calls 181 `proportional` — a glyph the
+    /// subset dropped — so restating Annex D alone left 181 undefined while
+    /// `/Widths` still declared mu's 576, failing §6.2.11.5:1.
+    #[test]
+    fn subset_restatement_keeps_the_authors_resolvable_codes() {
+        let table = pdf_standard_fonts::StandardFont::from_base_font("Symbol")
+            .and_then(|f| f.encoding_table())
+            .expect("bundled Symbol encoding table");
+        let available = names(&[".notdef", "space", "mu", "degree"]);
+
+        let with_author = differences_map(&restate_symbolic_encoding(
+            table,
+            Some(&available),
+            Some("WinAnsiEncoding"),
+        ));
+
+        assert_eq!(
+            with_author.get(&181).map(String::as_str),
+            Some("mu"),
+            "WinAnsi's code for a glyph the subset carries must survive"
+        );
+        // Annex D still supplies the codes the author's encoding does not
+        // resolve: 109 is Symbol's own position for mu.
+        assert_eq!(with_author.get(&109).map(String::as_str), Some("mu"));
+        assert_eq!(with_author.get(&32).map(String::as_str), Some("space"));
+        assert!(
+            !with_author.values().any(|n| n == "proportional"),
+            "a glyph the subset dropped must not be named: {with_author:?}"
+        );
+    }
+
+    /// Without the author's encoding — a bundled substitute, where the program
+    /// is ours and its built-in encoding is what veraPDF reads (196_196635) —
+    /// Annex D stands alone, and code 181 stays Symbol's `proportional`.
+    #[test]
+    fn restatement_without_a_stripped_encoding_is_pure_annex_d() {
+        let table = pdf_standard_fonts::StandardFont::from_base_font("Symbol")
+            .and_then(|f| f.encoding_table())
+            .expect("bundled Symbol encoding table");
+
+        let annex_d = differences_map(&restate_symbolic_encoding(table, None, None));
+
+        assert_eq!(annex_d.get(&181).map(String::as_str), Some("proportional"));
+        assert_eq!(annex_d.get(&109).map(String::as_str), Some("mu"));
+        assert_eq!(
+            annex_d.len(),
+            table.len(),
+            "every Annex D entry must be restated when nothing filters them"
+        );
+    }
+
+    /// The subset filter on its own: names the program does not carry are
+    /// dropped rather than emitted as codes pointing at `.notdef`.
+    #[test]
+    fn restatement_drops_names_the_subset_lacks() {
+        let table = pdf_standard_fonts::StandardFont::from_base_font("Symbol")
+            .and_then(|f| f.encoding_table())
+            .expect("bundled Symbol encoding table");
+        let available = names(&["space", "degree"]);
+
+        let filtered = differences_map(&restate_symbolic_encoding(table, Some(&available), None));
+
+        assert_eq!(filtered.get(&32).map(String::as_str), Some("space"));
+        assert_eq!(filtered.get(&176).map(String::as_str), Some("degree"));
+        assert_eq!(filtered.len(), 2, "got {filtered:?}");
     }
 }
