@@ -12,12 +12,14 @@ mine are not.
 
 ## Summary
 
-- **11 of 11** advertised capabilities are implemented, reachable,
+- **13 of 13** advertised capabilities are implemented, reachable,
   tested, and covered by a CI job that actually runs the test.
 - **78** public methods on `pdfluent::Document`, of which
   **5** fail at runtime.
-- **16** published crates cannot be
-  reached from the facade.
+- **3** published crates are
+  absent from the facade's dependency graph;
+  **13** are compiled in but
+  not exposed as API.
 - **0** published
   crates have no tests of any kind.
 - **0** crates
@@ -72,10 +74,10 @@ features were covered.
 | | |
 |---|---|
 | **Implemented in** | `pdf-manip`, `pdfluent`, `pdf-node`, `pdf-python` |
-| **Defined at** | `crates/pdf-manip/src/pages.rs` |
+| **Defined at** | `crates/pdf-manip/src/pages.rs` · `crates/pdfluent/src/document.rs` |
 | **Reachable from facade** | yes |
 | **Exposed in bindings** | WASM (@pdfluent/sdk-wasm) |
-| **Tested by** | `crates/pdf-manip/src/pages.rs` |
+| **Tested by** | `crates/pdf-manip/src/pages.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/merge.rs` |
 | **Run in CI by** | `quality:cargo-test` |
 
 ### Compress PDF — `shipped`
@@ -137,10 +139,10 @@ features were covered.
 | | |
 |---|---|
 | **Implemented in** | `pdf-xlsx`, `pdfluent` |
-| **Defined at** | `crates/pdf-xlsx/src/lib.rs` |
+| **Defined at** | `crates/pdf-xlsx/src/lib.rs` · `crates/pdfluent/src/document.rs` |
 | **Reachable from facade** | yes |
 | **Exposed in bindings** | **Rust only** |
-| **Tested by** | `crates/pdf-xlsx/src/lib.rs` · `crates/pdfluent/src/document.rs` |
+| **Tested by** | `crates/pdf-xlsx/src/lib.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/parity_methods.rs` |
 | **Run in CI by** | `quality:cargo-test` |
 
 ### PDF to PowerPoint — `shipped`
@@ -150,10 +152,10 @@ features were covered.
 | | |
 |---|---|
 | **Implemented in** | `pdf-pptx`, `pdfluent` |
-| **Defined at** | `crates/pdf-pptx/src/lib.rs` |
+| **Defined at** | `crates/pdf-pptx/src/lib.rs` · `crates/pdfluent/src/document.rs` |
 | **Reachable from facade** | yes |
 | **Exposed in bindings** | **Rust only** |
-| **Tested by** | `crates/pdf-pptx/src/lib.rs` · `crates/pdfluent/src/document.rs` |
+| **Tested by** | `crates/pdf-pptx/src/lib.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/parity_methods.rs` |
 | **Run in CI by** | `quality:cargo-test` |
 
 ### PDF to image — `shipped`
@@ -163,11 +165,37 @@ features were covered.
 | | |
 |---|---|
 | **Implemented in** | `pdf-render`, `pdf-engine`, `pdfluent`, `xfa-wasm` |
-| **Defined at** | `crates/pdf-engine/src/document.rs` · `crates/pdfluent/src/document.rs` · `crates/xfa-wasm/src/lib.rs` |
+| **Defined at** | `crates/pdf-engine/src/api.rs` · `crates/pdf-engine/src/document.rs` · `crates/pdfluent/src/document.rs` · `crates/xfa-wasm/src/lib.rs` |
 | **Reachable from facade** | yes |
 | **Exposed in bindings** | WASM (@pdfluent/sdk-wasm) · C ABI (voedt .NET/Java/Node) · Java (JNI) · Node (napi) |
 | **Tested by** | `crates/pdf-engine/src/document.rs` · `crates/pdf-engine/src/render.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/diagnostics.rs` · `crates/pdfluent/tests/ga_quality.rs` |
 | **Run in CI by** | `quality:cargo-test` · `sanity:wasm-binding-smoke` |
+
+### Redact PDF — `shipped`
+
+*Permanently remove text or regions, not just cover them*
+
+| | |
+|---|---|
+| **Implemented in** | `pdf-redact`, `pdfluent` |
+| **Defined at** | `crates/pdfluent/src/document.rs` |
+| **Reachable from facade** | yes |
+| **Exposed in bindings** | WASM (@pdfluent/sdk-wasm) · Python (pdfluent) · C ABI (voedt .NET/Java/Node) · Java (JNI) · Node (napi) |
+| **Tested by** | `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/ga_security.rs` · `crates/pdfluent/tests/qr15_security_matrix.rs` · `crates/pdfluent/tests/security.rs` |
+| **Run in CI by** | `quality:cargo-test` |
+
+### Digitally sign PDF — `shipped`
+
+*PAdES signatures, and verification of existing ones*
+
+| | |
+|---|---|
+| **Implemented in** | `pdf-sign`, `pdfluent` |
+| **Defined at** | `crates/pdfluent/src/document.rs` |
+| **Reachable from facade** | yes |
+| **Exposed in bindings** | WASM (@pdfluent/sdk-wasm) · C ABI (voedt .NET/Java/Node) · Node (napi) |
+| **Tested by** | `crates/pdf-sign/src/sign.rs` · `crates/pdf-sign/src/signer.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/qr15_security_matrix.rs` · `crates/pdfluent/tests/security.rs` |
+| **Run in CI by** | `quality:cargo-test` |
 
 ### PDF to PDF/A — `shipped`
 
@@ -198,14 +226,12 @@ separate from the state column rather than folded into it.
 - PDF to Excel
 - PDF to PowerPoint
 
-### Published crates a facade user cannot reach
+### Published crates absent from the facade entirely
 
-Each is either a deliberate split (an engine internal, a vendored codec) or
-a capability we imply we ship and do not wire up. The register cannot tell
-those apart; a human has to say which is which, and then wire or document
-it.
+Not merely unexposed — not in the dependency graph at all. Each is either a
+deliberate split or a capability we imply we ship and never wired up.
 
-`formcalc-interpreter` · `pdf-font` · `pdf-invoice` · `pdf-ocr` · `pdf-standard-fonts` · `pdf-text-format` · `pdf-xfa` · `pdfluent-ccitt` · `pdfluent-cff` · `pdfluent-extract` · `pdfluent-jbig2` · `pdfluent-jpeg2000` · `xfa-dom-resolver` · `xfa-js-sandboxed` · `xfa-json` · `xfa-layout-engine`
+`pdf-invoice` · `pdf-ocr` · `pdf-text-format`
 
 ## Facade surface
 
@@ -305,40 +331,45 @@ a caller cannot discover the gap without running it.
 
 ## Crates
 
-| crate | version | reachable from facade | test files | unit tests | run by |
+`direct` = a customer using `pdfluent` can call it. `internal` = compiled into
+the facade and used by the engine, but not exposed as API — a design choice.
+`absent` = not in the facade's dependency graph at all, so genuinely not
+delivered through it.
+
+| crate | version | in facade | test files | unit tests | run by |
 |---|---|---|---|---|---|
-| `formcalc-interpreter` | 1.0.0-beta.18 | **no** | 3 | 86 | `quality:cargo-test` |
-| `pdf-annot` | 1.0.0-beta.18 | yes | — | 38 | `quality:cargo-test` |
-| `pdf-compliance` | 1.0.0-beta.18.1 | yes | — | 88 | `quality:cargo-test` |
-| `pdf-docx` | 1.0.0-beta.18 | yes | — | 24 | `quality:cargo-test` |
-| `pdf-engine` | 1.0.0-beta.18 | yes | 3 | 155 | `quality:cargo-test` |
-| `pdf-font` | 1.0.0-beta.5 | **no** | — | 117 | `quality:cargo-test` |
-| `pdf-interpret` | 0.5.8 | yes | — | 123 | `quality:cargo-test` |
-| `pdf-invoice` | 1.0.0-beta.18 | **no** | — | 53 | `quality:cargo-test` |
-| `pdf-manip` | 1.0.0-beta.18 | yes | 10 | 230 | `quality:cargo-test` |
-| `pdf-ocr` | 1.0.0-beta.18 | **no** | 1 | 70 | `quality:cargo-test` |
-| `pdf-pptx` | 1.0.0-beta.18 | yes | — | 14 | `quality:cargo-test` |
-| `pdf-redact` | 1.0.0-beta.18 | yes | 5 | 57 | `quality:cargo-test` |
-| `pdf-render` | 1.0.0-beta.18 | yes | — | 7 | `quality:cargo-test` |
-| `pdf-standard-fonts` | 1.0.0-beta.18 | **no** | — | 9 | `quality:cargo-test` |
-| `pdf-syntax` | 0.5.6 | yes | — | 203 | `quality:cargo-test` |
-| `pdf-text-format` | 1.0.0-beta.18 | **no** | — | 21 | `quality:cargo-test` |
-| `pdf-xfa` | 1.0.0-beta.18 | **no** | 47 | 376 | `quality:cargo-test` |
-| `pdf-xlsx` | 1.0.0-beta.18 | yes | — | 19 | `quality:cargo-test` |
-| `pdfluent` | 1.0.0-beta.18 | yes | 31 | 24 | `quality:cargo-test` |
-| `pdfluent-ccitt` | 0.2.2 | **no** | — | 7 | `quality:cargo-test` |
-| `pdfluent-cff` | 0.2.1 | **no** | — | 21 | `quality:cargo-test` |
-| `pdfluent-extract` | 1.0.0-beta.18 | **no** | — | 77 | `quality:cargo-test` |
-| `pdfluent-forms` | 1.0.0-beta.18 | yes | 2 | 70 | `quality:cargo-test` |
-| `pdfluent-jbig2` | 0.2.3 | **no** | — | 9 | `quality:cargo-test` |
-| `pdfluent-jpeg2000` | 0.3.5 | **no** | — | 7 | `quality:cargo-test` |
-| `pdfluent-lopdf` | 0.39.4 | yes | 1 | 100 | `quality:cargo-test` |
-| `pdfluent-sign` | 1.0.0-beta.18 | yes | — | 49 | `quality:cargo-test` |
-| `xfa-dom-resolver` | 1.0.0-beta.18 | **no** | 1 | 32 | `quality:cargo-test` |
-| `xfa-js-sandboxed` | 1.0.0-beta.18 | **no** | 5 | 8 | `quality:cargo-test` |
-| `xfa-json` | 1.0.0-beta.18 | **no** | — | 26 | `quality:cargo-test` |
-| `xfa-layout-engine` | 1.0.0-beta.18 | **no** | 8 | 123 | `quality:cargo-test` |
-| `xfa-license` | 1.0.0-beta.18 | yes | — | 26 | `quality:cargo-test` |
+| `formcalc-interpreter` | 1.0.0-beta.18 | internal | 3 | 86 | `quality:cargo-test` |
+| `pdf-annot` | 1.0.0-beta.18 | direct | — | 38 | `quality:cargo-test` |
+| `pdf-compliance` | 1.0.0-beta.18.1 | direct | — | 88 | `quality:cargo-test` |
+| `pdf-docx` | 1.0.0-beta.18 | direct | — | 24 | `quality:cargo-test` |
+| `pdf-engine` | 1.0.0-beta.18 | direct | 3 | 155 | `quality:cargo-test` |
+| `pdf-font` | 1.0.0-beta.5 | internal | — | 117 | `quality:cargo-test` |
+| `pdf-interpret` | 0.5.8 | direct | — | 123 | `quality:cargo-test` |
+| `pdf-invoice` | 1.0.0-beta.18 | **absent** | — | 53 | `quality:cargo-test` |
+| `pdf-manip` | 1.0.0-beta.18 | direct | 10 | 230 | `quality:cargo-test` |
+| `pdf-ocr` | 1.0.0-beta.18 | **absent** | 1 | 70 | `quality:cargo-test` |
+| `pdf-pptx` | 1.0.0-beta.18 | direct | — | 14 | `quality:cargo-test` |
+| `pdf-redact` | 1.0.0-beta.18 | direct | 5 | 57 | `quality:cargo-test` |
+| `pdf-render` | 1.0.0-beta.18 | direct | — | 7 | `quality:cargo-test` |
+| `pdf-standard-fonts` | 1.0.0-beta.18 | internal | — | 9 | `quality:cargo-test` |
+| `pdf-syntax` | 0.5.6 | direct | — | 203 | `quality:cargo-test` |
+| `pdf-text-format` | 1.0.0-beta.18 | **absent** | — | 21 | `quality:cargo-test` |
+| `pdf-xfa` | 1.0.0-beta.18 | internal | 47 | 376 | `quality:cargo-test` |
+| `pdf-xlsx` | 1.0.0-beta.18 | direct | — | 19 | `quality:cargo-test` |
+| `pdfluent` | 1.0.0-beta.18 | direct | 31 | 24 | `quality:cargo-test` |
+| `pdfluent-ccitt` | 0.2.2 | internal | — | 7 | `quality:cargo-test` |
+| `pdfluent-cff` | 0.2.1 | internal | — | 21 | `quality:cargo-test` |
+| `pdfluent-extract` | 1.0.0-beta.18 | internal | — | 77 | `quality:cargo-test` |
+| `pdfluent-forms` | 1.0.0-beta.18 | direct | 2 | 70 | `quality:cargo-test` |
+| `pdfluent-jbig2` | 0.2.3 | internal | — | 9 | `quality:cargo-test` |
+| `pdfluent-jpeg2000` | 0.3.5 | internal | — | 7 | `quality:cargo-test` |
+| `pdfluent-lopdf` | 0.39.4 | direct | 1 | 100 | `quality:cargo-test` |
+| `pdfluent-sign` | 1.0.0-beta.18 | direct | — | 49 | `quality:cargo-test` |
+| `xfa-dom-resolver` | 1.0.0-beta.18 | internal | 1 | 32 | `quality:cargo-test` |
+| `xfa-js-sandboxed` | 1.0.0-beta.18 | internal | 5 | 8 | `quality:cargo-test` |
+| `xfa-json` | 1.0.0-beta.18 | internal | — | 26 | `quality:cargo-test` |
+| `xfa-layout-engine` | 1.0.0-beta.18 | internal | 8 | 123 | `quality:cargo-test` |
+| `xfa-license` | 1.0.0-beta.18 | direct | — | 26 | `quality:cargo-test` |
 
 ## Feature flags that enable nothing
 

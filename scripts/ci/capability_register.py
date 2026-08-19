@@ -101,6 +101,60 @@ def workspace_crates() -> list[dict]:
     return sorted(meta.get("packages", []), key=lambda p: p["name"])
 
 
+def facade_closure() -> set[str]:
+    """Every crate in the facade's full dependency graph, direct or not.
+
+    Needed because "not a direct dependency" and "not delivered" are different
+    claims, and the first version conflated them: it reported sixteen crates as
+    unreachable when eight of them -- the vendored codecs, the font crates, the XFA
+    engine -- are compiled into the facade and used internally. They are not a
+    customer-facing API surface, which is a design choice, not a gap.
+
+    `cargo metadata` resolves the whole graph from the committed lockfile, with no
+    network and independent of the host platform.
+    """
+    meta = json.loads(run(["cargo", "metadata", "--format-version", "1"]))
+    by_id = {pkg["id"]: pkg["name"] for pkg in meta.get("packages", [])}
+    nodes = {n["id"]: n for n in meta.get("resolve", {}).get("nodes", [])}
+
+    root = next((i for i, name in by_id.items() if name == "pdfluent"), None)
+    if root is None:
+        raise RuntimeError("pdfluent is not in cargo metadata")
+
+    seen: set[str] = set()
+    stack = [root]
+    while stack:
+        cur = stack.pop()
+        for dep in nodes.get(cur, {}).get("dependencies", []):
+            if dep not in seen:
+                seen.add(dep)
+                stack.append(dep)
+    return {by_id[i] for i in seen if i in by_id}
+
+
+def dir_to_package() -> dict[str, str]:
+    """`crates/<dir>` -> published package name.
+
+    They differ for every renamed crate: crates/pdf-sign publishes as
+    `pdfluent-sign`, crates/pdf-forms as `pdfluent-forms`, crates/lopdf as
+    `pdfluent-lopdf`. PROMISES is written in directory names because that is how
+    people talk about them, while cargo answers in package names, and mixing the
+    two silently breaks reachability.
+
+    feature_promises.py currently gets the right answer here by accident: it
+    substring-matches against `cargo tree` output, whose lines include the crate's
+    filesystem path, so "pdf-sign" is found inside `.../crates/pdf-sign)`. That is
+    a coincidence, not a check — it would match an unrelated crate whose path
+    happened to contain the name.
+    """
+    meta = json.loads(run(["cargo", "metadata", "--format-version", "1", "--no-deps"]))
+    out: dict[str, str] = {}
+    for pkg in meta.get("packages", []):
+        out[Path(pkg["manifest_path"]).parent.name] = pkg["name"]
+        out[pkg["name"]] = pkg["name"]
+    return out
+
+
 def facade_deps() -> set[str]:
     """Crates reachable from the facade. `cargo tree`, never a Cargo.toml grep:
     dependencies live in several sections and some are platform-gated, which is
@@ -262,6 +316,8 @@ def analyse() -> dict:
         if "/tests/" in str(f) or "#[test]" in t or "#[wasm_bindgen_test]" in t
     }
     deps = facade_deps()
+    closure = facade_closure()
+    pkg_of = dir_to_package()
     methods = facade_methods()
     targeted = targeted_test_jobs()
     bexp = binding_exports()
@@ -291,8 +347,9 @@ def analyse() -> dict:
                 # A file also run by name gets that faster gate credited too.
                 jobs.update(targeted.get(f.stem, []))
 
+        # Translate directory names to package names before asking cargo.
         impl = [c for c in crates if c != "pdfluent"]
-        reachable = (not impl) or any(c in deps for c in impl)
+        reachable = (not impl) or any(pkg_of.get(c, c) in deps for c in impl)
 
         if not test_files:
             state = "UNTESTED"
@@ -341,15 +398,39 @@ def analyse() -> dict:
         ) if (root / "src").is_dir() else 0
         has_tests = bool(integration) or unit > 0
         job = EXCLUDED_FROM_SUITE.get(name, WORKSPACE_SUITE) if has_tests else None
+        # Three states, not two. `direct` is API surface a customer can call;
+        # `internal` is compiled in and used by the engine but not exposed;
+        # `absent` is genuinely not delivered, which is the only one worth an alarm.
+        if name == "pdfluent" or name in deps:
+            reach = "direct"
+        elif name in closure:
+            reach = "internal"
+        else:
+            reach = "absent"
         crate_rows.append({
             "name": name, "version": c["version"],
-            "reachable": name in deps or name == "pdfluent",
+            "reachable": reach != "absent", "reach": reach,
             "tests": len(integration), "unit": unit, "job": job,
         })
 
+    # Which facade methods are not attributable to any advertised capability?
+    #
+    # This is the question that makes the register scale. PROMISES is maintained by
+    # hand, so a capability added to the product is invisible here until somebody
+    # remembers to write it down -- and "somebody remembers" is the dependency the
+    # whole exercise exists to remove. Listing the unattributed methods turns it
+    # around: add a public method and the gate makes you say whether it is a
+    # promise we make or explicitly not one, in the same change.
+    promised_symbols = {sym for _, (_, _, syms) in PROMISES.items() for sym in syms}
+    unattributed = sorted(
+        m for m in methods
+        if m not in promised_symbols
+        and not m.startswith(("from_", "new", "with_", "as_", "is_", "has_"))
+    )
+
     return {
         "rows": rows, "crates": crate_rows, "methods": methods,
-        "empty_features": empty_features(),
+        "empty_features": empty_features(), "unattributed": unattributed,
     }
 
 
@@ -385,8 +466,10 @@ def render(a: dict) -> str:
     w("  tested, and covered by a CI job that actually runs the test.")
     w(f"- **{len(methods)}** public methods on `pdfluent::Document`, of which")
     w(f"  **{len(stubs)}** fail at runtime.")
-    w(f"- **{sum(1 for c in crates if not c['reachable'])}** published crates cannot be")
-    w("  reached from the facade.")
+    w(f"- **{sum(1 for c in crates if c['reach'] == 'absent')}** published crates are")
+    w("  absent from the facade's dependency graph;")
+    w(f"  **{sum(1 for c in crates if c['reach'] == 'internal')}** are compiled in but")
+    w("  not exposed as API.")
     w(f"- **{sum(1 for c in crates if not c['tests'] and not c['unit'])}** published")
     w("  crates have no tests of any kind.")
     w(f"- **{sum(1 for c in crates if (c['tests'] or c['unit']) and not c['job'])}** crates")
@@ -430,7 +513,7 @@ def render(a: dict) -> str:
 
     # ---- the action list -------------------------------------------------- #
     rust_only = [r["feature"] for r in rows if not r["bindings"]]
-    unreachable = [c["name"] for c in crates if not c["reachable"]]
+    unreachable = [c["name"] for c in crates if c["reach"] == "absent"]
     bad_state = [r for r in rows if r["state"] != "shipped"]
 
     w("## Gaps worth acting on")
@@ -456,12 +539,10 @@ def render(a: dict) -> str:
             w(f"- {f}")
         w()
     if unreachable:
-        w("### Published crates a facade user cannot reach")
+        w("### Published crates absent from the facade entirely")
         w()
-        w("Each is either a deliberate split (an engine internal, a vendored codec) or")
-        w("a capability we imply we ship and do not wire up. The register cannot tell")
-        w("those apart; a human has to say which is which, and then wire or document")
-        w("it.")
+        w("Not merely unexposed — not in the dependency graph at all. Each is either a")
+        w("deliberate split or a capability we imply we ship and never wired up.")
         w()
         w("`" + "` · `".join(unreachable) + "`")
         w()
@@ -487,12 +568,18 @@ def render(a: dict) -> str:
 
     w("## Crates")
     w()
-    w("| crate | version | reachable from facade | test files | unit tests | run by |")
+    w("`direct` = a customer using `pdfluent` can call it. `internal` = compiled into")
+    w("the facade and used by the engine, but not exposed as API — a design choice.")
+    w("`absent` = not in the facade's dependency graph at all, so genuinely not")
+    w("delivered through it.")
+    w()
+    w("| crate | version | in facade | test files | unit tests | run by |")
     w("|---|---|---|---|---|---|")
     for c in crates:
         has = c["tests"] or c["unit"]
         job = f"`{c['job']}`" if c["job"] else ("**nothing**" if has else "**no tests**")
-        w(f"| `{c['name']}` | {c['version']} | {'yes' if c['reachable'] else '**no**'} "
+        mark = {"direct": "direct", "internal": "internal", "absent": "**absent**"}[c["reach"]]
+        w(f"| `{c['name']}` | {c['version']} | {mark} "
           f"| {c['tests'] or '—'} | {c['unit'] or '—'} | {job} |")
     w()
 
@@ -520,16 +607,104 @@ def render(a: dict) -> str:
     return "\n".join(L) + "\n"
 
 
+EXCEPTIONS = REPO / "docs" / "capability_exceptions.toml"
+
+
+def load_exceptions() -> dict:
+    """Accepted gaps, each with a stated reason.
+
+    A gap in this file is a decision someone wrote down. A gap not in this file is
+    a surprise, and the gate treats surprises as failures — that is the whole
+    mechanism. Nothing here suppresses a gap from the generated register: the
+    register still lists it, so an exception hides the alarm and never the fact.
+    """
+    if not EXCEPTIONS.exists():
+        return {}
+    import tomllib
+
+    with EXCEPTIONS.open("rb") as fh:
+        return tomllib.load(fh)
+
+
+def gate(a: dict) -> int:
+    """Fail when a gap exists that nobody has accepted in writing."""
+    ex = load_exceptions()
+    problems: list[str] = []
+
+    def accepted(section: str, key: str) -> bool:
+        return key in (ex.get(section) or {})
+
+    for r in a["rows"]:
+        if r["state"] != "shipped" and not accepted("capabilities", r["feature"]):
+            problems.append(
+                f"capability {r['feature']!r} is {r['state']} and is not in "
+                f"[capabilities] in {EXCEPTIONS.name}"
+            )
+        if not r["bindings"] and not accepted("rust_only", r["feature"]):
+            problems.append(
+                f"capability {r['feature']!r} is advertised but reachable only from "
+                f"Rust; add it to [rust_only] with a reason, or expose it in a binding"
+            )
+
+    for c in a["crates"]:
+        if c["reach"] == "absent" and not accepted("unreachable_crates", c["name"]):
+            problems.append(
+                f"crate {c['name']!r} is published but absent from the facade's "
+                f"dependency graph and is not in [unreachable_crates]"
+            )
+        if not (c["tests"] or c["unit"]) and not accepted("untested_crates", c["name"]):
+            problems.append(f"crate {c['name']!r} has no tests of any kind")
+        if (c["tests"] or c["unit"]) and not c["job"]:
+            # Never excusable: a test no job runs is indistinguishable from a test
+            # that passes, which is the exact failure this whole system exists for.
+            problems.append(
+                f"crate {c['name']!r} has tests that no CI job executes "
+                f"(this one has no exception mechanism, on purpose)"
+            )
+
+    for m in sorted(n for n, stub in a["methods"].items() if stub):
+        if not accepted("runtime_stubs", m):
+            problems.append(
+                f"facade method {m}() fails at runtime and is not in [runtime_stubs]"
+            )
+
+    for m in a["unattributed"]:
+        if not accepted("not_advertised", m):
+            problems.append(
+                f"facade method {m}() maps to no advertised capability; add it to "
+                f"PROMISES in feature_promises.py, or to [not_advertised] with a reason"
+            )
+
+    if not problems:
+        print("[capability_register] gate: no unaccepted gaps")
+        return 0
+
+    print(f"[capability_register] GATE FAILED: {len(problems)} unaccepted gap(s)\n")
+    for pr in problems:
+        print(f"  - {pr}")
+    print(f"\n[capability_register] Either close the gap, or record it in")
+    print(f"[capability_register] {EXCEPTIONS.relative_to(REPO)} with a reason.")
+    print("[capability_register] Writing a reason is cheap; it is also a decision,")
+    print("[capability_register] which is the point -- silence is what we are removing.")
+    return 1
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--gate", action="store_true",
+                    help="fail on any gap not accepted in capability_exceptions.toml")
     args = ap.parse_args()
 
     try:
-        current = render(analyse())
+        analysis = analyse()
+        current = render(analysis)
     except Exception as e:  # noqa: BLE001
         print(f"[capability_register] FATAL: {e}", file=sys.stderr)
         sys.exit(2)
+
+    if args.gate:
+        sys.exit(gate(analysis))
 
     if not args.check:
         OUT.parent.mkdir(parents=True, exist_ok=True)
