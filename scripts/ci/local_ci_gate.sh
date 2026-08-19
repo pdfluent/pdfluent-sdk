@@ -7,6 +7,11 @@
 #     bash scripts/ci/local_ci_gate.sh --full     # + test + audit (slow)
 #
 # Exit 0 only if every gate passes. Mirrors:
+#   ci-yaml  : scripts/ci/ci_config_lint.py
+#              Shape of .gitlab-ci.yml, not just its syntax. An unquoted ": " in
+#              a script line parses as valid YAML and becomes a dict, which
+#              GitLab rejects outright -- the pipeline comes back `failed` with
+#              zero jobs and no clue where to look.
 #   metadata : cargo metadata --no-deps
 #   fmt      : cargo fmt --all -- --check
 #   build    : scripts/ci/run_build.sh   (cargo check, CI excludes)
@@ -36,6 +41,7 @@ run() { local name="$1"; shift
 if [ -n "$(git status --porcelain | grep -vE 'gen/schemas|\.e1_gaps')" ]; then
   echo "NOTE: working tree has uncommitted changes (the CI audit job requires a clean tree)."
 fi
+run ci-yaml  python3 scripts/ci/ci_config_lint.py
 run metadata cargo metadata --no-deps --format-version 1
 run fmt      cargo fmt --all -- --check
 run build    bash scripts/ci/run_build.sh
