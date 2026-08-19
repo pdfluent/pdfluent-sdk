@@ -17,6 +17,10 @@ paddle = ["ort", "ndarray", "image", "ureq", "dirs-next"]
 [dependencies]
 lopdf.workspace = true
 thiserror.workspace = true
+# Not optional: src/integrity.rs is compiled unconditionally so that its
+# tests run in CI without needing a non-default feature enabled.
+sha2 = "0.10"
+
 leptess = { version = "0.14", optional = true }
 ort = { version = "=2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic", "api-24"] }
 ndarray = { version = "0.17", optional = true }

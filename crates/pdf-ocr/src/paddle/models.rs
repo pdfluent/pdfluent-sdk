@@ -7,9 +7,6 @@ use ort::session::Session;
 
 use super::dictionary::Dictionary;
 
-/// HuggingFace repository base URL for PaddleOCR ONNX models.
-const HF_BASE_URL: &str = "https://huggingface.co/monkt/paddleocr-onnx/resolve/main";
-
 /// Error type for model operations.
 #[derive(Debug)]
 pub enum ModelError {
@@ -21,6 +18,17 @@ pub enum ModelError {
     Session(String),
     /// Loading the character dictionary failed; contains the error description.
     Dictionary(String),
+    /// Model files are absent and `ModelSource::LocalOnly` forbids fetching them.
+    ModelsMissing {
+        /// The files that are not present.
+        missing: Vec<PathBuf>,
+        /// Where they were looked for.
+        model_dir: PathBuf,
+    },
+    /// A fetch was requested for a file with no pinned digest.
+    UnpinnedFile(String),
+    /// Bytes arrived but did not match the pinned digest. Nothing was written.
+    Integrity(String),
 }
 
 impl std::fmt::Display for ModelError {
@@ -30,6 +38,31 @@ impl std::fmt::Display for ModelError {
             Self::Download(msg) => write!(f, "model download error: {msg}"),
             Self::Session(msg) => write!(f, "session creation error: {msg}"),
             Self::Dictionary(msg) => write!(f, "dictionary error: {msg}"),
+            Self::ModelsMissing { missing, model_dir } => write!(
+                f,
+                "OCR model files are missing from {}: {}. \
+                 Nothing was downloaded, by design: place the weights there yourself, \
+                 or set PaddleOcrConfig::model_source to ModelSource::Verified with a \
+                 pinned sha256 for each file. Reference source: {}",
+                model_dir.display(),
+                missing
+                    .iter()
+                    .map(|p| p
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                REFERENCE_MODEL_BASE_URL
+            ),
+            Self::UnpinnedFile(path) => write!(
+                f,
+                "refusing to download {path}: no sha256 pinned for it. Add one to \
+                 ModelSource::Verified::digests -- a file that cannot be verified \
+                 must not be fetched"
+            ),
+            Self::Integrity(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -138,6 +171,8 @@ pub struct PaddleOcrConfig {
     pub rec_batch_size: usize,
     /// Number of ONNX Runtime intra-op threads (default 4).
     pub num_threads: usize,
+    /// Where weights may be fetched from. Defaults to `LocalOnly` — no network.
+    pub model_source: ModelSource,
 }
 
 impl Default for PaddleOcrConfig {
@@ -152,6 +187,7 @@ impl Default for PaddleOcrConfig {
             box_threshold: 0.6,
             rec_batch_size: 8,
             num_threads: 4,
+            model_source: ModelSource::LocalOnly,
         }
     }
 }
@@ -202,46 +238,121 @@ pub fn models_available(config: &PaddleOcrConfig) -> bool {
     det && rec && dict && cls
 }
 
-/// Download required models from HuggingFace to the model directory.
-pub fn download_models(config: &PaddleOcrConfig) -> Result<(), ModelError> {
+/// Where model weights may come from.
+///
+/// # Why the default fetches nothing
+///
+/// This used to download up to ~84 MB of ONNX weights from a third-party public
+/// repository the first time an engine was constructed, and write them straight to
+/// the cache without checking a single byte. Whoever served those bytes decided
+/// what our inference engine executed, and the caller was never asked. For an SDK
+/// sold on privacy and on working offline, a silent network fetch is the wrong
+/// default even before the integrity question.
+///
+/// So the default is `LocalOnly`: point `model_dir` at weights you already have.
+/// Fetching is a decision the caller makes explicitly, and it is always verified.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ModelSource {
+    /// Never touch the network. Missing files are an error naming what is missing.
+    #[default]
+    LocalOnly,
+    /// Fetch missing files from `base_url`, verifying each against a pinned digest.
+    ///
+    /// Keys are repository-relative paths exactly as they appear in the URL, e.g.
+    /// `"detection/v3/det.onnx"`. A file with no entry is **not** downloaded: an
+    /// unpinned file cannot be verified, and downloading what you cannot verify is
+    /// the thing this type exists to prevent.
+    Verified {
+        /// Base URL, without a trailing slash.
+        base_url: String,
+        /// Repository-relative path to hex SHA-256.
+        digests: std::collections::BTreeMap<String, String>,
+    },
+}
+
+/// Upper bound on a single model file, as a guard against a hostile or broken
+/// server streaming without end. The largest weight we know of is ~84 MB.
+const MAX_MODEL_BYTES: usize = 256 * 1024 * 1024;
+
+/// The reference URL for PaddleOCR ONNX weights.
+///
+/// Provided for convenience only. It is a third-party repository we do not
+/// control, which is exactly why using it requires pinning digests yourself.
+pub const REFERENCE_MODEL_BASE_URL: &str =
+    "https://huggingface.co/monkt/paddleocr-onnx/resolve/main";
+
+/// Every file this configuration needs, as (repository-relative path, local path).
+fn required_files(config: &PaddleOcrConfig) -> Vec<(String, PathBuf)> {
     let det_hf_dir = match config.detection_model {
         DetectionModel::V3 => "detection/v3",
         DetectionModel::V5 => "detection/v5",
     };
-
-    download_file_if_missing(
-        &format!("{det_hf_dir}/det.onnx"),
-        &detection_model_path(config),
-    )?;
-
     let lang = config.languages.first().copied().unwrap_or(Language::Latin);
-    download_file_if_missing(
-        &format!("{}/rec.onnx", lang.hf_dir()),
-        &recognition_model_path(config),
-    )?;
-    download_file_if_missing(
-        &format!("{}/dict.txt", lang.hf_dir()),
-        &dictionary_path(config),
-    )?;
 
+    let mut files = vec![
+        (
+            format!("{det_hf_dir}/det.onnx"),
+            detection_model_path(config),
+        ),
+        (
+            format!("{}/rec.onnx", lang.hf_dir()),
+            recognition_model_path(config),
+        ),
+        (
+            format!("{}/dict.txt", lang.hf_dir()),
+            dictionary_path(config),
+        ),
+    ];
     if config.use_angle_classifier {
-        download_file_if_missing("preprocessing/cls.onnx", &classifier_model_path(config))?;
+        files.push((
+            "preprocessing/cls.onnx".to_string(),
+            classifier_model_path(config),
+        ));
     }
-
-    Ok(())
+    files
 }
 
-fn download_file_if_missing(hf_path: &str, local_path: &Path) -> Result<(), ModelError> {
-    if local_path.exists() {
+/// Make sure every required model file is present, fetching only if the caller
+/// asked for that and only against a pinned digest.
+pub fn ensure_models(config: &PaddleOcrConfig) -> Result<(), ModelError> {
+    let missing: Vec<(String, PathBuf)> = required_files(config)
+        .into_iter()
+        .filter(|(_, local)| !local.exists())
+        .collect();
+
+    if missing.is_empty() {
         return Ok(());
     }
 
-    if let Some(parent) = local_path.parent() {
-        std::fs::create_dir_all(parent)?;
+    match &config.model_source {
+        ModelSource::LocalOnly => Err(ModelError::ModelsMissing {
+            missing: missing.iter().map(|(_, p)| p.clone()).collect(),
+            model_dir: config.model_dir.clone(),
+        }),
+        ModelSource::Verified { base_url, digests } => {
+            for (hf_path, local_path) in missing {
+                let expected = digests
+                    .get(&hf_path)
+                    .ok_or_else(|| ModelError::UnpinnedFile(hf_path.clone()))?;
+                fetch_verified(base_url, &hf_path, expected, &local_path)?;
+            }
+            Ok(())
+        }
     }
+}
 
-    let url = format!("{HF_BASE_URL}/{hf_path}");
-    eprintln!("Downloading {url} ...");
+/// Download one file into memory, verify it, and only then write it.
+///
+/// The order matters. Streaming to disk and checking afterwards leaves unverified
+/// bytes on the filesystem, where a crash, a concurrent process, or a caller that
+/// ignores the error can still pick them up and load them.
+fn fetch_verified(
+    base_url: &str,
+    hf_path: &str,
+    expected_sha256: &str,
+    local_path: &Path,
+) -> Result<(), ModelError> {
+    let url = format!("{}/{}", base_url.trim_end_matches('/'), hf_path);
 
     let agent = ureq::Agent::new_with_defaults();
     let response = agent
@@ -249,20 +360,38 @@ fn download_file_if_missing(hf_path: &str, local_path: &Path) -> Result<(), Mode
         .call()
         .map_err(|e| ModelError::Download(format!("{url}: {e}")))?;
 
-    let body = response.into_body();
-    let mut reader = body.into_reader();
-    let mut file = std::fs::File::create(local_path)?;
+    let mut reader = response.into_body().into_reader();
+    let mut bytes: Vec<u8> = Vec::new();
     let mut buf = vec![0u8; 64 * 1024];
     loop {
         let n = std::io::Read::read(&mut reader, &mut buf)
-            .map_err(|e| ModelError::Download(format!("read error: {e}")))?;
+            .map_err(|e| ModelError::Download(format!("{url}: read error: {e}")))?;
         if n == 0 {
             break;
         }
-        file.write_all(&buf[..n])?;
+        if bytes.len() + n > MAX_MODEL_BYTES {
+            return Err(ModelError::Download(format!(
+                "{url}: exceeds {MAX_MODEL_BYTES} bytes; refusing to continue"
+            )));
+        }
+        bytes.extend_from_slice(&buf[..n]);
     }
 
-    eprintln!("  → saved to {}", local_path.display());
+    crate::integrity::verify_sha256(&bytes, expected_sha256)
+        .map_err(|e| ModelError::Integrity(format!("{url}: {e}")))?;
+
+    if let Some(parent) = local_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    // Write beside the target and rename, so a reader never observes a partial
+    // file even though the bytes are already verified.
+    let tmp = local_path.with_extension("part");
+    {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+    }
+    std::fs::rename(&tmp, local_path)?;
     Ok(())
 }
 

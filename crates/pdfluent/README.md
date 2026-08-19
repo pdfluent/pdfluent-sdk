@@ -59,12 +59,45 @@ Default: `signing`, `pdfa`, `redaction`.
 | `signing` (default) | PAdES B-LT / B-LTA digital signatures, CMS verification |
 | `pdfa` (default) | PDF/A-1b/2b/3b validation and conversion |
 | `redaction` (default) | Content redaction (search-based and region-based) |
-| `ocr-tesseract` | OCR via Tesseract |
-| `ocr-paddle` | OCR via PaddleOCR |
+| `ocr-tesseract` | reserved, no effect — see OCR below |
+| `ocr-paddle` | reserved, no effect — see OCR below |
 | `docx-export` | PDF → DOCX export |
 | `xfa-flatten` | XFA form → static PDF flattening (experimental) |
 | `wasm` | WebAssembly target |
 | `tracing` | Observability via the `tracing` crate |
+
+## OCR
+
+Three routes, all supported, all through one seam. OCR lives in the separate
+[`pdf-ocr`](https://crates.io/crates/pdf-ocr) crate — the `ocr-*` flags on this
+crate are reserved names that currently enable nothing, so depend on `pdf-ocr`
+directly.
+
+| route | feature | needs |
+|---|---|---|
+| **Your cloud provider** | none | implement `OcrEngine` against Google Cloud Vision, AWS Textract, Azure Document Intelligence, or anything else |
+| **PaddleOCR** | `paddle` | ONNX Runtime as a shared library; you supply the model weights, or pin their digests and let the crate fetch them |
+| **Tesseract** | `tesseract` | Tesseract and Leptonica installed on the system |
+
+Whichever you pick, the PDF side is ours: `make_searchable` renders each page,
+hands the image to the recognizer, and writes the returned words and bounding
+boxes back as an invisible text layer over the scan. The output is a searchable,
+copyable PDF.
+
+The facade stays free of all three so that a plain `pdfluent` dependency pulls in
+no system libraries and no model downloads. Opting in is your decision to make,
+not a side effect of using the SDK.
+
+## HTML to PDF
+
+Not offered. Rendering modern HTML and CSS correctly means shipping a browser
+engine, and a rendering engine that is nearly right is worse than none — the
+output looks plausible and is wrong.
+
+Use headless Chrome or Chromium for the conversion, then hand the PDF to
+PDFluent for everything after that: merging, page operations, compression,
+watermarks, encryption, signing, PDF/A conversion, redaction. That combination is
+well supported and is what we recommend.
 
 ## Licensing
 

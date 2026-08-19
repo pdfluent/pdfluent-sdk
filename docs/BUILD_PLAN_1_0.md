@@ -40,7 +40,7 @@ about a day each, mostly test-writing.
 | # | capability | open source | complexity sits in |
 |---|---|---|---|
 | B1 | **XFA barcodes** | **`barcoders`** 2.0 (MIT/Apache, 1 dependency) for 1D, **`rxing`** 0.9 (Apache-2.0) for PDF417/DataMatrix/QR | mapping the XFA `<barcode type>` attribute to a symbology, and drawing modules into the content stream. Everything else — parsing, layout, no-split rule — already exists. Neither crate emits PDF, which suits us: the geometry stays ours |
-| B2 | **OCR cloud integration** | none for OCR itself; `ureq` or `reqwest` for HTTP | a trait plus one adapter per provider. The work is three different request shapes, three auth schemes and three result formats — not recognition. No models, no licence question |
+| B2 | ~~OCR cloud integration~~ | — | **Reduced to documentation, 19-08.** No adapter per provider: the `OcrEngine` trait and `make_searchable` already are the integration, so what was missing was an honest description of them, not code. See the OCR section below |
 | B5 | page numbers, header/footer | none needed | `PageDecoration` currently models watermarks only; this generalises it to positioned content with page-relative placement |
 | B9 | greyscale, N-up, resize, split-by-bookmark | `image` for colour | four independent page-level operations. Greyscale needs colour-space handling for images *and* content-stream colour operators, which is the fiddly part |
 | B11 | timestamp / TSA | **`rasn-cms`** 0.28 (MIT/Apache, pure Rust) — or extend what we have | **not a new stack**: `pdf-sign` already uses `der`, `rsa`, `p256`, `sha2`. RFC 3161 is a CMS structure fetched over HTTP and embedded in the signature dictionary |
@@ -76,70 +76,51 @@ from its absence in the facade instead of checking the crate behind it. The
 
 | # | capability | see below |
 |---|---|---|
-| B3 | **HTML → PDF** | two tracks, sized separately |
+| B3 | **HTML → PDF** | **dropped 19-08** — not built, not offered, documented Chrome route |
 
 ---
 
-## HTML → PDF: two tracks is the right answer
+## HTML to PDF: decided, and we are not building it
 
-Your instinct matches what the market actually does, and the split is not a
-compromise — the two serve different customers.
+**Decision, Jasper, 2026-08-19: do not build it. Do not offer it. Support it.**
 
-**Track 1 — Chromium, as an optional dependency (M).**
-`chromiumoxide` (MIT/Apache) drives a browser over the DevTools protocol and
-asks it to print to PDF. Perfect fidelity, because it *is* a browser: JavaScript,
-web fonts, flexbox, everything. We do not ship or bundle Chromium; the customer
-points us at the browser they already have. That keeps the pure-Rust rule intact
-for the default build — it becomes an opt-in feature with an external runtime
-requirement, stated plainly.
+Both tracks below are dropped — the pure-Rust renderer and the Chromium wrapper
+alike. The reasoning that made track 2 large applies to track 1 as well once you
+follow it through: a renderer that is nearly right is worse than none, because the
+output looks plausible and is wrong, and the customer finds out downstream.
 
-This is what wkhtmltopdf, Puppeteer and every serious HTML-to-PDF service do, and
-the reason they all weigh hundreds of megabytes. Anyone converting real web pages
-needs this and will not accept a subset.
+What we say instead: use headless Chrome or Chromium for the conversion, then hand
+the PDF to PDFluent for everything after it — merging, page operations,
+compression, watermarks, encryption, signing, PDF/A, redaction. That is a real
+answer to the actual need, and it is honest about which part is ours.
 
-**Track 2 — a pure-Rust document subset (L to XL).**
+Recorded in `crates/pdfluent/README.md` and `STABILITY.md`. The `html-to-pdf`
+feature flag said "Reserved for 1.1 (#1206 IronPDF parity)" and now says what is
+true: not offered, not planned.
 
-Fair question: if the crates exist, why is this weeks rather than days?
+## OCR: decided, and the seam is what we ship
 
-Because of what they do *not* cover. The four crates give you:
+**Decision, Jasper, 2026-08-19: do not develop OCR. Be genuinely ready for cloud
+providers, and say so. That is enough for 1.0.**
 
-| crate | gives you |
-|---|---|
-| `html5ever` | a DOM tree from HTML bytes |
-| `cssparser` | CSS text into parsed rules |
-| `selectors` | which rules match which element |
-| `taffy` | box positions, given a tree of boxes with known sizes |
+B2 shrinks from "an adapter per provider" to nothing but documentation, because
+the preparation already exists and is real:
 
-Between "rules that match" and "boxes with known sizes" sits everything that
-makes a browser a browser, and none of it is in those crates:
+- `pdf_ocr::OcrEngine` — implement `recognize(rgb, width, height, dpi)` against
+  Google Cloud Vision, AWS Textract, Azure Document Intelligence, or anything else
+- `pdf_ocr::make_searchable(doc, engine, config, render_fn)` — renders each page,
+  calls your recognizer, and writes the returned words and `bbox_px` back as an
+  invisible text layer over the image
 
-- **The cascade.** Turning matched rules into one computed value per property per
-  element: specificity, inheritance, initial values, units, `em` relative to
-  which parent. Servo has a whole crate for this (`stylo`); it is not small.
-- **Text layout.** Line breaking, font fallback, shaping, baselines. We have
-  pieces of this from `pdf-render` and the text engine, which helps — but it must
-  be driven from computed CSS rather than from PDF text runs.
-- **Pagination.** `taffy` lays out one continuous area. It has no concept of a
-  page, so page breaks, widows and orphans, repeated table headers and content
-  that overflows onto the next page are all ours. For a *document* renderer this
-  is the central problem, not an edge case.
-- **Painting.** Turning the laid-out boxes into PDF operators: backgrounds,
-  borders, images, clipping, z-order.
+Recognition is the provider's; the PDF work is ours. Two local backends
+(`tesseract`, `paddle`) exist behind their own flags but need C system libraries,
+which is why the facade does not wire them and why a cloud recognizer is the
+recommended path — it keeps the pure-Rust guarantee intact.
 
-So the crates carry parsing and box layout — real work, genuinely saved — and we
-build the cascade, pagination and paint. That is the L to XL.
-
-Scope it honestly and it shrinks: text, tables, images, page breaks, basic CSS;
-no JavaScript, no floats, no grid edge cases. That covers invoices, reports and
-letters — most of the actual demand — with no external runtime, no browser to
-install, and deterministic output.
-
-**Recommendation:** build track 1 first. It is smaller, it is what the market
-expects, and it lets you keep the promise now. Track 2 then becomes the
-differentiator rather than the excuse — "runs anywhere, no browser required" is
-a real selling point precisely because competitors cannot say it.
-
----
+Correcting the documentation was the actual work here, and it was overdue: the
+published crates.io README for `pdfluent` advertised "OCR via Tesseract" and "OCR
+via PaddleOCR" as feature flags that are empty, and `pdf-ocr/README.md` pointed
+readers straight at those no-ops.
 
 ## Total
 
@@ -149,8 +130,8 @@ a real selling point precisely because competitors cannot say it.
 | small builds | 4 | ~1 day each |
 | medium builds | 6 | a few days each |
 | large builds | 1 (PDF/UA + PDF/X) | 1–2 weeks |
-| HTML → PDF track 1 (Chromium) | 1 | a few days |
-| HTML → PDF track 2 (pure Rust) | 1 | 1–2 weeks, or more |
+| HTML → PDF | **dropped 19-08** | not built, not offered; documented Chrome route |
+| OCR | **reduced 19-08** | documentation only; the `OcrEngine` seam already exists |
 | deferred stubs to implement or remove | 3 | varies |
 
 Roughly six to eight weeks of focused work for everything, and the first two

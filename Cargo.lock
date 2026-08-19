@@ -4402,6 +4402,7 @@ dependencies = [
  "ndarray",
  "ort",
  "pdfluent-lopdf",
+ "sha2",
  "tempfile",
  "thiserror 2.0.18",
  "ureq 3.3.0",
