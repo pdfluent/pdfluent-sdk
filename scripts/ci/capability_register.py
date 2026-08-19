@@ -180,7 +180,13 @@ def facade_deps() -> set[str]:
 
 
 def facade_methods() -> dict[str, bool]:
-    """name -> is_stub, for every public method on Document."""
+    """name -> is_stub, for every public method on the facade type.
+
+    The type is `PdfDocument`, exported through `pdfluent::prelude`, NOT
+    `pdfluent::Document` -- there is no such path. Worth stating because I wrote
+    the wrong one into this register and only found out when the compiler refused
+    an example that used it.
+    """
     src = (REPO / "crates" / "pdfluent" / "src" / "document.rs").read_text(errors="replace")
     out: dict[str, bool] = {}
     for m in re.finditer(r"pub fn (\w+)", src):
@@ -464,7 +470,7 @@ def render(a: dict) -> str:
     w()
     w(f"- **{ok} of {len(rows)}** advertised capabilities are implemented, reachable,")
     w("  tested, and covered by a CI job that actually runs the test.")
-    w(f"- **{len(methods)}** public methods on `pdfluent::Document`, of which")
+    w(f"- **{len(methods)}** public methods on `pdfluent::prelude::PdfDocument`, of which")
     w(f"  **{len(stubs)}** fail at runtime.")
     w(f"- **{sum(1 for c in crates if c['reach'] == 'absent')}** published crates are")
     w("  absent from the facade's dependency graph;")

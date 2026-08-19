@@ -14,7 +14,7 @@ mine are not.
 
 - **13 of 13** advertised capabilities are implemented, reachable,
   tested, and covered by a CI job that actually runs the test.
-- **78** public methods on `pdfluent::Document`, of which
+- **78** public methods on `pdfluent::prelude::PdfDocument`, of which
   **5** fail at runtime.
 - **3** published crates are
   absent from the facade's dependency graph;
