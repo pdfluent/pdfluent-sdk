@@ -72,7 +72,24 @@ EXCLUDED_FROM_SUITE = {
 
 
 def run(cmd: list[str]) -> str:
-    return subprocess.run(cmd, cwd=REPO, capture_output=True, text=True).stdout
+    """Run a command and REFUSE to continue if it failed.
+
+    The first version returned .stdout and ignored the exit status. When
+    `cargo tree --target all` failed on the runner (it must resolve for every
+    platform, which needs the network), stdout was empty, every crate looked
+    unreachable, and the register cheerfully reported 0 of 11 capabilities
+    delivered. A wrong answer stated with total confidence, from a command that
+    never ran.
+
+    This is the same silent-failure shape that test_skip_lint.py exists to catch
+    in tests and that F5.9 flags in our own scripts. A tool that reports on
+    correctness must not itself fail quietly.
+    """
+    r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"`{' '.join(cmd)}` exited {r.returncode}\n{r.stderr.strip()[:600]}")
+    return r.stdout
 
 
 # --------------------------------------------------------------------------- #
@@ -88,14 +105,24 @@ def facade_deps() -> set[str]:
     """Crates reachable from the facade. `cargo tree`, never a Cargo.toml grep:
     dependencies live in several sections and some are platform-gated, which is
     how docx was once reported as unreachable when it was not."""
-    # --target all is not a nicety: without it `cargo tree` resolves for the HOST,
-    # so a macOS laptop and the Linux runner produce different answers and the
-    # drift gate fails on every push regardless of the code. A register whose
-    # content depends on who generated it cannot be a gate. (Found the honest
-    # way: the job went red on its first real run.)
-    tree = run(["cargo", "tree", "-p", "pdfluent", "--depth", "1",
-                "--edges", "normal", "--target", "all"])
-    return {m.group(1) for m in re.finditer(r"^[│├└─\s]*([a-z0-9_-]+) v", tree, re.M)}
+    # Read the manifest, do not resolve the graph.
+    #
+    # `cargo tree` was the wrong instrument twice over. It resolves for the HOST,
+    # so a macOS laptop and the Linux runner disagreed and the gate failed on
+    # every push regardless of the code; and `--target all`, the obvious fix,
+    # has to resolve for every platform, which needs the network the runner does
+    # not have. It then failed outright.
+    #
+    # `cargo metadata --no-deps` reports what the manifest declares, including
+    # platform-gated entries, with no resolution and no network. Which is the
+    # actual question: does the facade declare a dependency on this crate? It is
+    # the same answer on every machine, which is what a drift gate requires.
+    meta = json.loads(run(["cargo", "metadata", "--format-version", "1", "--no-deps"]))
+    for pkg in meta.get("packages", []):
+        if pkg["name"] == "pdfluent":
+            return {d["name"] for d in pkg.get("dependencies", [])
+                    if d.get("kind") in (None, "normal")}
+    raise RuntimeError("the pdfluent package is not in cargo metadata")
 
 
 def facade_methods() -> dict[str, bool]:

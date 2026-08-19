@@ -1,0 +1,8 @@
+# Compiled test binaries. `test_smoke` was committed as a Mach-O executable and
+# survived in the repo until the C tests first ran on Linux, where it died with
+# "Exec format error" -- make saw the file, decided it was up to date, and ran a
+# macOS binary on a Linux runner. The .c sources are the source of truth.
+test_smoke
+test_text_blocks
+*.o
+*.dSYM/
