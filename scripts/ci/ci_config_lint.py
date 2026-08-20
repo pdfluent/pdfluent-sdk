@@ -24,6 +24,7 @@ Exit codes:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -82,6 +83,24 @@ def main() -> None:
                 problems.append(
                     f"{name}.{key} contains a {type(leaf).__name__}, not a string.{hint}"
                 )
+
+        # Hardcoded target/ paths. CARGO_TARGET_DIR is set for every job on this
+        # runner, so `target/release/x` is a directory cargo never writes to. The
+        # failure is expensive and misleading: the job builds successfully for
+        # minutes, then reports the binary as missing. This has now happened three
+        # times in one day -- the C ABI Makefile, and both PDF/A corpus gates,
+        # which each compiled for six minutes before looking in the wrong place.
+        for key in ("script", "before_script", "after_script"):
+            for leaf in flatten(job.get(key) or []):
+                if not isinstance(leaf, str):
+                    continue
+                for line in leaf.splitlines():
+                    if re.search(r"(?<![\w/${])target/(release|debug)/", line) \
+                            and "CARGO_TARGET_DIR" not in line:
+                        problems.append(
+                            f"{name}.{key} hardcodes a target/ path: {line.strip()[:70]!r}"
+                            '  -- use "${CARGO_TARGET_DIR:-target}/release/..."'
+                        )
 
         # A `needs` on a job that does not exist stops the pipeline from being
         # created at all, with the same unhelpful "failed, no jobs" symptom.
