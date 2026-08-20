@@ -11852,7 +11852,23 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
         "threequarters" => Some('\u{00BE}'),
         "periodcentered" | "middot" => Some('\u{00B7}'),
         ".notdef" => None,
-        _ => None,
+        _ => {
+            // Adobe's glyph list disambiguates duplicate names with a numeric
+            // suffix — `mu1`, `space1`, `hyphen2` — and producers emit those
+            // verbatim. The suffix names the same character, so retry without
+            // it rather than reporting the name unresolvable (govdocs holdout
+            // 074_074896: `mu1` in a 69-name Latin encoding).
+            //
+            // Only when a suffix is actually present, or `a1` (a real
+            // ZapfDingbats glyph, unrelated to `a`) would resolve to the
+            // letter a.
+            let stem = name.trim_end_matches(|c: char| c.is_ascii_digit());
+            if stem.len() > 1 && stem.len() < name.len() {
+                glyph_name_to_unicode(stem)
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -14810,12 +14826,35 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
     count + symbolic_to_strip.len()
 }
 
+/// Whether an /Encoding's /Differences read as ordinary text rather than as
+/// glyph ids in disguise.
+///
+/// Judged by proportion, not unanimity. The two populations this separates are
+/// nowhere near each other: a real text encoding resolves essentially every
+/// name through the AGL, while the descriptive junk on a genuinely symbolic
+/// font resolves almost none — its names are `g27`, `index14`, or the
+/// producer's private strings. Demanding that *every* name resolve therefore
+/// buys no accuracy and costs entire documents: govdocs holdout 074_074896
+/// carries 69 names, 68 of them plain Latin letters and one `mu1`, and on the
+/// strength of that single unknown its whole /Encoding was discarded — the
+/// document dropped from 102,7% to 10,0% text retention, because stripping the
+/// encoding leaves every code unresolvable.
+///
+/// An empty /Differences is safe: there is nothing to disagree with.
 fn truetype_encoding_differences_are_safe(doc: &Document, enc: Option<&Object>) -> bool {
+    // Three quarters is far above what junk reaches and far below what real
+    // text encodings score; the exact fraction is not load-bearing.
+    const REQUIRED_RESOLVED: f64 = 0.75;
+
     let diff = parse_differences_from_encoding(doc, enc);
-    diff.is_empty()
-        || diff
-            .values()
-            .all(|name| name == ".notdef" || glyph_name_to_unicode(name).is_some())
+    if diff.is_empty() {
+        return true;
+    }
+    let resolvable = diff
+        .values()
+        .filter(|name| *name == ".notdef" || glyph_name_to_unicode(name).is_some())
+        .count();
+    resolvable as f64 >= diff.len() as f64 * REQUIRED_RESOLVED
 }
 
 /// Fix symbolic TrueType cmap tables in already-embedded fonts (6.2.11.6:4).
@@ -22850,6 +22889,98 @@ fn unicode_to_agl_name(ch: char) -> Option<String> {
 /// Rebuilds the Encoding dictionary with the merged Differences array
 /// that includes both the original entries (with .notdef replaced) and
 /// any new entries.
+/// Re-point a code's `/Widths` entry at the glyph its new name resolves to.
+///
+/// `apply_encoding_fixes` exists to stop a code rendering `.notdef`, and it
+/// does that by renaming the code — usually to `space`. The width left behind
+/// still describes the glyph the code *used* to mean, and §6.2.11.5 compares
+/// the declared width against the program, so the remedy for one rule creates
+/// a failure of another.
+///
+/// Measured on govdocs holdout 074_074896: code 94 named `mu1`, a glyph the
+/// subset does not carry, was renamed to `space` (250) while `/Widths` kept
+/// mu's 576. The encoding and the widths have to move together or neither is
+/// trustworthy.
+fn sync_widths_for_recoded_glyphs(
+    doc: &mut Document,
+    font_id: ObjectId,
+    recoded: &[(u32, String)],
+) {
+    if recoded.is_empty() {
+        return;
+    }
+
+    let (fd_id, first_char, mut widths) = {
+        let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+            return;
+        };
+        let fd_id = match dict.get(b"FontDescriptor").ok() {
+            Some(Object::Reference(id)) => *id,
+            _ => return,
+        };
+        let first_char = match dict.get(b"FirstChar").ok() {
+            Some(Object::Integer(i)) => *i as u32,
+            _ => return,
+        };
+        let widths = match dict.get(b"Widths").ok() {
+            Some(Object::Array(arr)) => arr.clone(),
+            _ => return,
+        };
+        (fd_id, first_char, widths)
+    };
+
+    let Some(font_data) = read_embedded_font_data(doc, fd_id) else {
+        return;
+    };
+
+    // Resolve a glyph name to its advance in 1000-unit text space, by the same
+    // route veraPDF takes: the name's Unicode through the (3,1) cmap for
+    // TrueType, the charset for CFF.
+    let advance_of = |name: &str| -> Option<f64> {
+        if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
+            let upem = face.units_per_em() as f64;
+            if upem == 0.0 {
+                return None;
+            }
+            let scale = 1000.0 / upem;
+            let gid = glyph_name_to_unicode(name)
+                .and_then(|ch| lookup_unicode_cmap_31(&face, ch as u32))
+                .or_else(|| face.glyph_index_by_name(name))?;
+            return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+        }
+        if let Some(cff) = cff_parser::Table::parse(&font_data) {
+            let gid = (0..cff.number_of_glyphs())
+                .find(|g| cff.glyph_name(cff_parser::GlyphId(*g)) == Some(name))?;
+            return cff.glyph_width_f64_verapdf(cff_parser::GlyphId(gid));
+        }
+        None
+    };
+
+    let mut changed = false;
+    for (code, name) in recoded {
+        let Some(advance) = advance_of(name) else {
+            continue;
+        };
+        let Some(idx) = code.checked_sub(first_char).map(|i| i as usize) else {
+            continue;
+        };
+        let Some(slot) = widths.get_mut(idx) else {
+            continue;
+        };
+        let new_w = Object::Integer(advance.round() as i64);
+        if *slot != new_w {
+            *slot = new_w;
+            changed = true;
+        }
+    }
+
+    if changed {
+        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&font_id) {
+            dict.set("Widths", Object::Array(widths));
+        }
+    }
+}
+
 fn apply_encoding_fixes(
     doc: &mut Document,
     font_id: ObjectId,
@@ -22865,6 +22996,13 @@ fn apply_encoding_fixes(
     for (code, name) in replacements {
         replacement_map.insert(*code, name.clone());
     }
+
+    // Every code whose meaning this call changes; their widths follow below.
+    let recoded: Vec<(u32, String)> = replacements
+        .iter()
+        .chain(new_diffs.iter())
+        .cloned()
+        .collect();
 
     // Merge original differences with replacements.
     let mut merged: Vec<(u32, String)> = Vec::new();
@@ -22930,6 +23068,7 @@ fn apply_encoding_fixes(
                     Object::Name(effective_base.as_bytes().to_vec()),
                 );
                 enc.set("Differences", Object::Array(diff_array));
+                sync_widths_for_recoded_glyphs(doc, font_id, &recoded);
                 return true;
             }
         }
@@ -22948,6 +23087,7 @@ fn apply_encoding_fixes(
 
     if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&font_id) {
         dict.set("Encoding", Object::Dictionary(enc_dict));
+        sync_widths_for_recoded_glyphs(doc, font_id, &recoded);
         return true;
     }
 
