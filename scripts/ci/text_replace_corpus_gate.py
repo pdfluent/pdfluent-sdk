@@ -76,14 +76,29 @@ class DocResult:
         return self.extractable
 
 
-def extract_text(pdftotext: str, pdf: Path) -> str | None:
+# A timeout and an unreadable file are not the same finding, and collapsing them
+# cost a full pipeline round on 2026-08-20: 92 of 200 source documents were
+# reported as "not readable by pdftotext" and counted as regressions, while the
+# real cause was a saturated machine -- two cargo-test jobs were running at the
+# time and a 60-second budget is easy to miss under that load.
+#
+# The source documents cannot regress. They are the same bytes they were when the
+# baseline was recorded, so a source that suddenly cannot be read says something
+# about the machine, never about our code.
+TIMED_OUT = object()
+
+
+def extract_text(pdftotext: str, pdf: Path, timeout: int = 60):
+    """Extracted text, None if genuinely unreadable, TIMED_OUT if it ran out of time."""
     try:
         out = subprocess.run(
             [pdftotext, "-enc", "UTF-8", "-nopgbrk", str(pdf), "-"],
             capture_output=True,
-            timeout=60,
+            timeout=timeout,
         )
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired:
+        return TIMED_OUT
+    except OSError:
         return None
     if out.returncode != 0:
         return None
@@ -94,6 +109,10 @@ def run_one(runner: str, pdftotext: str, src: Path, workdir: Path) -> DocResult:
     """Replace the first word we can find, then read the page back."""
     name = src.name
     before = extract_text(pdftotext, src)
+    if before is TIMED_OUT:
+        # Deliberately its own note: the caller counts these and refuses to judge
+        # rather than reporting them as regressions.
+        return DocResult(name, False, False, False, False, "SOURCE_TIMEOUT")
     if before is None:
         return DocResult(name, False, False, False, False, "source not readable by pdftotext")
 
@@ -244,6 +263,31 @@ def main() -> None:
                 regressions.append(f"{name}: {axis} {was[axis]} -> {now[axis]} ({now['note']})")
 
     if regressions:
+        # Source timeouts are not regressions and must not be reported as any.
+        #
+        # The source documents are the same bytes as when the baseline was
+        # recorded, so one that suddenly cannot be read within the budget says the
+        # machine was busy, not that our code got worse. Exit 2 means "could not
+        # measure"; exit 1 means "measured, and it is worse". Conflating them is
+        # how a saturated runner produced 92 phantom regressions on 2026-08-20 --
+        # a number alarming enough to look like a serious defect, on a night when
+        # nobody was awake to question it.
+        timed_out = [r for r in regressions if "SOURCE_TIMEOUT" in str(r)]
+        if timed_out:
+            print(f"[text_replace_gate] CANNOT MEASURE: {len(timed_out)} source "
+                  f"document(s) timed out in pdftotext.")
+            for r in timed_out[:10]:
+                print(f"  {r}")
+            if len(timed_out) > 10:
+                print(f"  ... and {len(timed_out) - 10} more")
+            print()
+            print("[text_replace_gate] These are not regressions. The sources have not")
+            print("[text_replace_gate] changed since the baseline; the machine was too")
+            print("[text_replace_gate] busy to read them in time. Check what else was")
+            print("[text_replace_gate] running (scripts/ci/runner_busy_check.sh) and")
+            print("[text_replace_gate] re-run on an idle machine.")
+            sys.exit(2)
+
         print(f"[text_replace_gate] REGRESSIONS ({len(regressions)}):")
         for r in regressions[:40]:
             print(f"  {r}")
