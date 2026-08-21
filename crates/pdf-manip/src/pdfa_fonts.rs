@@ -11857,6 +11857,10 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
         "Oslash" => Some('\u{00D8}'),
         "Scaron" => Some('\u{0160}'),
         "Uacute" => Some('\u{00DA}'),
+        // Y-acute: Czech, Slovak, Welsh, Icelandic, Faroese. Present in the
+        // code->name direction (WinAnsi 221/253) but missing here, so any font
+        // whose /Differences named it had its entire encoding discarded.
+        "Yacute" => Some('\u{00DD}'),
         "Ugrave" => Some('\u{00D9}'),
         "Ucircumflex" => Some('\u{00DB}'),
         "Zcaron" => Some('\u{017D}'),
@@ -11883,6 +11887,7 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
         "oslash" => Some('\u{00F8}'),
         "scaron" => Some('\u{0161}'),
         "uacute" => Some('\u{00FA}'),
+        "yacute" => Some('\u{00FD}'),
         "ugrave" => Some('\u{00F9}'),
         "ucircumflex" => Some('\u{00FB}'),
         "zcaron" => Some('\u{017E}'),
@@ -14939,6 +14944,147 @@ fn truetype_encoding_differences_are_safe(doc: &Document, enc: Option<&Object>) 
         .filter(|name| *name == ".notdef" || glyph_name_to_unicode(name).is_some())
         .count();
     resolvable as f64 >= diff.len() as f64 * REQUIRED_RESOLVED
+}
+
+#[cfg(test)]
+mod glyph_name_table_tests {
+    use super::{glyph_name_to_unicode, winansi_type1_glyph_name};
+
+    /// Every name the encoding table can produce must resolve back to a character.
+    ///
+    /// The two tables are written by hand and drifted apart: `winansi_type1_glyph_name`
+    /// could emit `Yacute`, `yacute` and `periodcentered`, and `glyph_name_to_unicode`
+    /// did not know them. Any font whose /Differences named one of those had its
+    /// ENTIRE encoding discarded by the safety predicate, because that predicate
+    /// requires every name to resolve.
+    ///
+    /// Measured cost: govdocs 002_002733 carries three fonts at 134 of 136 names
+    /// resolving, the two holdouts being yacute and Yacute, and lost 2.3 percentage
+    /// points of extractable text over it.
+    ///
+    /// Single-character names are excluded because glyph_name_to_unicode handles
+    /// those with a general rule rather than a table entry.
+    #[test]
+    fn every_producible_name_resolves() {
+        let mut missing = Vec::new();
+        for code in 0u16..=255 {
+            let Some(name) = winansi_type1_glyph_name(code as u8) else {
+                continue;
+            };
+            if name.len() == 1 {
+                continue;
+            }
+            if glyph_name_to_unicode(name).is_none() {
+                missing.push((code, name));
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "these names can be produced by winansi_type1_glyph_name but do not \
+             resolve in glyph_name_to_unicode, so a /Differences naming one of them \
+             costs the font its whole encoding: {missing:?}"
+        );
+    }
+
+    /// The two that were missing, pinned individually so a future edit that
+    /// removes one fails with a name rather than with a list.
+    ///
+    /// periodcentered is asserted too, and was NOT missing: my first scan for
+    /// gaps used a pattern that did not recognise alternation, so it read
+    /// `"periodcentered" | "middot" => ...` as absent and I added a duplicate.
+    /// The pre-push gate rejected it as an unreachable pattern. Keeping the
+    /// assertion is cheap and records that the name is covered by an arm that a
+    /// naive search will miss again.
+    #[test]
+    fn the_names_that_were_missing() {
+        assert_eq!(glyph_name_to_unicode("Yacute"), Some('\u{00DD}'));
+        assert_eq!(glyph_name_to_unicode("yacute"), Some('\u{00FD}'));
+        assert_eq!(glyph_name_to_unicode("periodcentered"), Some('\u{00B7}'));
+    }
+}
+
+/// What an /Encoding's /Differences look like to the safety predicate.
+///
+/// The predicate that decides whether to keep or discard a font's /Differences
+/// is a single boolean, and when it gets a document wrong there is no way to see
+/// why from the outside. That has cost real time twice: once when demanding every
+/// name resolve threw away a 69-name Latin encoding over one `mu1` and dropped a
+/// document from 102.7% to 10.0% text retention, and again when relaxing the rule
+/// to a proportion fixed two documents and regressed three others.
+///
+/// Both questions are the same question — what fraction of these names actually
+/// resolve, and which ones do not — and neither was answerable without adding
+/// print statements to a release build. This makes it answerable.
+#[derive(Debug, Clone)]
+pub struct EncodingDiagnostic {
+    /// The font's BaseFont name, or its object id when it has none.
+    pub font: String,
+    /// How many entries the /Differences array defines.
+    pub differences: usize,
+    /// How many of those resolve to a character through the AGL.
+    pub resolved: usize,
+    /// The names that do not resolve, in encoding order, capped at 20 so a
+    /// genuinely symbolic font does not print a thousand private strings.
+    pub unresolved: Vec<String>,
+}
+
+impl EncodingDiagnostic {
+    /// Fraction of names that resolve, 0.0 when there are no differences.
+    #[must_use]
+    pub fn resolved_fraction(&self) -> f64 {
+        if self.differences == 0 {
+            0.0
+        } else {
+            self.resolved as f64 / self.differences as f64
+        }
+    }
+}
+
+/// Report the /Differences resolution rate for every font in the document.
+///
+/// Read-only: it inspects, it does not fix. Fonts without /Differences are
+/// omitted, because the predicate accepts those unconditionally and reporting
+/// them would bury the interesting ones.
+#[must_use]
+pub fn encoding_diagnostics(doc: &Document) -> Vec<EncodingDiagnostic> {
+    let mut out = Vec::new();
+    let mut ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    ids.sort_unstable();
+
+    for id in ids {
+        let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+            continue;
+        };
+        if get_name(dict, b"Type").as_deref() != Some("Font") {
+            continue;
+        }
+        let enc = dict.get(b"Encoding").ok();
+        let diff = parse_differences_from_encoding(doc, enc);
+        if diff.is_empty() {
+            continue;
+        }
+
+        let mut resolved = 0usize;
+        let mut unresolved = Vec::new();
+        for name in diff.values() {
+            // `.notdef` is deliberately counted as resolved: it is a valid,
+            // meaningful entry rather than an unknown name, and the predicate
+            // treats it the same way.
+            if name == ".notdef" || glyph_name_to_unicode(name).is_some() {
+                resolved += 1;
+            } else if unresolved.len() < 20 {
+                unresolved.push(name.clone());
+            }
+        }
+
+        out.push(EncodingDiagnostic {
+            font: get_name(dict, b"BaseFont").unwrap_or_else(|| format!("obj {}", id.0)),
+            differences: diff.len(),
+            resolved,
+            unresolved,
+        });
+    }
+    out
 }
 
 /// Fix symbolic TrueType cmap tables in already-embedded fonts (6.2.11.6:4).
