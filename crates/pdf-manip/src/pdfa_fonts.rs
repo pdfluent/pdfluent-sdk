@@ -25503,6 +25503,185 @@ end
 mod cff_space_encoding_tests {
     use super::*;
 
+    /// Een simpel lettertype met een `/FontDescriptor` waarvan de vlaggen te
+    /// zetten zijn. `subset` zet het zesletterige voorvoegsel met `+` ervoor.
+    fn font_met_vlaggen(
+        doc: &mut Document,
+        subtype: &[u8],
+        vlaggen: i64,
+        subset: bool,
+        encoding: Option<Object>,
+    ) -> ObjectId {
+        let fd_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "TestFont",
+            "Flags" => Object::Integer(vlaggen),
+        }));
+        let basefont: &[u8] = if subset {
+            b"ABCDEF+TestFont"
+        } else {
+            b"TestFont"
+        };
+        let mut font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => Object::Name(subtype.to_vec()),
+            "BaseFont" => Object::Name(basefont.to_vec()),
+            "FontDescriptor" => Object::Reference(fd_id),
+        };
+        if let Some(enc) = encoding {
+            font.set("Encoding", enc);
+        }
+        doc.add_object(Object::Dictionary(font))
+    }
+
+    fn encoding_van(doc: &Document, font_id: ObjectId) -> Option<Object> {
+        match doc.objects.get(&font_id) {
+            Some(Object::Dictionary(d)) => d.get(b"Encoding").ok().cloned(),
+            _ => None,
+        }
+    }
+
+    /// Dit paar is het vangnet tegen precies het coderingsverlies dat in dit
+    /// bestand al drie keer langs een andere weg is opgetreden. Tot nu toe werd
+    /// het door geen enkele test uitgeoefend -- niet bij naam en ook niet via
+    /// een omweg -- en een vangnet dat niemand test is geen vangnet.
+    #[test]
+    fn snapshot_records_simple_fonts_and_skips_the_rest() {
+        let mut doc = Document::with_version("1.7");
+        let simpel = font_met_vlaggen(
+            &mut doc,
+            b"Type1",
+            32,
+            false,
+            Some(Object::Name(b"WinAnsiEncoding".to_vec())),
+        );
+        let zonder_encoding = font_met_vlaggen(&mut doc, b"TrueType", 32, false, None);
+        // Type0 is samengesteld, niet simpel: hoort er niet in.
+        let type0 = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type0",
+            "BaseFont" => "TestType0",
+            "Encoding" => Object::Name(b"Identity-H".to_vec()),
+        }));
+        // Een woordenboek met de juiste Subtype maar zonder BaseFont is geen
+        // lettertype-woordenboek.
+        let geen_font = doc.add_object(Object::Dictionary(dictionary! {
+            "Subtype" => "Type1",
+            "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec()),
+        }));
+
+        let snap = snapshot_font_encodings(&doc);
+
+        assert!(
+            snap.contains_key(&simpel),
+            "het simpele lettertype ontbreekt"
+        );
+        assert!(
+            !snap.contains_key(&zonder_encoding),
+            "zonder /Encoding valt er niets te bewaren"
+        );
+        assert!(!snap.contains_key(&type0), "Type0 is niet simpel");
+        assert!(
+            !snap.contains_key(&geen_font),
+            "zonder /BaseFont is het geen lettertype"
+        );
+        assert_eq!(snap.len(), 1);
+    }
+
+    #[test]
+    fn restore_puts_back_an_encoding_the_pipeline_removed() {
+        let mut doc = Document::with_version("1.7");
+        let font_id = font_met_vlaggen(
+            &mut doc,
+            b"Type1",
+            32, // nonsymbolic
+            false,
+            Some(Object::Name(b"MacRomanEncoding".to_vec())),
+        );
+        let snap = snapshot_font_encodings(&doc);
+
+        // De pijplijn haalt de codering weg.
+        if let Some(Object::Dictionary(d)) = doc.objects.get_mut(&font_id) {
+            d.remove(b"Encoding");
+        }
+        assert!(encoding_van(&doc, font_id).is_none());
+
+        let hersteld = restore_stripped_encodings(&mut doc, &snap);
+
+        assert_eq!(hersteld, 1);
+        assert_eq!(
+            encoding_van(&doc, font_id).and_then(|o| o.as_name().ok().map(|n| n.to_vec())),
+            Some(b"MacRomanEncoding".to_vec()),
+        );
+    }
+
+    #[test]
+    fn restore_leaves_a_symbolic_truetype_without_an_encoding() {
+        // Een symbolische TrueType hoort zijn /Encoding juist kwijt te zijn
+        // (6.2.11.6:3). Terugzetten zou de reparatie ongedaan maken.
+        let mut doc = Document::with_version("1.7");
+        let font_id = font_met_vlaggen(
+            &mut doc,
+            b"TrueType",
+            4, // symbolic
+            false,
+            Some(Object::Name(b"WinAnsiEncoding".to_vec())),
+        );
+        let snap = snapshot_font_encodings(&doc);
+
+        if let Some(Object::Dictionary(d)) = doc.objects.get_mut(&font_id) {
+            d.remove(b"Encoding");
+        }
+
+        let hersteld = restore_stripped_encodings(&mut doc, &snap);
+
+        assert_eq!(
+            hersteld, 0,
+            "een symbolische TrueType mag zijn codering niet terugkrijgen"
+        );
+        assert!(encoding_van(&doc, font_id).is_none());
+    }
+
+    #[test]
+    fn restore_does_not_undo_a_changed_encoding_on_a_subset() {
+        // Bij subsets zijn de /Differences die de pijplijn toevoegt bedoeld:
+        // ze leggen .notdef-codes op /space om 6.2.11.8:1 te vermijden.
+        // Terugdraaien brengt die overtreding terug.
+        let mut doc = Document::with_version("1.7");
+        let font_id = font_met_vlaggen(
+            &mut doc,
+            b"Type1",
+            32,
+            true, // subset: ABCDEF+
+            Some(Object::Name(b"MacRomanEncoding".to_vec())),
+        );
+        let snap = snapshot_font_encodings(&doc);
+
+        // De pijplijn vervangt de naam door een woordenboek met /Differences.
+        let nieuwe_enc = Object::Dictionary(dictionary! {
+            "Type" => "Encoding",
+            "BaseEncoding" => Object::Name(b"MacRomanEncoding".to_vec()),
+            "Differences" => Object::Array(vec![
+                Object::Integer(127),
+                Object::Name(b"space".to_vec()),
+            ]),
+        });
+        if let Some(Object::Dictionary(d)) = doc.objects.get_mut(&font_id) {
+            d.set("Encoding", nieuwe_enc);
+        }
+
+        let hersteld = restore_stripped_encodings(&mut doc, &snap);
+
+        assert_eq!(
+            hersteld, 0,
+            "een bewust gewijzigde subset-codering blijft staan"
+        );
+        assert!(
+            matches!(encoding_van(&doc, font_id), Some(Object::Dictionary(_))),
+            "het woordenboek met /Differences is teruggedraaid naar de oude naam"
+        );
+    }
+
     /// Bouwt de fixture van de test hieronder, maar met /Encoding als eigen
     /// object en /Differences daarin als verwijzing naar een array.
     fn doc_met_verwezen_differences() -> (Document, ObjectId, ObjectId) {
