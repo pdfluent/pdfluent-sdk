@@ -245,9 +245,9 @@ pipeline (#1236/#1237/#1238/#1246).
 | `signing` | yes | PAdES signing + verification. Compiles `pdf-sign`. |
 | `pdfa` | yes | PDF/A validation + conversion. |
 | `redaction` | yes | Content + region redaction. |
-| `ocr-tesseract` | no | OCR via Tesseract. |
-| `ocr-paddle` | no | OCR via PaddleOCR. |
-| `html-to-pdf` | no | HTML → PDF. Reserved for 1.1 (#1206 IronPDF parity). |
+| `ocr-tesseract` | no | **Reserved name, enables nothing.** Use `pdf-ocr` with its own `tesseract` feature (needs Tesseract + Leptonica installed). |
+| `ocr-paddle` | no | **Reserved name, enables nothing.** Use `pdf-ocr` with its own `paddle` feature (ONNX Runtime as a shared library; weights fetched once, then offline). |
+| `html-to-pdf` | no | **Not offered, and not planned.** Rendering modern HTML/CSS means shipping a browser engine; an almost-right renderer produces output that looks plausible and is wrong. Use headless Chrome or Chromium, then process the resulting PDF with PDFluent. |
 | `docx-export` | no | `to_docx` wiring. Currently compile-time reserved; 1.0 always compiles `to_docx` on non-wasm. |
 | `xlsx-export` / `pptx-export` | no | Reserved for future `to_xlsx` / `to_pptx`. |
 | `xfa-flatten` | no | XFA flatten runtime. |

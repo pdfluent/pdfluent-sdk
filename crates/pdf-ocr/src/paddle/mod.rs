@@ -43,9 +43,11 @@ impl PaddleOcrEngine {
 
     /// Create with custom configuration.
     pub fn with_config(config: PaddleOcrConfig) -> Result<Self, String> {
-        if !models::models_available(&config) {
-            models::download_models(&config).map_err(|e| e.to_string())?;
-        }
+        // ensure_models does not touch the network unless the caller set
+        // model_source to Verified with pinned digests. The previous code called
+        // download_models() here, so merely constructing an engine fetched ~84 MB
+        // of unverified weights from a third-party host.
+        models::ensure_models(&config).map_err(|e| e.to_string())?;
         let sessions = models::load_sessions(&config).map_err(|e| e.to_string())?;
         Ok(Self {
             sessions: UnsafeCell::new(sessions),

@@ -1232,6 +1232,94 @@ impl PdfDocument {
         })
     }
 
+    /// Convert the document to an `.xlsx` file on disk.
+    ///
+    /// Routes to [`pdf_xlsx::convert_pdf_bytes_to_xlsx`], which detects tabular
+    /// structure and emits a spreadsheet. Table detection in PDF is inference —
+    /// PDF has no table model — so the result is best-effort and worth checking
+    /// against the source for anything load-bearing.
+    ///
+    /// # Capability
+    ///
+    /// Requires [`Capability::XlsxExport`].
+    ///
+    /// # Why this exists
+    ///
+    /// `pdf-xlsx` has existed and been published for a long time, but the facade
+    /// did not depend on it, so "PDF to Excel" was reachable only by adding the
+    /// crate by hand — while the features page presented it as an SDK
+    /// capability. The `xlsx-export` feature flag was empty, which is worse than
+    /// absent: enabling it did nothing and read as consent.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            target = "pdfluent",
+            skip(self),
+            fields(path = %path.as_ref().display())
+        )
+    )]
+    pub fn to_xlsx<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        self.require_capability(Capability::XlsxExport)?;
+        let pdf_bytes = self.to_bytes()?;
+        let xlsx_bytes = pdf_xlsx::convert_pdf_bytes_to_xlsx(&pdf_bytes)
+            .map_err(|e| internal_error(format!("xlsx conversion failed: {e}")))?;
+        fs::write(path.as_ref(), xlsx_bytes).map_err(|source| Error::Io {
+            source,
+            path: Some(path.as_ref().to_path_buf()),
+        })?;
+        Ok(())
+    }
+
+    /// Convert the document to an `.xlsx` file — wasm stub.
+    #[cfg(target_arch = "wasm32")]
+    pub fn to_xlsx<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
+        Err(Error::UnsupportedOnWasm {
+            operation: "to_xlsx",
+        })
+    }
+
+    /// Convert the document to a `.pptx` file on disk.
+    ///
+    /// Routes to [`pdf_pptx::convert_pdf_bytes_to_pptx`], one slide per page.
+    ///
+    /// # Capability
+    ///
+    /// Requires [`Capability::PptxExport`].
+    ///
+    /// # Why this exists
+    ///
+    /// Same as [`Document::to_xlsx`]: the crate was published and tested, the
+    /// facade did not depend on it, and `pptx-export` was an empty flag.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(
+            target = "pdfluent",
+            skip(self),
+            fields(path = %path.as_ref().display())
+        )
+    )]
+    pub fn to_pptx<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        self.require_capability(Capability::PptxExport)?;
+        let pdf_bytes = self.to_bytes()?;
+        let pptx_bytes = pdf_pptx::convert_pdf_bytes_to_pptx(&pdf_bytes)
+            .map_err(|e| internal_error(format!("pptx conversion failed: {e}")))?;
+        fs::write(path.as_ref(), pptx_bytes).map_err(|source| Error::Io {
+            source,
+            path: Some(path.as_ref().to_path_buf()),
+        })?;
+        Ok(())
+    }
+
+    /// Convert the document to a `.pptx` file — wasm stub.
+    #[cfg(target_arch = "wasm32")]
+    pub fn to_pptx<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
+        Err(Error::UnsupportedOnWasm {
+            operation: "to_pptx",
+        })
+    }
+
     /// Render each page to an image file.
     ///
     /// `pattern` is a path template; the substring `{page}` (if present)

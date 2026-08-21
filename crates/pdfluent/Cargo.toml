@@ -79,6 +79,12 @@ tracing = { version = "0.1", optional = true }
 # surface as [`Error::UnsupportedOnWasm`].
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pdf-docx = { path = "../pdf-docx", version = "=1.0.0-beta.18" }
+# Excel and PowerPoint, for the same reason as docx: the /features/ page and the
+# SDK listing present them as SDK capabilities, and until now the facade did not
+# depend on them at all — `xlsx-export` and `pptx-export` were empty feature
+# flags, so a customer enabling one got a no-op. Same non-wasm gating as docx.
+pdf-xlsx = { path = "../pdf-xlsx", version = "=1.0.0-beta.18" }
+pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0-beta.18" }
 pdf-render = { path = "../pdf-render", version = "=1.0.0-beta.18" }
 # Image encoding for `to_images` — PNG via the `png` crate, JPEG via
 # `image`'s JpegEncoder. Both are already transitively present via
