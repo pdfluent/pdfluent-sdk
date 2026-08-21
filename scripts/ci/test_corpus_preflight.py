@@ -165,14 +165,49 @@ def test_stat_alleen_zou_dit_missen() -> None:
             fifo.unlink(missing_ok=True)
 
 
+def _onder_koppelpunt(pad: Path) -> bool:
+    """Ligt `pad` onder een koppelpunt anders dan de root?"""
+    p = pad.resolve()
+    while str(p) != "/":
+        if subprocess.run(["mountpoint", "-q", str(p)]).returncode == 0:
+            return True
+        p = p.parent
+    return False
+
+
+def _map_op_de_rootschijf() -> Path | None:
+    """Een schrijfbare map die onder geen enkel koppelpunt ligt.
+
+    Nodig omdat dit niet overal hetzelfde ligt: op de CI-runner is `/tmp` een
+    eigen tmpfs, en dan zou `tempfile` een map opleveren die wél onder een
+    koppelpunt valt. Dat de test daar tot nu toe slaagde kwam doordat TMPDIR er
+    ergens anders heen wees -- een uitkomst die van de omgeving afhing en niet
+    van de code. Verandert TMPDIR, dan klapt de test om zonder dat er iets mis
+    is met wat hij bewaakt.
+    """
+    for kandidaat in (Path("/var/tmp"), Path.cwd(), Path.home()):
+        try:
+            if kandidaat.is_dir() and os.access(kandidaat, os.W_OK) and not _onder_koppelpunt(kandidaat):
+                return kandidaat
+        except OSError:
+            continue
+    return None
+
+
 def test_require_mount_weigert_rootschijf() -> None:
-    with tempfile.TemporaryDirectory() as d:
+    basis = _map_op_de_rootschijf()
+    if basis is None:
+        print("  SKIPPED (not a pass): geen schrijfbare map gevonden die buiten "
+              "elk koppelpunt ligt; --require-mount is hier niet te toetsen",
+              file=sys.stderr)
+        return
+    with tempfile.TemporaryDirectory(dir=basis) as d:
         maak_corpus(Path(d))
         code, uit, _ = draai("--require-mount", d)
         controleer(
             "--require-mount op de rootschijf -> 6",
             code == 6,
-            f"code={code} {uit.strip()}",
+            f"code={code} in {basis} — {uit.strip()}",
         )
 
 
