@@ -354,7 +354,7 @@ delivered through it.
 | `pdf-standard-fonts` | 1.0.0 | internal | — | 9 | `quality:cargo-test` |
 | `pdf-syntax` | 0.5.6 | direct | — | 203 | `quality:cargo-test` |
 | `pdf-text-format` | 1.0.0 | **absent** | — | 21 | `quality:cargo-test` |
-| `pdf-xfa` | 1.0.0 | internal | 47 | 376 | `quality:cargo-test` |
+| `pdf-xfa` | 1.0.0 | internal | 47 | 378 | `quality:cargo-test` |
 | `pdf-xlsx` | 1.0.0 | direct | — | 19 | `quality:cargo-test` |
 | `pdfluent` | 1.0.0 | direct | 31 | 24 | `quality:cargo-test` |
 | `pdfluent-ccitt` | 0.2.2 | internal | — | 7 | `quality:cargo-test` |
