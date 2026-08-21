@@ -281,9 +281,29 @@ mod tests {
         assert_eq!(guard.licensee(), "Personal Use");
     }
 
+    /// Serialises the tests that touch PDFLUENT_LICENSE_KEY.
+    ///
+    /// The environment is process-wide and cargo runs tests in threads, so two
+    /// tests setting the same variable race: one signs with keypair A and sets
+    /// the variable, the other signs with keypair B and sets it too, and whoever
+    /// reads after the other wrote verifies a token against the wrong key. It
+    /// surfaces as `InvalidSignature`, which reads like a broken signature
+    /// implementation and is a broken test.
+    ///
+    /// Observed on 2026-08-21: test_load_from_env_key failed in CI with
+    /// InvalidSignature while the same suite passed on other runs. A flaky gate
+    /// is worse than a missing one, because it teaches everybody to press retry.
+    ///
+    /// A mutex rather than #[serial] to avoid a dependency for three tests.
+    /// Poisoning is ignored deliberately: a panic in one test must not cascade
+    /// into unrelated failures in the others.
+    #[cfg(feature = "signing")]
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[cfg(feature = "signing")]
     #[test]
     fn test_load_from_env_key() {
+        let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (private_key, public_key) = token::generate_keypair();
         let payload = LicensePayload {
             licensee: "Env Test".into(),
@@ -308,6 +328,7 @@ mod tests {
     #[cfg(feature = "signing")]
     #[test]
     fn test_load_from_env_base64() {
+        let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         let (private_key, public_key) = token::generate_keypair();
         let payload = LicensePayload {
@@ -333,6 +354,7 @@ mod tests {
 
     #[test]
     fn test_load_from_env_none() {
+        let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("PDFLUENT_LICENSE_FILE");
         std::env::remove_var("PDFLUENT_LICENSE_KEY");
         let guard = LicenseGuard::load_from_env(&[0u8; 32], 1500).unwrap();
