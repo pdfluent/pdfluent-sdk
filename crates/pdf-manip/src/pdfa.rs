@@ -486,6 +486,21 @@ fn run_font_steps(
         crate::pdfa_fonts::fix_missing_cidtogidmap(doc)
     );
 
+    // Widths, once more, now that every encoding rewrite has happened.
+    //
+    // §6.2.11.5 compares the declared width against the glyph the *final*
+    // encoding resolves to, and several passes above rename a code after the
+    // first width reconciliation has run — `fix_notdef_glyph_refs` points a
+    // code at `space` to avoid a §6.2.11.8:1 violation, for instance. The
+    // first pass then leaves a width describing the glyph the code used to
+    // mean (govdocs holdout 074_074896: code 94 renamed from `mu1` to
+    // `space`, width left at mu's 576 against space's 250). The pass is
+    // idempotent, so re-running it costs nothing where nothing moved.
+    font_step!(
+        "width_mismatches_final",
+        crate::pdfa_fonts::fix_font_width_mismatches(doc)
+    );
+
     // Runs last among the font steps: which code of a duplicated
     // supplement/main pair is actually used is only stable once every
     // content-rewriting pass has run.

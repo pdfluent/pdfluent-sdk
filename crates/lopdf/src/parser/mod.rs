@@ -396,11 +396,37 @@ fn stream<'a>(
                 ErrorKind::LengthValue,
             )));
         }
-        let (i, data) = terminated(
+        let (i, data): (ParserInput, &[u8]) = match terminated(
             take(length as usize),
             pair(opt(eol), tag(&b"endstream"[..])),
         )
-        .parse(i)?;
+        .parse(i)
+        {
+            Ok((i2, taken)) => (i2, *taken.fragment()),
+            Err(primary_err) => {
+                // Recover from an incorrect /Length (govdocs holdout
+                // 885_885832: declared lengths are short, so the declared
+                // slice does not end at "endstream", the stream parse fails,
+                // and the object is silently re-parsed as a bare dictionary —
+                // losing the page's content outright). Scan for the
+                // "endstream" keyword instead and take the data up to it,
+                // trimming the EOL that precedes it.
+                let hay: &[u8] = &i;
+                let Some(end) = hay
+                    .windows(b"endstream".len())
+                    .position(|window| window == b"endstream")
+                else {
+                    return Err(primary_err);
+                };
+                let mut data = &hay[..end];
+                if data.ends_with(b"\r\n") {
+                    data = &data[..data.len() - 2];
+                } else if data.ends_with(b"\n") || data.ends_with(b"\r") {
+                    data = &data[..data.len() - 1];
+                }
+                (i.take_from(end + b"endstream".len()), data)
+            }
+        };
         Ok((i, Object::Stream(Stream::new(dict, data.to_vec()))))
     } else {
         // Return position relative to the start of the stream dictionary.

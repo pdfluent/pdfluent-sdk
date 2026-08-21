@@ -1771,3 +1771,65 @@ fn load_options_builder() {
     );
     assert!(!default.lazy_objstm);
 }
+
+/// Regression: a stream whose declared /Length is short (govdocs holdout
+/// 885_885832) used to fail the stream parse, and the object was silently
+/// re-parsed as a bare dictionary — the page's content vanished from the
+/// loaded document. The parser now recovers by scanning for `endstream`.
+#[cfg(all(test, not(feature = "async")))]
+#[test]
+fn load_stream_with_short_declared_length() {
+    let body_text = b"BT /F1 12 Tf (Hello, world!) Tj ET";
+    // Declares 10 bytes; the real content is longer.
+    let mut pdf = Vec::new();
+    pdf.extend_from_slice(b"%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    let objects: Vec<Vec<u8>> = vec![
+        b"<</Type/Catalog/Pages 2 0 R>>".to_vec(),
+        b"<</Type/Pages/Count 1/Kids[3 0 R]>>".to_vec(),
+        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R>>".to_vec(),
+        format!(
+            "<</Length 10>>stream\n{}\nendstream",
+            String::from_utf8_lossy(body_text)
+        )
+        .into_bytes(),
+    ];
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj", i + 1).as_bytes());
+        pdf.extend_from_slice(body);
+        pdf.extend_from_slice(b"\nendobj\n");
+    }
+    let xref_pos = pdf.len();
+    // xref entries are exactly 20 bytes (note the trailing space before EOL).
+    pdf.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+    for off in &offsets {
+        pdf.extend_from_slice(format!("{:010} 00000 n \n", off).as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<</Size 5/Root 1 0 R>>\nstartxref\n{}\n%%EOF\n",
+            xref_pos
+        )
+        .as_bytes(),
+    );
+
+    let doc = Document::load_mem(&pdf).expect("load");
+    let pages = doc.get_pages();
+    assert_eq!(pages.len(), 1);
+    let page = doc
+        .get_object(*pages.get(&1).unwrap())
+        .unwrap()
+        .as_dict()
+        .unwrap();
+    let Object::Reference(content_id) = page.get(b"Contents").unwrap() else {
+        panic!("contents not a reference")
+    };
+    let Object::Stream(stream) = doc.get_object(*content_id).unwrap() else {
+        panic!(
+            "content object lost its stream: {:?}",
+            doc.get_object(*content_id)
+        )
+    };
+    assert_eq!(stream.content, body_text.to_vec());
+}
