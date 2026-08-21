@@ -68,8 +68,16 @@ if ($script:LastWslExit -eq 0) {
 # zichtbaar terwijl de kernel de partitie erop nog niet heeft doorgenomen. Een
 # enkele `mount -a` valt dan net te vroeg en faalt stil: de schijf is gekoppeld,
 # /mnt/storagebox blijft leeg, en de CI zou tegen een leeg corpus meten.
+# WAAROM HET WACHTVENSTER RUIM IS
+#
+# Op 21-08-2026 duurde het na een `wsl --shutdown` plus `wsl --unmount` 85
+# seconden voor de kernel de partitie had doorgenomen: vijf keer
+# `/dev/sde1: Can't open blockdev` en pas daarna de EXT4-mount. Het venster
+# stond toen op 6 x 5s = 30s, dus het script gaf op terwijl er niets mis was,
+# meldde FOUT, en liet de machine zonder corpus achter. Twee minuten kost niets
+# -- dit draait bij het opstarten en periodiek -- en dekt de trage kant ruim.
 $mounted = $false
-for ($poging = 1; $poging -le 6; $poging++) {
+for ($poging = 1; $poging -le 24; $poging++) {
     Invoke-Wsl "mount -a" | Out-Null
     $df = (Invoke-Wsl "mountpoint -q /mnt/storagebox && df -h /mnt/storagebox | tail -1 || echo NIET-GEKOPPELD").Trim()
     if ($df -notmatch "NIET-GEKOPPELD" -and $df) {
@@ -77,12 +85,12 @@ for ($poging = 1; $poging -le 6; $poging++) {
         $mounted = $true
         break
     }
-    Log "  poging ${poging}/6: partitie nog niet klaar, 5s wachten"
+    Log "  poging ${poging}/24: partitie nog niet klaar, 5s wachten ($($poging * 5)s verstreken)"
     Start-Sleep -Seconds 5
 }
 
 if (-not $mounted) {
-    Log "FOUT: /mnt/storagebox is na 6 pogingen geen mountpoint"
+    Log "FOUT: /mnt/storagebox is na 24 pogingen (2 minuten) geen mountpoint"
     Invoke-Wsl "lsblk -o NAME,SIZE,FSTYPE,UUID" | ForEach-Object { Log "  lsblk: $_" }
     exit 1
 }
