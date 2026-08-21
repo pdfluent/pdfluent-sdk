@@ -90,7 +90,7 @@ features were covered.
 | **Defined at** | `crates/pdfluent/src/document.rs` |
 | **Reachable from facade** | yes |
 | **Exposed in bindings** | WASM (@pdfluent/sdk-wasm) · C ABI (voedt .NET/Java/Node) |
-| **Tested by** | `crates/pdf-manip/src/pdfa_fonts.rs` · `crates/pdf-manip/src/unicode_font.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/dx_consolidation.rs` · `crates/pdfluent/tests/parity_methods.rs` |
+| **Tested by** | `crates/pdf-manip/src/pdfa_colorspace.rs` · `crates/pdf-manip/src/pdfa_fonts.rs` · `crates/pdf-manip/src/unicode_font.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/dx_consolidation.rs` |
 | **Run in CI by** | `quality:cargo-test` |
 
 ### Password protect PDF — `shipped`
@@ -346,7 +346,7 @@ delivered through it.
 | `pdf-font` | 1.0.0-beta.5 | internal | — | 117 | `quality:cargo-test` |
 | `pdf-interpret` | 0.5.8 | direct | — | 123 | `quality:cargo-test` |
 | `pdf-invoice` | 1.0.0-beta.18 | **absent** | — | 53 | `quality:cargo-test` |
-| `pdf-manip` | 1.0.0-beta.18 | direct | 10 | 230 | `quality:cargo-test` |
+| `pdf-manip` | 1.0.0-beta.18 | direct | 10 | 257 | `quality:cargo-test` |
 | `pdf-ocr` | 1.0.0-beta.18 | **absent** | 1 | 70 | `quality:cargo-test` |
 | `pdf-pptx` | 1.0.0-beta.18 | direct | — | 14 | `quality:cargo-test` |
 | `pdf-redact` | 1.0.0-beta.18 | direct | 5 | 57 | `quality:cargo-test` |
@@ -363,7 +363,7 @@ delivered through it.
 | `pdfluent-forms` | 1.0.0-beta.18 | direct | 2 | 70 | `quality:cargo-test` |
 | `pdfluent-jbig2` | 0.2.3 | internal | — | 9 | `quality:cargo-test` |
 | `pdfluent-jpeg2000` | 0.3.5 | internal | — | 7 | `quality:cargo-test` |
-| `pdfluent-lopdf` | 0.39.4 | direct | 1 | 100 | `quality:cargo-test` |
+| `pdfluent-lopdf` | 0.39.4 | direct | 1 | 101 | `quality:cargo-test` |
 | `pdfluent-sign` | 1.0.0-beta.18 | direct | — | 49 | `quality:cargo-test` |
 | `xfa-dom-resolver` | 1.0.0-beta.18 | internal | 1 | 32 | `quality:cargo-test` |
 | `xfa-js-sandboxed` | 1.0.0-beta.18 | internal | 5 | 8 | `quality:cargo-test` |
