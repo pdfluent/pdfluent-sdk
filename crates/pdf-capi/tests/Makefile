@@ -33,8 +33,16 @@ endif
 # targets a different architecture than the host (e.g. x86_64 toolchain
 # on an arm64 Mac produces binaries in target/release/, not
 # target/aarch64-apple-darwin/release/).
-TARGET_DIR_TRIPLE  := ../../../target/$(TARGET_TRIPLE)/release
-TARGET_DIR_GENERIC := ../../../target/release
+# CARGO_TARGET_DIR moves cargo's output somewhere else entirely, and CI sets it
+# (the desktop runner keeps a warm cache at /var/cache/cargo-target). Hardcoding
+# ../../../target means the link step looks in a directory cargo never wrote to:
+# `cannot find -lpdf_capi`, with the library sitting happily elsewhere. Same
+# class of bug as the -arch flag that kept these tests macOS-only -- a Makefile
+# quietly assuming the environment it was written on.
+CARGO_OUT := $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),../../../target)
+
+TARGET_DIR_TRIPLE  := $(CARGO_OUT)/$(TARGET_TRIPLE)/release
+TARGET_DIR_GENERIC := $(CARGO_OUT)/release
 
 HAS_DYLIB_TRIPLE  := $(wildcard $(TARGET_DIR_TRIPLE)/libpdf_capi.dylib \
                                 $(TARGET_DIR_TRIPLE)/libpdf_capi.so)
@@ -56,11 +64,18 @@ endif
 DYLIB_ARCH_RAW := $(shell file $(TARGET_DIR)/libpdf_capi.dylib \
                                $(TARGET_DIR)/libpdf_capi.so 2>/dev/null \
                   | grep -o 'x86_64\|arm64\|aarch64' | head -1)
-# Normalise aarch64 → arm64 for -arch flag (clang uses arm64, not aarch64).
-ifeq ($(DYLIB_ARCH_RAW),aarch64)
-  CFLAGS += -arch arm64
-else ifneq ($(DYLIB_ARCH_RAW),)
-  CFLAGS += -arch $(DYLIB_ARCH_RAW)
+# -arch is a clang/Apple flag; gcc on Linux rejects it outright, which is why
+# these tests had only ever run on macOS ("unrecognized command-line option
+# '-arch'" the first time CI executed them on the Linux runner). On Linux the
+# host compiler already matches the library, so nothing is needed.
+#
+# Normalise aarch64 → arm64 for the flag (clang uses arm64, not aarch64).
+ifeq ($(UNAME_S),Darwin)
+  ifeq ($(DYLIB_ARCH_RAW),aarch64)
+    CFLAGS += -arch arm64
+  else ifneq ($(DYLIB_ARCH_RAW),)
+    CFLAGS += -arch $(DYLIB_ARCH_RAW)
+  endif
 endif
 
 LDFLAGS  := -L$(TARGET_DIR)

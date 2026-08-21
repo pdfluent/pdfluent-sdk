@@ -32,7 +32,10 @@ package-lock.json
 /benchmarks/weekly/benchmark-*-report.md
 /benchmarks/weekly/regression-*.md
 /benchmarks/stress-fixtures/
-scripts/__pycache__/
+# Any __pycache__, at any depth. The narrower `scripts/__pycache__/` did not match
+# scripts/ci/__pycache__/, so bytecode from the CI helpers kept turning up staged.
+__pycache__/
+*.pyc
 .cache/
 out/
 

@@ -39,6 +39,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -63,8 +64,48 @@ def die(msg: str, code: int = 2) -> None:
     sys.exit(code)
 
 
+# Extraction counts, keyed on the bytes extracted from.
+#
+# Both halves of this gate are cacheable, for different reasons. chars(source)
+# depends only on the input document, and the holdout corpus does not change --
+# those thousand mutool runs give the same answer forever. chars(output) depends
+# on the converter, but conversion is byte-reproducible (measured 2026-08-20:
+# identical output from two runs seconds apart), so a document a round of fixes
+# did not touch produces identical bytes and its count still holds.
+#
+# Keyed on content, never on path: identical bytes deserve one entry, and a file
+# that changed must miss even if its name did not.
+_CACHE_DIR = Path(os.environ.get("RETENTION_CACHE_DIR", "/mnt/storagebox/pdfa-textcounts"))
+_CACHE_ON = os.environ.get("RETENTION_CACHE", "on").lower() not in ("off", "0", "false")
+
+
+def _digest(pdf: Path) -> str | None:
+    try:
+        h = hashlib.sha256()
+        with pdf.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
 def chars(mutool: str, pdf: Path) -> int:
     """Non-whitespace characters mutool extracts, or -1 when it cannot read."""
+    key = _digest(pdf) if _CACHE_ON else None
+    entry = _CACHE_DIR / key[:2] / f"{key}.txt" if key else None
+
+    if entry is not None and entry.is_file():
+        try:
+            cached = int(entry.read_text().strip())
+            # -1 means mutool could not read it. That can be a broken install
+            # rather than a property of the document, so it is never replayed --
+            # a cached failure would quietly become a permanent verdict.
+            if cached >= 0:
+                return cached
+        except (OSError, ValueError):
+            pass
+
     try:
         out = subprocess.run(
             [mutool, "draw", "-F", "txt", str(pdf)],
@@ -73,7 +114,18 @@ def chars(mutool: str, pdf: Path) -> int:
         )
     except (subprocess.TimeoutExpired, OSError):
         return -1
-    return len(b"".join(out.stdout.split()))
+    count = len(b"".join(out.stdout.split()))
+
+    if entry is not None and count >= 0:
+        try:
+            entry.parent.mkdir(parents=True, exist_ok=True)
+            tmp = entry.with_suffix(".part")
+            tmp.write_text(str(count))
+            tmp.replace(entry)
+        except OSError:
+            pass  # an unwritable cache may slow this down, never break it
+
+    return count
 
 
 def main() -> None:

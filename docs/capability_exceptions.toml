@@ -1,0 +1,88 @@
+# Accepted gaps in the capability register.
+#
+# `scripts/ci/capability_register.py --gate` fails on any gap that is not listed
+# here. That is the mechanism: a gap in this file is a decision somebody wrote
+# down, and a gap missing from it is a surprise. Adding an entry is cheap, which
+# is fine — the cost was never meant to be the obstacle. Having to state a reason
+# is, because it turns silence into a sentence someone else can disagree with.
+#
+# Nothing here hides anything from the generated register: docs/CAPABILITY_REGISTER.md
+# still lists every gap. An exception silences the alarm, never the fact.
+#
+# One category has no exception mechanism at all, on purpose: a crate with tests
+# that no CI job executes. That is the failure this entire system was built to
+# prevent, and there is no reason worth accepting for it.
+
+[rust_only]
+# Advertised for the SDK, callable only from Rust. Real gaps, not design choices.
+"PDF to Word" = "Roadmap F7.1, blocking for 1.0. pdf-docx is reachable from the Rust facade and fully tested, but no binding exports it — zero mentions of docx across all five binding sources. A Python or Node customer cannot call it at all."
+"PDF to Excel" = "Roadmap F7.1, blocking for 1.0. Same as PDF to Word: wired into the facade on 2026-08-18, never into a binding."
+"PDF to PowerPoint" = "Roadmap F7.1, blocking for 1.0. Same as PDF to Word."
+
+[unreachable_crates]
+# Published, and absent from the facade dependency graph entirely.
+"pdf-ocr" = "Deliberate. Wiring it in would make every pdfluent user carry an OCR stack: Tesseract needs C system libraries, and PaddleOCR needs ONNX Runtime plus model weights. Opting in is the customer's decision. See crates/pdf-ocr/README.md."
+"pdf-invoice" = "Roadmap: wiring job, size S. Implements ZUGFeRD/Factur-X/XRechnung embedding AND validation; the facade simply does not depend on it. Nothing to build, only to expose and test."
+"pdf-text-format" = "Engine-internal text formatting, consumed by pdf-manip and the XFA layout engine rather than by callers. Published because the workspace publishes everything it builds; not intended as customer API."
+
+[runtime_stubs]
+# Methods that compile and fail when called. Each needs implementing or removing.
+"add_decoration" = "PageDecoration models watermarks only; positioned headers, footers and page numbers are build item B5. Currently returns MissingDependency rather than doing nothing silently, which is the right failure."
+"embed_font" = "Font embedding exists in pdf-manip (unicode_font.rs) but is not surfaced here. Deferred stub, listed in the build plan."
+"flatten_forms" = "Form flattening lives in pdf-forms and behind the xfa-flatten path; the facade entry point was never connected. Deferred stub."
+"linearize" = "Linearisation (fast web view) is not implemented. The read side reports linearisation status; producing it is a separate job."
+"form_mut" = "Mutable form access needs the engine sync contract settled first — handing out a mutable handle while the engine holds its own copy is how the page-count layers drifted apart."
+
+[capabilities]
+# Capabilities in a state other than `shipped`. Empty is the goal.
+
+[not_advertised]
+# Public API that is real, tested and supported, but is not a marketed capability.
+# Being here says "this is not a product promise", not "this does not matter".
+"add_decoration" = "Part of the page content surface. Supported and tested; not marketed as a standalone capability."
+"annotations" = "Part of the annotations surface. Supported and tested; not marketed as a standalone capability."
+"attachment_bytes" = "Part of the attachments surface. Supported and tested; not marketed as a standalone capability."
+"attachments" = "Part of the attachments surface. Supported and tested; not marketed as a standalone capability."
+"create" = "Document plumbing: creating an empty document. Not a capability anyone buys the SDK for."
+"diagnostics" = "Document plumbing: reading warnings. Not a capability anyone buys the SDK for."
+"dimensions" = "Document plumbing: page size. Not a capability anyone buys the SDK for."
+"embed_font" = "Part of the fonts surface. Supported and tested; not marketed as a standalone capability."
+"extract_text" = "Part of the text extraction surface. Supported and tested; not marketed as a standalone capability."
+"find_text" = "Part of the text extraction surface. Supported and tested; not marketed as a standalone capability."
+"flatten_annotations" = "Part of the annotations surface. Supported and tested; not marketed as a standalone capability."
+"flatten_forms" = "Supported public API, not a marketed capability. Reviewed 2026-08-19."
+"form_fields" = "Part of the forms surface. Supported and tested; not marketed as a standalone capability."
+"form_model" = "Part of the forms surface. Supported and tested; not marketed as a standalone capability."
+"form_mut" = "Part of the forms surface. Supported and tested; not marketed as a standalone capability."
+"insert_image" = "Part of the page content surface. Supported and tested; not marketed as a standalone capability."
+"linearize" = "Supported public API, not a marketed capability. Reviewed 2026-08-19."
+"metadata" = "Part of the metadata and navigation surface. Supported and tested; not marketed as a standalone capability."
+"metadata_mut" = "Part of the metadata and navigation surface. Supported and tested; not marketed as a standalone capability."
+"number" = "Document plumbing: page number. Not a capability anyone buys the SDK for."
+"open" = "Document plumbing: opening a file. Not a capability anyone buys the SDK for."
+"open_with" = "Document plumbing: opening with options. Not a capability anyone buys the SDK for."
+"outlines" = "Part of the metadata and navigation surface. Supported and tested; not marketed as a standalone capability."
+"page" = "Document plumbing: addressing a page. Not a capability anyone buys the SDK for."
+"page_count" = "Document plumbing: counting pages. Not a capability anyone buys the SDK for."
+"page_labels" = "Part of the metadata and navigation surface. Supported and tested; not marketed as a standalone capability."
+"pages" = "Document plumbing: iterating pages. Not a capability anyone buys the SDK for."
+"parse" = "Document plumbing: parsing bytes. Not a capability anyone buys the SDK for."
+"regenerate_form_appearances" = "Part of the forms surface. Supported and tested; not marketed as a standalone capability."
+"replace_text" = "Part of the text editing surface. Supported and tested; not marketed as a standalone capability."
+"replace_text_matches" = "Part of the text editing surface. Supported and tested; not marketed as a standalone capability."
+"save" = "Document plumbing: saving. Not a capability anyone buys the SDK for."
+"save_with" = "Document plumbing: saving with options. Not a capability anyone buys the SDK for."
+"set_outlines" = "Part of the metadata and navigation surface. Supported and tested; not marketed as a standalone capability."
+"set_xfa_field_value" = "Part of the forms surface. Supported and tested; not marketed as a standalone capability."
+"strict_memory_limit" = "Document plumbing: a resource guard. Not a capability anyone buys the SDK for."
+"structure_tree" = "Part of the metadata and navigation surface. Supported and tested; not marketed as a standalone capability."
+"subset_fonts" = "Part of the fonts surface. Supported and tested; not marketed as a standalone capability."
+"sync_engine" = "Document plumbing: internal engine sync. Not a capability anyone buys the SDK for."
+"take_diagnostics" = "Document plumbing: draining warnings. Not a capability anyone buys the SDK for."
+"text" = "Part of the text extraction surface. Supported and tested; not marketed as a standalone capability."
+"text_with_layout" = "Part of the text extraction surface. Supported and tested; not marketed as a standalone capability."
+"to_bytes" = "Document plumbing: serialising. Not a capability anyone buys the SDK for."
+"to_incremental_bytes" = "Document plumbing: incremental save. Not a capability anyone buys the SDK for."
+"version" = "Document plumbing: reading the PDF version. Not a capability anyone buys the SDK for."
+"write_to" = "Document plumbing: writing to a sink. Not a capability anyone buys the SDK for."
+"xfa_form_model" = "Part of the forms surface. Supported and tested; not marketed as a standalone capability."

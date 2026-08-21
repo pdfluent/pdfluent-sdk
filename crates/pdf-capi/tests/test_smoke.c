@@ -240,9 +240,9 @@ static int test_annotation_highlight(void) {
     /* Safety: null inputs */
     PdfDocument *nil = NULL;
     assert(pdf_annotation_add_highlight(NULL, 0, x, y, w, h, &nil)
-           == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+           == PDF_STATUS_ERROR_INVALID_ARG);
     assert(pdf_annotation_add_highlight(doc, 0, x, y, w, h, NULL)
-           == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+           == PDF_STATUS_ERROR_INVALID_ARG);
 
     pdf_document_free(out);
     pdf_document_free(doc);
@@ -271,7 +271,7 @@ static int test_pdfa_validation(void) {
 
     /* Safety: null inputs must not crash. */
     assert(pdf_document_validate_pdfa(NULL, PDF_A_LEVEL_2B, &report)
-           == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+           == PDF_STATUS_ERROR_INVALID_ARG);
     assert(pdf_compliance_report_is_compliant(NULL) == 0);
     assert(pdf_compliance_report_error_count(NULL) == -1);
     pdf_compliance_report_free(NULL);
@@ -307,8 +307,8 @@ static int test_merge_pdfs(void) {
 
     /* Safety: null / bad inputs */
     PdfDocument *nil = NULL;
-    assert(pdf_documents_merge(NULL, 2, &nil) == PDF_STATUS_ERROR_INVALID_ARGUMENT);
-    assert(pdf_documents_merge(inputs, 0, &nil) == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+    assert(pdf_documents_merge(NULL, 2, &nil) == PDF_STATUS_ERROR_INVALID_ARG);
+    assert(pdf_documents_merge(inputs, 0, &nil) == PDF_STATUS_ERROR_INVALID_ARG);
 
     pdf_document_free(merged);
     pdf_document_free(doc2);
@@ -454,7 +454,7 @@ static int test_convert_pdfa(void) {
     /* Safety: null inputs must not crash. */
     PdfDocument *nil = NULL;
     assert(pdf_document_convert_pdfa(NULL, PDF_A_LEVEL_2B, &nil)
-           == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+           == PDF_STATUS_ERROR_INVALID_ARG);
 
     pdf_document_free(out);
     pdf_document_free(doc);
@@ -482,9 +482,9 @@ static int test_redact(void) {
     /* Safety: null inputs. */
     PdfDocument *nil = NULL;
     assert(pdf_document_redact(NULL, "x", &nil)
-           == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+           == PDF_STATUS_ERROR_INVALID_ARG);
     assert(pdf_document_redact(doc, NULL, &nil)
-           == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+           == PDF_STATUS_ERROR_INVALID_ARG);
 
     pdf_document_free(out);
     pdf_document_free(doc);
@@ -502,7 +502,7 @@ static int test_sign(void) {
      * not crash. */
     PdfDocument *out = NULL;
     s = pdf_document_sign(doc, NULL, NULL, &out);
-    assert(s == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+    assert(s == PDF_STATUS_ERROR_INVALID_ARG);
 
     s = pdf_document_sign(doc, "/nonexistent.p12", "", &out);
     assert(s == PDF_STATUS_ERROR_FILE_NOT_FOUND);

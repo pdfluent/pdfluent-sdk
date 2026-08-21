@@ -3,6 +3,9 @@
 
 pub mod engine;
 pub mod error;
+/// Integrity checking for anything fetched over the network. Compiled always,
+/// feature flags or not, so its tests cannot be skipped out of CI.
+pub mod integrity;
 pub mod pipeline;
 
 #[cfg(feature = "tesseract")]
