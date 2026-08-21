@@ -11898,6 +11898,133 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
         "multiply" => Some('\u{00D7}'),
         "divide" => Some('\u{00F7}'),
         "mu" => Some('\u{00B5}'),
+        // More Latin, same derivation: horn forms (Vietnamese), comma-below
+        // (Latvian, Romanian), and the barred letters.
+        "Eng" => Some('\u{014A}'),
+        "Ldot" => Some('\u{013F}'),
+        "Ohorn" => Some('\u{01A0}'),
+        "Scommaaccent" => Some('\u{0218}'),
+        "Tcommaaccent" => Some('\u{021A}'),
+        "Uhorn" => Some('\u{01AF}'),
+        "Wacute" => Some('\u{1E82}'),
+        "Wdieresis" => Some('\u{1E84}'),
+        "Wgrave" => Some('\u{1E80}'),
+        "Ygrave" => Some('\u{1EF2}'),
+        "eng" => Some('\u{014B}'),
+        "ldot" => Some('\u{0140}'),
+        "ohorn" => Some('\u{01A1}'),
+        "scommaaccent" => Some('\u{0219}'),
+        "tcommaaccent" => Some('\u{021B}'),
+        "uhorn" => Some('\u{01B0}'),
+        "wacute" => Some('\u{1E83}'),
+        "wdieresis" => Some('\u{1E85}'),
+        "wgrave" => Some('\u{1E81}'),
+        "ygrave" => Some('\u{1EF3}'),
+        // Latin Extended-A, from the Adobe Glyph List.
+        //
+        // AGL_NAMES in pdfa_fixups.rs accepts these as valid names, so
+        // sanitize_differences keeps them — and then this table did not know
+        // them, so the safety predicate discarded the whole /Encoding anyway.
+        // Two tables disagreeing produced the worst of both: the name survives
+        // the sanitiser and kills the font at the next step.
+        //
+        // Czech, Polish, Croatian, Hungarian, Slovak, Latvian, Lithuanian,
+        // Turkish and Romanian all live in this block.
+        //
+        // Code points derived from the Unicode database by name rather than
+        // typed, and every entry cross-checked against AGL_NAMES, so a slip
+        // would have to exist in Unicode itself.
+        "Abreve" => Some('\u{0102}'),
+        "Amacron" => Some('\u{0100}'),
+        "Aogonek" => Some('\u{0104}'),
+        "Cacute" => Some('\u{0106}'),
+        "Ccaron" => Some('\u{010C}'),
+        "Ccircumflex" => Some('\u{0108}'),
+        "Cdotaccent" => Some('\u{010A}'),
+        "Dcaron" => Some('\u{010E}'),
+        "Ebreve" => Some('\u{0114}'),
+        "Ecaron" => Some('\u{011A}'),
+        "Edotaccent" => Some('\u{0116}'),
+        "Emacron" => Some('\u{0112}'),
+        "Eogonek" => Some('\u{0118}'),
+        "Gbreve" => Some('\u{011E}'),
+        "Gcircumflex" => Some('\u{011C}'),
+        "Gdotaccent" => Some('\u{0120}'),
+        "Hcircumflex" => Some('\u{0124}'),
+        "Ibreve" => Some('\u{012C}'),
+        "Idotaccent" => Some('\u{0130}'),
+        "Imacron" => Some('\u{012A}'),
+        "Iogonek" => Some('\u{012E}'),
+        "Itilde" => Some('\u{0128}'),
+        "Jcircumflex" => Some('\u{0134}'),
+        "Lacute" => Some('\u{0139}'),
+        "Lcaron" => Some('\u{013D}'),
+        "Nacute" => Some('\u{0143}'),
+        "Ncaron" => Some('\u{0147}'),
+        "Obreve" => Some('\u{014E}'),
+        "Ohungarumlaut" => Some('\u{0150}'),
+        "Omacron" => Some('\u{014C}'),
+        "Racute" => Some('\u{0154}'),
+        "Rcaron" => Some('\u{0158}'),
+        "Sacute" => Some('\u{015A}'),
+        "Scedilla" => Some('\u{015E}'),
+        "Scircumflex" => Some('\u{015C}'),
+        "Tcaron" => Some('\u{0164}'),
+        "Ubreve" => Some('\u{016C}'),
+        "Uhungarumlaut" => Some('\u{0170}'),
+        "Umacron" => Some('\u{016A}'),
+        "Uogonek" => Some('\u{0172}'),
+        "Uring" => Some('\u{016E}'),
+        "Utilde" => Some('\u{0168}'),
+        "Wcircumflex" => Some('\u{0174}'),
+        "Ycircumflex" => Some('\u{0176}'),
+        "Zacute" => Some('\u{0179}'),
+        "Zdotaccent" => Some('\u{017B}'),
+        "abreve" => Some('\u{0103}'),
+        "amacron" => Some('\u{0101}'),
+        "aogonek" => Some('\u{0105}'),
+        "cacute" => Some('\u{0107}'),
+        "ccaron" => Some('\u{010D}'),
+        "ccircumflex" => Some('\u{0109}'),
+        "cdotaccent" => Some('\u{010B}'),
+        "dcaron" => Some('\u{010F}'),
+        "ebreve" => Some('\u{0115}'),
+        "ecaron" => Some('\u{011B}'),
+        "edotaccent" => Some('\u{0117}'),
+        "emacron" => Some('\u{0113}'),
+        "eogonek" => Some('\u{0119}'),
+        "gbreve" => Some('\u{011F}'),
+        "gcircumflex" => Some('\u{011D}'),
+        "gdotaccent" => Some('\u{0121}'),
+        "hcircumflex" => Some('\u{0125}'),
+        "ibreve" => Some('\u{012D}'),
+        "imacron" => Some('\u{012B}'),
+        "iogonek" => Some('\u{012F}'),
+        "itilde" => Some('\u{0129}'),
+        "jcircumflex" => Some('\u{0135}'),
+        "lacute" => Some('\u{013A}'),
+        "lcaron" => Some('\u{013E}'),
+        "nacute" => Some('\u{0144}'),
+        "ncaron" => Some('\u{0148}'),
+        "obreve" => Some('\u{014F}'),
+        "ohungarumlaut" => Some('\u{0151}'),
+        "omacron" => Some('\u{014D}'),
+        "racute" => Some('\u{0155}'),
+        "rcaron" => Some('\u{0159}'),
+        "sacute" => Some('\u{015B}'),
+        "scedilla" => Some('\u{015F}'),
+        "scircumflex" => Some('\u{015D}'),
+        "tcaron" => Some('\u{0165}'),
+        "ubreve" => Some('\u{016D}'),
+        "uhungarumlaut" => Some('\u{0171}'),
+        "umacron" => Some('\u{016B}'),
+        "uogonek" => Some('\u{0173}'),
+        "uring" => Some('\u{016F}'),
+        "utilde" => Some('\u{0169}'),
+        "wcircumflex" => Some('\u{0175}'),
+        "ycircumflex" => Some('\u{0177}'),
+        "zacute" => Some('\u{017A}'),
+        "zdotaccent" => Some('\u{017C}'),
         // Greek, from the Adobe Glyph List.
         //
         // The table had no Greek at all -- `mu` above is the micro sign U+00B5,
@@ -15064,6 +15191,60 @@ mod glyph_name_table_tests {
             "these names can be produced by winansi_type1_glyph_name but do not \
              resolve in glyph_name_to_unicode, so a /Differences naming one of them \
              costs the font its whole encoding: {missing:?}"
+        );
+    }
+
+    /// The two name tables in this crate must not contradict each other.
+    ///
+    /// `AGL_NAMES` in pdfa_fixups.rs decides whether a /Differences entry survives
+    /// the sanitiser; `glyph_name_to_unicode` here decides whether the encoding is
+    /// safe to keep. When the first accepts a name the second cannot resolve, the
+    /// result is the worst of both: the name survives sanitising and then kills
+    /// the whole font at the next step.
+    ///
+    /// That is not hypothetical. Ninety-one Latin Extended-A names were in that
+    /// state — Ccaron, Aogonek, Dcroat, Ebreve, the letters Czech, Polish,
+    /// Croatian, Hungarian, Slovak, Latvian, Lithuanian, Turkish and Romanian are
+    /// written with — and any document declaring one lost its encoding entirely.
+    ///
+    /// The assertion is deliberately one-directional. glyph_name_to_unicode may
+    /// know names AGL_NAMES does not (uniXXXX forms, suffix variants); the
+    /// converse is what breaks documents.
+    #[test]
+    fn agl_names_all_resolve() {
+        let unresolved: Vec<&str> = crate::pdfa_fixups::agl_names_for_test()
+            .iter()
+            .copied()
+            .filter(|n| n.len() > 1 && *n != ".notdef")
+            .filter(|n| glyph_name_to_unicode(n).is_none())
+            .collect();
+
+        // A ceiling that only comes down.
+        //
+        // 388 names remain unresolved, and typing them by hand is precisely the
+        // work that produced this defect in the first place. 240 are afii forms,
+        // which need the AFII registry rather than anything derivable from the
+        // Unicode database; the rest are symbols and ligatures.
+        //
+        // So the gap is recorded rather than hidden, and cannot grow. Lower this
+        // when you close some; never raise it. A font declaring one of these still
+        // loses its whole /Encoding, so every name removed from the list is a
+        // document that starts working.
+        const CEILING: usize = 388;
+
+        assert!(
+            unresolved.len() <= CEILING,
+            "{} name(s) that AGL_NAMES accepts cannot be resolved here, up from \
+             {CEILING}. A font declaring one loses its entire /Encoding: {:?}",
+            unresolved.len(),
+            &unresolved[..unresolved.len().min(30)]
+        );
+        assert!(
+            unresolved.len() >= CEILING.saturating_sub(5),
+            "{} unresolved, well below the ceiling of {CEILING}. Lower CEILING to \
+             {} so the gain cannot be lost again.",
+            unresolved.len(),
+            unresolved.len()
         );
     }
 

@@ -3371,6 +3371,15 @@ mod agl_name_tests {
     }
 }
 
+/// The AGL name set, for the cross-table test in pdfa_fonts.rs.
+///
+/// Exposed to the crate rather than made public: the invariant it checks is
+/// internal, and the two tables it compares are both implementation detail.
+#[cfg(test)]
+pub(crate) fn agl_names_for_test() -> &'static [&'static str] {
+    AGL_NAMES
+}
+
 /// Adobe Glyph List names (sorted for binary search).
 /// Source: https://github.com/adobe-type-tools/agl-aglfn/blob/master/aglfn.txt
 static AGL_NAMES: &[&str] = &[
