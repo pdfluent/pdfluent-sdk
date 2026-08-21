@@ -3571,7 +3571,7 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 continue;
             }
 
-            let (first_char, last_char, existing_widths, enc, differences) = {
+            let (first_char, last_char, existing_widths, enc, differences, widths_ref) = {
                 let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
                     continue;
                 };
@@ -3583,8 +3583,24 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                     Some(Object::Integer(i)) => *i as u32,
                     _ => 255,
                 };
+                // /Widths mag indirect staan, en 6,02% van de lettertypen in
+                // het corpus doet dat ook. Alleen de directe vorm lezen maakte
+                // van al die gevallen een lege lijst, en dan kan hieronder niet
+                // meer worden vastgesteld dat de breedtes al klopten: `changed`
+                // wordt onvoorwaardelijk waar en het document wordt aangeraakt
+                // waar dat niet nodig was. Elders in dit bestand gebeurt het al
+                // wel goed (zie de opmerking "Widths may be inline or an
+                // indirect reference").
+                let widths_ref = match font.get(b"Widths").ok() {
+                    Some(Object::Reference(r)) => Some(*r),
+                    _ => None,
+                };
                 let widths = match font.get(b"Widths").ok() {
                     Some(Object::Array(arr)) => arr.clone(),
+                    Some(Object::Reference(r)) => match doc.get_object(*r) {
+                        Ok(Object::Array(arr)) => arr.clone(),
+                        _ => vec![],
+                    },
                     _ => vec![],
                 };
                 // Resolve through get_simple_encoding_info, the same way the CFF
@@ -3601,7 +3617,7 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 // (see the comment there about MacRoman 212 = /quoteleft on govdocs
                 // 000_000840); it was never carried across to TrueType.
                 let (enc, differences) = get_simple_encoding_info(doc, font);
-                (first_char, last_char, widths, enc, differences)
+                (first_char, last_char, widths, enc, differences, widths_ref)
             };
 
             let mut new_widths: Vec<Object> =
@@ -3643,8 +3659,23 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
             }
 
             if changed {
-                if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&font_id) {
-                    font.set("Widths", Object::Array(new_widths));
+                // Was /Widths een verwijzing, dan wordt het verwezen object
+                // bijgewerkt. Er een directe array overheen leggen laat het oude
+                // object verweesd achter -- extra bytes in een bestand dat juist
+                // voor de lange termijn wordt klaargemaakt.
+                match widths_ref {
+                    Some(widths_id) => {
+                        if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&widths_id) {
+                            *arr = new_widths;
+                        }
+                    }
+                    None => {
+                        if let Some(Object::Dictionary(ref mut font)) =
+                            doc.objects.get_mut(&font_id)
+                        {
+                            font.set("Widths", Object::Array(new_widths));
+                        }
+                    }
                 }
                 fixed += 1;
             }
@@ -3664,7 +3695,7 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 }
             }
         } else if let Some(cff) = cff_parser::Table::parse(&font_data) {
-            let (first_char, last_char, existing_widths, enc_name, differences) = {
+            let (first_char, last_char, existing_widths, enc_name, differences, widths_ref) = {
                 let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
                     continue;
                 };
@@ -3676,12 +3707,35 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                     Some(Object::Integer(i)) => *i as u32,
                     _ => 255,
                 };
+                // /Widths mag indirect staan, en 6,02% van de lettertypen in
+                // het corpus doet dat ook. Alleen de directe vorm lezen maakte
+                // van al die gevallen een lege lijst, en dan kan hieronder niet
+                // meer worden vastgesteld dat de breedtes al klopten: `changed`
+                // wordt onvoorwaardelijk waar en het document wordt aangeraakt
+                // waar dat niet nodig was. Elders in dit bestand gebeurt het al
+                // wel goed (zie de opmerking "Widths may be inline or an
+                // indirect reference").
+                let widths_ref = match font.get(b"Widths").ok() {
+                    Some(Object::Reference(r)) => Some(*r),
+                    _ => None,
+                };
                 let widths = match font.get(b"Widths").ok() {
                     Some(Object::Array(arr)) => arr.clone(),
+                    Some(Object::Reference(r)) => match doc.get_object(*r) {
+                        Ok(Object::Array(arr)) => arr.clone(),
+                        _ => vec![],
+                    },
                     _ => vec![],
                 };
                 let (enc_name, differences) = get_simple_encoding_info(doc, font);
-                (first_char, last_char, widths, enc_name, differences)
+                (
+                    first_char,
+                    last_char,
+                    widths,
+                    enc_name,
+                    differences,
+                    widths_ref,
+                )
             };
 
             let upem = {
@@ -3741,8 +3795,23 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
             }
 
             if changed {
-                if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&font_id) {
-                    font.set("Widths", Object::Array(new_widths));
+                // Was /Widths een verwijzing, dan wordt het verwezen object
+                // bijgewerkt. Er een directe array overheen leggen laat het oude
+                // object verweesd achter -- extra bytes in een bestand dat juist
+                // voor de lange termijn wordt klaargemaakt.
+                match widths_ref {
+                    Some(widths_id) => {
+                        if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&widths_id) {
+                            *arr = new_widths;
+                        }
+                    }
+                    None => {
+                        if let Some(Object::Dictionary(ref mut font)) =
+                            doc.objects.get_mut(&font_id)
+                        {
+                            font.set("Widths", Object::Array(new_widths));
+                        }
+                    }
                 }
                 fixed += 1;
             }
@@ -25148,6 +25217,106 @@ end
             widths_entry(&doc, font_id, 65),
             300,
             "code 65 wijst via /Differences naar /five (300), niet naar 'A' (700)"
+        );
+    }
+
+    /// Bouwt een document met een indirecte /Widths en geeft (font_id, widths_id).
+    fn doc_met_indirecte_widths(waarde: i64) -> (Document, ObjectId, ObjectId) {
+        let mut doc = Document::with_version("1.7");
+        let font_data = minimal_truetype();
+        let lengte = font_data.len() as i64;
+        let stream = Stream::new(dictionary! { "Length1" => lengte }, font_data);
+        let font_file_id = doc.add_object(Object::Stream(stream));
+
+        let fd_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "TestTrueType",
+            "Flags" => Object::Integer(32),
+            "FontFile2" => Object::Reference(font_file_id),
+        }));
+
+        let widths_id = doc.add_object(Object::Array(vec![Object::Integer(waarde)]));
+
+        let font_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "TrueType",
+            "BaseFont" => "TestTrueType",
+            "FirstChar" => Object::Integer(65),
+            "LastChar" => Object::Integer(65),
+            "Widths" => Object::Reference(widths_id),
+            "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec()),
+            "FontDescriptor" => Object::Reference(fd_id),
+        }));
+
+        (doc, font_id, widths_id)
+    }
+
+    fn widths_blijft_verwijzing(doc: &Document, font_id: ObjectId) -> bool {
+        let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+            panic!("font dict missing");
+        };
+        matches!(font.get(b"Widths"), Ok(Object::Reference(_)))
+    }
+
+    fn verwezen_breedte(doc: &Document, widths_id: ObjectId) -> i64 {
+        match doc.objects.get(&widths_id) {
+            Some(Object::Array(a)) => match &a[0] {
+                Object::Integer(i) => *i,
+                other => panic!("unexpected width: {other:?}"),
+            },
+            other => panic!("widths object is not an array: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_sync_widths_leaves_a_correct_indirect_widths_array_alone() {
+        // 6,02% van de lettertypen in het corpus draagt /Widths als verwijzing.
+        // Die werd als lege lijst gelezen, waarna `changed` onvoorwaardelijk
+        // waar werd: het document werd aangeraakt terwijl er niets mis was. Bij
+        // archivering is dat precies de verkeerde kant op.
+        let (mut doc, font_id, widths_id) = doc_met_indirecte_widths(700);
+        let voor = doc.objects.len();
+
+        let gerepareerd = sync_widths_from_embedded_fonts(&mut doc);
+
+        // Dit is de assertie die de leeskant vastlegt. De twee eronder niet: die
+        // blijven groen ook als /Widths weer als lege lijst wordt gelezen, want
+        // de waarde die er dan overheen wordt geschreven is dezelfde. Alleen de
+        // teller laat het verschil zien tussen "gecontroleerd en in orde" en
+        // "blind overschreven". Getoetst door het lezen terug te draaien.
+        assert_eq!(
+            gerepareerd, 0,
+            "breedtes die al kloppen mogen niet als reparatie tellen"
+        );
+        assert_eq!(verwezen_breedte(&doc, widths_id), 700);
+        assert!(
+            widths_blijft_verwijzing(&doc, font_id),
+            "een correcte indirecte /Widths mag geen directe array worden"
+        );
+        assert_eq!(
+            doc.objects.len(),
+            voor,
+            "er is niets bijgekomen; het oude array mag niet verweesd achterblijven"
+        );
+    }
+
+    #[test]
+    fn test_sync_widths_corrects_through_the_reference() {
+        // En als er wél iets mis is, moet de correctie in het verwezen object
+        // landen -- niet als directe array over de verwijzing heen, want dan
+        // blijft het oude object als dode bytes in het bestand staan.
+        let (mut doc, font_id, widths_id) = doc_met_indirecte_widths(1);
+
+        let _ = sync_widths_from_embedded_fonts(&mut doc);
+
+        assert_eq!(
+            verwezen_breedte(&doc, widths_id),
+            700,
+            "de breedte van 'A' hoort in het verwezen array te staan"
+        );
+        assert!(
+            widths_blijft_verwijzing(&doc, font_id),
+            "de verwijzing blijft een verwijzing"
         );
     }
 
