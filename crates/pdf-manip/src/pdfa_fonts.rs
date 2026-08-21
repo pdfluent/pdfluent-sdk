@@ -11898,6 +11898,87 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
         "multiply" => Some('\u{00D7}'),
         "divide" => Some('\u{00F7}'),
         "mu" => Some('\u{00B5}'),
+        // Greek, from the Adobe Glyph List.
+        //
+        // The table had no Greek at all -- `mu` above is the micro sign U+00B5,
+        // not the letter. A font declaring Greek /Differences therefore resolved
+        // almost nothing and lost its entire encoding to the safety predicate.
+        // govdocs 607_607851 carries one at 23 of 96 names resolving; the 73
+        // holdouts are ordinary AGL names like Lambda, theta and Alphatonos.
+        //
+        // Scientific and mathematical PDFs use these constantly, so the gap is
+        // wider than one document.
+        "Alpha" => Some('\u{0391}'),
+        "Beta" => Some('\u{0392}'),
+        "Gamma" => Some('\u{0393}'),
+        "Delta" => Some('\u{0394}'),
+        "Epsilon" => Some('\u{0395}'),
+        "Zeta" => Some('\u{0396}'),
+        "Eta" => Some('\u{0397}'),
+        "Theta" => Some('\u{0398}'),
+        "Iota" => Some('\u{0399}'),
+        "Kappa" => Some('\u{039A}'),
+        "Lambda" => Some('\u{039B}'),
+        "Mu" => Some('\u{039C}'),
+        "Nu" => Some('\u{039D}'),
+        "Xi" => Some('\u{039E}'),
+        "Omicron" => Some('\u{039F}'),
+        "Pi" => Some('\u{03A0}'),
+        "Rho" => Some('\u{03A1}'),
+        "Sigma" => Some('\u{03A3}'),
+        "Tau" => Some('\u{03A4}'),
+        "Upsilon" => Some('\u{03A5}'),
+        "Phi" => Some('\u{03A6}'),
+        "Chi" => Some('\u{03A7}'),
+        "Psi" => Some('\u{03A8}'),
+        "Omega" => Some('\u{03A9}'),
+        "alpha" => Some('\u{03B1}'),
+        "beta" => Some('\u{03B2}'),
+        "gamma" => Some('\u{03B3}'),
+        "delta" => Some('\u{03B4}'),
+        "epsilon" => Some('\u{03B5}'),
+        "zeta" => Some('\u{03B6}'),
+        "eta" => Some('\u{03B7}'),
+        "theta" => Some('\u{03B8}'),
+        "iota" => Some('\u{03B9}'),
+        "kappa" => Some('\u{03BA}'),
+        "lambda" => Some('\u{03BB}'),
+        "nu" => Some('\u{03BD}'),
+        "xi" => Some('\u{03BE}'),
+        "omicron" => Some('\u{03BF}'),
+        "pi" => Some('\u{03C0}'),
+        "rho" => Some('\u{03C1}'),
+        "sigma1" => Some('\u{03C2}'),
+        "sigma" => Some('\u{03C3}'),
+        "tau" => Some('\u{03C4}'),
+        "upsilon" => Some('\u{03C5}'),
+        "phi" => Some('\u{03C6}'),
+        "chi" => Some('\u{03C7}'),
+        "psi" => Some('\u{03C8}'),
+        "omega" => Some('\u{03C9}'),
+        "Alphatonos" => Some('\u{0386}'),
+        "Epsilontonos" => Some('\u{0388}'),
+        "Etatonos" => Some('\u{0389}'),
+        "Iotatonos" => Some('\u{038A}'),
+        "Omicrontonos" => Some('\u{038C}'),
+        "Upsilontonos" => Some('\u{038E}'),
+        "Omegatonos" => Some('\u{038F}'),
+        "alphatonos" => Some('\u{03AC}'),
+        "epsilontonos" => Some('\u{03AD}'),
+        "etatonos" => Some('\u{03AE}'),
+        "iotatonos" => Some('\u{03AF}'),
+        "omicrontonos" => Some('\u{03CC}'),
+        "upsilontonos" => Some('\u{03CD}'),
+        "omegatonos" => Some('\u{03CE}'),
+        "Iotadieresis" => Some('\u{03AA}'),
+        "Upsilondieresis" => Some('\u{03AB}'),
+        "iotadieresis" => Some('\u{03CA}'),
+        "upsilondieresis" => Some('\u{03CB}'),
+        "iotadieresistonos" => Some('\u{0390}'),
+        "upsilondieresistonos" => Some('\u{03B0}'),
+        "dieresistonos" => Some('\u{0385}'),
+        "tonos" => Some('\u{0384}'),
+        "afii00208" => Some('\u{2015}'),
         "guillemotleft" => Some('\u{00AB}'),
         "guillemotright" => Some('\u{00BB}'),
         "guilsinglleft" => Some('\u{2039}'),
@@ -14984,6 +15065,43 @@ mod glyph_name_table_tests {
              resolve in glyph_name_to_unicode, so a /Differences naming one of them \
              costs the font its whole encoding: {missing:?}"
         );
+    }
+
+    /// Greek resolves, because a font declaring Greek /Differences used to lose
+    /// its entire encoding.
+    ///
+    /// The table had no Greek at all — `mu` is the micro sign U+00B5, not the
+    /// letter — so govdocs 607_607851's Greek font resolved 23 of 96 names and
+    /// was discarded whole. With the AGL Greek block it reads 96/96.
+    ///
+    /// Spot-checked against the Adobe Glyph List rather than asserting all
+    /// seventy: a handful across each sub-block (plain, tonos, dieresis) catches
+    /// a wrong code point or a copy-paste slip, which is what would realistically
+    /// go wrong here.
+    #[test]
+    fn greek_resolves() {
+        for (name, expected) in [
+            ("Alpha", '\u{0391}'),
+            ("Omega", '\u{03A9}'),
+            ("Lambda", '\u{039B}'),
+            ("alpha", '\u{03B1}'),
+            ("omega", '\u{03C9}'),
+            ("theta", '\u{03B8}'),
+            // Final sigma is a distinct letter, not a variant of sigma.
+            ("sigma1", '\u{03C2}'),
+            ("sigma", '\u{03C3}'),
+            ("Alphatonos", '\u{0386}'),
+            ("omegatonos", '\u{03CE}'),
+            ("iotadieresistonos", '\u{0390}'),
+            ("tonos", '\u{0384}'),
+            ("dieresistonos", '\u{0385}'),
+        ] {
+            assert_eq!(
+                glyph_name_to_unicode(name),
+                Some(expected),
+                "AGL name {name} must resolve"
+            );
+        }
     }
 
     /// The two that were missing, pinned individually so a future edit that
