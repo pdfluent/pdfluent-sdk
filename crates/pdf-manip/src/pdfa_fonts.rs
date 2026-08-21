@@ -24062,8 +24062,22 @@ pub fn fix_cff_subset_missing_space(doc: &mut Document) -> usize {
         };
         match encoding_id {
             Some(enc_id) => {
-                if let Some(Object::Dictionary(enc)) = doc.objects.get_mut(&enc_id) {
-                    append_space_difference(enc, SPACE_CODE);
+                // Staat /Differences als eigen object, volg dan die verwijzing.
+                // Anders leest append_space_difference een lege lijst en vervangt
+                // het de hele code-naar-glyph-afbeelding door een enkele
+                // vermelding -- dezelfde schade als hierboven, een laag dieper.
+                let arr_ref = match doc.objects.get(&enc_id) {
+                    Some(Object::Dictionary(enc)) => differences_array_ref(enc),
+                    _ => None,
+                };
+                let gedaan = match arr_ref {
+                    Some(arr_id) => push_space_into_differences_array(doc, arr_id, SPACE_CODE),
+                    None => false,
+                };
+                if !gedaan {
+                    if let Some(Object::Dictionary(enc)) = doc.objects.get_mut(&enc_id) {
+                        append_space_difference(enc, SPACE_CODE);
+                    }
                 }
             }
             None => {
@@ -24072,11 +24086,25 @@ pub fn fix_cff_subset_missing_space(doc: &mut Document) -> usize {
                 // /Differences, re-basing the font on the program's built-in
                 // encoding and turning WinAnsi-mapped glyphs into .notdef
                 // (govdocs 001_001688: minus signs vanished from the table).
-                let mut handled = false;
-                if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
-                    if let Ok(Object::Dictionary(old)) = font.get_mut(b"Encoding") {
-                        append_space_difference(old, SPACE_CODE);
-                        handled = true;
+                // Ook een inline woordenboek kan zijn /Differences als eigen
+                // object hebben staan.
+                let inline_arr_ref = match doc.objects.get(&font_id) {
+                    Some(Object::Dictionary(font)) => match font.get(b"Encoding") {
+                        Ok(Object::Dictionary(enc)) => differences_array_ref(enc),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let mut handled = match inline_arr_ref {
+                    Some(arr_id) => push_space_into_differences_array(doc, arr_id, SPACE_CODE),
+                    None => false,
+                };
+                if !handled {
+                    if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
+                        if let Ok(Object::Dictionary(old)) = font.get_mut(b"Encoding") {
+                            append_space_difference(old, SPACE_CODE);
+                            handled = true;
+                        }
                     }
                 }
                 if !handled {
@@ -24159,6 +24187,31 @@ fn deref<'a>(doc: &'a Document, obj: &'a Object) -> &'a Object {
 }
 
 /// Append `<code> /space` to an encoding dictionary's `/Differences`.
+/// Het /Differences van een coderingswoordenboek mag zelf een verwijzing zijn.
+/// Gemeten op de groep die deze pas raakt -- kale CFF, `FontFile3` beginnend met
+/// `0x01` -- doet 0,87% van de lettertypen dat (70 van 8010 in 3000
+/// govdocs-documenten).
+fn differences_array_ref(enc: &lopdf::Dictionary) -> Option<ObjectId> {
+    match enc.get(b"Differences") {
+        Ok(Object::Reference(r)) => Some(*r),
+        _ => None,
+    }
+}
+
+/// Zet `<code> /space` achter een /Differences-array dat een eigen object is.
+/// Geeft terug of dat gelukt is, zodat de aanroeper niet stil doorloopt wanneer
+/// de verwijzing nergens heen wijst.
+fn push_space_into_differences_array(doc: &mut Document, arr_id: ObjectId, code: i64) -> bool {
+    match doc.objects.get_mut(&arr_id) {
+        Some(Object::Array(arr)) => {
+            arr.push(Object::Integer(code));
+            arr.push(Object::Name(b"space".to_vec()));
+            true
+        }
+        _ => false,
+    }
+}
+
 fn append_space_difference(enc: &mut lopdf::Dictionary, code: i64) {
     let mut diffs = match enc.get(b"Differences") {
         Ok(Object::Array(a)) => a.clone(),
@@ -25449,6 +25502,142 @@ end
 #[cfg(test)]
 mod cff_space_encoding_tests {
     use super::*;
+
+    /// Bouwt de fixture van de test hieronder, maar met /Encoding als eigen
+    /// object en /Differences daarin als verwijzing naar een array.
+    fn doc_met_verwezen_differences() -> (Document, ObjectId, ObjectId) {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+
+        let ff = Stream::new(dictionary! {}, crate::cff_append::tests::synth_cff(&[2], 0));
+        let ff_id = doc.add_object(Object::Stream(ff));
+        let fd_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "ABCDEF+TestSerif",
+            "Flags" => Object::Integer(34),
+            "FontBBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(100), Object::Integer(100),
+            ]),
+            "FontFile3" => Object::Reference(ff_id),
+        }));
+
+        let diffs_id = doc.add_object(Object::Array(vec![
+            Object::Integer(50),
+            Object::Name(b"X".to_vec()),
+        ]));
+        let enc_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Encoding",
+            "BaseEncoding" => Object::Name(b"WinAnsiEncoding".to_vec()),
+            "Differences" => Object::Reference(diffs_id),
+        }));
+
+        let font_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "ABCDEF+TestSerif",
+            "FirstChar" => Object::Integer(32),
+            "LastChar" => Object::Integer(50),
+            "Encoding" => Object::Reference(enc_id),
+            "FontDescriptor" => Object::Reference(fd_id),
+        }));
+
+        let content = Stream::new(dictionary! {}, b"BT /F1 12 Tf (x y) Tj ET".to_vec());
+        let content_id = doc.add_object(Object::Stream(content));
+        let mut font_res = lopdf::Dictionary::new();
+        font_res.set("F1", Object::Reference(font_id));
+        let mut res = lopdf::Dictionary::new();
+        res.set("Font", Object::Dictionary(font_res));
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Page",
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Dictionary(res),
+        }));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Count" => Object::Integer(1),
+                "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+            }),
+        );
+        let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        (doc, font_id, diffs_id)
+    }
+
+    /// Dezelfde schade als hieronder, maar een laag dieper: /Differences mag
+    /// zelf een verwijzing zijn, en append_space_difference las het alleen als
+    /// directe array. Dan begon het met een lege lijst en verving het de hele
+    /// afbeelding door één vermelding.
+    ///
+    /// Gemeten op de groep die deze pas raakt -- kale CFF, FontFile3 beginnend
+    /// met 0x01 -- doet 0,87% van de lettertypen dat (70 van 8010 in 3000
+    /// govdocs-documenten). Zeldzaam, maar dan is de codering van dat lettertype
+    /// volledig weg, wat precies de schade is die de test hieronder al eens
+    /// vastlegde voor het geval dat het woordenboek zelf werd vervangen.
+    ///
+    /// Vlak onder deze code wordt /CharSet wel op zijn verwijzing gevolgd, met
+    /// een opmerking erbij dat dat moet. Hier niet.
+    #[test]
+    fn space_fix_preserves_differences_behind_a_reference() {
+        let (mut doc, font_id, diffs_id) = doc_met_verwezen_differences();
+
+        let fixed = fix_cff_subset_missing_space(&mut doc);
+        assert_ne!(
+            fixed, 0,
+            "SKIPPED (not a pass): de CFF-fixture is niet actionabel, de pas deed niets"
+        );
+
+        // Wat telt is wat het lettertype oplost, niet wat er nog los in het
+        // bestand rondslingert. Het oude array blijft namelijk gewoon bestaan
+        // als de verwijzing wordt vervangen door een verse directe array -- het
+        // raakt alleen verweesd, en een assertie daarop staat groen terwijl de
+        // codering van het lettertype juist weg is. Deze test keek eerst naar
+        // het verkeerde object en slaagde daardoor op kapotte code.
+        let enc_id = match doc.objects.get(&font_id) {
+            Some(Object::Dictionary(font)) => match font.get(b"Encoding") {
+                Ok(Object::Reference(id)) => *id,
+                other => panic!("verwacht een verwijzing naar de codering: {other:?}"),
+            },
+            other => panic!("font weg: {other:?}"),
+        };
+        let arr = match doc.objects.get(&enc_id) {
+            Some(Object::Dictionary(enc)) => match enc.get(b"Differences") {
+                Ok(Object::Array(a)) => a.clone(),
+                Ok(Object::Reference(r)) => match doc.objects.get(r) {
+                    Some(Object::Array(a)) => a.clone(),
+                    other => panic!("verwezen /Differences is geen array: {other:?}"),
+                },
+                other => panic!("geen /Differences meer: {other:?}"),
+            },
+            other => panic!("coderingswoordenboek weg: {other:?}"),
+        };
+        let _ = diffs_id;
+        let namen: Vec<&[u8]> = arr.iter().filter_map(|o| o.as_name().ok()).collect();
+        assert!(
+            namen.contains(&b"X".as_slice()),
+            "de bestaande /Differences-vermelding is verdwenen: {arr:?}"
+        );
+
+        // En het lettertype moet nog steeds naar hetzelfde woordenboek wijzen.
+        let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+            panic!("font gone")
+        };
+        assert!(
+            matches!(font.get(b"Encoding"), Ok(Object::Reference(_))),
+            "de verwijzing naar het coderingswoordenboek is vervangen"
+        );
+    }
 
     /// Regression: fix_cff_subset_missing_space used to replace an inline
     /// encoding dictionary with a fresh one, dropping /BaseEncoding and all
