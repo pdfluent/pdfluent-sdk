@@ -3571,7 +3571,7 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 continue;
             }
 
-            let (first_char, last_char, existing_widths, enc) = {
+            let (first_char, last_char, existing_widths, enc, differences) = {
                 let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
                     continue;
                 };
@@ -3587,15 +3587,21 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                     Some(Object::Array(arr)) => arr.clone(),
                     _ => vec![],
                 };
-                let enc = font
-                    .get(b"Encoding")
-                    .ok()
-                    .and_then(|o| match o {
-                        Object::Name(n) => String::from_utf8(n.clone()).ok(),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-                (first_char, last_char, widths, enc)
+                // Resolve through get_simple_encoding_info, the same way the CFF
+                // branch below already does. Reading /Encoding as a bare name here
+                // was wrong for one embedded simple font in five: measured on 3000
+                // govdocs documents, 3160 of 15737 fonts on this code path carry an
+                // /Encoding dictionary with /Differences (20.08%), and this match
+                // turned every one of them into an empty string. encoding_to_char
+                // then fell through to "identity below 128, WinAnsi above", so the
+                // advance written into /Widths belonged to whatever glyph that guess
+                // landed on rather than to the one /Differences names.
+                //
+                // This is the same defect that was found and fixed on the CFF side
+                // (see the comment there about MacRoman 212 = /quoteleft on govdocs
+                // 000_000840); it was never carried across to TrueType.
+                let (enc, differences) = get_simple_encoding_info(doc, font);
+                (first_char, last_char, widths, enc, differences)
             };
 
             let mut new_widths: Vec<Object> =
@@ -3604,8 +3610,17 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 existing_widths.len() != (last_char.saturating_sub(first_char) + 1) as usize;
             for code in first_char..=last_char {
                 let idx = (code - first_char) as usize;
-                let ch = encoding_to_char(code, &enc);
-                let expected = if let Some(gid) = face.glyph_index(ch) {
+                // A code named by /Differences is resolved by glyph name first,
+                // then through the name's Unicode value. Only a code that
+                // /Differences says nothing about falls back to the encoding's
+                // character mapping.
+                let gid = match differences.get(&code) {
+                    Some(glyph_name) => face.glyph_index_by_name(glyph_name).or_else(|| {
+                        glyph_name_to_unicode(glyph_name).and_then(|ch| face.glyph_index(ch))
+                    }),
+                    None => face.glyph_index(encoding_to_char(code, &enc)),
+                };
+                let expected = if let Some(gid) = gid {
                     face.glyph_hor_advance(gid)
                         .map(|w| (w as f64 * 1000.0 / units_per_em).round() as i32)
                         .unwrap_or(0)
@@ -24931,6 +24946,245 @@ end
             widths_entry(&doc, font_id, 212),
             333,
             "sync must resolve MacRoman 212 through the PDF encoding (/quoteleft)"
+        );
+    }
+
+    /// Een minimale TrueType: vier glyphs, een cmap en een hmtx.
+    ///
+    /// Er staat geen fontbestand in de repo, en een systeemfont zou de test op
+    /// de ene machine wel en op de andere niet laten draaien -- een stille
+    /// overslag, precies wat hier uitgesloten moet worden. De
+    /// breedtesynchronisatie heeft alleen glyph_index() en glyph_hor_advance()
+    /// nodig, dus omtrekken (glyf/loca) kunnen weg; ttf_parser eist enkel head,
+    /// hhea en maxp.
+    ///
+    /// Glyph 1 staat op 'A' en is 700 breed, glyph 2 staat op '5' en is 300
+    /// breed. Dat verschil is wat de test kan zien.
+    fn minimal_truetype() -> Vec<u8> {
+        fn be16(v: u16) -> Vec<u8> {
+            v.to_be_bytes().to_vec()
+        }
+        fn be32(v: u32) -> Vec<u8> {
+            v.to_be_bytes().to_vec()
+        }
+
+        let mut head = Vec::new();
+        head.extend(be32(0x0001_0000)); // version
+        head.extend(be32(0x0001_0000)); // fontRevision
+        head.extend(be32(0)); // checkSumAdjustment
+        head.extend(be32(0x5F0F_3CF5)); // magicNumber
+        head.extend(be16(0)); // flags
+        head.extend(be16(1000)); // unitsPerEm
+        head.extend([0u8; 8]); // created
+        head.extend([0u8; 8]); // modified
+        head.extend(be16(0)); // xMin
+        head.extend(be16(0)); // yMin
+        head.extend(be16(1000)); // xMax
+        head.extend(be16(1000)); // yMax
+        head.extend(be16(0)); // macStyle
+        head.extend(be16(8)); // lowestRecPPEM
+        head.extend(be16(0)); // fontDirectionHint
+        head.extend(be16(0)); // indexToLocFormat
+        head.extend(be16(0)); // glyphDataFormat
+        assert_eq!(head.len(), 54);
+
+        let mut hhea = Vec::new();
+        hhea.extend(be32(0x0001_0000)); // version
+        hhea.extend(be16(800)); // ascender
+        hhea.extend(be16(0xFF38)); // descender (-200)
+        hhea.extend(be16(0)); // lineGap
+        hhea.extend(be16(700)); // advanceWidthMax
+        hhea.extend(be16(0)); // minLeftSideBearing
+        hhea.extend(be16(0)); // minRightSideBearing
+        hhea.extend(be16(700)); // xMaxExtent
+        hhea.extend(be16(1)); // caretSlopeRise
+        hhea.extend(be16(0)); // caretSlopeRun
+        hhea.extend(be16(0)); // caretOffset
+        hhea.extend([0u8; 8]); // vier gereserveerde velden
+        hhea.extend(be16(0)); // metricDataFormat
+        hhea.extend(be16(4)); // numberOfHMetrics
+        assert_eq!(hhea.len(), 36);
+
+        let mut maxp = Vec::new();
+        maxp.extend(be32(0x0001_0000)); // version 1.0
+        maxp.extend(be16(4)); // numGlyphs
+        maxp.extend([0u8; 26]); // de rest van versie 1.0 mag nul zijn
+        assert_eq!(maxp.len(), 32);
+
+        // advanceWidth + leftSideBearing per glyph.
+        let mut hmtx = Vec::new();
+        for advance in [500u16, 700, 300, 500] {
+            hmtx.extend(be16(advance));
+            hmtx.extend(be16(0));
+        }
+
+        // cmap met één subtabel van formaat 6 (aaneengesloten reeks codes),
+        // want formaat 4 heeft segmenten en zoekhulpvelden die hier niets
+        // toevoegen behalve kans op een fout.
+        let eerste_code: u16 = b'5' as u16; // 53
+        let laatste_code: u16 = b'A' as u16; // 65
+        let aantal = laatste_code - eerste_code + 1;
+        let mut sub = Vec::new();
+        sub.extend(be16(6)); // format
+        sub.extend(be16(2 + 2 + 2 + 2 + 2 + aantal * 2)); // length
+        sub.extend(be16(0)); // language
+        sub.extend(be16(eerste_code));
+        sub.extend(be16(aantal));
+        for code in eerste_code..=laatste_code {
+            let gid = match code {
+                c if c == b'5' as u16 => 2u16,
+                c if c == b'A' as u16 => 1u16,
+                _ => 0,
+            };
+            sub.extend(be16(gid));
+        }
+        let mut cmap = Vec::new();
+        cmap.extend(be16(0)); // version
+        cmap.extend(be16(1)); // numTables
+        cmap.extend(be16(3)); // platformID: Windows
+        cmap.extend(be16(1)); // encodingID: Unicode BMP
+        cmap.extend(be32(12)); // offset naar de subtabel
+        cmap.extend(sub);
+
+        // Tabelnamen moeten oplopend gesorteerd staan in de directory.
+        let tabellen: Vec<(&[u8; 4], Vec<u8>)> = vec![
+            (b"cmap", cmap),
+            (b"head", head),
+            (b"hhea", hhea),
+            (b"hmtx", hmtx),
+            (b"maxp", maxp),
+        ];
+
+        let aantal_tabellen = tabellen.len() as u16;
+        let mut font = Vec::new();
+        font.extend(be32(0x0001_0000)); // sfnt version
+        font.extend(be16(aantal_tabellen));
+        font.extend(be16(0)); // searchRange
+        font.extend(be16(0)); // entrySelector
+        font.extend(be16(0)); // rangeShift
+
+        let mut offset = 12 + 16 * tabellen.len();
+        let mut directory = Vec::new();
+        let mut inhoud = Vec::new();
+        for (tag, data) in &tabellen {
+            directory.extend(tag.iter());
+            directory.extend(be32(0)); // checksum: ttf_parser controleert die niet
+            directory.extend(be32(offset as u32));
+            directory.extend(be32(data.len() as u32));
+            inhoud.extend(data.iter());
+            let opvulling = (4 - data.len() % 4) % 4;
+            inhoud.extend(std::iter::repeat_n(0u8, opvulling));
+            offset += data.len() + opvulling;
+        }
+        font.extend(directory);
+        font.extend(inhoud);
+        font
+    }
+
+    #[test]
+    fn test_minimal_truetype_is_parseable() {
+        // Zonder deze controle zou een fout in de fontopbouw hierboven zich
+        // voordoen als een geslaagde test hieronder: Face::parse zou falen, de
+        // TrueType-tak zou nooit worden bereikt, en /Widths bleef onaangeroerd
+        // op precies de waarde die de test verwacht.
+        let data = minimal_truetype();
+        let face = ttf_parser::Face::parse(&data, 0).expect("minimale TrueType moet parsen");
+        assert_eq!(face.units_per_em(), 1000);
+        let a = face.glyph_index('A').expect("'A' moet in de cmap staan");
+        let vijf = face.glyph_index('5').expect("'5' moet in de cmap staan");
+        assert_eq!(face.glyph_hor_advance(a), Some(700));
+        assert_eq!(face.glyph_hor_advance(vijf), Some(300));
+    }
+
+    #[test]
+    fn test_sync_widths_truetype_respects_encoding_differences() {
+        // Eén op de vijf ingebedde simpele lettertypen draagt een
+        // /Encoding-woordenboek met /Differences: gemeten op 3000
+        // govdocs-documenten, 3160 van 15737 lettertypen op dit codepad
+        // (20,08%). De TrueType-tak las /Encoding als een kale naam en maakte
+        // van al die gevallen een lege string, waarna encoding_to_char()
+        // terugviel op "identiteit onder 128". Code 65 werd dan 'A' terwijl
+        // /Differences zegt dat er /five staat.
+        //
+        // Dezelfde fout is eerder aan de CFF-kant gevonden en gerepareerd
+        // (MacRoman 212 = /quoteleft op govdocs 000_000840); dit is dezelfde
+        // functie, één tak verder.
+        let mut doc = Document::with_version("1.7");
+        let font_data = minimal_truetype();
+        let lengte = font_data.len() as i64;
+        let stream = Stream::new(dictionary! { "Length1" => lengte }, font_data);
+        let font_file_id = doc.add_object(Object::Stream(stream));
+
+        let fd_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "TestTrueType",
+            "Flags" => Object::Integer(32),
+            "FontFile2" => Object::Reference(font_file_id),
+        }));
+
+        let enc = dictionary! {
+            "Type" => "Encoding",
+            "Differences" => Object::Array(vec![
+                Object::Integer(65),
+                Object::Name(b"five".to_vec()),
+            ]),
+        };
+
+        let font_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "TrueType",
+            "BaseFont" => "TestTrueType",
+            "FirstChar" => Object::Integer(65),
+            "LastChar" => Object::Integer(65),
+            // De breedte van 'A'. Dat is wat de oude code hier zou laten staan.
+            "Widths" => Object::Array(vec![Object::Integer(700)]),
+            "Encoding" => Object::Dictionary(enc),
+            "FontDescriptor" => Object::Reference(fd_id),
+        }));
+
+        let _ = sync_widths_from_embedded_fonts(&mut doc);
+
+        assert_eq!(
+            widths_entry(&doc, font_id, 65),
+            300,
+            "code 65 wijst via /Differences naar /five (300), niet naar 'A' (700)"
+        );
+    }
+
+    /// Zonder /Differences moet de codering het werk blijven doen, anders zou
+    /// de reparatie hierboven de 63% gevallen breken die het altijd al goed deden.
+    #[test]
+    fn test_sync_widths_truetype_without_differences_uses_encoding() {
+        let mut doc = Document::with_version("1.7");
+        let font_data = minimal_truetype();
+        let lengte = font_data.len() as i64;
+        let stream = Stream::new(dictionary! { "Length1" => lengte }, font_data);
+        let font_file_id = doc.add_object(Object::Stream(stream));
+
+        let fd_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "TestTrueType",
+            "Flags" => Object::Integer(32),
+            "FontFile2" => Object::Reference(font_file_id),
+        }));
+
+        let font_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "TrueType",
+            "BaseFont" => "TestTrueType",
+            "FirstChar" => Object::Integer(65),
+            "LastChar" => Object::Integer(65),
+            "Widths" => Object::Array(vec![Object::Integer(1)]),
+            "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec()),
+            "FontDescriptor" => Object::Reference(fd_id),
+        }));
+
+        let _ = sync_widths_from_embedded_fonts(&mut doc);
+
+        assert_eq!(
+            widths_entry(&doc, font_id, 65),
+            700,
+            "zonder /Differences blijft code 65 gewoon 'A'"
         );
     }
 
