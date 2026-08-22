@@ -6,20 +6,20 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**87 van 676 publieke functies** (12.9%).
+**84 van 676 publieke functies** (12.4%).
 
 Daarvan dragen er **23** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export) en 7 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **64** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **61** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
 | `pdf-desktop` | 16 | 26 |
 | `pdf-compliance` | 13 | 178 |
 | `pdf-manip` | 10 | 132 |
-| `pdf-sign` | 9 | 23 |
 | `lopdf` | 6 | 25 |
 | `pdf-ocr` | 6 | 26 |
+| `pdf-sign` | 6 | 23 |
 | `pdf-xfa` | 5 | 58 |
 | `xfa-test-runner` | 4 | 26 |
 | `cff-parser` | 3 | 8 |
@@ -146,12 +146,9 @@ De overige **64** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 ## pdf-sign
 
 - `check_revocation_embedded`  — *(geen reden opgegeven)*
-- `get_docmdp_permission`  — *(geen reden opgegeven)*
-- `get_field_mdp_locks`  — *(geen reden opgegeven)*
 - `has_appearance_stream`  — *(geen reden opgegeven)*
 - `parse_seed_values`  — *(geen reden opgegeven)*
 - `request_timestamp`  — *(geen reden opgegeven)*
-- `sign_pdf_incremental`  — *(geen reden opgegeven)*
 - `sign_pdf_ltv`  — *(geen reden opgegeven)*
 - `verify_certificate_chain`  — *(geen reden opgegeven)*
 
