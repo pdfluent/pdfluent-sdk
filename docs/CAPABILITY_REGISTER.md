@@ -363,7 +363,7 @@ delivered through it.
 | `pdfluent-forms` | 1.0.0-beta.18 | direct | 2 | 70 | `quality:cargo-test` |
 | `pdfluent-jbig2` | 0.2.3 | internal | — | 9 | `quality:cargo-test` |
 | `pdfluent-jpeg2000` | 0.3.5 | internal | — | 7 | `quality:cargo-test` |
-| `pdfluent-lopdf` | 0.39.4 | direct | 1 | 105 | `quality:cargo-test` |
+| `pdfluent-lopdf` | 0.39.4 | direct | 1 | 109 | `quality:cargo-test` |
 | `pdfluent-sign` | 1.0.0-beta.18 | direct | — | 59 | `quality:cargo-test` |
 | `xfa-dom-resolver` | 1.0.0-beta.18 | internal | 1 | 32 | `quality:cargo-test` |
 | `xfa-js-sandboxed` | 1.0.0-beta.18 | internal | 5 | 8 | `quality:cargo-test` |
