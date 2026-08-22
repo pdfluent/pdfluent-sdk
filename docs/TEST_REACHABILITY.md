@@ -6,19 +6,19 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**91 van 676 publieke functies** (13.5%).
+**89 van 676 publieke functies** (13.2%).
 
 Daarvan dragen er **23** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export) en 7 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **68** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **66** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
 | `pdf-desktop` | 16 | 26 |
 | `pdf-compliance` | 13 | 178 |
 | `pdf-manip` | 10 | 132 |
-| `lopdf` | 9 | 25 |
 | `pdf-sign` | 9 | 23 |
+| `lopdf` | 8 | 25 |
 | `pdf-ocr` | 6 | 26 |
 | `pdf-xfa` | 5 | 58 |
 | `xfa-test-runner` | 4 | 26 |
@@ -29,7 +29,6 @@ De overige **68** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 | `hayro-jpeg2000` | 1 | 1 |
 | `pdf-annot` | 1 | 4 |
 | `pdf-bench` | 1 | 1 |
-| `pdf-content-stream` | 1 | 11 |
 | `pdf-extract` | 1 | 13 |
 | `pdf-forms` | 1 | 29 |
 | `xfa-cli` | 1 | 5 |
@@ -60,7 +59,6 @@ De overige **68** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 - `encode_row`  — *(geen reden opgegeven)*
 - `encrypt_object`  — *(geen reden opgegeven)*
 - `indirect_object`  — *(geen reden opgegeven)*
-- `substring`  — *(geen reden opgegeven)*
 - `xref_and_trailer`  — *(geen reden opgegeven)*
 
 ## pdf-annot
@@ -86,10 +84,6 @@ De overige **68** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 - `check_xmp_schemas`  — *(geen reden opgegeven)*
 - `has_embedded_files`  — *(geen reden opgegeven)*
 - `parse_structure_tree`  — *(geen reden opgegeven)*
-
-## pdf-content-stream
-
-- `verify_contiguity`  — *(geen reden opgegeven)*
 
 ## pdf-desktop
 

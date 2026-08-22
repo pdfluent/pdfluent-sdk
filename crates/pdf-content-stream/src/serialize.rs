@@ -51,15 +51,74 @@ pub fn verify_round_trip(input: &[u8], ops: &[ParsedOp]) -> bool {
 ///
 /// Returns `Ok(())` if the invariant holds.
 pub fn verify_contiguity(ops: &[ParsedOp]) -> Result<(), String> {
-    for window in ops.windows(2) {
+    // De index kwam uit `byte_start` in plaats van uit de positie in de lijst,
+    // en `b.byte_start` stond er twee keer. De melding zei dus "op[1234]" met
+    // een byte-offset waar een opnummer hoort -- misleidend op precies het
+    // moment dat iemand hem nodig heeft.
+    for (i, window) in ops.windows(2).enumerate() {
         let a = &window[0];
         let b = &window[1];
         if a.byte_end != b.byte_start {
             return Err(format!(
                 "gap between op[{}] (byte_end={}) and op[{}] (byte_start={})",
-                a.byte_start, a.byte_end, b.byte_start, b.byte_start,
+                i,
+                a.byte_end,
+                i + 1,
+                b.byte_start,
             ));
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod contiguity_tests {
+    use super::verify_contiguity;
+    use crate::ops::ContentOp;
+    use crate::parser::ParsedOp;
+
+    fn op(start: usize, end: usize) -> ParsedOp {
+        ParsedOp {
+            byte_start: start,
+            byte_end: end,
+            op: ContentOp::BeginText,
+        }
+    }
+
+    /// De geparste instructies moeten de invoer zonder gaten betegelen. Zit er
+    /// een gat, dan vallen die bytes bij het terugschrijven weg — en dat is
+    /// stille inhoudsverlies, niet een foutmelding.
+    #[test]
+    fn a_contiguous_run_is_accepted() {
+        assert!(verify_contiguity(&[op(0, 3), op(3, 7), op(7, 12)]).is_ok());
+    }
+
+    #[test]
+    fn a_gap_is_refused() {
+        let r = verify_contiguity(&[op(0, 3), op(5, 9)]);
+        assert!(r.is_err(), "een gat van byte 3 tot 5 hoort te weigeren");
+    }
+
+    /// De melding moet de plek in de lijst noemen, niet een byte-offset. Dit is
+    /// de assertie die de oude tekst rood maakt.
+    #[test]
+    fn the_message_names_the_op_index_not_a_byte_offset() {
+        let fout = verify_contiguity(&[op(100, 103), op(105, 109)]).unwrap_err();
+        assert!(fout.contains("op[0]"), "verwacht de index 0, kreeg: {fout}");
+        assert!(fout.contains("op[1]"), "verwacht de index 1, kreeg: {fout}");
+        assert!(fout.contains("byte_end=103"), "kreeg: {fout}");
+        assert!(fout.contains("byte_start=105"), "kreeg: {fout}");
+    }
+
+    #[test]
+    fn overlap_is_a_gap_too() {
+        // byte_end voorbij de volgende byte_start is net zo goed niet aaneengesloten.
+        assert!(verify_contiguity(&[op(0, 8), op(5, 9)]).is_err());
+    }
+
+    #[test]
+    fn zero_or_one_op_is_trivially_contiguous() {
+        assert!(verify_contiguity(&[]).is_ok());
+        assert!(verify_contiguity(&[op(4, 9)]).is_ok());
+    }
 }

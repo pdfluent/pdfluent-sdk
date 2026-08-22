@@ -715,3 +715,42 @@ mod tests {
         assert!(extracted_text.contains("Hi World! Hi Universe!"));
     }
 }
+
+#[cfg(test)]
+mod substring_tests {
+    use super::substring;
+
+    /// `start` telt tekens, geen bytes. Dat onderscheid is hier het hele punt:
+    /// een byte-index in `&s[i..]` laat Rust panieken zodra hij midden in een
+    /// meerbyte-teken valt, en tekst in een PDF is zelden puur ASCII.
+    #[test]
+    fn start_counts_characters_not_bytes() {
+        // "héllo": h=1 byte, é=2 bytes. Teken 2 is de eerste l.
+        assert_eq!(substring("héllo", 0), "héllo");
+        assert_eq!(substring("héllo", 1), "éllo");
+        assert_eq!(substring("héllo", 2), "llo");
+    }
+
+    #[test]
+    fn multibyte_only_input_does_not_panic() {
+        assert_eq!(substring("日本語", 1), "本語");
+        assert_eq!(substring("日本語", 2), "語");
+    }
+
+    /// Voorbij het einde levert een lege string op in plaats van een paniek of
+    /// een afkapping. Een aanroeper die doortelt loopt zo netjes leeg.
+    #[test]
+    fn past_the_end_is_empty_rather_than_a_panic() {
+        assert_eq!(substring("abc", 3), "");
+        assert_eq!(substring("abc", 99), "");
+        assert_eq!(substring("", 0), "");
+        assert_eq!(substring("", 5), "");
+    }
+
+    #[test]
+    fn an_emoji_is_one_character() {
+        // Buiten de BMP: vier bytes, maar één teken.
+        assert_eq!(substring("a\u{1F600}b", 1), "\u{1F600}b");
+        assert_eq!(substring("a\u{1F600}b", 2), "b");
+    }
+}
