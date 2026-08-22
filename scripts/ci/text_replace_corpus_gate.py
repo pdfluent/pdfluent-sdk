@@ -64,6 +64,16 @@ class DocResult:
     replaced: bool
     extractable: bool
     note: str = ""
+    # The word this run picked, and what it wrote in its place.
+    #
+    # Without them a reported failure cannot be reproduced. On 22-08 the nine
+    # "replacement not found in extracted text" entries each took a separate
+    # experiment to re-derive the word, and six of the nine then replaced and
+    # extracted perfectly with a different word -- so the failure lives in the
+    # run that got hit, not in the document. That is a useful finding and it was
+    # nearly invisible: the artefact recorded the verdict and dropped the input.
+    needle: str = ""
+    replacement: str = ""
 
     @property
     def axis1(self) -> bool:
@@ -136,7 +146,8 @@ def run_one(runner: str, pdftotext: str, src: Path, workdir: Path,
             timeout=180,
         )
     except (subprocess.TimeoutExpired, OSError) as e:
-        return DocResult(name, True, False, False, False, f"runner failed: {e}")
+        return DocResult(name, True, False, False, False, f"runner failed: {e}",
+                         needle, replacement)
 
     if proc.returncode != 0 or not out_pdf.exists():
         detail = proc.stderr.decode("utf-8", errors="replace").strip().splitlines()
@@ -145,15 +156,17 @@ def run_one(runner: str, pdftotext: str, src: Path, workdir: Path,
         # outside reader did. That is a finding about the search, not a broken
         # replacement, and counting it as the latter buries it.
         engine_found = "no match for" not in last
-        return DocResult(name, True, engine_found, False, False, last[:120])
+        return DocResult(name, True, engine_found, False, False, last[:120],
+                         needle, replacement)
 
     after = extract_text(pdftotext, out_pdf)
     if after is None:
-        return DocResult(name, True, True, True, False, "edited file no longer extractable")
+        return DocResult(name, True, True, True, False, "edited file no longer extractable",
+                         needle, replacement)
 
     extractable = replacement in after
     note = "" if extractable else "replacement not found in extracted text"
-    return DocResult(name, True, True, True, extractable, note)
+    return DocResult(name, True, True, True, extractable, note, needle, replacement)
 
 
 def main() -> None:
