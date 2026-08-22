@@ -44,6 +44,7 @@ import json
 import os
 import platform
 import subprocess
+import statistics
 import sys
 import tempfile
 from pathlib import Path
@@ -128,6 +129,34 @@ def chars(mutool: str, pdf: Path) -> int:
     return count
 
 
+def print_distribution(measured: dict) -> None:
+    """De verdeling over de steekproef, ongeacht hoe de run afloopt.
+
+    Zonder dit levert een geslaagde run geen cijfer op: je weet dat niets
+    slechter werd, niet hoe goed het is. Een poort die alleen regressies meldt
+    kan geen bron zijn voor een uitspraak naar buiten, en dan wordt dat getal
+    alsnog met de hand ergens anders vandaan gehaald -- wat precies is hoe een
+    verkeerd cijfer maanden op een website blijft staan.
+
+    Staat vóór de --update-baseline-aftakking, want juist de run die de
+    basislijn vastlegt is de run waarvan je het cijfer wilt zien.
+    """
+    waarden = sorted(v for v in measured.values() if isinstance(v, (int, float)))
+    if not waarden:
+        return
+
+    def pct(q: float) -> float:
+        return waarden[min(int(len(waarden) * q), len(waarden) - 1)]
+
+    print("[retention] distribution over the sample:")
+    print(f"[retention]   median              {statistics.median(waarden):.1f}%")
+    print(f"[retention]   5th percentile      {pct(0.05):.1f}%")
+    print(f"[retention]   lowest              {waarden[0]:.1f}%")
+    print(f"[retention]   at or above 100%    {sum(1 for v in waarden if v >= 100.0)}/{len(waarden)}")
+    print(f"[retention]   below 95%           {sum(1 for v in waarden if v < 95.0)}")
+    print(f"[retention]   below 50%           {sum(1 for v in waarden if v < 50.0)}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -195,6 +224,8 @@ def main() -> None:
                 # Nothing to retain, nothing to judge.
                 continue
             measured[name] = round(100.0 * o / s, 1)
+
+    print_distribution(measured)
 
     if args.update_baseline:
         # Per-platform documents map: font substitution differs per host, so a
