@@ -6,17 +6,17 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**76 van 653 publieke functies** (11.6%).
+**75 van 653 publieke functies** (11.5%).
 
 Daarvan dragen er **27** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export), 7 zijn een omhulsel dat niets doet dan doorgeven aan een variant die wél getest wordt, en 4 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **49** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **48** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
 | `pdf-desktop` | 16 | 26 |
 | `pdf-compliance` | 11 | 178 |
-| `pdf-manip` | 7 | 109 |
+| `pdf-manip` | 6 | 109 |
 | `pdf-ocr` | 6 | 26 |
 | `pdf-sign` | 6 | 23 |
 | `pdf-xfa` | 5 | 58 |
@@ -116,7 +116,6 @@ De overige **49** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 - `fix_simple_truetype_widths`  — *gemeten besluit*
 - `fix_type0_cmap_cidsysteminfo`  — *gemeten besluit*
 - `fix_type1_widths`  — *gemeten besluit*
-- `open_encrypted`  — *(geen reden opgegeven)*
 - `rearrange_pages`  — *delegatie*
 - `run_structure_fixups`  — *(geen reden opgegeven)*
 
