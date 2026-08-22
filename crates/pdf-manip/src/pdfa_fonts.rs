@@ -28,6 +28,13 @@ static TYPE1_SUBSET_FONT_PROGRAM_PARSE_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Snapshot all font encodings before the font pipeline runs.
 /// Returns a map of font_id → original Encoding object for all simple fonts
 /// that have an Encoding entry.
+/// **Correct, tested, and called by nothing.**
+///
+/// This pair is a safety net against encodings the font pipeline removes, and
+/// on 22-08-2026 it behaved exactly as it should on 797 documents: nothing to
+/// restore on untouched input. It is simply not connected to anything, so the
+/// net is not under the trapeze. Unlike the other unwired passes in this file
+/// there is no evidence it would do harm -- only that it currently does nothing.
 pub fn snapshot_font_encodings(doc: &Document) -> std::collections::HashMap<ObjectId, Object> {
     let mut snapshot = std::collections::HashMap::new();
     for (&id, obj) in doc.objects.iter() {
@@ -55,6 +62,13 @@ pub fn snapshot_font_encodings(doc: &Document) -> std::collections::HashMap<Obje
 /// For subset fonts: restores the original encoding if it was removed OR
 /// changed (e.g., from a simple /MacRomanEncoding to a dict with Differences).
 /// For non-subset fonts: only restores if encoding was completely removed.
+/// **Correct, tested, and called by nothing.**
+///
+/// This pair is a safety net against encodings the font pipeline removes, and
+/// on 22-08-2026 it behaved exactly as it should on 797 documents: nothing to
+/// restore on untouched input. It is simply not connected to anything, so the
+/// net is not under the trapeze. Unlike the other unwired passes in this file
+/// there is no evidence it would do harm -- only that it currently does nothing.
 pub fn restore_stripped_encodings(
     doc: &mut Document,
     original_encodings: &std::collections::HashMap<ObjectId, Object>,
@@ -1493,6 +1507,11 @@ fn embed_bare_fonts(doc: &mut Document) -> usize {
 /// Without Encoding, veraPDF may use font-internal cmap tables that differ
 /// between the original and substitute fonts, causing width mismatches.
 /// Must run AFTER embed_fonts and fix_font_width_mismatches.
+/// **Not wired into any pipeline, and measured to do nothing.**
+///
+/// On 22-08-2026: no repairs on 797 untouched documents, and no veraPDF verdict changed either way over
+/// 40 documents. Nothing in this workspace calls it. Reproduce with
+/// `examples/unwired_pass_probe.rs`.
 pub fn ensure_truetype_encoding(doc: &mut Document) -> usize {
     // Build set of FD IDs that have FontFile2
     let mut ff2_fds: std::collections::HashSet<ObjectId> = Default::default();
@@ -4832,6 +4851,15 @@ pub fn fix_font_descriptor_metrics(doc: &mut Document) -> usize {
 /// Ascent, Descent, CapHeight, FontBBox in the FontDescriptor, and
 /// Widths in the font dictionary to match the actual font data.
 #[allow(dead_code)]
+/// **Not wired into any pipeline, and measured harmful if you wire it in.**
+///
+/// On 22-08-2026 this reported 880 repairs across 99 of 200 converted documents, and it converges, so the
+/// changes are real. veraPDF disagrees about their value: over 40 documents,
+/// applying this after a full PDF/A conversion improved **no** verdict and
+/// turned **6 of 40** from PASS to FAIL.
+///
+/// Nothing in this workspace calls it. That is not neglect. Reproduce with
+/// `examples/unwired_pass_probe.rs` before assuming otherwise.
 pub fn fix_embedded_font_metrics(doc: &mut Document) -> usize {
     let font_ids: Vec<ObjectId> = doc
         .objects
@@ -7602,6 +7630,15 @@ fn extract_glyph_names_from_charstrings(data: &[u8]) -> Option<String> {
 /// Only processes fonts with WinAnsiEncoding or MacRomanEncoding to avoid
 /// regression from incorrect encoding assumptions. Compares existing /Widths
 /// against hmtx table and fixes mismatches.
+/// **Not wired into any pipeline, and measured harmful if you wire it in.**
+///
+/// On 22-08-2026 this reported 337 repairs across 49 of 200 converted documents, and it converges, so the
+/// changes are real. veraPDF disagrees about their value: over 40 documents,
+/// applying this after a full PDF/A conversion improved **no** verdict and
+/// turned **1 of 40** from PASS to FAIL.
+///
+/// Nothing in this workspace calls it. That is not neglect. Reproduce with
+/// `examples/unwired_pass_probe.rs` before assuming otherwise.
 pub fn fix_simple_truetype_widths(doc: &mut Document) -> usize {
     let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     let mut fixed = 0;
@@ -7746,6 +7783,15 @@ pub fn fix_simple_truetype_widths(doc: &mut Document) -> usize {
 ///
 /// Reads glyph widths from FontFile3 (CFF) and updates the /Widths array.
 /// Only processes Type1 fonts that have a CFF program embedded.
+/// **Not wired into any pipeline, and measured harmful if you wire it in.**
+///
+/// On 22-08-2026 this reported 1420 repairs across 200 of 200 converted documents, and it converges, so the
+/// changes are real. veraPDF disagrees about their value: over 40 documents,
+/// applying this after a full PDF/A conversion improved **no** verdict and
+/// turned **5 of 40** from PASS to FAIL.
+///
+/// Nothing in this workspace calls it. That is not neglect. Reproduce with
+/// `examples/unwired_pass_probe.rs` before assuming otherwise.
 pub fn fix_type1_widths(doc: &mut Document) -> usize {
     let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     let mut fixed = 0;
@@ -8144,6 +8190,11 @@ fn is_predefined_cmap(cmap_name: &str) -> bool {
 /// §6.2.11.3.1: CIDSystemInfo Registry/Ordering mismatch between the CMap
 /// and the CIDFont descendant. When they disagree, the CIDFont's CIDSystemInfo
 /// is updated to match the CMap.
+/// **Not wired into any pipeline, and measured to do nothing.**
+///
+/// On 22-08-2026: no repairs on 797 untouched documents, and no veraPDF verdict changed either way over
+/// 40 documents. Nothing in this workspace calls it. Reproduce with
+/// `examples/unwired_pass_probe.rs`.
 pub fn fix_type0_cmap_cidsysteminfo(doc: &mut Document) -> usize {
     #[derive(Debug, Clone)]
     struct Type0CmapInfo {
@@ -15724,6 +15775,11 @@ pub fn fix_truetype_unicode_cmap(doc: &mut Document) -> usize {
 /// When the current PDF width already matches the raw Mac-cmap glyph advance,
 /// add a targeted alias in the (3,1) cmap so veraPDF resolves the byte through
 /// the same GID during §6.2.11.5 width validation.
+/// **Not wired into any pipeline, and measured to do nothing.**
+///
+/// On 22-08-2026: 20 repairs across 14 of 200 converted documents, and no veraPDF verdict changed either way over
+/// 40 documents. Nothing in this workspace calls it. Reproduce with
+/// `examples/unwired_pass_probe.rs`.
 pub fn fix_truetype_macroman_unicode_aliases(doc: &mut Document) -> usize {
     use std::collections::{BTreeMap, HashMap};
 
