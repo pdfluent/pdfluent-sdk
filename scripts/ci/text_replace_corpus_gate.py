@@ -29,6 +29,22 @@ RULES THIS GATE FOLLOWS
   * A document that cannot be opened at all is not counted as a failure of
     replacement — it is reported separately. Mixing "we broke it" with "it was
     already broken" makes both unreadable.
+  * The baseline records which word-picking rule produced it (METHODOLOGY).
+    Change the rule and the gate re-records instead of judging, because
+    per-document verdicts are not comparable across it.
+
+WHAT THIS MEASURE CANNOT TELL YOU
+
+One word per document. Measured 22-08: of nine documents whose replacement was
+not found in the extracted text, six replaced and extracted perfectly with a
+different word from the same document. So a per-document verdict says as much
+about which word the run happened to pick as about the engine, and the aggregate
+carries that noise with it.
+
+That is a limit of the design, not a bug in it, and it is the reason the gate
+judges per document against a baseline rather than publishing the rate. Before
+any rate from here goes outside, it needs several words per document — otherwise
+the number moves when nothing changed.
 
 Exit codes:
     0  gate passed
