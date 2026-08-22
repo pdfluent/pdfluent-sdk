@@ -3571,7 +3571,7 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 continue;
             }
 
-            let (first_char, last_char, existing_widths, enc) = {
+            let (first_char, last_char, existing_widths, enc, differences, widths_ref) = {
                 let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
                     continue;
                 };
@@ -3583,19 +3583,41 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                     Some(Object::Integer(i)) => *i as u32,
                     _ => 255,
                 };
+                // /Widths mag indirect staan, en 6,02% van de lettertypen in
+                // het corpus doet dat ook. Alleen de directe vorm lezen maakte
+                // van al die gevallen een lege lijst, en dan kan hieronder niet
+                // meer worden vastgesteld dat de breedtes al klopten: `changed`
+                // wordt onvoorwaardelijk waar en het document wordt aangeraakt
+                // waar dat niet nodig was. Elders in dit bestand gebeurt het al
+                // wel goed (zie de opmerking "Widths may be inline or an
+                // indirect reference").
+                let widths_ref = match font.get(b"Widths").ok() {
+                    Some(Object::Reference(r)) => Some(*r),
+                    _ => None,
+                };
                 let widths = match font.get(b"Widths").ok() {
                     Some(Object::Array(arr)) => arr.clone(),
+                    Some(Object::Reference(r)) => match doc.get_object(*r) {
+                        Ok(Object::Array(arr)) => arr.clone(),
+                        _ => vec![],
+                    },
                     _ => vec![],
                 };
-                let enc = font
-                    .get(b"Encoding")
-                    .ok()
-                    .and_then(|o| match o {
-                        Object::Name(n) => String::from_utf8(n.clone()).ok(),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-                (first_char, last_char, widths, enc)
+                // Resolve through get_simple_encoding_info, the same way the CFF
+                // branch below already does. Reading /Encoding as a bare name here
+                // was wrong for one embedded simple font in five: measured on 3000
+                // govdocs documents, 3160 of 15737 fonts on this code path carry an
+                // /Encoding dictionary with /Differences (20.08%), and this match
+                // turned every one of them into an empty string. encoding_to_char
+                // then fell through to "identity below 128, WinAnsi above", so the
+                // advance written into /Widths belonged to whatever glyph that guess
+                // landed on rather than to the one /Differences names.
+                //
+                // This is the same defect that was found and fixed on the CFF side
+                // (see the comment there about MacRoman 212 = /quoteleft on govdocs
+                // 000_000840); it was never carried across to TrueType.
+                let (enc, differences) = get_simple_encoding_info(doc, font);
+                (first_char, last_char, widths, enc, differences, widths_ref)
             };
 
             let mut new_widths: Vec<Object> =
@@ -3604,8 +3626,17 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 existing_widths.len() != (last_char.saturating_sub(first_char) + 1) as usize;
             for code in first_char..=last_char {
                 let idx = (code - first_char) as usize;
-                let ch = encoding_to_char(code, &enc);
-                let expected = if let Some(gid) = face.glyph_index(ch) {
+                // A code named by /Differences is resolved by glyph name first,
+                // then through the name's Unicode value. Only a code that
+                // /Differences says nothing about falls back to the encoding's
+                // character mapping.
+                let gid = match differences.get(&code) {
+                    Some(glyph_name) => face.glyph_index_by_name(glyph_name).or_else(|| {
+                        glyph_name_to_unicode(glyph_name).and_then(|ch| face.glyph_index(ch))
+                    }),
+                    None => face.glyph_index(encoding_to_char(code, &enc)),
+                };
+                let expected = if let Some(gid) = gid {
                     face.glyph_hor_advance(gid)
                         .map(|w| (w as f64 * 1000.0 / units_per_em).round() as i32)
                         .unwrap_or(0)
@@ -3628,8 +3659,23 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
             }
 
             if changed {
-                if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&font_id) {
-                    font.set("Widths", Object::Array(new_widths));
+                // Was /Widths een verwijzing, dan wordt het verwezen object
+                // bijgewerkt. Er een directe array overheen leggen laat het oude
+                // object verweesd achter -- extra bytes in een bestand dat juist
+                // voor de lange termijn wordt klaargemaakt.
+                match widths_ref {
+                    Some(widths_id) => {
+                        if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&widths_id) {
+                            *arr = new_widths;
+                        }
+                    }
+                    None => {
+                        if let Some(Object::Dictionary(ref mut font)) =
+                            doc.objects.get_mut(&font_id)
+                        {
+                            font.set("Widths", Object::Array(new_widths));
+                        }
+                    }
                 }
                 fixed += 1;
             }
@@ -3649,7 +3695,7 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 }
             }
         } else if let Some(cff) = cff_parser::Table::parse(&font_data) {
-            let (first_char, last_char, existing_widths, enc_name, differences) = {
+            let (first_char, last_char, existing_widths, enc_name, differences, widths_ref) = {
                 let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
                     continue;
                 };
@@ -3661,12 +3707,35 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                     Some(Object::Integer(i)) => *i as u32,
                     _ => 255,
                 };
+                // /Widths mag indirect staan, en 6,02% van de lettertypen in
+                // het corpus doet dat ook. Alleen de directe vorm lezen maakte
+                // van al die gevallen een lege lijst, en dan kan hieronder niet
+                // meer worden vastgesteld dat de breedtes al klopten: `changed`
+                // wordt onvoorwaardelijk waar en het document wordt aangeraakt
+                // waar dat niet nodig was. Elders in dit bestand gebeurt het al
+                // wel goed (zie de opmerking "Widths may be inline or an
+                // indirect reference").
+                let widths_ref = match font.get(b"Widths").ok() {
+                    Some(Object::Reference(r)) => Some(*r),
+                    _ => None,
+                };
                 let widths = match font.get(b"Widths").ok() {
                     Some(Object::Array(arr)) => arr.clone(),
+                    Some(Object::Reference(r)) => match doc.get_object(*r) {
+                        Ok(Object::Array(arr)) => arr.clone(),
+                        _ => vec![],
+                    },
                     _ => vec![],
                 };
                 let (enc_name, differences) = get_simple_encoding_info(doc, font);
-                (first_char, last_char, widths, enc_name, differences)
+                (
+                    first_char,
+                    last_char,
+                    widths,
+                    enc_name,
+                    differences,
+                    widths_ref,
+                )
             };
 
             let upem = {
@@ -3726,8 +3795,23 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
             }
 
             if changed {
-                if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&font_id) {
-                    font.set("Widths", Object::Array(new_widths));
+                // Was /Widths een verwijzing, dan wordt het verwezen object
+                // bijgewerkt. Er een directe array overheen leggen laat het oude
+                // object verweesd achter -- extra bytes in een bestand dat juist
+                // voor de lange termijn wordt klaargemaakt.
+                match widths_ref {
+                    Some(widths_id) => {
+                        if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&widths_id) {
+                            *arr = new_widths;
+                        }
+                    }
+                    None => {
+                        if let Some(Object::Dictionary(ref mut font)) =
+                            doc.objects.get_mut(&font_id)
+                        {
+                            font.set("Widths", Object::Array(new_widths));
+                        }
+                    }
                 }
                 fixed += 1;
             }
@@ -23978,8 +24062,22 @@ pub fn fix_cff_subset_missing_space(doc: &mut Document) -> usize {
         };
         match encoding_id {
             Some(enc_id) => {
-                if let Some(Object::Dictionary(enc)) = doc.objects.get_mut(&enc_id) {
-                    append_space_difference(enc, SPACE_CODE);
+                // Staat /Differences als eigen object, volg dan die verwijzing.
+                // Anders leest append_space_difference een lege lijst en vervangt
+                // het de hele code-naar-glyph-afbeelding door een enkele
+                // vermelding -- dezelfde schade als hierboven, een laag dieper.
+                let arr_ref = match doc.objects.get(&enc_id) {
+                    Some(Object::Dictionary(enc)) => differences_array_ref(enc),
+                    _ => None,
+                };
+                let gedaan = match arr_ref {
+                    Some(arr_id) => push_space_into_differences_array(doc, arr_id, SPACE_CODE),
+                    None => false,
+                };
+                if !gedaan {
+                    if let Some(Object::Dictionary(enc)) = doc.objects.get_mut(&enc_id) {
+                        append_space_difference(enc, SPACE_CODE);
+                    }
                 }
             }
             None => {
@@ -23988,11 +24086,25 @@ pub fn fix_cff_subset_missing_space(doc: &mut Document) -> usize {
                 // /Differences, re-basing the font on the program's built-in
                 // encoding and turning WinAnsi-mapped glyphs into .notdef
                 // (govdocs 001_001688: minus signs vanished from the table).
-                let mut handled = false;
-                if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
-                    if let Ok(Object::Dictionary(old)) = font.get_mut(b"Encoding") {
-                        append_space_difference(old, SPACE_CODE);
-                        handled = true;
+                // Ook een inline woordenboek kan zijn /Differences als eigen
+                // object hebben staan.
+                let inline_arr_ref = match doc.objects.get(&font_id) {
+                    Some(Object::Dictionary(font)) => match font.get(b"Encoding") {
+                        Ok(Object::Dictionary(enc)) => differences_array_ref(enc),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let mut handled = match inline_arr_ref {
+                    Some(arr_id) => push_space_into_differences_array(doc, arr_id, SPACE_CODE),
+                    None => false,
+                };
+                if !handled {
+                    if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
+                        if let Ok(Object::Dictionary(old)) = font.get_mut(b"Encoding") {
+                            append_space_difference(old, SPACE_CODE);
+                            handled = true;
+                        }
                     }
                 }
                 if !handled {
@@ -24075,6 +24187,31 @@ fn deref<'a>(doc: &'a Document, obj: &'a Object) -> &'a Object {
 }
 
 /// Append `<code> /space` to an encoding dictionary's `/Differences`.
+/// Het /Differences van een coderingswoordenboek mag zelf een verwijzing zijn.
+/// Gemeten op de groep die deze pas raakt -- kale CFF, `FontFile3` beginnend met
+/// `0x01` -- doet 0,87% van de lettertypen dat (70 van 8010 in 3000
+/// govdocs-documenten).
+fn differences_array_ref(enc: &lopdf::Dictionary) -> Option<ObjectId> {
+    match enc.get(b"Differences") {
+        Ok(Object::Reference(r)) => Some(*r),
+        _ => None,
+    }
+}
+
+/// Zet `<code> /space` achter een /Differences-array dat een eigen object is.
+/// Geeft terug of dat gelukt is, zodat de aanroeper niet stil doorloopt wanneer
+/// de verwijzing nergens heen wijst.
+fn push_space_into_differences_array(doc: &mut Document, arr_id: ObjectId, code: i64) -> bool {
+    match doc.objects.get_mut(&arr_id) {
+        Some(Object::Array(arr)) => {
+            arr.push(Object::Integer(code));
+            arr.push(Object::Name(b"space".to_vec()));
+            true
+        }
+        _ => false,
+    }
+}
+
 fn append_space_difference(enc: &mut lopdf::Dictionary, code: i64) {
     let mut diffs = match enc.get(b"Differences") {
         Ok(Object::Array(a)) => a.clone(),
@@ -24934,6 +25071,345 @@ end
         );
     }
 
+    /// Een minimale TrueType: vier glyphs, een cmap en een hmtx.
+    ///
+    /// Er staat geen fontbestand in de repo, en een systeemfont zou de test op
+    /// de ene machine wel en op de andere niet laten draaien -- een stille
+    /// overslag, precies wat hier uitgesloten moet worden. De
+    /// breedtesynchronisatie heeft alleen glyph_index() en glyph_hor_advance()
+    /// nodig, dus omtrekken (glyf/loca) kunnen weg; ttf_parser eist enkel head,
+    /// hhea en maxp.
+    ///
+    /// Glyph 1 staat op 'A' en is 700 breed, glyph 2 staat op '5' en is 300
+    /// breed. Dat verschil is wat de test kan zien.
+    fn minimal_truetype() -> Vec<u8> {
+        fn be16(v: u16) -> Vec<u8> {
+            v.to_be_bytes().to_vec()
+        }
+        fn be32(v: u32) -> Vec<u8> {
+            v.to_be_bytes().to_vec()
+        }
+
+        let mut head = Vec::new();
+        head.extend(be32(0x0001_0000)); // version
+        head.extend(be32(0x0001_0000)); // fontRevision
+        head.extend(be32(0)); // checkSumAdjustment
+        head.extend(be32(0x5F0F_3CF5)); // magicNumber
+        head.extend(be16(0)); // flags
+        head.extend(be16(1000)); // unitsPerEm
+        head.extend([0u8; 8]); // created
+        head.extend([0u8; 8]); // modified
+        head.extend(be16(0)); // xMin
+        head.extend(be16(0)); // yMin
+        head.extend(be16(1000)); // xMax
+        head.extend(be16(1000)); // yMax
+        head.extend(be16(0)); // macStyle
+        head.extend(be16(8)); // lowestRecPPEM
+        head.extend(be16(0)); // fontDirectionHint
+        head.extend(be16(0)); // indexToLocFormat
+        head.extend(be16(0)); // glyphDataFormat
+        assert_eq!(head.len(), 54);
+
+        let mut hhea = Vec::new();
+        hhea.extend(be32(0x0001_0000)); // version
+        hhea.extend(be16(800)); // ascender
+        hhea.extend(be16(0xFF38)); // descender (-200)
+        hhea.extend(be16(0)); // lineGap
+        hhea.extend(be16(700)); // advanceWidthMax
+        hhea.extend(be16(0)); // minLeftSideBearing
+        hhea.extend(be16(0)); // minRightSideBearing
+        hhea.extend(be16(700)); // xMaxExtent
+        hhea.extend(be16(1)); // caretSlopeRise
+        hhea.extend(be16(0)); // caretSlopeRun
+        hhea.extend(be16(0)); // caretOffset
+        hhea.extend([0u8; 8]); // vier gereserveerde velden
+        hhea.extend(be16(0)); // metricDataFormat
+        hhea.extend(be16(4)); // numberOfHMetrics
+        assert_eq!(hhea.len(), 36);
+
+        let mut maxp = Vec::new();
+        maxp.extend(be32(0x0001_0000)); // version 1.0
+        maxp.extend(be16(4)); // numGlyphs
+        maxp.extend([0u8; 26]); // de rest van versie 1.0 mag nul zijn
+        assert_eq!(maxp.len(), 32);
+
+        // advanceWidth + leftSideBearing per glyph.
+        let mut hmtx = Vec::new();
+        for advance in [500u16, 700, 300, 500] {
+            hmtx.extend(be16(advance));
+            hmtx.extend(be16(0));
+        }
+
+        // cmap met één subtabel van formaat 6 (aaneengesloten reeks codes),
+        // want formaat 4 heeft segmenten en zoekhulpvelden die hier niets
+        // toevoegen behalve kans op een fout.
+        let eerste_code: u16 = b'5' as u16; // 53
+        let laatste_code: u16 = b'A' as u16; // 65
+        let aantal = laatste_code - eerste_code + 1;
+        let mut sub = Vec::new();
+        sub.extend(be16(6)); // format
+        sub.extend(be16(2 + 2 + 2 + 2 + 2 + aantal * 2)); // length
+        sub.extend(be16(0)); // language
+        sub.extend(be16(eerste_code));
+        sub.extend(be16(aantal));
+        for code in eerste_code..=laatste_code {
+            let gid = match code {
+                c if c == b'5' as u16 => 2u16,
+                c if c == b'A' as u16 => 1u16,
+                _ => 0,
+            };
+            sub.extend(be16(gid));
+        }
+        let mut cmap = Vec::new();
+        cmap.extend(be16(0)); // version
+        cmap.extend(be16(1)); // numTables
+        cmap.extend(be16(3)); // platformID: Windows
+        cmap.extend(be16(1)); // encodingID: Unicode BMP
+        cmap.extend(be32(12)); // offset naar de subtabel
+        cmap.extend(sub);
+
+        // Tabelnamen moeten oplopend gesorteerd staan in de directory.
+        let tabellen: Vec<(&[u8; 4], Vec<u8>)> = vec![
+            (b"cmap", cmap),
+            (b"head", head),
+            (b"hhea", hhea),
+            (b"hmtx", hmtx),
+            (b"maxp", maxp),
+        ];
+
+        let aantal_tabellen = tabellen.len() as u16;
+        let mut font = Vec::new();
+        font.extend(be32(0x0001_0000)); // sfnt version
+        font.extend(be16(aantal_tabellen));
+        font.extend(be16(0)); // searchRange
+        font.extend(be16(0)); // entrySelector
+        font.extend(be16(0)); // rangeShift
+
+        let mut offset = 12 + 16 * tabellen.len();
+        let mut directory = Vec::new();
+        let mut inhoud = Vec::new();
+        for (tag, data) in &tabellen {
+            directory.extend(tag.iter());
+            directory.extend(be32(0)); // checksum: ttf_parser controleert die niet
+            directory.extend(be32(offset as u32));
+            directory.extend(be32(data.len() as u32));
+            inhoud.extend(data.iter());
+            let opvulling = (4 - data.len() % 4) % 4;
+            inhoud.extend(std::iter::repeat_n(0u8, opvulling));
+            offset += data.len() + opvulling;
+        }
+        font.extend(directory);
+        font.extend(inhoud);
+        font
+    }
+
+    #[test]
+    fn test_minimal_truetype_is_parseable() {
+        // Zonder deze controle zou een fout in de fontopbouw hierboven zich
+        // voordoen als een geslaagde test hieronder: Face::parse zou falen, de
+        // TrueType-tak zou nooit worden bereikt, en /Widths bleef onaangeroerd
+        // op precies de waarde die de test verwacht.
+        let data = minimal_truetype();
+        let face = ttf_parser::Face::parse(&data, 0).expect("minimale TrueType moet parsen");
+        assert_eq!(face.units_per_em(), 1000);
+        let a = face.glyph_index('A').expect("'A' moet in de cmap staan");
+        let vijf = face.glyph_index('5').expect("'5' moet in de cmap staan");
+        assert_eq!(face.glyph_hor_advance(a), Some(700));
+        assert_eq!(face.glyph_hor_advance(vijf), Some(300));
+    }
+
+    #[test]
+    fn test_sync_widths_truetype_respects_encoding_differences() {
+        // Eén op de vijf ingebedde simpele lettertypen draagt een
+        // /Encoding-woordenboek met /Differences: gemeten op 3000
+        // govdocs-documenten, 3160 van 15737 lettertypen op dit codepad
+        // (20,08%). De TrueType-tak las /Encoding als een kale naam en maakte
+        // van al die gevallen een lege string, waarna encoding_to_char()
+        // terugviel op "identiteit onder 128". Code 65 werd dan 'A' terwijl
+        // /Differences zegt dat er /five staat.
+        //
+        // Dezelfde fout is eerder aan de CFF-kant gevonden en gerepareerd
+        // (MacRoman 212 = /quoteleft op govdocs 000_000840); dit is dezelfde
+        // functie, één tak verder.
+        let mut doc = Document::with_version("1.7");
+        let font_data = minimal_truetype();
+        let lengte = font_data.len() as i64;
+        let stream = Stream::new(dictionary! { "Length1" => lengte }, font_data);
+        let font_file_id = doc.add_object(Object::Stream(stream));
+
+        let fd_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "TestTrueType",
+            "Flags" => Object::Integer(32),
+            "FontFile2" => Object::Reference(font_file_id),
+        }));
+
+        let enc = dictionary! {
+            "Type" => "Encoding",
+            "Differences" => Object::Array(vec![
+                Object::Integer(65),
+                Object::Name(b"five".to_vec()),
+            ]),
+        };
+
+        let font_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "TrueType",
+            "BaseFont" => "TestTrueType",
+            "FirstChar" => Object::Integer(65),
+            "LastChar" => Object::Integer(65),
+            // De breedte van 'A'. Dat is wat de oude code hier zou laten staan.
+            "Widths" => Object::Array(vec![Object::Integer(700)]),
+            "Encoding" => Object::Dictionary(enc),
+            "FontDescriptor" => Object::Reference(fd_id),
+        }));
+
+        let _ = sync_widths_from_embedded_fonts(&mut doc);
+
+        assert_eq!(
+            widths_entry(&doc, font_id, 65),
+            300,
+            "code 65 wijst via /Differences naar /five (300), niet naar 'A' (700)"
+        );
+    }
+
+    /// Bouwt een document met een indirecte /Widths en geeft (font_id, widths_id).
+    fn doc_met_indirecte_widths(waarde: i64) -> (Document, ObjectId, ObjectId) {
+        let mut doc = Document::with_version("1.7");
+        let font_data = minimal_truetype();
+        let lengte = font_data.len() as i64;
+        let stream = Stream::new(dictionary! { "Length1" => lengte }, font_data);
+        let font_file_id = doc.add_object(Object::Stream(stream));
+
+        let fd_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "TestTrueType",
+            "Flags" => Object::Integer(32),
+            "FontFile2" => Object::Reference(font_file_id),
+        }));
+
+        let widths_id = doc.add_object(Object::Array(vec![Object::Integer(waarde)]));
+
+        let font_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "TrueType",
+            "BaseFont" => "TestTrueType",
+            "FirstChar" => Object::Integer(65),
+            "LastChar" => Object::Integer(65),
+            "Widths" => Object::Reference(widths_id),
+            "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec()),
+            "FontDescriptor" => Object::Reference(fd_id),
+        }));
+
+        (doc, font_id, widths_id)
+    }
+
+    fn widths_blijft_verwijzing(doc: &Document, font_id: ObjectId) -> bool {
+        let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+            panic!("font dict missing");
+        };
+        matches!(font.get(b"Widths"), Ok(Object::Reference(_)))
+    }
+
+    fn verwezen_breedte(doc: &Document, widths_id: ObjectId) -> i64 {
+        match doc.objects.get(&widths_id) {
+            Some(Object::Array(a)) => match &a[0] {
+                Object::Integer(i) => *i,
+                other => panic!("unexpected width: {other:?}"),
+            },
+            other => panic!("widths object is not an array: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_sync_widths_leaves_a_correct_indirect_widths_array_alone() {
+        // 6,02% van de lettertypen in het corpus draagt /Widths als verwijzing.
+        // Die werd als lege lijst gelezen, waarna `changed` onvoorwaardelijk
+        // waar werd: het document werd aangeraakt terwijl er niets mis was. Bij
+        // archivering is dat precies de verkeerde kant op.
+        let (mut doc, font_id, widths_id) = doc_met_indirecte_widths(700);
+        let voor = doc.objects.len();
+
+        let gerepareerd = sync_widths_from_embedded_fonts(&mut doc);
+
+        // Dit is de assertie die de leeskant vastlegt. De twee eronder niet: die
+        // blijven groen ook als /Widths weer als lege lijst wordt gelezen, want
+        // de waarde die er dan overheen wordt geschreven is dezelfde. Alleen de
+        // teller laat het verschil zien tussen "gecontroleerd en in orde" en
+        // "blind overschreven". Getoetst door het lezen terug te draaien.
+        assert_eq!(
+            gerepareerd, 0,
+            "breedtes die al kloppen mogen niet als reparatie tellen"
+        );
+        assert_eq!(verwezen_breedte(&doc, widths_id), 700);
+        assert!(
+            widths_blijft_verwijzing(&doc, font_id),
+            "een correcte indirecte /Widths mag geen directe array worden"
+        );
+        assert_eq!(
+            doc.objects.len(),
+            voor,
+            "er is niets bijgekomen; het oude array mag niet verweesd achterblijven"
+        );
+    }
+
+    #[test]
+    fn test_sync_widths_corrects_through_the_reference() {
+        // En als er wél iets mis is, moet de correctie in het verwezen object
+        // landen -- niet als directe array over de verwijzing heen, want dan
+        // blijft het oude object als dode bytes in het bestand staan.
+        let (mut doc, font_id, widths_id) = doc_met_indirecte_widths(1);
+
+        let _ = sync_widths_from_embedded_fonts(&mut doc);
+
+        assert_eq!(
+            verwezen_breedte(&doc, widths_id),
+            700,
+            "de breedte van 'A' hoort in het verwezen array te staan"
+        );
+        assert!(
+            widths_blijft_verwijzing(&doc, font_id),
+            "de verwijzing blijft een verwijzing"
+        );
+    }
+
+    /// Zonder /Differences moet de codering het werk blijven doen, anders zou
+    /// de reparatie hierboven de 63% gevallen breken die het altijd al goed deden.
+    #[test]
+    fn test_sync_widths_truetype_without_differences_uses_encoding() {
+        let mut doc = Document::with_version("1.7");
+        let font_data = minimal_truetype();
+        let lengte = font_data.len() as i64;
+        let stream = Stream::new(dictionary! { "Length1" => lengte }, font_data);
+        let font_file_id = doc.add_object(Object::Stream(stream));
+
+        let fd_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "TestTrueType",
+            "Flags" => Object::Integer(32),
+            "FontFile2" => Object::Reference(font_file_id),
+        }));
+
+        let font_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "TrueType",
+            "BaseFont" => "TestTrueType",
+            "FirstChar" => Object::Integer(65),
+            "LastChar" => Object::Integer(65),
+            "Widths" => Object::Array(vec![Object::Integer(1)]),
+            "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec()),
+            "FontDescriptor" => Object::Reference(fd_id),
+        }));
+
+        let _ = sync_widths_from_embedded_fonts(&mut doc);
+
+        assert_eq!(
+            widths_entry(&doc, font_id, 65),
+            700,
+            "zonder /Differences blijft code 65 gewoon 'A'"
+        );
+    }
+
     #[test]
     fn test_control_strip_preserves_type3_glyphs_on_control_codes() {
         // govdocs 000_000816: a Type3 font puts a real glyph (thindash) on
@@ -25026,6 +25502,321 @@ end
 #[cfg(test)]
 mod cff_space_encoding_tests {
     use super::*;
+
+    /// Een simpel lettertype met een `/FontDescriptor` waarvan de vlaggen te
+    /// zetten zijn. `subset` zet het zesletterige voorvoegsel met `+` ervoor.
+    fn font_met_vlaggen(
+        doc: &mut Document,
+        subtype: &[u8],
+        vlaggen: i64,
+        subset: bool,
+        encoding: Option<Object>,
+    ) -> ObjectId {
+        let fd_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "TestFont",
+            "Flags" => Object::Integer(vlaggen),
+        }));
+        let basefont: &[u8] = if subset {
+            b"ABCDEF+TestFont"
+        } else {
+            b"TestFont"
+        };
+        let mut font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => Object::Name(subtype.to_vec()),
+            "BaseFont" => Object::Name(basefont.to_vec()),
+            "FontDescriptor" => Object::Reference(fd_id),
+        };
+        if let Some(enc) = encoding {
+            font.set("Encoding", enc);
+        }
+        doc.add_object(Object::Dictionary(font))
+    }
+
+    fn encoding_van(doc: &Document, font_id: ObjectId) -> Option<Object> {
+        match doc.objects.get(&font_id) {
+            Some(Object::Dictionary(d)) => d.get(b"Encoding").ok().cloned(),
+            _ => None,
+        }
+    }
+
+    /// Dit paar is het vangnet tegen precies het coderingsverlies dat in dit
+    /// bestand al drie keer langs een andere weg is opgetreden. Tot nu toe werd
+    /// het door geen enkele test uitgeoefend -- niet bij naam en ook niet via
+    /// een omweg -- en een vangnet dat niemand test is geen vangnet.
+    #[test]
+    fn snapshot_records_simple_fonts_and_skips_the_rest() {
+        let mut doc = Document::with_version("1.7");
+        let simpel = font_met_vlaggen(
+            &mut doc,
+            b"Type1",
+            32,
+            false,
+            Some(Object::Name(b"WinAnsiEncoding".to_vec())),
+        );
+        let zonder_encoding = font_met_vlaggen(&mut doc, b"TrueType", 32, false, None);
+        // Type0 is samengesteld, niet simpel: hoort er niet in.
+        let type0 = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type0",
+            "BaseFont" => "TestType0",
+            "Encoding" => Object::Name(b"Identity-H".to_vec()),
+        }));
+        // Een woordenboek met de juiste Subtype maar zonder BaseFont is geen
+        // lettertype-woordenboek.
+        let geen_font = doc.add_object(Object::Dictionary(dictionary! {
+            "Subtype" => "Type1",
+            "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec()),
+        }));
+
+        let snap = snapshot_font_encodings(&doc);
+
+        assert!(
+            snap.contains_key(&simpel),
+            "het simpele lettertype ontbreekt"
+        );
+        assert!(
+            !snap.contains_key(&zonder_encoding),
+            "zonder /Encoding valt er niets te bewaren"
+        );
+        assert!(!snap.contains_key(&type0), "Type0 is niet simpel");
+        assert!(
+            !snap.contains_key(&geen_font),
+            "zonder /BaseFont is het geen lettertype"
+        );
+        assert_eq!(snap.len(), 1);
+    }
+
+    #[test]
+    fn restore_puts_back_an_encoding_the_pipeline_removed() {
+        let mut doc = Document::with_version("1.7");
+        let font_id = font_met_vlaggen(
+            &mut doc,
+            b"Type1",
+            32, // nonsymbolic
+            false,
+            Some(Object::Name(b"MacRomanEncoding".to_vec())),
+        );
+        let snap = snapshot_font_encodings(&doc);
+
+        // De pijplijn haalt de codering weg.
+        if let Some(Object::Dictionary(d)) = doc.objects.get_mut(&font_id) {
+            d.remove(b"Encoding");
+        }
+        assert!(encoding_van(&doc, font_id).is_none());
+
+        let hersteld = restore_stripped_encodings(&mut doc, &snap);
+
+        assert_eq!(hersteld, 1);
+        assert_eq!(
+            encoding_van(&doc, font_id).and_then(|o| o.as_name().ok().map(|n| n.to_vec())),
+            Some(b"MacRomanEncoding".to_vec()),
+        );
+    }
+
+    #[test]
+    fn restore_leaves_a_symbolic_truetype_without_an_encoding() {
+        // Een symbolische TrueType hoort zijn /Encoding juist kwijt te zijn
+        // (6.2.11.6:3). Terugzetten zou de reparatie ongedaan maken.
+        let mut doc = Document::with_version("1.7");
+        let font_id = font_met_vlaggen(
+            &mut doc,
+            b"TrueType",
+            4, // symbolic
+            false,
+            Some(Object::Name(b"WinAnsiEncoding".to_vec())),
+        );
+        let snap = snapshot_font_encodings(&doc);
+
+        if let Some(Object::Dictionary(d)) = doc.objects.get_mut(&font_id) {
+            d.remove(b"Encoding");
+        }
+
+        let hersteld = restore_stripped_encodings(&mut doc, &snap);
+
+        assert_eq!(
+            hersteld, 0,
+            "een symbolische TrueType mag zijn codering niet terugkrijgen"
+        );
+        assert!(encoding_van(&doc, font_id).is_none());
+    }
+
+    #[test]
+    fn restore_does_not_undo_a_changed_encoding_on_a_subset() {
+        // Bij subsets zijn de /Differences die de pijplijn toevoegt bedoeld:
+        // ze leggen .notdef-codes op /space om 6.2.11.8:1 te vermijden.
+        // Terugdraaien brengt die overtreding terug.
+        let mut doc = Document::with_version("1.7");
+        let font_id = font_met_vlaggen(
+            &mut doc,
+            b"Type1",
+            32,
+            true, // subset: ABCDEF+
+            Some(Object::Name(b"MacRomanEncoding".to_vec())),
+        );
+        let snap = snapshot_font_encodings(&doc);
+
+        // De pijplijn vervangt de naam door een woordenboek met /Differences.
+        let nieuwe_enc = Object::Dictionary(dictionary! {
+            "Type" => "Encoding",
+            "BaseEncoding" => Object::Name(b"MacRomanEncoding".to_vec()),
+            "Differences" => Object::Array(vec![
+                Object::Integer(127),
+                Object::Name(b"space".to_vec()),
+            ]),
+        });
+        if let Some(Object::Dictionary(d)) = doc.objects.get_mut(&font_id) {
+            d.set("Encoding", nieuwe_enc);
+        }
+
+        let hersteld = restore_stripped_encodings(&mut doc, &snap);
+
+        assert_eq!(
+            hersteld, 0,
+            "een bewust gewijzigde subset-codering blijft staan"
+        );
+        assert!(
+            matches!(encoding_van(&doc, font_id), Some(Object::Dictionary(_))),
+            "het woordenboek met /Differences is teruggedraaid naar de oude naam"
+        );
+    }
+
+    /// Bouwt de fixture van de test hieronder, maar met /Encoding als eigen
+    /// object en /Differences daarin als verwijzing naar een array.
+    fn doc_met_verwezen_differences() -> (Document, ObjectId, ObjectId) {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+
+        let ff = Stream::new(dictionary! {}, crate::cff_append::tests::synth_cff(&[2], 0));
+        let ff_id = doc.add_object(Object::Stream(ff));
+        let fd_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "ABCDEF+TestSerif",
+            "Flags" => Object::Integer(34),
+            "FontBBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(100), Object::Integer(100),
+            ]),
+            "FontFile3" => Object::Reference(ff_id),
+        }));
+
+        let diffs_id = doc.add_object(Object::Array(vec![
+            Object::Integer(50),
+            Object::Name(b"X".to_vec()),
+        ]));
+        let enc_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Encoding",
+            "BaseEncoding" => Object::Name(b"WinAnsiEncoding".to_vec()),
+            "Differences" => Object::Reference(diffs_id),
+        }));
+
+        let font_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "ABCDEF+TestSerif",
+            "FirstChar" => Object::Integer(32),
+            "LastChar" => Object::Integer(50),
+            "Encoding" => Object::Reference(enc_id),
+            "FontDescriptor" => Object::Reference(fd_id),
+        }));
+
+        let content = Stream::new(dictionary! {}, b"BT /F1 12 Tf (x y) Tj ET".to_vec());
+        let content_id = doc.add_object(Object::Stream(content));
+        let mut font_res = lopdf::Dictionary::new();
+        font_res.set("F1", Object::Reference(font_id));
+        let mut res = lopdf::Dictionary::new();
+        res.set("Font", Object::Dictionary(font_res));
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Page",
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Dictionary(res),
+        }));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Count" => Object::Integer(1),
+                "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+            }),
+        );
+        let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        (doc, font_id, diffs_id)
+    }
+
+    /// Dezelfde schade als hieronder, maar een laag dieper: /Differences mag
+    /// zelf een verwijzing zijn, en append_space_difference las het alleen als
+    /// directe array. Dan begon het met een lege lijst en verving het de hele
+    /// afbeelding door één vermelding.
+    ///
+    /// Gemeten op de groep die deze pas raakt -- kale CFF, FontFile3 beginnend
+    /// met 0x01 -- doet 0,87% van de lettertypen dat (70 van 8010 in 3000
+    /// govdocs-documenten). Zeldzaam, maar dan is de codering van dat lettertype
+    /// volledig weg, wat precies de schade is die de test hieronder al eens
+    /// vastlegde voor het geval dat het woordenboek zelf werd vervangen.
+    ///
+    /// Vlak onder deze code wordt /CharSet wel op zijn verwijzing gevolgd, met
+    /// een opmerking erbij dat dat moet. Hier niet.
+    #[test]
+    fn space_fix_preserves_differences_behind_a_reference() {
+        let (mut doc, font_id, diffs_id) = doc_met_verwezen_differences();
+
+        let fixed = fix_cff_subset_missing_space(&mut doc);
+        assert_ne!(
+            fixed, 0,
+            "SKIPPED (not a pass): de CFF-fixture is niet actionabel, de pas deed niets"
+        );
+
+        // Wat telt is wat het lettertype oplost, niet wat er nog los in het
+        // bestand rondslingert. Het oude array blijft namelijk gewoon bestaan
+        // als de verwijzing wordt vervangen door een verse directe array -- het
+        // raakt alleen verweesd, en een assertie daarop staat groen terwijl de
+        // codering van het lettertype juist weg is. Deze test keek eerst naar
+        // het verkeerde object en slaagde daardoor op kapotte code.
+        let enc_id = match doc.objects.get(&font_id) {
+            Some(Object::Dictionary(font)) => match font.get(b"Encoding") {
+                Ok(Object::Reference(id)) => *id,
+                other => panic!("verwacht een verwijzing naar de codering: {other:?}"),
+            },
+            other => panic!("font weg: {other:?}"),
+        };
+        let arr = match doc.objects.get(&enc_id) {
+            Some(Object::Dictionary(enc)) => match enc.get(b"Differences") {
+                Ok(Object::Array(a)) => a.clone(),
+                Ok(Object::Reference(r)) => match doc.objects.get(r) {
+                    Some(Object::Array(a)) => a.clone(),
+                    other => panic!("verwezen /Differences is geen array: {other:?}"),
+                },
+                other => panic!("geen /Differences meer: {other:?}"),
+            },
+            other => panic!("coderingswoordenboek weg: {other:?}"),
+        };
+        let _ = diffs_id;
+        let namen: Vec<&[u8]> = arr.iter().filter_map(|o| o.as_name().ok()).collect();
+        assert!(
+            namen.contains(&b"X".as_slice()),
+            "de bestaande /Differences-vermelding is verdwenen: {arr:?}"
+        );
+
+        // En het lettertype moet nog steeds naar hetzelfde woordenboek wijzen.
+        let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+            panic!("font gone")
+        };
+        assert!(
+            matches!(font.get(b"Encoding"), Ok(Object::Reference(_))),
+            "de verwijzing naar het coderingswoordenboek is vervangen"
+        );
+    }
 
     /// Regression: fix_cff_subset_missing_space used to replace an inline
     /// encoding dictionary with a fresh one, dropping /BaseEncoding and all
