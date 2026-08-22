@@ -111,6 +111,54 @@ def heeft_reden(doc: str) -> str | None:
     return None
 
 
+# Een publieke functie waarvan het hele lichaam één aanroep is naar een andere
+# functie in deze workspace. Bij `check_*` in pdf-compliance is dat het patroon
+# `pub fn X(pdf, report) { X_cached(&ObjectCache::new(pdf), report) }`: het
+# omhulsel draagt geen gedrag, de `_cached`-variant wel.
+#
+# Dat telt alleen als uitleg wanneer de aangeroepen functie zélf door een test
+# wordt bereikt -- anders zou dit een gat wegpoetsen in plaats van verklaren.
+# Structureel afgeleid en niet uit commentaar, dus het kan niet verouderen: gaat
+# er ooit gedrag in het omhulsel zitten, dan is het geen delegatie meer en komt
+# het vanzelf terug in de lijst.
+def delegeert_naar(lichaam: str) -> str | None:
+    regels = [r.strip() for r in lichaam.split("\n")[1:] if r.strip()]
+    regels = [r for r in regels if not r.startswith("//")]
+    if regels and regels[-1] == "}":
+        regels = regels[:-1]
+    if not regels:
+        return None
+    # Voorafgaande regels mogen alleen iets construeren om door te geven
+    # (`let cache = ObjectCache::new(pdf);`). Staat er iets anders, dan draagt
+    # het omhulsel eigen gedrag en is dit geen delegatie.
+    for r in regels[:-1]:
+        if not re.match(r"^let \w+ = [\w:]+\(.*\);$", r):
+            return None
+    m = re.match(r"^([a-z_][a-z0-9_]*)\(.*\);?$", regels[-1])
+    return m.group(1) if m else None
+
+
+# Welke uitleg een onbereikte functie draagt, of None.
+#
+# Apart van `maak_rapport` zodat de bewaking eronder toetsbaar is: een
+# delegatie telt alleen als uitleg wanneer het doel zélf door een test wordt
+# bereikt. Zonder die voorwaarde zou een omhulsel rond een ONgeteste functie
+# zichzelf verklaren, en dan verbergt het register precies wat het moet tonen.
+def soort_van(
+    naam: str,
+    lichamen: dict[str, list[str]],
+    bereik: set[str],
+    redenen: dict[str, bool],
+) -> str | None:
+    if redenen.get(naam):
+        return redenen[naam]
+    for lichaam in lichamen.get(naam, []):
+        doel = delegeert_naar(lichaam)
+        if doel and doel != naam and doel in bereik:
+            return "delegatie"
+    return None
+
+
 def lees_workspace() -> tuple[dict[str, list[str]], str, dict[str, set[str]], dict[str, bool]]:
     lichamen: dict[str, list[str]] = {}
     testtekst: list[str] = []
@@ -221,8 +269,11 @@ def maak_rapport() -> str:
         "bevinding is."
     )
     uit.append("")
+    def soort(naam: str) -> str | None:
+        return soort_van(naam, lichamen, bereik, redenen)
+
     soorten = collections.Counter(
-        redenen.get(n) for _, _, onb in per_crate for n in onb
+        soort(n) for _, _, onb in per_crate for n in onb
     )
     met_reden = sum(v for k, v in soorten.items() if k)
     zonder = soorten.get(None, 0)
@@ -231,7 +282,9 @@ def maak_rapport() -> str:
     uit.append(
         f"Daarvan dragen er **{met_reden}** een uitleg: "
         f"{soorten.get('buiten Rust', 0)} worden per constructie van buiten Rust "
-        f"aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export) "
+        f"aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export), "
+        f"{soorten.get('delegatie', 0)} zijn een omhulsel dat niets doet dan "
+        f"doorgeven aan een variant die wél getest wordt, "
         f"en {soorten.get('gemeten besluit', 0)} dragen een gemeten besluit in hun "
         "eigen doc-commentaar."
     )
@@ -253,8 +306,8 @@ def maak_rapport() -> str:
         uit.append(f"## {crate}")
         uit.append("")
         for naam in onb:
-            soort = redenen.get(naam)
-            merk = f"  — *{soort}*" if soort else "  — *(geen reden opgegeven)*"
+            s = soort(naam)
+            merk = f"  — *{s}*" if s else "  — *(geen reden opgegeven)*"
             uit.append(f"- `{naam}`{merk}")
         uit.append("")
     return "\n".join(uit).rstrip() + "\n"
