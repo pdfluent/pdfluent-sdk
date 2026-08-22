@@ -6,11 +6,11 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**96 van 676 publieke functies** (14.2%).
+**95 van 676 publieke functies** (14.1%).
 
 Daarvan dragen er **23** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export) en 7 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **73** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **72** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
@@ -18,7 +18,7 @@ De overige **73** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 | `pdf-compliance` | 13 | 178 |
 | `lopdf` | 10 | 25 |
 | `pdf-manip` | 10 | 132 |
-| `pdf-sign` | 10 | 23 |
+| `pdf-sign` | 9 | 23 |
 | `pdf-ocr` | 6 | 26 |
 | `pdf-xfa` | 5 | 58 |
 | `cff-parser` | 4 | 8 |
@@ -160,7 +160,6 @@ De overige **73** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 - `get_docmdp_permission`  — *(geen reden opgegeven)*
 - `get_field_mdp_locks`  — *(geen reden opgegeven)*
 - `has_appearance_stream`  — *(geen reden opgegeven)*
-- `is_field_locked`  — *(geen reden opgegeven)*
 - `parse_seed_values`  — *(geen reden opgegeven)*
 - `request_timestamp`  — *(geen reden opgegeven)*
 - `sign_pdf_incremental`  — *(geen reden opgegeven)*
