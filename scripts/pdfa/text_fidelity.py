@@ -23,6 +23,13 @@ Voor `170_170298.pdf` gaf de telling **80,1%**, terwijl de tekst dit was:
 van de tékens staat er nog en het document is vernield. Een omzetting die elke
 letter door dezelfde vervangt scoort op tellen bijna vol.
 
+NOOT 22-08, later die dag: dat kapotte bestand kwam uit `examples/convert_pdfa.rs`,
+niet uit de pijplijn die we uitleveren — dat voorbeeld was afgedreven en wiste
+elke tekencode onder 32. Door `pdfa::convert_bytes` staat `170_170298.pdf` op
+100,0%. Het punt hierboven blijft staan: een maat die louter x'en 80,1% geeft
+meet hoeveelheid. Alleen is dit document er niet langer het bewijs van. Meet
+altijd via `examples/pdfa_convert_real.rs`.
+
 Andersom is het net zo scheef: zonder `/ToUnicode` produceerde dezelfde omzetting
 drie keer zoveel tekens (345%), allemaal vervangingstekens. Op tellen een
 verbetering, in werkelijkheid onleesbaar.
