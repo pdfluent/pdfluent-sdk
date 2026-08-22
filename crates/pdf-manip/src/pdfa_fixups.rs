@@ -3297,7 +3297,87 @@ fn is_agl_name(name: &str) -> bool {
     }
 
     // Check against the core AGL set (all 600+ standard names).
-    AGL_NAMES.binary_search(&name).is_ok()
+    if AGL_NAMES.binary_search(&name).is_ok() {
+        return true;
+    }
+
+    // Adobe disambiguates duplicate names with a numeric suffix -- `mu1`,
+    // `space1`, `hyphen2` -- and producers emit those verbatim. The suffix names
+    // the same character, so a name whose stem is a real AGL name is a real name.
+    //
+    // Without this, sanitize_differences rewrites the entry to "space" and leaves
+    // /Widths pointing at the original glyph's advance. govdocs 074_074896 code 94
+    // is `mu1`: renamed to space (250 in the program) while /Widths still declared
+    // mu's 576, and veraPDF rejected the mismatch under 6.2.11.5. The rename was
+    // the defect, not the width -- keeping the name keeps both consistent.
+    //
+    // glyph_name_to_unicode in pdfa_fonts.rs already treats suffixes this way.
+    // This is the same rule in the second of the three tables that describe glyph
+    // names; see the cross-table test below for why that number is a problem.
+    //
+    // Single-character stems are excluded: `a1` is a real ZapfDingbats glyph and
+    // has nothing to do with the letter a.
+    let stem = name.trim_end_matches(|c: char| c.is_ascii_digit());
+    if stem.len() > 1 && stem.len() < name.len() {
+        return AGL_NAMES.binary_search(&stem).is_ok();
+    }
+
+    false
+}
+
+#[cfg(test)]
+mod agl_name_tests {
+    use super::is_agl_name;
+
+    /// A numeric suffix names the same glyph, so the name is real.
+    ///
+    /// sanitize_differences rewrites any name is_agl_name rejects to "space" and
+    /// does not touch /Widths. govdocs 074_074896 code 94 is `mu1`: it was renamed
+    /// to space (250 in the font program) while /Widths still declared mu's 576,
+    /// and veraPDF rejected the mismatch under 6.2.11.5.
+    ///
+    /// The rename was the defect rather than the width. Keeping the name keeps
+    /// both consistent, and it is the same rule glyph_name_to_unicode already
+    /// applies in pdfa_fonts.rs.
+    #[test]
+    fn numeric_suffix_names_are_real() {
+        assert!(
+            is_agl_name("mu1"),
+            "mu1 is Adobe's duplicate-name form of mu"
+        );
+        assert!(is_agl_name("space1"));
+        assert!(is_agl_name("hyphen2"));
+    }
+
+    /// Single-character stems stay rejected: `a1` is a real ZapfDingbats glyph
+    /// and has nothing to do with the letter a. Stripping its suffix would map an
+    /// ornament onto a Latin letter.
+    #[test]
+    fn single_character_stems_are_not_stripped() {
+        assert!(!is_agl_name("a1"));
+        assert!(!is_agl_name("g27"));
+    }
+
+    /// Genuinely unknown names are still rejected, suffix or not. Without this
+    /// the relaxation would accept a producer's private strings.
+    #[test]
+    fn private_names_are_still_rejected() {
+        assert!(!is_agl_name("index14"));
+        assert!(!is_agl_name("qwertyuiop"));
+        assert!(
+            !is_agl_name("glyph99"),
+            "glyph is not an AGL name, so glyph99 is not either"
+        );
+    }
+}
+
+/// The AGL name set, for the cross-table test in pdfa_fonts.rs.
+///
+/// Exposed to the crate rather than made public: the invariant it checks is
+/// internal, and the two tables it compares are both implementation detail.
+#[cfg(test)]
+pub(crate) fn agl_names_for_test() -> &'static [&'static str] {
+    AGL_NAMES
 }
 
 /// Adobe Glyph List names (sorted for binary search).
