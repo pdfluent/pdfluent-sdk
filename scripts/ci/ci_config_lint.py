@@ -25,6 +25,7 @@ Exit codes:
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -40,6 +41,58 @@ def flatten(item) -> list:
             out.extend(flatten(sub))
         return out
     return [item]
+
+
+
+# Vlaggen die aan een Python-script in dit repo worden meegegeven maar die het
+# script niet kent.
+#
+# corpus:text-replace-capability gaf `--fallback standard` mee aan een gate die
+# die vlag niet had. Argparse weigerde, de job viel binnen 0,4 seconde om, en het
+# cijfer dat hij moest opleveren is nooit gemeten -- maandenlang, want een job die
+# meteen faalt op een handmatige trigger valt niemand op. De vlag stond in de
+# config, het script kende hem niet, en niets vergeleek die twee.
+#
+# Dit vergelijkt ze. Per commando dat begint met `python3 <pad in de repo>` worden
+# de meegegeven lange vlaggen opgezocht in de `--help` van dat script.
+COMMANDO_SCHEIDERS = re.compile(r"\s*(?:\|\||&&|\||;|\n)\s*")
+
+
+def python_commandos(blok: str):
+    """Geeft (scriptpad, [vlaggen]) voor elk python3-commando in een scriptblok."""
+    # Regelvervolgen samenvoegen: een commando dat met \ eindigt loopt door.
+    samen = re.sub(r"\\\s*\n\s*", " ", blok)
+    for stuk in COMMANDO_SCHEIDERS.split(samen):
+        stuk = stuk.strip()
+        m = re.match(r"python3?\s+(\S+\.py)\b(.*)", stuk, re.S)
+        if not m:
+            continue
+        pad = REPO / m.group(1)
+        if not pad.is_file():
+            continue
+        vlaggen = set(re.findall(r"(?<![\w-])(--[a-z][a-z0-9-]*)", m.group(2)))
+        yield pad, vlaggen
+
+
+def onbekende_vlaggen(pad: Path, vlaggen: set) -> list:
+    if not vlaggen:
+        return []
+    # Alleen fouten opvangen die écht over het script gaan. Een brede `except`
+    # maakte deze controle stil kapot: `subprocess` was niet geïmporteerd, de
+    # NameError verdween erin, en de lint meldde vrolijk dat alles in orde was
+    # terwijl hij niets deed. Dat is dezelfde fout als degene die hij moet vangen.
+    try:
+        uit = subprocess.run(
+            [sys.executable, str(pad), "--help"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    hulptekst = uit.stdout + uit.stderr
+    if "usage" not in hulptekst.lower():
+        return []  # geen argparse; niets te vergelijken
+    bekend = set(re.findall(r"(--[a-z][a-z0-9-]*)", hulptekst))
+    return sorted(v for v in vlaggen if v not in bekend)
 
 
 def main() -> None:
@@ -108,6 +161,20 @@ def main() -> None:
             dep_name = dep.get("job") if isinstance(dep, dict) else dep
             if isinstance(dep_name, str) and dep_name not in job_names:
                 problems.append(f"{name}.needs refers to {dep_name!r}, which is not a job")
+
+    for name, job in doc.items():
+        if not isinstance(job, dict) or name.startswith("."):
+            continue
+        for key in ("script", "before_script", "after_script"):
+            blok = job.get(key)
+            if not isinstance(blok, list):
+                continue
+            for pad, vlaggen in python_commandos("\n".join(str(r) for r in blok)):
+                for vlag in onbekende_vlaggen(pad, vlaggen):
+                    problems.append(
+                        f"{name}: passes {vlag} to {pad.relative_to(REPO)}, "
+                        "which does not accept it — the job dies on argument parsing"
+                    )
 
     if problems:
         print(f"[ci_config_lint] FAIL: {len(problems)} problem(s) GitLab would reject:")
