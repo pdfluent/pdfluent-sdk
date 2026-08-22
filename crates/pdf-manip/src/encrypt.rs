@@ -328,6 +328,54 @@ fn ensure_document_id(doc: &mut Document) {
 mod tests {
     use super::*;
 
+    /// `open_encrypted` is the door: it reads a protected file from disk and
+    /// hands back a usable document. Nothing reached it
+    /// (docs/TEST_REACHABILITY.md), so nothing checked the half that matters —
+    /// that a wrong password is refused. A door that opens for everyone is
+    /// worse than no door, because the file claims to be protected.
+    #[test]
+    fn open_encrypted_accepts_the_password_and_refuses_any_other() {
+        use lopdf::{dictionary, Object};
+
+        let mut doc = lopdf::Document::with_version("1.7");
+        let pages = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Pages".to_vec()),
+            "Kids" => Vec::<Object>::new(),
+            "Count" => 0_i64,
+        }));
+        let catalog = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Catalog".to_vec()),
+            "Pages" => Object::Reference(pages),
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog));
+
+        let config = EncryptConfig {
+            user_password: b"geheim".to_vec(),
+            owner_password: b"eigenaar".to_vec(),
+            ..EncryptConfig::default()
+        };
+        let mut bytes = Vec::new();
+        encrypt_and_save(&mut doc, &config, &mut bytes).expect("encrypt");
+
+        let map = std::env::temp_dir().join(format!(
+            "pdfluent-open-encrypted-{}.pdf",
+            std::process::id()
+        ));
+        std::fs::write(&map, &bytes).expect("write");
+
+        let goed = open_encrypted(&map, "geheim");
+        assert!(goed.is_ok(), "the right password must open it: {goed:?}");
+
+        let fout = open_encrypted(&map, "geheim2");
+        assert!(
+            fout.is_err(),
+            "a wrong password must be refused — if this passes, the file only \
+             looks protected"
+        );
+
+        let _ = std::fs::remove_file(&map);
+    }
+
     #[test]
     fn test_permissions_roundtrip() {
         let perms = Permissions {
