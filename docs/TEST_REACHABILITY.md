@@ -6,19 +6,19 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**97 van 676 publieke functies** (14.3%).
+**96 van 676 publieke functies** (14.2%).
 
 Daarvan dragen er **23** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export) en 7 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **74** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **73** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
 | `pdf-desktop` | 16 | 26 |
 | `pdf-compliance` | 13 | 178 |
-| `pdf-sign` | 11 | 23 |
 | `lopdf` | 10 | 25 |
 | `pdf-manip` | 10 | 132 |
+| `pdf-sign` | 10 | 23 |
 | `pdf-ocr` | 6 | 26 |
 | `pdf-xfa` | 5 | 58 |
 | `cff-parser` | 4 | 8 |
@@ -157,7 +157,6 @@ De overige **74** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 ## pdf-sign
 
 - `check_revocation_embedded`  — *(geen reden opgegeven)*
-- `compute_vri_key`  — *(geen reden opgegeven)*
 - `get_docmdp_permission`  — *(geen reden opgegeven)*
 - `get_field_mdp_locks`  — *(geen reden opgegeven)*
 - `has_appearance_stream`  — *(geen reden opgegeven)*
