@@ -6,13 +6,13 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**115 van 679 publieke functies** (16.9%).
+**113 van 679 publieke functies** (16.6%).
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
 | `pdf-compliance` | 16 | 178 |
 | `pdf-desktop` | 16 | 26 |
-| `pdf-manip` | 13 | 132 |
+| `pdf-manip` | 11 | 132 |
 | `pdf-sign` | 11 | 23 |
 | `lopdf` | 10 | 25 |
 | `pdf-content-stream` | 10 | 11 |
@@ -151,9 +151,7 @@ Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .
 - `fix_type1_widths`
 - `open_encrypted`
 - `rearrange_pages`
-- `restore_stripped_encodings`
 - `run_structure_fixups`
-- `snapshot_font_encodings`
 - `split_by_ranges`
 
 ## pdf-node
