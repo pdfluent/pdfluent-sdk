@@ -6,32 +6,33 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**113 van 679 publieke functies** (16.6%).
+**97 van 676 publieke functies** (14.3%).
 
-Daarvan dragen er **7** een uitleg in hun eigen doc-commentaar. De rest staat hier zonder dat iemand heeft opgeschreven waarom, en dat is het getal dat omlaag hoort. Een functie die hier bij komt zonder reden verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+Daarvan dragen er **23** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export) en 7 dragen een gemeten besluit in hun eigen doc-commentaar.
+
+De overige **74** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
-| `pdf-compliance` | 16 | 178 |
 | `pdf-desktop` | 16 | 26 |
-| `pdf-manip` | 11 | 132 |
+| `pdf-compliance` | 13 | 178 |
 | `pdf-sign` | 11 | 23 |
 | `lopdf` | 10 | 25 |
-| `pdf-content-stream` | 10 | 11 |
+| `pdf-manip` | 10 | 132 |
 | `pdf-ocr` | 6 | 26 |
 | `pdf-xfa` | 5 | 58 |
-| `xfa-test-runner` | 5 | 29 |
 | `cff-parser` | 4 | 8 |
-| `pdf-engine` | 3 | 9 |
+| `xfa-test-runner` | 4 | 26 |
 | `pdf-node` | 3 | 12 |
 | `formcalc-interpreter` | 2 | 5 |
-| `pdf-forms` | 2 | 29 |
+| `pdf-content-stream` | 2 | 11 |
+| `pdf-engine` | 2 | 9 |
 | `xfa-cli` | 2 | 5 |
 | `hayro-jpeg2000` | 1 | 1 |
 | `pdf-annot` | 1 | 4 |
 | `pdf-bench` | 1 | 1 |
-| `pdf-docx` | 1 | 6 |
 | `pdf-extract` | 1 | 13 |
+| `pdf-forms` | 1 | 29 |
 | `xfa-dom-resolver` | 1 | 4 |
 | `xfa-golden-tests` | 1 | 3 |
 
@@ -87,49 +88,33 @@ Daarvan dragen er **7** een uitleg in hun eigen doc-commentaar. De rest staat hi
 - `check_xmp_schemas`  — *(geen reden opgegeven)*
 - `has_embedded_files`  — *(geen reden opgegeven)*
 - `parse_structure_tree`  — *(geen reden opgegeven)*
-- `validate_pdfa_with_progress`  — *(geen reden opgegeven)*
-- `validate_pdfx`  — *(geen reden opgegeven)*
-- `validate_with_progress`  — *(geen reden opgegeven)*
 
 ## pdf-content-stream
 
-- `find_span`  — *(geen reden opgegeven)*
-- `find_spans_containing`  — *(geen reden opgegeven)*
-- `identity_matrix`  — *(geen reden opgegeven)*
-- `matrix_concat`  — *(geen reden opgegeven)*
-- `matrix_origin`  — *(geen reden opgegeven)*
-- `matrix_translate`  — *(geen reden opgegeven)*
-- `serialize`  — *(geen reden opgegeven)*
 - `tj_text_len`  — *(geen reden opgegeven)*
 - `verify_contiguity`  — *(geen reden opgegeven)*
-- `verify_round_trip`  — *(geen reden opgegeven)*
 
 ## pdf-desktop
 
 - `build_menu`  — *(geen reden opgegeven)*
-- `close_document`  — *(geen reden opgegeven)*
-- `delete_annotation`  — *(geen reden opgegeven)*
-- `delete_page`  — *(geen reden opgegeven)*
-- `document_info`  — *(geen reden opgegeven)*
-- `get_bookmarks`  — *(geen reden opgegeven)*
-- `get_page_geometry`  — *(geen reden opgegeven)*
-- `is_document_dirty`  — *(geen reden opgegeven)*
-- `list_annotations`  — *(geen reden opgegeven)*
-- `open_document`  — *(geen reden opgegeven)*
-- `print_document`  — *(geen reden opgegeven)*
-- `redo_document`  — *(geen reden opgegeven)*
+- `close_document`  — *buiten Rust*
+- `delete_annotation`  — *buiten Rust*
+- `delete_page`  — *buiten Rust*
+- `document_info`  — *buiten Rust*
+- `get_bookmarks`  — *buiten Rust*
+- `get_page_geometry`  — *buiten Rust*
+- `is_document_dirty`  — *buiten Rust*
+- `list_annotations`  — *buiten Rust*
+- `open_document`  — *buiten Rust*
+- `print_document`  — *buiten Rust*
+- `redo_document`  — *buiten Rust*
 - `run`  — *(geen reden opgegeven)*
-- `save_document_as`  — *(geen reden opgegeven)*
-- `search_document`  — *(geen reden opgegeven)*
-- `undo_document`  — *(geen reden opgegeven)*
-
-## pdf-docx
-
-- `pdf_to_docx_text_only`  — *(geen reden opgegeven)*
+- `save_document_as`  — *buiten Rust*
+- `search_document`  — *buiten Rust*
+- `undo_document`  — *buiten Rust*
 
 ## pdf-engine
 
-- `best_available_backend`  — *(geen reden opgegeven)*
 - `ocr_page_default`  — *(geen reden opgegeven)*
 - `read_with`  — *(geen reden opgegeven)*
 
@@ -139,27 +124,25 @@ Daarvan dragen er **7** een uitleg in hun eigen doc-commentaar. De rest staat hi
 
 ## pdf-forms
 
-- `get_options`  — *(geen reden opgegeven)*
 - `set_multi_selection`  — *(geen reden opgegeven)*
 
 ## pdf-manip
 
-- `ensure_truetype_encoding`
-- `fix_simple_truetype_widths`
-- `fix_symbolic_font_flags`
-- `fix_truetype_macroman_unicode_aliases`
-- `fix_type0_cmap_cidsysteminfo`
-- `fix_type1_standard_encoding`
-- `fix_type1_widths`
+- `ensure_truetype_encoding`  — *gemeten besluit*
+- `fix_simple_truetype_widths`  — *gemeten besluit*
+- `fix_symbolic_font_flags`  — *gemeten besluit*
+- `fix_truetype_macroman_unicode_aliases`  — *gemeten besluit*
+- `fix_type0_cmap_cidsysteminfo`  — *gemeten besluit*
+- `fix_type1_standard_encoding`  — *gemeten besluit*
+- `fix_type1_widths`  — *gemeten besluit*
 - `open_encrypted`  — *(geen reden opgegeven)*
 - `rearrange_pages`  — *(geen reden opgegeven)*
 - `run_structure_fixups`  — *(geen reden opgegeven)*
-- `split_by_ranges`  — *(geen reden opgegeven)*
 
 ## pdf-node
 
-- `merge_pdfs`  — *(geen reden opgegeven)*
-- `open_pdf`  — *(geen reden opgegeven)*
+- `merge_pdfs`  — *buiten Rust*
+- `open_pdf`  — *buiten Rust*
 - `to_napi_error`  — *(geen reden opgegeven)*
 
 ## pdf-ocr
@@ -211,5 +194,4 @@ Daarvan dragen er **7** een uitleg in hun eigen doc-commentaar. De rest staat hi
 - `generate_issue_labels`  — *(geen reden opgegeven)*
 - `generate_resolved_comment`  — *(geen reden opgegeven)*
 - `generate_update_comment`  — *(geen reden opgegeven)*
-- `has_malformed_page_tree`  — *(geen reden opgegeven)*
 - `save_text_diff`  — *(geen reden opgegeven)*

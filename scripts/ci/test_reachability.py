@@ -50,6 +50,7 @@ bijwerkt is na een maand een bewering waar niets meer achter zit.
 from __future__ import annotations
 
 import argparse
+import collections
 import difflib
 import pathlib
 import re
@@ -89,9 +90,25 @@ REDEN_WOORDEN = (
 )
 
 
-def heeft_reden(doc: str) -> bool:
+# Attributen die zélf de reden zijn. Een functie met `#[tauri::command]` wordt
+# per constructie vanuit de frontend aangeroepen en nooit vanuit Rust; hetzelfde
+# geldt voor de bindingen naar WASM, Node, Python en Java. Dat is geen
+# verzuim en ook geen keuze die iemand nog moet opschrijven -- het staat er al,
+# machineleesbaar, en het kan niet verouderen zoals commentaar dat kan.
+BUITEN_RUST = (
+    "#[tauri::command", "#[wasm_bindgen", "#[napi", "#[pyfunction", "#[pymethods",
+    "no_mangle", "extern \"C\"",
+)
+
+
+def heeft_reden(doc: str) -> str | None:
+    """Geeft terug wélke soort uitleg er is, of None."""
+    if any(a in doc for a in BUITEN_RUST):
+        return "buiten Rust"
     laag = doc.lower()
-    return any(w in laag for w in REDEN_WOORDEN)
+    if any(w in laag for w in REDEN_WOORDEN):
+        return "gemeten besluit"
+    return None
 
 
 def lees_workspace() -> tuple[dict[str, list[str]], str, dict[str, set[str]], dict[str, bool]]:
@@ -105,6 +122,16 @@ def lees_workspace() -> tuple[dict[str, list[str]], str, dict[str, set[str]], di
             continue
         pubs: set[str] = set()
         for bestand in sorted((crate / "src").rglob("*.rs")):
+            # Een `mod tests;` die naar src/tests/ wijst is net zo goed testcode
+            # als een inline `#[cfg(test)] mod tests`. Dat werd gemist, en het
+            # gevolg was zichtbaar in het rapport: pdf-content-stream stond op 10
+            # van de 11 publieke functies onbereikbaar, terwijl src/tests/
+            # find_span elf keer aanroept. De tool telde die tests als
+            # productiecode en zag ze dus nooit als test.
+            if "tests" in bestand.relative_to(crate / "src").parts:
+                testtekst.append(bestand.read_text(errors="replace"))
+                continue
+
             lijnen = bestand.read_text(errors="replace").split("\n")
             knip = testmodule_start(lijnen)
             productie = lijnen[:knip]
@@ -194,15 +221,27 @@ def maak_rapport() -> str:
         "bevinding is."
     )
     uit.append("")
-    met_reden = sum(1 for _, _, onb in per_crate for n in onb if redenen.get(n))
+    soorten = collections.Counter(
+        redenen.get(n) for _, _, onb in per_crate for n in onb
+    )
+    met_reden = sum(v for k, v in soorten.items() if k)
+    zonder = soorten.get(None, 0)
     uit.append(f"**{onbereikt} van {totaal} publieke functies** ({100 * onbereikt / totaal:.1f}%).")
     uit.append("")
     uit.append(
-        f"Daarvan dragen er **{met_reden}** een uitleg in hun eigen doc-commentaar. "
-        "De rest staat hier zonder dat iemand heeft opgeschreven waarom, en dat is "
-        "het getal dat omlaag hoort. Een functie die hier bij komt zonder reden "
-        "verschijnt in de diff als `(geen reden opgegeven)` — precies waar een "
-        "reviewer kijkt."
+        f"Daarvan dragen er **{met_reden}** een uitleg: "
+        f"{soorten.get('buiten Rust', 0)} worden per constructie van buiten Rust "
+        f"aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export) "
+        f"en {soorten.get('gemeten besluit', 0)} dragen een gemeten besluit in hun "
+        "eigen doc-commentaar."
+    )
+    uit.append("")
+    uit.append(
+        f"De overige **{zonder}** staan hier zonder uitleg. Dat is het getal dat "
+        "omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: "
+        "niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een "
+        "functie die hier bij komt verschijnt in de diff als "
+        "`(geen reden opgegeven)` — precies waar een reviewer kijkt."
     )
     uit.append("")
     uit.append("| crate | onbereikt | publiek |")
@@ -214,7 +253,8 @@ def maak_rapport() -> str:
         uit.append(f"## {crate}")
         uit.append("")
         for naam in onb:
-            merk = "" if redenen.get(naam) else "  — *(geen reden opgegeven)*"
+            soort = redenen.get(naam)
+            merk = f"  — *{soort}*" if soort else "  — *(geen reden opgegeven)*"
             uit.append(f"- `{naam}`{merk}")
         uit.append("")
     return "\n".join(uit).rstrip() + "\n"
