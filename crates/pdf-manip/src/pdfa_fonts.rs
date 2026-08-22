@@ -19338,6 +19338,14 @@ pub fn fix_notdef_glyph_refs(doc: &mut Document) -> usize {
 /// literals in all content streams. These characters are non-printing and
 /// frequently map to .notdef in fonts, causing PDF/A violations (6.2.11.8:1
 /// and 6.2.11.4.1:2).
+/// Superseded by [`fix_simple_font_streams`], which does this and the width and
+/// range fixups in one pass over each content stream. Kept because the
+/// step-by-step diagnosis examples call the stages individually.
+///
+/// Both derive the codes to keep from [`control_codes_to_preserve`]. That is
+/// deliberate and not merely tidy: this pass used to pass an empty set, so it
+/// blanked every code below 32 including the ones `/Differences` names, and the
+/// examples that call it therefore measured something we do not ship.
 pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
     use std::collections::HashMap;
 
@@ -19347,7 +19355,7 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
     for &page_id in &page_ids {
         // Build a page-local map: font resource name -> is strip-safe simple font.
         let mut has_type0_font = false;
-        let font_map: HashMap<String, bool> = {
+        let font_map: HashMap<String, (bool, std::collections::HashSet<u8>)> = {
             let page = match doc.objects.get(&page_id) {
                 Some(Object::Dictionary(d)) => d.clone(),
                 _ => continue,
@@ -19372,14 +19380,15 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
             let mut map = HashMap::new();
             for (key, val) in fonts.iter() {
                 let name = String::from_utf8_lossy(key).to_string();
-                let subtype = match val {
+                let fd = match val {
                     Object::Reference(id) => match doc.objects.get(id) {
-                        Some(Object::Dictionary(d)) => get_name(d, b"Subtype").unwrap_or_default(),
-                        _ => String::new(),
+                        Some(Object::Dictionary(d)) => Some(d),
+                        _ => None,
                     },
-                    Object::Dictionary(d) => get_name(d, b"Subtype").unwrap_or_default(),
-                    _ => String::new(),
+                    Object::Dictionary(d) => Some(d),
+                    _ => None,
                 };
+                let subtype = fd.and_then(|d| get_name(d, b"Subtype")).unwrap_or_default();
                 if subtype == "Type0" {
                     has_type0_font = true;
                 }
@@ -19389,12 +19398,19 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
                     || subtype == "Type1"
                     || subtype == "MMType1"
                     || subtype == "Type3";
-                map.insert(name, can_strip);
+                // Codes below 32 that /Differences maps to a real glyph are the
+                // document's letters, not control characters — see
+                // control_codes_to_preserve. Passing an empty set here is what
+                // made this pass blank a TeX subset page (govdocs 170_170298).
+                let preserve = fd
+                    .map(|d| control_codes_to_preserve(doc, d, &subtype, can_strip))
+                    .unwrap_or_default();
+                map.insert(name, (can_strip, preserve));
             }
             map
         };
 
-        if !font_map.values().any(|v| *v) {
+        if !font_map.values().any(|(strip, _)| *strip) {
             continue;
         }
 
@@ -19434,30 +19450,39 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
                         }
                         new_ops.push(op.clone());
                     }
-                    "Tj" | "'" | "\"" if font_map.get(&current_font).copied().unwrap_or(false) => {
+                    "Tj" | "'" | "\""
+                        if font_map
+                            .get(&current_font)
+                            .map(|(strip, _)| *strip)
+                            .unwrap_or(false) =>
+                    {
+                        let preserve = font_map
+                            .get(&current_font)
+                            .map(|(_, p)| p.clone())
+                            .unwrap_or_default();
                         let mut new_op = op.clone();
                         let str_idx = if op.operator == "\"" { 2 } else { 0 };
                         if let Some(Object::String(bytes, _)) = new_op.operands.get_mut(str_idx) {
-                            if strip_control_bytes(
-                                bytes,
-                                !has_type0_font,
-                                &std::collections::HashSet::new(),
-                            ) {
+                            if strip_control_bytes(bytes, !has_type0_font, &preserve) {
                                 modified = true;
                             }
                         }
                         new_ops.push(new_op);
                     }
-                    "TJ" if font_map.get(&current_font).copied().unwrap_or(false) => {
+                    "TJ" if font_map
+                        .get(&current_font)
+                        .map(|(strip, _)| *strip)
+                        .unwrap_or(false) =>
+                    {
+                        let preserve = font_map
+                            .get(&current_font)
+                            .map(|(_, p)| p.clone())
+                            .unwrap_or_default();
                         let mut new_op = op.clone();
                         if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
                             for item in arr.iter_mut() {
                                 if let Object::String(bytes, _) = item {
-                                    if strip_control_bytes(
-                                        bytes,
-                                        !has_type0_font,
-                                        &std::collections::HashSet::new(),
-                                    ) {
+                                    if strip_control_bytes(bytes, !has_type0_font, &preserve) {
                                         modified = true;
                                     }
                                 }
@@ -19484,6 +19509,67 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
     }
 
     total_fixed
+}
+
+/// Character codes below 32 that this simple font maps to a real glyph, and
+/// which must therefore survive the .notdef stripping in `strip_control_bytes`.
+///
+/// Why this is not simply "codes below 32 are control characters": a TeX subset
+/// encoding starts its /Differences at code 1, so on a Computer Modern subset
+/// codes 1..31 are the document's ordinary letters. Blanking them to 0x20
+/// erases the page and still leaves a conforming file behind, which is the
+/// failure mode nobody catches by validating. Measured on govdocs
+/// 170_170298.pdf: 277 of its 368 character codes sit below 32, and stripping
+/// them drops word retention from 100% to 6% while veraPDF stays green.
+fn control_codes_to_preserve(
+    doc: &Document,
+    fd: &lopdf::Dictionary,
+    subtype: &str,
+    can_strip: bool,
+) -> std::collections::HashSet<u8> {
+    if !can_strip {
+        return std::collections::HashSet::new();
+    }
+    let (_, differences) = get_simple_encoding_info(doc, fd);
+    let mut keep: std::collections::HashSet<u8> = differences
+        .iter()
+        .filter(|(code, name)| {
+            **code < 32
+                        && !matches!(**code, 9 | 10 | 13)
+                        && name.as_str() != ".notdef"
+                        // A /space mapping (usually pipeline-generated
+                        // .notdef avoidance) draws a blank either way;
+                        // stripping it to 32 is what keeps the width
+                        // consistent (govdocs 003_003411, cmr9 code 11).
+                        && name.as_str() != "space"
+        })
+        .map(|(code, _)| *code as u8)
+        .collect();
+    // A symbolic TrueType subset may put real glyphs on
+    // control codes without any /Differences saying so —
+    // the (3,0)/(1,0) cmap is the evidence (govdocs
+    // 002_002193: OpenSymbol keeps a visible symbol on code
+    // 1; stripping it to 0x20 references a glyph the font
+    // does NOT have, tripping 6.2.11.4.1).
+    if subtype == "TrueType" && is_font_symbolic(doc, fd) && differences.is_empty() {
+        if let Ok(Object::Reference(fd_id)) = fd.get(b"FontDescriptor") {
+            if let Some(font_data) = read_embedded_font_data(doc, *fd_id) {
+                if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
+                    for code in 0..32u32 {
+                        if matches!(code, 9 | 10 | 13) {
+                            continue;
+                        }
+                        let gid = lookup_symbol_cmap_30(&face, code)
+                            .or_else(|| lookup_mac_cmap(&face, code));
+                        if gid.is_some_and(|g| g.0 != 0 && tt_glyph_has_data(&face, g)) {
+                            keep.insert(code as u8);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    keep
 }
 
 fn strip_control_bytes(
@@ -21184,53 +21270,7 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
                 } else {
                     None
                 };
-                let preserve_ctrl = if can_strip {
-                    let (_, differences) = get_simple_encoding_info(doc, fd);
-                    let mut keep: std::collections::HashSet<u8> = differences
-                        .iter()
-                        .filter(|(code, name)| {
-                            **code < 32
-                                && !matches!(**code, 9 | 10 | 13)
-                                && name.as_str() != ".notdef"
-                                // A /space mapping (usually pipeline-generated
-                                // .notdef avoidance) draws a blank either way;
-                                // stripping it to 32 is what keeps the width
-                                // consistent (govdocs 003_003411, cmr9 code 11).
-                                && name.as_str() != "space"
-                        })
-                        .map(|(code, _)| *code as u8)
-                        .collect();
-                    // A symbolic TrueType subset may put real glyphs on
-                    // control codes without any /Differences saying so —
-                    // the (3,0)/(1,0) cmap is the evidence (govdocs
-                    // 002_002193: OpenSymbol keeps a visible symbol on code
-                    // 1; stripping it to 0x20 references a glyph the font
-                    // does NOT have, tripping 6.2.11.4.1).
-                    if subtype == "TrueType" && is_font_symbolic(doc, fd) && differences.is_empty()
-                    {
-                        if let Ok(Object::Reference(fd_id)) = fd.get(b"FontDescriptor") {
-                            if let Some(font_data) = read_embedded_font_data(doc, *fd_id) {
-                                if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
-                                    for code in 0..32u32 {
-                                        if matches!(code, 9 | 10 | 13) {
-                                            continue;
-                                        }
-                                        let gid = lookup_symbol_cmap_30(&face, code)
-                                            .or_else(|| lookup_mac_cmap(&face, code));
-                                        if gid.is_some_and(|g| {
-                                            g.0 != 0 && tt_glyph_has_data(&face, g)
-                                        }) {
-                                            keep.insert(code as u8);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    keep
-                } else {
-                    std::collections::HashSet::new()
-                };
+                let preserve_ctrl = control_codes_to_preserve(doc, fd, &subtype, can_strip);
                 map.insert(
                     res_name,
                     FontInfo {
