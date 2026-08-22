@@ -91,3 +91,29 @@ plaats van ze te verplaatsen) en groen. Niet gemerged.
 geen technische afweging.
 
 **Wacht op.** Jasper.
+
+## 22-08 — Voorbeeldprogramma's meten niet automatisch wat we uitleveren
+
+`examples/convert_pdfa.rs` roept de reparatiestappen los aan, in een eigen
+volgorde. Dat is bruikbaar om te zien wat elke stap doet, en het is het eerste
+wat je pakt als je één document wilt uitpluizen. Die volgorde was afgedreven van
+`pdfa::convert_bytes`: hij riep nog `strip_control_chars_from_streams` aan met
+een lege "bewaren"-verzameling, waardoor elke tekencode onder 32 een spatie werd.
+Op een TeX-subset zijn dat de gewone letters.
+
+Ik heb daar een hele avond op gediagnosticeerd — inclusief drie hypotheses over
+lettertypen die stuk voor stuk door meting onderuit gingen — en de conclusie
+"dit document is vernield, 6,0% tekstbehoud" gepubliceerd in
+`benchmarks/PDFA_HOLDOUT_22AUG.md`. Door de echte pijplijn staat hetzelfde
+bestand op 100,0% en conform.
+
+**Besluit:** elk cijfer gaat door `examples/pdfa_convert_real.rs`, dat
+rechtstreeks `pdfa::convert_bytes` aanroept. Het hand-nagebouwde voorbeeld is
+diagnosegereedschap, geen meetinstrument.
+
+**Waarom dit meer is dan één bug:** twee stukken code die hetzelfde horen te doen
+en apart onderhouden worden, gaan uit elkaar lopen, en het verschil valt niet op
+omdat beide iets plausibels opleveren. De `preserve`-berekening zit daarom nu in
+één functie, `control_codes_to_preserve`, met de reden erboven. Vastgelegd in
+`crates/pdf-manip/tests/pdfa_control_code_glyphs.rs`, dat meedraait in
+`quality:cargo-test`, en getoetst door de fix te breken.
