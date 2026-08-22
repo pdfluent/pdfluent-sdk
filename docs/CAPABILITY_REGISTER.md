@@ -340,13 +340,13 @@ delivered through it.
 |---|---|---|---|---|---|
 | `formcalc-interpreter` | 1.0.0-beta.18 | internal | 3 | 86 | `quality:cargo-test` |
 | `pdf-annot` | 1.0.0-beta.18 | direct | — | 38 | `quality:cargo-test` |
-| `pdf-compliance` | 1.0.0-beta.18.1 | direct | — | 88 | `quality:cargo-test` |
+| `pdf-compliance` | 1.0.0-beta.18.1 | direct | — | 92 | `quality:cargo-test` |
 | `pdf-docx` | 1.0.0-beta.18 | direct | — | 24 | `quality:cargo-test` |
 | `pdf-engine` | 1.0.0-beta.18 | direct | 3 | 155 | `quality:cargo-test` |
 | `pdf-font` | 1.0.0-beta.5 | internal | — | 117 | `quality:cargo-test` |
 | `pdf-interpret` | 0.5.8 | direct | — | 123 | `quality:cargo-test` |
 | `pdf-invoice` | 1.0.0-beta.18 | **absent** | — | 53 | `quality:cargo-test` |
-| `pdf-manip` | 1.0.0-beta.18 | direct | 11 | 278 | `quality:cargo-test` |
+| `pdf-manip` | 1.0.0-beta.18 | direct | 11 | 279 | `quality:cargo-test` |
 | `pdf-ocr` | 1.0.0-beta.18 | **absent** | 1 | 70 | `quality:cargo-test` |
 | `pdf-pptx` | 1.0.0-beta.18 | direct | — | 14 | `quality:cargo-test` |
 | `pdf-redact` | 1.0.0-beta.18 | direct | 5 | 57 | `quality:cargo-test` |
