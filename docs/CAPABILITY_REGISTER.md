@@ -358,12 +358,12 @@ delivered through it.
 | `pdf-xlsx` | 1.0.0-beta.18 | direct | — | 19 | `quality:cargo-test` |
 | `pdfluent` | 1.0.0-beta.18 | direct | 31 | 24 | `quality:cargo-test` |
 | `pdfluent-ccitt` | 0.2.2 | internal | — | 7 | `quality:cargo-test` |
-| `pdfluent-cff` | 0.2.1 | internal | — | 21 | `quality:cargo-test` |
+| `pdfluent-cff` | 0.2.1 | internal | — | 26 | `quality:cargo-test` |
 | `pdfluent-extract` | 1.0.0-beta.18 | internal | — | 77 | `quality:cargo-test` |
 | `pdfluent-forms` | 1.0.0-beta.18 | direct | 2 | 70 | `quality:cargo-test` |
 | `pdfluent-jbig2` | 0.2.3 | internal | — | 9 | `quality:cargo-test` |
 | `pdfluent-jpeg2000` | 0.3.5 | internal | — | 7 | `quality:cargo-test` |
-| `pdfluent-lopdf` | 0.39.4 | direct | 1 | 101 | `quality:cargo-test` |
+| `pdfluent-lopdf` | 0.39.4 | direct | 1 | 105 | `quality:cargo-test` |
 | `pdfluent-sign` | 1.0.0-beta.18 | direct | — | 59 | `quality:cargo-test` |
 | `xfa-dom-resolver` | 1.0.0-beta.18 | internal | 1 | 32 | `quality:cargo-test` |
 | `xfa-js-sandboxed` | 1.0.0-beta.18 | internal | 5 | 8 | `quality:cargo-test` |
