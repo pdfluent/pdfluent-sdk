@@ -95,6 +95,38 @@ def onbekende_vlaggen(pad: Path, vlaggen: set) -> list:
     return sorted(v for v in vlaggen if v not in bekend)
 
 
+def basislijn_zonder_artefact(name: str, job: dict) -> list[str]:
+    """Een job die een basislijn kan vastleggen moet hem ook uploaden.
+
+    Zonder artefact schrijft de job het bestand in de werkmap van de runner,
+    roept "commit it", en gooit het weg als de job eindigt. De volgende run legt
+    weer een basislijn vast en oordeelt weer niets — een hek dat nooit hekt.
+
+    Gevonden op 22-08: corpus:pdfa-holdout-retention had helemaal geen
+    artifacts, en corpus:pdfa-holdout-conformance uploadde wel zijn uitvoermap
+    maar niet zijn basislijn.
+    """
+    tekst = " ".join(str(x) for x in flatten(job.get("script") or []))
+    if "--baseline" not in tekst:
+        return []
+    kan_schrijven = any(v in tekst for v in ("--update-baseline", "--write-baseline"))
+    if not kan_schrijven:
+        return []
+    paden = set()
+    art = job.get("artifacts")
+    if isinstance(art, dict):
+        paden = {str(p) for p in (art.get("paths") or [])}
+    fout = []
+    for m in re.finditer(r"--baseline\s+(\S+)", tekst):
+        doel = m.group(1).strip('"\'')
+        if not any(doel == p or doel.startswith(p.rstrip("/") + "/") for p in paden):
+            fout.append(
+                f"{name}: can record {doel} but does not upload it as an artifact — "
+                "the file dies with the runner workspace and the gate never starts gating"
+            )
+    return fout
+
+
 def main() -> None:
     try:
         import yaml
@@ -114,6 +146,8 @@ def main() -> None:
     for name, job in doc.items():
         if not isinstance(job, dict):
             continue
+        if not name.startswith("."):
+            problems.extend(basislijn_zonder_artefact(name, job))
         for key in ("script", "before_script", "after_script"):
             block = job.get(key)
             if block is None:
