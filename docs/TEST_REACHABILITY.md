@@ -6,30 +6,30 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**94 van 676 publieke functies** (13.9%).
+**91 van 676 publieke functies** (13.5%).
 
 Daarvan dragen er **23** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export) en 7 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **71** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **68** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
 | `pdf-desktop` | 16 | 26 |
 | `pdf-compliance` | 13 | 178 |
-| `lopdf` | 10 | 25 |
 | `pdf-manip` | 10 | 132 |
+| `lopdf` | 9 | 25 |
 | `pdf-sign` | 9 | 23 |
 | `pdf-ocr` | 6 | 26 |
 | `pdf-xfa` | 5 | 58 |
-| `cff-parser` | 4 | 8 |
 | `xfa-test-runner` | 4 | 26 |
+| `cff-parser` | 3 | 8 |
 | `pdf-node` | 3 | 12 |
 | `formcalc-interpreter` | 2 | 5 |
-| `pdf-content-stream` | 2 | 11 |
 | `pdf-engine` | 2 | 9 |
 | `hayro-jpeg2000` | 1 | 1 |
 | `pdf-annot` | 1 | 4 |
 | `pdf-bench` | 1 | 1 |
+| `pdf-content-stream` | 1 | 11 |
 | `pdf-extract` | 1 | 13 |
 | `pdf-forms` | 1 | 29 |
 | `xfa-cli` | 1 | 5 |
@@ -39,7 +39,6 @@ De overige **71** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 ## cff-parser
 
 - `f64_abs`  — *(geen reden opgegeven)*
-- `is_dict_one_byte_op`  — *(geen reden opgegeven)*
 - `skip_index`  — *(geen reden opgegeven)*
 - `skip_number`  — *(geen reden opgegeven)*
 
@@ -59,7 +58,6 @@ De overige **71** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 - `decode_row`  — *(geen reden opgegeven)*
 - `decrypt_object`  — *(geen reden opgegeven)*
 - `encode_row`  — *(geen reden opgegeven)*
-- `encode_utf8`  — *(geen reden opgegeven)*
 - `encrypt_object`  — *(geen reden opgegeven)*
 - `indirect_object`  — *(geen reden opgegeven)*
 - `substring`  — *(geen reden opgegeven)*
@@ -91,7 +89,6 @@ De overige **71** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 
 ## pdf-content-stream
 
-- `tj_text_len`  — *(geen reden opgegeven)*
 - `verify_contiguity`  — *(geen reden opgegeven)*
 
 ## pdf-desktop
