@@ -6,16 +6,16 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**78 van 653 publieke functies** (11.9%).
+**76 van 653 publieke functies** (11.6%).
 
 Daarvan dragen er **27** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export), 7 zijn een omhulsel dat niets doet dan doorgeven aan een variant die wél getest wordt, en 4 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **51** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **49** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
 | `pdf-desktop` | 16 | 26 |
-| `pdf-compliance` | 13 | 178 |
+| `pdf-compliance` | 11 | 178 |
 | `pdf-manip` | 7 | 109 |
 | `pdf-ocr` | 6 | 26 |
 | `pdf-sign` | 6 | 23 |
@@ -68,14 +68,12 @@ De overige **51** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 
 - `check_font_file_subtype`  — *delegatie*
 - `check_inline_image_filters`  — *(geen reden opgegeven)*
-- `check_marked_content_sequences`  — *(geen reden opgegeven)*
 - `check_name_utf8`  — *delegatie*
 - `check_real_value_limits`  — *delegatie*
 - `check_stream_empty_keys`  — *delegatie*
 - `check_stream_external_refs`  — *delegatie*
 - `check_stream_filters`  — *delegatie*
 - `check_truetype_cmap_pdfa4`  — *(geen reden opgegeven)*
-- `check_undefined_operators`  — *(geen reden opgegeven)*
 - `check_xmp_schemas`  — *(geen reden opgegeven)*
 - `has_embedded_files`  — *(geen reden opgegeven)*
 - `parse_structure_tree`  — *(geen reden opgegeven)*

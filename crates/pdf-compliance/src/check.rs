@@ -18769,6 +18769,95 @@ fn t1_standard_encoding_name(code: u8) -> Option<&'static str> {
 mod tests {
     use super::*;
 
+    // ── PDF/A-controles op een echte pagina ──
+    //
+    // De scanners hieronder werden al met losse bytes getest, maar de publieke
+    // controles zelf door niets (docs/TEST_REACHABILITY.md). Dat is het verschil
+    // tussen "de scanner klopt" en "de controle draait op de pagina's van het
+    // document" — en het tweede is wat een conformiteitsuitspraak draagt.
+
+    /// Bouw een PDF van één pagina met deze contentstroom.
+    fn pdf_met_stroom(stroom: &[u8]) -> pdf_syntax::Pdf {
+        use lopdf::{dictionary, Document, Object, Stream};
+        let mut doc = Document::with_version("1.7");
+        let cs = doc.add_object(Object::Stream(Stream::new(dictionary! {}, stroom.to_vec())));
+        let page = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Page".to_vec()),
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => Object::Reference(cs),
+            "Resources" => Object::Dictionary(dictionary! {}),
+        }));
+        let pages = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Pages".to_vec()),
+            "Kids" => vec![Object::Reference(page)],
+            "Count" => 1_i64,
+        }));
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page) {
+            d.set("Parent", Object::Reference(pages));
+        }
+        let catalog = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Catalog".to_vec()),
+            "Pages" => Object::Reference(pages),
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog));
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save");
+        pdf_syntax::Pdf::new(bytes).expect("parse")
+    }
+
+    fn fouten(report: &ComplianceReport) -> usize {
+        report
+            .issues
+            .iter()
+            .filter(|i| i.severity == crate::Severity::Error)
+            .count()
+    }
+
+    #[test]
+    fn an_operator_that_does_not_exist_is_reported() {
+        let pdf = pdf_met_stroom(b"BT /F1 12 Tf (hoi) Tj ET\nzz\n");
+        let mut report = ComplianceReport::default();
+        check_undefined_operators(&pdf, &mut report);
+        assert!(
+            fouten(&report) > 0,
+            "`zz` is geen operator; PDF/A verbiedt ongedefinieerde operatoren \
+             (ISO 19005-2 6.2.5) en dit moet een fout opleveren"
+        );
+    }
+
+    #[test]
+    fn a_page_of_ordinary_operators_is_left_alone() {
+        // Zonder dit tegengeval zou "meld altijd een fout" er doorheen komen.
+        let pdf = pdf_met_stroom(b"q 1 0 0 1 10 10 cm BT /F1 12 Tf (hoi) Tj ET Q\n");
+        let mut report = ComplianceReport::default();
+        check_undefined_operators(&pdf, &mut report);
+        assert_eq!(
+            fouten(&report),
+            0,
+            "niets hierin is ongedefinieerd; gemeld: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn an_unclosed_marked_content_sequence_is_reported() {
+        let pdf = pdf_met_stroom(b"/P <</MCID 0>> BDC\nBT /F1 12 Tf (hoi) Tj ET\n");
+        let mut report = ComplianceReport::default();
+        check_marked_content_sequences(&pdf, &mut report);
+        assert!(
+            fouten(&report) > 0,
+            "een BDC zonder EMC laat de gemarkeerde inhoud open staan"
+        );
+    }
+
+    #[test]
+    fn a_balanced_marked_content_sequence_is_left_alone() {
+        let pdf = pdf_met_stroom(b"/P <</MCID 0>> BDC\nBT /F1 12 Tf (hoi) Tj ET\nEMC\n");
+        let mut report = ComplianceReport::default();
+        check_marked_content_sequences(&pdf, &mut report);
+        assert_eq!(fouten(&report), 0, "gemeld: {:?}", report.issues);
+    }
+
     // ── .notdef hex scan ──
 
     #[test]
