@@ -127,6 +127,29 @@ def basislijn_zonder_artefact(name: str, job: dict) -> list[str]:
     return fout
 
 
+def ontbrekende_scripts(name: str, job: dict) -> list[str]:
+    """Elk repo-script dat een job aanroept moet bestaan.
+
+    Gevonden op 22-08 tijdens een publicatie: `release:crates-publish` roept
+    `scripts/release/publish_ordered.sh` aan en `release:wasm-npm-publish` roept
+    `scripts/release/publish_wasm.sh` aan. Geen van beide staat in de repo. De
+    enige geautomatiseerde publicatieroute zou dus in seconden omvallen — en dat
+    merk je pas op het moment dat je wilt uitrollen.
+
+    Dezelfde vorm als eerder die dag: `corpus_preflight.sh` stond op master maar
+    niet op de branch die ernaar verwees, en de corpusjobs vielen om na vier
+    seconden. Een job die naar iets wijst dat er niet is, is geen job.
+    """
+    fout = []
+    tekst = " ".join(str(x) for x in flatten(job.get("script") or []))
+    tekst += " " + " ".join(str(x) for x in flatten(job.get("before_script") or []))
+    for m in re.finditer(r"scripts/(?:release|ci|pdfa|infra)/[\w.\-/]+\.(?:sh|py)", tekst):
+        doel = REPO / m.group(0)
+        if not doel.is_file():
+            fout.append(f"{name}: calls {m.group(0)}, which is not in the repository")
+    return fout
+
+
 def main() -> None:
     try:
         import yaml
@@ -148,6 +171,7 @@ def main() -> None:
             continue
         if not name.startswith("."):
             problems.extend(basislijn_zonder_artefact(name, job))
+            problems.extend(ontbrekende_scripts(name, job))
         for key in ("script", "before_script", "after_script"):
             block = job.get(key)
             if block is None:
