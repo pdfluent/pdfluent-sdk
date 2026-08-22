@@ -8,9 +8,9 @@ Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .
 
 **81 van 676 publieke functies** (12.0%).
 
-Daarvan dragen er **23** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export) en 7 dragen een gemeten besluit in hun eigen doc-commentaar.
+Daarvan dragen er **30** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export), 7 zijn een omhulsel dat niets doet dan doorgeven aan een variant die wél getest wordt, en 7 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **58** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **51** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
@@ -66,14 +66,14 @@ De overige **58** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 
 ## pdf-compliance
 
-- `check_font_file_subtype`  — *(geen reden opgegeven)*
+- `check_font_file_subtype`  — *delegatie*
 - `check_inline_image_filters`  — *(geen reden opgegeven)*
 - `check_marked_content_sequences`  — *(geen reden opgegeven)*
-- `check_name_utf8`  — *(geen reden opgegeven)*
-- `check_real_value_limits`  — *(geen reden opgegeven)*
-- `check_stream_empty_keys`  — *(geen reden opgegeven)*
-- `check_stream_external_refs`  — *(geen reden opgegeven)*
-- `check_stream_filters`  — *(geen reden opgegeven)*
+- `check_name_utf8`  — *delegatie*
+- `check_real_value_limits`  — *delegatie*
+- `check_stream_empty_keys`  — *delegatie*
+- `check_stream_external_refs`  — *delegatie*
+- `check_stream_filters`  — *delegatie*
 - `check_truetype_cmap_pdfa4`  — *(geen reden opgegeven)*
 - `check_undefined_operators`  — *(geen reden opgegeven)*
 - `check_xmp_schemas`  — *(geen reden opgegeven)*
@@ -122,7 +122,7 @@ De overige **58** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 - `fix_type1_standard_encoding`  — *gemeten besluit*
 - `fix_type1_widths`  — *gemeten besluit*
 - `open_encrypted`  — *(geen reden opgegeven)*
-- `rearrange_pages`  — *(geen reden opgegeven)*
+- `rearrange_pages`  — *delegatie*
 - `run_structure_fixups`  — *(geen reden opgegeven)*
 
 ## pdf-node
