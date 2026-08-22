@@ -79,6 +79,37 @@ verkoopcyclus.
 
 **Wacht op.** Jasper.
 
+## OPEN · Wordt er gepubliceerd?
+
+**Wat er in master zit en niet in het pakket dat mensen installeren:**
+
+- Een pagina verloor al haar tekst na de eerste backslash die erin stond. Dat
+  raakt elk document waarvan de tekst een `\` bevat — pdfTeX schrijft die als
+  `(\x00\\\\)`. veraPDF noemde het resultaat conform, dus geen validatie ving
+  het.
+- Spaties werden als `)` getekend zodra een subset-lettertype zijn spatie-glyph
+  zonder omtrek had. Zichtbaar op de pagina, niet alleen in de tekstlaag.
+- Tekencodes onder 32 werden blanco gemaakt, ook waar `/Differences` ze een
+  letter geeft. Raakt TeX-documenten.
+- `sign_pdf_incremental` werkte bij geen enkel document.
+- Een gecertificeerde handtekening meldde nooit zijn eigen `/DocMDP`-niveau, dus
+  elke "mag deze wijziging?"-beslissing behandelde hem als ongecertificeerd.
+
+**Wat het meten betreft.** Zolang dit niet gepubliceerd is, staan de twee assen
+op verschillende builds: de conformiteit die een buitenstaander kan nadraaien
+komt uit beta.17.5, het tekstbehoud uit de broncode. Eén publicatie zet ze op
+dezelfde build en maakt `benchmarks/pdfa/reproduce/` een volledig antwoord in
+plaats van een half antwoord.
+
+**Waarom dit niet zelf gebeurt.** Publiceren is een stap naar buiten, en
+onomkeerbaar zodra een registry het pakket heeft.
+
+**Wat er klaarligt.** De reparaties zitten in master met tests die in CI draaien.
+`benchmarks/pdfa/reproduce/package.json` pint de versie; na publicatie hoeft daar
+één versienummer in en dan draait dezelfde meting op het nieuwe pakket.
+
+**Wacht op.** Jasper.
+
 ## OPEN · Verschuift de grens tussen open en propriëtair? (!16)
 
 **Wat.** !16 maakt `pdf-compliance` een zuivere validator door generatiecode naar
