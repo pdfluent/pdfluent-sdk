@@ -117,3 +117,51 @@ omdat beide iets plausibels opleveren. De `preserve`-berekening zit daarom nu in
 één functie, `control_codes_to_preserve`, met de reden erboven. Vastgelegd in
 `crates/pdf-manip/tests/pdfa_control_code_glyphs.rs`, dat meedraait in
 `quality:cargo-test`, en getoetst door de fix te breken.
+
+
+## 22-08 — Eén backslash in de tekst kostte de rest van de pagina
+
+`truncate_long_strings_in_content` (PDF/A-limiet van 32767 bytes per tekstreeks)
+bepaalde het einde van een `(...)`-reeks met de regel "de vorige byte is geen
+backslash". Dat is niet de regel: een escape verbruikt precies één byte erna, dus
+in `(\\)` escapet de backslash zichzelf en sluit de haak wél.
+
+Gevolg: zodra de tekst van een pagina een backslash bevatte — `(\x00\\\\)` in
+pdfTeX-uitvoer — liep de scan door tot het einde van de contentstroom, kwam
+boven de 32767 uit, en hield de functie de eerste 32767 bytes over. **Alles
+daarna werd weggegooid.** Op `170_170407.pdf` viel pagina 3 van 67.786 naar
+36.668 bytes; elke pagina van dat document verloor de tekst na zijn eerste
+backslash. veraPDF noemde het resultaat conform.
+
+Twee dingen zijn veranderd:
+
+1. De escape wordt gelezen zoals ISO 32000-1 §7.3.4.2 hem beschrijft.
+2. Een reeks waarvan we het einde niet vinden, laten we met rust. Een mogelijk
+   te lange reeks laten staan is een validatiebevinding; de pagina afkappen is
+   dataverlies. Dat vangnet is wat de schade tegenhoudt als de ontleding
+   onverhoopt toch misgaat.
+
+Dezelfde foute regel stond op drie plekken in dit bestand. Ze gebruiken nu één
+functie, `end_of_literal_string`, met de reden erboven — anders landt de
+volgende correctie weer in twee van de drie. De andere twee scanners
+(`collect_xobject_refs_from_form`, `fix_emc_in_bytes`) kapten niets af, maar
+werden na de eerste backslash blind voor de rest van de stroom.
+
+Vastgelegd in vier tests in `pdfa_cleanup.rs`, elk getoetst door de bijbehorende
+helft van de fix te breken. Let op de eerste poging: mijn eerste testgeval was
+te kórt om de schade te laten optreden, dus alle drie bleven groen met de fout
+erin. En mijn eerste *mutatie* was ook de verkeerde — ik zette het overslaan van
+de escape uit in plaats van de historische regel terug te zetten, en dat gaf
+toevallig hetzelfde resultaat. Een test die het gebrek niet kan uitlokken toetst
+niets; een mutatie die het gebrek niet nabootst, toetst de test niet.
+
+## 22-08 — Een lege omtrek is geen ontbrekende glyph
+
+`fix_cid_font_notdef` beschouwde elke glyph zonder omtrek als weggesneden en
+verving hem. Een spatie hééft geen omtrek. Omdat `glyph_index(' ')` in een
+subset vaak niets vindt, viel de vervanging terug op "de laagste glyph die wél
+een omtrek heeft" — op `170_170407.pdf` was dat `)`, dus de pagina tekende
+"SWAT)SC)Working)Group".
+
+`/ToUnicode` scheidt de twee gevallen: zegt het document zelf dat deze CID een
+spatie is, dan is de lege omtrek de juiste. Zie `tounicode_blank_cids`.

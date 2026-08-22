@@ -19625,6 +19625,83 @@ fn strip_control_bytes(
     changed
 }
 
+/// Two-byte CIDs that this Type0 font's /ToUnicode declares to be whitespace.
+///
+/// Why an outline-less glyph is not a missing glyph: a space *must* have an
+/// empty outline. `tt_glyph_has_data` reads an empty `loca` entry, which is how
+/// a subsetter marks a stripped glyph and also how every font stores a space —
+/// the two are indistinguishable from `loca` alone. /ToUnicode tells them
+/// apart: if the document itself says this CID is a space, the empty outline is
+/// the correct one and the CID is valid.
+///
+/// Measured on govdocs 170_170407.pdf: CID 3 is the space (/ToUnicode gives
+/// U+00A0) with zero contours. Treating it as missing replaced every space with
+/// the lowest CID that did have an outline — ')' — so the page read
+/// "SWAT)SC)Working)Group" and word retention sat at 78.3%.
+fn tounicode_blank_cids(
+    doc: &Document,
+    font_dict: &lopdf::Dictionary,
+) -> std::collections::HashSet<u16> {
+    let mut uit = std::collections::HashSet::new();
+    let Ok(Object::Reference(id)) = font_dict.get(b"ToUnicode") else {
+        return uit;
+    };
+    let Some(Object::Stream(stream)) = doc.objects.get(id) else {
+        return uit;
+    };
+    let mut stream = stream.clone();
+    let _ = stream.decompress();
+    let tekst = String::from_utf8_lossy(&stream.content);
+
+    // Only beginbfchar pairs: a bfrange spanning whitespace and non-whitespace
+    // would need per-entry reasoning, and no measured case needs it.
+    let mut in_blok = false;
+    for regel in tekst.lines() {
+        if regel.contains("beginbfchar") {
+            in_blok = true;
+            continue;
+        }
+        if regel.contains("endbfchar") {
+            in_blok = false;
+            continue;
+        }
+        if !in_blok {
+            continue;
+        }
+        let stukken: Vec<&str> = regel
+            .split(['<', '>'])
+            .map(str::trim)
+            .filter(|x| !x.is_empty())
+            .collect();
+        if stukken.len() != 2 {
+            continue;
+        }
+        let (Ok(cid), Some(doel)) = (
+            u16::from_str_radix(stukken[0], 16),
+            utf16be_naar_string(stukken[1]),
+        ) else {
+            continue;
+        };
+        if !doel.is_empty() && doel.chars().all(|c| c.is_whitespace() || c == '\u{00A0}') {
+            uit.insert(cid);
+        }
+    }
+    uit
+}
+
+/// Hex digits of a UTF-16BE /ToUnicode target to a String, or None if malformed.
+fn utf16be_naar_string(hex: &str) -> Option<String> {
+    if !hex.len().is_multiple_of(4) || hex.is_empty() {
+        return None;
+    }
+    let mut eenheden = Vec::with_capacity(hex.len() / 4);
+    for stuk in hex.as_bytes().chunks(4) {
+        let s = std::str::from_utf8(stuk).ok()?;
+        eenheden.push(u16::from_str_radix(s, 16).ok()?);
+    }
+    String::from_utf16(&eenheden).ok()
+}
+
 /// Fix .notdef references in CID (Type0) fonts by modifying content streams.
 ///
 /// ISO 19005-2, §6.2.11.8: no .notdef glyph references allowed.
@@ -19889,10 +19966,15 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                                 None
                             }
                         });
+                        // See tounicode_blank_cids: a space has an empty outline
+                        // by definition, so `loca` alone cannot tell it from a
+                        // glyph a subsetter stripped.
+                        let blanco = tounicode_blank_cids(doc, font_dict);
                         let has_glyph_data = |gid: u16| -> bool {
                             gid > 0
                                 && gid < num_glyphs
-                                && tt_glyph_has_data(&face, ttf_parser::GlyphId(gid))
+                                && (tt_glyph_has_data(&face, ttf_parser::GlyphId(gid))
+                                    || blanco.contains(&gid))
                         };
                         let space_gid = face
                             .glyph_index(' ')
