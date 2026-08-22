@@ -105,7 +105,8 @@ def extract_text(pdftotext: str, pdf: Path, timeout: int = 60):
     return out.stdout.decode("utf-8", errors="replace")
 
 
-def run_one(runner: str, pdftotext: str, src: Path, workdir: Path) -> DocResult:
+def run_one(runner: str, pdftotext: str, src: Path, workdir: Path,
+            fallback: str = "deny") -> DocResult:
     """Replace the first word we can find, then read the page back."""
     name = src.name
     before = extract_text(pdftotext, src)
@@ -129,7 +130,8 @@ def run_one(runner: str, pdftotext: str, src: Path, workdir: Path) -> DocResult:
     try:
         proc = subprocess.run(
             [runner, "--input", str(src), "--output", str(out_pdf),
-             "--find", needle, "--replace", replacement],
+             "--find", needle, "--replace", replacement,
+             "--fallback", fallback],
             capture_output=True,
             timeout=180,
         )
@@ -165,6 +167,14 @@ def main() -> None:
                     help="record the current result as the baseline instead of judging against it")
     ap.add_argument("--limit", type=int, default=0, help="0 = the whole sample")
     ap.add_argument("--workdir", default="/tmp/text-replace-gate")
+    # De job gaf dit al mee terwijl het hier niet bestond, waardoor
+    # corpus:text-replace-capability binnen een seconde faalde op het parsen en
+    # de meting die hij moest opleveren nooit is gedraaid. De keuzes zijn
+    # afgedwongen: een tikfout mag geen meting opleveren die iets anders meet
+    # dan hij in zijn kop zet.
+    ap.add_argument("--fallback", choices=("deny", "standard"), default="deny",
+                    help="welke fontfallback het vervangen mag gebruiken; "
+                         "'deny' is de bibliotheekstandaard")
     args = ap.parse_args()
 
     corpus = Path(args.corpus_dir)
@@ -192,7 +202,7 @@ def main() -> None:
         if not src.exists():
             results.append(DocResult(name, False, 0, False, False, "not present in corpus"))
             continue
-        results.append(run_one(args.runner, args.pdftotext, src, workdir))
+        results.append(run_one(args.runner, args.pdftotext, src, workdir, args.fallback))
         if i % 25 == 0:
             print(f"[text_replace_gate] {i}/{len(names)}")
 
