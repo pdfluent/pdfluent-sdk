@@ -6,11 +6,11 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**83 van 676 publieke functies** (12.3%).
+**81 van 676 publieke functies** (12.0%).
 
 Daarvan dragen er **23** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export) en 7 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **60** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **58** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
@@ -19,10 +19,10 @@ De overige **60** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 | `pdf-manip` | 10 | 132 |
 | `pdf-ocr` | 6 | 26 |
 | `pdf-sign` | 6 | 23 |
-| `lopdf` | 5 | 25 |
 | `pdf-xfa` | 5 | 58 |
 | `xfa-test-runner` | 4 | 26 |
 | `cff-parser` | 3 | 8 |
+| `lopdf` | 3 | 25 |
 | `pdf-node` | 3 | 12 |
 | `formcalc-interpreter` | 2 | 5 |
 | `pdf-engine` | 2 | 9 |
@@ -53,8 +53,6 @@ De overige **60** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 ## lopdf
 
 - `binary_mark`  — *(geen reden opgegeven)*
-- `decrypt_object`  — *(geen reden opgegeven)*
-- `encrypt_object`  — *(geen reden opgegeven)*
 - `indirect_object`  — *(geen reden opgegeven)*
 - `xref_and_trailer`  — *(geen reden opgegeven)*
 
