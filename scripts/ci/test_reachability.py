@@ -80,10 +80,25 @@ def testmodule_start(lijnen: list[str]) -> int:
     return len(lijnen)
 
 
-def lees_workspace() -> tuple[dict[str, list[str]], str, dict[str, set[str]]]:
+# Woorden die een bewuste keuze aankondigen. Alleen doc-commentaar telt: een
+# `//`-regel is een kanttekening, een `///`-regel staat in de gegenereerde
+# documentatie en is dus geschreven om gelezen te worden.
+REDEN_WOORDEN = (
+    "not wired", "niet aangesloten", "deliberate", "on purpose", "bewust",
+    "measured", "gemeten", "disabled", "uitgezet", "do not wire", "niet aansluiten",
+)
+
+
+def heeft_reden(doc: str) -> bool:
+    laag = doc.lower()
+    return any(w in laag for w in REDEN_WOORDEN)
+
+
+def lees_workspace() -> tuple[dict[str, list[str]], str, dict[str, set[str]], dict[str, bool]]:
     lichamen: dict[str, list[str]] = {}
     testtekst: list[str] = []
     publiek: dict[str, set[str]] = {}
+    redenen: dict[str, bool] = {}
 
     for crate in sorted(CRATES.iterdir()):
         if not (crate / "src").is_dir():
@@ -107,6 +122,21 @@ def lees_workspace() -> tuple[dict[str, list[str]], str, dict[str, set[str]]]:
                     lichamen.setdefault(naam, []).append("\n".join(productie[start:eind]))
             pubs |= set(PUBLIEK.findall("\n".join(productie)))
 
+            # Het doc-commentaar direct boven een publieke functie: alles wat
+            # vlak ervoor staat en met /// of #[ begint hoort er nog bij.
+            for i, regel in enumerate(productie):
+                m = PUBLIEK.match(regel)
+                if not m:
+                    continue
+                doc: list[str] = []
+                j = i - 1
+                while j >= 0 and (productie[j].lstrip().startswith("///")
+                                  or productie[j].lstrip().startswith("#[")
+                                  or productie[j].lstrip().startswith("//!")):
+                    doc.append(productie[j])
+                    j -= 1
+                redenen[m.group(1)] = heeft_reden("\n".join(doc))
+
         for map_ in ("tests", "benches"):
             if (crate / map_).is_dir():
                 for bestand in sorted((crate / map_).rglob("*.rs")):
@@ -115,7 +145,7 @@ def lees_workspace() -> tuple[dict[str, list[str]], str, dict[str, set[str]]]:
         if pubs:
             publiek[crate.name] = pubs
 
-    return lichamen, "\n".join(testtekst), publiek
+    return lichamen, "\n".join(testtekst), publiek, redenen
 
 
 def bereikbaar_vanaf_tests(lichamen: dict[str, list[str]], testtekst: str) -> set[str]:
@@ -133,7 +163,7 @@ def bereikbaar_vanaf_tests(lichamen: dict[str, list[str]], testtekst: str) -> se
 
 
 def maak_rapport() -> str:
-    lichamen, testtekst, publiek = lees_workspace()
+    lichamen, testtekst, publiek, redenen = lees_workspace()
     bereik = bereikbaar_vanaf_tests(lichamen, testtekst)
 
     per_crate: list[tuple[str, int, list[str]]] = []
@@ -164,7 +194,16 @@ def maak_rapport() -> str:
         "bevinding is."
     )
     uit.append("")
+    met_reden = sum(1 for _, _, onb in per_crate for n in onb if redenen.get(n))
     uit.append(f"**{onbereikt} van {totaal} publieke functies** ({100 * onbereikt / totaal:.1f}%).")
+    uit.append("")
+    uit.append(
+        f"Daarvan dragen er **{met_reden}** een uitleg in hun eigen doc-commentaar. "
+        "De rest staat hier zonder dat iemand heeft opgeschreven waarom, en dat is "
+        "het getal dat omlaag hoort. Een functie die hier bij komt zonder reden "
+        "verschijnt in de diff als `(geen reden opgegeven)` — precies waar een "
+        "reviewer kijkt."
+    )
     uit.append("")
     uit.append("| crate | onbereikt | publiek |")
     uit.append("|---|---:|---:|")
@@ -175,7 +214,8 @@ def maak_rapport() -> str:
         uit.append(f"## {crate}")
         uit.append("")
         for naam in onb:
-            uit.append(f"- `{naam}`")
+            merk = "" if redenen.get(naam) else "  — *(geen reden opgegeven)*"
+            uit.append(f"- `{naam}`{merk}")
         uit.append("")
     return "\n".join(uit).rstrip() + "\n"
 
