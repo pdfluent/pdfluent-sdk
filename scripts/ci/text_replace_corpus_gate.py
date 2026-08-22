@@ -50,6 +50,23 @@ REPO = HERE.parent.parent
 DEFAULT_SAMPLE_LIST = REPO / "benchmarks" / "text_replace" / "corpus_sample_200.txt"
 DEFAULT_BASELINE = REPO / "benchmarks" / "text_replace" / "baseline.json"
 
+# Hoe deze meting haar woord kiest. Een basislijn is alleen vergelijkbaar binnen
+# één methode: verandert de keuzeregel, dan verschuiven de per-document-uitslagen
+# zonder dat er iets aan de motor mankeert.
+#
+# Op 22-08 gebeurde dat: de regel werd "het woord moet precies één keer
+# voorkomen", omdat de controle erna anders dubbelzinnig is (govdocs 000024.pdf
+# heeft het woord twee keer, en de tweede staat in een gedraaid kaartlabel dat
+# pdftotext in de ÓNGEWIJZIGDE bron al over drie regels breekt). De gate meldde
+# daarna 14 "regressies" tegen een basislijn van de oude regel. Geen daarvan was
+# er een.
+#
+# Bump deze naam in dezelfde commit als de regelwijziging. De gate legt dan een
+# nieuwe basislijn vast in plaats van te oordelen, met een banner erboven.
+METHODOLOGY = "needle-unique-v2"
+METHODOLOGY_KEY = "_methodology"
+
+
 
 def die(msg: str, code: int = 2) -> None:
     print(f"[text_replace_gate] FATAL: {msg}", file=sys.stderr)
@@ -260,9 +277,14 @@ def main() -> None:
     current = {r.name: asdict(r) for r in results}
     baseline_path = Path(args.baseline)
 
-    if args.write_baseline:
+    def schrijf_basislijn() -> None:
         baseline_path.parent.mkdir(parents=True, exist_ok=True)
-        baseline_path.write_text(json.dumps(current, indent=2, sort_keys=True))
+        inhoud = dict(current)
+        inhoud[METHODOLOGY_KEY] = METHODOLOGY
+        baseline_path.write_text(json.dumps(inhoud, indent=2, sort_keys=True))
+
+    if args.write_baseline:
+        schrijf_basislijn()
         print(f"[text_replace_gate] baseline written: {baseline_path}")
         sys.exit(0)
 
@@ -274,8 +296,7 @@ def main() -> None:
         # committed to the repo, so its absence is visible in git — and the
         # banner below makes a re-baseline impossible to mistake for a pass in
         # the job log.
-        baseline_path.parent.mkdir(parents=True, exist_ok=True)
-        baseline_path.write_text(json.dumps(current, indent=2, sort_keys=True))
+        schrijf_basislijn()
         print()
         print("=" * 68)
         print("[text_replace_gate] BASELINE ESTABLISHED — THIS RUN JUDGED NOTHING")
@@ -286,6 +307,23 @@ def main() -> None:
         sys.exit(0)
 
     baseline = json.loads(baseline_path.read_text())
+    baseline_methode = baseline.pop(METHODOLOGY_KEY, None)
+    if baseline_methode != METHODOLOGY:
+        # Een basislijn van een andere keuzeregel levert verschillen op die niets
+        # over de motor zeggen. Vergelijken zou 14 niet-bestaande regressies
+        # melden; zwijgend doorgaan zou echte verbergen. Dus: opnieuw vastleggen,
+        # luid, en niets oordelen.
+        schrijf_basislijn()
+        print()
+        print("=" * 68)
+        print("[text_replace_gate] METHODOLOGY CHANGED — THIS RUN JUDGED NOTHING")
+        print(f"[text_replace_gate] baseline was recorded under: {baseline_methode!r}")
+        print(f"[text_replace_gate] this run measures under:     {METHODOLOGY!r}")
+        print("[text_replace_gate] per-document verdicts are not comparable across that")
+        print("[text_replace_gate] change, so the baseline is re-recorded, not judged.")
+        print("[text_replace_gate] Commit it; the next run compares against it.")
+        print("=" * 68)
+        sys.exit(0)
     regressions = []
     for name, now in current.items():
         was = baseline.get(name)

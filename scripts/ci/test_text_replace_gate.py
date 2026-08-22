@@ -156,6 +156,61 @@ def test_de_vlag_bereikt_de_runner() -> None:
             )
 
 
+def test_een_basislijn_draagt_zijn_methode() -> None:
+    """De geschreven basislijn zegt onder welke keuzeregel hij is gemaakt."""
+    with tempfile.TemporaryDirectory() as tmp:
+        corpus, runner, log = opstelling(tmp)
+        draai_gate(corpus, runner, log, [])
+        inhoud = json.loads((corpus / "baseline.json").read_text())
+        controleer(
+            "een basislijn draagt zijn methode",
+            inhoud.get("_methodology"),
+            "zonder markering is niet te zien of een vergelijking geldig is",
+        )
+
+
+def test_een_andere_methode_oordeelt_niet_maar_legt_opnieuw_vast() -> None:
+    """Verandert de keuzeregel, dan zijn per-document-uitslagen onvergelijkbaar.
+
+    Vergelijken zou verschillen melden die niets over de motor zeggen — op 22-08
+    waren dat er veertien. Zwijgend doorgaan zou echte regressies verbergen. Dus
+    opnieuw vastleggen, luid, en niets oordelen.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        corpus, runner, log = opstelling(tmp)
+        # Een basislijn van een oudere regel, met een uitslag die anders als
+        # regressie zou tellen.
+        (corpus / "baseline.json").write_text(json.dumps({
+            "_methodology": "needle-first-v1",
+            "een.pdf": {"name": "een.pdf", "usable": True, "engine_found": True,
+                        "replaced": True, "extractable": True, "note": "",
+                        "needle": "", "replacement": ""},
+        }))
+        sample = corpus / "sample.txt"
+        sample.write_text("een.pdf\n")
+        r = subprocess.run(
+            [sys.executable, str(GATE),
+             "--corpus-dir", str(corpus), "--runner", str(runner),
+             "--pdftotext", str(corpus / "namaak_pdftotext.py"),
+             "--sample-list", str(sample),
+             "--baseline", str(corpus / "baseline.json"),
+             "--workdir", str(corpus / "work2")],
+            capture_output=True, text=True,
+            env=dict(os.environ, RUNNER_LOG=str(log)), timeout=120,
+        )
+        controleer(
+            "een andere methode oordeelt niet",
+            r.returncode == 0 and "METHODOLOGY CHANGED" in r.stdout,
+            f"rc={r.returncode}, uitvoer: {r.stdout[-300:]}",
+        )
+        opnieuw = json.loads((corpus / "baseline.json").read_text())
+        controleer(
+            "en legt de nieuwe methode vast",
+            opnieuw.get("_methodology") == "needle-unique-v2",
+            f"kreeg {opnieuw.get('_methodology')!r}",
+        )
+
+
 def main() -> int:
     if not GATE.exists():
         print(f"SKIPPED (not a pass): {GATE} bestaat niet", file=sys.stderr)
