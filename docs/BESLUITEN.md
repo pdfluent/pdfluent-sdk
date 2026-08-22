@@ -48,6 +48,21 @@ holdout meer en moet er een nieuwe getrokken worden.
 
 ## OPEN · Gaat fontfallback standaard aan bij tekstvervanging?
 
+**Gemeten 22-08, en het cijfer is er nu.** De job die dit moest beantwoorden had
+nooit gedraaid: hij gaf een vlag mee die het script niet kende en viel binnen 0,4
+seconde om. Gerepareerd, en toen liep hij in drie minuten.
+
+| op 196 bruikbare documenten | `Deny` (nu) | `InjectStandard` |
+|---|---|---|
+| vervangen | 180 (91,8%) | **193 (98,5%)** |
+| daarna uitleesbaar | 171 (87,2%) | **184 (93,9%)** |
+
+Alle dertien die op de fallback strandden slagen ermee, inclusief de drie subsets
+zonder bekende codering waarvan ik verwachtte dat ze zouden blijven falen. De
+negen die na vervanging onleesbaar blijven zijn exact dezelfde negen — fallback
+raakt die niet, wat bevestigt dat het daar om `/ToUnicode` gaat.
+
+
 **Wat.** `FontFallback::Deny` is nu de standaard: kan een lettertype een teken
 niet schrijven, dan weigert de vervanging. Het alternatief voegt een
 Helvetica-hulpbron toe.
