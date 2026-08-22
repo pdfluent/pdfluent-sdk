@@ -131,7 +131,17 @@ def run_one(runner: str, pdftotext: str, src: Path, workdir: Path,
     # the match is unambiguous and the replacement is a realistic edit rather
     # than a single character.
     words = [w.strip(".,;:()[]\"'") for w in before.split()]
-    needle = next((w for w in words if len(w) >= 6 and w.isalpha()), None)
+    # The needle has to occur exactly once, or the check afterwards is
+    # ambiguous: the engine replaces one occurrence and the reader may be
+    # showing another. govdocs 000024.pdf is the case that taught this -- the
+    # word appears twice, once as a rotated map label that pdftotext already
+    # splits across three lines in the *original*. The replacement landed
+    # correctly on that label and the check then failed against the untouched
+    # second occurrence, which reads as a defect and is not one.
+    needle = next(
+        (w for w in words if len(w) >= 6 and w.isalpha() and before.count(w) == 1),
+        None,
+    )
     if needle is None:
         return DocResult(name, True, False, False, False, "no suitable word to replace")
 
