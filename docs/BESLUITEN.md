@@ -165,3 +165,37 @@ een omtrek heeft" — op `170_170407.pdf` was dat `)`, dus de pagina tekende
 
 `/ToUnicode` scheidt de twee gevallen: zegt het document zelf dat deze CID een
 spatie is, dan is de lege omtrek de juiste. Zie `tounicode_blank_cids`.
+
+## 22-08 — Vier open merge requests, beoordeeld op inhoud
+
+`scripts/ci/mr_staleness.py` meldt ze al op leeftijd. Wat het script niet kan
+zeggen is of er nog iets in zit. Nagekeken op 22-08:
+
+| MR | leeftijd | achter | inhoud | zit het in master? |
+|---|---|---|---|---|
+| !12 | 81d | 329 | StructTree-gestuurde logische tekstextractie, plus gedraaide tekst, overprint-dedup en ligaturen (3.217 regels) | **nee** |
+| !9 | 81d | 329 | `XFA_DRAW_LINE_SPAN` — celranden in XFA-tabellen tekenen (1.023 regels) | **nee** |
+| !8 | 81d | 498 | `<arc>` renderen (cirkels, ellipsen, zegelringen) plus drie occur-parity-fixes (849 regels) | **nee** |
+| !16 | 79d | 10 | `pdf-compliance` als zuivere lezer; de tagged-generator verhuist naar `pdf-manip` (10 regels) | n.v.t. — grensbesluit |
+
+Geen van de drie functies is er langs een andere weg ingekomen; ik heb op de
+kenmerkende namen gezocht in `origin/master`. Dit is dus echte, onverzilverde
+functionaliteit, geen archief dat zich voordoet als een plan.
+
+**Wat dit kost, per stuk:**
+
+- **!16** is klein en groen, en tien commits achter. De enige vraag is waar de
+  grens tussen open en gesloten ligt. Dat is een besluit voor Jasper, geen werk.
+- **!8, !9, !12** zijn 329 tot 498 commits achter. Rebasen is hier geen middag
+  meer — dat is het werk grotendeels opnieuw doen. Dat is precies waar de regel
+  "rebase zolang dat nog een middag is" voor bestaat, en die middag is voorbij.
+
+**Waarom ik ze niet zelf merge:** het zijn productwijzigingen aan de
+XFA-weergave en aan tekstextractie, ongereviewd, op een branch die master voedt.
+Een van de drie zet bovendien een vlag standaard aan. Dat is niet iets om
+ongevraagd binnen te halen omdat een teller op rood staat.
+
+**Wat er wél moet gebeuren:** per stuk merge of sluit. Sluiten laat de branch
+bestaan, dus het kost niets behalve de schijn dat er iets in de wachtrij staat —
+en bij !8, !9 en !12 is die schijn inmiddels duurder dan het werk zelf, want
+niemand weet meer of het nog past.
