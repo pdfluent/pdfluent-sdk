@@ -66,9 +66,10 @@ TOLERANCE_PP = 1.0
 # op 22-08 een avond kostte.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from text_fidelity import meet as woord_fidelity  # noqa: E402
+    from text_fidelity import MIN_WOORDEN, meet as woord_fidelity  # noqa: E402
 except ImportError:  # pragma: no cover — dan meet dit script alleen tekens
     woord_fidelity = None
+    MIN_WOORDEN = 20
 
 
 def die(msg: str, code: int = 2) -> None:
@@ -245,6 +246,7 @@ def main() -> None:
     measured: dict[str, float] = {}
     unreadable: list[str] = []
     op_woorden: dict[str, float] = {}
+    te_weinig_woorden: list[str] = []
     with tempfile.TemporaryDirectory(prefix="retention-") as tmp:
         for name in names:
             src = corpus / name
@@ -271,7 +273,14 @@ def main() -> None:
             if args.word_fidelity and woord_fidelity is not None:
                 uitslag = woord_fidelity(src, out, args.mutool)
                 if uitslag is not None:
-                    op_woorden[name] = round(uitslag[0], 1)
+                    # uitslag[2] is het aantal bronwoorden. Te weinig woorden en
+                    # het percentage zegt niets — zie MIN_WOORDEN in
+                    # text_fidelity.py, en govdocs 076_076313.pdf, dat met twee
+                    # woorden 100,0% scoorde terwijl 31% van de tekens weg was.
+                    if uitslag[2] < MIN_WOORDEN:
+                        te_weinig_woorden.append(name)
+                    else:
+                        op_woorden[name] = round(uitslag[0], 1)
 
     print_distribution(measured)
     if args.word_fidelity:
@@ -279,6 +288,9 @@ def main() -> None:
             print("[retention] SKIPPED (not a pass): text_fidelity.py niet importeerbaar")
         else:
             print_distribution_words(op_woorden)
+            if te_weinig_woorden:
+                print(f"[retention-words]   too few words to judge "
+                      f"(<{MIN_WOORDEN} in source): {len(te_weinig_woorden)}")
 
     if args.update_baseline:
         # Per-platform documents map: font substitution differs per host, so a
