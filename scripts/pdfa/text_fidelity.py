@@ -76,6 +76,20 @@ def woorden(tekst: str) -> collections.Counter:
     return collections.Counter(w.lower() for w in WOORD.findall(tekst))
 
 
+# Onder dit aantal bronwoorden zegt een percentage niets.
+#
+# govdocs 076_076313.pdf heeft 5.865 tekens en **twee** woorden — de rest is
+# cijfers, losse letters en symbolen. De omzetting verloor 31% van de tekens en
+# deze maat gaf hem 100,0% (2 van 2). Dat is geen bewijs, dat is ruis met een
+# geruststellend getal ervoor.
+#
+# Twintig is geen natuurwet; het is laag genoeg om echte tekstpagina's binnen te
+# houden en hoog genoeg dat één toevallig woord de uitslag niet maakt. Wat telt
+# is dat zulke documenten apart gerapporteerd worden in plaats van als 100% mee
+# te tellen.
+MIN_WOORDEN = 20
+
+
 def fidelity(bron: str, uit: str) -> tuple[float, int, int]:
     """Welk deel van de bronwoorden komt terug, met veelvoud."""
     b, u = woorden(bron), woorden(uit)

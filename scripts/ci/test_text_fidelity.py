@@ -124,6 +124,28 @@ def test_lege_bron_geeft_geen_getal() -> None:
     controleer("lege bron geeft NaN", score != score, f"kreeg {score}")
 
 
+def test_een_bron_met_bijna_geen_woorden_is_geen_bewijs() -> None:
+    """De blinde vlek van deze maat, in cijfers.
+
+    govdocs 076_076313.pdf heeft 5.865 tekens en twee woorden. De omzetting
+    verloor 31% van de tekens en deze maat gaf hem 100,0%. Een percentage over
+    twee woorden is geen meting; MIN_WOORDEN bestaat om zulke documenten apart
+    te zetten in plaats van ze als een perfecte score mee te tellen.
+    """
+    mod = laad()
+    score, behouden, totaal = mod.fidelity("ok ok", "ok ok 1 2 3 4 5 6 7 8 9")
+    controleer(
+        "twee woorden geven 100% terwijl er van alles bij kan zijn gekomen",
+        score == 100.0 and totaal == 2,
+        f"{score} {behouden}/{totaal}",
+    )
+    controleer(
+        "en die 2 ligt onder de drempel",
+        totaal < mod.MIN_WOORDEN,
+        f"MIN_WOORDEN={mod.MIN_WOORDEN}",
+    )
+
+
 def main() -> int:
     if not MAAT.is_file():
         print(f"SKIPPED (not a pass): {MAAT} bestaat niet", file=sys.stderr)
