@@ -84,6 +84,40 @@ def test_de_verdeling_wordt_gerapporteerd() -> None:
     controleer("telling vanaf 100 klopt", "at or above 100%    5/9" in uit, uit)
 
 
+def test_de_woordverdeling_wordt_apart_gerapporteerd() -> None:
+    """De woordas is het cijfer dat naar buiten gaat (CLAIMS.md A12).
+
+    Apart getest van de tekenverdeling omdat de twee niet dezelfde schaal
+    hebben: boven 100% is bij tellen normaal, bij woorden is 100% het maximum.
+    Een rapport dat stil niets doet is hier niet onschuldig — dan is het getal
+    weg en zegt de poort nog steeds OK.
+    """
+    mod = laad()
+    buf = io.StringIO()
+    gegevens = {f"d{i}.pdf": v for i, v in enumerate(
+        [40.0, 80.0, 94.0, 99.0, 100.0, 100.0, 100.0, 100.0, 100.0])}
+    with contextlib.redirect_stdout(buf):
+        mod.print_distribution_words(gegevens)
+    uit = buf.getvalue()
+    controleer("er komt iets uit", bool(uit.strip()), "leeg")
+    controleer("mediaan klopt", "median             100.0%" in uit, uit)
+    controleer("telling vanaf 99 klopt", "at or above 99%    6/9" in uit, uit)
+    controleer("telling onder 95 klopt", "below 95%          3" in uit, uit)
+    controleer("laagste vijf staan erbij", "lowest five" in uit, uit)
+
+
+def test_een_lege_woordmeting_valt_niet_om() -> None:
+    mod = laad()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        mod.print_distribution_words({})
+    controleer(
+        "lege woordmeting zegt dat er niets is",
+        "nothing measured" in buf.getvalue(),
+        repr(buf.getvalue()),
+    )
+
+
 def test_een_lege_meting_zwijgt_niet_stiekem() -> None:
     """Bij niets gemeten hoort er niets te staan — maar dan moet de poort er ook
     niet op omvallen. Een uitzondering hier zou de hele run laten falen op het
