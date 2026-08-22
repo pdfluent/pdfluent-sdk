@@ -338,38 +338,38 @@ delivered through it.
 
 | crate | version | in facade | test files | unit tests | run by |
 |---|---|---|---|---|---|
-| `formcalc-interpreter` | 1.0.0-beta.18 | internal | 3 | 86 | `quality:cargo-test` |
-| `pdf-annot` | 1.0.0-beta.18 | direct | — | 38 | `quality:cargo-test` |
-| `pdf-compliance` | 1.0.0-beta.18.1 | direct | — | 92 | `quality:cargo-test` |
-| `pdf-docx` | 1.0.0-beta.18 | direct | — | 24 | `quality:cargo-test` |
-| `pdf-engine` | 1.0.0-beta.18 | direct | 3 | 155 | `quality:cargo-test` |
+| `formcalc-interpreter` | 1.0.0 | internal | 3 | 86 | `quality:cargo-test` |
+| `pdf-annot` | 1.0.0 | direct | — | 38 | `quality:cargo-test` |
+| `pdf-compliance` | 1.0.0 | direct | — | 92 | `quality:cargo-test` |
+| `pdf-docx` | 1.0.0 | direct | — | 24 | `quality:cargo-test` |
+| `pdf-engine` | 1.0.0 | direct | 3 | 155 | `quality:cargo-test` |
 | `pdf-font` | 1.0.0-beta.5 | internal | — | 117 | `quality:cargo-test` |
 | `pdf-interpret` | 0.5.8 | direct | — | 123 | `quality:cargo-test` |
-| `pdf-invoice` | 1.0.0-beta.18 | **absent** | — | 53 | `quality:cargo-test` |
-| `pdf-manip` | 1.0.0-beta.18 | direct | 11 | 279 | `quality:cargo-test` |
-| `pdf-ocr` | 1.0.0-beta.18 | **absent** | 1 | 70 | `quality:cargo-test` |
-| `pdf-pptx` | 1.0.0-beta.18 | direct | — | 14 | `quality:cargo-test` |
-| `pdf-redact` | 1.0.0-beta.18 | direct | 5 | 57 | `quality:cargo-test` |
-| `pdf-render` | 1.0.0-beta.18 | direct | — | 7 | `quality:cargo-test` |
-| `pdf-standard-fonts` | 1.0.0-beta.18 | internal | — | 9 | `quality:cargo-test` |
+| `pdf-invoice` | 1.0.0 | **absent** | — | 53 | `quality:cargo-test` |
+| `pdf-manip` | 1.0.0 | direct | 11 | 279 | `quality:cargo-test` |
+| `pdf-ocr` | 1.0.0 | **absent** | 1 | 70 | `quality:cargo-test` |
+| `pdf-pptx` | 1.0.0 | direct | — | 14 | `quality:cargo-test` |
+| `pdf-redact` | 1.0.0 | direct | 5 | 57 | `quality:cargo-test` |
+| `pdf-render` | 1.0.0 | direct | — | 7 | `quality:cargo-test` |
+| `pdf-standard-fonts` | 1.0.0 | internal | — | 9 | `quality:cargo-test` |
 | `pdf-syntax` | 0.5.6 | direct | — | 203 | `quality:cargo-test` |
-| `pdf-text-format` | 1.0.0-beta.18 | **absent** | — | 21 | `quality:cargo-test` |
-| `pdf-xfa` | 1.0.0-beta.18 | internal | 47 | 376 | `quality:cargo-test` |
-| `pdf-xlsx` | 1.0.0-beta.18 | direct | — | 19 | `quality:cargo-test` |
-| `pdfluent` | 1.0.0-beta.18 | direct | 31 | 24 | `quality:cargo-test` |
+| `pdf-text-format` | 1.0.0 | **absent** | — | 21 | `quality:cargo-test` |
+| `pdf-xfa` | 1.0.0 | internal | 47 | 376 | `quality:cargo-test` |
+| `pdf-xlsx` | 1.0.0 | direct | — | 19 | `quality:cargo-test` |
+| `pdfluent` | 1.0.0 | direct | 31 | 24 | `quality:cargo-test` |
 | `pdfluent-ccitt` | 0.2.2 | internal | — | 7 | `quality:cargo-test` |
 | `pdfluent-cff` | 0.2.1 | internal | — | 26 | `quality:cargo-test` |
-| `pdfluent-extract` | 1.0.0-beta.18 | internal | — | 77 | `quality:cargo-test` |
-| `pdfluent-forms` | 1.0.0-beta.18 | direct | 2 | 70 | `quality:cargo-test` |
+| `pdfluent-extract` | 1.0.0 | internal | — | 77 | `quality:cargo-test` |
+| `pdfluent-forms` | 1.0.0 | direct | 2 | 70 | `quality:cargo-test` |
 | `pdfluent-jbig2` | 0.2.3 | internal | — | 9 | `quality:cargo-test` |
 | `pdfluent-jpeg2000` | 0.3.5 | internal | — | 7 | `quality:cargo-test` |
-| `pdfluent-lopdf` | 0.39.4 | direct | 1 | 119 | `quality:cargo-test` |
-| `pdfluent-sign` | 1.0.0-beta.18 | direct | — | 62 | `quality:cargo-test` |
-| `xfa-dom-resolver` | 1.0.0-beta.18 | internal | 1 | 32 | `quality:cargo-test` |
-| `xfa-js-sandboxed` | 1.0.0-beta.18 | internal | 5 | 8 | `quality:cargo-test` |
-| `xfa-json` | 1.0.0-beta.18 | internal | — | 26 | `quality:cargo-test` |
-| `xfa-layout-engine` | 1.0.0-beta.18 | internal | 8 | 123 | `quality:cargo-test` |
-| `xfa-license` | 1.0.0-beta.18 | direct | — | 26 | `quality:cargo-test` |
+| `pdfluent-lopdf` | 0.39.5 | direct | 1 | 119 | `quality:cargo-test` |
+| `pdfluent-sign` | 1.0.0 | direct | — | 62 | `quality:cargo-test` |
+| `xfa-dom-resolver` | 1.0.0 | internal | 1 | 32 | `quality:cargo-test` |
+| `xfa-js-sandboxed` | 1.0.0 | internal | 5 | 8 | `quality:cargo-test` |
+| `xfa-json` | 1.0.0 | internal | — | 26 | `quality:cargo-test` |
+| `xfa-layout-engine` | 1.0.0 | internal | 8 | 123 | `quality:cargo-test` |
+| `xfa-license` | 1.0.0 | direct | — | 26 | `quality:cargo-test` |
 
 ## Feature flags that enable nothing
 
