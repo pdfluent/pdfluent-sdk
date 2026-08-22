@@ -152,8 +152,16 @@ pub fn encode_row(method: FilterType, bpp: usize, previous: &[u8], current: &mut
         }
         Avg => {
             for i in (bpp..len).rev() {
-                current[i] =
-                    current[i].wrapping_sub(current[i - bpp].wrapping_add(previous[i]) / 2);
+                // Same nine-bit sum as the decoder: RFC 2083 §6.5 averages
+                // left and above before dividing, and `wrapping_add` here
+                // truncated the sum to eight bits, so any pair adding to 256
+                // or more encoded to a byte the decoder could not undo. The
+                // decoder was repaired first, which left the two halves
+                // disagreeing; nothing caught it because no test reached
+                // `encode_row` (docs/TEST_REACHABILITY.md).
+                current[i] = current[i].wrapping_sub(
+                    ((i16::from(current[i - bpp]) + i16::from(previous[i])) / 2) as u8,
+                );
             }
 
             for i in 0..bpp {
@@ -178,6 +186,33 @@ pub fn encode_row(method: FilterType, bpp: usize, previous: &[u8], current: &mut
 
 #[cfg(test)]
 mod predictor_tests {
+
+    /// `encode_row` is the inverse of `decode_row`, so the only test worth
+    /// having runs them against each other. Both had the same defect on the
+    /// Average filter — RFC 2083 §6.5 computes `floor((a + b) / 2)` in nine
+    /// bits, and adding two bytes first wraps whenever a + b exceeds 255.
+    /// The decoder was fixed after a corpus document rendered wrong; the
+    /// encoder was never reached by a test at all.
+    #[test]
+    fn every_filter_round_trips_including_values_that_overflow_a_byte() {
+        use super::FilterType::*;
+        // 200 + 200 = 400: the case that wraps if the sum is taken in u8.
+        let vorige: Vec<u8> = vec![200, 200, 200, 7, 0, 255, 128, 3];
+        let bron: Vec<u8> = vec![200, 201, 202, 9, 1, 254, 127, 5];
+
+        for filter in [None, Sub, Up, Avg, Paeth] {
+            for bpp in [1usize, 3] {
+                let mut werk = bron.clone();
+                super::encode_row(filter, bpp, &vorige, &mut werk);
+                super::decode_row(filter, bpp, &vorige, &mut werk);
+                assert_eq!(
+                    werk, bron,
+                    "{filter:?} with bpp {bpp} did not survive encode->decode"
+                );
+            }
+        }
+    }
+
     use super::decode_frame;
 
     /// De PNG-predictor zit voor vrijwel elke gecomprimeerde stroom in een PDF.
