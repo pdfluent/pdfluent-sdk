@@ -6,11 +6,11 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**95 van 676 publieke functies** (14.1%).
+**94 van 676 publieke functies** (13.9%).
 
 Daarvan dragen er **23** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export) en 7 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **72** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **71** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
@@ -27,12 +27,12 @@ De overige **72** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 | `formcalc-interpreter` | 2 | 5 |
 | `pdf-content-stream` | 2 | 11 |
 | `pdf-engine` | 2 | 9 |
-| `xfa-cli` | 2 | 5 |
 | `hayro-jpeg2000` | 1 | 1 |
 | `pdf-annot` | 1 | 4 |
 | `pdf-bench` | 1 | 1 |
 | `pdf-extract` | 1 | 13 |
 | `pdf-forms` | 1 | 29 |
+| `xfa-cli` | 1 | 5 |
 | `xfa-dom-resolver` | 1 | 4 |
 | `xfa-golden-tests` | 1 | 3 |
 
@@ -176,7 +176,6 @@ De overige **72** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 
 ## xfa-cli
 
-- `parse_page_list`  — *(geen reden opgegeven)*
 - `run`  — *(geen reden opgegeven)*
 
 ## xfa-dom-resolver
