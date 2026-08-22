@@ -146,6 +146,50 @@ def test_een_bron_met_bijna_geen_woorden_is_geen_bewijs() -> None:
     )
 
 
+def test_de_twee_implementaties_delen_hun_regels() -> None:
+    """De woordmaat bestaat twee keer: hier in Python en in het
+    reproductiescript in JavaScript, zodat een buitenstaander hetzelfde cijfer
+    kan uitrekenen zonder onze broncode.
+
+    Twee kopieën lopen uit elkaar, en dan meten ze iets anders terwijl ze
+    hetzelfde heten. Het woordpatroon en de drempel worden daarom hier
+    vergeleken in plaats van met de hand.
+    """
+    import pathlib
+    import re as _re
+
+    wortel = pathlib.Path(__file__).resolve().parents[2]
+    py = (wortel / "scripts/pdfa/text_fidelity.py").read_text(encoding="utf-8")
+    js_pad = wortel / "benchmarks/pdfa/reproduce/reproduce.mjs"
+    if not js_pad.is_file():
+        print(f"SKIPPED (not a pass): {js_pad} ontbreekt", file=sys.stderr)
+        return
+    js = js_pad.read_text(encoding="utf-8")
+
+    p_re = _re.search(r'^WOORD = re\.compile\(r"(.+)"\)', py, _re.M)
+    j_re = _re.search(r"^const WOORD = /(.+)/gu;", js, _re.M)
+    p_min = _re.search(r"^MIN_WOORDEN = (\d+)", py, _re.M)
+    j_min = _re.search(r"^const MIN_WOORDEN = (\d+);", js, _re.M)
+
+    controleer(
+        "beide kanten zijn vindbaar",
+        all([p_re, j_re, p_min, j_min]),
+        f"py_re={bool(p_re)} js_re={bool(j_re)} py_min={bool(p_min)} js_min={bool(j_min)}",
+    )
+    if not all([p_re, j_re, p_min, j_min]):
+        return
+    controleer(
+        "hetzelfde woordpatroon",
+        p_re.group(1) == j_re.group(1),
+        f"{p_re.group(1)!r} tegen {j_re.group(1)!r}",
+    )
+    controleer(
+        "dezelfde drempel",
+        p_min.group(1) == j_min.group(1),
+        f"{p_min.group(1)} tegen {j_min.group(1)}",
+    )
+
+
 def main() -> int:
     if not MAAT.is_file():
         print(f"SKIPPED (not a pass): {MAAT} bestaat niet", file=sys.stderr)
