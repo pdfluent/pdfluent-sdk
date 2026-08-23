@@ -2,6 +2,59 @@
 
 All notable changes to PDFluent are documented here.
 
+## [1.0.0] — 2026-08-23
+
+General availability. Every binding channel moves to `1.0.0`; the crates.io
+graph stays deliberately heterogeneous (upstream forks keep their `0.x` tracks),
+which is the topologically-proven publish set rather than an inconsistency.
+
+Four of the fixes below could not be caught by validating the output. A file can
+lose most of its text and still pass PDF/A validation, because what is gone
+cannot be wrong. They were found by measuring text retention as a second axis
+against the source document.
+
+### Fixed
+
+- **A backslash in a page's text no longer costs everything after it.** The
+  PDF/A implementation-limit pass located the end of a `(...)` string with the
+  rule "the previous byte is not a backslash". An escape consumes exactly the
+  byte after it, so in `(\\)` the backslash escapes itself and the `)` does
+  close the string. Reading it the other way ran the scan to the end of the
+  content stream, came out over the 32767-byte limit, and kept the first 32767
+  bytes — discarding the rest of the page. Any document whose text contains a
+  backslash was affected; pdfTeX writes one as `(\x00\\\\)`. Measured on a
+  govdocs holdout document: page 3 fell from 67,786 to 36,668 bytes, and veraPDF
+  called the result compliant.
+- **Spaces no longer render as `)` on subset fonts.** A glyph with an empty
+  outline was treated as one the subsetter had stripped, and replaced. A space
+  *has* no outline. With `glyph_index(' ')` finding nothing in the subset, the
+  replacement fell back to the lowest CID that did have an outline. `/ToUnicode`
+  now separates the two cases.
+- **Character codes below 32 survive where `/Differences` names them.** They are
+  control characters only when the font says nothing about them; a TeX subset
+  encoding starts its `/Differences` at code 1, so on a Computer Modern subset
+  those are the document's ordinary letters.
+- **`sign_pdf_incremental` works.** It failed on every input with "PDF has no
+  pages": a fresh incremental revision starts with no objects, so the signing
+  pass had no page tree to attach the widget to. The catalog and page tree are
+  now carried over, and the previous revision survives byte for byte — which is
+  the property that keeps signatures already in the file verifying.
+- **A certified signature reports its own DocMDP level.** The reader looked up
+  `/SigRef`; ISO 32000-1 Table 252 names the key `/Reference`, and `SigRef` is
+  the `/Type` inside each entry. Every "may this edit be applied" decision
+  downstream treated certified documents as uncertified. The same call feeds
+  `/FieldMDP`, so form-field locks were invisible too.
+- **The PNG Average predictor encoder can be undone by its own decoder.** RFC
+  2083 §6.5 averages the left and above bytes in nine bits; adding them as `u8`
+  wraps whenever the sum reaches 256.
+
+### Changed
+
+- `pdfluent-lopdf` 0.39.4 → 0.39.5 (the predictor fix above).
+- Binding channels unified on `1.0.0`: `@pdfluent/node` and its six per-platform
+  packages, `@pdfluent/sdk-wasm`, PyPI `pdfluent`, Maven `com.pdfluent:pdfluent`,
+  NuGet `PDFluent`.
+
 ## [1.0.0-beta.17] — 2026-06-18
 
 Repairs the OSS-fork dependency drift that blocked beta.16 from publishing to
