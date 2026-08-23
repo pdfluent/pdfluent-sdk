@@ -932,6 +932,79 @@ mod tests {
         }
     }
 
+    /// `encrypt_object` and `decrypt_object` are the per-object primitives the
+    /// document-level paths are built on, and callers outside this crate use
+    /// them directly. Neither was reached by a test
+    /// (docs/TEST_REACHABILITY.md), so nothing checked the one property that
+    /// makes them worth having: that they are each other's inverse. A stream
+    /// and a string are both covered because they take different branches.
+    #[test]
+    fn encrypt_object_and_decrypt_object_are_inverses() {
+        use crate::{Dictionary, Object, Stream};
+
+        let document = create_document();
+        for (naam, version) in [
+            (
+                "V1",
+                EncryptionVersion::V1 {
+                    document: &document,
+                    owner_password: "owner",
+                    user_password: "user",
+                    permissions: Permissions::all(),
+                },
+            ),
+            (
+                "V2",
+                EncryptionVersion::V2 {
+                    document: &document,
+                    owner_password: "owner",
+                    user_password: "user",
+                    key_length: 128,
+                    permissions: Permissions::all(),
+                },
+            ),
+        ] {
+            let state = EncryptionState::try_from(version).unwrap();
+            let obj_id = (7u32, 0u16);
+
+            let mut dict = Dictionary::new();
+            dict.set(
+                "Title",
+                Object::string_literal("een titel met accenten: \u{e9}\u{e8}"),
+            );
+            let bron = Object::Dictionary(dict);
+            let mut werk = bron.clone();
+            super::encrypt_object(&state, obj_id, &mut werk).unwrap();
+            assert_ne!(
+                format!("{werk:?}"),
+                format!("{bron:?}"),
+                "{naam}: encrypting a string must change it, or nothing is protected"
+            );
+            super::decrypt_object(&state, obj_id, &mut werk).unwrap();
+            assert_eq!(
+                format!("{werk:?}"),
+                format!("{bron:?}"),
+                "{naam}: a string must survive encrypt -> decrypt"
+            );
+
+            let stroom =
+                Object::Stream(Stream::new(Dictionary::new(), b"BT /F1 12 Tf ET".to_vec()));
+            let mut werk = stroom.clone();
+            super::encrypt_object(&state, obj_id, &mut werk).unwrap();
+            assert_ne!(
+                werk.as_stream().unwrap().content,
+                stroom.as_stream().unwrap().content,
+                "{naam}: encrypting a stream must change its bytes"
+            );
+            super::decrypt_object(&state, obj_id, &mut werk).unwrap();
+            assert_eq!(
+                werk.as_stream().unwrap().content,
+                stroom.as_stream().unwrap().content,
+                "{naam}: a stream must survive encrypt -> decrypt"
+            );
+        }
+    }
+
     #[test]
     fn encrypt_v1() {
         let mut document = create_document();

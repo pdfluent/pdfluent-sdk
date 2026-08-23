@@ -262,3 +262,63 @@ pub fn embed_dss_incremental(
     result.extend_from_slice(&incremental);
     Ok(result)
 }
+
+#[cfg(test)]
+mod vri_key_tests {
+    use super::*;
+
+    /// De VRI-sleutel is de sleutel waaronder een lezer de validatiegegevens van
+    /// één handtekening terugvindt in de DSS. Klopt hij niet, dan staan die
+    /// gegevens er wel maar vindt niemand ze, en valt LTV-validatie terug op
+    /// "geen informatie" in plaats van op een fout — stil, en precies bij de
+    /// handtekeningen die het langst moeten meegaan.
+    ///
+    /// Getoetst tegen de SHA-1-standaard zelf, niet tegen onze eigen uitvoer:
+    /// anders legt de test alleen vast wat de code nu toevallig doet.
+    #[test]
+    fn vri_key_is_uppercase_hex_sha1() {
+        // NIST-vectoren voor SHA-1.
+        assert_eq!(
+            compute_vri_key(b""),
+            "DA39A3EE5E6B4B0D3255BFEF95601890AFD80709",
+            "SHA-1 van de lege invoer"
+        );
+        assert_eq!(
+            compute_vri_key(b"abc"),
+            "A9993E364706816ABA3E25717850C26C9CD0D89D",
+            "SHA-1 van \"abc\""
+        );
+    }
+
+    #[test]
+    fn vri_key_is_forty_uppercase_hex_characters() {
+        // ISO 32000-2 §12.8.4.3 wil hoofdletters; een lezer die op de sleutel
+        // matcht vindt een kleine-letterversie niet.
+        let sleutel = compute_vri_key(&[0x30, 0x82, 0x01, 0x00, 0xFF]);
+        assert_eq!(sleutel.len(), 40, "SHA-1 is 20 bytes, dus 40 hextekens");
+        assert!(
+            sleutel
+                .chars()
+                .all(|c| c.is_ascii_digit() || ('A'..='F').contains(&c)),
+            "moet hoofdletter-hex zijn, kreeg {sleutel}"
+        );
+    }
+
+    #[test]
+    fn different_signatures_get_different_keys() {
+        assert_ne!(
+            compute_vri_key(b"handtekening-een"),
+            compute_vri_key(b"handtekening-twee")
+        );
+    }
+
+    /// De ruwe /Contents van een handtekening is gevuld met nullen tot zijn
+    /// gereserveerde lengte. Die nullen horen mee te tellen: een lezer hasht
+    /// wat er in het bestand staat, niet wat wij ervan zouden willen afknippen.
+    #[test]
+    fn trailing_zero_padding_changes_the_key() {
+        let kaal = compute_vri_key(b"\x30\x82\x01\x00");
+        let met_opvulling = compute_vri_key(b"\x30\x82\x01\x00\x00\x00\x00\x00");
+        assert_ne!(kaal, met_opvulling, "opvulling hoort de hash te veranderen");
+    }
+}

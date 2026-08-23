@@ -1,6 +1,6 @@
 [package]
 name = "pdf-render"
-version = "1.0.0-beta.18"
+version = "1.0.0"
 description = "A PDF rasterizer in pure Rust."
 edition = "2024"
 license = "Apache-2.0 OR MIT"
@@ -27,7 +27,7 @@ vello_cpu = { version = "0.0.6", default-features = false, features = ["std", "p
 
 [dev-dependencies]
 log = "0.4"
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5" }
 
 [features]
 default = ["embed-fonts", "embed-cmaps"]

@@ -210,3 +210,85 @@ fn extract_field_names(dict: &Dict<'_>) -> Vec<String> {
         })
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod field_mdp_tests {
+    use super::*;
+
+    fn lock(action: LockAction) -> FieldMdpInfo {
+        FieldMdpInfo {
+            action,
+            signing_field: Some("Signature1".into()),
+        }
+    }
+
+    /// FieldMDP is de reden dat een handtekening iets waard is: hij legt vast
+    /// welke velden ná ondertekening nog gewijzigd mogen worden (ISO 32000-2
+    /// §12.8.2.4). `Include` en `Exclude` omdraaien is hier de gevaarlijke
+    /// fout — dan laat je precies de velden bewerken die de ondertekenaar heeft
+    /// dichtgezet, en het bestand ziet er verder normaal uit.
+    #[test]
+    fn include_locks_only_the_named_fields() {
+        let locks = vec![lock(LockAction::Include(vec![
+            "Bedrag".into(),
+            "Datum".into(),
+        ]))];
+        assert!(
+            is_field_locked("Bedrag", &locks),
+            "genoemd veld hoort vergrendeld"
+        );
+        assert!(is_field_locked("Datum", &locks));
+        assert!(
+            !is_field_locked("Opmerking", &locks),
+            "een veld dat er niet in staat blijft bewerkbaar"
+        );
+    }
+
+    #[test]
+    fn exclude_locks_everything_except_the_named_fields() {
+        let locks = vec![lock(LockAction::Exclude(vec!["Opmerking".into()]))];
+        assert!(
+            !is_field_locked("Opmerking", &locks),
+            "het uitgezonderde veld blijft juist bewerkbaar"
+        );
+        assert!(
+            is_field_locked("Bedrag", &locks),
+            "al het andere is vergrendeld"
+        );
+    }
+
+    #[test]
+    fn all_locks_every_field() {
+        let locks = vec![lock(LockAction::All)];
+        assert!(is_field_locked("wat dan ook", &locks));
+        assert!(is_field_locked("", &locks));
+    }
+
+    #[test]
+    fn without_locks_nothing_is_locked() {
+        assert!(!is_field_locked("Bedrag", &[]));
+    }
+
+    /// Meerdere handtekeningen kunnen elk hun eigen slot leggen. Vergrendeld
+    /// door één ervan is vergrendeld — een later slot kan een eerder slot niet
+    /// opheffen.
+    #[test]
+    fn locks_from_several_signatures_accumulate() {
+        let locks = vec![
+            lock(LockAction::Include(vec!["Bedrag".into()])),
+            lock(LockAction::Include(vec!["Datum".into()])),
+        ];
+        assert!(is_field_locked("Bedrag", &locks));
+        assert!(is_field_locked("Datum", &locks));
+        assert!(!is_field_locked("Opmerking", &locks));
+    }
+
+    /// Veldnamen zijn hoofdlettergevoelig in PDF. Een vergelijking die dat
+    /// negeert zou een veld vergrendelen dat de ondertekenaar niet bedoelde.
+    #[test]
+    fn field_names_are_matched_exactly() {
+        let locks = vec![lock(LockAction::Include(vec!["Bedrag".into()]))];
+        assert!(!is_field_locked("bedrag", &locks));
+        assert!(!is_field_locked("Bedrag ", &locks));
+    }
+}

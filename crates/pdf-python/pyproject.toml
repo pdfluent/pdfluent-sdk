@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pdfluent"
-version = "1.0.0b17.post5"
+version = "1.0.0"
 description = "Enterprise PDF SDK — find and replace PDF text while preserving fonts and layout, plus render, extract, annotate, sign, and validate PDFs. Pure Rust, zero system dependencies."
 readme = "README.md"
 license = { text = "PDFluent Commercial License" }
