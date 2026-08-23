@@ -44,6 +44,7 @@ import json
 import os
 import platform
 import subprocess
+import statistics
 import sys
 import tempfile
 from pathlib import Path
@@ -57,6 +58,18 @@ BASELINE = REPO / "benchmarks" / "pdfa" / "text_retention_baseline.json"
 # Retention is noisy at the margin: extractors differ by a character or two on
 # ligature and soft-hyphen handling. Only a real drop should fail the gate.
 TOLERANCE_PP = 1.0
+
+
+# De woordmaat staat naast deze: tellen is het regressiehek, woorden is het
+# cijfer dat naar buiten gaat (CLAIMS.md A12). Ze horen uit dezelfde run te
+# komen, anders beschrijven ze verschillende omzettingen — precies de fout die
+# op 22-08 een avond kostte.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from text_fidelity import MIN_WOORDEN, meet as woord_fidelity  # noqa: E402
+except ImportError:  # pragma: no cover — dan meet dit script alleen tekens
+    woord_fidelity = None
+    MIN_WOORDEN = 20
 
 
 def die(msg: str, code: int = 2) -> None:
@@ -128,6 +141,61 @@ def chars(mutool: str, pdf: Path) -> int:
     return count
 
 
+def print_distribution_words(measured: dict) -> None:
+    """De woordverdeling — het cijfer dat naar buiten gaat.
+
+    Apart van print_distribution omdat de twee assen niet dezelfde schaal
+    hebben: boven 100% is bij tellen normaal (de omzetting repareert coderingen
+    en maakt méér uitleesbaar), bij woorden is 100% het maximum.
+    """
+    if not measured:
+        print("[retention-words] nothing measured")
+        return
+    waarden = sorted(measured.values())
+
+    def pct(q: float) -> float:
+        return waarden[min(int(len(waarden) * q), len(waarden) - 1)]
+
+    print()
+    print(f"[retention-words] {len(waarden)} documents, word multiset vs source")
+    print(f"[retention-words]   median             {pct(0.5):.1f}%")
+    print(f"[retention-words]   5th percentile     {pct(0.05):.1f}%")
+    print(f"[retention-words]   1st percentile     {pct(0.01):.1f}%")
+    print(f"[retention-words]   at or above 99%    {sum(1 for v in waarden if v >= 99.0)}/{len(waarden)}")
+    print(f"[retention-words]   below 95%          {sum(1 for v in waarden if v < 95.0)}")
+    print(f"[retention-words]   below 50%          {sum(1 for v in waarden if v < 50.0)}")
+    laagste = sorted(measured.items(), key=lambda kv: kv[1])[:5]
+    print(f"[retention-words]   lowest five        {laagste}")
+
+
+def print_distribution(measured: dict) -> None:
+    """De verdeling over de steekproef, ongeacht hoe de run afloopt.
+
+    Zonder dit levert een geslaagde run geen cijfer op: je weet dat niets
+    slechter werd, niet hoe goed het is. Een poort die alleen regressies meldt
+    kan geen bron zijn voor een uitspraak naar buiten, en dan wordt dat getal
+    alsnog met de hand ergens anders vandaan gehaald -- wat precies is hoe een
+    verkeerd cijfer maanden op een website blijft staan.
+
+    Staat vóór de --update-baseline-aftakking, want juist de run die de
+    basislijn vastlegt is de run waarvan je het cijfer wilt zien.
+    """
+    waarden = sorted(v for v in measured.values() if isinstance(v, (int, float)))
+    if not waarden:
+        return
+
+    def pct(q: float) -> float:
+        return waarden[min(int(len(waarden) * q), len(waarden) - 1)]
+
+    print("[retention] distribution over the sample:")
+    print(f"[retention]   median              {statistics.median(waarden):.1f}%")
+    print(f"[retention]   5th percentile      {pct(0.05):.1f}%")
+    print(f"[retention]   lowest              {waarden[0]:.1f}%")
+    print(f"[retention]   at or above 100%    {sum(1 for v in waarden if v >= 100.0)}/{len(waarden)}")
+    print(f"[retention]   below 95%           {sum(1 for v in waarden if v < 95.0)}")
+    print(f"[retention]   below 50%           {sum(1 for v in waarden if v < 50.0)}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -147,6 +215,11 @@ def main() -> None:
     ap.add_argument("--mutool", default="mutool")
     ap.add_argument("--update-baseline", action="store_true")
     ap.add_argument("--only", help="comma-separated basenames, for a quick check")
+    ap.add_argument(
+        "--word-fidelity",
+        action="store_true",
+        help="also report the word-based distribution (the number in CLAIMS.md A12)",
+    )
     args = ap.parse_args()
 
     # Module-level defaults stay for readability; the run uses whatever the
@@ -172,6 +245,8 @@ def main() -> None:
 
     measured: dict[str, float] = {}
     unreadable: list[str] = []
+    op_woorden: dict[str, float] = {}
+    te_weinig_woorden: list[str] = []
     with tempfile.TemporaryDirectory(prefix="retention-") as tmp:
         for name in names:
             src = corpus / name
@@ -195,6 +270,27 @@ def main() -> None:
                 # Nothing to retain, nothing to judge.
                 continue
             measured[name] = round(100.0 * o / s, 1)
+            if args.word_fidelity and woord_fidelity is not None:
+                uitslag = woord_fidelity(src, out, args.mutool)
+                if uitslag is not None:
+                    # uitslag[2] is het aantal bronwoorden. Te weinig woorden en
+                    # het percentage zegt niets — zie MIN_WOORDEN in
+                    # text_fidelity.py, en govdocs 076_076313.pdf, dat met twee
+                    # woorden 100,0% scoorde terwijl 31% van de tekens weg was.
+                    if uitslag[2] < MIN_WOORDEN:
+                        te_weinig_woorden.append(name)
+                    else:
+                        op_woorden[name] = round(uitslag[0], 1)
+
+    print_distribution(measured)
+    if args.word_fidelity:
+        if woord_fidelity is None:
+            print("[retention] SKIPPED (not a pass): text_fidelity.py niet importeerbaar")
+        else:
+            print_distribution_words(op_woorden)
+            if te_weinig_woorden:
+                print(f"[retention-words]   too few words to judge "
+                      f"(<{MIN_WOORDEN} in source): {len(te_weinig_woorden)}")
 
     if args.update_baseline:
         # Per-platform documents map: font substitution differs per host, so a

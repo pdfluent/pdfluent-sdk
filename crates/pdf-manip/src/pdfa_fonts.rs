@@ -28,6 +28,13 @@ static TYPE1_SUBSET_FONT_PROGRAM_PARSE_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Snapshot all font encodings before the font pipeline runs.
 /// Returns a map of font_id → original Encoding object for all simple fonts
 /// that have an Encoding entry.
+/// **Correct, tested, and called by nothing.**
+///
+/// This pair is a safety net against encodings the font pipeline removes, and
+/// on 22-08-2026 it behaved exactly as it should on 797 documents: nothing to
+/// restore on untouched input. It is simply not connected to anything, so the
+/// net is not under the trapeze. Unlike the other unwired passes in this file
+/// there is no evidence it would do harm -- only that it currently does nothing.
 pub fn snapshot_font_encodings(doc: &Document) -> std::collections::HashMap<ObjectId, Object> {
     let mut snapshot = std::collections::HashMap::new();
     for (&id, obj) in doc.objects.iter() {
@@ -55,6 +62,13 @@ pub fn snapshot_font_encodings(doc: &Document) -> std::collections::HashMap<Obje
 /// For subset fonts: restores the original encoding if it was removed OR
 /// changed (e.g., from a simple /MacRomanEncoding to a dict with Differences).
 /// For non-subset fonts: only restores if encoding was completely removed.
+/// **Correct, tested, and called by nothing.**
+///
+/// This pair is a safety net against encodings the font pipeline removes, and
+/// on 22-08-2026 it behaved exactly as it should on 797 documents: nothing to
+/// restore on untouched input. It is simply not connected to anything, so the
+/// net is not under the trapeze. Unlike the other unwired passes in this file
+/// there is no evidence it would do harm -- only that it currently does nothing.
 pub fn restore_stripped_encodings(
     doc: &mut Document,
     original_encodings: &std::collections::HashMap<ObjectId, Object>,
@@ -1493,6 +1507,11 @@ fn embed_bare_fonts(doc: &mut Document) -> usize {
 /// Without Encoding, veraPDF may use font-internal cmap tables that differ
 /// between the original and substitute fonts, causing width mismatches.
 /// Must run AFTER embed_fonts and fix_font_width_mismatches.
+/// **Not wired into any pipeline, and measured to do nothing.**
+///
+/// On 22-08-2026: no repairs on 797 untouched documents, and no veraPDF verdict changed either way over
+/// 40 documents. Nothing in this workspace calls it. Reproduce with
+/// `examples/unwired_pass_probe.rs`.
 pub fn ensure_truetype_encoding(doc: &mut Document) -> usize {
     // Build set of FD IDs that have FontFile2
     let mut ff2_fds: std::collections::HashSet<ObjectId> = Default::default();
@@ -4832,6 +4851,15 @@ pub fn fix_font_descriptor_metrics(doc: &mut Document) -> usize {
 /// Ascent, Descent, CapHeight, FontBBox in the FontDescriptor, and
 /// Widths in the font dictionary to match the actual font data.
 #[allow(dead_code)]
+/// **Not wired into any pipeline, and measured harmful if you wire it in.**
+///
+/// On 22-08-2026 this reported 880 repairs across 99 of 200 converted documents, and it converges, so the
+/// changes are real. veraPDF disagrees about their value: over 40 documents,
+/// applying this after a full PDF/A conversion improved **no** verdict and
+/// turned **6 of 40** from PASS to FAIL.
+///
+/// Nothing in this workspace calls it. That is not neglect. Reproduce with
+/// `examples/unwired_pass_probe.rs` before assuming otherwise.
 pub fn fix_embedded_font_metrics(doc: &mut Document) -> usize {
     let font_ids: Vec<ObjectId> = doc
         .objects
@@ -7602,6 +7630,15 @@ fn extract_glyph_names_from_charstrings(data: &[u8]) -> Option<String> {
 /// Only processes fonts with WinAnsiEncoding or MacRomanEncoding to avoid
 /// regression from incorrect encoding assumptions. Compares existing /Widths
 /// against hmtx table and fixes mismatches.
+/// **Not wired into any pipeline, and measured harmful if you wire it in.**
+///
+/// On 22-08-2026 this reported 337 repairs across 49 of 200 converted documents, and it converges, so the
+/// changes are real. veraPDF disagrees about their value: over 40 documents,
+/// applying this after a full PDF/A conversion improved **no** verdict and
+/// turned **1 of 40** from PASS to FAIL.
+///
+/// Nothing in this workspace calls it. That is not neglect. Reproduce with
+/// `examples/unwired_pass_probe.rs` before assuming otherwise.
 pub fn fix_simple_truetype_widths(doc: &mut Document) -> usize {
     let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     let mut fixed = 0;
@@ -7746,6 +7783,15 @@ pub fn fix_simple_truetype_widths(doc: &mut Document) -> usize {
 ///
 /// Reads glyph widths from FontFile3 (CFF) and updates the /Widths array.
 /// Only processes Type1 fonts that have a CFF program embedded.
+/// **Not wired into any pipeline, and measured harmful if you wire it in.**
+///
+/// On 22-08-2026 this reported 1420 repairs across 200 of 200 converted documents, and it converges, so the
+/// changes are real. veraPDF disagrees about their value: over 40 documents,
+/// applying this after a full PDF/A conversion improved **no** verdict and
+/// turned **5 of 40** from PASS to FAIL.
+///
+/// Nothing in this workspace calls it. That is not neglect. Reproduce with
+/// `examples/unwired_pass_probe.rs` before assuming otherwise.
 pub fn fix_type1_widths(doc: &mut Document) -> usize {
     let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     let mut fixed = 0;
@@ -8144,6 +8190,11 @@ fn is_predefined_cmap(cmap_name: &str) -> bool {
 /// §6.2.11.3.1: CIDSystemInfo Registry/Ordering mismatch between the CMap
 /// and the CIDFont descendant. When they disagree, the CIDFont's CIDSystemInfo
 /// is updated to match the CMap.
+/// **Not wired into any pipeline, and measured to do nothing.**
+///
+/// On 22-08-2026: no repairs on 797 untouched documents, and no veraPDF verdict changed either way over
+/// 40 documents. Nothing in this workspace calls it. Reproduce with
+/// `examples/unwired_pass_probe.rs`.
 pub fn fix_type0_cmap_cidsysteminfo(doc: &mut Document) -> usize {
     #[derive(Debug, Clone)]
     struct Type0CmapInfo {
@@ -15724,6 +15775,11 @@ pub fn fix_truetype_unicode_cmap(doc: &mut Document) -> usize {
 /// When the current PDF width already matches the raw Mac-cmap glyph advance,
 /// add a targeted alias in the (3,1) cmap so veraPDF resolves the byte through
 /// the same GID during §6.2.11.5 width validation.
+/// **Not wired into any pipeline, and measured to do nothing.**
+///
+/// On 22-08-2026: 20 repairs across 14 of 200 converted documents, and no veraPDF verdict changed either way over
+/// 40 documents. Nothing in this workspace calls it. Reproduce with
+/// `examples/unwired_pass_probe.rs`.
 pub fn fix_truetype_macroman_unicode_aliases(doc: &mut Document) -> usize {
     use std::collections::{BTreeMap, HashMap};
 
@@ -19282,6 +19338,14 @@ pub fn fix_notdef_glyph_refs(doc: &mut Document) -> usize {
 /// literals in all content streams. These characters are non-printing and
 /// frequently map to .notdef in fonts, causing PDF/A violations (6.2.11.8:1
 /// and 6.2.11.4.1:2).
+/// Superseded by [`fix_simple_font_streams`], which does this and the width and
+/// range fixups in one pass over each content stream. Kept because the
+/// step-by-step diagnosis examples call the stages individually.
+///
+/// Both derive the codes to keep from [`control_codes_to_preserve`]. That is
+/// deliberate and not merely tidy: this pass used to pass an empty set, so it
+/// blanked every code below 32 including the ones `/Differences` names, and the
+/// examples that call it therefore measured something we do not ship.
 pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
     use std::collections::HashMap;
 
@@ -19291,7 +19355,7 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
     for &page_id in &page_ids {
         // Build a page-local map: font resource name -> is strip-safe simple font.
         let mut has_type0_font = false;
-        let font_map: HashMap<String, bool> = {
+        let font_map: HashMap<String, (bool, std::collections::HashSet<u8>)> = {
             let page = match doc.objects.get(&page_id) {
                 Some(Object::Dictionary(d)) => d.clone(),
                 _ => continue,
@@ -19316,14 +19380,15 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
             let mut map = HashMap::new();
             for (key, val) in fonts.iter() {
                 let name = String::from_utf8_lossy(key).to_string();
-                let subtype = match val {
+                let fd = match val {
                     Object::Reference(id) => match doc.objects.get(id) {
-                        Some(Object::Dictionary(d)) => get_name(d, b"Subtype").unwrap_or_default(),
-                        _ => String::new(),
+                        Some(Object::Dictionary(d)) => Some(d),
+                        _ => None,
                     },
-                    Object::Dictionary(d) => get_name(d, b"Subtype").unwrap_or_default(),
-                    _ => String::new(),
+                    Object::Dictionary(d) => Some(d),
+                    _ => None,
                 };
+                let subtype = fd.and_then(|d| get_name(d, b"Subtype")).unwrap_or_default();
                 if subtype == "Type0" {
                     has_type0_font = true;
                 }
@@ -19333,12 +19398,19 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
                     || subtype == "Type1"
                     || subtype == "MMType1"
                     || subtype == "Type3";
-                map.insert(name, can_strip);
+                // Codes below 32 that /Differences maps to a real glyph are the
+                // document's letters, not control characters — see
+                // control_codes_to_preserve. Passing an empty set here is what
+                // made this pass blank a TeX subset page (govdocs 170_170298).
+                let preserve = fd
+                    .map(|d| control_codes_to_preserve(doc, d, &subtype, can_strip))
+                    .unwrap_or_default();
+                map.insert(name, (can_strip, preserve));
             }
             map
         };
 
-        if !font_map.values().any(|v| *v) {
+        if !font_map.values().any(|(strip, _)| *strip) {
             continue;
         }
 
@@ -19378,30 +19450,39 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
                         }
                         new_ops.push(op.clone());
                     }
-                    "Tj" | "'" | "\"" if font_map.get(&current_font).copied().unwrap_or(false) => {
+                    "Tj" | "'" | "\""
+                        if font_map
+                            .get(&current_font)
+                            .map(|(strip, _)| *strip)
+                            .unwrap_or(false) =>
+                    {
+                        let preserve = font_map
+                            .get(&current_font)
+                            .map(|(_, p)| p.clone())
+                            .unwrap_or_default();
                         let mut new_op = op.clone();
                         let str_idx = if op.operator == "\"" { 2 } else { 0 };
                         if let Some(Object::String(bytes, _)) = new_op.operands.get_mut(str_idx) {
-                            if strip_control_bytes(
-                                bytes,
-                                !has_type0_font,
-                                &std::collections::HashSet::new(),
-                            ) {
+                            if strip_control_bytes(bytes, !has_type0_font, &preserve) {
                                 modified = true;
                             }
                         }
                         new_ops.push(new_op);
                     }
-                    "TJ" if font_map.get(&current_font).copied().unwrap_or(false) => {
+                    "TJ" if font_map
+                        .get(&current_font)
+                        .map(|(strip, _)| *strip)
+                        .unwrap_or(false) =>
+                    {
+                        let preserve = font_map
+                            .get(&current_font)
+                            .map(|(_, p)| p.clone())
+                            .unwrap_or_default();
                         let mut new_op = op.clone();
                         if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
                             for item in arr.iter_mut() {
                                 if let Object::String(bytes, _) = item {
-                                    if strip_control_bytes(
-                                        bytes,
-                                        !has_type0_font,
-                                        &std::collections::HashSet::new(),
-                                    ) {
+                                    if strip_control_bytes(bytes, !has_type0_font, &preserve) {
                                         modified = true;
                                     }
                                 }
@@ -19428,6 +19509,67 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
     }
 
     total_fixed
+}
+
+/// Character codes below 32 that this simple font maps to a real glyph, and
+/// which must therefore survive the .notdef stripping in `strip_control_bytes`.
+///
+/// Why this is not simply "codes below 32 are control characters": a TeX subset
+/// encoding starts its /Differences at code 1, so on a Computer Modern subset
+/// codes 1..31 are the document's ordinary letters. Blanking them to 0x20
+/// erases the page and still leaves a conforming file behind, which is the
+/// failure mode nobody catches by validating. Measured on govdocs
+/// 170_170298.pdf: 277 of its 368 character codes sit below 32, and stripping
+/// them drops word retention from 100% to 6% while veraPDF stays green.
+fn control_codes_to_preserve(
+    doc: &Document,
+    fd: &lopdf::Dictionary,
+    subtype: &str,
+    can_strip: bool,
+) -> std::collections::HashSet<u8> {
+    if !can_strip {
+        return std::collections::HashSet::new();
+    }
+    let (_, differences) = get_simple_encoding_info(doc, fd);
+    let mut keep: std::collections::HashSet<u8> = differences
+        .iter()
+        .filter(|(code, name)| {
+            **code < 32
+                        && !matches!(**code, 9 | 10 | 13)
+                        && name.as_str() != ".notdef"
+                        // A /space mapping (usually pipeline-generated
+                        // .notdef avoidance) draws a blank either way;
+                        // stripping it to 32 is what keeps the width
+                        // consistent (govdocs 003_003411, cmr9 code 11).
+                        && name.as_str() != "space"
+        })
+        .map(|(code, _)| *code as u8)
+        .collect();
+    // A symbolic TrueType subset may put real glyphs on
+    // control codes without any /Differences saying so —
+    // the (3,0)/(1,0) cmap is the evidence (govdocs
+    // 002_002193: OpenSymbol keeps a visible symbol on code
+    // 1; stripping it to 0x20 references a glyph the font
+    // does NOT have, tripping 6.2.11.4.1).
+    if subtype == "TrueType" && is_font_symbolic(doc, fd) && differences.is_empty() {
+        if let Ok(Object::Reference(fd_id)) = fd.get(b"FontDescriptor") {
+            if let Some(font_data) = read_embedded_font_data(doc, *fd_id) {
+                if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
+                    for code in 0..32u32 {
+                        if matches!(code, 9 | 10 | 13) {
+                            continue;
+                        }
+                        let gid = lookup_symbol_cmap_30(&face, code)
+                            .or_else(|| lookup_mac_cmap(&face, code));
+                        if gid.is_some_and(|g| g.0 != 0 && tt_glyph_has_data(&face, g)) {
+                            keep.insert(code as u8);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    keep
 }
 
 fn strip_control_bytes(
@@ -19481,6 +19623,83 @@ fn strip_control_bytes(
         }
     }
     changed
+}
+
+/// Two-byte CIDs that this Type0 font's /ToUnicode declares to be whitespace.
+///
+/// Why an outline-less glyph is not a missing glyph: a space *must* have an
+/// empty outline. `tt_glyph_has_data` reads an empty `loca` entry, which is how
+/// a subsetter marks a stripped glyph and also how every font stores a space —
+/// the two are indistinguishable from `loca` alone. /ToUnicode tells them
+/// apart: if the document itself says this CID is a space, the empty outline is
+/// the correct one and the CID is valid.
+///
+/// Measured on govdocs 170_170407.pdf: CID 3 is the space (/ToUnicode gives
+/// U+00A0) with zero contours. Treating it as missing replaced every space with
+/// the lowest CID that did have an outline — ')' — so the page read
+/// "SWAT)SC)Working)Group" and word retention sat at 78.3%.
+fn tounicode_blank_cids(
+    doc: &Document,
+    font_dict: &lopdf::Dictionary,
+) -> std::collections::HashSet<u16> {
+    let mut uit = std::collections::HashSet::new();
+    let Ok(Object::Reference(id)) = font_dict.get(b"ToUnicode") else {
+        return uit;
+    };
+    let Some(Object::Stream(stream)) = doc.objects.get(id) else {
+        return uit;
+    };
+    let mut stream = stream.clone();
+    let _ = stream.decompress();
+    let tekst = String::from_utf8_lossy(&stream.content);
+
+    // Only beginbfchar pairs: a bfrange spanning whitespace and non-whitespace
+    // would need per-entry reasoning, and no measured case needs it.
+    let mut in_blok = false;
+    for regel in tekst.lines() {
+        if regel.contains("beginbfchar") {
+            in_blok = true;
+            continue;
+        }
+        if regel.contains("endbfchar") {
+            in_blok = false;
+            continue;
+        }
+        if !in_blok {
+            continue;
+        }
+        let stukken: Vec<&str> = regel
+            .split(['<', '>'])
+            .map(str::trim)
+            .filter(|x| !x.is_empty())
+            .collect();
+        if stukken.len() != 2 {
+            continue;
+        }
+        let (Ok(cid), Some(doel)) = (
+            u16::from_str_radix(stukken[0], 16),
+            utf16be_naar_string(stukken[1]),
+        ) else {
+            continue;
+        };
+        if !doel.is_empty() && doel.chars().all(|c| c.is_whitespace() || c == '\u{00A0}') {
+            uit.insert(cid);
+        }
+    }
+    uit
+}
+
+/// Hex digits of a UTF-16BE /ToUnicode target to a String, or None if malformed.
+fn utf16be_naar_string(hex: &str) -> Option<String> {
+    if !hex.len().is_multiple_of(4) || hex.is_empty() {
+        return None;
+    }
+    let mut eenheden = Vec::with_capacity(hex.len() / 4);
+    for stuk in hex.as_bytes().chunks(4) {
+        let s = std::str::from_utf8(stuk).ok()?;
+        eenheden.push(u16::from_str_radix(s, 16).ok()?);
+    }
+    String::from_utf16(&eenheden).ok()
 }
 
 /// Fix .notdef references in CID (Type0) fonts by modifying content streams.
@@ -19747,10 +19966,15 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                                 None
                             }
                         });
+                        // See tounicode_blank_cids: a space has an empty outline
+                        // by definition, so `loca` alone cannot tell it from a
+                        // glyph a subsetter stripped.
+                        let blanco = tounicode_blank_cids(doc, font_dict);
                         let has_glyph_data = |gid: u16| -> bool {
                             gid > 0
                                 && gid < num_glyphs
-                                && tt_glyph_has_data(&face, ttf_parser::GlyphId(gid))
+                                && (tt_glyph_has_data(&face, ttf_parser::GlyphId(gid))
+                                    || blanco.contains(&gid))
                         };
                         let space_gid = face
                             .glyph_index(' ')
@@ -21128,53 +21352,7 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
                 } else {
                     None
                 };
-                let preserve_ctrl = if can_strip {
-                    let (_, differences) = get_simple_encoding_info(doc, fd);
-                    let mut keep: std::collections::HashSet<u8> = differences
-                        .iter()
-                        .filter(|(code, name)| {
-                            **code < 32
-                                && !matches!(**code, 9 | 10 | 13)
-                                && name.as_str() != ".notdef"
-                                // A /space mapping (usually pipeline-generated
-                                // .notdef avoidance) draws a blank either way;
-                                // stripping it to 32 is what keeps the width
-                                // consistent (govdocs 003_003411, cmr9 code 11).
-                                && name.as_str() != "space"
-                        })
-                        .map(|(code, _)| *code as u8)
-                        .collect();
-                    // A symbolic TrueType subset may put real glyphs on
-                    // control codes without any /Differences saying so —
-                    // the (3,0)/(1,0) cmap is the evidence (govdocs
-                    // 002_002193: OpenSymbol keeps a visible symbol on code
-                    // 1; stripping it to 0x20 references a glyph the font
-                    // does NOT have, tripping 6.2.11.4.1).
-                    if subtype == "TrueType" && is_font_symbolic(doc, fd) && differences.is_empty()
-                    {
-                        if let Ok(Object::Reference(fd_id)) = fd.get(b"FontDescriptor") {
-                            if let Some(font_data) = read_embedded_font_data(doc, *fd_id) {
-                                if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
-                                    for code in 0..32u32 {
-                                        if matches!(code, 9 | 10 | 13) {
-                                            continue;
-                                        }
-                                        let gid = lookup_symbol_cmap_30(&face, code)
-                                            .or_else(|| lookup_mac_cmap(&face, code));
-                                        if gid.is_some_and(|g| {
-                                            g.0 != 0 && tt_glyph_has_data(&face, g)
-                                        }) {
-                                            keep.insert(code as u8);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    keep
-                } else {
-                    std::collections::HashSet::new()
-                };
+                let preserve_ctrl = control_codes_to_preserve(doc, fd, &subtype, can_strip);
                 map.insert(
                     res_name,
                     FontInfo {

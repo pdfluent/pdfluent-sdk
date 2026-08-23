@@ -141,6 +141,8 @@ echo "[topo-dry-run] ${#CRATES[@]} crates queued"
 PASS=0
 FAIL=0
 FAILED=()
+PENDING=0
+PENDING_CRATES=()
 i=0
 for crate in "${CRATES[@]}"; do
     i=$((i+1))
@@ -154,6 +156,20 @@ for crate in "${CRATES[@]}"; do
         echo "OK"
         PASS=$((PASS+1))
         echo "| $i | \`$crate\` | 0 | ok |" >> "${REPORT_MD}"
+    elif grep -q "failed to select a version for the requirement" "$log"; then
+        # Niet kapot: deze crate pint op een versie van een workspace-crate die
+        # in dezelfde ronde nog gepubliceerd moet worden. `cargo publish
+        # --dry-run` resolvet tegen de registry, dus een gecoördineerde release
+        # kan hier per definitie niet volledig groen zijn.
+        #
+        # Op 22-08 stond dat op 20 van 32 rood bij de 1.0.0-bump, en het kostte
+        # handwerk om vast te stellen dat er nul echte fouten tussen zaten. Dat
+        # hoort het script te zeggen, niet de lezer uit te zoeken.
+        echo "PENDING-DEP"
+        PENDING=$((PENDING+1))
+        PENDING_CRATES+=("$crate")
+        dep=$(grep -o "requirement \`[^\`]*\`" "$log" | head -1 | tr -d '`' | sed 's/requirement //')
+        echo "| $i | \`$crate\` | $rc | waits for ${dep} (published later in this order) |" >> "${REPORT_MD}"
     else
         echo "FAIL (rc=$rc)"
         FAIL=$((FAIL+1))
@@ -172,6 +188,7 @@ done
     echo "## Summary"
     echo
     echo "- Pass: ${PASS}"
+    echo "- Waiting on a dependency published later in this same order: ${PENDING}"
     echo "- Fail: ${FAIL}"
     if [[ ${#FAILED[@]} -gt 0 ]]; then
         echo "- Failed crates:"
@@ -183,7 +200,13 @@ done
 } >> "${REPORT_MD}"
 
 echo "[topo-dry-run] report: ${REPORT_MD}"
-echo "[topo-dry-run] pass=${PASS} fail=${FAIL}"
+echo "[topo-dry-run] pass=${PASS} pending-dep=${PENDING} fail=${FAIL}"
+if [[ ${PENDING} -gt 0 ]]; then
+    echo "[topo-dry-run] ${PENDING} crate(s) pin a workspace version that is not on"
+    echo "[topo-dry-run] crates.io yet. That is what a coordinated release looks like"
+    echo "[topo-dry-run] before it starts; publish_ordered.sh waits for the index"
+    echo "[topo-dry-run] after each crate so each one resolves when its turn comes."
+fi
 
 if [[ $FAIL -gt 0 ]] && ! $KEEP_GOING; then
     exit 1

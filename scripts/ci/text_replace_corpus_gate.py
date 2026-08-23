@@ -29,6 +29,22 @@ RULES THIS GATE FOLLOWS
   * A document that cannot be opened at all is not counted as a failure of
     replacement — it is reported separately. Mixing "we broke it" with "it was
     already broken" makes both unreadable.
+  * The baseline records which word-picking rule produced it (METHODOLOGY).
+    Change the rule and the gate re-records instead of judging, because
+    per-document verdicts are not comparable across it.
+
+WHAT THIS MEASURE CANNOT TELL YOU
+
+One word per document. Measured 22-08: of nine documents whose replacement was
+not found in the extracted text, six replaced and extracted perfectly with a
+different word from the same document. So a per-document verdict says as much
+about which word the run happened to pick as about the engine, and the aggregate
+carries that noise with it.
+
+That is a limit of the design, not a bug in it, and it is the reason the gate
+judges per document against a baseline rather than publishing the rate. Before
+any rate from here goes outside, it needs several words per document — otherwise
+the number moves when nothing changed.
 
 Exit codes:
     0  gate passed
@@ -50,6 +66,23 @@ REPO = HERE.parent.parent
 DEFAULT_SAMPLE_LIST = REPO / "benchmarks" / "text_replace" / "corpus_sample_200.txt"
 DEFAULT_BASELINE = REPO / "benchmarks" / "text_replace" / "baseline.json"
 
+# Hoe deze meting haar woord kiest. Een basislijn is alleen vergelijkbaar binnen
+# één methode: verandert de keuzeregel, dan verschuiven de per-document-uitslagen
+# zonder dat er iets aan de motor mankeert.
+#
+# Op 22-08 gebeurde dat: de regel werd "het woord moet precies één keer
+# voorkomen", omdat de controle erna anders dubbelzinnig is (govdocs 000024.pdf
+# heeft het woord twee keer, en de tweede staat in een gedraaid kaartlabel dat
+# pdftotext in de ÓNGEWIJZIGDE bron al over drie regels breekt). De gate meldde
+# daarna 14 "regressies" tegen een basislijn van de oude regel. Geen daarvan was
+# er een.
+#
+# Bump deze naam in dezelfde commit als de regelwijziging. De gate legt dan een
+# nieuwe basislijn vast in plaats van te oordelen, met een banner erboven.
+METHODOLOGY = "needle-unique-v2"
+METHODOLOGY_KEY = "_methodology"
+
+
 
 def die(msg: str, code: int = 2) -> None:
     print(f"[text_replace_gate] FATAL: {msg}", file=sys.stderr)
@@ -64,6 +97,16 @@ class DocResult:
     replaced: bool
     extractable: bool
     note: str = ""
+    # The word this run picked, and what it wrote in its place.
+    #
+    # Without them a reported failure cannot be reproduced. On 22-08 the nine
+    # "replacement not found in extracted text" entries each took a separate
+    # experiment to re-derive the word, and six of the nine then replaced and
+    # extracted perfectly with a different word -- so the failure lives in the
+    # run that got hit, not in the document. That is a useful finding and it was
+    # nearly invisible: the artefact recorded the verdict and dropped the input.
+    needle: str = ""
+    replacement: str = ""
 
     @property
     def axis1(self) -> bool:
@@ -121,7 +164,17 @@ def run_one(runner: str, pdftotext: str, src: Path, workdir: Path,
     # the match is unambiguous and the replacement is a realistic edit rather
     # than a single character.
     words = [w.strip(".,;:()[]\"'") for w in before.split()]
-    needle = next((w for w in words if len(w) >= 6 and w.isalpha()), None)
+    # The needle has to occur exactly once, or the check afterwards is
+    # ambiguous: the engine replaces one occurrence and the reader may be
+    # showing another. govdocs 000024.pdf is the case that taught this -- the
+    # word appears twice, once as a rotated map label that pdftotext already
+    # splits across three lines in the *original*. The replacement landed
+    # correctly on that label and the check then failed against the untouched
+    # second occurrence, which reads as a defect and is not one.
+    needle = next(
+        (w for w in words if len(w) >= 6 and w.isalpha() and before.count(w) == 1),
+        None,
+    )
     if needle is None:
         return DocResult(name, True, False, False, False, "no suitable word to replace")
 
@@ -136,7 +189,8 @@ def run_one(runner: str, pdftotext: str, src: Path, workdir: Path,
             timeout=180,
         )
     except (subprocess.TimeoutExpired, OSError) as e:
-        return DocResult(name, True, False, False, False, f"runner failed: {e}")
+        return DocResult(name, True, False, False, False, f"runner failed: {e}",
+                         needle, replacement)
 
     if proc.returncode != 0 or not out_pdf.exists():
         detail = proc.stderr.decode("utf-8", errors="replace").strip().splitlines()
@@ -145,15 +199,17 @@ def run_one(runner: str, pdftotext: str, src: Path, workdir: Path,
         # outside reader did. That is a finding about the search, not a broken
         # replacement, and counting it as the latter buries it.
         engine_found = "no match for" not in last
-        return DocResult(name, True, engine_found, False, False, last[:120])
+        return DocResult(name, True, engine_found, False, False, last[:120],
+                         needle, replacement)
 
     after = extract_text(pdftotext, out_pdf)
     if after is None:
-        return DocResult(name, True, True, True, False, "edited file no longer extractable")
+        return DocResult(name, True, True, True, False, "edited file no longer extractable",
+                         needle, replacement)
 
     extractable = replacement in after
     note = "" if extractable else "replacement not found in extracted text"
-    return DocResult(name, True, True, True, extractable, note)
+    return DocResult(name, True, True, True, extractable, note, needle, replacement)
 
 
 def main() -> None:
@@ -237,9 +293,14 @@ def main() -> None:
     current = {r.name: asdict(r) for r in results}
     baseline_path = Path(args.baseline)
 
-    if args.write_baseline:
+    def schrijf_basislijn() -> None:
         baseline_path.parent.mkdir(parents=True, exist_ok=True)
-        baseline_path.write_text(json.dumps(current, indent=2, sort_keys=True))
+        inhoud = dict(current)
+        inhoud[METHODOLOGY_KEY] = METHODOLOGY
+        baseline_path.write_text(json.dumps(inhoud, indent=2, sort_keys=True))
+
+    if args.write_baseline:
+        schrijf_basislijn()
         print(f"[text_replace_gate] baseline written: {baseline_path}")
         sys.exit(0)
 
@@ -251,8 +312,7 @@ def main() -> None:
         # committed to the repo, so its absence is visible in git — and the
         # banner below makes a re-baseline impossible to mistake for a pass in
         # the job log.
-        baseline_path.parent.mkdir(parents=True, exist_ok=True)
-        baseline_path.write_text(json.dumps(current, indent=2, sort_keys=True))
+        schrijf_basislijn()
         print()
         print("=" * 68)
         print("[text_replace_gate] BASELINE ESTABLISHED — THIS RUN JUDGED NOTHING")
@@ -263,6 +323,23 @@ def main() -> None:
         sys.exit(0)
 
     baseline = json.loads(baseline_path.read_text())
+    baseline_methode = baseline.pop(METHODOLOGY_KEY, None)
+    if baseline_methode != METHODOLOGY:
+        # Een basislijn van een andere keuzeregel levert verschillen op die niets
+        # over de motor zeggen. Vergelijken zou 14 niet-bestaande regressies
+        # melden; zwijgend doorgaan zou echte verbergen. Dus: opnieuw vastleggen,
+        # luid, en niets oordelen.
+        schrijf_basislijn()
+        print()
+        print("=" * 68)
+        print("[text_replace_gate] METHODOLOGY CHANGED — THIS RUN JUDGED NOTHING")
+        print(f"[text_replace_gate] baseline was recorded under: {baseline_methode!r}")
+        print(f"[text_replace_gate] this run measures under:     {METHODOLOGY!r}")
+        print("[text_replace_gate] per-document verdicts are not comparable across that")
+        print("[text_replace_gate] change, so the baseline is re-recorded, not judged.")
+        print("[text_replace_gate] Commit it; the next run compares against it.")
+        print("=" * 68)
+        sys.exit(0)
     regressions = []
     for name, now in current.items():
         was = baseline.get(name)
