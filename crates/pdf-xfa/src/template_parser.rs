@@ -752,6 +752,36 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
         }
     }
 
+    // XFA `<line>` draw shapes (the `FFLineN` cell-grid rules) likewise carry
+    // their stroke on `<value><line><edge>`, not `<border>`. Mirror the
+    // rectangle branch so `render_draw` can stroke the spanned line at the
+    // authored weight (the merge path `merger::parse_node_style` agrees).
+    if style.border_width_pt.is_none() {
+        if let Some(line) = find_first_child_by_name(elem, "value")
+            .and_then(|value| find_first_child_by_name(value, "line"))
+        {
+            if let Some(edge) = find_first_child_by_name(line, "edge") {
+                if attr(edge, "stroke").unwrap_or("solid") != "none" {
+                    if let Some(thickness) = attr(edge, "thickness")
+                        .and_then(Measurement::parse)
+                        .map(|m| m.to_points())
+                    {
+                        if thickness > 0.0 {
+                            style.border_width_pt = Some(thickness);
+                        }
+                    }
+                    if style.border_color.is_none() {
+                        if let Some(rgb) =
+                            find_first_child_by_name(edge, "color").and_then(parse_xfa_color)
+                        {
+                            style.border_color = Some(rgb);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Parse <font typeface="..." size="..." weight="..."> for font properties.
     // XFA Spec 3.3 §28.1 — Adobe Non-conformance:
     //   - font-weight: numeric values (100-900) ignored, only "bold"/"normal" (p1229)

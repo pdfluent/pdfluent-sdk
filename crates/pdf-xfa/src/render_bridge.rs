@@ -727,10 +727,24 @@ fn render_nodes(
         // XFA §8 — Clip content to the node's declared bounds so that
         // text in fixed-height fields cannot overflow into adjacent nodes.
         ops.extend_from_slice(b"q\n");
-        write_ops(
-            ops,
-            format_args!("{:.2} {:.2} {:.2} {:.2} re W n\n", abs_x, pdf_y, w, h),
-        );
+        // A spanned `<line>` draw fills its box edge-to-edge, but the grid rules
+        // have a zero-width or zero-height box, so the usual per-node clip
+        // (re W n) is a zero-area region that would erase the stroke. Skip the
+        // clip for such degenerate spanned line draws (a line has nothing to
+        // clip). Gated on the span flag so the opt-out path stays byte-identical.
+        let skip_line_clip = draw_line_span_enabled()
+            && (w <= 0.01 || h <= 0.01)
+            && matches!(
+                &node.content,
+                LayoutContent::Draw(DrawContent::Line { x1, y1, x2, y2 })
+                    if *x1 == 0.0 && *y1 == 0.0 && *x2 == 0.0 && *y2 == 0.0
+            );
+        if !skip_line_clip {
+            write_ops(
+                ops,
+                format_args!("{:.2} {:.2} {:.2} {:.2} re W n\n", abs_x, pdf_y, w, h),
+            );
+        }
 
         let is_bold = node.style.font_weight.as_deref() == Some("bold");
 
@@ -3212,12 +3226,23 @@ fn lookup_font_metrics<'a>(
     })
 }
 
+/// XFA 3.3 §2.6 — render a coordless `<line>` value by spanning the draw's
+/// laid-out box (the cell-grid rules in table-style forms). Default-on; opt out
+/// with `XFA_DRAW_LINE_SPAN=0|off|false|no` to restore the legacy zero-length
+/// point (byte-identical render).
+fn draw_line_span_enabled() -> bool {
+    !matches!(
+        std::env::var("XFA_DRAW_LINE_SPAN").as_deref(),
+        Ok("0") | Ok("off") | Ok("false") | Ok("no")
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_draw(
     draw_content: &DrawContent,
     abs_x: f64,
     pdf_y: f64,
-    _w: f64,
+    container_w: f64,
     container_h: f64,
     node_style: &FormNodeStyle,
     config: &XfaRenderConfig,
@@ -3263,10 +3288,47 @@ fn render_draw(
             }
         }
         DrawContent::Line { x1, y1, x2, y2 } => {
-            let start_x = abs_x + x1;
-            let start_y = pdf_y + container_h - y1;
-            let end_x = abs_x + x2;
-            let end_y = pdf_y + container_h - y2;
+            // XFA 3.3 §2.6 — a `<line>` value carries NO x1/y1/x2/y2 attributes:
+            // the line spans the draw's content box corner-to-corner per its
+            // `slope` (default `\`, top-left→bottom-right). The parser therefore
+            // yields `Line{0,0,0,0}` for every authored grid rule (the `FFLineN`
+            // draws in gov forms), which the legacy path below strokes as a
+            // zero-length point with butt caps => the whole cell grid vanishes.
+            // When the span flag is on and the coords are absent, substitute the
+            // laid-out box extent; for the axis-aligned h=0 / w=0 grid lines
+            // this is exactly the horizontal / vertical rule. Stroke weight and
+            // colour come from the line's `<edge>` (parsed into the node style,
+            // mirroring the rectangle path). Opt out with
+            // XFA_DRAW_LINE_SPAN=0|off|false|no to restore the byte-identical
+            // legacy point.
+            let coordless = *x1 == 0.0 && *y1 == 0.0 && *x2 == 0.0 && *y2 == 0.0;
+            let span =
+                draw_line_span_enabled() && coordless && (container_w > 0.0 || container_h > 0.0);
+            if span {
+                if let Some((r, g, b)) = node_style.border_color {
+                    write_ops(
+                        ops,
+                        format_args!(
+                            "{:.4} {:.4} {:.4} RG\n",
+                            r as f64 / 255.0,
+                            g as f64 / 255.0,
+                            b as f64 / 255.0
+                        ),
+                    );
+                }
+                if let Some(w_pt) = node_style.border_width_pt {
+                    write_ops(ops, format_args!("{:.2} w\n", w_pt));
+                }
+            }
+            let (lx1, ly1, lx2, ly2) = if span {
+                (0.0, 0.0, container_w, container_h)
+            } else {
+                (*x1, *y1, *x2, *y2)
+            };
+            let start_x = abs_x + lx1;
+            let start_y = pdf_y + container_h - ly1;
+            let end_x = abs_x + lx2;
+            let end_y = pdf_y + container_h - ly2;
             write_ops(
                 ops,
                 format_args!(
@@ -4888,6 +4950,54 @@ mod tests {
         assert!(
             s.contains("(2024-01-15) Tj"),
             "date field must render its value: {s}"
+        );
+    }
+
+    #[test]
+    fn draw_line_span_gate_default_on_and_opt_out() {
+        // A coordless <line/> (the parser yields Line{0,0,0,0} because XFA
+        // <line> values have no x1/y1/x2/y2) inside a horizontal grid box
+        // (w=200, h=0) at abs_x=30, pdf_y=50, carrying the authored 6.01pt
+        // (≈2.12mm) edge weight in the node style. Default-on must span the box
+        // edge-to-edge (30 -> 230) at that weight; opt-out restores the legacy
+        // zero-length point at the box origin with no weight emitted.
+        let line = DrawContent::Line {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 0.0,
+            y2: 0.0,
+        };
+        let style = FormNodeStyle {
+            border_width_pt: Some(6.01),
+            border_color: Some((0, 0, 0)),
+            ..Default::default()
+        };
+        let config = XfaRenderConfig::default();
+
+        // Default (flag unset) → spans the 200pt box at the authored weight.
+        std::env::remove_var("XFA_DRAW_LINE_SPAN");
+        let mut ops_on = Vec::new();
+        render_draw(&line, 30.0, 50.0, 200.0, 0.0, &style, &config, &mut ops_on);
+        let s_on = String::from_utf8(ops_on).unwrap();
+        assert!(s_on.contains("6.01 w\n"), "authored stroke weight:\n{s_on}");
+        assert!(
+            s_on.contains("30.00 50.00 m\n230.00 50.00 l\nS\n"),
+            "horizontal grid rule must span the box (30 -> 230):\n{s_on}"
+        );
+
+        // Opt-out → legacy zero-length point at the box origin, no weight.
+        std::env::set_var("XFA_DRAW_LINE_SPAN", "0");
+        let mut ops_off = Vec::new();
+        render_draw(&line, 30.0, 50.0, 200.0, 0.0, &style, &config, &mut ops_off);
+        std::env::remove_var("XFA_DRAW_LINE_SPAN");
+        let s_off = String::from_utf8(ops_off).unwrap();
+        assert!(
+            !s_off.contains(" w\n"),
+            "opt-out emits no stroke weight:\n{s_off}"
+        );
+        assert!(
+            s_off.contains("30.00 50.00 m\n30.00 50.00 l\nS\n"),
+            "opt-out = legacy zero-length point:\n{s_off}"
         );
     }
 }
