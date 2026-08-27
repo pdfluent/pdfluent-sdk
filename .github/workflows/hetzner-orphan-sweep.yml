@@ -44,7 +44,7 @@ jobs:
               page = next_page
 
           with open('/tmp/servers.tsv', 'w') as f:
-              f.write('\n'.join(rows))
+              f.write(''.join(row + '\n' for row in rows))
           "
 
           if [ ! -s /tmp/servers.tsv ]; then
