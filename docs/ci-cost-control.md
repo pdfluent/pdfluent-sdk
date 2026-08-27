@@ -23,11 +23,24 @@ runner setup this mirrors) rather than re-tuning the estimate.
 no compilation, `git ls-files` + a `json.load`, near-zero cost either
 way, no benefit to moving them.
 
+**Self-hosted only on `push`, never on `pull_request`** (Codex review on
+#1532): `xfa-fast` is a persistent desktop runner, not an isolated
+ephemeral one. A PR's Cargo build scripts or proc-macros run as the
+runner's user, so untrusted PR code on a persistent runner means host
+access / persistence that survives into later trusted jobs. `check` /
+`test` / `clippy` / `fmt` therefore use
+`runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}`
+— PR runs (pre-merge, not yet trusted) stay on GitHub-hosted; only
+already-merged code on `push` touches the desktop. This repo is private
+today but goes public at LC10, so the boundary has to hold now, not get
+retrofitted later.
+
 ## Two-tier model
 
 | Tier | Where | Trigger | Purpose |
 |------|-------|---------|---------|
-| Cheap PR gate | GitHub Actions, self-hosted `xfa-fast` runner (`.github/workflows/ci.yml`) | every PR + master push | fast sanity: compile, test, clippy, fmt |
+| Cheap PR gate (PR) | GitHub Actions, `ubuntu-latest` (`.github/workflows/ci.yml`) | every PR push | fast sanity, isolated: untrusted code |
+| Cheap PR gate (post-merge) | GitHub Actions, self-hosted `xfa-fast` runner | master push | same checks, free, trusted code only |
 | Expensive validation | Ephemeral Hetzner runners, or VPS / local (`scripts/validate-expensive.sh`) | manual, before merge / release | wasm, bindings, desktop, conversion, corpus |
 | Manual fallback | GitHub Actions (`.github/workflows/expensive-validation.yml`) | `workflow_dispatch` | noodknop when no VPS/Hetzner is available |
 
