@@ -1,0 +1,49 @@
+name: Hetzner Orphan Sweep
+
+# Safety net for golden-diff-ephemeral.yml: that workflow's delete-runner job
+# normally tears down the Hetzner instance it created, but a hard GitHub
+# Actions outage or a killed workflow run can skip that step. The Hetzner
+# project used here (pdfluent-ci-ephemeral) exists only for this purpose, so
+# any server still running past a generous margin is by definition an orphan
+# — no label/name filtering needed, unlike a shared project.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete Hetzner servers older than 2 hours
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          set -euo pipefail
+          now=$(date +%s)
+          curl -sf -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            https://api.hetzner.cloud/v1/servers | \
+          python3 -c "
+          import json, sys, datetime
+          data = json.load(sys.stdin)
+          for s in data.get('servers', []):
+              created = datetime.datetime.fromisoformat(s['created'].replace('Z', '+00:00'))
+              age_min = (datetime.datetime.now(datetime.timezone.utc) - created).total_seconds() / 60
+              print(f\"{s['id']}\t{s['name']}\t{age_min:.0f}\")
+          " > /tmp/servers.tsv
+
+          if [ ! -s /tmp/servers.tsv ]; then
+            echo "no servers running — nothing to sweep"
+            exit 0
+          fi
+
+          while IFS=$'\t' read -r id name age_min; do
+            if [ "${age_min%.*}" -gt 120 ]; then
+              echo "ORPHAN: $name (id $id, ${age_min} min old) — deleting"
+              curl -sf -X DELETE -H "Authorization: Bearer $HCLOUD_TOKEN" \
+                "https://api.hetzner.cloud/v1/servers/$id"
+            else
+              echo "ok: $name (id $id, ${age_min} min old)"
+            fi
+          done < /tmp/servers.tsv
