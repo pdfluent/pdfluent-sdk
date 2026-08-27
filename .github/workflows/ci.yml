@@ -8,10 +8,19 @@ name: CI
 # (workflow_dispatch only, not required for merge).
 #
 # check/test/clippy/fmt run on the self-hosted `xfa-fast` runner (the
-# desktop), not ubuntu-latest: the workspace outgrew the ~$0.05/push
-# estimate #1380 was written against, and self-hosted minutes are free
-# regardless of duration. artifact-guard/license-metadata-guard stay on
-# ubuntu-latest — no compilation, near-zero cost either way.
+# desktop) ONLY on push to master — the workspace outgrew the
+# ~$0.05/push estimate #1380 was written against, and self-hosted
+# minutes are free regardless of duration. artifact-guard/
+# license-metadata-guard stay on ubuntu-latest — no compilation,
+# near-zero cost either way.
+#
+# On pull_request they stay on ubuntu-latest deliberately (Codex review
+# on #1532): xfa-fast is a persistent desktop runner, not an isolated
+# ephemeral one, so a PR's Cargo build scripts/proc-macros would execute
+# as the runner user with host access if PR runs used it. Only code
+# that's already merged (push) touches it. This repo is private today
+# but is slated to go public at LC10 — this boundary needs to hold
+# before that, not be added after.
 #
 # See `docs/ci-cost-control.md` for the full rationale.
 #
@@ -42,7 +51,7 @@ env:
 jobs:
   check:
     name: Check
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -51,7 +60,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     # OOM workaround (issue #1481): the linker `ld` exhausts the 7 GB
     # github-hosted runner when linking ~30 test binaries with full debug
     # info in parallel (signal 7 / Bus error).
@@ -71,7 +80,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -82,7 +91,7 @@ jobs:
 
   fmt:
     name: Format
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
