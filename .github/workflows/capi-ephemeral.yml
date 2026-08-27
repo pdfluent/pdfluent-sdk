@@ -17,6 +17,10 @@ name: pdf-capi (ephemeral Hetzner)
 # core" against the wrong toolchain silently having no wasm target.
 #
 # GitLab's existing jobs are untouched; this is additive.
+#
+# create-runner/delete-runner run on the self-hosted xfa-fast runner, not
+# ubuntu-latest — same reasoning as golden-diff-ephemeral.yml: they're the
+# only steps in this workflow that would bill GitHub Actions minutes.
 
 on:
   workflow_dispatch:
@@ -30,7 +34,7 @@ env:
 
 jobs:
   create-runner:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     outputs:
       label: ${{ steps.create.outputs.label }}
       server_id: ${{ steps.create.outputs.server_id }}
@@ -79,7 +83,7 @@ jobs:
   delete-runner:
     needs: [create-runner, capi-test]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - name: Delete ephemeral Hetzner runner
         uses: Cyclenerd/hcloud-github-runner@v1
