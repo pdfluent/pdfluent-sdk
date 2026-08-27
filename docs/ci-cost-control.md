@@ -1,24 +1,43 @@
 # CI Cost Control
 
-GitHub Actions runs only the cheap PR sanity gate. Expensive validation
-(WASM build, C bindings, desktop UI, conversion quality, corpus
-regression) runs off-CI on a VPS or local box. This keeps the per-PR
-GitHub spend low and predictable.
+GitHub Actions runs only the cheap PR sanity gate, and since 2026-08-27
+that gate itself runs on a self-hosted runner rather than
+`ubuntu-latest`. Expensive validation (WASM build, C bindings, desktop
+UI, conversion quality, corpus regression) runs off-CI on ephemeral
+Hetzner runners or a VPS/local box.
+
+## Why the cheap gate moved off ubuntu-latest
+
+#1380 estimated ~$0.04–0.05/push for `check`+`test`+`clippy`+`fmt` on
+`ubuntu-latest`. By 2026-08-27 the workspace had grown enough that a
+single evening of normal push volume measurably dented the monthly
+Actions budget — well above that original estimate (the workspace's
+crate count and `cargo test --workspace` surface grew substantially
+since #1380 was written). Self-hosted runner time is free regardless
+of duration, so the fix was moving these four jobs to the `xfa-fast`
+self-hosted runner (the desktop, registered as a persistent GitHub
+Actions runner — see `docs/ci/vps_runner.md` for the equivalent GitLab
+runner setup this mirrors) rather than re-tuning the estimate.
+
+`artifact-guard` and `license-metadata-guard` stay on `ubuntu-latest`:
+no compilation, `git ls-files` + a `json.load`, near-zero cost either
+way, no benefit to moving them.
 
 ## Two-tier model
 
 | Tier | Where | Trigger | Purpose |
 |------|-------|---------|---------|
-| Cheap PR gate | GitHub Actions (`.github/workflows/ci.yml`) | every PR + master push | fast sanity: compile, test, clippy, fmt |
-| Expensive validation | VPS / local (`scripts/validate-expensive.sh`) | manual, before merge / release | wasm, bindings, desktop, conversion, corpus |
-| Manual fallback | GitHub Actions (`.github/workflows/expensive-validation.yml`) | `workflow_dispatch` | noodknop when no VPS is available |
+| Cheap PR gate | GitHub Actions, self-hosted `xfa-fast` runner (`.github/workflows/ci.yml`) | every PR + master push | fast sanity: compile, test, clippy, fmt |
+| Expensive validation | Ephemeral Hetzner runners, or VPS / local (`scripts/validate-expensive.sh`) | manual, before merge / release | wasm, bindings, desktop, conversion, corpus |
+| Manual fallback | GitHub Actions (`.github/workflows/expensive-validation.yml`) | `workflow_dispatch` | noodknop when no VPS/Hetzner is available |
 
-## Cheap PR gate (GitHub Actions)
+## Cheap PR gate (GitHub Actions, self-hosted)
 
-Jobs in `ci.yml`: `check`, `test`, `clippy`, `fmt`. All run in parallel
-on `ubuntu-latest`. Combined billable time is ~5–6 minutes per push.
-Estimated cost: ~$0.04–0.05 per push, ~$0.20–0.25 per PR (5 pushes
-average).
+Jobs in `ci.yml`: `check`, `test`, `clippy`, `fmt`, all on
+`[self-hosted, xfa-fast]`. Combined GitHub Actions billable time: ~0
+(self-hosted minutes aren't metered). The only remaining metered cost
+in this gate is `artifact-guard` + `license-metadata-guard` on
+`ubuntu-latest`, each a few seconds.
 
 Not in the gate (intentionally):
 
@@ -126,7 +145,8 @@ merging #1380.
 
 | Path | Cost / PR | Cost / week (≈5 PRs) |
 |------|-----------|----------------------|
-| Old (10 always-on jobs) | ~$0.40–0.60 | ~$2.00–3.00 |
-| **New (cheap gate)** | **~$0.20–0.25** | **~$1.00–1.25** |
+| Original (10 always-on jobs) | ~$0.40–0.60 | ~$2.00–3.00 |
+| #1380 (cheap gate, ubuntu-latest) | ~$0.20–0.25 (estimate; measured higher by 2026-08-27) | ~$1.00–1.25 |
+| **Current (cheap gate, self-hosted `xfa-fast`)** | **~$0 Actions minutes** (desktop compute time isn't billed) | **~$0** |
 | Manual `expensive-validation.yml` per run | ~$0.10–0.15 | n/a |
 | Nightly (existing) | n/a | ~$0.70 |
