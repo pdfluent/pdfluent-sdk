@@ -1,11 +1,19 @@
 name: CI
 
-# M8-CLEANUP-04 (#1380): GitHub Actions runs only the cheap PR sanity
-# gate. Expensive validation (wasm, bindings, desktop, conversion,
-# corpus regression) runs off-CI on a VPS or local box via
-# `scripts/validate-expensive.sh`. A manual fallback workflow lives at
-# `.github/workflows/expensive-validation.yml` (workflow_dispatch only,
-# not required for merge). See `docs/ci-cost-control.md` for rationale.
+# M8-CLEANUP-04 (#1380): only the cheap PR sanity gate runs here.
+# Expensive validation (wasm, bindings, desktop, conversion, corpus
+# regression) runs off-CI on ephemeral Hetzner runners or a VPS/local
+# box via `scripts/validate-expensive.sh`. A manual fallback workflow
+# lives at `.github/workflows/expensive-validation.yml`
+# (workflow_dispatch only, not required for merge).
+#
+# check/test/clippy/fmt run on the self-hosted `xfa-fast` runner (the
+# desktop), not ubuntu-latest: the workspace outgrew the ~$0.05/push
+# estimate #1380 was written against, and self-hosted minutes are free
+# regardless of duration. artifact-guard/license-metadata-guard stay on
+# ubuntu-latest — no compilation, near-zero cost either way.
+#
+# See `docs/ci-cost-control.md` for the full rationale.
 #
 # pdf-desktop is excluded from check/test/clippy because it pulls in
 # Tauri/GTK system libs (glib-2.0, gtk-3, webkit2gtk, …) that are not
@@ -34,7 +42,7 @@ env:
 jobs:
   check:
     name: Check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -43,7 +51,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     # OOM workaround (issue #1481): the linker `ld` exhausts the 7 GB
     # github-hosted runner when linking ~30 test binaries with full debug
     # info in parallel (signal 7 / Bus error).
@@ -63,7 +71,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -74,7 +82,7 @@ jobs:
 
   fmt:
     name: Format
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
