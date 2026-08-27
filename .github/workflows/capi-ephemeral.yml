@@ -1,0 +1,91 @@
+name: pdf-capi (ephemeral Hetzner)
+
+# Proof-of-concept for the "one base snapshot, thin per-binding layers"
+# design: the base snapshot (xfa-base-capi-1.94.0-cedf6522, id 425017420) has
+# the host-triple + wasm32 dependency graph prebuilt at the exact path
+# actions/checkout uses (/actions-runner/_work/xfa-native-rust/xfa-native-rust),
+# so actions/checkout does an incremental fetch+reset here instead of a full
+# clone, and cargo only rebuilds what actually changed since the bake.
+#
+# Measured (cedf6522, CPX42): cold host-triple build 2m56s -> warm (no
+# change) 1.5s; warm after a real content change in a shared crate
+# (pdf-manip, 5.1% of build time, in all 6 binding graphs) 25.6s.
+#
+# The snapshot is pinned to rust-toolchain.toml's channel (see
+# /etc/xfa-snapshot-toolchain.txt on the instance) — bumping that pin means
+# rebaking, or the wasm32 target step below fails with "can't find crate for
+# core" against the wrong toolchain silently having no wasm target.
+#
+# GitLab's existing jobs are untouched; this is additive.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: capi-ephemeral-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HCLOUD_SNAPSHOT_ID: '425017420' # xfa-base-capi-1.94.0-cedf6522
+
+jobs:
+  create-runner:
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.create.outputs.label }}
+      server_id: ${{ steps.create.outputs.server_id }}
+    steps:
+      - name: Create ephemeral Hetzner runner
+        id: create
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: create
+          github_token: ${{ secrets.GH_RUNNER_PAT }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          server_type: cpx42
+          location: fsn1
+          image: ${{ env.HCLOUD_SNAPSHOT_ID }}
+
+  capi-test:
+    needs: create-runner
+    runs-on: ${{ needs.create-runner.outputs.label }}
+    timeout-minutes: 30
+    env:
+      CARGO_HOME: /var/cache/cargo-home
+      CARGO_TARGET_DIR: /var/cache/cargo-target
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm toolchain pin matches the baked snapshot
+        run: |
+          BAKED=$(grep '^channel' /etc/xfa-snapshot-toolchain.txt | cut -d'"' -f2)
+          PINNED=$(grep '^channel' rust-toolchain.toml | cut -d'"' -f2)
+          if [ "$BAKED" != "$PINNED" ]; then
+            echo "::error::snapshot baked for toolchain $BAKED, repo now pins $PINNED — rebake the snapshot before trusting this run's timing"
+            exit 1
+          fi
+          echo "toolchain OK: $PINNED"
+
+      - name: Build pdf-capi (release, locked)
+        run: |
+          command -v cc >/dev/null || { echo "cc missing on this runner"; exit 1; }
+          cargo build -p pdf-capi --release --locked
+
+      - name: Run capi smoke tests (fails on zero tests, not just nonzero exit)
+        run: |
+          python3 "${GITHUB_WORKSPACE}/scripts/ci/tests_actually_ran.py" capi -- \
+            make -C crates/pdf-capi/tests run
+
+  delete-runner:
+    needs: [create-runner, capi-test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete ephemeral Hetzner runner
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: delete
+          github_token: ${{ secrets.GH_RUNNER_PAT }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          name: ${{ needs.create-runner.outputs.label }}
+          server_id: ${{ needs.create-runner.outputs.server_id }}
