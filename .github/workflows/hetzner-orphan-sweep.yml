@@ -6,6 +6,11 @@ name: Hetzner Orphan Sweep
 # project used here (pdfluent-ci-ephemeral) exists only for this purpose, so
 # any server still running past a generous margin is by definition an orphan
 # — no label/name filtering needed, unlike a shared project.
+#
+# Runs on the self-hosted xfa-fast runner, not ubuntu-latest: this fires
+# every 30 minutes on a schedule, so on ubuntu-latest it would be a small
+# but constant GitHub Actions cost for no reason — xfa-fast is free and
+# already always-on.
 
 on:
   schedule:
@@ -14,7 +19,7 @@ on:
 
 jobs:
   sweep:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - name: Delete Hetzner servers older than 2 hours
         env:
