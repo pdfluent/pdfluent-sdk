@@ -21,17 +21,31 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
           set -euo pipefail
-          now=$(date +%s)
-          curl -sf -H "Authorization: Bearer $HCLOUD_TOKEN" \
-            https://api.hetzner.cloud/v1/servers | \
           python3 -c "
-          import json, sys, datetime
-          data = json.load(sys.stdin)
-          for s in data.get('servers', []):
-              created = datetime.datetime.fromisoformat(s['created'].replace('Z', '+00:00'))
-              age_min = (datetime.datetime.now(datetime.timezone.utc) - created).total_seconds() / 60
-              print(f\"{s['id']}\t{s['name']}\t{age_min:.0f}\")
-          " > /tmp/servers.tsv
+          import json, datetime, os, urllib.request
+
+          token = os.environ['HCLOUD_TOKEN']
+          page = 1
+          rows = []
+          while True:
+              req = urllib.request.Request(
+                  f'https://api.hetzner.cloud/v1/servers?page={page}&per_page=50',
+                  headers={'Authorization': f'Bearer {token}'},
+              )
+              with urllib.request.urlopen(req) as resp:
+                  data = json.load(resp)
+              for s in data.get('servers', []):
+                  created = datetime.datetime.fromisoformat(s['created'].replace('Z', '+00:00'))
+                  age_min = (datetime.datetime.now(datetime.timezone.utc) - created).total_seconds() / 60
+                  rows.append(f\"{s['id']}\t{s['name']}\t{age_min:.0f}\")
+              next_page = data.get('meta', {}).get('pagination', {}).get('next_page')
+              if not next_page:
+                  break
+              page = next_page
+
+          with open('/tmp/servers.tsv', 'w') as f:
+              f.write('\n'.join(rows))
+          "
 
           if [ ! -s /tmp/servers.tsv ]; then
             echo "no servers running — nothing to sweep"
