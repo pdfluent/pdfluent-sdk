@@ -185,7 +185,12 @@ jobs:
 
       - name: wasm surface
         run: |
-          rustup target add wasm32-unknown-unknown
+          # Not plain `rustup target add`: that lands on the default toolchain,
+          # which is `stable` here, while rust-toolchain.toml pins 1.94.0 and
+          # that is what cargo will use. Same trap as #1539 -- a target on the
+          # wrong toolchain gives "can't find crate for `core`". Codex, #1547.
+          rustup target add wasm32-unknown-unknown \
+            --toolchain "$(rustup show active-toolchain | cut -d" " -f1)"
           cargo check --target wasm32-unknown-unknown -p pdfluent --tests
           cargo test -p pdfluent --test wasm_surface
 
@@ -196,10 +201,28 @@ jobs:
 
       # The WASM build that wasm.yml used to do on a push to master. Publishing
       # stays there, on tags; this is the build and the website rebuild.
+      # wasm-opt parity lost its pull-request trigger when the provisioning was
+      # folded into one instance, and nothing took over -- a coverage loss, not
+      # a consolidation (#278). It needs wasm-pack and Node, both of which the
+      # wasm build step below already installs.
+      - name: wasm-opt parity
+        continue-on-error: true
+        run: |
+          rustup target add wasm32-unknown-unknown \
+            --toolchain "$(rustup show active-toolchain | cut -d" " -f1)"
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          wasm-pack build --release --target web --out-dir /tmp/parity/pkg crates/xfa-wasm
+          ls -l /tmp/parity/pkg/xfa_wasm_bg.wasm
+
       - name: wasm build
         if: github.event_name == 'push'
         run: |
-          rustup target add wasm32-unknown-unknown
+          # Not plain `rustup target add`: that lands on the default toolchain,
+          # which is `stable` here, while rust-toolchain.toml pins 1.94.0 and
+          # that is what cargo will use. Same trap as #1539 -- a target on the
+          # wrong toolchain gives "can't find crate for `core`". Codex, #1547.
+          rustup target add wasm32-unknown-unknown \
+            --toolchain "$(rustup show active-toolchain | cut -d" " -f1)"
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
           wasm-pack build --release --target web crates/xfa-wasm
 
