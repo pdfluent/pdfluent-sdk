@@ -120,6 +120,16 @@ jobs:
           toolchain: stable
       - name: Add rustfmt and clippy to the pinned toolchain
         run: rustup component add rustfmt clippy
+
+      # `/usr/local/bin/cargo` on this image is a plain binary, not a rustup
+      # shim, so it does not see the components rustup just installed -- which
+      # is why `cargo fmt` kept answering "no such command" after the component
+      # was demonstrably up to date. `rustup which cargo` gives the path of the
+      # active toolchain's own cargo, and that one knows about them.
+      - name: Find the cargo that belongs to the pinned toolchain
+        run: |
+          echo "CARGO_BIN=$(rustup which cargo)" >> "$GITHUB_ENV"
+          echo "using $(rustup which cargo)"
       # The image carries cargo, rustc and rustup as plain binaries in
       # /usr/local/bin. CARGO_HOME says /.cargo and that directory does not
       # exist; RUSTUP_HOME is unset. So neither $GITHUB_PATH nor a PATH export
@@ -133,6 +143,7 @@ jobs:
         run: |
           echo "CARGO_HOME=${CARGO_HOME:-unset}  RUSTUP_HOME=${RUSTUP_HOME:-unset}"
           which -a cargo rustc rustup || true
+          rustup which cargo || true
           rustup show || true
           rustup component list --installed || true
           for d in "${CARGO_HOME:-}/bin" "$HOME/.cargo/bin" /usr/local/bin; do
@@ -146,16 +157,16 @@ jobs:
       # failing crate should not hide the state of the other forty.
       - name: fmt
         run: |
-          cargo fmt --all --check
+          "$CARGO_BIN" fmt --all --check
       - name: check
         run: |
-          cargo check --workspace --exclude pdf-desktop
+          "$CARGO_BIN" check --workspace --exclude pdf-desktop
       - name: clippy
         run: |
-          cargo clippy --workspace --exclude pdf-desktop -- -D warnings
+          "$CARGO_BIN" clippy --workspace --exclude pdf-desktop -- -D warnings
       - name: test
         run: |
-          cargo test --workspace --exclude pdf-desktop --no-fail-fast
+          "$CARGO_BIN" test --workspace --exclude pdf-desktop --no-fail-fast
 
       # What used to be four workflows, each creating its own instance. One push
       # fired them together and Hetzner made five cpx42s inside five minutes
@@ -163,18 +174,19 @@ jobs:
       # from are still there for a manual dispatch.
       - name: xfa regression
         run: |
-          cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
-          cargo test -p pdf-xfa --test '*' --release
+          "$CARGO_BIN" test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
+          "$CARGO_BIN" test -p pdf-xfa --test '*' --release
 
       - name: wasm surface
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo check --target wasm32-unknown-unknown -p pdfluent --tests
-          cargo test -p pdfluent --test wasm_surface
+          "$CARGO_BIN" check --target wasm32-unknown-unknown -p pdfluent --tests
+          "$CARGO_BIN" test -p pdfluent --test wasm_surface
 
       - name: docs drift (advisory)
         continue-on-error: true
-        run: cargo build -p pdfluent-snippet-extract --release
+        run: |
+          "$CARGO_BIN" build -p pdfluent-snippet-extract --release
 
       # The WASM build that wasm.yml used to do on a push to master. Publishing
       # stays there, on tags; this is the build and the website rebuild.
