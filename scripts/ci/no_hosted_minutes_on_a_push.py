@@ -69,15 +69,62 @@ def vanzelf_actief(on) -> bool:
             continue
         # `push` with only a `tags:` filter is a release, not an ordinary push.
         if naam == "push" and isinstance(waarde, dict):
-            if "tags" in waarde and "branches" not in waarde:
+            # `tags:` alone is a release. `tags:` with `branches:` fires on
+            # every commit too -- and so does `tags:` with `branches-ignore:`,
+            # which enables every branch the filter does not exclude. Codex
+            # caught the second form on #1546; the first version only knew
+            # about `branches`.
+            takken = "branches" in waarde or "branches-ignore" in waarde
+            if "tags" in waarde and not takken:
                 continue
         return True
     return False
 
 
-def kosten(tekst: str) -> tuple[str, int] | None:
+def runner_ingangen(job: dict):
+    """Every runner this job could land on, one entry at a time.
+
+    A blob of text will not do. A matrix carrying both `[self-hosted, xfa-fast]`
+    and `macos-latest` contains the word "self-hosted", and deciding on the blob
+    excuses exactly the expensive half; deciding the other way bills our own
+    Windows box, whose label contains "windows". Codex made both points on
+    #1546. So: collect the entries and judge each on its own.
+    """
+    uit = []
+
+    def voeg_toe(waarde):
+        if isinstance(waarde, str):
+            uit.append(waarde)
+        elif isinstance(waarde, list):
+            # A list is either one runner's labels, or a matrix of runners.
+            if all(isinstance(x, str) for x in waarde):
+                uit.append(",".join(waarde))
+            else:
+                for x in waarde:
+                    voeg_toe(x)
+        elif isinstance(waarde, dict):
+            for x in waarde.values():
+                voeg_toe(x)
+
+    runs_on = job.get("runs-on")
+    if isinstance(runs_on, str) and "${{" in runs_on:
+        # Resolved from the matrix; the matrix values are the real answer.
+        matrix = (job.get("strategy") or {}).get("matrix") if isinstance(job.get("strategy"), dict) else None
+        if matrix:
+            voeg_toe(matrix)
+        else:
+            uit.append(runs_on)
+    else:
+        voeg_toe(runs_on)
+    return [x for x in uit if isinstance(x, str) and x]
+
+
+def kosten(ingang: str) -> tuple[str, int] | None:
+    """What one runner entry costs. Our own machines cost nothing."""
+    if "self-hosted" in ingang:
+        return None
     for merk, factor in DUUR.items():
-        if merk in tekst:
+        if merk in ingang:
             return merk, factor
     return None
 
@@ -105,17 +152,19 @@ def main() -> int:
         for naam, job in (doc.get("jobs") or {}).items():
             if not isinstance(job, dict):
                 continue
-            tekst = str(job.get("runs-on", "")) + str(job.get("strategy", ""))
-            if "self-hosted" in tekst:
-                continue
-            gevonden = kosten(tekst)
-            if gevonden is None:
-                if "ubuntu" in tekst:
+            ingangen = runner_ingangen(job)
+            duurste = None
+            for ingang in ingangen:
+                gevonden = kosten(ingang)
+                if gevonden and (duurste is None or gevonden[1] > duurste[1]):
+                    duurste = gevonden
+            if duurste is None:
+                if any("ubuntu" in i and "self-hosted" not in i for i in ingangen):
                     goedkoop += 1
                 continue
             if (pad.name, naam) in TOEGESTAAN:
                 continue
-            duur.append((pad.name, naam, gevonden[0], gevonden[1]))
+            duur.append((pad.name, naam, duurste[0], duurste[1]))
 
     if gelezen < MINIMUM_WORKFLOWS:  # FLOOR
         print(

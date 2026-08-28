@@ -56,17 +56,27 @@ jobs:
           docker load --input /tmp/image.tar
           docker images ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
+      # A tag name is free text, and `github.ref_name` hands over whatever is
+      # left after the prefix is stripped. A tag called `v1.2.$(id)` is a legal
+      # ref, matches this workflow's tag trigger, and reaches the shell as a
+      # command. Through `env:` it arrives as data. (Codex, #1540)
       - name: Inspect image
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          docker inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(echo ${{ github.ref_name }} | sed 's/^v//')
+          docker inspect "${REGISTRY}/${IMAGE_NAME}:$(echo "$REF_NAME" | sed 's/^v//')"
 
       - name: Test CLI
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} --version
+          docker run --rm "${REGISTRY}/${IMAGE_NAME}:${REF_NAME}" --version
 
       - name: Test help output
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} --help
+          docker run --rm "${REGISTRY}/${IMAGE_NAME}:${REF_NAME}" --help
 
       # Publish step (commented out - uncomment to enable)
       # - name: Push to Registry
