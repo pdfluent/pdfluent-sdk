@@ -170,6 +170,8 @@ jobs:
       - run: pip install --quiet pyyaml
       - name: Orchestration stays on hosted runners
         run: python3 scripts/ci/orchestration_stays_hosted.py
+      - name: No `if:` reads the secrets context
+        run: python3 scripts/ci/if_conditions_are_valid.py
       # The guard first, then its own test -- a guard whose parser stopped
       # understanding the files reports a clean tree in exactly the same words.
       - name: The guard that reads run-blocks still reads them
