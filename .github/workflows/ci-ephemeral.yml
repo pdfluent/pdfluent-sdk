@@ -1,0 +1,100 @@
+# The workspace build for a push to master, on a throwaway instance.
+#
+# `check`, `test`, `clippy` and `fmt` used to run on [self-hosted, xfa-fast] for
+# a push. That is the desktop: four cores, and it also carries the corpus, the
+# warm cargo cache and the runner registration token. One push to master fires
+# eight workflows at once, and the measurement on 28-08-2026 showed two CI
+# systems compiling on it simultaneously -- load 5.6 on four cores, with GitLab's
+# `cargo test --workspace` 54 minutes in and a GitHub Runner.Worker 22 minutes in.
+# Nothing was orphaned. The saturation was the design (#267).
+#
+# The four jobs are one job here, on one instance. Four instances would spend
+# more on boot and cache restore than the parallelism buys back, and they would
+# each pay the same snapshot download.
+#
+# WHY THIS IS NOT THE `--ref master` DANCE THE OTHER EPHEMERAL WORKFLOWS DO
+#
+# Those are dispatched, and a dispatch lets the caller choose the ref -- so the
+# workflow body itself could come from a branch. This one triggers on a push to
+# master, so the body is master's by construction. There is no ref to choose.
+#
+# scripts/ci/orchestration_stays_hosted.py knows the difference: it treats
+# `push` with a `branches: [master]` filter as pinned, and `workflow_dispatch`
+# as not.
+
+name: CI (ephemeral Hetzner)
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'CHANGELOG.md'
+      - '.github/**.md'
+
+concurrency:
+  group: ci-ephemeral-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  HCLOUD_SNAPSHOT_ID: '425004761' # xfa-golden-ci-base-v2
+
+jobs:
+  create-runner:
+    runs-on: [self-hosted, xfa-fast]
+    outputs:
+      label: ${{ steps.create.outputs.label }}
+      server_id: ${{ steps.create.outputs.server_id }}
+    steps:
+      - name: Create ephemeral Hetzner runner
+        id: create
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: create
+          github_token: ${{ secrets.GH_RUNNER_PAT }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          server_type: cpx42
+          location: fsn1
+          image: ${{ env.HCLOUD_SNAPSHOT_ID }}
+
+  workspace:
+    needs: create-runner
+    runs-on: ${{ needs.create-runner.outputs.label }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Ordered cheapest-first so an obvious break reports in seconds rather
+      # than after the test suite. `--no-fail-fast` on the tests, because one
+      # failing crate should not hide the state of the other forty.
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: check
+        run: cargo check --workspace --exclude pdf-desktop
+      - name: clippy
+        run: cargo clippy --workspace --exclude pdf-desktop -- -D warnings
+      - name: test
+        run: cargo test --workspace --exclude pdf-desktop --no-fail-fast
+
+  delete-runner:
+    needs: [create-runner, workspace]
+    if: always()
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      # Only when there is something to delete: a failed create leaves the
+      # outputs empty, and a genuine half-created instance is caught by
+      # hetzner-orphan-sweep.yml.
+      - name: Delete ephemeral Hetzner runner
+        if: needs.create-runner.outputs.server_id != ''
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: delete
+          github_token: ${{ secrets.GH_RUNNER_PAT }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          name: ${{ needs.create-runner.outputs.label }}
+          server_id: ${{ needs.create-runner.outputs.server_id }}

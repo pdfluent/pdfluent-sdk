@@ -51,7 +51,11 @@ env:
 jobs:
   check:
     name: Check
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+        # A push to master is built by ci-ephemeral.yml, on a throwaway instance.
+    # These four used to take the persistent desktop for a push, which is the
+    # machine with four cores, the corpus and the warm cache (#267).
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -60,7 +64,11 @@ jobs:
 
   test:
     name: Test
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+        # A push to master is built by ci-ephemeral.yml, on a throwaway instance.
+    # These four used to take the persistent desktop for a push, which is the
+    # machine with four cores, the corpus and the warm cache (#267).
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     # OOM workaround (issue #1481): the linker `ld` exhausts the 7 GB
     # github-hosted runner when linking ~30 test binaries with full debug
     # info in parallel (signal 7 / Bus error).
@@ -80,7 +88,11 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+        # A push to master is built by ci-ephemeral.yml, on a throwaway instance.
+    # These four used to take the persistent desktop for a push, which is the
+    # machine with four cores, the corpus and the warm cache (#267).
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -91,7 +103,11 @@ jobs:
 
   fmt:
     name: Format
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+        # A push to master is built by ci-ephemeral.yml, on a throwaway instance.
+    # These four used to take the persistent desktop for a push, which is the
+    # machine with four cores, the corpus and the warm cache (#267).
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

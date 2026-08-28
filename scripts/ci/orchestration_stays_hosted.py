@@ -95,6 +95,45 @@ ALLEEN_BIJ_PUSH = re.compile(
     r"github\.event_name\s*==\s*'push'\s*&&.*?\|\|\s*'[^']*ubuntu", re.S)
 
 
+# A job is heavy when it compiles the workspace. Those belong on a throwaway
+# instance: the persistent desktop has four cores and also carries the corpus,
+# the warm cargo cache and the runner registration token. On 28-08-2026 two CI
+# systems were compiling on it at once -- load 5.6 on four cores, neither of them
+# orphaned. The saturation was the design, not a fault (#267).
+ZWAAR = re.compile(r"\bcargo\s+(build|test|check|clippy|bench|doc)\b")
+
+# Jobs that compile on a persistent runner because they read the corpus, which
+# lives there. Moving them would mean shipping the corpus to a throwaway
+# instance on every run. Recorded so the count cannot grow, and so that removing
+# one is a decision rather than a line that ages.
+ZWARE_BASELINE = {
+    ("bench.yml", "benchmark"),
+    ("crash-guard.yml", "crash-guard"),
+    ("gate-ci.yml", "gate"),
+    ("wasm-gate.yml", "wasm-gate"),
+    # Only the build job compiles; the other two consume its artefact.
+    ("enterprise-acceptance.yml", "build"),
+    # Not corpus, but release. `preflight` runs a full workspace check and the
+    # integration suites before a publish, so it belongs on a throwaway instance
+    # like everything else here. It stays for now because it is on the release
+    # path and there is no way to rehearse a change to it without publishing:
+    # a broken preflight surfaces at the worst possible moment. Moving it is
+    # tracked separately on #267 rather than done blind.
+    ("publish-crates.yml", "preflight"),
+}
+
+
+def compileert(job) -> bool:
+    """True when any step of this job runs a cargo command that builds."""
+    if not isinstance(job, dict):
+        return False
+    for stap in job.get("steps") or []:
+        if isinstance(stap, dict) and isinstance(stap.get("run"), str):
+            if ZWAAR.search(stap["run"]):
+                return True
+    return False
+
+
 def op_blijvende_runner(runs_on) -> bool:
     tekst = str(runs_on)
     if not any(l in tekst for l in PERSISTENT_LABELS):
@@ -197,6 +236,7 @@ def main() -> int:
         return 1
 
     bekeken, overtredingen, bekend = 0, [], []
+    zware, zwaar_bekend = [], []
     for pad in sorted(FLOWS.glob("*.yml")) + sorted(FLOWS.glob("*.yaml")):
         try:
             doc = yaml.load(pad.read_text(), GeenDubbeleSleutels) or {}
@@ -205,6 +245,18 @@ def main() -> int:
             return 1
         bekeken += 1
         tr = triggers(doc)
+
+        # The heavy-job rule does not care which trigger fired: compiling the
+        # workspace on the persistent desktop saturates it whether the push was
+        # reviewed or not.
+        for naam, job in (doc.get("jobs") or {}).items():
+            if not op_blijvende_runner(job.get("runs-on", "")) or not compileert(job):
+                continue
+            if (pad.name, naam) in ZWARE_BASELINE:
+                zwaar_bekend.append((pad.name, naam))
+            else:
+                zware.append((pad.name, naam))
+
         if branch_locked(tr):
             continue
         for naam, job in (doc.get("jobs") or {}).items():
@@ -224,7 +276,38 @@ def main() -> int:
               f"lost its files, and an empty scan reports a clean tree.", file=sys.stderr)
         return 1
 
-    print(f"[orchestration] {bekeken} workflow(s) inspected, {len(bekend)} known exposure(s)")
+    print(f"[orchestration] {bekeken} workflow(s) inspected, {len(bekend)} known exposure(s), "
+          f"{len(zwaar_bekend)} known heavy job(s) on the desktop")
+
+    zwaar_verdwenen = [k for k in ZWARE_BASELINE if k not in set(zwaar_bekend)]
+    if zwaar_verdwenen:
+        print(f"[orchestration] {len(zwaar_verdwenen)} entr(y/ies) in ZWARE_BASELINE no longer "
+              "match a compiling job on a persistent runner. Take them out, or the list stops "
+              "describing anything:", file=sys.stderr)
+        for w, j in sorted(zwaar_verdwenen):
+            print(f"  {w}  job `{j}`", file=sys.stderr)
+        return 1
+
+    if zware:
+        print(file=sys.stderr)
+        print(f"[orchestration] {len(zware)} job(s) compile the workspace on the persistent "
+              "runner:", file=sys.stderr)
+        for w, j in sorted(zware):
+            print(f"  {w}  job `{j}`", file=sys.stderr)
+        print(file=sys.stderr)
+        print("[orchestration] That machine has four cores and also carries the corpus, the",
+              file=sys.stderr)
+        print("[orchestration] warm cargo cache and the runner registration token. A cargo",
+              file=sys.stderr)
+        print("[orchestration] build belongs on a throwaway instance -- see",
+              file=sys.stderr)
+        print("[orchestration] .github/workflows/ci-ephemeral.yml for the shape. If the job",
+              file=sys.stderr)
+        print("[orchestration] genuinely needs the corpus, add it to ZWARE_BASELINE with the",
+              file=sys.stderr)
+        print("[orchestration] reason. (#267)", file=sys.stderr)
+        return 1
+
 
     # A baseline that stops matching reality is worse than none: it says nine
     # when there are eight, and the one that left took its reason with it.
