@@ -119,6 +119,19 @@ jobs:
           fi
           echo "OK: no compiled build artifacts found in the repository."
 
+  orchestration-guard:
+    name: No ref-dispatchable job on the persistent runner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml
+      - name: Orchestration stays on hosted runners
+        run: python3 scripts/ci/orchestration_stays_hosted.py
+
   license-metadata-guard:
     name: No MIT/Apache license on commercial npm packages
     runs-on: ubuntu-latest
