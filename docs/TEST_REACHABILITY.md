@@ -8,9 +8,9 @@ Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .
 
 **75 van 653 publieke functies** (11.5%).
 
-Daarvan dragen er **27** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export), 7 zijn een omhulsel dat niets doet dan doorgeven aan een variant die wél getest wordt, en 4 dragen een gemeten besluit in hun eigen doc-commentaar.
+Daarvan dragen er **37** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export), 7 zijn een omhulsel dat niets doet dan doorgeven aan een variant die wél getest wordt, en 14 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **48** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **38** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
@@ -127,21 +127,21 @@ De overige **48** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 
 ## pdf-ocr
 
-- `classify_and_rotate_batch`  — *(geen reden opgegeven)*
-- `classify_angle`  — *(geen reden opgegeven)*
-- `detect_inference`  — *(geen reden opgegeven)*
-- `load_sessions`  — *(geen reden opgegeven)*
-- `recognize_batch`  — *(geen reden opgegeven)*
-- `recognize_inference`  — *(geen reden opgegeven)*
+- `classify_and_rotate_batch`  — *gemeten besluit*
+- `classify_angle`  — *gemeten besluit*
+- `detect_inference`  — *gemeten besluit*
+- `load_sessions`  — *gemeten besluit*
+- `recognize_batch`  — *gemeten besluit*
+- `recognize_inference`  — *gemeten besluit*
 
 ## pdf-sign
 
-- `check_revocation_embedded`  — *(geen reden opgegeven)*
+- `check_revocation_embedded`  — *gemeten besluit*
 - `has_appearance_stream`  — *(geen reden opgegeven)*
 - `parse_seed_values`  — *(geen reden opgegeven)*
-- `request_timestamp`  — *(geen reden opgegeven)*
-- `sign_pdf_ltv`  — *(geen reden opgegeven)*
-- `verify_certificate_chain`  — *(geen reden opgegeven)*
+- `request_timestamp`  — *gemeten besluit*
+- `sign_pdf_ltv`  — *gemeten besluit*
+- `verify_certificate_chain`  — *gemeten besluit*
 
 ## pdf-xfa
 
