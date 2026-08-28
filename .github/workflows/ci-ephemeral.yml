@@ -66,7 +66,24 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      # The snapshot image carries cargo and rustc but not the components: the
+      # first run of this workflow died on `no such command: fmt`. It also
+      # symlinks cargo into /usr/local/bin, which shadows rustup's shims, so the
+      # toolchain rustup installs has to be put in front of PATH by hand.
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Put the rustup toolchain ahead of the image's own cargo
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Show what will actually run
+        run: |
+          which cargo rustc || true
+          cargo --version
+          cargo fmt --version
+          cargo clippy --version
+
       - uses: Swatinem/rust-cache@v2
 
       # Ordered cheapest-first so an obvious break reports in seconds rather
