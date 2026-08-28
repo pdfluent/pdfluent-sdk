@@ -119,6 +119,17 @@ jobs:
           fi
           echo "OK: no compiled build artifacts found in the repository."
 
+  toolchain-pin-guard:
+    name: Cross targets land on the pinned toolchain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 scripts/ci/wasm_target_matches_the_pin.py
+
   test-count-parsers:
     name: The parsers that tell a binding job zero tests ran
     runs-on: ubuntu-latest

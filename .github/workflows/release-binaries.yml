@@ -60,8 +60,12 @@ jobs:
         if: matrix.use_cross == true
         run: cargo install cross --locked
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to rust-toolchain.toml: `@stable` adds the matrix target to
+      # stable, cargo then switches to the pinned channel and finds no std
+      # for it -- "can't find crate for `core`", naming neither.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: '1.94.0'
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2

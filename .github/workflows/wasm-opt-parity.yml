@@ -43,8 +43,12 @@ jobs:
           lfs: true
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        # Pinned to rust-toolchain.toml's channel: `@stable` puts the target
+        # on stable, cargo switches to the pinned channel, and there is no
+        # wasm32 std there -- "can't find crate for `core`".
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: '1.94.0'
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
@@ -63,14 +67,26 @@ jobs:
           import re, pathlib
           p = pathlib.Path("crates/xfa-wasm/Cargo.toml")
           t = p.read_text()
-          t = re.sub(
-              r"^wasm-opt = .*$",
+          # `wasm-opt` is a multi-line array. A single-line `^wasm-opt = .*$`
+          # replaces only the opening `wasm-opt = [` and leaves its contents
+          # behind, so cargo reads an orphaned `"-O3",` and reports
+          # "key with no value, expected `=`" -- pointing at a line nobody
+          # wrote. This workflow was checked in dormant and had never run, so
+          # the patch had never been executed against the array form.
+          nieuw, n = re.subn(
+              r"^wasm-opt\s*=\s*(?:\[[^\]]*\]|[^\n]*)$",
               "wasm-opt = false",
               t,
               count=1,
-              flags=re.M,
+              flags=re.M | re.S,
           )
-          p.write_text(t)
+          if n != 1:
+              raise SystemExit(
+                  "wasm-opt key not found in crates/xfa-wasm/Cargo.toml; the "
+                  "reference build would silently keep optimisation on, which "
+                  "makes this comparison meaningless"
+              )
+          p.write_text(nieuw)
           PY
           wasm-pack build --release --target web \
             --out-dir /tmp/ref/pkg crates/xfa-wasm \
