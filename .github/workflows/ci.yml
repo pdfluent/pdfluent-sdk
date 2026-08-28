@@ -49,49 +49,6 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  artifact-guard:
-    name: No compiled build artifacts committed
-    runs-on: [self-hosted, xfa-fast]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check for committed .so / .pyd / .node / .wasm artifacts
-        run: |
-          FOUND=$(git ls-files \
-            '*.so' '*.pyd' '*.node' \
-            'crates/xfa-wasm/pkg/*.js' \
-            'crates/xfa-wasm/pkg/*.wasm' \
-            'crates/xfa-wasm/pkg/*.d.ts' \
-            2>/dev/null)
-          if [ -n "$FOUND" ]; then
-            echo "ERROR: committed build artifact(s) found — remove them and add to .gitignore:"
-            echo "$FOUND"
-            exit 1
-          fi
-          echo "OK: no compiled build artifacts found in the repository."
-
-  toolchain-pin-guard:
-    name: Cross targets land on the pinned toolchain
-    runs-on: [self-hosted, xfa-fast]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: python3 scripts/ci/wasm_target_matches_the_pin.py
-
-  test-count-parsers:
-    name: The parsers that tell a binding job zero tests ran
-    runs-on: [self-hosted, xfa-fast]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Parsers still read their runners' output
-        run: python3 scripts/ci/test_tests_actually_ran.py
-
   orchestration-guard:
     name: No ref-dispatchable job on the persistent runner
     runs-on: [self-hosted, xfa-fast]
@@ -118,26 +75,39 @@ jobs:
         run: python3 scripts/ci/test_workflow_inputs_are_not_shell.py
       - name: No caller-supplied string reaches a shell
         run: python3 scripts/ci/workflow_inputs_are_not_shell.py
-
-  license-metadata-guard:
-    name: No MIT/Apache license on commercial npm packages
-    runs-on: [self-hosted, xfa-fast]
-    steps:
-      - uses: actions/checkout@v4
+      - name: Cross targets land on the pinned toolchain
+        run: python3 scripts/ci/wasm_target_matches_the_pin.py
+      - name: Parsers still read their runners' output
+        run: python3 scripts/ci/test_tests_actually_ran.py
+      - name: Check for committed .so / .pyd / .node / .wasm artifacts
+        run: |
+            FOUND=$(git ls-files \
+              '*.so' '*.pyd' '*.node' \
+              'crates/xfa-wasm/pkg/*.js' \
+              'crates/xfa-wasm/pkg/*.wasm' \
+              'crates/xfa-wasm/pkg/*.d.ts' \
+              2>/dev/null)
+            if [ -n "$FOUND" ]; then
+              echo "ERROR: committed build artifact(s) found — remove them and add to .gitignore:"
+              echo "$FOUND"
+              exit 1
+            fi
+            echo "OK: no compiled build artifacts found in the repository."
       - name: Verify commercial packages declare correct license
         run: |
-          FAIL=0
-          for PKG in \
-            crates/xfa-wasm/pkg/package.json \
-            crates/pdf-node/package.json; do
-            if [ -f "$PKG" ]; then
-              LICENSE=$(python3 -c "import json; print(json.load(open('$PKG')).get('license',''))")
-              if [ "$LICENSE" = "MIT" ] || [ "$LICENSE" = "Apache-2.0" ] || [ "$LICENSE" = "MIT OR Apache-2.0" ]; then
-                echo "ERROR: $PKG has permissive license '$LICENSE' — must be PDFluent Commercial License"
-                FAIL=1
-              else
-                echo "OK: $PKG license = '$LICENSE'"
+            FAIL=0
+            for PKG in \
+              crates/xfa-wasm/pkg/package.json \
+              crates/pdf-node/package.json; do
+              if [ -f "$PKG" ]; then
+                LICENSE=$(python3 -c "import json; print(json.load(open('$PKG')).get('license',''))")
+                if [ "$LICENSE" = "MIT" ] || [ "$LICENSE" = "Apache-2.0" ] || [ "$LICENSE" = "MIT OR Apache-2.0" ]; then
+                  echo "ERROR: $PKG has permissive license '$LICENSE' — must be PDFluent Commercial License"
+                  FAIL=1
+                else
+                  echo "OK: $PKG license = '$LICENSE'"
+                fi
               fi
-            fi
-          done
-          if [ "$FAIL" = "1" ]; then exit 1; fi
+            done
+            if [ "$FAIL" = "1" ]; then exit 1; fi
+

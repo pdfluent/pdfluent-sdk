@@ -197,17 +197,13 @@ def op_blijvende_runner(runs_on) -> bool:
 # that same decision: the heavy build goes to a throwaway instance, which is
 # both free and faster than a hosted runner.
 BASELINE = {
-    # The light guard jobs. They moved off ubuntu-latest on 28-08-2026 when the
+    # The light guard work, now one job. It moved off ubuntu-latest on 28-08-2026 when the
     # Actions budget ran out and every hosted job started failing outright --
     # a spending limit disables hosted runners and leaves self-hosted ones
     # working, so this is where the guards keep running at all. Seconds of file
     # scanning each; booting an instance would cost more than the work. Under
     # the same 28-08 decision about branch code on the desktop (#274).
-    ("ci.yml", "artifact-guard"),
-    ("ci.yml", "toolchain-pin-guard"),
-    ("ci.yml", "test-count-parsers"),
     ("ci.yml", "orchestration-guard"),
-    ("ci.yml", "license-metadata-guard"),
     ("security-audit.yml", "cargo-audit"),
     ("security-audit.yml", "cargo-deny-advisories"),
     ("verapdf.yml", "conformance"),
