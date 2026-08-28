@@ -119,6 +119,18 @@ jobs:
           fi
           echo "OK: no compiled build artifacts found in the repository."
 
+  test-count-parsers:
+    name: The parsers that tell a binding job zero tests ran
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Parsers still read their runners' output
+        run: python3 scripts/ci/test_tests_actually_ran.py
+
   orchestration-guard:
     name: No ref-dispatchable job on the persistent runner
     runs-on: ubuntu-latest
