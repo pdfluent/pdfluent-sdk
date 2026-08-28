@@ -2,8 +2,8 @@ name: Fuzzing
 
 on:
   schedule:
-    - cron: '30 2 * * *'    # nightly smoke: build all + 60s on core targets
-    - cron: '30 3 * * 0'    # weekly deep: all targets, full duration
+    - cron: '30 4 * * *'    # nightly smoke: build all + 60s on core targets
+    - cron: '30 6 * * 0'    # weekly deep: all targets, full duration
   workflow_dispatch:
     inputs:
       duration:

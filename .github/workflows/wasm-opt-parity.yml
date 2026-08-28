@@ -12,54 +12,20 @@ name: WASM wasm-opt parity gate
 # pipeline is set up.
 
 on:
-  pull_request:
-    paths:
-      - 'crates/xfa-wasm/**'
-      - 'scripts/bench/wasm-golden-compare.mjs'
-      - 'scripts/bench/wasm-bench.mjs'
-      - '.github/workflows/wasm-opt-parity.yml'
-  push:
-    branches:
-      - 'enterprise/post-beta-hardening'
-      - 'master'
-    paths:
-      - 'crates/xfa-wasm/**'
+  # Automatic triggers removed on 28-08-2026. This work now runs on the
+  # shared instance that ci-ephemeral.yml creates: one server per push,
+  # not one per workflow. Five workflows each provisioning their own gave
+  # five cpx42s inside five minutes for a single push (#275).
   workflow_dispatch:
 
 env:
-  HCLOUD_SNAPSHOT_ID: '425004761' # xfa-golden-ci-base-v2
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
-  # One throwaway instance for this workflow. The jobs below queue on it rather
-  # than spreading across hosted runners: free, and a cpx42 has eight cores
-  # against a hosted runner's two to four. Orchestration sits on the desktop,
-  # which costs nothing (#274).
-  create-runner:
-    # Only from the default branch: a dispatch can choose the ref, and this
-    # job sits on the machine with the corpus and the runner token (#268).
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: [self-hosted, xfa-fast]
-    outputs:
-      label: ${{ steps.create.outputs.label }}
-      server_id: ${{ steps.create.outputs.server_id }}
-    steps:
-      - name: Create ephemeral Hetzner runner
-        id: create
-        uses: Cyclenerd/hcloud-github-runner@v1
-        with:
-          mode: create
-          github_token: ${{ secrets.GH_RUNNER_PAT }}
-          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
-          server_type: cpx42
-          location: fsn1
-          image: ${{ env.HCLOUD_SNAPSHOT_ID }}
-
   wasm-opt-parity:
-    needs: create-runner
     name: "wasm-opt -O3 vs disabled (byte-identical outputs)"
-    runs-on: ${{ needs.create-runner.outputs.label }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
@@ -156,17 +122,3 @@ jobs:
             /tmp/ref/pkg/xfa_wasm_bg.wasm
             /tmp/cand/pkg/xfa_wasm_bg.wasm
           retention-days: 14
-  delete-runner:
-    needs: [create-runner, wasm-opt-parity]
-    if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: [self-hosted, xfa-fast]
-    steps:
-      - name: Delete ephemeral Hetzner runner
-        if: needs.create-runner.outputs.server_id != ''
-        uses: Cyclenerd/hcloud-github-runner@v1
-        with:
-          mode: delete
-          github_token: ${ secrets.GH_RUNNER_PAT }
-          hcloud_token: ${ secrets.HCLOUD_TOKEN }
-          name: ${ needs.create-runner.outputs.label }
-          server_id: ${ needs.create-runner.outputs.server_id }

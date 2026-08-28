@@ -50,7 +50,7 @@ jobs:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: [self-hosted, xfa-fast]
     steps:
-      - name: Delete Hetzner servers older than 2 hours
+      - name: Delete Hetzner servers older than 45 minutes
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
@@ -87,7 +87,7 @@ jobs:
           fi
 
           while IFS=$'\t' read -r id name age_min; do
-            if [ "${age_min%.*}" -gt 120 ]; then
+            if [ "${age_min%.*}" -gt 45 ]; then
               echo "ORPHAN: $name (id $id, ${age_min} min old) — deleting"
               curl -sf -X DELETE -H "Authorization: Bearer $HCLOUD_TOKEN" \
                 "https://api.hetzner.cloud/v1/servers/$id"

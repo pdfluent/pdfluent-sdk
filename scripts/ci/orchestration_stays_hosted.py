@@ -196,13 +196,8 @@ BASELINE = {
     # Orchestration for a pull request, under the 28-08 decision above: the
     # heavy build goes to a throwaway instance and the desktop only creates and
     # deletes it. A PR branch could change what those two jobs do; accepted
-    # while this repository has one contributor.
-    ("docs-drift-guard.yml", "create-runner"),
-    ("docs-drift-guard.yml", "delete-runner"),
-    ("wasm-surface-guard.yml", "create-runner"),
-    ("wasm-surface-guard.yml", "delete-runner"),
-    ("xfa-regression.yml", "create-runner"),
-    ("xfa-regression.yml", "delete-runner"),
+    # while this repository has one contributor. Only ci-ephemeral does this
+    # now -- the others hand their work to the instance it creates (#275).
     ("ci-ephemeral.yml", "create-runner"),
     ("ci-ephemeral.yml", "delete-runner"),
     ("bench.yml", "benchmark"),
