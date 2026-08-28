@@ -239,6 +239,15 @@ pub fn build_tsa_request(
 
 /// Send a timestamp request to a TSA endpoint and return the raw
 /// DER-encoded TimeStampToken (CMS ContentInfo).
+///
+/// **No test reaches this, deliberately.** It posts an RFC 3161 request to a
+/// timestamp authority over HTTP and returns what comes back. A test would
+/// either need a real TSA -- which makes the suite depend on somebody else's
+/// uptime, and fail on a train -- or a fake one, which would prove that our
+/// mock answers our request and nothing about the protocol.
+///
+/// What is worth testing here is the parsing of the response, and that lives
+/// in the functions this one calls.
 #[cfg(feature = "tsa")]
 pub fn request_timestamp(config: &TsaConfig, signature_hash: &[u8]) -> Result<Vec<u8>, TsaError> {
     use sha2::Digest;
