@@ -106,12 +106,24 @@ jobs:
       - name: Publish to npm
         # Publish when: a v* tag is pushed, OR workflow_dispatch with publish_npm=true.
         # Requires NPM_TOKEN secret set in repository settings.
-        if: |
-          (startsWith(github.ref, 'refs/tags/v') || inputs.publish_npm == 'true') &&
-          secrets.NPM_TOKEN != ''
+        # No token check in the condition. `secrets` is not available in an
+        # `if:` at all -- reading it there does not come out false, it makes the
+        # whole file invalid, which is what stopped this workflow for nine days.
+        # Hoisting the token to the job's `env:` would fix that but hand a
+        # registry-write credential to every step in the job, which Codex
+        # pointed out on #1544 and is right about. So the condition asks only
+        # what it needs to, and the token stays on this one step. A missing
+        # token now fails the publish loudly instead of skipping it in silence,
+        # and a release that quietly does not publish is worse than one that
+        # stops and says so.
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_npm == 'true'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          if [ -z "${NPM_TOKEN}" ]; then
+            echo "NPM_TOKEN is not set; refusing to pretend this published." >&2
+            exit 1
+          fi
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
           cd crates/xfa-wasm/pkg
           echo "Publishing @pdfluent/wasm $(node -e "console.log(require('./package.json').version)") to npm..."
