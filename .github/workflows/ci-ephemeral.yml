@@ -107,16 +107,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      # The image ships its own cargo in /usr/local/bin and sets
-      # CARGO_HOME=/.cargo, so `which cargo` finds the image's copy and
-      # `cargo fmt` is not in it. Two attempts at $GITHUB_PATH did not shift
-      # that, so every step below sets PATH itself. Belt and braces, and the
-      # braces are what actually held.
+      # The image carries cargo, rustc and rustup as plain binaries in
+      # /usr/local/bin. CARGO_HOME says /.cargo and that directory does not
+      # exist; RUSTUP_HOME is unset. So neither $GITHUB_PATH nor a PATH export
+      # could point at the toolchain rustup installed -- there was nothing at
+      # the path they named.
+      #
+      # `rustup run stable cargo ...` asks rustup where its own toolchain is,
+      # which is the one question that does not depend on any of that.
       - name: Show which toolchains are on this instance
         continue-on-error: true
         run: |
           echo "CARGO_HOME=${CARGO_HOME:-unset}  RUSTUP_HOME=${RUSTUP_HOME:-unset}"
           which -a cargo rustc rustup || true
+          rustup show || true
+          rustup component list --installed || true
           for d in "${CARGO_HOME:-}/bin" "$HOME/.cargo/bin" /usr/local/bin; do
             [ -d "$d" ] && { echo "--- $d"; ls "$d" | head -12; }
           done
@@ -128,20 +133,16 @@ jobs:
       # failing crate should not hide the state of the other forty.
       - name: fmt
         run: |
-          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
-          cargo fmt --all --check
+          rustup run stable cargo fmt --all --check
       - name: check
         run: |
-          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
-          cargo check --workspace --exclude pdf-desktop
+          rustup run stable cargo check --workspace --exclude pdf-desktop
       - name: clippy
         run: |
-          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
-          cargo clippy --workspace --exclude pdf-desktop -- -D warnings
+          rustup run stable cargo clippy --workspace --exclude pdf-desktop -- -D warnings
       - name: test
         run: |
-          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
-          cargo test --workspace --exclude pdf-desktop --no-fail-fast
+          rustup run stable cargo test --workspace --exclude pdf-desktop --no-fail-fast
 
       # What used to be four workflows, each creating its own instance. One push
       # fired them together and Hetzner made five cpx42s inside five minutes
@@ -149,27 +150,24 @@ jobs:
       # from are still there for a manual dispatch.
       - name: xfa regression
         run: |
-          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
-          cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
-          cargo test -p pdf-xfa --test '*' --release
+          rustup run stable cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
+          rustup run stable cargo test -p pdf-xfa --test '*' --release
 
       - name: wasm surface
         run: |
-          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
           rustup target add wasm32-unknown-unknown
-          cargo check --target wasm32-unknown-unknown -p pdfluent --tests
-          cargo test -p pdfluent --test wasm_surface
+          rustup run stable cargo check --target wasm32-unknown-unknown -p pdfluent --tests
+          rustup run stable cargo test -p pdfluent --test wasm_surface
 
       - name: docs drift (advisory)
         continue-on-error: true
-        run: cargo build -p pdfluent-snippet-extract --release
+        run: rustup run stable cargo build -p pdfluent-snippet-extract --release
 
       # The WASM build that wasm.yml used to do on a push to master. Publishing
       # stays there, on tags; this is the build and the website rebuild.
       - name: wasm build
         if: github.event_name == 'push'
         run: |
-          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
           rustup target add wasm32-unknown-unknown
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
           wasm-pack build --release --target web crates/xfa-wasm
