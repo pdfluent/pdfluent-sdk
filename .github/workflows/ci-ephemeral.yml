@@ -64,7 +64,7 @@ jobs:
     # register, holding the one desktop runner while everything else
     # queues behind it. Fifteen minutes of that is what a wedged
     # provisioning looked like (#274).
-    timeout-minutes: 10
+    timeout-minutes: 20
     runs-on: [self-hosted, xfa-fast]
     outputs:
       label: ${{ steps.hergebruik.outputs.label || steps.create.outputs.label }}
