@@ -79,6 +79,8 @@ jobs:
         run: python3 scripts/ci/test_mirror_has_not_drifted.py
       - name: The age alarm can tell a working machine from a leaked one
         run: python3 scripts/ci/test_infra_health.py
+      - name: The wait for a free instance fits inside its job
+        run: python3 scripts/ci/wait_fits_in_the_job_timeout.py
       # The guard first, then its own test -- a guard whose parser stopped
       # understanding the files reports a clean tree in exactly the same words.
       - name: The guard that reads run-blocks still reads them
