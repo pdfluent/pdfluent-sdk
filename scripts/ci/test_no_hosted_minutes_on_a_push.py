@@ -71,6 +71,9 @@ GEVALLEN = [
     # would flag it, and the label says windows.
     ("self-hosted windows on push",
      "  push:\n    branches: [master]\n", "[self-hosted, windows]", False),
+    # `tags` with `branches-ignore` still fires on ordinary branches.
+    ("macos on tags plus branches-ignore",
+     "  push:\n    tags: ['v*']\n    branches-ignore: ['wip/**']\n", "macos-latest", True),
     ("macos on dispatch", "  workflow_dispatch: null\n", "macos-latest", False),
     # Linux is counted, not refused.
     ("ubuntu on push-to-branch", "  push:\n    branches: [master]\n", "ubuntu-latest", False),
@@ -92,6 +95,18 @@ def main() -> int:
                     f"{naam}: expected {'a failure' if moet_falen else 'a pass'}, got "
                     f"exit {r.returncode}\n      {r.stdout.strip()}\n      {r.stderr.strip()[:200]}"
                 )
+
+    # A matrix with a self-hosted entry AND a hosted macOS one: skipping on the
+    # word "self-hosted" would excuse exactly the expensive half.
+    gemengd = ("name: Proef\non:\n  push:\n    branches: [master]\njobs:\n  bouw:\n"
+               "    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n"
+               "        os: [[self-hosted, xfa-fast], macos-latest]\n"
+               "    steps:\n      - run: echo hi\n")
+    with tempfile.TemporaryDirectory() as d:
+        m = pathlib.Path(d)
+        bouw(m, gemengd)
+        if draai(m).returncode == 0:
+            fouten.append("macOS beside a self-hosted entry in one matrix is excused")
 
     # And the matrix form, which is how node-bindings carried it.
     matrix = ("name: Proef\non:\n  push:\n    branches: [master]\njobs:\n  bouw:\n"

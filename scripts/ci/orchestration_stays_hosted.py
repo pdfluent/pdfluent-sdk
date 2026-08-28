@@ -49,6 +49,7 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parent.parent.parent
+WORTEL = REPO
 FLOWS = REPO / ".github" / "workflows"
 FLOOR = 10
 
@@ -120,17 +121,39 @@ ZWARE_BASELINE = {
     # a broken preflight surfaces at the worst possible moment. Moving it is
     # tracked separately on #267 rather than done blind.
     ("publish-crates.yml", "preflight"),
+    # Found only once the guard started following the scripts a job calls:
+    # `publish` runs ./scripts/publish_ordered.sh, which compiles. Same reason
+    # as preflight -- release path, no way to rehearse a change to it without
+    # publishing. (Codex, #1541)
+    ("publish-crates.yml", "publish"),
 }
 
 
-def compileert(job) -> bool:
-    """True when any step of this job runs a cargo command that builds."""
+# A job that calls `bash scripts/ci/run_build.sh` compiles just as hard as one
+# that types `cargo build`, and the workflow file says nothing about it. Codex
+# raised this on #1541; the first version read only the YAML.
+AANGEROEPEN = re.compile(r"(?:bash |sh |\./)?(scripts/[\w/.-]+\.(?:sh|py))")
+
+
+def compileert(job, wortel: pathlib.Path) -> bool:
+    """True when this job builds -- directly, or through a script it calls."""
     if not isinstance(job, dict):
         return False
     for stap in job.get("steps") or []:
-        if isinstance(stap, dict) and isinstance(stap.get("run"), str):
-            if ZWAAR.search(stap["run"]):
-                return True
+        if not (isinstance(stap, dict) and isinstance(stap.get("run"), str)):
+            continue
+        script = stap["run"]
+        if ZWAAR.search(script):
+            return True
+        for m in AANGEROEPEN.finditer(script):
+            pad = wortel / m.group(1)
+            if not pad.is_file():
+                continue
+            try:
+                if ZWAAR.search(pad.read_text(errors="replace")):
+                    return True
+            except OSError:
+                continue
     return False
 
 
@@ -272,7 +295,7 @@ def main() -> int:
         # workspace on the persistent desktop saturates it whether the push was
         # reviewed or not.
         for naam, job in (doc.get("jobs") or {}).items():
-            if not op_blijvende_runner(job.get("runs-on", "")) or not compileert(job):
+            if not op_blijvende_runner(job.get("runs-on", "")) or not compileert(job, WORTEL):
                 continue
             if (pad.name, naam) in ZWARE_BASELINE:
                 zwaar_bekend.append((pad.name, naam))
