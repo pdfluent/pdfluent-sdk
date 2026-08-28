@@ -27,7 +27,7 @@ env:
 jobs:
   conformance:
     name: PDF/A Conformance Check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
 

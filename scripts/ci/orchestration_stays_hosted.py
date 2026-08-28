@@ -132,7 +132,11 @@ ZWARE_BASELINE = {
 # A job that calls `bash scripts/ci/run_build.sh` compiles just as hard as one
 # that types `cargo build`, and the workflow file says nothing about it. Codex
 # raised this on #1541; the first version read only the YAML.
-AANGEROEPEN = re.compile(r"(?:bash |sh |\./)?(scripts/[\w/.-]+\.(?:sh|py))")
+# Only shell scripts. A .sh file's text is commands, so `cargo build` in it is a
+# build. A .py file's text is mostly not: this guard's own source contains
+# `cargo build|test|check` inside the pattern below, and following it made the
+# job that runs this guard look like a compile.
+AANGEROEPEN = re.compile(r"(?:bash |sh |\./)?(scripts/[\w/.-]+\.sh)")
 
 
 def compileert(job, wortel: pathlib.Path) -> bool:
@@ -193,6 +197,20 @@ def op_blijvende_runner(runs_on) -> bool:
 # that same decision: the heavy build goes to a throwaway instance, which is
 # both free and faster than a hosted runner.
 BASELINE = {
+    # The light guard jobs. They moved off ubuntu-latest on 28-08-2026 when the
+    # Actions budget ran out and every hosted job started failing outright --
+    # a spending limit disables hosted runners and leaves self-hosted ones
+    # working, so this is where the guards keep running at all. Seconds of file
+    # scanning each; booting an instance would cost more than the work. Under
+    # the same 28-08 decision about branch code on the desktop (#274).
+    ("ci.yml", "artifact-guard"),
+    ("ci.yml", "toolchain-pin-guard"),
+    ("ci.yml", "test-count-parsers"),
+    ("ci.yml", "orchestration-guard"),
+    ("ci.yml", "license-metadata-guard"),
+    ("security-audit.yml", "cargo-audit"),
+    ("security-audit.yml", "cargo-deny-advisories"),
+    ("verapdf.yml", "conformance"),
     # Orchestration for a pull request, under the 28-08 decision above: the
     # heavy build goes to a throwaway instance and the desktop only creates and
     # deletes it. A PR branch could change what those two jobs do; accepted
