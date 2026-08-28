@@ -69,14 +69,27 @@ PERSISTENT_LABELS = ("self-hosted", "xfa-fast")
 # request that preceded it ran hosted. Reading this as a violation would flag
 # ci.yml and crash-guard.yml, which are deliberately built this way -- and a
 # guard that cries wolf is one that gets switched off.
-# The other safe shape: a job that refuses to run unless the ref is the default
-# branch. `workflow_dispatch` cannot be filtered by branch in the trigger, so
-# the guard has to sit on the job. publish-crates.yml uses this -- it needs a
-# self-hosted runner for the local registry, and the ref guard is what makes
-# that acceptable with a crates.io token in reach.
+# A job that refuses to run unless the ref is the default branch.
+#
+# Accepted here, with a caveat that belongs in writing: the `if:` lives in the
+# workflow file, and a dispatch by ref runs that branch's copy of it. A branch
+# that deletes the guard is not stopped by the guard. Codex raised this on
+# #1538 and it is correct.
+#
+# What it stops is the accident, which is the failure that actually occurs. The
+# real boundary is repository write access -- whoever can dispatch could push to
+# the default branch instead. So this check reports the shape being right on the
+# default branch, where it can be relied on, and not a wall against a hostile
+# branch. Claiming otherwise would make the next reader trust it further than it
+# goes.
+#
+# The comparison is against the full ref, not `ref_name`: that strips both
+# refs/heads/ and refs/tags/, so a TAG named master would satisfy a short-name
+# check. Codex caught that too.
 REF_VASTGEZET = re.compile(
-    r"github\.ref(_name)?\s*==\s*"
-    r"(github\.event\.repository\.default_branch|'refs/heads/(master|main)'|'(master|main)')")
+    r"github\.ref\s*==\s*"
+    r"(format\('refs/heads/\{0\}',\s*github\.event\.repository\.default_branch\)"
+    r"|'refs/heads/(master|main)')")
 
 ALLEEN_BIJ_PUSH = re.compile(
     r"github\.event_name\s*==\s*'push'\s*&&.*?\|\|\s*'[^']*ubuntu", re.S)
@@ -123,6 +136,31 @@ REF_CHOSEN_BY_CALLER = {"workflow_dispatch", "workflow_call", "schedule",
                         "pull_request", "pull_request_target", "repository_dispatch"}
 
 
+class GeenDubbeleSleutels(yaml.SafeLoader):
+    """PyYAML takes the last of two identical keys; GitHub rejects the file.
+
+    That gap cost a run: an inserted `inputs:` block sat next to the existing
+    one, `yaml.safe_load` accepted it silently, and GitHub answered "this run
+    likely failed because of a workflow file issue" with no line number. A
+    validator that is more permissive than the thing it validates is not a
+    validator.
+    """
+
+
+def _geen_dubbele(loader, node, deep=False):
+    gezien = {}
+    for k, v in node.value:
+        sleutel = loader.construct_object(k, deep=deep)
+        if sleutel in gezien:
+            raise yaml.YAMLError(f"duplicate key {sleutel!r}")
+        gezien[sleutel] = loader.construct_object(v, deep=deep)
+    return gezien
+
+
+GeenDubbeleSleutels.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _geen_dubbele)
+
+
 def triggers(doc: dict) -> dict:
     # PyYAML reads a bare `on:` key as the boolean True.
     return doc.get(True) or doc.get("on") or {}
@@ -154,7 +192,7 @@ def main() -> int:
     bekeken, overtredingen, bekend = 0, [], []
     for pad in sorted(FLOWS.glob("*.yml")) + sorted(FLOWS.glob("*.yaml")):
         try:
-            doc = yaml.safe_load(pad.read_text()) or {}
+            doc = yaml.load(pad.read_text(), GeenDubbeleSleutels) or {}
         except yaml.YAMLError as e:
             print(f"[orchestration] FATAL: {pad.name} will not parse: {e}", file=sys.stderr)
             return 1
