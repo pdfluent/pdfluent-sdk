@@ -90,7 +90,7 @@ jobs:
   smoke:
     name: Smoke ${{ matrix.target }}
     needs: [create-runner, build]
-    if: github.event.schedule == '30 2 * * *' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule == '30 4 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ needs.create-runner.outputs.label }}
     strategy:
       fail-fast: false
@@ -142,7 +142,7 @@ jobs:
   deep:
     name: Deep ${{ matrix.target }}
     needs: [create-runner, build]
-    if: github.event.schedule == '30 3 * * 0' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule == '30 6 * * 0' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ needs.create-runner.outputs.label }}
     strategy:
       fail-fast: false
