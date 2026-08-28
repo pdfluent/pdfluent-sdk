@@ -32,6 +32,10 @@ def draai(busy: bool, minuten: int = 120, paginas: int = 1, liegt: bool = False)
     naam = "gh-runner-test"
 
     mod.hetzner_token = lambda: "stub"
+    # Without this the unit test reaches the real Hetzner API on every run: the
+    # exception is swallowed into a SKIPPED line, so the sizing path silently
+    # goes unexercised while the test still reports success.
+    mod.catalogus = lambda _t: dict(CATALOGUS)
     mod.servers = lambda _t: [
         {"name": naam, "server_type": {"name": "cpx42"}, "created": gemaakt.isoformat()}
     ]
@@ -91,6 +95,14 @@ def formaat_controles(mod) -> list[str]:
         stuk.append("a smaller machine was proposed as an improvement")
     if beter and beter[0] != "cx43":
         stuk.append(f"the cheapest qualifying type should come first, got {beter[0]}")
+    # A deprecated type we are still running must stay in the catalogue, or the
+    # comparison loses its baseline and the check goes quiet exactly when moving
+    # matters most.
+    verouderd = dict(CATALOGUS)
+    verouderd["cpx42"] = {**verouderd["cpx42"], "deprecated": True}
+    if not mod.beter_formaat("cpx42", verouderd):
+        stuk.append("a deprecated type in use lost its comparison, so no advice was given")
+
     # And the other direction: once we are on the best type, stay quiet.
     if mod.beter_formaat("cx43", CATALOGUS):
         stuk.append("the check still complains when the type in use is already the cheapest")

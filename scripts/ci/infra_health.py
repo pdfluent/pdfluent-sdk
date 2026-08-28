@@ -129,7 +129,7 @@ def alle_runners():
     return {"runners": gevonden, "total_count": verwacht}
 
 
-def catalogus(token: str) -> dict[str, dict]:
+def catalogus(token: str, in_gebruik: tuple[str, ...] = ()) -> dict[str, dict]:
     """Every current server type with its cores, memory and hourly gross price."""
     req = urllib.request.Request(
         # Hetzner caps per_page at 50; asking for more is rejected, and a rejected
@@ -152,7 +152,11 @@ def catalogus(token: str) -> dict[str, dict]:
         )
     uit = {}
     for t in rauw:
-        if t.get("deprecated"):
+        # A deprecated type is dropped from the options, but not when it is the
+        # one we are on: deprecation is precisely when moving matters most, and
+        # filtering it out would leave the check with nothing to compare against
+        # and so nothing to say.
+        if t.get("deprecated") and t["name"] not in (STANDAARD_TYPE, *in_gebruik):
             continue
         prijzen = [pr for pr in t["prices"] if pr["location"] == LOCATIE] or t["prices"]
         uit[t["name"]] = {
@@ -205,7 +209,7 @@ def main() -> int:
             print(f"SKIPPED (not a pass): Hetzner unreachable: {fout}", file=sys.stderr)
             lijst = None
         try:
-            cat = catalogus(token)
+            cat = catalogus(token, tuple(s["server_type"]["name"] for s in (lijst or [])))
             EURO_PER_UUR.update({naam: t["uur"] for naam, t in cat.items()})
         except Exception as fout:  # noqa: BLE001 - reporting, not handling
             print(f"SKIPPED (not a pass): could not read the price catalogue: {fout}",
@@ -321,7 +325,9 @@ def main() -> int:
                   and datetime.datetime.fromisoformat(
                       r["created_at"].replace("Z", "+00:00")) > uur_geleden]
         if starts:
-            kosten_uur = len(starts) * EURO_PER_UUR.get(STANDAARD_TYPE, STANDAARD_PER_UUR)
+            # Same reason: price the machines that actually ran, not a constant.
+            soorten = sorted({x["server_type"]["name"] for x in (lijst or [])}) or [STANDAARD_TYPE]
+            kosten_uur = len(starts) * EURO_PER_UUR.get(soorten[0], STANDAARD_PER_UUR)
             print(f"[infra] churn: {len(starts)} instance(s) started in the last hour "
                   f"(EUR {kosten_uur:.2f} in billed hours)")
             if len(starts) > PER_UUR_ALARM:
@@ -340,8 +346,12 @@ def main() -> int:
         vandaag = [r for r in runs.get("workflow_runs", [])
                    if r["created_at"][:10] == f"{nu:%Y-%m-%d}"]
         if vandaag:
-            print(f"[infra] cost: {len(vandaag)} run(s) today; a cpx42 hour is "
-                  f"EUR {EURO_PER_UUR.get(STANDAARD_TYPE, STANDAARD_PER_UUR):.3f}, and Hetzner rounds an hour up -- "
+            # Name the type the price belongs to. It used to say "cpx42" in
+            # fixed text while the number came from whatever STANDAARD_TYPE
+            # was, so the label and the figure could describe two machines.
+            soort = (sorted({x["server_type"]["name"] for x in lijst}) or [STANDAARD_TYPE])[0]
+            print(f"[infra] cost: {len(vandaag)} run(s) today; a {soort} hour is "
+                  f"EUR {EURO_PER_UUR.get(soort, STANDAARD_PER_UUR):.3f}, and Hetzner rounds an hour up -- "
                   "so a build that takes ten minutes costs the same as one that takes "
                   "fifty, and splitting it across two machines costs double")
 
