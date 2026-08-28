@@ -1,28 +1,16 @@
 name: Benchmarks
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - 'crates/pdf-syntax/**'
-      - 'crates/pdf-interpret/**'
-      - 'crates/pdf-font/**'
-      - 'crates/pdfium-ffi-bridge/**'
-      - 'crates/formcalc-interpreter/**'
-      - 'crates/xfa-dom-resolver/**'
-      - 'crates/xfa-layout-engine/**'
-      - 'crates/pdf-bench/**'
-  pull_request:
-    branches: [master]
-    paths:
-      - 'crates/pdf-syntax/**'
-      - 'crates/pdf-interpret/**'
-      - 'crates/pdf-font/**'
-      - 'crates/pdfium-ffi-bridge/**'
-      - 'crates/formcalc-interpreter/**'
-      - 'crates/xfa-dom-resolver/**'
-      - 'crates/xfa-layout-engine/**'
-      - 'crates/pdf-bench/**'
+  # The `xfa-corpus` runner this job needs does not exist. There is one
+  # self-hosted runner registered on this repository, `xfa-desktop-fast`,
+  # labelled `xfa-fast`. Every automatic run of this workflow therefore sat in
+  # the queue until GitHub gave up on it a day later, holding a slot and making
+  # the pipeline look permanently busy -- while testing nothing.
+  #
+  # Dispatch-only until there is a runner that can pick it up, or until the
+  # corpus reaches a machine that already has one (#276). Better an honest gap
+  # than a queue entry that pretends to be a gate.
+  workflow_dispatch:
 
 permissions:
   contents: read

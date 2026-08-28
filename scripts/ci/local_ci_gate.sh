@@ -49,7 +49,13 @@ printf '%s\n' "$_bm_uit" | sed 's/^/  /'
 [ $_bm -eq 0 ] || { echo "LOCAL_CI_GATE: branch-mr FAILED" >&2; exit 1; }
 run kosten   python3 scripts/ci/no_hosted_minutes_on_a_push.py
 run instances python3 scripts/ci/one_instance_per_event.py
-run infra     python3 scripts/ci/infra_health.py
+run jobsexist python3 scripts/ci/workflow_jobs_exist.py
+run labels    python3 scripts/ci/every_label_has_a_runner.py
+# Advisory, never blocking. It reports on live machines -- a queue, a busy
+# runner, a server someone is still using -- and none of that is a reason to
+# refuse a commit. The three-hourly run is where its exit code matters.
+echo "--- infra (advisory) ---"
+python3 scripts/ci/infra_health.py 2>&1 | sed 's/^/  /' || true
 run ci-yaml  python3 scripts/ci/ci_config_lint.py
 run metadata cargo metadata --no-deps --format-version 1
 run fmt      cargo fmt --all -- --check
