@@ -60,6 +60,11 @@ env:
 
 jobs:
   create-runner:
+    # Without this the create action polls for a runner that may never
+    # register, holding the one desktop runner while everything else
+    # queues behind it. Fifteen minutes of that is what a wedged
+    # provisioning looked like (#274).
+    timeout-minutes: 10
     runs-on: [self-hosted, xfa-fast]
     outputs:
       label: ${{ steps.create.outputs.label }}
@@ -155,6 +160,11 @@ jobs:
   delete-runner:
     needs: [create-runner, workspace]
     if: always()
+    # Without this the create action polls for a runner that may never
+    # register, holding the one desktop runner while everything else
+    # queues behind it. Fifteen minutes of that is what a wedged
+    # provisioning looked like (#274).
+    timeout-minutes: 10
     runs-on: [self-hosted, xfa-fast]
     steps:
       # Only when there is something to delete: a failed create leaves the

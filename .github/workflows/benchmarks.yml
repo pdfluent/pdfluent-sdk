@@ -21,6 +21,11 @@ jobs:
     # Only from the default branch: a dispatch can choose the ref, and this
     # job sits on the machine with the corpus and the runner token (#268).
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # Without this the create action polls for a runner that may never
+    # register, holding the one desktop runner while everything else
+    # queues behind it. Fifteen minutes of that is what a wedged
+    # provisioning looked like (#274).
+    timeout-minutes: 10
     runs-on: [self-hosted, xfa-fast]
     outputs:
       label: ${{ steps.create.outputs.label }}
@@ -61,6 +66,11 @@ jobs:
   delete-runner:
     needs: [create-runner, benchmark]
     if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # Without this the create action polls for a runner that may never
+    # register, holding the one desktop runner while everything else
+    # queues behind it. Fifteen minutes of that is what a wedged
+    # provisioning looked like (#274).
+    timeout-minutes: 10
     runs-on: [self-hosted, xfa-fast]
     steps:
       - name: Delete ephemeral Hetzner runner
