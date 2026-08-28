@@ -1,3 +1,20 @@
+# Orchestration runs on ubuntu-latest, deliberately.
+#
+# `gh workflow run --ref <branch>` executes the workflow definition FROM THAT
+# BRANCH. Put create-runner or delete-runner on the persistent [self-hosted,
+# xfa-fast] host and any feature branch can add a step that runs on the desktop,
+# which is the machine that holds the corpus, the warm cargo cache and the
+# runner registration token. Pre-merge code stays on isolated runners; this is
+# where that rule is enforced.
+#
+# The cost argument for moving them was real but small: create and delete are
+# 10-20s of hosted time each. The exposure they bought back is not bounded.
+#
+# The candidate ref reaches only the ephemeral instance, via actions/checkout in
+# the test job below. Nothing from an unmerged branch executes on xfa-fast.
+#
+# scripts/ci/orchestration_stays_hosted.py fails the build if this is undone.
+
 name: Hetzner Orphan Sweep
 
 # Safety net for golden-diff-ephemeral.yml: that workflow's delete-runner job
@@ -7,10 +24,15 @@ name: Hetzner Orphan Sweep
 # any server still running past a generous margin is by definition an orphan
 # — no label/name filtering needed, unlike a shared project.
 #
-# Runs on the self-hosted xfa-fast runner, not ubuntu-latest: this fires
-# every 30 minutes on a schedule, so on ubuntu-latest it would be a small
-# but constant GitHub Actions cost for no reason — xfa-fast is free and
-# already always-on.
+# Runs on ubuntu-latest, and that is the whole point of a safety net: it must
+# not depend on the machine it protects. On xfa-fast, a desktop that loses
+# power or network after creating a Hetzner instance takes the sweep down with
+# it, and the orphan keeps billing until the desktop returns -- exactly the
+# failure this workflow exists to catch. Every 30 minutes of hosted time for a
+# few seconds' work is the cheaper side of that trade.
+
+permissions:
+  contents: read
 
 on:
   schedule:
@@ -19,7 +41,7 @@ on:
 
 jobs:
   sweep:
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ubuntu-latest
     steps:
       - name: Delete Hetzner servers older than 2 hours
         env:

@@ -1,3 +1,15 @@
+# This workflow runs only on the default branch, and that is a security
+# boundary rather than a convenience.
+#
+# `gh workflow run --ref <branch>` executes the workflow definition FROM THAT
+# BRANCH. Without the ref guard below, any branch with write access could
+# dispatch this file, run its own steps on a persistent self-hosted runner, and
+# reach the crates.io publishing token -- a straight path from "can push a
+# branch" to "can publish as PDFluent".
+#
+# Found by scripts/ci/orchestration_stays_hosted.py while fixing the ephemeral
+# workflows (#266).
+
 name: Publish to crates.io
 
 # Manual-only workflow for releasing PDFluent SDK crates.
@@ -28,13 +40,21 @@ concurrency:
   group: publish-crates
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
-  CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+# CARGO_REGISTRY_TOKEN used to sit here, at workflow level, which put the
+# crates.io publishing token in the environment of every step of every job --
+# including the pre-flight checks, which never publish anything. It is set on
+# the one step that logs in, below.
 
 jobs:
   preflight:
     name: Pre-flight checks
+    if: github.ref_name == github.event.repository.default_branch
     runs-on: self-hosted
     timeout-minutes: 20
 
@@ -76,6 +96,7 @@ jobs:
 
   publish:
     name: Publish (${{ inputs.dry_run == 'true' && 'DRY RUN' || 'LIVE' }})
+    if: github.ref_name == github.event.repository.default_branch
     needs: preflight
     runs-on: self-hosted
     timeout-minutes: 60
@@ -89,6 +110,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Configure crates.io token
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo login "$CARGO_REGISTRY_TOKEN"
 
       - name: Publish crates (ordered)

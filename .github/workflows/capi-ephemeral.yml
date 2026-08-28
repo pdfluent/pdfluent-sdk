@@ -1,3 +1,20 @@
+# Orchestration runs on ubuntu-latest, deliberately.
+#
+# `gh workflow run --ref <branch>` executes the workflow definition FROM THAT
+# BRANCH. Put create-runner or delete-runner on the persistent [self-hosted,
+# xfa-fast] host and any feature branch can add a step that runs on the desktop,
+# which is the machine that holds the corpus, the warm cargo cache and the
+# runner registration token. Pre-merge code stays on isolated runners; this is
+# where that rule is enforced.
+#
+# The cost argument for moving them was real but small: create and delete are
+# 10-20s of hosted time each. The exposure they bought back is not bounded.
+#
+# The candidate ref reaches only the ephemeral instance, via actions/checkout in
+# the test job below. Nothing from an unmerged branch executes on xfa-fast.
+#
+# scripts/ci/orchestration_stays_hosted.py fails the build if this is undone.
+
 name: pdf-capi (ephemeral Hetzner)
 
 # Proof-of-concept for the "one base snapshot, thin per-binding layers"
@@ -18,9 +35,9 @@ name: pdf-capi (ephemeral Hetzner)
 #
 # GitLab's existing jobs are untouched; this is additive.
 #
-# create-runner/delete-runner run on the self-hosted xfa-fast runner, not
-# ubuntu-latest — same reasoning as golden-diff-ephemeral.yml: they're the
-# only steps in this workflow that would bill GitHub Actions minutes.
+
+permissions:
+  contents: read
 
 on:
   workflow_dispatch:
@@ -34,7 +51,7 @@ env:
 
 jobs:
   create-runner:
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.create.outputs.label }}
       server_id: ${{ steps.create.outputs.server_id }}
@@ -83,9 +100,15 @@ jobs:
   delete-runner:
     needs: [create-runner, capi-test]
     if: always()
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ubuntu-latest
     steps:
+      # Only when there is something to delete: if create-runner failed the
+      # outputs are empty and this step would error on a server that was
+      # never made. A genuine half-created instance is caught by
+      # hetzner-orphan-sweep.yml, which is why that one must not depend on
+      # this machine either.
       - name: Delete ephemeral Hetzner runner
+        if: needs.create-runner.outputs.server_id != ''
         uses: Cyclenerd/hcloud-github-runner@v1
         with:
           mode: delete
