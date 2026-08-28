@@ -132,11 +132,24 @@ def alle_runners():
 def catalogus(token: str) -> dict[str, dict]:
     """Every current server type with its cores, memory and hourly gross price."""
     req = urllib.request.Request(
-        "https://api.hetzner.cloud/v1/server_types?per_page=60",
+        # Hetzner caps per_page at 50; asking for more is rejected, and a rejected
+        # catalogue means the sizing advice silently stops being given.
+        "https://api.hetzner.cloud/v1/server_types?per_page=50",
         headers={"Authorization": f"Bearer {token}"},
     )
     with urllib.request.urlopen(req, timeout=30) as antwoord:
-        rauw = json.load(antwoord).get("server_types", [])
+        blad = json.load(antwoord)
+    rauw = blad.get("server_types", [])
+    # A catalogue read in part is worse than none: the type we should move to
+    # may be the one on the page we never saw, and the advice would look
+    # complete either way. Twenty-five types fit on one page today; this is
+    # here for the day they do not.
+    totaal = blad.get("meta", {}).get("pagination", {}).get("total_entries")
+    if totaal is not None and len(rauw) < totaal:
+        raise RuntimeError(
+            f"read {len(rauw)} of {totaal} server types; sizing advice from a "
+            "partial catalogue could name the wrong type, or miss the right one"
+        )
     uit = {}
     for t in rauw:
         if t.get("deprecated"):
