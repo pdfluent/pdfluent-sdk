@@ -737,6 +737,15 @@ fn ensure_acroform(doc: &mut Document, field_id: ObjectId) -> Result<(), SignErr
 ///
 /// Requires the `tsa` crate feature (adds `ureq` for HTTP to the TSA endpoint).
 #[cfg(feature = "tsa")]
+///
+/// **No test reaches this, deliberately.** B-LT signing needs a timestamp from
+/// a real authority: the DSS it builds is meaningless without one, so a test
+/// either depends on somebody else's uptime or mocks the very thing under test.
+///
+/// The parts that can be tested on their own are: the increment it appends
+/// (`embed_dss_incremental`, covered in ltv.rs since #252) and the profile
+/// refusal in the facade (#176). What is left here is the ordering between
+/// them, and that wants a fixture with a real timestamp rather than a unit test.
 pub fn sign_pdf_ltv(
     pdf_bytes: &[u8],
     signer: &impl PdfSigner,

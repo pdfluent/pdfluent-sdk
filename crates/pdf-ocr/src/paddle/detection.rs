@@ -83,6 +83,16 @@ pub fn preprocess_for_detection(
 /// Run DBNet inference on preprocessed tensor.
 ///
 /// Returns the probability map with shape [1, 1, H, W].
+///
+/// **No test reaches this, deliberately.** It runs a PaddleOCR ONNX session,
+/// which needs the model files -- tens of megabytes that are downloaded at
+/// setup, not committed. A test that skips when they are absent proves nothing
+/// on the machine where it matters; a test that downloads them makes every
+/// suite run depend on somebody else's CDN.
+///
+/// The measured decision (28-08-2026) is that OCR inference is covered by the
+/// corpus gate, which has the models, and that unit tests here would only
+/// assert that ONNX Runtime returns tensors.
 pub fn detect_inference(
     session: &mut Session,
     input: &Array4<f32>,

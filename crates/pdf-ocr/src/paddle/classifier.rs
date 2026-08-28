@@ -57,6 +57,16 @@ fn preprocess_for_classifier(rgb_crop: &[u8], width: u32, height: u32) -> Array4
 }
 
 /// Classify text orientation (0° or 180°) for a single crop.
+///
+/// **No test reaches this, deliberately.** It runs a PaddleOCR ONNX session,
+/// which needs the model files -- tens of megabytes that are downloaded at
+/// setup, not committed. A test that skips when they are absent proves nothing
+/// on the machine where it matters; a test that downloads them makes every
+/// suite run depend on somebody else's CDN.
+///
+/// The measured decision (28-08-2026) is that OCR inference is covered by the
+/// corpus gate, which has the models, and that unit tests here would only
+/// assert that ONNX Runtime returns tensors.
 pub fn classify_angle(
     session: &mut Session,
     crop: &[u8],
@@ -104,6 +114,16 @@ pub fn classify_angle(
 /// Classify and optionally rotate a batch of text crops.
 ///
 /// Crops detected as 180° rotated (label=1) are rotated in-place.
+///
+/// **No test reaches this, deliberately.** It runs a PaddleOCR ONNX session,
+/// which needs the model files -- tens of megabytes that are downloaded at
+/// setup, not committed. A test that skips when they are absent proves nothing
+/// on the machine where it matters; a test that downloads them makes every
+/// suite run depend on somebody else's CDN.
+///
+/// The measured decision (28-08-2026) is that OCR inference is covered by the
+/// corpus gate, which has the models, and that unit tests here would only
+/// assert that ONNX Runtime returns tensors.
 pub fn classify_and_rotate_batch(
     session: &mut Session,
     crops: &mut [(Vec<u8>, u32, u32)],
