@@ -136,6 +136,7 @@ jobs:
       # not exist at all.
       - name: Put the pinned toolchain's bin directory on PATH
         run: |
+          |
           toolchain_bin="$(dirname "$(rustup which cargo)")"
           echo "$toolchain_bin" >> "$GITHUB_PATH"
           echo "added $toolchain_bin"
@@ -151,6 +152,7 @@ jobs:
       - name: Show which toolchains are on this instance
         continue-on-error: true
         run: |
+          |
           echo "CARGO_HOME=${CARGO_HOME:-unset}  RUSTUP_HOME=${RUSTUP_HOME:-unset}"
           which -a cargo rustc rustup || true
           rustup which cargo || true
@@ -179,11 +181,13 @@ jobs:
       # (#275). They are steps on the one instance now; the workflows they came
       # from are still there for a manual dispatch.
       - name: xfa regression
-        run: cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
+        run: |
+          cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
           cargo test -p pdf-xfa --test '*' --release
 
       - name: wasm surface
         run: |
+          |
           rustup target add wasm32-unknown-unknown
           cargo check --target wasm32-unknown-unknown -p pdfluent --tests
           cargo test -p pdfluent --test wasm_surface
@@ -191,6 +195,7 @@ jobs:
       - name: docs drift (advisory)
         continue-on-error: true
         run: |
+          |
           cargo build -p pdfluent-snippet-extract --release
 
       # The WASM build that wasm.yml used to do on a push to master. Publishing
@@ -198,6 +203,7 @@ jobs:
       - name: wasm build
         if: github.event_name == 'push'
         run: |
+          |
           rustup target add wasm32-unknown-unknown
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
           wasm-pack build --release --target web crates/xfa-wasm
