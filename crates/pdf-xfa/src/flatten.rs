@@ -4836,6 +4836,78 @@ mod tests {
         build_xfa_pdf_with_content(xdp, Vec::new())
     }
 
+    /// A `<draw><value><line/></value></draw>` cell-grid rule (the `FFLineN`
+    /// draws in table-style gov forms) must flatten into a stroked line that
+    /// spans the draw's laid-out box. Guards the full pipeline
+    /// (merge → layout → render): XFA `<line>` values carry no x1/y1/x2/y2, so
+    /// the parser yields `Line{0,0,0,0}`; the legacy path stroked a zero-length
+    /// point and the whole cell grid vanished. (XFA 3.3 §2.6.)
+    #[test]
+    fn flatten_line_draw_renders_spanning_rule() {
+        const LINE_XDP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="paginate">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="grid" layout="positioned" w="7.5in" h="10in">
+      <draw name="FFLine1" w="100mm" h="0mm" x="10mm" y="50mm">
+        <value>
+          <line hand="right">
+            <edge cap="butt" thickness="0.5mm"/>
+          </line>
+        </value>
+        <ui><defaultUi/></ui>
+      </draw>
+    </subform>
+  </subform>
+</template>
+</xdp:xdp>"#;
+        let pdf = build_xfa_pdf(LINE_XDP);
+        let out = flatten_xfa_to_pdf(&pdf).expect("flatten line");
+        let _ = extract_text_from_pdf_bytes(&out); // force decode path
+
+        let doc = Document::load_mem(&out).expect("load flattened line PDF");
+        let mut all_ops = String::new();
+        for page_id in doc.page_iter() {
+            if let Ok(page_dict) = doc.get_dictionary(page_id) {
+                if let Ok(Object::Reference(sid)) = page_dict.get(b"Contents") {
+                    if let Ok(stream) = doc.get_object(*sid).and_then(|o| o.as_stream().cloned()) {
+                        let bytes = stream.decompressed_content().unwrap_or(stream.content);
+                        all_ops.push_str(&String::from_utf8_lossy(&bytes));
+                    }
+                }
+            }
+        }
+        // The horizontal grid rule must span its 100mm (~283pt) box: find an
+        // "sx sy m / ex ey l" pair whose horizontal extent is large (not the
+        // legacy zero-length point), and confirm the authored 0.5mm weight.
+        let mut max_span = 0.0_f64;
+        let mut last_mx: Option<f64> = None;
+        for line in all_ops.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() == 3 && parts[2] == "m" {
+                last_mx = parts[0].parse::<f64>().ok();
+            } else if parts.len() == 3 && parts[2] == "l" {
+                if let (Some(mx), Ok(ex)) = (last_mx, parts[0].parse::<f64>()) {
+                    max_span = max_span.max((ex - mx).abs());
+                }
+            }
+        }
+        assert!(
+            max_span > 100.0,
+            "grid rule must span its box (~283pt), got max horizontal span {max_span:.1}:\n{all_ops}"
+        );
+        assert!(
+            all_ops.contains(" w\n"),
+            "line must stroke at the authored edge weight:\n{all_ops}"
+        );
+    }
+
     fn build_xfa_doc_with_xfa_array() -> (Document, ObjectId, Vec<ObjectId>) {
         use lopdf::{dictionary, Document, Object, Stream};
 

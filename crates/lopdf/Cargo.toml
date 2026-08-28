@@ -13,7 +13,7 @@ license = "MIT"
 readme = "README.md"
 name = "pdfluent-lopdf"
 repository = "https://pdfluent.com/source"
-version = "0.39.4"
+version = "0.39.5"
 rust-version = "1.85"
 
 [dependencies]

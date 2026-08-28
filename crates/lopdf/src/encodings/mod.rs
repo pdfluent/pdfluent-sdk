@@ -196,3 +196,36 @@ mod tests {
         assert_eq!(result.unwrap(), "\u{0024}");
     }
 }
+
+#[cfg(test)]
+mod utf8_bom_tests {
+    use super::encode_utf8;
+
+    /// PDF 2.0 herkent een UTF-8 tekststring aan de byte-order mark EF BB BF.
+    /// Zonder die drie bytes leest een lezer de string als PDFDocEncoding, en
+    /// dan wordt elke niet-ASCII-letter een ander teken — zichtbaar verkeerd,
+    /// maar pas bij het lezen.
+    #[test]
+    fn every_string_starts_with_the_utf8_bom() {
+        assert_eq!(&encode_utf8("")[..3], &[0xEF, 0xBB, 0xBF]);
+        assert_eq!(&encode_utf8("abc")[..3], &[0xEF, 0xBB, 0xBF]);
+    }
+
+    #[test]
+    fn ascii_follows_the_bom_unchanged() {
+        assert_eq!(encode_utf8("PDF"), vec![0xEF, 0xBB, 0xBF, b'P', b'D', b'F']);
+    }
+
+    #[test]
+    fn non_ascii_keeps_its_utf8_bytes() {
+        // "é" is C3 A9 in UTF-8; één teken, twee bytes.
+        assert_eq!(encode_utf8("é"), vec![0xEF, 0xBB, 0xBF, 0xC3, 0xA9]);
+        // Een teken buiten de BMP blijft vier bytes.
+        assert_eq!(encode_utf8("\u{1F600}").len(), 3 + 4);
+    }
+
+    #[test]
+    fn the_empty_string_is_only_the_bom() {
+        assert_eq!(encode_utf8(""), vec![0xEF, 0xBB, 0xBF]);
+    }
+}

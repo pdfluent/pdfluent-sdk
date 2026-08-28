@@ -82,6 +82,7 @@ pub fn sign_pdf_incremental(
     let prev =
         Document::load_mem(pdf_bytes).map_err(|e| SignError::CmsBuild(format!("load: {e}")))?;
     let mut doc = Document::new_from_prev(&prev);
+    carry_over_structure(&prev, &mut doc);
 
     let (buffer, placeholder) = prepare_pdf_with_placeholder(&mut doc, signer, options)?;
 
@@ -116,6 +117,53 @@ pub fn sign_pdf_incremental(
 
     inject_signature(&mut result, &adjusted, signer)?;
     Ok(result)
+}
+
+/// Copy the catalog and the page tree from the previous revision into a fresh
+/// incremental revision.
+///
+/// `Document::new_from_prev` carries the trailer and nothing else — `objects`
+/// starts empty. The signing pass then looks for a page to hang the widget on,
+/// finds none, and returns "PDF has no pages"; that happened for *every* input,
+/// which is why `sign_pdf_incremental` never worked and why nothing noticed:
+/// no test reached it (docs/TEST_REACHABILITY.md).
+///
+/// Only the objects the pass reads or modifies are copied. Re-emitting the page
+/// leaves costs a few hundred bytes on a large document and keeps the update a
+/// plain append, which is the property that matters: the previous revision's
+/// bytes are untouched, so the signatures already in the file keep verifying.
+fn carry_over_structure(prev: &Document, doc: &mut Document) {
+    let Ok(catalog_id) = prev.trailer.get(b"Root").and_then(|o| o.as_reference()) else {
+        return;
+    };
+    let mut te_kopieren = vec![catalog_id];
+    let mut gezien = std::collections::HashSet::new();
+
+    while let Some(id) = te_kopieren.pop() {
+        if !gezien.insert(id) {
+            continue;
+        }
+        let Ok(obj) = prev.get_object(id) else {
+            continue;
+        };
+        doc.objects.insert(id, obj.clone());
+
+        if let Ok(dict) = obj.as_dict() {
+            for sleutel in [&b"Pages"[..], b"Kids", b"AcroForm"] {
+                match dict.get(sleutel) {
+                    Ok(Object::Reference(r)) => te_kopieren.push(*r),
+                    Ok(Object::Array(arr)) => {
+                        for item in arr {
+                            if let Object::Reference(r) = item {
+                                te_kopieren.push(*r);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 /// Pass 1 — Prepare the PDF with a signature placeholder.
@@ -884,6 +932,140 @@ mod tests {
     fn load_ec_signer() -> Pkcs12Signer {
         let data = std::fs::read(fixture_path("test-ec-p256.p12")).unwrap();
         Pkcs12Signer::from_pkcs12(&data, "test123").unwrap()
+    }
+
+    /// An incremental update must leave the bytes it appends to untouched.
+    ///
+    /// That is the whole contract: a second signature over a rewritten prefix
+    /// invalidates the first, and the reader has no way to tell that from
+    /// tampering. Asserting only "the result validates" would pass on a full
+    /// rewrite, which is why this checks the prefix byte for byte.
+    #[test]
+    fn sign_pdf_incremental_appends_and_never_rewrites_the_original() {
+        let Some(fixture) = corpus_path("simple.pdf") else {
+            eprintln!("SKIPPED (not a pass): repository fixture tree not present");
+            return;
+        };
+        let pdf = std::fs::read(fixture).unwrap();
+        let signer = load_rsa_signer();
+
+        let signed =
+            sign_pdf_incremental(&pdf, &signer, &SignOptions::default()).expect("incremental sign");
+
+        assert!(
+            signed.len() > pdf.len(),
+            "an incremental update only appends; got {} bytes from {}",
+            signed.len(),
+            pdf.len()
+        );
+        assert_eq!(
+            &signed[..pdf.len()],
+            &pdf[..],
+            "the original revision must survive byte for byte, or every \
+             signature already in the file stops verifying"
+        );
+
+        let parsed = pdf_syntax::Pdf::new(signed).expect("parse incremental result");
+        let results = crate::validate_signatures(&parsed);
+        assert_eq!(results.len(), 1, "exactly one signature expected");
+        assert!(
+            matches!(results[0].status, crate::types::ValidationStatus::Valid),
+            "expected Valid, got {:?}",
+            results[0].status
+        );
+    }
+
+    /// A /FieldMDP transform is what says "these form fields are frozen from
+    /// here on". It is read through the same /Reference array as /DocMDP, so
+    /// it was equally invisible: only the older `/Lock` spelling was ever
+    /// found, and a document relying on /FieldMDP reported no locks at all.
+    #[test]
+    fn a_fieldmdp_transform_is_reported_as_a_lock() {
+        let Some(fixture) = corpus_path("simple.pdf") else {
+            eprintln!("SKIPPED (not a pass): repository fixture tree not present");
+            return;
+        };
+        let pdf = std::fs::read(fixture).unwrap();
+        let signer = load_rsa_signer();
+        let signed = sign_pdf(&pdf, &signer, &SignOptions::default()).expect("sign");
+
+        // Add a /FieldMDP reference to the signature dictionary. Doing it
+        // afterwards breaks the signature's own digest, which is fine here —
+        // this asserts what the *reader* finds, not that the file verifies.
+        let mut doc = Document::load_mem(&signed).expect("load signed");
+        let sig_id = doc
+            .objects
+            .iter()
+            .find(|(_, o)| {
+                o.as_dict().is_ok_and(|d| {
+                    d.get(b"Type")
+                        .and_then(|t| t.as_name())
+                        .is_ok_and(|n| n == b"Sig")
+                })
+            })
+            .map(|(id, _)| *id)
+            .expect("a signature dictionary");
+
+        let params = dictionary! {
+            "Type" => Object::Name(b"TransformParams".to_vec()),
+            "Action" => Object::Name(b"All".to_vec()),
+            "V" => Object::Name(b"1.2".to_vec()),
+        };
+        let reference = dictionary! {
+            "Type" => Object::Name(b"SigRef".to_vec()),
+            "TransformMethod" => Object::Name(b"FieldMDP".to_vec()),
+            "TransformParams" => Object::Dictionary(params),
+        };
+        if let Ok(d) = doc.get_dictionary_mut(sig_id) {
+            d.set(
+                "Reference",
+                Object::Array(vec![Object::Dictionary(reference)]),
+            );
+        }
+        let mut uit = Vec::new();
+        doc.save_to(&mut uit).expect("save");
+
+        let parsed = pdf_syntax::Pdf::new(uit).expect("parse");
+        let locks = crate::docmdp::get_field_mdp_locks(&parsed);
+        assert!(
+            locks
+                .iter()
+                .any(|l| matches!(l.action, crate::types::LockAction::All)),
+            "a /FieldMDP transform with /Action /All must show up as a lock; got {locks:?}"
+        );
+    }
+
+    /// A certifying signature writes /DocMDP with a permission level, and
+    /// `get_docmdp_permission` is what every downstream "may this edit be
+    /// applied" decision reads. Nothing exercised it.
+    #[test]
+    fn a_certified_signature_reports_the_permission_it_was_given() {
+        let Some(fixture) = corpus_path("simple.pdf") else {
+            eprintln!("SKIPPED (not a pass): repository fixture tree not present");
+            return;
+        };
+        let pdf = std::fs::read(fixture).unwrap();
+        let signer = load_rsa_signer();
+
+        for niveau in [
+            crate::types::DocMdpPermission::NoChanges,
+            crate::types::DocMdpPermission::FormFillAndSign,
+            crate::types::DocMdpPermission::FormFillSignAnnotate,
+        ] {
+            let opts = SignOptions {
+                certification: Some(niveau),
+                ..SignOptions::default()
+            };
+            let signed = sign_pdf(&pdf, &signer, &opts).expect("certify");
+            let parsed = pdf_syntax::Pdf::new(signed).expect("parse certified PDF");
+
+            let info = crate::docmdp::get_docmdp_permission(&parsed)
+                .expect("a certified document must report a DocMDP permission");
+            assert_eq!(
+                info.permission, niveau,
+                "the level read back must be the level signed with"
+            );
+        }
     }
 
     #[test]

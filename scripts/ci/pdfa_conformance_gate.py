@@ -54,6 +54,19 @@ def die(msg: str, code: int = 2) -> None:
     sys.exit(code)
 
 
+def corpus_label(sample_list, aantal: int) -> str:
+    """Welk monster is gedraaid, afgeleid van de lijst zelf.
+
+    Dit stond hard op "govdocs (fixed 300-document sample)", ongeacht welke
+    lijst je meegaf. De holdoutrun van 1000 documenten schreef dus in zijn eigen
+    `measured.json` dat hij uit de 300 kwam — precies het monster waarop vijf
+    ronden reparatiewerk zijn geoptimaliseerd, en precies het onderscheid waar
+    de holdout voor bestaat. Een cijfer dat zichzelf verkeerd etiketteert is
+    erger dan geen cijfer.
+    """
+    return f"govdocs ({sample_list.name}, {aantal} documents)"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -156,7 +169,7 @@ def main() -> None:
     total = sum(counts.values())
     passed = counts.get("pass", 0)
     measured = {
-        "corpus": "govdocs (fixed 300-document sample)",
+        "corpus": corpus_label(SAMPLE_LIST, len(names)),
         "platform": platform_key(),
         "sample_size": len(names),
         "measured_total": total,

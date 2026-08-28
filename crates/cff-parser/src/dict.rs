@@ -320,3 +320,48 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod dict_op_tests {
+    use super::is_dict_one_byte_op;
+
+    /// Adobe Technical Note #5176, Appendix H. Een operator die als getal wordt
+    /// gelezen (of andersom) laat de parser midden in een DICT uit de pas lopen,
+    /// en dan is alles daarna onzin — een lettertype dat stil verkeerde
+    /// waarden oplevert in plaats van een foutmelding.
+    #[test]
+    fn operators_are_zero_to_twentyseven() {
+        for b in 0u8..=27 {
+            assert!(is_dict_one_byte_op(b), "{b} hoort een operator te zijn");
+        }
+    }
+
+    #[test]
+    fn twentyeight_to_thirty_are_numbers() {
+        // 28 = shortint, 29 = longint, 30 = real
+        for b in 28u8..=30 {
+            assert!(!is_dict_one_byte_op(b), "{b} is een getal, geen operator");
+        }
+    }
+
+    #[test]
+    fn thirtyone_and_twofivefive_are_reserved_operators() {
+        assert!(is_dict_one_byte_op(31));
+        assert!(is_dict_one_byte_op(255));
+    }
+
+    #[test]
+    fn the_whole_number_range_is_not_operators() {
+        for b in 32u8..=254 {
+            assert!(!is_dict_one_byte_op(b), "{b} valt in het getallenbereik");
+        }
+    }
+
+    /// De vier gevallen samen dekken alle 256 waarden; deze test valt om zodra
+    /// een van de grenzen verschuift zonder dat de andere meebewegen.
+    #[test]
+    fn the_four_ranges_cover_every_byte_exactly_once() {
+        let operatoren = (0u8..=255).filter(|b| is_dict_one_byte_op(*b)).count();
+        assert_eq!(operatoren, 28 + 1 + 1, "0-27, plus 31, plus 255");
+    }
+}

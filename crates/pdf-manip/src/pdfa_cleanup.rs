@@ -3296,16 +3296,11 @@ fn collect_xobject_refs_from_form(doc: &Document, form_id: ObjectId) -> Vec<Obje
 
         // Skip strings.
         if content[i] == b'(' {
-            i += 1;
-            let mut nest = 1i32;
-            while i < content.len() && nest > 0 {
-                if content[i] == b'(' && (i == 0 || content[i - 1] != b'\\') {
-                    nest += 1;
-                } else if content[i] == b')' && (i == 0 || content[i - 1] != b'\\') {
-                    nest -= 1;
-                }
-                i += 1;
-            }
+            // Unterminated: nothing past here parses as an operator either.
+            let Some(eind) = end_of_literal_string(&content, i) else {
+                break;
+            };
+            i = eind;
             continue;
         }
 
@@ -3453,16 +3448,13 @@ fn fix_emc_in_bytes(data: &[u8]) -> Vec<u8> {
         // Skip strings.
         if data[i] == b'(' {
             let start = i;
-            i += 1;
-            let mut nest = 1i32;
-            while i < data.len() && nest > 0 {
-                if data[i] == b'(' && (i == 0 || data[i - 1] != b'\\') {
-                    nest += 1;
-                } else if data[i] == b')' && (i == 0 || data[i - 1] != b'\\') {
-                    nest -= 1;
-                }
-                i += 1;
-            }
+            // Unterminated: copy the remainder through untouched rather than
+            // guess at marked-content structure we cannot see.
+            let Some(eind) = end_of_literal_string(data, i) else {
+                out.extend_from_slice(&data[start..]);
+                break;
+            };
+            i = eind;
             out.extend_from_slice(&data[start..i]);
             continue;
         }
@@ -4950,6 +4942,41 @@ fn fix_extgstate_smask_s(doc: &mut Document) -> usize {
     count
 }
 
+/// Index just past the closing `)` of the literal string opening at `open`,
+/// or `None` when the string never closes.
+///
+/// The escape rule is "a backslash consumes exactly the byte after it"
+/// (ISO 32000-1 §7.3.4.2), not "the previous byte is not a backslash". The
+/// second reading treats the `)` in `(\\)` as escaped, and the scan then runs
+/// off the end of the stream. Three scanners in this file each carried their
+/// own copy of the wrong rule; the one in `truncate_long_strings_in_content`
+/// also cut the page at that point, which is how govdocs 170_170407.pdf lost
+/// the text after every backslash it drew. One function now, so the next fix
+/// cannot land in two of the three.
+fn end_of_literal_string(data: &[u8], open: usize) -> Option<usize> {
+    debug_assert_eq!(data.get(open), Some(&b'('));
+    let mut i = open + 1;
+    let mut nest = 1i32;
+    while i < data.len() {
+        match data[i] {
+            b'\\' => {
+                i += 2;
+                continue;
+            }
+            b'(' => nest += 1,
+            b')' => {
+                nest -= 1;
+                if nest == 0 {
+                    return Some(i + 1);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 /// §6.1.13: Truncate string literals > 32767 bytes in content streams.
 fn fix_long_strings_in_content_streams(doc: &mut Document) -> usize {
     let mut count = 0;
@@ -4996,6 +5023,22 @@ fn fix_long_strings_in_content_streams(doc: &mut Document) -> usize {
 }
 
 /// Truncate string literals > 32767 bytes in content stream bytes.
+///
+/// Two things here are easy to get wrong, and both destroy content silently.
+///
+/// **The escape rule is not "the previous byte is not a backslash".** In
+/// `(\\)` the backslash escapes itself and the `)` really does close the
+/// string; an escape consumes exactly the one byte after it (ISO 32000-1
+/// §7.3.4.2). Reading it the naive way makes the scan run to the end of the
+/// stream, and the over-limit branch below then keeps 32767 bytes and drops
+/// everything after. Measured on govdocs 170_170407.pdf: page 3 fell from
+/// 67786 to 36668 bytes — 3900 bytes of prefix, 32767, and a closing paren —
+/// because one text run draws U+005C, written as `(\x00\\\\)`. Every page of
+/// that document lost the text following its first backslash.
+///
+/// **A string we cannot find the end of is a string we did not parse.** The
+/// content is then copied through untouched: leaving a possibly over-long
+/// string in place is a validation finding, cutting the page is data loss.
 fn truncate_long_strings_in_content(content: &[u8]) -> Vec<u8> {
     const MAX_STRING_LEN: usize = 32767;
     let mut result = Vec::with_capacity(content.len());
@@ -5004,22 +5047,27 @@ fn truncate_long_strings_in_content(content: &[u8]) -> Vec<u8> {
     while i < content.len() {
         if content[i] == b'(' {
             let start = i;
-            i += 1;
-            let mut nest = 1i32;
-            let mut str_len = 0;
-            while i < content.len() && nest > 0 {
-                if content[i] == b'(' && (i == 0 || content[i - 1] != b'\\') {
-                    nest += 1;
-                } else if content[i] == b')' && (i == 0 || content[i - 1] != b'\\') {
-                    nest -= 1;
+            let inner_start = start + 1;
+            let Some(eind) = end_of_literal_string(content, start) else {
+                // Unterminated: copy the remainder verbatim and stop scanning.
+                result.extend_from_slice(&content[start..]);
+                break;
+            };
+            i = eind;
+
+            let inner_len = i - 1 - inner_start;
+            if inner_len > MAX_STRING_LEN {
+                let mut end = inner_start + MAX_STRING_LEN;
+                // Never cut between a backslash and the byte it escapes.
+                let mut slashes = 0;
+                while end - slashes > inner_start && content[end - slashes - 1] == b'\\' {
+                    slashes += 1;
                 }
-                if nest > 0 {
-                    str_len += 1;
+                if slashes % 2 == 1 {
+                    end -= 1;
                 }
-                i += 1;
-            }
-            if str_len > MAX_STRING_LEN {
-                result.extend_from_slice(&content[start..start + str_len.min(MAX_STRING_LEN)]);
+                result.push(b'(');
+                result.extend_from_slice(&content[inner_start..end]);
                 result.push(b')');
             } else {
                 result.extend_from_slice(&content[start..i]);
@@ -5202,7 +5250,13 @@ fn fix_lang_in_content_stream(content: &[u8]) -> Vec<u8> {
                     result.extend_from_slice(name);
                 }
             } else {
-                result.extend_from_slice(&content[tok_start..i]);
+                // No property-list name follows the BDC: the token and the
+                // whitespace after it were already emitted above. Emitting
+                // `content[tok_start..i]` here would duplicate the BDC
+                // operator itself (govdocs holdout 087_087333, 426_426895:
+                // every `/Span <</MCID n >> BDC` became `BDC BDC`, leaving
+                // marked-content nesting unbalanced and the page's text
+                // unextractable).
             }
         } else {
             result.extend_from_slice(token);
@@ -5710,6 +5764,92 @@ fn fix_xref_eol(data: &mut Vec<u8>) {
 
 #[cfg(test)]
 mod tests {
+
+    /// The shared rule the three scanners in this file now depend on.
+    #[test]
+    fn end_of_literal_string_reads_escapes_the_way_the_spec_does() {
+        // `\\` is one escaped backslash; the `)` after it closes the string.
+        assert_eq!(super::end_of_literal_string(b"(a\\\\)rest", 0), Some(5));
+        // `\)` is a literal paren and does NOT close.
+        assert_eq!(super::end_of_literal_string(b"(a\\)b)rest", 0), Some(6));
+        // Nesting still counts.
+        assert_eq!(super::end_of_literal_string(b"(a(b)c)rest", 0), Some(7));
+        // No close at all.
+        assert_eq!(super::end_of_literal_string(b"(a\\)b", 0), None);
+        // A trailing backslash must not read past the end.
+        assert_eq!(super::end_of_literal_string(b"(a\\", 0), None);
+    }
+
+    /// A backslash in the text is escaped as `\\`, and the `)` after it closes
+    /// the string — an escape consumes exactly one byte (ISO 32000-1 §7.3.4.2).
+    ///
+    /// The fixture puts a genuinely over-long string *after* the escaped one,
+    /// because that is the only way the difference shows: read the escape
+    /// naively and the first string never closes, swallows the second, and
+    /// nothing gets truncated at all. govdocs 170_170407.pdf drew U+005C on
+    /// every page and lost everything after it.
+    #[test]
+    fn an_escaped_backslash_does_not_swallow_the_string_after_it() {
+        let mut content = Vec::new();
+        content.extend_from_slice(b"(a\\\\)Tj\n(");
+        content.extend(std::iter::repeat(b'A').take(40_000));
+        content.extend_from_slice(b")Tj\nET\n");
+
+        let uit = super::truncate_long_strings_in_content(&content);
+
+        assert!(
+            uit.len() < content.len(),
+            "the second string is over the limit and must be cut; if the first \
+             string swallowed it, nothing is cut and the page keeps a \
+             40000-byte literal"
+        );
+        assert!(
+            uit.starts_with(b"(a\\\\)Tj\n("),
+            "the escaped string itself must come through untouched"
+        );
+        assert!(
+            uit.ends_with(b")Tj\nET\n"),
+            "and the operators after it must survive"
+        );
+    }
+
+    #[test]
+    fn an_over_long_string_is_cut_but_the_operators_after_it_survive() {
+        let mut content = Vec::new();
+        content.extend_from_slice(b"BT\n(");
+        content.extend(std::iter::repeat(b'A').take(40_000));
+        content.extend_from_slice(b")Tj\n(kort)Tj\nET\n");
+
+        let uit = super::truncate_long_strings_in_content(&content);
+
+        assert!(uit.len() < content.len(), "the long string must be cut");
+        assert!(
+            uit.ends_with(b")Tj\n(kort)Tj\nET\n"),
+            "everything after the long string must still be there — cutting the \
+             stream is data loss, not a fix; got tail {:?}",
+            String::from_utf8_lossy(&uit[uit.len().saturating_sub(24)..])
+        );
+    }
+
+    /// The guard that actually stopped the data loss: without it, a scan that
+    /// runs off the end reports a length over the limit and the branch above
+    /// keeps 32767 bytes and drops the rest.
+    #[test]
+    fn an_unterminated_string_leaves_the_content_alone() {
+        let mut content = Vec::new();
+        content.extend_from_slice(b"BT\n(nooit gesloten ");
+        content.extend(std::iter::repeat(b'B').take(40_000));
+        content.extend_from_slice(b"\nET\n");
+
+        let uit = super::truncate_long_strings_in_content(&content);
+
+        assert_eq!(
+            uit, content,
+            "a string we cannot find the end of is one we did not parse; \
+             copy it through rather than cut the page"
+        );
+    }
+
     use super::*;
     use lopdf::{dictionary, Stream};
 
@@ -6321,5 +6461,27 @@ mod tests {
         let mut data = b"%PDF-2.0\ntest".to_vec();
         fix_pdf_header(&mut data);
         assert!(data.starts_with(b"%PDF-1.7"));
+    }
+
+    /// Regression: fix_lang_in_content_stream used to re-emit the BDC token
+    /// and its trailing whitespace when no /Lang name followed, duplicating
+    /// every BDC (`/Span <</MCID 0 >> BDC` → `BDC BDC`) and leaving
+    /// marked-content nesting unbalanced (govdocs holdout 087_087333,
+    /// 426_426895).
+    #[test]
+    fn fix_lang_does_not_duplicate_bdc_without_lang() {
+        let input = b"/Span <</MCID 0 >> BDC (x) Tj EMC\n";
+        let out = fix_lang_in_content_stream(input);
+        assert_eq!(out.as_slice(), input);
+    }
+
+    /// Regression: an /ActualText hex string inside a marked-content dict
+    /// must survive the pass untouched (hex strings inside dicts were not
+    /// always handled by byte-level content rewriters).
+    #[test]
+    fn fix_lang_preserves_actualtext_dict() {
+        let input = b"/Span<</ActualText<FEFF0020>>> BDC ( ) Tj EMC\n";
+        let out = fix_lang_in_content_stream(input);
+        assert_eq!(out.as_slice(), input);
     }
 }

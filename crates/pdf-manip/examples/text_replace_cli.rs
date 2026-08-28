@@ -13,7 +13,9 @@
 //! The distinction between 1 and 2 is what lets the gate separate "we broke it"
 //! from "it was already broken", which otherwise turns both numbers to mush.
 
-use pdf_manip::text_edit::{begin_text_edit, DocumentRevision, ReplaceOptions, TextQuery};
+use pdf_manip::text_edit::{
+    begin_text_edit, DocumentRevision, FontFallback, ReplaceOptions, TextQuery,
+};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -22,6 +24,15 @@ struct Args {
     output: PathBuf,
     find: String,
     replace: String,
+    /// Welke fallback het vervangen mag gebruiken als het lettertype een teken
+    /// niet kan schrijven. `deny` is de bibliotheekstandaard en weigert; met
+    /// `standard` wordt er een Helvetica/WinAnsi-hulpbron toegevoegd.
+    ///
+    /// Bestond niet, terwijl `corpus:text-replace-capability` er wel
+    /// `--fallback standard` aan meegaf. Die job faalde daardoor binnen een
+    /// seconde op het doorgeven, en de meting die hij moest opleveren is nooit
+    /// gedraaid.
+    fallback: FontFallback,
 }
 
 fn parse() -> Option<Args> {
@@ -29,6 +40,7 @@ fn parse() -> Option<Args> {
     let mut output = None;
     let mut find = None;
     let mut replace = None;
+    let mut fallback = FontFallback::Deny;
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let value = it.next()?;
@@ -37,6 +49,19 @@ fn parse() -> Option<Args> {
             "--output" => output = Some(PathBuf::from(value)),
             "--find" => find = Some(value),
             "--replace" => replace = Some(value),
+            // Een onbekende waarde wordt geweigerd in plaats van stil op
+            // `deny` te vallen: anders zou een tikfout een meting opleveren
+            // die iets anders meet dan hij zegt.
+            "--fallback" => {
+                fallback = match value.as_str() {
+                    "deny" => FontFallback::Deny,
+                    "standard" => FontFallback::InjectStandard,
+                    other => {
+                        eprintln!("unknown --fallback {other:?}; expected deny or standard");
+                        return None;
+                    }
+                }
+            }
             _ => return None,
         }
     }
@@ -45,12 +70,13 @@ fn parse() -> Option<Args> {
         output: output?,
         find: find?,
         replace: replace?,
+        fallback,
     })
 }
 
 fn main() -> ExitCode {
     let Some(args) = parse() else {
-        eprintln!("usage: --input <pdf> --output <pdf> --find <text> --replace <text>");
+        eprintln!("usage: --input <pdf> --output <pdf> --find <text> --replace <text> [--fallback deny|standard]");
         return ExitCode::from(2);
     };
 
@@ -90,7 +116,8 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     };
 
-    if let Err(e) = session.stage_replace(&first.id, &args.replace, ReplaceOptions::default()) {
+    let options = ReplaceOptions::default().font_fallback(args.fallback.clone());
+    if let Err(e) = session.stage_replace(&first.id, &args.replace, options) {
         eprintln!("stage failed: {e}");
         return ExitCode::from(1);
     }
