@@ -95,18 +95,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Put the rustup toolchain ahead of the image's own cargo
+      # The image ships its own cargo in /usr/local/bin and sets
+      # CARGO_HOME=/.cargo, so `which cargo` finds the image's copy and
+      # `cargo fmt` is not in it. Two attempts at $GITHUB_PATH did not shift
+      # that, so every step below sets PATH itself. Belt and braces, and the
+      # braces are what actually held.
+      - name: Show which toolchains are on this instance
+        continue-on-error: true
         run: |
-          # Not $HOME/.cargo: the image sets CARGO_HOME=/.cargo, so that is where
-          # rustup put rustfmt and clippy. Pointing at $HOME left the image's own
-          # cargo in /usr/local/bin winning, and `cargo fmt` was still missing.
-          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
-      - name: Show what will actually run
-        run: |
-          which cargo rustc || true
-          cargo --version
-          cargo fmt --version
-          cargo clippy --version
+          echo "CARGO_HOME=${CARGO_HOME:-unset}  RUSTUP_HOME=${RUSTUP_HOME:-unset}"
+          which -a cargo rustc rustup || true
+          for d in "${CARGO_HOME:-}/bin" "$HOME/.cargo/bin" /usr/local/bin; do
+            [ -d "$d" ] && { echo "--- $d"; ls "$d" | head -12; }
+          done
 
       - uses: Swatinem/rust-cache@v2
 
@@ -114,13 +115,21 @@ jobs:
       # than after the test suite. `--no-fail-fast` on the tests, because one
       # failing crate should not hide the state of the other forty.
       - name: fmt
-        run: cargo fmt --all --check
+        run: |
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+          cargo fmt --all --check
       - name: check
-        run: cargo check --workspace --exclude pdf-desktop
+        run: |
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+          cargo check --workspace --exclude pdf-desktop
       - name: clippy
-        run: cargo clippy --workspace --exclude pdf-desktop -- -D warnings
+        run: |
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+          cargo clippy --workspace --exclude pdf-desktop -- -D warnings
       - name: test
-        run: cargo test --workspace --exclude pdf-desktop --no-fail-fast
+        run: |
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+          cargo test --workspace --exclude pdf-desktop --no-fail-fast
 
       # What used to be four workflows, each creating its own instance. One push
       # fired them together and Hetzner made five cpx42s inside five minutes
@@ -128,11 +137,13 @@ jobs:
       # from are still there for a manual dispatch.
       - name: xfa regression
         run: |
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
           cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
           cargo test -p pdf-xfa --test '*' --release
 
       - name: wasm surface
         run: |
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
           rustup target add wasm32-unknown-unknown
           cargo check --target wasm32-unknown-unknown -p pdfluent --tests
           cargo test -p pdfluent --test wasm_surface
@@ -146,6 +157,7 @@ jobs:
       - name: wasm build
         if: github.event_name == 'push'
         run: |
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
           rustup target add wasm32-unknown-unknown
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
           wasm-pack build --release --target web crates/xfa-wasm
