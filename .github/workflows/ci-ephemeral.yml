@@ -114,6 +114,44 @@ jobs:
       - name: test
         run: cargo test --workspace --exclude pdf-desktop --no-fail-fast
 
+      # What used to be four workflows, each creating its own instance. One push
+      # fired them together and Hetzner made five cpx42s inside five minutes
+      # (#275). They are steps on the one instance now; the workflows they came
+      # from are still there for a manual dispatch.
+      - name: xfa regression
+        run: |
+          cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
+          cargo test -p pdf-xfa --test '*' --release
+
+      - name: wasm surface
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check --target wasm32-unknown-unknown -p pdfluent --tests
+          cargo test -p pdfluent --test wasm_surface
+
+      - name: docs drift (advisory)
+        continue-on-error: true
+        run: cargo build -p pdfluent-snippet-extract --release
+
+      # The WASM build that wasm.yml used to do on a push to master. Publishing
+      # stays there, on tags; this is the build and the website rebuild.
+      - name: wasm build
+        if: github.event_name == 'push'
+        run: |
+          rustup target add wasm32-unknown-unknown
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          wasm-pack build --release --target web crates/xfa-wasm
+
+      - name: Trigger website rebuild
+        if: github.event_name == 'push' && env.WEBSITE_DEPLOY_TOKEN != ''
+        env:
+          WEBSITE_DEPLOY_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+          repository: pdfluent/pdfluent-playground
+          event-type: wasm-updated
+
   delete-runner:
     needs: [create-runner, workspace]
     if: always()

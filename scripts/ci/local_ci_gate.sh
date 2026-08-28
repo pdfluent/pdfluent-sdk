@@ -48,6 +48,7 @@ _bm_uit="$(python3 scripts/ci/branches_have_a_merge_request.py 2>&1)"; _bm=$?
 printf '%s\n' "$_bm_uit" | sed 's/^/  /'
 [ $_bm -eq 0 ] || { echo "LOCAL_CI_GATE: branch-mr FAILED" >&2; exit 1; }
 run kosten   python3 scripts/ci/no_hosted_minutes_on_a_push.py
+run instances python3 scripts/ci/one_instance_per_event.py
 run ci-yaml  python3 scripts/ci/ci_config_lint.py
 run metadata cargo metadata --no-deps --format-version 1
 run fmt      cargo fmt --all -- --check

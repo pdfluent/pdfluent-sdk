@@ -110,6 +110,8 @@ jobs:
         run: python3 scripts/ci/test_no_hosted_minutes_on_a_push.py
       - name: No hosted minutes on a push
         run: python3 scripts/ci/no_hosted_minutes_on_a_push.py
+      - name: One event starts one machine
+        run: python3 scripts/ci/one_instance_per_event.py
       # The guard first, then its own test -- a guard whose parser stopped
       # understanding the files reports a clean tree in exactly the same words.
       - name: The guard that reads run-blocks still reads them
