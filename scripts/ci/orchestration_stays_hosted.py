@@ -149,7 +149,29 @@ def op_blijvende_runner(runs_on) -> bool:
 # refuse to run off the default branch, and the crates.io token moved from
 # workflow-level env -- where every step of every job could read it -- onto the
 # single step that logs in.
+# BESLUIT 28-08-2026 (Jasper): "Ik zou op dit moment niet te bevreesd daarover
+# zijn zolang ik de enige contributor ben. Hou kosten laag maar zorg dat
+# pipelines wel snel gaan en development niet tegenhoudt."
+#
+# That settles what this file could not settle by itself. The exposure is real
+# -- a pull_request runs the merge commit, so a branch can put its own steps on
+# the persistent desktop -- and on a private repository with one contributor
+# there is no second party to protect against. Fork pull requests would change
+# that, and there are none.
+#
+# So these stay recorded rather than fixed, and the guard's sharp end moves to
+# ZWARE_BASELINE: heavy work must not run on that machine, because four cores
+# shared with the corpus is a speed problem no matter who wrote the branch.
+#
+# If a second contributor appears, this is the first decision to revisit
+# (#266, #268).
+#
+# ci-ephemeral.yml orchestrates from the desktop for pull requests too, under
+# that same decision: the heavy build goes to a throwaway instance, which is
+# both free and faster than a hosted runner.
 BASELINE = {
+    ("ci-ephemeral.yml", "create-runner"),
+    ("ci-ephemeral.yml", "delete-runner"),
     ("bench.yml", "benchmark"),
     # Found only after Codex pointed out that a pull_request branch filter names
     # the base, not the source. Runs on [self-hosted, xfa-corpus] -- a second

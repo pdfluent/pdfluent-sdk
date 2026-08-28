@@ -25,6 +25,22 @@
 name: CI (ephemeral Hetzner)
 
 on:
+  # Pull requests too, since 28-08-2026. The heavy build for a PR used to sit on
+  # ubuntu-latest and be billed; a cpx42 has eight cores against a hosted
+  # runner's two to four, so this is cheaper *and* quicker once the ninety
+  # seconds of boot are paid.
+  #
+  # The orchestration jobs run the workflow file from the PR's merge commit, so
+  # a branch could change what create-runner does on the desktop. Recorded, and
+  # accepted while this repository has one contributor -- see the note in
+  # scripts/ci/orchestration_stays_hosted.py.
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'CHANGELOG.md'
+      - '.github/**.md'
   push:
     branches: [master]
     paths-ignore:
