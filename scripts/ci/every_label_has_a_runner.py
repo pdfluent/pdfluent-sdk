@@ -41,11 +41,18 @@ EFEMEER = re.compile(r"needs\.|matrix\.|^hetzner$|^gh-runner-")
 
 
 def geregistreerd() -> set[str] | None:
-    r = subprocess.run(
-        ["gh", "api", "repos/{owner}/{repo}/actions/runners", "--jq",
-         "[.runners[] | select(.status==\"online\") | .labels[].name] | unique"],
-        capture_output=True, text=True, check=False,
-    )
+    # `gh` is not installed on the desktop runner, and OSError from subprocess is
+    # not a return code -- an uncaught one exits before a single line is printed,
+    # which is a crash pretending to be a failed check. Missing tooling has to
+    # announce itself.
+    try:
+        r = subprocess.run(
+            ["gh", "api", "repos/{owner}/{repo}/actions/runners", "--jq",
+             "[.runners[] | select(.status==\"online\") | .labels[].name] | unique"],
+            capture_output=True, text=True, check=False, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
     if r.returncode != 0:
         return None
     try:

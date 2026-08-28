@@ -97,7 +97,10 @@ jobs:
           components: rustfmt, clippy
       - name: Put the rustup toolchain ahead of the image's own cargo
         run: |
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          # Not $HOME/.cargo: the image sets CARGO_HOME=/.cargo, so that is where
+          # rustup put rustfmt and clippy. Pointing at $HOME left the image's own
+          # cargo in /usr/local/bin winning, and `cargo fmt` was still missing.
+          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
       - name: Show what will actually run
         run: |
           which cargo rustc || true
