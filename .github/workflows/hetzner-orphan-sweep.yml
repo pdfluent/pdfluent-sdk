@@ -24,12 +24,18 @@ name: Hetzner Orphan Sweep
 # any server still running past a generous margin is by definition an orphan
 # — no label/name filtering needed, unlike a shared project.
 #
-# Runs on ubuntu-latest, and that is the whole point of a safety net: it must
-# not depend on the machine it protects. On xfa-fast, a desktop that loses
-# power or network after creating a Hetzner instance takes the sweep down with
-# it, and the orphan keeps billing until the desktop returns -- exactly the
-# failure this workflow exists to catch. Every 30 minutes of hosted time for a
-# few seconds' work is the cheaper side of that trade.
+# Runs on xfa-fast, and the reasoning changed with the architecture.
+#
+# A safety net that depends on the machine it protects is normally wrong. Here
+# the desktop is also the only thing that CREATES instances: orchestration
+# moved back to it so that no GitHub-hosted minutes are billed. A desktop that
+# is down is therefore a desktop that is making no orphans either, and the
+# window narrows to "instance created, then the desktop dies before delete" --
+# which this sweep closes as soon as it returns.
+#
+# The trigger is `schedule` and `workflow_dispatch` only, and the job guard
+# below pins it to the default branch, so no branch code reaches the desktop
+# through it.
 
 permissions:
   contents: read
@@ -41,7 +47,8 @@ on:
 
 jobs:
   sweep:
-    runs-on: ubuntu-latest
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - name: Delete Hetzner servers older than 2 hours
         env:

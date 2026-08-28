@@ -1,5 +1,44 @@
-# Orchestration runs on ubuntu-latest, deliberately.
+# Zero GitHub-hosted cost, and no branch code on the desktop.
 #
+# Those two pull against each other, and the way out is that the workflow body
+# and the code under test come from different places:
+#
+#   * the workflow is always dispatched with --ref master, so what runs on the
+#     persistent desktop is code that is already merged and reviewed;
+#   * the branch you want to test is passed as the `candidate_ref` INPUT, and
+#     only the ephemeral Hetzner instance checks it out.
+#
+#     gh workflow run capi-ephemeral.yml --ref master -f candidate_ref=my-branch
+#
+# Dispatching with --ref my-branch would run that branch's workflow definition,
+# which is how a feature branch could put its own steps on the machine holding
+# the corpus, the warm cargo cache and the runner token.
+#
+# Orchestration therefore sits on xfa-fast (free) instead of ubuntu-latest,
+# without buying back the exposure that #1536 removed. The heavy work was never
+# on the desktop to begin with: it runs on the throwaway instance.
+#
+# WHAT THIS GUARD IS, AND WHAT IT IS NOT
+#
+# The `if:` below lives in this file, and `gh workflow run --ref <branch>` runs
+# THIS FILE FROM THAT BRANCH. A branch that deletes the guard is not stopped by
+# it. Codex made that point on #1538 and it is right: this is not a boundary
+# against a hostile branch.
+#
+# What it does stop is the accident -- dispatching a feature branch out of habit
+# and finding its steps on the machine with the corpus, the warm cache and the
+# runner token. That is the failure that actually happens, and it happened to be
+# the one I was set up to cause, dispatching from a branch every few minutes.
+#
+# The real boundary is who can dispatch a workflow at all: repository write
+# access. Someone who has that could push to the default branch directly, so the
+# guard buys defence in depth, not a new wall. Recorded rather than implied,
+# because a comment claiming more than the code delivers is how the next person
+# gets it wrong.
+#
+# scripts/ci/orchestration_stays_hosted.py checks the shape on the default
+# branch, which is where it can be relied on.
+
 # `gh workflow run --ref <branch>` executes the workflow definition FROM THAT
 # BRANCH. Put create-runner or delete-runner on the persistent [self-hosted,
 # xfa-fast] host and any feature branch can add a step that runs on the desktop,
@@ -41,9 +80,14 @@ permissions:
 
 on:
   workflow_dispatch:
+    inputs:
+      candidate_ref:
+        description: 'Branch or SHA to check out ON THE EPHEMERAL INSTANCE. The workflow itself always runs from the default branch.'
+        required: false
+        default: ''
 
 concurrency:
-  group: capi-ephemeral-${{ github.ref }}
+  group: capi-ephemeral-${{ inputs.candidate_ref || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -51,7 +95,10 @@ env:
 
 jobs:
   create-runner:
-    runs-on: ubuntu-latest
+    # Only from the default branch: a dispatch carrying another branch's
+    # workflow body is skipped entirely, so nothing unmerged runs here.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: [self-hosted, xfa-fast]
     outputs:
       label: ${{ steps.create.outputs.label }}
       server_id: ${{ steps.create.outputs.server_id }}
@@ -76,6 +123,10 @@ jobs:
       CARGO_TARGET_DIR: /var/cache/cargo-target
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Empty falls back to the default branch, which is what a plain
+          # dispatch means. This is the only place a candidate ref is used.
+          ref: ${{ inputs.candidate_ref || github.ref }}
 
       - name: Confirm toolchain pin matches the baked snapshot
         run: |
@@ -99,8 +150,8 @@ jobs:
 
   delete-runner:
     needs: [create-runner, capi-test]
-    if: always()
-    runs-on: ubuntu-latest
+    if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: [self-hosted, xfa-fast]
     steps:
       # Only when there is something to delete: if create-runner failed the
       # outputs are empty and this step would error on a server that was
