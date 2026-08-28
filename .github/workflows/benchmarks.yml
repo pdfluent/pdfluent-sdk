@@ -31,6 +31,18 @@ jobs:
       label: ${{ steps.create.outputs.label }}
       server_id: ${{ steps.create.outputs.server_id }}
     steps:
+      # Forty seconds before spending anything. `cancel-in-progress` kills a
+      # superseded run almost at once, so a second push inside this window
+      # cancels the first one *before* it has bought a machine. Without it,
+      # three pushes five minutes apart bought three instances -- and Hetzner
+      # bills a started hour in full, so that is three hours for fifteen
+      # minutes of work (#274).
+      #
+      # Forty seconds against a ten-minute build is a rounding error. Three
+      # billed hours is not.
+      - name: Let a newer push cancel this one before spending anything
+        run: sleep 40
+
       - name: Create ephemeral Hetzner runner
         id: create
         uses: Cyclenerd/hcloud-github-runner@v1

@@ -49,6 +49,10 @@ EURO_PER_UUR = {"cpx11": 0.0077, "cpx21": 0.0128, "cpx31": 0.0250,
 STANDAARD_PER_UUR = 0.05
 # More than this at once and something is fanning out rather than sharing.
 GELIJKTIJDIG_ALARM = 2
+# Hetzner bills a started hour in full. Two provisionings inside one hour cost
+# two hours for work that would have fitted in one, so this is the number that
+# says whether the pipeline is being used or churned.
+PER_UUR_ALARM = 3
 
 
 def gh(pad: str):
@@ -169,6 +173,28 @@ def main() -> int:
                     "build or something wedged"
                 )
                 break
+
+    # How often an instance was started in the last hour. Each start is a whole
+    # billed hour, so three pushes five minutes apart cost three hours for
+    # fifteen minutes of work. That is not a fan-out and no guard will catch it:
+    # it is the shape of how someone is using the pipeline.
+    if runs is not None:
+        uur_geleden = nu - datetime.timedelta(hours=1)
+        starts = [r for r in runs.get("workflow_runs", [])
+                  if "ephemeral" in r["name"].lower()
+                  and datetime.datetime.fromisoformat(
+                      r["created_at"].replace("Z", "+00:00")) > uur_geleden]
+        if starts:
+            kosten_uur = len(starts) * EURO_PER_UUR["cpx42"]
+            print(f"[infra] churn: {len(starts)} instance(s) started in the last hour "
+                  f"(EUR {kosten_uur:.2f} in billed hours)")
+            if len(starts) > PER_UUR_ALARM:
+                klachten.append(
+                    f"{len(starts)} instances started within the hour, EUR "
+                    f"{kosten_uur:.2f} of billed hours. Hetzner charges a started hour "
+                    "in full, so pushing three times in five minutes buys three hours "
+                    "for fifteen minutes of work. Batch the pushes"
+                )
 
     # Cost per push, which is the number that decides whether speed was worth
     # buying. A cpx42 for a fifteen-minute build is billed as one hour: about
