@@ -66,9 +66,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Verify workspace version matches input
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           WS_VER=$(grep -A5 '\[workspace\.package\]' Cargo.toml | grep '^version' | sed 's/version = "\(.*\)"/\1/')
-          INPUT_VER="${{ inputs.version }}"
+          INPUT_VER="$INPUT_VERSION"
           if [[ "$WS_VER" != "$INPUT_VER" ]]; then
             echo "ERROR: Workspace version ($WS_VER) does not match requested version ($INPUT_VER)"
             echo "Bump [workspace.package] version in Cargo.toml first."
@@ -115,8 +117,10 @@ jobs:
         run: cargo login "$CARGO_REGISTRY_TOKEN"
 
       - name: Publish crates (ordered)
+        env:
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+          if [[ "$INPUT_DRY_RUN" == "true" ]]; then
             echo "DRY RUN — not publishing to crates.io"
             ./scripts/publish_ordered.sh
           else

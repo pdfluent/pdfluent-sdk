@@ -23,7 +23,6 @@ on:
       - 'crates/xfa-dom-resolver/**'
       - 'crates/xfa-layout-engine/**'
       - 'crates/pdf-bench/**'
-  workflow_dispatch:
 
 permissions:
   contents: read
