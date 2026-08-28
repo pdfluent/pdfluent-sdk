@@ -60,7 +60,9 @@ def main() -> int:
               file=sys.stderr)
         return 0
 
-    if tak.split("/")[-1] in ("master", "main"):
+    # Not `tak.split("/")[-1]`: that reads `release/main` and `feature/master`
+    # as the default branch and skips a topic branch entirely. Codex, #1542.
+    if tak in ("master", "main"):
         print(f"[branch-mr] on {tak}; nothing to ask.")
         return 0
 

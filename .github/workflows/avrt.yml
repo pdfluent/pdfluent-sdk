@@ -1,23 +1,17 @@
 name: Visual Regression (AVRT)
 
 on:
-  pull_request:
-    branches: [master]
-    paths:
-      - 'crates/xfa-layout-engine/**'
-      - 'crates/xfa-golden-tests/**'
-      - 'crates/pdfium-ffi-bridge/**'
-      - 'scripts/run-avrt.sh'
+  # Automatic triggers removed on 28-08-2026. This work now runs on the
+  # shared instance that ci-ephemeral.yml creates: one server per push,
+  # not one per workflow. Five workflows each provisioning their own gave
+  # five cpx42s inside five minutes for a single push (#275).
   workflow_dispatch:
-    inputs:
-      threshold:
-        description: 'Max pixel diff percentage'
-        default: '1.0'
-        type: string
 
 permissions:
   contents: read
   pull-requests: write
+
+env:
 
 jobs:
   visual-regression:

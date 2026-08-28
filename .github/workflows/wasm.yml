@@ -4,11 +4,9 @@ name: WASM Build
 # Version tags (v*.*.*): build + publish to npm.
 on:
   push:
-    branches: [master]
-    paths:
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+    # Tags only. The master-push build moved into ci-ephemeral.yml so that one
+    # push provisions one instance instead of two: this workflow and that one
+    # fired together and each made its own cpx42 (#275).
     tags:
       - 'v*.*.*'
   workflow_dispatch:

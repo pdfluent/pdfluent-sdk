@@ -7,13 +7,44 @@ on:
   workflow_dispatch:
 
 env:
+  HCLOUD_SNAPSHOT_ID: '425004761' # xfa-golden-ci-base-v2
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  # One throwaway instance for this workflow. The jobs below queue on it rather
+  # than spreading across hosted runners: free, and a cpx42 has eight cores
+  # against a hosted runner's two to four. Orchestration sits on the desktop,
+  # which costs nothing (#274).
+  create-runner:
+    # Only from the default branch: a dispatch can choose the ref, and this
+    # job sits on the machine with the corpus and the runner token (#268).
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # Without this the create action polls for a runner that may never
+    # register, holding the one desktop runner while everything else
+    # queues behind it. Fifteen minutes of that is what a wedged
+    # provisioning looked like (#274).
+    timeout-minutes: 10
+    runs-on: [self-hosted, xfa-fast]
+    outputs:
+      label: ${{ steps.create.outputs.label }}
+      server_id: ${{ steps.create.outputs.server_id }}
+    steps:
+      - name: Create ephemeral Hetzner runner
+        id: create
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: create
+          github_token: ${{ secrets.GH_RUNNER_PAT }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          server_type: cpx42
+          location: fsn1
+          image: ${{ env.HCLOUD_SNAPSHOT_ID }}
+
   full-corpus-test:
+    needs: create-runner
     name: Full Corpus Test Suite
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.create-runner.outputs.label }}
     steps:
       - uses: actions/checkout@v4
 
@@ -105,8 +136,9 @@ jobs:
           if-no-files-found: ignore
 
   benchmarks:
+    needs: create-runner
     name: Nightly Benchmarks
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.create-runner.outputs.label }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -145,8 +177,9 @@ jobs:
           if-no-files-found: ignore
 
   desktop-tests:
+    needs: create-runner
     name: Nightly Desktop Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.create-runner.outputs.label }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -165,8 +198,9 @@ jobs:
           npx vitest run
 
   conversion-tests:
+    needs: create-runner
     name: Nightly Conversion Quality Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.create-runner.outputs.label }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -179,8 +213,9 @@ jobs:
           cargo test --package pdf-pptx
 
   conformance:
+    needs: create-runner
     name: Nightly Conformance (veraPDF)
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.create-runner.outputs.label }}
     if: false  # Enable when veraPDF is installed and gold masters are available
     steps:
       - uses: actions/checkout@v4
@@ -213,8 +248,9 @@ jobs:
           retention-days: 30
 
   visual-regression:
+    needs: create-runner
     name: Nightly AVRT
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.create-runner.outputs.label }}
     if: false  # Enable when gold masters are available
     steps:
       - uses: actions/checkout@v4
@@ -239,3 +275,22 @@ jobs:
           name: nightly-avrt-report
           path: reports/avrt/
           retention-days: 30
+  delete-runner:
+    needs: [create-runner, full-corpus-test, benchmarks, desktop-tests, conversion-tests, conformance, visual-regression]
+    if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # Without this the create action polls for a runner that may never
+    # register, holding the one desktop runner while everything else
+    # queues behind it. Fifteen minutes of that is what a wedged
+    # provisioning looked like (#274).
+    timeout-minutes: 10
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      - name: Delete ephemeral Hetzner runner
+        if: needs.create-runner.outputs.server_id != ''
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: delete
+          github_token: ${ secrets.GH_RUNNER_PAT }
+          hcloud_token: ${ secrets.HCLOUD_TOKEN }
+          name: ${ needs.create-runner.outputs.label }
+          server_id: ${ needs.create-runner.outputs.server_id }
