@@ -67,11 +67,26 @@ jobs:
     timeout-minutes: 10
     runs-on: [self-hosted, xfa-fast]
     outputs:
-      label: ${{ steps.create.outputs.label }}
+      label: ${{ steps.hergebruik.outputs.label || steps.create.outputs.label }}
       server_id: ${{ steps.create.outputs.server_id }}
+      reused: ${{ steps.hergebruik.outputs.reused }}
     steps:
+      # Reuse before buying. Hetzner bills a started hour in full, so an
+      # instance already up and idle is free for the rest of that hour, and the
+      # runner is registered without --ephemeral so it takes more than one job.
+      # A forty-second delay was the earlier answer; this is the better one,
+      # because it costs nothing and saves a whole machine (#274).
+      - uses: actions/checkout@v4
+      - name: Reuse an idle instance if one is already up
+        id: hergebruik
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          RUNNER_PAT: ${{ secrets.GH_RUNNER_PAT }}
+        run: bash scripts/ci/reuse_an_idle_instance.sh
+
       - name: Create ephemeral Hetzner runner
         id: create
+        if: steps.hergebruik.outputs.reused != 'true'
         uses: Cyclenerd/hcloud-github-runner@v1
         with:
           mode: create
@@ -92,18 +107,58 @@ jobs:
       # first run of this workflow died on `no such command: fmt`. It also
       # symlinks cargo into /usr/local/bin, which shadows rustup's shims, so the
       # toolchain rustup installs has to be put in front of PATH by hand.
-      - uses: dtolnay/rust-toolchain@stable
+      # NOT @stable. `rust-toolchain.toml` pins 1.94.0, so cargo switches to
+      # that channel and the components this action added to `stable` are on a
+      # toolchain nothing here uses -- which is why `cargo fmt` kept coming back
+      # "no such command" through three different fixes. Same trap as #1539,
+      # where a cross target was installed on the wrong toolchain.
+      #
+      # `rustup component add` with no toolchain argument acts on the active
+      # one, which is the pinned one, which is the one that will run.
+      - uses: dtolnay/rust-toolchain@master
         with:
-          components: rustfmt, clippy
-      - name: Put the rustup toolchain ahead of the image's own cargo
+          toolchain: stable
+      - name: Add rustfmt and clippy to the pinned toolchain
+        run: rustup component add rustfmt clippy
+
+      # `/usr/local/bin/cargo` on this image is a plain binary, not a rustup
+      # shim, so it does not see the components rustup just installed -- which
+      # is why `cargo fmt` kept answering "no such command" after the component
+      # was demonstrably up to date. `rustup which cargo` gives the path of the
+      # active toolchain's own cargo, and that one knows about them.
+      # `cargo fmt` does not live inside cargo: it runs `cargo-fmt`, which cargo
+      # looks for on PATH. So calling the toolchain's own cargo was not enough --
+      # its bin directory still was not on PATH, and that is where `cargo-fmt`
+      # and `cargo-clippy` sit.
+      #
+      # `dirname "$(rustup which cargo)"` is that directory. Earlier attempts
+      # pointed at $CARGO_HOME/bin, which on this image is /.cargo/bin and does
+      # not exist at all.
+      - name: Put the pinned toolchain's bin directory on PATH
         run: |
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - name: Show what will actually run
+          toolchain_bin="$(dirname "$(rustup which cargo)")"
+          echo "$toolchain_bin" >> "$GITHUB_PATH"
+          echo "added $toolchain_bin"
+          ls "$toolchain_bin"
+      # The image carries cargo, rustc and rustup as plain binaries in
+      # /usr/local/bin. CARGO_HOME says /.cargo and that directory does not
+      # exist; RUSTUP_HOME is unset. So neither $GITHUB_PATH nor a PATH export
+      # could point at the toolchain rustup installed -- there was nothing at
+      # the path they named.
+      #
+      # `cargo ...` asks rustup where its own toolchain is,
+      # which is the one question that does not depend on any of that.
+      - name: Show which toolchains are on this instance
+        continue-on-error: true
         run: |
-          which cargo rustc || true
-          cargo --version
-          cargo fmt --version
-          cargo clippy --version
+          echo "CARGO_HOME=${CARGO_HOME:-unset}  RUSTUP_HOME=${RUSTUP_HOME:-unset}"
+          which -a cargo rustc rustup || true
+          rustup which cargo || true
+          rustup show || true
+          rustup component list --installed || true
+          for d in "${CARGO_HOME:-}/bin" "$HOME/.cargo/bin" /usr/local/bin; do
+            [ -d "$d" ] && { echo "--- $d"; ls "$d" | head -12; }
+          done
 
       - uses: Swatinem/rust-cache@v2
 
@@ -136,7 +191,8 @@ jobs:
 
       - name: docs drift (advisory)
         continue-on-error: true
-        run: cargo build -p pdfluent-snippet-extract --release
+        run: |
+          cargo build -p pdfluent-snippet-extract --release
 
       # The WASM build that wasm.yml used to do on a push to master. Publishing
       # stays there, on tags; this is the build and the website rebuild.
@@ -157,25 +213,7 @@ jobs:
           repository: pdfluent/pdfluent-playground
           event-type: wasm-updated
 
-  delete-runner:
-    needs: [create-runner, workspace]
-    if: always()
-    # Without this the create action polls for a runner that may never
-    # register, holding the one desktop runner while everything else
-    # queues behind it. Fifteen minutes of that is what a wedged
-    # provisioning looked like (#274).
-    timeout-minutes: 10
-    runs-on: [self-hosted, xfa-fast]
-    steps:
-      # Only when there is something to delete: a failed create leaves the
-      # outputs empty, and a genuine half-created instance is caught by
-      # hetzner-orphan-sweep.yml.
-      - name: Delete ephemeral Hetzner runner
-        if: needs.create-runner.outputs.server_id != ''
-        uses: Cyclenerd/hcloud-github-runner@v1
-        with:
-          mode: delete
-          github_token: ${{ secrets.GH_RUNNER_PAT }}
-          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
-          name: ${{ needs.create-runner.outputs.label }}
-          server_id: ${{ needs.create-runner.outputs.server_id }}
+  # No delete-runner. Deleting after every run threw away an hour that was
+  # already paid for and made the next push buy another. hetzner-orphan-sweep
+  # removes an idle instance once its billed hour is nearly up, which is the
+  # moment keeping it stops being free.

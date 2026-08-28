@@ -41,6 +41,18 @@ REPO = os.environ.get("PDFLUENT_REPO", "jasperdew/xfa-native-rust")
 OUD_MINUTEN = 45
 # More than this waiting means the desktop is the bottleneck.
 WACHTRIJ_ALARM = 4
+# What a cpx42 costs, so the report can say what an hour of carelessness cost
+# rather than counting machines. Hetzner bills by the hour, rounded up, which
+# is why a server that lives four minutes still costs a whole one.
+EURO_PER_UUR = {"cpx11": 0.0077, "cpx21": 0.0128, "cpx31": 0.0250,
+                "cpx41": 0.0489, "cpx42": 0.0489, "cpx51": 0.0989}
+STANDAARD_PER_UUR = 0.05
+# More than this at once and something is fanning out rather than sharing.
+GELIJKTIJDIG_ALARM = 2
+# Hetzner bills a started hour in full. Two provisionings inside one hour cost
+# two hours for work that would have fitted in one, so this is the number that
+# says whether the pipeline is being used or churned.
+PER_UUR_ALARM = 3
 
 
 def gh(pad: str):
@@ -89,7 +101,16 @@ def main() -> int:
             print(f"SKIPPED (not a pass): Hetzner unreachable: {fout}", file=sys.stderr)
             lijst = None
         if lijst is not None:
-            print(f"[infra] hetzner: {len(lijst)} server(s)")
+            per_uur = sum(EURO_PER_UUR.get(s["server_type"]["name"], STANDAARD_PER_UUR)
+                          for s in lijst)
+            print(f"[infra] hetzner: {len(lijst)} server(s), "
+                  f"EUR {per_uur:.3f}/hour while they run")
+            if len(lijst) > GELIJKTIJDIG_ALARM:
+                klachten.append(
+                    f"{len(lijst)} servers at once (EUR {per_uur:.2f}/hour). One event "
+                    "should start one machine; more than that is a fan-out, and fan-out "
+                    "buys a fraction of the wall-clock for a multiple of the bill"
+                )
             for s in lijst:
                 gemaakt = datetime.datetime.fromisoformat(s["created"].replace("Z", "+00:00"))
                 minuten = (nu - gemaakt).total_seconds() / 60
@@ -152,6 +173,41 @@ def main() -> int:
                     "build or something wedged"
                 )
                 break
+
+    # How often an instance was started in the last hour. Each start is a whole
+    # billed hour, so three pushes five minutes apart cost three hours for
+    # fifteen minutes of work. That is not a fan-out and no guard will catch it:
+    # it is the shape of how someone is using the pipeline.
+    if runs is not None:
+        uur_geleden = nu - datetime.timedelta(hours=1)
+        starts = [r for r in runs.get("workflow_runs", [])
+                  if "ephemeral" in r["name"].lower()
+                  and datetime.datetime.fromisoformat(
+                      r["created_at"].replace("Z", "+00:00")) > uur_geleden]
+        if starts:
+            kosten_uur = len(starts) * EURO_PER_UUR["cpx42"]
+            print(f"[infra] churn: {len(starts)} instance(s) started in the last hour "
+                  f"(EUR {kosten_uur:.2f} in billed hours)")
+            if len(starts) > PER_UUR_ALARM:
+                klachten.append(
+                    f"{len(starts)} instances started within the hour, EUR "
+                    f"{kosten_uur:.2f} of billed hours. Hetzner charges a started hour "
+                    "in full, so pushing three times in five minutes buys three hours "
+                    "for fifteen minutes of work. Batch the pushes"
+                )
+
+    # Cost per push, which is the number that decides whether speed was worth
+    # buying. A cpx42 for a fifteen-minute build is billed as one hour: about
+    # five cents. Two of them in parallel to save four minutes is not a
+    # trade-off, it is a doubling for a rounding error.
+    if runs is not None and token is not None and lijst is not None:
+        vandaag = [r for r in runs.get("workflow_runs", [])
+                   if r["created_at"][:10] == f"{nu:%Y-%m-%d}"]
+        if vandaag:
+            print(f"[infra] cost: {len(vandaag)} run(s) today; a cpx42 hour is "
+                  f"EUR {EURO_PER_UUR['cpx42']:.3f}, and Hetzner rounds an hour up -- "
+                  "so a build that takes ten minutes costs the same as one that takes "
+                  "fifty, and splitting it across two machines costs double")
 
     if not klachten:
         print("[infra] OK: nothing needs a person.")
