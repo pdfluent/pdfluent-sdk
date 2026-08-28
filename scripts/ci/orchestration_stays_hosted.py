@@ -213,7 +213,6 @@ BASELINE = {
     # while this repository has one contributor. Only ci-ephemeral does this
     # now -- the others hand their work to the instance it creates (#275).
     ("ci-ephemeral.yml", "create-runner"),
-    ("ci-ephemeral.yml", "delete-runner"),
     ("bench.yml", "benchmark"),
     # Found only after Codex pointed out that a pull_request branch filter names
     # the base, not the source. Runs on [self-hosted, xfa-corpus] -- a second

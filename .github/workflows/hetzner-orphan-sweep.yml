@@ -50,73 +50,12 @@ jobs:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: [self-hosted, xfa-fast]
     steps:
-      - name: Delete Hetzner servers older than 45 minutes
+      - uses: actions/checkout@v4
+      # Idle *and* past the paid hour. Instances are reused rather than deleted
+      # after every run, so this sweep is what ends their life -- and a busy one
+      # must survive at any age, or a sweep kills a build (#274).
+      - name: Delete idle instances past their billed hour
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-        run: |
-          set -euo pipefail
-          python3 -c "
-          import json, datetime, os, urllib.request
-
-          token = os.environ['HCLOUD_TOKEN']
-          page = 1
-          rows = []
-          while True:
-              req = urllib.request.Request(
-                  f'https://api.hetzner.cloud/v1/servers?page={page}&per_page=50',
-                  headers={'Authorization': f'Bearer {token}'},
-              )
-              with urllib.request.urlopen(req) as resp:
-                  data = json.load(resp)
-              for s in data.get('servers', []):
-                  created = datetime.datetime.fromisoformat(s['created'].replace('Z', '+00:00'))
-                  age_min = (datetime.datetime.now(datetime.timezone.utc) - created).total_seconds() / 60
-                  rows.append(f\"{s['id']}\t{s['name']}\t{age_min:.0f}\")
-              next_page = data.get('meta', {}).get('pagination', {}).get('next_page')
-              if not next_page:
-                  break
-              page = next_page
-
-          with open('/tmp/servers.tsv', 'w') as f:
-              f.write(''.join(row + '\n' for row in rows))
-          "
-
-          if [ ! -s /tmp/servers.tsv ]; then
-            echo "no servers running — nothing to sweep"
-            exit 0
-          fi
-
-          while IFS=$'\t' read -r id name age_min; do
-            if [ "${age_min%.*}" -gt 45 ]; then
-              echo "ORPHAN: $name (id $id, ${age_min} min old) — deleting"
-              curl -sf -X DELETE -H "Authorization: Bearer $HCLOUD_TOKEN" \
-                "https://api.hetzner.cloud/v1/servers/$id"
-            else
-              echo "ok: $name (id $id, ${age_min} min old)"
-            fi
-          done < /tmp/servers.tsv
-
-      # A deleted server leaves its GitHub runner registration behind, offline
-      # and forever. Five of them accumulated in one evening (#274); nothing
-      # removed them, and a list of dead runners is how you stop reading the
-      # list. Registrations whose server is gone are removed here.
-      - name: Remove runner registrations with no server
-        env:
-          GH_TOKEN: ${{ secrets.GH_RUNNER_PAT }}
-        run: |
-          set -euo pipefail
-          levend="$(cut -f2 /tmp/servers.tsv 2>/dev/null || true)"
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runners" \
-            --jq '.runners[] | select(.status=="offline") | "\(.id)\t\(.name)"' \
-          | while IFS=$'\t' read -r id naam; do
-              case "$naam" in
-                gh-runner-*) ;;
-                *) echo "keeping $naam (not an ephemeral runner)"; continue ;;
-              esac
-              if printf '%s\n' "$levend" | grep -qx "$naam"; then
-                echo "keeping $naam (its server is still up)"
-              else
-                echo "removing stale registration $naam (id $id)"
-                gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/runners/$id" || true
-              fi
-            done
+          GH_RUNNER_PAT: ${{ secrets.GH_RUNNER_PAT }}
+        run: python3 scripts/ci/sweep_idle_instances.py

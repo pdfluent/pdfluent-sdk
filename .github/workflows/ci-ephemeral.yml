@@ -67,23 +67,26 @@ jobs:
     timeout-minutes: 10
     runs-on: [self-hosted, xfa-fast]
     outputs:
-      label: ${{ steps.create.outputs.label }}
+      label: ${{ steps.hergebruik.outputs.label || steps.create.outputs.label }}
       server_id: ${{ steps.create.outputs.server_id }}
+      reused: ${{ steps.hergebruik.outputs.reused }}
     steps:
-      # Forty seconds before spending anything. `cancel-in-progress` kills a
-      # superseded run almost at once, so a second push inside this window
-      # cancels the first one *before* it has bought a machine. Without it,
-      # three pushes five minutes apart bought three instances -- and Hetzner
-      # bills a started hour in full, so that is three hours for fifteen
-      # minutes of work (#274).
-      #
-      # Forty seconds against a ten-minute build is a rounding error. Three
-      # billed hours is not.
-      - name: Let a newer push cancel this one before spending anything
-        run: sleep 40
+      # Reuse before buying. Hetzner bills a started hour in full, so an
+      # instance already up and idle is free for the rest of that hour, and the
+      # runner is registered without --ephemeral so it takes more than one job.
+      # A forty-second delay was the earlier answer; this is the better one,
+      # because it costs nothing and saves a whole machine (#274).
+      - uses: actions/checkout@v4
+      - name: Reuse an idle instance if one is already up
+        id: hergebruik
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          RUNNER_PAT: ${{ secrets.GH_RUNNER_PAT }}
+        run: bash scripts/ci/reuse_an_idle_instance.sh
 
       - name: Create ephemeral Hetzner runner
         id: create
+        if: steps.hergebruik.outputs.reused != 'true'
         uses: Cyclenerd/hcloud-github-runner@v1
         with:
           mode: create
@@ -192,25 +195,7 @@ jobs:
           repository: pdfluent/pdfluent-playground
           event-type: wasm-updated
 
-  delete-runner:
-    needs: [create-runner, workspace]
-    if: always()
-    # Without this the create action polls for a runner that may never
-    # register, holding the one desktop runner while everything else
-    # queues behind it. Fifteen minutes of that is what a wedged
-    # provisioning looked like (#274).
-    timeout-minutes: 10
-    runs-on: [self-hosted, xfa-fast]
-    steps:
-      # Only when there is something to delete: a failed create leaves the
-      # outputs empty, and a genuine half-created instance is caught by
-      # hetzner-orphan-sweep.yml.
-      - name: Delete ephemeral Hetzner runner
-        if: needs.create-runner.outputs.server_id != ''
-        uses: Cyclenerd/hcloud-github-runner@v1
-        with:
-          mode: delete
-          github_token: ${{ secrets.GH_RUNNER_PAT }}
-          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
-          name: ${{ needs.create-runner.outputs.label }}
-          server_id: ${{ needs.create-runner.outputs.server_id }}
+  # No delete-runner. Deleting after every run threw away an hour that was
+  # already paid for and made the next push buy another. hetzner-orphan-sweep
+  # removes an idle instance once its billed hour is nearly up, which is the
+  # moment keeping it stops being free.
