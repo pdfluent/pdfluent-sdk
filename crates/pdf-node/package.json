@@ -1,7 +1,7 @@
 {
   "name": "@pdfluent/node",
-  "version": "1.0.0-beta.17.4.1",
-  "description": "Enterprise PDF SDK for Node.js — find and replace PDF text while preserving fonts and layout, plus rendering, text extraction, forms, annotations, redaction, encryption, and PDF/A compliance.",
+  "version": "1.0.0",
+  "description": "Enterprise PDF SDK for Node.js \u2014 find and replace PDF text while preserving fonts and layout, plus rendering, text extraction, forms, annotations, redaction, encryption, and PDF/A compliance.",
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
@@ -76,12 +76,12 @@
     "access": "public"
   },
   "optionalDependencies": {
-    "@pdfluent/node-darwin-arm64": "1.0.0-beta.17.4",
-    "@pdfluent/node-darwin-x64": "1.0.0-beta.17.4",
-    "@pdfluent/node-linux-arm64-gnu": "1.0.0-beta.17.4",
-    "@pdfluent/node-linux-x64-gnu": "1.0.0-beta.17.4",
-    "@pdfluent/node-linux-x64-musl": "1.0.0-beta.17.4",
-    "@pdfluent/node-win32-x64-msvc": "1.0.0-beta.17.4"
+    "@pdfluent/node-darwin-arm64": "1.0.0",
+    "@pdfluent/node-darwin-x64": "1.0.0",
+    "@pdfluent/node-linux-arm64-gnu": "1.0.0",
+    "@pdfluent/node-linux-x64-gnu": "1.0.0",
+    "@pdfluent/node-linux-x64-musl": "1.0.0",
+    "@pdfluent/node-win32-x64-msvc": "1.0.0"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0",

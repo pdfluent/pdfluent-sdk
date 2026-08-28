@@ -311,3 +311,46 @@ pub fn tj_text_len(items: &[TjItem]) -> usize {
         })
         .sum()
 }
+
+#[cfg(test)]
+mod tj_len_tests {
+    use super::tj_text_len;
+    use crate::ops::TjItem;
+
+    /// Een TJ-array wisselt tekst en kerningwaarden af. Wie de kerning meetelt
+    /// als tekst, schat de breedte te hoog en zet alles daarna verkeerd — en dat
+    /// is precies het soort fout dat er op het scherm uitziet als "de opmaak
+    /// klopt niet" zonder dat iets faalt.
+    #[test]
+    fn only_text_counts_never_the_kerning() {
+        let items = vec![
+            TjItem::Text(b"Hallo".to_vec()),
+            TjItem::Kern(-250.0),
+            TjItem::Text(b" wereld".to_vec()),
+        ];
+        assert_eq!(tj_text_len(&items), 5 + 7);
+    }
+
+    #[test]
+    fn kerning_alone_is_zero_length() {
+        assert_eq!(
+            tj_text_len(&[TjItem::Kern(-1000.0), TjItem::Kern(120.0)]),
+            0
+        );
+    }
+
+    #[test]
+    fn an_empty_array_is_zero() {
+        assert_eq!(tj_text_len(&[]), 0);
+    }
+
+    /// Bytes, geen tekens: de inhoud is ruwe PDF-codering, en hoeveel tekens
+    /// dat voorstelt hangt van het lettertype af. Twee bytes tellen als twee.
+    #[test]
+    fn length_is_counted_in_bytes_not_characters() {
+        // "é" in UTF-8 is twee bytes; als codering in het document telt dat als 2.
+        assert_eq!(tj_text_len(&[TjItem::Text(vec![0xC3, 0xA9])]), 2);
+        // Een lege string draagt niets bij.
+        assert_eq!(tj_text_len(&[TjItem::Text(Vec::new())]), 0);
+    }
+}

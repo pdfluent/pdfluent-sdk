@@ -2506,6 +2506,38 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
             }
         }
     }
+    // XFA 3.3 §2.6 — a `<line>` draw shape carries its stroke on
+    // `<value><line><edge>`, not `<border>`, so the border pass above never
+    // sees it. Capture the line's edge thickness/colour into the node style so
+    // `render_draw` can stroke the spanned grid rule at the authored weight
+    // (e.g. the 2.12 mm header rule vs the 0.21 mm cell rules). Scoped to
+    // `<line>` only — the rectangle path is unaffected, and the zero-area line
+    // box keeps the non-field border pass from drawing a spurious box.
+    if style.border_width_pt.is_none() {
+        if let Some(line) = find_first_child_by_name(elem, "value")
+            .and_then(|value| find_first_child_by_name(value, "line"))
+        {
+            if let Some(edge) = find_first_child_by_name(line, "edge") {
+                if attr(edge, "stroke").unwrap_or("solid") != "none" {
+                    if let Some(thickness) = attr(edge, "thickness")
+                        .and_then(Measurement::parse)
+                        .map(|m: Measurement| m.to_points())
+                    {
+                        if thickness > 0.0 {
+                            style.border_width_pt = Some(thickness);
+                        }
+                    }
+                    if style.border_color.is_none() {
+                        if let Some(rgb) =
+                            find_first_child_by_name(edge, "color").and_then(parse_xfa_color)
+                        {
+                            style.border_color = Some(rgb);
+                        }
+                    }
+                }
+            }
+        }
+    }
     if let Some(font) = find_first_child_by_name(elem, "font") {
         if let Some(typeface) = attr(font, "typeface") {
             style.font_family = Some(typeface.to_string());

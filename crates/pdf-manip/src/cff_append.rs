@@ -918,7 +918,7 @@ fn patch_operand_in_place(buf: &mut [u8], span: &OperandSpan, value: i32) -> Opt
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Build a minimal but structurally real CFF: header, Name INDEX, Top DICT
@@ -931,7 +931,7 @@ mod tests {
     /// byte, while a fat CharStrings INDEX pushes the append site past 1131,
     /// where DICT integers need three. That is exactly the shape of the real
     /// subsets this path exists for.
-    fn synth_cff(glyph_names: &[u16], charstring_pad: usize) -> Vec<u8> {
+    pub(crate) fn synth_cff(glyph_names: &[u16], charstring_pad: usize) -> Vec<u8> {
         let mut charset_off = 0usize;
         let mut charstrings_off = 0usize;
         let mut private_off = 0usize;

@@ -1,6 +1,6 @@
 [package]
 name = "pdf-xfa"
-version = "1.0.0-beta.18"
+version = "1.0.0"
 edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
@@ -18,14 +18,14 @@ categories = ["rendering"]
 include = ["src/**/*", "LICENSE", "README.md"]
 
 [dependencies]
-xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0-beta.18" }
-formcalc-interpreter = { path = "../formcalc-interpreter", version = "=1.0.0-beta.18" }
-xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0-beta.18" }
-xfa-json = { path = "../xfa-json", version = "=1.0.0-beta.18" }
+xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0" }
+formcalc-interpreter = { path = "../formcalc-interpreter", version = "=1.0.0" }
+xfa-layout-engine = { path = "../xfa-layout-engine", version = "=1.0.0" }
+xfa-json = { path = "../xfa-json", version = "=1.0.0" }
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.6" }
 pdf-font = { path = "../pdf-font", version = "=1.0.0-beta.5" }
 pdf-interpret = { path = "../pdf-interpret", version = "=0.5.8" }
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5" }
 flate2 = "1"
 thiserror = "2"
 ttf-parser = "0.25"

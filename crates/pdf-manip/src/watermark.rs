@@ -613,9 +613,29 @@ pub(crate) fn add_content_to_page(
     stream_id: ObjectId,
     layer: Layer,
 ) {
-    if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
-        let existing = page_dict.get(b"Contents").ok().cloned();
+    let existing = match doc.objects.get(&page_id) {
+        Some(Object::Dictionary(page_dict)) => page_dict.get(b"Contents").ok().cloned(),
+        _ => None,
+    };
 
+    // A /Contents reference may point to an indirect *array* of streams
+    // rather than a single stream (govdocs holdout 590_590336). Wrapping
+    // that reference in a new array nests an array inside /Contents, which
+    // is invalid — viewers ignore the nested array and the page renders
+    // blank. Append to the referenced array in place instead.
+    if let Some(Object::Reference(existing_id)) = existing {
+        if matches!(doc.objects.get(&existing_id), Some(Object::Array(_))) {
+            if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&existing_id) {
+                match layer {
+                    Layer::Background => arr.insert(0, Object::Reference(stream_id)),
+                    Layer::Foreground => arr.push(Object::Reference(stream_id)),
+                }
+            }
+            return;
+        }
+    }
+
+    if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
         let new_contents = match existing {
             Some(Object::Reference(existing_id)) => match layer {
                 Layer::Background => Object::Array(vec![
@@ -823,5 +843,54 @@ mod tests {
         assert_eq!(even, vec![2, 4, 6]);
         let odd = resolve_page_selection(&doc, &PageSelection::Odd).unwrap();
         assert_eq!(odd, vec![1, 3, 5]);
+    }
+
+    /// Regression: a /Contents reference may point to an indirect *array* of
+    /// streams. Wrapping that reference in a new array nests an array inside
+    /// /Contents — invalid, and viewers ignore the nested array so the page
+    /// renders blank (govdocs holdout 590_590336).
+    #[test]
+    fn add_content_to_indirect_contents_array_appends_in_place() {
+        let mut doc = make_test_doc(1);
+        let page_id = *doc.get_pages().values().next().unwrap();
+
+        // Replace /Contents with a reference to an indirect array of streams.
+        let existing = {
+            let Some(Object::Dictionary(page)) = doc.objects.get(&page_id) else {
+                panic!("no page")
+            };
+            match page.get(b"Contents").unwrap() {
+                Object::Reference(id) => *id,
+                _ => panic!("expected contents reference"),
+            }
+        };
+        let arr_id = doc.add_object(Object::Array(vec![Object::Reference(existing)]));
+        if let Some(Object::Dictionary(ref mut page)) = doc.objects.get_mut(&page_id) {
+            page.set("Contents", Object::Reference(arr_id));
+        }
+
+        let wm_stream = Stream::new(dictionary! {}, b"q Q".to_vec());
+        let wm_id = doc.add_object(Object::Stream(wm_stream));
+        add_content_to_page(&mut doc, page_id, wm_id, Layer::Foreground);
+
+        // The page must still point at the indirect array, and that array
+        // must contain both stream references — no nesting.
+        let Some(Object::Dictionary(page)) = doc.objects.get(&page_id) else {
+            panic!("no page")
+        };
+        let Ok(Object::Reference(contents_ref)) = page.get(b"Contents") else {
+            panic!(
+                "contents no longer a reference: {:?}",
+                page.get(b"Contents")
+            )
+        };
+        assert_eq!(*contents_ref, arr_id);
+        let Some(Object::Array(arr)) = doc.objects.get(&arr_id) else {
+            panic!("indirect array gone")
+        };
+        assert_eq!(
+            arr.as_slice(),
+            &[Object::Reference(existing), Object::Reference(wm_id)]
+        );
     }
 }

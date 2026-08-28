@@ -69,8 +69,14 @@ pub fn decode_row(filter: FilterType, bpp: usize, previous: &[u8], current: &mut
             }
 
             for i in bpp..len {
-                current[i] = current[i]
-                    .wrapping_add((i16::from(current[i - bpp]) + i16::from(previous[i]) / 2) as u8);
+                // De haakjes stonden verkeerd: `a + b / 2` in plaats van
+                // `(a + b) / 2`. De PNG-specificatie (RFC 2083 §6.4) deelt de
+                // SOM van links en boven door twee, en `/` bond hier alleen aan
+                // `previous[i]`. Elke rij met filtertype 3 kwam er daardoor
+                // verkeerd uit -- geen foutmelding, gewoon andere bytes.
+                current[i] = current[i].wrapping_add(
+                    ((i16::from(current[i - bpp]) + i16::from(previous[i])) / 2) as u8,
+                );
             }
         }
         Paeth => {
@@ -146,8 +152,16 @@ pub fn encode_row(method: FilterType, bpp: usize, previous: &[u8], current: &mut
         }
         Avg => {
             for i in (bpp..len).rev() {
-                current[i] =
-                    current[i].wrapping_sub(current[i - bpp].wrapping_add(previous[i]) / 2);
+                // Same nine-bit sum as the decoder: RFC 2083 §6.5 averages
+                // left and above before dividing, and `wrapping_add` here
+                // truncated the sum to eight bits, so any pair adding to 256
+                // or more encoded to a byte the decoder could not undo. The
+                // decoder was repaired first, which left the two halves
+                // disagreeing; nothing caught it because no test reached
+                // `encode_row` (docs/TEST_REACHABILITY.md).
+                current[i] = current[i].wrapping_sub(
+                    ((i16::from(current[i - bpp]) + i16::from(previous[i])) / 2) as u8,
+                );
             }
 
             for i in 0..bpp {
@@ -167,5 +181,121 @@ pub fn encode_row(method: FilterType, bpp: usize, previous: &[u8], current: &mut
                 current[i] = current[i].wrapping_sub(paeth_predict(0, previous[i], 0));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod predictor_tests {
+
+    /// `encode_row` is the inverse of `decode_row`, so the only test worth
+    /// having runs them against each other. Both had the same defect on the
+    /// Average filter — RFC 2083 §6.5 computes `floor((a + b) / 2)` in nine
+    /// bits, and adding two bytes first wraps whenever a + b exceeds 255.
+    /// The decoder was fixed after a corpus document rendered wrong; the
+    /// encoder was never reached by a test at all.
+    #[test]
+    fn every_filter_round_trips_including_values_that_overflow_a_byte() {
+        use super::FilterType::*;
+        // 200 + 200 = 400: the case that wraps if the sum is taken in u8.
+        let vorige: Vec<u8> = vec![200, 200, 200, 7, 0, 255, 128, 3];
+        let bron: Vec<u8> = vec![200, 201, 202, 9, 1, 254, 127, 5];
+
+        for filter in [None, Sub, Up, Avg, Paeth] {
+            for bpp in [1usize, 3] {
+                let mut werk = bron.clone();
+                super::encode_row(filter, bpp, &vorige, &mut werk);
+                super::decode_row(filter, bpp, &vorige, &mut werk);
+                assert_eq!(
+                    werk, bron,
+                    "{filter:?} with bpp {bpp} did not survive encode->decode"
+                );
+            }
+        }
+    }
+
+    use super::decode_frame;
+
+    /// De PNG-predictor zit voor vrijwel elke gecomprimeerde stroom in een PDF.
+    /// Eén verkeerde optelling verschuift niet één byte maar alle bytes erna,
+    /// en het resultaat is geen foutmelding maar onleesbare inhoud.
+    ///
+    /// De verwachte waarden hieronder zijn met de hand uitgerekend volgens de
+    /// PNG-specificatie (RFC 2083 §6), niet overgenomen uit onze eigen uitvoer.
+
+    #[test]
+    fn filter_none_passes_the_row_through() {
+        // filterbyte 0, dan drie bytes
+        let uit = decode_frame(&[0, 10, 20, 30], 1, 3).unwrap();
+        assert_eq!(uit, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn filter_sub_adds_the_pixel_to_its_left() {
+        // recon[0]=5, recon[1]=5+3=8, recon[2]=8+2=10
+        let uit = decode_frame(&[1, 5, 3, 2], 1, 3).unwrap();
+        assert_eq!(uit, vec![5, 8, 10]);
+    }
+
+    #[test]
+    fn filter_up_adds_the_row_above() {
+        // rij 1 met Up en een impliciete nulrij erboven -> onveranderd
+        // rij 2 met Up telt er de vorige rij bij op
+        let uit = decode_frame(&[2, 10, 20, 30, 2, 1, 2, 3], 1, 3).unwrap();
+        assert_eq!(uit, vec![10, 20, 30, 11, 22, 33]);
+    }
+
+    /// Average rondt naar beneden af: recon = raw + floor((links + boven) / 2).
+    /// Naar boven afronden geeft precies één te veel op de helft van de bytes,
+    /// wat er als ruis uitziet in plaats van als een fout.
+    #[test]
+    fn filter_average_rounds_down() {
+        // rij 1: None -> [10, 20, 30]
+        // rij 2: Avg, raw [0,0,0]
+        //   i=0: links=0,  boven=10 -> floor(10/2)=5
+        //   i=1: links=5,  boven=20 -> floor(25/2)=12
+        //   i=2: links=12, boven=30 -> floor(42/2)=21
+        let uit = decode_frame(&[0, 10, 20, 30, 3, 0, 0, 0], 1, 3).unwrap();
+        assert_eq!(uit, vec![10, 20, 30, 5, 12, 21]);
+    }
+
+    /// Paeth kiest de buur die het dichtst bij de schatting links+boven-linksboven
+    /// ligt, met links als beslissing bij gelijkspel. Die volgorde is de plek
+    /// waar implementaties uit elkaar lopen.
+    #[test]
+    fn filter_paeth_picks_the_nearest_neighbour() {
+        // rij 1: None -> [10, 20, 30]
+        // rij 2: Paeth, raw [0,0,0]
+        //   i=0: links=0, boven=10, linksboven=0 -> p=10, kiest boven=10
+        //   i=1: links=10, boven=20, linksboven=10 -> p=20, kiest boven=20
+        //   i=2: links=20, boven=30, linksboven=20 -> p=30, kiest boven=30
+        let uit = decode_frame(&[0, 10, 20, 30, 4, 0, 0, 0], 1, 3).unwrap();
+        assert_eq!(uit, vec![10, 20, 30, 10, 20, 30]);
+    }
+
+    /// Bytes per pixel bepaalt hoe ver "links" terugkijkt. Bij 3 bytes per pixel
+    /// verwijst Sub naar drie posities terug, niet naar één.
+    #[test]
+    fn bytes_per_pixel_sets_how_far_left_reaches() {
+        // 2 pixels van 3 bytes: raw [1,2,3, 10,20,30]
+        // recon[0..3] = [1,2,3]; recon[3] = 10+1 = 11, [4] = 20+2 = 22, [5] = 30+3 = 33
+        let uit = decode_frame(&[1, 1, 2, 3, 10, 20, 30], 3, 2).unwrap();
+        assert_eq!(uit, vec![1, 2, 3, 11, 22, 33]);
+    }
+
+    #[test]
+    fn an_unknown_filter_byte_is_refused() {
+        assert!(
+            decode_frame(&[9, 1, 2, 3], 1, 3).is_err(),
+            "filter 9 bestaat niet"
+        );
+    }
+
+    /// Overloop hoort om te wikkelen, niet te panieken: de specificatie rekent
+    /// modulo 256 en een echte stroom leunt daarop.
+    #[test]
+    fn addition_wraps_at_256() {
+        // Sub: recon[0]=200, recon[1]=200+100 = 300 mod 256 = 44
+        let uit = decode_frame(&[1, 200, 100], 1, 2).unwrap();
+        assert_eq!(uit, vec![200, 44]);
     }
 }

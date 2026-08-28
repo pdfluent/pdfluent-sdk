@@ -264,7 +264,8 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
     // Also scan for DeviceCMYK usage in content streams and image XObjects.
     let has_cmyk =
         unique_names.iter().any(|n| n.contains("DeviceCMYK")) || has_device_cmyk_in_objects(doc);
-    let has_rgb = unique_names.iter().any(|n| n.contains("DeviceRGB"));
+    let has_rgb =
+        unique_names.iter().any(|n| n.contains("DeviceRGB")) || has_device_rgb_in_streams(doc);
 
     // Ensure an OutputIntent exists for each device-dependent color space used.
     // PDF/A-2 allows multiple OutputIntent entries (one per color space).
@@ -510,11 +511,100 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
     false
 }
 
+/// Whether the document uses an RGB colour space anywhere a name-level scan
+/// cannot see it: an inline image (`BI … /CS /DeviceRGB … ID … EI`), which
+/// lives inside a content stream and is not an object at all, or a
+/// three-component ICCBased profile, which is RGB by definition.
+///
+/// Needed because the object-level DeviceRGB XObjects are converted to
+/// ICCBased before this pass runs, so by the time the OutputIntent decision is
+/// made an inline image can be the only RGB usage left — and without an sRGB
+/// OutputIntent that document is not conformant (govdocs holdout 104_104177).
+///
+/// Errs towards finding RGB: a false positive only adds an sRGB OutputIntent
+/// beside the CMYK one, which PDF/A-2 explicitly allows (one per colour
+/// space), while a false negative is a validation failure.
+fn has_device_rgb_in_streams(doc: &Document) -> bool {
+    doc.objects.values().any(|obj| {
+        let Object::Stream(stream) = obj else {
+            return false;
+        };
+        // /N is the ICCBased component count; 3 components is an RGB profile.
+        if let Ok(Object::Integer(3)) = stream.dict.get(b"N") {
+            return true;
+        }
+        let content = match stream.decompressed_content() {
+            Ok(c) => c,
+            Err(_) => stream.content.clone(),
+        };
+        content
+            .windows(b"DeviceRGB".len())
+            .any(|w| w == b"DeviceRGB")
+    })
+}
+
+/// PostScript whitespace, as the content-stream lexer sees it.
+fn is_cs_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0x0c | 0)
+}
+
+/// Whether the content stream actually sets a CMYK colour, i.e. contains a
+/// `k`/`K` operator with its four operands.
+///
+/// The operand count is the whole point. Testing for a whitespace byte
+/// followed by `k` matches inside inline-image samples and text strings alike
+/// — arbitrary binary hits it constantly — and a false positive is not
+/// harmless here: it earns the document a CMYK OutputIntent, and because
+/// §6.2.3:2 makes every OutputIntent share one ICC object, that CMYK profile
+/// then owns the slot an RGB one needed (govdocs holdout 104_104177: no CMYK
+/// anywhere, 29 inline RGB images, and 58 §6.2.4.3:2 failures because the
+/// document had been given a CMYK output intent on the strength of a byte
+/// pair in image data).
+fn has_cmyk_operator(content: &[u8]) -> bool {
+    let is_num = |b: u8| b.is_ascii_digit() || b == b'.' || b == b'-' || b == b'+';
+
+    for i in 0..content.len() {
+        if content[i] != b'k' && content[i] != b'K' {
+            continue;
+        }
+        if i == 0 || !is_cs_space(content[i - 1]) {
+            continue;
+        }
+        let after_ok = i + 1 >= content.len()
+            || is_cs_space(content[i + 1])
+            || matches!(
+                content[i + 1],
+                b'/' | b'[' | b']' | b'<' | b'>' | b'(' | b')'
+            );
+        if !after_ok {
+            continue;
+        }
+
+        // Four numeric operands must precede it, or this is not `setcmykcolor`.
+        let mut j = i;
+        let mut operands = 0;
+        while operands < 4 {
+            while j > 0 && is_cs_space(content[j - 1]) {
+                j -= 1;
+            }
+            let end = j;
+            while j > 0 && is_num(content[j - 1]) {
+                j -= 1;
+            }
+            if j == end {
+                break;
+            }
+            operands += 1;
+        }
+        if operands == 4 {
+            return true;
+        }
+    }
+    false
+}
+
 fn content_has_cmyk(content: &[u8]) -> bool {
-    if content
-        .windows(2)
-        .any(|w| (w[1] == b'k' || w[1] == b'K') && (w[0] == b' ' || w[0] == b'\n' || w[0] == b'\r'))
-    {
+    if has_cmyk_operator(content) {
         return true;
     }
     let content_str = String::from_utf8_lossy(content);
@@ -3229,5 +3319,177 @@ mod tests {
         } else {
             panic!("stream object not found");
         }
+    }
+}
+
+#[cfg(test)]
+mod inline_rgb_output_intent_tests {
+    use super::*;
+
+    fn doc_with_stream(dict: lopdf::Dictionary, content: &[u8]) -> Document {
+        let mut doc = Document::with_version("1.7");
+        doc.add_object(Object::Stream(Stream::new(dict, content.to_vec())));
+        doc
+    }
+
+    /// An inline image is not an object: it lives between `BI` and `EI` inside
+    /// a content stream, so nothing that walks `doc.objects` looking for a
+    /// `/ColorSpace` name will ever see its `/CS /DeviceRGB`. By the time the
+    /// OutputIntent decision runs, the object-level RGB XObjects have already
+    /// become ICCBased, so an inline image can be the document's only
+    /// remaining RGB usage — and missing it costs the sRGB OutputIntent the
+    /// document needs (govdocs holdout 104_104177).
+    #[test]
+    fn inline_image_device_rgb_is_found() {
+        let doc = doc_with_stream(
+            dictionary! {},
+            b"q 100 0 0 100 0 0 cm\nBI /W 2 /H 2 /CS /DeviceRGB /BPC 8 ID \x00\x01\x02 EI\nQ",
+        );
+        assert!(has_device_rgb_in_streams(&doc));
+    }
+
+    /// A three-component ICCBased profile is an RGB profile; its stream never
+    /// spells "DeviceRGB" anywhere, so the /N count is the only signal.
+    #[test]
+    fn three_component_iccbased_counts_as_rgb() {
+        let doc = doc_with_stream(dictionary! { "N" => Object::Integer(3) }, b"\x00\x01\x02");
+        assert!(has_device_rgb_in_streams(&doc));
+    }
+
+    /// The converse must hold, or the check is just "always true": a CMYK-only
+    /// document must not be handed an sRGB OutputIntent it has no use for.
+    #[test]
+    fn cmyk_only_document_has_no_rgb() {
+        let doc = doc_with_stream(
+            dictionary! { "N" => Object::Integer(4) },
+            b"q /DeviceCMYK cs 0 0 0 1 sc 0 0 10 10 re f Q",
+        );
+        assert!(!has_device_rgb_in_streams(&doc));
+    }
+
+    /// The pass must actually consult the scan. Testing the detector alone
+    /// would leave the call site free to disappear — the exact shape of defect
+    /// this project keeps hitting: the check exists and nothing invokes it.
+    ///
+    /// The fixture has to carry CMYK too. Without CMYK the pass adds sRGB
+    /// unconditionally (`has_rgb || !has_cmyk`), so an RGB-only document
+    /// cannot tell whether the scan ran — it was green with the call site
+    /// deleted. A CMYK document whose only RGB is an inline image is the one
+    /// shape where the answer decides the outcome, and it is 104_104177's.
+    #[test]
+    fn normalize_colorspaces_gives_a_cmyk_document_srgb_for_its_inline_rgb() {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+
+        // Named CMYK in the resources; the RGB exists only inside the content.
+        let content = Stream::new(
+            dictionary! {},
+            b"q /CS1 cs 0 0 0 1 sc 0 0 10 10 re f\nBI /W 1 /H 1 /CS /DeviceRGB /BPC 8 ID \x00 EI\nQ".to_vec(),
+        );
+        let content_id = doc.add_object(Object::Stream(content));
+        let mut cs_dict = lopdf::Dictionary::new();
+        cs_dict.set("CS1", Object::Name(b"DeviceCMYK".to_vec()));
+        let mut res = lopdf::Dictionary::new();
+        res.set("ColorSpace", Object::Dictionary(cs_dict));
+
+        let page = dictionary! {
+            "Type" => "Page",
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Dictionary(res),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Count" => Object::Integer(1),
+                "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+            }),
+        );
+        let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        normalize_colorspaces(&mut doc).expect("normalize");
+
+        // Assert on the condition identifier, not the profile's component
+        // count: the two intents currently share one DestOutputProfile object,
+        // so an N-based check reads the CMYK profile and says "no sRGB" even
+        // when the sRGB intent is there. What this test is about is whether
+        // the inline image reached the decision at all.
+        let identifiers: Vec<String> = doc
+            .objects
+            .values()
+            .filter_map(|obj| match obj {
+                Object::Dictionary(d)
+                    if matches!(d.get(b"Type"), Ok(Object::Name(n)) if n == b"OutputIntent") =>
+                {
+                    match d.get(b"OutputConditionIdentifier") {
+                        Ok(Object::String(s, _)) => Some(String::from_utf8_lossy(s).into_owned()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            identifiers.iter().any(|i| i.contains("sRGB")),
+            "inline-image RGB must reach the OutputIntent decision; got {identifiers:?}"
+        );
+    }
+
+    /// `k` is `setcmykcolor` and takes four operands. Without insisting on
+    /// them, any whitespace-then-`k` byte pair reads as CMYK usage — and
+    /// inline-image samples are arbitrary binary, so they hit it constantly.
+    /// The consequence is not cosmetic: a spurious CMYK OutputIntent takes the
+    /// single ICC slot §6.2.3:2 allows, and the document's real RGB content
+    /// then has no output intent to stand on (govdocs holdout 104_104177 and
+    /// 212_212392, 58 and 8 §6.2.4.3:2 failures, zero CMYK anywhere in either).
+    #[test]
+    fn cmyk_operator_needs_its_four_operands() {
+        assert!(has_cmyk_operator(b"q 0 0 0 1 k 10 10 100 100 re f Q"));
+        assert!(has_cmyk_operator(b"0.1 0.2 0.3 0.4 K\n"));
+        assert!(has_cmyk_operator(b"BT 1 1 1 1 k ET"));
+    }
+
+    #[test]
+    fn stray_k_bytes_are_not_cmyk_usage() {
+        // Binary image samples: a space followed by 0x6B means nothing.
+        assert!(!has_cmyk_operator(b"BI /W 2 /H 2 ID \x01\x02 k\x99\x04 EI"));
+        // A `k` that is part of a longer token is not the operator.
+        assert!(!has_cmyk_operator(b"q 0 0 0 1 kilo Q"));
+        // Text, not colour.
+        assert!(!has_cmyk_operator(b"BT (a black cat) Tj ET"));
+        // Three operands is `rg`-shaped, not `k`.
+        assert!(!has_cmyk_operator(b"0 0 1 k"[..6].as_ref()));
+    }
+
+    /// Compressed streams have to be searched decompressed, or a Flate content
+    /// stream hides its inline image from the scan entirely.
+    #[test]
+    fn compressed_stream_is_searched_decompressed() {
+        // Padded so DEFLATE actually wins — lopdf keeps the plain bytes when
+        // compression does not pay, and an uncompressed fixture would pass
+        // this test without exercising the decompression path at all.
+        let mut content = b"q 1 0 0 1 0 0 cm ".repeat(64);
+        content.extend_from_slice(b"BI /W 1 /H 1 /CS /DeviceRGB /BPC 8 ID \x00 EI Q");
+        let mut stream = Stream::new(dictionary! {}, content);
+        stream.compress().expect("compress");
+        assert!(
+            !stream.content.windows(9).any(|w| w == b"DeviceRGB"),
+            "fixture must actually be compressed, or it proves nothing"
+        );
+        let mut doc = Document::with_version("1.7");
+        doc.add_object(Object::Stream(stream));
+
+        assert!(has_device_rgb_in_streams(&doc));
     }
 }

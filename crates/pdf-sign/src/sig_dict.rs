@@ -128,7 +128,14 @@ impl<'a> SigDict<'a> {
     /// Return the /Reference array (signature reference dictionaries).
     pub fn references(&self) -> Vec<Dict<'a>> {
         self.dict
-            .get::<Array<'_>>(SIG_REF)
+            // /Reference, not /SigRef: ISO 32000-1 Table 252 names the key
+            // `Reference`, and `SigRef` is the /Type *inside* each entry —
+            // which is exactly what sign.rs writes. Reading the Type name as
+            // the key meant this always returned empty, so
+            // `get_docmdp_permission` reported None for every certified
+            // document and every "may this edit be applied" decision
+            // downstream treated it as uncertified.
+            .get::<Array<'_>>(REFERENCE)
             .map(|arr| arr.iter::<Dict<'_>>().collect())
             .unwrap_or_default()
     }

@@ -1,10 +1,12 @@
 [package]
 name = "xfa-wasm"
 # Explicit version (not workspace-inherited): the @pdfluent/sdk-wasm npm package
-# is aligned to the RC line 1.0.0-beta.17 across channels. The Rust workspace
-# version is intentionally a different, independent value; wasm-pack derives the
-# generated package.json version from this [package] version.
-version = "1.0.0-beta.17.5"
+# carries the cross-channel line, which is 1.0.0 as of the GA publish on
+# 22-08-2026 (SDK_NON_XFA_PUBLISH_TRAIN_RUNBOOK.md §5 — binding channels are
+# unified, the crates.io graph stays heterogeneous). wasm-pack derives the
+# generated package.json version from this [package] version, and the
+# [package.metadata.npm] block below must say the same thing.
+version = "1.0.0"
 edition.workspace = true
 license-file = "LICENSE"
 repository.workspace = true
@@ -25,27 +27,27 @@ pdf-syntax.workspace = true
 pdf-engine = { workspace = true, features = ["xfa"] }
 pdf-sign.workspace = true
 pdf-compliance.workspace = true
-pdf-render = { path = "../pdf-render", optional = true, version = "=1.0.0-beta.18" }
-pdf-annot = { path = "../pdf-annot", optional = true, version = "=1.0.0-beta.18" }
+pdf-render = { path = "../pdf-render", optional = true, version = "=1.0.0" }
+pdf-annot = { path = "../pdf-annot", optional = true, version = "=1.0.0" }
 wasm-bindgen = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 indexmap.workspace = true
 js-sys = "0.3"
 kurbo = "0.13"
-pdf-manip = { path = "../pdf-manip", features = ["pdfa-convert"], version = "=1.0.0-beta.18" }
-pdf-redact = { path = "../pdf-redact", version = "=1.0.0-beta.18" }
+pdf-manip = { path = "../pdf-manip", features = ["pdfa-convert"], version = "=1.0.0" }
+pdf-redact = { path = "../pdf-redact", version = "=1.0.0" }
 pdf-forms = { workspace = true }
-pdfluent = { path = "../pdfluent", version = "=1.0.0-beta.18" }
-pdf-text-format = { path = "../pdf-text-format", version = "=1.0.0-beta.18" }
+pdfluent = { path = "../pdfluent", version = "=1.0.0" }
+pdf-text-format = { path = "../pdf-text-format", version = "=1.0.0" }
 
 # lopdf: required for text extraction; annotate uses lopdf for mutation.
 # Direct path (not workspace = true) to allow per-target default-features override.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.4" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", default-features = false, features = ["wasm_js"], version = "=0.39.5" }
 # getrandom v0.2 (transitively via p12/pdf-sign) needs "js" feature on wasm32.
 getrandom = { version = "0.2", features = ["js"] }
 web-sys = { version = "0.3", features = [
@@ -72,13 +74,13 @@ wasm-bindgen-test = "0.3"
 # Used by tests/edit_handle.rs to synthesise minimal PDFs with known
 # extractable text runs (avoids dependency on specific corpus encoding).
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.4" }
+lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5" }
 
 # npm package identity — set by scripts/release/transform-wasm-pkg.sh at
 # publish time. Cargo workspace version and npm version are independent.
 [package.metadata.npm]
 name = "@pdfluent/sdk-wasm"
-version = "1.0.0-beta.17.5"
+version = "1.0.0"
 
 [package.metadata.wasm-pack.profile.release]
 # B3 — wasm-opt -O3 enabled after evaluation. See

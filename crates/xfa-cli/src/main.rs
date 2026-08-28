@@ -401,3 +401,60 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod page_list_tests {
+    use super::parse_page_list;
+
+    /// Paginabereiken komen rechtstreeks van de gebruiker en gaan van
+    /// 1-gebaseerd naar 0-gebaseerd. Eén stap ernaast betekent dat iemand een
+    /// andere pagina krijgt dan hij vroeg, en dat merkt hij pas bij het lezen.
+    #[test]
+    fn single_pages_shift_from_one_based_to_zero_based() {
+        assert_eq!(parse_page_list("1", 10).unwrap(), vec![0]);
+        assert_eq!(parse_page_list("10", 10).unwrap(), vec![9]);
+        assert_eq!(parse_page_list("1,3,5", 10).unwrap(), vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn ranges_are_inclusive_at_both_ends() {
+        assert_eq!(parse_page_list("2-4", 10).unwrap(), vec![1, 2, 3]);
+        assert_eq!(parse_page_list("1-1", 10).unwrap(), vec![0]);
+    }
+
+    #[test]
+    fn spaces_around_the_parts_are_allowed() {
+        assert_eq!(parse_page_list(" 1 , 3 - 4 ", 10).unwrap(), vec![0, 2, 3]);
+    }
+
+    /// Pagina 0 bestaat niet voor een gebruiker, en boven het totaal ook niet.
+    /// Allebei horen te weigeren in plaats van stil iets anders te doen.
+    #[test]
+    fn out_of_bounds_is_refused() {
+        assert!(parse_page_list("0", 10).is_err(), "pagina 0 bestaat niet");
+        assert!(parse_page_list("11", 10).is_err(), "boven het totaal");
+        assert!(parse_page_list("0-3", 10).is_err());
+        assert!(parse_page_list("8-11", 10).is_err());
+        assert!(parse_page_list("abc", 10).is_err());
+        assert!(parse_page_list("", 10).is_err());
+    }
+
+    /// Vastgelegd omdat het verrast: een omgekeerd bereik levert géén fout maar
+    /// een lege lijst. `for i in 5..=3` loopt nul keer, dus wie `5-3` vraagt
+    /// krijgt stil niets terug in plaats van de drie pagina's die hij bedoelde
+    /// of een melding dat het andersom moet.
+    ///
+    /// Deze test legt het huidige gedrag vast, geen goedkeuring ervan. Wordt
+    /// besloten dit te weigeren, dan hoort deze test rood te worden en dat is
+    /// precies het signaal dat het gedrag bewust verandert.
+    #[test]
+    fn a_reversed_range_yields_nothing_and_does_not_complain() {
+        assert_eq!(parse_page_list("5-3", 10).unwrap(), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn overlapping_parts_are_kept_as_given() {
+        // Geen ontdubbeling: wie 1-3,2 vraagt krijgt pagina 2 twee keer.
+        assert_eq!(parse_page_list("1-3,2", 10).unwrap(), vec![0, 1, 2, 1]);
+    }
+}
