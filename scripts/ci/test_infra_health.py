@@ -25,7 +25,7 @@ def laad():
     return mod
 
 
-def draai(busy: bool, minuten: int = 120) -> tuple[int, str]:
+def draai(busy: bool, minuten: int = 120, paginas: int = 1, liegt: bool = False) -> tuple[int, str]:
     """Run main() against one server that is `minuten` old and busy or not."""
     mod = laad()
     gemaakt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=minuten)
@@ -36,10 +36,21 @@ def draai(busy: bool, minuten: int = 120) -> tuple[int, str]:
         {"name": naam, "server_type": {"name": "cpx42"}, "created": gemaakt.isoformat()}
     ]
 
+    # Our runner sits on the LAST page, which is where a naive single-page read
+    # loses it. `vulling` are dead registrations, which this repo accumulates.
+    echte = {"name": naam, "status": "online", "busy": busy, "labels": [{"name": "hetzner"}]}
+    vulling = [{"name": f"dood-{i}", "status": "offline", "busy": False, "labels": []}
+               for i in range(100 * (paginas - 1))]
+    alles = vulling + [echte]
+
     def nep_gh(pad: str):
-        if pad.endswith("/actions/runners"):
-            return {"runners": [{"name": naam, "status": "online", "busy": busy,
-                                 "labels": [{"name": "hetzner"}]}]}
+        if "/actions/runners" in pad:
+            nr = 1
+            if "page=" in pad:
+                nr = int(pad.split("page=")[-1].split("&")[0])
+            deel = alles[(nr - 1) * 100: nr * 100]
+            # `liegt` mimics an API that promises more than it hands over.
+            return {"runners": deel, "total_count": len(alles) + (5 if liegt else 0)}
         if "/actions/runs" in pad:
             return {"workflow_runs": []}
         return {}
@@ -68,6 +79,22 @@ def main() -> int:
     _, tekst = draai(busy=False)
     if "outlived its run" not in tekst:
         stuk.append("an idle server well past the threshold raised no alarm")
+
+    # The busy runner on page two must still be found. Without pagination the
+    # first page holds only dead registrations, `bezet` looks authoritative and
+    # empty, and the live build is reported as a leaked machine.
+    _, tekst = draai(busy=True, paginas=2)
+    if "outlived its run" in tekst:
+        stuk.append("a busy runner on the second page was read as idle")
+
+    # If the list cannot be completed, the check must not pretend to know. It
+    # may still raise the alarm, but it has to say it could not confirm --
+    # silently trusting a short list is how the false alarm comes back.
+    _, tekst = draai(busy=True, liegt=True)
+    if "outlived its run" in tekst and "could not read the runner list" not in tekst:
+        stuk.append("an incomplete runner list was treated as authoritative")
+    if "SKIPPED (not a pass)" not in tekst:
+        stuk.append("an incomplete runner list was not announced as a skipped check")
 
     # And a young idle machine is not yet a leak.
     _, tekst = draai(busy=False, minuten=5)
