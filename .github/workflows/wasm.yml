@@ -31,8 +31,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to rust-toolchain.toml's channel: `@stable` puts the target
+      # on stable, cargo switches to the pinned channel, and there is no
+      # wasm32 std there -- "can't find crate for `core`".
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: '1.94.0'
           targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2

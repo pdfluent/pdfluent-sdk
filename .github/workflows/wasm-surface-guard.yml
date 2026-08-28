@@ -27,9 +27,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # `@stable` installs stable and adds the target to STABLE. cargo then
+      # reads rust-toolchain.toml, switches to the pinned channel, and finds no
+      # wasm32 std there:
+      #
+      #     error[E0463]: can't find crate for `core`
+      #
+      # The message names neither the toolchain nor the target, which is why
+      # this ran red for a while looking like a code problem. Pinning the action
+      # to the same channel as the repo keeps the target and the compiler
+      # together.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: '1.94.0'
           targets: wasm32-unknown-unknown
+
+      - name: The target is on the toolchain cargo will actually use
+        run: |
+          PINNED=$(grep '^channel' rust-toolchain.toml | cut -d'"' -f2)
+          if ! rustup target list --installed --toolchain "$PINNED" \
+               | grep -qx wasm32-unknown-unknown; then
+            echo "::error::wasm32-unknown-unknown is not installed for $PINNED."
+            echo "::error::rust-toolchain.toml pins $PINNED; the workflow must add"
+            echo "::error::the target to that channel, not to stable."
+            exit 1
+          fi
+          echo "wasm32-unknown-unknown present on $PINNED"
 
       - uses: Swatinem/rust-cache@v2
         with:
