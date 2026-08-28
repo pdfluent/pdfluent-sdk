@@ -85,6 +85,41 @@ def servers(token: str):
         return json.load(antwoord).get("servers", [])
 
 
+def alle_runners():
+    """Every runner registration, across pages.
+
+    The API returns 30 per page. A partial list is indistinguishable from a
+    complete one -- it is still a dict, still non-empty -- and a busy runner
+    that fell onto page two would be read as absent. That turns the idle gate
+    into the false alarm it exists to prevent: a working machine reported as a
+    leaked one. Returns None when the list cannot be trusted, so the caller
+    says "could not confirm" instead of guessing.
+    """
+    antwoord = gh(f"repos/{REPO}/actions/runners?per_page=100&page=1")
+    if antwoord is None:
+        return None
+    gevonden = list(antwoord.get("runners", []))
+    verwacht = antwoord.get("total_count")
+    bladzijde = 1
+    while verwacht is not None and len(gevonden) < verwacht:
+        bladzijde += 1
+        if bladzijde > 20:  # a runaway pager is a bug, not a reason to loop
+            return None
+        volgende = gh(f"repos/{REPO}/actions/runners?per_page=100&page={bladzijde}")
+        if volgende is None:
+            return None
+        stapel = volgende.get("runners", [])
+        if not stapel:
+            break
+        gevonden.extend(stapel)
+    if verwacht is not None and len(gevonden) != verwacht:
+        print(f"SKIPPED (not a pass): read {len(gevonden)} of {verwacht} runner "
+              "registrations; an incomplete list cannot decide whether a server is idle.",
+              file=sys.stderr)
+        return None
+    return {"runners": gevonden, "total_count": verwacht}
+
+
 def main() -> int:
     klachten: list[str] = []
     nu = datetime.datetime.now(datetime.timezone.utc)
@@ -94,7 +129,7 @@ def main() -> int:
     token = hetzner_token()
     # Read the runners first: a long-lived server that is running a job is working,
     # not leaking, and the age alarm must be able to tell those two apart.
-    runners = gh(f"repos/{REPO}/actions/runners")
+    runners = alle_runners()
     bezet = None
     if runners is not None:
         bezet = {r["name"] for r in runners.get("runners", []) if r.get("busy")}
