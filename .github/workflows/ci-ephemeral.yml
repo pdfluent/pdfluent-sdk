@@ -96,6 +96,21 @@ jobs:
           location: fsn1
           image: ${{ env.HCLOUD_SNAPSHOT_ID }}
 
+      # Reap here rather than on a schedule. The */30 cron fired twice in a day
+      # (#279), and since instances are reused instead of deleted after each
+      # run, this sweep is the only thing that ends their life. A push always
+      # happens; a schedule apparently does not.
+      #
+      # Last, and never before the instance for this run exists: sweeping first
+      # would race the machine this same push is about to claim.
+      - name: Reap instances that are idle and past their billed hour
+        if: always()
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          GH_RUNNER_PAT: ${{ secrets.GH_RUNNER_PAT }}
+          SWEEP_BEHOUD: ${{ steps.hergebruik.outputs.label }}
+        run: python3 scripts/ci/sweep_idle_instances.py
+
   workspace:
     needs: create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}

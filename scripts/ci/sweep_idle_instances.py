@@ -55,6 +55,11 @@ def main() -> int:
     hcloud = os.environ.get("HCLOUD_TOKEN")
     pat = os.environ.get("GH_RUNNER_PAT")
     repo = os.environ.get("GITHUB_REPOSITORY")
+    # The instance this very run is about to use. It is normally young enough
+    # to survive the age filter, but the filters read state that can change
+    # between the read and the delete; naming it removes the window instead of
+    # narrowing it.
+    behoud = {n for n in os.environ.get("SWEEP_BEHOUD", "").split(",") if n}
     if not hcloud:
         print("SKIPPED (not a pass): HCLOUD_TOKEN is unset; nothing was swept.",
               file=sys.stderr)
@@ -92,6 +97,9 @@ def main() -> int:
     for s in onze:
         gemaakt = datetime.datetime.fromisoformat(s["created"].replace("Z", "+00:00"))
         minuten = (nu - gemaakt).total_seconds() / 60
+        if s["name"] in behoud:
+            print(f"  spared  {s['name']} ({minuten:.0f} min) — claimed by this run")
+            continue
         if bezet.get(s["name"], False):
             print(f"  busy    {s['name']} ({minuten:.0f} min) — leaving it")
             continue
