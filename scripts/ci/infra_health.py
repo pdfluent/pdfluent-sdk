@@ -92,6 +92,13 @@ def main() -> int:
 
     # --- Hetzner
     token = hetzner_token()
+    # Read the runners first: a long-lived server that is running a job is working,
+    # not leaking, and the age alarm must be able to tell those two apart.
+    runners = gh(f"repos/{REPO}/actions/runners")
+    bezet = None
+    if runners is not None:
+        bezet = {r["name"] for r in runners.get("runners", []) if r.get("busy")}
+
     if token is None:
         print("SKIPPED (not a pass): no Hetzner token, so nothing was checked there.",
               file=sys.stderr)
@@ -115,17 +122,23 @@ def main() -> int:
             for s in lijst:
                 gemaakt = datetime.datetime.fromisoformat(s["created"].replace("Z", "+00:00"))
                 minuten = (nu - gemaakt).total_seconds() / 60
-                merk = "OUD" if minuten > OUD_MINUTEN else "ok"
+                werkt = bezet is not None and s["name"] in bezet
+                merk = "OUD" if minuten > OUD_MINUTEN and not werkt else "ok"
                 print(f"          {merk:3} {s['name']:22} {s['server_type']['name']:8} "
                       f"{minuten:5.0f} min")
+                if minuten > OUD_MINUTEN and bezet is not None and s["name"] in bezet:
+                    # Working, not leaking. Jobs here legitimately run long (the WASM
+                    # smoke test alone takes 10-14 minutes), so age alone says nothing.
+                    continue
                 if minuten > OUD_MINUTEN:
+                    onbekend = ("" if bezet is not None else
+                                " (could not read the runner list, so this may be a live job)")
                     klachten.append(
-                        f"{s['name']} has been up {minuten:.0f} minutes; a job does not take "
-                        "that long, so it outlived its run and is billing by the hour"
+                        f"{s['name']} has been up {minuten:.0f} minutes and is running "
+                        f"nothing{onbekend}; it outlived its run and is billing by the hour"
                     )
 
-    # --- GitHub runners
-    runners = gh(f"repos/{REPO}/actions/runners")
+    # --- GitHub runners (already read above, so age can be judged against busy-ness)
     if runners is None:
         print("SKIPPED (not a pass): could not read the runner list.", file=sys.stderr)
     else:
