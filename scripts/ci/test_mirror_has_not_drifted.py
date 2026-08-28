@@ -28,8 +28,15 @@ import tempfile
 BEWAKER = pathlib.Path(__file__).with_name("mirror_has_not_drifted.py")
 
 
+# GIT_DIR, GIT_INDEX_FILE and friends are set while a hook runs, and they follow
+# a subprocess into a scratch repository -- where `git add` then writes into the
+# real repository's index and exits 128. The local gate runs this from the
+# pre-push hook, so it failed there and nowhere else.
+SCHOON = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def git(map_: pathlib.Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=map_, check=True,
+    subprocess.run(["git", *args], cwd=map_, check=True, env=SCHOON,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -55,7 +62,7 @@ def bouw(map_: pathlib.Path, bron_extra: int, spiegel_extra: int) -> None:
 
 
 def draai(map_: pathlib.Path, bron: str, doel: str) -> subprocess.CompletedProcess[str]:
-    omgeving = dict(os.environ, MIRROR_SOURCE=bron, MIRROR_TARGET=doel)
+    omgeving = dict(SCHOON, MIRROR_SOURCE=bron, MIRROR_TARGET=doel)
     return subprocess.run([sys.executable, str(BEWAKER)], cwd=map_,
                           capture_output=True, text=True, env=omgeving, check=False)
 

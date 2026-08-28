@@ -69,5 +69,50 @@ else:
     esac
 done
 
-echo "every instance is busy or gone; one will be created"
-echo "reused=false" >> "${uit}"
+# REGEL (Jasper, 28-08-2026): er draait nooit meer dan één instance tegelijk.
+#
+# Als er al een machine staat maar hij is bezet, wachten we tot hij vrijkomt --
+# we kopen er geen tweede bij. Een tweede machine kost een heel extra uur en
+# levert bij een bouw van tien minuten hooguit een paar minuten wandkloktijd op.
+#
+# Loopt de wachttijd af, dan stopt dit met een fout in plaats van alsnog te
+# kopen. Een pijplijn die wacht is zichtbaar; een rekening die verdubbelt niet.
+wacht=0
+while [ "${wacht}" -lt 900 ]; do
+    for naam in ${servers}; do
+        staat="$(printf '%s' "${runners}" | python3 -c 'import json,sys
+naam = sys.argv[1]
+for r in json.load(sys.stdin).get("runners", []):
+    if r["name"] == naam:
+        print("idle" if r["status"] == "online" and not r["busy"] else "busy")
+        break
+else:
+    print("gone")' "${naam}" 2>/dev/null)"
+        if [ "${staat}" = "idle" ]; then
+            echo "reusing ${naam} after waiting ${wacht}s"
+            echo "label=${naam}" >> "${uit}"
+            echo "reused=true" >> "${uit}"
+            exit 0
+        fi
+    done
+    sleep 30
+    wacht=$((wacht + 30))
+    runners="$(curl -sf -H "Authorization: Bearer ${RUNNER_PAT}" \
+      "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runners" || echo '{}')"
+    servers="$(curl -sf -H "Authorization: Bearer ${HCLOUD_TOKEN}" \
+      'https://api.hetzner.cloud/v1/servers?per_page=50' \
+      | python3 -c 'import json,sys
+d = json.load(sys.stdin).get("servers", [])
+print(" ".join(s["name"] for s in d if s["name"].startswith("gh-runner-")))' 2>/dev/null)"
+    if [ -z "${servers}" ]; then
+        echo "the instance went away while waiting; creating one"
+        echo "reused=false" >> "${uit}"
+        exit 0
+    fi
+    echo "still busy after ${wacht}s"
+done
+
+echo "an instance has been busy for 15 minutes and the rule says never more" >&2
+echo "than one at a time. Refusing to buy a second: re-run this once the" >&2
+echo "other build is done, or raise the wait if builds legitimately take longer." >&2
+exit 1

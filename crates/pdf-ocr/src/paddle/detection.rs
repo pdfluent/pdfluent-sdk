@@ -84,15 +84,23 @@ pub fn preprocess_for_detection(
 ///
 /// Returns the probability map with shape [1, 1, H, W].
 ///
-/// **No test reaches this, deliberately.** It runs a PaddleOCR ONNX session,
-/// which needs the model files -- tens of megabytes that are downloaded at
-/// setup, not committed. A test that skips when they are absent proves nothing
-/// on the machine where it matters; a test that downloads them makes every
-/// suite run depend on somebody else's CDN.
+/// **No test reaches this, deliberately, and that follows the scope decision
+/// rather than a gap in the suite.**
 ///
-/// The measured decision (28-08-2026) is that OCR inference is covered by the
-/// corpus gate, which has the models, and that unit tests here would only
-/// assert that ONNX Runtime returns tensors.
+/// BESLUIT 19-08-2026: we do not develop OCR. We facilitate three routes to
+/// somebody else's -- cloud through the `OcrEngine` trait, PaddleOCR behind the
+/// `paddle` feature, Tesseract behind `tesseract` -- and the facade wires none
+/// of them, so an ordinary `pdfluent` dependency pulls no system libraries and
+/// downloads no models.
+///
+/// This function is inside the `paddle` route. It drives a third-party ONNX
+/// model that is fetched once from HuggingFace and never committed. Testing it
+/// would assert that ONNX Runtime returns tensors for weights we did not train
+/// and do not maintain -- which is not our behaviour to guard.
+///
+/// What is ours is the seam: the `OcrEngine` trait and `make_searchable`, which
+/// writes words and `bbox_px` back as an invisible text layer. That is where a
+/// test earns its keep.
 pub fn detect_inference(
     session: &mut Session,
     input: &Array4<f32>,
