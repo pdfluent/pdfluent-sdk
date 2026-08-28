@@ -32,6 +32,10 @@ def draai(busy: bool, minuten: int = 120, paginas: int = 1, liegt: bool = False)
     naam = "gh-runner-test"
 
     mod.hetzner_token = lambda: "stub"
+    # Without this the unit test reaches the real Hetzner API on every run: the
+    # exception is swallowed into a SKIPPED line, so the sizing path silently
+    # goes unexercised while the test still reports success.
+    mod.catalogus = lambda _t: dict(CATALOGUS)
     mod.servers = lambda _t: [
         {"name": naam, "server_type": {"name": "cpx42"}, "created": gemaakt.isoformat()}
     ]
@@ -64,8 +68,50 @@ def draai(busy: bool, minuten: int = 120, paginas: int = 1, liegt: bool = False)
     return code, uit.getvalue() + fout.getvalue()
 
 
+CATALOGUS = {
+    # what we ran until 28-08: eight cores at four times the price of its equal
+    "cpx42": {"cores": 8, "memory": 16, "arch": "x86", "uur": 0.1114, "hier": True},
+    "cx43":  {"cores": 8, "memory": 16, "arch": "x86", "uur": 0.0256, "hier": True},
+    "cx53":  {"cores": 16, "memory": 32, "arch": "x86", "uur": 0.0473, "hier": True},
+    # cheaper per core, but a different architecture is a decision, not a saving
+    "cax41": {"cores": 16, "memory": 32, "arch": "arm", "uur": 0.0657, "hier": True},
+    # cheap and bigger, but not sold where we provision
+    "cxELDERS": {"cores": 16, "memory": 32, "arch": "x86", "uur": 0.0100, "hier": False},
+    # smaller: never an answer, however cheap
+    "cx33":  {"cores": 4, "memory": 8, "arch": "x86", "uur": 0.0136, "hier": True},
+}
+
+
+def formaat_controles(mod) -> list[str]:
+    stuk = []
+    beter = mod.beter_formaat("cpx42", CATALOGUS)
+    if "cx43" not in beter or "cx53" not in beter:
+        stuk.append(f"a type beaten on both cores and price was not spotted: {beter}")
+    if "cax41" in beter:
+        stuk.append("an arm type was proposed; that changes the toolchain, so it is a decision")
+    if "cxELDERS" in beter:
+        stuk.append("a type absent from our location was proposed")
+    if "cx33" in beter:
+        stuk.append("a smaller machine was proposed as an improvement")
+    if beter and beter[0] != "cx43":
+        stuk.append(f"the cheapest qualifying type should come first, got {beter[0]}")
+    # A deprecated type we are still running must stay in the catalogue, or the
+    # comparison loses its baseline and the check goes quiet exactly when moving
+    # matters most.
+    verouderd = dict(CATALOGUS)
+    verouderd["cpx42"] = {**verouderd["cpx42"], "deprecated": True}
+    if not mod.beter_formaat("cpx42", verouderd):
+        stuk.append("a deprecated type in use lost its comparison, so no advice was given")
+
+    # And the other direction: once we are on the best type, stay quiet.
+    if mod.beter_formaat("cx43", CATALOGUS):
+        stuk.append("the check still complains when the type in use is already the cheapest")
+    return stuk
+
+
 def main() -> int:
     stuk = []
+    stuk += formaat_controles(laad())
 
     # A busy machine is working, however old it is.
     _, tekst = draai(busy=True)
