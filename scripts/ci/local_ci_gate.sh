@@ -42,6 +42,7 @@ if [ -n "$(git status --porcelain | grep -vE 'gen/schemas|\.e1_gaps')" ]; then
   echo "NOTE: working tree has uncommitted changes (the CI audit job requires a clean tree)."
 fi
 run branch-mr python3 scripts/ci/branches_have_a_merge_request.py
+run kosten   python3 scripts/ci/no_hosted_minutes_on_a_push.py
 run ci-yaml  python3 scripts/ci/ci_config_lint.py
 run metadata cargo metadata --no-deps --format-version 1
 run fmt      cargo fmt --all -- --check

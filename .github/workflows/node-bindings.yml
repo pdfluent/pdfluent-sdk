@@ -14,7 +14,12 @@ name: Node.js Bindings
 on:
   push:
     tags: ['node/v*', 'v*.*.*']
-    branches: [master]
+    # Deliberately no `branches:`. With master in here, every push to master ran
+    # build-and-test across ubuntu, macOS and Windows, plus build-release across
+    # macos-13 and macos-latest. macOS bills at ten times the Linux rate and
+    # Windows at twice, so an ordinary push was the largest line on the Actions
+    # bill -- to answer a question ("do the bindings still build for a release?")
+    # that only matters at a tag.
   workflow_dispatch:
     inputs:
       publish_npm:
