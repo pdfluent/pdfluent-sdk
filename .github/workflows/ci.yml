@@ -71,6 +71,8 @@ jobs:
         run: python3 scripts/ci/one_instance_per_event.py
       - name: Every needs names a job that exists
         run: python3 scripts/ci/workflow_jobs_exist.py
+      - name: Every self-hosted label has a runner
+        run: python3 scripts/ci/every_label_has_a_runner.py
       # The guard first, then its own test -- a guard whose parser stopped
       # understanding the files reports a clean tree in exactly the same words.
       - name: The guard that reads run-blocks still reads them
