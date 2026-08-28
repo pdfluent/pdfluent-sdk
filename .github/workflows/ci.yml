@@ -154,6 +154,12 @@ jobs:
       - run: pip install --quiet pyyaml
       - name: Orchestration stays on hosted runners
         run: python3 scripts/ci/orchestration_stays_hosted.py
+      # The guard first, then its own test -- a guard whose parser stopped
+      # understanding the files reports a clean tree in exactly the same words.
+      - name: The guard that reads run-blocks still reads them
+        run: python3 scripts/ci/test_workflow_inputs_are_not_shell.py
+      - name: No caller-supplied string reaches a shell
+        run: python3 scripts/ci/workflow_inputs_are_not_shell.py
 
   license-metadata-guard:
     name: No MIT/Apache license on commercial npm packages

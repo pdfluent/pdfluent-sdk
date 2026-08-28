@@ -117,11 +117,7 @@ BASELINE = {
     # persistent machine -- so ubuntu-latest is not the fix here; restricting the
     # trigger is.
     ("crash-guard.yml", "crash-guard"),
-    ("enterprise-acceptance.yml", "build"),
-    ("enterprise-acceptance.yml", "enterprise-benchmark"),
-    ("enterprise-acceptance.yml", "gate-check"),
     ("gate-ci.yml", "gate"),
-    ("release-smoke.yml", "smoke"),
     ("wasm-gate.yml", "wasm-gate"),
 }
 
@@ -132,7 +128,10 @@ BASELINE = {
 # and the workflow still runs from the merge commit -- source branch included.
 # Codex caught that; the first version read the filter as proof the code was
 # already merged, which is the opposite of what a pull request is.
-REF_CHOSEN_BY_CALLER = {"workflow_dispatch", "workflow_call", "schedule",
+# `schedule` is deliberately absent. A scheduled run always takes the workflow
+# file from the default branch, so the caller cannot choose the body -- unlike
+# `workflow_dispatch`, where the ref is a field on the form.
+REF_CHOSEN_BY_CALLER = {"workflow_dispatch", "workflow_call",
                         "pull_request", "pull_request_target", "repository_dispatch"}
 
 
@@ -169,15 +168,23 @@ def triggers(doc: dict) -> dict:
 def branch_locked(trigger_block) -> bool:
     """True when every trigger is pinned to the default branch.
 
-    Only `push` qualifies. A push to master runs code that is, by definition,
-    already on master. A pull_request does not: its branch filter names the
-    target, and the body comes from the merge commit.
+    Two qualify. `push` with a `branches: [master]` filter runs code that is,
+    by definition, already on master. `schedule` needs no filter at all: GitHub
+    only ever runs a scheduled workflow from the default branch, so there is no
+    ref for a caller to choose.
+
+    A `pull_request` does not qualify, however its filter reads: `branches:`
+    names the *target*, and the body comes from the merge commit, source branch
+    included. Neither does `push` with only a `tags:` filter -- a tag can point
+    at any commit, including one that never reached master.
     """
     if not isinstance(trigger_block, dict):
         return False
     for naam, waarde in trigger_block.items():
         if naam in REF_CHOSEN_BY_CALLER:
             return False
+        if naam == "schedule":
+            continue
         takken = (waarde or {}).get("branches") if isinstance(waarde, dict) else None
         if not takken or set(takken) - {"master", "main"}:
             return False

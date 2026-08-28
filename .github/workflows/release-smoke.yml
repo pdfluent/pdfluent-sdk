@@ -25,7 +25,11 @@ env:
 jobs:
   smoke:
     name: Release smoke (compile + test + package)
-    runs-on: self-hosted
+    # This workflow has never produced a single run. It needs no corpus, so
+    # it has no reason to sit on the persistent desktop. Moving it here is
+    # therefore unverified: if it turns out to want something only that
+    # machine has, delete it rather than move it back (#266).
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
@@ -62,8 +66,10 @@ jobs:
           tar -tzf target/package/pdfluent-*.crate | sort | head -60
 
       - name: Package validation — ${{ inputs.crate || 'pdf-engine' }}
+        env:
+          INPUT_CRATE: ${{ inputs.crate || 'pdf-engine' }}
         run: |
-          CRATE="${{ inputs.crate || 'pdf-engine' }}"
+          CRATE="$INPUT_CRATE"
           cargo package -p "$CRATE" --no-verify --allow-dirty
           echo "--- $CRATE package contents ---"
           tar -tzf "target/package/${CRATE}-"*.crate | sort | head -40

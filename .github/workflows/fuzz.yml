@@ -62,8 +62,10 @@ jobs:
         run: cargo install cargo-fuzz
       - name: Smoke run (60s)
         working-directory: fuzz
+        env:
+          INPUT_TARGET: ${{ inputs.target }}
         run: |
-          TARGET="${{ inputs.target }}"
+          TARGET="$INPUT_TARGET"
           if [[ -n "$TARGET" && "$TARGET" != "${{ matrix.target }}" ]]; then
             echo "Skipping ${{ matrix.target }} (only running $TARGET)"
             exit 0
@@ -132,9 +134,12 @@ jobs:
             fuzz-corpus-${{ matrix.target }}-
       - name: Run fuzzer
         working-directory: fuzz
+        env:
+          INPUT_DURATION: ${{ inputs.duration || '300' }}
+          INPUT_TARGET: ${{ inputs.target }}
         run: |
-          DURATION="${{ inputs.duration || '300' }}"
-          TARGET="${{ inputs.target }}"
+          DURATION="$INPUT_DURATION"
+          TARGET="$INPUT_TARGET"
           if [[ -n "$TARGET" && "$TARGET" != "${{ matrix.target }}" ]]; then
             echo "Skipping ${{ matrix.target }} (only running $TARGET)"
             exit 0

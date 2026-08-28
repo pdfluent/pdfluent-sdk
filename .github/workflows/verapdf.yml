@@ -70,8 +70,10 @@ jobs:
         run: echo "/opt/verapdf" >> $GITHUB_PATH
 
       - name: Run conformance check
+        env:
+          INPUT_PROFILE: ${{ inputs.profile || '2b' }}
         run: |
-          PROFILE="${{ inputs.profile || '2b' }}"
+          PROFILE="$INPUT_PROFILE"
           if [ ! -d corpus ] || [ -z "$(find corpus -name '*.pdf' -type f 2>/dev/null)" ]; then
             echo "No PDF corpus found — skipping conformance check"
             mkdir -p reports/verapdf

@@ -70,8 +70,10 @@ jobs:
 
       - name: Run AVRT
         if: steps.gold-check.outputs.exists == 'true'
+        env:
+          INPUT_THRESHOLD: ${{ inputs.threshold || '1.0' }}
         run: |
-          THRESHOLD="${{ inputs.threshold || '1.0' }}"
+          THRESHOLD="$INPUT_THRESHOLD"
           ./scripts/run-avrt.sh \
             --renders renders/ \
             --gold gold-masters/ \
