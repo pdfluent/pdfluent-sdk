@@ -193,6 +193,16 @@ def op_blijvende_runner(runs_on) -> bool:
 # that same decision: the heavy build goes to a throwaway instance, which is
 # both free and faster than a hosted runner.
 BASELINE = {
+    # Orchestration for a pull request, under the 28-08 decision above: the
+    # heavy build goes to a throwaway instance and the desktop only creates and
+    # deletes it. A PR branch could change what those two jobs do; accepted
+    # while this repository has one contributor.
+    ("docs-drift-guard.yml", "create-runner"),
+    ("docs-drift-guard.yml", "delete-runner"),
+    ("wasm-surface-guard.yml", "create-runner"),
+    ("wasm-surface-guard.yml", "delete-runner"),
+    ("xfa-regression.yml", "create-runner"),
+    ("xfa-regression.yml", "delete-runner"),
     ("ci-ephemeral.yml", "create-runner"),
     ("ci-ephemeral.yml", "delete-runner"),
     ("bench.yml", "benchmark"),

@@ -27,13 +27,39 @@ on:
   workflow_dispatch:
 
 env:
+  HCLOUD_SNAPSHOT_ID: '425004761' # xfa-golden-ci-base-v2
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
+  # One throwaway instance for this workflow. The jobs below queue on it rather
+  # than spreading across hosted runners: free, and a cpx42 has eight cores
+  # against a hosted runner's two to four. Orchestration sits on the desktop,
+  # which costs nothing (#274).
+  create-runner:
+    # Only from the default branch: a dispatch can choose the ref, and this
+    # job sits on the machine with the corpus and the runner token (#268).
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: [self-hosted, xfa-fast]
+    outputs:
+      label: ${{ steps.create.outputs.label }}
+      server_id: ${{ steps.create.outputs.server_id }}
+    steps:
+      - name: Create ephemeral Hetzner runner
+        id: create
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: create
+          github_token: ${{ secrets.GH_RUNNER_PAT }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          server_type: cpx42
+          location: fsn1
+          image: ${{ env.HCLOUD_SNAPSHOT_ID }}
+
   wasm-opt-parity:
+    needs: create-runner
     name: "wasm-opt -O3 vs disabled (byte-identical outputs)"
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.create-runner.outputs.label }}
     timeout-minutes: 30
 
     steps:
@@ -130,3 +156,17 @@ jobs:
             /tmp/ref/pkg/xfa_wasm_bg.wasm
             /tmp/cand/pkg/xfa_wasm_bg.wasm
           retention-days: 14
+  delete-runner:
+    needs: [create-runner, wasm-opt-parity]
+    if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      - name: Delete ephemeral Hetzner runner
+        if: needs.create-runner.outputs.server_id != ''
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: delete
+          github_token: ${ secrets.GH_RUNNER_PAT }
+          hcloud_token: ${ secrets.HCLOUD_TOKEN }
+          name: ${ needs.create-runner.outputs.label }
+          server_id: ${ needs.create-runner.outputs.server_id }
