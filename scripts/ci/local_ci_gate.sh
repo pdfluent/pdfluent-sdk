@@ -52,6 +52,7 @@ run instances python3 scripts/ci/one_instance_per_event.py
 run jobsexist python3 scripts/ci/workflow_jobs_exist.py
 run labels    python3 scripts/ci/every_label_has_a_runner.py
 run crons     python3 scripts/ci/schedule_guards_match_their_cron.py
+run mirror    python3 scripts/ci/test_mirror_has_not_drifted.py
 # Advisory, never blocking. It reports on live machines -- a queue, a busy
 # runner, a server someone is still using -- and none of that is a reason to
 # refuse a commit. The three-hourly run is where its exit code matters.
