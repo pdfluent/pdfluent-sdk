@@ -47,8 +47,9 @@ WACHTRIJ_ALARM = 4
 EURO_PER_UUR = {"cpx11": 0.0077, "cpx21": 0.0128, "cpx31": 0.0250,
                 "cpx41": 0.0489, "cpx42": 0.0489, "cpx51": 0.0989}
 STANDAARD_PER_UUR = 0.05
-# More than this at once and something is fanning out rather than sharing.
-GELIJKTIJDIG_ALARM = 2
+# REGEL (Jasper, 28-08-2026): nooit meer dan één tegelijk. Een tweede machine
+# kost een heel extra uur voor hooguit een paar minuten wandkloktijd.
+GELIJKTIJDIG_ALARM = 1
 # Hetzner bills a started hour in full. Two provisionings inside one hour cost
 # two hours for work that would have fitted in one, so this is the number that
 # says whether the pipeline is being used or churned.
