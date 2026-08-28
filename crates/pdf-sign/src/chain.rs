@@ -52,6 +52,16 @@ impl CertificateInfo {
 /// The first certificate in `certs` is assumed to be the signing (leaf)
 /// certificate. The function attempts to build a chain to a self-signed
 /// root.
+///
+/// **No test reaches this, deliberately.** Building a chain needs a leaf, an
+/// intermediate and a self-signed root that agree with each other, and
+/// generating those at test time means shipping a small CA -- key material in
+/// the repository, with an expiry date that turns the suite red on a morning
+/// nobody chose.
+///
+/// The measured decision (28-08-2026) is that this is worth a fixture built
+/// from a real signed document rather than a synthetic chain, and that belongs
+/// with the corpus work, not here.
 pub fn verify_certificate_chain(certs: &[X509Certificate]) -> ChainVerificationResult {
     if certs.is_empty() {
         return ChainVerificationResult {
@@ -171,6 +181,14 @@ pub enum RevocationSource {
 /// This performs offline revocation checking using data already embedded
 /// in the PDF. Online OCSP/CRL fetching is intentionally not implemented
 /// (would require network access and async runtime).
+///
+/// **No test reaches this, deliberately.** It reads OCSP responses and CRLs out
+/// of a document's DSS, so a test needs a document that carries them -- which
+/// means a real signed PDF with revocation data embedded, not something that
+/// can be assembled by hand.
+///
+/// Online fetching is out of scope by design, as the note above says, so the
+/// gap here is a fixture and not a feature.
 pub fn check_revocation_embedded(
     cert: &X509Certificate,
     ocsp_responses: &[Vec<u8>],

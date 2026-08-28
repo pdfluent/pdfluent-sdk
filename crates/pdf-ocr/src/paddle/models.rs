@@ -396,6 +396,16 @@ fn fetch_verified(
 }
 
 /// Load ONNX sessions for all required models.
+///
+/// **No test reaches this, deliberately.** It runs a PaddleOCR ONNX session,
+/// which needs the model files -- tens of megabytes that are downloaded at
+/// setup, not committed. A test that skips when they are absent proves nothing
+/// on the machine where it matters; a test that downloads them makes every
+/// suite run depend on somebody else's CDN.
+///
+/// The measured decision (28-08-2026) is that OCR inference is covered by the
+/// corpus gate, which has the models, and that unit tests here would only
+/// assert that ONNX Runtime returns tensors.
 pub fn load_sessions(config: &PaddleOcrConfig) -> Result<ModelSessions, ModelError> {
     let detection = create_session(&detection_model_path(config), config.num_threads)?;
     let recognition = create_session(&recognition_model_path(config), config.num_threads)?;
