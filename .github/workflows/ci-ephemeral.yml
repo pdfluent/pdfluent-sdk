@@ -126,10 +126,20 @@ jobs:
       # is why `cargo fmt` kept answering "no such command" after the component
       # was demonstrably up to date. `rustup which cargo` gives the path of the
       # active toolchain's own cargo, and that one knows about them.
-      - name: Find the cargo that belongs to the pinned toolchain
+      # `cargo fmt` does not live inside cargo: it runs `cargo-fmt`, which cargo
+      # looks for on PATH. So calling the toolchain's own cargo was not enough --
+      # its bin directory still was not on PATH, and that is where `cargo-fmt`
+      # and `cargo-clippy` sit.
+      #
+      # `dirname "$(rustup which cargo)"` is that directory. Earlier attempts
+      # pointed at $CARGO_HOME/bin, which on this image is /.cargo/bin and does
+      # not exist at all.
+      - name: Put the pinned toolchain's bin directory on PATH
         run: |
-          echo "CARGO_BIN=$(rustup which cargo)" >> "$GITHUB_ENV"
-          echo "using $(rustup which cargo)"
+          toolchain_bin="$(dirname "$(rustup which cargo)")"
+          echo "$toolchain_bin" >> "$GITHUB_PATH"
+          echo "added $toolchain_bin"
+          ls "$toolchain_bin"
       # The image carries cargo, rustc and rustup as plain binaries in
       # /usr/local/bin. CARGO_HOME says /.cargo and that directory does not
       # exist; RUSTUP_HOME is unset. So neither $GITHUB_PATH nor a PATH export
@@ -156,37 +166,32 @@ jobs:
       # than after the test suite. `--no-fail-fast` on the tests, because one
       # failing crate should not hide the state of the other forty.
       - name: fmt
-        run: |
-          "$CARGO_BIN" fmt --all --check
+        run: cargo fmt --all --check
       - name: check
-        run: |
-          "$CARGO_BIN" check --workspace --exclude pdf-desktop
+        run: cargo check --workspace --exclude pdf-desktop
       - name: clippy
-        run: |
-          "$CARGO_BIN" clippy --workspace --exclude pdf-desktop -- -D warnings
+        run: cargo clippy --workspace --exclude pdf-desktop -- -D warnings
       - name: test
-        run: |
-          "$CARGO_BIN" test --workspace --exclude pdf-desktop --no-fail-fast
+        run: cargo test --workspace --exclude pdf-desktop --no-fail-fast
 
       # What used to be four workflows, each creating its own instance. One push
       # fired them together and Hetzner made five cpx42s inside five minutes
       # (#275). They are steps on the one instance now; the workflows they came
       # from are still there for a manual dispatch.
       - name: xfa regression
-        run: |
-          "$CARGO_BIN" test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
-          "$CARGO_BIN" test -p pdf-xfa --test '*' --release
+        run: cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
+          cargo test -p pdf-xfa --test '*' --release
 
       - name: wasm surface
         run: |
           rustup target add wasm32-unknown-unknown
-          "$CARGO_BIN" check --target wasm32-unknown-unknown -p pdfluent --tests
-          "$CARGO_BIN" test -p pdfluent --test wasm_surface
+          cargo check --target wasm32-unknown-unknown -p pdfluent --tests
+          cargo test -p pdfluent --test wasm_surface
 
       - name: docs drift (advisory)
         continue-on-error: true
         run: |
-          "$CARGO_BIN" build -p pdfluent-snippet-extract --release
+          cargo build -p pdfluent-snippet-extract --release
 
       # The WASM build that wasm.yml used to do on a push to master. Publishing
       # stays there, on tags; this is the build and the website rebuild.
