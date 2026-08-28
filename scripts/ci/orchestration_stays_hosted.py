@@ -49,6 +49,7 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parent.parent.parent
+WORTEL = REPO
 FLOWS = REPO / ".github" / "workflows"
 FLOOR = 10
 
@@ -120,17 +121,43 @@ ZWARE_BASELINE = {
     # a broken preflight surfaces at the worst possible moment. Moving it is
     # tracked separately on #267 rather than done blind.
     ("publish-crates.yml", "preflight"),
+    # Found only once the guard started following the scripts a job calls:
+    # `publish` runs ./scripts/publish_ordered.sh, which compiles. Same reason
+    # as preflight -- release path, no way to rehearse a change to it without
+    # publishing. (Codex, #1541)
+    ("publish-crates.yml", "publish"),
 }
 
 
-def compileert(job) -> bool:
-    """True when any step of this job runs a cargo command that builds."""
+# A job that calls `bash scripts/ci/run_build.sh` compiles just as hard as one
+# that types `cargo build`, and the workflow file says nothing about it. Codex
+# raised this on #1541; the first version read only the YAML.
+# Only shell scripts. A .sh file's text is commands, so `cargo build` in it is a
+# build. A .py file's text is mostly not: this guard's own source contains
+# `cargo build|test|check` inside the pattern below, and following it made the
+# job that runs this guard look like a compile.
+AANGEROEPEN = re.compile(r"(?:bash |sh |\./)?(scripts/[\w/.-]+\.sh)")
+
+
+def compileert(job, wortel: pathlib.Path) -> bool:
+    """True when this job builds -- directly, or through a script it calls."""
     if not isinstance(job, dict):
         return False
     for stap in job.get("steps") or []:
-        if isinstance(stap, dict) and isinstance(stap.get("run"), str):
-            if ZWAAR.search(stap["run"]):
-                return True
+        if not (isinstance(stap, dict) and isinstance(stap.get("run"), str)):
+            continue
+        script = stap["run"]
+        if ZWAAR.search(script):
+            return True
+        for m in AANGEROEPEN.finditer(script):
+            pad = wortel / m.group(1)
+            if not pad.is_file():
+                continue
+            try:
+                if ZWAAR.search(pad.read_text(errors="replace")):
+                    return True
+            except OSError:
+                continue
     return False
 
 
@@ -149,7 +176,44 @@ def op_blijvende_runner(runs_on) -> bool:
 # refuse to run off the default branch, and the crates.io token moved from
 # workflow-level env -- where every step of every job could read it -- onto the
 # single step that logs in.
+# BESLUIT 28-08-2026 (Jasper): "Ik zou op dit moment niet te bevreesd daarover
+# zijn zolang ik de enige contributor ben. Hou kosten laag maar zorg dat
+# pipelines wel snel gaan en development niet tegenhoudt."
+#
+# That settles what this file could not settle by itself. The exposure is real
+# -- a pull_request runs the merge commit, so a branch can put its own steps on
+# the persistent desktop -- and on a private repository with one contributor
+# there is no second party to protect against. Fork pull requests would change
+# that, and there are none.
+#
+# So these stay recorded rather than fixed, and the guard's sharp end moves to
+# ZWARE_BASELINE: heavy work must not run on that machine, because four cores
+# shared with the corpus is a speed problem no matter who wrote the branch.
+#
+# If a second contributor appears, this is the first decision to revisit
+# (#266, #268).
+#
+# ci-ephemeral.yml orchestrates from the desktop for pull requests too, under
+# that same decision: the heavy build goes to a throwaway instance, which is
+# both free and faster than a hosted runner.
 BASELINE = {
+    # The light guard work, now one job. It moved off ubuntu-latest on 28-08-2026 when the
+    # Actions budget ran out and every hosted job started failing outright --
+    # a spending limit disables hosted runners and leaves self-hosted ones
+    # working, so this is where the guards keep running at all. Seconds of file
+    # scanning each; booting an instance would cost more than the work. Under
+    # the same 28-08 decision about branch code on the desktop (#274).
+    ("ci.yml", "orchestration-guard"),
+    ("security-audit.yml", "cargo-audit"),
+    ("security-audit.yml", "cargo-deny-advisories"),
+    ("verapdf.yml", "conformance"),
+    # Orchestration for a pull request, under the 28-08 decision above: the
+    # heavy build goes to a throwaway instance and the desktop only creates and
+    # deletes it. A PR branch could change what those two jobs do; accepted
+    # while this repository has one contributor. Only ci-ephemeral does this
+    # now -- the others hand their work to the instance it creates (#275).
+    ("ci-ephemeral.yml", "create-runner"),
+    ("ci-ephemeral.yml", "delete-runner"),
     ("bench.yml", "benchmark"),
     # Found only after Codex pointed out that a pull_request branch filter names
     # the base, not the source. Runs on [self-hosted, xfa-corpus] -- a second
@@ -250,7 +314,7 @@ def main() -> int:
         # workspace on the persistent desktop saturates it whether the push was
         # reviewed or not.
         for naam, job in (doc.get("jobs") or {}).items():
-            if not op_blijvende_runner(job.get("runs-on", "")) or not compileert(job):
+            if not op_blijvende_runner(job.get("runs-on", "")) or not compileert(job, WORTEL):
                 continue
             if (pad.name, naam) in ZWARE_BASELINE:
                 zwaar_bekend.append((pad.name, naam))

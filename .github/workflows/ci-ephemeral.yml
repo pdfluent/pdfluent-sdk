@@ -25,6 +25,22 @@
 name: CI (ephemeral Hetzner)
 
 on:
+  # Pull requests too, since 28-08-2026. The heavy build for a PR used to sit on
+  # ubuntu-latest and be billed; a cpx42 has eight cores against a hosted
+  # runner's two to four, so this is cheaper *and* quicker once the ninety
+  # seconds of boot are paid.
+  #
+  # The orchestration jobs run the workflow file from the PR's merge commit, so
+  # a branch could change what create-runner does on the desktop. Recorded, and
+  # accepted while this repository has one contributor -- see the note in
+  # scripts/ci/orchestration_stays_hosted.py.
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'CHANGELOG.md'
+      - '.github/**.md'
   push:
     branches: [master]
     paths-ignore:
@@ -44,6 +60,11 @@ env:
 
 jobs:
   create-runner:
+    # Without this the create action polls for a runner that may never
+    # register, holding the one desktop runner while everything else
+    # queues behind it. Fifteen minutes of that is what a wedged
+    # provisioning looked like (#274).
+    timeout-minutes: 10
     runs-on: [self-hosted, xfa-fast]
     outputs:
       label: ${{ steps.create.outputs.label }}
@@ -98,9 +119,52 @@ jobs:
       - name: test
         run: cargo test --workspace --exclude pdf-desktop --no-fail-fast
 
+      # What used to be four workflows, each creating its own instance. One push
+      # fired them together and Hetzner made five cpx42s inside five minutes
+      # (#275). They are steps on the one instance now; the workflows they came
+      # from are still there for a manual dispatch.
+      - name: xfa regression
+        run: |
+          cargo test -p pdf-xfa -p xfa-layout-engine -p xfa-dom-resolver --release
+          cargo test -p pdf-xfa --test '*' --release
+
+      - name: wasm surface
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check --target wasm32-unknown-unknown -p pdfluent --tests
+          cargo test -p pdfluent --test wasm_surface
+
+      - name: docs drift (advisory)
+        continue-on-error: true
+        run: cargo build -p pdfluent-snippet-extract --release
+
+      # The WASM build that wasm.yml used to do on a push to master. Publishing
+      # stays there, on tags; this is the build and the website rebuild.
+      - name: wasm build
+        if: github.event_name == 'push'
+        run: |
+          rustup target add wasm32-unknown-unknown
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          wasm-pack build --release --target web crates/xfa-wasm
+
+      - name: Trigger website rebuild
+        if: github.event_name == 'push' && env.WEBSITE_DEPLOY_TOKEN != ''
+        env:
+          WEBSITE_DEPLOY_TOKEN: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+          repository: pdfluent/pdfluent-playground
+          event-type: wasm-updated
+
   delete-runner:
     needs: [create-runner, workspace]
     if: always()
+    # Without this the create action polls for a runner that may never
+    # register, holding the one desktop runner while everything else
+    # queues behind it. Fifteen minutes of that is what a wedged
+    # provisioning looked like (#274).
+    timeout-minutes: 10
     runs-on: [self-hosted, xfa-fast]
     steps:
       # Only when there is something to delete: a failed create leaves the

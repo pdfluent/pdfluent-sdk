@@ -11,14 +11,13 @@ name: WASM Surface Guard
 # `to_images` ever drift, this job fails.
 
 on:
-  pull_request:
-    paths:
-      - 'crates/pdfluent/src/**'
-      - 'crates/pdfluent/tests/wasm_surface.rs'
-      - 'WASM_SUPPORT.md'
-      - '.github/workflows/wasm-surface-guard.yml'
-  push:
-    branches: [master]
+  # Automatic triggers removed on 28-08-2026. This work now runs on the
+  # shared instance that ci-ephemeral.yml creates: one server per push,
+  # not one per workflow. Five workflows each provisioning their own gave
+  # five cpx42s inside five minutes for a single push (#275).
+  workflow_dispatch:
+
+env:
 
 jobs:
   wasm-surface:

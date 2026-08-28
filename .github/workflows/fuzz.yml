@@ -2,8 +2,8 @@ name: Fuzzing
 
 on:
   schedule:
-    - cron: '30 2 * * *'    # nightly smoke: build all + 60s on core targets
-    - cron: '30 3 * * 0'    # weekly deep: all targets, full duration
+    - cron: '30 4 * * *'    # nightly smoke: build all + 60s on core targets
+    - cron: '30 6 * * 0'    # weekly deep: all targets, full duration
   workflow_dispatch:
     inputs:
       duration:
@@ -21,13 +21,49 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  HCLOUD_SNAPSHOT_ID: '425004761' # xfa-golden-ci-base-v2
 
 jobs:
+  # One throwaway instance for the whole workflow. The matrix jobs below queue
+  # on it one at a time instead of running in parallel on seven hosted runners:
+  # slower, and free. Fuzzing was the largest single line on the Actions bill --
+  # 97 minutes across nine jobs in the last 41 runs (#274).
+  #
+  # Orchestration sits on the desktop. A schedule always runs the workflow file
+  # from the default branch, so there is no branch-chosen body here.
+  create-runner:
+    # Only from the default branch. A schedule always runs master's file, but a
+    # dispatch lets the caller pick the ref -- and this job sits on the machine
+    # with the corpus, the warm cache and the runner token. Not a boundary
+    # against a hostile branch (#268), but it stops the accident.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # Without this the create action polls for a runner that may never
+    # register, holding the one desktop runner while everything else
+    # queues behind it. Fifteen minutes of that is what a wedged
+    # provisioning looked like (#274).
+    timeout-minutes: 10
+    runs-on: [self-hosted, xfa-fast]
+    outputs:
+      label: ${{ steps.create.outputs.label }}
+      server_id: ${{ steps.create.outputs.server_id }}
+    steps:
+      - name: Create ephemeral Hetzner runner
+        id: create
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: create
+          github_token: ${{ secrets.GH_RUNNER_PAT }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          server_type: cpx42
+          location: fsn1
+          image: ${{ env.HCLOUD_SNAPSHOT_ID }}
+
   # Bit-rot gate: every declared target must compile. Cheap, no fuzzing.
   # Runs on every trigger (nightly, weekly, manual).
   build:
     name: Build all fuzz targets
-    runs-on: ubuntu-latest
+    needs: create-runner
+    runs-on: ${{ needs.create-runner.outputs.label }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -41,9 +77,9 @@ jobs:
   # regressions quickly. Runs on the nightly schedule and on manual dispatch.
   smoke:
     name: Smoke ${{ matrix.target }}
-    needs: build
+    needs: [create-runner, build]
     if: github.event.schedule == '30 2 * * *' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.create-runner.outputs.label }}
     strategy:
       fail-fast: false
       matrix:
@@ -93,9 +129,9 @@ jobs:
   # Runs on the weekly schedule and on manual dispatch.
   deep:
     name: Deep ${{ matrix.target }}
-    needs: build
+    needs: [create-runner, build]
     if: github.event.schedule == '30 3 * * 0' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.create-runner.outputs.label }}
     strategy:
       fail-fast: false
       matrix:
@@ -163,3 +199,25 @@ jobs:
             echo "CRASHES FOUND in ${{ matrix.target }}:"; ls -la "$CRASH_DIR"; exit 1
           fi
           echo "No crashes found in ${{ matrix.target }}"
+
+  delete-runner:
+    needs: [create-runner, build, smoke, deep]
+    if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # Without this the create action polls for a runner that may never
+    # register, holding the one desktop runner while everything else
+    # queues behind it. Fifteen minutes of that is what a wedged
+    # provisioning looked like (#274).
+    timeout-minutes: 10
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      # A failed create leaves the outputs empty; a genuinely half-created
+      # instance is swept by hetzner-orphan-sweep.yml.
+      - name: Delete ephemeral Hetzner runner
+        if: needs.create-runner.outputs.server_id != ''
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: delete
+          github_token: ${{ secrets.GH_RUNNER_PAT }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          name: ${{ needs.create-runner.outputs.label }}
+          server_id: ${{ needs.create-runner.outputs.server_id }}

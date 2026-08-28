@@ -10,13 +10,13 @@ name: Docs Drift Guard
 # `.rs` files byte-for-byte.
 
 on:
-  pull_request:
-    paths:
-      - 'crates/pdfluent/tests/web_examples/**'
-      - 'tools/pdfluent-snippet-extract/**'
-      - '.github/workflows/docs-drift-guard.yml'
-  push:
-    branches: [master]
+  # Automatic triggers removed on 28-08-2026. This work now runs on the
+  # shared instance that ci-ephemeral.yml creates: one server per push,
+  # not one per workflow. Five workflows each provisioning their own gave
+  # five cpx42s inside five minutes for a single push (#275).
+  workflow_dispatch:
+
+env:
 
 jobs:
   drift-guard:
