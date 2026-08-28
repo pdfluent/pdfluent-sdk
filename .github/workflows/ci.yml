@@ -51,7 +51,7 @@ env:
 jobs:
   artifact-guard:
     name: No compiled build artifacts committed
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
       - name: Check for committed .so / .pyd / .node / .wasm artifacts
@@ -71,7 +71,7 @@ jobs:
 
   toolchain-pin-guard:
     name: Cross targets land on the pinned toolchain
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -82,7 +82,7 @@ jobs:
 
   test-count-parsers:
     name: The parsers that tell a binding job zero tests ran
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -94,7 +94,7 @@ jobs:
 
   orchestration-guard:
     name: No ref-dispatchable job on the persistent runner
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -121,7 +121,7 @@ jobs:
 
   license-metadata-guard:
     name: No MIT/Apache license on commercial npm packages
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
       - name: Verify commercial packages declare correct license
