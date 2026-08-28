@@ -18,14 +18,39 @@ on:
   push:
     branches: [master]
 
+env:
+  HCLOUD_SNAPSHOT_ID: '425004761' # xfa-golden-ci-base-v2
+
 jobs:
+  # One throwaway instance for this workflow. The jobs below queue on it rather
+  # than spreading across hosted runners: free, and a cpx42 has eight cores
+  # against a hosted runner's two to four. Orchestration sits on the desktop,
+  # which costs nothing (#274).
+  create-runner:
+    runs-on: [self-hosted, xfa-fast]
+    outputs:
+      label: ${{ steps.create.outputs.label }}
+      server_id: ${{ steps.create.outputs.server_id }}
+    steps:
+      - name: Create ephemeral Hetzner runner
+        id: create
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: create
+          github_token: ${{ secrets.GH_RUNNER_PAT }}
+          hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          server_type: cpx42
+          location: fsn1
+          image: ${{ env.HCLOUD_SNAPSHOT_ID }}
+
   drift-guard:
+    needs: create-runner
     name: Snippet extract output matches committed tests
     # Advisory until #1488 is resolved: the website shows aspirational API
     # not yet in the SDK, so regenerating produces non-compilable snippets.
     # The check still runs and reports drift; it does not block merges.
     continue-on-error: true
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.create-runner.outputs.label }}
     steps:
       - uses: actions/checkout@v4
 
@@ -78,3 +103,17 @@ jobs:
             echo "Then commit the regenerated .rs files."
             exit 1
           fi
+  delete-runner:
+    needs: [create-runner, drift-guard]
+    if: always()
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      - name: Delete ephemeral Hetzner runner
+        if: needs.create-runner.outputs.server_id != ''
+        uses: Cyclenerd/hcloud-github-runner@v1
+        with:
+          mode: delete
+          github_token: ${ secrets.GH_RUNNER_PAT }
+          hcloud_token: ${ secrets.HCLOUD_TOKEN }
+          name: ${ needs.create-runner.outputs.label }
+          server_id: ${ needs.create-runner.outputs.server_id }
