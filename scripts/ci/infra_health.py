@@ -39,14 +39,23 @@ import urllib.request
 REPO = os.environ.get("PDFLUENT_REPO", "jasperdew/xfa-native-rust")
 # A server older than this has outlived any plausible job.
 OUD_MINUTEN = 45
+# Where the workflows provision. A type that is cheaper but absent here is not
+# an option, so the sizing advice has to know this.
+LOCATIE = os.environ.get("PDFLUENT_HETZNER_LOCATIE", "fsn1")
 # More than this waiting means the desktop is the bottleneck.
 WACHTRIJ_ALARM = 4
 # What a cpx42 costs, so the report can say what an hour of carelessness cost
 # rather than counting machines. Hetzner bills by the hour, rounded up, which
 # is why a server that lives four minutes still costs a whole one.
-EURO_PER_UUR = {"cpx11": 0.0077, "cpx21": 0.0128, "cpx31": 0.0250,
-                "cpx41": 0.0489, "cpx42": 0.0489, "cpx51": 0.0989}
+# Filled from the Hetzner catalogue at run time. It used to be a literal table
+# and it drifted: it carried cpx42 at 0.0489 while the real gross price was
+# 0.1114, so every cost line in this report understated by a factor of two.
+# A price is a fact about the world, and this file is the wrong place to keep one.
+EURO_PER_UUR: dict[str, float] = {}
 STANDAARD_PER_UUR = 0.05
+# The type the workflows ask for, so the sizing check has something to judge
+# even when nothing is running at the moment.
+STANDAARD_TYPE = os.environ.get("PDFLUENT_HETZNER_TYPE", "cx53")
 # REGEL (Jasper, 28-08-2026): nooit meer dan één tegelijk. Een tweede machine
 # kost een heel extra uur voor hooguit een paar minuten wandkloktijd.
 GELIJKTIJDIG_ALARM = 1
@@ -120,6 +129,45 @@ def alle_runners():
     return {"runners": gevonden, "total_count": verwacht}
 
 
+def catalogus(token: str) -> dict[str, dict]:
+    """Every current server type with its cores, memory and hourly gross price."""
+    req = urllib.request.Request(
+        "https://api.hetzner.cloud/v1/server_types?per_page=60",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as antwoord:
+        rauw = json.load(antwoord).get("server_types", [])
+    uit = {}
+    for t in rauw:
+        if t.get("deprecated"):
+            continue
+        prijzen = [pr for pr in t["prices"] if pr["location"] == LOCATIE] or t["prices"]
+        uit[t["name"]] = {
+            "cores": t["cores"], "memory": t["memory"],
+            "arch": t["architecture"], "uur": float(prijzen[0]["price_hourly"]["gross"]),
+            "hier": any(pr["location"] == LOCATIE for pr in t["prices"]),
+        }
+    return uit
+
+
+def beter_formaat(huidig: str, cat: dict[str, dict]) -> list[str]:
+    """Types that are at least as big as `huidig` and cost less, in our location.
+
+    Same architecture only: an arm type is cheaper per core but would need a
+    different toolchain, and that is a decision, not an optimisation.
+    """
+    nu = cat.get(huidig)
+    if nu is None:
+        return []
+    return sorted(
+        (naam for naam, t in cat.items()
+         if t["hier"] and t["arch"] == nu["arch"]
+         and t["cores"] >= nu["cores"] and t["memory"] >= nu["memory"]
+         and t["uur"] < nu["uur"]),
+        key=lambda naam: cat[naam]["uur"],
+    )
+
+
 def main() -> int:
     klachten: list[str] = []
     nu = datetime.datetime.now(datetime.timezone.utc)
@@ -143,6 +191,32 @@ def main() -> int:
         except Exception as fout:  # noqa: BLE001 - reporting, not handling
             print(f"SKIPPED (not a pass): Hetzner unreachable: {fout}", file=sys.stderr)
             lijst = None
+        try:
+            cat = catalogus(token)
+            EURO_PER_UUR.update({naam: t["uur"] for naam, t in cat.items()})
+        except Exception as fout:  # noqa: BLE001 - reporting, not handling
+            print(f"SKIPPED (not a pass): could not read the price catalogue: {fout}",
+                  file=sys.stderr)
+            cat = {}
+
+        # Is the machine we buy the right one? Asked every run, because the
+        # catalogue changes under us and a type that was sensible in June can
+        # be beaten by a cheaper, larger one in August without anyone looking.
+        gebruikt = sorted({s["server_type"]["name"] for s in (lijst or [])}) or [STANDAARD_TYPE]
+        for soort in gebruikt:
+            beter = beter_formaat(soort, cat)
+            if not beter:
+                continue
+            eerste = cat[beter[0]]
+            dit = cat[soort]
+            klachten.append(
+                f"{soort} ({dit['cores']} cores, {dit['memory']:.0f} GB, "
+                f"EUR {dit['uur']:.4f}/h) is beaten in our own location by "
+                f"{beter[0]} ({eerste['cores']} cores, {eerste['memory']:.0f} GB, "
+                f"EUR {eerste['uur']:.4f}/h). More machine for less money is not a "
+                "trade-off to weigh; it is a type to change"
+            )
+
         if lijst is not None:
             per_uur = sum(EURO_PER_UUR.get(s["server_type"]["name"], STANDAARD_PER_UUR)
                           for s in lijst)
@@ -234,7 +308,7 @@ def main() -> int:
                   and datetime.datetime.fromisoformat(
                       r["created_at"].replace("Z", "+00:00")) > uur_geleden]
         if starts:
-            kosten_uur = len(starts) * EURO_PER_UUR["cpx42"]
+            kosten_uur = len(starts) * EURO_PER_UUR.get(STANDAARD_TYPE, STANDAARD_PER_UUR)
             print(f"[infra] churn: {len(starts)} instance(s) started in the last hour "
                   f"(EUR {kosten_uur:.2f} in billed hours)")
             if len(starts) > PER_UUR_ALARM:
@@ -254,7 +328,7 @@ def main() -> int:
                    if r["created_at"][:10] == f"{nu:%Y-%m-%d}"]
         if vandaag:
             print(f"[infra] cost: {len(vandaag)} run(s) today; a cpx42 hour is "
-                  f"EUR {EURO_PER_UUR['cpx42']:.3f}, and Hetzner rounds an hour up -- "
+                  f"EUR {EURO_PER_UUR.get(STANDAARD_TYPE, STANDAARD_PER_UUR):.3f}, and Hetzner rounds an hour up -- "
                   "so a build that takes ten minutes costs the same as one that takes "
                   "fifty, and splitting it across two machines costs double")
 
