@@ -92,7 +92,7 @@ jobs:
           mode: create
           github_token: ${{ secrets.GH_RUNNER_PAT }}
           hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
-          server_type: cpx42
+          server_type: cx53
           location: fsn1
           image: ${{ env.HCLOUD_SNAPSHOT_ID }}
 
