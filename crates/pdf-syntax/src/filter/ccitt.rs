@@ -93,7 +93,11 @@ pub(crate) fn decode(
         buffer: 0,
         bit_count: 0,
     };
-    let result = hayro_ccitt::decode(data, &mut decoder, &settings);
+    // Upstream 0.3.0 takes a reusable DecoderContext instead of settings by
+    // reference: the context is built once and reset per call rather than
+    // allocated on every call. One decode here, so it is built inline.
+    let mut ctx = hayro_ccitt::DecoderContext::new(settings);
+    let result = hayro_ccitt::decode(data, &mut decoder, &mut ctx);
 
     // If we decoded at least one row, let's be lenient and return what we got.
     // See also 0001763.pdf.
