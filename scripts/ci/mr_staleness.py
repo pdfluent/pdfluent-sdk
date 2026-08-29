@@ -66,11 +66,23 @@ def api(path: str, tok: str) -> list:
         return json.loads(fh.read().decode())
 
 
+def schone_omgeving() -> dict[str, str]:
+    """The caller's environment with every GIT_* variable removed.
+
+    A pre-push hook exports GIT_DIR and GIT_INDEX_FILE, and a subprocess
+    inherits them. A git command meant for a scratch directory then operates on
+    the real repository instead. On 25-08-2026 that put `core.bare = true` on
+    this repository and stopped all thirty worktrees -- the damage was outside
+    the script, not a wrong answer inside it.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def behind(branch: str) -> int | None:
     """Commits on master that this branch does not have."""
     for ref in (f"origin/{branch}", branch):
         r = subprocess.run(["git", "rev-list", "--count", f"{ref}..origin/master"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, env=schone_omgeving())
         if r.returncode == 0 and r.stdout.strip().isdigit():
             return int(r.stdout.strip())
     return None
@@ -94,7 +106,8 @@ def main() -> None:
         print(f"[mr_staleness] FATAL: could not read the merge requests: {e}", file=sys.stderr)
         sys.exit(2)
 
-    subprocess.run(["git", "fetch", "-q", "origin"], capture_output=True)
+    subprocess.run(["git", "fetch", "-q", "origin"], capture_output=True,
+                   env=schone_omgeving())
     now = datetime.datetime.now(datetime.timezone.utc)
 
     rows = []

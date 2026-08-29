@@ -35,6 +35,17 @@ import os
 import subprocess
 import sys
 
+def schone_omgeving() -> dict[str, str]:
+    """The caller's environment with every GIT_* variable removed.
+
+    A pre-push hook exports GIT_DIR and GIT_INDEX_FILE, and a subprocess
+    inherits them: a git command meant for a scratch directory then operates on
+    the real repository. That put `core.bare = true` on this one and stopped
+    thirty worktrees -- damage outside the script, not a wrong answer inside it.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 ACHTER_COMMITS = 50
 ACHTER_DAGEN = 2
 
@@ -45,7 +56,7 @@ SPIEGEL = os.environ.get("MIRROR_TARGET", "origin/master")
 def git(*args: str) -> str | None:
     try:
         r = subprocess.run(["git", *args], capture_output=True, text=True,
-                           check=False, timeout=120)
+                           check=False, timeout=120, env=schone_omgeving())
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout.strip() if r.returncode == 0 else None
