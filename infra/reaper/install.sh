@@ -26,8 +26,19 @@ if [ ! -f "${CHECKOUT}/scripts/ci/sweep_idle_instances.py" ]; then
   echo "would fail every 15 minutes." >&2
   exit 1
 fi
-sed "s|@CHECKOUT@|${CHECKOUT}|" "$(dirname "$0")/pdfluent-reaper.service" \
-  > /etc/systemd/system/pdfluent-reaper.service
+# python, not sed: a checkout path may legally contain & or the | delimiter,
+# and sed would then either reinsert the placeholder or fail outright. A path
+# is data, and sed has no way to be told that.
+CHECKOUT="${CHECKOUT}" python3 - \
+  "$(dirname "$0")/pdfluent-reaper.service" \
+  /etc/systemd/system/pdfluent-reaper.service <<'SUBST'
+import os, sys
+bron, doel = sys.argv[1], sys.argv[2]
+tekst = open(bron).read().replace("@CHECKOUT@", os.environ["CHECKOUT"])
+if "@CHECKOUT@" in tekst:
+    raise SystemExit("placeholder survived substitution; refusing to install")
+open(doel, "w").write(tekst)
+SUBST
 chmod 644 /etc/systemd/system/pdfluent-reaper.service
 echo "Reaper will run from ${CHECKOUT}"
 install -m 644 "$(dirname "$0")/pdfluent-reaper.timer" /etc/systemd/system/
