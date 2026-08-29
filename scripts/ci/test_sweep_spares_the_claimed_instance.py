@@ -20,13 +20,16 @@ from contextlib import redirect_stdout
 HIER = pathlib.Path(__file__).resolve().parent
 
 
-def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0) -> tuple[str, list[str]]:
+def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0,
+          vastgelopen: int = 0) -> tuple[str, list[str]]:
     spec = importlib.util.spec_from_file_location("sweep", HIER / "sweep_idle_instances.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
     oud = (datetime.datetime.now(datetime.timezone.utc)
            - datetime.timedelta(minutes=90)).isoformat()
+    vast = (datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(hours=9)).isoformat()
     namen = ["gh-runner-geclaimd", "gh-runner-oud", "gh-runner-bezig"]
     gewist: list[str] = []
 
@@ -38,7 +41,10 @@ def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0) -> tuple[str,
             return {"servers": [{"name": n, "id": n, "created": oud} for n in namen]}
         if "/actions/runs" in url:
             # Our own run is always present; the sweep must look past it.
-            runs = [{"id": "ONS"}] + [{"id": f"ander-{i}"} for i in range(in_de_lucht)]
+            vers = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            runs = [{"id": "ONS", "created_at": vers}]
+            runs += [{"id": f"ander-{i}", "created_at": vers} for i in range(in_de_lucht)]
+            runs += [{"id": f"vast-{i}", "created_at": vast} for i in range(vastgelopen)]
             return {"workflow_runs": runs, "total_count": len(runs)}
         if "/runners" in url:
             return {"runners": [{"name": n, "busy": n in busy_namen, "status": "online"}
@@ -118,6 +124,13 @@ def main() -> int:
     # matters is the last one before the delete.
     if "gh-runner-laat" in laat_geclaimd():
         stuk.append("an instance claimed between the first read and the delete was deleted")
+
+    # A run stuck in the queue for nine hours is waiting for a runner that does
+    # not exist (#281). Treating it as live work holds the sweep off forever
+    # and turns the safety check into a permanent off switch.
+    _, gewist4 = draai("", set(), vastgelopen=3)
+    if "gh-runner-oud" not in gewist4:
+        stuk.append("a run stuck in the queue for hours stopped the sweep entirely")
 
     if stuk:
         for r in stuk:

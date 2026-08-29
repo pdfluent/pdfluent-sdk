@@ -91,9 +91,12 @@ def main() -> int:
             continue
         on = doc.get(True) or doc.get("on") or {}
         namen = list(on) if isinstance(on, dict) else [on]
-        vanzelf = [t for t in namen if t in ("push", "pull_request", "schedule", "workflow_run")]
-        if not vanzelf:
-            continue
+        # Every trigger, not only the automatic ones. Three runs sat queued for
+        # nine hours on a label no runner carried (#281) and this guard reported
+        # OK, because their workflows are dispatch-only and fell outside exactly
+        # the check written to catch them. A job that can never be assigned is
+        # stuck whoever started it.
+        vanzelf = namen or ["(no trigger)"]
         for naam, job in (doc.get("jobs") or {}).items():
             if not isinstance(job, dict):
                 continue
@@ -108,12 +111,34 @@ def main() -> int:
 
     print(f"[labels] online labels: {', '.join(sorted(online)) or 'none'}")
     if not ontbreekt:
-        print("[labels] OK: every self-hosted label an automatic job asks for has a runner.")
+        print("[labels] OK: every self-hosted label any job asks for has a runner.")
         return 0
 
     print(file=sys.stderr)
     print(f"[labels] FATAL: {len(ontbreekt)} job(s) ask for a label no runner answers:",
           file=sys.stderr)
+    # Known and tracked in #276: four dispatch-only jobs want a corpus runner
+    # that was never provisioned. Named individually so the list cannot quietly
+    # grow, and checked in both directions so it cannot quietly shrink either --
+    # a baseline that only fails upward stops being a baseline.
+    BEKEND = {
+        ("bench.yml", "benchmark", "xfa-corpus"),
+        ("crash-guard.yml", "crash-guard", "xfa-corpus"),
+        ("gate-ci.yml", "gate", "xfa-corpus"),
+        ("wasm-gate.yml", "wasm-gate", "xfa-corpus"),
+    }
+    nu_stuk = {(w, j, l) for w, j, l, _ in ontbreekt}
+    nieuw = nu_stuk - BEKEND
+    opgelost = BEKEND - nu_stuk
+    if opgelost and not nieuw:
+        print(f"FAIL: {len(opgelost)} known-stuck job(s) can now be assigned: "
+              f"{sorted(opgelost)}. Remove them from BEKEND so the next one is "
+              "caught.", file=sys.stderr)
+        return 1
+    if not nieuw:
+        print(f"[labels] OK: {len(BEKEND)} job(s) still wait on a corpus runner (#276); "
+              "no new label is unanswered.")
+        return 0
     for workflow, job, label, triggers in ontbreekt:
         print(f"  {workflow} :: {job} wants `{label}` on {triggers}", file=sys.stderr)
     print(
