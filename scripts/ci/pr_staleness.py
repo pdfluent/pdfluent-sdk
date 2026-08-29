@@ -68,6 +68,13 @@ def main() -> int:
         dagen = (nu - bij).days
         vergelijk = gh(f"repos/{REPO}/compare/{pr['base']['ref']}...{pr['head']['sha']}")
         achter = (vergelijk or {}).get("behind_by")
+        if achter is None:
+            # The compare call failed. Falling back to the day count alone lets
+            # a pull request that was commented on yesterday and is two thousand
+            # commits behind read as healthy -- which is exactly the case the
+            # commit thresholds exist for.
+            print(f"  ?     #{pr['number']} could not be compared against "
+                  f"{pr['base']['ref']}; commit distance unknown")
         if achter is not None and achter >= FAAL_ACHTER and pr["number"] not in BEKEND_OUD:
             faal.append((pr["number"], dagen, f"{achter} commits behind — {pr['title'][:34]}"))
             continue
@@ -88,6 +95,17 @@ def main() -> int:
     for nr, dagen, titel in sorted(faal, key=lambda r: -r[1]):
         print(f"  STALE #{nr} untouched for {dagen} days — {titel}")
 
+    # Blocking only where blocking helps. On a pull request this runs beside the
+    # other gates, and one pull request crossing thirty days would stop every
+    # merge in the repository -- including the merges that would clear the
+    # backlog. A guard against neglect that freezes the work is worse than the
+    # neglect. Set PR_STALENESS_BLOCKING=1 in the scheduled run, where failing
+    # costs nobody their afternoon.
+    blokkerend = os.environ.get("PR_STALENESS_BLOCKING") == "1"
+    if faal and not blokkerend:
+        print(f"[pr-staleness] {len(faal)} stale pull request(s); reported, not "
+              "blocking here. The scheduled run fails on these.")
+        return 0
     if faal:
         print(file=sys.stderr)
         print(f"FAIL: {len(faal)} pull request(s) untouched for {FAAL_DAGEN} days or more. "

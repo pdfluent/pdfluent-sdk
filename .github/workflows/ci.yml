@@ -34,7 +34,9 @@ on:
     branches: [master]
     paths-ignore:
       - '**.md'
-      - 'docs/**'
+      # docs/** is deliberately NOT ignored: docs/UPSTREAM_FORKS.toml is the
+      # input to two gates in this workflow, so ignoring it meant a change to
+      # that file was the one change they could not see.
       - 'CHANGELOG.md'
       - '.github/**.md'
   push:
