@@ -32,10 +32,17 @@ def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0,
             - datetime.timedelta(hours=9)).isoformat()
     namen = ["gh-runner-geclaimd", "gh-runner-oud", "gh-runner-bezig"]
     gewist: list[str] = []
+    registraties_weg: list[str] = []
 
     def nep_haal(url: str, token: str, methode: str = "GET"):
         if methode == "DELETE":
-            gewist.append(url.rsplit("/", 1)[-1])
+            # Two different deletes: a Hetzner server, and a GitHub runner
+            # registration. Counting them together hid the whole distinction
+            # this test exists for.
+            if "/actions/runners/" in url:
+                registraties_weg.append(url.rsplit("/", 1)[-1])
+            else:
+                gewist.append(url.rsplit("/", 1)[-1])
             return {}
         if "/servers" in url:
             return {"servers": [{"name": n, "id": n, "created": oud} for n in namen]}
@@ -53,8 +60,13 @@ def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0,
                 runs += [{"id": "lang", "created_at": vast}]
             return {"workflow_runs": runs, "total_count": len(runs)}
         if "/runners" in url:
-            return {"runners": [{"name": n, "busy": n in busy_namen, "status": "online"}
-                                for n in namen], "total_count": len(namen)}
+            # One registration whose server is gone. It cannot be claimed by
+            # anything, so the sweep must clean it even while work is in flight.
+            regs = [{"name": n, "busy": n in busy_namen, "status": "online", "id": n}
+                    for n in namen]
+            regs.append({"name": "gh-runner-weg", "busy": False,
+                         "status": "offline", "id": "weg"})
+            return {"runners": regs, "total_count": len(regs)}
         return {}
 
     mod.haal = nep_haal
@@ -82,7 +94,13 @@ def laat_geclaimd() -> list[str]:
 
     def nep_haal(url: str, token: str, methode: str = "GET"):
         if methode == "DELETE":
-            gewist.append(url.rsplit("/", 1)[-1])
+            # Two different deletes: a Hetzner server, and a GitHub runner
+            # registration. Counting them together hid the whole distinction
+            # this test exists for.
+            if "/actions/runners/" in url:
+                registraties_weg.append(url.rsplit("/", 1)[-1])
+            else:
+                gewist.append(url.rsplit("/", 1)[-1])
             return {}
         if "/servers" in url:
             return {"servers": [{"name": "gh-runner-laat", "id": "gh-runner-laat",
@@ -149,6 +167,17 @@ def main() -> int:
     _, gewist5 = draai("", set(), lang_bezig=True)
     if gewist5:
         stuk.append(f"instances were deleted under a long-running build: {gewist5}")
+
+    # Servers are held back while work is in flight; registrations are not.
+    # A registration whose server is gone cannot be claimed by anything, so
+    # cleaning it strands nobody -- and holding it back lets the runner list
+    # fill with offline names until nobody reads it.
+    tekst, gewist6 = draai("", set(), in_de_lucht=1)
+    if gewist6:
+        stuk.append(f"a server was deleted while work was in flight: {gewist6}")
+    if "gh-runner-weg" not in tekst:
+        stuk.append("an orphaned registration was left alone just because a run "
+                    "was in flight; it cannot be claimed, so cleaning it strands nobody")
 
     if stuk:
         for r in stuk:
