@@ -20,7 +20,26 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Parked (#276). This job wants a runner labelled `xfa-corpus`; none is
+  # registered, so dispatching it used to leave a run sitting in the queue for
+  # days -- and a queued run is not a red run, so nobody saw it. Worse, a
+  # permanently non-empty queue switches the instance sweep off entirely.
+  #
+  # This gate turns that silence into an immediate, legible failure. Delete it
+  # the day the corpus runner exists.
+  parked:
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      - name: Refuse to queue for a runner that does not exist
+        run: |
+          echo "PARKED (not a pass): this workflow needs a runner labelled" \
+               "'xfa-corpus'. None is registered, so the job would wait in the" \
+               "queue rather than run. Corpus work is deliberately deferred;" \
+               "see #276." >&2
+          exit 1
+
   benchmark:
+    needs: parked
     name: Run Benchmarks
     # Self-hosted runner: consistent hardware for reliable benchmark comparisons.
     # Criterion baseline cache (target/criterion) persists between runs on self-hosted.
