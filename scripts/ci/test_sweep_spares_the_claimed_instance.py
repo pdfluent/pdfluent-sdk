@@ -80,7 +80,7 @@ def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0,
     uit = io.StringIO()
     with redirect_stdout(uit):
         mod.main()
-    return uit.getvalue(), gewist
+    return uit.getvalue(), gewist, registraties_weg
 
 
 def laat_geclaimd() -> list[str]:
@@ -126,7 +126,7 @@ def laat_geclaimd() -> list[str]:
 
 def main() -> int:
     stuk = []
-    _, gewist = draai("gh-runner-geclaimd", {"gh-runner-bezig"})
+    _, gewist, _regs = draai("gh-runner-geclaimd", {"gh-runner-bezig"})
 
     if "gh-runner-geclaimd" in gewist:
         stuk.append("the instance claimed by this run was deleted")
@@ -138,13 +138,13 @@ def main() -> int:
 
     # And sparing must be driven by the name, not by luck: with nothing claimed,
     # that same instance is fair game.
-    _, gewist2 = draai("", {"gh-runner-bezig"})
+    _, gewist2, _regs = draai("", {"gh-runner-bezig"})
     if "gh-runner-geclaimd" not in gewist2:
         stuk.append("an unclaimed idle instance survived, so the exclusion is not name-driven")
 
     # A run in flight can claim an instance before its job starts, so busy-ness
     # does not show it yet. Nothing may be deleted while that is true.
-    _, gewist3 = draai("", set(), in_de_lucht=1)
+    _, gewist3, _regs = draai("", set(), in_de_lucht=1)
     if gewist3:
         stuk.append(f"instances were deleted while a run was in flight: {gewist3}")
 
@@ -157,14 +157,14 @@ def main() -> int:
     # A run stuck in the queue for nine hours is waiting for a runner that does
     # not exist (#281). Treating it as live work holds the sweep off forever
     # and turns the safety check into a permanent off switch.
-    _, gewist4 = draai("", set(), vastgelopen=3)
+    _, gewist4, _regs = draai("", set(), vastgelopen=3)
     if "gh-runner-oud" not in gewist4:
         stuk.append("a run stuck in the queue for hours stopped the sweep entirely")
 
     # Nightly and fuzz legitimately run for hours. Ageing an in-progress run out
     # would delete the runner under a live build -- the staleness rule is only
     # ever about the queue.
-    _, gewist5 = draai("", set(), lang_bezig=True)
+    _, gewist5, _regs = draai("", set(), lang_bezig=True)
     if gewist5:
         stuk.append(f"instances were deleted under a long-running build: {gewist5}")
 
@@ -172,12 +172,13 @@ def main() -> int:
     # A registration whose server is gone cannot be claimed by anything, so
     # cleaning it strands nobody -- and holding it back lets the runner list
     # fill with offline names until nobody reads it.
-    tekst, gewist6 = draai("", set(), in_de_lucht=1)
+    _tekst, gewist6, registraties6 = draai("", set(), in_de_lucht=1)
     if gewist6:
         stuk.append(f"a server was deleted while work was in flight: {gewist6}")
-    if "gh-runner-weg" not in tekst:
+    if "weg" not in registraties6:
         stuk.append("an orphaned registration was left alone just because a run "
-                    "was in flight; it cannot be claimed, so cleaning it strands nobody")
+                    "was in flight; it cannot be claimed, so cleaning it strands "
+                    f"nobody (deleted: {registraties6})")
 
     if stuk:
         for r in stuk:
