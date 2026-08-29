@@ -455,8 +455,13 @@ fn apply_font_correction_plan(doc: &mut Document, plan: &FontCorrectionPlan) -> 
 /// After isolation, each font dict has its own private FD.
 pub fn isolate_font_descriptors(doc: &mut Document) {
     // Build map: FD id → list of font dict ids that reference it
-    let mut fd_owners: std::collections::HashMap<ObjectId, Vec<ObjectId>> =
-        std::collections::HashMap::new();
+    // BTreeMap, not HashMap: the loop below allocates new object ids while it
+    // iterates, so the iteration order lands in the output file. HashMap order
+    // varies per process, which made the same input produce different bytes on
+    // different runs -- and PDF/A conversion is exactly where that gets noticed,
+    // because a signature over a "reproducible" conversion is not reproducible.
+    let mut fd_owners: std::collections::BTreeMap<ObjectId, Vec<ObjectId>> =
+        std::collections::BTreeMap::new();
 
     for (&id, obj) in doc.objects.iter() {
         let Object::Dictionary(d) = obj else { continue };
