@@ -1,0 +1,16 @@
+[Unit]
+Description=Reap idle Hetzner CI instances every 15 minutes
+Documentation=https://github.com/pdfluent/pdfluent-internal/issues/279
+
+[Timer]
+# GitHub's own */30 schedule fired twice in a day. This machine is always on
+# and is the only one that provisions, so it is the right place for the clock.
+OnBootSec=5min
+OnUnitActiveSec=15min
+# Without this a laptop-style suspend silently skips every missed run, which is
+# the failure this timer exists to replace.
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
