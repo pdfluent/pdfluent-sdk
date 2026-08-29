@@ -10,7 +10,10 @@ Type=oneshot
 Environment=PDFLUENT_INSTANCE_LOCK=/var/tmp/pdfluent-instances.lock
 Environment=GITHUB_REPOSITORY=jasperdew/xfa-native-rust
 EnvironmentFile=/etc/pdfluent/reaper.env
-WorkingDirectory=/opt/pdfluent/xfa
+# Filled in by install.sh from the checkout it was run from. A hard-coded
+# path here would either fail every 15 minutes or, worse, quietly run a
+# different checkout than the one being installed.
+WorkingDirectory=@CHECKOUT@
 ExecStart=/usr/bin/python3 scripts/ci/sweep_idle_instances.py
 # A sweep that cannot finish must not wedge the timer.
 TimeoutStartSec=600

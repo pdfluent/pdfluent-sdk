@@ -19,7 +19,17 @@ if [ ! -f /etc/pdfluent/reaper.env ]; then
 fi
 chmod 600 /etc/pdfluent/reaper.env
 
-install -m 644 "$(dirname "$0")/pdfluent-reaper.service" /etc/systemd/system/
+# The checkout this installer was run from, not a path written months ago.
+CHECKOUT="$(cd "$(dirname "$0")/../.." && pwd)"
+if [ ! -f "${CHECKOUT}/scripts/ci/sweep_idle_instances.py" ]; then
+  echo "No sweep script under ${CHECKOUT}; refusing to install a timer that" >&2
+  echo "would fail every 15 minutes." >&2
+  exit 1
+fi
+sed "s|@CHECKOUT@|${CHECKOUT}|" "$(dirname "$0")/pdfluent-reaper.service" \
+  > /etc/systemd/system/pdfluent-reaper.service
+chmod 644 /etc/systemd/system/pdfluent-reaper.service
+echo "Reaper will run from ${CHECKOUT}"
 install -m 644 "$(dirname "$0")/pdfluent-reaper.timer" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now pdfluent-reaper.timer
