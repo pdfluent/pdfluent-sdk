@@ -61,6 +61,7 @@ run installer python3 scripts/ci/test_installer_escapes_the_path.py
 run upstream  python3 scripts/ci/upstream_has_not_moved_on.py
 run forklist  python3 scripts/ci/fork_lists_agree.py
 run wordsep   python3 scripts/ci/never_delete_the_word_separator.py
+run gitenv    python3 scripts/ci/test_no_test_can_touch_the_real_repo.py
 run licenses2 python3 scripts/ci/license_gate.py
 run lictest   python3 scripts/ci/test_license_gate.py
 run errdocs   python3 scripts/ci/error_codes_have_an_anchor.py
