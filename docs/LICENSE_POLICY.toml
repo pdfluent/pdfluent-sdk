@@ -1,0 +1,95 @@
+# What PDFluent accepts, per distribution surface. One policy, several gates.
+#
+# `deny.toml` covered the Rust workspace and nothing else, so a copyleft
+# dependency could walk in through npm, Maven, NuGet or a Python wheel without
+# meeting a single check (#214). This file is the shared list those gates read,
+# and `scripts/ci/license_gate.py` enforces that deny.toml still agrees with it.
+#
+# TWO SURFACES, TWO QUESTIONS
+#
+# What we *inspect* and what we *ship* are different sets, and conflating them
+# gives an attribution file with 764 entries that nobody reads and that says
+# nothing about what a user actually receives.
+#
+#   inspection  — every third-party dependency, build and dev included. A
+#                 forbidden licence is a problem wherever it sits: a dev
+#                 dependency ends up in a wheel the day someone vendors it.
+#   attribution — only what lands in a released package, or what the end user's
+#                 own build resolves. That is the list with legal weight.
+
+[licenses]
+
+# Permitted anywhere. Mirrors deny.toml's allow list; the gate fails if the two
+# drift, because two lists become two policies within a month.
+allowed = [
+    "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause", "BSD-2-Clause", "BSD-3-Clause",
+    "Zlib", "ISC", "Unicode-3.0", "Unicode-DFS-2016",
+    "BSL-1.0", "0BSD", "MIT-0", "CC0-1.0", "NCSA", "Unlicense",
+    "CDLA-Permissive-2.0",
+    "LicenseRef-PDFluent-Commercial",
+]
+
+# Named, so a hit reports "forbidden" instead of "unknown". The difference
+# matters: unknown means look it up, forbidden means it may not come in.
+forbidden = [
+    "GPL-1.0-only", "GPL-1.0-or-later", "GPL-2.0-only", "GPL-2.0-or-later",
+    "GPL-3.0-only", "GPL-3.0-or-later",
+    "AGPL-1.0-only", "AGPL-3.0-only", "AGPL-3.0-or-later",
+    "SSPL-1.0", "EUPL-1.2", "CDDL-1.0", "CDDL-1.1",
+    "CC-BY-SA-4.0", "BUSL-1.1", "Elastic-2.0",
+]
+
+# File-level copyleft: classified, but permitted only on a surface that names
+# it under [surfaces]. Listing them here is what makes a hit report "not allowed
+# on this surface" instead of "unknown" -- a different instruction to the reader.
+#
+# LGPL is in this list and named by no surface, so it is classified and refused
+# everywhere. That is deliberate: `forbidden` would be wrong (an LGPL option
+# inside a disjunction is fine to decline, see [elections]) and leaving it out
+# would report it as unclassified.
+weak_copyleft = ["MPL-2.0", "LGPL-2.1-only", "LGPL-2.1-or-later", "LGPL-3.0-or-later"]
+
+[surfaces]
+
+# What a stranger receives. Weak copyleft is not allowed here: the commercial
+# licence has to be offerable without file-level obligations travelling with it.
+sdk = { weak_copyleft = [], note = "crates.io, PyPI, npm, NuGet, Maven" }
+
+# Proprietary, distributed as a binary. MPL-2.0 arrives via Tauri
+# (option-ext -> dirs -> tauri) and is acceptable provided the source of those
+# files stays available.
+editor = { weak_copyleft = ["MPL-2.0"], note = "pdf-desktop; MPL arrives via Tauri" }
+
+# Never distributed. Anything permissive goes.
+internal = { weak_copyleft = ["MPL-2.0"], note = "pdfluent-snippet-extract, benchmarks, test runners" }
+
+[elections]
+
+# Dual-licensed dependencies where we take one option. Writing the choice down
+# is the whole point: without it the reader falls back to the first-named
+# licence, and for JNA that is LGPL.
+"net.java.dev.jna:jna" = { take = "Apache-2.0", of = ["LGPL-2.1-or-later", "Apache-2.0"], why = "The Java binding declares JNA as a compile dependency; Maven resolves it in the user's own build and we ship no shaded jar. JNA has offered Apache-2.0 alongside LGPL since 4.0. PDFluent takes Apache-2.0, so no LGPL obligation travels to a commercial licensee." }
+
+[own_packages]
+
+# Our own manifests, whose `license` field is not an SPDX identifier. npm has no
+# spelling for a proprietary licence, so its convention is `SEE LICENSE IN
+# <file>`. Mapped here per manifest rather than by pattern: allowing that string
+# in general would wave through any third-party package that uses it, and the
+# point of this gate is that nothing unclassified passes.
+"crates/pdf-node/package.json" = "LicenseRef-PDFluent-Commercial"
+# The generated pkg/package.json is a build artefact and gitignored; the gate
+# reads the manifest wasm-pack copies from instead.
+"crates/xfa-wasm/Cargo.toml" = "LicenseRef-PDFluent-Commercial"
+
+[floors]
+
+# A scanner that finds nothing reports success over nothing. Each ecosystem
+# declares how much it must at least see; below that the gate fails rather than
+# passes quietly.
+cargo_packages = 400
+npm_manifests = 2
+maven_dependencies = 1
+python_manifests = 1
+dotnet_projects = 1

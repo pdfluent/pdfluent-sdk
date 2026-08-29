@@ -202,21 +202,14 @@ jobs:
 
       # The WASM build that wasm.yml used to do on a push to master. Publishing
       # stays there, on tags; this is the build and the website rebuild.
-      # wasm-opt parity lost its pull-request trigger when the provisioning was
-      # folded into one instance, and nothing took over -- a coverage loss, not
-      # a consolidation (#278). It needs wasm-pack and Node, both of which the
-      # wasm build step below already installs.
-      - name: wasm-opt parity
-        continue-on-error: true
-        run: |
-          rustup target add wasm32-unknown-unknown \
-            --toolchain "$(rustup show active-toolchain | cut -d" " -f1)"
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-          wasm-pack build --release --target web --out-dir /tmp/parity/pkg crates/xfa-wasm
-          ls -l /tmp/parity/pkg/xfa_wasm_bg.wasm
-
+      # One build, not two. These were separate steps that each ran
+      # `rustup target add`, installed wasm-pack over the network and then ran
+      # the same `wasm-pack build --release --target web` on the same crate --
+      # 552s and 517s of a 1200s pipeline, producing the same artefact twice.
+      #
+      # Measured on run 33270735898: those two steps were 88% of the job, while
+      # `check` took 11s and `clippy` 16s. The Rust cache was never the problem.
       - name: wasm build
-        if: github.event_name == 'push'
         run: |
           # Not plain `rustup target add`: that lands on the default toolchain,
           # which is `stable` here, while rust-toolchain.toml pins 1.94.0 and
@@ -226,6 +219,33 @@ jobs:
             --toolchain "$(rustup show active-toolchain | cut -d" " -f1)"
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
           wasm-pack build --release --target web crates/xfa-wasm
+
+      # What the old "wasm-opt parity" step did was build the artefact a second
+      # time and then run `ls -l` on it. It compared nothing, and it carried
+      # continue-on-error, so it could not have failed either way. Nine minutes
+      # for a file listing.
+      #
+      # This checks the property the name promises: wasm-pack runs wasm-opt on a
+      # release build, so the shipped artefact must be smaller than the raw
+      # target output. If wasm-opt silently stops running -- a toolchain change,
+      # a flag, a version bump -- the sizes converge and this says so.
+      - name: wasm-opt actually ran
+        run: |
+          set -euo pipefail
+          shipped="crates/xfa-wasm/pkg/xfa_wasm_bg.wasm"
+          raw="target/wasm32-unknown-unknown/release/xfa_wasm.wasm"
+          for f in "$shipped" "$raw"; do
+            [ -f "$f" ] || { echo "SKIPPED (not a pass): $f is missing" >&2; exit 0; }
+          done
+          s=$(wc -c < "$shipped"); r=$(wc -c < "$raw")
+          echo "raw ${r} bytes, shipped ${s} bytes"
+          if [ "$s" -ge "$r" ]; then
+            echo "FAIL: the shipped wasm is not smaller than the raw build, so" >&2
+            echo "wasm-opt did not run. The artefact still works; it is just" >&2
+            echo "bigger than it should be, which is the kind of regression" >&2
+            echo "nobody notices until a download budget does." >&2
+            exit 1
+          fi
 
       - name: Trigger website rebuild
         if: github.event_name == 'push' && env.WEBSITE_DEPLOY_TOKEN != ''

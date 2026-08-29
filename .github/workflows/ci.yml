@@ -91,6 +91,10 @@ jobs:
         run: python3 scripts/ci/upstream_has_not_moved_on.py
       - name: Both fork lists name the same crates
         run: python3 scripts/ci/fork_lists_agree.py
+      - name: Third-party licences satisfy the policy
+        run: python3 scripts/ci/license_gate.py
+      - name: The licence gate rejects what it should
+        run: python3 scripts/ci/test_license_gate.py
       - name: No pull request has been left to rot
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
