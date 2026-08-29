@@ -57,6 +57,38 @@ def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0) -> tuple[str,
     return uit.getvalue(), gewist
 
 
+def laat_geclaimd() -> list[str]:
+    spec = importlib.util.spec_from_file_location("sweep2", HIER / "sweep_idle_instances.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    oud = (datetime.datetime.now(datetime.timezone.utc)
+           - datetime.timedelta(minutes=90)).isoformat()
+    beurt = {"n": 0}
+    gewist: list[str] = []
+
+    def nep_haal(url: str, token: str, methode: str = "GET"):
+        if methode == "DELETE":
+            gewist.append(url.rsplit("/", 1)[-1])
+            return {}
+        if "/servers" in url:
+            return {"servers": [{"name": "gh-runner-laat", "id": "gh-runner-laat",
+                                 "created": oud}]}
+        if "/actions/runs" in url:
+            return {"workflow_runs": [{"id": "ONS"}], "total_count": 1}
+        if "/runners" in url:
+            beurt["n"] += 1
+            return {"runners": [{"name": "gh-runner-laat", "busy": beurt["n"] > 1,
+                                 "status": "online"}], "total_count": 1}
+        return {}
+
+    mod.haal = nep_haal
+    os.environ["SWEEP_BEHOUD"] = ""
+    os.environ["GITHUB_RUN_ID"] = "ONS"
+    with redirect_stdout(io.StringIO()):
+        mod.main()
+    return gewist
+
+
 def main() -> int:
     stuk = []
     _, gewist = draai("gh-runner-geclaimd", {"gh-runner-bezig"})
@@ -80,6 +112,12 @@ def main() -> int:
     _, gewist3 = draai("", set(), in_de_lucht=1)
     if gewist3:
         stuk.append(f"instances were deleted while a run was in flight: {gewist3}")
+
+    # Claimed *during* the sweep: idle on the first read, busy by the time we
+    # are about to delete. Every check here is a point in time, so the one that
+    # matters is the last one before the delete.
+    if "gh-runner-laat" in laat_geclaimd():
+        stuk.append("an instance claimed between the first read and the delete was deleted")
 
     if stuk:
         for r in stuk:
