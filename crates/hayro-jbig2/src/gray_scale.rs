@@ -3,7 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::arithmetic_decoder::{ArithmeticDecoder, Context};
+use crate::arithmetic_decoder::{ArithmeticDecoder, ArithmeticDecoderContext as Context};
 use crate::bitmap::Bitmap;
 use crate::decode::generic::{ContextGatherer, decode_bitmap_mmr};
 use crate::decode::{AdaptiveTemplatePixel, Template};
