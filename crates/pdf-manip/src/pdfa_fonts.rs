@@ -23188,9 +23188,9 @@ fn fix_notdef_in_type1_fontfile(
         if let Some(to_code) = stream_remap_to {
             return replace_simple_font_code_refs(doc, font_id, 32, Some(to_code)) > 0;
         }
-        if !has_internal_32 {
-            return replace_simple_font_code_refs(doc, font_id, 32, None) > 0;
-        }
+        // Deliberately not `replace_simple_font_code_refs(.., 32, None)`. See the
+        // note at the second call site below: passing None deletes the code from
+        // the page, and for code 32 that is the word separator.
         return false;
     }
 
@@ -23204,10 +23204,26 @@ fn fix_notdef_in_type1_fontfile(
         enc_ref,
     );
 
+    // `None` here means "delete every occurrence of this code from the page",
+    // and the code is 32. A Type1 subset that never had to draw a visible space
+    // legitimately leaves 32 out of its encoding vector, while the PDF still
+    // uses it with a declared width to advance the cursor -- so this deleted the
+    // word separator from documents that were otherwise fine.
+    //
+    // It is invisible from every angle we were checking. The page renders
+    // identically, because a deleted space and a blank space both draw nothing
+    // and the widths were never touched. veraPDF is satisfied, because the
+    // violation it was raised against really is gone. Character retention stays
+    // at 100%, because no letter was lost. Only word retention moves, and on the
+    // six worst govdocs documents it moved from ~100% to a median of 4.0%:
+    // `To improve cooperation` came out of the converter as
+    // `Toimprovecooperation` (#182, #210).
+    //
+    // Remapping to another code is still allowed: that keeps a character on the
+    // page. Deleting is not a repair, it is data loss that no conformance
+    // checker can see.
     let stream_fixed = if let Some(to_code) = stream_remap_to {
         replace_simple_font_code_refs(doc, font_id, 32, Some(to_code)) > 0
-    } else if !parsed.encoding.contains_key(&32) {
-        replace_simple_font_code_refs(doc, font_id, 32, None) > 0
     } else {
         false
     };
