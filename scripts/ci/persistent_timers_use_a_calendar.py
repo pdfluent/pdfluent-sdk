@@ -45,6 +45,20 @@ def main() -> int:
                 "systemd only replays missed runs for OnCalendar timers, so this unit "
                 "claims to survive a suspend and does not."
             )
+    # A unit that names a path nobody filled in fails every time the timer
+    # fires, and a failing oneshot is quiet: the timer just keeps going.
+    for unit in sorted(WORTEL.glob("infra/**/*.service")):
+        tekst = unit.read_text()
+        if "@CHECKOUT@" in tekst and not (WORTEL / "infra/reaper/install.sh").exists():
+            stuk.append(f"{unit.name} has an unsubstituted placeholder and no installer "
+                        "to fill it in")
+        for regel in tekst.splitlines():
+            if regel.startswith("WorkingDirectory=") and "@" not in regel:
+                pad = regel.split("=", 1)[1].strip()
+                stuk.append(f"{unit.name} hard-codes WorkingDirectory={pad}. The installer "
+                            "must write the checkout it was run from, or the unit runs "
+                            "somewhere else than the code being installed.")
+
     if stuk:
         for r in stuk:
             print(f"FAIL: {r}", file=sys.stderr)
