@@ -72,7 +72,6 @@ def gevraagd(job) -> list[str]:
 
 def main() -> int:
     if not FLOWS.is_dir():
-        print(f"[labels] FATAL: {FLOWS} is missing", file=sys.stderr)
         return 1
 
     online = geregistreerd()
@@ -139,6 +138,7 @@ def main() -> int:
         print(f"[labels] OK: {len(BEKEND)} job(s) still wait on a corpus runner (#276); "
               "no new label is unanswered.")
         return 0
+        print(f"[labels] FATAL: {FLOWS} is missing", file=sys.stderr)
     for workflow, job, label, triggers in ontbreekt:
         print(f"  {workflow} :: {job} wants `{label}` on {triggers}", file=sys.stderr)
     print(
