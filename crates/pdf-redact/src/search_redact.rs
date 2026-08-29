@@ -91,9 +91,52 @@ pub struct SearchRedactReport {
     pub pages_affected: usize,
     /// Whether metadata was cleaned.
     pub metadata_cleaned: bool,
+    /// Pages whose text layer could not be read (1-based).
+    ///
+    /// Such a page used to be skipped with `Err(_) => continue`, which left
+    /// "no matches because the term is not there" indistinguishable from "no
+    /// matches because I could not read the page". For a redaction function
+    /// that is the worst shape a failure can take: the caller gets a clean
+    /// report and a document nothing was removed from. See #203.
+    ///
+    /// An empty page is not listed here -- that one was read and had no text.
+    pub pages_unreadable: Vec<u32>,
     /// Bounding boxes of all redacted areas: (page_number_1based, [x0,y0,x1,y1] in PDF points).
     /// Used by visual verification tests to confirm overlay coverage.
     pub redacted_rects: Vec<(u32, [f64; 4])>,
+}
+
+/// Of de `/Contents` van deze pagina naar bestaande objecten wijst.
+///
+/// Een pagina zonder `/Contents` is blanco en telt als leesbaar. Een pagina
+/// met een verwijzing die nergens heen wijst, telt dat niet: lopdf geeft daar
+/// stilzwijgend lege inhoud terug, en dan is "niets gevonden" niet te
+/// onderscheiden van "niet gekeken". Zie #203.
+fn page_contents_resolve(doc: &Document, page_id: ObjectId) -> bool {
+    let Ok(dict) = doc.get_dictionary(page_id) else {
+        return false;
+    };
+    let contents = match dict.get(b"Contents") {
+        Ok(c) => c,
+        // Geen /Contents: een blanco pagina, en dat is een geldig document.
+        Err(_) => return true,
+    };
+    let mut verwijzingen = Vec::new();
+    match contents {
+        Object::Reference(id) => verwijzingen.push(*id),
+        Object::Array(items) => {
+            for item in items {
+                if let Object::Reference(id) = item {
+                    verwijzingen.push(*id);
+                }
+            }
+        }
+        // Een directe stroom staat er gewoon; niets op te zoeken.
+        _ => return true,
+    }
+    verwijzingen
+        .into_iter()
+        .all(|id| doc.get_object(id).is_ok())
 }
 
 /// Search for text matching a pattern and redact all occurrences.
@@ -127,18 +170,43 @@ pub fn search_and_redact(
 
     // Find all matches across pages.
     let mut all_areas: Vec<RedactionArea> = Vec::new();
+    let mut pages_unreadable: Vec<u32> = Vec::new();
     let mut total_matches = 0;
     // Per-page match bounding boxes used for position-based op removal fallback.
     let mut page_bboxes: std::collections::HashMap<u32, Vec<[f64; 4]>> =
         std::collections::HashMap::new();
 
     for &page_num in &page_range {
+        // Eerst: is de inhoudsstroom van deze pagina überhaupt te bereiken?
+        //
+        // Noch `extract_positioned_chars` noch `get_page_content` geeft hier
+        // een fout: allebei melden ze `Ok` met nul. Een onleesbare pagina en
+        // een blanco pagina komen er dus als hetzelfde antwoord uit, en dat is
+        // precies het onderscheid dat hier telt.
+        //
+        // Het verschil zit in de verwijzing zelf. Een pagina zonder
+        // `/Contents` is blanco -- dat is geldig. Een pagina mét `/Contents`
+        // die naar een object wijst dat niet bestaat, is stuk: dat is wat er
+        // gebeurde toen acht fixtures `<<//Length` droegen en het object niet
+        // laadde. lopdf behandelt zo'n verwijzing stilzwijgend als lege inhoud.
+        if let Some(&page_id) = pages.get(&page_num) {
+            if !page_contents_resolve(doc, page_id) {
+                pages_unreadable.push(page_num);
+                continue;
+            }
+        }
+
         let chars = match pdf_extract::extract_positioned_chars(doc, page_num) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(_) => {
+                pages_unreadable.push(page_num);
+                continue;
+            }
         };
 
         if chars.is_empty() {
+            // Wél stilzwijgend door: deze pagina ís gelezen en heeft geen
+            // tekst. Dat is een geldig antwoord, geen mislukking.
             continue;
         }
 
@@ -197,6 +265,7 @@ pub fn search_and_redact(
 
     if all_areas.is_empty() {
         return Ok(SearchRedactReport {
+            pages_unreadable: pages_unreadable.clone(),
             matches_found: 0,
             areas_redacted: 0,
             operations_removed: 0,
@@ -227,6 +296,7 @@ pub fn search_and_redact(
     }
 
     Ok(SearchRedactReport {
+        pages_unreadable: pages_unreadable.clone(),
         matches_found: total_matches,
         areas_redacted: report.areas_redacted,
         operations_removed: report.operations_removed + extra_ops_removed,
