@@ -248,7 +248,26 @@ pub fn embed_dss_incremental(
         .ok_or_else(|| "no /Root in trailer".to_string())?;
     let mut catalog = prev
         .get_dictionary(catalog_id)
-        .map_err(|e| format!("catalog: {e}"))?
+        .map_err(|e| {
+            // lopdf takes the decryption route when the trailer carries
+            // /Encrypt. If that route fails the object table stays empty, so
+            // every lookup returns "object ID ... not found" -- a message that
+            // points at the cross-reference table while the cause is
+            // encryption. After a successful decrypt the reader removes
+            // /Encrypt from the trailer, so its presence here means exactly
+            // "loaded, not decrypted".
+            //
+            // Deliberately the trailer predicate and not is_encrypted(): that
+            // one requires /Encrypt to be a reference, and a direct dictionary
+            // is legal and does occur, so the check would silently do nothing.
+            if prev.trailer.get(b"Encrypt").is_ok() {
+                "catalog: document is encrypted and could not be decrypted; \
+                 LTV/DSS embedding requires a decrypted document"
+                    .to_string()
+            } else {
+                format!("catalog: {e}")
+            }
+        })?
         .clone();
     catalog.set("DSS", Object::Reference(dss_id));
     doc.set_object(catalog_id, Object::Dictionary(catalog));
