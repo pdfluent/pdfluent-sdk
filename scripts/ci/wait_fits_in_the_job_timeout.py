@@ -21,6 +21,11 @@ WERKSTROOM = WORTEL / ".github/workflows/ci-ephemeral.yml"
 # The wait must leave room for provisioning after it succeeds, not just end
 # exactly as the axe falls.
 MARGE_SECONDEN = 120
+# FLOOR: wait >= 1500s -- because one instance at a time means a second push
+# must sit out a whole build, and workspace runs 15 to 19 minutes. A wait
+# shorter than a build turns the one-instance rule into a coin flip: whichever
+# push is second fails, and it fails looking like a broken pipeline.
+MINIMUM_WACHT = 1500
 
 
 def wachtbudget() -> int | None:
@@ -44,6 +49,11 @@ def main() -> int:
         return 1
     if limiet is None:
         print("FAIL: create-runner has no timeout-minutes, so the wait has no ceiling to fit in")
+        return 1
+    if budget < MINIMUM_WACHT:
+        print(f"FAIL: the wait is {budget}s but a build takes up to 19 minutes. With "
+              "one instance at a time, a second push must outlast the first build or "
+              f"it fails for no reason; the floor is {MINIMUM_WACHT}s.")
         return 1
     if budget + MARGE_SECONDEN > limiet:
         print(f"FAIL: the wait may run {budget}s inside a job capped at {limiet}s "
