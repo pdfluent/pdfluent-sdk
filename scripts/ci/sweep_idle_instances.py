@@ -139,6 +139,24 @@ def main() -> int:
             print(f"  idle    {s['name']} ({minuten:.0f} min) — still inside its paid "
                   "hour, keep for reuse")
             continue
+        # Re-read immediately before deleting, not once before the loop. Every
+        # check here is a point in time and none of them is a lock: a run can
+        # claim this machine between the reading and the delete. Doing it per
+        # server shrinks that window to one round trip instead of the whole
+        # loop, which is a narrowing, not a fix -- see #280.
+        try:
+            if andere("in_progress") or andere("queued"):
+                print(f"  claimed {s['name']} — a run appeared while sweeping, leaving it")
+                continue
+            vers = haal(f"https://api.github.com/repos/{repo}/actions/runners?per_page=100", pat)
+            if any(r["name"] == s["name"] and r.get("busy")
+                   for r in vers.get("runners", [])):
+                print(f"  busy    {s['name']} — claimed since the first read, leaving it")
+                continue
+        except (urllib.error.URLError, OSError) as fout:
+            print(f"    could not re-check {s['name']}, so not deleting it: {fout}",
+                  file=sys.stderr)
+            continue
         print(f"  DELETE  {s['name']} ({minuten:.0f} min) — idle and past its hour")
         try:
             haal(f"{HCLOUD}/{s['id']}", hcloud, "DELETE")
