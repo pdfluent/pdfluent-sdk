@@ -1009,7 +1009,10 @@ impl Stream {
             bit_count: 0,
         };
 
-        match hayro_ccitt::decode(input, &mut decoder, &settings) {
+        // Upstream 0.3.0 takes a reusable DecoderContext rather than settings
+        // by reference; built inline here since this decodes once.
+        let mut ctx = hayro_ccitt::DecoderContext::new(settings);
+        match hayro_ccitt::decode(input, &mut decoder, &mut ctx) {
             Ok(_) => Ok(decoder.output),
             Err(_) if !decoder.output.is_empty() => {
                 // Partial decode — return what we got (lenient).
