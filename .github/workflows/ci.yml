@@ -93,6 +93,8 @@ jobs:
         run: python3 scripts/ci/upstream_has_not_moved_on.py
       - name: Both fork lists name the same crates
         run: python3 scripts/ci/fork_lists_agree.py
+      - name: Nothing deletes the word separator
+        run: python3 scripts/ci/never_delete_the_word_separator.py
       - name: Third-party licences satisfy the policy
         run: python3 scripts/ci/license_gate.py
       - name: The licence gate rejects what it should
