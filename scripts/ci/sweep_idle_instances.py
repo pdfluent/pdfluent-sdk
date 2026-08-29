@@ -72,6 +72,38 @@ def main() -> int:
         return 0
 
     onze = [s for s in servers if s["name"].startswith(VOORVOEGSEL)]
+
+    # A run that is queued or building may claim an instance between the moment
+    # this sweep reads "idle" and the moment it deletes. The runner is claimed
+    # before its job starts, so busy-ness does not yet show it. While anything
+    # is in flight, reap nothing: the machines cost a started hour either way,
+    # and the quiet periods -- which is when a leak actually accumulates -- are
+    # still swept.
+    if pat and repo:
+        try:
+            # Our own run is in flight by definition -- the reap job is part of
+            # it. Counting ourselves would make this gate refuse every time,
+            # which is the same self-defeating shape as sweeping inside
+            # provisioning: it would look like a working sweep that never
+            # deletes.
+            eigen = os.environ.get("GITHUB_RUN_ID")
+            def andere(status: str) -> int:
+                bladzijde = haal(
+                    f"https://api.github.com/repos/{repo}/actions/runs"
+                    f"?status={status}&per_page=100", pat)
+                runs = bladzijde.get("workflow_runs")
+                if runs is None:
+                    return bladzijde.get("total_count", 0)
+                return sum(1 for r in runs if str(r.get("id")) != str(eigen))
+            lopend, wachtend = andere("in_progress"), andere("queued")
+        except (urllib.error.URLError, OSError) as fout:
+            print(f"SKIPPED (not a pass): could not read the run queue: {fout}",
+                  file=sys.stderr)
+            return 0
+        if lopend or wachtend:
+            print(f"[sweep] {lopend} running and {wachtend} queued run(s); an instance "
+                  "can be claimed before its job starts, so nothing is deleted now")
+            return 0
     print(f"[sweep] {len(onze)} instance(s)")
 
     bezet: dict[str, bool] = {}
