@@ -7,7 +7,7 @@ use super::{
     AdaptiveTemplatePixel, RefinementTemplate, RegionBitmap, RegionSegmentInfo,
     parse_refinement_at_pixels, parse_region_segment_info,
 };
-use crate::arithmetic_decoder::{ArithmeticDecoder, Context};
+use crate::arithmetic_decoder::{ArithmeticDecoder, ArithmeticDecoderContext as Context};
 use crate::bitmap::Bitmap;
 use crate::error::{DecodeError, ParseError, RegionError, Result, bail};
 use crate::reader::Reader;
