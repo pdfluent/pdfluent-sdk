@@ -424,7 +424,7 @@ fn resource_limit_error_has_stable_code_and_url() {
     assert_eq!(err.code(), "E-BUDGET-RESOURCE-LIMIT");
     assert_eq!(
         err.docs_url(),
-        "https://pdfluent.com/errors/E-BUDGET-RESOURCE-LIMIT"
+        "https://pdfluent.com/errors#E-BUDGET-RESOURCE-LIMIT"
     );
     let msg = format!("{err}");
     assert!(msg.contains("Resource limit exceeded"));
