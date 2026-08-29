@@ -63,6 +63,8 @@ def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0,
     os.environ["GITHUB_REPOSITORY"] = "stub/stub"
     os.environ["SWEEP_BEHOUD"] = behoud
     os.environ["GITHUB_RUN_ID"] = "ONS"
+    # Already inside the lock: the unit test must not re-exec under flock.
+    os.environ["PDFLUENT_LOCK_HELD"] = "1"
     uit = io.StringIO()
     with redirect_stdout(uit):
         mod.main()
@@ -97,6 +99,8 @@ def laat_geclaimd() -> list[str]:
     mod.haal = nep_haal
     os.environ["SWEEP_BEHOUD"] = ""
     os.environ["GITHUB_RUN_ID"] = "ONS"
+    # Already inside the lock: the unit test must not re-exec under flock.
+    os.environ["PDFLUENT_LOCK_HELD"] = "1"
     with redirect_stdout(io.StringIO()):
         mod.main()
     return gewist
