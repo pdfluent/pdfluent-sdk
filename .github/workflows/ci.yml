@@ -91,6 +91,10 @@ jobs:
         run: python3 scripts/ci/upstream_has_not_moved_on.py
       - name: Both fork lists name the same crates
         run: python3 scripts/ci/fork_lists_agree.py
+      - name: No pull request has been left to rot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/ci/pr_staleness.py
       - name: The sweep spares the instance this run claimed
         run: python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
       - name: Reaping runs after the work, never inside provisioning
