@@ -89,7 +89,16 @@ def main() -> int:
         if not isinstance(doc, dict):
             continue
         on = doc.get(True) or doc.get("on") or {}
-        namen = list(on) if isinstance(on, dict) else [on]
+        # `on:` has three legal shapes: a mapping, a sequence, or a bare string.
+        # Wrapping a sequence in a list left an unhashable list inside `namen`,
+        # so any workflow using `on: [push, workflow_dispatch]` crashed this
+        # guard instead of being checked by it.
+        if isinstance(on, dict):
+            namen = list(on)
+        elif isinstance(on, (list, tuple)):
+            namen = list(on)
+        else:
+            namen = [on]
         # Every trigger, not only the automatic ones. Three runs sat queued for
         # nine hours on a label no runner carried (#281) and this guard reported
         # OK, because their workflows are dispatch-only and fell outside exactly
