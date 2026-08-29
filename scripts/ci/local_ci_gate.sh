@@ -60,6 +60,8 @@ run timers    python3 scripts/ci/persistent_timers_use_a_calendar.py
 run installer python3 scripts/ci/test_installer_escapes_the_path.py
 run upstream  python3 scripts/ci/upstream_has_not_moved_on.py
 run forklist  python3 scripts/ci/fork_lists_agree.py
+run licenses2 python3 scripts/ci/license_gate.py
+run lictest   python3 scripts/ci/test_license_gate.py
 run prstale   python3 scripts/ci/pr_staleness.py
 run sweep     python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
 run reaporder python3 scripts/ci/reaping_happens_after_the_work.py
