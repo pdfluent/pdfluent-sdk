@@ -108,7 +108,12 @@ def main() -> int:
                     # (#281). Counting it holds the sweep off forever, which
                     # turns this safety check into a permanent off switch --
                     # and it reports success every time it declines.
-                    gemaakt = r.get("created_at")
+                    # Only a *queued* run can be stuck forever. A run that is
+                    # in progress is holding a machine right now, however long
+                    # it has been going -- nightly and fuzz legitimately run for
+                    # hours, and ageing one out would delete the runner under a
+                    # live build.
+                    gemaakt = r.get("created_at") if status == "queued" else None
                     if gemaakt:
                         wacht = (toen - datetime.datetime.fromisoformat(
                             gemaakt.replace("Z", "+00:00"))).total_seconds() / 60

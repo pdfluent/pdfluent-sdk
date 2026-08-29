@@ -21,7 +21,7 @@ HIER = pathlib.Path(__file__).resolve().parent
 
 
 def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0,
-          vastgelopen: int = 0) -> tuple[str, list[str]]:
+          vastgelopen: int = 0, lang_bezig: bool = False) -> tuple[str, list[str]]:
     spec = importlib.util.spec_from_file_location("sweep", HIER / "sweep_idle_instances.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -40,11 +40,17 @@ def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0,
         if "/servers" in url:
             return {"servers": [{"name": n, "id": n, "created": oud} for n in namen]}
         if "/actions/runs" in url:
+            soort = url.split("status=")[-1].split("&")[0] if "status=" in url else ""
             # Our own run is always present; the sweep must look past it.
             vers = datetime.datetime.now(datetime.timezone.utc).isoformat()
             runs = [{"id": "ONS", "created_at": vers}]
             runs += [{"id": f"ander-{i}", "created_at": vers} for i in range(in_de_lucht)]
-            runs += [{"id": f"vast-{i}", "created_at": vast} for i in range(vastgelopen)]
+            if soort == "queued":
+                runs += [{"id": f"vast-{i}", "created_at": vast}
+                         for i in range(vastgelopen)]
+            # A long build is old *and* in progress. It must never be aged out.
+            if soort == "in_progress" and lang_bezig:
+                runs += [{"id": "lang", "created_at": vast}]
             return {"workflow_runs": runs, "total_count": len(runs)}
         if "/runners" in url:
             return {"runners": [{"name": n, "busy": n in busy_namen, "status": "online"}
@@ -80,6 +86,7 @@ def laat_geclaimd() -> list[str]:
             return {"servers": [{"name": "gh-runner-laat", "id": "gh-runner-laat",
                                  "created": oud}]}
         if "/actions/runs" in url:
+            soort = url.split("status=")[-1].split("&")[0] if "status=" in url else ""
             return {"workflow_runs": [{"id": "ONS"}], "total_count": 1}
         if "/runners" in url:
             beurt["n"] += 1
@@ -131,6 +138,13 @@ def main() -> int:
     _, gewist4 = draai("", set(), vastgelopen=3)
     if "gh-runner-oud" not in gewist4:
         stuk.append("a run stuck in the queue for hours stopped the sweep entirely")
+
+    # Nightly and fuzz legitimately run for hours. Ageing an in-progress run out
+    # would delete the runner under a live build -- the staleness rule is only
+    # ever about the queue.
+    _, gewist5 = draai("", set(), lang_bezig=True)
+    if gewist5:
+        stuk.append(f"instances were deleted under a long-running build: {gewist5}")
 
     if stuk:
         for r in stuk:
