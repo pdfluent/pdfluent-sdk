@@ -40,7 +40,7 @@ pub(crate) fn decode(data: &[u8], header: &Header<'_>) -> Result<Vec<ComponentDa
     let mut storage = DecompositionStorage::default();
 
     for tile in tiles.iter() {
-        ltrace!(
+        trace!(
             "tile {} rect [{},{} {}x{}]",
             tile.idx,
             tile.rect.x0,
