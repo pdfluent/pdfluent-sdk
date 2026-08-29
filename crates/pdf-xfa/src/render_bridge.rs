@@ -851,6 +851,16 @@ fn render_nodes(
                             ops,
                         )
                     }
+                    FieldKind::Barcode => render_barcode(
+                        val_x,
+                        val_pdf_y,
+                        val_w,
+                        val_h,
+                        value,
+                        &node.style,
+                        &node_config,
+                        ops,
+                    ),
                     FieldKind::Signature => render_signature(
                         val_x,
                         val_pdf_y,
@@ -2481,6 +2491,66 @@ fn render_button(
     // fields — see 053ecab3: every TextField rendered after the button ended
     // up clipped to the empty intersection of its own rect and the button's.
     ops.extend_from_slice(b"Q\n");
+}
+
+#[allow(clippy::too_many_arguments)]
+/// Teken een barcode in het veld.
+///
+/// Een barcodeveld werd herkend en op maat gebracht en daarna als gewone tekst
+/// getekend: het formulier was niet scanbaar, wat de enige reden is dat er een
+/// barcode op staat. Zie #147.
+///
+/// Valt terug op niets tekenen wanneer de waarde leeg is of tekens bevat die
+/// Code 39 niet kent. Stil weglaten van tekens zou een barcode opleveren die
+/// naar iets anders scant dan er staat, en dat is erger dan geen barcode -- dat
+/// merk je pas bij de klant met een handscanner in de hand.
+fn render_barcode(
+    x: f64,
+    pdf_y: f64,
+    w: f64,
+    h: f64,
+    value: &str,
+    _node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
+    if value.is_empty() || w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let Some(elementen) = crate::barcode::encode_code39(value) else {
+        return;
+    };
+    let modules = crate::barcode::total_modules(&elementen);
+    if modules == 0 {
+        return;
+    }
+    // Schaal de code op de veldbreedte. Smaller dan een kwart punt per module
+    // is niet meer te scannen; dan tekenen we liever niets dan een streepjespatroon
+    // waar niemand iets aan heeft.
+    let module_breedte = w / f64::from(modules);
+    if module_breedte < 0.25 {
+        return;
+    }
+
+    write_ops(
+        ops,
+        format_args!(
+            "{:.3} {:.3} {:.3} rg\n",
+            config.text_color[0], config.text_color[1], config.text_color[2]
+        ),
+    );
+    let mut cursor = x;
+    for e in &elementen {
+        let breedte = module_breedte * f64::from(e.modules);
+        if e.is_bar {
+            write_ops(
+                ops,
+                format_args!("{cursor:.2} {pdf_y:.2} {breedte:.2} {h:.2} re\n"),
+            );
+        }
+        cursor += breedte;
+    }
+    ops.extend_from_slice(b"f\n");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4998,6 +5068,130 @@ mod tests {
         assert!(
             s_off.contains("30.00 50.00 m\n30.00 50.00 l\nS\n"),
             "opt-out = legacy zero-length point:\n{s_off}"
+        );
+    }
+
+    #[test]
+    fn a_filled_signature_still_draws_its_content() {
+        let mut ops = Vec::new();
+        render_signature(
+            10.0,
+            20.0,
+            100.0,
+            30.0,
+            "J. de Winter",
+            &FormNodeStyle::default(),
+            &config_with_border(true),
+            &mut ops,
+        );
+        assert!(!ops.is_empty(), "een ingevulde handtekening tekende niets");
+    }
+
+    // ---- barcode renderen (#147) ----
+
+    #[test]
+    fn een_barcodeveld_tekent_balken_en_geen_tekst() {
+        let mut ops = Vec::new();
+        render_barcode(
+            10.0,
+            20.0,
+            200.0,
+            40.0,
+            "ABC-123",
+            &FormNodeStyle::default(),
+            &XfaRenderConfig::default(),
+            &mut ops,
+        );
+        let uit = String::from_utf8_lossy(&ops);
+        assert!(!ops.is_empty(), "er is niets getekend");
+        assert!(
+            uit.contains(" re\n"),
+            "geen rechthoeken; er staan geen balken: {uit}"
+        );
+        assert!(uit.trim_end().ends_with('f'), "het pad wordt niet gevuld");
+        assert!(
+            !uit.contains(" Tj"),
+            "er wordt tekst getekend in plaats van een barcode"
+        );
+    }
+
+    #[test]
+    fn een_onbekend_teken_tekent_niets() {
+        // Stil weglaten zou een barcode geven die naar iets anders scant dan er
+        // staat. Dat merk je pas met een handscanner bij de klant.
+        let mut ops = Vec::new();
+        render_barcode(
+            10.0,
+            20.0,
+            200.0,
+            40.0,
+            "hallo!",
+            &FormNodeStyle::default(),
+            &XfaRenderConfig::default(),
+            &mut ops,
+        );
+        assert!(
+            ops.is_empty(),
+            "er is toch iets getekend: {}",
+            String::from_utf8_lossy(&ops)
+        );
+    }
+
+    #[test]
+    fn een_te_smal_veld_tekent_niets() {
+        // Onder een kwart punt per module is de code niet meer te scannen. Dan
+        // is een streepjespatroon tekenen erger dan niets: het ziet eruit als
+        // een werkende barcode.
+        let mut ops = Vec::new();
+        render_barcode(
+            10.0,
+            20.0,
+            2.0,
+            40.0,
+            "ABC-123",
+            &FormNodeStyle::default(),
+            &XfaRenderConfig::default(),
+            &mut ops,
+        );
+        assert!(
+            ops.is_empty(),
+            "een onleesbaar smalle barcode werd toch getekend"
+        );
+    }
+
+    #[test]
+    fn de_balken_passen_binnen_de_veldbreedte() {
+        // Zou de schaling misgaan, dan loopt de code buiten zijn veld en over
+        // de tekst ernaast heen -- zichtbaar fout, maar niet als je alleen
+        // controleert dát er balken staan.
+        let mut ops = Vec::new();
+        let (x, breedte) = (10.0_f64, 200.0_f64);
+        render_barcode(
+            x,
+            20.0,
+            breedte,
+            40.0,
+            "123",
+            &FormNodeStyle::default(),
+            &XfaRenderConfig::default(),
+            &mut ops,
+        );
+        let uit = String::from_utf8_lossy(&ops);
+        let mut rechtsterand = x;
+        for regel in uit.lines().filter(|l| l.ends_with(" re")) {
+            let d: Vec<f64> = regel
+                .trim_end_matches(" re")
+                .split(' ')
+                .filter_map(|t| t.parse().ok())
+                .collect();
+            if d.len() == 4 {
+                rechtsterand = rechtsterand.max(d[0] + d[2]);
+            }
+        }
+        assert!(
+            rechtsterand <= x + breedte + 0.5,
+            "de barcode loopt tot {rechtsterand} en het veld eindigt op {}",
+            x + breedte
         );
     }
 }
