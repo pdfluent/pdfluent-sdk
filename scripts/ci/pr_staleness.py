@@ -38,7 +38,12 @@ BEKEND_OUD = {1034, 1271, 1272, 1278, 1322, 1349, 1350, 1397, 1398, 1465, 1469, 
 
 
 def gh(pad: str):
-    r = subprocess.run(["gh", "api", pad], capture_output=True, text=True, check=False)
+    try:
+        r = subprocess.run(["gh", "api", pad], capture_output=True, text=True, check=False)
+    except (FileNotFoundError, OSError):
+        # gh missing is the ordinary case on a fresh runner, and a traceback
+        # buries the one line that says what to install.
+        return None
     if r.returncode != 0:
         return None
     try:
@@ -50,15 +55,26 @@ def gh(pad: str):
 def main() -> int:
     prs = gh(f"repos/{REPO}/pulls?state=open&per_page=100")
     if prs is None:
-        print("SKIPPED (not a pass): could not read the pull request list, so nothing "
-              "was checked.", file=sys.stderr)
-        return 0
+        print("FAIL: could not read the pull request list. A stack nobody can see is "
+              "exactly the state this check exists to prevent, so not being able to "
+              "look is a failure, not a pass. Check that `gh` is installed and "
+              "authenticated where this runs.", file=sys.stderr)
+        return 1
 
     nu = datetime.datetime.now(datetime.timezone.utc)
     waarschuw, faal = [], []
     for pr in prs:
         bij = datetime.datetime.fromisoformat(pr["updated_at"].replace("Z", "+00:00"))
         dagen = (nu - bij).days
+        vergelijk = gh(f"repos/{REPO}/compare/{pr['base']['ref']}...{pr['head']['sha']}")
+        achter = (vergelijk or {}).get("behind_by")
+        if achter is not None and achter >= FAAL_ACHTER and pr["number"] not in BEKEND_OUD:
+            faal.append((pr["number"], dagen, f"{achter} commits behind — {pr['title'][:34]}"))
+            continue
+        if achter is not None and achter >= WAARSCHUW_ACHTER and dagen < WAARSCHUW_DAGEN:
+            waarschuw.append((pr["number"], dagen,
+                              f"{achter} commits behind — {pr['title'][:34]}"))
+            continue
         if dagen >= FAAL_DAGEN and pr["number"] not in BEKEND_OUD:
             faal.append((pr["number"], dagen, pr["title"][:48]))
         elif dagen >= WAARSCHUW_DAGEN:
