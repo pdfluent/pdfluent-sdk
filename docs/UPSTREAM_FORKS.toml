@@ -68,6 +68,5 @@ waarom = "JPEG 2000 image codec."
 [[fork]]
 onze_crate = "hayro-ccitt"
 upstream = "hayro-ccitt"
-gelijk_met = "0.2.2"
-aanvaard_tot = "0.3.0"  # #256
+gelijk_met = "0.3.0"
 waarom = "CCITT fax codec."
