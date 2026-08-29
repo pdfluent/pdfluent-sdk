@@ -96,6 +96,7 @@ jobs:
           location: fsn1
           image: ${{ env.HCLOUD_SNAPSHOT_ID }}
 
+
   workspace:
     needs: create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}
@@ -240,3 +241,24 @@ jobs:
   # already paid for and made the next push buy another. hetzner-orphan-sweep
   # removes an idle instance once its billed hour is nearly up, which is the
   # moment keeping it stops being free.
+
+  # Reaping has to happen after the work, not before it. Attached to
+  # create-runner it could never delete anything: the sole instance is either
+  # claimed by this run and excluded, or freshly made and inside its paid hour.
+  # Here the runner has been released, so an instance past its billed hour is
+  # genuinely idle and can go. Younger ones survive on age and stay reusable.
+  #
+  # On the push because the */30 schedule fired twice in a day (#279). The
+  # schedule stays as a backstop.
+  reap:
+    needs: [create-runner, workspace]
+    if: always()
+    runs-on: [self-hosted, xfa-fast]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete instances that are idle and past their billed hour
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          GH_RUNNER_PAT: ${{ secrets.GH_RUNNER_PAT }}
+        run: python3 scripts/ci/sweep_idle_instances.py

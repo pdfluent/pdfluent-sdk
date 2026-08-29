@@ -55,6 +55,11 @@ def main() -> int:
     hcloud = os.environ.get("HCLOUD_TOKEN")
     pat = os.environ.get("GH_RUNNER_PAT")
     repo = os.environ.get("GITHUB_REPOSITORY")
+    # The instance this very run is about to use. It is normally young enough
+    # to survive the age filter, but the filters read state that can change
+    # between the read and the delete; naming it removes the window instead of
+    # narrowing it.
+    behoud = {n for n in os.environ.get("SWEEP_BEHOUD", "").split(",") if n}
     if not hcloud:
         print("SKIPPED (not a pass): HCLOUD_TOKEN is unset; nothing was swept.",
               file=sys.stderr)
@@ -67,6 +72,38 @@ def main() -> int:
         return 0
 
     onze = [s for s in servers if s["name"].startswith(VOORVOEGSEL)]
+
+    # A run that is queued or building may claim an instance between the moment
+    # this sweep reads "idle" and the moment it deletes. The runner is claimed
+    # before its job starts, so busy-ness does not yet show it. While anything
+    # is in flight, reap nothing: the machines cost a started hour either way,
+    # and the quiet periods -- which is when a leak actually accumulates -- are
+    # still swept.
+    if pat and repo:
+        try:
+            # Our own run is in flight by definition -- the reap job is part of
+            # it. Counting ourselves would make this gate refuse every time,
+            # which is the same self-defeating shape as sweeping inside
+            # provisioning: it would look like a working sweep that never
+            # deletes.
+            eigen = os.environ.get("GITHUB_RUN_ID")
+            def andere(status: str) -> int:
+                bladzijde = haal(
+                    f"https://api.github.com/repos/{repo}/actions/runs"
+                    f"?status={status}&per_page=100", pat)
+                runs = bladzijde.get("workflow_runs")
+                if runs is None:
+                    return bladzijde.get("total_count", 0)
+                return sum(1 for r in runs if str(r.get("id")) != str(eigen))
+            lopend, wachtend = andere("in_progress"), andere("queued")
+        except (urllib.error.URLError, OSError) as fout:
+            print(f"SKIPPED (not a pass): could not read the run queue: {fout}",
+                  file=sys.stderr)
+            return 0
+        if lopend or wachtend:
+            print(f"[sweep] {lopend} running and {wachtend} queued run(s); an instance "
+                  "can be claimed before its job starts, so nothing is deleted now")
+            return 0
     print(f"[sweep] {len(onze)} instance(s)")
 
     bezet: dict[str, bool] = {}
@@ -92,12 +129,33 @@ def main() -> int:
     for s in onze:
         gemaakt = datetime.datetime.fromisoformat(s["created"].replace("Z", "+00:00"))
         minuten = (nu - gemaakt).total_seconds() / 60
+        if s["name"] in behoud:
+            print(f"  spared  {s['name']} ({minuten:.0f} min) — claimed by this run")
+            continue
         if bezet.get(s["name"], False):
             print(f"  busy    {s['name']} ({minuten:.0f} min) — leaving it")
             continue
         if minuten <= MINUTEN:
             print(f"  idle    {s['name']} ({minuten:.0f} min) — still inside its paid "
                   "hour, keep for reuse")
+            continue
+        # Re-read immediately before deleting, not once before the loop. Every
+        # check here is a point in time and none of them is a lock: a run can
+        # claim this machine between the reading and the delete. Doing it per
+        # server shrinks that window to one round trip instead of the whole
+        # loop, which is a narrowing, not a fix -- see #280.
+        try:
+            if andere("in_progress") or andere("queued"):
+                print(f"  claimed {s['name']} — a run appeared while sweeping, leaving it")
+                continue
+            vers = haal(f"https://api.github.com/repos/{repo}/actions/runners?per_page=100", pat)
+            if any(r["name"] == s["name"] and r.get("busy")
+                   for r in vers.get("runners", [])):
+                print(f"  busy    {s['name']} — claimed since the first read, leaving it")
+                continue
+        except (urllib.error.URLError, OSError) as fout:
+            print(f"    could not re-check {s['name']}, so not deleting it: {fout}",
+                  file=sys.stderr)
             continue
         print(f"  DELETE  {s['name']} ({minuten:.0f} min) — idle and past its hour")
         try:

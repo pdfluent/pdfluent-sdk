@@ -81,6 +81,10 @@ jobs:
         run: python3 scripts/ci/test_infra_health.py
       - name: The wait for a free instance fits inside its job
         run: python3 scripts/ci/wait_fits_in_the_job_timeout.py
+      - name: The sweep spares the instance this run claimed
+        run: python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
+      - name: Reaping runs after the work, never inside provisioning
+        run: python3 scripts/ci/reaping_happens_after_the_work.py
       # The guard first, then its own test -- a guard whose parser stopped
       # understanding the files reports a clean tree in exactly the same words.
       - name: The guard that reads run-blocks still reads them
