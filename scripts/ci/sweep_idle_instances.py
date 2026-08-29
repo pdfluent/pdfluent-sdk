@@ -38,6 +38,9 @@ import urllib.error
 import urllib.request
 
 MINUTEN = 50
+# A run waiting longer than this is stuck, not pending. Generous on purpose:
+# a real queue behind a busy runner clears in minutes, not hours.
+VASTGELOPEN_MINUTEN = 90
 HCLOUD = "https://api.hetzner.cloud/v1/servers"
 VOORVOEGSEL = "gh-runner-"
 
@@ -87,6 +90,8 @@ def main() -> int:
             # provisioning: it would look like a working sweep that never
             # deletes.
             eigen = os.environ.get("GITHUB_RUN_ID")
+            toen = datetime.datetime.now(datetime.timezone.utc)
+
             def andere(status: str) -> int:
                 bladzijde = haal(
                     f"https://api.github.com/repos/{repo}/actions/runs"
@@ -94,7 +99,30 @@ def main() -> int:
                 runs = bladzijde.get("workflow_runs")
                 if runs is None:
                     return bladzijde.get("total_count", 0)
-                return sum(1 for r in runs if str(r.get("id")) != str(eigen))
+                telt = 0
+                for r in runs:
+                    if str(r.get("id")) == str(eigen):
+                        continue
+                    # A run that has waited for hours is not about to claim a
+                    # machine: it is waiting for a runner that does not exist
+                    # (#281). Counting it holds the sweep off forever, which
+                    # turns this safety check into a permanent off switch --
+                    # and it reports success every time it declines.
+                    # Only a *queued* run can be stuck forever. A run that is
+                    # in progress is holding a machine right now, however long
+                    # it has been going -- nightly and fuzz legitimately run for
+                    # hours, and ageing one out would delete the runner under a
+                    # live build.
+                    gemaakt = r.get("created_at") if status == "queued" else None
+                    if gemaakt:
+                        wacht = (toen - datetime.datetime.fromisoformat(
+                            gemaakt.replace("Z", "+00:00"))).total_seconds() / 60
+                        if wacht > VASTGELOPEN_MINUTEN:
+                            print(f"  stale   run {r.get('id')} has waited {wacht:.0f} min; "
+                                  "not treating it as live work")
+                            continue
+                    telt += 1
+                return telt
             lopend, wachtend = andere("in_progress"), andere("queued")
         except (urllib.error.URLError, OSError) as fout:
             print(f"SKIPPED (not a pass): could not read the run queue: {fout}",
