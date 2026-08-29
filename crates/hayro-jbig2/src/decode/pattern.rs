@@ -1,7 +1,7 @@
 //! Pattern dictionary segment parsing and decoding (7.4.4, 6.7).
 
 use super::{AdaptiveTemplatePixel, Template, generic};
-use crate::arithmetic_decoder::{ArithmeticDecoder, Context};
+use crate::arithmetic_decoder::{ArithmeticDecoder, ArithmeticDecoderContext as Context};
 use crate::bitmap::Bitmap;
 use crate::error::{DecodeError, ParseError, Result};
 use crate::reader::Reader;
