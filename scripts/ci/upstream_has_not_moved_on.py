@@ -40,8 +40,23 @@ def nieuwste(crate: str) -> str | None:
 
 
 def delen(versie: str) -> tuple[int, int]:
+    """Major and minor only -- for measuring how wide a gap is."""
     stukken = versie.split(".")
     return int(stukken[0]), int(stukken[1] if len(stukken) > 1 else 0)
+
+
+def volledig(versie: str) -> tuple[int, ...]:
+    """Every component, for deciding whether an accepted version still covers.
+
+    Comparing on major.minor alone made an acceptance of 0.7.2 also cover 0.7.3
+    and everything after it, so patch releases -- which is where fixes land --
+    would have slipped past the check that exists to notice them.
+    """
+    uit = []
+    for stuk in versie.split("."):
+        cijfers = "".join(c for c in stuk if c.isdigit())
+        uit.append(int(cijfers) if cijfers else 0)
+    return tuple(uit)
 
 
 def main() -> int:
@@ -66,12 +81,12 @@ def main() -> int:
         gat = (zij[0] - wij[0]) * 100 + (zij[1] - wij[1])
         aanvaard_nu = f.get("aanvaard_tot")
         vrij = gat <= MINORS_TOEGESTAAN or (
-            aanvaard_nu is not None and delen(boven) <= delen(aanvaard_nu))
+            aanvaard_nu is not None and volledig(boven) <= volledig(aanvaard_nu))
         merk = "  " if vrij else "!!"
         print(f"[upstream] {merk} {f['onze_crate']:14} {f['gelijk_met']:>7} "
               f"<- {f['upstream']:18} now {boven}")
         aanvaard = f.get("aanvaard_tot")
-        if aanvaard and delen(boven) <= delen(aanvaard):
+        if aanvaard and volledig(boven) <= volledig(aanvaard):
             # A gap somebody chose, with an issue against it. Still printed, so
             # it stays visible; not fatal, so it does not block other work.
             continue
@@ -82,6 +97,10 @@ def main() -> int:
         for crate, reden in onbereikbaar:
             print(f"SKIPPED (not a pass): could not reach crates.io for {crate}: {reden}",
                   file=sys.stderr)
+        if len(onbereikbaar) == len(forks):
+            print("[upstream] FAIL: not one fork could be checked, so this run says "
+                  "nothing about how far behind we are.", file=sys.stderr)
+            return 1
         if not achter:
             return 0
 
