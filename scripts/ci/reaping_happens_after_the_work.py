@@ -51,7 +51,10 @@ def main() -> int:
             nodig = [nodig] if isinstance(nodig, str) else list(nodig)
             # It must follow at least one job that provisioning feeds, or it
             # runs while the machine is still in use.
-            if not any(g in nodig for g in maakt) and not nodig:
+            # `and not nodig` was here and made the first clause dead: any
+            # unrelated dependency satisfied it. A guard that accepts the wrong
+            # answer is the thing it was written to catch.
+            if not any(g in nodig for g in maakt):
                 stuk.append(f"{pad.name}: job `{naam}` sweeps without needing the job that "
                             "uses the runner, so it can run while the machine is in use")
     if stuk:

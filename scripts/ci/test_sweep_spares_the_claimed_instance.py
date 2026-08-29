@@ -20,7 +20,7 @@ from contextlib import redirect_stdout
 HIER = pathlib.Path(__file__).resolve().parent
 
 
-def draai(behoud: str, busy_namen: set[str]) -> tuple[str, list[str]]:
+def draai(behoud: str, busy_namen: set[str], in_de_lucht: int = 0) -> tuple[str, list[str]]:
     spec = importlib.util.spec_from_file_location("sweep", HIER / "sweep_idle_instances.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -36,6 +36,10 @@ def draai(behoud: str, busy_namen: set[str]) -> tuple[str, list[str]]:
             return {}
         if "/servers" in url:
             return {"servers": [{"name": n, "id": n, "created": oud} for n in namen]}
+        if "/actions/runs" in url:
+            # Our own run is always present; the sweep must look past it.
+            runs = [{"id": "ONS"}] + [{"id": f"ander-{i}"} for i in range(in_de_lucht)]
+            return {"workflow_runs": runs, "total_count": len(runs)}
         if "/runners" in url:
             return {"runners": [{"name": n, "busy": n in busy_namen, "status": "online"}
                                 for n in namen], "total_count": len(namen)}
@@ -46,6 +50,7 @@ def draai(behoud: str, busy_namen: set[str]) -> tuple[str, list[str]]:
     os.environ["GH_RUNNER_PAT"] = "stub"
     os.environ["GITHUB_REPOSITORY"] = "stub/stub"
     os.environ["SWEEP_BEHOUD"] = behoud
+    os.environ["GITHUB_RUN_ID"] = "ONS"
     uit = io.StringIO()
     with redirect_stdout(uit):
         mod.main()
@@ -69,6 +74,12 @@ def main() -> int:
     _, gewist2 = draai("", {"gh-runner-bezig"})
     if "gh-runner-geclaimd" not in gewist2:
         stuk.append("an unclaimed idle instance survived, so the exclusion is not name-driven")
+
+    # A run in flight can claim an instance before its job starts, so busy-ness
+    # does not show it yet. Nothing may be deleted while that is true.
+    _, gewist3 = draai("", set(), in_de_lucht=1)
+    if gewist3:
+        stuk.append(f"instances were deleted while a run was in flight: {gewist3}")
 
     if stuk:
         for r in stuk:
