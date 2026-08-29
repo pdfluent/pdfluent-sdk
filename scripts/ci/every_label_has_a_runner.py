@@ -113,9 +113,6 @@ def main() -> int:
         print("[labels] OK: every self-hosted label any job asks for has a runner.")
         return 0
 
-    print(file=sys.stderr)
-    print(f"[labels] FATAL: {len(ontbreekt)} job(s) ask for a label no runner answers:",
-          file=sys.stderr)
     # Known and tracked in #276: four dispatch-only jobs want a corpus runner
     # that was never provisioned. Named individually so the list cannot quietly
     # grow, and checked in both directions so it cannot quietly shrink either --
@@ -126,29 +123,51 @@ def main() -> int:
         ("gate-ci.yml", "gate", "xfa-corpus"),
         ("wasm-gate.yml", "wasm-gate", "xfa-corpus"),
     }
-    nu_stuk = {(w, j, l) for w, j, l, _ in ontbreekt}
-    nieuw = nu_stuk - BEKEND
-    opgelost = BEKEND - nu_stuk
-    if opgelost and not nieuw:
-        print(f"FAIL: {len(opgelost)} known-stuck job(s) can now be assigned: "
-              f"{sorted(opgelost)}. Remove them from BEKEND so the next one is "
-              "caught.", file=sys.stderr)
+    # The exemption is for jobs nobody can start by accident. If one of these
+    # workflows re-enables push or schedule it queues on every commit, which is
+    # the failure this guard exists for -- so the trigger list is part of what
+    # is excused, not something the baseline may drop.
+    HANDMATIG = {"workflow_dispatch", "workflow_call", "repository_dispatch"}
+    handmatig_stuk = {(w, j, l) for w, j, l, t in ontbreekt if set(t or []) <= HANDMATIG}
+    automatisch = [r for r in ontbreekt if not set(r[3] or []) <= HANDMATIG]
+
+    def uitleg(rijen) -> None:
+        for workflow, job, label, triggers in rijen:
+            print(f"  {workflow} :: {job} wants `{label}` on {triggers}", file=sys.stderr)
+        print(
+            "\nThose runs queue until GitHub abandons them about a day later. A queued "
+            "job is not red -- it waits, and a gate that waits forever looks like one "
+            "that has not got round to you yet. Register the runner, point the job at "
+            "one that exists, or make the workflow dispatch-only until it can run. "
+            "(#276)",
+            file=sys.stderr,
+        )
+
+    if automatisch:
+        print(file=sys.stderr)
+        print(f"[labels] FATAL: {len(automatisch)} job(s) ask for a missing label on an "
+              "automatic trigger; no baseline covers those.", file=sys.stderr)
+        uitleg(automatisch)
         return 1
-    if not nieuw:
-        print(f"[labels] OK: {len(BEKEND)} job(s) still wait on a corpus runner (#276); "
-              "no new label is unanswered.")
-        return 0
-        print(f"[labels] FATAL: {FLOWS} is missing", file=sys.stderr)
-    for workflow, job, label, triggers in ontbreekt:
-        print(f"  {workflow} :: {job} wants `{label}` on {triggers}", file=sys.stderr)
-    print(
-        "\nThose runs queue until GitHub abandons them about a day later. A queued job "
-        "is not red -- it waits, and a gate that waits forever looks like one that has "
-        "not got round to you yet. Register the runner, point the job at one that "
-        "exists, or make the workflow dispatch-only until it can run. (#276)",
-        file=sys.stderr,
-    )
-    return 1
+
+    nieuw = handmatig_stuk - BEKEND
+    if nieuw:
+        print(file=sys.stderr)
+        print(f"[labels] FATAL: {len(nieuw)} job(s) ask for a label no runner answers:",
+              file=sys.stderr)
+        uitleg([r for r in ontbreekt if (r[0], r[1], r[2]) in nieuw])
+        return 1
+
+    opgelost = BEKEND - handmatig_stuk
+    if opgelost:
+        print(f"FAIL: {len(opgelost)} known-stuck job(s) can now be assigned: "
+              f"{sorted(opgelost)}. Remove them from BEKEND so the next one is caught.",
+              file=sys.stderr)
+        return 1
+
+    print(f"[labels] OK: {len(BEKEND)} job(s) still wait on a corpus runner (#276); "
+          "no new label is unanswered.")
+    return 0
 
 
 if __name__ == "__main__":
