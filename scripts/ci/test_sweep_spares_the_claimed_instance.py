@@ -180,6 +180,15 @@ def main() -> int:
                     "was in flight; it cannot be claimed, so cleaning it strands "
                     f"nobody (deleted: {registraties6})")
 
+    # A reaped server must take its registration with it. Leaving it for a later
+    # run assumes there will be one; in a quiet period there is not, and every
+    # sweep was leaving exactly one orphan behind.
+    _t, gewist7, registraties7 = draai("", set())
+    for naam in gewist7:
+        if naam not in registraties7:
+            stuk.append(f"server {naam} was deleted but its registration was left "
+                        f"behind (removed: {registraties7})")
+
     if stuk:
         for r in stuk:
             print(f"FAIL: {r}")

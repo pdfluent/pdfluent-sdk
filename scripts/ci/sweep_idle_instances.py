@@ -226,6 +226,26 @@ def main() -> int:
         try:
             haal(f"{HCLOUD}/{s['id']}", hcloud, "DELETE")
             verwijderd += 1
+            # Take the registration in the same pass. Leaving it for a later run
+            # assumes there will be one, and in a quiet period there is not: the
+            # push-triggered reap only runs when somebody pushes. Every sweep
+            # was leaving exactly one orphan behind, which is how a runner list
+            # fills up with offline names.
+            if pat and repo:
+                rid = next(
+                    (r for r in (haal(f"https://api.github.com/repos/{repo}"
+                                      "/actions/runners?per_page=100", pat) or {})
+                     .get("runners", []) if r["name"] == s["name"]),
+                    None,
+                )
+                if rid is not None:
+                    try:
+                        haal(f"https://api.github.com/repos/{repo}/actions/runners/"
+                             f"{rid['id']}", pat, "DELETE")
+                        print(f"          and its registration")
+                    except (urllib.error.URLError, OSError) as fout:
+                        print(f"          registration left behind: {fout}",
+                              file=sys.stderr)
         except (urllib.error.URLError, OSError) as fout:
             print(f"    could not delete: {fout}", file=sys.stderr)
 
