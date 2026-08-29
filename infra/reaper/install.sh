@@ -34,7 +34,11 @@ CHECKOUT="${CHECKOUT}" python3 - \
   /etc/systemd/system/pdfluent-reaper.service <<'SUBST'
 import os, sys
 bron, doel = sys.argv[1], sys.argv[2]
-tekst = open(bron).read().replace("@CHECKOUT@", os.environ["CHECKOUT"])
+# % starts a specifier in a unit file, so a path holding one would be
+# expanded rather than used. Doubling it is how systemd takes a literal.
+# Escaping for the shell was not enough; each syntax needs its own.
+pad = os.environ["CHECKOUT"].replace("%", "%%")
+tekst = open(bron).read().replace("@CHECKOUT@", pad)
 if "@CHECKOUT@" in tekst:
     raise SystemExit("placeholder survived substitution; refusing to install")
 open(doel, "w").write(tekst)

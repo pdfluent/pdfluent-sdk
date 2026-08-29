@@ -85,6 +85,8 @@ jobs:
         run: python3 scripts/ci/one_lock_guards_the_instances.py
       - name: A Persistent= timer fires on a calendar
         run: python3 scripts/ci/persistent_timers_use_a_calendar.py
+      - name: The installer escapes the checkout path for systemd
+        run: python3 scripts/ci/test_installer_escapes_the_path.py
       - name: The sweep spares the instance this run claimed
         run: python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
       - name: Reaping runs after the work, never inside provisioning
