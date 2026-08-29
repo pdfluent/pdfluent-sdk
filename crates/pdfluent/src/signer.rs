@@ -15,12 +15,23 @@ use crate::error::Result;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum PadesProfile {
-    /// PAdES B-B — basic signature, no timestamp.
+    /// PAdES B-B — basic signature, no timestamp. **Default.**
+    ///
+    /// The default is what the signer actually produces. It used to be
+    /// LongTerm, which mapped to the same code path and produced B-B anyway —
+    /// so callers asking for long-term validity got a basic signature and no
+    /// warning. A signature that claims more than it carries is worse than one
+    /// that claims less.
+    #[default]
     BasicSignature,
     /// PAdES B-T — signature with trusted timestamp.
     Timestamped,
-    /// PAdES B-LT — signature with long-term validation data (DSS). **Default.**
-    #[default]
+    /// PAdES B-LT — signature with long-term validation data (DSS).
+    ///
+    /// Not reachable yet: B-LT needs a timestamp authority to collect
+    /// validation data from, and SignOptions carries no TSA configuration.
+    /// Asking for it returns an error rather than quietly signing B-B, which
+    /// is what this used to do while being the default (#176).
     LongTerm,
     /// PAdES B-LTA — signature with archive timestamp for renewal.
     LongTermArchive,
@@ -39,7 +50,7 @@ pub struct SignOptions {
 }
 
 impl SignOptions {
-    /// New options with [`PadesProfile::LongTerm`] as default.
+    /// New options with [`PadesProfile::BasicSignature`] as default.
     pub fn new() -> Self {
         Self::default()
     }

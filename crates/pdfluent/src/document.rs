@@ -1792,6 +1792,7 @@ impl PdfDocument {
         opts: crate::signer::SignOptions,
     ) -> Result<()> {
         self.require_capability(Capability::DigitalSignatureSign)?;
+        profile_is_reachable(opts.profile)?;
         let pdf_bytes = self.to_bytes()?;
         let inner_opts = map_sign_options(&opts);
         // Wrap our trait-object signer in an adapter that implements the
@@ -2865,7 +2866,36 @@ fn map_permissions(perms: crate::encrypt::Permissions) -> pdf_manip::encrypt::Pe
     }
 }
 
+/// Refuse the profiles we cannot actually produce.
+///
+/// B-T, B-LT and B-LTA all need a timestamp authority, and SignOptions carries
+/// no TSA configuration, so `sign_pdf_ltv` is unreachable from here. Until it
+/// is wired, asking for one of those returned a plain B-B signature with no
+/// indication that the request had been downgraded (#176).
+///
+/// A signature that claims long-term validity and carries no validation data
+/// is a false compliance claim. Failing is the smaller harm.
+fn profile_is_reachable(profile: crate::signer::PadesProfile) -> Result<()> {
+    use crate::signer::PadesProfile::*;
+    let (naam, wat) = match profile {
+        BasicSignature => return Ok(()),
+        Timestamped => ("B-T", "a trusted timestamp"),
+        LongTerm => ("B-LT", "long-term validation data (DSS)"),
+        LongTermArchive => ("B-LTA", "an archive timestamp"),
+    };
+    Err(crate::Error::Unsupported(format!(
+        "PAdES {naam} needs {wat}, which requires a timestamp authority. \
+         SignOptions carries no TSA configuration yet, so this profile cannot \
+         be produced. Use PadesProfile::BasicSignature, or follow #176."
+    )))
+}
+
 fn map_sign_options(opts: &crate::signer::SignOptions) -> pdf_sign::SignOptions {
+    // Every profile maps to the same SubFilter, which is correct: PAdES uses
+    // ETSI.CAdES.detached throughout. What distinguishes B-T, B-LT and B-LTA is
+    // the timestamp and validation data, and those come from sign_pdf_ltv with
+    // a TSA -- not from this field. Refusing the unreachable profiles happens
+    // in sign(); see profile_is_reachable.
     let sub_filter = match opts.profile {
         crate::signer::PadesProfile::BasicSignature => pdf_sign::SubFilter::EtsiCadesDetached,
         crate::signer::PadesProfile::Timestamped => pdf_sign::SubFilter::EtsiCadesDetached,
