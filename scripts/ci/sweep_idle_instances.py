@@ -100,6 +100,9 @@ def main() -> int:
         return 0
 
     onze = [s for s in servers if s["name"].startswith(VOORVOEGSEL)]
+    # Default to holding servers back: if we never got far enough to check the
+    # queue, we do not know it is safe to delete one.
+    alleen_registraties = True
 
     # A run that is queued or building may claim an instance between the moment
     # this sweep reads "idle" and the moment it deletes. The runner is claimed
@@ -154,9 +157,16 @@ def main() -> int:
                   file=sys.stderr)
             return 0
         if lopend or wachtend:
+            # Servers are held back, registrations are not. A registration whose
+            # server is already gone cannot be claimed by anything, so removing
+            # it strands nobody -- and leaving it makes the list fill with
+            # offline names until nobody reads it any more. This gate is about
+            # not deleting machines, not about doing nothing.
             print(f"[sweep] {lopend} running and {wachtend} queued run(s); an instance "
-                  "can be claimed before its job starts, so nothing is deleted now")
-            return 0
+                  "can be claimed before its job starts, so no server is deleted now")
+            alleen_registraties = True
+        else:
+            alleen_registraties = False
     print(f"[sweep] {len(onze)} instance(s)")
 
     bezet: dict[str, bool] = {}
@@ -182,6 +192,8 @@ def main() -> int:
     for s in onze:
         gemaakt = datetime.datetime.fromisoformat(s["created"].replace("Z", "+00:00"))
         minuten = (nu - gemaakt).total_seconds() / 60
+        if alleen_registraties:
+            continue
         if s["name"] in behoud:
             print(f"  spared  {s['name']} ({minuten:.0f} min) — claimed by this run")
             continue
