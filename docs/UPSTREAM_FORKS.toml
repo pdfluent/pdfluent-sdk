@@ -27,6 +27,10 @@ waarom = "Content-stream interpreter and font handling. Still MIT OR Apache-2.0.
 
 [[fork]]
 onze_crate = "pdf-font"
+# Split out of hayro-interpret and since merged with hayro-font, hayro-cmap and
+# hayro-postscript upstream. Tracked against hayro-interpret because that is
+# where our code came from; the merge means a move here is a redesign, not an
+# upgrade, which is why this one is not planned.
 upstream = "hayro-interpret"
 gelijk_met = "0.5.0"
 aanvaard_tot = "0.7.0"  # in uitvoering, #256

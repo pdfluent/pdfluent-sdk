@@ -101,8 +101,12 @@ def main() -> int:
             print("[upstream] FAIL: not one fork could be checked, so this run says "
                   "nothing about how far behind we are.", file=sys.stderr)
             return 1
-        if not achter:
-            return 0
+        # A partial outage is still an answer we do not have. Reporting OK
+        # because the forks we *could* reach are fine says nothing about the
+        # ones we could not, and that is the whole question.
+        print(f"[upstream] FAIL: {len(onbereikbaar)} of {len(forks)} fork(s) could not "
+              "be checked, so this run cannot say they are current.", file=sys.stderr)
+        return 1
 
     if achter:
         print(file=sys.stderr)
