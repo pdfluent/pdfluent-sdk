@@ -3,7 +3,11 @@
 //! - Stable-code snapshot: every public `Error` variant produces a
 //!   canonical `code()` string that is frozen for the life of 1.x.
 //! - Docs-url mapping: every variant's `docs_url()` deep-links into the
-//!   expected `/errors/<code>` subtree.
+//!   expected `/errors#<code>` anchor on the published index page.
+//!
+//! The per-code subtree was the original design and none of those pages
+//! were ever published -- every one returned 404 (#253). The index page
+//! with an anchor per code is what exists.
 //! - From-impl contracts: each interne crate's error type maps to the
 //!   agreed public variant without leaking the interne type via
 //!   `Error::source()`.
@@ -185,8 +189,8 @@ fn docs_url_resolves_to_expected_subtree() {
         let url = err.docs_url();
         assert_eq!(
             url,
-            format!("https://pdfluent.com/errors/{code}"),
-            "docs_url for {err:?} must deep-link to /errors/{code}",
+            format!("https://pdfluent.com/errors#{code}"),
+            "docs_url for {err:?} must link to the /errors#{code} anchor",
         );
     }
 }
