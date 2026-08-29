@@ -1,0 +1,73 @@
+# Where each forked crate came from, and which upstream release we are level
+# with. Machine-readable on purpose: a fork that stands still falls behind
+# without anyone noticing, which is the same shape as a check that stops
+# looking. scripts/ci/upstream_has_not_moved_on.py reads this.
+#
+# `aanvaard_tot` records a gap somebody decided to live with for now, with
+# the issue that tracks closing it. The check fails if upstream moves past
+# it, so an accepted gap cannot quietly become a forgotten one.
+#
+# `gelijk_met` is the upstream version our code corresponds to -- not our own
+# version number, which is independent. Update it only when the code actually
+# moved.
+
+[[fork]]
+onze_crate = "pdf-syntax"
+upstream = "hayro-syntax"
+gelijk_met = "0.5.0"
+aanvaard_tot = "0.7.2"  # in uitvoering, #256
+waarom = "PDF object model and parser. Closest to upstream; still MIT OR Apache-2.0."
+
+[[fork]]
+onze_crate = "pdf-interpret"
+upstream = "hayro-interpret"
+gelijk_met = "0.5.0"
+aanvaard_tot = "0.7.0"  # in uitvoering, #256
+waarom = "Content-stream interpreter and font handling. Still MIT OR Apache-2.0."
+
+[[fork]]
+onze_crate = "pdf-font"
+upstream = "hayro-interpret"
+gelijk_met = "0.5.0"
+aanvaard_tot = "0.7.0"  # in uitvoering, #256
+waarom = "Split out of hayro-interpret and substantially extended."
+
+[[fork]]
+onze_crate = "pdf-render"
+upstream = "hayro"
+gelijk_met = "0.5.0"
+aanvaard_tot = "0.7.1"  # in uitvoering, #256
+waarom = "Rasteriser. Substantially extended; diverged furthest."
+[[fork]]
+onze_crate = "lopdf"
+upstream = "lopdf"
+gelijk_met = "0.39.5"
+aanvaard_tot = "0.44.0"  # grootste gat dat we hebben, #256
+waarom = "PDF document model used by pdf-manip. Five minor releases behind."
+
+[[fork]]
+onze_crate = "cff-parser"
+upstream = "cff-parser"
+gelijk_met = "0.2.1"
+waarom = "CFF font parsing. Level with upstream, or slightly ahead."
+
+[[fork]]
+onze_crate = "hayro-jbig2"
+upstream = "hayro-jbig2"
+gelijk_met = "0.2.3"
+aanvaard_tot = "0.3.0"  # #256
+waarom = "JBIG2 image codec."
+
+[[fork]]
+onze_crate = "hayro-jpeg2000"
+upstream = "hayro-jpeg2000"
+gelijk_met = "0.3.5"
+aanvaard_tot = "0.4.0"  # #256
+waarom = "JPEG 2000 image codec."
+
+[[fork]]
+onze_crate = "hayro-ccitt"
+upstream = "hayro-ccitt"
+gelijk_met = "0.2.2"
+aanvaard_tot = "0.3.0"  # #256
+waarom = "CCITT fax codec."

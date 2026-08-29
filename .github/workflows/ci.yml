@@ -87,6 +87,10 @@ jobs:
         run: python3 scripts/ci/persistent_timers_use_a_calendar.py
       - name: The installer escapes the checkout path for systemd
         run: python3 scripts/ci/test_installer_escapes_the_path.py
+      - name: Our forks have not fallen behind upstream
+        run: python3 scripts/ci/upstream_has_not_moved_on.py
+      - name: Both fork lists name the same crates
+        run: python3 scripts/ci/fork_lists_agree.py
       - name: The sweep spares the instance this run claimed
         run: python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
       - name: Reaping runs after the work, never inside provisioning
