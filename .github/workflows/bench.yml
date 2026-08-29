@@ -28,7 +28,13 @@ jobs:
   # This gate turns that silence into an immediate, legible failure. Delete it
   # the day the corpus runner exists.
   parked:
-    runs-on: [self-hosted, xfa-fast]
+    # Hosted, not the persistent desktop. workflow_dispatch lets the caller pick
+    # any ref, so this job's body comes from that ref -- a branch could replace
+    # the failing step and run whatever it liked on the machine that also
+    # provisions and reaps. Five seconds of hosted runner on a dispatch nobody
+    # should be making is the cheaper side of that trade, and the cost guard
+    # already says a dispatch is a decision that may cost.
+    runs-on: ubuntu-latest
     steps:
       - name: Refuse to queue for a runner that does not exist
         run: |
