@@ -20,6 +20,54 @@ pub struct SubsetReport {
     pub fonts_subsetted: usize,
     /// Total bytes saved.
     pub bytes_saved: usize,
+    /// Lettertypen die zijn overgeslagen omdat het subsetten tabellen kwijtraakte.
+    pub fonts_skipped_incomplete: usize,
+    /// Which tables those were, per font name.
+    pub tables_lost: Vec<(String, Vec<String>)>,
+}
+
+/// The names of the SFNT tables in a font program.
+///
+/// Returns an empty list for bare CFF (FontFile3 without an SFNT wrapper):
+/// there is no table directory there, so there is nothing to compare.
+fn sfnt_table_names(data: &[u8]) -> Vec<String> {
+    if data.len() < 12 {
+        return Vec::new();
+    }
+    let magic = &data[..4];
+    if magic != b"\x00\x01\x00\x00" && magic != b"true" && magic != b"ttcf" && magic != b"OTTO" {
+        return Vec::new();
+    }
+    let count = u16::from_be_bytes([data[4], data[5]]) as usize;
+    // A plausible upper bound; above this the header cannot be trusted.
+    if count > 64 {
+        return Vec::new();
+    }
+    (0..count)
+        .filter_map(|i| {
+            let at = 12 + i * 16;
+            data.get(at..at + 4)
+                .map(|tag| String::from_utf8_lossy(tag).into_owned())
+        })
+        .collect()
+}
+
+/// Tables the original had and the subset does not, or `None` if nothing was lost.
+/// Exposed for the guard's test: the predicate is the whole protection, and
+/// testing it through a full document would need corpus fonts this machine
+/// does not carry.
+pub fn tables_lost_for_test(original: &[u8], subsetted: &[u8]) -> Option<Vec<String>> {
+    tables_lost(original, subsetted)
+}
+
+fn tables_lost(original: &[u8], subsetted: &[u8]) -> Option<Vec<String>> {
+    let before = sfnt_table_names(original);
+    if before.is_empty() {
+        return None;
+    }
+    let after: HashSet<String> = sfnt_table_names(subsetted).into_iter().collect();
+    let lost: Vec<String> = before.into_iter().filter(|t| !after.contains(t)).collect();
+    (!lost.is_empty()).then_some(lost)
 }
 
 /// Subset all embedded fonts in the document to only used glyphs.
@@ -28,6 +76,8 @@ pub fn subset_fonts(doc: &mut Document) -> Result<SubsetReport> {
         fonts_processed: 0,
         fonts_subsetted: 0,
         bytes_saved: 0,
+        fonts_skipped_incomplete: 0,
+        tables_lost: Vec::new(),
     };
 
     // Step 1: Find all Font objects and collect used character codes per font.
@@ -113,6 +163,23 @@ pub fn subset_fonts(doc: &mut Document) -> Result<SubsetReport> {
 
         if subsetted.len() >= original_size {
             continue; // No size reduction.
+        }
+
+        // Nooit een lettertype terugschrijven dat minder tabellen heeft dan het
+        // origineel.
+        //
+        // Gemeten op 24-08-2026: zonder deze regel verloor het subsetten de
+        // `cmap`-tabel. Tekstextractie merkte daar niets van (die leest
+        // ToUnicode) en de pagina's renderden pixelidentiek, maar FreeType
+        // meldde "could not find any cmaps" en veraPDF kon de bestanden niet
+        // meer valideren -- op 17 holdout-documenten ging 17 conform naar 0.
+        //
+        // Kleiner en kapot is geen besparing. Zolang de subsetter geen
+        // vervangende `cmap` opbouwt (#184), slaan we zo'n lettertype over.
+        if let Some(kwijt) = tables_lost(&font_data, &subsetted) {
+            report.fonts_skipped_incomplete += 1;
+            report.tables_lost.push((font_name.clone(), kwijt));
+            continue;
         }
 
         let bytes_saved = original_size - subsetted.len();
