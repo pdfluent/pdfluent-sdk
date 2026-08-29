@@ -78,7 +78,11 @@ done
 # Loopt de wachttijd af, dan stopt dit met een fout in plaats van alsnog te
 # kopen. Een pijplijn die wacht is zichtbaar; een rekening die verdubbelt niet.
 wacht=0
-while [ "${wacht}" -lt 900 ]; do
+# Long enough to outlast a whole build. The rule is one instance at a time, so
+# a second push must wait for the first to finish -- and workspace takes 15 to
+# 19 minutes. A 900s wait guaranteed that two pushes close together failed the
+# second one, which reads as a broken pipeline rather than a queue.
+while [ "${wacht}" -lt 1800 ]; do
     for naam in ${servers}; do
         staat="$(printf '%s' "${runners}" | python3 -c 'import json,sys
 naam = sys.argv[1]
