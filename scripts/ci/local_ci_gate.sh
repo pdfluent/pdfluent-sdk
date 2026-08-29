@@ -55,6 +55,9 @@ run crons     python3 scripts/ci/schedule_guards_match_their_cron.py
 run mirror    python3 scripts/ci/test_mirror_has_not_drifted.py
 run infra     python3 scripts/ci/test_infra_health.py
 run waitfit   python3 scripts/ci/wait_fits_in_the_job_timeout.py
+run onelock   python3 scripts/ci/one_lock_guards_the_instances.py
+run timers    python3 scripts/ci/persistent_timers_use_a_calendar.py
+run installer python3 scripts/ci/test_installer_escapes_the_path.py
 run sweep     python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
 run reaporder python3 scripts/ci/reaping_happens_after_the_work.py
 # Advisory, never blocking. It reports on live machines -- a queue, a busy

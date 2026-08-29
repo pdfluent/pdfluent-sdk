@@ -21,6 +21,24 @@
 
 set -uo pipefail
 
+# One machine provisions and one machine reaps: this desktop. So a plain file
+# lock is enough to make claiming and deleting mutually exclusive, which the
+# GitHub and Hetzner APIs cannot do between them -- neither offers a
+# compare-and-swap, so every check either side is a point in time (#280).
+#
+# Re-exec under flock rather than wrapping the body, so every exit path
+# releases it. The timeout is a deadlock guard: a crashed holder must not stop
+# provisioning for ever, and 300s is far longer than either side needs.
+SLOT="${PDFLUENT_INSTANCE_LOCK:-/var/tmp/pdfluent-instances.lock}"
+if [ -z "${PDFLUENT_LOCK_HELD:-}" ]; then
+  if command -v flock >/dev/null 2>&1; then
+    export PDFLUENT_LOCK_HELD=1
+    exec flock --timeout 300 "${SLOT}" "$0" "$@"
+  fi
+  echo "SKIPPED (not a pass): flock is not installed, so claiming and reaping" \
+       "are not serialised on this host." >&2
+fi
+
 uit="${GITHUB_OUTPUT:-/dev/stdout}"
 : "${HCLOUD_TOKEN:?HCLOUD_TOKEN is required}"
 : "${RUNNER_PAT:?RUNNER_PAT is required}"

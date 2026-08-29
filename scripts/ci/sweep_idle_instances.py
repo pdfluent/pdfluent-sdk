@@ -33,6 +33,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -54,7 +55,31 @@ def haal(url: str, token: str, methode: str = "GET"):
         return json.loads(ruw) if ruw else {}
 
 
+def onder_slot() -> bool:
+    """Re-exec under the same file lock the provisioning script takes.
+
+    Claiming and reaping both happen on this one desktop, so a plain lock gives
+    the mutual exclusion neither API offers: there is no compare-and-swap on
+    either side, so every check is otherwise a point in time (#280). Returns
+    False when the lock could not be taken, so the caller declines rather than
+    proceeding unprotected.
+    """
+    if os.environ.get("PDFLUENT_LOCK_HELD"):
+        return True
+    slot = os.environ.get("PDFLUENT_INSTANCE_LOCK", "/var/tmp/pdfluent-instances.lock")
+    flock = shutil.which("flock")
+    if flock is None:
+        print("SKIPPED (not a pass): flock is not installed, so reaping cannot be "
+              "serialised against provisioning; nothing was deleted.", file=sys.stderr)
+        return False
+    omgeving = dict(os.environ, PDFLUENT_LOCK_HELD="1")
+    os.execve(flock, [flock, "--timeout", "300", slot, sys.executable, *sys.argv], omgeving)
+
+
 def main() -> int:
+    if not onder_slot():
+        return 0
+
     hcloud = os.environ.get("HCLOUD_TOKEN")
     pat = os.environ.get("GH_RUNNER_PAT")
     repo = os.environ.get("GITHUB_REPOSITORY")
