@@ -7,7 +7,7 @@
 //! Each variant carries:
 //! - a stable [`code`](Error::code) string of the form `E-<CATEGORY>-<SPECIFIC>`,
 //! - a deep-linked [`docs_url`](Error::docs_url) to
-//!   `https://pdfluent.com/errors/<code>`,
+//!   `https://pdfluent.com/errors#<code>`,
 //! - a human-readable message via the [`std::fmt::Display`] implementation.
 //!
 //! See RFC 0001 §5 for the full contract.
@@ -346,50 +346,50 @@ impl Error {
     /// Static deep-link to the documentation page for this error code.
     pub const fn docs_url(&self) -> &'static str {
         match self {
-            Error::Io { .. } => "https://pdfluent.com/errors/E-IO-GENERIC",
-            Error::FileNotFound { .. } => "https://pdfluent.com/errors/E-IO-FILE-NOT-FOUND",
-            Error::InvalidPdf { .. } => "https://pdfluent.com/errors/E-PARSE-INVALID-PDF",
+            Error::Io { .. } => "https://pdfluent.com/errors#E-IO-GENERIC",
+            Error::FileNotFound { .. } => "https://pdfluent.com/errors#E-IO-FILE-NOT-FOUND",
+            Error::InvalidPdf { .. } => "https://pdfluent.com/errors#E-PARSE-INVALID-PDF",
             Error::UnsupportedPdfVersion { .. } => {
-                "https://pdfluent.com/errors/E-PARSE-UNSUPPORTED-VERSION"
+                "https://pdfluent.com/errors#E-PARSE-UNSUPPORTED-VERSION"
             }
             Error::PdfaValidationFailed { .. } => {
-                "https://pdfluent.com/errors/E-COMPLIANCE-PDFA-INVALID"
+                "https://pdfluent.com/errors#E-COMPLIANCE-PDFA-INVALID"
             }
             Error::DecryptionFailed { .. } => {
-                "https://pdfluent.com/errors/E-SECURITY-DECRYPTION-FAILED"
+                "https://pdfluent.com/errors#E-SECURITY-DECRYPTION-FAILED"
             }
             Error::InvalidSignature { .. } => {
-                "https://pdfluent.com/errors/E-SECURITY-INVALID-SIGNATURE"
+                "https://pdfluent.com/errors#E-SECURITY-INVALID-SIGNATURE"
             }
             Error::FeatureNotInTier { .. } => {
-                "https://pdfluent.com/errors/E-LICENSE-FEATURE-NOT-IN-TIER"
+                "https://pdfluent.com/errors#E-LICENSE-FEATURE-NOT-IN-TIER"
             }
             Error::CapabilityNotCompiled { .. } => {
-                "https://pdfluent.com/errors/E-LICENSE-CAPABILITY-NOT-COMPILED"
+                "https://pdfluent.com/errors#E-LICENSE-CAPABILITY-NOT-COMPILED"
             }
-            Error::InvalidLicense { .. } => "https://pdfluent.com/errors/E-LICENSE-INVALID",
-            Error::LicenseExpired { .. } => "https://pdfluent.com/errors/E-LICENSE-EXPIRED",
+            Error::InvalidLicense { .. } => "https://pdfluent.com/errors#E-LICENSE-INVALID",
+            Error::LicenseExpired { .. } => "https://pdfluent.com/errors#E-LICENSE-EXPIRED",
             Error::LicenseInvalidSignature => {
-                "https://pdfluent.com/errors/E-LICENSE-INVALID-SIGNATURE"
+                "https://pdfluent.com/errors#E-LICENSE-INVALID-SIGNATURE"
             }
             Error::LicenseRateLimited { .. } => {
-                "https://pdfluent.com/errors/E-LICENSE-RATE-LIMITED"
+                "https://pdfluent.com/errors#E-LICENSE-RATE-LIMITED"
             }
-            Error::TextEditFailed { .. } => "https://pdfluent.com/errors/E-EDIT-TEXT-FAILED",
+            Error::TextEditFailed { .. } => "https://pdfluent.com/errors#E-EDIT-TEXT-FAILED",
             Error::UnsupportedOnWasm { .. } => {
-                "https://pdfluent.com/errors/E-ENV-UNSUPPORTED-ON-WASM"
+                "https://pdfluent.com/errors#E-ENV-UNSUPPORTED-ON-WASM"
             }
             Error::MissingDependency { .. } => {
-                "https://pdfluent.com/errors/E-ENV-MISSING-DEPENDENCY"
+                "https://pdfluent.com/errors#E-ENV-MISSING-DEPENDENCY"
             }
             Error::MemoryBudgetExceeded { .. } => {
-                "https://pdfluent.com/errors/E-BUDGET-MEMORY-EXCEEDED"
+                "https://pdfluent.com/errors#E-BUDGET-MEMORY-EXCEEDED"
             }
             Error::ResourceLimitExceeded { .. } => {
-                "https://pdfluent.com/errors/E-BUDGET-RESOURCE-LIMIT"
+                "https://pdfluent.com/errors#E-BUDGET-RESOURCE-LIMIT"
             }
-            Error::Unsupported(_) => "https://pdfluent.com/errors/E-UNSUPPORTED",
-            Error::Internal { .. } => "https://pdfluent.com/errors/E-INTERNAL",
+            Error::Unsupported(_) => "https://pdfluent.com/errors#E-UNSUPPORTED",
+            Error::Internal { .. } => "https://pdfluent.com/errors#E-INTERNAL",
         }
     }
 }
