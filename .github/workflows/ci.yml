@@ -97,6 +97,8 @@ jobs:
         run: python3 scripts/ci/test_feature_gated_tests_run.py
       - name: Site snippets match the code that compiles them
         run: python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
+      - name: The capability matrix and the coverage report agree
+        run: python3 scripts/ci/capability_matrix_matches_coverage.py
       - name: Nothing deletes the word separator
         run: python3 scripts/ci/never_delete_the_word_separator.py
       - name: No script can reach the real repository
