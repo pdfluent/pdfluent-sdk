@@ -25,12 +25,23 @@ import subprocess
 import sys
 import tempfile
 
+def schone_omgeving() -> dict[str, str]:
+    """The caller's environment with every GIT_* variable removed.
+
+    A pre-push hook exports GIT_DIR and GIT_INDEX_FILE, and a subprocess
+    inherits them: a git command meant for a scratch directory then operates on
+    the real repository. That put `core.bare = true` on this one and stopped
+    thirty worktrees -- damage outside the script, not a wrong answer inside it.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 BEWAKER = pathlib.Path(__file__).with_name("branches_have_a_merge_request.py")
 
 
 def git(map_: pathlib.Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=map_, check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=schone_omgeving())
 
 
 def bouw(map_: pathlib.Path, commits: int) -> None:
