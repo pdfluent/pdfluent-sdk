@@ -57,9 +57,22 @@ TOEGESTAAN: dict[tuple[str, str], str] = {
     ("pdfluent", "pdfa"): "#285 -- 24 tests pass locally, no job runs them",
     ("xfa-license", "signing"): "#285 -- 26 tests pass locally, no job runs them",
     ("pdf-ocr", "tesseract"): "#244 -- libtesseract is not on the runner",
+    # Found only after the parsing was widened to see crate-level gates,
+    # compound cfgs and non-plain test attributes (Codex, #1583). The guard had
+    # been reporting a subset and calling it the total -- which is the shape it
+    # exists to catch, in itself.
+    ("pdfluent-lopdf", "async"): "#285 -- no job enables it",
+    ("pdf-annot", "write"): "#285 -- 38 tests pass locally, no job runs them",
+    ("pdf-font", "embed-cmaps"): "#285 -- 117 tests pass locally, no job runs them",
 }
 
-CFG_FEATURE = re.compile(r'#\[cfg\(\s*feature\s*=\s*"([^"]+)"')
+# Matches an inner attribute too (`#![cfg(...)]`), which is how an integration
+# test gates its whole file -- and the previous pattern required `#[`, so a
+# crate-level gate was invisible. Also matches a feature named anywhere inside
+# the cfg, so `cfg(all(test, feature = "x"))` counts; requiring `feature` to
+# come first missed every compound condition (Codex, #1583).
+CFG_FEATURE = re.compile(r'#!?\[cfg\([^)]*?feature\s*=\s*"([^"]+)"')
+TEST_ATTRIBUUT = re.compile(r"#\[(?:[\w:]+::)?test\b")
 CFG_NOT_FEATURE = re.compile(r'#\[cfg\(\s*not\(\s*feature\s*=\s*"([^"]+)"')
 
 
@@ -86,7 +99,9 @@ def gated_features_met_tests(tekst: str) -> set[str]:
 
     # Vorm 1: attribuutblok direct boven `#[test]`.
     for i, regel in enumerate(regels):
-        if regel.strip() != "#[test]":
+        # `#[tokio::test]`, `#[async_std::test]` and friends are tests too, and
+        # a gate above one of those was skipped entirely.
+        if not TEST_ATTRIBUUT.match(regel.strip()):
             continue
         j = i - 1
         while j >= 0 and regels[j].lstrip().startswith("#["):
