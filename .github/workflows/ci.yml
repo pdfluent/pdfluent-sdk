@@ -97,6 +97,8 @@ jobs:
         run: python3 scripts/ci/license_gate.py
       - name: The licence gate rejects what it should
         run: python3 scripts/ci/test_license_gate.py
+      - name: Every error code links to a section that exists
+        run: python3 scripts/ci/error_codes_have_an_anchor.py
       - name: No pull request has been left to rot
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
