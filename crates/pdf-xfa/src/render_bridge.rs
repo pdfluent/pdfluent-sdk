@@ -5071,6 +5071,17 @@ mod tests {
         );
     }
 
+    /// A render config with borders on or off. Came across from the branch
+    /// alongside the barcode work; the call was resolved into the merge and the
+    /// definition was not, so the build failed on a name that existed nowhere.
+    fn config_with_border(border: bool) -> XfaRenderConfig {
+        XfaRenderConfig {
+            draw_borders: border,
+            border_width: if border { 1.0 } else { 0.0 },
+            ..XfaRenderConfig::default()
+        }
+    }
+
     #[test]
     fn a_filled_signature_still_draws_its_content() {
         let mut ops = Vec::new();
