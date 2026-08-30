@@ -28,6 +28,10 @@ LIJST = WORTEL / "docs/UPSTREAM_FORKS.toml"
 # How far behind is still a choice rather than neglect. One minor release is
 # a deliberate "not yet"; two is nobody looking.
 MINORS_TOEGESTAAN = 1
+# Patch releases carry fixes and nothing else, so falling behind on them is
+# cheap to close and expensive to ignore. Three is a working week of upstream
+# activity, not a policy.
+PATCHES_TOEGESTAAN = 3
 
 
 def nieuwste(crate: str) -> str | None:
@@ -78,7 +82,18 @@ def main() -> int:
             onbereikbaar.append((f["upstream"], "no version in the response"))
             continue
         wij, zij = delen(f["gelijk_met"]), delen(boven)
+        # Major and minor only, so a fork twenty patch releases behind measured
+        # a gap of zero and read as current -- while volledig() a few lines up
+        # says in as many words that patch releases are where fixes land. The
+        # CCITT buffer fix arrived in one (#262).
         gat = (zij[0] - wij[0]) * 100 + (zij[1] - wij[1])
+        if gat == 0:
+            # Same minor: fall through to the patch component, which is the
+            # only thing left that can differ.
+            patch_wij = volledig(f["gelijk_met"])[2:3] or (0,)
+            patch_zij = volledig(boven)[2:3] or (0,)
+            if patch_zij[0] - patch_wij[0] > PATCHES_TOEGESTAAN:
+                gat = MINORS_TOEGESTAAN + 1
         aanvaard_nu = f.get("aanvaard_tot")
         vrij = gat <= MINORS_TOEGESTAAN or (
             aanvaard_nu is not None and volledig(boven) <= volledig(aanvaard_nu))
