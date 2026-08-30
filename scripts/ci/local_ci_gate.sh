@@ -63,6 +63,7 @@ run forklist  python3 scripts/ci/fork_lists_agree.py
 run featgate  python3 scripts/ci/test_feature_gated_tests_run.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
 run examples  cargo build -q --examples -p pdfluent
+run matrix    python3 scripts/ci/capability_matrix_matches_coverage.py
 run wordsep   python3 scripts/ci/never_delete_the_word_separator.py
 run gitenv    python3 scripts/ci/test_no_test_can_touch_the_real_repo.py
 run licenses2 python3 scripts/ci/license_gate.py
