@@ -32,7 +32,12 @@ def uit_licenties() -> set[str]:
     def loop(x) -> None:
         if isinstance(x, dict):
             erf = str(x.get("heritage", ""))
-            if "ork of" in erf:
+            # Was `"ork of" in erf`, matching free prose. pdf-font reads
+            # "Fork merging hayro-font, hayro-cmap, hayro-postscript" -- a fork
+            # by any reading, and invisible to that substring. The list said
+            # eight where there are nine, and the missing one carries
+            # forbidden_change (#220).
+            if "ork of" in erf or "ork merging" in erf or "orked from" in erf:
                 naam = x.get("workspace_dir") or x.get("name")
                 if naam:
                     gevonden.add(str(naam))
@@ -57,6 +62,15 @@ def main() -> int:
     gevolgd = {f["onze_crate"] for f in tomllib.load(UPSTREAM.open("rb"))["fork"]}
 
     ontbreekt = licentie - gevolgd - set(GEEN_UPSTREAM_SPOOR)
+    # The docstring promises that adding a fork to one list and not the other
+    # fails here. Only one direction was computed, so a crate tracked upstream
+    # and absent from the licence register passed in silence.
+    ongelicentieerd = gevolgd - licentie - set(GEEN_UPSTREAM_SPOOR)
+    if ongelicentieerd:
+        print(f"FAIL: {len(ongelicentieerd)} crate(s) are tracked against upstream but "
+              "are not recorded as forks for licensing, so nothing checks their "
+              f"attribution: {', '.join(sorted(ongelicentieerd))}", file=sys.stderr)
+        return 1
     if ontbreekt:
         print(f"FAIL: {len(ontbreekt)} crate(s) are recorded as forks for licensing but "
               "are not tracked against upstream, so nothing will notice when they fall "
