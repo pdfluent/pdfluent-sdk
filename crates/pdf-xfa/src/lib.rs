@@ -21,8 +21,9 @@
 //! `javascript_policy` is similarly `pub` for cross-module visibility within the
 //! workspace. It is not intended as a public API for downstream crates.
 
-/// Appearance stream generation for XFA form fields (internal bridge).
 pub mod appearance_bridge;
+/// Appearance stream generation for XFA form fields (internal bridge).
+pub mod barcode;
 pub mod classify;
 /// Faithful datasets/form packet writeback (surgical XML splice + PDF stream swap).
 mod datasets_writeback;
