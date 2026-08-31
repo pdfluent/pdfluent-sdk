@@ -106,6 +106,26 @@ jobs:
     runs-on: ubuntu-latest
 """
 
+# Restoring `target/criterion` is the comparison, so the key decides whose
+# numbers this run is measured against. Correct here; a case below strips the
+# class back out.
+WORKFLOW_WITH_CRITERION = """
+jobs:
+  bench:
+    runs-on: [self-hosted, xfa-fast]
+    env:
+      BENCH_MACHINE_CLASS: desktop-class
+    steps:
+      - uses: actions/cache@v4
+        with:
+          path: target/criterion
+          key: bench-${{ env.BENCH_MACHINE_CLASS }}-master-${{ github.sha }}
+          restore-keys: |
+            bench-${{ env.BENCH_MACHINE_CLASS }}-master-
+      - name: Run
+        run: cargo bench
+"""
+
 
 def build(root: pathlib.Path) -> None:
     """Write the repaired tree: everything the guard wants, and nothing it hates."""
@@ -121,7 +141,8 @@ def build(root: pathlib.Path) -> None:
 
     (flows / "provision.yml").write_text(WORKFLOW_WITH_TYPE)
     (flows / "guard.yml").write_text(WORKFLOW_WITH_LABEL)
-    for n in range(3):
+    (flows / "bench.yml").write_text(WORKFLOW_WITH_CRITERION)
+    for n in range(2):
         (flows / f"plain{n}.yml").write_text(WORKFLOW_PLAIN)
 
 
@@ -192,6 +213,21 @@ def calibration_with_no_date(root: pathlib.Path) -> None:
     sla.write_text(sla.read_text().replace("UNCALIBRATED", "Baseline"))
 
 
+def criterion_key_forgets_the_machine(root: pathlib.Path) -> None:
+    """The shape `nightly.yml` had: a baseline restored across machines."""
+    path = root / ".github" / "workflows" / "bench.yml"
+    path.write_text(path.read_text().replace(
+        "${{ env.BENCH_MACHINE_CLASS }}", "${{ runner.os }}"))
+
+
+def criterion_restore_key_forgets_the_machine(root: pathlib.Path) -> None:
+    """Only the fallback loses the class -- which is the one that gets used."""
+    path = root / ".github" / "workflows" / "bench.yml"
+    path.write_text(path.read_text().replace(
+        "            bench-${{ env.BENCH_MACHINE_CLASS }}-master-",
+        "            bench-master-"))
+
+
 def registry_removed(root: pathlib.Path) -> None:
     (root / "benchmarks" / "BASELINE_HARDWARE.toml").unlink()
 
@@ -205,6 +241,10 @@ CASES = [
     ("a class is calibrated without raising the floor", calibration_without_announcing_it),
     ("a calibration is older than the registry allows", calibration_that_expired),
     ("a calibration claims no date", calibration_with_no_date),
+    ("a criterion baseline is restored under a machine-blind key",
+     criterion_key_forgets_the_machine),
+    ("only the criterion fallback key loses the machine",
+     criterion_restore_key_forgets_the_machine),
     ("the registry is gone", registry_removed),
 ]
 

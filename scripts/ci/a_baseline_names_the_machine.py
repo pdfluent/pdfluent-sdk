@@ -45,7 +45,13 @@ WHAT IT CHECKS
   4. A calibration expires. `calibrated = true` with a `calibrated_on` older
      than `[meta] calibration_valid_days` counts as absent.
 
-  5. The floor below, two-way.
+  5. A restored criterion baseline names the machine class in its cache key.
+     `target/criterion` is the baseline: restoring it is the comparison. A key
+     that says only `runner.os` hands a run somebody else's numbers -- which is
+     what `nightly.yml` did, on ephemeral instances that are a different
+     machine every night.
+
+  6. The floor below, two-way.
 """
 
 # FLOOR: calibrated machine classes >= 0 -- there is no calibrated class today,
@@ -95,6 +101,12 @@ CALIBRATED_FLOOR = 0
 MINIMUM_WORKFLOWS = 10
 
 UNCALIBRATED_MARKER = "UNCALIBRATED"
+
+# Criterion keeps the previous run here and compares against it. Restoring this
+# directory from a cache is the comparison, so the key is what decides whose
+# numbers you are measured against.
+CRITERION_PATH = "target/criterion"
+CLASS_IN_KEY = "BENCH_MACHINE_CLASS"
 
 
 def fatal(message: str) -> int:
@@ -154,6 +166,61 @@ def reachable_classes_in_ci(workflows: pathlib.Path) -> tuple[set[str], set[str]
             labels.add(m.group(1))
 
     return types, labels, read
+
+
+def criterion_cache_keys(workflows: pathlib.Path) -> list[tuple[str, int, str]]:
+    """Cache keys that restore a criterion baseline without naming the machine.
+
+    Returns (workflow name, line number, the offending line).
+    """
+    offenders: list[tuple[str, int, str]] = []
+
+    paths = sorted(workflows.glob("*.yml")) + sorted(workflows.glob("*.yaml"))
+    for path in paths:
+        lines = path.read_text(errors="replace").splitlines()
+        for index, line in enumerate(lines):
+            if CRITERION_PATH not in line:
+                continue
+            # Walk out to the enclosing step: back to its `- ` and on to the
+            # next one at the same indent. Cheaper than a YAML dependency, and
+            # this guard already has to run wherever python does.
+            start = index
+            while start > 0 and not lines[start].lstrip().startswith("- "):
+                start -= 1
+            indent = len(lines[start]) - len(lines[start].lstrip())
+            end = start + 1
+            while end < len(lines):
+                stripped = lines[end].lstrip()
+                if stripped.startswith("- ") and (len(lines[end]) - len(stripped)) <= indent:
+                    break
+                end += 1
+
+            in_keys = False
+            for offset in range(start, end):
+                text = lines[offset]
+                stripped = text.strip()
+                is_key = stripped.startswith("key:")
+                if stripped.startswith("restore-keys:"):
+                    in_keys = True
+                    # `restore-keys: |` is a block-scalar header, not a key.
+                    remainder = stripped[len("restore-keys:"):].strip().lstrip("|>-").strip()
+                    if remainder and CLASS_IN_KEY not in remainder:
+                        offenders.append((path.name, offset + 1, stripped))
+                    continue
+                if is_key:
+                    in_keys = False
+                    if CLASS_IN_KEY not in stripped:
+                        offenders.append((path.name, offset + 1, stripped))
+                    continue
+                if in_keys:
+                    if not stripped or stripped.startswith("-") or ":" in stripped.split("-")[0]:
+                        if not stripped or ":" in stripped:
+                            in_keys = False
+                            continue
+                    if CLASS_IN_KEY not in stripped:
+                        offenders.append((path.name, offset + 1, stripped))
+
+    return offenders
 
 
 def main(root: pathlib.Path = REPO, minimum_workflows: int = MINIMUM_WORKFLOWS) -> int:
@@ -250,7 +317,17 @@ def main(root: pathlib.Path = REPO, minimum_workflows: int = MINIMUM_WORKFLOWS) 
             f"numbers belong to."
         )
 
-    # --- 5. the floor, both ways --------------------------------------------
+    # --- 5. a restored baseline names the machine it came from ---------------
+    for workflow, number, line in criterion_cache_keys(WORKFLOWS):
+        problems.append(
+            f".github/workflows/{workflow}:{number} restores a criterion baseline "
+            f"under a key that does not name the machine class. Restoring "
+            f"{CRITERION_PATH} is the comparison: this run gets measured against "
+            f"whichever machine last wrote that key. Put ${{{{ env.{CLASS_IN_KEY} }}}} "
+            f"in the key and every restore-key.\n      {line}"
+        )
+
+    # --- 6. the floor, both ways --------------------------------------------
     if len(live) < CALIBRATED_FLOOR:
         problems.append(
             f"{len(live)} calibrated machine class(es), floor is {CALIBRATED_FLOOR}. "
