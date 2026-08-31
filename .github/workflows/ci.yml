@@ -261,6 +261,12 @@ jobs:
       - name: Parsers still read their runners' output
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_tests_actually_ran.py
+      # Costs nothing -- it drives the gate's verdict with numbers, no veraPDF
+      # and no corpus -- so the cheap job can vouch for the expensive one. The
+      # first case is the report `verapdf.yml` published on #1543: five
+      # documents, nothing compliant, and a green tick over it (#286).
+      - name: A 0% conformance report cannot be green
+        run: python3 scripts/ci/test_pdfa_output_conformance_gate.py
       - name: Check for committed .so / .pyd / .node / .wasm artifacts
         if: ${{ !cancelled() }}
         run: |
