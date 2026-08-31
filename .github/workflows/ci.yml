@@ -559,3 +559,10 @@ jobs:
         run: python3 scripts/ci/test_commits_use_the_noreply_alias.py
       - name: Every commit this change adds is authored by the noreply alias
         run: python3 scripts/ci/commits_use_the_noreply_alias.py
+      # The commit fields are half of it. The tree is the other half, and the
+      # easier one to leak into: eight tracked files on master carried the
+      # address as ordinary text while the identity guard was already green.
+      - name: The tree guard finds a planted term and spares the innocent
+        run: python3 scripts/ci/test_no_personal_address_in_the_tree.py
+      - name: No tracked file carries an address we decided not to publish
+        run: python3 scripts/ci/no_personal_address_in_the_tree.py
