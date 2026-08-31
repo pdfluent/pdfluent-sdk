@@ -84,6 +84,11 @@ STIL_NA_DAGEN = 30
 
 REPO = "jasperdew/xfa-native-rust"
 
+# Why the last API call failed, so a skip can name its cause instead of being a
+# shrug. A skip that does not say why is only marginally better than a silent
+# one: you still cannot act on it.
+REDEN: list[str] = []
+
 
 def gh(pad: str):
     """One GitHub API call, by whichever route this machine has.
@@ -110,11 +115,21 @@ def gh(pad: str):
             f"https://api.github.com/{pad.lstrip('/')}",
             headers={"Authorization": f"Bearer {token}",
                      "Accept": "application/vnd.github+json",
+                     "X-GitHub-Api-Version": "2022-11-28",
                      "User-Agent": "pdfluent-ci-guard"})
         try:
             with urllib.request.urlopen(req, timeout=60) as fh:
                 return json.loads(fh.read().decode())
-        except (urllib.error.URLError, OSError, json.JSONDecodeError):
+        except urllib.error.HTTPError as fout:
+            # The status, not just "it did not work". A 403 here means the
+            # workflow token lacks actions:read and the workflow needs a
+            # `permissions:` block; a 404 on a private repository means the
+            # same thing wearing a different number. Guessing between those
+            # costs a fifteen-minute push each time.
+            REDEN.append(f"HTTP {fout.code} {fout.reason} on {pad.split('?')[0]}")
+            return None
+        except (urllib.error.URLError, OSError, json.JSONDecodeError) as fout:
+            REDEN.append(f"{type(fout).__name__}: {fout}")
             return None
 
     try:
@@ -172,13 +187,16 @@ def main() -> int:
 
     lijst = gh("repos/{owner}/{repo}/actions/workflows?per_page=100")
     if lijst is None or "workflows" not in lijst:
+        waarom = REDEN[-1] if REDEN else ("no GH_TOKEN and no usable `gh`")
         print("SKIPPED (not a pass): could not read the workflow list from GitHub, so "
-              "no gate was checked against its own history.", file=sys.stderr)
+              f"no gate was checked against its own history. Cause: {waarom}.",
+              file=sys.stderr)
         return 0
 
     bij_pad = {w["path"]: w for w in lijst["workflows"]}
 
     dood, jong, stil, uitgezet, gezond = [], [], [], [], 0
+    hersteld_namen: set[str] = set()
     nu = dt.datetime.now(dt.timezone.utc)
 
     for pad in op_schijf:
@@ -204,13 +222,15 @@ def main() -> int:
         groen = gh(f"repos/{{owner}}/{{repo}}/actions/workflows/{wf['id']}/runs"
                    f"?per_page=1&status=success&created=%3E{vanaf}")
         if alle is None or groen is None:
-            print(f"SKIPPED (not a pass): could not read the run history of {pad.name}.",
-                  file=sys.stderr)
+            waarom = REDEN[-1] if REDEN else "unknown"
+            print(f"SKIPPED (not a pass): could not read the run history of "
+                  f"{pad.name}. Cause: {waarom}.", file=sys.stderr)
             return 0
 
         n, g = alle["total_count"], groen["total_count"]
         if g > 0:
             gezond += 1
+            hersteld_namen.add(pad.name)
         elif n == 0 and (nu - sinds).days > STIL_NA_DAGEN:
             stil.append((pad.name, sinds, (nu - sinds).days))
         elif n < GENOEG:
@@ -250,12 +270,29 @@ def main() -> int:
         )
         return 1
 
-    hersteld = sorted(set(BEKEND) - namen)
+    # Only a workflow that has actually gone green may be demanded out of
+    # BEKEND. The first version asked for `set(BEKEND) - namen`, which counts
+    # "not judged" as "recovered" -- and every entry becomes not-judged the
+    # moment somebody edits its file, because the window restarts empty. It
+    # fired on ci.yml one commit after ci.yml was added to BEKEND, for a commit
+    # that touched ci.yml. A baseline that empties itself when you edit the file
+    # is not a baseline.
+    hersteld = sorted(set(BEKEND) & hersteld_namen)
     if hersteld:
         print(file=sys.stderr)
-        print(f"[groen] FATAL: {len(hersteld)} workflow(s) in BEKEND are no longer dead: "
-              f"{', '.join(hersteld)}.", file=sys.stderr)
+        print(f"[groen] FATAL: {len(hersteld)} workflow(s) in BEKEND have gone green "
+              f"since their file last changed: {', '.join(hersteld)}.", file=sys.stderr)
         print("Remove them from BEKEND, so the next one to die is still caught.",
+              file=sys.stderr)
+        return 1
+
+    weg = sorted(n for n in BEKEND
+                 if n not in {p.name for p in op_schijf})
+    if weg:
+        print(file=sys.stderr)
+        print(f"[groen] FATAL: {len(weg)} name(s) in BEKEND no longer exist: "
+              f"{', '.join(weg)}.", file=sys.stderr)
+        print("Remove them; a baseline naming files that are gone stops being read.",
               file=sys.stderr)
         return 1
 

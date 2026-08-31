@@ -147,6 +147,15 @@ GEVALLEN = [
     # it stops being a baseline and becomes a list of excuses.
     ("BEKEND must shrink when a known-dead one recovers",
      [wf(BEKEND[0], 40, 3)] + [wf(b, 40, 0) for b in BEKEND[1:]], True),
+    # ...but "not judged" is not "recovered". Every entry becomes not-judged the
+    # moment someone edits its file, because the window restarts empty. The
+    # first version asked for BEKEND minus everything currently dead, so a
+    # commit touching a known-dead workflow demanded its own baseline entry be
+    # deleted -- which is how a baseline quietly empties itself.
+    ("a BEKEND entry with too few runs is not a recovery",
+     [wf(BEKEND[0], 0, 0)] + [wf(b, 40, 0) for b in BEKEND[1:]], False),
+    ("a BEKEND entry with one red run is not a recovery either",
+     [wf(BEKEND[0], 1, 0)] + [wf(b, 40, 0) for b in BEKEND[1:]], False),
 ]
 
 

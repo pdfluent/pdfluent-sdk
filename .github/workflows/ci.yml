@@ -53,6 +53,18 @@ env:
 jobs:
   orchestration-guard:
     name: No ref-dispatchable job on the persistent runner
+    # The repository's default workflow token is "read", which grants
+    # `contents` and `packages` and nothing else -- `actions: read` is not in
+    # it. Two guards in this job need it: the never-green one reads run
+    # history, and pr_staleness.py reads pull requests. Without this block they
+    # get a 403 and announce SKIPPED (not a pass) on a green step, which is a
+    # guard that reports without measuring (#290). A job-level block replaces
+    # the default rather than adding to it, so `contents: read` is listed too
+    # or actions/checkout stops working.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
