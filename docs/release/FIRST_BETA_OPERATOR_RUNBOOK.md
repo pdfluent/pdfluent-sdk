@@ -685,7 +685,7 @@ combine into a single yes/no answer per channel. This is the answer to
 | channel | ready today? | rationale | go-to runbook section |
 |---|---|---|---|
 | **crates.io** (Rust SDK 32 crates) | 🟢 **YES** | token in `~/.cargo/credentials.toml`, topo dry-run + audit scripts ready, SBOM baselines committed | §1.1 — start with `formcalc-interpreter beta.8` per the chain order |
-| **npm `@pdfluent/sdk-wasm`** (WASM SDK) | 🟢 **YES** | `[redacted]` owner-verified on `@pdfluent`, `wasm-pack` available, `wasm_dry_run.sh` ready | §1.2 — build pkg + audit + publish |
+| **npm `@pdfluent/sdk-wasm`** (WASM SDK) | 🟢 **YES** | the npm account is owner-verified on `@pdfluent`, `wasm-pack` available, `wasm_dry_run.sh` ready | §1.2 — build pkg + audit + publish |
 | **npm `@pdfluent/node`** (NAPI binding) | 🟢 **YES** (with caveat) | same npm token; pdf-node `npm pack` works (15 KB per Tier-1 CI logs). Caveat: confirm whether `pdf-node` ships JS-only-glue or includes prebuilt natives (see §1.3 step 2) | §1.3 |
 | **PyPI `pdfluent`** | 🟢 **YES** | `pypi-token` in keychain, `pypi-` prefix validated, `maturin` available | §1.4 — TestPyPI first |
 | **Maven Central `com.pdfluent:pdfluent`** | 🟢 **YES** | `~/.m2/settings.xml` server `central` present, GPG key `DA87…B513` for `<hello@pdfluent.com>` rsa4096 valid until 2028-05-13. **Caveat:** `pinentry-mac` not currently installed — GPG passphrase prompts will appear in the operator's terminal during `mvn deploy`. If running headless / for CI, first `brew install pinentry-mac` and configure `~/.gnupg/gpg-agent.conf` accordingly. | §1.5 — Sonatype staging first |

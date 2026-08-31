@@ -38,8 +38,10 @@ packaging bug and is a linker default.
 
 **Windows is the one that needs another machine.** `cargo zigbuild` cannot
 produce `x86_64-pc-windows-msvc` for crates with C code; the MSVC libraries are
-not something zig substitutes. Build it on the LAN box (`a build machine`,
-passwordless SSH) — the same machine that builds the editor's `.msi`.
+not something zig substitutes. Build it on the Windows LAN box (passwordless
+SSH; its hostname is in the private infrastructure notes, not here — this file
+goes public with the tree under #222) — the same machine that builds the
+editor's `.msi`.
 
 ## Sizes measured on 23-08 (release, before strip)
 

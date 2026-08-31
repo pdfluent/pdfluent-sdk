@@ -81,7 +81,7 @@ fn facade_find_and_replace_by_match_id() {
     let matches = doc.find_text(TextQuery::exact("Acme")).unwrap();
     assert_eq!(matches.len(), 2);
 
-    // Replace only the second occurrence (the async/[redacted] workflow shape).
+    // Replace only the second occurrence (the async integration workflow shape).
     let edits = vec![(matches[1].id.clone(), "Bqme".to_string())];
     let report = doc
         .replace_text_matches(&edits, ReplaceOptions::default())

@@ -1,6 +1,9 @@
 # Windows-side setup for the WSL desktop CI runner
 
-These four files keep the WSL2 CI runner on `a build machine` alive and usable.
+These four files keep the WSL2 CI runner on the Windows LAN box alive and
+usable. Its hostname is deliberately not written here: this tree becomes public
+under #222, and a machine name plus the setup below is a map to a box on a home
+network. The name is in the private infrastructure notes.
 They run on the **Windows** side, because everything they do is impossible from
 inside the distro: attaching a physical disk, holding the VM up, and compacting
 the virtual disk all require the Windows host.

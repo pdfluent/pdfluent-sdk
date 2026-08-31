@@ -344,7 +344,7 @@ mod tests {
         assert!(second_id.starts_with("pdfluent-match-v1."));
 
         // Apply by id — the token has crossed a JSON boundary, as it would
-        // over postMessage in the [redacted] workflow.
+        // over postMessage in the integration workflow this was built for.
         let edits = format!(
             r#"[{{"id": {}, "text": "Bqme"}}]"#,
             serde_json::to_string(&second_id).unwrap()
