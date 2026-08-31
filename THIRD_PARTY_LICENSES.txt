@@ -97,11 +97,27 @@ are distributed under the Foxit license included in:
   crates/pdf-interpret/assets/LICENSE_FOXIT
 
 ================================================================================
-CGATS ICC Profile (embedded in pdf-interpret, hayro-jpeg2000)
+Embedded ICC Profiles (pdf-interpret, hayro-jpeg2000)
 ================================================================================
 
-CGATS001Compat-v2-micro.icc — CGATS.001 compatible CMYK ICC profile.
-See: crates/pdf-interpret/assets/CGATS_LICENSE.txt
+Five profile files are embedded, three distinct profiles across two crates:
+
+  CGATS001Compat-v2-micro.icc   CGATS.001 compatible CMYK, from
+                                github.com/saucecontrol/Compact-ICC-Profiles
+                                CC0-1.0
+  ProPhoto-v2-micro.icc         ProPhoto RGB, same upstream
+                                CC0-1.0
+  LAB.icc                       generated with LCMS2; no third-party rights
+
+Upstream licence texts:
+  crates/pdf-interpret/assets/CGATS_LICENSE.txt
+  crates/hayro-jpeg2000/assets/LICENSE.txt  (CC0 1.0 Universal, full text)
+
+ProPhoto was previously absent from this file while being present in the tree
+and correctly attributed in crates/hayro-jpeg2000/assets/README.md. That is the
+same shape of gap as the JNA entry above: recorded where the build can see it
+and missing from the document that leaves the building. Naming all three here
+is the point, not naming the one that happened to be asked about.
 
 ================================================================================
 Java Binding Dependencies (resolved by Maven in the user's own build)
