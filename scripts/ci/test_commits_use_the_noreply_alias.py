@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 Innovation Trigger B.V. All rights reserved.
+#
+# This software is proprietary. The PDFluent application is free to use,
+# including for commercial purposes. Redistribution, or extraction or reuse
+# of its components (including the embedded PDF engine), requires a licence.
+# See https://pdfluent.com/license for terms.
+
+"""Does the identity guard refuse the right addresses, and only those?
+
+Both directions, and the second is the one that matters here. A guard that
+refuses everything gets switched off within a week, and this one sits in a
+pre-commit hook where being wrong is expensive: it stands between the writer and
+every commit they make.
+
+The end-to-end half runs against a repository built in a temporary directory.
+That is deliberate -- the range logic and the floor are where this guard can go
+quietly blind, and a table of strings cannot exercise either.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+HIER = Path(__file__).resolve().parent
+GUARD = HIER / "commits_use_the_noreply_alias.py"
+
+sys.path.insert(0, str(HIER))
+from commits_use_the_noreply_alias import ALIAS, CUTOVER, is_allowed  # noqa: E402
+
+# A date safely on either side of the cutover, in the form `git commit --date`
+# takes. The past one stands for the published history the owner has not decided
+# about yet; the later one for anything written from here on. Both are written
+# out rather than derived from CUTOVER, so moving the cutover cannot move the
+# fixtures with it and leave the test proving nothing.
+VOOR_CUTOVER = "2026-01-15T09:00:00+01:00"
+NA_CUTOVER = "2026-12-01T12:00:00+01:00"
+
+ACCEPT = [
+    ("the account's own alias", ALIAS),
+    ("the login-only noreply form", "jasperdew@users.noreply.github.com"),
+    ("another account's alias", "99+someone@users.noreply.github.com"),
+    ("GitHub's web-flow committer", "noreply@github.com"),
+    ("release tooling", "noreply@pdfluent.com"),
+    ("the CI gate account", "gate-ci@pdfluent.com"),
+    ("the same address with stray whitespace", f"  {ALIAS}  "),
+    ("the noreply domain in capitals", ALIAS.upper()),
+]
+
+REFUSE = [
+    # The placeholder that 219 commits in this repository carry, because one
+    # worktree was configured with it and nobody looked again.
+    ("the t@t placeholder", "t@t"),
+    ("a personal mailbox", "someone@example.com"),
+    ("a personal mailbox at a company domain", "firstname@example.co.uk"),
+    ("nothing at all", ""),
+    ("whitespace only", "   "),
+    # The domain has to end the address. Without the anchor a look-alike host
+    # walks straight through, and that is the whole weight this pattern carries.
+    ("a look-alike host", "harvest@users.noreply.github.com.example.com"),
+    ("the domain as a prefix", "users.noreply.github.com@example.com"),
+]
+
+
+def _git_env() -> dict[str, str]:
+    """git without the caller's GIT_* variables.
+
+    This test builds repositories with `git init`, and inside a hook GIT_DIR and
+    GIT_WORK_TREE are absolute and inherited. A `git init` under those runs on
+    the real repository -- which is how `core.bare = true` landed on it on
+    25-08-2026 and stopped all thirty worktrees (#240).
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def _git(wd: Path, *args: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(wd),
+         # No hook of the outer clone, and no signing: both would make this
+         # test's outcome depend on the machine it runs on.
+         "-c", "core.hooksPath=/nonexistent",
+         "-c", "commit.gpgsign=false",
+         *args],
+        capture_output=True, text=True, env={**_git_env(), **(extra_env or {})},
+    )
+
+
+def _commit(wd: Path, email: str, subject: str, datum: str = NA_CUTOVER,
+            committer: str | None = None) -> None:
+    """One empty commit. `committer` splits the two identities apart.
+
+    Git has no `-c committer.email`, so the committer half only reaches git
+    through the environment -- which is also how it drifts apart from the author
+    in real life: a rebase, a cherry-pick, a `git commit --author`. A guard
+    reading only `%ae` misses it, and master alone has 253 commits where the two
+    differ.
+    """
+    r = _git(wd, "-c", f"user.email={email}", "-c", "user.name=test",
+             "commit", "--allow-empty", "--no-verify", "--date", datum, "-m", subject,
+             extra_env=({"GIT_COMMITTER_EMAIL": committer, "GIT_COMMITTER_NAME": "test"}
+                        if committer else None))
+    if r.returncode != 0:
+        raise SystemExit(f"[test-commit-identity] could not build the fixture: {r.stderr}")
+
+
+def _rev(wd: Path, ref: str) -> str:
+    return _git(wd, "rev-parse", ref).stdout.strip()
+
+
+def _run(wd: Path, *args: str) -> subprocess.CompletedProcess:
+    # GITHUB_EVENT_PATH would send the guard at this run's own event payload
+    # instead of at the fixture, so it is taken out for the duration.
+    omgeving = {k: v for k, v in os.environ.items() if k != "GITHUB_EVENT_PATH"}
+    return subprocess.run(
+        [sys.executable, str(GUARD), *args],
+        cwd=str(wd), capture_output=True, text=True, env=omgeving,
+    )
+
+
+def einde_tot_eind(fouten: list[str]) -> None:
+    """A real range over a real repository: clean, dirty, and empty."""
+    with tempfile.TemporaryDirectory() as tmp:
+        wd = Path(tmp)
+        if _git(wd, "init", "--initial-branch=master", ".").returncode != 0:
+            fouten.append("could not create the fixture repository")
+            return
+
+        _commit(wd, ALIAS, "chore: the first commit")
+        basis = _rev(wd, "HEAD")
+        _commit(wd, ALIAS, "chore: a second, also aliased")
+        _commit(wd, "noreply@pdfluent.com", "chore: one from release tooling")
+        schoon = _rev(wd, "HEAD")
+
+        r = _run(wd, "--range", f"{basis}..{schoon}")
+        if r.returncode != 0:
+            fouten.append(
+                f"refused a range whose every identity is an alias "
+                f"(exit {r.returncode}): {r.stderr.strip()[:200]}"
+            )
+
+        _commit(wd, "someone@example.com", "chore: one from a personal address")
+        vuil = _rev(wd, "HEAD")
+        r = _run(wd, "--range", f"{basis}..{vuil}")
+        if r.returncode == 0:
+            fouten.append("accepted a range containing a personal address")
+        elif "someone@example.com" not in r.stderr:
+            fouten.append("refused the range without naming the offending address")
+
+        # A commit carries two identities and both are published. Checking only
+        # the author is a mutation this test did not catch until 30-08-2026, and
+        # it is the likelier of the two to go wrong: the author survives a
+        # rebase, the committer is rewritten to whoever ran it.
+        _commit(wd, ALIAS, "chore: aliased author, personal committer",
+                committer="someone@example.com")
+        gesplitst = _rev(wd, "HEAD")
+        r = _run(wd, "--range", f"{vuil}..{gesplitst}")
+        if r.returncode == 0:
+            fouten.append("accepted a commit whose committer is a personal address")
+        vuil = gesplitst
+
+        # The floor. An empty range is the state where this guard reports success
+        # over nothing, and it has to be a failure rather than a pass.
+        r = _run(wd, "--range", f"{vuil}..{vuil}")
+        if r.returncode == 0:
+            fouten.append("passed an empty range instead of failing on the floor")
+        elif "floor" not in r.stderr.lower():
+            fouten.append("failed on an empty range without naming the floor")
+
+        # The cutover, both ways. The same personal address is the published
+        # history when it was authored before the cutover, and a new mistake when
+        # it was authored after -- and if that distinction stops working, it
+        # fails open: everything reads as history and nothing is ever checked.
+        _commit(wd, "someone@example.com", "chore: an old one", datum=VOOR_CUTOVER)
+        oud = _rev(wd, "HEAD")
+        r = _run(wd, "--range", f"{vuil}..{oud}")
+        if r.returncode != 0:
+            fouten.append(
+                "refused a commit authored before the cutover, which is the "
+                "published history the owner has not decided about"
+            )
+        _commit(wd, "someone@example.com", "chore: a new one", datum=NA_CUTOVER)
+        if _run(wd, "--range", f"{oud}..HEAD").returncode == 0:
+            fouten.append("accepted a personal address authored after the cutover")
+
+        # And the pre-commit mode, over the same repository, both ways.
+        omgeving = _git_env()
+        for email, moet_falen in ((ALIAS, False), ("t@t", True)):
+            _git(wd, "config", "user.email", email)
+            r = subprocess.run(
+                [sys.executable, str(GUARD), "--pending"],
+                cwd=str(wd), capture_output=True, text=True, env=omgeving,
+            )
+            if moet_falen and r.returncode == 0:
+                fouten.append(f"--pending accepted a commit authored as {email}")
+            if not moet_falen and r.returncode != 0:
+                fouten.append(f"--pending refused a commit authored as the alias: "
+                              f"{r.stderr.strip()[:200]}")
+
+        # THE TWO ROUTES ROUND THE CONFIG. A commit's identity does not have to
+        # come from `user.email`: the environment sets it directly, and `git -c
+        # user.email=...` reaches a hook as GIT_CONFIG_PARAMETERS. Both beat a
+        # check that reads the config, and both beat a check that strips every
+        # GIT_* variable before asking git -- which is what this guard did until
+        # 31-08-2026, when `git -c user.email=<personal> commit` walked past the
+        # hook and produced a commit carrying that address.
+        #
+        # The config here is left on the alias on purpose, so the only thing
+        # that can make these fail is the override being seen.
+        _git(wd, "config", "user.email", ALIAS)
+        for naam, extra in (
+            ("GIT_AUTHOR_EMAIL", {"GIT_AUTHOR_EMAIL": "someone@example.com"}),
+            ("GIT_COMMITTER_EMAIL", {"GIT_COMMITTER_EMAIL": "someone@example.com"}),
+            ("git -c user.email",
+             {"GIT_CONFIG_PARAMETERS": "'user.email=someone@example.com'"}),
+        ):
+            r = subprocess.run(
+                [sys.executable, str(GUARD), "--pending"],
+                cwd=str(wd), capture_output=True, text=True,
+                env={**omgeving, **extra},
+            )
+            if r.returncode == 0:
+                fouten.append(
+                    f"--pending accepted a commit whose address comes from {naam}, "
+                    "which is the route that beats reading the config"
+                )
+
+        # And the mirror image: the location variables still have to go, or a
+        # hook's GIT_DIR sends every git call in here at the real repository.
+        r = subprocess.run(
+            [sys.executable, str(GUARD), "--pending"],
+            cwd=str(wd), capture_output=True, text=True,
+            env={**omgeving, "GIT_DIR": "/nonexistent/objects", "GIT_WORK_TREE": "/nonexistent"},
+        )
+        if r.returncode != 0:
+            fouten.append(
+                "--pending broke when handed a hook's GIT_DIR/GIT_WORK_TREE; those "
+                "have to be stripped (#240)"
+            )
+
+
+def main() -> int:
+    fouten: list[str] = []
+
+    for naam, adres in ACCEPT:
+        if not is_allowed(adres):
+            fouten.append(f"refused {naam}: {adres!r}")
+    for naam, adres in REFUSE:
+        if is_allowed(adres):
+            fouten.append(f"accepted {naam}: {adres!r}")
+
+    einde_tot_eind(fouten)
+
+    if fouten:
+        print(f"[test-commit-identity] FAIL: {len(fouten)} case(s):", file=sys.stderr)
+        for f in fouten:
+            print(f"  - {f}", file=sys.stderr)
+        return 1
+
+    print(
+        f"[test-commit-identity] OK: {len(ACCEPT)} address(es) accepted, "
+        f"{len(REFUSE)} refused, and the range, the floor and the pre-commit "
+        "mode answer over a real repository."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

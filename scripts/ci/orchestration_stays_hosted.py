@@ -220,6 +220,12 @@ BASELINE = {
     # were installed and not executing. A gate nobody can see pass is not a
     # gate (#283).
     ("ci.yml", "baseline-hardware-guard"),
+    # Same shape as orchestration-guard and there for the same reason, split off
+    # only because it is the one job here that needs `fetch-depth: 0`: it reads
+    # the author and committer address of the commits a change introduces, and
+    # over a shallow clone that range is empty. It reads commit metadata and
+    # nothing else -- seconds of `git log`, no compilation, no secrets (#261).
+    ("ci.yml", "commit-identity-guard"),
     ("security-audit.yml", "cargo-audit"),
     ("security-audit.yml", "cargo-deny-advisories"),
     # Orchestration for a pull request, under the 28-08 decision above: the

@@ -482,6 +482,27 @@ jobs:
     runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
+
+  commit-identity-guard:
+    name: No commit publishes a personal address
+    # Its own job, and the only one here that checks out the whole history.
+    #
+    # `actions/checkout` fetches one commit by default, and over a shallow clone
+    # `git log <base>..<head>` prints nothing and exits 0 -- which is the state
+    # this guard exists to refuse, dressed as a pass. The floor inside the script
+    # turns that into a failure rather than a green tick, but a job that can only
+    # fail is not a gate, so the history has to actually be here.
+    #
+    # On the persistent desktop like orchestration-guard, and for the same
+    # reason: a spending limit disables hosted runners, and a check that stops
+    # running exactly when the bill does is not a check.
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The commits a push or a pull request introduces are the population;
+          # without the base commit there is no range to read.
+          fetch-depth: 0
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -530,3 +551,11 @@ jobs:
       - name: The test fixtures are still well formed
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_fixtures_are_wellformed.py
+      # The test first, and for the usual reason: this guard's whole job is to
+      # find nothing most days, so green says nothing until something has proved
+      # it can go red. It exercises the range, the floor and the cutover against
+      # a repository built in a temporary directory.
+      - name: The identity guard refuses what it should, and only that
+        run: python3 scripts/ci/test_commits_use_the_noreply_alias.py
+      - name: Every commit this change adds is authored by the noreply alias
+        run: python3 scripts/ci/commits_use_the_noreply_alias.py
