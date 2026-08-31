@@ -30,7 +30,12 @@ HIER = Path(__file__).resolve().parent
 GUARD = HIER / "commits_use_the_noreply_alias.py"
 
 sys.path.insert(0, str(HIER))
-from commits_use_the_noreply_alias import ALIAS, CUTOVER, is_allowed  # noqa: E402
+from commits_use_the_noreply_alias import (  # noqa: E402
+    ALIAS,
+    CUTOVER,
+    LEGACY_BUDGET,
+    is_allowed,
+)
 
 # A date safely on either side of the cutover, in the form `git commit --date`
 # takes. The past one stands for the published history the owner has not decided
@@ -111,13 +116,18 @@ def _rev(wd: Path, ref: str) -> str:
     return _git(wd, "rev-parse", ref).stdout.strip()
 
 
-def _run(wd: Path, *args: str) -> subprocess.CompletedProcess:
+def _run(wd: Path, *args: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     # GITHUB_EVENT_PATH would send the guard at this run's own event payload
-    # instead of at the fixture, so it is taken out for the duration.
-    omgeving = {k: v for k, v in os.environ.items() if k != "GITHUB_EVENT_PATH"}
+    # instead of at the fixture, and GITHUB_HEAD_REF/GITHUB_REF_NAME would tell
+    # it which branch it is on -- which is this run's branch, not the fixture's.
+    # All three are taken out, and put back deliberately where the case is about
+    # the branch.
+    weg = {"GITHUB_EVENT_PATH", "GITHUB_HEAD_REF", "GITHUB_REF_NAME"}
+    omgeving = {k: v for k, v in os.environ.items() if k not in weg}
     return subprocess.run(
         [sys.executable, str(GUARD), *args],
-        cwd=str(wd), capture_output=True, text=True, env=omgeving,
+        cwd=str(wd), capture_output=True, text=True,
+        env={**omgeving, **(extra_env or {})},
     )
 
 
@@ -170,20 +180,45 @@ def einde_tot_eind(fouten: list[str]) -> None:
         elif "floor" not in r.stderr.lower():
             fouten.append("failed on an empty range without naming the floor")
 
-        # The cutover, both ways. The same personal address is the published
-        # history when it was authored before the cutover, and a new mistake when
-        # it was authored after -- and if that distinction stops working, it
-        # fails open: everything reads as history and nothing is ever checked.
+        # THE CUTOVER, AND THE BUDGET THAT MAKES IT FINITE.
+        #
+        # A date on its own fails open in two directions: everything old reads as
+        # published history, and `git commit --date=<something old>` makes a
+        # commit old on request. So a pre-cutover offender is refused like any
+        # other unless the branch it is on is named in LEGACY_BUDGET.
+        #
+        # Both halves are asserted, because only the pair is the rule. If the
+        # budget stopped being consulted the first case would still pass; if the
+        # cutover stopped being consulted the second one would.
         _commit(wd, "someone@example.com", "chore: an old one", datum=VOOR_CUTOVER)
         oud = _rev(wd, "HEAD")
-        r = _run(wd, "--range", f"{vuil}..{oud}")
+
+        r = _run(wd, "--range", f"{vuil}..{oud}",
+                 extra_env={"GITHUB_HEAD_REF": "feature/no-budget-here"})
+        if r.returncode == 0:
+            fouten.append(
+                "accepted a pre-cutover personal address on a branch with no "
+                "budget -- which is `git commit --date=<old>` walking through"
+            )
+        elif "budget" not in r.stderr.lower():
+            fouten.append("refused it without saying the budget was the reason")
+
+        tak, budget = next(iter(LEGACY_BUDGET.items()))
+        if budget < 1:
+            fouten.append(f"LEGACY_BUDGET[{tak}] is {budget}, so this case proves nothing")
+        r = _run(wd, "--range", f"{vuil}..{oud}", extra_env={"GITHUB_HEAD_REF": tak})
         if r.returncode != 0:
             fouten.append(
-                "refused a commit authored before the cutover, which is the "
-                "published history the owner has not decided about"
+                f"refused a pre-cutover address on `{tak}`, which has a budget of "
+                f"{budget}: {r.stderr.strip()[:200]}"
             )
+
+        # And the cutover itself still separates the two: the same address,
+        # authored after it, is a new mistake on any branch including the one
+        # with a budget.
         _commit(wd, "someone@example.com", "chore: a new one", datum=NA_CUTOVER)
-        if _run(wd, "--range", f"{oud}..HEAD").returncode == 0:
+        if _run(wd, "--range", f"{oud}..HEAD",
+                extra_env={"GITHUB_HEAD_REF": tak}).returncode == 0:
             fouten.append("accepted a personal address authored after the cutover")
 
         # And the pre-commit mode, over the same repository, both ways.
@@ -242,6 +277,58 @@ def einde_tot_eind(fouten: list[str]) -> None:
             )
 
 
+def dichtstbijzijnde_basis(fouten: list[str]) -> None:
+    """Two remotes that disagree: the range is measured from the nearer one.
+
+    This checkout has `origin` on GitLab and `github` on GitHub, and on
+    31-08-2026 the GitLab mirror was 99 commits behind. Taking the first
+    candidate that resolved made a 4-commit branch look like a 103-commit one
+    and dragged 52 published offenders into a range with a budget of zero.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        wd = Path(tmp)
+        if _git(wd, "init", "--initial-branch=master", ".").returncode != 0:
+            fouten.append("could not create the base fixture")
+            return
+
+        _commit(wd, ALIAS, "chore: one")
+        ver = _rev(wd, "HEAD")
+        _commit(wd, ALIAS, "chore: two")
+        _commit(wd, ALIAS, "chore: three")
+        dichtbij = _rev(wd, "HEAD")
+        _commit(wd, ALIAS, "chore: four")
+        _commit(wd, ALIAS, "chore: five")
+
+        # BOTH ARRANGEMENTS, AND THAT IS THE POINT.
+        #
+        # With the near base on whichever remote happens to be tried first, a
+        # guard that simply takes the first candidate is right by luck and the
+        # case proves nothing. Running it the other way round too means no
+        # candidate order can pass both -- only actually choosing the nearest
+        # does.
+        for stale_ref, verse_ref in (("origin/master", "github/master"),
+                                     ("github/master", "origin/master")):
+            _git(wd, "update-ref", f"refs/remotes/{stale_ref}", ver)
+            _git(wd, "update-ref", f"refs/remotes/{verse_ref}", dichtbij)
+
+            r = _run(wd)
+            if r.returncode != 0:
+                fouten.append(
+                    f"the derived range failed on a clean fixture with the near "
+                    f"base on {verse_ref}: {r.stderr.strip()[:200]}"
+                )
+            elif ver in r.stdout:
+                fouten.append(
+                    f"measured from the stale {stale_ref} rather than the nearer "
+                    f"{verse_ref}, which is the bug that spends a zero budget on "
+                    "published history"
+                )
+            elif dichtbij not in r.stdout:
+                fouten.append(
+                    f"did not measure from either candidate base: {r.stdout.strip()[:200]}"
+                )
+
+
 def main() -> int:
     fouten: list[str] = []
 
@@ -253,6 +340,7 @@ def main() -> int:
             fouten.append(f"accepted {naam}: {adres!r}")
 
     einde_tot_eind(fouten)
+    dichtstbijzijnde_basis(fouten)
 
     if fouten:
         print(f"[test-commit-identity] FAIL: {len(fouten)} case(s):", file=sys.stderr)
@@ -262,8 +350,9 @@ def main() -> int:
 
     print(
         f"[test-commit-identity] OK: {len(ACCEPT)} address(es) accepted, "
-        f"{len(REFUSE)} refused, and the range, the floor and the pre-commit "
-        "mode answer over a real repository."
+        f"{len(REFUSE)} refused, and the range, the nearest base, the floor, "
+        "the cutover, the legacy budget and the pre-commit mode answer over a "
+        "real repository."
     )
     return 0
 

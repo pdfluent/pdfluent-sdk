@@ -45,7 +45,15 @@ in plaintext, in a file whose whole subject is that those must not be published.
 
 WHAT THIS GUARD DOES NOT COVER TODAY, SAID OUT LOUD
 
-Only address-shaped tokens are extracted, so only addresses can be caught. The
+Only address-shaped tokens are extracted, so only addresses can be caught, and
+only when they are written as an address. `jasper [at] example [dot] nl` is not
+matched by the tokeniser and is not hashed to anything, so it passes -- measured,
+not assumed, on 31-08-2026. A hash denylist cannot fix that without hashing every
+spelling of every term, which is a list nobody can finish. What it does cover is
+the leak that actually happens: an address written out, by hand or by a tool,
+because writing it was the natural thing to do.
+
+The
 internal terms are a real and separate problem and this guard is green in spite
 of them, not because of them. Measured on master, 31-08-2026: `/mnt/storagebox`
 in 93 tracked files, the runner tag in 80, the build machine's hostname in 2, a
@@ -92,10 +100,18 @@ ADRES = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 # the failure this guard has to survive, because it is the silent one.
 MINIMUM_BESTANDEN = 500
 
-# Read at most this much of any one file. A lockfile or a vendored licence bundle
-# can be megabytes, and an address that has not appeared in the first megabyte is
-# not the kind of leak this is looking for.
-MAX_BYTES = 1 << 20
+# Enough of a file to tell text from binary. Binaries carry no addresses worth
+# reading and decoding one is noise, so the NUL test happens on this much and the
+# rest of the file is only read when the test says text.
+#
+# THERE IS NO READ CAP BEYOND THIS. There was one, of a megabyte, on the
+# reasoning that an address past the first megabyte is not the kind of leak this
+# looks for. That reasoning was wrong and the check proved it: on 31-08-2026 an
+# address planted after a megabyte of padding in a tracked file passed the guard
+# with a clean green line. Sixteen tracked files here are over a megabyte and the
+# largest is five, so the whole tree is 89 MB -- reading all of it costs seconds
+# and removes a gap that anyone who read this file could have used.
+KOP_BYTES = 8192
 
 
 def _git_env() -> dict[str, str]:
@@ -150,12 +166,14 @@ def scan(root: str = ".", forbidden: dict[str, str] | None = None,
         vol = os.path.join(root, pad)
         try:
             with open(vol, "rb") as f:
-                ruw = f.read(MAX_BYTES)
+                kop = f.read(KOP_BYTES)
+                # Binary: no addresses worth reading, and decoding one is noise.
+                # Tested before the rest is read, so a 3 MB PDF costs 8 kB.
+                if b"\0" in kop:
+                    continue
+                ruw = kop + f.read()
         except OSError:
             # A symlink to nowhere, or a path removed between ls-files and here.
-            continue
-        # Binary: no addresses worth reading, and decoding one is noise.
-        if b"\0" in ruw[:8192]:
             continue
         gelezen += 1
         tekst = ruw.decode("utf-8", "replace")
