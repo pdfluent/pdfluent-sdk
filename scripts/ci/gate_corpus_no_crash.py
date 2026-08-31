@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import os
 import json
 import pathlib
 import re
@@ -68,7 +69,12 @@ def een(binary: str, pdf: pathlib.Path) -> tuple[str, str, str]:
         r = subprocess.run(
             [binary, "render", str(pdf), "-o", uit, "-d", "72", "-p", "1"],
             capture_output=True, text=True, errors="replace",
-            timeout=TIMEOUT_S, env={"RUST_BACKTRACE": "1", "PATH": "/usr/bin:/bin"},
+            timeout=TIMEOUT_S,
+            # Inherit the environment rather than replace it. A bare env drops
+            # HOME and XDG_*, which is where fontconfig looks; every page that
+            # needs a substituted font would then fail for a reason that has
+            # nothing to do with the renderer.
+            env={**os.environ, "RUST_BACKTRACE": "1"},
         )
     except subprocess.TimeoutExpired:
         return (pdf.name, "hang",
@@ -96,7 +102,7 @@ def main() -> int:
     p.add_argument("--workers", type=int, default=4)
     args = p.parse_args()
 
-    binary = pathlib.Path(args.binary)
+    binary = pathlib.Path(args.binary).resolve()
     if not binary.is_file():
         print(f"FATAL: no binary at {binary}. The build step did not produce "
               "one, which is a failure and not a reason to skip the gate.",
