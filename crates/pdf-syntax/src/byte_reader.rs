@@ -110,7 +110,11 @@ impl<'a> Reader<'a> {
     /// Peeks the specified number of bytes.
     #[inline]
     pub fn peek_bytes(&self, len: usize) -> Option<&'a [u8]> {
-        self.data.get(self.offset..self.offset + len)
+        // `offset + len` overflows on a length read out of the file. Ported
+        // from hayro upstream (LaurenzV/hayro#1194).
+        self.offset
+            .checked_add(len)
+            .and_then(|end| self.data.get(self.offset..end))
     }
 
     /// Peeks a single byte.
@@ -218,5 +222,27 @@ impl<'a> Reader<'a> {
         Some(u64::from_be_bytes([
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
+    }
+}
+
+/// Regression test for a fix ported from hayro upstream (LaurenzV/hayro#1194).
+///
+/// `self.offset + len` overflowed for a length read out of the file.
+#[cfg(test)]
+mod upstream_hardening_tests {
+    use super::Reader;
+
+    #[test]
+    fn peek_bytes_rejects_overflowing_len() {
+        // The offset has to be non-zero: at offset 0 the addition happens to
+        // land exactly on `usize::MAX` and never wraps, which is how the first
+        // version of this test passed against the unfixed code.
+        let reader = Reader::new_with(b"abc", 1);
+        assert!(reader.peek_bytes(usize::MAX).is_none());
+        assert_eq!(reader.peek_bytes(2), Some(&b"bc"[..]));
+
+        let reader = Reader::new(b"abc");
+        assert!(reader.peek_bytes(usize::MAX).is_none());
+        assert_eq!(reader.peek_bytes(3), Some(&b"abc"[..]));
     }
 }

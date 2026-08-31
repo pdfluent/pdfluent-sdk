@@ -36,9 +36,16 @@ impl<'a> BitReader<'a> {
 
     /// Read the given number of bits from the byte stream.
     ///
-    /// Returns `None` if `bit_size` > 32.
+    /// Returns `None` unless `bit_size` is in `1..=32`.
     #[inline(always)]
     pub fn read(&mut self, bit_size: u8) -> Option<u32> {
+        // A zero bit size used to fall into the `0..=32` arm, where
+        // `bit_pos + bit_size as usize - 1` underflows. Ported from hayro
+        // upstream (LaurenzV/hayro#1194).
+        if !(1..=32).contains(&bit_size) {
+            return None;
+        }
+
         let byte_pos = self.byte_pos();
 
         if byte_pos >= self.data.len() {
@@ -52,7 +59,7 @@ impl<'a> BitReader<'a> {
 
                 Some(item)
             }
-            0..=32 => {
+            1..=32 => {
                 let bit_pos = self.bit_pos();
                 let end_byte_pos = (bit_pos + bit_size as usize - 1) / 8;
                 let mut read = [0_u8; 8];
@@ -115,8 +122,16 @@ impl<'a> BitReader<'a> {
 }
 
 /// Get the mask for the given bit size.
+///
+/// Sizes above 32 saturate instead of shifting out of range; the shift itself
+/// is undefined for a width the type cannot hold. Ported from hayro upstream
+/// (LaurenzV/hayro#1194).
 pub fn bit_mask(bit_size: u8) -> u32 {
-    ((1_u64 << bit_size as u64) - 1) as u32
+    match bit_size {
+        0 => 0,
+        1..=31 => (1_u32 << bit_size) - 1,
+        _ => u32::MAX,
+    }
 }
 /// A bit writer.
 #[derive(Debug)]
@@ -247,7 +262,10 @@ pub struct BitChunks<'a> {
 impl<'a> BitChunks<'a> {
     /// Create a new iterator over bit chunks.
     pub fn new(data: &'a [u8], bit_size: u8, chunk_len: usize) -> Option<Self> {
-        if bit_size > 16 {
+        // Zero bit size or zero chunk length yields an iterator that consumes
+        // nothing and never ends. Ported from hayro upstream
+        // (LaurenzV/hayro#1194).
+        if !(1..=16).contains(&bit_size) || chunk_len == 0 {
             return None;
         }
 
@@ -300,7 +318,7 @@ impl BitChunk {
         bit_size: u8,
         chunk_len: usize,
     ) -> Option<Self> {
-        if bit_size > 16 {
+        if !(1..=16).contains(&bit_size) || chunk_len == 0 {
             return None;
         }
 
@@ -603,5 +621,64 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+/// Regression tests for fixes ported from hayro upstream.
+///
+/// Each of these fails against the pre-port code: `read(0)` underflowed
+/// `bit_pos + bit_size - 1`, and `bit_mask` shifted a `u64` by a width it does
+/// not have. See LaurenzV/hayro#1194.
+#[cfg(test)]
+mod upstream_hardening_tests {
+    use super::*;
+
+    #[test]
+    fn read_rejects_zero_and_oversized_bit_sizes() {
+        let data = [0xff, 0xff];
+        let mut reader = BitReader::new(&data);
+        assert!(reader.read(0).is_none());
+        assert!(reader.read(33).is_none());
+        // A rejected read must not have advanced the cursor.
+        assert_eq!(reader.cur_pos(), 0);
+        assert_eq!(reader.read(8), Some(0xff));
+    }
+
+    #[test]
+    fn read_rejects_zero_at_every_bit_offset() {
+        // The underflow is in `bit_pos + bit_size as usize - 1`, so it has to
+        // hold at a non-zero bit position too.
+        let data = [0xff, 0xff, 0xff];
+        for skip in 0_u8..8 {
+            let mut reader = BitReader::new(&data);
+            if skip > 0 {
+                reader.read(skip).unwrap();
+            }
+            assert!(reader.read(0).is_none(), "bit offset {skip}");
+        }
+    }
+
+    #[test]
+    fn bit_mask_does_not_shift_out_of_range() {
+        assert_eq!(bit_mask(0), 0);
+        assert_eq!(bit_mask(1), 0b1);
+        assert_eq!(bit_mask(31), u32::MAX >> 1);
+        assert_eq!(bit_mask(32), u32::MAX);
+        // Above the width of the result type; must saturate, not panic.
+        assert_eq!(bit_mask(64), u32::MAX);
+        assert_eq!(bit_mask(u8::MAX), u32::MAX);
+    }
+
+    #[test]
+    fn bit_chunks_reject_degenerate_shapes() {
+        let data = [0xff, 0xff];
+        assert!(BitChunks::new(&data, 0, 3).is_none());
+        assert!(BitChunks::new(&data, 1, 0).is_none());
+        assert!(BitChunks::new(&data, 17, 3).is_none());
+        assert!(BitChunks::new(&data, 1, 3).is_some());
+
+        let mut reader = BitReader::new(&data);
+        assert!(BitChunk::from_reader(&mut reader, 0, 3).is_none());
+        assert!(BitChunk::from_reader(&mut reader, 1, 0).is_none());
     }
 }
