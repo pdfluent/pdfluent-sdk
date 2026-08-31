@@ -113,6 +113,55 @@ MIN_COMMITS = 1
 CUTOVER = "2026-08-30T18:03:00+00:00"
 CUTOVER_EPOCH = int(datetime.fromisoformat(CUTOVER).timestamp())
 
+# A CUTOVER ON ITS OWN IS NOT A GUARD, IT IS AN AMNESTY WITH A DATE ON IT.
+#
+# Measured on 31-08-2026, on the branch behind pull request #1543: of the 319
+# commits `chore/test-reachability-gate` adds to master, 248 carry a pre-rule
+# address and every one of them is older than the cutover. The guard passed.
+# A rule that does not apply to 78% of what it is pointed at is not a rule that
+# branch has to obey, and reading the green tick as "this branch is clean" is
+# reading something the check never said.
+#
+# It is also the hole. `git commit --date=2026-01-01` sets the author date to
+# whatever it is told, and the cutover then waves the commit through -- the one
+# thing this file exists to stop, defeated by an argument anyone can type.
+#
+# So the amnesty is enumerated instead of open-ended. Every branch gets a budget
+# of zero pre-cutover offenders unless it is named below, with the number
+# measured on the day and the reason it is not zero. Over budget is a failure
+# whatever the dates claim, which closes the backdating hole at the same time:
+# a fabricated old commit still counts against a number that is already spent.
+#
+# The numbers may go down and never up. Deleting a line here is the goal, and
+# it happens when that branch's history is rewritten -- deferred until #1543 is
+# merged or closed, because rewriting the base under an open pull request of
+# 319 commits breaks it.
+LEGACY_BUDGET: dict[str, int] = {
+    # #1543, DRAFT. 248 of 319 on 31-08-2026. Rewriting them is a force-push of
+    # the branch a 319-commit pull request is built on.
+    "chore/test-reachability-gate": 248,
+}
+
+# Everything not named above. Zero: a branch cut after the rule landed has no
+# pre-rule commits of its own, so any it presents were either backdated or
+# dragged in by a range that reaches further back than the branch does.
+DEFAULT_BUDGET = 0
+
+
+def _branch() -> str:
+    """The branch this check is about.
+
+    In Actions on a pull request, GITHUB_REF_NAME is `1588/merge` and says
+    nothing; GITHUB_HEAD_REF is the branch. On a push there is no HEAD_REF and
+    REF_NAME is the branch. Locally it is simply the checkout.
+    """
+    for var in ("GITHUB_HEAD_REF", "GITHUB_REF_NAME"):
+        waarde = (os.environ.get(var) or "").strip()
+        if waarde:
+            return waarde
+    r = _git("rev-parse", "--abbrev-ref", "HEAD")
+    return r.stdout.strip() if r.returncode == 0 else ""
+
 
 # The GIT_* variables that say WHICH repository git should work on. A hook is
 # handed these as absolute paths and every subprocess inherits them, so git then
@@ -232,14 +281,31 @@ def _derived_range() -> tuple[str, list[str]]:
     Falls back to HEAD alone when the branch adds nothing, which is the ordinary
     state on master and must not read as a broken range.
     """
-    for basis in ("origin/master", "master", "origin/main", "main"):
+    # THE TIGHTEST OF THE CANDIDATES, NOT THE FIRST ONE THAT RESOLVES.
+    #
+    # This checkout has two remotes and they do not agree: on 31-08-2026
+    # `origin/master` (the GitLab mirror) was 99 commits behind `github/master`,
+    # so taking the first candidate made this branch look like it added 103
+    # commits when it adds 4 -- and 52 of the 99 it dragged in are published
+    # master history that no branch is answerable for. With the legacy budget
+    # below that is not cosmetic: the wrong base spends a budget of zero on
+    # commits the branch never made.
+    #
+    # The branch adds what the nearest base says it adds, so: try them all, keep
+    # the smallest non-empty answer.
+    kandidaten: list[tuple[int, str, list]] = []
+    for basis in ("github/master", "origin/master", "master", "github/main",
+                  "origin/main", "main"):
         r = _git("merge-base", basis, "HEAD")
-        if r.returncode == 0:
-            bereik = f"{r.stdout.strip()}..HEAD"
-            commits = _commits(bereik)
-            if commits:
-                return bereik, commits
-            break
+        if r.returncode != 0:
+            continue
+        bereik = f"{r.stdout.strip()}..HEAD"
+        commits = _commits(bereik)
+        if commits:
+            kandidaten.append((len(commits), bereik, commits))
+    if kandidaten:
+        _, bereik, commits = min(kandidaten, key=lambda k: k[0])
+        return bereik, commits
     return "HEAD (this branch adds nothing on top of master)", _commits("-1", "HEAD")
 
 
@@ -308,10 +374,42 @@ def main() -> int:
         )
         return 1
 
-    nieuw = [c for c in commits if int(c[3]) >= CUTOVER_EPOCH]
-    oud = len(commits) - len(nieuw)
+    def vuil(c) -> bool:
+        return not is_allowed(c[1]) or not is_allowed(c[2])
 
-    fout = [c for c in nieuw if not is_allowed(c[1]) or not is_allowed(c[2])]
+    nieuw = [c for c in commits if int(c[3]) >= CUTOVER_EPOCH]
+    oud = [c for c in commits if int(c[3]) < CUTOVER_EPOCH]
+    oud_vuil = [c for c in oud if vuil(c)]
+
+    tak = _branch()
+    budget = LEGACY_BUDGET.get(tak, DEFAULT_BUDGET)
+    if len(oud_vuil) > budget:
+        print(
+            f"[commit-identity] {len(oud_vuil)} commit(s) in {bereik} predate the "
+            f"cutover and carry an address that is not a noreply alias. The budget "
+            f"for `{tak or '(unknown branch)'}` is {budget}.\n",
+            file=sys.stderr,
+        )
+        for sha, auteur, committer, _datum, onderwerp in oud_vuil[:10]:
+            print(f"  {sha[:9]}  {onderwerp[:56]}", file=sys.stderr)
+        if len(oud_vuil) > 10:
+            print(f"  ... and {len(oud_vuil) - 10} more", file=sys.stderr)
+        print(
+            "\nA date on its own is an amnesty, not a rule: `git commit "
+            "--date=<something old>`\nwalks straight through one. The budget is "
+            "what makes the amnesty finite --\nit is spent, and it may go down "
+            "and never up.\n\n"
+            "If these are genuinely pre-rule commits on a long-lived branch, they "
+            "belong in\nLEGACY_BUDGET with the number and the reason. If they are "
+            "yours, rewrite the\nidentity on the commits this branch adds:\n"
+            "  git rebase --root --exec 'git commit --amend --no-edit --reset-author'\n\n"
+            "And check the base: a range measured against a stale mirror drags in "
+            "published\nmaster history the branch never made.",
+            file=sys.stderr,
+        )
+        return 1
+
+    fout = [c for c in nieuw if vuil(c)]
     if fout:
         print(
             f"[commit-identity] {len(fout)} of {len(nieuw)} commit(s) authored on "
@@ -343,8 +441,11 @@ def main() -> int:
 
     print(
         f"[commit-identity] OK: {len(nieuw)} commit(s) in {bereik} authored on or "
-        f"after {CUTOVER}, every identity a noreply alias. {oud} predate the "
-        "cutover and are the published-history question, not this one."
+        f"after {CUTOVER}, every identity a noreply alias. "
+        f"{len(oud)} predate the cutover, of which {len(oud_vuil)} carry a "
+        f"pre-rule address -- within the budget of {budget} for "
+        f"`{tak or '(unknown branch)'}`, and the published-history question (#261) "
+        "rather than this one."
     )
     return 0
 

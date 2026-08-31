@@ -130,6 +130,35 @@ def main() -> int:
         if len(treffers_na) != len(treffers):
             fouten.append("counted an untracked file, which is not a publication")
 
+        # DEEP IN A LARGE FILE, WHICH IS WHERE THE READ CAP USED TO HIDE IT.
+        # The guard read the first megabyte of each file and stopped. Two
+        # megabytes of padding and then the term passed with a green line, on a
+        # tree that carries sixteen files over that size. Reading a fixed prefix
+        # is indistinguishable from reading the file, right up to the moment it
+        # is not.
+        (wd / "docs" / "big.md").write_text(
+            ("padding\n" * 300_000) + f"contact: {GEPLANT}\n", encoding="utf-8"
+        )
+        _git(wd, "add", "-A")
+        _, treffers_diep = scan(str(wd), forbidden=GEPLANT_HASH, floor=1)
+        if not any(t[0] == "docs/big.md" for t in treffers_diep):
+            fouten.append(
+                "missed the term two megabytes into a tracked file, which is a "
+                "read cap dressed as a clean tree"
+            )
+        (wd / "docs" / "big.md").unlink()
+        _git(wd, "rm", "--cached", "-q", "docs/big.md")
+
+        # A binary file stays skipped now that the whole file is read: the NUL
+        # test happens on the first block, not on a truncated prefix.
+        (wd / "big.bin").write_bytes(b"\x00" + b"A" * (2 << 20) + GEPLANT.encode())
+        _git(wd, "add", "-A")
+        _, treffers_bin = scan(str(wd), forbidden=GEPLANT_HASH, floor=1)
+        if any(t[0] == "big.bin" for t in treffers_bin):
+            fouten.append("decoded a binary file instead of skipping it")
+        (wd / "big.bin").unlink()
+        _git(wd, "rm", "--cached", "-q", "big.bin")
+
         # The floor. A scan that reads almost nothing has not looked, and must
         # not report a clean tree.
         try:
@@ -147,8 +176,9 @@ def main() -> int:
 
     print(
         f"[test-tree-address] OK: {len(ONSCHULDIG)} innocent address(es) left alone, "
-        "a planted term found and masked, untracked files ignored, and the floor "
-        "refuses a scan that read too little."
+        "a planted term found and masked -- including two megabytes into a file "
+        "-- untracked files ignored, binaries skipped, and the floor refuses a "
+        "scan that read too little."
     )
     return 0
 
