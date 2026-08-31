@@ -106,13 +106,72 @@ def toegestaan(expr: str, ok: set[str], zwak: set[str], verboden: set[str],
     return (not slecht), "; ".join(slecht)
 
 
+# --- attribution -------------------------------------------------------------
+
+ATTRIBUTIE = REPO / "THIRD_PARTY_LICENSES.txt"
+
+
+def elections_are_attributed(pol: dict) -> list[str]:
+    """Every recorded election must also be stated in the file we ship.
+
+    An election lives in two places on purpose. `[elections]` in the policy is
+    what CI reads; THIRD_PARTY_LICENSES.txt is what a buyer's lawyer reads, and
+    it is the only one of the two that leaves the building. JNA sat in neither
+    for months, then in the policy alone -- which passes every automated check
+    while the shipped attribution still implies the copyleft half of a dual
+    licence. Recording the choice where nobody reads it is not recording it.
+    """
+    keuzes = pol.get("elections", {})
+    if not keuzes:
+        return []
+    if not ATTRIBUTIE.is_file():
+        return [f"{ATTRIBUTIE.name} is missing, so no election can be stated in it"]
+    regels = ATTRIBUTIE.read_text(encoding="utf-8", errors="ignore").split("\n")
+    uit = []
+    for coord, keuze in keuzes.items():
+        artefact = coord.split(":")[-1]
+        raken = [i for i, r in enumerate(regels) if artefact in r]
+        if not raken:
+            uit.append(f"election for {coord} is in the policy but {artefact} "
+                       f"is absent from {ATTRIBUTIE.name}")
+            continue
+        # Look for the elected licence NEAR the artefact, not anywhere in the
+        # file. `Apache-2.0` occurs 23 times in the Rust crate list, so a
+        # whole-file substring test passes even when JNA's own entry names the
+        # copyleft half -- which is the one mistake this check exists to catch.
+        # VENSTER: the entry plus its explanatory paragraph, measured against
+        # the real file; the two are never further apart than this.
+        VENSTER = 12
+        dichtbij = any(
+            keuze["take"] in r
+            for i in raken
+            for r in regels[max(0, i - 2):i + VENSTER]
+        )
+        if not dichtbij:
+            uit.append(f"{artefact} is attributed in {ATTRIBUTIE.name} but the "
+                       f"elected licence {keuze['take']} is not named within "
+                       f"{VENSTER} lines of it")
+    return uit
+
+
 # --- scanners ---------------------------------------------------------------
 
 def scan_cargo(_: dict) -> list[tuple[str, str]]:
     """Every third-party crate in the resolved graph, build and dev included."""
-    r = subprocess.run(["cargo", "metadata", "--format-version", "1"],
-                       capture_output=True, text=True, cwd=REPO,
-                       env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+    try:
+        r = subprocess.run(["cargo", "metadata", "--format-version", "1"],
+                           capture_output=True, text=True, cwd=REPO,
+                           env={k: v for k, v in os.environ.items()
+                                if not k.startswith("GIT_")})
+    except FileNotFoundError as e:
+        # A runner without cargo on PATH used to escape as a bare traceback out
+        # of subprocess, which is a crash and not a verdict: the step went red
+        # with a stack trace that says nothing about licences, and the reader
+        # has no way to tell "769 crates were checked and one is GPL" from
+        # "nothing was checked at all". Both are exit 1. This is the second
+        # kind, and it says so.
+        raise Onleesbaar("SKIPPED (not a pass): cargo is not on PATH, so the "
+                         "resolved crate graph was never read") from e
     if r.returncode != 0:
         raise Onleesbaar(f"cargo metadata failed: {r.stderr[-200:]}")
     m = json.loads(r.stdout)
@@ -297,6 +356,10 @@ def main() -> int:
         for s in slecht[:10]:
             print(f"      {s}")
         problemen += [f"{naam}: {s}" for s in slecht]
+
+    for m in elections_are_attributed(pol):
+        problemen.append(f"attribution: {m}")
+        print(f"  {'attrib':8} FAIL        {m}")
 
     if not problemen:
         print("[license_gate] every ecosystem satisfies the policy")

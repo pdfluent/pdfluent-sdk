@@ -33,6 +33,7 @@ from __future__ import annotations
 # and a shortened list is a quietly widened policy.
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -154,7 +155,28 @@ def main() -> int:
         finally:
             lg.REPO = echt
 
-    print(f"[test_license_gate] {len(CASES)} expression case(s) + 3 scanner case(s)")
+    # A toolchain that is absent must fail as a verdict, not as a traceback.
+    # The GitHub runner has no cargo, so scan_cargo raised FileNotFoundError
+    # straight out of subprocess: the step went red with a stack trace and no
+    # statement about licences at all. Exit 1 for "a crate is GPL" and exit 1
+    # for "nothing was read" are not the same result, and the message is the
+    # only thing that distinguishes them.
+    echt_pad = os.environ.get("PATH", "")
+    with tempfile.TemporaryDirectory() as leeg:
+        os.environ["PATH"] = leeg
+        try:
+            lg.scan_cargo({})
+            fouten.append("a missing cargo was not reported at all")
+        except lg.Onleesbaar as e:
+            if "SKIPPED (not a pass)" not in str(e):
+                fouten.append("a missing cargo failed without announcing itself "
+                              "as a skip rather than a licence verdict")
+        except FileNotFoundError:
+            fouten.append("a missing cargo escaped as a traceback instead of a verdict")
+        finally:
+            os.environ["PATH"] = echt_pad
+
+    print(f"[test_license_gate] {len(CASES)} expression case(s) + 4 scanner case(s)")
     if not fouten:
         print("[test_license_gate] every judgement holds")
         return 0
