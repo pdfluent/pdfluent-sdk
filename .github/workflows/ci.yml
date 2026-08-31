@@ -61,6 +61,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --quiet pyyaml
+      - name: One owner per path, and branches stay inside their own
+        run: python3 scripts/ci/territories_do_not_overlap.py
       - name: Orchestration stays on hosted runners
         run: python3 scripts/ci/orchestration_stays_hosted.py
       - name: No `if:` reads the secrets context
