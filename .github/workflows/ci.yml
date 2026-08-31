@@ -179,6 +179,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/ci/a_gate_that_never_went_green.py
+      # From #283, rebased onto a master that had removed the label guard above
+      # and now requires `if: ${{ !cancelled() }}` on every guard step. Both
+      # kept: the removal stands, and the new guard gets the line it needs or
+      # guards_do_not_hide_behind_each_other.py refuses it.
+      #
+      # The guard first, then its own test -- same order and same reason as the
+      # run-block pair below: a guard whose parser stopped understanding the
+      # files reports a clean tree in exactly the same words as a clean tree.
+      - name: Every baseline names the machine it came from
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_baseline_names_the_machine.py
+      - name: The baseline-hardware guard still bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_baseline_names_the_machine.py
       - name: Schedule conditions name a cron that exists
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/schedule_guards_match_their_cron.py

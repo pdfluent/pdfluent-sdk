@@ -1,9 +1,43 @@
 # Performance SLA — PDFluent SDK
 
 This document defines the formal performance SLA targets for the PDFluent SDK.
-All targets are measured on the benchmark hardware: **Hetzner EX42 — Xeon E-2176G @ 3.70 GHz, 6C/12T, 62 GB RAM, Ubuntu 22.04**.
 
-> **Status**: Initial baseline targets — to be confirmed by running `scripts/run_benchmarks.sh`.
+> ## UNCALIBRATED
+>
+> **Every absolute number below is uncalibrated. Do not quote them, and do not
+> treat a run that clears them as a pass.**
+>
+> They were measured in April 2026 on a Xeon E-2176G @ 3.70 GHz, 6C/12T, 62 GB
+> RAM, Ubuntu 22.04. That machine was decommissioned on 24-08-2026. No number
+> here has been re-measured since, and no number here has been changed —
+> changing them without measuring would only move the fiction.
+>
+> Comparing against them fails in the flattering direction: a real regression
+> measured on faster hardware still clears a threshold set on slower hardware
+> and reports a pass. `scripts/check_benchmark_sla.py` therefore refuses to
+> judge a result at all while no machine class is calibrated. It exits 3 with
+> `SKIPPED (not a pass): …` rather than returning a verdict it cannot support.
+>
+> **What would make them real again**, in order:
+>
+> 1. A machine class that can hold the corpus. `.github/workflows/bench.yml`
+>    wants a runner labelled `xfa-corpus`; none is registered, and the workflow
+>    is parked for that reason (#276). The corpus disk on the persistent runner
+>    is currently unreadable, so the run cannot be done there either.
+> 2. `BENCH_MACHINE_CLASS=<class> scripts/run_benchmarks.sh --corpus-dir …`
+>    on that class. The script refuses to write a result whose class does not
+>    match the cores actually present.
+> 3. Set `calibrated = true` and `calibrated_on` for that class in
+>    `benchmarks/BASELINE_HARDWARE.toml`, replace the numbers below with what
+>    was measured, raise `CALIBRATED_FLOOR` in
+>    `scripts/ci/a_baseline_names_the_machine.py`, and delete this block.
+>
+> Steps 2 and 3 are guarded and will fail until all of them are done. Which
+> class to calibrate against is an owner decision: an ephemeral instance costs
+> money per run and cannot hold the corpus, and the persistent runner shares a
+> workstation with other work.
+>
+> Registry: `benchmarks/BASELINE_HARDWARE.toml`. Issue: #283.
 
 ---
 
@@ -53,21 +87,26 @@ All targets are measured on the benchmark hardware: **Hetzner EX42 — Xeon E-21
 
 ## Measurement Procedure
 
-Run on VPS:
+Run on a machine class registered in `benchmarks/BASELINE_HARDWARE.toml`.
+`BENCH_MACHINE_CLASS` is required: it is checked against the cores actually
+present, and it names the result file, so a run cannot claim a machine it was
+not on.
 
 ```bash
 # Build release binary
 cargo build --release -p xfa-cli
 
 # Run benchmark suite
-./scripts/run_benchmarks.sh \
+BENCH_MACHINE_CLASS=<class> ./scripts/run_benchmarks.sh \
   --corpus-dir /opt/xfa-corpus/curated-1k \
   --warmup-seconds 2 \
   --measure-seconds 10
 
-# Check against SLA
+# Check against SLA. Exits 3 with `SKIPPED (not a pass): …` if the class this
+# result came from has no calibrated baseline — which is the case for every
+# class today.
 python3 scripts/check_benchmark_sla.py \
-  --suite-json benchmarks/results/hetzner-e2176g-$(date +%Y-%m-%d).json \
+  --suite-json benchmarks/results/<class>-$(date +%Y-%m-%d).json \
   --sla BENCHMARKS_SLA.md
 ```
 
@@ -111,3 +150,9 @@ set `BENCHMARK_STRESS_LARGE=1` when including them in a bench run.
 - The benchmark suite runs automatically on merge to `master` via `.github/workflows/benchmarks.yml`
 - A regression of >20% on any SLA target triggers an alert (not a block — performance varies with CPU state)
 - Hard block: any test timeout (>30s) or OOM in the benchmark suite
+- No comparison happens against an uncalibrated machine class.
+  `scripts/check_benchmark_sla.py` exits 3 and says so on stderr; a percentage
+  threshold against numbers from other hardware measures nothing, and a gate
+  that reports a pass it cannot support is worse than no gate.
+  `scripts/ci/a_baseline_names_the_machine.py` keeps this document and the
+  registry in step, in both directions.
