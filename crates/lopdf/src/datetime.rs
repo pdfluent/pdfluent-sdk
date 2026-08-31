@@ -70,16 +70,14 @@ mod jiff_impl {
             // CAPITAL Z signifies that local time is equal to UT. If no UT information is
             // specified, the relationship of the specified time to UT shall be considered GMT."
             //
-            // 1. Try parsing the full date and time with the `%#z` specifier to parse the timezone
-            //    as a `Zoned` object.
-            // 2. Try parsing the full date and time with the 'Z' suffix as a `DateTime` interpreted
-            //    to be in the UTC timezone.
-            // 3. Try parsing the date and time without the seconds specified with the `%#z`
-            //    specifier to parse the timezone as a `Zoned` object.
-            // 4. Try parsing the date and time without the seconds specified with the 'Z' as a
-            //    `DateTime` interpreted to be in the UTC timezone.
-            // 5. Try parsing the date with no time as a `Date` interpreted to be in the GMT
+            // 1. Try parsing the full date and time with the `%#z` specifier to parse the timezone as a `Zoned` object.
+            // 2. Try parsing the full date and time with the 'Z' suffix as a `DateTime` interpreted to be in the UTC
             //    timezone.
+            // 3. Try parsing the date and time without the seconds specified with the `%#z` specifier to parse the
+            //    timezone as a `Zoned` object.
+            // 4. Try parsing the date and time without the seconds specified with the 'Z' as a `DateTime` interpreted
+            //    to be in the UTC timezone.
+            // 5. Try parsing the date with no time as a `Date` interpreted to be in the GMT timezone.
             //
             // In all cases we return a `Zoned` object here to preserve the timezone.
             Zoned::strptime("%Y%m%d%H%M%S%#z", &value.0)
@@ -94,18 +92,27 @@ mod jiff_impl {
 #[cfg(feature = "time")]
 mod time_impl {
     use crate::Object;
-    use time::{OffsetDateTime, Time, format_description::FormatItem};
+    use time::{OffsetDateTime, PrimitiveDateTime};
 
-    impl From<Time> for Object {
-        fn from(date: Time) -> Self {
-            // can only fail if the TIME_FMT_ENCODE_STR would be invalid
-            Object::string_literal(
-                format!(
-                    "D:{}",
-                    date.format(&FormatItem::Literal("%Y%m%d%H%M%SZ".as_bytes())).unwrap()
-                )
-                .into_bytes(),
-            )
+    /// The naive datetime is taken to be UTC and rendered with the `Z` suffix
+    /// (PDF 32000-1 §7.9.4) — the `time`-crate counterpart of the
+    /// `chrono::DateTime<Utc>` and `jiff::Timestamp` impls above.
+    ///
+    /// Taken from upstream lopdf 1efa270, which lands *after* v0.44.0. It has to
+    /// come along: v0.44.0 itself replaced the working `FormatItem::Literal` in
+    /// this impl with a `FormatItem::StringLiteral` variant that exists in no
+    /// released `time` 0.3, so v0.44.0 does not build with its own default
+    /// features (upstream issue #518). Merging v0.44.0 without this would have
+    /// swapped our compiling version for a non-compiling one.
+    impl From<PrimitiveDateTime> for Object {
+        fn from(date: PrimitiveDateTime) -> Self {
+            Object::string_literal({
+                // D:%Y%m%d%H%M%SZ
+                let format =
+                    time::format_description::parse_borrowed::<2>("D:[year][month][day][hour][minute][second]Z")
+                        .unwrap();
+                date.format(&format).unwrap()
+            })
         }
     }
 
@@ -113,7 +120,7 @@ mod time_impl {
         fn from(date: OffsetDateTime) -> Self {
             Object::string_literal({
                 // D:%Y%m%d%H%M%S:%z'
-                let format = time::format_description::parse(
+                let format = time::format_description::parse_borrowed::<2>(
                     "D:[year][month][day][hour][minute][second][offset_hour sign:mandatory]'[offset_minute]'",
                 )
                 .unwrap();
@@ -130,7 +137,7 @@ mod time_impl {
         type Error = time::Error;
 
         fn try_from(value: super::DateTime) -> Result<OffsetDateTime, Self::Error> {
-            let format = time::format_description::parse(
+            let format = time::format_description::parse_borrowed::<2>(
                 "[year][month][day][hour][minute][second][offset_hour sign:mandatory][offset_minute]",
             )
             .unwrap();
@@ -160,14 +167,7 @@ impl Object {
     // Parses the `D`, `:` and `\` out of a `Object::String` to parse the date time
     fn datetime_string(&self) -> Option<String> {
         if let Object::String(bytes, _) = self {
-            String::from_utf8(
-                bytes
-                    .iter()
-                    .filter(|b| ![b'D', b':', b'\''].contains(b))
-                    .cloned()
-                    .collect(),
-            )
-            .ok()
+            String::from_utf8(bytes.iter().filter(|b| !b"D:'".contains(b)).cloned().collect()).ok()
         } else {
             None
         }

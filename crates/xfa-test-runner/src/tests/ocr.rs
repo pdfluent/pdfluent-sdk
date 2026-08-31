@@ -16,10 +16,8 @@ pub struct OcrTest;
 
 /// Check if a page needs OCR (has fewer than `threshold` text characters).
 fn page_needs_ocr(doc: &lopdf::Document, page_id: lopdf::ObjectId, threshold: usize) -> bool {
-    let content_bytes = match doc.get_page_content(page_id) {
-        Ok(b) => b,
-        Err(_) => return true,
-    };
+    // lopdf 0.44: get_page_content is infallible and returns Vec<u8>.
+    let content_bytes = doc.get_page_content(page_id);
     let content = match lopdf::content::Content::decode(&content_bytes) {
         Ok(c) => c,
         Err(_) => return true,
