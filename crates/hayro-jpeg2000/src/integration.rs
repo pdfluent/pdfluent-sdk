@@ -209,21 +209,23 @@ fn convert_inner(image: &Image<'_>, buf: &mut [u8]) -> ImageResult<()> {
         has_alpha: bool,
         cs: ColorSpace,
     ) -> Result<(), ImageError> {
+        let mut decoder_context = crate::DecoderContext::default();
+
         match (cs, has_alpha) {
             (ColorSpace::Gray, false) => {
-                image.decode_into(buf)?;
+                image.decode(&mut decoder_context)?.store_u8_into(buf);
             }
             (ColorSpace::Gray, true) => {
-                image.decode_into(buf)?;
+                image.decode(&mut decoder_context)?.store_u8_into(buf);
             }
             (ColorSpace::RGB, false) => {
-                image.decode_into(buf)?;
+                image.decode(&mut decoder_context)?.store_u8_into(buf);
             }
             (ColorSpace::RGB, true) => {
-                image.decode_into(buf)?;
+                image.decode(&mut decoder_context)?.store_u8_into(buf);
             }
             (ColorSpace::CMYK, false) => {
-                let decoded = image.decode()?;
+                let decoded = image.decode(&mut decoder_context)?.data_u8();
                 let transformed = from_icc(CMYK_PROFILE, 4, has_alpha, width, height, &decoded)
                     .map_err(icc_err_to_image)?;
                 buf.copy_from_slice(&transformed);
@@ -231,7 +233,7 @@ fn convert_inner(image: &Image<'_>, buf: &mut [u8]) -> ImageResult<()> {
             (ColorSpace::CMYK, true) => {
                 // moxcms doesn't support CMYK interleaved with alpha, so we
                 // need to split it.
-                let decoded = image.decode()?;
+                let decoded = image.decode(&mut decoder_context)?.data_u8();
                 let mut cmyk = vec![];
                 let mut alpha = vec![];
 
@@ -257,7 +259,7 @@ fn convert_inner(image: &Image<'_>, buf: &mut [u8]) -> ImageResult<()> {
                 },
                 has_alpha,
             ) => {
-                let decoded = image.decode()?;
+                let decoded = image.decode(&mut decoder_context)?.data_u8();
 
                 let transformed =
                     from_icc(&profile, num_components, has_alpha, width, height, &decoded);

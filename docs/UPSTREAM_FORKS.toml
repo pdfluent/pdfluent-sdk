@@ -65,8 +65,7 @@ waarom = "JBIG2 image codec."
 [[fork]]
 onze_crate = "hayro-jpeg2000"
 upstream = "hayro-jpeg2000"
-gelijk_met = "0.3.5"
-aanvaard_tot = "0.4.0"  # #256
+gelijk_met = "0.4.0"
 waarom = "JPEG 2000 image codec."
 
 [[fork]]
