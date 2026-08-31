@@ -39,7 +39,21 @@ claim.
 
 The mechanism generalises. Any term that must not appear in a public tree --
 a partner name, a hostname, an internal path -- can be added as a digest, which
-is the shape the older `geen_interne_zaken.py` denylist should have had.
+is the shape the older `geen_interne_zaken.py` denylist should have had: that one
+holds three partner names, a private address range and a build machine's hostname
+in plaintext, in a file whose whole subject is that those must not be published.
+
+WHAT THIS GUARD DOES NOT COVER TODAY, SAID OUT LOUD
+
+Only address-shaped tokens are extracted, so only addresses can be caught. The
+internal terms are a real and separate problem and this guard is green in spite
+of them, not because of them. Measured on master, 31-08-2026: `/mnt/storagebox`
+in 93 tracked files, the runner tag in 80, the build machine's hostname in 2, a
+private address in 1, a partner name in 5. Adding those digests here today would
+turn the job red on 170-odd files nobody is authorised to bulk-edit in this
+change, and a guard that always fails is switched off within the week. They go in
+as the cleanup lands, term by term, and until then a green tick here means "no
+forbidden address", never "nothing internal in the tree".
 
 Exit codes:
     0  no tracked file carries a forbidden term
