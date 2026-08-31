@@ -209,6 +209,8 @@ jobs:
       - name: Both fork lists name the same crates
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/fork_lists_agree.py
+      - name: A fork without a fork point is not merged
+        run: python3 scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py
       - name: A fork behind on patch releases is behind
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_upstream_gap_counts_patches.py

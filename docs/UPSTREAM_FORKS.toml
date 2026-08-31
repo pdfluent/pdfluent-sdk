@@ -87,6 +87,7 @@ upstream = "hayro"
 # there is no file to intersect windows on. Establishing this fork point needs a
 # different method, and inventing a commit to fill the field is what produced
 # four of the errors above (#262).
+niet_mergen = "geen forkpunt vast te stellen: onze src/ is 2 bestanden tegen upstreams 7, geen naam gedeeld, dus niets is byte-identiek en er zijn geen vensters om te doorsnijden (#262)"
 gelijk_met = "0.5.0"
 forkpunt = "4b8511cbb"  # commit in LaurenzV/hayro
 aanvaard_tot = "0.7.1"  # in uitvoering, #256
@@ -108,6 +109,14 @@ waarom = "PDF document model used by pdf-manip."
 [[fork]]
 onze_crate = "cff-parser"
 upstream = "cff-parser"
+# Tweede crate waar de inhoudsmethode niet bij komt, om de omgekeerde reden van
+# pdf-render: niet omdat wij te veel hebben herschreven, maar omdat upstream
+# (jrmuizel/cff-parser) er acht commits heeft. Twee van onze tien bestanden zijn
+# byte-identiek, en aan alle acht revisies tegelijk -- dus ze onderscheiden
+# niets. Upstream staat bovendien op 0.2.0 en wij op 0.2.1: er is hier geen
+# merge te doen, en dat is precies waarom een verzonnen forkpunt hier nooit zou
+# opvallen (#262).
+niet_mergen = "geen forkpunt vast te stellen: 2 van 10 bestanden identiek, en aan de hele upstream-historie tegelijk, dus zonder onderscheidend vermogen (#262)"
 gelijk_met = "0.2.1"
 waarom = "CFF font parsing. Level with upstream, or slightly ahead."
 
@@ -151,6 +160,12 @@ waarom = "JPEG 2000 image codec."
 [[fork]]
 onze_crate = "hayro-ccitt"
 upstream = "hayro-ccitt"
+# Het forkpunt van deze crate wordt vastgesteld op tak `upstream/ccitt-to-current`
+# (#1602), met de inhoudsmethode. Hier op master staat het er niet, dus hier valt
+# niets te controleren. Deze regel verdwijnt zodra die tak binnen is en
+# `forkpunt` meebrengt -- en de bewaker weigert als ze allebei staan, zodat het
+# opruimen niet vergeten kan worden.
+niet_mergen = "forkpunt wordt vastgesteld op tak upstream/ccitt-to-current (#1602); niet mergen vanaf master tot die tak binnen is"
 gelijk_met = "0.3.0"
 forkpunt = "5a5f0e2"  # LaurenzV/hayro HEAD on 2026-08-24, merged 31-08-2026
 waarom = "CCITT fax codec. First crate brought level; see #262."
