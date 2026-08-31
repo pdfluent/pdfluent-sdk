@@ -65,6 +65,19 @@ raise SystemExit(1)
 """
 
 
+def schoon() -> dict[str, str]:
+    """The environment without the caller's git in it.
+
+    The fixture is a real repository and the guard reads it with `git log`. Run
+    from .githooks/pre-push, GIT_DIR and GIT_INDEX_FILE are already exported and
+    point at the actual checkout, so `git init` in a temporary directory is
+    followed by a `git add` that exits 128 -- or worse, succeeds against the
+    wrong repository. The test passed when run by hand and failed inside the
+    hook, which is the only place it had a chance to be wrong.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def bouw(map_: pathlib.Path, workflows: list[dict]) -> None:
     """A real git repo with the workflow files, plus a stub gh on PATH."""
     wf = map_ / ".github" / "workflows"
@@ -72,9 +85,10 @@ def bouw(map_: pathlib.Path, workflows: list[dict]) -> None:
     for w in workflows:
         (wf / pathlib.Path(w["path"]).name).write_text(WERKSTROOM)
 
-    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+    env = {**schoon(), "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
-    for cmd in (["git", "init", "-q"], ["git", "add", "-A"],
+    for cmd in (["git", "init", "-q"],
+                ["git", "add", "--", ".github"],
                 ["git", "commit", "-qm", "fixture"]):
         subprocess.run(cmd, cwd=map_, check=True, capture_output=True, env=env)
 
@@ -88,7 +102,7 @@ def bouw(map_: pathlib.Path, workflows: list[dict]) -> None:
 
 
 def draai(map_: pathlib.Path) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "PATH": f"{map_ / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+    env = {**schoon(), "PATH": f"{map_ / 'bin'}{os.pathsep}{os.environ['PATH']}"}
     return subprocess.run([sys.executable, str(BEWAKER)], cwd=map_,
                           capture_output=True, text=True, check=False, env=env)
 
