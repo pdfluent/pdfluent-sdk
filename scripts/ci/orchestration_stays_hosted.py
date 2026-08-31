@@ -212,6 +212,14 @@ BASELINE = {
     # `cargo metadata` and `cargo tree` -- no compilation, seconds of work.
     ("ci.yml", "promise-guard"),
     ("ci.yml", "measurement-guard"),
+    # Same shape and same 28-08 decision: checkout, python, two file scans,
+    # seconds. It is a second job rather than two more steps on the one above
+    # because that job runs thirty-seven steps in sequence and aborts on the
+    # first failure -- on 31-08-2026 it had been failing at step two for the
+    # last thirty runs on master, so the thirty-five guards below that step
+    # were installed and not executing. A gate nobody can see pass is not a
+    # gate (#283).
+    ("ci.yml", "baseline-hardware-guard"),
     ("security-audit.yml", "cargo-audit"),
     ("security-audit.yml", "cargo-deny-advisories"),
     # Orchestration for a pull request, under the 28-08 decision above: the
