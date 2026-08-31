@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -38,6 +39,17 @@ import sys
 
 VLOER = 500
 MANIFEST = pathlib.Path("corpus/GATE_CORPUS_MANIFEST.json")
+
+def schone_omgeving() -> dict[str, str]:
+    """The caller's environment with every GIT_* variable removed.
+
+    A pre-push hook exports GIT_DIR and GIT_INDEX_FILE, and a subprocess that
+    inherits them acts on the real repository whatever directory you point it
+    at. scripts/ci/test_no_test_can_touch_the_real_repo.py caught this one
+    before it ran anywhere.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -118,7 +130,8 @@ def main() -> int:
     try:
         getrackt = subprocess.run(
             ["git", "ls-files", "--", "corpus/gate/*.pdf", "corpus/gate/**/*.pdf"],
-            capture_output=True, text=True, check=False, timeout=60).stdout.split()
+            capture_output=True, text=True, check=False, timeout=60,
+            env=schone_omgeving()).stdout.split()
     except (OSError, subprocess.SubprocessError):
         getrackt = []
     if getrackt:
