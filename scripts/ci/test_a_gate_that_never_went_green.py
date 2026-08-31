@@ -63,6 +63,11 @@ tabel = json.loads(pathlib.Path(%r).read_text())
 url = sys.argv[-1]
 if "actions/workflows?" in url:
     print(json.dumps({"workflows": tabel["workflows"]})); raise SystemExit(0)
+if "/commits?path=" in url:
+    # The guard dates each workflow from the default branch. A fixed date far
+    # enough back that the run counts in the table are what decides each case.
+    print(json.dumps([{"commit": {"committer": {"date": "2026-01-01T00:00:00Z"}}}]))
+    raise SystemExit(0)
 for wf in tabel["workflows"]:
     if f"/workflows/{wf['id']}/runs" in url:
         groen = "status=success" in url
@@ -77,7 +82,11 @@ raise SystemExit(1)
 
 
 def schoon() -> dict[str, str]:
-    """The environment without the caller's git in it.
+    """The environment without the caller's git, or anyone's GitHub token.
+
+    GH_TOKEN sends the guard to the real API over urllib, which would make this
+    suite pass or fail on the state of the repository that day and ignore the
+    stub entirely. Stripping it is what makes the stub the only route.
 
     The fixture is a real repository and the guard reads it with `git log`. Run
     from .githooks/pre-push, GIT_DIR and GIT_INDEX_FILE are already exported and
@@ -86,7 +95,8 @@ def schoon() -> dict[str, str]:
     wrong repository. The test passed when run by hand and failed inside the
     hook, which is the only place it had a chance to be wrong.
     """
-    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith("GIT_") and k not in ("GH_TOKEN", "GITHUB_TOKEN")}
 
 
 def bouw(map_: pathlib.Path, workflows: list[dict]) -> None:

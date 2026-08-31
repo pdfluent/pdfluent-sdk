@@ -48,6 +48,7 @@ import pathlib
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 FLOWS = pathlib.Path(".github/workflows")
@@ -61,14 +62,12 @@ GENOEG = 3
 # baseline that only grows is a list of excuses, and one that only shrinks
 # stops noticing when something dies.
 BEKEND = {
-    # Found by this guard on its own pull request, which is the strongest thing
-    # it has said so far: the workflow it lives in is itself a dead gate.
-    # `orchestration-guard` aborts on step four -- ci-ephemeral's `reap` job on
-    # the persistent runner (#267) -- and has done on every run for weeks. Not
-    # fixable from here; #1601 and #1605 both carry the repair and are open.
-    # This entry comes out the day ci.yml goes green, and the both-directions
-    # check below is what will insist on it.
-    "ci.yml": "orchestration-guard aborts on step four since 28-08-2026 (#267; repair open in #1601/#1605)",
+    # ci.yml was in this list for one commit, on the strength of "5 runs since
+    # the file changed, none green". That reading came from dating the file
+    # against the branch, where the file had just been edited -- by the commit
+    # that added the entry. Dated against the default branch it is 48 runs and
+    # 7 green, and not dead at all. The dating moved to one source; the entry
+    # went with it.
     "enterprise-acceptance.yml": "red on every run since 28-08-2026; found by this guard, not diagnosed (#290)",
     "fuzz.yml": "red on every run since 28-08-2026; found by this guard, not diagnosed (#290)",
     "node-bindings.yml": "red on every run since 28-08-2026; found by this guard, not diagnosed (#290)",
@@ -159,19 +158,34 @@ def schone_omgeving() -> dict[str, str]:
 
 
 def veranderd_op(pad: pathlib.Path) -> dt.datetime | None:
-    """When this workflow file last changed, in UTC."""
-    try:
-        r = subprocess.run(["git", "log", "-1", "--format=%cI", "--", str(pad)],
-                           capture_output=True, text=True, check=False, timeout=60,
-                           stdin=subprocess.DEVNULL, env=schone_omgeving())
-    except (OSError, subprocess.SubprocessError):
+    """When this workflow file last changed on the default branch, in UTC.
+
+    Not from `git log`, for two reasons discovered in that order.
+
+    `actions/checkout@v4` clones with depth 1, so `git log -1 -- <path>` answers
+    with the only commit it has, for every path. On run 33438191805 this guard
+    reported all 26 workflows as `not judged -- 0 run(s) since the file changed
+    on 31-08-2026`, bindings.yml included, whose file last changed on
+    06-05-2026. Green, and measuring nothing -- the shape it exists to catch,
+    with itself inside it. Reproduced with `git clone --depth 1`: 2026-05-06 in
+    a full clone, 2026-08-31 in a shallow one.
+
+    And the branch is the wrong frame anyway. Dated against the checkout, every
+    entry becomes not-judged the moment somebody edits the file, so a workflow
+    can be lifted out of the guard's sight by touching it. Dated against the
+    default branch, editing it on a branch changes nothing.
+
+    The run history already comes from the API. Taking the date from the same
+    place is one source instead of two that can disagree -- and they did.
+    """
+    naam = urllib.parse.quote(str(pad))
+    doc = gh(f"repos/{{owner}}/{{repo}}/commits?path={naam}&per_page=1")
+    if not doc:
         return None
-    uit = r.stdout.strip()
-    if r.returncode != 0 or not uit:
-        return None
     try:
-        return dt.datetime.fromisoformat(uit).astimezone(dt.timezone.utc)
-    except ValueError:
+        stempel = doc[0]["commit"]["committer"]["date"]
+        return dt.datetime.fromisoformat(stempel.replace("Z", "+00:00"))
+    except (KeyError, IndexError, TypeError, ValueError):
         return None
 
 
