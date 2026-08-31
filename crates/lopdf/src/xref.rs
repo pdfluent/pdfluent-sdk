@@ -75,11 +75,7 @@ impl Xref {
         }
     }
 
-    pub(crate) fn compressed_object_belongs_to(
-        &self,
-        object_id: ObjectId,
-        container_id: ObjectId,
-    ) -> bool {
+    pub(crate) fn compressed_object_belongs_to(&self, object_id: ObjectId, container_id: ObjectId) -> bool {
         matches!(
             self.get(object_id.0),
             Some(XrefEntry::Compressed { container, .. })
@@ -135,10 +131,7 @@ impl XrefEntry {
             XrefEntry::Normal { offset, generation } => {
                 write!(file, "{offset:>010} {generation:>05} n\r\n")?;
             }
-            XrefEntry::Compressed {
-                container: _,
-                index: _,
-            } => {
+            XrefEntry::Compressed { container: _, index: _ } => {
                 write!(file, "{:>010} {:>05} f\r\n", 0, 65535)?;
             }
             XrefEntry::Free => {
@@ -205,11 +198,7 @@ pub struct XrefStreamBuilder<'a> {
 impl<'a> XrefStreamBuilder<'a> {
     /// Create a new builder from an Xref
     pub fn new(xref: &'a Xref) -> Self {
-        let entries: Vec<_> = xref
-            .entries
-            .iter()
-            .map(|(&id, entry)| (id, entry))
-            .collect();
+        let entries: Vec<_> = xref.entries.iter().map(|(&id, entry)| (id, entry)).collect();
 
         Self {
             xref,

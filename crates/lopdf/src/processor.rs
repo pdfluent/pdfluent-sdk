@@ -10,9 +10,7 @@ impl Document {
         if let Ok(info) = self.trailer.get_mut(b"Info") {
             if let Some(dict) = match info {
                 Object::Dictionary(dict) => Some(dict),
-                Object::Reference(id) => {
-                    self.objects.get_mut(id).and_then(|o| o.as_dict_mut().ok())
-                }
+                Object::Reference(id) => self.objects.get_mut(id).and_then(|o| o.as_dict_mut().ok()),
                 _ => None,
             } {
                 dict.set("Producer", Object::string_literal(producer));
@@ -51,10 +49,7 @@ impl Document {
         use std::collections::HashSet;
 
         let pages = self.get_pages();
-        let ids_to_delete: HashSet<ObjectId> = page_numbers
-            .iter()
-            .filter_map(|pn| pages.get(pn).copied())
-            .collect();
+        let ids_to_delete: HashSet<ObjectId> = page_numbers.iter().filter_map(|pn| pages.get(pn).copied()).collect();
 
         if ids_to_delete.is_empty() {
             return;
@@ -330,9 +325,7 @@ impl Document {
     }
 
     pub fn change_page_content(&mut self, page_id: ObjectId, content: Vec<u8>) -> Result<()> {
-        let contents = self
-            .get_dictionary(page_id)
-            .and_then(|page| page.get(b"Contents"))?;
+        let contents = self.get_dictionary(page_id).and_then(|page| page.get(b"Contents"))?;
         match contents {
             Object::Reference(id) => self.change_content_stream(*id, content),
             Object::Array(arr) => {

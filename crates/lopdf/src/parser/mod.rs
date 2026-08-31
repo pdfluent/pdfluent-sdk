@@ -34,11 +34,7 @@ fn strip_nom<O>(r: NomResult<O>) -> Option<O> {
 }
 
 #[inline]
-fn convert_result<O, E>(
-    result: Result<O, E>,
-    input: ParserInput,
-    error_kind: ErrorKind,
-) -> NomResult<O> {
+fn convert_result<O, E>(result: Result<O, E>, input: ParserInput, error_kind: ErrorKind) -> NomResult<O> {
     result.map(|o| (input, o)).map_err(|_| {
         // this is a unit bind if NomError = ()
         let err: NomError = nom::error::Error::from_error_kind(input, error_kind);
@@ -58,15 +54,7 @@ pub(crate) fn eol(input: ParserInput) -> NomResult<ParserInput> {
 }
 
 pub(crate) fn comment(input: ParserInput) -> NomResult<()> {
-    map(
-        (
-            tag(&b"%"[..]),
-            take_while(|c: u8| !b"\r\n".contains(&c)),
-            eol,
-        ),
-        |_| (),
-    )
-    .parse(input)
+    map((tag(&b"%"[..]), take_while(|c: u8| !b"\r\n".contains(&c)), eol), |_| ()).parse(input)
 }
 
 #[inline]
@@ -167,9 +155,12 @@ pub(crate) fn name(input: ParserInput) -> NomResult<Vec<u8>> {
             // Bare '#' not followed by two hex digits: treat as literal 0x23.
             // Many real-world PDFs contain malformed #-sequences in names.
             map(tag(&b"#"[..]), |_: ParserInput| b'#'),
-            map_opt(take(1usize), |c: ParserInput| {
-                if is_regular(c[0]) { Some(c[0]) } else { None }
-            }),
+            map_opt(
+                take(1usize),
+                |c: ParserInput| {
+                    if is_regular(c[0]) { Some(c[0]) } else { None }
+                },
+            ),
         ))),
     )
     .parse(input)
@@ -202,9 +193,7 @@ enum InnerLiteralString<'a> {
 impl InnerLiteralString<'_> {
     fn push(&self, output: &mut Vec<u8>) {
         match self {
-            InnerLiteralString::Direct(s) | InnerLiteralString::Eol(s) => {
-                output.extend_from_slice(s)
-            }
+            InnerLiteralString::Direct(s) | InnerLiteralString::Eol(s) => output.extend_from_slice(s),
             InnerLiteralString::Escape(e) => output.extend(e),
             InnerLiteralString::Nested(n) => output.extend_from_slice(n),
         }
@@ -215,10 +204,7 @@ fn inner_literal_string(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<u
     move |input| {
         fold_many0(
             alt((
-                map(
-                    take_while1(is_direct_literal_string),
-                    InnerLiteralString::Direct,
-                ),
+                map(take_while1(is_direct_literal_string), InnerLiteralString::Direct),
                 map(escape_sequence, InnerLiteralString::Escape),
                 map(eol, InnerLiteralString::Eol),
                 map(nested_literal_string(depth), InnerLiteralString::Nested),
@@ -239,11 +225,7 @@ fn nested_literal_string(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<
             map(verify(tag(&b"too deep"[..]), |_| false), |_| vec![]).parse(input)
         } else {
             map(
-                delimited(
-                    tag(&b"("[..]),
-                    inner_literal_string(depth - 1),
-                    tag(&b")"[..]),
-                ),
+                delimited(tag(&b"("[..]), inner_literal_string(depth - 1), tag(&b")"[..])),
                 |mut content| {
                     content.insert(0, b'(');
                     content.push(b')');
@@ -267,9 +249,7 @@ fn literal_string(input: ParserInput) -> NomResult<Vec<u8>> {
 #[inline]
 fn hex_digit(input: ParserInput) -> NomResult<u8> {
     map_opt(take(1usize), |c: ParserInput| {
-        str::from_utf8(&c)
-            .ok()
-            .and_then(|c| u8::from_str_radix(c, 16).ok())
+        str::from_utf8(&c).ok().and_then(|c| u8::from_str_radix(c, 16).ok())
     })
     .parse(input)
 }
@@ -315,21 +295,11 @@ fn null(input: ParserInput) -> NomResult<Object> {
 }
 
 fn array(input: ParserInput) -> NomResult<Vec<Object>> {
-    delimited(
-        pair(tag(&b"["[..]), space),
-        many0(_direct_object),
-        tag(&b"]"[..]),
-    )
-    .parse(input)
+    delimited(pair(tag(&b"["[..]), space), many0(_direct_object), tag(&b"]"[..])).parse(input)
 }
 
 pub(crate) fn dictionary(input: ParserInput) -> NomResult<Dictionary> {
-    delimited(
-        pair(tag(&b"<<"[..]), space),
-        inner_dictionary,
-        tag(&b">>"[..]),
-    )
-    .parse(input)
+    delimited(pair(tag(&b"<<"[..]), space), inner_dictionary, tag(&b">>"[..])).parse(input)
 }
 
 fn inner_dictionary(input: ParserInput) -> NomResult<Dictionary> {
@@ -372,68 +342,51 @@ pub(crate) fn dict_dup(input: ParserInput) -> NomResult<Dictionary> {
     .parse(input)
 }
 
-fn stream<'a>(
-    input: ParserInput<'a>,
-    reader: &Reader,
-    already_seen: &mut HashSet<ObjectId>,
-) -> NomResult<'a, Object> {
-    let (i, dict) =
-        terminated(dictionary, (space, tag(&b"stream"[..]), space0, eol)).parse(input)?;
+fn stream<'a>(input: ParserInput<'a>, reader: &Reader, already_seen: &mut HashSet<ObjectId>) -> NomResult<'a, Object> {
+    let (i, dict) = terminated(dictionary, (space, tag(&b"stream"[..]), space0, eol)).parse(input)?;
 
     if let Ok(length) = dict.get(b"Length").and_then(|value| {
         if let Ok(id) = value.as_reference() {
-            reader
-                .get_object(id, already_seen)
-                .and_then(|value| value.as_i64())
+            reader.get_object(id, already_seen).and_then(|value| value.as_i64())
         } else {
             value.as_i64()
         }
     }) {
         if length < 0 {
             // artificial error kind is created to allow descriptive nom errors
-            return Err(nom::Err::Failure(NomError::from_error_kind(
-                i,
-                ErrorKind::LengthValue,
-            )));
+            return Err(nom::Err::Failure(NomError::from_error_kind(i, ErrorKind::LengthValue)));
         }
-        let (i, data): (ParserInput, &[u8]) = match terminated(
-            take(length as usize),
-            pair(opt(eol), tag(&b"endstream"[..])),
-        )
-        .parse(i)
-        {
-            Ok((i2, taken)) => (i2, *taken.fragment()),
-            Err(primary_err) => {
-                // Recover from an incorrect /Length (govdocs holdout
-                // 885_885832: declared lengths are short, so the declared
-                // slice does not end at "endstream", the stream parse fails,
-                // and the object is silently re-parsed as a bare dictionary —
-                // losing the page's content outright). Scan for the
-                // "endstream" keyword instead and take the data up to it,
-                // trimming the EOL that precedes it.
-                let hay: &[u8] = &i;
-                let Some(end) = hay
-                    .windows(b"endstream".len())
-                    .position(|window| window == b"endstream")
-                else {
-                    return Err(primary_err);
-                };
-                let mut data = &hay[..end];
-                if data.ends_with(b"\r\n") {
-                    data = &data[..data.len() - 2];
-                } else if data.ends_with(b"\n") || data.ends_with(b"\r") {
-                    data = &data[..data.len() - 1];
+        let (i, data): (ParserInput, &[u8]) =
+            match terminated(take(length as usize), pair(opt(eol), tag(&b"endstream"[..]))).parse(i) {
+                Ok((i2, taken)) => (i2, *taken.fragment()),
+                Err(primary_err) => {
+                    // Recover from an incorrect /Length (govdocs holdout
+                    // 885_885832: declared lengths are short, so the declared
+                    // slice does not end at "endstream", the stream parse fails,
+                    // and the object is silently re-parsed as a bare dictionary —
+                    // losing the page's content outright). Scan for the
+                    // "endstream" keyword instead and take the data up to it,
+                    // trimming the EOL that precedes it.
+                    let hay: &[u8] = &i;
+                    let Some(end) = hay
+                        .windows(b"endstream".len())
+                        .position(|window| window == b"endstream")
+                    else {
+                        return Err(primary_err);
+                    };
+                    let mut data = &hay[..end];
+                    if data.ends_with(b"\r\n") {
+                        data = &data[..data.len() - 2];
+                    } else if data.ends_with(b"\n") || data.ends_with(b"\r") {
+                        data = &data[..data.len() - 1];
+                    }
+                    (i.take_from(end + b"endstream".len()), data)
                 }
-                (i.take_from(end + b"endstream".len()), data)
-            }
-        };
+            };
         Ok((i, Object::Stream(Stream::new(dict, data.to_vec()))))
     } else {
         // Return position relative to the start of the stream dictionary.
-        Ok((
-            i,
-            Object::Stream(Stream::with_position(dict, input.len() - i.len())),
-        ))
+        Ok((i, Object::Stream(Stream::with_position(dict, input.len() - i.len()))))
     }
 }
 
@@ -445,11 +398,7 @@ fn unsigned_int<I: FromStr>(input: ParserInput) -> NomResult<I> {
 }
 
 fn object_id(input: ParserInput) -> NomResult<ObjectId> {
-    pair(
-        terminated(unsigned_int, space),
-        terminated(unsigned_int, space),
-    )
-    .parse(input)
+    pair(terminated(unsigned_int, space), terminated(unsigned_int, space)).parse(input)
 }
 
 fn reference(input: ParserInput) -> NomResult<Object> {
@@ -485,11 +434,7 @@ pub fn direct_object(input: ParserInput) -> Option<Object> {
     strip_nom(_direct_object.parse(input))
 }
 
-fn object<'a>(
-    input: ParserInput<'a>,
-    reader: &Reader,
-    already_seen: &mut HashSet<ObjectId>,
-) -> NomResult<'a, Object> {
+fn object<'a>(input: ParserInput<'a>, reader: &Reader, already_seen: &mut HashSet<ObjectId>) -> NomResult<'a, Object> {
     terminated(
         alt((|input| stream(input, reader, already_seen), _direct_objects)),
         space,
@@ -498,19 +443,10 @@ fn object<'a>(
 }
 
 pub fn indirect_object(
-    input: ParserInput,
-    offset: usize,
-    expected_id: Option<ObjectId>,
-    reader: &Reader,
+    input: ParserInput, offset: usize, expected_id: Option<ObjectId>, reader: &Reader,
     already_seen: &mut HashSet<ObjectId>,
 ) -> crate::Result<(ObjectId, Object)> {
-    let (id, mut object) = _indirect_object(
-        input.take_from(offset),
-        offset,
-        expected_id,
-        reader,
-        already_seen,
-    )?;
+    let (id, mut object) = _indirect_object(input.take_from(offset), offset, expected_id, reader, already_seen)?;
 
     offset_stream(&mut object, offset);
 
@@ -518,10 +454,7 @@ pub fn indirect_object(
 }
 
 fn _indirect_object<'a>(
-    input: ParserInput<'a>,
-    offset: usize,
-    expected_id: Option<ObjectId>,
-    reader: &Reader,
+    input: ParserInput<'a>, offset: usize, expected_id: Option<ObjectId>, reader: &Reader,
     already_seen: &mut HashSet<ObjectId>,
 ) -> crate::Result<(ObjectId, Object)> {
     let (i, (_, object_id)) = terminated((space, object_id), pair(tag(&b"obj"[..]), space))
@@ -576,10 +509,7 @@ pub fn binary_mark(input: ParserInput) -> Option<Vec<u8>> {
 
 /// Decode CrossReferenceTable
 fn xref(input: ParserInput) -> NomResult<Xref> {
-    let xref_eol = map(
-        alt((tag(&b" \r"[..]), tag(&b" \n"[..]), tag(&b"\r\n"[..]))),
-        |_| (),
-    );
+    let xref_eol = map(alt((tag(&b" \r"[..]), tag(&b" \n"[..]), tag(&b"\r\n"[..]))), |_| ());
     let xref_entry = pair(
         separated_pair(unsigned_int, tag(&b" "[..]), unsigned_int::<u32>),
         delimited(tag(&b" "[..]), map(one_of("nf"), |k| k == 'n'), xref_eol),
@@ -599,10 +529,7 @@ fn xref(input: ParserInput) -> NomResult<Xref> {
                 for (index, ((offset, generation), is_normal)) in entries.into_iter().enumerate() {
                     if is_normal {
                         if let Ok(generation) = generation.try_into() {
-                            xref.insert(
-                                (start + index) as u32,
-                                XrefEntry::Normal { offset, generation },
-                            );
+                            xref.insert((start + index) as u32, XrefEntry::Normal { offset, generation });
                         }
                     }
                 }
@@ -660,13 +587,8 @@ pub fn xref_start(input: ParserInput) -> Option<i64> {
 }
 
 fn trim_spaces<'a, O>(
-    p: impl Parser<
-        ParserInput<'a>,
-        Output = O,
-        Error = nom::error::Error<LocatedSpan<&'a [u8], &'a str>>,
-    >,
-) -> impl Parser<ParserInput<'a>, Output = O, Error = nom::error::Error<LocatedSpan<&'a [u8], &'a str>>>
-{
+    p: impl Parser<ParserInput<'a>, Output = O, Error = nom::error::Error<LocatedSpan<&'a [u8], &'a str>>>,
+) -> impl Parser<ParserInput<'a>, Output = O, Error = nom::error::Error<LocatedSpan<&'a [u8], &'a str>>> {
     delimited(many0(tag(" ")), p, many0(tag(" ")))
 }
 
@@ -706,10 +628,7 @@ fn operation(input: ParserInput) -> NomResult<Operation> {
     map(
         preceded(
             many0(comment),
-            alt((
-                inline_image,
-                terminated(pair(many0(operand), operator), content_space),
-            )),
+            alt((inline_image, terminated(pair(many0(operand), operator), content_space))),
         ),
         |(operands, operator)| Operation { operator, operands },
     )
@@ -723,21 +642,13 @@ fn inline_image(input: ParserInput) -> NomResult<(Vec<Object>, String)> {
 fn inline_image_impl(input: ParserInput) -> NomResult<(Vec<Object>, String)> {
     let (input, stream_dict) = inner_dictionary.parse(input)?;
     let (input, _) = pair(tag(&b"ID"[..]), content_space).parse(input)?;
-    let (_, (input, stream)) = convert_result(
-        image_data_stream(input, stream_dict),
-        input,
-        ErrorKind::Fail,
-    )?;
+    let (_, (input, stream)) = convert_result(image_data_stream(input, stream_dict), input, ErrorKind::Fail)?;
     let (input, _) = (content_space, tag(&b"EI"[..]), content_space).parse(input)?;
     Ok((input, (vec![Object::Stream(stream)], String::from("BI"))))
 }
 
-fn image_data_stream(
-    input: ParserInput,
-    stream_dict: Dictionary,
-) -> crate::Result<(ParserInput, Stream)> {
-    let get_abbr =
-        |key_abbr: &[u8], key: &[u8]| stream_dict.get(key_abbr).or_else(|_| stream_dict.get(key));
+fn image_data_stream(input: ParserInput, stream_dict: Dictionary) -> crate::Result<(ParserInput, Stream)> {
+    let get_abbr = |key_abbr: &[u8], key: &[u8]| stream_dict.get(key_abbr).or_else(|_| stream_dict.get(key));
     let width = get_abbr(b"W", b"Width")?.as_i64()? as usize;
     let height = get_abbr(b"H", b"Height")?.as_i64()? as usize;
     let bpc = get_abbr(b"BPC", b"BitsPerComponent")?.as_i64()? as usize;
@@ -816,8 +727,7 @@ mod tests {
     }
 
     fn tstrip<O>(r: NomResult<O>) -> Option<O> {
-        r.ok()
-            .and_then(|(i, o)| if !i.is_empty() { None } else { Some(o) })
+        r.ok().and_then(|(i, o)| if !i.is_empty() { None } else { Some(o) })
     }
 
     #[test]
@@ -836,10 +746,7 @@ mod tests {
         let data = vec![
             ("()", ""),
             ("(text())", "text()"),
-            (
-                "(text\r\n\\\\(nested\\t\\b\\f))",
-                "text\r\n\\(nested\t\x08\x0C)",
-            ),
+            ("(text\r\n\\\\(nested\\t\\b\\f))", "text\r\n\\(nested\t\x08\x0C)"),
             ("(text\\0\\53\\053\\0053)", "text\0++\x053"),
             ("(text line\\\n())", "text line()"),
         ];
@@ -870,9 +777,7 @@ mod tests {
         let result = tstrip(name(test_span(text)));
         eprintln!(
             "Im#221 parsed as: {:?}",
-            result
-                .as_ref()
-                .map(|v| String::from_utf8_lossy(v).to_string())
+            result.as_ref().map(|v| String::from_utf8_lossy(v).to_string())
         );
         // #22 is '"' (0x22) — currently decoded to raw byte
         // Expected: [73, 109, 34, 49] = Im"1
@@ -883,9 +788,7 @@ mod tests {
         let result = tstrip(name(test_span(text)));
         eprintln!(
             "Foo#GH parsed as: {:?}",
-            result
-                .as_ref()
-                .map(|v| String::from_utf8_lossy(v).to_string())
+            result.as_ref().map(|v| String::from_utf8_lossy(v).to_string())
         );
         assert_eq!(result, Some(b"Foo#GH".to_vec()));
 

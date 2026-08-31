@@ -32,10 +32,7 @@ pub fn form(boundingbox: Vec<f32>, matrix: Vec<f32>, content: Vec<u8>) -> Stream
         "BBox",
         Object::Array(boundingbox.into_iter().map(Object::Real).collect()),
     );
-    dict.set(
-        "Matrix",
-        Object::Array(matrix.into_iter().map(Object::Real).collect()),
-    );
+    dict.set("Matrix", Object::Array(matrix.into_iter().map(Object::Real).collect()));
     let mut xobject = Stream::new(dict, content);
     // Ignore any compression error.
     let _ = xobject.compress();
@@ -182,12 +179,9 @@ fn insert_image() {
     use super::xobject;
     let mut doc = Document::load("assets/example.pdf").unwrap();
     let pages = doc.get_pages();
-    let page_id = *pages
-        .get(&1)
-        .unwrap_or_else(|| panic!("Page {} not exist.", 1));
+    let page_id = *pages.get(&1).unwrap_or_else(|| panic!("Page {} not exist.", 1));
     let img = xobject::image("assets/pdf_icon.jpg").unwrap();
-    doc.insert_image(page_id, img, (100.0, 210.0), (400.0, 225.0))
-        .unwrap();
+    doc.insert_image(page_id, img, (100.0, 210.0), (400.0, 225.0)).unwrap();
     doc.save("test_5_image.pdf").unwrap();
 }
 
@@ -198,12 +192,9 @@ async fn insert_image() {
     use super::xobject;
     let mut doc = Document::load("assets/example.pdf").await.unwrap();
     let pages = doc.get_pages();
-    let page_id = *pages
-        .get(&1)
-        .unwrap_or_else(|| panic!("Page {} not exist.", 1));
+    let page_id = *pages.get(&1).unwrap_or_else(|| panic!("Page {} not exist.", 1));
     let img = xobject::image("assets/pdf_icon.jpg").unwrap();
-    doc.insert_image(page_id, img, (100.0, 210.0), (400.0, 225.0))
-        .unwrap();
+    doc.insert_image(page_id, img, (100.0, 210.0), (400.0, 225.0)).unwrap();
     doc.save("test_5_image.pdf").unwrap();
 }
 
@@ -229,9 +220,7 @@ fn embed_supported_color_type() -> Result<()> {
         let img = image::open(&img_path)?;
         let (width, height) = img.dimensions();
         let color_type = img.color();
-        println!(
-            "Image: {img_path:?}, width: {width}, height: {height}, color type: {color_type:?}"
-        );
+        println!("Image: {img_path:?}, width: {width}, height: {height}, color type: {color_type:?}");
 
         let image_stream = xobject::image(img_path)?;
 
@@ -240,14 +229,7 @@ fn embed_supported_color_type() -> Result<()> {
 
         let cm_operation = Operation::new(
             "cm",
-            vec![
-                width.into(),
-                0.into(),
-                0.into(),
-                height.into(),
-                0.into(),
-                0.into(),
-            ],
+            vec![width.into(), 0.into(), 0.into(), height.into(), 0.into(), 0.into()],
         );
 
         let do_operation = Operation::new("Do", vec![Object::Name(img_name.as_bytes().to_vec())]);

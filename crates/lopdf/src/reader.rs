@@ -66,10 +66,7 @@ impl Document {
     }
 
     fn load_internal<R: Read>(
-        mut source: R,
-        capacity: Option<usize>,
-        filter_func: Option<FilterFunc>,
-        password: Option<String>,
+        mut source: R, capacity: Option<usize>, filter_func: Option<FilterFunc>, password: Option<String>,
     ) -> Result<Document> {
         let mut buffer = capacity.map(Vec::with_capacity).unwrap_or_default();
         source.read_to_end(&mut buffer)?;
@@ -129,10 +126,7 @@ impl Document {
         let file_size = file.metadata()?.len() as usize;
         if let Some(limit) = opts.max_file_bytes {
             if file_size > limit {
-                return Err(Error::DocumentTooLarge {
-                    size: file_size,
-                    limit,
-                });
+                return Err(Error::DocumentTooLarge { size: file_size, limit });
             }
         }
         let mut buffer = Vec::with_capacity(file_size);
@@ -173,10 +167,7 @@ impl Document {
 
     /// Load PDF metadata from a file path with a password for encrypted PDFs.
     #[inline]
-    pub fn load_metadata_with_password<P: AsRef<Path>>(
-        path: P,
-        password: &str,
-    ) -> Result<PdfMetadata> {
+    pub fn load_metadata_with_password<P: AsRef<Path>>(path: P, password: &str) -> Result<PdfMetadata> {
         let file = File::open(path)?;
         let capacity = Some(file.metadata()?.len() as usize);
         Self::load_metadata_internal(file, capacity, Some(password.to_string()))
@@ -190,10 +181,7 @@ impl Document {
 
     /// Load PDF metadata from an arbitrary source with a password for encrypted PDFs.
     #[inline]
-    pub fn load_metadata_from_with_password<R: Read>(
-        source: R,
-        password: &str,
-    ) -> Result<PdfMetadata> {
+    pub fn load_metadata_from_with_password<R: Read>(source: R, password: &str) -> Result<PdfMetadata> {
         Self::load_metadata_internal(source, None, Some(password.to_string()))
     }
 
@@ -226,9 +214,7 @@ impl Document {
     }
 
     fn load_metadata_internal<R: Read>(
-        mut source: R,
-        capacity: Option<usize>,
-        password: Option<String>,
+        mut source: R, capacity: Option<usize>, password: Option<String>,
     ) -> Result<PdfMetadata> {
         let mut buffer = capacity.map(Vec::with_capacity).unwrap_or_default();
         source.read_to_end(&mut buffer)?;
@@ -262,10 +248,7 @@ impl Document {
         Self::load_internal(file, capacity, None, Some(password.to_string())).await
     }
 
-    pub async fn load_filtered<P: AsRef<Path>>(
-        path: P,
-        filter_func: FilterFunc,
-    ) -> Result<Document> {
+    pub async fn load_filtered<P: AsRef<Path>>(path: P, filter_func: FilterFunc) -> Result<Document> {
         let file = File::open(path).await?;
         let metadata = file.metadata().await?;
         let capacity = Some(metadata.len() as usize);
@@ -273,10 +256,7 @@ impl Document {
     }
 
     async fn load_internal<R: AsyncRead>(
-        source: R,
-        capacity: Option<usize>,
-        filter_func: Option<FilterFunc>,
-        password: Option<String>,
+        source: R, capacity: Option<usize>, filter_func: Option<FilterFunc>, password: Option<String>,
     ) -> Result<Document> {
         pin!(source);
 
@@ -328,10 +308,7 @@ impl Document {
 
     /// Load PDF metadata from a file path with a password for encrypted PDFs.
     #[inline]
-    pub async fn load_metadata_with_password<P: AsRef<Path>>(
-        path: P,
-        password: &str,
-    ) -> Result<PdfMetadata> {
+    pub async fn load_metadata_with_password<P: AsRef<Path>>(path: P, password: &str) -> Result<PdfMetadata> {
         let file = File::open(path).await?;
         let metadata = file.metadata().await?;
         let capacity = Some(metadata.len() as usize);
@@ -346,10 +323,7 @@ impl Document {
 
     /// Load PDF metadata from an arbitrary source with a password for encrypted PDFs.
     #[inline]
-    pub async fn load_metadata_from_with_password<R: AsyncRead>(
-        source: R,
-        password: &str,
-    ) -> Result<PdfMetadata> {
+    pub async fn load_metadata_from_with_password<R: AsyncRead>(source: R, password: &str) -> Result<PdfMetadata> {
         Self::load_metadata_internal(source, None, Some(password.to_string())).await
     }
 
@@ -382,9 +356,7 @@ impl Document {
     }
 
     async fn load_metadata_internal<R: AsyncRead>(
-        source: R,
-        capacity: Option<usize>,
-        password: Option<String>,
+        source: R, capacity: Option<usize>, password: Option<String>,
     ) -> Result<PdfMetadata> {
         pin!(source);
 
@@ -573,25 +545,19 @@ impl Reader<'_> {
     ///
     /// For encrypted PDFs, use `Document::load_metadata_with_password()` instead.
     pub fn read_metadata(mut self) -> Result<PdfMetadata> {
-        let offset = self
-            .buffer
-            .windows(5)
-            .position(|w| w == b"%PDF-")
-            .unwrap_or(0);
+        let offset = self.buffer.windows(5).position(|w| w == b"%PDF-").unwrap_or(0);
         self.buffer = &self.buffer[offset..];
 
-        let version = parser::header(ParserInput::new_extra(self.buffer, "header"))
-            .ok_or(ParseError::InvalidFileHeader)?;
+        let version =
+            parser::header(ParserInput::new_extra(self.buffer, "header")).ok_or(ParseError::InvalidFileHeader)?;
 
         let xref_start = Self::get_xref_start(self.buffer)?;
         if xref_start > self.buffer.len() {
             return Err(Error::Xref(XrefError::Start));
         }
 
-        let (mut xref, mut trailer) = parser::xref_and_trailer(
-            ParserInput::new_extra(&self.buffer[xref_start..], "xref"),
-            &self,
-        )?;
+        let (mut xref, mut trailer) =
+            parser::xref_and_trailer(ParserInput::new_extra(&self.buffer[xref_start..], "xref"), &self)?;
 
         let mut already_seen = HashSet::new();
         let mut prev_xref_start = trailer.remove(b"Prev");
@@ -604,10 +570,8 @@ impl Reader<'_> {
                 return Err(Error::Xref(XrefError::PrevStart));
             }
 
-            let (prev_xref, prev_trailer) = parser::xref_and_trailer(
-                ParserInput::new_extra(&self.buffer[prev as usize..], ""),
-                &self,
-            )?;
+            let (prev_xref, prev_trailer) =
+                parser::xref_and_trailer(ParserInput::new_extra(&self.buffer[prev as usize..], ""), &self)?;
             xref.merge(prev_xref);
 
             let prev_xref_stream_start = trailer.remove(b"XRefStm");
@@ -616,19 +580,14 @@ impl Reader<'_> {
                     return Err(Error::Xref(XrefError::StreamStart));
                 }
 
-                let (prev_xref, _) = parser::xref_and_trailer(
-                    ParserInput::new_extra(&self.buffer[prev as usize..], ""),
-                    &self,
-                )?;
+                let (prev_xref, _) =
+                    parser::xref_and_trailer(ParserInput::new_extra(&self.buffer[prev as usize..], ""), &self)?;
                 xref.merge(prev_xref);
             }
 
             prev_xref_start = prev_trailer.get(b"Prev").cloned().ok();
         }
-        let xref_entry_count = xref
-            .max_id()
-            .checked_add(1)
-            .ok_or(ParseError::InvalidXref)?;
+        let xref_entry_count = xref.max_id().checked_add(1).ok_or(ParseError::InvalidXref)?;
         if xref.size != xref_entry_count {
             warn!(
                 "Size entry of trailer dictionary is {}, correct value is {}.",
@@ -761,12 +720,7 @@ impl Reader<'_> {
     }
 
     fn extract_page_count(&self) -> Result<u32> {
-        let root_ref = match self
-            .document
-            .trailer
-            .get(b"Root")
-            .and_then(Object::as_reference)
-        {
+        let root_ref = match self.document.trailer.get(b"Root").and_then(Object::as_reference) {
             Ok(id) => id,
             Err(_) => return Ok(0),
         };
@@ -787,15 +741,10 @@ impl Reader<'_> {
             Err(_) => return Ok(0),
         };
 
-        self.get_pages_tree_count(pages_ref, &mut HashSet::new())
-            .or(Ok(0))
+        self.get_pages_tree_count(pages_ref, &mut HashSet::new()).or(Ok(0))
     }
 
-    fn get_pages_tree_count(
-        &self,
-        pages_id: ObjectId,
-        seen: &mut HashSet<ObjectId>,
-    ) -> Result<u32> {
+    fn get_pages_tree_count(&self, pages_id: ObjectId, seen: &mut HashSet<ObjectId>) -> Result<u32> {
         if seen.contains(&pages_id) {
             return Err(Error::ReferenceCycle(pages_id));
         }
@@ -844,24 +793,19 @@ impl Reader<'_> {
 
     /// Read whole document.
     pub fn read(mut self, filter_func: Option<FilterFunc>) -> Result<Document> {
-        let offset = self
-            .buffer
-            .windows(5)
-            .position(|w| w == b"%PDF-")
-            .unwrap_or(0);
+        let offset = self.buffer.windows(5).position(|w| w == b"%PDF-").unwrap_or(0);
         self.buffer = &self.buffer[offset..];
 
         // The document structure can be expressed in PEG as:
         //   document <- header indirect_object* xref trailer xref_start
-        let version = parser::header(ParserInput::new_extra(self.buffer, "header"))
-            .ok_or(ParseError::InvalidFileHeader)?;
+        let version =
+            parser::header(ParserInput::new_extra(self.buffer, "header")).ok_or(ParseError::InvalidFileHeader)?;
 
         //The binary_mark is in line 2 after the pdf version. If at other line number, then will be declared as invalid pdf.
         if let Some(pos) = self.buffer.iter().position(|&byte| byte == b'\n') {
-            if let Some(binary_mark) = parser::binary_mark(ParserInput::new_extra(
-                &self.buffer[pos + 1..],
-                "binary_mark",
-            )) {
+            if let Some(binary_mark) =
+                parser::binary_mark(ParserInput::new_extra(&self.buffer[pos + 1..], "binary_mark"))
+            {
                 if binary_mark.iter().all(|&byte| byte >= 128) {
                     self.document.binary_mark = binary_mark;
                 }
@@ -874,10 +818,8 @@ impl Reader<'_> {
         }
         self.document.xref_start = xref_start;
 
-        let (mut xref, mut trailer) = parser::xref_and_trailer(
-            ParserInput::new_extra(&self.buffer[xref_start..], "xref"),
-            &self,
-        )?;
+        let (mut xref, mut trailer) =
+            parser::xref_and_trailer(ParserInput::new_extra(&self.buffer[xref_start..], "xref"), &self)?;
 
         // Read previous Xrefs of linearized or incremental updated document.
         let mut already_seen = HashSet::new();
@@ -891,10 +833,8 @@ impl Reader<'_> {
                 return Err(Error::Xref(XrefError::PrevStart));
             }
 
-            let (prev_xref, prev_trailer) = parser::xref_and_trailer(
-                ParserInput::new_extra(&self.buffer[prev as usize..], ""),
-                &self,
-            )?;
+            let (prev_xref, prev_trailer) =
+                parser::xref_and_trailer(ParserInput::new_extra(&self.buffer[prev as usize..], ""), &self)?;
             xref.merge(prev_xref);
 
             // Read xref stream in hybrid-reference file
@@ -904,19 +844,14 @@ impl Reader<'_> {
                     return Err(Error::Xref(XrefError::StreamStart));
                 }
 
-                let (prev_xref, _) = parser::xref_and_trailer(
-                    ParserInput::new_extra(&self.buffer[prev as usize..], ""),
-                    &self,
-                )?;
+                let (prev_xref, _) =
+                    parser::xref_and_trailer(ParserInput::new_extra(&self.buffer[prev as usize..], ""), &self)?;
                 xref.merge(prev_xref);
             }
 
             prev_xref_start = prev_trailer.get(b"Prev").cloned().ok();
         }
-        let xref_entry_count = xref
-            .max_id()
-            .checked_add(1)
-            .ok_or(ParseError::InvalidXref)?;
+        let xref_entry_count = xref.max_id().checked_add(1).ok_or(ParseError::InvalidXref)?;
         if xref.size != xref_entry_count {
             warn!(
                 "Size entry of trailer dictionary is {}, correct value is {}.",
@@ -1096,20 +1031,15 @@ impl Reader<'_> {
                             // when `object` is dropped at the end of this arm.
                             if let Ok(obj_stream) = ObjectStream::new(stream) {
                                 let container_id = object_id;
-                                let owned_objects = obj_stream.objects.into_iter().filter(
-                                    |(nested_object_id, _)| {
-                                        self.document.reference_table.compressed_object_belongs_to(
-                                            *nested_object_id,
-                                            container_id,
-                                        )
-                                    },
-                                );
+                                let owned_objects = obj_stream.objects.into_iter().filter(|(nested_object_id, _)| {
+                                    self.document
+                                        .reference_table
+                                        .compressed_object_belongs_to(*nested_object_id, container_id)
+                                });
                                 let mut object_streams = object_streams.lock().unwrap();
                                 if let Some(filter_func) = filter_func {
                                     let objects: BTreeMap<(u32, u16), Object> = owned_objects
-                                        .filter_map(|(object_id, mut object)| {
-                                            filter_func(object_id, &mut object)
-                                        })
+                                        .filter_map(|(object_id, mut object)| filter_func(object_id, &mut object))
                                         .collect();
                                     object_streams.extend(objects);
                                 } else {
@@ -1186,9 +1116,7 @@ impl Reader<'_> {
         let end = start + length;
 
         if end > self.buffer.len() {
-            return Err(Error::InvalidStream(
-                "stream extends after document end.".to_string(),
-            ));
+            return Err(Error::InvalidStream("stream extends after document end.".to_string()));
         }
 
         stream.set_content(self.buffer[start..end].to_vec());
@@ -1213,11 +1141,7 @@ impl Reader<'_> {
 
     /// Get object offset by object ID.
     fn get_offset(&self, id: ObjectId) -> Result<u32> {
-        let entry = self
-            .document
-            .reference_table
-            .get(id.0)
-            .ok_or(Error::MissingXrefEntry)?;
+        let entry = self.document.reference_table.get(id.0).ok_or(Error::MissingXrefEntry)?;
         match *entry {
             XrefEntry::Normal { offset, generation } if generation == id.1 => Ok(offset),
             _ => Err(Error::MissingXrefEntry),
@@ -1226,11 +1150,7 @@ impl Reader<'_> {
 
     /// Load a compressed object from an object stream (for lightweight metadata extraction)
     fn get_compressed_object(&self, id: ObjectId) -> Result<Object> {
-        let entry = self
-            .document
-            .reference_table
-            .get(id.0)
-            .ok_or(Error::MissingXrefEntry)?;
+        let entry = self.document.reference_table.get(id.0).ok_or(Error::MissingXrefEntry)?;
 
         let container_id = match entry {
             XrefEntry::Compressed { container, .. } => *container,
@@ -1242,19 +1162,12 @@ impl Reader<'_> {
         let container_obj = self.get_object(container_id, &mut already_seen)?;
         let mut container_stream = container_obj.as_stream()?.clone();
         let object_stream = ObjectStream::new(&mut container_stream)?;
-        object_stream
-            .objects
-            .get(&id)
-            .cloned()
-            .ok_or(Error::MissingXrefEntry)
+        object_stream.objects.get(&id).cloned().ok_or(Error::MissingXrefEntry)
     }
 
     pub fn get_object(&self, id: ObjectId, already_seen: &mut HashSet<ObjectId>) -> Result<Object> {
         if already_seen.contains(&id) {
-            warn!(
-                "reference cycle detected resolving object {} {}",
-                id.0, id.1
-            );
+            warn!("reference cycle detected resolving object {} {}", id.0, id.1);
             return Err(Error::ReferenceCycle(id));
         }
         already_seen.insert(id);
@@ -1286,16 +1199,10 @@ impl Reader<'_> {
     }
 
     fn parse_encryption_dictionary(&mut self) -> Result<()> {
-        if let Ok(encrypt_ref) = self
-            .document
-            .trailer
-            .get(b"Encrypt")
-            .and_then(|o| o.as_reference())
-        {
+        if let Ok(encrypt_ref) = self.document.trailer.get(b"Encrypt").and_then(|o| o.as_reference()) {
             if self.raw_objects.is_empty() {
                 let offset = self.get_offset(encrypt_ref)?;
-                let (_, encrypt_obj) =
-                    self.read_object(offset as usize, Some(encrypt_ref), &mut HashSet::new())?;
+                let (_, encrypt_obj) = self.read_object(offset as usize, Some(encrypt_ref), &mut HashSet::new())?;
                 self.document.objects.insert(encrypt_ref, encrypt_obj);
             } else if let Some(raw_bytes) = self.raw_objects.get(&encrypt_ref) {
                 if let Ok((_, obj)) = self.parse_raw_object(raw_bytes) {
@@ -1306,10 +1213,7 @@ impl Reader<'_> {
         Ok(())
     }
 
-    fn authenticate_and_setup_encryption(
-        &mut self,
-        require_password: bool,
-    ) -> Result<Option<String>> {
+    fn authenticate_and_setup_encryption(&mut self, require_password: bool) -> Result<Option<String>> {
         let password_to_use: Option<String> = if self.document.authenticate_password("").is_ok() {
             Some(String::new())
         } else if let Some(ref pwd) = self.password {
@@ -1414,10 +1318,7 @@ impl Reader<'_> {
     }
 
     fn read_object(
-        &self,
-        offset: usize,
-        expected_id: Option<ObjectId>,
-        already_seen: &mut HashSet<ObjectId>,
+        &self, offset: usize, expected_id: Option<ObjectId>, already_seen: &mut HashSet<ObjectId>,
     ) -> Result<(ObjectId, Object)> {
         if offset > self.buffer.len() {
             return Err(Error::InvalidOffset(offset));
@@ -1601,10 +1502,7 @@ startxref
 #[test]
 fn search_substring_finds_last_occurrence() {
     assert_eq!(Reader::search_substring(b"hello world", b"xyz", 0), None);
-    assert_eq!(
-        Reader::search_substring(b"hello world", b"world", 0),
-        Some(6)
-    );
+    assert_eq!(Reader::search_substring(b"hello world", b"world", 0), Some(6));
 
     let buffer = b"%%EOF\ntest%%EOF\nend";
     assert_eq!(Reader::search_substring(buffer, b"%%EOF", 0), Some(10));
@@ -1634,8 +1532,7 @@ fn load_with_options_accepts_normal_document() {
     // Default options (256 MiB limit) should accept the small example PDF.
     let data = minimal_pdf_bytes();
     let opts = LoadOptions::new();
-    let doc = Document::load_mem_with_options(data, &opts)
-        .expect("example.pdf should be accepted by default options");
+    let doc = Document::load_mem_with_options(data, &opts).expect("example.pdf should be accepted by default options");
     assert_eq!(doc.version, "1.5");
 }
 
@@ -1645,8 +1542,7 @@ fn load_with_options_rejects_oversized_document() {
     // Set a 1-byte limit — any real PDF must exceed it.
     let data = minimal_pdf_bytes();
     let opts = LoadOptions::new().max_file_bytes(1usize);
-    let err = Document::load_mem_with_options(data, &opts)
-        .expect_err("document larger than 1 byte must be rejected");
+    let err = Document::load_mem_with_options(data, &opts).expect_err("document larger than 1 byte must be rejected");
     match err {
         Error::DocumentTooLarge { size, limit } => {
             assert_eq!(limit, 1);
@@ -1662,8 +1558,7 @@ fn load_with_options_unlimited() {
     // None = no size check — should succeed for any document.
     let data = minimal_pdf_bytes();
     let opts = LoadOptions::new().max_file_bytes(None);
-    let doc = Document::load_mem_with_options(data, &opts)
-        .expect("unlimited options must not reject documents");
+    let doc = Document::load_mem_with_options(data, &opts).expect("unlimited options must not reject documents");
     assert_eq!(doc.version, "1.5");
 }
 
@@ -1677,8 +1572,7 @@ fn load_mem_with_options_lazy_objstm_no_objects_lost() {
     // exercises the lazy path on real data.
     let data = minimal_pdf_bytes();
     let opts = LoadOptions::new().lazy_objstm(true).max_file_bytes(None);
-    let mut lazy_doc = Document::load_mem_with_options(data, &opts)
-        .expect("lazy load of example.pdf should succeed");
+    let mut lazy_doc = Document::load_mem_with_options(data, &opts).expect("lazy load of example.pdf should succeed");
 
     // Eager-loaded reference document.
     let eager_doc = Document::load_mem(data).expect("eager load of example.pdf should succeed");
@@ -1716,19 +1610,15 @@ fn resolve_pending_object_streams_skips_objects_reassigned_to_newer_container() 
     old_stream
         .add_object((7, 0), Object::Integer(1))
         .expect("old ObjStm should accept object");
-    doc.objects.insert(
-        (10, 0),
-        Object::Stream(old_stream.to_stream_object().unwrap()),
-    );
+    doc.objects
+        .insert((10, 0), Object::Stream(old_stream.to_stream_object().unwrap()));
 
     let mut new_stream = ObjectStream::builder().compression_level(0).build();
     new_stream
         .add_object((7, 0), Object::Integer(2))
         .expect("new ObjStm should accept object");
-    doc.objects.insert(
-        (20, 0),
-        Object::Stream(new_stream.to_stream_object().unwrap()),
-    );
+    doc.objects
+        .insert((20, 0), Object::Stream(new_stream.to_stream_object().unwrap()));
 
     doc.pending_obj_streams = vec![(10, 0), (20, 0)];
     doc.resolve_pending_object_streams()
@@ -1737,12 +1627,7 @@ fn resolve_pending_object_streams_skips_objects_reassigned_to_newer_container() 
     let resolved = doc
         .get_object((7, 0))
         .expect("object should resolve from the current ObjStm");
-    assert_eq!(
-        resolved
-            .as_i64()
-            .expect("resolved object should stay an integer"),
-        2
-    );
+    assert_eq!(resolved.as_i64().expect("resolved object should stay an integer"), 2);
     assert!(
         !doc.objects.contains_key(&(10, 0)),
         "old ObjStm container should be dropped after resolution"
@@ -1755,9 +1640,7 @@ fn resolve_pending_object_streams_skips_objects_reassigned_to_newer_container() 
 
 #[test]
 fn load_options_builder() {
-    let opts = LoadOptions::new()
-        .max_file_bytes(64 * 1024 * 1024)
-        .lazy_objstm(true);
+    let opts = LoadOptions::new().max_file_bytes(64 * 1024 * 1024).lazy_objstm(true);
     assert_eq!(opts.max_file_bytes, Some(64 * 1024 * 1024));
     assert!(opts.lazy_objstm);
 
@@ -1806,30 +1689,17 @@ fn load_stream_with_short_declared_length() {
     for off in &offsets {
         pdf.extend_from_slice(format!("{:010} 00000 n \n", off).as_bytes());
     }
-    pdf.extend_from_slice(
-        format!(
-            "trailer\n<</Size 5/Root 1 0 R>>\nstartxref\n{}\n%%EOF\n",
-            xref_pos
-        )
-        .as_bytes(),
-    );
+    pdf.extend_from_slice(format!("trailer\n<</Size 5/Root 1 0 R>>\nstartxref\n{}\n%%EOF\n", xref_pos).as_bytes());
 
     let doc = Document::load_mem(&pdf).expect("load");
     let pages = doc.get_pages();
     assert_eq!(pages.len(), 1);
-    let page = doc
-        .get_object(*pages.get(&1).unwrap())
-        .unwrap()
-        .as_dict()
-        .unwrap();
+    let page = doc.get_object(*pages.get(&1).unwrap()).unwrap().as_dict().unwrap();
     let Object::Reference(content_id) = page.get(b"Contents").unwrap() else {
         panic!("contents not a reference")
     };
     let Object::Stream(stream) = doc.get_object(*content_id).unwrap() else {
-        panic!(
-            "content object lost its stream: {:?}",
-            doc.get_object(*content_id)
-        )
+        panic!("content object lost its stream: {:?}", doc.get_object(*content_id))
     };
     assert_eq!(stream.content, body_text.to_vec());
 }
