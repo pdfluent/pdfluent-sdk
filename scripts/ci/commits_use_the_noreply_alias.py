@@ -331,7 +331,7 @@ def main() -> int:
             "\nFix the configuration first, so the next commit is right:\n"
             f"  git config --local user.email {ALIAS}\n"
             "  git config --local user.name jasperdew\n"
-            "  bash scripts/git-hooks/install.sh\n\n"
+            "  git config --local core.hooksPath .githooks\n\n"
             "Then rewrite the identity on the commits this branch adds -- only\n"
             "those, and only while they are unpushed:\n"
             "  git rebase --root --exec 'git commit --amend --no-edit --reset-author'\n\n"
