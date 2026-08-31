@@ -262,8 +262,11 @@ jobs:
   delete-runner:
     # `visual-regression` was removed with avrt.yml on 31-08-2026: the gold
     # masters it compares against have never existed on any branch, so it
-    # sat behind `if: false` measuring nothing. The missing capability is
-    # tracked as an issue of its own, not as a parked job (#290).
+    # sat behind `if: false` measuring nothing. What is missing is the
+    # capability, not the job -- we have no visual regression testing at all.
+    # That is #293, which says what each of the three ways to get it costs.
+    # Do not re-add a job here before that issue is decided; a parked job is
+    # how this stayed invisible for four months (#290).
     needs: [create-runner, full-corpus-test, benchmarks, desktop-tests, conversion-tests, conformance]
     if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     # Without this the create action polls for a runner that may never
