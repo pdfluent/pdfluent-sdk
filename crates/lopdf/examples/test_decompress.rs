@@ -34,8 +34,5 @@ fn main() {
         }
     }
 
-    println!(
-        "{}: {} ok, {} fail. Filters: {:?}",
-        path, success, fail, filters_seen
-    );
+    println!("{}: {} ok, {} fail. Filters: {:?}", path, success, fail, filters_seen);
 }

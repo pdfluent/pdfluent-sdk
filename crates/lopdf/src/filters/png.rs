@@ -74,9 +74,8 @@ pub fn decode_row(filter: FilterType, bpp: usize, previous: &[u8], current: &mut
                 // SOM van links en boven door twee, en `/` bond hier alleen aan
                 // `previous[i]`. Elke rij met filtertype 3 kwam er daardoor
                 // verkeerd uit -- geen foutmelding, gewoon andere bytes.
-                current[i] = current[i].wrapping_add(
-                    ((i16::from(current[i - bpp]) + i16::from(previous[i])) / 2) as u8,
-                );
+                current[i] =
+                    current[i].wrapping_add(((i16::from(current[i - bpp]) + i16::from(previous[i])) / 2) as u8);
             }
         }
         Paeth => {
@@ -85,21 +84,13 @@ pub fn decode_row(filter: FilterType, bpp: usize, previous: &[u8], current: &mut
             }
 
             for i in bpp..len {
-                current[i] = current[i].wrapping_add(paeth_predict(
-                    current[i - bpp],
-                    previous[i],
-                    previous[i - bpp],
-                ));
+                current[i] = current[i].wrapping_add(paeth_predict(current[i - bpp], previous[i], previous[i - bpp]));
             }
         }
     }
 }
 
-pub fn decode_frame(
-    content: &[u8],
-    bytes_per_pixel: usize,
-    pixels_per_row: usize,
-) -> Result<Vec<u8>> {
+pub fn decode_frame(content: &[u8], bytes_per_pixel: usize, pixels_per_row: usize) -> Result<Vec<u8>> {
     let bytes_per_row = bytes_per_pixel * pixels_per_row;
     let mut previous = Vec::new();
     previous.try_reserve(bytes_per_row)?;
@@ -115,12 +106,7 @@ pub fn decode_frame(
             (&content[pos..]).read_exact(current.as_mut_slice())?;
             pos += bytes_per_row;
 
-            decode_row(
-                filter,
-                bytes_per_pixel,
-                previous.as_slice(),
-                current.as_mut_slice(),
-            );
+            decode_row(filter, bytes_per_pixel, previous.as_slice(), current.as_mut_slice());
             decoded.write_all(current.as_slice())?;
             mem::swap(&mut previous, &mut current);
         } else {
@@ -159,9 +145,8 @@ pub fn encode_row(method: FilterType, bpp: usize, previous: &[u8], current: &mut
                 // decoder was repaired first, which left the two halves
                 // disagreeing; nothing caught it because no test reached
                 // `encode_row` (docs/TEST_REACHABILITY.md).
-                current[i] = current[i].wrapping_sub(
-                    ((i16::from(current[i - bpp]) + i16::from(previous[i])) / 2) as u8,
-                );
+                current[i] =
+                    current[i].wrapping_sub(((i16::from(current[i - bpp]) + i16::from(previous[i])) / 2) as u8);
             }
 
             for i in 0..bpp {
@@ -170,11 +155,7 @@ pub fn encode_row(method: FilterType, bpp: usize, previous: &[u8], current: &mut
         }
         Paeth => {
             for i in (bpp..len).rev() {
-                current[i] = current[i].wrapping_sub(paeth_predict(
-                    current[i - bpp],
-                    previous[i],
-                    previous[i - bpp],
-                ));
+                current[i] = current[i].wrapping_sub(paeth_predict(current[i - bpp], previous[i], previous[i - bpp]));
             }
 
             for i in 0..bpp {
@@ -205,10 +186,7 @@ mod predictor_tests {
                 let mut werk = bron.clone();
                 super::encode_row(filter, bpp, &vorige, &mut werk);
                 super::decode_row(filter, bpp, &vorige, &mut werk);
-                assert_eq!(
-                    werk, bron,
-                    "{filter:?} with bpp {bpp} did not survive encode->decode"
-                );
+                assert_eq!(werk, bron, "{filter:?} with bpp {bpp} did not survive encode->decode");
             }
         }
     }
@@ -284,10 +262,7 @@ mod predictor_tests {
 
     #[test]
     fn an_unknown_filter_byte_is_refused() {
-        assert!(
-            decode_frame(&[9, 1, 2, 3], 1, 3).is_err(),
-            "filter 9 bestaat niet"
-        );
+        assert!(decode_frame(&[9, 1, 2, 3], 1, 3).is_err(), "filter 9 bestaat niet");
     }
 
     /// Overloop hoort om te wikkelen, niet te panieken: de specificatie rekent

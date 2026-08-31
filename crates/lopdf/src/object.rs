@@ -336,10 +336,7 @@ impl fmt::Debug for Object {
                 write!(f, ">")
             }
             Object::Array(array) => {
-                let items = array
-                    .iter()
-                    .map(|item| format!("{item:?}"))
-                    .collect::<Vec<String>>();
+                let items = array.iter().map(|item| format!("{item:?}")).collect::<Vec<String>>();
                 write!(f, "[{}]", items.join(" "))
             }
             Object::Dictionary(dict) => write!(f, "{dict:?}"),
@@ -430,12 +427,8 @@ impl Dictionary {
         // - predefined CJK CMAP other than indicated in SimpleEncoding
         match self.get(b"Encoding").and_then(Object::as_name) {
             Ok(b"StandardEncoding") => Ok(Encoding::OneByteEncoding(&encodings::STANDARD_ENCODING)),
-            Ok(b"MacRomanEncoding") => {
-                Ok(Encoding::OneByteEncoding(&encodings::MAC_ROMAN_ENCODING))
-            }
-            Ok(b"MacExpertEncoding") => {
-                Ok(Encoding::OneByteEncoding(&encodings::MAC_EXPERT_ENCODING))
-            }
+            Ok(b"MacRomanEncoding") => Ok(Encoding::OneByteEncoding(&encodings::MAC_ROMAN_ENCODING)),
+            Ok(b"MacExpertEncoding") => Ok(Encoding::OneByteEncoding(&encodings::MAC_EXPERT_ENCODING)),
             Ok(b"WinAnsiEncoding") => Ok(Encoding::OneByteEncoding(&encodings::WIN_ANSI_ENCODING)),
             Ok(b"PDFDocEncoding") => {
                 log::warn!("PDFDocEncoding is not a valid character encoding for a font");
@@ -447,12 +440,8 @@ impl Dictionary {
             }
             Ok(name) => Ok(Encoding::SimpleEncoding(name)),
             Err(err) => {
-                warn!(
-                    "Could not parse the encoding, error: {err:#?}\nFont: {self:#?}\nTrying to retrieve ToUnicode."
-                );
-                let stream = self
-                    .get_deref(b"ToUnicode", doc)
-                    .and_then(Object::as_stream);
+                warn!("Could not parse the encoding, error: {err:#?}\nFont: {self:#?}\nTrying to retrieve ToUnicode.");
+                let stream = self.get_deref(b"ToUnicode", doc).and_then(Object::as_stream);
                 if let Ok(stream) = stream {
                     return self.get_encoding_from_to_unicode_cmap(stream);
                 }
@@ -470,25 +459,23 @@ impl Dictionary {
     }
 
     pub fn extend(&mut self, other: &Dictionary) {
-        let keep_both_objects = |new_dict: &mut IndexMap<Vec<u8>, Object>,
-                                 key: &Vec<u8>,
-                                 value: &Object,
-                                 old_value: Object| {
-            let mut final_array;
+        let keep_both_objects =
+            |new_dict: &mut IndexMap<Vec<u8>, Object>, key: &Vec<u8>, value: &Object, old_value: Object| {
+                let mut final_array;
 
-            match value {
-                Object::Array(array) => {
-                    final_array = Vec::with_capacity(array.len() + 1);
-                    final_array.push(old_value);
-                    final_array.extend(array.to_owned());
+                match value {
+                    Object::Array(array) => {
+                        final_array = Vec::with_capacity(array.len() + 1);
+                        final_array.push(old_value);
+                        final_array.extend(array.to_owned());
+                    }
+                    _ => {
+                        final_array = vec![value.to_owned(), old_value];
+                    }
                 }
-                _ => {
-                    final_array = vec![value.to_owned(), old_value];
-                }
-            }
 
-            new_dict.insert(key.to_owned(), Object::Array(final_array));
-        };
+                new_dict.insert(key.to_owned(), Object::Array(final_array));
+            };
 
         let mut new_dict = std::mem::take(&mut self.0);
         new_dict.reserve_exact(other.0.len());
@@ -523,16 +510,10 @@ impl Dictionary {
                         new_dict.insert(key.to_owned(), Object::Array(array));
                     }
                     (Object::Reference(old_object_id), Object::Reference(object_id)) => {
-                        let array = vec![
-                            Object::Reference(*old_object_id),
-                            Object::Reference(*object_id),
-                        ];
+                        let array = vec![Object::Reference(*old_object_id), Object::Reference(*object_id)];
                         new_dict.insert(key.to_owned(), Object::Array(array));
                     }
-                    (Object::Null, _)
-                    | (Object::Boolean(_), _)
-                    | (Object::Name(_), _)
-                    | (Object::Stream(_), _) => {
+                    (Object::Null, _) | (Object::Boolean(_), _) | (Object::Name(_), _) | (Object::Stream(_), _) => {
                         new_dict.insert(key.to_owned(), old_value);
                     }
                     (_, _) => keep_both_objects(&mut new_dict, key, value, old_value),
@@ -811,10 +792,7 @@ impl Stream {
         for &ch in input_no_eod {
             if ch == b'z' {
                 if count != 0 {
-                    return Err(DecompressError::Ascii85(
-                        "z character is not allowed in the middle of a group",
-                    )
-                    .into());
+                    return Err(DecompressError::Ascii85("z character is not allowed in the middle of a group").into());
                 }
                 output.extend_from_slice(&[0, 0, 0, 0]);
                 continue;
@@ -999,16 +977,14 @@ impl Stream {
             // whole-byte fast path is unchanged; it only needs the output to be
             // byte-aligned first, which is what the prefix loop does.
             fn push_pixels(&mut self, white: bool, count: u32) {
-                let (prefix, whole_bytes, tail) =
-                    hayro_ccitt::split_run(u32::from(self.bit_count), count);
+                let (prefix, whole_bytes, tail) = hayro_ccitt::split_run(u32::from(self.bit_count), count);
 
                 for _ in 0..prefix {
                     self.push_pixel(white);
                 }
                 if whole_bytes > 0 {
                     let byte = if white { 0xFF } else { 0x00 };
-                    self.output
-                        .extend(std::iter::repeat_n(byte, whole_bytes as usize));
+                    self.output.extend(std::iter::repeat_n(byte, whole_bytes as usize));
                 }
                 for _ in 0..tail {
                     self.push_pixel(white);
@@ -1044,8 +1020,8 @@ impl Stream {
         // Note: JBIG2Globals from DecodeParms requires Document access to resolve
         // the indirect stream reference. Without globals, only self-contained
         // JBIG2 streams can be decoded.
-        let image = hayro_jbig2::decode_embedded(input, None)
-            .map_err(|_| Error::Unimplemented("JBIG2Decode failed"))?;
+        let image =
+            hayro_jbig2::decode_embedded(input, None).map_err(|_| Error::Unimplemented("JBIG2Decode failed"))?;
 
         let row_bytes = (image.width as usize).div_ceil(8);
         let mut packed = vec![0u8; row_bytes * image.height as usize];
@@ -1112,8 +1088,8 @@ impl Stream {
             target_resolution: None,
         };
 
-        let image = hayro_jpeg2000::Image::new(input, &settings)
-            .map_err(|_| Error::Unimplemented("JPXDecode failed"))?;
+        let image =
+            hayro_jpeg2000::Image::new(input, &settings).map_err(|_| Error::Unimplemented("JPXDecode failed"))?;
         let mut decoder_context = hayro_jpeg2000::DecoderContext::default();
         Ok(image
             .decode(&mut decoder_context)
@@ -1125,26 +1101,11 @@ impl Stream {
         use crate::filters::png;
 
         if let Some(params) = params {
-            let predictor = params
-                .get(b"Predictor")
-                .and_then(Object::as_i64)
-                .unwrap_or(1);
+            let predictor = params.get(b"Predictor").and_then(Object::as_i64).unwrap_or(1);
             if (10..=15).contains(&predictor) {
-                let pixels_per_row = max(
-                    1,
-                    params.get(b"Columns").and_then(Object::as_i64).unwrap_or(1),
-                ) as usize;
-                let colors = max(
-                    1,
-                    params.get(b"Colors").and_then(Object::as_i64).unwrap_or(1),
-                ) as usize;
-                let bits = max(
-                    8,
-                    params
-                        .get(b"BitsPerComponent")
-                        .and_then(Object::as_i64)
-                        .unwrap_or(8),
-                ) as usize;
+                let pixels_per_row = max(1, params.get(b"Columns").and_then(Object::as_i64).unwrap_or(1)) as usize;
+                let colors = max(1, params.get(b"Colors").and_then(Object::as_i64).unwrap_or(1)) as usize;
+                let bits = max(8, params.get(b"BitsPerComponent").and_then(Object::as_i64).unwrap_or(8)) as usize;
                 let bytes_per_pixel = colors * bits / 8;
                 data = png::decode_frame(data.as_slice(), bytes_per_pixel, pixels_per_row)?;
             }
@@ -1191,10 +1152,7 @@ mod test {
         let input = b"uuuuu~>";
         let output = Stream::decode_ascii85(input);
         // let expected: Result<Vec<u8>, Error> = Err(Error::ContentDecode);
-        assert!(matches!(
-            output,
-            Err(Error::Decompress(DecompressError::Ascii85(_)))
-        ));
+        assert!(matches!(output, Err(Error::Decompress(DecompressError::Ascii85(_)))));
     }
 
     #[test]
@@ -1271,10 +1229,7 @@ mod test {
         let compressed = encoder.finish().unwrap();
 
         let result = Stream::decompress_zlib(&compressed, None);
-        assert!(
-            result.is_ok(),
-            "small stream should decompress successfully"
-        );
+        assert!(result.is_ok(), "small stream should decompress successfully");
         assert_eq!(result.unwrap(), plaintext);
     }
 

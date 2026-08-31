@@ -243,14 +243,12 @@ impl TryFrom<EncryptionVersion<'_>> for EncryptionState {
                 let owner_password = algorithm.sanitize_password_r4(owner_password)?;
                 let user_password = algorithm.sanitize_password_r4(user_password)?;
 
-                algorithm.owner_value = algorithm
-                    .compute_hashed_owner_password_r4(Some(&owner_password), &user_password)?;
+                algorithm.owner_value =
+                    algorithm.compute_hashed_owner_password_r4(Some(&owner_password), &user_password)?;
 
-                algorithm.user_value =
-                    algorithm.compute_hashed_user_password_r2(document, &user_password)?;
+                algorithm.user_value = algorithm.compute_hashed_user_password_r2(document, &user_password)?;
 
-                let file_encryption_key =
-                    algorithm.compute_file_encryption_key_r4(document, &user_password)?;
+                let file_encryption_key = algorithm.compute_file_encryption_key_r4(document, &user_password)?;
 
                 Ok(Self {
                     version: algorithm.version,
@@ -285,14 +283,12 @@ impl TryFrom<EncryptionVersion<'_>> for EncryptionState {
                 let owner_password = algorithm.sanitize_password_r4(owner_password)?;
                 let user_password = algorithm.sanitize_password_r4(user_password)?;
 
-                algorithm.owner_value = algorithm
-                    .compute_hashed_owner_password_r4(Some(&owner_password), &user_password)?;
+                algorithm.owner_value =
+                    algorithm.compute_hashed_owner_password_r4(Some(&owner_password), &user_password)?;
 
-                algorithm.user_value =
-                    algorithm.compute_hashed_user_password_r3_r4(document, &user_password)?;
+                algorithm.user_value = algorithm.compute_hashed_user_password_r3_r4(document, &user_password)?;
 
-                let file_encryption_key =
-                    algorithm.compute_file_encryption_key_r4(document, &user_password)?;
+                let file_encryption_key = algorithm.compute_file_encryption_key_r4(document, &user_password)?;
 
                 Ok(Self {
                     version: algorithm.version,
@@ -330,14 +326,12 @@ impl TryFrom<EncryptionVersion<'_>> for EncryptionState {
                 let owner_password = algorithm.sanitize_password_r4(owner_password)?;
                 let user_password = algorithm.sanitize_password_r4(user_password)?;
 
-                algorithm.owner_value = algorithm
-                    .compute_hashed_owner_password_r4(Some(&owner_password), &user_password)?;
+                algorithm.owner_value =
+                    algorithm.compute_hashed_owner_password_r4(Some(&owner_password), &user_password)?;
 
-                algorithm.user_value =
-                    algorithm.compute_hashed_user_password_r3_r4(document, &user_password)?;
+                algorithm.user_value = algorithm.compute_hashed_user_password_r3_r4(document, &user_password)?;
 
-                let file_encryption_key =
-                    algorithm.compute_file_encryption_key_r4(document, &user_password)?;
+                let file_encryption_key = algorithm.compute_file_encryption_key_r4(document, &user_password)?;
 
                 Ok(Self {
                     version: algorithm.version,
@@ -382,20 +376,19 @@ impl TryFrom<EncryptionVersion<'_>> for EncryptionState {
                 let owner_password = algorithm.sanitize_password_r6(owner_password)?;
                 let user_password = algorithm.sanitize_password_r6(user_password)?;
 
-                let (user_value, user_encrypted) = algorithm
-                    .compute_hashed_user_password_r6(file_encryption_key, user_password)?;
+                let (user_value, user_encrypted) =
+                    algorithm.compute_hashed_user_password_r6(file_encryption_key, user_password)?;
 
                 algorithm.user_value = user_value;
                 algorithm.user_encrypted = user_encrypted;
 
-                let (owner_value, owner_encrypted) = algorithm
-                    .compute_hashed_owner_password_r6(file_encryption_key, owner_password)?;
+                let (owner_value, owner_encrypted) =
+                    algorithm.compute_hashed_owner_password_r6(file_encryption_key, owner_password)?;
 
                 algorithm.owner_value = owner_value;
                 algorithm.owner_encrypted = owner_encrypted;
 
-                algorithm.permission_encrypted =
-                    algorithm.compute_permissions(file_encryption_key)?;
+                algorithm.permission_encrypted = algorithm.compute_permissions(file_encryption_key)?;
 
                 Ok(Self {
                     version: algorithm.version,
@@ -441,20 +434,19 @@ impl TryFrom<EncryptionVersion<'_>> for EncryptionState {
                 let owner_password = algorithm.sanitize_password_r6(owner_password)?;
                 let user_password = algorithm.sanitize_password_r6(user_password)?;
 
-                let (user_value, user_encrypted) = algorithm
-                    .compute_hashed_user_password_r6(file_encryption_key, user_password)?;
+                let (user_value, user_encrypted) =
+                    algorithm.compute_hashed_user_password_r6(file_encryption_key, user_password)?;
 
                 algorithm.user_value = user_value;
                 algorithm.user_encrypted = user_encrypted;
 
-                let (owner_value, owner_encrypted) = algorithm
-                    .compute_hashed_owner_password_r6(file_encryption_key, owner_password)?;
+                let (owner_value, owner_encrypted) =
+                    algorithm.compute_hashed_owner_password_r6(file_encryption_key, owner_password)?;
 
                 algorithm.owner_value = owner_value;
                 algorithm.owner_encrypted = owner_encrypted;
 
-                algorithm.permission_encrypted =
-                    algorithm.compute_permissions(file_encryption_key)?;
+                algorithm.permission_encrypted = algorithm.compute_permissions(file_encryption_key)?;
 
                 Ok(Self {
                     version: algorithm.version,
@@ -646,10 +638,7 @@ impl EncryptionState {
         if self.revision >= 5 {
             encrypted.set(b"OE", Object::string_literal(self.owner_encrypted.clone()));
             encrypted.set(b"UE", Object::string_literal(self.user_encrypted.clone()));
-            encrypted.set(
-                b"Perms",
-                Object::string_literal(self.permission_encrypted.clone()),
-            );
+            encrypted.set(b"Perms", Object::string_literal(self.permission_encrypted.clone()));
         }
 
         Ok(encrypted)
@@ -675,9 +664,7 @@ impl EncryptionState {
 /// Generates a cryptographically random 32-byte file encryption key internally.
 /// The returned state can be passed directly to [`Document::encrypt`].
 pub fn aes256_encryption_state(
-    owner_password: &str,
-    user_password: &str,
-    permissions: Permissions,
+    owner_password: &str, user_password: &str, permissions: Permissions,
 ) -> crate::Result<EncryptionState> {
     use rand::Rng as _;
     let mut file_key = [0u8; 32];
@@ -696,11 +683,7 @@ pub fn aes256_encryption_state(
 }
 
 /// Encrypts `obj`.
-pub fn encrypt_object(
-    state: &EncryptionState,
-    obj_id: ObjectId,
-    obj: &mut Object,
-) -> Result<(), DecryptionError> {
+pub fn encrypt_object(state: &EncryptionState, obj_id: ObjectId, obj: &mut Object) -> Result<(), DecryptionError> {
     // The cross-reference stream shall not be encrypted and strings appearing in the
     // cross-reference stream dictionary shall not be encrypted.
     let is_xref_stream = obj
@@ -794,11 +777,7 @@ pub fn encrypt_object(
 }
 
 /// Decrypts `obj`.
-pub fn decrypt_object(
-    state: &EncryptionState,
-    obj_id: ObjectId,
-    obj: &mut Object,
-) -> Result<(), DecryptionError> {
+pub fn decrypt_object(state: &EncryptionState, obj_id: ObjectId, obj: &mut Object) -> Result<(), DecryptionError> {
     // The cross-reference stream shall not be encrypted and strings appearing in the
     // cross-reference stream dictionary shall not be encrypted.
     let is_xref_stream = obj
@@ -910,11 +889,7 @@ mod tests {
                 String::from("Plaintext"),
                 String::from("BBF316E8D940AF0AD3"),
             ),
-            (
-                String::from("Wiki"),
-                String::from("pedia"),
-                String::from("1021BF0420"),
-            ),
+            (String::from("Wiki"), String::from("pedia"), String::from("1021BF0420")),
         ];
 
         for (key, plain, cipher) in cases {
@@ -922,8 +897,7 @@ mod tests {
             let cipher = cipher.as_bytes();
             let mut cipher_bytes = Vec::with_capacity(cipher.len() / 2);
             for hex_pair in cipher.chunks_exact(2) {
-                cipher_bytes
-                    .push(u8::from_str_radix(std::str::from_utf8(hex_pair).unwrap(), 16).unwrap());
+                cipher_bytes.push(u8::from_str_radix(std::str::from_utf8(hex_pair).unwrap(), 16).unwrap());
             }
 
             let decryptor = Rc4::new(key);
@@ -968,10 +942,7 @@ mod tests {
             let obj_id = (7u32, 0u16);
 
             let mut dict = Dictionary::new();
-            dict.set(
-                "Title",
-                Object::string_literal("een titel met accenten: \u{e9}\u{e8}"),
-            );
+            dict.set("Title", Object::string_literal("een titel met accenten: \u{e9}\u{e8}"));
             let bron = Object::Dictionary(dict);
             let mut werk = bron.clone();
             super::encrypt_object(&state, obj_id, &mut werk).unwrap();
@@ -987,8 +958,7 @@ mod tests {
                 "{naam}: a string must survive encrypt -> decrypt"
             );
 
-            let stroom =
-                Object::Stream(Stream::new(Dictionary::new(), b"BT /F1 12 Tf ET".to_vec()));
+            let stroom = Object::Stream(Stream::new(Dictionary::new(), b"BT /F1 12 Tf ET".to_vec()));
             let mut werk = stroom.clone();
             super::encrypt_object(&state, obj_id, &mut werk).unwrap();
             assert_ne!(

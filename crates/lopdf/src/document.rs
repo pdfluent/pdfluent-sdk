@@ -150,19 +150,13 @@ impl Document {
     /// The object id will be None if the object was not a
     /// reference. Otherwise, it will be the last object id in the
     /// reference chain.
-    pub fn dereference<'a>(
-        &'a self,
-        mut object: &'a Object,
-    ) -> Result<(Option<ObjectId>, &'a Object)> {
+    pub fn dereference<'a>(&'a self, mut object: &'a Object) -> Result<(Option<ObjectId>, &'a Object)> {
         let mut nb_deref = 0;
         let mut id = None;
 
         while let Ok(ref_id) = object.as_reference() {
             id = Some(ref_id);
-            object = self
-                .objects
-                .get(&ref_id)
-                .ok_or(Error::ObjectNotFound(ref_id))?;
+            object = self.objects.get(&ref_id).ok_or(Error::ObjectNotFound(ref_id))?;
 
             nb_deref += 1;
             if nb_deref > Self::DEREF_LIMIT {
@@ -192,9 +186,7 @@ impl Document {
         let (ref_id, _obj) = self.dereference(object)?;
 
         let target_id = ref_id.unwrap_or(id);
-        self.objects
-            .get_mut(&target_id)
-            .ok_or(Error::ObjectNotFound(target_id))
+        self.objects.get_mut(&target_id).ok_or(Error::ObjectNotFound(target_id))
     }
 
     /// Decompress and extract all ObjStm streams deferred by `LoadOptions::lazy_objstm`.
@@ -217,18 +209,14 @@ impl Document {
                 })?
                 .as_stream()?
                 .clone();
-            let obj_stream =
-                ObjectStream::new(&mut stream).map_err(|_| Error::ObjStmDecompress {
-                    container_id: container_id.0,
-                })?;
+            let obj_stream = ObjectStream::new(&mut stream).map_err(|_| Error::ObjStmDecompress {
+                container_id: container_id.0,
+            })?;
             // Only insert objects whose xref entry assigns them to this container.
             // This prevents stale copies from older ObjStm containers (incremental
             // saves) from winning non-deterministically.
             for (id, object) in obj_stream.objects {
-                if self
-                    .reference_table
-                    .compressed_object_belongs_to(id, container_id)
-                {
+                if self.reference_table.compressed_object_belongs_to(id, container_id) {
                     self.objects.entry(id).or_insert(object);
                 }
             }
@@ -265,11 +253,7 @@ impl Document {
     }
 
     /// Get dictionary in dictionary by key.
-    pub fn get_dict_in_dict<'a>(
-        &'a self,
-        node: &'a Dictionary,
-        key: &[u8],
-    ) -> Result<&'a Dictionary> {
+    pub fn get_dict_in_dict<'a>(&'a self, node: &'a Dictionary, key: &[u8]) -> Result<&'a Dictionary> {
         match node.get(key)? {
             Object::Reference(object_id) => self.get_dictionary(*object_id),
             Object::Dictionary(dic) => Ok(dic),
@@ -282,29 +266,17 @@ impl Document {
 
     /// Traverse objects from trailer recursively, return all referenced object IDs.
     pub fn traverse_objects<A: Fn(&mut Object)>(&mut self, action: A) -> Vec<ObjectId> {
-        fn traverse_array<A: Fn(&mut Object)>(
-            array: &mut [Object],
-            action: &A,
-            refs: &mut Vec<ObjectId>,
-        ) {
+        fn traverse_array<A: Fn(&mut Object)>(array: &mut [Object], action: &A, refs: &mut Vec<ObjectId>) {
             for item in array.iter_mut() {
                 traverse_object(item, action, refs);
             }
         }
-        fn traverse_dictionary<A: Fn(&mut Object)>(
-            dict: &mut Dictionary,
-            action: &A,
-            refs: &mut Vec<ObjectId>,
-        ) {
+        fn traverse_dictionary<A: Fn(&mut Object)>(dict: &mut Dictionary, action: &A, refs: &mut Vec<ObjectId>) {
             for (_, v) in dict.iter_mut() {
                 traverse_object(v, action, refs);
             }
         }
-        fn traverse_object<A: Fn(&mut Object)>(
-            object: &mut Object,
-            action: &A,
-            refs: &mut Vec<ObjectId>,
-        ) {
+        fn traverse_object<A: Fn(&mut Object)>(object: &mut Object, action: &A, refs: &mut Vec<ObjectId>) {
             action(object);
             match object {
                 Object::Array(array) => traverse_array(array, action, refs),
@@ -531,10 +503,7 @@ impl Document {
         self.authenticate_raw_password(&password)?;
 
         // Find the ID of the encryption dict; we'll want to skip it when decrypting
-        let encryption_obj_id = self
-            .trailer
-            .get(b"Encrypt")
-            .and_then(Object::as_reference)?;
+        let encryption_obj_id = self.trailer.get(b"Encrypt").and_then(Object::as_reference)?;
 
         let state = EncryptionState::decode(&*self, password)?;
 
@@ -600,10 +569,7 @@ impl Document {
 
     /// Get page numbers and corresponding object ids.
     pub fn get_pages(&self) -> BTreeMap<u32, ObjectId> {
-        self.page_iter()
-            .enumerate()
-            .map(|(i, p)| ((i + 1) as u32, p))
-            .collect()
+        self.page_iter().enumerate().map(|(i, p)| ((i + 1) as u32, p)).collect()
     }
 
     pub fn page_iter(&self) -> impl Iterator<Item = ObjectId> + '_ {
@@ -658,8 +624,7 @@ impl Document {
             Ok(Object::Array(arr)) => arr.clone(),
             _ => vec![],
         };
-        let content_object_id =
-            self.add_object(Object::Stream(Stream::new(Dictionary::new(), content)));
+        let content_object_id = self.add_object(Object::Stream(Stream::new(Dictionary::new(), content)));
         current_content_list.push(Object::Reference(content_object_id));
 
         let page_mut = self.get_object_mut(page_id).and_then(Object::as_dict_mut)?;
@@ -683,14 +648,9 @@ impl Document {
     }
 
     /// Get resources used by a page.
-    pub fn get_page_resources(
-        &self,
-        page_id: ObjectId,
-    ) -> Result<(Option<&Dictionary>, Vec<ObjectId>)> {
+    pub fn get_page_resources(&self, page_id: ObjectId) -> Result<(Option<&Dictionary>, Vec<ObjectId>)> {
         fn collect_resources(
-            page_node: &Dictionary,
-            resource_ids: &mut Vec<ObjectId>,
-            doc: &Document,
+            page_node: &Dictionary, resource_ids: &mut Vec<ObjectId>, doc: &Document,
             already_seen: &mut HashSet<ObjectId>,
         ) -> Result<()> {
             if let Ok(resource_id) = page_node.get(b"Resources").and_then(Object::as_reference) {
@@ -719,9 +679,7 @@ impl Document {
     /// Get fonts used by a page.
     pub fn get_page_fonts(&self, page_id: ObjectId) -> Result<BTreeMap<Vec<u8>, &Dictionary>> {
         fn collect_fonts_from_resources<'a>(
-            resources: &'a Dictionary,
-            fonts: &mut BTreeMap<Vec<u8>, &'a Dictionary>,
-            doc: &'a Document,
+            resources: &'a Dictionary, fonts: &mut BTreeMap<Vec<u8>, &'a Dictionary>, doc: &'a Document,
         ) {
             if let Ok(font) = resources.get(b"Font") {
                 let font_dict = match font {
@@ -807,9 +765,7 @@ impl Document {
                 let height = dict.get(b"Height")?.as_i64()?;
                 let color_space = match dict.get(b"ColorSpace") {
                     Ok(cs) => match cs {
-                        Object::Array(array) => {
-                            Some(String::from_utf8_lossy(array[0].as_name()?).to_string())
-                        }
+                        Object::Array(array) => Some(String::from_utf8_lossy(array[0].as_name()?).to_string()),
                         Object::Name(name) => Some(String::from_utf8_lossy(name).to_string()),
                         _ => None,
                     },
@@ -921,11 +877,7 @@ impl Iterator for PageTreeIter<'_> {
                 self.kids = Some(new_kids);
 
                 if let Ok(kid_id) = kid.as_reference() {
-                    if let Ok(type_name) = self
-                        .doc
-                        .get_dictionary(kid_id)
-                        .and_then(Dictionary::get_type)
-                    {
+                    if let Ok(type_name) = self.doc.get_dictionary(kid_id).and_then(Dictionary::get_type) {
                         match type_name {
                             b"Page" => {
                                 return Some(kid_id);
@@ -959,15 +911,9 @@ impl Iterator for PageTreeIter<'_> {
             .iter()
             .chain(self.stack.iter().flat_map(|k| k.iter()))
             .map(|kid| {
-                if let Ok(dict) = kid
-                    .as_reference()
-                    .and_then(|id| self.doc.get_dictionary(id))
-                {
+                if let Ok(dict) = kid.as_reference().and_then(|id| self.doc.get_dictionary(id)) {
                     if let Ok(b"Pages") = dict.get_type() {
-                        let count = dict
-                            .get_deref(b"Count", self.doc)
-                            .and_then(Object::as_i64)
-                            .unwrap_or(0);
+                        let count = dict.get_deref(b"Count", self.doc).and_then(Object::as_i64).unwrap_or(0);
                         // Don't let page count go backwards in case of an invalid document.
                         max(0, count) as usize
                     } else {

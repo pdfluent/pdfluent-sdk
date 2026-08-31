@@ -47,10 +47,7 @@ impl Document {
     }
 
     fn outline_child(
-        &self,
-        maxid: &mut u32,
-        parent: (ObjectId, &[u32]),
-        processed: &mut HashMap<ObjectId, Dictionary>,
+        &self, maxid: &mut u32, parent: (ObjectId, &[u32]), processed: &mut HashMap<ObjectId, Dictionary>,
     ) -> (Option<ObjectId>, Option<ObjectId>, i64) {
         let mut first: Option<ObjectId> = None;
         let mut last: Option<ObjectId> = None;
@@ -104,8 +101,7 @@ impl Document {
             last = Some(id);
 
             if !bookmark.children.is_empty() {
-                let (c_first, c_last, c_count) =
-                    self.outline_child(maxid, (id, &bookmark.children[..]), processed);
+                let (c_first, c_last, c_count) = self.outline_child(maxid, (id, &bookmark.children[..]), processed);
 
                 if let Some(n) = c_first {
                     child.set("First", n);
@@ -134,8 +130,7 @@ impl Document {
             maxid += 1;
             let id: ObjectId = (maxid, 0);
 
-            let (first, last, count) =
-                self.outline_child(&mut maxid, (id, &self.bookmarks[..]), &mut processed);
+            let (first, last, count) = self.outline_child(&mut maxid, (id, &self.bookmarks[..]), &mut processed);
 
             if let Some(n) = first {
                 outline.set("First", n);
