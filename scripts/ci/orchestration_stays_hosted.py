@@ -204,6 +204,14 @@ BASELINE = {
     # scanning each; booting an instance would cost more than the work. Under
     # the same 28-08 decision about branch code on the desktop (#274).
     ("ci.yml", "orchestration-guard"),
+    # #288 moved thirteen guards off the GitLab mirror, where a failure stopped
+    # nothing, into these two jobs. They land on the desktop for the same reason
+    # orchestration-guard did: a spending limit disables hosted runners and
+    # leaves self-hosted ones working, and a guard that stops on the day the
+    # bill stops is worthless on the day it matters. Python file scans plus
+    # `cargo metadata` and `cargo tree` -- no compilation, seconds of work.
+    ("ci.yml", "promise-guard"),
+    ("ci.yml", "measurement-guard"),
     ("security-audit.yml", "cargo-audit"),
     ("security-audit.yml", "cargo-deny-advisories"),
     ("verapdf.yml", "conformance"),
@@ -213,6 +221,11 @@ BASELINE = {
     # while this repository has one contributor. Only ci-ephemeral does this
     # now -- the others hand their work to the instance it creates (#275).
     ("ci-ephemeral.yml", "create-runner"),
+    # `reap` is the other half of `create-runner`: the same workflow deletes the
+    # instance it made. It was left out when create-runner was written down, and
+    # this check has been failing on it on master ever since -- which is what
+    # #288 is about in miniature, since the failure was in a step nothing read.
+    ("ci-ephemeral.yml", "reap"),
     ("bench.yml", "benchmark"),
     # Found only after Codex pointed out that a pull_request branch filter names
     # the base, not the source. Runs on [self-hosted, xfa-corpus] -- a second
