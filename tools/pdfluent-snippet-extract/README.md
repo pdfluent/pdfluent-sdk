@@ -102,9 +102,15 @@ cargo test -p pdfluent-snippet-extract
 
 ## CI drift-guard (#1238)
 
-`.github/workflows/docs-drift-guard.yml` runs the extractor in
-offline mode and fails if its output diverges from the committed
-`tests/web_examples/*.rs`.
+The `docs drift (advisory)` step of
+`.github/workflows/ci-ephemeral.yml` runs the extractor in offline
+mode and reports when its output diverges from the committed
+`tests/web_examples/*.rs`. It is advisory until #1488.
+
+Until 31-08-2026 this pointed at `docs-drift-guard.yml`, which had
+been unable to start since 28-08 and whose work was believed to have
+moved to that step -- while the step only built the extractor and
+never ran it. Both halves are fixed and the duplicate is gone (#290).
 
 Two contract files the workflow depends on:
 
