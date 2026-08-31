@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -87,12 +88,25 @@ def gh(pad: str):
         return None
 
 
+def schone_omgeving() -> dict[str, str]:
+    """The caller's environment with every GIT_* variable removed.
+
+    A pre-push hook exports GIT_DIR and GIT_INDEX_FILE, and a subprocess
+    inherits them. A git command meant for one directory then operates on
+    whatever those point at. On 25-08-2026 that put `core.bare = true` on this
+    repository and stopped all thirty worktrees. Same helper as
+    scripts/ci/mr_staleness.py, and scripts/ci/no_test_can_touch_the_real_repo.py
+    is what insists on it.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def veranderd_op(pad: pathlib.Path) -> dt.datetime | None:
     """When this workflow file last changed, in UTC."""
     try:
         r = subprocess.run(["git", "log", "-1", "--format=%cI", "--", str(pad)],
                            capture_output=True, text=True, check=False, timeout=60,
-                           stdin=subprocess.DEVNULL)
+                           stdin=subprocess.DEVNULL, env=schone_omgeving())
     except (OSError, subprocess.SubprocessError):
         return None
     uit = r.stdout.strip()
