@@ -104,6 +104,27 @@ CGATS001Compat-v2-micro.icc — CGATS.001 compatible CMYK ICC profile.
 See: crates/pdf-interpret/assets/CGATS_LICENSE.txt
 
 ================================================================================
+Java Binding Dependencies (resolved by Maven in the user's own build)
+================================================================================
+
+net.java.dev.jna:jna 5.14.0 — Apache-2.0, as elected by PDFluent.
+
+JNA has been offered under two licences since version 4.0: LGPL-2.1-or-later OR
+Apache-2.0. PDFluent takes Apache-2.0, so no LGPL obligation travels to a
+commercial licensee. Recording that choice is the point of this entry: without
+it the default reading of a dual-licensed dependency is the copyleft half, and
+that is a different answer to give a buyer's lawyer than the one we mean.
+
+The election is held as data in docs/LICENSE_POLICY.toml under [elections], and
+scripts/ci/license_gate.py fails on any Maven dependency that has no election
+recorded. This paragraph is the human-readable half of that same fact.
+
+We ship no shaded or assembled jar; the POM declares JNA and Maven resolves it
+in the user's own build. It is listed here because it is the one external
+runtime dependency across all bindings, and an unlisted dependency is
+indistinguishable from one nobody looked at.
+
+================================================================================
 Rust Crate Dependencies — Complete List (cargo license 2026-05-26)
 ================================================================================
 
