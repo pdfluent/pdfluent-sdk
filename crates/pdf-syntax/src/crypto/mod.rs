@@ -145,6 +145,14 @@ pub(crate) fn get(
     };
 
     let byte_length = length / 8;
+    // `/Length` is in bits and comes from the file, so anything below 8 divides
+    // down to a key of zero bytes -- which reaches `Rc4::new` and does
+    // `key[i % key.len()]`. Ported from hayro upstream (LaurenzV/hayro#1193);
+    // the clamp at the upper end already existed in decryption_key_rev1234 and
+    // says so in its comment, but nothing held the lower end.
+    if byte_length == 0 {
+        return Err(InvalidEncryption);
+    }
 
     let owner_string = dict.get::<object::String>(O).ok_or(InvalidEncryption)?;
     let user_string = dict.get::<object::String>(U).ok_or(InvalidEncryption)?;
@@ -668,4 +676,61 @@ fn decryption_key_rev56(
     // the file encryption key as the key. Verify that bytes 9-11 of the result are the characters "a", "d",
     // "b". Bytes 0-3 of the decrypted Perms entry, treated as a little-endian integer, are the user
     // permissions. They shall match the value in the P key.
+}
+
+#[cfg(test)]
+mod upstream_hardening_tests {
+    use super::*;
+    use crate::reader::{Reader, ReaderContext, ReaderExt};
+
+    fn encryption_dict(data: &[u8]) -> Dict<'_> {
+        Reader::new(data)
+            .read_with_context::<Dict<'_>>(&ReaderContext::dummy())
+            .expect("the test's own dictionary must parse")
+    }
+
+    /// Ported from LaurenzV/hayro#1193.
+    ///
+    /// `/Length` is in bits and comes from the file. Anything below 8 divides
+    /// down to a key of zero bytes, and the key reaches `Rc4::new`, which does
+    /// `key[i % key.len()]` -- a remainder by zero. `byte_length.min(16)` a few
+    /// lines below clamps the upper end and says so in its comment; nothing
+    /// clamped the lower end.
+    ///
+    /// `/V 2` is what makes `/Length` reach the key derivation at all: V 1 hard-codes
+    /// 40 and V 5 hard-codes 256, so neither can express this.
+    #[test]
+    fn an_encryption_length_below_one_byte_is_rejected_not_divided_by() {
+        let dict = encryption_dict(
+            b"<< /Filter /Standard /V 2 /R 2 /Length 4 \
+               /O <0000000000000000000000000000000000000000000000000000000000000000> \
+               /U <0000000000000000000000000000000000000000000000000000000000000000> \
+               /P -1 >>",
+        );
+
+        assert!(matches!(
+            get(&dict, b"", b""),
+            Err(DecryptionError::InvalidEncryption)
+        ));
+    }
+
+    /// The bound must reject only what it is for. `/Length 40` is the PDF
+    /// default and derives a five-byte key, so a guard that rejected it -- or
+    /// one written as `<= 8` bits rather than `< 8` -- would fail here.
+    #[test]
+    fn the_ordinary_forty_bit_length_still_derives_a_key() {
+        let dict = encryption_dict(
+            b"<< /Filter /Standard /V 2 /R 2 /Length 40 \
+               /O <0000000000000000000000000000000000000000000000000000000000000000> \
+               /U <0000000000000000000000000000000000000000000000000000000000000000> \
+               /P -1 >>",
+        );
+
+        // The password is wrong, so authentication fails -- but it fails as a
+        // password problem, having derived a key, rather than as InvalidEncryption.
+        assert!(!matches!(
+            get(&dict, b"", b""),
+            Err(DecryptionError::InvalidEncryption)
+        ));
+    }
 }
