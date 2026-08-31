@@ -22,6 +22,7 @@ not excuse red-since-the-file-changed.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import pathlib
@@ -30,6 +31,16 @@ import sys
 import tempfile
 
 BEWAKER = pathlib.Path(__file__).with_name("a_gate_that_never_went_green.py")
+
+# Read straight from the guard rather than repeating it. The first version
+# listed the four names by hand; adding a fifth to BEKEND turned every case red
+# at once, because each fixture then looked like a repository where a
+# known-dead workflow had recovered. A test that has to be edited whenever the
+# thing it tests grows is a test that will be edited wrongly.
+_spec = importlib.util.spec_from_file_location("bewaker", BEWAKER)
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+BEKEND = tuple(_mod.BEKEND)
 
 WERKSTROOM = """\
 name: Proef
@@ -128,13 +139,14 @@ GEVALLEN = [
     # Off on purpose is not the same as broken.
     ("disabled on purpose", [wf("uit.yml", 40, 0, state="disabled_manually")], False),
     # The baseline excuses by name, and only by name.
-    ("a name in BEKEND is excused", [wf("fuzz.yml", 40, 0)], False),
+    ("a name in BEKEND is excused", [wf(BEKEND[0], 40, 0)], False),
     ("a name not in BEKEND beside one that is",
-     [wf("fuzz.yml", 40, 0), wf("ander.yml", 40, 0)], True),
+     [wf(BEKEND[0], 40, 0), wf("ander.yml", 40, 0)], True),
     # A baseline that only grows is a list of excuses.
+    # One known-dead workflow recovers: the baseline must be made to shrink, or
+    # it stops being a baseline and becomes a list of excuses.
     ("BEKEND must shrink when a known-dead one recovers",
-     [wf("fuzz.yml", 40, 3), wf("node-bindings.yml", 40, 0),
-      wf("security-audit.yml", 40, 0), wf("enterprise-acceptance.yml", 40, 0)], True),
+     [wf(BEKEND[0], 40, 3)] + [wf(b, 40, 0) for b in BEKEND[1:]], True),
 ]
 
 
@@ -144,10 +156,7 @@ def main() -> int:
         # Every case carries the whole BEKEND set as still-dead, so the
         # both-directions check does not fire by accident on unrelated cases.
         namen = {w["path"].split("/")[-1] for w in workflows}
-        vol = list(workflows) + [
-            wf(b, 40, 0) for b in
-            ("fuzz.yml", "node-bindings.yml", "security-audit.yml",
-             "enterprise-acceptance.yml") if b not in namen]
+        vol = list(workflows) + [wf(b, 40, 0) for b in BEKEND if b not in namen]
         with tempfile.TemporaryDirectory() as d:
             m = pathlib.Path(d)
             bouw(m, vol)
