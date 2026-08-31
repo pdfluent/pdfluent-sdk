@@ -58,6 +58,12 @@ pub(crate) fn decode(
     }
     let end_of_block = params.get::<bool>(END_OF_BLOCK).unwrap_or(true);
 
+    let columns = params.get::<usize>(COLUMNS).unwrap_or(1728) as u32;
+    // Refuse a /Columns x /Rows product that does not fit rather than decoding
+    // into a buffer sized by something else. Ported from hayro upstream
+    // (LaurenzV/hayro#1269).
+    (columns as usize).checked_mul(rows as usize)?;
+
     let settings = DecodeSettings {
         columns,
         rows,

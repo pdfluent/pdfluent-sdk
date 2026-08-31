@@ -357,13 +357,22 @@ pub(crate) mod flate {
                             }
                         }
 
-                        // Copy from previous output
-                        let start = self.output.len().wrapping_sub(distance);
+                        // A distance of 0, or one that reaches behind the start
+                        // of the output, is a corrupt stream. The old shape
+                        // silently emitted nothing for the whole match, which
+                        // left the rest of the stream decoding against a buffer
+                        // that no longer lines up. Ported from hayro upstream
+                        // (LaurenzV/hayro#1194).
+                        if distance == 0 || distance > self.output.len() {
+                            warn!("invalid flate distance {}", distance);
+
+                            self.eof = true;
+                            return;
+                        }
+
                         for _ in 0..length {
-                            if start < self.output.len() {
-                                let byte = self.output[self.output.len() - distance];
-                                self.output.push(byte);
-                            }
+                            let byte = self.output[self.output.len() - distance];
+                            self.output.push(byte);
                         }
                     }
                 }
@@ -752,12 +761,19 @@ struct PredictorParams {
 }
 
 impl PredictorParams {
-    fn bits_per_pixel(&self) -> u8 {
-        self.bits_per_component * self.colors
+    /// Bits per pixel, or `None` if `/Colors` and `/BitsPerComponent` multiply
+    /// out of range.
+    ///
+    /// Both come straight out of the decode parms dictionary, so a document can
+    /// ask for 255 colors at 16 bits and overflow the `u8` this used to return.
+    /// Ported from hayro upstream (LaurenzV/hayro#1194).
+    fn bits_per_pixel(&self) -> Option<usize> {
+        (self.bits_per_component as usize).checked_mul(self.colors as usize)
     }
 
-    fn row_length_in_bytes(&self) -> usize {
-        (self.columns * self.bits_per_pixel() as usize).div_ceil(8)
+    fn row_length_in_bytes(&self) -> Option<usize> {
+        let bits_per_row = self.columns.checked_mul(self.bits_per_pixel()?)?;
+        Some(bits_per_row.div_ceil(8))
     }
 }
 
@@ -794,11 +810,11 @@ fn apply_predictor(data: Vec<u8>, params: &PredictorParams) -> Option<Vec<u8>> {
         i => {
             let is_png_predictor = i >= 10;
 
-            let row_len = params.row_length_in_bytes();
+            let row_len = params.row_length_in_bytes()?;
 
             let total_row_len = if is_png_predictor {
                 // + 1 Because each row must start with the predictor that is used for PNG predictors.
-                row_len + 1
+                row_len.checked_add(1)?
             } else {
                 row_len
             };
@@ -825,10 +841,7 @@ fn apply_predictor(data: Vec<u8>, params: &PredictorParams) -> Option<Vec<u8>> {
             }
 
             let (bit_size, chunk_len) = if is_png_predictor {
-                (
-                    8,
-                    (params.colors * params.bits_per_component).div_ceil(8) as usize,
-                )
+                (8, params.bits_per_pixel()?.div_ceil(8))
             } else {
                 (params.bits_per_component, params.colors as usize)
             };
@@ -1121,5 +1134,60 @@ mod tests {
                 4, 3, 1, 252, 5, 253, 6, 1, 229, 254,
             ],
         );
+    }
+}
+
+/// Regression tests for fixes ported from hayro upstream (LaurenzV/hayro#1194).
+#[cfg(test)]
+mod upstream_hardening_tests {
+    use super::{PredictorParams, apply_predictor};
+
+    /// `/Colors` and `/BitsPerComponent` are both single bytes out of the
+    /// decode parms dictionary, and the product used to be computed in a `u8`.
+    /// 255 x 16 does not fit.
+    #[test]
+    fn bits_per_pixel_does_not_overflow_a_byte() {
+        let params = PredictorParams {
+            predictor: 12,
+            colors: u8::MAX,
+            bits_per_component: 16,
+            columns: 4,
+            early_change: false,
+        };
+
+        assert_eq!(params.bits_per_pixel(), Some(255 * 16));
+    }
+
+    /// `columns * bits_per_pixel` is a `usize` multiplication of two file-
+    /// supplied numbers.
+    #[test]
+    fn predictor_rejects_overflowing_row_size() {
+        let params = PredictorParams {
+            predictor: 10,
+            colors: 4,
+            bits_per_component: 16,
+            columns: usize::MAX,
+            early_change: false,
+        };
+
+        assert!(params.row_length_in_bytes().is_none());
+        assert!(apply_predictor(vec![0], &params).is_none());
+    }
+
+    /// A predictor row that is well within range must still decode, so the
+    /// guards above cannot be satisfied by rejecting everything.
+    #[test]
+    fn predictor_still_accepts_a_sane_row() {
+        let params = PredictorParams {
+            predictor: 12,
+            colors: 1,
+            bits_per_component: 8,
+            columns: 3,
+            early_change: false,
+        };
+
+        // Two PNG-Up rows of three bytes each, prefixed with the filter type.
+        let data = vec![2, 1, 2, 3, 2, 1, 1, 1];
+        assert_eq!(apply_predictor(data, &params), Some(vec![1, 2, 3, 2, 3, 4]));
     }
 }

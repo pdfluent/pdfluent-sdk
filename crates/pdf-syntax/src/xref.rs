@@ -824,7 +824,9 @@ fn populate_from_xref_table<'a>(
         reader.skip_white_spaces();
 
         let start = header.start;
-        let end = start + header.num_entries;
+        // Both come from the file. Ported from hayro upstream
+        // (LaurenzV/hayro#1194).
+        let end = start.checked_add(header.num_entries)?;
 
         for obj_number in start..end {
             max_obj = max(max_obj, obj_number);
@@ -1013,7 +1015,8 @@ fn read_xref_table_trailer<'a>(
     reader.skip_white_spaces();
 
     while let Some(header) = reader.read_without_context::<SubsectionHeader>() {
-        reader.jump(reader.offset() + XREF_ENTRY_LEN * header.num_entries as usize);
+        let len = XREF_ENTRY_LEN.checked_mul(header.num_entries as usize)?;
+        reader.jump(reader.offset().checked_add(len)?);
     }
 
     reader.skip_white_spaces();
@@ -1399,5 +1402,29 @@ mod qf2b_objectstream_cache_tests {
             reduction >= 10.0,
             "QF2-B acceptance: ≥ 10 % parse-time reduction required; got {reduction:.2} %"
         );
+    }
+}
+
+/// Regression tests for fixes ported from hayro upstream (LaurenzV/hayro#1194).
+///
+/// Both subsection-header fields come from the file. `start + num_entries` and
+/// `XREF_ENTRY_LEN * num_entries` overflowed on a header that declares more
+/// entries than the address space holds.
+#[cfg(test)]
+mod upstream_hardening_tests {
+    use super::*;
+
+    #[test]
+    fn xref_table_trailer_rejects_overflowing_entry_skip() {
+        let data = b"xref\n0 999999999999999999999\ntrailer\n<<>>";
+        let mut reader = Reader::new(data);
+        assert!(read_xref_table_trailer(&mut reader, &ReaderContext::dummy()).is_none());
+    }
+
+    #[test]
+    fn xref_table_trailer_still_reads_a_sane_header() {
+        let data = b"xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 1 >>";
+        let mut reader = Reader::new(data);
+        assert!(read_xref_table_trailer(&mut reader, &ReaderContext::dummy()).is_some());
     }
 }
