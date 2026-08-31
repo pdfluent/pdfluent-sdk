@@ -516,7 +516,35 @@ pub struct Reader<'a> {
 /// Maximum allowed embedding of literal strings.
 pub const MAX_BRACKET: usize = 100;
 
-pub const MAX_NESTING_DEPTH: usize = 100;
+/// How deep an array or dictionary may nest before the parser refuses to
+/// descend further.
+///
+/// Upstream lopdf sets this to 100 (c755394). We set it to 32, and the reason is
+/// measurable rather than aesthetic: `Reader::read` fans object parsing out over
+/// rayon workers, so the stack this recursion runs on is a spawned thread's
+/// default 2 MiB, not the main thread's 8 MiB. The dictionary parser costs
+/// roughly 20 KiB of stack per nesting level in an unoptimised build, and a
+/// stack overflow on a rayon worker aborts the whole process -- no `Result` to
+/// return, nothing for a caller to catch.
+///
+/// Measured on this crate at debug profile, feeding a 50 000-deep dictionary
+/// through `Document::load_mem` on default thread stacks:
+///
+/// | limit | outcome           |
+/// |------:|-------------------|
+/// |   100 | stack overflow    |
+/// |    80 | survives          |
+/// |    64 | survives          |
+/// |    32 | survives          |
+///
+/// 32 leaves a 2.5x margin over the measured edge, which is what covers a change
+/// of compiler version, profile, or rayon's default stack. Raising it back to
+/// upstream's 100 needs either a bigger worker stack or a parser that does not
+/// recurse -- not a decision that a re-merge should make by accident.
+///
+/// Real documents do not come near 32: PDF 32000-1 defines no nesting this deep,
+/// and nothing in the test corpus exceeds single digits.
+pub const MAX_NESTING_DEPTH: usize = 32;
 
 /// PDF metadata extracted without loading the entire document.
 /// This is useful for quickly getting basic information about large PDFs.
