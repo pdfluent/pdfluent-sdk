@@ -81,37 +81,6 @@ jobs:
         run: python3 scripts/ci/a_baseline_names_the_machine.py
       - name: The baseline-hardware guard still bites
         run: python3 scripts/ci/test_a_baseline_names_the_machine.py
-  # Its own job, not a step in orchestration-guard. That job runs twenty-odd
-  # guards in sequence, and a step that fails takes every later step with it --
-  # so an unrelated red there would silently stop this one running, which is
-  # the shape of the failure this whole change is about (#276).
-  #
-  # This was ubuntu-latest, argued as harmless because it compiles nothing and
-  # touches no network. The standing rule is zero hosted minutes with no
-  # exception for the cheap tier -- and `no_hosted_minutes_on_a_push.py` only
-  # COUNTS ubuntu on automatic triggers rather than refusing it, so the counter
-  # bids lower than the rule. That gap is a finding of its own (#292).
-  #
-  # A python-only guard belongs on the persistent runner: orchestration_stays_
-  # hosted objects to jobs that COMPILE there, not to file scans.
-  gate-corpus-guard:
-    name: The gate corpus is pinned, licensed and the size it says
-    runs-on: [self-hosted, xfa-fast]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      # The guard first, then the test that tries to defeat it -- a guard whose
-      # parser stopped understanding the manifest reports a clean one in
-      # exactly the same words.
-      - name: The manifest still describes one pinned, licensed set
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/gate_corpus_is_pinned.py
-      - name: The gate-corpus guard rejects what it should
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_gate_corpus_is_pinned.py
-
   orchestration-guard:
     name: No ref-dispatchable job on the persistent runner
     # The repository's default workflow token is "read", which grants
@@ -361,6 +330,26 @@ jobs:
       - name: Every error code links to a section that exists
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/error_codes_have_an_anchor.py
+      # `always()` on both, and not for tidiness. A step that fails takes
+      # every later step in the job with it, so parking these behind twenty
+      # other guards would mean an unrelated red quietly stops the corpus
+      # gate from being checked -- which is the exact shape of #276, where
+      # nothing was failing and nothing was running.
+      #
+      # They stay in this job rather than getting their own because a hosted
+      # runner is not available: the Actions spending limit disables
+      # ubuntu-latest outright, and a new job on the desktop would need its
+      # own entry in the orchestration baseline. This job is already there.
+      #
+      # The guard first, then the test that tries to defeat it -- a guard
+      # whose parser stopped understanding the manifest reports a clean one
+      # in exactly the same words.
+      - name: The manifest still describes one pinned, licensed set
+        if: always()
+        run: python3 scripts/ci/gate_corpus_is_pinned.py
+      - name: The gate-corpus guard rejects what it should
+        if: always()
+        run: python3 scripts/ci/test_gate_corpus_is_pinned.py
       - name: No pull request has been left to rot
         if: ${{ !cancelled() }}
         env:
