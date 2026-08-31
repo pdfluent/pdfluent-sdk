@@ -94,6 +94,14 @@ jobs:
       - name: Every self-hosted label has a runner
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/every_label_has_a_runner.py
+      - name: A key GitHub needs a value for has one
+        run: python3 scripts/ci/test_every_workflow_can_start.py
+      - name: Every workflow can start at all
+        run: python3 scripts/ci/every_workflow_can_start.py
+      - name: The never-green gate still bites
+        run: python3 scripts/ci/test_a_gate_that_never_went_green.py
+      - name: No workflow has been red since its file last changed
+        run: python3 scripts/ci/a_gate_that_never_went_green.py
       - name: Schedule conditions name a cron that exists
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/schedule_guards_match_their_cron.py

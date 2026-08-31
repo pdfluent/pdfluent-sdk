@@ -51,6 +51,10 @@ run kosten   python3 scripts/ci/no_hosted_minutes_on_a_push.py
 run instances python3 scripts/ci/one_instance_per_event.py
 run jobsexist python3 scripts/ci/workflow_jobs_exist.py
 run labels    python3 scripts/ci/every_label_has_a_runner.py
+run startbaar python3 scripts/ci/every_workflow_can_start.py
+run startbaartest python3 scripts/ci/test_every_workflow_can_start.py
+run groen     python3 scripts/ci/a_gate_that_never_went_green.py
+run groentest python3 scripts/ci/test_a_gate_that_never_went_green.py
 run crons     python3 scripts/ci/schedule_guards_match_their_cron.py
 run mirror    python3 scripts/ci/test_mirror_has_not_drifted.py
 run infra     python3 scripts/ci/test_infra_health.py
