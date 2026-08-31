@@ -47,6 +47,8 @@ import os
 import pathlib
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 
 FLOWS = pathlib.Path(".github/workflows")
 
@@ -59,6 +61,14 @@ GENOEG = 3
 # baseline that only grows is a list of excuses, and one that only shrinks
 # stops noticing when something dies.
 BEKEND = {
+    # Found by this guard on its own pull request, which is the strongest thing
+    # it has said so far: the workflow it lives in is itself a dead gate.
+    # `orchestration-guard` aborts on step four -- ci-ephemeral's `reap` job on
+    # the persistent runner (#267) -- and has done on every run for weeks. Not
+    # fixable from here; #1601 and #1605 both carry the repair and are open.
+    # This entry comes out the day ci.yml goes green, and the both-directions
+    # check below is what will insist on it.
+    "ci.yml": "orchestration-guard aborts on step four since 28-08-2026 (#267; repair open in #1601/#1605)",
     "enterprise-acceptance.yml": "red on every run since 28-08-2026; found by this guard, not diagnosed (#290)",
     "fuzz.yml": "red on every run since 28-08-2026; found by this guard, not diagnosed (#290)",
     "node-bindings.yml": "red on every run since 28-08-2026; found by this guard, not diagnosed (#290)",
@@ -72,9 +82,41 @@ BEKEND = {
 STIL_NA_DAGEN = 30
 
 
+REPO = "jasperdew/xfa-native-rust"
+
+
 def gh(pad: str):
-    # `gh` is not installed on the desktop runner, and an uncaught OSError is a
-    # crash pretending to be a failed check.
+    """One GitHub API call, by whichever route this machine has.
+
+    `gh` is not installed on the desktop runner. The first version of this
+    guard used it anyway, and on the pull request that introduced it the step
+    printed
+
+        SKIPPED (not a pass): could not read the workflow list from GitHub
+
+    on a green job -- announcing itself, and still measuring nothing, which is
+    the exact shape #290 is about. Passing GH_TOKEN was not enough; there is no
+    binary to pass it to.
+
+    So: the token over plain HTTP when there is one, which is the case in CI,
+    and `gh` otherwise, which is the case on a workstation where the token
+    lives in a keyring. urllib is the same route scripts/ci/mr_staleness.py
+    takes for the same reason.
+    """
+    pad = pad.replace("{owner}/{repo}", REPO)
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        req = urllib.request.Request(
+            f"https://api.github.com/{pad.lstrip('/')}",
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/vnd.github+json",
+                     "User-Agent": "pdfluent-ci-guard"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as fh:
+                return json.loads(fh.read().decode())
+        except (urllib.error.URLError, OSError, json.JSONDecodeError):
+            return None
+
     try:
         r = subprocess.run(["gh", "api", pad], capture_output=True, text=True,
                            check=False, timeout=120, stdin=subprocess.DEVNULL)
