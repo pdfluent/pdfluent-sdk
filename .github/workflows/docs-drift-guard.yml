@@ -10,13 +10,25 @@ name: Docs Drift Guard
 # `.rs` files byte-for-byte.
 
 on:
-  # Automatic triggers removed on 28-08-2026. This work now runs on the
-  # shared instance that ci-ephemeral.yml creates: one server per push,
-  # not one per workflow. Five workflows each provisioning their own gave
-  # five cpx42s inside five minutes for a single push (#275).
+  # Automatic triggers removed on 28-08-2026, on the grounds that this work now
+  # runs on the shared instance ci-ephemeral.yml creates (#275).
+  #
+  # That was only ever half true, and the half that was missing is the half
+  # that measures anything. The `docs drift (advisory)` step over there ran
+  # `cargo build -p pdfluent-snippet-extract --release` and stopped: it built
+  # the extractor and never ran it, so no snippet was re-extracted and no diff
+  # was ever taken. Between 28-08 and 31-08-2026 the drift check existed in two
+  # places and ran in neither, because this file could not start at all (#290)
+  # and that step did not do the work. The extract and the diff are now in that
+  # step, where the build already was; this file stays as the dispatchable
+  # reproducer.
   workflow_dispatch:
 
-env:
+# Nothing to set here. The key was left behind on 31-08-2026 when
+# HCLOUD_SNAPSHOT_ID was deleted from it (d511912f), and `env:` with no value
+# is valid YAML but not a valid workflow: GitHub refused the whole file, so
+# every push produced a run with zero jobs and zero seconds (#290). An absent
+# key is the way to say "no environment"; an empty one is a broken file.
 
 jobs:
   drift-guard:
@@ -25,7 +37,9 @@ jobs:
     # not yet in the SDK, so regenerating produces non-compilable snippets.
     # The check still runs and reports drift; it does not block merges.
     continue-on-error: true
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: hosted minutes are billed and the standing rule is to
+    # spend none (#290).
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
 

@@ -17,12 +17,20 @@ on:
   # five cpx42s inside five minutes for a single push (#275).
   workflow_dispatch:
 
-env:
+# Nothing to set here. The key was left behind on 31-08-2026 when
+# HCLOUD_SNAPSHOT_ID was deleted from it (d511912f), and `env:` with no value
+# is valid YAML but not a valid workflow: GitHub refused the whole file, so
+# every push produced a run with zero jobs and zero seconds (#290). An absent
+# key is the way to say "no environment"; an empty one is a broken file.
 
 jobs:
   wasm-surface:
     name: Cross-compile wasm_surface on wasm32-unknown-unknown
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: hosted minutes are billed and the standing rule is to
+    # spend none. These same two commands run on every push as the `wasm
+    # surface` step of ci-ephemeral.yml; this workflow is the isolated
+    # reproducer you dispatch when that step goes red (#290).
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
 
