@@ -78,6 +78,11 @@ jobs:
           fi
           echo "Version check: ✅ $WS_VER"
 
+      # The persistent runner hands every job the state the last one left. Clear
+      # debris from an aborted build, and fail in seconds if the directory has
+      # stopped answering, rather than forty minutes in. (#264)
+      - name: The shared build directory is there and undamaged
+        run: bash scripts/ci/cargo_target_health.sh
       - name: Workspace compile check
         run: cargo check --workspace --exclude pdf-desktop
 
