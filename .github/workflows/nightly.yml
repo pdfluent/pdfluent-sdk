@@ -259,36 +259,12 @@ jobs:
           path: reports/verapdf/
           retention-days: 30
 
-  visual-regression:
-    needs: create-runner
-    name: Nightly AVRT
-    runs-on: ${{ needs.create-runner.outputs.label }}
-    if: false  # Enable when gold masters are available
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install ImageMagick
-        run: sudo apt-get update && sudo apt-get install -y imagemagick
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Run AVRT
-        run: ./scripts/run-avrt.sh --ci
-
-      - name: Generate report
-        if: always()
-        run: ./scripts/avrt-report.sh
-
-      - name: Upload report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nightly-avrt-report
-          path: reports/avrt/
-          retention-days: 30
   delete-runner:
-    needs: [create-runner, full-corpus-test, benchmarks, desktop-tests, conversion-tests, conformance, visual-regression]
+    # `visual-regression` was removed with avrt.yml on 31-08-2026: the gold
+    # masters it compares against have never existed on any branch, so it
+    # sat behind `if: false` measuring nothing. The missing capability is
+    # tracked as an issue of its own, not as a parked job (#290).
+    needs: [create-runner, full-corpus-test, benchmarks, desktop-tests, conversion-tests, conformance]
     if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     # Without this the create action polls for a runner that may never
     # register, holding the one desktop runner while everything else
