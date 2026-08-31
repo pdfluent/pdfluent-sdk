@@ -48,6 +48,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 VLOER = 500
 
@@ -59,7 +60,12 @@ CRASH = re.compile(
     re.IGNORECASE,
 )
 
-TIMEOUT_S = 60
+TIMEOUT_S = 30
+# Five hundred files that each hang for TIMEOUT_S would outlast the job and be
+# killed by GitHub with no output at all -- a gate that reports nothing looks
+# exactly like a gate that has not got round to you yet, which is #276 again.
+# The budget turns that into a result: too slow is a finding, not a timeout.
+BUDGET_S = 900
 
 
 def een(binary: str, pdf: pathlib.Path) -> tuple[str, str, str]:
@@ -132,18 +138,28 @@ def main() -> int:
         bekend = json.loads(kpad.read_text()).get("known", {})
 
     crashes: list[tuple[str, str, str]] = []
+    begonnen = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
         for naam, oordeel, detail in pool.map(
                 lambda f: een(str(binary), f), pdfs):
             if oordeel != "ok":
                 crashes.append((naam, oordeel, detail))
+    duur = time.monotonic() - begonnen
 
     gevonden = {c[0] for c in crashes}
     nieuw = sorted(gevonden - set(bekend))
     genezen = sorted(set(bekend) - gevonden)
 
-    print(f"[no-crash] {n} PDFs rendered, {len(crashes)} crashed or hung, "
-          f"{len(bekend)} on the known list")
+    print(f"[no-crash] {n} PDFs rendered in {duur:.0f}s, {len(crashes)} crashed "
+          f"or hung, {len(bekend)} on the known list")
+
+    if duur > BUDGET_S:
+        print(f"\n[no-crash] FATAL: {duur:.0f}s for {n} files, budget is "
+              f"{BUDGET_S}s. Page one of a file under 3 MB at 72 dpi does not "
+              "take this long; something got much slower, and the next step is "
+              "for this to overrun the job and report nothing at all.",
+              file=sys.stderr)
+        return 1
 
     if nieuw:
         print(f"\n[no-crash] FATAL: {len(nieuw)} file(s) newly crash or hang "
