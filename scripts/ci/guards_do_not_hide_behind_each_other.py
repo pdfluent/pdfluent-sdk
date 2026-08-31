@@ -27,9 +27,16 @@ see all of them at once.
 This check keeps that true for steps added later, which is the part a convention
 cannot do on its own.
 
+There is a second way to un-arm a guard job, and it is one line as well:
+`continue-on-error: true` leaves the step running, the log red and the job
+green. A gate that cannot fail is the shape #286 found in front of the merge --
+a PDF/A check validating its own input fixtures, unable to go red, standing
+where the real gate was not. So this file refuses that too, on the step and on
+the job.
+
 Exit codes:
-  0  every guard step runs regardless of its predecessors
-  1  a guard step would be skipped when an earlier one fails
+  0  every guard step runs regardless of its predecessors, and can still fail
+  1  a guard step would be skipped when an earlier one fails, or cannot fail
   3  cannot check (announced, never silent)
 """
 
@@ -50,6 +57,12 @@ ROOT = Path(__file__).resolve().parents[2]
 # says nothing about whether the next one would pass, so the next one must run.
 GUARD_JOBS = {
     ("ci.yml", "orchestration-guard"),
+    # #288 ported thirteen guards off the GitLab mirror into these two jobs.
+    # They are the same shape as orchestration-guard -- a series of independent
+    # checks -- so they carry the same risk: one failure would hide the rest,
+    # and a step that never ran looks exactly like a step that passed.
+    ("ci.yml", "promise-guard"),
+    ("ci.yml", "measurement-guard"),
 }
 
 # Steps that genuinely are prerequisites: if the checkout or the interpreter is
@@ -86,6 +99,12 @@ def main() -> int:
             problems.append(f"{filename}: job `{job_name}` no longer exists. Update GUARD_JOBS or restore it.")
             continue
 
+        if str(job.get("continue-on-error", "")).lower() == "true":
+            problems.append(
+                f"{filename}:{job_name} is continue-on-error, so every guard in it "
+                "reports green whatever it finds. Remove it."
+            )
+
         steps = job.get("steps") or []
         seen_a_guard = False
         for index, step in enumerate(steps, start=1):
@@ -98,6 +117,14 @@ def main() -> int:
                 continue
             seen_a_guard = True
             checked += 1
+            if str(step.get("continue-on-error", "")).lower() == "true":
+                label = step.get("name") or str(step.get("run", ""))[:60]
+                problems.append(
+                    f"{filename}:{job_name} step {index} ({label}) is continue-on-error. "
+                    "It runs, it goes red in the log and the job stays green -- which is "
+                    "the soft gate this repository has already been caught by."
+                )
+
             condition = str(step.get("if", ""))
             if not any(marker in condition for marker in RUNS_ANYWAY):
                 label = step.get("name") or str(step.get("run", ""))[:60]
@@ -120,7 +147,10 @@ def main() -> int:
             print(f"  - {p}", file=sys.stderr)
         return 1
 
-    print(f"✓ {checked} guard step(s) across {len(GUARD_JOBS)} job(s) run regardless of their predecessors")
+    print(
+        f"✓ {checked} guard step(s) across {len(GUARD_JOBS)} job(s) run regardless of "
+        "their predecessors, and none of them is allowed to fail softly"
+    )
     return 0
 
 
