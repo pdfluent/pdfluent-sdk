@@ -1097,9 +1097,11 @@ impl Stream {
 
         let image = hayro_jpeg2000::Image::new(input, &settings)
             .map_err(|_| Error::Unimplemented("JPXDecode failed"))?;
-        image
-            .decode()
-            .map_err(|_| Error::Unimplemented("JPXDecode failed"))
+        let mut decoder_context = hayro_jpeg2000::DecoderContext::default();
+        Ok(image
+            .decode(&mut decoder_context)
+            .map_err(|_| Error::Unimplemented("JPXDecode failed"))?
+            .data_u8())
     }
 
     fn decompress_predictor(mut data: Vec<u8>, params: Option<&Dictionary>) -> Result<Vec<u8>> {

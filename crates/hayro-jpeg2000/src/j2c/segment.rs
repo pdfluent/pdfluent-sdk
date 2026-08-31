@@ -5,7 +5,7 @@ use alloc::boxed::Box;
 use super::build::Segment;
 use super::codestream::markers::{EPH, SOP};
 use super::codestream::{ComponentInfo, Header};
-use super::decode::{DecompositionStorage, TileDecodeContext};
+use super::decode::DecompositionStorage;
 use super::progression::ProgressionData;
 use super::tile::{Tile, TilePart};
 use crate::error::{Result, TileError, bail};
@@ -13,10 +13,9 @@ use crate::reader::BitReader;
 
 pub(crate) const MAX_BITPLANE_COUNT: u8 = 32;
 
-pub(crate) fn parse<'a>(
-    tile: &'a Tile<'a>,
+pub(crate) fn parse<'a, 'b>(
+    tile: &'b Tile<'a>,
     mut progression_iterator: Box<dyn Iterator<Item = ProgressionData> + '_>,
-    tile_ctx: &mut TileDecodeContext<'a>,
     header: &Header<'_>,
     storage: &mut DecompositionStorage<'a>,
 ) -> Result<()> {
@@ -24,7 +23,7 @@ pub(crate) fn parse<'a>(
         if parse_inner(
             tile_part.clone(),
             &mut progression_iterator,
-            tile_ctx,
+            &tile.component_infos,
             storage,
         )
         .is_none()
@@ -40,13 +39,13 @@ pub(crate) fn parse<'a>(
 fn parse_inner<'a>(
     mut tile_part: TilePart<'a>,
     progression_iterator: &mut dyn Iterator<Item = ProgressionData>,
-    tile_ctx: &mut TileDecodeContext<'a>,
+    component_infos: &[ComponentInfo],
     storage: &mut DecompositionStorage<'a>,
 ) -> Option<()> {
     while !tile_part.header().at_end() {
         let progression_data = progression_iterator.next()?;
         let resolution = progression_data.resolution;
-        let component_info = &tile_ctx.tile.component_infos[progression_data.component as usize];
+        let component_info = &component_infos[progression_data.component as usize];
         let tile_decompositions =
             &mut storage.tile_decompositions[progression_data.component as usize];
         let sub_band_iter = tile_decompositions.sub_band_iter(resolution, &storage.decompositions);
