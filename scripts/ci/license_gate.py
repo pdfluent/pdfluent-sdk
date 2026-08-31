@@ -154,6 +154,32 @@ def elections_are_attributed(pol: dict) -> list[str]:
     return uit
 
 
+def embedded_assets_are_attributed() -> list[str]:
+    """Every binary asset we ship inside a crate must be named in the attribution.
+
+    A .icc carries someone else's rights and no manifest declares it, so no
+    ecosystem scanner above will ever see it: cargo metadata lists crates, not
+    the bytes baked into them. ProPhoto-v2-micro.icc sat in the tree for months,
+    correctly attributed in its own crate's README and absent from the file that
+    actually ships -- found only because someone counted the files by hand. This
+    is that count, kept.
+
+    Matched on filename, which is the string a reader greps for. It is a weaker
+    check than a hash, and deliberately: the profiles are upstream artefacts we
+    do not modify, so drift here is a file appearing or disappearing, not one
+    changing underneath us.
+    """
+    if not ATTRIBUTIE.is_file():
+        return [f"{ATTRIBUTIE.name} is missing"]
+    tekst = ATTRIBUTIE.read_text(encoding="utf-8", errors="ignore")
+    uit = []
+    for pad in sorted(REPO.glob("crates/*/assets/*.icc")):
+        if pad.name not in tekst:
+            uit.append(f"{pad.relative_to(REPO)} is shipped but not named in "
+                       f"{ATTRIBUTIE.name}")
+    return uit
+
+
 # --- scanners ---------------------------------------------------------------
 
 def scan_cargo(_: dict) -> list[tuple[str, str]]:
@@ -357,7 +383,7 @@ def main() -> int:
             print(f"      {s}")
         problemen += [f"{naam}: {s}" for s in slecht]
 
-    for m in elections_are_attributed(pol):
+    for m in elections_are_attributed(pol) + embedded_assets_are_attributed():
         problemen.append(f"attribution: {m}")
         print(f"  {'attrib':8} FAIL        {m}")
 
