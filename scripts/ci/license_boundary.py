@@ -31,6 +31,7 @@ in the commit hook, where a network call would make it skippable.
 """
 from __future__ import annotations
 
+import hashlib
 import pathlib
 import re
 import sys
@@ -50,6 +51,48 @@ PERMISSIEF = re.compile(r"\b(MIT|Apache-2\.0|BSD-[0-9]|ISC|Zlib|Unlicense|CC0)\b
 # so a crate may be removed without tripping this, but an empty or truncated
 # map cannot pass as a clean one.
 VLOER = 40
+
+
+# --- the AGPL text itself ----------------------------------------------------
+
+AGPL = REPO / "LICENSE-AGPL"
+
+# Pinned to the FSF's own publication at https://www.gnu.org/licenses/agpl-3.0.txt,
+# fetched 31-08-2026. Cross-checked word for word against SPDX's stored
+# AGPL-3.0-only text: 5535 words in both, and the only three differences are
+# `http` -> `https` in FSF/GNU URLs, which is the FSF's own migration and not a
+# change to the licence.
+#
+# WHY A HASH AND NOT A STRUCTURAL CHECK
+#
+# An altered GPL is not the GPL. Edit one sentence and the result is
+# incompatible with every other GPL work and loses the case law that gives the
+# text its meaning -- and it would not look wrong, because it would still read
+# like a licence. Counting section headings cannot catch a changed sentence
+# inside section 7. A hash can, and nothing else here can.
+#
+# If this ever fails legitimately, the FSF published a new text. Then fetch it,
+# diff it deliberately, and change this constant in the same commit -- do not
+# make the constant follow the file.
+AGPL_SHA256 = "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
+AGPL_WOORDEN = 5535
+
+
+def agpl_is_onaangeroerd() -> list[str]:
+    """The AGPL text is byte-for-byte the one we pinned."""
+    if not AGPL.is_file():
+        return [f"{AGPL.name} is missing; the AGPL half of the dual licence has no text"]
+    rauw = AGPL.read_bytes()
+    echt = hashlib.sha256(rauw).hexdigest()
+    if echt == AGPL_SHA256:
+        return []
+    woorden = len(rauw.decode("utf-8", "ignore").split())
+    return [f"{AGPL.name} hashes to {echt[:16]}…, pinned is {AGPL_SHA256[:16]}… "
+            f"({woorden} words, expected {AGPL_WOORDEN}). An edited GPL is not the "
+            "GPL: it loses compatibility with every other GPL work and the case "
+            "law that interprets it, and it still reads like a licence. If the FSF "
+            "published a new text, diff it deliberately and move the pin in the "
+            "same commit"]
 
 
 def lees(pad: pathlib.Path) -> str:
@@ -74,7 +117,7 @@ def main() -> int:
               "A short map reads as a clean run and is not one.", file=sys.stderr)
         return 1
 
-    problemen: list[str] = []
+    problemen: list[str] = agpl_is_onaangeroerd()
     gezien: set[str] = set()
 
     for rij in rijen:
