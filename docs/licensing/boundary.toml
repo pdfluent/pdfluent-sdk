@@ -1,0 +1,308 @@
+# Which side of the licence boundary each first-party crate is on.
+#
+# #220 asks for the boundary as DATA, not prose: "een lijst die CI kan lezen".
+# scripts/ci/license_boundary.py reads this and fails when a crate's Cargo.toml
+# stops agreeing with the side it is booked on.
+#
+# WHY A CRATE CAN COST MONEY BY MOVING SIDES
+#
+# `ours` is dual-licensed AGPLv3 + commercial after LC9. `forked` stays
+# permissive: NOTICE promises those "may be used without a commercial license
+# from PDFluent", and there is no revenue in them anyway -- nobody buys a
+# licence for a JBIG2 decoder. The value is XFA, forms, PDF/A, signing and
+# conversion.
+#
+# Move a forked crate to `ours` and we break that promise to people who already
+# have the code. Move one of ours to `forked` and we publish the product under a
+# permissive licence, which cannot be taken back. Neither shows up as a failing
+# test; both show up in a lawyer's letter.
+#
+# THE WORKSPACE-MIT TRAP, and why `internal` exists at all
+#
+# The workspace root declares `license = "MIT"`. Six crates inherit it, and all
+# six are `publish = false` today, so nothing has ever gone to crates.io as MIT.
+# That is a coincidence of discipline, not a mechanism: add a crate, forget
+# `publish = false`, and the proprietary SDK ships to crates.io declaring MIT --
+# an irrevocable grant, made by omission.
+#
+# So `internal` carries `publish_false = true` on every row, and the gate
+# refuses any crate that inherits the workspace licence without it.
+
+
+# --- ours: AGPLv3 + commercial (license-file = "LICENSE") ---
+
+[[crate]]
+name = "formcalc-interpreter"
+dir = "crates/formcalc-interpreter"
+side = "ours"
+
+[[crate]]
+name = "pdf-annot"
+dir = "crates/pdf-annot"
+side = "ours"
+
+[[crate]]
+name = "pdf-capi"
+dir = "crates/pdf-capi"
+side = "ours"
+publish_false = true
+
+[[crate]]
+name = "pdf-compliance"
+dir = "crates/pdf-compliance"
+side = "ours"
+
+[[crate]]
+name = "pdf-docx"
+dir = "crates/pdf-docx"
+side = "ours"
+
+[[crate]]
+name = "pdf-engine"
+dir = "crates/pdf-engine"
+side = "ours"
+
+[[crate]]
+name = "pdfluent-extract"
+dir = "crates/pdf-extract"
+side = "ours"
+
+[[crate]]
+name = "pdfluent-forms"
+dir = "crates/pdf-forms"
+side = "ours"
+
+[[crate]]
+name = "pdf-invoice"
+dir = "crates/pdf-invoice"
+side = "ours"
+
+[[crate]]
+name = "pdf-manip"
+dir = "crates/pdf-manip"
+side = "ours"
+
+[[crate]]
+name = "pdf-node"
+dir = "crates/pdf-node"
+side = "ours"
+publish_false = true
+
+[[crate]]
+name = "pdf-ocr"
+dir = "crates/pdf-ocr"
+side = "ours"
+
+[[crate]]
+name = "pdf-pptx"
+dir = "crates/pdf-pptx"
+side = "ours"
+
+[[crate]]
+name = "pdf-python"
+dir = "crates/pdf-python"
+side = "ours"
+publish_false = true
+
+[[crate]]
+name = "pdf-redact"
+dir = "crates/pdf-redact"
+side = "ours"
+
+[[crate]]
+name = "pdfluent-sign"
+dir = "crates/pdf-sign"
+side = "ours"
+
+[[crate]]
+name = "pdf-standard-fonts"
+dir = "crates/pdf-standard-fonts"
+side = "ours"
+
+[[crate]]
+name = "pdf-text-format"
+dir = "crates/pdf-text-format"
+side = "ours"
+
+[[crate]]
+name = "pdf-xfa"
+dir = "crates/pdf-xfa"
+side = "ours"
+
+[[crate]]
+name = "pdf-xlsx"
+dir = "crates/pdf-xlsx"
+side = "ours"
+
+[[crate]]
+name = "pdfluent"
+dir = "crates/pdfluent"
+side = "ours"
+
+[[crate]]
+name = "pdfluent-cli"
+dir = "crates/pdfluent-cli"
+side = "ours"
+publish_false = true
+
+[[crate]]
+name = "xfa-cli"
+dir = "crates/xfa-cli"
+side = "ours"
+publish_false = true
+
+[[crate]]
+name = "xfa-dom-resolver"
+dir = "crates/xfa-dom-resolver"
+side = "ours"
+
+[[crate]]
+name = "xfa-js-sandboxed"
+dir = "crates/xfa-js-sandboxed"
+side = "ours"
+
+[[crate]]
+name = "xfa-json"
+dir = "crates/xfa-json"
+side = "ours"
+
+[[crate]]
+name = "xfa-layout-engine"
+dir = "crates/xfa-layout-engine"
+side = "ours"
+
+[[crate]]
+name = "xfa-license"
+dir = "crates/xfa-license"
+side = "ours"
+
+[[crate]]
+name = "xfa-wasm"
+dir = "crates/xfa-wasm"
+side = "ours"
+publish_false = true
+
+
+# --- forked from upstream: stays permissive, no commercial licence needed ---
+
+[[crate]]
+name = "pdfluent-cff"
+dir = "crates/cff-parser"
+side = "forked"
+declares = "MIT OR Apache-2.0"
+
+[[crate]]
+name = "pdfluent-ccitt"
+dir = "crates/hayro-ccitt"
+side = "forked"
+declares = "Apache-2.0 OR MIT"
+
+[[crate]]
+name = "pdfluent-jbig2"
+dir = "crates/hayro-jbig2"
+side = "forked"
+declares = "Apache-2.0 OR MIT"
+
+[[crate]]
+name = "pdfluent-jpeg2000"
+dir = "crates/hayro-jpeg2000"
+side = "forked"
+declares = "Apache-2.0 OR MIT"
+
+[[crate]]
+name = "pdfluent-lopdf"
+dir = "crates/lopdf"
+side = "forked"
+declares = "MIT"
+
+[[crate]]
+name = "pdf-content-stream"
+dir = "crates/pdf-content-stream"
+side = "forked"
+declares = "MIT OR Apache-2.0"
+publish_false = true
+
+[[crate]]
+name = "pdf-diff"
+dir = "crates/pdf-diff"
+side = "forked"
+declares = "MIT"
+publish_false = true
+
+[[crate]]
+name = "pdf-font"
+dir = "crates/pdf-font"
+side = "forked"
+declares = "Apache-2.0 OR MIT"
+
+[[crate]]
+name = "pdf-interpret"
+dir = "crates/pdf-interpret"
+side = "forked"
+declares = "Apache-2.0 OR MIT"
+
+[[crate]]
+name = "pdf-java"
+dir = "crates/pdf-java"
+side = "forked"
+declares = "MIT"
+publish_false = true
+
+[[crate]]
+name = "pdf-render"
+dir = "crates/pdf-render"
+side = "forked"
+declares = "Apache-2.0 OR MIT"
+
+[[crate]]
+name = "pdf-syntax"
+dir = "crates/pdf-syntax"
+side = "forked"
+declares = "Apache-2.0 OR MIT"
+
+[[crate]]
+name = "xfa-pdfrest-compare"
+dir = "crates/xfa-pdfrest-compare"
+side = "forked"
+declares = "MIT"
+publish_false = true
+
+
+# --- internal tooling: workspace MIT, never published ---
+
+[[crate]]
+name = "pdf-bench"
+dir = "crates/pdf-bench"
+side = "internal"
+publish_false = true
+
+[[crate]]
+name = "pdf-desktop"
+dir = "crates/pdf-desktop"
+side = "internal"
+publish_false = true
+
+[[crate]]
+name = "xfa-api-server"
+dir = "crates/xfa-api-server"
+side = "internal"
+publish_false = true
+
+[[crate]]
+name = "xfa-golden-tests"
+dir = "crates/xfa-golden-tests"
+side = "internal"
+publish_false = true
+
+[[crate]]
+name = "xfa-license-gen"
+dir = "crates/xfa-license-gen"
+side = "internal"
+publish_false = true
+
+[[crate]]
+name = "xfa-test-runner"
+dir = "crates/xfa-test-runner"
+side = "internal"
+publish_false = true
+
