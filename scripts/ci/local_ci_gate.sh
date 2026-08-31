@@ -74,6 +74,13 @@ run errtests  cargo test -q -p pdfluent --test error_codes_stable --test process
 run prstale   python3 scripts/ci/pr_staleness.py
 run sweep     python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
 run reaporder python3 scripts/ci/reaping_happens_after_the_work.py
+run guardrun  python3 scripts/ci/guards_do_not_hide_behind_each_other.py
+run buildmnt  bash scripts/ci/test_desktop_env.sh
+run buildheal bash scripts/ci/test_cargo_target_health.sh
+run builddir  python3 scripts/ci/shared_build_dir_fails_loudly.py
+run builddir2 python3 scripts/ci/test_persistent_builds_check_their_build_dir.py
+run builddir3 python3 scripts/ci/persistent_builds_check_their_build_dir.py
+run diskguard python3 scripts/ci/test_disk_headroom.py
 # Advisory, never blocking. It reports on live machines -- a queue, a busy
 # runner, a server someone is still using -- and none of that is a reason to
 # refuse a commit. The three-hourly run is where its exit code matters.

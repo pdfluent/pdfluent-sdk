@@ -69,6 +69,11 @@ jobs:
           restore-keys: |
             bench-baseline-${{ runner.os }}-master-
 
+      # The persistent runner hands every job the state the last one left. Clear
+      # debris from an aborted build, and fail in seconds if the directory has
+      # stopped answering, rather than forty minutes in. (#264)
+      - name: The shared build directory is there and undamaged
+        run: bash scripts/ci/cargo_target_health.sh
       - name: Run benchmarks
         run: |
           cargo bench -p pdf-bench 2>&1 | tee bench-output.txt
