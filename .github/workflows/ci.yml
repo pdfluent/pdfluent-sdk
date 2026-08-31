@@ -94,13 +94,29 @@ jobs:
       - name: Every self-hosted label has a runner
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/every_label_has_a_runner.py
+      # `if: ${{ !cancelled() }}` on every one of these, because this job runs
+      # its guards in sequence and stops at the first failure. On 31-08-2026 it
+      # was failing on step four -- "Orchestration stays on hosted runners" --
+      # on every run, and the twenty-odd steps below it were SKIPPED, which in
+      # the summary looks exactly like passed. Appending a guard here without
+      # this line adds a check that does not run. (#288 makes that mechanical
+      # for every step; these four do not wait for it.)
       - name: A key GitHub needs a value for has one
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_every_workflow_can_start.py
       - name: Every workflow can start at all
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/every_workflow_can_start.py
       - name: The never-green gate still bites
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_a_gate_that_never_went_green.py
+      # Without the token `gh api` cannot read a private repository's run
+      # history, and this guard would announce SKIPPED (not a pass) on every
+      # run -- honest, but not a gate. Same plumbing as pr_staleness.py above.
       - name: No workflow has been red since its file last changed
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/ci/a_gate_that_never_went_green.py
       - name: Schedule conditions name a cron that exists
         if: ${{ !cancelled() }}
