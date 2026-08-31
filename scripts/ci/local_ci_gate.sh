@@ -122,6 +122,10 @@ run diskguard python3 scripts/ci/test_disk_headroom.py
 # core.hooksPath set, let through -- before it reaches a remote.
 run identtest python3 scripts/ci/test_commits_use_the_noreply_alias.py
 run identity  python3 scripts/ci/commits_use_the_noreply_alias.py
+# And the same address in the tree rather than in a commit field, which is the
+# half a guard on author/committer cannot see.
+run treetest  python3 scripts/ci/test_no_personal_address_in_the_tree.py
+run treeaddr  python3 scripts/ci/no_personal_address_in_the_tree.py
 # Advisory, never blocking. It reports on live machines -- a queue, a busy
 # runner, a server someone is still using -- and none of that is a reason to
 # refuse a commit. The three-hourly run is where its exit code matters.
