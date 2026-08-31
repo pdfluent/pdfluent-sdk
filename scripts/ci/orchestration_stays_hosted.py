@@ -214,7 +214,6 @@ BASELINE = {
     ("ci.yml", "measurement-guard"),
     ("security-audit.yml", "cargo-audit"),
     ("security-audit.yml", "cargo-deny-advisories"),
-    ("verapdf.yml", "conformance"),
     # Orchestration for a pull request, under the 28-08 decision above: the
     # heavy build goes to a throwaway instance and the desktop only creates and
     # deletes it. A PR branch could change what those two jobs do; accepted

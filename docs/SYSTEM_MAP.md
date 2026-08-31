@@ -114,5 +114,7 @@ There is no barcode encoder anywhere in the workspace.
 | does the WASM binding survive the crossing? | `sanity:wasm-binding-smoke` |
 | can our output be read back by someone else? | `sanity:external-reader-verification` |
 | does our output pass the standard? | `sanity:verapdf-on-our-own-output` |
+| ...on the pipeline that blocks a merge? | GitHub `CI (ephemeral Hetzner) / workspace`, step "PDF/A conversion output conforms and keeps its text" — `scripts/ci/pdfa_output_conformance_gate.py`, five fixtures, both axes |
+| ...on a thousand real documents? | **only on GitLab**, and only automatically on a schedule or a tag: `corpus:pdfa-holdout` and `corpus:pdfa-holdout-retention` are `when: manual` for a merge request. GitLab has been the mirror since 25-08, so nothing about the holdout stands between a change and master. Written down here rather than implied, because the five-fixture gate above is easy to mistake for the whole answer (#286, blocked on #276 and #284) |
 | do tests skip in silence? | `sanity:test-skip-lint` |
 | does the whole suite pass? | `quality:cargo-test` — **automatic since 2026-08-18**, was manual with no schedule, so it ran on nothing |
