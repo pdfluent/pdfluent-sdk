@@ -1,4 +1,4 @@
-use crate::parser::{self, ParserInput};
+use crate::parser;
 use crate::{Document, Error, Object, ObjectId, Result, Stream};
 use std::collections::BTreeMap;
 use std::num::TryFromIntError;
@@ -37,9 +37,27 @@ impl Default for ObjectStreamConfig {
 }
 
 impl ObjectStream {
-    /// Parse an existing object stream
+    /// Parse an existing object stream.
+    ///
+    /// This decompresses the stream without any size limit. For untrusted input,
+    /// prefer [`ObjectStream::new_with_limit`] to guard against decompression
+    /// bombs.
     pub fn new(stream: &mut Stream) -> Result<ObjectStream> {
-        let _ = stream.decompress();
+        Self::new_with_limit(stream, None)
+    }
+
+    /// Parse an existing object stream, rejecting it if its decompressed content
+    /// would exceed `max_decompressed_size` bytes. `None` means no limit (the
+    /// behavior of [`ObjectStream::new`]).
+    pub fn new_with_limit(stream: &mut Stream, max_decompressed_size: Option<usize>) -> Result<ObjectStream> {
+        match max_decompressed_size {
+            // Object streams are decompressed while the document is loaded, so
+            // enforcing the limit here bounds the memory a single stream can use.
+            Some(max) => stream.decompress_with_limit(max)?,
+            None => {
+                let _ = stream.decompress();
+            }
+        }
 
         if stream.content.is_empty() {
             return Ok(ObjectStream {
@@ -80,7 +98,16 @@ impl ObjectStream {
                 warn!("out-of-bounds offset in object stream");
                 return None;
             }
-            let object = parser::direct_object(ParserInput::new_extra(&stream.content[offset..], "direct object"))?;
+            // Skip leading whitespace — some PDFs emit newlines before objects in ObjStm
+            let mut start = offset;
+            while start < stream.content.len() && stream.content[start].is_ascii_whitespace() {
+                start += 1;
+            }
+            if start >= stream.content.len() {
+                warn!("only whitespace after offset in object stream");
+                return None;
+            }
+            let object = parser::direct_object(&stream.content[start..])?;
 
             Some(((id, 0), object))
         };
@@ -244,32 +271,30 @@ impl ObjectStream {
         }
 
         // Rule 3: Only encryption dictionary cannot be compressed from trailer references
-        if let Ok(Object::Reference(encrypt_ref)) = doc.trailer.get(b"Encrypt") {
-            if id == *encrypt_ref {
-                return false;
-            }
+        if let Ok(Object::Reference(encrypt_ref)) = doc.trailer.get(b"Encrypt")
+            && id == *encrypt_ref
+        {
+            return false;
         }
 
         // Rule 4: Specific object types that cannot be compressed
-        if let Object::Dictionary(dict) = obj {
-            if let Ok(type_obj) = dict.get(b"Type") {
-                if let Ok(type_name) = type_obj.as_name() {
-                    match type_name {
-                        // Cross-reference streams and object streams cannot be compressed
-                        b"XRef" => return false,
-                        b"ObjStm" => return false,
+        if let Object::Dictionary(dict) = obj
+            && let Ok(type_obj) = dict.get(b"Type")
+            && let Ok(type_name) = type_obj.as_name()
+        {
+            match type_name {
+                // Cross-reference streams and object streams cannot be compressed
+                b"XRef" => return false,
+                b"ObjStm" => return false,
 
-                        // Catalog can only be excluded in linearized PDFs
-                        b"Catalog"
-                            // Check if PDF is linearized
-                            if Self::is_linearized(doc) => {
-                                return false;
-                            }
-
-                        // Page, Pages, and all other types CAN be compressed
-                        _ => {}
-                    }
+                // Catalog can only be excluded in linearized PDFs
+                b"Catalog" if Self::is_linearized(doc) => {
+                    return false;
                 }
+                b"Catalog" => {}
+
+                // Page, Pages, and all other types CAN be compressed
+                _ => {}
             }
         }
 
@@ -283,10 +308,10 @@ impl ObjectStream {
         // linearization dictionary with /Linearized entry
         // For simplicity, we check if any object has a /Linearized entry
         for obj in doc.objects.values() {
-            if let Object::Dictionary(dict) = obj {
-                if dict.has(b"Linearized") {
-                    return true;
-                }
+            if let Object::Dictionary(dict) = obj
+                && dict.has(b"Linearized")
+            {
+                return true;
             }
         }
         false

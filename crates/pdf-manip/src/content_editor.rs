@@ -1064,10 +1064,10 @@ mod tests {
         let pages = doc.get_pages();
         let mut tested = 0;
         for (&page_num, &page_id) in &pages {
-            let content = match doc.get_page_content(page_id) {
-                Ok(c) if !c.is_empty() => c,
-                _ => continue,
-            };
+            let content = doc.get_page_content(page_id);
+            if content.is_empty() {
+                continue;
+            }
             let editor = match ContentEditor::from_stream(&content) {
                 Ok(e) => e,
                 Err(_) => continue, // skip pages lopdf can't decode

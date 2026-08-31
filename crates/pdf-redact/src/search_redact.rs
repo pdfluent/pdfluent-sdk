@@ -765,10 +765,8 @@ fn remove_text_ops_with_inline_images(
     };
 
     // Decompressed concatenation of all content streams for this page.
-    let content_bytes = match doc.get_page_content(page_id) {
-        Ok(b) => b,
-        Err(_) => return Ok(0),
-    };
+    // lopdf 0.44: get_page_content is infallible and returns Vec<u8>.
+    let content_bytes = doc.get_page_content(page_id);
 
     // Separate inline images from the rest.
     let (stripped, inline_images) = pdf_manip::content_editor::strip_inline_images(&content_bytes);

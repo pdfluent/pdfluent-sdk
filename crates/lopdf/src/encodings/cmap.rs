@@ -1,5 +1,4 @@
 use crate::cmap_section::{CMapParseError, CMapSection, CodeLen, SourceCode};
-use crate::parser::ParserInput;
 use crate::parser::cmap_parser::parse;
 
 use log::error;
@@ -51,7 +50,7 @@ impl ToUnicodeCMap {
     }
 
     pub(crate) fn parse(stream_content: Vec<u8>) -> Result<ToUnicodeCMap, UnicodeCMapError> {
-        let cmap_sections = parse(ParserInput::new_extra(&stream_content[..], "cmap"))?;
+        let cmap_sections = parse(&stream_content[..])?;
         Self::from_sections(cmap_sections)
     }
 
@@ -130,13 +129,13 @@ impl ToUnicodeCMap {
                         }
                     };
 
-                    if let Some(uni_seq) = unicode_sequence {
-                        if !uni_seq.is_empty() {
-                            rev_map.entry(uni_seq).or_insert_with(Vec::new).push(ReverseCMapEntry {
-                                source_code: src_code,
-                                code_len,
-                            });
-                        }
+                    if let Some(uni_seq) = unicode_sequence
+                        && !uni_seq.is_empty()
+                    {
+                        rev_map.entry(uni_seq).or_insert_with(Vec::new).push(ReverseCMapEntry {
+                            source_code: src_code,
+                            code_len,
+                        });
                     }
                 }
             }
@@ -162,7 +161,14 @@ impl ToUnicodeCMap {
                 ret_vec
             }
             UTF16CodePoint { offset } => vec![u32::wrapping_add(code, *offset) as u16],
-            ArrayOfHexStrings(vec_of_strings) => vec_of_strings[(code - range.start()) as usize].clone(),
+            ArrayOfHexStrings(vec_of_strings) => {
+                let idx = (code - range.start()) as usize;
+                if idx < vec_of_strings.len() {
+                    vec_of_strings[idx].clone()
+                } else {
+                    vec![ToUnicodeCMap::REPLACEMENT_CHAR]
+                }
+            }
         })
     }
 
@@ -249,5 +255,27 @@ mod tests {
 
         cmap.put_char(char_code, 5, char_value.clone());
         cmap.put_char(char_code, 0, char_value.clone());
+    }
+
+    #[test]
+    fn array_of_hex_strings_out_of_bounds_returns_replacement() {
+        // Simulate a malformed CMap bfrange where the array has fewer entries
+        // than the declared source code range covers.
+        let mut cmap = ToUnicodeCMap::new();
+        let array = BfRangeTarget::ArrayOfHexStrings(vec![
+            vec![0x0041], // 'A' — for code 0x10
+            vec![0x0042], // 'B' — for code 0x11
+        ]);
+        // Range 0x10..=0x14 but only 2 entries in array (needs 5)
+        cmap.put(0x10, 0x14, 2, array);
+
+        // In-bounds lookups work
+        assert_eq!(cmap.get(0x10, 2), Some(vec![0x0041]));
+        assert_eq!(cmap.get(0x11, 2), Some(vec![0x0042]));
+
+        // Out-of-bounds lookups return replacement char instead of panicking
+        assert_eq!(cmap.get(0x12, 2), Some(vec![ToUnicodeCMap::REPLACEMENT_CHAR]));
+        assert_eq!(cmap.get(0x13, 2), Some(vec![ToUnicodeCMap::REPLACEMENT_CHAR]));
+        assert_eq!(cmap.get(0x14, 2), Some(vec![ToUnicodeCMap::REPLACEMENT_CHAR]));
     }
 }

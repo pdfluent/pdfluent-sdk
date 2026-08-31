@@ -111,8 +111,16 @@ fn cmap_data(input: ParserInput) -> NomResult<Vec<CMapSection>> {
 }
 
 fn cmap_metadata(input: ParserInput) -> NomResult<()> {
-    let metadata_parser = alt((cid_system_info, cmap_name, cmap_type));
-    fold_many_m_n(1, 4, metadata_parser, || (), |_, _| ()).parse(input)
+    let metadata_parser = alt((
+        cid_system_info,
+        cmap_name,
+        cmap_type,
+        cmap_version,
+        uidoffset,
+        wmode,
+        xuid,
+    ));
+    fold_many_m_n(1, 7, metadata_parser, || (), |_, _| ()).parse(input)
 }
 
 fn cid_system_info(input: ParserInput) -> NomResult<()> {
@@ -152,6 +160,53 @@ fn cmap_type(input: ParserInput) -> NomResult<()> {
         tag(&b"def"[..]),
         multispace1,
     )
+        .parse(input)
+        .map(|(i, _)| (i, ()))
+}
+
+fn cmap_version(input: ParserInput) -> NomResult<()> {
+    let version = (digit1, opt((tag(&b"."[..]), digit1)));
+    (
+        tag(&b"/CMapVersion"[..]),
+        space1,
+        version,
+        space1,
+        tag(&b"def"[..]),
+        multispace1,
+    )
+        .parse(input)
+        .map(|(i, _)| (i, ()))
+}
+
+fn wmode(input: ParserInput) -> NomResult<()> {
+    (
+        tag(&b"/WMode"[..]),
+        space1,
+        digit1,
+        space1,
+        tag(&b"def"[..]),
+        multispace1,
+    )
+        .parse(input)
+        .map(|(i, _)| (i, ()))
+}
+
+fn uidoffset(input: ParserInput) -> NomResult<()> {
+    (
+        tag(&b"/UIDOffset"[..]),
+        space1,
+        digit1,
+        space1,
+        tag(&b"def"[..]),
+        multispace1,
+    )
+        .parse(input)
+        .map(|(i, _)| (i, ()))
+}
+
+fn xuid(input: ParserInput) -> NomResult<()> {
+    let array = (tag(&b"["[..]), separated_list1(space1, digit1), tag(&b"]"[..]));
+    (tag(&b"/XUID"[..]), space1, array, space1, tag(&b"def"[..]), multispace1)
         .parse(input)
         .map(|(i, _)| (i, ()))
 }
@@ -255,13 +310,13 @@ mod tests {
     use super::*;
 
     fn test_span(s: &'_ [u8]) -> ParserInput<'_> {
-        ParserInput::new_extra(s, "")
+        s
     }
     #[test]
     fn parse_1byte_source_code() {
         let data = b"<0A>";
         let (rem, res) = source_code(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, (0x0a, 1));
     }
 
@@ -269,7 +324,7 @@ mod tests {
     fn parse_source_code() {
         let data = b"<080F>";
         let (rem, res) = source_code(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, (0x080f, 2));
     }
 
@@ -289,7 +344,7 @@ mod tests {
     fn parse_code_range_pair() {
         let data = b"<080F> <08FF> ";
         let (rem, res) = code_range_pair(test_span(data)).unwrap();
-        assert_eq!(*rem, b" ");
+        assert_eq!(rem, b" ");
         assert_eq!(res, (0x080f, 0x08ff, 2));
     }
 
@@ -298,7 +353,7 @@ mod tests {
         let data = b"<080F><08FF>";
 
         let (rem, res) = code_range_pair(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, (0x080f, 0x08ff, 2));
     }
 
@@ -312,14 +367,14 @@ mod tests {
     fn parse_bfrange_line() {
         let data = b"<080f> <08ff> <09000110>\n";
         let (rem, res) = bf_range_line(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, ((0x080f, 0x08ff, 2), vec![vec![0x0900, 0x0110]]));
     }
     #[test]
     fn parse_bfrange_line_without_spaces() {
         let data = b"<080f><08ff><09000110>\n";
         let (rem, res) = bf_range_line(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, ((0x080f, 0x08ff, 2), vec![vec![0x0900, 0x0110]]));
     }
 
@@ -327,7 +382,7 @@ mod tests {
     fn parse_bfrange_line_array() {
         let data = b"<080f> <08ff> [ <09000110> <08fe> ] \n";
         let (rem, res) = bf_range_line(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, ((0x080f, 0x08ff, 2), vec![vec![0x0900, 0x0110], vec![0x08fe]]));
     }
     #[test]
@@ -342,7 +397,7 @@ mod tests {
             <0000> <FFFF> \n\
         endcodespacerange\n";
         let (rem, res) = codespace_range_section(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, CMapSection::CsRange(vec![(0x0000, 0xffff, 2)]));
     }
 
@@ -355,7 +410,7 @@ mod tests {
         endbfrange\n";
 
         let (rem, res) = bf_range_section(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(
             res,
             CMapSection::BfRange(vec![
@@ -375,7 +430,7 @@ mod tests {
             <20> <0020>\n\
         endbfchar\n";
         let (rem, res) = bf_char_section(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(
             res,
             CMapSection::BfChar(vec![
@@ -432,6 +487,36 @@ end def
     fn parse_cmap_type() {
         let data = b"/CMapType 2 def\n";
         assert!(cmap_type(test_span(data)).is_ok())
+    }
+
+    #[test]
+    fn parse_cmap_version() {
+        let data = b"/CMapVersion 0 def\n";
+        assert!(cmap_version(test_span(data)).is_ok())
+    }
+
+    #[test]
+    fn parse_cmap_version2() {
+        let data = b"/CMapVersion 10.001 def\n";
+        assert!(cmap_version(test_span(data)).is_ok())
+    }
+
+    #[test]
+    fn parse_uidoffset() {
+        let data = b"/UIDOffset 950 def\n";
+        assert!(uidoffset(test_span(data)).is_ok())
+    }
+
+    #[test]
+    fn parse_xuid() {
+        let data = b"/XUID [1 10 25343] def\n";
+        assert!(xuid(test_span(data)).is_ok())
+    }
+
+    #[test]
+    fn parse_wmode() {
+        let data = b"/WMode 0 def\n";
+        assert!(wmode(test_span(data)).is_ok())
     }
 
     #[test]

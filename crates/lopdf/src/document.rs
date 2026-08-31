@@ -4,11 +4,10 @@ use crate::encryption::crypt_filters::*;
 use crate::encryption::{self, EncryptionState, PasswordAlgorithm};
 use crate::xobject::PdfImage;
 use crate::xref::{Xref, XrefType};
-use crate::{Error, ObjectStream, Result, Stream};
+use crate::{DecompressError, Error, ObjectStream, Result, Stream};
 use log::debug;
 use std::cmp::max;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::Write;
 use std::str;
 use std::sync::Arc;
 
@@ -209,9 +208,13 @@ impl Document {
                 })?
                 .as_stream()?
                 .clone();
-            let obj_stream = ObjectStream::new(&mut stream).map_err(|_| Error::ObjStmDecompress {
-                container_id: container_id.0,
-            })?;
+            // Bounded like the eager path in Reader::read: deferring the work
+            // does not make an inflated ObjStm safe, and this is the only place
+            // a lazily-loaded document decompresses one.
+            let obj_stream = ObjectStream::new_with_limit(&mut stream, Some(crate::object::MAX_DECOMPRESSED_BYTES))
+                .map_err(|_| Error::ObjStmDecompress {
+                    container_id: container_id.0,
+                })?;
             // Only insert objects whose xref entry assigns them to this container.
             // This prevents stale copies from older ObjStm containers (incremental
             // saves) from winning non-deterministically.
@@ -505,7 +508,7 @@ impl Document {
         // Find the ID of the encryption dict; we'll want to skip it when decrypting
         let encryption_obj_id = self.trailer.get(b"Encrypt").and_then(Object::as_reference)?;
 
-        let state = EncryptionState::decode(&*self, password)?;
+        let mut state = EncryptionState::decode(&*self, password)?;
 
         for (&id, obj) in self.objects.iter_mut() {
             // The encryption dictionary is not encrypted, leave it alone
@@ -519,7 +522,7 @@ impl Document {
         // Add the objects from the object streams now that they have been decrypted.
         let mut object_streams = vec![];
 
-        for (_, object) in self.objects.iter_mut() {
+        for object in self.objects.values_mut() {
             let Ok(ref mut stream) = object.as_stream_mut() else {
                 continue;
             };
@@ -544,6 +547,12 @@ impl Document {
 
         let object_id = self.trailer.remove(b"Encrypt").unwrap().as_reference()?;
         self.objects.remove(&object_id);
+
+        // Remember the object id of the original /Encrypt dictionary so that
+        // callers doing an incremental save can point the appended trailer's
+        // /Encrypt back at the (still-intact) dictionary bytes in the previous
+        // revision. See `IncrementalDocument::save_internal`.
+        state.encrypt_object_id = Some(object_id);
 
         self.encryption_state = Some(state);
 
@@ -633,15 +642,68 @@ impl Document {
     }
 
     /// Get content of a page.
-    pub fn get_page_content(&self, page_id: ObjectId) -> Result<Vec<u8>> {
+    pub fn get_page_content(&self, page_id: ObjectId) -> Vec<u8> {
         let mut content = Vec::new();
         let content_streams = self.get_page_contents(page_id);
         for object_id in content_streams {
             if let Ok(content_stream) = self.get_object(object_id).and_then(Object::as_stream) {
                 match content_stream.decompressed_content() {
-                    Ok(data) => content.write_all(&data)?,
-                    Err(_) => content.write_all(&content_stream.content)?,
+                    Ok(data) => content.extend_from_slice(&data),
+                    Err(_) => content.extend_from_slice(&content_stream.content),
                 };
+                content.push(b'\n');
+            }
+        }
+        content
+    }
+
+    /// Get the content of a page, bounding the total decompressed output to
+    /// `max_decompressed_size` bytes.
+    ///
+    /// This is the decompression-bomb-safe counterpart to
+    /// [`Document::get_page_content`]. A page's content can be split across
+    /// several streams; the whole concatenated result is bounded to roughly
+    /// `max_decompressed_size` bytes (each stream is decoded against the
+    /// *remaining* budget, so N streams cannot sum to N times the limit), which
+    /// stops a small compressed page stream from inflating without limit when
+    /// processing untrusted PDFs. Use it (and
+    /// [`Document::extract_text_with_limit`]) instead of the unbounded variants
+    /// for input you do not control.
+    ///
+    /// Returns [`DecompressError::MemoryLimitExceeded`](crate::DecompressError::MemoryLimitExceeded)
+    /// if the page content would exceed the limit. Like
+    /// [`Document::get_page_content`], a stream that fails to decode for a reason
+    /// *other* than the size limit falls back to its raw bytes, but that fallback
+    /// is also kept within the remaining budget.
+    pub fn get_page_content_with_limit(&self, page_id: ObjectId, max_decompressed_size: usize) -> Result<Vec<u8>> {
+        let mut content = Vec::new();
+        let content_streams = self.get_page_contents(page_id);
+        for object_id in content_streams {
+            if let Ok(content_stream) = self.get_object(object_id).and_then(Object::as_stream) {
+                let remaining = max_decompressed_size.saturating_sub(content.len());
+                match content_stream.decompressed_content_with_limit(remaining) {
+                    Ok(data) => content.extend_from_slice(&data),
+                    Err(Error::Decompress(DecompressError::MemoryLimitExceeded { .. })) => {
+                        return Err(DecompressError::MemoryLimitExceeded {
+                            limit: max_decompressed_size,
+                        }
+                        .into());
+                    }
+                    // Mirror `get_page_content`'s lenient fallback to the raw
+                    // (still-compressed) bytes when a stream can't be decoded, but
+                    // keep that fallback within the page's remaining budget so a
+                    // large raw stream can't bypass the guard.
+                    Err(_) => {
+                        if content_stream.content.len() > remaining {
+                            return Err(DecompressError::MemoryLimitExceeded {
+                                limit: max_decompressed_size,
+                            }
+                            .into());
+                        }
+                        content.extend_from_slice(&content_stream.content);
+                    }
+                }
+                content.push(b'\n');
             }
         }
         Ok(content)
@@ -876,21 +938,22 @@ impl Iterator for PageTreeIter<'_> {
 
                 self.kids = Some(new_kids);
 
-                if let Ok(kid_id) = kid.as_reference() {
-                    if let Ok(type_name) = self.doc.get_dictionary(kid_id).and_then(Dictionary::get_type) {
-                        match type_name {
-                            b"Page" => {
-                                return Some(kid_id);
-                            }
-                            b"Pages" if self.stack.len() < Self::PAGE_TREE_DEPTH_LIMIT => {
-                                let kids = self.kids.unwrap();
-                                if !kids.is_empty() {
-                                    self.stack.push(kids);
-                                }
-                                self.kids = Self::kids(self.doc, kid_id);
-                            }
-                            _ => {}
+                if let Ok(kid_id) = kid.as_reference()
+                    && let Ok(type_name) = self.doc.get_dictionary(kid_id).and_then(Dictionary::get_type)
+                {
+                    match type_name {
+                        b"Page" => {
+                            return Some(kid_id);
                         }
+                        b"Pages" if self.stack.len() < Self::PAGE_TREE_DEPTH_LIMIT => {
+                            let kids = self.kids.unwrap();
+                            if !kids.is_empty() {
+                                self.stack.push(kids);
+                            }
+                            self.kids = Self::kids(self.doc, kid_id);
+                        }
+                        b"Pages" => {}
+                        _ => {}
                     }
                 }
             }

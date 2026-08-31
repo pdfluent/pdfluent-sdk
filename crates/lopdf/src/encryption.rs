@@ -216,6 +216,11 @@ pub struct EncryptionState {
     pub(crate) user_encrypted: Vec<u8>,
     pub(crate) permissions: Permissions,
     pub(crate) permission_encrypted: Vec<u8>,
+    /// Object id of the `/Encrypt` dictionary in the previous revision, recorded
+    /// during `Document::decrypt_raw` before the reference is stripped from the
+    /// trailer. Used by `IncrementalDocument` to restore the `/Encrypt` reference
+    /// in the appended trailer.
+    pub(crate) encrypt_object_id: Option<ObjectId>,
 }
 
 impl TryFrom<EncryptionVersion<'_>> for EncryptionState {
@@ -405,6 +410,7 @@ impl TryFrom<EncryptionVersion<'_>> for EncryptionState {
                     user_encrypted: algorithm.user_encrypted,
                     permissions: algorithm.permissions,
                     permission_encrypted: algorithm.permission_encrypted,
+                    encrypt_object_id: None,
                 })
             }
             EncryptionVersion::V5 {
@@ -463,6 +469,7 @@ impl TryFrom<EncryptionVersion<'_>> for EncryptionState {
                     user_encrypted: algorithm.user_encrypted,
                     permissions: algorithm.permissions,
                     permission_encrypted: algorithm.permission_encrypted,
+                    encrypt_object_id: None,
                 })
             }
         }
@@ -524,6 +531,14 @@ impl EncryptionState {
 
     pub fn permission_encrypted(&self) -> &[u8] {
         self.permission_encrypted.as_ref()
+    }
+
+    /// Object id of the original `/Encrypt` dictionary, when known. This is
+    /// recorded during `Document::decrypt_raw`; the dictionary bytes themselves
+    /// are left intact in the previous revision so that an incremental save can
+    /// point back at them via `/Encrypt N G R` without re-emitting the dictionary.
+    pub fn encrypt_object_id(&self) -> Option<ObjectId> {
+        self.encrypt_object_id
     }
 
     pub fn decode<P>(document: &Document, password: P) -> Result<Self, Error>
@@ -666,7 +681,7 @@ impl EncryptionState {
 pub fn aes256_encryption_state(
     owner_password: &str, user_password: &str, permissions: Permissions,
 ) -> crate::Result<EncryptionState> {
-    use rand::Rng as _;
+    use rand::RngExt as _;
     let mut file_key = [0u8; 32];
     rand::rng().fill(&mut file_key);
     let crypt_filter: Arc<dyn CryptFilter> = Arc::new(Aes256CryptFilter);
@@ -876,7 +891,7 @@ mod tests {
     use crate::creator::tests::create_document;
     use crate::encryption::{Aes128CryptFilter, Aes256CryptFilter, CryptFilter};
     use crate::{EncryptionState, EncryptionVersion, Permissions};
-    use rand::Rng as _;
+    use rand::RngExt as _;
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
