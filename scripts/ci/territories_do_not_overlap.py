@@ -147,8 +147,34 @@ def main() -> int:
                 "Claim it in .claude/territories.toml, or leave it to its owner."
             )
     elif branch and branch not in ("master", "HEAD"):
-        print(f"SKIPPED (not a pass): branch `{branch}` does not name a territory. "
-              "Name branches `<territory>/<what>`, e.g. `t2/ci-guards`.", file=sys.stderr)
+        # A branch that names no territory used to be skipped, which made opting
+        # out free: rename `t1/x` to `upstream/x` and nothing checks you again.
+        # All three `upstream/*` branches went unchecked that way, and the moment
+        # one was renamed the guard found two real violations in it.
+        #
+        # So an unnamed branch is skipped only while it stays out of owned
+        # ground. The moment it edits a path somebody owns, it has to say who it
+        # is -- which is the whole question the map exists to answer.
+        result = changed_files()
+        if result is None:
+            print("SKIPPED (not a pass): could not diff against master, so an unnamed "
+                  "branch's reach is unknown", file=sys.stderr)
+            return 3
+        files, _ = result
+        trespass = [(f, [t["id"] for t in in_repo if owns(t, f)]) for f in files]
+        trespass = [(f, o) for f, o in trespass if o]
+        if trespass:
+            print(f"Branch `{branch}` names no territory and changed "
+                  f"{len(trespass)} owned file(s):\n", file=sys.stderr)
+            for f, owners in trespass[:10]:
+                print(f"  - {f} (belongs to {', '.join(owners)})", file=sys.stderr)
+            print("\nName the branch `<territory>/<what>`, e.g. `t2/ci-guards`, so the "
+                  "map can check it. Skipping an unnamed branch would make opting out "
+                  "free, which is how three branches went unchecked.", file=sys.stderr)
+            return 1
+        print(f"SKIPPED (not a pass): branch `{branch}` names no territory, but changed "
+              "no owned file either. Name it `<territory>/<what>` if that changes.",
+              file=sys.stderr)
         return 3
 
     if problems:
