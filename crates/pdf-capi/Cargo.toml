@@ -6,7 +6,8 @@ edition = "2021"
 # scripts/release/package_cabi.sh (with the bundled commercial LICENSE), not via
 # crates.io. license-file points to the PDFluent Commercial License (see ./LICENSE).
 publish = false
-license-file = "LICENSE"
+# AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
+license = "AGPL-3.0-or-later"
 description = "C-compatible API for the PDF engine (PDFium-compatible interface)."
 
 [lib]

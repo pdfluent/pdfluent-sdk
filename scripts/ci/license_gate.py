@@ -210,6 +210,42 @@ def scan_cargo(_: dict) -> list[tuple[str, str]]:
     return uit
 
 
+# A declaration npm or cargo accepts that is not an SPDX expression, so the
+# policy has to say what it means. Anything else is checkable and gets checked.
+NIET_SPDX = re.compile(r"^\s*(SEE LICENSE IN|LicenseRef-|UNLICENSED)", re.I)
+
+
+def eigen_verklaring(rel: str, gedeclareerd: str | None, pol: dict) -> tuple[str, str | None]:
+    """(the licence to judge, a complaint if the policy and the manifest disagree).
+
+    `own_packages` exists because npm accepts `SEE LICENSE IN LICENSE`, which is
+    not an SPDX expression and cannot be judged against a policy. It used to
+    override the manifest unconditionally -- so when LC9 changed
+    crates/xfa-wasm/Cargo.toml to AGPL-3.0-or-later while the policy still said
+    LicenseRef-PDFluent-Commercial, this gate printed `npm ok` over two files
+    that disagreed with each other. Two sources of truth, and the silent one won.
+
+    Now the policy only speaks where the manifest cannot. Where the manifest
+    gives a real SPDX expression, that is the answer, and a policy entry that
+    contradicts it is itself the finding.
+    """
+    verwacht = pol.get("own_packages", {}).get(rel)
+    if verwacht is None:
+        return (gedeclareerd or "UNKNOWN"), None
+
+    # Judged as our own dual licence, not as the AGPL. The allow-list answers
+    # "may this licence be in our dependency graph", and AGPL is forbidden there
+    # for a good reason: an AGPL DEPENDENCY would reach the whole product. Our
+    # own crate declaring AGPL is the opposite -- it is the thing being licensed
+    # out, and it is exactly what LC9 set out to do. Reading one rule as the
+    # other would have made the licence switch fail its own gate.
+    oordeel = "LicenseRef-PDFluent-Dual"
+    if gedeclareerd and not NIET_SPDX.match(gedeclareerd) and gedeclareerd != verwacht:
+        return oordeel, (f"{rel} declares {gedeclareerd!r}; "
+                         f"docs/LICENSE_POLICY.toml [own_packages] expects "
+                         f"{verwacht!r}. One of the two is out of date")
+    return oordeel, None
+
 def scan_npm(pol: dict) -> list[tuple[str, str]]:
     """Declared runtime dependencies of the npm packages, from tracked sources.
 
@@ -229,8 +265,10 @@ def scan_npm(pol: dict) -> list[tuple[str, str]]:
         except json.JSONDecodeError as e:
             raise Onleesbaar(f"{pad.relative_to(REPO)}: {e}") from e
         rel = str(pad.relative_to(REPO))
-        eigen = pol.get("own_packages", {}).get(rel)
-        uit.append((rel, eigen or d.get("license", "UNKNOWN")))
+        oordeel, klacht = eigen_verklaring(rel, d.get("license"), pol)
+        if klacht:
+            uit.append((f"{rel} [policy drift]", "UNKNOWN (" + klacht + ")"))
+        uit.append((rel, oordeel))
         for naam, _v in (d.get("dependencies") or {}).items():
             uit.append((f"npm {naam}", "UNKNOWN (runtime dependency, licence unread)"))
 
@@ -239,9 +277,13 @@ def scan_npm(pol: dict) -> list[tuple[str, str]]:
     wasm = REPO / "crates/xfa-wasm/Cargo.toml"
     if not wasm.is_file():
         raise Onleesbaar("crates/xfa-wasm/Cargo.toml is missing")
-    eigen = pol.get("own_packages", {}).get("crates/xfa-wasm/Cargo.toml")
-    uit.append(("crates/xfa-wasm/Cargo.toml (npm: @pdfluent/sdk-wasm)",
-                eigen or "UNKNOWN"))
+    m = re.search(r'^\s*license\s*=\s*"([^"]+)"', wasm.read_text(encoding="utf-8"), re.M)
+    oordeel, klacht = eigen_verklaring("crates/xfa-wasm/Cargo.toml",
+                                       m.group(1) if m else None, pol)
+    if klacht:
+        uit.append(("crates/xfa-wasm/Cargo.toml [policy drift]",
+                    "UNKNOWN (" + klacht + ")"))
+    uit.append(("crates/xfa-wasm/Cargo.toml (npm: @pdfluent/sdk-wasm)", oordeel))
     return uit
 
 

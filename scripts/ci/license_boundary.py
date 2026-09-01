@@ -53,6 +53,25 @@ PERMISSIEF = re.compile(r"\b(MIT|Apache-2\.0|BSD-[0-9]|ISC|Zlib|Unlicense|CC0)\b
 VLOER = 40
 
 
+# What a crate of ours declares after LC9 (#221). The commercial half is not an
+# SPDX identifier and cannot be one, so the manifest names the AGPL and LICENSE
+# names both. crates.io renders this field, so this is the string the world sees.
+ONZE_LICENTIE = "AGPL-3.0-or-later"
+
+# The fork register is the authority on what is a fork. `forked` is the one side
+# that permits a permissive licence, so a crate may not simply claim it.
+FORKREGISTER = REPO / "docs" / "UPSTREAM_FORKS.toml"
+
+
+def _forks() -> set[str]:
+    if not FORKREGISTER.is_file():
+        return set()
+    d = tomllib.loads(FORKREGISTER.read_text(encoding="utf-8"))
+    return {f["onze_crate"] for f in d.get("fork", [])}
+
+
+FORKS = _forks()
+
 # --- the AGPL text itself ----------------------------------------------------
 
 AGPL = REPO / "LICENSE-AGPL"
@@ -134,15 +153,28 @@ def main() -> int:
         publiceerbaar = not re.search(r"^\s*publish\s*=\s*false", t, re.M)
 
         if kant == "ours":
-            if not bestand:
+            if spdx != ONZE_LICENTIE:
                 problemen.append(
-                    f"{naam} is on our side of the boundary and does not declare "
-                    f"`license-file`. It declares {spdx or 'the workspace licence'}, "
-                    "which offers the product under terms we cannot withdraw")
-            if spdx and PERMISSIEF.search(spdx):
+                    f"{naam} is ours and declares "
+                    f"{spdx or bestand or 'the workspace licence'!r}, not "
+                    f"{ONZE_LICENTIE!r}. Our crates are dual-licensed AGPL plus "
+                    "commercial; anything else offers the product under terms we "
+                    "cannot withdraw from whoever fetched it")
+            if bestand:
                 problemen.append(
-                    f"{naam} is ours and declares the permissive expression {spdx!r}")
+                    f"{naam} still declares `license-file`, which crates.io renders "
+                    "instead of an SPDX expression. LC9 replaced that with "
+                    f"`license = \"{ONZE_LICENTIE}\"`")
         elif kant == "forked":
+            if rij["dir"].split("/")[-1] not in FORKS:
+                problemen.append(
+                    f"{naam} is booked as a fork and is not in "
+                    f"{FORKREGISTER.name}. Four of our own crates were booked this "
+                    "way on 31-08 -- pdf-java among them, declaring MIT with a "
+                    "comment admitting it was stale -- and this gate approved every "
+                    "one, because `forked` is exactly the label that permits a "
+                    "permissive licence. Nothing shipped only because all four "
+                    "happened to be publish = false")
             if bestand:
                 problemen.append(
                     f"{naam} is a fork of somebody else's work and declares "
