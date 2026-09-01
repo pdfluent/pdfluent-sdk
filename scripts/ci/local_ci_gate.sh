@@ -121,6 +121,10 @@ run forkpunt  python3 scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py
 run wtconfig  python3 scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py
 run forkmerge python3 scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py
 run featgate  python3 scripts/ci/test_feature_gated_tests_run.py
+# The guard that enforces the whole multi-terminal model did not run in the gate
+# that guards every push -- it was only in ci.yml, which means a push could cross
+# a territory line and nothing local said so. (codex P1, #296)
+run territory python3 scripts/ci/territories_do_not_overlap.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
 run examples  cargo build -q --examples -p pdfluent
