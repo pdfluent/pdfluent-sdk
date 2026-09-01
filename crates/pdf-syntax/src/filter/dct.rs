@@ -140,15 +140,24 @@ fn maybe_patch_jpeg_dimensions<'a>(
 ) -> Option<Cow<'a, [u8]>> {
     let sof_offset = find_sof_marker(data)?;
 
-    let height_offset = sof_offset + 5;
-    let width_offset = sof_offset + 7;
+    // Every one of these is derived from file bytes: the marker offset, the two
+    // dimensions and both areas. Ported from hayro upstream
+    // (LaurenzV/hayro#1194).
+    let height_offset = sof_offset.checked_add(5)?;
+    let width_offset = sof_offset.checked_add(7)?;
 
-    let jpeg_height =
-        u16::from_be_bytes([*data.get(height_offset)?, *data.get(height_offset + 1)?]);
-    let jpeg_width = u16::from_be_bytes([*data.get(width_offset)?, *data.get(width_offset + 1)?]);
+    let jpeg_height = u16::from_be_bytes([
+        *data.get(height_offset)?,
+        *data.get(height_offset.checked_add(1)?)?,
+    ]);
+    let jpeg_width = u16::from_be_bytes([
+        *data.get(width_offset)?,
+        *data.get(width_offset.checked_add(1)?)?,
+    ]);
 
-    let need_patch =
-        (jpeg_width as u32) * (jpeg_height as u32) > image_params.width * image_params.height;
+    let jpeg_area = (jpeg_width as usize).checked_mul(jpeg_height as usize)?;
+    let image_area = (image_params.width as usize).checked_mul(image_params.height as usize)?;
+    let need_patch = jpeg_area > image_area;
 
     if !need_patch {
         return Some(Cow::Borrowed(data));
@@ -158,16 +167,16 @@ fn maybe_patch_jpeg_dimensions<'a>(
     let target_h = (image_params.height as u16).to_be_bytes();
 
     let mut patched = data.to_vec();
-    patched[height_offset..height_offset + 2].copy_from_slice(&target_h);
-    patched[width_offset..width_offset + 2].copy_from_slice(&target_w);
+    patched[height_offset..height_offset.checked_add(2)?].copy_from_slice(&target_h);
+    patched[width_offset..width_offset.checked_add(2)?].copy_from_slice(&target_w);
 
     Some(Cow::Owned(patched))
 }
 
 fn find_sof_marker(data: &[u8]) -> Option<usize> {
-    let mut i = 0;
+    let mut i = 0_usize;
 
-    while i + 1 < data.len() {
+    while i.checked_add(1).is_some_and(|next| next < data.len()) {
         if data[i] != 0xFF {
             i += 1;
             continue;
@@ -197,12 +206,45 @@ fn find_sof_marker(data: &[u8]) -> Option<usize> {
             }
             // All other markers have a 2-byte length field — skip over them.
             _ => {
-                let seg_len = u16::from_be_bytes([*data.get(i + 2)?, *data.get(i + 3)?]) as usize;
+                let len_start = i.checked_add(2)?;
+                let len_end = i.checked_add(3)?;
+                let seg_len =
+                    u16::from_be_bytes([*data.get(len_start)?, *data.get(len_end)?]) as usize;
 
-                i += 2 + seg_len;
+                i = i.checked_add(2)?.checked_add(seg_len)?;
             }
         }
     }
 
     None
+}
+
+/// Regression tests for fixes ported from hayro upstream (LaurenzV/hayro#1194).
+#[cfg(test)]
+mod upstream_hardening_tests {
+    use super::find_sof_marker;
+
+    /// The segment length is two file bytes and used to be added to the cursor
+    /// unchecked: `i += 2 + seg_len` walks past `usize::MAX` on a marker near
+    /// the end of a long buffer.
+    #[test]
+    fn find_sof_marker_survives_a_maximal_segment_length() {
+        // APP0 marker declaring a 0xFFFF-byte segment, with nothing behind it.
+        let data = [0xFF, 0xE0, 0xFF, 0xFF];
+        assert_eq!(find_sof_marker(&data), None);
+    }
+
+    #[test]
+    fn find_sof_marker_survives_a_truncated_length_field() {
+        let data = [0xFF, 0xE0, 0x00];
+        assert_eq!(find_sof_marker(&data), None);
+    }
+
+    /// A real SOF0 must still be found, so the guards cannot be satisfied by
+    /// bailing out early on everything.
+    #[test]
+    fn find_sof_marker_still_finds_sof0() {
+        let data = [0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08];
+        assert_eq!(find_sof_marker(&data), Some(2));
+    }
 }

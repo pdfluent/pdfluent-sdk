@@ -213,7 +213,10 @@ fn read_inner(r: &mut Reader<'_>) -> Option<Number> {
 
     if !has_dot {
         let value = if negative {
-            -(mantissa as i64)
+            // `-i64::MIN` has no representation; a document that literally
+            // writes -9223372036854775808 must not take the process with it.
+            // Ported from hayro upstream (LaurenzV/hayro#1194).
+            (mantissa as i64).wrapping_neg()
         } else {
             mantissa as i64
         };
@@ -412,6 +415,20 @@ mod tests {
                 .read_without_context::<i32>()
                 .unwrap(),
             3245
+        );
+    }
+
+    /// Regression test for a fix ported from hayro upstream
+    /// (LaurenzV/hayro#1194): `-(mantissa as i64)` has no representation for
+    /// `i64::MIN`, so a document that literally writes the minimum took the
+    /// process down.
+    #[test]
+    fn int_min_does_not_panic() {
+        assert_eq!(
+            Reader::new("-9223372036854775808".as_bytes())
+                .read_without_context::<i64>()
+                .unwrap(),
+            i64::MIN
         );
     }
 
