@@ -453,6 +453,29 @@ jobs:
   #
   # Nothing here is continue-on-error. Each one stands in front of a product
   # promise, and a soft gate recreates exactly the situation this issue is about.
+  licence-registry-guard:
+    name: The licence registry is enforced somewhere that cannot be skipped
+    # Its own job because every existing job in this file is self-hosted, and a
+    # pull_request must not run PR-authored code on the persistent desktop
+    # (#311). The header above still says artifact-guard and
+    # license-metadata-guard stay on ubuntu-latest; measured 02-09-2026, no job
+    # here is hosted any more. The boundary drifted while the comment describing
+    # it did not.
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Measured 02-09-2026: this ran in NO CI file. Its only enforcement was
+      # local_ci_gate.sh, and a local gate is skippable -- demonstrably, since a
+      # branch passed a push that evening while this check returned 1. A gate
+      # that can be stepped over is a convention, not a gate. (#304)
+      - name: Every crate's licence matches the canonical register
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/license_registry_check.py
+
   promise-guard:
     name: Every promise has a test that reaches it
     runs-on: [self-hosted, xfa-fast]
