@@ -110,6 +110,13 @@ ALLOWED: dict[str, str] = {
     "qr11_binding_runtime_mapping.sh": "a one-off quality review (QR-11)",
 
     # Release moment, not every commit.
+    # Maintenance, run when the disk-headroom floor is reached from below --
+    # exactly the moment a job must not start. A job for it would delete build
+    # caches on a schedule nobody chose. (#298)
+    "sweep_merged_build_caches.py": (
+        "reclaims target/ from worktrees whose work is already on master; a "
+        "maintenance action, run when the floor says there is no room"
+    ),
     "run_release_drift_check.sh": (
         "belongs on a pipeline schedule, not on a push"
     ),
