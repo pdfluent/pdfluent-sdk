@@ -98,6 +98,32 @@ def main() -> int:
         print(f"[branch-mr] {tak} is {vooruit} ahead and has {staat}.")
         return 0
 
+    # A branch that is not on the remote yet cannot have a merge request, and
+    # telling it to open one is advice it cannot take: `gh pr create` needs a
+    # remote branch, and the only way to get one is the push this refuses.
+    #
+    # T3 hit this resolving #1543. Their branch was 323 commits ahead -- inherited
+    # from the branch they were resolving, not work they had piled up -- and was
+    # being pushed AT `chore/test-reachability-gate`, which has had PR #1543 open
+    # for days. The work was never going to be invisible; the guard simply judged
+    # the wrong branch, and then demanded the impossible.
+    #
+    # A guard that cannot be satisfied is not a standard, it is an obstacle, and
+    # the only way past it is `PRE_PUSH_SKIP=1` -- which skips the other 32 gates
+    # too. Refusing to be satisfiable is how a gate teaches people to bypass it.
+    #
+    # So: still fatal for a branch that IS on the remote and far ahead with no
+    # merge request, which is the case #272 was about. Not fatal for one that has
+    # never been pushed, where the demand is unmeetable by construction.
+    op_de_remote = draai("git", "rev-parse", "--verify", "--quiet",
+                         f"github/{tak}") or draai(
+                         "git", "rev-parse", "--verify", "--quiet", f"origin/{tak}")
+    if not op_de_remote:
+        print(f"[branch-mr] {tak} is {vooruit} ahead of {standaard} and is not on the "
+              "remote yet, so it cannot have a merge request. Push it, then open one "
+              "-- and if it is still without one on the next push, this fails.")
+        return 0
+
     ernst = "FATAL" if vooruit >= FAAL_VANAF else "WARNING"
     print(f"[branch-mr] {ernst}: {tak} is {vooruit} commits ahead of {standaard} "
           "and has no merge request.", file=sys.stderr)
