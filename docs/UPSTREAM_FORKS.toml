@@ -15,6 +15,7 @@
 onze_crate = "pdf-syntax"
 upstream = "hayro-syntax"
 gelijk_met = "0.5.0"
+forkpunt = "758948489"  # commit in LaurenzV/hayro
 aanvaard_tot = "0.7.2"  # in uitvoering, #256
 waarom = "PDF object model and parser. Closest to upstream; still MIT OR Apache-2.0."
 
@@ -22,6 +23,7 @@ waarom = "PDF object model and parser. Closest to upstream; still MIT OR Apache-
 onze_crate = "pdf-interpret"
 upstream = "hayro-interpret"
 gelijk_met = "0.5.0"
+forkpunt = "357b0a8c7"  # commit in LaurenzV/hayro
 aanvaard_tot = "0.7.0"  # in uitvoering, #256
 waarom = "Content-stream interpreter and font handling. Still MIT OR Apache-2.0."
 
@@ -33,6 +35,7 @@ onze_crate = "pdf-font"
 # upgrade, which is why this one is not planned.
 upstream = "hayro-interpret"
 gelijk_met = "0.5.0"
+forkpunt = "357b0a8c7"  # commit in LaurenzV/hayro
 aanvaard_tot = "0.7.0"  # in uitvoering, #256
 waarom = "Split out of hayro-interpret and substantially extended."
 
@@ -40,6 +43,7 @@ waarom = "Split out of hayro-interpret and substantially extended."
 onze_crate = "pdf-render"
 upstream = "hayro"
 gelijk_met = "0.5.0"
+forkpunt = "4b8511cbb"  # commit in LaurenzV/hayro
 aanvaard_tot = "0.7.1"  # in uitvoering, #256
 waarom = "Rasteriser. Substantially extended; diverged furthest."
 [[fork]]
@@ -58,14 +62,16 @@ waarom = "CFF font parsing. Level with upstream, or slightly ahead."
 [[fork]]
 onze_crate = "hayro-jbig2"
 upstream = "hayro-jbig2"
-gelijk_met = "0.2.3"
+gelijk_met = "0.2.0"  # was 0.2.3; the fork point carries 0.2.0 (#262)
+forkpunt = "09d24e745"  # commit in LaurenzV/hayro
 aanvaard_tot = "0.3.0"  # #256
 waarom = "JBIG2 image codec."
 
 [[fork]]
 onze_crate = "hayro-jpeg2000"
 upstream = "hayro-jpeg2000"
-gelijk_met = "0.3.5"
+gelijk_met = "0.3.0"  # was 0.3.5; the fork point carries 0.3.0 (#262)
+forkpunt = "1c42f8cee"  # commit in LaurenzV/hayro
 aanvaard_tot = "0.4.0"  # #256
 waarom = "JPEG 2000 image codec."
 
@@ -73,4 +79,5 @@ waarom = "JPEG 2000 image codec."
 onze_crate = "hayro-ccitt"
 upstream = "hayro-ccitt"
 gelijk_met = "0.3.0"
-waarom = "CCITT fax codec."
+forkpunt = "5a5f0e2"  # LaurenzV/hayro HEAD on 2026-08-24, merged 31-08-2026
+waarom = "CCITT fax codec. First crate brought level; see #262."
