@@ -40,6 +40,14 @@ import urllib.parse
 import urllib.request
 
 
+# Five hundred entries times a five-step backoff is fifty minutes of grinding
+# when nothing upstream answers, and the job would be killed before printing a
+# word. The deadline turns a total outage into a result instead of a timeout:
+# after it passes, the remaining entries fail immediately and the reason is the
+# outage, in the log, where somebody can read it.
+DEADLINE_S = 420
+
+
 def sha256_bytes(body: bytes) -> str:
     return hashlib.sha256(body).hexdigest()
 
@@ -89,6 +97,7 @@ def main() -> int:
 
     fout: list[str] = []
     hergebruikt = 0
+    verloopt = time.monotonic() + DEADLINE_S
 
     def een(entry: dict) -> str | None:
         doel = uit / entry["name"]
@@ -101,6 +110,9 @@ def main() -> int:
             return (f"{entry['name']}: source `{entry['source']}` is not "
                     "declared in the manifest")
         url = bron["raw_base"] + urllib.parse.quote(entry["path"])
+        if time.monotonic() > verloopt:
+            return (f"{entry['name']}: not attempted — the fetch passed its "
+                    f"{DEADLINE_S}s deadline")
         try:
             body = haal(url)
         except Exception as e:  # noqa: BLE001 - reported, not raised
@@ -122,6 +134,10 @@ def main() -> int:
 
     aanwezig = sorted(x.name for x in uit.iterdir() if x.is_file())
     verwacht = sorted(e["name"] for e in entries)
+
+    if time.monotonic() > verloopt:
+        print(f"[gate-corpus] the {DEADLINE_S}s deadline passed; entries after "
+              "that point were not attempted.", file=sys.stderr)
 
     print(f"[gate-corpus] {len(entries)} entries, {hergebruikt} already present, "
           f"{len(entries) - hergebruikt - len(fout)} fetched, "
