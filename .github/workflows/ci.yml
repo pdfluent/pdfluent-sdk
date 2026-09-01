@@ -203,6 +203,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/ci/a_gate_that_never_went_green.py
+      # `license_boundary.py` has been in scripts/ci since it was written and
+      # called by nothing -- no job in .github/workflows, none in .gitlab-ci.yml,
+      # not in local_ci_gate.sh. An installed control that no pipeline invokes is
+      # the same nothing as one that runs and cannot fail.
+      #
+      # What it guards is not a style rule. The workspace root declares MIT, six
+      # crates inherit it, and all six are `publish = false` today by accident of
+      # who wrote them. Add a crate, forget that line, and the proprietary SDK
+      # goes to crates.io declaring MIT -- a grant nobody can withdraw from
+      # anyone who already fetched it. It breaks no build and fails no test; it
+      # is simply true afterwards.
+      #
+      # The script is t3 territory and untouched. Only the call is mine.
+      - name: Every crate declares the licence its side of the boundary requires
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/license_boundary.py
       - name: Schedule conditions name a cron that exists
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/schedule_guards_match_their_cron.py
