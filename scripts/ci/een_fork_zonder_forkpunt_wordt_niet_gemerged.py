@@ -51,7 +51,9 @@ Exitcodes:
 
 from __future__ import annotations
 
+import os
 import pathlib
+import subprocess
 import sys
 
 try:
@@ -69,6 +71,38 @@ LIJST = WORTEL / "docs" / "UPSTREAM_FORKS.toml"
 # nul regels controleert en groen meldt is precies de fout die dit project al
 # vier keer heeft gehad.
 MINIMAAL_AANTAL_FORKS = 5
+
+
+def gewijzigde_crates() -> set[str]:
+    """Which crates this branch touches, by directory name under crates/.
+
+    Against the merge base, not the working tree: the question is what the
+    branch proposes to merge. When no base can be found the answer is the empty
+    set, and that is stated rather than assumed -- a branch whose base cannot be
+    determined is not a branch that changed nothing.
+    """
+    for ref in ("github/master", "origin/master", "master"):
+        basis = subprocess.run(
+            ["/usr/bin/git", "merge-base", "HEAD", ref],
+            cwd=WORTEL, capture_output=True, text=True, check=False,
+        )
+        if basis.returncode != 0:
+            continue
+        uit = subprocess.run(
+            ["/usr/bin/git", "diff", "--name-only", basis.stdout.strip(), "--", "crates/"],
+            cwd=WORTEL, capture_output=True, text=True, check=False,
+        )
+        if uit.returncode != 0:
+            continue
+        return {
+            regel.split("/")[1]
+            for regel in uit.stdout.splitlines()
+            if regel.startswith("crates/") and "/" in regel[7:]
+        }
+    print("SKIPPED (not a pass): geen merge-base gevonden, dus niet vastgesteld "
+          "welke crates deze tak wijzigt; `niet_mergen` blokkeert hier niets.",
+          file=sys.stderr)
+    return set()
 
 
 def main() -> int:
@@ -91,6 +125,7 @@ def main() -> int:
 
     fouten: list[str] = []
     geblokkeerd: list[tuple[str, str]] = []
+    gewijzigd = gewijzigde_crates()
 
     for f in forks:
         naam = f.get("onze_crate", "<naamloos>")
@@ -114,6 +149,17 @@ def main() -> int:
 
     for naam, reden in geblokkeerd:
         print(f"[forkpunt] NIET MERGEN: {naam} -- {reden}")
+        # Printing it is not blocking it. The step in .github/workflows/ci.yml
+        # reads the exit status and nothing else, so a branch that upgraded one
+        # of these crates while leaving the field in place passed with a warning
+        # in the log that nobody reads. (Codex, #1609.)
+        if naam in gewijzigd:
+            fouten.append(
+                f"  {naam}: carries `niet_mergen` and this branch changes "
+                f"crates/{naam}/. That field says the crate is not to be merged "
+                "until its fork point is established -- so either establish it "
+                "and replace the field, or leave the crate alone."
+            )
 
     if fouten:
         print(file=sys.stderr)

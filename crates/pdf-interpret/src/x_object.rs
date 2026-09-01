@@ -414,6 +414,9 @@ impl DecodedImageXObject {
             target_dimension,
             width: obj.width,
             height: obj.height,
+            // Filled in by Stream::decoded_image from the stream's own context;
+            // a caller has no way to know it and should not have to.
+            pixel_limit: None,
         };
 
         let mut decoded = obj

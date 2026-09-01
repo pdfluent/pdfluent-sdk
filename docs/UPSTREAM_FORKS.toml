@@ -139,7 +139,16 @@ onze_crate = "pdf-font"
 # upgrade, which is why this one is not planned.
 upstream = "hayro-interpret"
 gelijk_met = "0.5.0"
-forkpunt = "3bda7cbc3"  # commit in LaurenzV/hayro, 2026-03-05 -- see pdf-interpret
+# No fork point, and it used to have one: `3bda7cbc3`, inferred from
+# pdf-interpret because this crate was split out of it. The content check found
+# that not one of our 36 files is byte-identical to upstream at any revision, so
+# there was nothing behind the value at all.
+#
+# That is the same mistake this file has now made seven times, and mine this
+# time: a plausible commit in a field that exists to be verifiable. The crate was
+# split out and then substantially extended, so the method does not reach it --
+# the same position as pdf-render, and it gets the same honest record.
+niet_mergen = "geen forkpunt vast te stellen: 0 van 36 bestanden byte-identiek aan upstream op enige revisie, want de crate is afgesplitst en daarna sterk uitgebreid (#262)"
 aanvaard_tot = "0.7.0"  # in uitvoering, #256
 waarom = "Split out of hayro-interpret and substantially extended."
 
