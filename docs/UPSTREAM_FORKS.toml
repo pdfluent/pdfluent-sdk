@@ -14,16 +14,120 @@
 [[fork]]
 onze_crate = "pdf-syntax"
 upstream = "hayro-syntax"
+# Fork point established by content on 31-08-2026 (#262). This entry carried no
+# `forkpunt` at all, so there was nothing to verify -- a version number cannot
+# see a fork point, which is the third of the three reasons
+# upstream_has_not_moved_on.py stayed silent for four months.
+#
+# The value in flight on the ccitt and jbig2 branches, 758948489 (2026-03-28),
+# is wrong by 90 commits, in the same optimistic direction as the four errors
+# already found. content/ops.rs and filter/jbig2.rs are byte-identical to
+# upstream here and differ at 758948489; eighteen further files are identical at
+# both and so cannot distinguish. Merging against 758948489 would have repeated
+# the hayro-jpeg2000 failure at larger scale -- 90 commits, 23 files,
+# +1117/-590 of upstream work read as something we deleted, reverted while
+# reporting an upgrade.
+#
+# 3bda7cbc3 rather than 9c987790e, one commit later: our page.rs handles a
+# negative /Rotate with rem_euclid, as upstream's #1034 does, which first looked
+# like evidence we had taken it. The sibling crate settles it -- see pdf-interpret
+# below, where a blob match is exact. Our rem_euclid sits on our own Option<u32>
+# field rather than upstream's Option<i32>, so it is ours, reached independently.
+# That has happened three times before in these crates (the LAB `rb` fix and
+# J2K-BUF-01 both landed upstream after we had them).
+#
+# Distance to upstream head 5a5f0e24: 65 commits, 37 files, +3400/-1028.
+#
+# Those 65 were read one by one on 31-08-2026 rather than merged wholesale, and
+# the balance was closed on 01-09-2026. Nine are correctness or robustness; the
+# other 56 are performance, refactors and version bumps.
+#
+# ALL NINE, each either already ours or taken, with nothing left unexplained:
+#
+#   #1192 stream object id   OURS, and stronger: we return Option and leave the
+#                            data undecrypted; upstream fabricates
+#                            ObjectIdentifier::new(0, 0) and decrypts with the
+#                            wrong key, producing plausible garbage.
+#   #1271 encryption /Length OURS: we clamp to the MD5 output size, upstream
+#                            rejects. Same panic prevented.
+#   #1150 circular /Prev     OURS, and stricter: we bound the chain at 64,
+#                            upstream at 256 with a visited-set. Neither hangs.
+#                            The cost of ours is that a document with more than
+#                            64 revisions is refused where upstream opens it.
+#   #1194 xref overflows     TAKEN on #1603.
+#   #1034 negative /Rotate   OURS, reached independently -- our rem_euclid sits
+#                            on our own Option<u32> field, not upstream's i32.
+#   #1193 zero-length key    TAKEN. The one panic nothing carried: /Length under
+#                            8 bits divides to a key of zero bytes, which reaches
+#                            Rc4::new and does key[i % key.len()].
+#   #1269 CCITT rows         TAKEN, and carried further than upstream. Upstream
+#                            reports /Rows; we report decoder.decoded_rows,
+#                            because /Rows is still an upper bound when a stream
+#                            ends early. That opened a second hole -- the pixel
+#                            limit had been checked against the DECLARED height
+#                            -- so the limit is re-applied to what was produced.
+#   #1339 CCITT /Rows < height TAKEN. Half does not apply (our decoder grows its
+#                            output rather than preallocating). The other half
+#                            does: /Rows below the declared height is malformed,
+#                            and the image is decoded to the height rather than
+#                            rendered as a sliver. Chromium does the same.
+#   #1191 number then letter TAKEN. Issue 994's rule reached two of our three
+#                            parsing paths; the int_num! macro's skip lacked it,
+#                            so `[8 0R]` read as two integers instead of the
+#                            malformed reference it is.
+#   #1342 numbers past u64   TAKEN. Wrapping arithmetic turned an out-of-range
+#                            number into a small plausible one -- measured:
+#                            10^25 became 1590897978359414800. The digits are
+#                            re-read and parsed properly on overflow.
+#   #1268 Debug impls        TAKEN. Both ended in Ok(()) rather than finish(),
+#                            so the formatter never closed the list and the
+#                            output was not the object being logged.
+#
+# (Eleven entries for nine fixes: #1269/#1339 are one CCITT pair, and #1191 is
+# the tail of #996 which we already had.)
+#
+# NOT taken, deliberately, so these are choices rather than omissions:
+#
+#   #1132 the `unsafe` feature, and #1212 which depends on it. This parser reads
+#         hostile input; unsafe for speed nobody has measured is the wrong trade.
+#   the ~50 performance commits (LUTs, memchr, smallvec, inlining, FxHashMap).
+#         They sit on the refactors -- skip_in_* removal, the logging
+#         unification, the native Transform type -- so taking them means taking
+#         those.
+#
+# THE DECISION:
+#
+# pdf-syntax does NOT go to the upstream head. The correctness is now all here.
+# A full three-way merge is 14 conflicting files, 38 hunks and roughly a thousand
+# lines -- xref.rs 367, content/mod.rs 198, object/stream.rs 108 -- and every
+# line of it buys speed rather than correctness, in a parser whose divergence
+# from upstream is mostly bounds this fork added on purpose. Revisit if a
+# measurement ever shows the parser is the bottleneck.
 gelijk_met = "0.5.0"
-forkpunt = "758948489"  # commit in LaurenzV/hayro
+forkpunt = "3bda7cbc3"  # commit in LaurenzV/hayro, 2026-03-05
 aanvaard_tot = "0.7.2"  # in uitvoering, #256
 waarom = "PDF object model and parser. Closest to upstream; still MIT OR Apache-2.0."
 
 [[fork]]
 onze_crate = "pdf-interpret"
 upstream = "hayro-interpret"
+# Same fork point as pdf-syntax, and this is where that was settled (#262).
+#
+# interpret/path.rs is byte-identical to upstream across exactly two revisions,
+# 718bb5b74 and 3bda7cbc3, and changes at the very next commit to touch the
+# crate -- 6043633d, a one-line `|| data.pattern.is_some()`. A window two
+# commits wide is the hardest pin either crate offers, and it puts the vendoring
+# of both at 3bda7cbc3.
+#
+# The value in flight on the other branches, 357b0a8c7 (2026-04-03), is 26
+# commits and +909/-583 across 27 files too late.
+#
+# Ten of the twelve files that match upstream at all are generated tables which
+# hold still for months, so they pin nothing; path.rs is the entry that does.
+#
+# Distance to upstream head 5a5f0e24: 71 commits, 51 files, +4354/-2831.
 gelijk_met = "0.5.0"
-forkpunt = "357b0a8c7"  # commit in LaurenzV/hayro
+forkpunt = "3bda7cbc3"  # commit in LaurenzV/hayro, 2026-03-05
 aanvaard_tot = "0.7.0"  # in uitvoering, #256
 waarom = "Content-stream interpreter and font handling. Still MIT OR Apache-2.0."
 
@@ -35,15 +139,45 @@ onze_crate = "pdf-font"
 # upgrade, which is why this one is not planned.
 upstream = "hayro-interpret"
 gelijk_met = "0.5.0"
-forkpunt = "357b0a8c7"  # commit in LaurenzV/hayro
+# No fork point, and it used to have one: `3bda7cbc3`, inferred from
+# pdf-interpret because this crate was split out of it. The content check found
+# that not one of our 36 files is byte-identical to upstream at any revision, so
+# there was nothing behind the value at all.
+#
+# That is the same mistake this file has now made seven times, and mine this
+# time: a plausible commit in a field that exists to be verifiable. The crate was
+# split out and then substantially extended, so the method does not reach it --
+# the same position as pdf-render, and it gets the same honest record.
+niet_mergen = "geen forkpunt vast te stellen: 0 van 36 bestanden byte-identiek aan upstream op enige revisie, want de crate is afgesplitst en daarna sterk uitgebreid (#262)"
 aanvaard_tot = "0.7.0"  # in uitvoering, #256
 waarom = "Split out of hayro-interpret and substantially extended."
 
 [[fork]]
 onze_crate = "pdf-render"
 upstream = "hayro"
+# No `forkpunt` here, deliberately, and this is the honest state rather than an
+# omission. The content method that pinned the other two cannot reach this crate:
+# our src/ is two files (lib.rs, renderer.rs) against upstream's seven, none of
+# them sharing a name, so nothing is byte-identical to any upstream revision and
+# there is no file to intersect windows on. Establishing this fork point needs a
+# different method, and inventing a commit to fill the field is what produced
+# four of the errors above (#262).
+#
+# Master carried `forkpunt = "4b8511cbb"` for a while; it is removed here rather
+# than kept, and the reason is a pattern rather than a preference. That commit is
+# dated 2026-03-28 -- the same day as `758948489`, the pdf-syntax value proven
+# wrong by 90 commits, and six days before `357b0a8c7`, the pdf-interpret value
+# proven wrong by 26. All three siblings were vendored in one operation, and the
+# two that can be measured both land on 2026-03-05. A third value from the wrong
+# cluster is not evidence of anything except that the same mistake was made three
+# times.
+#
+# Inferring 3bda7cbc3 from the siblings would probably be right, and inference is
+# precisely what produced the six wrong entries this file has already had. So it
+# stays unrecorded, and this crate is not merged until a method that reaches it
+# says otherwise.
+niet_mergen = "geen forkpunt vast te stellen: onze src/ is 2 bestanden tegen upstreams 7, geen naam gedeeld, dus niets is byte-identiek en er zijn geen vensters om te doorsnijden (#262)"
 gelijk_met = "0.5.0"
-forkpunt = "4b8511cbb"  # commit in LaurenzV/hayro
 aanvaard_tot = "0.7.1"  # in uitvoering, #256
 waarom = "Rasteriser. Substantially extended; diverged furthest."
 [[fork]]
@@ -53,7 +187,19 @@ upstream = "lopdf"
 # upstream never made -- it had drifted to our own crate version. Our tree is
 # closest to tag v0.39.0 and the distance grows monotonically at every commit
 # after it (#262).
-forkpunt = "6cd9a62"  # J-F-Liu/lopdf v0.39.0, 2026-01-12
+# 8c454dd9 (v0.44.0), not 6cd9a62 (v0.39.0) -- and the difference is what the
+# field means. `forkpunt` is the base a future merge should use, not the
+# original divergence: after the 0.39.0 -> 0.44.0 merge landed in #1614, the
+# next merge starts from 0.44.0. `hayro-ccitt` already reads that way (its point
+# is upstream HEAD at the time it was brought level, not where it first
+# diverged).
+#
+# 6cd9a62 was recorded here first, and the register verifier caught it within
+# minutes of being taught that lopdf lives in a different repository: the entry
+# claimed gelijk_met = 0.44.0 while its fork point carried 0.39.0. Both numbers
+# were right about different things, which is precisely the confusion the field
+# exists to prevent.
+forkpunt = "8c454dd9"  # J-F-Liu/lopdf v0.44.0, 2026-07-10
 # Was recorded as 0.39.5, a version upstream has never released -- it had
 # drifted to our own crate version. Verified against the code: the fork point
 # was upstream tag v0.39.0, and the tree now sits on v0.44.0 (#262).
@@ -63,6 +209,14 @@ waarom = "PDF document model used by pdf-manip."
 [[fork]]
 onze_crate = "cff-parser"
 upstream = "cff-parser"
+# Tweede crate waar de inhoudsmethode niet bij komt, om de omgekeerde reden van
+# pdf-render: niet omdat wij te veel hebben herschreven, maar omdat upstream
+# (jrmuizel/cff-parser) er acht commits heeft. Twee van onze tien bestanden zijn
+# byte-identiek, en aan alle acht revisies tegelijk -- dus ze onderscheiden
+# niets. Upstream staat bovendien op 0.2.0 en wij op 0.2.1: er is hier geen
+# merge te doen, en dat is precies waarom een verzonnen forkpunt hier nooit zou
+# opvallen (#262).
+niet_mergen = "geen forkpunt vast te stellen: 2 van 10 bestanden identiek, en aan de hele upstream-historie tegelijk, dus zonder onderscheidend vermogen (#262)"
 gelijk_met = "0.2.1"
 waarom = "CFF font parsing. Level with upstream, or slightly ahead."
 
