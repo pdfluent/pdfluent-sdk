@@ -34,6 +34,13 @@
 # costs tens of minutes of runner time on the one machine that also runs the
 # corpus measurements.
 #
+# WHAT IT DOES *NOT* DO, since 01-09-2026: delete anything, unless you pass
+# `--sweep`. Before a build it reports and removes nothing. Deleting needs the
+# machine to be idle, and "idle" cannot be established by looking once -- the
+# gap between the look and the delete spans the scheduling of the next workflow
+# step, and the GitHub and GitLab runners on this host share no lock. See the
+# comment above `_target_in_use`. (codex, #1621)
+#
 # ORDER MATTERS. Run `shared_build_dir_is_there.sh` before this, never after.
 # Every command below touches the filesystem, and on a device that has stopped
 # answering, `find` blocks in D-state where SIGKILL does nothing -- the silent
@@ -98,7 +105,23 @@ fi
 # *this* target -- which the rustc command lines say, because cargo passes
 # `--out-dir <target>/debug/deps` and `-L dependency=<target>/...`.
 _target_in_use() {
-    ps -Ao args= 2>/dev/null | grep -F -- "${TARGET}" | grep -qvE '^\s*(grep|ps)\b'
+    # No `grep -q` at the end of this pipeline. It exits on its first match, the
+    # upstream grep gets SIGPIPE writing the rest, and with `pipefail` set at the
+    # top of this file the function returns 141 -- which `if` reads as false. So
+    # the guard failed OPEN exactly when many rustc processes were running, i.e.
+    # when a build was busiest and deleting under it was most damaging.
+    # Reproduced with 5000 matching lines: 141 with `grep -q`, 0 with a count.
+    # (codex, #1621)
+    # The path alone is not enough: any shell whose command line mentions the
+    # directory matches, including the one invoking this script. That is the
+    # same self-match that made `pgrep -f "git push"` report other sessions'
+    # monitors as pushes. A line has to look like a BUILD -- cargo or rustc --
+    # and name this target.
+    local n
+    n=$(ps -Ao args= 2>/dev/null \
+        | grep -F -- "${TARGET}" \
+        | grep -cE '(^|/)(cargo|rustc|sccache)( |$)' || true)
+    [ "${n:-0}" -gt 0 ]
 }
 # This is a snapshot, not a lock, and it is worth being plain about that: a
 # build can start in the moment between this check and the deletions below. The
@@ -107,7 +130,26 @@ _target_in_use() {
 # job running on the shared machine) and not the rare one (a job starting during
 # the sweep). A real cross-CI lock is the fix if this ever bites; it has not
 # yet, and I would rather leave the limitation written down than implied.
-if _target_in_use; then
+# Deleting is opt-in, and this is the second thing codex was right about on
+# #1621: a snapshot cannot hold the no-live-deletion invariant. Two jobs can both
+# find the directory idle, and the window is not a few instructions -- it spans
+# the scheduling of the next workflow step. crash-guard.yml runs this guard at
+# line 93 and cargo at line 98; another job starting cargo in between is
+# ordinary, not exotic, because the GitHub and GitLab runners share this machine
+# and no lock spans both.
+#
+# So in the position where it is actually called -- just before a build -- this
+# now REPORTS and removes nothing. That keeps everything #264 wanted from it (a
+# missing mount, a dead device, debris named out loud) and drops the one thing it
+# could not do safely. Sweeping is a maintenance action: `--sweep`, run when the
+# machine is known idle.
+if [ "${1:-}" != "--sweep" ]; then
+    SWEEP=0
+else
+    SWEEP=1
+fi
+
+if [ "${SWEEP}" -eq 1 ] && _target_in_use; then
     echo "[cargo-target-health] a build is using ${TARGET} — nothing removed."
     echo "[cargo-target-health]   Debris is cheap to leave and expensive to delete from"
     echo "[cargo-target-health]   under a live build: a .part.bin removed before cargo"
@@ -124,6 +166,10 @@ cleaned=0
 #    four checkouts when it was last measured.
 if [ -d "${TARGET}/debug/incremental" ] || [ -d "${TARGET}/release/incremental" ]; then
     n=$(_bounded_probe "${DEADLINE}" find "${TARGET}"/*/incremental -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    if [ "${SWEEP}" -eq 0 ]; then
+        echo "[cargo-target-health] incremental state present (${n} directories) while CARGO_INCREMENTAL=0 — reported, not removed (run with --sweep when idle)"
+        cleaned=$((cleaned + 1))
+    else
     echo "[cargo-target-health] incremental state present (${n} directories) while CARGO_INCREMENTAL=0 — removed"
     if ! _bounded_probe "${DEADLINE}" rm -rf "${TARGET}/debug/incremental" "${TARGET}/release/incremental" >/dev/null 2>&1; then
         # 124 is the probe's timeout, anything else is a real rm failure. Either
@@ -136,18 +182,24 @@ if [ -d "${TARGET}/debug/incremental" ] || [ -d "${TARGET}/release/incremental" 
         exit 1
     fi
     cleaned=$((cleaned + 1))
+    fi
 fi
 
 # 2. Leftover `.part.bin` — exactly the file named in the 25-08 failure.
 part=$(_bounded_probe "${DEADLINE}" find "${TARGET}" -name '*.part.bin' -type f 2>/dev/null | head -50)
 if [ -n "${part}" ]; then
     n=$(echo "${part}" | wc -l | tr -d ' ')
-    echo "[cargo-target-health] ${n} half-written .part.bin — removed"
-    if ! echo "${part}" | xargs rm -f 2>/dev/null; then
-        echo "[cargo-target-health] FATAL: could not remove ${n} .part.bin file(s)." >&2
-        exit 1
+    if [ "${SWEEP}" -eq 0 ]; then
+        echo "[cargo-target-health] ${n} half-written .part.bin — reported, not removed (run with --sweep when idle)"
+        cleaned=$((cleaned + 1))
+    else
+        echo "[cargo-target-health] ${n} half-written .part.bin — removed"
+        if ! echo "${part}" | xargs rm -f 2>/dev/null; then
+            echo "[cargo-target-health] FATAL: could not remove ${n} .part.bin file(s)." >&2
+            exit 1
+        fi
+        cleaned=$((cleaned + 1))
     fi
-    cleaned=$((cleaned + 1))
 fi
 
 # 3. A lock held by a process that no longer exists. An aborted pipeline leaves
@@ -159,7 +211,9 @@ fi
 #    directory this file exists to protect. Leaving a stale lock costs one
 #    job; removing a live one costs the cache.
 if [ -f "${TARGET}/.cargo-lock" ]; then
-    if ! pgrep -x cargo >/dev/null 2>&1; then
+    if [ "${SWEEP}" -eq 0 ]; then
+        echo "[cargo-target-health] .cargo-lock present — reported, not removed (run with --sweep when idle)"
+    elif ! pgrep -x cargo >/dev/null 2>&1; then
         echo "[cargo-target-health] .cargo-lock with no cargo process running — removed"
         rm -f "${TARGET}/.cargo-lock"
         cleaned=$((cleaned + 1))
@@ -170,6 +224,10 @@ fi
 
 if [ "${cleaned}" -eq 0 ]; then
     echo "[cargo-target-health] ${TARGET} is clean"
+elif [ "${SWEEP}" -eq 0 ]; then
+    echo "[cargo-target-health] ${cleaned} kind(s) of debris present; nothing removed."
+    echo "[cargo-target-health]   Run this with --sweep when the machine is idle. Deleting"
+    echo "[cargo-target-health]   from under a live build is what this refuses to risk."
 else
     echo "[cargo-target-health] ${cleaned} kind(s) of debris removed; the next build starts clean"
 fi

@@ -86,7 +86,7 @@ t="$(fresh_target part)"
 mkdir -p "${t}/debug/incremental/pdfluent-abc"
 : > "${t}/debug/incremental/pdfluent-abc/dep-graph.part.bin"
 case_
-out="$(CARGO_TARGET_DIR="${t}" bash "${BENCH}/cargo_target_health.sh" 2>&1)"
+out="$(CARGO_TARGET_DIR="${t}" bash "${BENCH}/cargo_target_health.sh" --sweep 2>&1)"
 [[ -e "${t}/debug/incremental" ]] && fail "incremental state survived the clean-up"
 case_
 grep -q 'incremental state present' <<<"${out}" || fail "the clean-up did not say what it removed: ${out}"
@@ -97,7 +97,7 @@ t="$(fresh_target loosepart)"
 mkdir -p "${t}/debug/build"
 : > "${t}/debug/build/dep-graph.part.bin"
 case_
-out="$(CARGO_TARGET_DIR="${t}" bash "${BENCH}/cargo_target_health.sh" 2>&1)"
+out="$(CARGO_TARGET_DIR="${t}" bash "${BENCH}/cargo_target_health.sh" --sweep 2>&1)"
 [[ -e "${t}/debug/build/dep-graph.part.bin" ]] && fail "a stray .part.bin survived the clean-up"
 case_
 grep -q 'half-written .part.bin' <<<"${out}" || fail "a stray .part.bin was removed without saying so: ${out}"
@@ -114,7 +114,7 @@ mkdir -p "${STUB}"
 printf '#!/bin/sh\nexit 1\n' > "${STUB}/pgrep"
 chmod +x "${STUB}/pgrep"
 case_
-out="$(PATH="${STUB}:${PATH}" CARGO_TARGET_DIR="${t}" bash "${BENCH}/cargo_target_health.sh" 2>&1)"
+out="$(PATH="${STUB}:${PATH}" CARGO_TARGET_DIR="${t}" bash "${BENCH}/cargo_target_health.sh" --sweep 2>&1)"
 [[ -e "${t}/.cargo-lock" ]] && fail "a lock with no cargo behind it was not removed"
 case_
 grep -q 'no cargo process running' <<<"${out}" || fail "the stale lock removal was not reported: ${out}"
@@ -126,7 +126,7 @@ mkdir -p "${STUB2}"
 printf '#!/bin/sh\necho 4242\nexit 0\n' > "${STUB2}/pgrep"
 chmod +x "${STUB2}/pgrep"
 case_
-out="$(PATH="${STUB2}:${PATH}" CARGO_TARGET_DIR="${t}" bash "${BENCH}/cargo_target_health.sh" 2>&1)"
+out="$(PATH="${STUB2}:${PATH}" CARGO_TARGET_DIR="${t}" bash "${BENCH}/cargo_target_health.sh" --sweep 2>&1)"
 [[ -e "${t}/.cargo-lock" ]] || fail "a lock held by a running cargo was removed — that corrupts the cache"
 case_
 grep -q 'left alone' <<<"${out}" || fail "leaving a live lock alone was not reported: ${out}"
@@ -154,10 +154,22 @@ t="$(fresh_target clean)"
 mkdir -p "${t}/debug/deps"
 : > "${t}/debug/deps/libpdfluent.rlib"
 case_
-out="$(CARGO_TARGET_DIR="${t}" bash "${BENCH}/cargo_target_health.sh" 2>&1)"
+out="$(CARGO_TARGET_DIR="${t}" bash "${BENCH}/cargo_target_health.sh" --sweep 2>&1)"
 [[ -e "${t}/debug/deps/libpdfluent.rlib" ]] || fail "the clean-up removed a build artefact it should keep"
 case_
 grep -q 'is clean' <<<"${out}" || fail "a clean directory was not reported clean: ${out}"
+
+# --- the default is report-only, because a snapshot cannot promise no build
+#     starts between the check and the delete (codex, #1621) ------------------
+t="$(fresh_target reportonly)"; : > "${t}/debug/live.part.bin"
+case_
+out="$(CARGO_TARGET_DIR="${t}" bash "${BENCH}/cargo_target_health.sh" 2>&1)"
+[[ -f "${t}/debug/live.part.bin" ]] || fail "the default invocation deleted something"
+case_
+grep -q 'not removed' <<<"${out}" || fail "the default did not say it removed nothing: ${out}"
+case_
+grep -q -- '--sweep' <<<"${out}" || fail "the default did not name --sweep as the way to clean: ${out}"
+
 
 if (( cases < FLOOR )); then  # FLOOR
     echo "[test-cargo-target-health] FATAL: ${cases} case(s) ran, floor is ${FLOOR}." >&2
@@ -169,5 +181,6 @@ fi
 if (( failures > 0 )); then
     echo "[test-cargo-target-health] FATAL: ${failures} of ${cases} case(s) failed" >&2
     exit 1
+
 fi
 echo "[test-cargo-target-health] OK: ${cases} cases — debris goes, a live lock stays, a dead directory is fatal."
