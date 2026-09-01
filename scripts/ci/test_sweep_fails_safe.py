@@ -122,7 +122,14 @@ with tempfile.TemporaryDirectory() as d:
     real_busy = sweeper.a_build_may_be_running
     old_cwd = os.getcwd()
 
-    def refuses_to_delete(path, *a, **k):
+    def refuses_to_delete(path, *a, ignore_errors=False, **k):
+        # ignore_errors is honoured, because the behaviour under test IS what the
+        # old code did with it: swallow the error and carry on as if the tree had
+        # been removed. An injection that raises regardless would make the old
+        # code crash instead of reporting a false success, and a crash is not the
+        # defect -- the false "removed" is.
+        if ignore_errors:
+            return
         raise PermissionError(13, "Permission denied", str(path))
 
     buf_out, buf_err = io.StringIO(), io.StringIO()
@@ -142,8 +149,11 @@ with tempfile.TemporaryDirectory() as d:
     out, err = buf_out.getvalue(), buf_err.getvalue()
     expect("a failed removal exits non-zero", rc == 1, f"exit={rc} {out[-160:]}")
     expect("  and says the removal FAILED", "FAILED to remove" in err, err[-200:])
-    expect("  and reports 0.0 GB freed, not the pre-scan size",
-           "0.0 GB freed" in out, out[-200:])
+    # "0.0 GB freed" alone passes on the OLD code too: this fixture is small
+    # enough that the inflated pre-scan figure also rounds to 0.0. What actually
+    # distinguishes them is that freed and found are reported as two numbers.
+    expect("  and reports what was freed SEPARATELY from what was found",
+           "freed of" in out and "GB found" in out, out[-200:])
     expect("  and the target is still there", (r / "target" / "more.bin").exists())
 
 MINIMUM_CASES = 13  # FLOOR
