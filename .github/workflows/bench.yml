@@ -1,5 +1,10 @@
 name: Benchmarks
 
+# Parked (#276). The per-pull-request corpus check lives in ci-ephemeral.yml
+# and reads corpus/GATE_CORPUS_MANIFEST.json. What is left here is the large
+# holdout run, which needs a corpus that no longer exists on any machine this
+# repository can reach.
+
 on:
   # The `xfa-corpus` runner this job needs does not exist. There is one
   # self-hosted runner registered on this repository, `xfa-desktop-fast`,
@@ -36,12 +41,21 @@ jobs:
     # already says a dispatch is a decision that may cost.
     runs-on: ubuntu-latest
     steps:
-      - name: Refuse to queue for a runner that does not exist
+      - name: Say why this cannot run, instead of waiting for a runner
         run: |
-          echo "PARKED (not a pass): this workflow needs a runner labelled" \
-               "'xfa-corpus'. None is registered, so the job would wait in the" \
-               "queue rather than run. Corpus work is deliberately deferred;" \
-               "see #276." >&2
+          echo "SKIPPED (not a pass): this workflow measures the large holdout" \
+               "corpus and there is nothing left to measure. It asks for a" \
+               "runner labelled 'xfa-corpus'; none is registered. The corpus" \
+               "itself lived on one external disk, which now enumerates but" \
+               "refuses every read, and corpus/CI_CORPUS_MANIFEST.json points" \
+               "all 500 of its entries at a path on that disk -- so it cannot" \
+               "be rebuilt from this repository either." >&2
+          echo "SKIPPED (not a pass): the per-pull-request corpus check is not" \
+               "waiting on this. It moved to ci-ephemeral.yml and reads the" \
+               "gate corpus in corpus/GATE_CORPUS_MANIFEST.json: 500 PDFs from" \
+               "three public licensed suites, pinned by SHA-256, fetched on" \
+               "every run. This workflow stays parked for the holdout and" \
+               "un-parks when a holdout corpus exists again. (#276)" >&2
           exit 1
 
   benchmark:

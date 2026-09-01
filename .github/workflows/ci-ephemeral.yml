@@ -276,6 +276,38 @@ jobs:
       # Advisory on purpose, as it was before: the website documents API the
       # SDK does not have yet (#1488), so there is real drift today and it must
       # report without blocking. When #1488 closes, drop continue-on-error.
+      # The corpus gate, on every pull request, automatically (#276).
+      #
+      # `crash-guard.yml` used to be this check. It asked for a runner
+      # labelled `xfa-corpus` that was never registered, so every automatic
+      # run of it queued until GitHub abandoned it a day later -- never red,
+      # never run -- and it read a corpus that lived on one external disk,
+      # which has since stopped answering reads.
+      #
+      # This reads the gate corpus instead: five hundred PDFs from three
+      # public licensed suites, fetched by URL at a pinned upstream commit
+      # and verified against a SHA-256 each. About 35 MB, twenty seconds
+      # cold, nothing at all when the instance is reused. Small enough that
+      # it can run every time, which is the only property that made the old
+      # check worth having.
+      #
+      # No `continue-on-error`. A gate that cannot fail is the thing this
+      # replaced.
+      - name: Fetch the gate corpus and prove it is the pinned set
+        run: |
+          python3 scripts/ci/fetch_gate_corpus.py \
+            --manifest corpus/GATE_CORPUS_MANIFEST.json \
+            --out corpus/gate
+
+      - name: Nothing in the gate corpus crashes or hangs the renderer
+        run: |
+          cargo build --release -p xfa-cli --bin pdfluent
+          python3 scripts/ci/gate_corpus_no_crash.py \
+            --binary target/release/pdfluent \
+            --corpus corpus/gate \
+            --known corpus/GATE_CORPUS_KNOWN_CRASHES.json \
+            --workers 8
+
       - name: docs drift (advisory)
         continue-on-error: true
         run: |
