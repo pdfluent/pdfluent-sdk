@@ -461,7 +461,7 @@ jobs:
     # license-metadata-guard stay on ubuntu-latest; measured 02-09-2026, no job
     # here is hosted any more. The boundary drifted while the comment describing
     # it did not.
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
