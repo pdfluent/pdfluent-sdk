@@ -63,6 +63,9 @@ pub enum EmbedFontError {
     /// The font declares `unitsPerEm` of zero, which would divide by zero when
     /// scaling advances into glyph space.
     ZeroUnitsPerEm,
+    /// The font carries CFF outlines, which need `/FontFile3` rather than the
+    /// `/FontFile2` this path writes.
+    CffOutlinesNotSupported,
     /// The font needs a composite (Type0/CID) encoding, which this does not write.
     TooManyGlyphsForSimpleFont {
         /// How many glyphs the font actually has.
@@ -77,6 +80,11 @@ impl core::fmt::Display for EmbedFontError {
         match self {
             Self::NotAFont => write!(f, "the data is not a readable TrueType or OpenType font"),
             Self::ZeroUnitsPerEm => write!(f, "the font declares unitsPerEm of zero"),
+            Self::CffOutlinesNotSupported => write!(
+                f,
+                "the font has CFF outlines, which need /FontFile3; this path writes \
+                 /FontFile2 and would produce a font viewers cannot load"
+            ),
             Self::TooManyGlyphsForSimpleFont { glyphs } => write!(
                 f,
                 "the font has {glyphs} glyphs; a simple font addresses at most 256, \
@@ -128,6 +136,16 @@ pub fn embed_font(
         });
     }
 
+    // `add_font` always writes /Subtype /TrueType and puts the programme in
+    // /FontFile2. A CFF-flavoured OpenType (.otf) parses perfectly well here and
+    // would be embedded under a key that promises glyf outlines, which viewers
+    // cannot reliably load -- a document that opens and renders nothing, from a
+    // call that returned Ok. CFF belongs in /FontFile3 with a matching subtype,
+    // which this path does not write. (Codex, #1614.)
+    if face.tables().cff.is_some() || face.tables().cff2.is_some() {
+        return Err(EmbedFontError::CffOutlinesNotSupported);
+    }
+
     let widths = widths_for_winansi(&face, units_per_em);
 
     let font_id = doc.add_font(FontData::new(font_data, name.to_string()));
@@ -166,18 +184,68 @@ fn widths_for_winansi(face: &ttf_parser::Face<'_>, units_per_em: u16) -> Vec<i64
 
     (FIRST_CHAR..=LAST_CHAR)
         .map(|code| {
-            // WinAnsiEncoding agrees with Latin-1, and so with the first 256
-            // code points of Unicode, over this range apart from 0x80..=0x9F.
-            // Those sixteen are punctuation in WinAnsi and controls in Latin-1;
-            // they get whatever the cmap says, which is the same answer a viewer
-            // reaches through the /Encoding entry.
             let advance = face
-                .glyph_index(char::from(code))
+                .glyph_index(winansi_to_char(code))
                 .and_then(|gid| face.glyph_hor_advance(gid))
                 .unwrap_or(0);
             (f64::from(advance) * scale).round() as i64
         })
         .collect()
+}
+
+/// The character a WinAnsi byte means, which is not always the byte itself.
+///
+/// WinAnsiEncoding agrees with Latin-1 everywhere except `0x80..=0x9F`. There
+/// Latin-1 has C1 control codes and WinAnsi has typography -- the euro sign,
+/// the curly quotes, the dashes, the bullet. Asking the cmap for `char::from(
+/// 0x92)` looks up U+0092, a control character no font has a glyph for, so the
+/// width came out zero while the font does carry a right single quote at
+/// U+2019. Text using any of these sixteen was then laid out with the wrong
+/// spacing. (Codex, #1614.)
+///
+/// The two `None`s are the two codes WinAnsiEncoding leaves undefined.
+fn winansi_to_char(code: u8) -> char {
+    const C1: [Option<char>; 32] = [
+        Some('\u{20AC}'),
+        None,
+        Some('\u{201A}'),
+        Some('\u{0192}'),
+        Some('\u{201E}'),
+        Some('\u{2026}'),
+        Some('\u{2020}'),
+        Some('\u{2021}'),
+        Some('\u{02C6}'),
+        Some('\u{2030}'),
+        Some('\u{0160}'),
+        Some('\u{2039}'),
+        Some('\u{0152}'),
+        None,
+        Some('\u{017D}'),
+        None,
+        None,
+        Some('\u{2018}'),
+        Some('\u{2019}'),
+        Some('\u{201C}'),
+        Some('\u{201D}'),
+        Some('\u{2022}'),
+        Some('\u{2013}'),
+        Some('\u{2014}'),
+        Some('\u{02DC}'),
+        Some('\u{2122}'),
+        Some('\u{0161}'),
+        Some('\u{203A}'),
+        Some('\u{0153}'),
+        None,
+        Some('\u{017E}'),
+        Some('\u{0178}'),
+    ];
+    if (0x80..=0x9F).contains(&code) {
+        // An undefined slot falls back to the raw code point, which has no glyph
+        // either -- so the width is zero, which is the honest answer for a byte
+        // the encoding does not define.
+        return C1[usize::from(code - 0x80)].unwrap_or(char::from(code));
+    }
+    char::from(code)
 }
 
 /// A `/Font` resource name no page already uses.
@@ -226,12 +294,28 @@ fn register_on_every_page(
 ) -> Result<usize, EmbedFontError> {
     let page_ids: Vec<ObjectId> = doc.get_pages().into_values().collect();
     let mut registered = 0;
+    // A /Resources dictionary inherited from a /Pages ancestor is shared by all
+    // the pages under it, so writing the font into it once serves them all --
+    // and writing it twice would be harmless but pointless.
+    let mut done: Vec<ObjectId> = Vec::new();
 
     for page_id in page_ids {
-        let resources = doc
-            .get_or_create_resources(page_id)
-            .and_then(Object::as_dict_mut)
-            .map_err(|e| EmbedFontError::Document(format!("{e:?}")))?;
+        let holder = resources_holder(doc, page_id)?;
+        if holder.shared_id.is_some_and(|id| done.contains(&id)) {
+            registered += 1;
+            continue;
+        }
+
+        let resources = match holder.shared_id {
+            Some(id) => doc
+                .get_object_mut(id)
+                .and_then(Object::as_dict_mut)
+                .map_err(|e| EmbedFontError::Document(format!("{e:?}")))?,
+            None => doc
+                .get_or_create_resources(page_id)
+                .and_then(Object::as_dict_mut)
+                .map_err(|e| EmbedFontError::Document(format!("{e:?}")))?,
+        };
 
         if !resources.has(b"Font") {
             resources.set("Font", Dictionary::new());
@@ -245,8 +329,23 @@ fn register_on_every_page(
             .map_err(|e| EmbedFontError::Document(format!("{e:?}")))?;
         if let Object::Reference(first) = fonts {
             let mut fonts_id = *first;
+            // Bounded and cycle-aware, as a second line rather than the first.
+            // Measured: on a /Font pointing into an A -> B -> A cycle, lopdf's
+            // own reference limit fires first and get_object returns
+            // ReferenceLimit, so the loop ends there. This bound covers the case
+            // where a chain is long but under that limit, and costs a Vec of at
+            // most 32 ids. Raised by Codex on #1614; the hang it described is
+            // not reachable through this call today, and the guard is cheap
+            // enough to keep for when the layer below changes.
+            let mut seen = vec![fonts_id];
             while let Ok(Object::Reference(next)) = doc.get_object(fonts_id) {
+                if seen.contains(next) || seen.len() > MAX_REFERENCE_CHAIN {
+                    return Err(EmbedFontError::Document(format!(
+                        "/Resources/Font on page {page_id:?} is a reference cycle"
+                    )));
+                }
                 fonts_id = *next;
+                seen.push(fonts_id);
             }
             fonts = doc
                 .get_object_mut(fonts_id)
@@ -256,8 +355,46 @@ fn register_on_every_page(
         Object::as_dict_mut(fonts)
             .map_err(|e| EmbedFontError::Document(format!("{e:?}")))?
             .set(resource_name.to_string(), Object::Reference(font_id));
+        if let Some(id) = holder.shared_id {
+            done.push(id);
+        }
         registered += 1;
     }
 
     Ok(registered)
+}
+
+/// How deep a chain of indirect references to follow before calling it broken.
+const MAX_REFERENCE_CHAIN: usize = 32;
+
+struct ResourcesHolder {
+    /// The object that actually carries the resources, when they are indirect --
+    /// which is also how an inherited dictionary reaches us.
+    shared_id: Option<ObjectId>,
+}
+
+/// Find the dictionary a page's resources really live in.
+///
+/// `get_or_create_resources` makes a fresh, empty page-level `/Resources` when
+/// the page has none of its own. For a page that inherits from a `/Pages`
+/// ancestor that is destructive: `/Resources` inheritance picks the nearest
+/// dictionary rather than merging, so a new empty one hides every inherited
+/// font, XObject, colour space and graphics state, and content that used them
+/// stops rendering. (Codex, #1614.)
+fn resources_holder(doc: &Document, page_id: ObjectId) -> Result<ResourcesHolder, EmbedFontError> {
+    let (own, inherited_ids) = doc
+        .get_page_resources(page_id)
+        .map_err(|e| EmbedFontError::Document(format!("{e:?}")))?;
+
+    // An own, direct dictionary: get_or_create_resources will hand back exactly
+    // that, so there is nothing to preserve.
+    if own.is_some() {
+        return Ok(ResourcesHolder { shared_id: None });
+    }
+    // Otherwise the nearest indirect one wins -- the page's own if it has one,
+    // else the closest ancestor's. Both are correct to write into: we are
+    // registering on every page anyway.
+    Ok(ResourcesHolder {
+        shared_id: inherited_ids.first().copied(),
+    })
 }
