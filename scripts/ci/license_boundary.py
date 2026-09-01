@@ -97,6 +97,39 @@ AGPL_SHA256 = "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
 AGPL_WOORDEN = 5535
 
 
+# docs/release/canonical_licenses.toml is the release gate's registry and it is
+# older than this file. It went unnoticed while boundary.toml was written, and
+# LC9 then flipped 33 manifests past it -- the pre-push hook caught all 23
+# publishable ones, which is the only reason this is a paragraph and not an
+# incident.
+#
+# Two registries describing the same fact will drift; that is not a risk, it is
+# a schedule. So they are compared here rather than left to agree by hand.
+CANONIEK = REPO / "docs" / "release" / "canonical_licenses.toml"
+
+
+def registers_agree() -> list[str]:
+    if not CANONIEK.is_file():
+        return [f"{CANONIEK.name} is missing; the release gate's registry and this "
+                "boundary can no longer be compared"]
+    canon = tomllib.loads(CANONIEK.read_text(encoding="utf-8")).get("crate", [])
+    kant = {}
+    for rij in tomllib.loads(KAART.read_text(encoding="utf-8")).get("crate", []):
+        kant[rij["name"]] = rij["side"]
+    uit = []
+    for c in canon:
+        naam, waarde = c["published_name"], c["license_value"]
+        zijde = kant.get(naam)
+        if zijde is None:
+            uit.append(f"{naam} is in {CANONIEK.name} and on no side of the boundary")
+        elif zijde == "ours" and waarde != ONZE_LICENTIE:
+            uit.append(f"{naam} is ours on the boundary and {CANONIEK.name} says "
+                       f"{waarde!r}")
+        elif zijde == "forked" and waarde == ONZE_LICENTIE:
+            uit.append(f"{naam} is a fork on the boundary and {CANONIEK.name} "
+                       "licenses it as ours")
+    return uit
+
 def agpl_is_onaangeroerd() -> list[str]:
     """The AGPL text is byte-for-byte the one we pinned."""
     if not AGPL.is_file():
@@ -136,7 +169,7 @@ def main() -> int:
               "A short map reads as a clean run and is not one.", file=sys.stderr)
         return 1
 
-    problemen: list[str] = agpl_is_onaangeroerd()
+    problemen: list[str] = agpl_is_onaangeroerd() + registers_agree()
     gezien: set[str] = set()
 
     for rij in rijen:
