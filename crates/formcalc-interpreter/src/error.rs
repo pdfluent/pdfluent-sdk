@@ -63,6 +63,14 @@ pub enum FormCalcError {
         max_depth: usize,
     },
 
+    #[error("evaluation nests deeper than {max_depth} steps")]
+    /// The evaluator's shared depth budget was exhausted. Counts expression
+    /// nodes and user-defined call frames alike, so the two cannot multiply.
+    EvalDepthExceeded {
+        /// The depth limit that was reached.
+        max_depth: usize,
+    },
+
     #[error("Division by zero")]
     /// Division by zero.
     DivisionByZero,
