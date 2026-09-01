@@ -105,6 +105,7 @@ run matrix    python3 scripts/ci/capability_matrix_matches_coverage.py
 run wordsep   python3 scripts/ci/never_delete_the_word_separator.py
 run gitenv    python3 scripts/ci/test_no_test_can_touch_the_real_repo.py
 run licenses2 python3 scripts/ci/license_gate.py
+run licbound  python3 scripts/ci/license_boundary.py
 run lictest   python3 scripts/ci/test_license_gate.py
 run errdocs   python3 scripts/ci/error_codes_have_an_anchor.py
 run errtests  cargo test -q -p pdfluent --test error_codes_stable --test processing_limits
