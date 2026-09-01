@@ -11,7 +11,7 @@ import os, subprocess, sys, tempfile
 from pathlib import Path
 
 GUARD = Path(__file__).with_name("a_deletion_declares_itself.py")
-MINIMUM_CASES = 9  # FLOOR
+MINIMUM_CASES = 13  # FLOOR
 
 
 def clean_env() -> dict[str, str]:
@@ -133,6 +133,50 @@ def main() -> int:
         r = guard(wd, "--base", "HEAD")
         expect("a base that is the head refuses, it does not pass",
                r.returncode == 2, f"exit {r.returncode}")
+
+    # A declaration attached to a deletion that was later undone. The trailer is
+    # real, the commit that carried it really did delete the file -- and none of
+    # that is true of the deletion standing at the tip. (codex, #1635)
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "A: delete\n\nRemoves-deliberately: doomed.txt")
+        (wd / "doomed.txt").write_text("doomed\n")
+        run(wd, "add", "-A")
+        run(wd, "commit", "-qm", "B: restore it")
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "C: delete again, saying nothing")
+        r = guard(wd, "--base", "master")
+        expect("an earlier declaration does not excuse the last deletion",
+               r.returncode == 1, f"exit {r.returncode}")
+
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "A: delete\n\nRemoves-deliberately: doomed.txt")
+        (wd / "doomed.txt").write_text("doomed\n")
+        run(wd, "add", "-A")
+        run(wd, "commit", "-qm", "B: restore it")
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "C: delete again\n\nRemoves-deliberately: doomed.txt")
+        r = guard(wd, "--base", "master")
+        expect("declaring the LAST deletion passes", r.returncode == 0,
+               f"exit {r.returncode} {r.stderr[:140]}")
+
+    # The misplaced-trailer path used to raise KeyError. The old case passed
+    # because it asserted exit 1 and text printed BEFORE the exception -- a
+    # traceback exits non-zero too, so the assertion could not tell the two
+    # apart. This one refuses a traceback explicitly.
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        (wd / "new.txt").write_text("new\n")
+        run(wd, "add", "-A")
+        run(wd, "commit", "-qm", "adds a file\n\nRemoves-deliberately: doomed.txt")
+        r = guard(wd, "--base", "master")
+        expect("a misplaced trailer fails", r.returncode == 1, f"exit {r.returncode}")
+        expect("and does not crash", "Traceback" not in r.stderr, r.stderr[-160:])
+        expect("and says how to fix it", "Move the trailer" in r.stderr,
+               r.stderr[:160])
 
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))

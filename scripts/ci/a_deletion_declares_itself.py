@@ -77,24 +77,23 @@ def main(argv: list[str]) -> int:
     _, out = git("diff", "--diff-filter=D", "--name-only", f"{base_sha}..{args.head}")
     deleted = {p for p in out.splitlines() if p.strip()}
 
-    # Per COMMIT, not set-wide over the range. The first version collected every
-    # trailer in the range and every deletion in the range and compared the two
-    # sets -- so a deletion in commit A was excused by a trailer in commit B, and
-    # the commit that actually removed the file was never looked at.
+    # The deletion transition that causes the FINAL absence, not "some commit
+    # deleted it and some commit declared it".
     #
-    # That defeats the reason for choosing a trailer over a register file. The
-    # whole argument was that a trailer travels with the deletion through rebase
-    # and cherry-pick; a set-wide check lets the two come apart in exactly those
-    # operations, which is when the explanation is most likely to be lost and
-    # least likely to be missed. (codex, #1635)
-    # %x1e between commits, not a second NUL: git already writes a newline
-    # after each record, so "%x00...%x00" ends up separated by "\0\n" and a
-    # split on "\0\0" returns ONE chunk holding every commit. The set-wide
-    # check could not notice; per-commit attribution turns it into every
-    # trailer landing on whichever commit git listed first.
-    _, log = git("log", "--format=%H%x00%B%x1e", f"{base_sha}..{args.head}")
-    declared: dict[str, str] = {}   # path -> the commit that deletes AND declares it
-    misplaced: list[str] = []       # trailer on a commit that deletes no such path
+    # Two versions were wrong before this one. Set-wide over the range let a
+    # trailer in commit B excuse a deletion in commit A. Per-commit fixed that
+    # but still asked only "is there a commit that both deletes and declares" --
+    # so A deletes P with a trailer, B restores P, C deletes P with none, and the
+    # branch passed while claiming "each declared by the commit that performs
+    # it". The declaration belonged to a deletion that had been undone.
+    #
+    # What has to carry the trailer is the LAST commit that removes the path,
+    # because that is the one whose effect survives to the tip. (codex, #1635)
+    _, log = git("log", "--reverse", "--format=%H%x00%B%x1e",
+                 f"{base_sha}..{args.head}")
+    last_deleter: dict[str, str] = {}     # path -> sha of the last commit removing it
+    trailers: dict[str, set[str]] = {}    # sha -> paths it declares
+    deletes: dict[str, set[str]] = {}     # sha -> paths it removes
     for entry in log.split("\x1e"):
         if not entry.strip():
             continue
@@ -102,25 +101,37 @@ def main(argv: list[str]) -> int:
         sha = sha.strip()
         if not sha:
             continue
-        named = [line.split(":", 1)[1].strip()
+        named = {line.split(":", 1)[1].strip()
                  for line in body.splitlines()
                  if line.lower().startswith("removes-deliberately:")
-                 and line.split(":", 1)[1].strip()]
-        if not named:
-            continue
-        # What THIS commit removes. A merge commit deletes nothing of its own.
-        _, own = git("show", "--diff-filter=D", "--name-only", "--format=", "-m",
-                     "--first-parent", sha)
-        removed_here = {p for p in own.splitlines() if p.strip()}
-        for path in named:
-            if path in removed_here:
-                declared[path] = sha[:8]
-            else:
-                misplaced.append(f"{path}  (declared in {sha[:8]}, which does not "
-                                 "delete it)")
+                 and line.split(":", 1)[1].strip()}
+        # What THIS commit removes, against its first parent.
+        _, own = git("show", "--diff-filter=D", "--name-only", "--format=",
+                     "--first-parent", "-m", sha)
+        removed_here = {x for x in own.splitlines() if x.strip()}
+        trailers[sha] = named
+        deletes[sha] = removed_here
+        for path in removed_here:
+            last_deleter[path] = sha
+
+    declared: dict[str, str] = {}
+    for path, sha in last_deleter.items():
+        if path in trailers.get(sha, set()):
+            declared[path] = sha[:8]
+
+    # A trailer on a commit that removes no such path is misplaced. Kept separate
+    # from the stale list: they need different sentences, and the previous
+    # version put both in one list and then looked every entry up in `declared`,
+    # which raised KeyError on the misplaced ones -- a traceback instead of the
+    # remediation the message was written to give. (codex, #1635)
+    misplaced: list[str] = []
+    for sha, named in trailers.items():
+        for path in sorted(named - deletes.get(sha, set())):
+            misplaced.append(f"{path}  (declared in {sha[:8]}, which does not "
+                             "delete it)")
 
     undeclared = sorted(deleted - set(declared))
-    stale = sorted(set(declared) - deleted) + sorted(misplaced)
+    stale = sorted(set(declared) - deleted)
 
     if undeclared:
         print(f"[deletions] FAIL: {len(undeclared)} file(s) present on "
@@ -132,6 +143,15 @@ def main(argv: list[str]) -> int:
               "  A deletion nobody declared is how a branch that predates the work\n"
               "  silently reverts it -- no conflict, no red, MERGEABLE true.",
               file=sys.stderr)
+    if misplaced:
+        print(f"[deletions] FAIL: {len(misplaced)} trailer(s) sit on a commit that "
+              "does not perform the deletion:", file=sys.stderr)
+        for m in misplaced:
+            print(f"    {m}", file=sys.stderr)
+        print("\n  Move the trailer to the commit that removes the file. If a later\n"
+              "  commit removes it again, that commit needs the trailer -- the one\n"
+              "  whose effect reaches the tip is the one being explained.",
+              file=sys.stderr)
     if stale:
         print(f"[deletions] FAIL: {len(stale)} trailer(s) name a path this branch "
               "does not delete:", file=sys.stderr)
@@ -141,7 +161,7 @@ def main(argv: list[str]) -> int:
               "  remove it. A trailer that sits on a different commit is not\n"
               "  travelling with the thing it explains -- and a rebase is exactly\n"
               "  where the two come apart.", file=sys.stderr)
-    if undeclared or stale:
+    if undeclared or stale or misplaced:
         return 1
 
     if deleted:
