@@ -1,0 +1,85 @@
+PDFluent — Additional Terms under section 7 of the GNU AGPLv3
+=============================================================
+
+These are additional terms as permitted by section 7 of the GNU Affero General
+Public License, version 3, which accompanies this software in the file
+LICENSE-AGPL.
+
+They are in a separate file on purpose. The AGPL text itself is reproduced
+verbatim and must not be altered: an edited GPL is not the GPL, and altering it
+would forfeit both compatibility with other GPL-licensed software and every
+court decision that has interpreted it. Section 7 exists precisely so that terms
+like the one below can be added without touching the licence.
+
+
+1. Preservation of attribution (AGPLv3 section 7(b))
+----------------------------------------------------
+
+Under section 7(b) of the GNU AGPLv3, you must preserve reasonable legal notices
+and author attributions in the covered work and in works based on it.
+
+Specifically, and without limiting the generality of that requirement: documents
+produced by this software carry the string "PDFluent" in the /Producer entry of
+the PDF /Info dictionary and in the corresponding XMP metadata. That string is a
+reasonable author attribution within the meaning of section 7(b), and it must be
+preserved in any conveyed modified version of this software.
+
+This does not restrict what you may do with documents the software produces. It
+constrains the software, not its output: you may edit, strip or rewrite the
+metadata of any individual PDF by any means you like, including with this
+software. What you may not do is convey a modified version of the software with
+the attribution removed from what it writes.
+
+
+2. Why this term and not a technical measure
+--------------------------------------------
+
+An AGPL recipient has the source and may delete any string in it. That is a
+freedom the licence grants deliberately, and no technical measure can survive
+it — a licence key check in published source is a few minutes' work to remove
+and only ever inconveniences the people who would have paid anyway.
+
+Section 7(b) is GPL-compatible and legally enforceable where a technical marking
+is neither. So the attribution is held by a licence term rather than by a check
+in the binary.
+
+That is the design. It is not yet the build: as of 1 September 2026 the compiled
+SDK still carries tier checks from the proprietary model, which an AGPL
+recipient is free to remove and which issue #199 removes for everyone. The
+obligation in this file is legal either way and does not depend on them.
+
+
+3. Removal of these terms
+-------------------------
+
+As section 7 requires, and to state it plainly: if you received this software
+with these additional terms, you may remove them from any copy you convey, to
+the extent permitted by section 7. Removing them removes the corresponding
+permission — it does not grant you rights under the commercial licence.
+
+
+4. Relationship to the commercial licence
+-----------------------------------------
+
+This software is available under two licences, at your option:
+
+  * the GNU AGPLv3 (LICENSE-AGPL) together with these additional terms; or
+  * the PDFluent Commercial Licence (LICENSE-COMMERCIAL).
+
+A commercial licensee is not bound by the AGPL and is not bound by these
+additional terms. The commercial licence states its own attribution position.
+
+If you have not signed a commercial licence, you are using this software under
+the AGPL, and the AGPL's obligations — including section 13, network
+interaction — apply to you in full.
+
+
+5. What these terms do not cover
+--------------------------------
+
+Several crates in this repository are forks of third-party open-source projects
+and remain under their original permissive licences. They are neither AGPL nor
+covered by these terms, and no commercial licence from PDFluent is needed to use
+them. NOTICE records which crates those are; docs/licensing/boundary.toml is the
+machine-readable version, and scripts/ci/license_boundary.py fails the build if
+the two disagree.

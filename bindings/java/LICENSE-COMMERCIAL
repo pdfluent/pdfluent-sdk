@@ -1,0 +1,142 @@
+PDFluent Commercial Licence
+===========================
+
+Version 2.0 — 31 August 2026
+Innovation Trigger B.V., trading as PDFluent, Netherlands.
+
+This licence replaces the PDFluent Commercial License v1.0 of 2 May 2026, which
+described a product with licence keys, tiers and an expiring evaluation. None of
+those exist. This text describes what the software actually is.
+
+
+1. Why this licence exists
+--------------------------
+
+PDFluent is published under the GNU AGPLv3 (LICENSE-AGPL) with an additional
+attribution term (LICENSE-ADDITIONAL-TERMS). That is the default, and it is the
+complete product: no feature is withheld, no key is required, nothing expires.
+
+The AGPL asks something in return. If you convey the software, or let users
+interact with a modified version over a network, you must offer those users the
+corresponding source under the same licence. For many organisations that is
+fine. For some it is impossible — because the surrounding product is closed, or
+a customer contract forbids it, or the legal department will not accept a
+copyleft obligation in a shipped binary.
+
+This licence is the alternative for exactly that case. You are not buying
+features. You are buying the right not to publish your own source.
+
+
+2. What you get
+---------------
+
+On payment of the agreed fee, PDFluent grants the licensee a non-exclusive,
+worldwide, perpetual licence to use, modify and distribute the PDFluent software
+in the licensee's own products, without the obligations of the AGPL.
+
+Specifically:
+
+  a. Distribution of the software as part of a compiled product, without
+     supplying source to the recipients.
+  b. Operation as a network service, without the AGPL section 13 obligation.
+  c. Internal use of any kind.
+  d. Deployment in environments without network access. Nothing in the software
+     contacts a server, so this needs no permission and costs nothing extra.
+
+Perpetual means the version you licensed does not stop working, ever. There is
+no mechanism by which it could: see section 5.
+
+
+3. What is not covered
+----------------------
+
+Several components in the repository are forks of third-party open-source
+projects and remain under their own permissive licences. They are not PDFluent's
+to relicense and need no licence from PDFluent. `NOTICE` records which they are;
+`docs/licensing/boundary.toml` is the machine-readable version.
+
+This licence covers the components on PDFluent's side of that boundary.
+
+
+4. Attribution
+--------------
+
+Documents produced by the software carry "PDFluent" in the PDF `/Producer` entry
+and in XMP metadata. Under this licence you may remove or replace that string in
+your build. The AGPLv3 section 7(b) term that requires it to be preserved does
+not apply to a commercial licensee.
+
+
+5. What this licence does not contain, and why
+----------------------------------------------
+
+No telemetry, and no expiry on a paid licence.
+
+Stated accurately rather than aspirationally: as of 1 September 2026 the build
+still carries tier checks from the previous model, so an unlicensed binary
+reports `Tier::Trial` and refuses some capabilities. That is being removed
+(issue #199). It is not a condition of this licence and never was — a
+commercial licensee's rights come from this agreement, not from a check in the
+binary — but this file should not describe a product that does not exist yet.
+
+This is deliberate, not an omission. Published source means any technical check
+can be removed by anyone who has the code, in minutes, so such a check would
+only ever inconvenience the people who intended to pay. The obligation here is
+contractual, and it is enforceable in the ordinary way.
+
+Consequently there is nothing to install, nothing to renew, and nothing that can
+break in production because a file expired or a server was unreachable.
+
+What a licensee receives is a countersigned agreement, an invoice, and an entry
+in PDFluent's licence register. Those are the deliverables.
+
+
+6. Support and updates
+----------------------
+
+This licence grants rights to the software. It is not a support contract and
+does not promise updates, response times or fixes. Where those are agreed they
+are written in a separate order form or services agreement, which prevails over
+this section.
+
+
+7. Warranty and liability
+-------------------------
+
+The software is provided "as is", without warranty of any kind, express or
+implied, including but not limited to the warranties of merchantability, fitness
+for a particular purpose and non-infringement.
+
+To the maximum extent permitted by applicable law, PDFluent's aggregate
+liability under or in connection with this licence shall not exceed the fees
+paid by the licensee for it. Nothing in this licence excludes or limits
+liability that cannot lawfully be excluded or limited, including liability for
+intentional misconduct or gross negligence.
+
+
+8. Term and termination
+-----------------------
+
+The licence is perpetual and terminates only on a material breach that the
+licensee has not remedied within 30 days of written notice. On termination the
+licensee must stop distributing the software under this licence; rights already
+granted to the licensee's own customers for versions already shipped are not
+affected.
+
+
+9. Law and forum
+----------------
+
+This licence is governed by the laws of the Netherlands. Disputes are submitted
+to the competent court in the district where PDFluent has its registered seat,
+without prejudice to any mandatory consumer or statutory forum.
+
+
+10. The agreement
+-----------------
+
+The licensee, the licensed scope, the fee and any agreed support are recorded in
+an order form signed by both parties. That order form and this text together are
+the agreement. Where they conflict, the order form prevails.
+
+Contact: sales@pdfluent.com
