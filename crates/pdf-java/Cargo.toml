@@ -5,7 +5,8 @@ edition = "2021"
 # publish = false: Java JNI bindings are distributed via Maven/JVM ecosystem, not crates.io.
 # Also has stale MIT license — fix license-file before enabling publish.
 publish = false
-license = "MIT"
+# AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
+license = "AGPL-3.0-or-later"
 description = "Java JNI bindings for the XFA PDF engine."
 
 [lib]

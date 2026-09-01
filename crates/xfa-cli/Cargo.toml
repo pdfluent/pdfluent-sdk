@@ -9,7 +9,8 @@ edition.workspace = true
 # scripts/release/pdfluent_cli_package.sh, NOT as crates.io source. (A legacy
 # 1.0.0-beta.8 was published before this governance was set; it is superseded.)
 publish = false
-license-file = "LICENSE"
+# AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
+license = "AGPL-3.0-or-later"
 repository.workspace = true
 description = "PDFluent — PDF and XFA processing CLI: render, extract, fill, flatten, validate, sign."
 readme = "README.md"

@@ -2,7 +2,8 @@
 name = "pdfluent-sign"
 version = "1.0.0"
 edition = "2021"
-license-file = "LICENSE"
+# AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
+license = "AGPL-3.0-or-later"
 readme = "README.md"
 description = "PDF digital signature validation — PAdES, CMS, certificate chain, DocMDP/FieldMDP, LTV."
 repository = "https://pdfluent.com/source"

@@ -28,6 +28,10 @@ allowed = [
     "BSL-1.0", "0BSD", "MIT-0", "CC0-1.0", "NCSA", "Unlicense",
     "CDLA-Permissive-2.0",
     "LicenseRef-PDFluent-Commercial",
+  # What our own packages are judged as after LC9: AGPL plus a commercial
+  # option. Distinct from the AGPL itself, which stays forbidden as a
+  # DEPENDENCY licence -- see eigen_verklaring() in scripts/ci/license_gate.py.
+  "LicenseRef-PDFluent-Dual",
 ]
 
 # Named, so a hit reports "forbidden" instead of "unknown". The difference
@@ -78,10 +82,10 @@ internal = { weak_copyleft = ["MPL-2.0"], note = "pdfluent-snippet-extract, benc
 # <file>`. Mapped here per manifest rather than by pattern: allowing that string
 # in general would wave through any third-party package that uses it, and the
 # point of this gate is that nothing unclassified passes.
-"crates/pdf-node/package.json" = "LicenseRef-PDFluent-Commercial"
+"crates/pdf-node/package.json" = "AGPL-3.0-or-later"
 # The generated pkg/package.json is a build artefact and gitignored; the gate
 # reads the manifest wasm-pack copies from instead.
-"crates/xfa-wasm/Cargo.toml" = "LicenseRef-PDFluent-Commercial"
+"crates/xfa-wasm/Cargo.toml" = "AGPL-3.0-or-later"
 
 [floors]
 

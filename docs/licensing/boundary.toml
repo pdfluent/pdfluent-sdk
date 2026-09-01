@@ -218,15 +218,13 @@ declares = "MIT"
 [[crate]]
 name = "pdf-content-stream"
 dir = "crates/pdf-content-stream"
-side = "forked"
-declares = "MIT OR Apache-2.0"
+side = "ours"
 publish_false = true
 
 [[crate]]
 name = "pdf-diff"
 dir = "crates/pdf-diff"
-side = "forked"
-declares = "MIT"
+side = "ours"
 publish_false = true
 
 [[crate]]
@@ -244,8 +242,7 @@ declares = "Apache-2.0 OR MIT"
 [[crate]]
 name = "pdf-java"
 dir = "crates/pdf-java"
-side = "forked"
-declares = "MIT"
+side = "ours"
 publish_false = true
 
 [[crate]]
@@ -263,8 +260,7 @@ declares = "Apache-2.0 OR MIT"
 [[crate]]
 name = "xfa-pdfrest-compare"
 dir = "crates/xfa-pdfrest-compare"
-side = "forked"
-declares = "MIT"
+side = "ours"
 publish_false = true
 
 
