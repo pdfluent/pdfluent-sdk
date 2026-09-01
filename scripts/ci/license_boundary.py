@@ -7,8 +7,11 @@ eigen kant van de grens een permissieve licentie declareert, of andersom".
 
 THREE SIDES
 
-  ours      dual-licensed AGPLv3 + commercial. Declares `license-file`, never a
-            permissive SPDX expression.
+  ours      dual-licensed AGPLv3 + commercial. Declares
+            `license = "AGPL-3.0-only"`. LC9 replaced the older
+            `license-file` form, which crates.io renders instead of an SPDX
+            expression, and the check below now refuses it -- this paragraph
+            described the rule the code had already stopped applying.
   forked    a fork of somebody else's open source. Keeps its upstream permissive
             licence, exactly as NOTICE promises. Never `license-file`.
   internal  tooling that inherits the workspace `license = "MIT"`. Must be
@@ -56,7 +59,7 @@ VLOER = 40
 # What a crate of ours declares after LC9 (#221). The commercial half is not an
 # SPDX identifier and cannot be one, so the manifest names the AGPL and LICENSE
 # names both. crates.io renders this field, so this is the string the world sees.
-ONZE_LICENTIE = "AGPL-3.0-or-later"
+ONZE_LICENTIE = "AGPL-3.0-only"
 
 # The fork register is the authority on what is a fork. `forked` is the one side
 # that permits a permissive licence, so a crate may not simply claim it.
@@ -164,7 +167,7 @@ def eigen_refs_zijn_gedefinieerd() -> list[str]:
     return uit
 
 # Every shipped copy of a licence text, and where it must be identical to.
-KOPIEEN = ("LICENSE", "LICENSE-AGPL", "LICENSE-ADDITIONAL-TERMS", "LICENSE-COMMERCIAL")
+KOPIEEN = ("LICENSE", "LICENSE-AGPL", "LICENSE-COMMERCIAL")
 KOPIE_MAPPEN = ("crates/*", "bindings/java", "bindings/dotnet/src/PDFluent")
 
 

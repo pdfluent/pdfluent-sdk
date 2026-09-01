@@ -7,7 +7,7 @@ description = "Visual comparison harness for PDFluent vs pdfRest renders."
 # Internal-only harness — never published. License set explicitly to satisfy
 # `cargo metadata` / `cargo deny` (workspace inherits MIT for internal crates).
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only"
 publish = false
 
 [dependencies]

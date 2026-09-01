@@ -34,7 +34,6 @@
   <ItemGroup>
     <None Include="LICENSE" Pack="true" PackagePath="" />
     <None Include="LICENSE-AGPL" Pack="true" PackagePath="" />
-    <None Include="LICENSE-ADDITIONAL-TERMS" Pack="true" PackagePath="" />
     <None Include="LICENSE-COMMERCIAL" Pack="true" PackagePath="" />
     <None Include="README.md" Pack="true" PackagePath="" />
   </ItemGroup>

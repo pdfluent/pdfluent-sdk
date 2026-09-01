@@ -73,7 +73,7 @@ exec(compile(_bron, lg.__file__, "exec"), lg.__dict__)
 
 OK = {"MIT", "Apache-2.0", "BSD-3-Clause", "LicenseRef-PDFluent-Commercial"}
 ZWAK = {"MPL-2.0", "LGPL-2.1-or-later"}
-VERBODEN = {"GPL-3.0-only", "AGPL-3.0-or-later", "SSPL-1.0"}
+VERBODEN = {"GPL-3.0-only", "AGPL-3.0-only", "AGPL-3.0-or-later", "SSPL-1.0"}
 
 FLOOR_CASES = 16
 

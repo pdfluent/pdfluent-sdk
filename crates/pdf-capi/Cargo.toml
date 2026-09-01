@@ -7,7 +7,7 @@ edition = "2021"
 # crates.io. license-file points to the PDFluent Commercial License (see ./LICENSE).
 publish = false
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only"
 description = "C-compatible API for the PDF engine (PDFium-compatible interface)."
 
 [lib]

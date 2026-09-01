@@ -3,7 +3,7 @@ name = "pdf-xfa"
 version = "1.0.0"
 edition = "2021"
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only"
 readme = "README.md"
 description = "XFA engine — extraction, layout rendering, font resolution. Experimental and under active development."
 repository = "https://pdfluent.com/source"
@@ -16,7 +16,7 @@ categories = ["rendering"]
 # internal golden corpus through repo-relative paths, so they cannot run
 # from a published crate; including them only carried internal corpus
 # names into the tarball (flagged by the prepublish audit).
-include = ["src/**/*", "LICENSE", "README.md", "LICENSE-AGPL", "LICENSE-ADDITIONAL-TERMS", "LICENSE-COMMERCIAL"]
+include = ["src/**/*", "LICENSE", "README.md", "LICENSE-AGPL", "LICENSE-COMMERCIAL"]
 
 [dependencies]
 xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0" }

@@ -9,7 +9,7 @@ name = "xfa-wasm"
 version = "1.0.0"
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only"
 repository.workspace = true
 description = "PDFluent browser SDK — find and replace PDF text, edit, annotate, redact, sign, and validate PDFs (including XFA) entirely client-side via WASM"
 publish = false
