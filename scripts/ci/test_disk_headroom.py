@@ -52,7 +52,7 @@ MINIMUM_CASES = 20
 # reason unrelated to the change under test, and the usual repair for that is to
 # stop running the guard at all. Both are one-line edits over there and neither
 # is visible in a diff of that file alone.
-PINNED_FLOOR_GB = 25
+PINNED_FLOOR_GB = 35
 
 failures: list[str] = []
 cases = 0
@@ -243,14 +243,29 @@ def main() -> int:
         expect("an unreadable mount table is not a pass", r.returncode == 3, f"got {r.returncode}")
 
         # --- the floor is pinned in both directions ------------------------
-        declared = None
+        nums = {}
         for line in GUARD.read_text().splitlines():
-            if line.startswith("DEFAULT_FLOOR_GB"):
-                declared = int(line.split("=")[1].strip())
+            for name in ("COLD_BUILD_GB", "SAFETY_MARGIN_GB"):
+                if line.startswith(name + " ="):
+                    nums[name] = int(line.split("=")[1].strip())
+        declared = (nums.get("COLD_BUILD_GB", 0) + nums.get("SAFETY_MARGIN_GB", 0)) or None
         expect(
             f"the floor is still {PINNED_FLOOR_GB} GB",
             declared == PINNED_FLOOR_GB,
             f"disk_headroom.py declares {declared}; change both or neither",
+        )
+
+        # The relationship, not just the total. The floor used to be 25 while the
+        # comment beside it claimed a cold build peaked at 15; the measured figure
+        # is 30, so the floor sat BELOW the build it was meant to permit and the
+        # verdict came out of how warm the last run had left the cache. Pinning
+        # only the sum would let that return as 34 + 1. (#298)
+        expect(
+            "the floor leaves room for a cold build",
+            nums.get("SAFETY_MARGIN_GB", 0) > 0
+            and declared > nums.get("COLD_BUILD_GB", 0),
+            f"floor {declared} does not exceed the cold-build cost "
+            f"{nums.get('COLD_BUILD_GB')}; that is the defect #298 describes",
         )
 
         # And it is a floor, not a decoration: the verdict has to turn over at
