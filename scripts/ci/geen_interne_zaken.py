@@ -174,12 +174,26 @@ def uit_boom():
     via de bestanden zelf: een klantnaam in een testfixture staat na publicatie
     in elke kloon, ongeacht hoe schoon de boodschap was.
     """
+    # De vraag is niet of de REPOSITORY interne zaken bevat, maar of de
+    # GEPUBLICEERDE boom ze bevat. Een klantnaam in een bestand dat
+    # PUBLIC_TREE.toml intern verklaart, verlaat het huis niet. Het predicaat
+    # komt uit simulate_public_tree, zodat er één antwoord op "gaat dit mee" is.
+    import importlib.util
+    import tomllib
+
+    _hier = os.path.dirname(os.path.abspath(__file__))
+    _spec = importlib.util.spec_from_file_location(
+        "simulate_public_tree", os.path.join(_hier, "simulate_public_tree.py"))
+    _stp = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_stp)
+    manifest = tomllib.loads(_stp.MANIFEST.read_text())
+
     paden = [
         p for p in subprocess.run(
             ["git", "ls-files", "-z"],
             capture_output=True, text=True, check=True, env=_git_omgeving(),
         ).stdout.split("\0")
-        if p and p not in EIGEN_BESTANDEN
+        if p and p not in EIGEN_BESTANDEN and _stp.wordt_gepubliceerd(p, manifest)
     ]
     if len(paden) < MIN_BESTANDEN:
         raise SystemExit(
@@ -202,11 +216,11 @@ def uit_boom():
 
 def _meld_boom(fouten, gelezen):
     if not fouten:
-        print(f"OK: {gelezen} getrackte tekstbestanden bevatten geen interne zaken.")
+        print(f"OK: {gelezen} publiek wordende tekstbestanden bevatten geen interne zaken.")
         return 0
     print(
-        f"geen_interne_zaken: {len(fouten)} plek(ken) in {gelezen} getrackte\n"
-        "tekstbestanden horen niet in een publieke repository. Anders dan een\n"
+        f"geen_interne_zaken: {len(fouten)} plek(ken) in {gelezen} bestanden die\n"
+        "PUBLIEK WORDEN horen daar niet. Anders dan een\n"
         "commitboodschap is dit de inhoud zelf: die staat na publicatie in elke kloon.",
         file=sys.stderr,
     )

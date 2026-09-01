@@ -73,12 +73,21 @@ def tracked() -> list[str]:
     return [f for f in out.stdout.split("\0") if f]
 
 
+def wordt_gepubliceerd(pad: str, m: dict) -> bool:
+    """Of dit pad in de publieke boom terechtkomt.
+
+    Eén bron voor de vraag "gaat dit mee". `geen_interne_zaken --boom` stelt
+    dezelfde vraag, en twee kopieën van deze twee regels zouden uit elkaar
+    lopen zonder dat iets dat merkt.
+    """
+    return not (pad.startswith(tuple(m["internal"]["paths"]))
+                or pad in set(m["internal"]["files"]))
+
+
 def assemble(dest: Path, m: dict) -> int:
-    paden = tuple(m["internal"]["paths"])
-    bestanden = set(m["internal"]["files"])
     n = 0
     for f in tracked():
-        if f.startswith(paden) or f in bestanden:
+        if not wordt_gepubliceerd(f, m):
             continue
         src = REPO / f
         if not src.is_file():
