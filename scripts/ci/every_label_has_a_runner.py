@@ -78,6 +78,18 @@ def main() -> int:
     if online is None:
         print("SKIPPED (not a pass): could not read the runner list, so no label was "
               "checked against anything.", file=sys.stderr)
+        # Say where this can and cannot work, because the answer is structural
+        # and somebody will otherwise try to fix it with a token. Measured
+        # 01-09-2026: `administration` is not a settable scope for
+        # GITHUB_TOKEN -- actionlint enumerates every available scope and it is
+        # not among them -- and /actions/runners requires it. So no workflow
+        # token can read this list, whatever else is wired up. It needs `gh`
+        # with a keyring, which is the local gate, or a PAT in a secret, which
+        # is a decision nobody has taken (#290).
+        print("  This works from scripts/ci/local_ci_gate.sh, where `gh` is "
+              "authenticated. It cannot work in GitHub Actions: /actions/runners "
+              "needs `administration: read`, which GITHUB_TOKEN cannot be granted.",
+              file=sys.stderr)
         return 0
 
     ontbreekt = []
