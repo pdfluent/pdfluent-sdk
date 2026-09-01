@@ -1,0 +1,115 @@
+# Who owns which paths, so several terminals can work at once without colliding.
+#
+# The unit of ownership is a PATH, not an issue. Two terminals can hold different
+# issues and still edit the same file, which is how the collisions actually
+# happen -- so allocating issues is not enough on its own.
+#
+# A branch declares its territory through its name: `t2/ci-guards-on-github` is
+# in territory t2. scripts/ci/territories_do_not_overlap.py checks two things:
+# that no two territories claim the same path, and that a branch has not edited
+# outside the one it named.
+#
+# Overlaps are not forbidden by accident of writing; they are impossible by
+# construction, because the guard refuses them.
+#
+# To take on work in another territory: change the file, in a commit, so it comes
+# past review. Never edit outside your territory quietly.
+
+[[territory]]
+id = "t1"
+name = "Forks and the engine"
+waarom = """
+The forked crates and their upstream register. Kept separate because an upstream
+merge rewrites whole files, and any other terminal touching them at the same time
+turns a three-way merge into a four-way one."""
+paden = [
+  "crates/hayro-*/**",
+  "crates/pdf-syntax/**",
+  "crates/pdf-interpret/**",
+  "crates/pdf-render/**",
+  "crates/pdf-font/**",
+  "crates/lopdf/**",
+  "docs/UPSTREAM_FORKS.toml",
+  "docs/FORKDIVERGENTIE.md",
+]
+issues = [262, 256, 255, 210]
+
+[[territory]]
+id = "t2"
+name = "CI, runners and gates"
+waarom = """
+Workflows and the guard scripts. The one place where a careless edit stops every
+other terminal from being able to verify anything, so it gets a single owner."""
+paden = [
+  ".claude/**",
+  ".github/workflows/**",
+  ".gitlab-ci.yml",
+  "scripts/ci/**",
+  "docs/ci/**",
+]
+uitgezonderd = [
+  "scripts/ci/*licen*",
+  "scripts/ci/*publicat*",
+  "scripts/ci/geen_interne_zaken.py",
+  "scripts/ci/contributors.toml",
+  "scripts/ci/repos_staan_zoals_bedoeld.py",
+]
+issues = [288, 286, 290, 276, 283, 264]
+
+[[territory]]
+id = "t3"
+name = "Licensing and what may be published"
+waarom = """
+Licence texts, the claims register, and the guards that decide what can go public.
+Shares scripts/ci/ with t2, so the filenames are carved out explicitly above --
+these are the guards about publication, not about building."""
+paden = [
+  "LICENSE*",
+  "NOTICE*",
+  "THIRD_PARTY*",
+  "docs/licen*",
+  "docs/KWALITEITSSPOOR.md",
+  "scripts/ci/*licen*",
+  "scripts/ci/*publicat*",
+  "scripts/ci/geen_interne_zaken.py",
+  "scripts/ci/contributors.toml",
+  "scripts/ci/repos_staan_zoals_bedoeld.py",
+  "crates/xfa-license/**",
+  "crates/xfa-license-gen/**",
+]
+issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
+
+[[territory]]
+id = "t4"
+name = "The website"
+waarom = """
+A different repository entirely (pdfluent/pdfluent-playground), so it cannot
+collide with anything here. The most self-contained package available."""
+repo = "pdfluent/pdfluent-playground"
+paden = ["**"]
+issues = [245, 247, 289, 277, 207]
+
+[[territory]]
+id = "t5"
+name = "The editor"
+waarom = """
+A different checkout (pdfluent-v3). Touches this repo only through the SDK it
+consumes, and then read-only."""
+repo = "pdfluent-v3"
+paden = ["**"]
+issues = [259, 225]
+
+[[territory]]
+id = "t6"
+name = "Visibility and outbound content"
+waarom = """
+The V-series. Almost no code: directories, posts, package-manager listings.
+Blocked behind CLAIMS.md rather than behind other terminals."""
+paden = [
+  "docs/marketing/**",
+  "docs/seo/**",
+]
+issues = [163, 164, 166, 167, 168, 169, 186, 187, 189, 192, 193, 194, 195, 205, 206]
+
+# Not a territory. #272 (the 1051-file branch) and #257/#258 (owner decisions)
+# cut across all of them and stay with the coordinating terminal.
