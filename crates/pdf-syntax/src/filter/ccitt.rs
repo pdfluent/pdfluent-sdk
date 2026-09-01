@@ -120,6 +120,26 @@ pub(crate) fn decode(
         crate::leniency::emit(crate::leniency::CCITT_PARTIAL_DECODE);
     }
 
+    // The pixel limit in Stream::decoded_image was checked against the DECLARED
+    // /Height, before any of this ran. Reporting decoded_rows -- which is the
+    // honest count, and the point of the fix above -- lets a file declare a
+    // small /Height to get past that check and then hand a much larger row count
+    // to get_components, which allocates at least a u16 per pixel. The fix for
+    // one hole opened another. (Codex, #1609.)
+    //
+    // So the limit is applied again, to what was actually produced.
+    if let Some(limit) = params.ctx().load_limits().image_pixel_limit() {
+        let pixels = u64::from(settings.columns).saturating_mul(u64::from(decoder.decoded_rows));
+        if pixels > u64::from(limit) {
+            log::warn!(
+                "CCITT decoded {} rows of {} columns = {pixels} pixels, over the limit {limit}",
+                decoder.decoded_rows,
+                settings.columns
+            );
+            return None;
+        }
+    }
+
     Some(FilterResult {
         data: decoder.output,
         image_data: Some(ImageData {
@@ -149,11 +169,22 @@ pub(crate) fn decode(
 mod upstream_hardening_tests {
     use super::*;
     use crate::object::FromBytes;
+    use crate::reader::{Reader, ReaderContext, ReaderExt};
 
     /// One row of eight white pixels, Group 3 one-dimensional.
     ///
     /// Taken from upstream's own regression fixture for LaurenzV/hayro#1258.
     const ONE_ROW_G3: &[u8] = &[0x35, 0x14];
+
+    /// The same dictionary, but read through a context that carries a pixel
+    /// limit -- which `Dict::from_bytes` cannot give us, since it uses a dummy
+    /// context with the defaults.
+    fn params_with_pixel_limit(src: &[u8], limit: u32) -> Dict<'_> {
+        let limits = crate::pdf::PdfLoadLimits::new().max_image_pixels(u64::from(limit));
+        Reader::new(src)
+            .read_with_context::<Dict<'_>>(&ReaderContext::dummy_with_limits(limits))
+            .expect("the test's own dictionary must parse")
+    }
 
     fn params_with(height: u32) -> ImageDecodeParams {
         ImageDecodeParams {
@@ -235,5 +266,32 @@ mod upstream_hardening_tests {
         let decoded = decode(ONE_ROW_G3, params, &params_with(1)).unwrap();
 
         assert_eq!(decoded.image_data.unwrap().height, 1);
+    }
+
+    /// The hole the `decoded_rows` fix opened, and the second check that closes it.
+    ///
+    /// `Stream::decoded_image` applies the pixel limit to the DECLARED
+    /// `/Height`, before any decoding. Reporting the decoded row count is the
+    /// honest answer, and it also means a file can declare a tiny `/Height` to
+    /// slip past that check and then hand a far larger count to
+    /// `get_components`, which allocates at least a `u16` per pixel.
+    /// (Codex, #1609.)
+    #[test]
+    fn decoded_rows_are_checked_against_the_pixel_limit_too() {
+        // Declared height 1, so the limit upstream of here is satisfied. The
+        // data decodes one row of eight columns: 8 pixels against a limit of 4.
+        let params = params_with_pixel_limit(b"<< /K 0 /Columns 8 /Rows 1 >>", 4);
+        assert!(
+            decode(ONE_ROW_G3, params, &params_with(1)).is_none(),
+            "8 decoded pixels must not pass a 4-pixel limit"
+        );
+    }
+
+    /// And the limit must not fire on an image that fits, or every CCITT image
+    /// in a document with a limit set would vanish.
+    #[test]
+    fn an_image_inside_the_pixel_limit_still_decodes() {
+        let params = params_with_pixel_limit(b"<< /K 0 /Columns 8 /Rows 1 >>", 64);
+        assert!(decode(ONE_ROW_G3, params, &params_with(1)).is_some());
     }
 }

@@ -159,7 +159,19 @@ upstream = "lopdf"
 # upstream never made -- it had drifted to our own crate version. Our tree is
 # closest to tag v0.39.0 and the distance grows monotonically at every commit
 # after it (#262).
-forkpunt = "6cd9a62"  # J-F-Liu/lopdf v0.39.0, 2026-01-12
+# 8c454dd9 (v0.44.0), not 6cd9a62 (v0.39.0) -- and the difference is what the
+# field means. `forkpunt` is the base a future merge should use, not the
+# original divergence: after the 0.39.0 -> 0.44.0 merge landed in #1614, the
+# next merge starts from 0.44.0. `hayro-ccitt` already reads that way (its point
+# is upstream HEAD at the time it was brought level, not where it first
+# diverged).
+#
+# 6cd9a62 was recorded here first, and the register verifier caught it within
+# minutes of being taught that lopdf lives in a different repository: the entry
+# claimed gelijk_met = 0.44.0 while its fork point carried 0.39.0. Both numbers
+# were right about different things, which is precisely the confusion the field
+# exists to prevent.
+forkpunt = "8c454dd9"  # J-F-Liu/lopdf v0.44.0, 2026-07-10
 # Was recorded as 0.39.5, a version upstream has never released -- it had
 # drifted to our own crate version. Verified against the code: the fork point
 # was upstream tag v0.39.0, and the tree now sits on v0.44.0 (#262).
