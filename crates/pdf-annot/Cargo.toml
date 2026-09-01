@@ -3,7 +3,7 @@ name = "pdf-annot"
 version = "1.0.0"
 edition = "2021"
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-only"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 readme = "README.md"
 description = "PDF annotation engine — parsing and typed access to all annotation types per ISO 32000-2 §12.5."
 repository = "https://pdfluent.com/source"

@@ -8,7 +8,9 @@ eigen kant van de grens een permissieve licentie declareert, of andersom".
 THREE SIDES
 
   ours      dual-licensed AGPLv3 + commercial. Declares
-            `license = "AGPL-3.0-only"`. LC9 replaced the older
+            `license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"` --
+            the compound is canonical on all four channels, so one constant can
+            be compared against four registers. LC9 replaced the older
             `license-file` form, which crates.io renders instead of an SPDX
             expression, and the check below now refuses it -- this paragraph
             described the rule the code had already stopped applying.
@@ -59,7 +61,7 @@ VLOER = 40
 # What a crate of ours declares after LC9 (#221). The commercial half is not an
 # SPDX identifier and cannot be one, so the manifest names the AGPL and LICENSE
 # names both. crates.io renders this field, so this is the string the world sees.
-ONZE_LICENTIE = "AGPL-3.0-only"
+ONZE_LICENTIE = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 
 # The fork register is the authority on what is a fork. `forked` is the one side
 # that permits a permissive licence, so a crate may not simply claim it.

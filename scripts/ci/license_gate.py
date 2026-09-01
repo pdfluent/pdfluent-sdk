@@ -266,7 +266,27 @@ def eigen_verklaring(rel: str, gedeclareerd: str | None, pol: dict) -> tuple[str
     # out, and it is exactly what LC9 set out to do. Reading one rule as the
     # other would have made the licence switch fail its own gate.
     oordeel = "LicenseRef-PDFluent-Dual"
-    if gedeclareerd and not NIET_SPDX.match(gedeclareerd) and gedeclareerd != verwacht:
+    # The non-SPDX escape is gone as of 01-09-2026.
+    #
+    # It existed because npm had no spelling for the offer: `SEE LICENSE IN
+    # LICENSE` is not an SPDX expression and cannot be compared to a policy. But
+    # skipping the comparison meant the `own_packages` entry READ as coverage
+    # while checking nothing -- put `SEE LICENSE IN LICENSE` back and this gate
+    # stayed green, which is how a channel could drift with an entry beside it.
+    #
+    # Now that every channel declares the canonical expression, there is a real
+    # string to compare on all four, so a manifest that retreats to a non-SPDX
+    # form is a finding rather than an exemption.
+    if not gedeclareerd:
+        return oordeel, (f"{rel} declares no licence at all, while "
+                         f"docs/LICENSE_POLICY.toml [own_packages] expects "
+                         f"{verwacht!r}")
+    if NIET_SPDX.match(gedeclareerd):
+        return oordeel, (f"{rel} declares {gedeclareerd!r}, which is not an SPDX "
+                         f"expression and so cannot be compared with anything. "
+                         f"[own_packages] expects {verwacht!r}; every channel can "
+                         "spell it now, so this is drift and not an exemption")
+    if gedeclareerd != verwacht:
         return oordeel, (f"{rel} declares {gedeclareerd!r}; "
                          f"docs/LICENSE_POLICY.toml [own_packages] expects "
                          f"{verwacht!r}. One of the two is out of date")
@@ -342,6 +362,19 @@ def scan_maven(pol: dict) -> list[tuple[str, str]]:
 
 def scan_nuget(_: dict) -> list[tuple[str, str]]:
     projecten = list((REPO / "bindings/dotnet/src").glob("*/*.csproj"))
+    uit_eigen: list[tuple[str, str]] = []
+    # The project's OWN licence, which this scanner never read: it collected
+    # PackageReference entries and nothing else, so removing
+    # <PackageLicenseExpression> left the gate green (#214/#304).
+    for p in projecten:
+        rel = p.relative_to(REPO).as_posix()
+        if rel not in _.get("own_packages", {}):
+            continue
+        m = re.search(r"<PackageLicenseExpression>([^<]+)</PackageLicenseExpression>", p.read_text())
+        oordeel, klacht = eigen_verklaring(rel, m.group(1) if m else None, _)
+        if klacht:
+            raise Onleesbaar(klacht)
+        uit_eigen.append((f"nuget {p.stem} (package)", oordeel))
     if not projecten:
         raise Onleesbaar("no .csproj found under bindings/dotnet/src")
     uit = []

@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.75"
 authors = ["PDFluent Contributors <team@pdfluent.com>"]
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-only"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 repository = "https://github.com/pdfluent/pdfluent-sdk"
 homepage = "https://pdfluent.com"
 documentation = "https://pdfluent.com/docs"

@@ -3,7 +3,7 @@ name = "pdf-xfa"
 version = "1.0.0"
 edition = "2021"
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-only"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 readme = "README.md"
 description = "XFA engine — extraction, layout rendering, font resolution. Experimental and under active development."
 repository = "https://pdfluent.com/source"

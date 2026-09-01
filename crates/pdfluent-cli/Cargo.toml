@@ -3,7 +3,7 @@ name = "pdfluent-cli"
 version = "1.0.0"
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-only"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 repository.workspace = true
 description = "PDFluent command-line interface (public scaffold): PDF info, text extraction, validation. XFA support is experimental and feature-gated."
 keywords = ["pdf", "cli", "pdfluent", "pdf-a", "forms"]
