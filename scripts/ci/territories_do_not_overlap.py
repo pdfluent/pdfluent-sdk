@@ -203,12 +203,24 @@ def main() -> int:
         # must not fall through to the green summary below: a half-run check that
         # prints the same line as a whole one is worse than no check, because the
         # line is what people read. (#296)
+        #
+        # But it must not swallow the half that DID run either. The first version
+        # of this returned here, so a real overlap -- found, collected, and worth
+        # exit 1 -- went unreported behind a message claiming the map had been
+        # checked. That is the same silent skip this change exists to remove,
+        # one layer down, introduced by the fix for it. (codex, #1636)
+        if problems:
+            print(f"Territories: {len(problems)} problem(s)\n", file=sys.stderr)
+            for p in problems:
+                print(f"  - {p}", file=sys.stderr)
+            print("", file=sys.stderr)
         print("SKIPPED (not a pass): detached HEAD and no branch name from the "
-              "environment or from a ref pointing here, so this checked the map "
-              "for overlaps but NOT whether this work stayed inside its own "
-              "territory. Set TERRITORY_BRANCH=<territory>/<what> to check it.",
-              file=sys.stderr)
-        return 3
+              "environment or from a ref pointing here, so the map WAS checked "
+              "for overlaps (result above) but whether this work stayed inside "
+              "its own territory was NOT. Set TERRITORY_BRANCH=<territory>/<what> "
+              "to check it.", file=sys.stderr)
+        # An overlap is a real failure and outranks "could not check the rest".
+        return 1 if problems else 3
     elif branch and branch not in ("master", "HEAD"):
         # A branch that names no territory used to be skipped, which made opting
         # out free: rename `t1/x` to `upstream/x` and nothing checks you again.
