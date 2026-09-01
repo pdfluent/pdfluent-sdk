@@ -58,6 +58,20 @@ pub(crate) fn decode(
     }
     let end_of_block = params.get::<bool>(END_OF_BLOCK).unwrap_or(true);
 
+    // Refuse a /Columns x /Rows product that does not fit rather than decoding
+    // into a buffer sized by something else. Ported from hayro upstream
+    // (LaurenzV/hayro#1269).
+    //
+    // Not redundant with the pixel-limit clamp above: that only runs when a
+    // limit is configured, and this is about `usize` overflowing on a 32-bit
+    // target -- which wasm32 is, and we ship there.
+    //
+    // `columns` is NOT re-bound here. This commit and the one already on master
+    // each introduced their own `let columns`, and Rust shadows rather than
+    // complains, so the rebase produced two bindings of the same value with
+    // nothing pointing at it.
+    (columns as usize).checked_mul(rows as usize)?;
+
     let settings = DecodeSettings {
         columns,
         rows,
