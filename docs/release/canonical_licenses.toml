@@ -65,143 +65,143 @@ schema_version = "1"
 [[crate]]
 published_name = "xfa-dom-resolver"
 workspace_dir  = "xfa-dom-resolver"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. XFA template/data DOM with SOM-path resolution."
 
 [[crate]]
 published_name = "formcalc-interpreter"
 workspace_dir  = "formcalc-interpreter"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. FormCalc lexer/parser/interpreter (XFA §25)."
 
 [[crate]]
 published_name = "xfa-js-sandboxed"
 workspace_dir  = "xfa-js-sandboxed"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. Sandboxed QuickJS runtime for XFA JS calculate scripts."
 
 [[crate]]
 published_name = "xfa-layout-engine"
 workspace_dir  = "xfa-layout-engine"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. XFA Box Model, pagination, reflow (XFA §4, §8)."
 
 [[crate]]
 published_name = "xfa-json"
 workspace_dir  = "xfa-json"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. JSON serialization for XFA layout."
 
 [[crate]]
 published_name = "xfa-license"
 workspace_dir  = "xfa-license"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. Runtime licence-token validation."
 
 [[crate]]
 published_name = "pdf-annot"
 workspace_dir  = "pdf-annot"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. PDF annotation/markup handling."
 
 [[crate]]
 published_name = "pdf-compliance"
 workspace_dir  = "pdf-compliance"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. PDF/A and PDF compliance helpers."
 
 [[crate]]
 published_name = "pdf-docx"
 workspace_dir  = "pdf-docx"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. PDF↔Word document conversion."
 
 [[crate]]
 published_name = "pdf-engine"
 workspace_dir  = "pdf-engine"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. Top-level PDF engine facade."
 
 [[crate]]
 published_name = "pdf-invoice"
 workspace_dir  = "pdf-invoice"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. Form data exchange (FDF/XFDF) and ZUGFeRD/Factur-X e-invoicing."
 
 [[crate]]
 published_name = "pdf-manip"
 workspace_dir  = "pdf-manip"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. PDF manipulation (merge, split, page ops)."
 
 [[crate]]
 published_name = "pdf-standard-fonts"
 workspace_dir  = "pdf-standard-fonts"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE", "LICENSE-FOXIT"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = """PDFluent original code. Bundles the 14 Standard-14 font programs \
 extracted from PDFium ((c) 2014 Foxit Software Inc.), BSD-3-Clause. That \
@@ -212,110 +212,110 @@ bytes also live in crates/pdf-interpret/assets under a .pfb extension."""
 [[crate]]
 published_name = "pdf-ocr"
 workspace_dir  = "pdf-ocr"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. OCR pipeline for PDFs."
 
 [[crate]]
 published_name = "pdf-pptx"
 workspace_dir  = "pdf-pptx"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. PDF↔PowerPoint conversion."
 
 [[crate]]
 published_name = "pdf-redact"
 workspace_dir  = "pdf-redact"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. PDF redaction."
 
 [[crate]]
 published_name = "pdf-text-format"
 workspace_dir  = "pdf-text-format"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. Text formatting/layout helpers."
 
 [[crate]]
 published_name = "pdf-xfa"
 workspace_dir  = "pdf-xfa"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. XFA-to-PDF bridge."
 
 [[crate]]
 published_name = "pdf-xlsx"
 workspace_dir  = "pdf-xlsx"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. PDF↔Excel conversion."
 
 [[crate]]
 published_name = "pdfluent"
 workspace_dir  = "pdfluent"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. Umbrella facade crate."
 
 [[crate]]
 published_name = "pdfluent-extract"
 workspace_dir  = "pdf-extract"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. Text/image/search extraction over lopdf-served documents."
 
 [[crate]]
 published_name = "pdfluent-forms"
 workspace_dir  = "pdf-forms"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. AcroForm + XFA unified form access."
 
 [[crate]]
 published_name = "pdfluent-sign"
 workspace_dir  = "pdf-sign"
-license_kind   = "commercial"
-license_decl   = "license-file"
-license_value  = "LICENSE"
+license_kind   = "agpl-or-commercial"
+license_decl   = "license"
+license_value  = "AGPL-3.0-or-later"
 required_files = ["LICENSE"]
-license_first_line_check = { file = "LICENSE", contains = "PDFluent Commercial License" }
+license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. Digital signature creation/validation."
 

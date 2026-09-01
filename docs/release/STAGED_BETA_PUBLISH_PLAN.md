@@ -100,7 +100,7 @@ ledger + verify + smoke + stop, and we move on (or stop).
 |---|---|
 | artefact path | `dist/staged_beta/pdfluent-sdk-wasm-1.0.0-beta.8.tgz` |
 | sha256 | `0a5bb67ca0e08246612760db50e36dcf95974fa4eb6bb817cfc47b52da060234` (post-snippets-fix) |
-| credential | `~/.npmrc //registry.npmjs.org/:_authToken` (preflight: `npm whoami → [redacted]`, owner of `@pdfluent`) |
+| credential | `~/.npmrc //registry.npmjs.org/:_authToken` (preflight: `npm whoami` returns the account that owns `@pdfluent`) |
 | exact publish command | `( cd crates/xfa-wasm/pkg && npm publish --access public )` |
 | reversibility | within 72h: `npm unpublish @pdfluent/sdk-wasm@1.0.0-beta.8`. After 72h: `npm deprecate "@pdfluent/sdk-wasm@1.0.0-beta.8" "<reason>"`. The version name is forever-taken either way. |
 | pre-publish gate | **MR !7 must be merged into master first** — the operator should be on a master that contains commit `b3c5f82e8`, otherwise the next person re-running `transform-wasm-pkg.sh` from master regresses the `snippets/` inclusion. |
