@@ -22,7 +22,7 @@
 
     <licenses>
         <license>
-            <name>LicenseRef-PDFluent-Commercial</name>
+            <name>AGPL-3.0-or-later OR LicenseRef-PDFluent-Commercial</name>
             <url>https://pdfluent.com/terms</url>
             <distribution>repo</distribution>
             <comments>
@@ -103,6 +103,9 @@
                 <directory>${project.basedir}</directory>
                 <includes>
                     <include>LICENSE</include>
+                    <include>LICENSE-AGPL</include>
+                    <include>LICENSE-ADDITIONAL-TERMS</include>
+                    <include>LICENSE-COMMERCIAL</include>
                 </includes>
                 <targetPath>META-INF</targetPath>
             </resource>
