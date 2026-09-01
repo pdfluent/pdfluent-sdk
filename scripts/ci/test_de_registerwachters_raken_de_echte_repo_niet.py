@@ -115,6 +115,41 @@ def main() -> int:
         if tip(work) != "UNPUSHED WORK":
             failures.append("a clean environment did not protect the unpushed commit")
 
+    # --- the second lock must be stricter than the environment, not the user --
+    #
+    # Both clone shapes are legitimate: the cache this fetches for itself is
+    # bare, and a clone a developer points `HAYRO_CLONE` at is an ordinary
+    # checkout whose git-dir is `<clone>/.git`. The first version of the check
+    # knew only the bare shape and refused the other, failing the run before it
+    # scored anything.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "reg", ROOT / "scripts/ci/the_fork_register_is_verifiable.py"
+    )
+    reg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reg)
+
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        bare = tmp / "cache.git"
+        nonbare = tmp / "hayro"
+        run("init", "-q", "--bare", str(bare), cwd=tmp)
+        run("init", "-q", str(nonbare), cwd=tmp)
+
+        if reg.de_fetch_gaat_naar_de_cache(bare) is not None:
+            failures.append("the bare cache was refused as a fetch target")
+        if reg.de_fetch_gaat_naar_de_cache(nonbare) is not None:
+            failures.append(
+                "a non-bare HAYRO_CLONE checkout was refused, though the script "
+                "documents it as supported"
+            )
+        if reg.de_fetch_gaat_naar_de_cache(ROOT) is None:
+            failures.append(
+                "the repository root was accepted as a fetch target -- the second "
+                "lock is not locking"
+            )
+
     if failures:
         print("[registerwachters] the guards can reach the real repository:\n", file=sys.stderr)
         for f in failures:

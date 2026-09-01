@@ -119,11 +119,18 @@ def de_fetch_gaat_naar_de_cache(clone) -> str | None:
     if out.returncode != 0:
         return f"cannot tell which repository {clone} is, so the fetch is refused"
     actual = _P(out.stdout.strip()).resolve()
-    if actual != _P(clone).resolve():
+    wanted = _P(clone).resolve()
+    # Two shapes are legitimate, and the first version of this check only knew
+    # one of them. The cache we fetch ourselves is bare, so its git-dir *is* the
+    # directory. A clone a developer points `HAYRO_CLONE` at is an ordinary
+    # checkout, and its git-dir is `<clone>/.git` -- which this refused, taking
+    # the guard from "stricter than the environment" to "stricter than the
+    # user" and failing the run with exit 3 before it scored anything.
+    if actual != wanted and actual != wanted / ".git":
         return (
-            f"refusing to fetch: the target resolved to {actual}, not the cache at "
-            f"{_P(clone).resolve()}. The refspec force-updates every branch, so this "
-            "would rewrite local branches -- see schone_omgeving()."
+            f"refusing to fetch: the target resolved to {actual}, which is neither "
+            f"{wanted} nor {wanted / '.git'}. The refspec force-updates every branch, "
+            "so this would rewrite local branches -- see schone_omgeving()."
         )
     return None
 
