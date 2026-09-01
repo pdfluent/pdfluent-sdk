@@ -393,7 +393,39 @@ def scan_python(_: dict) -> list[tuple[str, str]]:
         d = tomllib.loads(pad.read_text())
     except tomllib.TOMLDecodeError as e:
         raise Onleesbaar(f"pyproject.toml: {e}") from e
-    uit = [("python pdfluent (wheel)", "LicenseRef-PDFluent-Commercial")]
+    # WAT HET BESTAND ZEGT, NIET WAT WIJ ERVAN VONDEN
+    #
+    # Tot 01-09-2026 stond hier onvoorwaardelijk
+    # `("python pdfluent (wheel)", "LicenseRef-PDFluent-Commercial")`. Het
+    # bestand werd wel geparset en de licentie nooit gelezen, dus de wheel werd
+    # als commercieel-only geoordeeld ongeacht wat er stond. Zet de declaratie
+    # op iets anders -- of draai hem terug -- en deze poort bleef groen (#1620).
+    #
+    # Dat is dezelfde vorm als #300, #301 en #304: een controle die een
+    # naastgelegen vraag beantwoordt en er compleet uitziet.
+    #
+    # PEP 621 kent twee vormen: `license = { text = "..." }` (oud) en
+    # `license = "..."` (PEP 639). Allebei lezen; ontbreekt hij, dan is dat een
+    # bevinding en geen aanname.
+    lic = d.get("project", {}).get("license")
+    if isinstance(lic, dict):
+        spdx = lic.get("text") or lic.get("file")
+    elif isinstance(lic, str):
+        spdx = lic
+    else:
+        spdx = None
+    if not spdx:
+        raise Onleesbaar(
+            "crates/pdf-python/pyproject.toml declares no [project] license. "
+            "A wheel without a licence is not a wheel we may publish."
+        )
+    # Judged like our other own packages: the allow-list answers "may this be in
+    # our dependency graph", which is a different question from "is this what we
+    # mean to publish". MIT is fine as a dependency and would be a disaster here.
+    oordeel, klacht = eigen_verklaring("crates/pdf-python/pyproject.toml", spdx, _)
+    if klacht:
+        raise Onleesbaar(klacht)
+    uit = [("python pdfluent (wheel)", oordeel)]
     for spec in d.get("project", {}).get("dependencies", []):
         uit.append((f"pypi {spec}", "UNKNOWN (runtime dependency, licence unread)"))
     return uit

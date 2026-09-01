@@ -88,6 +88,10 @@ internal = { weak_copyleft = ["MPL-2.0"], note = "pdfluent-snippet-extract, benc
 "crates/xfa-wasm/Cargo.toml" = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 
 "bindings/dotnet/src/PDFluent/PDFluent.csproj" = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+# The wheel states the dual offer in full, and after #257 so does every other
+# channel: one canonical string, comparable against four registers. It was never
+# compared at all until #1620, because `scan_python` hardcoded its verdict and
+# never read the file.
 "crates/pdf-python/pyproject.toml" = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 
 [floors]
