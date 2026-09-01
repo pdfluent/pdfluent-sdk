@@ -221,18 +221,33 @@ jobs:
         run: python3 scripts/ci/license_boundary.py
       # The other orphan. Blocking, with the cutoff at 2c03659a -- the commit
       # that introduced the DCO this morning (#223). The rule applies from the
-      # moment the rule exists, so no history has to be rewritten.
+      # moment the rule exists, so no history is rewritten.
       #
-      # The range is the PULL REQUEST's own commits, not `2c03659a..HEAD`.
+      # THE CUTOFF IS AN AUTHOR DATE, NOT A COMMITTER DATE, AND THAT IS
+      # DELIBERATE. A rebase rewrites committer dates and preserves author
+      # dates. Judging on committer date would therefore turn every rebased
+      # branch red for work written before the rule existed -- punishing exactly
+      # the branches that are being maintained, while untouched ones went free,
+      # on the same morning everybody was asked to rebase.
+      #
+      # The cutoff commit demonstrates it on itself:
+      #
+      #     2c03659a  author 2026-08-31T20:27:22  committer 2026-09-01T08:10:38
+      #
+      # Author dates can be forged. We accept that: this is a discipline gate,
+      # not a security boundary, and the signature is the point. Do not
+      # "fix" this to committer date -- that trade is the reason it reads this
+      # way. (T3 found the trap; the coordinator took the decision.)
+      #
+      # The range is the PULL REQUEST's own commits, never `2c03659a..HEAD`.
       # Measured: 57 commits have landed on master since the cutoff and 12 carry
       # a sign-off, so the wider range would fail every pull request on other
-      # people's merged history -- a red check for something the author cannot
-      # fix, which is the shape we keep removing.
+      # people's merged history -- a red check the author cannot act on.
       #
-      # The checkout is shallow, so the base commit has to be fetched before the
-      # range means anything. `git log` on a depth-1 clone answers confidently
-      # and wrongly; that is #290's dating bug in a different file.
-      - name: Every commit in this pull request carries a matching sign-off
+      # The checkout is shallow, so the base commit is fetched before the range
+      # means anything: `git log` on a depth-1 clone answers confidently and
+      # wrongly, which is #290's dating bug in a different file.
+      - name: Every commit written since the DCO carries a matching sign-off
         if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         run: |
           set -euo pipefail
@@ -246,11 +261,19 @@ jobs:
             echo "  so which commits the rule covers cannot be established." >&2
             exit 1
           fi
-          if git merge-base --is-ancestor "${CUTOFF}" "${BASE}"; then
-            python3 scripts/ci/licence_signoff.py "${BASE}..HEAD"
-          else
-            echo "::notice::This branch was cut before the DCO landed (${CUTOFF}); sign-off is not required for its existing commits."
+          CUT_AT=$(git log -1 --format=%at "${CUTOFF}")
+          # `git log --since` filters on committer date, which is the thing we
+          # are deliberately not using, so the selection is done here.
+          NA=$(git log --format='%H %at' "${BASE}..HEAD" \
+               | awk -v c="${CUT_AT}" '$2 > c {print $1}')
+          if [ -z "${NA}" ]; then
+            echo "::notice::No commit in this pull request was written after the DCO landed; sign-off not required."
+            exit 0
           fi
+          echo "${NA}" | while read -r sha; do
+            [ -n "$sha" ] || continue
+            python3 scripts/ci/licence_signoff.py "${sha}~1..${sha}"
+          done
       - name: Schedule conditions name a cron that exists
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/schedule_guards_match_their_cron.py
