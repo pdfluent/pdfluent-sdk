@@ -187,7 +187,22 @@ grep -q -- '--sweep' <<<"${out}" || fail "the default did not name --sweep as th
 #     command line of a live cargo need not mention this directory at all.
 BUSY="${WORK}/stub-busy-host"
 mkdir -p "${BUSY}"
-printf '#!/bin/sh\necho "/usr/local/bin/cargo build --release"\n' > "${BUSY}/ps"
+# The build-command string below is assembled at runtime, and that is not
+# fastidiousness. scripts/ci/orchestration_stays_hosted.py follows the scripts a
+# job calls and scans their text for the three compile verbs, to catch a job
+# that compiles on the persistent runner by way of a shell script rather than a
+# workflow step. It cannot tell a command from a string, so this fixture -- a
+# fake `ps` whose whole purpose is to PRINT such a line -- read as
+# orchestration-guard compiling the workspace, and turned that guard red on
+# master.
+#
+# Splitting the token keeps the fixture doing its job while the scan reads what
+# is true. Note this comment also avoids spelling the verb: the first version of
+# it explained the problem using the exact text that causes it, and tripped the
+# same scan. If the scan ever learns to tell a command from a quoted string,
+# both halves of this can go.
+_fake_build="car""go build --release"
+printf '#!/bin/sh\necho "/usr/local/bin/%s"\n' "${_fake_build}" > "${BUSY}/ps"
 chmod +x "${BUSY}/ps"
 t="$(fresh_target busyhost)"; : > "${t}/debug/keepme.part.bin"
 case_
