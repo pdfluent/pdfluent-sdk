@@ -70,14 +70,26 @@ pub(crate) fn decode(
     }
 
     impl Decoder for ByteDecoder {
-        fn push_pixel(&mut self, white: bool) {
-            self.push_bit(white);
-        }
+        // Upstream replaced push_pixel/push_pixel_chunk with a single
+        // push_pixels, which hands the whole run to the implementor instead of
+        // deciding the chunking inside the decoder. The byte-wise fast path is
+        // the same one we had; it simply lives on this side of the trait now,
+        // where it can see the output buffer's bit alignment.
+        fn push_pixels(&mut self, white: bool, count: u32) {
+            let (prefix, whole_bytes, tail) =
+                hayro_ccitt::split_run(u32::from(self.bit_count), count);
 
-        fn push_pixel_chunk(&mut self, white: bool, chunk_count: u32) {
-            let byte = if white { 0xFF } else { 0x00 };
-            self.output
-                .extend(iter::repeat_n(byte, chunk_count as usize));
+            for _ in 0..prefix {
+                self.push_bit(white);
+            }
+            if whole_bytes > 0 {
+                let byte = if white { 0xFF } else { 0x00 };
+                self.output
+                    .extend(iter::repeat_n(byte, whole_bytes as usize));
+            }
+            for _ in 0..tail {
+                self.push_bit(white);
+            }
         }
 
         fn next_line(&mut self) {

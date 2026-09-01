@@ -175,7 +175,7 @@ pub(crate) fn decode_bitmap_mmr(bitmap: &mut Bitmap, data: &[u8]) -> Result<usiz
         }
     }
 
-    impl hayro_ccitt::Decoder for BitmapDecoder<'_> {
+    impl BitmapDecoder<'_> {
         fn push_pixel(&mut self, white: bool) {
             if self.x < self.bitmap.width {
                 self.bitmap.set_pixel(self.x, self.y, white);
@@ -209,6 +209,26 @@ pub(crate) fn decode_bitmap_mmr(bitmap: &mut Bitmap, data: &[u8]) -> Result<usiz
             }
 
             self.x = end_x;
+        }
+    }
+
+    impl hayro_ccitt::Decoder for BitmapDecoder<'_> {
+        // Upstream collapsed push_pixel and push_pixel_chunk into one
+        // push_pixels, so the run now arrives whole and the alignment decision
+        // moves here. The word-at-a-time path below is unchanged and still
+        // requires a byte-aligned start, which is what the prefix loop buys.
+        fn push_pixels(&mut self, white: bool, count: u32) {
+            let (prefix, whole_chunks, tail) = hayro_ccitt::split_run(self.x, count);
+
+            for _ in 0..prefix {
+                self.push_pixel(white);
+            }
+            if whole_chunks > 0 {
+                self.push_pixel_chunk(white, whole_chunks);
+            }
+            for _ in 0..tail {
+                self.push_pixel(white);
+            }
         }
 
         fn next_line(&mut self) {

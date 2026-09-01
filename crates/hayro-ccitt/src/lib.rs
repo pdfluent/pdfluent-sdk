@@ -110,19 +110,37 @@ pub struct DecodeSettings {
     pub invert_black: bool,
 }
 
+/// Split a run of `count` pixels into the part that finishes the current byte,
+/// the whole bytes after it, and the remainder.
+///
+/// Upstream replaced `push_pixel` and `push_pixel_chunk` with a single
+/// `push_pixels`, which is the better shape: the implementor sees the whole run
+/// and decides how to write it. But every implementor that writes bytes rather
+/// than bits then needs the same three-way split, and an off-by-one in that
+/// arithmetic corrupts image data silently rather than failing.
+///
+/// `written` is how many bits the implementor has already put into its current
+/// byte, so `written % 8 == 0` means it is aligned and can start writing bytes
+/// immediately. Returns `(prefix_pixels, whole_bytes, tail_pixels)`, where
+/// `prefix_pixels + whole_bytes * 8 + tail_pixels == count`.
+///
+/// ```
+/// # use pdfluent_ccitt::split_run;
+/// assert_eq!(split_run(0, 24), (0, 3, 0));   // aligned, three whole bytes
+/// assert_eq!(split_run(3, 24), (5, 2, 3));   // three bits in: 5 + 16 + 3
+/// assert_eq!(split_run(0, 5), (0, 0, 5));    // too short for a byte
+/// ```
+pub fn split_run(written: u32, count: u32) -> (u32, u32, u32) {
+    let to_boundary = (8 - (written % 8)) % 8;
+    let prefix = count.min(to_boundary);
+    let rest = count - prefix;
+    (prefix, rest / 8, rest % 8)
+}
+
 /// A decoder for CCITT images.
 pub trait Decoder {
-    /// Push a single pixel with the given color.
-    fn push_pixel(&mut self, white: bool);
-    /// Push multiple chunks of 8 pixels of the same color.
-    ///
-    /// The `chunk_count` parameter indicates how many 8-pixel chunks to push.
-    /// For example, if this method is called with `white = true` and
-    /// `chunk_count = 10`, 80 white pixels are pushed (10 × 8 = 80).
-    ///
-    /// You can assume that this method is only called if the number of already
-    /// pushed pixels is a multiple of 8 (i.e. byte-aligned).
-    fn push_pixel_chunk(&mut self, white: bool, chunk_count: u32);
+    /// Push a run of pixels of the same color.
+    fn push_pixels(&mut self, white: bool, count: u32);
     /// Called when a row has been completed.
     fn next_line(&mut self);
 }
@@ -457,27 +475,7 @@ impl DecoderContext {
         // Make sure we don't have too many pixels (for invalid files).
         let count = count.min(self.line_width - self.pixels_decoded);
         let white = self.color.is_white() ^ self.invert_black;
-        let mut remaining = count;
-
-        // Push individual pixels until we reach an 8-pixel boundary.
-        let pixels_to_boundary = (8 - (self.pixels_decoded % 8)) % 8;
-        let unaligned_pixels = remaining.min(pixels_to_boundary);
-        for _ in 0..unaligned_pixels {
-            decoder.push_pixel(white);
-            remaining -= 1;
-        }
-
-        // Push full chunks of 8 pixels.
-        let full_chunks = remaining / 8;
-        if full_chunks > 0 {
-            decoder.push_pixel_chunk(white, full_chunks);
-            remaining %= 8;
-        }
-
-        // Push remaining individual pixels.
-        for _ in 0..remaining {
-            decoder.push_pixel(white);
-        }
+        decoder.push_pixels(white, count);
 
         // Track the color change:
         // - At start of line (no previous changes): only add if color differs from
@@ -549,12 +547,8 @@ mod tests {
     }
 
     impl Decoder for PixelCollector {
-        fn push_pixel(&mut self, white: bool) {
-            self.current.push(white);
-        }
-
-        fn push_pixel_chunk(&mut self, white: bool, chunk_count: u32) {
-            for _ in 0..chunk_count * 8 {
+        fn push_pixels(&mut self, white: bool, count: u32) {
+            for _ in 0..count {
                 self.current.push(white);
             }
         }
@@ -660,5 +654,43 @@ mod tests {
         let mut sink = PixelCollector::new();
         let err = decode(&[], &mut sink, &mut DecoderContext::new(g3_1d(4, 1))).unwrap_err();
         assert_eq!(err, DecodeError::UnexpectedEof);
+    }
+}
+
+#[cfg(test)]
+mod split_run_tests {
+    use super::split_run;
+
+    /// The three parts must always add back up to the run, at every alignment.
+    ///
+    /// Written as an exhaustive sweep rather than a handful of cases because
+    /// the failure mode is an off-by-one at one specific alignment, which is
+    /// exactly what a handful of cases misses.
+    #[test]
+    fn the_parts_always_reconstruct_the_run() {
+        for written in 0..32u32 {
+            for count in 0..200u32 {
+                let (prefix, bytes, tail) = split_run(written, count);
+                assert_eq!(
+                    prefix + bytes * 8 + tail,
+                    count,
+                    "written={written} count={count} split into {prefix}+{bytes}*8+{tail}"
+                );
+                assert!(tail < 8, "tail {tail} should have been a whole byte");
+                assert!(
+                    prefix == count || (written + prefix) % 8 == 0,
+                    "written={written} count={count}: prefix {prefix} left the writer unaligned"
+                );
+            }
+        }
+    }
+
+    /// An aligned writer must not be handed a prefix: that would push the fast
+    /// path off by a byte for every run.
+    #[test]
+    fn an_aligned_writer_gets_no_prefix() {
+        for written in [0u32, 8, 16, 800] {
+            assert_eq!(split_run(written, 24), (0, 3, 0), "written={written}");
+        }
     }
 }
