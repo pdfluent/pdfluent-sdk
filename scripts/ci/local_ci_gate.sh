@@ -98,6 +98,7 @@ run upstream  python3 scripts/ci/upstream_has_not_moved_on.py
 run forklist  python3 scripts/ci/fork_lists_agree.py
 run patches   python3 scripts/ci/test_upstream_gap_counts_patches.py
 run featgate  python3 scripts/ci/test_feature_gated_tests_run.py
+run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
 run examples  cargo build -q --examples -p pdfluent
 run matrix    python3 scripts/ci/capability_matrix_matches_coverage.py
