@@ -14,13 +14,25 @@ pub(crate) fn decode(
 ) -> Option<FilterResult> {
     let k = params.get::<i32>(K).unwrap_or(0);
 
-    // /Rows 0 means "derive row count from end-of-block marker or image height".
-    // Treat 0 as absent so the fallback to image_params.height is used.
-    // Without this, the Group4 decoder exits immediately (decoded_rows=0 == rows=0).
+    // How many rows to decode. Three sources disagree and all three come from
+    // the file, so the rule is the maximum of what /Rows asks for and what the
+    // image dictionary declares:
+    //
+    // * /Rows 0 means "derive it from the end-of-block marker or the image
+    //   height". Treated as absent; without this the Group4 decoder exits
+    //   immediately, because decoded_rows == rows == 0.
+    // * /Rows *below* the declared height means the file is malformed, and
+    //   upstream decodes to the height anyway rather than truncating the image
+    //   -- Chromium does the same. Ported from LaurenzV/hayro#1339; before it,
+    //   a page whose /Rows undercounted rendered as a sliver.
+    //
+    // The upper bound is safe: image_params.height is what the pixel-limit
+    // check in Stream::decoded_image was applied to, and the count actually
+    // produced is checked against that limit again below.
     let rows = params
         .get::<u32>(ROWS)
-        .filter(|&r| r > 0)
-        .unwrap_or(image_params.height);
+        .unwrap_or(0)
+        .max(image_params.height);
     let end_of_block = params.get::<bool>(END_OF_BLOCK).unwrap_or(true);
 
     let settings = DecodeSettings {
@@ -293,5 +305,24 @@ mod upstream_hardening_tests {
     fn an_image_inside_the_pixel_limit_still_decodes() {
         let params = params_with_pixel_limit(b"<< /K 0 /Columns 8 /Rows 1 >>", 64);
         assert!(decode(ONE_ROW_G3, params, &params_with(1)).is_some());
+    }
+
+    /// Ported from LaurenzV/hayro#1339: `/Rows` below the declared height is a
+    /// malformed file, and the image is decoded to the height rather than
+    /// truncated. Chromium does the same.
+    ///
+    /// Before the port this rendered as a single row out of four -- a sliver
+    /// where the page has a picture.
+    #[test]
+    fn rows_below_the_declared_height_decodes_the_whole_image_anyway() {
+        let data: Vec<u8> = ONE_ROW_G3.iter().copied().cycle().take(4).collect();
+        let params = Dict::from_bytes(b"<< /K 0 /Columns 8 /Rows 1 >>").unwrap();
+        let decoded = decode(&data, params, &params_with(4)).unwrap();
+
+        assert_eq!(
+            decoded.image_data.unwrap().height,
+            4,
+            "/Rows 1 against a declared height of 4 must not truncate the image"
+        );
     }
 }
