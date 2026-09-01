@@ -40,7 +40,23 @@ SIGNOFF = re.compile(r"^Signed-off-by:\s*(.+?)\s*<([^>]+)>\s*$", re.M | re.I)
 # Commits that predate the decision on 31-08-2026 are not rewritten for it; see
 # #261 and #230 on why this history is not being rewritten casually. The gate
 # applies to what arrives from here on.
-STANDAARD_BEREIK = "origin/master..HEAD"
+#
+# `github`, not `origin`. `origin` in this checkout is the GitLab mirror, which
+# was 166 commits behind GitHub when this line was corrected -- so the default
+# range would have covered every commit master gained since the mirror last ran
+# and reported all of them unsigned. #291 records the same defect in
+# territories_do_not_overlap.py, which called 62 files a branch's work when none
+# were, and in mr_staleness.py, which still has it.
+#
+# A range that names the wrong remote does not fail; it answers a different
+# question confidently.
+def _standaard_bereik() -> str:
+    for remote in ("github/master", "origin/master"):
+        r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", remote],
+                           capture_output=True, text=True, env=_omgeving())
+        if r.returncode == 0:
+            return f"{remote}..HEAD"
+    return "HEAD~1..HEAD"
 
 
 def _omgeving() -> dict[str, str]:
@@ -62,7 +78,7 @@ def commits(bereik: str) -> list[tuple[str, str, str, str]]:
 
 
 def main(argv: list[str]) -> int:
-    bereik = argv[1] if len(argv) > 1 else STANDAARD_BEREIK
+    bereik = argv[1] if len(argv) > 1 else _standaard_bereik()
     rijen = commits(bereik)
     if len(rijen) < MIN_COMMITS:
         print(f"[signoff] FATAL: {bereik} holds {len(rijen)} commit(s). An empty "

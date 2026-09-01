@@ -40,9 +40,13 @@ it — a licence key check in published source is a few minutes' work to remove
 and only ever inconveniences the people who would have paid anyway.
 
 Section 7(b) is GPL-compatible and legally enforceable where a technical marking
-is neither. So the attribution is held by a licence term, and the software ships
-with no enforcement of any kind. That is the whole design: the free version is
-complete, and the obligations are legal rather than mechanical.
+is neither. So the attribution is held by a licence term rather than by a check
+in the binary.
+
+That is the design. It is not yet the build: as of 1 September 2026 the compiled
+SDK still carries tier checks from the proprietary model, which an AGPL
+recipient is free to remove and which issue #199 removes for everyone. The
+obligation in this file is legal either way and does not depend on them.
 
 
 3. Removal of these terms

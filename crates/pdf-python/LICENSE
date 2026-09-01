@@ -17,9 +17,22 @@ Choose either. You do not need permission to choose the first.
 Which one you want
 ------------------
 
-The AGPL is the default and the complete product. No feature is withheld, no
-key is required, nothing expires, and there is no enforcement of any kind in the
-software.
+The AGPL is the default. No key is required to receive it, nothing expires, and
+the rights it grants are not conditional on anything we do.
+
+**What the build currently does, stated plainly, because this file previously
+said otherwise.** As of 1 September 2026 the compiled SDK still contains tier
+checks left over from the proprietary model: with no licence key it runs as
+`Tier::Trial`, and some capabilities — rendering, redaction, conversion —
+return `FeatureNotInTier`. Text edits add an "Edited with PDFluent trial"
+annotation.
+
+Those checks do not limit the rights granted below. You have the source and the
+AGPL's freedom to modify it, so you may remove them, and you need no permission
+from us to do so. But a licence that says "no enforcement of any kind" while the
+binary refuses features is a false statement, and it was one. Removal of the
+enforcement is tracked as issue #199; until that lands, this paragraph is the
+accurate description and the sentence it replaced was not.
 
 It asks something in return: if you convey the software, or let users interact
 with a modified version over a network, you must offer those users the

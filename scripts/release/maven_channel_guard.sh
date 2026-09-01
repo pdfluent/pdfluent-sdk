@@ -33,8 +33,19 @@ else
     || fail "canonical artifactId must be 'pdfluent' ($CANON)"
   grep -q '<groupId>com.pdfluent</groupId>' "$CANON" && ok "canonical groupId=com.pdfluent" \
     || fail "canonical groupId must be 'com.pdfluent' ($CANON)"
-  grep -q 'LicenseRef-PDFluent-Commercial' "$CANON" && ok "canonical license=commercial" \
-    || fail "canonical license must be LicenseRef-PDFluent-Commercial ($CANON)"
+  # LC9 (#221): the Maven artefact carries the dual licence, not commercial only.
+  # The old check grepped for the commercial ref alone, which still matches the
+  # dual string as a substring -- so it would have passed while reporting
+  # "license=commercial" about an artefact that is no longer commercial-only.
+  # Whole <name> element, not a substring. `grep -q` alone accepted
+  # "... OR LicenseRef-PDFluent-Commercial OR MIT" -- an extra grant walking
+  # through a gate whose whole job is to refuse extra grants. The previous
+  # version of this check had the same flaw in the other direction: it matched
+  # the commercial ref inside the dual string and reported "license=commercial"
+  # about an artefact that was not.
+  grep -qx '[[:space:]]*<name>AGPL-3.0-or-later OR LicenseRef-PDFluent-Commercial</name>[[:space:]]*' "$CANON" \
+    && ok "canonical license=AGPL or commercial (exact)" \
+    || fail "canonical <name> must be exactly 'AGPL-3.0-or-later OR LicenseRef-PDFluent-Commercial' ($CANON)"
   grep -qE '<version>1\.0\.0-beta\.[0-9]+</version>' "$CANON" && ok "canonical version on RC line" \
     || fail "canonical version must be 1.0.0-beta.N ($CANON)"
 fi
