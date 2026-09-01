@@ -97,6 +97,16 @@ run installer python3 scripts/ci/test_installer_escapes_the_path.py
 run upstream  python3 scripts/ci/upstream_has_not_moved_on.py
 run forklist  python3 scripts/ci/fork_lists_agree.py
 run patches   python3 scripts/ci/test_upstream_gap_counts_patches.py
+# The four fork-register guards. Two of them ran nowhere at all -- not in a job,
+# not in this gate -- so they looked like protection and were not. The wiring was
+# named as t2's part when they were written (#1609) and then lost twice: once
+# when it drowned in the #1543 relay, and once when the relay's merge was rebuilt
+# from scratch and only the CONFLICTED paths were carried over. This file was not
+# conflicted, so the edit to it stayed behind in the discarded tree. (#296)
+run forkreg   python3 scripts/ci/the_fork_register_is_verifiable.py
+run forkpunt  python3 scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py
+run wtconfig  python3 scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py
+run forkmerge python3 scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py
 run featgate  python3 scripts/ci/test_feature_gated_tests_run.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
