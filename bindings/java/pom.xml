@@ -22,7 +22,7 @@
 
     <licenses>
         <license>
-            <name>LicenseRef-PDFluent-Commercial</name>
+            <name>AGPL-3.0-or-later OR LicenseRef-PDFluent-Commercial</name>
             <url>https://pdfluent.com/terms</url>
             <distribution>repo</distribution>
             <comments>

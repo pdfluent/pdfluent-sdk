@@ -7,8 +7,8 @@ name = "pdfluent"
 version = "1.0.0"
 description = "Enterprise PDF SDK — find and replace PDF text while preserving fonts and layout, plus render, extract, annotate, sign, and validate PDFs. Pure Rust, zero system dependencies."
 readme = "README.md"
-license = { text = "PDFluent Commercial License" }
-license-files = ["LICENSE"]
+license = { text = "AGPL-3.0-or-later OR LicenseRef-PDFluent-Commercial" }
+license-files = ["LICENSE", "LICENSE-AGPL", "LICENSE-ADDITIONAL-TERMS", "LICENSE-COMMERCIAL"]
 authors = [
     { name = "Innovation Trigger BV", email = "team@pdfluent.com" },
 ]
@@ -17,6 +17,7 @@ keywords = ["pdf-text-replace", "find-and-replace", "edit-pdf-text", "pdf", "xfa
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "License :: Other/Proprietary License",
     "Operating System :: OS Independent",
     "Programming Language :: Rust",

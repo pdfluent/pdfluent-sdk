@@ -18,7 +18,7 @@ categories = ["parser-implementations"]
 # from a published crate. `include` rather than `exclude`: an exclude list
 # would itself have to name those files, which puts the same internal paths
 # back into the packaged manifest.
-include = ["src/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
+include = ["src/**/*", "LICENSE", "README.md", "CHANGELOG.md", "LICENSE-AGPL", "LICENSE-ADDITIONAL-TERMS", "LICENSE-COMMERCIAL"]
 
 [dependencies]
 pdf-syntax = { path = "../pdf-syntax", version = "=0.5.6" }

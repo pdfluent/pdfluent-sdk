@@ -16,7 +16,7 @@ categories = ["rendering"]
 # internal golden corpus through repo-relative paths, so they cannot run
 # from a published crate; including them only carried internal corpus
 # names into the tarball (flagged by the prepublish audit).
-include = ["src/**/*", "LICENSE", "README.md"]
+include = ["src/**/*", "LICENSE", "README.md", "LICENSE-AGPL", "LICENSE-ADDITIONAL-TERMS", "LICENSE-COMMERCIAL"]
 
 [dependencies]
 xfa-dom-resolver = { path = "../xfa-dom-resolver", version = "=1.0.0" }

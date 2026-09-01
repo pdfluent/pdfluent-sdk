@@ -36,6 +36,7 @@ import json
 import os
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -55,12 +56,20 @@ HERE = Path(__file__).resolve().parent
 # read as "the gate caught it" when nothing was checked at all. That is the exact
 # class of false green this whole test exists to prevent, sitting in the harness
 # rather than in the thing under test.
+# `dont_write_bytecode` only stops WRITING. A cache that is already there and
+# timestamp-valid is still READ, and mtime has one-second granularity on some
+# filesystems -- so a same-length mutation and restore inside one second can
+# execute the cached mutated gate and report that the test caught something it
+# never ran. That is the false green this block exists to prevent, one layer
+# deeper than the fix I first wrote. Codex found it; my version was incomplete.
+#
+# Compiling the source text directly cannot consult a cache at all.
 sys.dont_write_bytecode = True
 importlib.invalidate_caches()
-spec = importlib.util.spec_from_file_location("lg", HERE / "license_gate.py")
-assert spec and spec.loader
-lg = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(lg)
+_bron = (HERE / "license_gate.py").read_text(encoding="utf-8")
+lg = types.ModuleType("lg")
+lg.__file__ = str(HERE / "license_gate.py")
+exec(compile(_bron, lg.__file__, "exec"), lg.__dict__)
 
 OK = {"MIT", "Apache-2.0", "BSD-3-Clause", "LicenseRef-PDFluent-Commercial"}
 ZWAK = {"MPL-2.0", "LGPL-2.1-or-later"}
