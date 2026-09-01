@@ -73,7 +73,7 @@ _EXPLICIT = os.environ.get("HAYRO_CLONE")
 CLONE = Path(_EXPLICIT) if _EXPLICIT else CACHE
 
 
-def de_fetch_gaat_naar_de_cache(clone) -> str | None:
+def de_fetch_gaat_naar_de_cache(clone, upstream_url: str = UPSTREAM_URL) -> str | None:
     """Refuse to fetch unless the target really is the cache.
 
     A second lock, deliberately not resting on the environment being clean. The
@@ -150,12 +150,26 @@ def de_fetch_gaat_naar_de_cache(clone) -> str | None:
     # (b) And it must actually be the upstream, not merely somewhere else.
     herkomst = git("config", "--get", "remote.origin.url", cwd=clone)
     url = herkomst.stdout.strip()
-    if not url or "hayro" not in url.lower():
+    if not url or _zelfde_upstream(url, upstream_url) is False:
         return (
-            f"refusing to fetch: {clone} has origin {url or '<none>'}, which is not "
-            "the hayro upstream this cache is for."
+            f"refusing to fetch: {clone} has origin {url or '<none>'}, not the "
+            f"{upstream_url} this cache is for."
         )
     return None
+
+
+def _zelfde_upstream(a: str, b: str) -> bool:
+    """Compare two remote URLs by the repository they name."""
+    def kern(u: str) -> str:
+        # Trailing slashes first: `.../hayro.git/` ends in a slash, so stripping
+        # `.git` before them leaves it in place and two spellings of one
+        # repository compare unequal.
+        u = u.strip().lower().rstrip("/").removesuffix(".git").rstrip("/")
+        u = u.replace("git@github.com:", "github.com/")
+        for prefix in ("https://", "http://", "ssh://git@", "ssh://", "git://"):
+            u = u.removeprefix(prefix)
+        return u
+    return kern(a) == kern(b)
 
 
 def schone_omgeving() -> dict[str, str]:

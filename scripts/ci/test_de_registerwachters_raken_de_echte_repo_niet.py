@@ -143,6 +143,7 @@ def main() -> int:
     )
     reg = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(reg)
+    HAYRO = reg.UPSTREAMS["hayro"][0]
 
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
@@ -156,14 +157,14 @@ def main() -> int:
         run("remote", "add", "origin", "https://github.com/LaurenzV/hayro.git", cwd=bare)
         run("remote", "add", "origin", "https://github.com/LaurenzV/hayro.git", cwd=nonbare)
 
-        if reg.de_fetch_gaat_naar_de_cache(bare) is not None:
+        if reg.de_fetch_gaat_naar_de_cache(bare, HAYRO) is not None:
             failures.append("the bare cache was refused as a fetch target")
-        if reg.de_fetch_gaat_naar_de_cache(nonbare) is not None:
+        if reg.de_fetch_gaat_naar_de_cache(nonbare, HAYRO) is not None:
             failures.append(
                 "a non-bare HAYRO_CLONE checkout was refused, though the script "
                 "documents it as supported"
             )
-        if reg.de_fetch_gaat_naar_de_cache(ROOT) is None:
+        if reg.de_fetch_gaat_naar_de_cache(ROOT, HAYRO) is None:
             failures.append(
                 "the repository root was accepted as a fetch target -- the second "
                 "lock is not locking"
@@ -176,7 +177,7 @@ def main() -> int:
         # was accepted outright, and this test said nothing.
         plain = tmp / "plain"
         run("init", "-q", str(plain), cwd=tmp)
-        if reg.de_fetch_gaat_naar_de_cache(plain) is None:
+        if reg.de_fetch_gaat_naar_de_cache(plain, HAYRO) is None:
             failures.append(
                 "a plain checkout with no hayro origin was accepted as a fetch target"
             )
@@ -198,7 +199,7 @@ def main() -> int:
         )
         reg_v = importlib.util.module_from_spec(spec_v)
         spec_v.loader.exec_module(reg_v)
-        if reg_v.de_fetch_gaat_naar_de_cache(vendored) is None:
+        if reg_v.de_fetch_gaat_naar_de_cache(vendored, HAYRO) is None:
             failures.append(
                 "a hayro-origin repository that is the script's own checkout was "
                 "accepted -- the origin check passes there, so only the "
@@ -212,7 +213,7 @@ def main() -> int:
         # worktrees, which is why the identity question is asked that way.
         wt = tmp / "linked"
         run("worktree", "add", "-q", str(wt), cwd=nonbare)
-        if reg.de_fetch_gaat_naar_de_cache(wt) is not None:
+        if reg.de_fetch_gaat_naar_de_cache(wt, HAYRO) is not None:
             failures.append(
                 "a linked worktree of a hayro clone was refused as a fetch target"
             )
@@ -240,17 +241,50 @@ def main() -> int:
         )
         reg_w = importlib.util.module_from_spec(spec_w)
         spec_w.loader.exec_module(reg_w)
-        if reg_w.de_fetch_gaat_naar_de_cache(hoofd) is None:
+        if reg_w.de_fetch_gaat_naar_de_cache(hoofd, HAYRO) is None:
             failures.append(
                 "running from a worktree, the main checkout was accepted as a fetch "
                 "target -- git-dirs differ between the two, only common-dirs match"
             )
 
+        # Per registered upstream, not a hardcoded name. The same loop refreshes
+        # the lopdf cache, whose legitimate origin is `J-F-Liu/lopdf.git`; a
+        # check for "hayro" refused it and left the next lopdf fork-point update
+        # unverifiable.
+        for naam, (upstream_url, _) in reg.UPSTREAMS.items():
+            cache = tmp / f"cache-{naam}"
+            run("init", "-q", "--bare", str(cache), cwd=tmp)
+            run("remote", "add", "origin", upstream_url, cwd=cache)
+            if reg.de_fetch_gaat_naar_de_cache(cache, upstream_url) is not None:
+                failures.append(
+                    f"the {naam} cache was refused although its origin is the one "
+                    f"the register names ({upstream_url})"
+                )
+        # and a cache whose origin is a *different* registered upstream
+        kruis = tmp / "cache-crossed"
+        run("init", "-q", "--bare", str(kruis), cwd=tmp)
+        run("remote", "add", "origin", reg.UPSTREAMS["hayro"][0], cwd=kruis)
+        if reg.de_fetch_gaat_naar_de_cache(kruis, reg.UPSTREAMS["lopdf"][0]) is None:
+            failures.append(
+                "a cache with hayro as origin was accepted as the lopdf cache"
+            )
+        # URL spellings that name the same repository must not be refused
+        for spelling in (
+            "git@github.com:LaurenzV/hayro.git",
+            "https://github.com/LaurenzV/hayro",
+            "https://github.com/LaurenzV/hayro.git/",
+        ):
+            alt = tmp / f"cache-alt-{abs(hash(spelling))}"
+            run("init", "-q", "--bare", str(alt), cwd=tmp)
+            run("remote", "add", "origin", spelling, cwd=alt)
+            if reg.de_fetch_gaat_naar_de_cache(alt, reg.UPSTREAMS["hayro"][0]) is not None:
+                failures.append(f"origin spelled {spelling} was refused")
+
         # And somewhere that *is* a hayro clone by name but not by origin.
         impostor = tmp / "hayro-lookalike"
         run("init", "-q", str(impostor), cwd=tmp)
         run("remote", "add", "origin", "https://example.invalid/other.git", cwd=impostor)
-        if reg.de_fetch_gaat_naar_de_cache(impostor) is None:
+        if reg.de_fetch_gaat_naar_de_cache(impostor, HAYRO) is None:
             failures.append(
                 "a repository named hayro but with a different origin was accepted"
             )
