@@ -71,7 +71,7 @@ def main() -> int:
         return 1
 
     forks = tomllib.load(LIJST.open("rb"))["fork"]
-    achter, onbereikbaar = [], []
+    achter, onbereikbaar, aanvaarde_gaten = [], [], []
     for f in forks:
         try:
             boven = nieuwste(f["upstream"])
@@ -104,6 +104,8 @@ def main() -> int:
         if aanvaard and volledig(boven) <= volledig(aanvaard):
             # A gap somebody chose, with an issue against it. Still printed, so
             # it stays visible; not fatal, so it does not block other work.
+            if gat > MINORS_TOEGESTAAN:
+                aanvaarde_gaten.append((f["onze_crate"], f["gelijk_met"], boven))
             continue
         if gat > MINORS_TOEGESTAAN:
             achter.append((f["onze_crate"], f["upstream"], f["gelijk_met"], boven))
@@ -133,6 +135,19 @@ def main() -> int:
               "already found the bug and wrote the fix. Move up, or record a deliberate "
               "decision not to in docs/UPSTREAM_FORKS.toml.", file=sys.stderr)
         return 1
+
+    # An accepted gap is still a gap. Reporting "none behind" while seven forks
+    # sit two to five minor releases back is how an accepted gap becomes a
+    # forgotten one: the summary said OK, so nobody read the lines above it.
+    if aanvaarde_gaten:
+        print(f"[upstream] OK, but {len(aanvaarde_gaten)} of {len(forks)} fork(s) sit more "
+              f"than {MINORS_TOEGESTAAN} minor release behind, accepted in "
+              "docs/UPSTREAM_FORKS.toml:")
+        for onze, wij, zij in aanvaarde_gaten:
+            print(f"    {onze}: on {wij}, upstream at {zij}")
+        print("  Decisions, not neglect -- and they expire the moment upstream releases")
+        print("  past the recorded version.")
+        return 0
 
     print(f"[upstream] OK: {len(forks)} fork(s), none more than {MINORS_TOEGESTAAN} minor "
           "behind.")

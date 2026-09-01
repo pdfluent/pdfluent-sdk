@@ -61,75 +61,119 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --quiet pyyaml
+      - name: Guards do not hide behind each other
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/guards_do_not_hide_behind_each_other.py
+      - name: The disk-headroom guard still bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_disk_headroom.py
+      - name: Enough disk to finish a build
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/disk_headroom.py
       - name: Orchestration stays on hosted runners
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/orchestration_stays_hosted.py
       - name: No `if:` reads the secrets context
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/if_conditions_are_valid.py
       - name: Nothing automatic reaches for macOS or Windows
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_no_hosted_minutes_on_a_push.py
       - name: No hosted minutes on a push
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_hosted_minutes_on_a_push.py
       - name: One event starts one machine
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/one_instance_per_event.py
       - name: Every needs names a job that exists
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/workflow_jobs_exist.py
       - name: Every self-hosted label has a runner
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/every_label_has_a_runner.py
       - name: Schedule conditions name a cron that exists
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/schedule_guards_match_their_cron.py
       - name: The mirror-drift gate still bites
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_mirror_has_not_drifted.py
       - name: The age alarm can tell a working machine from a leaked one
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_infra_health.py
       - name: The wait for a free instance fits inside its job
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/wait_fits_in_the_job_timeout.py
       - name: Provisioning and reaping take the same lock
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/one_lock_guards_the_instances.py
       - name: A Persistent= timer fires on a calendar
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/persistent_timers_use_a_calendar.py
       - name: The installer escapes the checkout path for systemd
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_installer_escapes_the_path.py
+      - name: The fork register matches its fork points
+        run: python3 scripts/ci/the_fork_register_is_verifiable.py
       - name: Our forks have not fallen behind upstream
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/upstream_has_not_moved_on.py
       - name: Both fork lists name the same crates
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/fork_lists_agree.py
       - name: A fork behind on patch releases is behind
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_upstream_gap_counts_patches.py
       - name: Every feature-gated test has a job that enables it
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_feature_gated_tests_run.py
       - name: Site snippets match the code that compiles them
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
       - name: The capability matrix and the coverage report agree
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/capability_matrix_matches_coverage.py
       - name: Nothing deletes the word separator
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/never_delete_the_word_separator.py
       - name: No script can reach the real repository
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_no_test_can_touch_the_real_repo.py
       - name: Third-party licences satisfy the policy
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/license_gate.py
       - name: The licence gate rejects what it should
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_license_gate.py
       - name: Every error code links to a section that exists
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/error_codes_have_an_anchor.py
       - name: No pull request has been left to rot
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/ci/pr_staleness.py
       - name: The sweep spares the instance this run claimed
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
       - name: Reaping runs after the work, never inside provisioning
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/reaping_happens_after_the_work.py
       # The guard first, then its own test -- a guard whose parser stopped
       # understanding the files reports a clean tree in exactly the same words.
       - name: The guard that reads run-blocks still reads them
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_workflow_inputs_are_not_shell.py
       - name: No caller-supplied string reaches a shell
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/workflow_inputs_are_not_shell.py
       - name: Cross targets land on the pinned toolchain
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/wasm_target_matches_the_pin.py
       - name: Parsers still read their runners' output
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_tests_actually_ran.py
       - name: Check for committed .so / .pyd / .node / .wasm artifacts
+        if: ${{ !cancelled() }}
         run: |
             FOUND=$(git ls-files \
               '*.so' '*.pyd' '*.node' \
@@ -144,6 +188,7 @@ jobs:
             fi
             echo "OK: no compiled build artifacts found in the repository."
       - name: Verify commercial packages declare correct license
+        if: ${{ !cancelled() }}
         run: |
             FAIL=0
             for PKG in \

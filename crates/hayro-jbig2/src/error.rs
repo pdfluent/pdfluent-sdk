@@ -104,6 +104,8 @@ pub enum SymbolError {
     NoSymbols,
     /// The symbol dictionary contains more symbols than expected.
     TooManySymbols,
+    /// A text region claims more symbol instances than its data can encode.
+    TooManyInstances,
     /// Symbol ID out of valid range.
     OutOfRange,
     /// Unexpected out-of-band value.
@@ -200,6 +202,7 @@ impl fmt::Display for SymbolError {
             Self::OutOfRange => write!(f, "symbol ID out of range"),
             Self::UnexpectedOob => write!(f, "unexpected out-of-band value"),
             Self::TooManySymbols => write!(f, "symbol dictionary contains too many symbols"),
+            Self::TooManyInstances => write!(f, "text region declares too many symbol instances"),
             Self::Invalid => write!(f, "invalid symbol encountered"),
         }
     }
