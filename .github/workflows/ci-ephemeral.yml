@@ -76,7 +76,15 @@ jobs:
       # runner is registered without --ephemeral so it takes more than one job.
       # A forty-second delay was the earlier answer; this is the better one,
       # because it costs nothing and saves a whole machine (#274).
+      # On a pull_request this job runs on the persistent desktop, because
+      # creating and reaping instances IS host work and cannot move. So the code
+      # it executes must not be the pull request's: `scripts/ci/*.sh` and
+      # `*.py` here are run directly, and on a PR the checkout would be whatever
+      # the PR says they are. Pinning the base revision means only merged code
+      # ever runs as the runner user. (#311)
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
       - name: Reuse an idle instance if one is already up
         id: hergebruik
         env:
@@ -456,7 +464,15 @@ jobs:
     runs-on: [self-hosted, xfa-fast]
     timeout-minutes: 5
     steps:
+      # On a pull_request this job runs on the persistent desktop, because
+      # creating and reaping instances IS host work and cannot move. So the code
+      # it executes must not be the pull request's: `scripts/ci/*.sh` and
+      # `*.py` here are run directly, and on a PR the checkout would be whatever
+      # the PR says they are. Pinning the base revision means only merged code
+      # ever runs as the runner user. (#311)
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
       - name: Delete instances that are idle and past their billed hour
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}

@@ -44,7 +44,7 @@ env:
 jobs:
   cargo-audit:
     name: cargo audit
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -65,7 +65,7 @@ jobs:
 
   cargo-deny-advisories:
     name: cargo-deny advisories
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
     # Run in addition to cargo-audit because cargo-deny also enforces
     # license, source, and ban policies declared in deny.toml.
     # If deny.toml is absent the job is a no-op.

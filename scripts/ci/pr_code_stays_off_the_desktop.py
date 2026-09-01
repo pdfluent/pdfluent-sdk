@@ -65,15 +65,14 @@ DYNAMIC: dict[str, dict] = {
 }
 
 KNOWN: dict[str, str] = {
-    "ci-ephemeral.yml:create-runner": "starts the ephemeral runner PRs actually use; #311",
-    "ci-ephemeral.yml:reap": "tears that runner down; must survive a cancelled run; #311",
-    "ci.yml:baseline-hardware-guard": "predates this guard; #311",
-    "ci.yml:orchestration-guard": "predates this guard; #311",
-    "ci.yml:promise-guard": "predates this guard; #311",
-    "ci.yml:measurement-guard": "predates this guard; #311",
-    "ci.yml:commit-identity-guard": "predates this guard; #311",
-    "security-audit.yml:cargo-audit": "predates this guard; #311",
-    "security-audit.yml:cargo-deny-advisories": "predates this guard; #311",
+    # Empty, and it has to stay that way. When this guard was written it held
+    # nine jobs -- five in ci.yml, two in security-audit.yml, two in
+    # ci-ephemeral.yml -- recorded so the count could not quietly grow. #311
+    # moved all nine, so the register describes nothing and is gone.
+    #
+    # An entry that stops matching anything is itself a failure here, which is
+    # what forced this to be emptied in the same change rather than left as a
+    # list nobody revisits.
 }
 
 # Runner images GitHub hosts. Anything else -- including a bare custom label
@@ -291,9 +290,12 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    print(f"[pr-runner] OK: {checked} pull_request-reachable job(s); none newly "
-          f"on a self-hosted runner. {len(KNOWN)} recorded from before this "
-          "guard, each still to be moved (#311).")
+    msg = (f"[pr-runner] OK: {checked} pull_request-reachable job(s); none runs "
+           "pull-request code on the persistent desktop.")
+    if KNOWN:
+        msg += (f" {len(KNOWN)} recorded from before this guard, each still to "
+                "be moved (#311).")
+    print(msg)
     return 0
 
 
