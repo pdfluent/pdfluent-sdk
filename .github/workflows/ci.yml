@@ -219,6 +219,38 @@ jobs:
       - name: Every crate declares the licence its side of the boundary requires
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/license_boundary.py
+      # The other orphan. Blocking, with the cutoff at 2c03659a -- the commit
+      # that introduced the DCO this morning (#223). The rule applies from the
+      # moment the rule exists, so no history has to be rewritten.
+      #
+      # The range is the PULL REQUEST's own commits, not `2c03659a..HEAD`.
+      # Measured: 57 commits have landed on master since the cutoff and 12 carry
+      # a sign-off, so the wider range would fail every pull request on other
+      # people's merged history -- a red check for something the author cannot
+      # fix, which is the shape we keep removing.
+      #
+      # The checkout is shallow, so the base commit has to be fetched before the
+      # range means anything. `git log` on a depth-1 clone answers confidently
+      # and wrongly; that is #290's dating bug in a different file.
+      - name: Every commit in this pull request carries a matching sign-off
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        run: |
+          set -euo pipefail
+          CUTOFF=2c03659a
+          BASE='${{ github.event.pull_request.base.sha }}'
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --no-tags --quiet --unshallow || git fetch --no-tags --quiet --deepen=200 || true
+          fi
+          if ! git cat-file -e "${CUTOFF}^{commit}" 2>/dev/null; then
+            echo "SKIPPED (not a pass): the cutoff ${CUTOFF} is not in this checkout," >&2
+            echo "  so which commits the rule covers cannot be established." >&2
+            exit 1
+          fi
+          if git merge-base --is-ancestor "${CUTOFF}" "${BASE}"; then
+            python3 scripts/ci/licence_signoff.py "${BASE}..HEAD"
+          else
+            echo "::notice::This branch was cut before the DCO landed (${CUTOFF}); sign-off is not required for its existing commits."
+          fi
       - name: Schedule conditions name a cron that exists
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/schedule_guards_match_their_cron.py
