@@ -41,24 +41,52 @@ Reporting by default; deleting takes --sweep. A tool that frees 30 GB the moment
 you run it by accident is not a tool anybody runs.
 """
 from __future__ import annotations
-import argparse, shutil, subprocess, sys
+import argparse, os, shutil, subprocess, sys
 from pathlib import Path
 
 GB = 1024**3
 
 
-def run(*args: str) -> str:
-    r = subprocess.run(["git", *args], capture_output=True, text=True)
-    return r.stdout if r.returncode == 0 else ""
+def clean_env() -> dict[str, str]:
+    """git must act on the directory we point it at, not the caller's.
+
+    Inside a git hook GIT_DIR and GIT_WORK_TREE name the real repository and git
+    ignores `-C` entirely. On 25-08-2026 that set core.bare = true on the real
+    repository and everything stopped. Same helper as mr_staleness.py.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
-def cargo_running() -> bool:
+def run(*args: str) -> tuple[bool, str]:
+    """Return (the command succeeded, its stdout).
+
+    The status is returned rather than folded into an empty string because this
+    script decides whether to DELETE things. "git could not tell me" and "git
+    told me nothing" have to reach the caller as different answers: read as the
+    same, an unreadable index makes a worktree look clean. (codex, #1634)
+    """
+    r = subprocess.run(["git", *args], capture_output=True, text=True,
+                       env=clean_env())
+    return r.returncode == 0, r.stdout
+
+
+def a_build_may_be_running() -> tuple[bool, str]:
+    """(do not sweep, why). Unknown counts as running.
+
+    A failed `ps` used to read as "no build is running", which is the one answer
+    that lets --sweep delete a target/ from under a live rustc -- the 25-08
+    corruption. When the process table cannot be read the honest answer is that
+    we do not know, and not knowing must not authorise deletion. (codex, #1634)
+    """
     r = subprocess.run(["ps", "-Ao", "args="], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        return True, (f"ps exited {r.returncode} with no usable output, so "
+                      "whether a build is running is unknown")
     for line in r.stdout.splitlines():
         head = line.split(" ", 1)[0].rsplit("/", 1)[-1]
         if head in ("cargo", "rustc", "sccache"):
-            return True
-    return False
+            return True, "a build is running on this host"
+    return False, ""
 
 
 def dir_size(path: Path) -> int:
@@ -73,7 +101,14 @@ def dir_size(path: Path) -> int:
 
 
 def worktrees() -> list[Path]:
-    out, paths = run("worktree", "list", "--porcelain"), []
+    ok, out = run("worktree", "list", "--porcelain")
+    if not ok:
+        # A scan that could not enumerate must not report a clean result.
+        print("[sweep] FATAL: `git worktree list` failed; refusing to decide "
+              "what is reclaimable from a list git could not produce.",
+              file=sys.stderr)
+        raise SystemExit(2)
+    paths = []
     for line in out.splitlines():
         if line.startswith("worktree "):
             paths.append(Path(line.split(" ", 1)[1]))
@@ -86,7 +121,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--base", default="github/master")
     args = ap.parse_args(argv[1:])
 
-    repo_root = str(Path(run("rev-parse", "--show-toplevel").strip() or ".").resolve())
+    ok_root, root_out = run("rev-parse", "--show-toplevel")
+    repo_root = str(Path(root_out.strip() if ok_root else ".").resolve())
     trees = worktrees()
     if not trees:
         print("[sweep] FATAL: git reported no worktrees. Refusing to report a "
@@ -98,13 +134,19 @@ def main(argv: list[str]) -> int:
         target = wt / "target"
         if not target.is_dir():
             continue
-        head = run("-C", str(wt), "rev-parse", "HEAD").strip()
+        ok, out = run("-C", str(wt), "rev-parse", "HEAD")
+        head = out.strip() if ok else ""
         if not head:
             kept.append((wt, "not a readable worktree")); continue
         merged = subprocess.run(
             ["git", "-C", str(wt), "merge-base", "--is-ancestor", head, args.base],
-            capture_output=True).returncode == 0
-        dirty = bool(run("-C", str(wt), "status", "--porcelain").strip())
+            capture_output=True, env=clean_env()).returncode == 0
+        # An unreadable index is not a clean worktree. Folding the two together
+        # is how uncommitted work gets deleted. (codex, #1634)
+        ok_status, status = run("-C", str(wt), "status", "--porcelain")
+        if not ok_status:
+            kept.append((wt, "git status could not be read here")); continue
+        dirty = bool(status.strip())
         if not merged:
             kept.append((wt, "HEAD is not on " + args.base))
         elif dirty:
@@ -126,15 +168,38 @@ def main(argv: list[str]) -> int:
     if not args.sweep:
         print("[sweep] reporting only; pass --sweep to delete.")
         return 0
-    if cargo_running():
-        print("[sweep] a build is running on this host -- nothing removed. "
-              "Deleting a target/ from under rustc is the 25-08 corruption.", file=sys.stderr)
+    busy, why = a_build_may_be_running()
+    if busy:
+        print(f"[sweep] {why} -- nothing removed. Deleting a target/ from under "
+              "rustc is the 25-08 corruption.", file=sys.stderr)
         return 0
+
+    # Only what actually went away is counted. ignore_errors=True used to
+    # swallow permission failures, after which the script printed "removed" and
+    # reported the whole pre-scan size as freed -- a number describing a
+    # deletion that had not happened. (codex, #1634)
+    freed, failed = 0, []
     for size, target in freeable:
-        shutil.rmtree(target, ignore_errors=True)
+        try:
+            shutil.rmtree(target)
+        except OSError as exc:
+            failed.append((target, exc))
+            print(f"[sweep] FAILED to remove {target}: {exc}", file=sys.stderr)
+            continue
+        if target.exists():
+            failed.append((target, "still present after rmtree returned"))
+            print(f"[sweep] FAILED to remove {target}: still present", file=sys.stderr)
+            continue
+        freed += size
         print(f"[sweep] removed {target}")
+
     free = shutil.disk_usage(trees[0]).free
-    print(f"[sweep] {total/GB:.1f} GB freed; {free/GB:.1f} GB now free")
+    print(f"[sweep] {freed/GB:.1f} GB freed of {total/GB:.1f} GB found; "
+          f"{free/GB:.1f} GB now free")
+    if failed:
+        print(f"[sweep] {len(failed)} target(s) could not be removed; the figure "
+              "above counts only what actually went away.", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -329,6 +329,9 @@ jobs:
       - name: Third-party licences satisfy the policy
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/license_gate.py
+      - name: The build-cache sweeper fails safe
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_sweep_fails_safe.py
       - name: The licence gate rejects what it should
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_license_gate.py
