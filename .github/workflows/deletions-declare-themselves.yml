@@ -20,16 +20,30 @@ permissions:
   contents: read
 
 concurrency:
-  group: deletions-${{ github.ref }}
-  cancel-in-progress: true
+  # A push gets its OWN group, and is never cancelled. Two pushes to master in
+  # quick succession used to share one: A carries an undeclared deletion, B is
+  # innocent, A's run is cancelled, and B compares A..B where the file is already
+  # absent on both sides -- green, with A never judged. A cancelled run is not a
+  # passing run, and here it silently became one. (codex, #1635)
+  group: deletions-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   deletions-guard:
     name: A deletion declares itself
-    # On the persistent desktop, like the guards in ci.yml and for the same
-    # reason: a spending limit disables hosted runners, and a check that stops
-    # running exactly when the bill does is not a check.
-    runs-on: [self-hosted, xfa-fast]
+    # Hosted for pull_request, the persistent desktop only for push.
+    #
+    # This job executes scripts/ci/*.py FROM THE CHECKOUT, so on a pull_request
+    # those files are PR-authored code. ci.yml lines 13-24 state the boundary
+    # outright -- xfa-fast is a persistent desktop, not an isolated ephemeral
+    # runner, so "only code that's already merged (push) touches it" -- and this
+    # workflow broke it on its first day. The repo is slated to go public, at
+    # which point any stranger's PR would run as the runner user.
+    #
+    # Push events keep xfa-fast: a spending limit disables hosted runners, and a
+    # check that stops running exactly when the bill does is not a check.
+    # (codex, #1635)
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,6 +55,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: A pull request stays off the persistent runner
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/pr_code_stays_off_the_desktop.py
       - name: The deletion guard bites in both directions
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_a_deletion_declares_itself.py
