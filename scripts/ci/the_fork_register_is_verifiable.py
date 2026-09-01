@@ -103,7 +103,7 @@ CACHE_ROOT = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "p
 _EXPLICIT = os.environ.get("HAYRO_CLONE")
 
 
-def de_fetch_gaat_naar_de_cache(clone) -> str | None:
+def de_fetch_gaat_naar_de_cache(clone, upstream_url: str) -> str | None:
     """Refuse to fetch unless the target really is the cache.
 
     A second lock, deliberately not resting on the environment being clean. The
@@ -177,15 +177,38 @@ def de_fetch_gaat_naar_de_cache(clone) -> str | None:
             "force-updates every branch, so this would rewrite local branches."
         )
 
-    # (b) And it must actually be the upstream, not merely somewhere else.
+    # (b) And it must be the upstream *this cache is for*, not merely somewhere
+    # that is not us. The criterion is the URL the register names for this
+    # entry: the same loop refreshes the lopdf cache, whose legitimate origin is
+    # `J-F-Liu/lopdf.git`, so a hardcoded "hayro" refused it and left the next
+    # lopdf fork-point update unverifiable.
     herkomst = git("config", "--get", "remote.origin.url", cwd=clone)
     url = herkomst.stdout.strip()
-    if not url or "hayro" not in url.lower():
+    if not url or _zelfde_upstream(url, upstream_url) is False:
         return (
-            f"refusing to fetch: {clone} has origin {url or '<none>'}, which is not "
-            "the hayro upstream this cache is for."
+            f"refusing to fetch: {clone} has origin {url or '<none>'}, not the "
+            f"{upstream_url} this cache is for."
         )
     return None
+
+
+def _zelfde_upstream(a: str, b: str) -> bool:
+    """Compare two remote URLs by the repository they name.
+
+    `https://github.com/X/y.git`, `git@github.com:X/y` and a trailing slash all
+    name the same repository; comparing the strings would refuse a cache that is
+    perfectly correct.
+    """
+    def kern(u: str) -> str:
+        # Trailing slashes first: `.../hayro.git/` ends in a slash, so stripping
+        # `.git` before them leaves it in place and two spellings of one
+        # repository compare unequal.
+        u = u.strip().lower().rstrip("/").removesuffix(".git").rstrip("/")
+        u = u.replace("git@github.com:", "github.com/")
+        for prefix in ("https://", "http://", "ssh://git@", "ssh://", "git://"):
+            u = u.removeprefix(prefix)
+        return u
+    return kern(a) == kern(b)
 
 
 def schone_omgeving() -> dict[str, str]:
@@ -266,7 +289,7 @@ def have_commit(clone: Path, commit: str) -> bool:
     return git("cat-file", "-e", f"{commit}^{{commit}}", cwd=clone).returncode == 0
 
 
-def refresh_for(clone: Path, commits: list[str]) -> str | None:
+def refresh_for(clone: Path, commits: list[str], upstream_url: str) -> str | None:
     """Fetch once if the register points at something the cache predates.
 
     Only when needed: a fetch on every run is a network round-trip to learn
@@ -274,7 +297,7 @@ def refresh_for(clone: Path, commits: list[str]) -> str | None:
     """
     if all(have_commit(clone, c) for c in commits):
         return None
-    if (waarom := de_fetch_gaat_naar_de_cache(clone)) is not None:
+    if (waarom := de_fetch_gaat_naar_de_cache(clone, upstream_url)) is not None:
         return waarom
     out = git("fetch", "--quiet", "--filter=blob:none", "origin",
               "+refs/heads/*:refs/heads/*", cwd=clone)
@@ -341,7 +364,7 @@ def main() -> int:
             )
             return 3
         wanted = [f["forkpunt"] for f in with_point if f["upstream"] == upstream]
-        if (why := refresh_for(cache_for(url), wanted)) is not None:
+        if (why := refresh_for(cache_for(url), wanted, url)) is not None:
             print(f"SKIPPED (not a pass): {why}", file=sys.stderr)
             return 3
 
