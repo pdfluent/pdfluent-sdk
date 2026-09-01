@@ -175,7 +175,21 @@ def de_fetch_gaat_naar_de_cache(clone, upstream_url: str = UPSTREAM_URL) -> str 
     # local `insteadOf` entries was written first and then removed: its mutation
     # showed the case already refused here, and the refusal already names the
     # decoy it saw.
-    remotes = git("remote", "-v", cwd=clone)
+    #
+    # Asked under the *sealed* environment, the one the fetch uses. Asking it
+    # unsealed was the mirror image of the bug above: the probe read the global
+    # config and reported the rewritten URL while `git_verzegeld` ignores that
+    # file and fetches the raw one. Measured with a cache whose origin is a
+    # mirror and a global `insteadOf` pointing at the canonical URL:
+    #
+    #     probe, unsealed  ->  canonical.git   (approved)
+    #     fetch, sealed    ->  mirror-COMMIT   (what actually arrived)
+    #
+    # A probe in a different environment than the operation it guards is not a
+    # probe. Local `insteadOf` still shows here, because sealing does not reach
+    # repository config -- which is exactly why the previous round's finding
+    # stands.
+    remotes = git_verzegeld("remote", "-v", cwd=clone)
     urls = sorted({
         regel.split()[1]
         for regel in remotes.stdout.splitlines()
