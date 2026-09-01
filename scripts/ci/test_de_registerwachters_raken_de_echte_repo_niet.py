@@ -308,6 +308,29 @@ def main() -> int:
                 f"tell why: {verdict}"
             )
 
+        # URL rewriting in the target's *own* config. The seal switches off the
+        # system and global files; it cannot switch off the repository's, and an
+        # `insteadOf` there rewrites the fetch URL just the same while
+        # `remote.origin.url` still reads correctly. Measured: such a cache
+        # fetched a decoy commit straight through the seal.
+        omgeleid = tmp / "locally-redirecting.git"
+        run("init", "-q", "--bare", str(omgeleid), cwd=tmp)
+        run("remote", "add", "origin", HAYRO, cwd=omgeleid)
+        if reg.de_fetch_gaat_naar_de_cache(omgeleid, HAYRO) is not None:
+            failures.append("a clean cache was refused before any rewrite was set")
+        run("config", f"url.file://{tmp}/decoy.insteadOf", HAYRO, cwd=omgeleid)
+        oordeel = reg.de_fetch_gaat_naar_de_cache(omgeleid, HAYRO)
+        if oordeel is None:
+            failures.append(
+                "a cache that rewrites URLs in its own config was accepted -- the "
+                "seal does not reach local config, so this has to be refused"
+            )
+        elif "decoy" not in oordeel:
+            failures.append(
+                "the refusal does not name what the rewrite pointed at, so the "
+                f"reader cannot see why: {oordeel}"
+            )
+
         # And somewhere that *is* a hayro clone by name but not by origin.
         impostor = tmp / "hayro-lookalike"
         run("init", "-q", str(impostor), cwd=tmp)
