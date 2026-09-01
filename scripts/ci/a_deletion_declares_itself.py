@@ -61,6 +61,19 @@ def main(argv: list[str]) -> int:
               "clean result for a comparison that never ran.", file=sys.stderr)
         return 2
 
+    # If the base resolves to the head, there is no range and every branch looks
+    # clean. That is not a pass, it is a comparison that did not happen -- and it
+    # is exactly what `--base origin/master` produced on a push to master, where
+    # the ref already points at the revision being pushed. The caller was fixed;
+    # this refuses too, because the next caller will be written by somebody who
+    # has not read that fix. (codex, #1635)
+    head_sha = git("rev-parse", args.head)[1].strip()
+    if base_sha == head_sha:
+        print(f"[deletions] FATAL: the base resolves to {args.head} itself, so the "
+              "range is empty and no deletion could be found. Pass the revision "
+              "this work started from, not the one it produced.", file=sys.stderr)
+        return 2
+
     _, out = git("diff", "--diff-filter=D", "--name-only", f"{base_sha}..{args.head}")
     deleted = {p for p in out.splitlines() if p.strip()}
 

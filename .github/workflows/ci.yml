@@ -611,8 +611,27 @@ jobs:
       - name: The deletion guard refuses what it should, and only that
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_a_deletion_declares_itself.py
+      # The base has to come from the EVENT, not from `origin master`. On a push
+      # to master that ref already points at the revision being pushed, so the
+      # merge base is HEAD and the comparison is empty -- the guard would measure
+      # itself and report every push clean. (codex, #1635)
       - name: Nothing master has is deleted here without saying why
         if: ${{ !cancelled() }}
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
-          git fetch -q origin master:refs/remotes/github/master 2>/dev/null || true
-          python3 scripts/ci/a_deletion_declares_itself.py --base refs/remotes/github/master
+          set -euo pipefail
+          BASE="${PR_BASE:-}"
+          if [ -z "$BASE" ]; then BASE="${PUSH_BEFORE:-}"; fi
+          # A brand-new branch has no "before"; git reports all-zeros for it.
+          case "$BASE" in
+            ""|0000000000000000000000000000000000000000)
+              echo "SKIPPED (not a pass): this event carries no base revision, so" >&2
+              echo "  there is nothing to compare against and no deletion could be" >&2
+              echo "  detected. That is not the same as a clean branch." >&2
+              exit 3
+              ;;
+          esac
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE"
+          python3 scripts/ci/a_deletion_declares_itself.py --base "$BASE"

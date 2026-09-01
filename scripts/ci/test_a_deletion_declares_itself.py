@@ -11,7 +11,7 @@ import os, subprocess, sys, tempfile
 from pathlib import Path
 
 GUARD = Path(__file__).with_name("a_deletion_declares_itself.py")
-MINIMUM_CASES = 6  # FLOOR
+MINIMUM_CASES = 7  # FLOOR
 
 
 def clean_env() -> dict[str, str]:
@@ -105,6 +105,14 @@ def main() -> int:
         r = guard(wd, "--base", "master")
         expect("a trailer anywhere in the range counts", r.returncode == 0,
                f"exit {r.returncode} {r.stderr[:120]}")
+
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "remove it")
+        r = guard(wd, "--base", "HEAD")
+        expect("a base that is the head refuses, it does not pass",
+               r.returncode == 2, f"exit {r.returncode}")
 
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))
