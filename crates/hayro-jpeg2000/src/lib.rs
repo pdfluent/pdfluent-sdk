@@ -10,12 +10,13 @@ changes in tile-parts), but all features that actually commonly appear in real-l
 images should be supported (if not, please open an issue!).
 
 The decoder abstracts away most of the internal complexity of JPEG2000
-and yields a simple 8-bit image with either greyscale, RGB, CMYK or an ICC-based
-color space, which can then be processed further according to your needs.
+and yields decoded image components, which can be inspected directly or packed
+into a simple 8-bit image with either greyscale, RGB, CMYK or an ICC-based color
+space.
 
 # Example
 ```rust,no_run
-use pdfluent_jpeg2000::{Image, DecodeSettings};
+use pdfluent_jpeg2000::{DecodeSettings, DecoderContext, Image};
 
 let data = std::fs::read("image.jp2").unwrap();
 let image = Image::new(&data, &DecodeSettings::default()).unwrap();
@@ -28,7 +29,9 @@ println!(
     image.has_alpha(),
 );
 
-let bitmap = image.decode().unwrap();
+let mut ctx = DecoderContext::default();
+let decoded = image.decode(&mut ctx).unwrap();
+let bitmap = decoded.data_u8();
 ```
 
 If you want to see a more comprehensive example, please take a look
@@ -71,12 +74,12 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::error::{bail, err};
-use crate::j2c::{ComponentData, DecodedCodestream, Header};
+use crate::j2c::Header;
+use crate::jp2::ImageBoxes;
 use crate::jp2::cdef::{ChannelAssociation, ChannelType};
 use crate::jp2::cmap::ComponentMappingType;
 use crate::jp2::colr::{CieLab, EnumeratedColorspace};
 use crate::jp2::icc::ICCMetadata;
-use crate::jp2::{DecodedImage, ImageBoxes};
 
 pub mod error;
 #[macro_use]
@@ -88,6 +91,8 @@ pub use error::{
     ColorError, DecodeError, DecodingError, FormatError, MarkerError, Result, TileError,
     ValidationError,
 };
+pub use j2c::{ComponentData, DecoderContext};
+pub use jp2::DecodedImage;
 
 #[cfg(feature = "image")]
 pub mod integration;
@@ -190,45 +195,32 @@ impl<'a> Image<'a> {
         self.header.component_infos[0].size_info.precision
     }
 
-    /// Decode the image.
-    pub fn decode(&self) -> Result<Vec<u8>> {
-        let total_channels =
-            self.color_space.num_channels() as usize + if self.has_alpha { 1 } else { 0 };
-        // Checked multiply prevents panic on pathological images whose dimensions
-        // pass the codec's 60000-pixel cap but whose product overflows usize (J2K-BUF-01).
-        let buffer_size = (self.width() as usize)
-            .checked_mul(self.height() as usize)
-            .and_then(|n| n.checked_mul(total_channels))
-            .ok_or(DecodeError::Validation(ValidationError::ImageTooLarge))?;
-        let mut buf = vec![0; buffer_size];
-        self.decode_into(&mut buf)?;
-
-        Ok(buf)
-    }
-
-    /// Decode the image into the given buffer. The buffer must have the correct
-    /// size.
-    pub(crate) fn decode_into(&self, buf: &mut [u8]) -> Result<()> {
+    /// Decode the image and return its decoded components.
+    pub fn decode<'b>(
+        &'a self,
+        decoder_context: &'b mut DecoderContext<'a>,
+    ) -> Result<DecodedImage<'b>> {
         let settings = &self.settings;
-        let mut decoded_image =
-            j2c::decode(self.codestream, &self.header).map(move |data| DecodedImage {
-                decoded: DecodedCodestream { components: data },
-                boxes: self.boxes.clone(),
-            })?;
+        j2c::decode(self.codestream, &self.header, decoder_context)?;
+        let mut decoded_image = DecodedImage {
+            decoded_components: &mut decoder_context.channel_data,
+            boxes: self.boxes.clone(),
+        };
 
         // Resolve palette indices.
         if settings.resolve_palette_indices {
-            decoded_image.decoded.components =
-                resolve_palette_indices(decoded_image.decoded.components, &decoded_image.boxes)?;
+            let components = core::mem::take(decoded_image.decoded_components);
+            *decoded_image.decoded_components =
+                resolve_palette_indices(components, &decoded_image.boxes)?;
         }
 
         if let Some(cdef) = &decoded_image.boxes.channel_definition {
             // Sort by the channel association. Note that this will only work if
             // each component is referenced only once.
             let mut components = decoded_image
-                .decoded
-                .components
-                .into_iter()
+                .decoded_components
+                .iter()
+                .cloned()
                 .zip(
                     cdef.channel_definitions
                         .iter()
@@ -239,16 +231,14 @@ impl<'a> Image<'a> {
                 )
                 .collect::<Vec<_>>();
             components.sort_by_key(|c1| c1.1);
-            decoded_image.decoded.components = components.into_iter().map(|c| c.0).collect();
+            *decoded_image.decoded_components = components.into_iter().map(|c| c.0).collect();
         }
 
         // Note that this is only valid if all images have the same bit depth.
-        let bit_depth = decoded_image.decoded.components[0].bit_depth;
+        let bit_depth = decoded_image.decoded_components[0].bit_depth;
         convert_color_space(&mut decoded_image, bit_depth)?;
 
-        interleave_and_convert(decoded_image, buf);
-
-        Ok(())
+        Ok(decoded_image)
     }
 }
 
@@ -380,8 +370,31 @@ pub struct Bitmap {
     pub original_bit_depth: u8,
 }
 
-fn interleave_and_convert(image: DecodedImage, buf: &mut [u8]) {
-    let mut components = image.decoded.components;
+impl DecodedImage<'_> {
+    /// The decoded components of the image.
+    pub fn components(&self) -> &[ComponentData] {
+        self.decoded_components
+    }
+
+    /// Return the decoded image as interleaved unsigned 8-bit sample data.
+    pub fn data_u8(&self) -> Vec<u8> {
+        let components = self.components();
+        let buffer_size = components[0].samples().len() * components.len();
+        let mut buf = vec![0; buffer_size];
+        self.store_u8_into(&mut buf);
+        buf
+    }
+
+    /// Store the decoded image as interleaved unsigned 8-bit sample data into `buf`.
+    ///
+    /// The buffer must have the correct size.
+    pub fn store_u8_into(&self, buf: &mut [u8]) {
+        interleave_and_convert(self, buf);
+    }
+}
+
+fn interleave_and_convert(image: &DecodedImage<'_>, buf: &mut [u8]) {
+    let components = &*image.decoded_components;
     let num_components = components.len();
 
     let mut all_same_bit_depth = Some(components[0].bit_depth);
@@ -412,8 +425,8 @@ fn interleave_and_convert(image: DecodedImage, buf: &mut [u8]) {
             }
             // Gray-scale with alpha.
             2 => {
-                let c1 = components.pop().unwrap();
-                let c0 = components.pop().unwrap();
+                let c0 = &components[0];
+                let c1 = &components[1];
 
                 let c0 = &c0.container[..max_len];
                 let c1 = &c1.container[..max_len];
@@ -425,9 +438,9 @@ fn interleave_and_convert(image: DecodedImage, buf: &mut [u8]) {
             }
             // RGB
             3 => {
-                let c2 = components.pop().unwrap();
-                let c1 = components.pop().unwrap();
-                let c0 = components.pop().unwrap();
+                let c0 = &components[0];
+                let c1 = &components[1];
+                let c2 = &components[2];
 
                 let c0 = &c0.container[..max_len];
                 let c1 = &c1.container[..max_len];
@@ -441,10 +454,10 @@ fn interleave_and_convert(image: DecodedImage, buf: &mut [u8]) {
             }
             // RGBA or CMYK.
             4 => {
-                let c3 = components.pop().unwrap();
-                let c2 = components.pop().unwrap();
-                let c1 = components.pop().unwrap();
-                let c0 = components.pop().unwrap();
+                let c0 = &components[0];
+                let c1 = &components[1];
+                let c2 = &components[2];
+                let c3 = &components[3];
 
                 let c0 = &c0.container[..max_len];
                 let c1 = &c1.container[..max_len];
@@ -475,7 +488,7 @@ fn interleave_and_convert(image: DecodedImage, buf: &mut [u8]) {
     }
 }
 
-fn convert_color_space(image: &mut DecodedImage, bit_depth: u8) -> Result<()> {
+fn convert_color_space(image: &mut DecodedImage<'_>, bit_depth: u8) -> Result<()> {
     if let Some(jp2::colr::ColorSpace::Enumerated(e)) = &image
         .boxes
         .color_specification
@@ -485,12 +498,12 @@ fn convert_color_space(image: &mut DecodedImage, bit_depth: u8) -> Result<()> {
         match e {
             EnumeratedColorspace::Sycc => {
                 dispatch!(Level::new(), simd => {
-                    sycc_to_rgb(simd, &mut image.decoded.components, bit_depth)
+                    sycc_to_rgb(simd, image.decoded_components, bit_depth)
                 })?;
             }
             EnumeratedColorspace::CieLab(cielab) => {
                 dispatch!(Level::new(), simd => {
-                    cielab_to_rgb(simd, &mut image.decoded.components, bit_depth, cielab)
+                    cielab_to_rgb(simd, image.decoded_components, bit_depth, cielab)
                 })?;
             }
             EnumeratedColorspace::Ycck => {
@@ -500,11 +513,11 @@ fn convert_color_space(image: &mut DecodedImage, bit_depth: u8) -> Result<()> {
                 // K (channel 3) stays in standard JP2 convention (0 = no ink).
                 // After this transform all four channels are in DeviceCMYK convention.
                 dispatch!(Level::new(), simd => {
-                    sycc_to_rgb(simd, &mut image.decoded.components, bit_depth)
+                    sycc_to_rgb(simd, image.decoded_components, bit_depth)
                 })?;
                 // Invert YCbCr→RGB result into CMY: C = max−R, M = max−G, Y = max−B.
                 let max_val = ((1_u32 << bit_depth) - 1) as f32;
-                for comp in image.decoded.components.iter_mut().take(3) {
+                for comp in image.decoded_components.iter_mut().take(3) {
                     for v in comp.container.iter_mut() {
                         *v = max_val - *v;
                     }
@@ -651,7 +664,7 @@ fn cielab_to_rgb<S: Simd>(
 
     let rl = lab.rl.unwrap_or(100);
     let ra = lab.ra.unwrap_or(170);
-    let rb = lab.ra.unwrap_or(200);
+    let rb = lab.rb.unwrap_or(200);
     let ol = lab.ol.unwrap_or(0);
     let oa = lab.oa.unwrap_or(1 << (bit_depth - 1));
     let ob = lab
@@ -773,7 +786,8 @@ mod tests {
     //   SOT  (FF 90): codestream tail starts here; not parsed by Image::new()
     //
     // After parsing the header, Image::new() stores the tail (&[0xFF, 0x90]) as
-    // codestream data. Only Image::new() is tested here, not Image::decode().
+    // codestream data. This constant covers header parsing only; append
+    // MINIMAL_J2C_TILE (see `full_j2c`) to run a decode as well.
     #[rustfmt::skip]
     const MINIMAL_J2C: &[u8] = &[
         // SOC
@@ -817,6 +831,35 @@ mod tests {
         0xFF, 0x90,
     ];
 
+    // `MINIMAL_J2C` plus a complete single tile-part, so the whole decode path
+    // runs. The tile carries one empty packet, which is legal: every code-block
+    // contributes nothing and all coefficients stay at zero.
+    //
+    //   SOT (FF 90): Lsot=10, Isot=0, Psot=15, TPsot=0, TNsot=1
+    //   SOD (FF 93)
+    //   packet header 0x00 — leading bit 0 means "zero-length packet"
+    //   EOC (FF D9)
+    #[rustfmt::skip]
+    const MINIMAL_J2C_TILE: &[u8] = &[
+        0x00, 0x0A,              // Lsot = 10
+        0x00, 0x00,              // Isot = 0 (first tile)
+        0x00, 0x00, 0x00, 0x0F,  // Psot = 15 (SOT marker .. end of tile-part data)
+        0x00,                    // TPsot = 0 (first tile-part)
+        0x01,                    // TNsot = 1 (one tile-part in total)
+
+        0xFF, 0x93,              // SOD
+
+        0x00,                    // one empty packet
+
+        0xFF, 0xD9,              // EOC
+    ];
+
+    fn full_j2c() -> Vec<u8> {
+        let mut data = MINIMAL_J2C.to_vec();
+        data.extend_from_slice(MINIMAL_J2C_TILE);
+        data
+    }
+
     #[test]
     fn new_minimal_j2c_succeeds() {
         assert!(Image::new(MINIMAL_J2C, &DecodeSettings::default()).is_ok());
@@ -846,25 +889,154 @@ mod tests {
         assert!(Image::new(b"\x00\x00\x00\x00", &DecodeSettings::default()).is_err());
     }
 
-    // Regression: J2K-BUF-01 — decode() buffer_size must use checked_mul, not *.
-    // The codec caps dimensions at 60000, so a real overflow only triggers on
-    // 32-bit/WASM targets (60000 × 60000 × 5 channels > u32::MAX).
-    // This test verifies the guard pattern itself: overflow is detected and
-    // mapped to ImageTooLarge rather than wrapping or panicking.
+    /// Return `MINIMAL_J2C` with the four SIZ dimension fields replaced.
+    ///
+    /// Byte offsets inside the SIZ segment: Xsiz@8, Ysiz@12, XTsiz@24, YTsiz@28.
+    fn j2c_with_grid(xsiz: u32, ysiz: u32, xtsiz: u32, ytsiz: u32) -> Vec<u8> {
+        let mut data = MINIMAL_J2C.to_vec();
+        for (offset, value) in [(8, xsiz), (12, ysiz), (24, xtsiz), (28, ytsiz)] {
+            data[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+        }
+        data
+    }
+
+    /// The decode API round-trips through a caller-owned [`DecoderContext`]
+    /// since upstream 0.4.0. This is the shape both of our in-tree consumers
+    /// (`pdf-syntax::filter::jpx` and `pdfluent-lopdf::Object::decode_jpx`) use,
+    /// so a signature change upstream fails here first.
     #[test]
-    fn decode_buffer_size_overflow_is_guarded() {
-        let overflow = (usize::MAX / 2 + 1)
-            .checked_mul(2)
-            .and_then(|n| n.checked_mul(1));
+    fn decode_minimal_j2c_round_trip() {
+        let data = full_j2c();
+        let image = Image::new(&data, &DecodeSettings::default()).expect("J2C should parse");
+        let mut ctx = DecoderContext::default();
+        let decoded = image.decode(&mut ctx).expect("2x2 greyscale should decode");
+        assert_eq!(decoded.components().len(), 1);
+        assert_eq!(decoded.data_u8().len(), 2 * 2);
+    }
+
+    // Regression for upstream a7e3aace (#1355), which replaced the hardcoded
+    // 60000-pixel dimension cap with checked allocation arithmetic. `num_tiles()`
+    // used to multiply the two SIZ tile counts unchecked. A grid of u32::MAX by
+    // u32::MAX one-pixel tiles wraps that product; the wrapped value is also what
+    // the per-tile index is later validated against, so the failure is a wrong
+    // answer rather than a crash. Must be rejected as ImageTooLarge.
+    #[test]
+    fn siz_with_overflowing_tile_count_is_rejected() {
+        let data = j2c_with_grid(u32::MAX, u32::MAX, 1, 1);
+        match Image::new(&data, &DecodeSettings::default()) {
+            Err(DecodeError::Validation(ValidationError::ImageTooLarge)) => {}
+            Err(other) => panic!("expected ImageTooLarge, got {other:?}"),
+            Ok(_) => panic!("a u32::MAX x u32::MAX tile grid must not be accepted"),
+        }
+    }
+
+    // A tile grid that does not overflow must still be accepted, so the guard
+    // above cannot be satisfied by rejecting everything.
+    #[test]
+    fn siz_with_large_but_valid_tile_count_is_accepted() {
+        // 2^16 x 2^16 = 2^32 exactly? No: 65535 x 65535 = 4_294_836_225 < u32::MAX.
+        let data = j2c_with_grid(65535, 65535, 1, 1);
         assert!(
-            overflow.is_none(),
-            "overflow must be detected by checked_mul"
+            Image::new(&data, &DecodeSettings::default()).is_ok(),
+            "65535x65535 one-pixel tiles fit in u32 and must be accepted"
         );
-        // Verify the error type exists and is what decode() would return.
-        let err: DecodeError = DecodeError::Validation(ValidationError::ImageTooLarge);
-        assert!(matches!(
-            err,
-            DecodeError::Validation(ValidationError::ImageTooLarge)
-        ));
+    }
+
+    // Regression for upstream ff7e2e40 (#1237): a caller-supplied target
+    // resolution of zero reached `image_width() / target_width` and divided by
+    // zero. Must return a header, not panic.
+    #[test]
+    fn zero_target_resolution_does_not_panic() {
+        let settings = DecodeSettings {
+            resolve_palette_indices: false,
+            strict: false,
+            target_resolution: Some((0, 0)),
+        };
+        let image = Image::new(MINIMAL_J2C, &settings).expect("J2C should parse");
+        assert_eq!(image.width(), 2);
+        assert_eq!(image.height(), 2);
+    }
+
+    fn lab_component(samples: &[f32], bit_depth: u8) -> ComponentData {
+        ComponentData {
+            container: math::SimdBuffer::new(samples.to_vec()),
+            bit_depth,
+        }
+    }
+
+    fn cielab_b_channel(lab: &CieLab) -> Vec<f32> {
+        let mut components = [
+            lab_component(&[10.0, 200.0, 128.0, 255.0], 8),
+            lab_component(&[10.0, 200.0, 128.0, 255.0], 8),
+            lab_component(&[10.0, 200.0, 128.0, 255.0], 8),
+        ];
+        dispatch!(Level::new(), simd => {
+            cielab_to_rgb(simd, &mut components, 8, lab)
+        })
+        .expect("LAB conversion should succeed for 8-bit components");
+        components[2].samples().to_vec()
+    }
+
+    // Regression for upstream c2df2014 (#1313): the b* range was read from
+    // `lab.ra` instead of `lab.rb`, so every JP2 carrying an explicit Rb decoded
+    // its b* channel against the a* range. One character, silently wrong colour.
+    //
+    // Two CieLab values that differ only in `rb` must produce different b*
+    // output. With the bug they are identical, because `rb` is never read.
+    #[test]
+    fn cielab_b_range_comes_from_rb_not_ra() {
+        let base = CieLab {
+            rl: Some(100),
+            ol: Some(0),
+            ra: Some(170),
+            oa: Some(128),
+            rb: Some(200),
+            ob: Some(96),
+        };
+        let widened = CieLab {
+            rb: Some(400),
+            ..base
+        };
+
+        let from_base = cielab_b_channel(&base);
+        let from_widened = cielab_b_channel(&widened);
+
+        assert_ne!(
+            from_base, from_widened,
+            "changing rb must change the b* channel; if it does not, rb is being ignored"
+        );
+    }
+
+    // The a* channel must NOT move when only `rb` changes -- otherwise the test
+    // above could pass on a mutation that simply swapped the two fields.
+    #[test]
+    fn cielab_a_range_is_unaffected_by_rb() {
+        let base = CieLab {
+            rl: Some(100),
+            ol: Some(0),
+            ra: Some(170),
+            oa: Some(128),
+            rb: Some(200),
+            ob: Some(96),
+        };
+        let widened = CieLab {
+            rb: Some(400),
+            ..base
+        };
+
+        let a_of = |lab: &CieLab| {
+            let mut components = [
+                lab_component(&[10.0, 200.0, 128.0, 255.0], 8),
+                lab_component(&[10.0, 200.0, 128.0, 255.0], 8),
+                lab_component(&[10.0, 200.0, 128.0, 255.0], 8),
+            ];
+            dispatch!(Level::new(), simd => {
+                cielab_to_rgb(simd, &mut components, 8, lab)
+            })
+            .expect("LAB conversion should succeed for 8-bit components");
+            components[1].samples().to_vec()
+        };
+
+        assert_eq!(a_of(&base), a_of(&widened));
     }
 }

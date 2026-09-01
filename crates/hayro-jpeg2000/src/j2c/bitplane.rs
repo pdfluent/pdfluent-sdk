@@ -28,7 +28,7 @@ pub(crate) fn decode(
     sub_band_type: SubBandType,
     total_bitplanes: u8,
     style: &CodeBlockStyle,
-    tile_ctx: &mut TileDecodeContext<'_>,
+    tile_ctx: &mut TileDecodeContext,
     storage: &DecompositionStorage<'_>,
     strict: bool,
 ) -> Result<()> {
@@ -99,14 +99,15 @@ fn decode_inner(
         // Only one termination per code block, so we can just decode the
         // whole range in one single go, processing all coding passes at once.
         let mut decoder = ArithmeticDecoder::new(&bp_buffers.combined_layers);
-        handle_coding_passes(
-            0,
-            code_block
-                .number_of_coding_passes
-                .min(ctx.max_coding_passes),
-            ctx,
-            &mut decoder,
-        )?;
+        let end = code_block
+            .number_of_coding_passes
+            .min(ctx.max_coding_passes);
+
+        if ctx.can_use_fast_path() {
+            fast_path::handle_coding_passes(0, end, ctx, &mut decoder)?;
+        } else {
+            handle_coding_passes(0, end, ctx, &mut decoder)?;
+        }
     } else {
         // Otherwise, each segment introduces a termination. For "termination on
         // each pass", each segment only covers one coding pass
@@ -151,27 +152,16 @@ fn handle_coding_passes(
     ctx: &mut BitPlaneDecodeContext,
     decoder: &mut impl BitDecoder,
 ) -> Option<()> {
+    let reset_context_probabilities = ctx.style.reset_context_probabilities;
+
     for coding_pass in start..end {
-        enum PassType {
-            Cleanup,
-            SignificancePropagation,
-            MagnitudeRefinement,
-        }
-
-        // The first bitplane only has a cleanup pass, all other bitplanes
-        // are in the order SPP -> MRR -> C.
-        let pass = match coding_pass % 3 {
-            0 => PassType::Cleanup,
-            1 => PassType::SignificancePropagation,
-            2 => PassType::MagnitudeRefinement,
-            _ => unreachable!(),
-        };
-
         let current_bitplane = coding_pass.div_ceil(3);
         ctx.current_bit_position = ctx.bitplanes - 1 - current_bitplane;
 
-        match pass {
-            PassType::Cleanup => {
+        // The first bitplane only has a cleanup pass, all other bitplanes
+        // are in the order SPP -> MRR -> C.
+        match coding_pass % 3 {
+            0 => {
                 cleanup_pass(ctx, decoder)?;
 
                 if ctx.style.segmentation_symbols {
@@ -187,15 +177,16 @@ fn handle_coding_passes(
 
                 ctx.reset_for_next_bitplane();
             }
-            PassType::SignificancePropagation => {
+            1 => {
                 significance_propagation_pass(ctx, decoder)?;
             }
-            PassType::MagnitudeRefinement => {
+            2 => {
                 magnitude_refinement_pass(ctx, decoder)?;
             }
+            _ => unreachable!(),
         }
 
-        if ctx.style.reset_context_probabilities {
+        if reset_context_probabilities {
             ctx.reset_contexts();
         }
     }
@@ -209,36 +200,47 @@ pub(crate) const BITPLANE_BIT_SIZE: u32 = size_of::<u32>() as u32 * 8 - 1;
 const SIGNIFICANCE_SHIFT: u8 = 7;
 const HAS_MAGNITUDE_REFINEMENT_SHIFT: u8 = 6;
 const HAS_ZERO_CODING_SHIFT: u8 = 5;
+const DECODED_BIT_POSITION_MASK: u8 = 0x1f;
+const CLEANUP_SKIP_MASK: u8 = (1 << SIGNIFICANCE_SHIFT) | (1 << HAS_ZERO_CODING_SHIFT);
+const REFINEMENT_PASS_MASK: u8 = (1 << SIGNIFICANCE_SHIFT) | (1 << HAS_ZERO_CODING_SHIFT);
 
-/// Bit-packed coefficient state (only 3 bits used):
+/// Bit-packed coefficient state:
 /// - Bit 7: significance state (set when first non-zero bit is encountered)
 /// - Bit 6: has had magnitude refinement pass
 /// - Bit 5: zero coded in current bitplane's significance propagation pass
+/// - Bits 0-4: position of the least significant decoded magnitude bit
 #[derive(Default, Copy, Clone)]
 pub(crate) struct CoefficientState(u8);
 
 impl CoefficientState {
     #[inline(always)]
-    fn set_bit(&mut self, shift: u8, value: u8) {
-        debug_assert!(value < 2);
-
-        self.0 &= !(1_u8 << shift);
-        self.0 |= value << shift;
-    }
-
-    #[inline(always)]
     fn set_significant(&mut self) {
-        self.set_bit(SIGNIFICANCE_SHIFT, 1);
+        self.0 |= 1_u8 << SIGNIFICANCE_SHIFT;
     }
 
     #[inline(always)]
     fn set_zero_coded(&mut self, value: u8) {
-        self.set_bit(HAS_ZERO_CODING_SHIFT, value & 1);
+        debug_assert!(value < 2);
+
+        self.0 &= !(1_u8 << HAS_ZERO_CODING_SHIFT);
+        self.0 |= value << HAS_ZERO_CODING_SHIFT;
     }
 
     #[inline(always)]
     fn set_magnitude_refined(&mut self) {
-        self.set_bit(HAS_MAGNITUDE_REFINEMENT_SHIFT, 1);
+        self.0 |= 1_u8 << HAS_MAGNITUDE_REFINEMENT_SHIFT;
+    }
+
+    #[inline(always)]
+    fn set_decoded_bit_position(&mut self, position: u8) {
+        debug_assert!(position <= DECODED_BIT_POSITION_MASK);
+
+        self.0 = (self.0 & !DECODED_BIT_POSITION_MASK) | position;
+    }
+
+    #[inline(always)]
+    fn decoded_bit_position(&self) -> u8 {
+        self.0 & DECODED_BIT_POSITION_MASK
     }
 
     #[inline(always)]
@@ -257,8 +259,15 @@ impl CoefficientState {
     }
 
     #[inline(always)]
-    fn is_zero_coded(&self) -> bool {
-        (self.0 >> HAS_ZERO_CODING_SHIFT) & 1 == 1
+    fn should_decode_cleanup(&self) -> bool {
+        // Checks that it's not significant and not zero-coded.
+        self.0 & CLEANUP_SKIP_MASK == 0
+    }
+
+    #[inline(always)]
+    fn should_decode_refinement(&self) -> bool {
+        // Checks that it's significant and not zero-coded.
+        self.0 & REFINEMENT_PASS_MASK == 1 << SIGNIFICANCE_SHIFT
     }
 }
 
@@ -266,12 +275,20 @@ impl CoefficientState {
 pub(crate) struct Coefficient(u32);
 
 impl Coefficient {
-    pub(crate) fn get(&self) -> i32 {
+    pub(crate) fn reconstructed(&self, state: &CoefficientState, irreversible: bool) -> f32 {
         let mut magnitude = (self.0 & !0x80000000) as i32;
         // Map sign (0 for positive, 1 for negative) to 1, -1.
         magnitude *= 1 - 2 * (self.sign() as i32);
 
-        magnitude
+        // See Formulas E-6 to E-8: Apply the reconstruction midpoint unless a
+        // reversible coefficient has been fully decoded, in which case it is exact.
+        let bit_position = state.decoded_bit_position();
+        if magnitude != 0 && (irreversible || bit_position != 0) {
+            let offset = 0.5 * (1_u32 << bit_position) as f32;
+            return magnitude as f32 + if magnitude > 0 { offset } else { -offset };
+        }
+
+        magnitude as f32
     }
 
     fn set_sign(&mut self, sign: u8) {
@@ -365,6 +382,8 @@ impl BitPlaneDecodeBuffers {
 pub(crate) struct BitPlaneDecodeContext {
     /// A vector of bit-packed fields for each coefficient in the code-block.
     coefficient_states: Vec<CoefficientState>,
+    /// Stripe-column state for the fast path.
+    stripe_flags: Vec<u32>,
     /// The neighbor significances for each coefficient.
     neighbor_significances: Vec<NeighborSignificances>,
     /// The magnitude and signs of each coefficient that is successively built
@@ -396,6 +415,7 @@ impl Default for BitPlaneDecodeContext {
     fn default() -> Self {
         Self {
             coefficient_states: vec![],
+            stripe_flags: vec![],
             coefficients: vec![],
             neighbor_significances: vec![],
             width: 0,
@@ -413,6 +433,10 @@ impl Default for BitPlaneDecodeContext {
 }
 
 impl BitPlaneDecodeContext {
+    fn can_use_fast_path(&self) -> bool {
+        self.height.is_multiple_of(4) && !self.style.vertically_causal_context
+    }
+
     /// Completely reset context so that it can be reused for a new code-block.
     pub(crate) fn reset(
         &mut self,
@@ -438,6 +462,10 @@ impl BitPlaneDecodeContext {
         self.coefficient_states.clear();
         self.coefficient_states
             .resize(num_coefficients, CoefficientState::default());
+
+        self.stripe_flags.clear();
+        self.stripe_flags
+            .resize((height.div_ceil(4) + 2) as usize * padded_width as usize, 0);
 
         self.width = width;
         self.padded_width = padded_width;
@@ -475,11 +503,22 @@ impl BitPlaneDecodeContext {
         Ok(())
     }
 
-    pub(crate) fn coefficient_rows(&self) -> impl Iterator<Item = &[Coefficient]> {
+    pub(crate) fn coefficient_rows(
+        &self,
+    ) -> impl Iterator<Item = (&[Coefficient], &[CoefficientState])> {
         self.coefficients
             .chunks_exact(self.padded_width as usize)
+            .zip(
+                self.coefficient_states
+                    .chunks_exact(self.padded_width as usize),
+            )
             // Exclude the padding that we added.
-            .map(|row| &row[COEFFICIENTS_PADDING as usize..][..self.width as usize])
+            .map(|(coefficients, states)| {
+                (
+                    &coefficients[COEFFICIENTS_PADDING as usize..][..self.width as usize],
+                    &states[COEFFICIENTS_PADDING as usize..][..self.width as usize],
+                )
+            })
             .skip(COEFFICIENTS_PADDING as usize)
             .take(self.height as usize)
     }
@@ -518,26 +557,25 @@ impl BitPlaneDecodeContext {
     #[inline(always)]
     fn set_significant(&mut self, position: Position) {
         let idx = position.index(self.padded_width);
-        let is_significant = self.coefficient_states[idx].is_significant();
+        // Should only be called once, so it should not be insignificant before.
+        debug_assert!(!self.coefficient_states[idx].is_significant());
 
-        if !is_significant {
-            self.coefficient_states[idx].set_significant();
+        self.coefficient_states[idx].set_significant();
+        self.coefficient_states[idx].set_decoded_bit_position(self.current_bit_position);
 
-            // Update all neighbors so they know this coefficient is significant
-            // now.
-            self.neighbor_significances[position.top_left().index(self.padded_width)]
-                .set_bottom_right();
-            self.neighbor_significances[position.top().index(self.padded_width)].set_bottom();
-            self.neighbor_significances[position.top_right().index(self.padded_width)]
-                .set_bottom_left();
-            self.neighbor_significances[position.left().index(self.padded_width)].set_right();
-            self.neighbor_significances[position.right().index(self.padded_width)].set_left();
-            self.neighbor_significances[position.bottom_left().index(self.padded_width)]
-                .set_top_right();
-            self.neighbor_significances[position.bottom().index(self.padded_width)].set_top();
-            self.neighbor_significances[position.bottom_right().index(self.padded_width)]
-                .set_top_left();
-        }
+        // Update all neighbors so they know this coefficient is significant now.
+        self.neighbor_significances[position.top_left().index(self.padded_width)]
+            .set_bottom_right();
+        self.neighbor_significances[position.top().index(self.padded_width)].set_bottom();
+        self.neighbor_significances[position.top_right().index(self.padded_width)]
+            .set_bottom_left();
+        self.neighbor_significances[position.left().index(self.padded_width)].set_right();
+        self.neighbor_significances[position.right().index(self.padded_width)].set_left();
+        self.neighbor_significances[position.bottom_left().index(self.padded_width)]
+            .set_top_right();
+        self.neighbor_significances[position.bottom().index(self.padded_width)].set_top();
+        self.neighbor_significances[position.bottom_right().index(self.padded_width)]
+            .set_top_left();
     }
 
     #[inline(always)]
@@ -547,7 +585,9 @@ impl BitPlaneDecodeContext {
 
     #[inline(always)]
     fn set_magnitude_refined(&mut self, position: Position) {
-        self.coefficient_states[position.index(self.padded_width)].set_magnitude_refined();
+        let state = &mut self.coefficient_states[position.index(self.padded_width)];
+        state.set_magnitude_refined();
+        state.set_decoded_bit_position(self.current_bit_position);
     }
 
     #[inline(always)]
@@ -556,8 +596,13 @@ impl BitPlaneDecodeContext {
     }
 
     #[inline(always)]
-    fn is_zero_coded(&self, position: Position) -> bool {
-        self.coefficient_states[position.index(self.padded_width)].is_zero_coded()
+    fn should_decode_cleanup(&self, position: Position) -> bool {
+        self.coefficient_states[position.index(self.padded_width)].should_decode_cleanup()
+    }
+
+    #[inline(always)]
+    fn should_decode_refinement(&self, position: Position) -> bool {
+        self.coefficient_states[position.index(self.padded_width)].should_decode_refinement()
     }
 
     #[inline(always)]
@@ -598,7 +643,7 @@ fn cleanup_pass(ctx: &mut BitPlaneDecodeContext, decoder: &mut impl BitDecoder) 
         ctx.height,
         #[inline(always)]
         |cur_pos| {
-            if !ctx.is_significant(*cur_pos) && !ctx.is_zero_coded(*cur_pos) {
+            if ctx.should_decode_cleanup(*cur_pos) {
                 let use_rl = cur_pos.real_y() % 4 == 0
                     && (ctx.height - cur_pos.real_y()) >= 4
                     && ctx.neighborhood_significance_states(*cur_pos) == 0
@@ -626,11 +671,8 @@ fn cleanup_pass(ctx: &mut BitPlaneDecodeContext, decoder: &mut impl BitDecoder) 
                     if bit == 0 {
                         // "If the symbol 0 is returned, then all four contiguous coefficients in
                         // the column remain insignificant and are set to zero."
-                        ctx.push_magnitude_bit(*cur_pos, 0);
-
                         for _ in 0..3 {
                             cur_pos.index_y += 1;
-                            ctx.push_magnitude_bit(*cur_pos, 0);
                         }
 
                         return Some(());
@@ -647,7 +689,6 @@ fn cleanup_pass(ctx: &mut BitPlaneDecodeContext, decoder: &mut impl BitDecoder) 
                             | decoder.read_bit(ctx.arithmetic_decoder_context(18))?;
 
                         for _ in 0..num_zeroes {
-                            ctx.push_magnitude_bit(*cur_pos, 0);
                             cur_pos.index_y += 1;
                         }
 
@@ -658,9 +699,8 @@ fn cleanup_pass(ctx: &mut BitPlaneDecodeContext, decoder: &mut impl BitDecoder) 
                     decoder.read_bit(ctx.arithmetic_decoder_context(ctx_label))?
                 };
 
-                ctx.push_magnitude_bit(*cur_pos, bit);
-
                 if bit == 1 {
+                    ctx.push_magnitude_bit(*cur_pos, bit);
                     decode_sign_bit(*cur_pos, ctx, decoder);
                     ctx.set_significant(*cur_pos);
                 }
@@ -690,7 +730,6 @@ fn significance_propagation_pass(
             {
                 let ctx_label = context_label_zero_coding(*cur_pos, ctx);
                 let bit = decoder.read_bit(ctx.arithmetic_decoder_context(ctx_label))?;
-                ctx.push_magnitude_bit(*cur_pos, bit);
                 ctx.set_zero_coded(*cur_pos);
 
                 // "If the value of this bit is 1 then the significance
@@ -698,6 +737,7 @@ fn significance_propagation_pass(
                 // the sign bit for the coefficient. Otherwise, the significance
                 // state remains 0."
                 if bit == 1 {
+                    ctx.push_magnitude_bit(*cur_pos, bit);
                     decode_sign_bit(*cur_pos, ctx, decoder)?;
                     ctx.set_significant(*cur_pos);
                 }
@@ -720,10 +760,12 @@ fn magnitude_refinement_pass(
         ctx.height,
         #[inline(always)]
         |cur_pos| {
-            if ctx.is_significant(*cur_pos) && !ctx.is_zero_coded(*cur_pos) {
+            if ctx.should_decode_refinement(*cur_pos) {
                 let ctx_label = context_label_magnitude_refinement_coding(*cur_pos, ctx);
                 let bit = decoder.read_bit(ctx.arithmetic_decoder_context(ctx_label))?;
-                ctx.push_magnitude_bit(*cur_pos, bit);
+                if bit == 1 {
+                    ctx.push_magnitude_bit(*cur_pos, bit);
+                }
                 ctx.set_magnitude_refined(*cur_pos);
             }
 
@@ -1022,5 +1064,607 @@ impl BitDecoder for BypassDecoder<'_> {
                 None
             }
         })
+    }
+}
+
+mod fast_path {
+    use super::{
+        ArithmeticDecoder, BitPlaneDecodeContext, COEFFICIENTS_PADDING, SIGN_CONTEXT_LOOKUP,
+        SubBandType, ZERO_CTX_HH_LOOKUP, ZERO_CTX_HL_LOOKUP, ZERO_CTX_LL_LH_LOOKUP,
+    };
+
+    // Note: Credit where credit is due, this fast path borrows some core ideas
+    // from the OpenJPEG implementation (e.g. the idea to bitpack state into u32),
+    // but has been adapted to more naturally work with our implementation.
+
+    pub(super) fn handle_coding_passes(
+        start: u8,
+        end: u8,
+        ctx: &mut BitPlaneDecodeContext,
+        decoder: &mut ArithmeticDecoder<'_>,
+    ) -> Option<()> {
+        let reset_context_probabilities = ctx.style.reset_context_probabilities;
+
+        for coding_pass in start..end {
+            let current_bitplane = coding_pass.div_ceil(3);
+            ctx.current_bit_position = ctx.bitplanes - 1 - current_bitplane;
+
+            match coding_pass % 3 {
+                0 => {
+                    cleanup_pass(ctx, decoder);
+
+                    if ctx.style.segmentation_symbols {
+                        let b0 = decoder.read_bit(&mut ctx.contexts[18]);
+                        let b1 = decoder.read_bit(&mut ctx.contexts[18]);
+                        let b2 = decoder.read_bit(&mut ctx.contexts[18]);
+                        let b3 = decoder.read_bit(&mut ctx.contexts[18]);
+
+                        if (b0 != 1 || b1 != 0 || b2 != 1 || b3 != 0) && ctx.strict {
+                            return None;
+                        }
+                    }
+
+                    reset_for_next_bitplane(ctx);
+                }
+                1 => significance_propagation_pass(ctx, decoder),
+                2 => magnitude_refinement_pass(ctx, decoder),
+                _ => unreachable!(),
+            }
+
+            if reset_context_probabilities {
+                ctx.reset_contexts();
+            }
+        }
+
+        Some(())
+    }
+
+    fn cleanup_pass(ctx: &mut BitPlaneDecodeContext, decoder: &mut ArithmeticDecoder<'_>) {
+        let zero_contexts = zero_context_lookup(ctx.sub_band_type);
+
+        for_each_stripe_column(
+            ctx,
+            #[inline(always)]
+            |ctx, column| {
+                let mut flags = column.flags;
+                let use_rl = flags == 0;
+
+                macro_rules! cleanup {
+                    ($coefficient_in_stripe:expr) => {
+                        cleanup_coefficient(
+                            ctx,
+                            decoder,
+                            zero_contexts,
+                            column,
+                            &mut flags,
+                            $coefficient_in_stripe,
+                            true,
+                            false,
+                        )
+                    };
+                }
+
+                if use_rl {
+                    let bit = decoder.read_bit(&mut ctx.contexts[17]);
+
+                    if bit == 1 {
+                        let mut num_zeroes = decoder.read_bit(&mut ctx.contexts[18]);
+                        num_zeroes = (num_zeroes << 1) | decoder.read_bit(&mut ctx.contexts[18]);
+                        cleanup_from_run_length(
+                            ctx,
+                            decoder,
+                            zero_contexts,
+                            column,
+                            &mut flags,
+                            num_zeroes,
+                        );
+                    }
+                } else {
+                    cleanup!(0);
+                    cleanup!(1);
+                    cleanup!(2);
+                    cleanup!(3);
+                }
+
+                flags & !FLAG_ZERO_CODED_ALL
+            },
+        );
+    }
+
+    #[inline(always)]
+    fn cleanup_from_run_length(
+        ctx: &mut BitPlaneDecodeContext,
+        decoder: &mut ArithmeticDecoder<'_>,
+        zero_contexts: &[u8; 512],
+        column: StripeColumn,
+        flags: &mut u32,
+        num_zeroes: u32,
+    ) {
+        macro_rules! decode {
+            ($coefficient_in_stripe:expr) => {
+                cleanup_coefficient(
+                    ctx,
+                    decoder,
+                    zero_contexts,
+                    column,
+                    flags,
+                    $coefficient_in_stripe,
+                    false,
+                    false,
+                )
+            };
+        }
+
+        macro_rules! significant {
+            ($coefficient_in_stripe:expr) => {
+                cleanup_coefficient(
+                    ctx,
+                    decoder,
+                    zero_contexts,
+                    column,
+                    flags,
+                    $coefficient_in_stripe,
+                    false,
+                    true,
+                )
+            };
+        }
+
+        match num_zeroes {
+            0 => {
+                significant!(0);
+                decode!(1);
+                decode!(2);
+                decode!(3);
+            }
+            1 => {
+                significant!(1);
+                decode!(2);
+                decode!(3);
+            }
+            2 => {
+                significant!(2);
+                decode!(3);
+            }
+            _ => significant!(3),
+        }
+    }
+
+    #[inline(always)]
+    fn cleanup_coefficient(
+        ctx: &mut BitPlaneDecodeContext,
+        decoder: &mut ArithmeticDecoder<'_>,
+        zero_contexts: &[u8; 512],
+        column: StripeColumn,
+        flags: &mut u32,
+        coefficient_in_stripe: u32,
+        check_flags: bool,
+        already_known_significant: bool,
+    ) {
+        debug_assert!(coefficient_in_stripe < 4);
+        let shift = coefficient_in_stripe * FLAGS_PER_COEFFICIENT;
+
+        if !check_flags || (*flags & ((FLAG_SIGNIFICANT_THIS | FLAG_ZERO_CODED_THIS) << shift)) == 0
+        {
+            if !already_known_significant {
+                let ctx_label =
+                    zero_contexts[((*flags >> shift) & FLAG_SIGNIFICANT_NEIGHBORS) as usize];
+                if decoder.read_bit(&mut ctx.contexts[ctx_label as usize]) == 0 {
+                    return;
+                }
+            }
+
+            let coefficient_idx =
+                column.coefficient_idx + coefficient_in_stripe as usize * column.stride;
+            push_magnitude_bit(ctx, coefficient_idx, 1);
+            let sign = decode_sign_bit(ctx, decoder, column, *flags, coefficient_in_stripe);
+            set_sign(ctx, coefficient_idx, sign as u8);
+            set_significant(ctx, column, flags, coefficient_in_stripe, sign);
+        }
+    }
+
+    fn significance_propagation_pass(
+        ctx: &mut BitPlaneDecodeContext,
+        decoder: &mut ArithmeticDecoder<'_>,
+    ) {
+        let zero_contexts = zero_context_lookup(ctx.sub_band_type);
+
+        for_each_stripe_column(
+            ctx,
+            #[inline(always)]
+            |ctx, column| {
+                let mut flags = column.flags;
+
+                macro_rules! propagate {
+                    ($coefficient_in_stripe:expr) => {
+                        significance_propagation_coefficient(
+                            ctx,
+                            decoder,
+                            zero_contexts,
+                            column,
+                            &mut flags,
+                            $coefficient_in_stripe,
+                        )
+                    };
+                }
+
+                if flags != 0 {
+                    propagate!(0);
+                    propagate!(1);
+                    propagate!(2);
+                    propagate!(3);
+                }
+
+                flags
+            },
+        );
+    }
+
+    #[inline(always)]
+    fn significance_propagation_coefficient(
+        ctx: &mut BitPlaneDecodeContext,
+        decoder: &mut ArithmeticDecoder<'_>,
+        zero_contexts: &[u8; 512],
+        column: StripeColumn,
+        flags: &mut u32,
+        coefficient_in_stripe: u32,
+    ) {
+        debug_assert!(coefficient_in_stripe < 4);
+        let shift = coefficient_in_stripe * FLAGS_PER_COEFFICIENT;
+        let shifted_flags = *flags >> shift;
+        let should_propagate = shifted_flags & (FLAG_SIGNIFICANT_THIS | FLAG_ZERO_CODED_THIS) == 0
+            && shifted_flags & FLAG_SIGNIFICANT_NEIGHBORS != 0;
+
+        if should_propagate {
+            let ctx_label = zero_contexts[(shifted_flags & FLAG_SIGNIFICANT_NEIGHBORS) as usize];
+            let bit = decoder.read_bit(&mut ctx.contexts[ctx_label as usize]);
+            *flags |= FLAG_ZERO_CODED_THIS << shift;
+
+            if bit == 1 {
+                let coefficient_idx =
+                    column.coefficient_idx + coefficient_in_stripe as usize * column.stride;
+                push_magnitude_bit(ctx, coefficient_idx, bit);
+
+                let sign = decode_sign_bit(ctx, decoder, column, *flags, coefficient_in_stripe);
+                set_sign(ctx, coefficient_idx, sign as u8);
+                set_significant(ctx, column, flags, coefficient_in_stripe, sign);
+            }
+        }
+    }
+
+    fn magnitude_refinement_pass(
+        ctx: &mut BitPlaneDecodeContext,
+        decoder: &mut ArithmeticDecoder<'_>,
+    ) {
+        for_each_stripe_column(
+            ctx,
+            #[inline(always)]
+            |ctx, column| {
+                let mut flags = column.flags;
+
+                macro_rules! refine {
+                    ($coefficient_in_stripe:expr) => {
+                        magnitude_refinement_coefficient(
+                            ctx,
+                            decoder,
+                            column,
+                            &mut flags,
+                            $coefficient_in_stripe,
+                        )
+                    };
+                }
+
+                if flags != 0 {
+                    refine!(0);
+                    refine!(1);
+                    refine!(2);
+                    refine!(3);
+                }
+
+                flags
+            },
+        );
+    }
+
+    #[inline(always)]
+    fn magnitude_refinement_coefficient(
+        ctx: &mut BitPlaneDecodeContext,
+        decoder: &mut ArithmeticDecoder<'_>,
+        column: StripeColumn,
+        flags: &mut u32,
+        coefficient_in_stripe: u32,
+    ) {
+        let shift = coefficient_in_stripe * FLAGS_PER_COEFFICIENT;
+        let shifted_flags = *flags >> shift;
+        let should_decode_refinement =
+            shifted_flags & (FLAG_SIGNIFICANT_THIS | FLAG_ZERO_CODED_THIS) == FLAG_SIGNIFICANT_THIS;
+
+        if should_decode_refinement {
+            let ctx_label = magnitude_refinement_context(shifted_flags);
+            let bit = decoder.read_bit(&mut ctx.contexts[ctx_label as usize]);
+            let coefficient_idx =
+                column.coefficient_idx + coefficient_in_stripe as usize * column.stride;
+            if bit == 1 {
+                push_magnitude_bit(ctx, coefficient_idx, bit);
+            }
+            ctx.coefficient_states[coefficient_idx]
+                .set_decoded_bit_position(ctx.current_bit_position);
+            *flags |= FLAG_MAGNITUDE_REFINED_THIS << shift;
+        }
+    }
+
+    #[inline(always)]
+    fn decode_sign_bit(
+        ctx: &mut BitPlaneDecodeContext,
+        decoder: &mut ArithmeticDecoder<'_>,
+        column: StripeColumn,
+        flags: u32,
+        coefficient_in_stripe: u32,
+    ) -> u32 {
+        let shift = coefficient_in_stripe * FLAGS_PER_COEFFICIENT;
+        let shifted_flags = flags >> shift;
+        let left_flags = ctx.stripe_flags[column.flag_idx - 1];
+        let right_flags = ctx.stripe_flags[column.flag_idx + 1];
+
+        let top_sign = if coefficient_in_stripe == 0 {
+            (flags >> FLAG_SIGN_TOP_STRIPE_SHIFT) & 1
+        } else {
+            (flags >> (FLAG_SIGN_THIS_SHIFT + (coefficient_in_stripe - 1) * 3)) & 1
+        };
+        let bottom_sign = (flags
+            >> (FLAG_SIGN_BOTTOM_THIS_SHIFT + coefficient_in_stripe * FLAGS_PER_COEFFICIENT))
+            & 1;
+        let left_sign = (left_flags >> (FLAG_SIGN_THIS_SHIFT + shift)) & 1;
+        let right_sign = (right_flags >> (FLAG_SIGN_THIS_SHIFT + shift)) & 1;
+
+        let lookup = left_sign
+            | (((shifted_flags & FLAG_SIGNIFICANT_TOP) != 0) as u32) << 1
+            | (right_sign << 2)
+            | (((shifted_flags & FLAG_SIGNIFICANT_LEFT) != 0) as u32) << 3
+            | (top_sign << 4)
+            | (((shifted_flags & FLAG_SIGNIFICANT_RIGHT) != 0) as u32) << 5
+            | (bottom_sign << 6)
+            | (((shifted_flags & FLAG_SIGNIFICANT_BOTTOM) != 0) as u32) << 7;
+
+        let (ctx_label, xor_bit) = SIGN_CONTEXT_STRIPE_LOOKUP[lookup as usize];
+        decoder.read_bit(&mut ctx.contexts[ctx_label as usize]) ^ xor_bit as u32
+    }
+
+    #[inline(always)]
+    fn zero_context_lookup(sub_band_type: SubBandType) -> &'static [u8; 512] {
+        match sub_band_type {
+            SubBandType::LowLow | SubBandType::LowHigh => &ZERO_CTX_LL_LH_STRIPE_LOOKUP,
+            SubBandType::HighLow => &ZERO_CTX_HL_STRIPE_LOOKUP,
+            SubBandType::HighHigh => &ZERO_CTX_HH_STRIPE_LOOKUP,
+        }
+    }
+
+    #[inline(always)]
+    fn magnitude_refinement_context(flags: u32) -> u8 {
+        if flags & FLAG_MAGNITUDE_REFINED_THIS != 0 {
+            16
+        } else {
+            14 + ((flags & FLAG_SIGNIFICANT_NEIGHBORS != 0) as u8)
+        }
+    }
+
+    #[inline(always)]
+    fn reset_for_next_bitplane(ctx: &mut BitPlaneDecodeContext) {
+        for flags in &mut ctx.stripe_flags {
+            *flags &= !FLAG_ZERO_CODED_ALL;
+        }
+    }
+
+    #[derive(Copy, Clone)]
+    struct StripeColumn {
+        flag_idx: usize,
+        coefficient_idx: usize,
+        flags: u32,
+        stride: usize,
+    }
+
+    #[inline(always)]
+    fn for_each_stripe_column(
+        ctx: &mut BitPlaneDecodeContext,
+        mut action: impl FnMut(&mut BitPlaneDecodeContext, StripeColumn) -> u32,
+    ) {
+        let width = ctx.width as usize;
+        let stride = ctx.padded_width as usize;
+        let stripe_count = (ctx.height / 4) as usize;
+        let padding = COEFFICIENTS_PADDING as usize;
+        let mut flag_base = padding * stride + padding;
+        let mut coefficient_base = padding * stride + padding;
+
+        for _ in 0..stripe_count {
+            for x in 0..width {
+                let flag_idx = flag_base + x;
+                let column = StripeColumn {
+                    flag_idx,
+                    coefficient_idx: coefficient_base + x,
+                    flags: ctx.stripe_flags[flag_idx],
+                    stride,
+                };
+                let flags = action(ctx, column);
+
+                ctx.stripe_flags[flag_idx] = flags;
+            }
+
+            flag_base += stride;
+            coefficient_base += 4 * stride;
+        }
+    }
+
+    #[inline(always)]
+    fn push_magnitude_bit(ctx: &mut BitPlaneDecodeContext, idx: usize, bit: u32) {
+        ctx.coefficients[idx].push_bit_at(bit, ctx.current_bit_position);
+    }
+
+    #[inline(always)]
+    fn set_sign(ctx: &mut BitPlaneDecodeContext, idx: usize, sign: u8) {
+        ctx.coefficients[idx].set_sign(sign);
+    }
+
+    #[inline(always)]
+    fn set_significant(
+        ctx: &mut BitPlaneDecodeContext,
+        column: StripeColumn,
+        flags: &mut u32,
+        coefficient_in_stripe: u32,
+        sign: u32,
+    ) {
+        let shift = coefficient_in_stripe * FLAGS_PER_COEFFICIENT;
+        let coefficient_idx =
+            column.coefficient_idx + coefficient_in_stripe as usize * column.stride;
+        ctx.coefficient_states[coefficient_idx].set_decoded_bit_position(ctx.current_bit_position);
+
+        ctx.stripe_flags[column.flag_idx - 1] |= FLAG_SIGNIFICANT_RIGHT << shift;
+        *flags |= ((sign << FLAG_SIGN_THIS_SHIFT) | FLAG_SIGNIFICANT_THIS) << shift;
+        ctx.stripe_flags[column.flag_idx + 1] |= FLAG_SIGNIFICANT_LEFT << shift;
+
+        if coefficient_in_stripe == 0 {
+            let top = column.flag_idx - column.stride;
+            ctx.stripe_flags[top] |= (sign << FLAG_SIGN_BOTTOM_STRIPE_SHIFT)
+                | (FLAG_SIGNIFICANT_BOTTOM << LAST_COEFFICIENT_SHIFT);
+            ctx.stripe_flags[top - 1] |= FLAG_SIGNIFICANT_BOTTOM_RIGHT << LAST_COEFFICIENT_SHIFT;
+            ctx.stripe_flags[top + 1] |= FLAG_SIGNIFICANT_BOTTOM_LEFT << LAST_COEFFICIENT_SHIFT;
+        }
+
+        if coefficient_in_stripe == 3 {
+            let bottom = column.flag_idx + column.stride;
+            ctx.stripe_flags[bottom] |= (sign << FLAG_SIGN_TOP_STRIPE_SHIFT) | FLAG_SIGNIFICANT_TOP;
+            ctx.stripe_flags[bottom - 1] |= FLAG_SIGNIFICANT_TOP_RIGHT;
+            ctx.stripe_flags[bottom + 1] |= FLAG_SIGNIFICANT_TOP_LEFT;
+        }
+    }
+
+    // State for a single stripe is stored in a bit-packed u32.
+    //
+    // Significance states:
+    //   0: lane 0 top-left
+    //   1: lane 0 top
+    //   2: lane 0 top-right
+    //   3: lane 0 left, lane 1 top-left
+    //   4: lane 0 this, lane 1 top
+    //   5: lane 0 right, lane 1 top-right
+    //   6: lane 0 bottom-left, lane 1 left, lane 2 top-left
+    //   7: lane 0 bottom, lane 1 this, lane 2 top
+    //   8: lane 0 bottom-right, lane 1 right, lane 2 top-right
+    //   9: lane 1 bottom-left, lane 2 left, lane 3 top-left
+    //   10: lane 1 bottom, lane 2 this, lane 3 top
+    //   11: lane 1 bottom-right, lane 2 right, lane 3 top-right
+    //   12: lane 2 bottom-left, lane 3 left
+    //   13: lane 2 bottom, lane 3 this
+    //   14: lane 2 bottom-right, lane 3 right
+    //   15: lane 3 bottom-left
+    //   16: lane 3 bottom
+    //   17: lane 3 bottom-right
+    //
+    // Top stripe-boundary sign:
+    //   18: sign above the stripe
+    //
+    // Per-lane coefficient states:
+    //   19: lane 0 sign
+    //   20: lane 0 magnitude-refined
+    //   21: lane 0 zero-coded
+    //   22: lane 1 sign
+    //   23: lane 1 magnitude-refined
+    //   24: lane 1 zero-coded
+    //   25: lane 2 sign
+    //   26: lane 2 magnitude-refined
+    //   27: lane 2 zero-coded
+    //   28: lane 3 sign
+    //   29: lane 3 magnitude-refined
+    //   30: lane 3 zero-coded
+    //
+    // Bottom stripe-boundary sign:
+    //   31: sign below the stripe
+    const FLAGS_PER_COEFFICIENT: u32 = 3;
+    const LAST_COEFFICIENT_SHIFT: u32 = 3 * FLAGS_PER_COEFFICIENT;
+
+    const FLAG_SIGNIFICANT_TOP_LEFT: u32 = 1 << 0;
+    const FLAG_SIGNIFICANT_TOP: u32 = 1 << 1;
+    const FLAG_SIGNIFICANT_TOP_RIGHT: u32 = 1 << 2;
+    const FLAG_SIGNIFICANT_LEFT: u32 = 1 << 3;
+    const FLAG_SIGNIFICANT_THIS: u32 = 1 << 4;
+    const FLAG_SIGNIFICANT_RIGHT: u32 = 1 << 5;
+    const FLAG_SIGNIFICANT_BOTTOM_LEFT: u32 = 1 << 6;
+    const FLAG_SIGNIFICANT_BOTTOM: u32 = 1 << 7;
+    const FLAG_SIGNIFICANT_BOTTOM_RIGHT: u32 = 1 << 8;
+    const FLAG_SIGNIFICANT_NEIGHBORS: u32 = FLAG_SIGNIFICANT_TOP_LEFT
+        | FLAG_SIGNIFICANT_TOP
+        | FLAG_SIGNIFICANT_TOP_RIGHT
+        | FLAG_SIGNIFICANT_LEFT
+        | FLAG_SIGNIFICANT_RIGHT
+        | FLAG_SIGNIFICANT_BOTTOM_LEFT
+        | FLAG_SIGNIFICANT_BOTTOM
+        | FLAG_SIGNIFICANT_BOTTOM_RIGHT;
+
+    const FLAG_SIGN_TOP_STRIPE_SHIFT: u32 = 18;
+    const FLAG_SIGN_THIS_SHIFT: u32 = 19;
+    const FLAG_MAGNITUDE_REFINED_THIS: u32 = 1 << 20;
+    const FLAG_ZERO_CODED_THIS: u32 = 1 << 21;
+    const FLAG_SIGN_BOTTOM_THIS_SHIFT: u32 = 22;
+    const FLAG_SIGN_BOTTOM_STRIPE_SHIFT: u32 = 31;
+    const FLAG_ZERO_CODED_ALL: u32 = (1 << 21) | (1 << 24) | (1 << 27) | (1 << 30);
+
+    // Those are basically the same as the lookup tables in the default path,
+    // but changed such that it works with the layout of a flag.
+
+    const SIGN_CONTEXT_STRIPE_LOOKUP: [(u8, u8); 256] = build_sign_context_lookup();
+
+    const fn build_sign_context_lookup() -> [(u8, u8); 256] {
+        let mut out = [(0, 0); 256];
+        let mut lookup = 0;
+
+        while lookup < 256 {
+            let left_sign = lookup & 1;
+            let top_significance = (lookup >> 1) & 1;
+            let right_sign = (lookup >> 2) & 1;
+            let left_significance = (lookup >> 3) & 1;
+            let top_sign = (lookup >> 4) & 1;
+            let right_significance = (lookup >> 5) & 1;
+            let bottom_sign = (lookup >> 6) & 1;
+            let bottom_significance = (lookup >> 7) & 1;
+
+            let significances = (top_significance << 6)
+                | (left_significance << 4)
+                | (right_significance << 2)
+                | bottom_significance;
+            let signs = (top_sign << 6) | (left_sign << 4) | (right_sign << 2) | bottom_sign;
+            let merged_significances = ((significances & signs) << 1) | (significances & !signs);
+
+            out[lookup] = SIGN_CONTEXT_LOOKUP[merged_significances];
+            lookup += 1;
+        }
+
+        out
+    }
+
+    const ZERO_CTX_LL_LH_STRIPE_LOOKUP: [u8; 512] =
+        build_zero_context_lookup(ZERO_CTX_LL_LH_LOOKUP);
+    const ZERO_CTX_HL_STRIPE_LOOKUP: [u8; 512] = build_zero_context_lookup(ZERO_CTX_HL_LOOKUP);
+    const ZERO_CTX_HH_STRIPE_LOOKUP: [u8; 512] = build_zero_context_lookup(ZERO_CTX_HH_LOOKUP);
+
+    const fn build_zero_context_lookup(source: [u8; 256]) -> [u8; 512] {
+        let mut out = [0; 512];
+        let mut flags = 0;
+
+        while flags < 512 {
+            out[flags] = source[neighbor_byte(flags)];
+            flags += 1;
+        }
+
+        out
+    }
+
+    const fn neighbor_byte(flags: usize) -> usize {
+        ((((flags & FLAG_SIGNIFICANT_TOP_LEFT as usize) != 0) as usize) << 7)
+            | ((((flags & FLAG_SIGNIFICANT_TOP as usize) != 0) as usize) << 6)
+            | ((((flags & FLAG_SIGNIFICANT_TOP_RIGHT as usize) != 0) as usize) << 5)
+            | ((((flags & FLAG_SIGNIFICANT_LEFT as usize) != 0) as usize) << 4)
+            | ((((flags & FLAG_SIGNIFICANT_BOTTOM_LEFT as usize) != 0) as usize) << 3)
+            | ((((flags & FLAG_SIGNIFICANT_RIGHT as usize) != 0) as usize) << 2)
+            | ((((flags & FLAG_SIGNIFICANT_BOTTOM_RIGHT as usize) != 0) as usize) << 1)
+            | (((flags & FLAG_SIGNIFICANT_BOTTOM as usize) != 0) as usize)
     }
 }
