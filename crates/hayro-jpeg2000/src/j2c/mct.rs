@@ -1,17 +1,18 @@
 //! The irreversible multi-component transformation, as specified in
 //! Annex G.2 and G.3.
 
+use super::ComponentData;
 use super::codestream::{Header, WaveletTransform};
-use super::decode::TileDecodeContext;
 use crate::error::{ColorError, Result, bail, err};
 use crate::math::{Level, Simd, dispatch, f32x8};
 
 /// Apply the inverse multi-component transform, as specified in G.2 and G.3.
 pub(crate) fn apply_inverse(
-    tile_ctx: &mut TileDecodeContext<'_>,
+    components: &mut [ComponentData],
+    component_infos: &[super::codestream::ComponentInfo],
     header: &Header<'_>,
 ) -> Result<()> {
-    if tile_ctx.channel_data.len() < 3 {
+    if components.len() < 3 {
         return if header.strict {
             err!(ColorError::Mct)
         } else {
@@ -19,14 +20,13 @@ pub(crate) fn apply_inverse(
         };
     }
 
-    let (s, _) = tile_ctx.channel_data.split_at_mut(3);
+    let (s, _) = components.split_at_mut(3);
     let [s0, s1, s2] = s else { unreachable!() };
 
-    let transform = tile_ctx.tile.component_infos[0].wavelet_transform();
+    let transform = component_infos[0].wavelet_transform();
 
-    if transform != tile_ctx.tile.component_infos[1].wavelet_transform()
-        || tile_ctx.tile.component_infos[1].wavelet_transform()
-            != tile_ctx.tile.component_infos[2].wavelet_transform()
+    if transform != component_infos[1].wavelet_transform()
+        || component_infos[1].wavelet_transform() != component_infos[2].wavelet_transform()
     {
         bail!(ColorError::Mct);
     }

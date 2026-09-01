@@ -85,9 +85,15 @@ waarom = "JBIG2 image codec. Two minors behind; re-baselining needs a corpus run
 [[fork]]
 onze_crate = "hayro-jpeg2000"
 upstream = "hayro-jpeg2000"
-gelijk_met = "0.3.0"  # was 0.3.5; the fork point carries 0.3.0 (#262)
-forkpunt = "1c42f8cee"  # commit in LaurenzV/hayro
-aanvaard_tot = "0.4.0"  # #256
+gelijk_met = "0.4.0"
+# Merged to upstream HEAD on 31-08-2026, so the fork point is that commit and
+# the accepted gap is closed. The register previously claimed 0.3.5 at
+# 1c42f8cee; both were wrong. The code actually sat at 0.3.3 (4d923bd4) with two
+# later commits already cherry-picked on top, so merging against the recorded
+# commit would have REVERTED that work while looking like an upgrade. Found by
+# blob-comparing every source file against every upstream revision -- the
+# version alone cannot catch this class.
+forkpunt = "5a5f0e2"  # LaurenzV/hayro HEAD on 2026-08-24
 waarom = "JPEG 2000 image codec."
 
 [[fork]]

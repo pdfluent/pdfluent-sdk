@@ -31,7 +31,7 @@ filtering layer. Direct usage:
 
 ```toml
 [dependencies]
-pdfluent-jpeg2000 = "0.3"
+pdfluent-jpeg2000 = "0.4"
 ```
 
 For PDF-level rendering, prefer the
