@@ -86,10 +86,39 @@ def de_fetch_gaat_naar_de_cache(clone) -> str | None:
     """
     from pathlib import Path as _P
 
-    out = git("rev-parse", "--absolute-git-dir", cwd=clone)
+    # `--git-common-dir`, not `--absolute-git-dir`: a linked worktree's git-dir
+    # is `<main>/.git/worktrees/<name>` while its common-dir is `<main>/.git`.
+    # Comparing git-dirs both rejected a worktree handed over as `HAYRO_CLONE`
+    # -- a legitimate checkout, refused before anything was scored -- and let
+    # this repository through whenever the guard itself ran from a worktree,
+    # which is how the first version of this check passed its own ROOT test.
+    # Common-dirs make both cases structural rather than incidental.
+    #
+    # Asked in the same environment the fetch will use, which means scrubbed.
+    #
+    # Review suggested reading the *inherited* environment instead, so the probe
+    # could catch a caller that forgot to strip. Measured before taking it, and
+    # the measurement said no: `git push` from a linked worktree exports
+    # `GIT_DIR`, so under our own pre-push hook every target resolves to this
+    # repository and the lock refuses the bare cache, a valid `HAYRO_CLONE` and
+    # a worktree alike -- five legitimate cases, all wrongly refused.
+    #
+    # (An earlier measurement here said hooks do not export `GIT_DIR`. That was
+    # taken in a plain clone, where it is true, and it is false in a worktree --
+    # which is where all our work happens.)
+    #
+    # The hazard that suggestion aimed at -- a call that forgets `env=` -- is
+    # real, and is caught mechanically one layer up by
+    # `test_no_test_can_touch_the_real_repo.py`, which requires `env=` on every
+    # git invocation in these scripts. That is the right place for it: a lint
+    # over call sites, not a probe guessing at how it will be called.
+    out = git("rev-parse", "--git-common-dir", cwd=clone)
     if out.returncode != 0:
         return f"cannot tell which repository {clone} is, so the fetch is refused"
-    doel = _P(out.stdout.strip()).resolve()
+    doel = _P(out.stdout.strip())
+    if not doel.is_absolute():
+        doel = (_P(clone) / doel)
+    doel = doel.resolve()
 
     # (a) Never this repository, whatever the configuration says.
     #
@@ -103,8 +132,16 @@ def de_fetch_gaat_naar_de_cache(clone) -> str | None:
     #
     # So the question is not "is the target the path we wanted" but "is the
     # target us", asked of git from the script's own location.
-    ons = git("rev-parse", "--absolute-git-dir", cwd=_P(__file__).resolve().parent)
-    if ons.returncode == 0 and _P(ons.stdout.strip()).resolve() == doel:
+    hier = _P(__file__).resolve().parent
+    ons = git("rev-parse", "--git-common-dir", cwd=hier)
+    onze = None
+    if ons.returncode == 0:
+        onze = _P(ons.stdout.strip())
+        # git answers relatively when asked from inside the work tree
+        if not onze.is_absolute():
+            onze = hier / onze
+        onze = onze.resolve()
+    if onze is not None and onze == doel:
         return (
             f"refusing to fetch: the target is this repository ({doel}). The refspec "
             "force-updates every branch, so this would rewrite local branches."
@@ -124,8 +161,11 @@ def de_fetch_gaat_naar_de_cache(clone) -> str | None:
 def schone_omgeving() -> dict[str, str]:
     """The caller's environment with every GIT_* variable removed.
 
-    A git hook exports `GIT_DIR` and `GIT_WORK_TREE`, and git then works on the
-    repository they name and ignores `cwd=` entirely. For a read-only command
+    When `GIT_DIR` and `GIT_WORK_TREE` are set, git works on the repository
+    they name and ignores `cwd=` entirely. (Measured 02-09: our own
+    `pre-commit` and `pre-push` hooks do not export them, so the earlier
+    wording here was too strong -- but `git rebase`, CI runners and any
+    wrapper that exports them do, and one incident already came of it.) For a read-only command
     that is merely wrong; for the fetch in the register guards it was
     destructive, because the refspec is a force-update of every branch.
 
