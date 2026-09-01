@@ -3,7 +3,7 @@ name = "pdf-engine"
 version = "1.0.0"
 edition = "2021"
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only"
 readme = "README.md"
 description = "Unified PDF rendering engine — page rendering, text extraction, thumbnails."
 repository = "https://pdfluent.com/source"

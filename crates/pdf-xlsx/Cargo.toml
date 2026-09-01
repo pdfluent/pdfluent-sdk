@@ -3,7 +3,7 @@ name = "pdf-xlsx"
 version.workspace = true
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only"
 repository.workspace = true
 description = "PDF table extraction and XLSX conversion"
 readme = "README.md"

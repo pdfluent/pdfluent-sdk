@@ -69,6 +69,11 @@ happens to say.
 
 ## Our own terms are not in this file
 
-The §7(b) attribution requirement is in `LICENSE-ADDITIONAL-TERMS`, which is what
-section 7 is for. Nothing of ours is inside `LICENSE-AGPL`, and the hash is what
-keeps it that way.
+Nothing of ours is inside `LICENSE-AGPL`, and the hash is what keeps it that way.
+
+Until 01-09-2026 there was a §7(b) attribution requirement, held in a separate
+`LICENSE-ADDITIONAL-TERMS` file precisely because section 7 is what allows a term
+to be added without touching the licence text. The owner dropped that term on
+01-09-2026 and the file is gone. The reasoning for keeping it out of
+`LICENSE-AGPL` is unchanged and is why this page still exists: an edited GPL is
+not the GPL. There is simply no additional term left to keep out.

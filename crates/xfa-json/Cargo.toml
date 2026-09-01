@@ -3,7 +3,7 @@ name = "xfa-json"
 version = "1.0.0"
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only"
 readme = "README.md"
 repository.workspace = true
 homepage.workspace = true
