@@ -127,12 +127,20 @@ pub(crate) fn decode(
             color_space: Some(ImageColorSpace::Gray),
             bits_per_component: 1,
             width: settings.columns,
-            // `rows`, not image_params.height. The two come from different
-            // places in the same file and nothing makes them agree: the decoder
-            // stops after `rows`, so reporting the declared /Height sends a
-            // consumer computing height * stride past the end of the data.
-            // Ported from hayro upstream (LaurenzV/hayro#1269).
-            height: rows,
+            // The rows actually decoded -- not `image_params.height`, and not
+            // `rows` either.
+            //
+            // Upstream (LaurenzV/hayro#1269) moved from /Height to /Rows, which
+            // fixes the common case. It is still an upper bound: a stream that
+            // ends early, or carries an end-of-block before /Rows, decodes fewer.
+            // The leniency branch above exists precisely because that happens.
+            //
+            // The gap is reachable on purpose. A file declaring a small /Height
+            // (so the pixel-limit check passes) and a huge /Rows, carrying one
+            // encoded row, would have get_components allocate and zero-pad
+            // rows * width samples. decoded_rows is what the buffer holds.
+            // (Codex, #1609.)
+            height: decoder.decoded_rows,
         }),
     })
 }
@@ -179,6 +187,35 @@ mod upstream_hardening_tests {
 
         // The invariant the height exists to support: a consumer reading
         // height * stride bytes must not read past what was decoded.
+        let stride = (image.width as usize).div_ceil(8);
+        assert!(
+            decoded.data.len() >= stride * image.height as usize,
+            "reported {}x{} needs {} bytes, got {}",
+            image.width,
+            image.height,
+            stride * image.height as usize,
+            decoded.data.len()
+        );
+    }
+
+    /// The gap between "asked for" and "produced", which `/Rows` alone does not
+    /// close (Codex, #1609).
+    ///
+    /// A small `/Height` passes the pixel-limit check upstream of here; a huge
+    /// `/Rows` then sets the reported height, while the data encodes one row.
+    /// A consumer sizing a buffer from the reported height allocates and
+    /// zero-pads a thousand rows for eight bytes of data.
+    #[test]
+    fn a_stream_that_stops_early_reports_what_it_produced_not_what_it_promised() {
+        let params = Dict::from_bytes(b"<< /K 0 /Columns 8 /Rows 1000 >>").unwrap();
+        let decoded = decode(ONE_ROW_G3, params, &params_with(1)).unwrap();
+
+        let image = decoded.image_data.unwrap();
+        assert_eq!(
+            image.height, 1,
+            "one row was encoded, whatever /Rows claims"
+        );
+
         let stride = (image.width as usize).div_ceil(8);
         assert!(
             decoded.data.len() >= stride * image.height as usize,

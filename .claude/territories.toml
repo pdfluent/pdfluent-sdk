@@ -50,6 +50,7 @@ paden = [
   "scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py",
   "scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py",
   "scripts/ci/the_fork_register_is_verifiable.py",
+  "scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py",
 ]
 # NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
 # parity tests are edited by this change but stay with whoever owns the SDK
@@ -89,6 +90,7 @@ uitgezonderd = [
   # Handed to t1 on #292 because the runner had no upstream clone and it exited 3
   # on every run. It reads the same register as the two above.
   "scripts/ci/the_fork_register_is_verifiable.py",
+  "scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py",
 ]
 issues = [288, 286, 290, 276, 283, 264]
 

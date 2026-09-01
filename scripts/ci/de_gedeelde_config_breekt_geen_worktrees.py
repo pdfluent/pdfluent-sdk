@@ -91,12 +91,23 @@ def gedeelde_config() -> pathlib.Path | None:
 
 
 def waarde(tekst: str, sectie: str, sleutel: str) -> str | None:
-    """Lees één sleutel uit één sectie, zonder `git config` aan te roepen.
+    """Lees één sleutel uit één sectie, zoals git hem zou lezen.
 
     Met git zelf lezen zou de global en de per-worktree config meenemen, en juist
-    het onderscheid tussen die drie is hier de vraag.
+    het onderscheid tussen die drie is hier de vraag. Dus met de hand -- en dan
+    ook mét de twee eigenaardigheden die git wél heeft en een naïeve lezer niet
+    (allebei aangewezen door Codex op #1609):
+
+    * **De laatste toekenning wint.** Bij `bare = false` gevolgd door
+      `bare = true` gebruikt git `true`. De eerste versie hiervan gaf de eerste
+      terug en meldde OK terwijl elke worktree stuk stond -- de exacte fout die
+      deze controle moet vinden.
+    * **Een sleutel zonder `=` is `true`.** `[core]` met een kale regel `bare`
+      is geldige git-syntax en betekent waar. De eerste versie zag daar geen
+      toekenning en gaf None terug, dus ook groen.
     """
     huidige = None
+    gevonden: str | None = None
     for regel in tekst.splitlines():
         kaal = regel.split("#", 1)[0].split(";", 1)[0].strip()
         if not kaal:
@@ -107,10 +118,13 @@ def waarde(tekst: str, sectie: str, sleutel: str) -> str | None:
             continue
         if huidige != sectie:
             continue
-        m = re.match(r"([A-Za-z0-9_-]+)\s*=\s*(.*)", kaal)
-        if m and m.group(1).lower() == sleutel:
-            return m.group(2).strip().strip('"')
-    return None
+        m = re.match(r"([A-Za-z0-9_-]+)\s*(?:=\s*(.*))?$", kaal)
+        if not m or m.group(1).lower() != sleutel:
+            continue
+        # Geen `=`: git's impliciete booleaanse waar.
+        rauw = m.group(2)
+        gevonden = "true" if rauw is None else rauw.strip().strip('"')
+    return gevonden
 
 
 def main() -> int:
