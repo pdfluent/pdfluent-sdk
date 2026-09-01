@@ -55,6 +55,14 @@ pub enum FormCalcError {
         max_depth: usize,
     },
 
+    #[error("expression nests deeper than {max_depth} levels")]
+    /// Expression tree too deep to parse or evaluate without exhausting the
+    /// native stack. Reached from untrusted input, so a bound, not a panic.
+    ExpressionTooDeep {
+        /// The depth limit that was reached.
+        max_depth: usize,
+    },
+
     #[error("Division by zero")]
     /// Division by zero.
     DivisionByZero,
