@@ -97,6 +97,13 @@ STIL_NA_DAGEN = 30
 
 
 REPO = "jasperdew/xfa-native-rust"
+STANDAARDTAK = "master"
+
+# GitHub Actions and GitLab both set CI. Used the same way T3 uses it for the
+# term list: a thing this guard cannot verify is fatal in the pipeline and a
+# warning on a contributor's clone, because in the pipeline "could not check"
+# renders as a green step and nobody reads the log.
+IN_CI = bool(os.environ.get("CI"))
 
 # Why the last API call failed, so a skip can name its cause instead of being a
 # shrug. A skip that does not say why is only marginally better than a silent
@@ -204,6 +211,27 @@ def veranderd_op(pad: pathlib.Path) -> dt.datetime | None:
         return None
 
 
+def niet_gecontroleerd() -> int:
+    """What an unverifiable answer is worth, which depends on where you are.
+
+    Returning 0 here was the house convention: announce the skip and pass. In
+    ci.yml this script is an ordinary `run` step, so that renders as a green
+    tick over a gate that checked nothing -- the exact fault this guard exists
+    to find, inside the guard. On a contributor's clone with no token it is a
+    warning, because failing there helps nobody.
+
+    Same split T3 uses for the term list, from the same variable. (codex, #1610)
+    """
+    if IN_CI:
+        print("  In CI that is a failure, not a skip: a gate that could not read "
+              "its evidence has not judged anything, and a green tick over it is "
+              "the fault this guard exists to catch.", file=sys.stderr)
+        return 1
+    print("  Outside CI this is a warning: without a token or `gh` there is "
+          "nothing to read. Set GH_TOKEN or authenticate `gh`.", file=sys.stderr)
+    return 0
+
+
 def main() -> int:
     if not FLOWS.is_dir():
         print(f"[groen] FATAL: {FLOWS} is missing", file=sys.stderr)
@@ -220,7 +248,7 @@ def main() -> int:
         print("SKIPPED (not a pass): could not read the workflow list from GitHub, so "
               f"no gate was checked against its own history. Cause: {waarom}.",
               file=sys.stderr)
-        return 0
+        return niet_gecontroleerd()
 
     bij_pad = {w["path"]: w for w in lijst["workflows"]}
 
@@ -236,25 +264,56 @@ def main() -> int:
             # branch yet. Added in this branch, most likely.
             jong.append((pad.name, "not registered with GitHub yet"))
             continue
-        if wf.get("state") != "active":
-            uitgezet.append((pad.name, wf.get("state")))
+        staat = wf.get("state")
+        if staat == "disabled_manually":
+            uitgezet.append((pad.name, staat))
+            continue
+        if staat != "active":
+            # `disabled_inactivity` is GitHub switching off a scheduled workflow
+            # after 60 quiet days -- which it can do once this repository is
+            # public. Treating every non-active state as "off on purpose" would
+            # let a scheduled gate go dark and be approved for it. Only the
+            # deliberate switch is an excuse. (codex, #1610)
+            dood.append((pad.name, 0, dt.datetime.now(dt.timezone.utc)))
+            print(f"[groen] {pad.name}: state is `{staat}`, which nobody chose. "
+                  "Re-enable it or name it in BEKEND.", file=sys.stderr)
             continue
 
         sinds = veranderd_op(pad)
         if sinds is None:
-            jong.append((pad.name, "no commit date for the file"))
-            continue
+            # Not "young". The window could not be established at all, and a
+            # workflow that died yesterday looks identical from here to one
+            # added yesterday. Reported as unchecked, which is fatal in CI.
+            waarom = REDEN[-1] if REDEN else "no commit date for the file"
+            print(f"SKIPPED (not a pass): could not date {pad.name}, so its "
+                  f"window is unknown. Cause: {waarom}.", file=sys.stderr)
+            return niet_gecontroleerd()
         vanaf = sinds.strftime("%Y-%m-%dT%H:%M:%SZ")
 
+        # `branch=` and `status=` both matter, and both were missing.
+        #
+        # Without `branch`, runs from every ref are counted. Measured on ci.yml:
+        # 2294 runs across all refs against 1384 on master. A workflow broken on
+        # master stays "healthy" here as long as some old branch happens to run
+        # its previous version green -- which is the guard reporting the
+        # opposite of the truth, not merely missing it. The date already comes
+        # from the default branch, so the runs must too or the two halves are
+        # measuring different things. (codex, #1610)
+        #
+        # Without `status=completed`, queued and in-progress runs count towards
+        # GENOEG while contributing no successes. Three runs created in a burst
+        # on a congested runner -- and there is one runner -- would read as
+        # three runs, none green, therefore dead.
+        tak = f"&branch={STANDAARDTAK}"
         alle = gh(f"repos/{{owner}}/{{repo}}/actions/workflows/{wf['id']}/runs"
-                  f"?per_page=1&created=%3E{vanaf}")
+                  f"?per_page=1&status=completed{tak}&created=%3E{vanaf}")
         groen = gh(f"repos/{{owner}}/{{repo}}/actions/workflows/{wf['id']}/runs"
-                   f"?per_page=1&status=success&created=%3E{vanaf}")
+                   f"?per_page=1&status=success{tak}&created=%3E{vanaf}")
         if alle is None or groen is None:
             waarom = REDEN[-1] if REDEN else "unknown"
             print(f"SKIPPED (not a pass): could not read the run history of "
                   f"{pad.name}. Cause: {waarom}.", file=sys.stderr)
-            return 0
+            return niet_gecontroleerd()
 
         n, g = alle["total_count"], groen["total_count"]
         if g > 0:

@@ -62,6 +62,16 @@ if [ $_dh -ne 0 ]; then
   exit 1
 fi
 
+# The workflow gates run here, above the branch/merge-request check, because
+# that check exits the script outright. A branch far enough ahead without a pull
+# request therefore hid every one of these -- and that is exactly the branch
+# most likely to have broken something. The large unreviewed change and the
+# checks that would have judged it were disqualifying each other. (codex, #1610)
+run startbaar python3 scripts/ci/every_workflow_can_start.py
+run startbaartest python3 scripts/ci/test_every_workflow_can_start.py
+run groen     python3 scripts/ci/a_gate_that_never_went_green.py
+run groentest python3 scripts/ci/test_a_gate_that_never_went_green.py
+
 # Clean-tree advisory (the CI audit job requires it; auto-generated gen/schemas
 # churn is a known false-positive — see docs).
 if [ -n "$(git status --porcelain | grep -vE 'gen/schemas|\.e1_gaps')" ]; then
@@ -77,10 +87,6 @@ run kosten   python3 scripts/ci/no_hosted_minutes_on_a_push.py
 run instances python3 scripts/ci/one_instance_per_event.py
 run jobsexist python3 scripts/ci/workflow_jobs_exist.py
 run labels    python3 scripts/ci/every_label_has_a_runner.py
-run startbaar python3 scripts/ci/every_workflow_can_start.py
-run startbaartest python3 scripts/ci/test_every_workflow_can_start.py
-run groen     python3 scripts/ci/a_gate_that_never_went_green.py
-run groentest python3 scripts/ci/test_a_gate_that_never_went_green.py
 run crons     python3 scripts/ci/schedule_guards_match_their_cron.py
 run mirror    python3 scripts/ci/test_mirror_has_not_drifted.py
 run infra     python3 scripts/ci/test_infra_health.py

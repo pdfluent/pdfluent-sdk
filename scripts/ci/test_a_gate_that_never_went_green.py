@@ -72,6 +72,12 @@ for wf in tabel["workflows"]:
     if f"/workflows/{wf['id']}/runs" in url:
         groen = "status=success" in url
         binnen = "created=" in url
+        # Unscoped queries answer with the all-refs numbers, which is what the
+        # real API does. A guard that forgets `branch=` therefore reads the
+        # other-branch counts and the case below catches it.
+        if "branch=" not in url:
+            n = wf.get("_green_anyref", wf["_green_all"]) if groen else wf.get("_runs_anyref", wf["_runs_all"])
+            print(json.dumps({"total_count": n, "workflow_runs": []})); raise SystemExit(0)
         n = wf["_green_in"] if groen else wf["_runs_in"]
         if not binnen:
             n = wf["_green_all"] if groen else wf["_runs_all"]
@@ -128,11 +134,17 @@ def draai(map_: pathlib.Path) -> subprocess.CompletedProcess[str]:
                           capture_output=True, text=True, check=False, env=env)
 
 
-def wf(naam, runs_in, green_in, runs_all=None, green_all=None, state="active"):
-    return {"id": abs(hash(naam)) % 100000, "path": f".github/workflows/{naam}",
-            "state": state, "_runs_in": runs_in, "_green_in": green_in,
-            "_runs_all": runs_all if runs_all is not None else runs_in,
-            "_green_all": green_all if green_all is not None else green_in}
+def wf(naam, runs_in, green_in, runs_all=None, green_all=None, state="active",
+       runs_anyref=None, green_anyref=None):
+    d = {"id": abs(hash(naam)) % 100000, "path": f".github/workflows/{naam}",
+         "state": state, "_runs_in": runs_in, "_green_in": green_in,
+         "_runs_all": runs_all if runs_all is not None else runs_in,
+         "_green_all": green_all if green_all is not None else green_in}
+    if runs_anyref is not None:
+        d["_runs_anyref"] = runs_anyref
+    if green_anyref is not None:
+        d["_green_anyref"] = green_anyref
+    return d
 
 
 GEVALLEN = [
@@ -148,6 +160,17 @@ GEVALLEN = [
     ("just added, no runs at all", [wf("nieuw.yml", 0, 0)], False),
     # Off on purpose is not the same as broken.
     ("disabled on purpose", [wf("uit.yml", 40, 0, state="disabled_manually")], False),
+    # ...but GitHub switching a scheduled workflow off after sixty quiet days is
+    # nobody's decision, and it can happen once this repository is public. The
+    # first version excused every non-active state and would have approved a
+    # scheduled gate that had gone dark. (codex, #1610)
+    ("disabled by inactivity is not an excuse",
+     [wf("stil.yml", 40, 0, state="disabled_inactivity")], True),
+    # The queries must be scoped to the default branch. Dead on master, green on
+    # some other ref: a guard reading all refs calls this healthy, which is the
+    # opposite of the truth rather than a gap in it.
+    ("green on another branch does not rescue a workflow dead on master",
+     [wf("tak.yml", 40, 0, runs_anyref=80, green_anyref=40)], True),
     # The baseline excuses by name, and only by name.
     ("a name in BEKEND is excused", [wf(BEKEND[0], 40, 0)], False),
     ("a name not in BEKEND beside one that is",
