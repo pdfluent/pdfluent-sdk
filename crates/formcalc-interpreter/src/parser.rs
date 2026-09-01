@@ -54,6 +54,21 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<Expr>> {
     // the evaluator. So the tree is measured once, exactly, before it is handed
     // to anything that walks it recursively.
     let depth = ast_depth(&script);
+    // If this fires, construction under-counted: a node was built without being
+    // measured, and the backstop is covering for it. In release that is exactly
+    // what the backstop is for. In a test build it must be loud, because the
+    // construction bound is the only thing protecting the *error* path, where a
+    // syntax error unwinds and ordinary `Drop` walks whatever was built --
+    // there is no backstop there.
+    //
+    // Two leaks were found this way after a first attempt at testing them
+    // passed vacuously: the test asked whether a too-deep tree was refused, the
+    // backstop refused it, and the assertion was skipped.
+    debug_assert!(
+        depth <= MAX_DEPTH,
+        "construction built a tree {depth} deep while believing it was within \
+         {MAX_DEPTH}; some node is not being counted"
+    );
     if depth > MAX_DEPTH {
         // Dropping it normally would recurse to the depth we just refused, so
         // the refusal would crash exactly where acceptance used to.
@@ -457,10 +472,16 @@ impl Parser {
             TokenKind::Return => self.parse_return(),
             TokenKind::Break => {
                 self.advance();
+                // Leaves, and they have to record it: a function that produces
+                // an `Expr` without setting `depth` leaves the previous
+                // subtree's value in place, so an enclosing node measured one
+                // level short whenever a `break` was its deepest child.
+                self.built(self.depth, &[])?;
                 Ok(Expr::Break)
             }
             TokenKind::Continue => {
                 self.advance();
+                self.built(self.depth, &[])?;
                 Ok(Expr::Continue)
             }
             _ => self.parse_assignment(),
@@ -644,6 +665,12 @@ impl Parser {
                 }
             }
             self.expect(&TokenKind::RParen)?;
+            // A node like any other. It is synthetic -- the parenthesised list
+            // of a `foreach` is wrapped in a call that no one wrote -- but it
+            // sits in the tree, so leaving it uncounted made the guard report a
+            // depth one short of what it had built.
+            self.built(outer, &[deepest])?;
+            deepest = self.depth;
             Expr::FuncCall {
                 name: "__foreach_list".to_string(),
                 args,
@@ -1609,6 +1636,66 @@ mod depth_bounds {
         assert!(refused(&format!("a.b.m({long_chain})")));
         // including on the error path, where the tree is dropped by unwinding
         assert!(refused(&format!("a.b.m({long_chain} +)")));
+    }
+
+    /// Every node the parser builds must be counted, including the ones nobody
+    /// wrote and the ones with no children.
+    ///
+    /// Two leaks, both found by review, both with the same consequence: a tree
+    /// one level deeper than the guard believed. `ast_depth` catches that on a
+    /// successful parse, so nothing wrong is ever *accepted* — but the
+    /// construction bound is what protects the error path, where a syntax error
+    /// unwinds and ordinary `Drop` walks whatever was built. A bound that
+    /// under-reports has already lost that guarantee.
+    ///
+    /// The synthetic `__foreach_list` call wrapping a parenthesised list, and
+    /// `Break`/`Continue`, which returned an `Expr` without recording their own
+    /// depth and so left the previous subtree's value in place.
+    #[test]
+    fn synthetic_nodes_and_childless_leaves_are_counted() {
+        // The backstop is disabled for this test's purpose by measuring the
+        // tree the parser accepted: if construction under-counts, `ast_depth`
+        // of an accepted tree exceeds the bound, which is exactly the state the
+        // error path cannot survive.
+        // Sweeping the boundary rather than guessing where it is: whichever
+        // depth trips the mismatch, the `debug_assert` in `parse` turns it into
+        // a panic. Both refusal and acceptance are fine answers; building more
+        // than was counted is not.
+        for n in 50..=64 {
+            let inner = format!("{}1{}", "Abs(".repeat(n), ")".repeat(n));
+            let _ = tokenize(&format!("foreach v in ({inner}) do\n  1\nendfor")).and_then(parse);
+            let _ =
+                tokenize(&format!("while (1) do\n  {inner}\n  break\nendwhile")).and_then(parse);
+            let _ =
+                tokenize(&format!("while (1) do\n  break\n  {inner}\nendwhile")).and_then(parse);
+        }
+
+        // `break` and `continue` are swept too, though no input here fails
+        // without their fix and that is worth saying rather than implying.
+        // Statement nesting costs one recursion level and one depth level
+        // together, so `MAX_RECURSION` refuses at exactly the point the
+        // miscount would start to matter: measured, the deepest accepted
+        // nested-`while` tree is 64 either way. The fix is kept because the
+        // invariant is what later changes will lean on -- a leaf that does not
+        // record its depth is a trap for the next node type added beside it --
+        // not because a test can currently tell the difference.
+        for n in 55..=64 {
+            let mut src = String::from("break");
+            for _ in 0..n {
+                src = format!("while (1) do\n{src}\nendwhile");
+            }
+            let _ = tokenize(&src).and_then(parse);
+
+            let mut cont = String::from("continue");
+            for _ in 0..n {
+                cont = format!("while (1) do\n{cont}\nendwhile");
+            }
+            let _ = tokenize(&cont).and_then(parse);
+        }
+
+        // and the plain statement forms still round-trip
+        accepted("while (1) do\n  break\nendwhile");
+        accepted("while (1) do\n  continue\nendwhile");
     }
 
     /// The other half: a bound low enough to break real forms is also a bug.
