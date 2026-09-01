@@ -73,9 +73,54 @@ _EXPLICIT = os.environ.get("HAYRO_CLONE")
 CLONE = Path(_EXPLICIT) if _EXPLICIT else CACHE
 
 
+def de_fetch_gaat_naar_de_cache(clone) -> str | None:
+    """Refuse to fetch unless the target really is the cache.
+
+    A second lock, deliberately not resting on the environment being clean. The
+    refspec below force-updates every branch, so pointing it at the wrong
+    repository destroys unpushed work; `schone_omgeving()` stops that happening,
+    and this stops it happening if someone adds a call and forgets.
+
+    `--git-dir` is asked of git itself rather than assumed from `cwd`, because
+    the whole failure being guarded against is git disagreeing with `cwd`.
+    """
+    from pathlib import Path as _P
+    out = git("rev-parse", "--absolute-git-dir", cwd=clone)
+    if out.returncode != 0:
+        return f"cannot tell which repository {clone} is, so the fetch is refused"
+    actual = _P(out.stdout.strip()).resolve()
+    if actual != _P(clone).resolve():
+        return (
+            f"refusing to fetch: the target resolved to {actual}, not the cache at "
+            f"{_P(clone).resolve()}. The refspec force-updates every branch, so this "
+            "would rewrite local branches -- see schone_omgeving()."
+        )
+    return None
+
+
+def schone_omgeving() -> dict[str, str]:
+    """The caller's environment with every GIT_* variable removed.
+
+    A git hook exports `GIT_DIR` and `GIT_WORK_TREE`, and git then works on the
+    repository they name and ignores `cwd=` entirely. For a read-only command
+    that is merely wrong; for the fetch in the register guards it was
+    destructive, because the refspec is a force-update of every branch.
+
+    Reproduced in a throwaway repository: a branch with an unpushed commit on
+    top of a pushed one lost that commit outright. What hid it is luck -- git
+    refuses to fetch into a branch that is checked out in a worktree and aborts
+    the whole fetch, and one of ours always is, which is why this surfaced in
+    the logs as `SKIPPED (not a pass)` rather than as damage. A detached HEAD
+    has no such protection, and detached HEAD is what `actions/checkout`
+    produces and what half of our worktrees are.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["/usr/bin/git", *args], cwd=cwd, capture_output=True, text=True, check=False
+        ["/usr/bin/git", *args], cwd=cwd, capture_output=True, text=True, env=schone_omgeving(),
+        check=False
     )
 
 
@@ -97,6 +142,8 @@ def ensure_clone(needed: list[str]) -> str | None:
         # HEAD is refreshed too, not only the named commits: the scoring walks
         # `log HEAD`, so a cache whose HEAD predates upstream's would leave the
         # newest revisions out of the comparison entirely.
+        if (waarom := de_fetch_gaat_naar_de_cache(CLONE)) is not None:
+            return waarom
         out = git("fetch", "--quiet", "--filter=blob:none", "origin",
                   "+refs/heads/*:refs/heads/*", cwd=CLONE)
         if out.returncode != 0 and missing:
