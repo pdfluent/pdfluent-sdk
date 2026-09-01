@@ -56,6 +56,16 @@ LICENTIEREGEL = "PDFluent is available under two licences"
 MIN_BESTANDEN = 200
 
 
+def crate_licentie(crate: pathlib.Path) -> str | None:
+    """De SPDX-expressie uit de Cargo.toml van de crate, of None."""
+    toml = crate / "Cargo.toml"
+    if not toml.is_file():
+        return None
+    import re as _re
+    m = _re.search(r'^\s*license\s*=\s*"([^"]+)"', toml.read_text(errors="replace"), _re.M)
+    return m.group(1) if m else None
+
+
 def is_geforkt(crate: pathlib.Path) -> bool:
     if crate.name in UPSTREAM:
         return True
@@ -76,14 +86,25 @@ def main() -> int:
 
     for crate in sorted(p for p in CRATES.iterdir() if p.is_dir()):
         if is_geforkt(crate):
-            # Geforkte crates krijgen onze kop niet, en het is een fout als er
-            # er toch een staat: dat claimt andermans werk.
+            # De kop van een bestand moet passen bij de licentie-expressie van de
+            # crate waarin het staat. `license = "Apache-2.0 OR MIT"` in de
+            # Cargo.toml is een belofte over ELKE file erin, dus een proprietary
+            # kop daarbinnen is een tegenspraak die elke SCA-scanner ziet.
+            #
+            # Een bestand dat wij aan zo'n crate toevoegen mag onze copyrightregel
+            # dragen -- maar dan onder de licentie van de crate, en die moet er dan
+            # ook staan. Alleen een copyrightregel laat in het midden waaronder het
+            # valt, en dat is precies wat hier niet mag blijven staan.
+            expr = crate_licentie(crate)
             for bron in sorted(crate.rglob("*.rs")):
                 if "target" in bron.parts:
                     continue
                 kop = "".join(bron.read_text(errors="replace").splitlines(keepends=True)[:60])
                 if LICENTIEREGEL in kop or "This software is proprietary" in kop:
                     in_fork.append(str(bron.relative_to(REPO)))
+                elif MERK in kop and expr and expr not in kop:
+                    in_fork.append(f"{bron.relative_to(REPO)} (our copyright without "
+                                   f"naming the crate's licence {expr!r})")
             continue
         for bron in sorted(crate.rglob("*.rs")):
             if "target" in bron.parts:
