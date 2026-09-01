@@ -993,7 +993,7 @@ impl Parser {
                 } else {
                     self.built(outer, &[])?;
                     let mut expr = Expr::Ident(name);
-                    expr = self.parse_accessor_tail(expr)?;
+                    expr = self.parse_accessor_tail(expr, outer)?;
                     Ok(expr)
                 }
             }
@@ -1018,7 +1018,16 @@ impl Parser {
     /// - `[*]`   — all occurrences
     /// - `..name` — recursive descent
     /// - `.#name` — class-based access
-    fn parse_accessor_tail(&mut self, mut expr: Expr) -> Result<Expr> {
+    ///
+    /// `base` is the depth the whole expression started from, before the
+    /// receiver was built. Accessor links stack on top of the receiver, but a
+    /// method call does not: `expr_to_som_path` flattens the entire chain into
+    /// the call's *name*, so `a.b.c…m()` is one `FuncCall` node over its
+    /// arguments however long the path was. Measuring that from the current
+    /// depth charged it for a receiver that is not in the tree -- a 63-member
+    /// path was accepted, and the same path with `.m()` refused, though the
+    /// second builds the shallower tree.
+    fn parse_accessor_tail(&mut self, mut expr: Expr, base: usize) -> Result<Expr> {
         loop {
             match self.peek().clone() {
                 // `.member` or `.#member`
@@ -1034,7 +1043,10 @@ impl Parser {
                                 if self.peek() == &TokenKind::LParen {
                                     self.advance(); // consume (
                                     let mut args = Vec::new();
-                                    let outer = self.depth;
+                                    // The receiver is flattened into the name,
+                                    // so this node sits on `base`, not on the
+                                    // depth the accessor chain reached.
+                                    let outer = base;
                                     let mut deepest = outer;
                                     if self.peek() != &TokenKind::RParen {
                                         loop {
@@ -1561,6 +1573,42 @@ mod depth_bounds {
             args: (0..500).map(|_| Expr::Number(1.0)).collect(),
         }];
         assert_eq!(ast_depth(&wide), 2);
+    }
+
+    /// A method call after a long SOM path is not deep, and must not be refused
+    /// as if it were.
+    ///
+    /// `expr_to_som_path` flattens the whole receiver into the call's *name*,
+    /// so `a.b.c….m()` is a single `FuncCall` over its arguments no matter how
+    /// long the path is. Measuring it from the accessor-inflated depth charged
+    /// it for a receiver that is not in the tree: a 63-member path was accepted,
+    /// and the same path with `.m()` refused — the shallower of the two.
+    ///
+    /// The second half of this test is the point. Measuring from the base is
+    /// only correct because the receiver disappears; the arguments do not, and
+    /// they must still be bounded.
+    #[test]
+    fn a_method_call_is_measured_from_the_expression_base() {
+        let path = format!("a{}", ".b".repeat(63));
+        assert!(
+            tokenize(&path).and_then(parse).is_ok(),
+            "a 63-member path parses on its own"
+        );
+        let called = accepted(&format!("{path}.m()"));
+        assert_eq!(
+            ast_depth(&called),
+            1,
+            "the receiver is flattened into the name, so this is a single \
+             argument-less FuncCall node"
+        );
+
+        // and the hostile counterpart: deep *arguments* are still refused
+        let deep_arg = format!("{}1{}", "Abs(".repeat(200), ")".repeat(200));
+        assert!(refused(&format!("a.b.m({deep_arg})")));
+        let long_chain = vec!["1"; 200].join(" + ");
+        assert!(refused(&format!("a.b.m({long_chain})")));
+        // including on the error path, where the tree is dropped by unwinding
+        assert!(refused(&format!("a.b.m({long_chain} +)")));
     }
 
     /// The other half: a bound low enough to break real forms is also a bug.
