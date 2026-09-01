@@ -61,6 +61,9 @@ jobs:
       - name: Install PyYAML
         if: ${{ !cancelled() }}
         run: pip install --quiet pyyaml
+      - name: The runner-boundary guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_pr_code_stays_off_the_desktop.py
       - name: A pull request stays off the persistent runner
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/pr_code_stays_off_the_desktop.py

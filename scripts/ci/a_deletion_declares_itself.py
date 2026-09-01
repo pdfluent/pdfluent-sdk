@@ -190,6 +190,22 @@ def main(argv: list[str]) -> int:
         for path in removed_here:
             last_deleter[path] = sha
 
+    # With --exact-base on a force-push, a path can be absent from the new
+    # history entirely: it exists at the old tip and no commit in base..head ever
+    # touched it, so nothing can be its "last deleter". Requiring the trailer on
+    # the deleting commit is then impossible to satisfy, and a trailer on the new
+    # tip was reported as misplaced. A deliberate force-push removal could not be
+    # declared at all. In this mode any commit in the range may carry it.
+    # (codex, #1635)
+    orphaned = {p for p in deleted if p not in last_deleter}
+    if args.exact_base and orphaned:
+        anywhere = set().union(*trailers.values()) if trailers else set()
+        for path in sorted(orphaned):
+            if path in anywhere:
+                who = next(sha for sha, named in trailers.items() if path in named)
+                last_deleter[path] = who
+                deletes.setdefault(who, set()).add(path)
+
     declared: dict[str, str] = {}
     for path, sha in last_deleter.items():
         if path in trailers.get(sha, set()):

@@ -11,7 +11,7 @@ import os, subprocess, sys, tempfile
 from pathlib import Path
 
 GUARD = Path(__file__).with_name("a_deletion_declares_itself.py")
-MINIMUM_CASES = 31  # FLOOR
+MINIMUM_CASES = 33  # FLOOR
 
 
 def clean_env() -> dict[str, str]:
@@ -251,6 +251,25 @@ def main() -> int:
         # questions asked, which is why the flag exists rather than a new default.
         expect("and the merge-base reading deliberately does not see it",
                r2.returncode == 0, f"exit {r2.returncode}")
+
+    # A force-push whose new history never had the file: nothing in base..head
+    # can be its "last deleter", so the trailer had nowhere valid to go and a
+    # deliberate removal could not be declared at all. (codex, #1635)
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        (wd / "later.txt").write_text("added after the ancestor\n")
+        run(wd, "add", "-A"); run(wd, "commit", "-qm", "add later.txt")
+        before = run(wd, "rev-parse", "HEAD").stdout.strip()
+        run(wd, "reset", "-q", "--hard", "master")
+        run(wd, "checkout", "-q", "-b", "forced2")
+        (wd / "z.txt").write_text("other\n")
+        run(wd, "add", "-A")
+        run(wd, "commit", "-qm", "other work\n\nRemoves-deliberately: later.txt")
+        r = guard(wd, "--base", before, "--exact-base")
+        expect("a force-push removal declared anywhere in the range passes",
+               r.returncode == 0, f"exit {r.returncode} {r.stderr[:200]}")
+        expect("and it is not called misplaced",
+               "does not delete it" not in r.stderr, r.stderr[:160])
 
     # A git command that FAILS must not read as "nothing found". With a bad
     # --head the diff exited non-zero, stdout was empty, and the guard reported
