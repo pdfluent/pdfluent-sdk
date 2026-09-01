@@ -62,16 +62,31 @@ GENOEG = 3
 # baseline that only grows is a list of excuses, and one that only shrinks
 # stops noticing when something dies.
 BEKEND = {
-    # ci.yml was in this list for one commit, on the strength of "5 runs since
-    # the file changed, none green". That reading came from dating the file
-    # against the branch, where the file had just been edited -- by the commit
-    # that added the entry. Dated against the default branch it is 48 runs and
-    # 7 green, and not dead at all. The dating moved to one source; the entry
-    # went with it.
-    "enterprise-acceptance.yml": "red on every run since 28-08-2026; found by this guard, not diagnosed (#290)",
-    "fuzz.yml": "red on every run since 28-08-2026; found by this guard, not diagnosed (#290)",
-    "node-bindings.yml": "red on every run since 28-08-2026; found by this guard, not diagnosed (#290)",
-    "security-audit.yml": "red on every run since 28-08-2026; found by this guard, not diagnosed (#290)",
+    # ci.yml is here twice over, and the two are not the same claim.
+    #
+    # The first time was wrong: "5 runs, none green" came from dating the file
+    # against the branch, where the commit adding the entry had just edited it.
+    # Against the default branch it was 48 runs and 7 green, and the entry came
+    # out with the dating fix.
+    #
+    # It is back on a measurement that holds. #1601 merged on 01-09-2026 and
+    # touched ci.yml, so the window restarts there, and in that window it is 3
+    # runs and 0 green -- because orchestration_stays_hosted.py fails on master
+    # itself, on ci-ephemeral's `reap` job (#267). Verified by running that
+    # guard on master and on this branch: byte-identical output, both exit 1.
+    # So every pull request is red on ci.yml regardless of its contents, and
+    # the workflow carrying every guard in this repository is not green.
+    #
+    # Not fixable from here -- moving `reap` off the persistent runner is a cost
+    # decision on #267. Out of this list the day ci.yml goes green, which the
+    # check below enforces.
+    "ci.yml": "orchestration_stays_hosted fails on master itself: ci-ephemeral `reap` on the persistent runner (#267)",
+    # Diagnosed on #294. Not one of the four fails on what it is supposed to
+    # guard, which is the reason they are one issue and not four.
+    "enterprise-acceptance.yml": "`Install system dependencies` fails; needs one re-run for the message (#294)",
+    "fuzz.yml": "every fuzz job passes; `delete-runner` gets 422 runner-still-busy and leaks the instance (#294)",
+    "node-bindings.yml": "Node 24 red on all three platforms; logs expired, needs a re-run (#294)",
+    "security-audit.yml": "cargo-audit builds under the pinned 1.94.0 and needs 1.96.0; cargo-deny has no docker (#287, #294)",
 }
 
 # A file that has not changed in this long and still has no runs is not new; it
