@@ -15,9 +15,12 @@ GUARD = "scripts/ci/the_licence_policy_says_what_it_must.py"
 POLICY_REL = "docs/LICENSE_POLICY.toml"
 
 fails: list[str] = []
+ran = 0
 
 
 def expect(what: str, ok: bool, detail: str = "") -> None:
+    global ran
+    ran += 1
     print(f"  {'ok  ' if ok else 'FAIL'}  {what}" + (f"   [{detail}]" if not ok and detail else ""))
     if not ok:
         fails.append(what)
@@ -135,9 +138,18 @@ with tempfile.TemporaryDirectory() as td:
                        capture_output=True, text=True)
 expect("a missing policy is FATAL, not a pass", r.returncode == 2, f"exit={r.returncode}")
 
-MINIMUM_CASES = 14  # FLOOR
-print(f"\n  {len(fails)} failure(s)")
+# Set to what actually runs, and actually compared. Declared-but-never-read is
+# how the same floor failed in #1641: len(fails) counts only failures, so a
+# deleted case left the suite green while it shrank, and a floor below the real
+# count tolerated the shrinkage it existed to catch.
+MINIMUM_CASES = 15  # FLOOR
+print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 if fails:
     for f in fails:
         print(f"    - {f}")
+if ran < MINIMUM_CASES:
+    print(f"  FATAL: {ran} assertions ran, floor is {MINIMUM_CASES}. Cases have "
+          "gone missing; a smaller suite passing is not the same as this suite "
+          "passing.", file=sys.stderr)
+    raise SystemExit(2)
 raise SystemExit(1 if fails else 0)
