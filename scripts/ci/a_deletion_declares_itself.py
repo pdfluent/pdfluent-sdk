@@ -102,8 +102,17 @@ def main(argv: list[str]) -> int:
     # a beta. The trailer carries the literal path, so the two spellings never
     # match and a correctly declared deletion is reported as both undeclared and
     # misplaced at once. This repo already tracks such paths. (codex, #1635)
-    _, out = git("diff", "--diff-filter=D", "--name-only", "-z",
-                 f"{base_sha}..{args.head}")
+    rc, out = git("diff", "--diff-filter=D", "--name-only", "-z",
+                  f"{base_sha}..{args.head}")
+    if rc != 0:
+        # An ignored return code made empty stdout look like an empty set of
+        # deletions: with a bad --head the diff failed and the guard reported OK
+        # having compared nothing. A command that did not run is not a clean
+        # answer. (codex, #1635)
+        print(f"[deletions] FATAL: `git diff {base_sha}..{args.head}` failed "
+              f"(exit {rc}). Refusing to report a clean branch for a comparison "
+              "that did not happen.", file=sys.stderr)
+        return 2
     deleted = {p for p in out.split("\0") if p.strip()}
 
     # The deletion transition that causes the FINAL absence, not "some commit
@@ -118,8 +127,13 @@ def main(argv: list[str]) -> int:
     #
     # What has to carry the trailer is the LAST commit that removes the path,
     # because that is the one whose effect survives to the tip. (codex, #1635)
-    _, log = git("log", "--reverse", "--format=%H%x00%B%x1e",
-                 f"{base_sha}..{args.head}")
+    rc, log = git("log", "--reverse", "--format=%H%x00%B%x1e",
+                  f"{base_sha}..{args.head}")
+    if rc != 0:
+        print(f"[deletions] FATAL: `git log {base_sha}..{args.head}` failed "
+              f"(exit {rc}). The range could not be read, so no commit was "
+              "examined.", file=sys.stderr)
+        return 2
     last_deleter: dict[str, str] = {}     # path -> sha of the last commit removing it
     trailers: dict[str, set[str]] = {}    # sha -> paths it declares
     deletes: dict[str, set[str]] = {}     # sha -> paths it removes

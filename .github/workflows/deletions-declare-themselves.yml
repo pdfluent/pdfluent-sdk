@@ -43,7 +43,7 @@ jobs:
     # Push events keep xfa-fast: a spending limit disables hosted runners, and a
     # check that stops running exactly when the bill does is not a check.
     # (codex, #1635)
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,6 +55,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # ubuntu-latest has no PyYAML, and pr_code_stays_off_the_desktop.py reads
+      # workflow files. Without this every pull request went red on an import.
+      # (codex, #1635)
+      - name: Install PyYAML
+        if: ${{ !cancelled() }}
+        run: pip install --quiet pyyaml
       - name: A pull request stays off the persistent runner
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/pr_code_stays_off_the_desktop.py
