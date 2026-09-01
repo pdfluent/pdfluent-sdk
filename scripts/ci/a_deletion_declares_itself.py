@@ -74,8 +74,14 @@ def main(argv: list[str]) -> int:
               "this work started from, not the one it produced.", file=sys.stderr)
         return 2
 
-    _, out = git("diff", "--diff-filter=D", "--name-only", f"{base_sha}..{args.head}")
-    deleted = {p for p in out.splitlines() if p.strip()}
+    # -z, because core.quotePath defaults to on and git would otherwise C-quote
+    # any path outside ASCII -- "benchmarks/runs/\316\262.md" for a path holding
+    # a beta. The trailer carries the literal path, so the two spellings never
+    # match and a correctly declared deletion is reported as both undeclared and
+    # misplaced at once. This repo already tracks such paths. (codex, #1635)
+    _, out = git("diff", "--diff-filter=D", "--name-only", "-z",
+                 f"{base_sha}..{args.head}")
+    deleted = {p for p in out.split("\0") if p.strip()}
 
     # The deletion transition that causes the FINAL absence, not "some commit
     # deleted it and some commit declared it".
@@ -105,14 +111,25 @@ def main(argv: list[str]) -> int:
                  for line in body.splitlines()
                  if line.lower().startswith("removes-deliberately:")
                  and line.split(":", 1)[1].strip()}
-        # What THIS commit removes, against its first parent.
-        _, own = git("show", "--diff-filter=D", "--name-only", "--format=",
+        # A merge deletes nothing of its own. Against its first parent it shows
+        # every path the merged side removed, so on a `pull_request` run -- where
+        # actions/checkout resolves the SYNTHETIC merge commit GitHub builds from
+        # base and head -- that merge would become the last deleter of everything
+        # in the PR, and its generated message carries no trailer. A correctly
+        # declared deletion would fail. The same holds for an ordinary merge
+        # commit landing on master. The deletion belongs to the commit on the
+        # side branch that performed it, so merges are skipped when choosing the
+        # last deleter. (codex, #1635)
+        parents = git("rev-list", "--parents", "-n", "1", sha)[1].split()
+        is_merge = len(parents) > 2
+        _, own = git("show", "--diff-filter=D", "--name-only", "--format=", "-z",
                      "--first-parent", "-m", sha)
-        removed_here = {x for x in own.splitlines() if x.strip()}
+        removed_here = {x for x in own.split("\0") if x.strip()}
         trailers[sha] = named
-        deletes[sha] = removed_here
-        for path in removed_here:
-            last_deleter[path] = sha
+        deletes[sha] = set() if is_merge else removed_here
+        if not is_merge:
+            for path in removed_here:
+                last_deleter[path] = sha
 
     declared: dict[str, str] = {}
     for path, sha in last_deleter.items():

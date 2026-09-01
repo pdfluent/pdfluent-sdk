@@ -11,7 +11,7 @@ import os, subprocess, sys, tempfile
 from pathlib import Path
 
 GUARD = Path(__file__).with_name("a_deletion_declares_itself.py")
-MINIMUM_CASES = 13  # FLOOR
+MINIMUM_CASES = 21  # FLOOR
 
 
 def clean_env() -> dict[str, str]:
@@ -125,6 +125,69 @@ def main() -> int:
         r = guard(wd, "--base", "master")
         expect("a declared deletion still passes with later commits on top",
                r.returncode == 0, f"exit {r.returncode} {r.stderr[:120]}")
+
+    # A `pull_request` run does not check out the PR head: actions/checkout
+    # resolves the SYNTHETIC merge GitHub builds from base and head. Against its
+    # first parent that merge removes every path the PR removes, and its
+    # generated message carries no trailer -- so it became the last deleter of
+    # everything and a correctly declared deletion failed. An ordinary merge on
+    # master has the same shape. (codex, #1635)
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "remove it\n\nRemoves-deliberately: doomed.txt")
+        run(wd, "checkout", "-q", "master")
+        run(wd, "merge", "-q", "--no-ff", "-m", "Merge pull request #1", "topic")
+        r = guard(wd, "--base", "master~1" if False else "HEAD^1")
+        expect("a declared deletion behind a merge commit passes",
+               r.returncode == 0, f"exit {r.returncode} {r.stderr[:200]}")
+        expect("and the merge is not blamed for it",
+               "Merge pull request" not in r.stderr, r.stderr[:160])
+
+    # Skipping merges must not buy that pass by ignoring them entirely.
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "remove it with no trailer")
+        run(wd, "checkout", "-q", "master")
+        run(wd, "merge", "-q", "--no-ff", "-m", "Merge pull request #2", "topic")
+        r = guard(wd, "--base", "HEAD^1")
+        expect("an undeclared deletion behind a merge still fails",
+               r.returncode == 1, f"exit {r.returncode}")
+        expect("and it names the path", "doomed.txt" in r.stderr, r.stderr[:160])
+
+    # core.quotePath is on by default, so git spells a path outside ASCII as
+    # "runs/\316\262.md" while the trailer carries the literal one. The two
+    # spellings never matched: a correct declaration was reported as undeclared
+    # AND misplaced at once. This repo already tracks such paths. (codex, #1635)
+    BETA = "runs/D\u03b2\u03b3.md"
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        (wd / "runs").mkdir()
+        (wd / BETA).write_text("data\n")
+        run(wd, "add", "-A")
+        run(wd, "commit", "-qm", "add a path outside ASCII")
+        run(wd, "rm", "-q", BETA)
+        run(wd, "commit", "-qm", f"remove it\n\nRemoves-deliberately: {BETA}")
+        r = guard(wd, "--base", "HEAD~1")
+        expect("a declared non-ASCII path passes",
+               r.returncode == 0, f"exit {r.returncode} {r.stderr[:200]}")
+        expect("and it is not called misplaced",
+               "does not delete it" not in r.stderr, r.stderr[:160])
+
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        (wd / "runs").mkdir()
+        (wd / BETA).write_text("data\n")
+        run(wd, "add", "-A")
+        run(wd, "commit", "-qm", "add a path outside ASCII")
+        run(wd, "rm", "-q", BETA)
+        run(wd, "commit", "-qm", "remove it silently")
+        r = guard(wd, "--base", "HEAD~1")
+        expect("an undeclared non-ASCII path fails",
+               r.returncode == 1, f"exit {r.returncode}")
+        expect("and the path is printed readably, not C-quoted",
+               "\\316" not in r.stderr, r.stderr[:160])
 
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))
