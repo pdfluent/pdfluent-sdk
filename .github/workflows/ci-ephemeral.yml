@@ -223,10 +223,27 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release -p pdf-manip --example pdfa_convert_real
+          # Exit 3 is "measured, did not judge" -- this platform has no
+          # recorded floor yet, so the script printed the numbers to record and
+          # deliberately did not gate. Under `set -e` that would fail the job
+          # exactly like a real failure, which would keep every pull request red
+          # until somebody commits a Linux floor: the outage the exit-3 branch
+          # exists to avoid, reintroduced by the caller. (codex, #1617)
+          #
+          # 0 and 3 pass; anything else fails. When "linux" joins BLOKKEERT this
+          # stays correct, because a gated platform never returns 3.
+          set +e
           python3 scripts/ci/pdfa_output_conformance_gate.py \
             --converter target/release/examples/pdfa_convert_real \
             --verapdf /opt/verapdf/verapdf \
             --out "${RUNNER_TEMP}/pdfa-output"
+          rc=$?
+          set -e
+          case "$rc" in
+            0) ;;
+            3) echo "::notice::PDF/A gate measured but did not judge (no floor for this platform yet). See the log for the numbers to record." ;;
+            *) exit "$rc" ;;
+          esac
 
       # What used to be four workflows, each creating its own instance. One push
       # fired them together and Hetzner made five cpx42s inside five minutes
