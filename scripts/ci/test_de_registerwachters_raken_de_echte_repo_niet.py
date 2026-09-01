@@ -39,9 +39,22 @@ GIT = "/usr/bin/git"
 
 
 def run(*args: str, cwd: Path, env: dict[str, str] | None = None):
+    """Run git for the fixtures, with `GIT_*` stripped unless asked otherwise.
+
+    This defaulted to inheriting the environment, and that was a real hazard
+    rather than a tidiness point. Wired into the local gate, this test runs from
+    the pre-push hook, where `GIT_DIR` points at the repository being pushed --
+    so every `init` and `commit` meant for a throwaway fixture operated on the
+    real repository instead. It rewrote this branch to a fixture commit and left
+    the working tree carrying a file called `f`.
+
+    The test that exists to prove the guards cannot reach the real repository
+    reached it, and by exactly the mechanism it documents. Only the deliberate
+    control below gets a dirty environment, and it names its target explicitly.
+    """
     return subprocess.run(
         [GIT, *args], cwd=cwd, capture_output=True, text=True, check=False,
-        env=env if env is not None else os.environ.copy(),
+        env=env if env is not None else schone_omgeving(),
     )
 
 
@@ -107,11 +120,12 @@ def main() -> int:
 
         # --- and with a clean environment it survives -----------------------
         work, hook_env = een_repo_met_ongepusht_werk(tmp / "b")
-        os.environ.update(hook_env)
+        # `hook_env` is handed over explicitly rather than pushed into
+        # `os.environ`: mutating this process's environment leaks into every
+        # later fixture call, and `schone_omgeving()` would then be scrubbing a
+        # variable this test had set itself.
         run("fetch", "--quiet", "--filter=blob:none", "origin", "+refs/heads/*:refs/heads/*",
             cwd=tmp / "b" / "upstream.git", env=schone_omgeving())
-        for key in ("GIT_DIR", "GIT_WORK_TREE"):
-            os.environ.pop(key, None)
         if tip(work) != "UNPUSHED WORK":
             failures.append("a clean environment did not protect the unpushed commit")
 
@@ -189,6 +203,47 @@ def main() -> int:
                 "a hayro-origin repository that is the script's own checkout was "
                 "accepted -- the origin check passes there, so only the "
                 "'not this repository' clause can refuse it"
+            )
+
+        # A linked worktree handed over as HAYRO_CLONE is a legitimate checkout.
+        # Its git-dir is `<main>/.git/worktrees/<name>`, which matches neither
+        # `<clone>` nor `<clone>/.git`, so comparing git-dirs refused it before
+        # anything was scored. Common-dirs are the same for main and linked
+        # worktrees, which is why the identity question is asked that way.
+        wt = tmp / "linked"
+        run("worktree", "add", "-q", str(wt), cwd=nonbare)
+        if reg.de_fetch_gaat_naar_de_cache(wt) is not None:
+            failures.append(
+                "a linked worktree of a hayro clone was refused as a fetch target"
+            )
+
+        # The case common-dirs exist for: the guard running inside a worktree
+        # while the *main* checkout is handed to it as the target. Their
+        # git-dirs differ (`<main>/.git` against
+        # `<main>/.git/worktrees/<name>`), so a git-dir comparison calls them
+        # different repositories and lets the main checkout through. Their
+        # common-dirs are equal, which is the whole point.
+        hoofd = tmp / "guarded"
+        (hoofd / "scripts" / "ci").mkdir(parents=True)
+        run("init", "-q", str(hoofd), cwd=tmp)
+        run("remote", "add", "origin", "https://github.com/LaurenzV/hayro.git", cwd=hoofd)
+        (hoofd / "f").write_text("x")
+        run("add", "f", cwd=hoofd)
+        run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x", cwd=hoofd)
+        zijtak = tmp / "guarded-wt"
+        run("worktree", "add", "-q", str(zijtak), cwd=hoofd)
+        # the guard lives in the worktree, and is asked about the main checkout
+        (zijtak / "scripts" / "ci").mkdir(parents=True, exist_ok=True)
+        (zijtak / "scripts/ci" / script.name).write_bytes(script.read_bytes())
+        spec_w = importlib.util.spec_from_file_location(
+            "reg_worktree", zijtak / "scripts/ci" / script.name
+        )
+        reg_w = importlib.util.module_from_spec(spec_w)
+        spec_w.loader.exec_module(reg_w)
+        if reg_w.de_fetch_gaat_naar_de_cache(hoofd) is None:
+            failures.append(
+                "running from a worktree, the main checkout was accepted as a fetch "
+                "target -- git-dirs differ between the two, only common-dirs match"
             )
 
         # And somewhere that *is* a hayro clone by name but not by origin.
