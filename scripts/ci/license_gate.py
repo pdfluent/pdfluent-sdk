@@ -282,10 +282,20 @@ def eigen_verklaring(rel: str, gedeclareerd: str | None, pol: dict) -> tuple[str
                          f"docs/LICENSE_POLICY.toml [own_packages] expects "
                          f"{verwacht!r}")
     if NIET_SPDX.match(gedeclareerd):
+        # "every channel can spell it now" was the reasoning here until 02-09-2026,
+        # and npm's own validator falsifies it: validate-npm-package-license 3.0.4
+        # rejects a LicenseRef expression outright. A channel that cannot carry the
+        # canonical string needs a spelling of its own -- but a declared one, named
+        # in [channel_representation] with the expression it stands for, matched
+        # exactly. That is the difference between a representation and an escape:
+        # the escape skipped the comparison, this one still makes it.
+        weergave = pol.get("channel_representation", {}).get(rel)
+        if weergave and gedeclareerd == weergave.get("publishes") == verwacht:
+            return weergave.get("canonical", oordeel), None
         return oordeel, (f"{rel} declares {gedeclareerd!r}, which is not an SPDX "
-                         f"expression and so cannot be compared with anything. "
-                         f"[own_packages] expects {verwacht!r}; every channel can "
-                         "spell it now, so this is drift and not an exemption")
+                         f"expression. [own_packages] expects {verwacht!r} and no "
+                         f"[channel_representation] entry declares it, so it cannot "
+                         "be compared with anything")
     if gedeclareerd != verwacht:
         return oordeel, (f"{rel} declares {gedeclareerd!r}; "
                          f"docs/LICENSE_POLICY.toml [own_packages] expects "
@@ -317,6 +327,35 @@ def scan_npm(pol: dict) -> list[tuple[str, str]]:
         uit.append((rel, oordeel))
         for naam, _v in (d.get("dependencies") or {}).items():
             uit.append((f"npm {naam}", "UNKNOWN (runtime dependency, licence unread)"))
+
+    # What the publish pipeline WRITES into the generated manifest. The docstring
+    # above used to argue that pkg/package.json need not be read because wasm-pack
+    # copies the licence from Cargo.toml. Two post-build steps overwrite it before
+    # `npm publish`, so that argument held for the file on disk and not for the
+    # package on the registry -- the gate said "canonical" while the channel
+    # published something else. The artefact is gitignored and absent in CI, so
+    # what is checked here is the code that produces it.
+    weergave = pol.get("channel_representation", {}).get("crates/xfa-wasm/pkg/package.json")
+    if weergave:
+        verwacht_str = weergave["publishes"]
+        for bron, patroon in (
+            (REPO / ".github/workflows/wasm.yml", r"""pkg\.license\s*=\s*['"]([^'"]+)['"]"""),
+            (REPO / "scripts/release/transform-wasm-pkg.sh", r"""d\[.license.\]\s*=\s*['"]([^'"]+)['"]"""),
+        ):
+            if not bron.is_file():
+                raise Onleesbaar(f"{bron.relative_to(REPO)} is missing")
+            gevonden = re.findall(patroon, bron.read_text(encoding="utf-8"))
+            if not gevonden:
+                uit.append((f"{bron.relative_to(REPO)} [publish path]",
+                            "UNKNOWN (no licence assignment found; the transform "
+                            "changed shape and this check no longer reads it)"))
+                continue
+            for waarde in gevonden:
+                if waarde != verwacht_str:
+                    uit.append((f"{bron.relative_to(REPO)} [publish path]",
+                                f"UNKNOWN (writes {waarde!r} into the published "
+                                f"manifest; [channel_representation] declares "
+                                f"{verwacht_str!r})"))
 
     # The wasm package, from the manifest wasm-pack reads rather than the one it
     # writes.
