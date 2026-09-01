@@ -103,9 +103,29 @@ jobs:
       - name: Every needs names a job that exists
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/workflow_jobs_exist.py
-      - name: Every self-hosted label has a runner
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/every_label_has_a_runner.py
+      # `every_label_has_a_runner.py` used to run here and could not work.
+      # It printed
+      #
+      #     SKIPPED (not a pass): could not read the runner list, so no label
+      #     was checked against anything.
+      #
+      # on a green step, every run. Two reasons, and the second is the one that
+      # settles it: `gh` is not installed on this runner, and -- measured --
+      # `administration` is not a settable scope for GITHUB_TOKEN at all.
+      # actionlint lists every available scope and it is absent, so the
+      # token-over-HTTP route that fixed the never-green guard cannot work
+      # here: `/actions/runners` needs a permission the workflow token can
+      # never hold.
+      #
+      # So this is not a wiring problem to solve later. It needs a PAT stored
+      # as a secret, which is a security decision nobody has taken, and until
+      # then a step here can only be decoration. It runs in
+      # scripts/ci/local_ci_gate.sh, where `gh` has a keyring and it genuinely
+      # checks (#290).
+      #
+      # Do not re-add it without either a PAT or a different signal. When #1605
+      # lands, register it in that guard's by-hand list or it reads as an
+      # orphan.
       # `if: ${{ !cancelled() }}` on every one of these, because this job runs
       # its guards in sequence and stops at the first failure. On 31-08-2026 it
       # was failing on step four -- "Orchestration stays on hosted runners" --
