@@ -11,7 +11,7 @@ import os, subprocess, sys, tempfile
 from pathlib import Path
 
 GUARD = Path(__file__).with_name("a_deletion_declares_itself.py")
-MINIMUM_CASES = 7  # FLOOR
+MINIMUM_CASES = 9  # FLOOR
 
 
 def clean_env() -> dict[str, str]:
@@ -103,8 +103,28 @@ def main() -> int:
         run(wd, "add", "-A")
         run(wd, "commit", "-qm", "later\n\nRemoves-deliberately: doomed.txt")
         r = guard(wd, "--base", "master")
-        expect("a trailer anywhere in the range counts", r.returncode == 0,
-               f"exit {r.returncode} {r.stderr[:120]}")
+        # This case used to assert the opposite, and asserting it is what made the
+        # defect look intentional: a trailer in a LATER commit was accepted for a
+        # deletion in an earlier one, so the deleting commit was never examined.
+        # The trailer was chosen over a register file precisely because it travels
+        # with the deletion through rebase and cherry-pick; accepting it anywhere
+        # in the range lets the two come apart in exactly those operations.
+        # (codex, #1635)
+        expect("a trailer on a LATER commit does not count", r.returncode == 1,
+               f"exit {r.returncode}")
+        expect("and it says the trailer is on the wrong commit",
+               "does not delete it" in r.stderr, r.stderr[:160])
+
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "remove it\n\nRemoves-deliberately: doomed.txt")
+        (wd / "x.txt").write_text("x\n")
+        run(wd, "add", "-A")
+        run(wd, "commit", "-qm", "unrelated work after it")
+        r = guard(wd, "--base", "master")
+        expect("a declared deletion still passes with later commits on top",
+               r.returncode == 0, f"exit {r.returncode} {r.stderr[:120]}")
 
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))
