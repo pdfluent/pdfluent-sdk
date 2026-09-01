@@ -20794,6 +20794,23 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
 
             // Build set of invalid codes using font's cmap.
             let mut invalid_codes = HashSet::new();
+
+            // Codes the font's own ToUnicode calls a space are never condemned.
+            //
+            // A code with no glyph draws nothing, which is what a space looks
+            // like, and `fix_simple_text_string` "repairs" it by writing 0x20
+            // over it. That assumes 0x20 means space. In these fonts it does
+            // not: their ToUnicode maps 0x20 to `.`, `A`, `r`, `S` or `G`, so
+            // the repair replaces an invisible space with visible ink that the
+            // original never drew. Measured on 002_002193: the spaces are codes
+            // 0x01, 0x04 and 0x09, all three mapping to U+0020 in the source's
+            // own ToUnicode -- so the document extracted correctly until we
+            // rewrote it (#210).
+            let ruimte_codes: HashSet<u8> = read_font_to_unicode_map(doc, dict)
+                .into_iter()
+                .filter(|(_, ch)| *ch == ' ')
+                .map(|(code, _)| code)
+                .collect();
             // Tracks whether any font-program parser produced an answer at
             // all. Only then is "no invalid codes" meaningful; the widths
             // fallback below exists for programs that cannot be parsed.
@@ -20879,7 +20896,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         None => cmap_has_glyph(code),
                     };
 
-                    if !has_glyph {
+                    if !has_glyph && !ruimte_codes.contains(&code) {
                         invalid_codes.insert(code);
                     }
                 }
@@ -20931,7 +20948,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         has_glyph = enc_map.get(&code).map(|&gid| gid != 0).unwrap_or(false);
                     }
 
-                    if !has_glyph {
+                    if !has_glyph && !ruimte_codes.contains(&code) {
                         invalid_codes.insert(code);
                     }
                 }
@@ -20966,7 +20983,9 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         ".notdef".to_string()
                     };
 
-                    if glyph_name == ".notdef" || !available_glyphs.contains_key(&glyph_name) {
+                    if (glyph_name == ".notdef" || !available_glyphs.contains_key(&glyph_name))
+                        && !ruimte_codes.contains(&code)
+                    {
                         invalid_codes.insert(code);
                     }
                 }
@@ -20989,12 +21008,16 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
             // is not defined by the font dictionary and should be stripped.
             let first_bound = first_char.min(256);
             for code in 0..first_bound {
-                invalid_codes.insert(code as u8);
+                if !ruimte_codes.contains(&(code as u8)) {
+                    invalid_codes.insert(code as u8);
+                }
             }
             let last_bound = last_char.min(255);
             if last_bound < 255 {
                 for code in (last_bound + 1)..=255 {
-                    invalid_codes.insert(code as u8);
+                    if !ruimte_codes.contains(&(code as u8)) {
+                        invalid_codes.insert(code as u8);
+                    }
                 }
             }
 
@@ -27198,6 +27221,53 @@ mod woordscheiding_tests {
     fn a_font_that_maps_cid_zero_to_ffff_does_not() {
         let (doc, font) = doc_with_tounicode(tounicode(&[("0000", "FFFF")]));
         assert!(!tounicode_blank_cids(&doc, &font).contains(&0));
+    }
+
+    /// A simple font's space code is whatever its ToUnicode says it is (#210).
+    ///
+    /// `002_002193` carries its spaces as codes `0x09`, `0x04` and `0x01`, each
+    /// mapping to U+0020 in the font's own ToUnicode — which is why the source
+    /// extracted 3265 spaces correctly. Those codes have no glyph, so the PDF/A
+    /// repair condemned them and wrote `0x20` over them; and in these fonts
+    /// `0x20` is not a space but `.`, `A`, `r` or `G`. An invisible space became
+    /// visible ink the original never drew.
+    ///
+    /// The same assumption as the CID-0 fault fixed above, one layer down: there
+    /// that CID 0 means `.notdef`, here that `0x20` means space. Both are
+    /// contradicted by a table in the same file.
+    #[test]
+    fn a_code_the_font_calls_a_space_is_not_condemned() {
+        let (doc, font) = doc_with_tounicode(tounicode(&[("0009", "0020"), ("0020", "002E")]));
+        let spaces: std::collections::HashSet<u8> = read_font_to_unicode_map(&doc, &font)
+            .into_iter()
+            .filter(|(_, ch)| *ch == ' ')
+            .map(|(code, _)| code)
+            .collect();
+        assert!(
+            spaces.contains(&0x09),
+            "code 0x09 maps to U+0020 and carries this font's spaces"
+        );
+        assert!(
+            !spaces.contains(&0x20),
+            "0x20 maps to '.' here, so substituting it would draw a period"
+        );
+    }
+
+    /// The acceptance side: an ordinary font is not disturbed.
+    ///
+    /// A bound has two failure directions, and every other test here asks
+    /// whether the wrong thing is rejected. This one asks whether the right
+    /// thing still passes: where `0x20` really is the space, it stays the space.
+    #[test]
+    fn an_ordinary_font_still_calls_0x20_the_space() {
+        let (doc, font) = doc_with_tounicode(tounicode(&[("0020", "0020"), ("0041", "0041")]));
+        let spaces: std::collections::HashSet<u8> = read_font_to_unicode_map(&doc, &font)
+            .into_iter()
+            .filter(|(_, ch)| *ch == ' ')
+            .map(|(code, _)| code)
+            .collect();
+        assert!(spaces.contains(&0x20), "0x20 is the space in a normal font");
+        assert!(!spaces.contains(&0x41), "0x41 is 'A', not a space");
     }
 
     #[test]
