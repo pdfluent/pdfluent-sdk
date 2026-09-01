@@ -193,6 +193,22 @@ def de_fetch_gaat_naar_de_cache(clone, upstream_url: str) -> str | None:
     # that is deliberate: this guard verifies our fork points against upstream,
     # and a repository that cannot say it is upstream is not something to verify
     # against silently. The refusal says which URLs were seen.
+    # `git remote -v`, not `git config --get remote.origin.url`.
+    #
+    # This is what makes the check see a rewritten URL. `insteadOf` in the
+    # repository's own config redirects fetches, and the seal cannot switch that
+    # off -- `GIT_CONFIG_NOSYSTEM` and `GIT_CONFIG_GLOBAL` reach the system and
+    # global files only. Measured on a cache whose local config redirects to a
+    # decoy:
+    #
+    #     config --get remote.origin.url  ->  the real hayro URL   (raw)
+    #     remote -v                       ->  file:///tmp/decoy    (rewritten)
+    #
+    # So the raw read approves while the fetch goes elsewhere; asking `remote`
+    # compares against what git will actually contact. A separate check for
+    # local `insteadOf` entries was written first and then removed: its mutation
+    # showed the case already refused here, and the refusal already names the
+    # decoy it saw.
     remotes = git("remote", "-v", cwd=clone)
     urls = sorted({
         regel.split()[1]
