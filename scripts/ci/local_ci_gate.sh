@@ -114,6 +114,7 @@ run errtests  cargo test -q -p pdfluent --test error_codes_stable --test process
 run prstale   python3 scripts/ci/pr_staleness.py
 run sweep     python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
 run sweepsafe python3 scripts/ci/test_sweep_fails_safe.py
+run regfetch  python3 scripts/ci/test_de_registerwachters_raken_de_echte_repo_niet.py
 run reaporder python3 scripts/ci/reaping_happens_after_the_work.py
 run guardrun  python3 scripts/ci/guards_do_not_hide_behind_each_other.py
 run buildmnt  bash scripts/ci/test_desktop_env.sh

@@ -57,6 +57,19 @@ paden = [
   # commit changes nothing else: the suffix allowlist becomes a binary skiplist,
   # and the read becomes encoding-aware. Hand back on T3's return.
   "scripts/ci/internal_stays_internal.py",
+  # Claimed 02-09-2026, narrowly and visibly, for #308. The register guards'
+  # safety regression (`test_de_registerwachters_raken_de_echte_repo_niet.py`)
+  # is t1's, and a guard that runs nowhere is worse than no guard: it leaves
+  # `every_guard_has_a_job.py` reporting an orphan on every CI run while the
+  # regression itself never executes. Wiring it means two lines in t2's files,
+  # so the claim is here rather than in the diff alone.
+  #
+  # This is the map's own mechanism for reaching outside a territory, not a way
+  # around t2: it comes past review, and t2 can take these back at their next
+  # ci.yml change if they want the step elsewhere.
+  ".github/workflows/ci.yml",
+  "scripts/ci/local_ci_gate.sh",
+  "scripts/ci/test_de_registerwachters_raken_de_echte_repo_niet.py",
 ]
 # NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
 # parity tests are edited by this change but stay with whoever owns the SDK
