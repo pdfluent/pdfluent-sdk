@@ -32,6 +32,7 @@ Exit codes:
 from __future__ import annotations
 
 import fnmatch
+import os
 import subprocess
 import sys
 import tomllib
@@ -74,11 +75,55 @@ def changed_files() -> tuple[list[str], str] | None:
 
 
 def current_branch() -> str | None:
+    """The branch this work is on, or None if it genuinely cannot be known.
+
+    `rev-parse --abbrev-ref HEAD` answers "HEAD" on a detached checkout, and
+    "HEAD" contains no slash, so the branch half of this guard skipped itself and
+    the run still printed the green overlap line. Anyone reading that line read
+    "the gate is green" for a check that had run half of itself.
+
+    That is not hypothetical and it is not rare: every worktree in the #1543
+    relay on 01-09-2026 was detached, so every territory claim made that day was
+    a half measurement -- including the ones I made about my own paths. Reported
+    by codex as a P1 on #296, and independently rediscovered by t3 with a better
+    measurement than the original find.
+
+    So: ask git, then ask the CI environment, then ask which branches point here.
+    If none of them answers, the caller must say so out loud rather than pass.
+    """
     out = subprocess.run(
         [GIT, "rev-parse", "--abbrev-ref", "HEAD"],
         cwd=ROOT, capture_output=True, text=True, check=False,
     )
-    return out.stdout.strip() or None if out.returncode == 0 else None
+    name = out.stdout.strip() if out.returncode == 0 else ""
+    if name and name != "HEAD":
+        return name
+
+    # CI checks out a detached commit and puts the name in the environment.
+    for var in ("GITHUB_HEAD_REF", "GITHUB_REF_NAME", "CI_COMMIT_REF_NAME",
+                "TERRITORY_BRANCH"):
+        value = os.environ.get(var, "").strip()
+        if value and value != "HEAD":
+            return value
+
+    # A worktree detached at a commit a branch still points to -- the shape every
+    # relay worktree had. Prefer a name that looks like a territory claim; a
+    # commit can carry several refs and only one of them answers this question.
+    pointing = subprocess.run(
+        [GIT, "branch", "--points-at", "HEAD", "--format=%(refname:short)"],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    # `--points-at` also prints git's pseudo-entry "(HEAD detached at <sha>)".
+    # Taking that as a branch name produced exit 3 with a message about a branch
+    # nobody named, which is the right verdict reached by the wrong route -- and a
+    # verdict reached by the wrong route stops being right the moment the route
+    # changes.
+    names = [n.strip() for n in pointing.stdout.splitlines()
+             if n.strip() and not n.startswith("(")]
+    for n in names:
+        if "/" in n:
+            return n
+    return names[0] if names else None
 
 
 def main() -> int:
@@ -113,6 +158,13 @@ def main() -> int:
                     "Two owners for one path is the collision this map exists to prevent."
                 )
 
+    # KNOWN LIMIT, worth stating rather than discovering (t3, 01-09-2026): on a
+    # shared branch this attributes every changed file to whoever the branch name
+    # says, so a relay branch that several terminals resolved reads as one
+    # terminal reaching everywhere. Narrowing the base to the pusher's own
+    # commits would fix it and is not done here; until then a shared branch needs
+    # the per-path review the relay used, not this check alone.
+
     # --- 2. the branch must have stayed inside its own -------------------
     branch = current_branch()
     checked_files = 0
@@ -146,6 +198,17 @@ def main() -> int:
                 f"(that belongs to {', '.join(other)}). "
                 "Claim it in .claude/territories.toml, or leave it to its owner."
             )
+    elif branch is None or branch == "HEAD":
+        # Nothing could name this checkout, so the branch half did not run. It
+        # must not fall through to the green summary below: a half-run check that
+        # prints the same line as a whole one is worse than no check, because the
+        # line is what people read. (#296)
+        print("SKIPPED (not a pass): detached HEAD and no branch name from the "
+              "environment or from a ref pointing here, so this checked the map "
+              "for overlaps but NOT whether this work stayed inside its own "
+              "territory. Set TERRITORY_BRANCH=<territory>/<what> to check it.",
+              file=sys.stderr)
+        return 3
     elif branch and branch not in ("master", "HEAD"):
         # A branch that names no territory used to be skipped, which made opting
         # out free: rename `t1/x` to `upstream/x` and nothing checks you again.
