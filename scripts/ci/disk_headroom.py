@@ -85,6 +85,19 @@ MOUNTINFO = Path(os.environ.get("DISK_HEADROOM_MOUNTINFO", "/proc/self/mountinfo
 # VM". Space reported on one of these is real: it is the host's own accounting.
 HOST_VOLUME_FSTYPES = ("9p", "drvfs", "virtiofs", "cifs")
 
+# ...but not every one of those is a candidate for "the volume the vhdx grows
+# into". CIFS is a network share. On this runner /mnt/storagebox is a CIFS
+# storage box with no relation to the Windows disk holding the distro image, so
+# with /mnt/c unmounted the search below would have picked the storage box and
+# reported its free space as the vhdx's headroom -- a full C: passing the guard
+# on the strength of a remote share's spare room. (codex, #1616)
+#
+# It stays in HOST_VOLUME_FSTYPES because the check above it is a different
+# question: if the repository itself lives on the share, then the share really
+# is what bounds it and df is telling the truth. Being the carrier is evidence;
+# merely being mounted is not.
+NOT_A_BACKING_VOLUME = ("cifs",)
+
 
 class CannotMeasure(Exception):
     """Refuse to answer rather than answer from the number known to be wrong."""
@@ -142,11 +155,21 @@ def host_volume_for(path: Path) -> Path:
         # Already on a host volume -- df is telling the truth here.
         return Path(carrier[0])
 
-    host_mounts = [Path(point) for point, fstype in rows if fstype in HOST_VOLUME_FSTYPES]
+    host_mounts = [
+        Path(point) for point, fstype in rows
+        if fstype in HOST_VOLUME_FSTYPES and fstype not in NOT_A_BACKING_VOLUME
+    ]
     if not host_mounts:
+        genegeerd = sorted(
+            {point for point, fstype in rows if fstype in NOT_A_BACKING_VOLUME}
+        )
+        extra = (
+            f" ({', '.join(genegeerd)} is a network share, not the disk the image grows into)"
+            if genegeerd else ""
+        )
         raise CannotMeasure(
             "WSL is running but no Windows volume is mounted, so how much the root "
-            "filesystem can still grow cannot be determined"
+            f"filesystem can still grow cannot be determined{extra}"
         )
     # C: by preference: WSL keeps its distro vhdx on the system drive unless it
     # was deliberately moved, and that is the volume the vhdx grows into.
