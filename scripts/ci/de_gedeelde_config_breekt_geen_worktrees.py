@@ -112,9 +112,13 @@ def waarde(tekst: str, sectie: str, sleutel: str) -> str | None:
         kaal = regel.split("#", 1)[0].split(";", 1)[0].strip()
         if not kaal:
             continue
-        kop = re.match(r"\[([^\]\s]+)", kaal)
+        kop = re.match(r"\[([^\]\s]+)(\s+\"[^\"]*\")?\s*\]", kaal)
         if kop:
-            huidige = kop.group(1).lower()
+            # `[core "demo"]` is core.demo.*, a different key entirely -- git
+            # prints it as `core.demo.bare` and leaves `core.bare` unset. Reading
+            # it as `core` made the guard report every worktree broken over a
+            # subsection that affects nothing. (Codex, #1609.)
+            huidige = None if kop.group(2) else kop.group(1).lower()
             continue
         if huidige != sectie:
             continue
@@ -125,6 +129,38 @@ def waarde(tekst: str, sectie: str, sleutel: str) -> str | None:
         rauw = m.group(2)
         gevonden = "true" if rauw is None else rauw.strip().strip('"')
     return gevonden
+
+
+def volg_includes(pad: pathlib.Path, tekst: str, diepte: int = 0) -> str:
+    """Inline `[include] path = ...`, which git applies to every worktree.
+
+    Only from the shared config, and only `include` -- not
+    `includeIf`, whose conditions are not evaluated here, and not the global or
+    per-worktree files, which are not what this checks. A file that sets
+    `core.bare` through an include breaks worktrees exactly as directly as one
+    that sets it inline. (Codex, #1609.)
+    """
+    if diepte > 5:  # git's own limit is 10; this is a guard against a loop.
+        return tekst
+    uit = [tekst]
+    huidige = None
+    for regel in tekst.splitlines():
+        kaal = regel.split("#", 1)[0].split(";", 1)[0].strip()
+        kop = re.match(r"\[([^\]\s]+)(\s+\"[^\"]*\")?\s*\]", kaal)
+        if kop:
+            huidige = None if kop.group(2) else kop.group(1).lower()
+            continue
+        if huidige != "include":
+            continue
+        m = re.match(r"path\s*=\s*(.+)", kaal)
+        if not m:
+            continue
+        doel = pathlib.Path(m.group(1).strip().strip('"')).expanduser()
+        if not doel.is_absolute():
+            doel = (pad.parent / doel).resolve()
+        if doel.is_file():
+            uit.append(volg_includes(doel, doel.read_text(errors="replace"), diepte + 1))
+    return "\n".join(uit)
 
 
 def main() -> int:
@@ -138,13 +174,26 @@ def main() -> int:
               "repo en niet met deze controle.", file=sys.stderr)
         return 1
 
-    tekst = pad.read_text(errors="replace")
+    tekst = volg_includes(pad, pad.read_text(errors="replace"))
     klachten: list[tuple[str, str]] = []
 
     bare = waarde(tekst, "core", "bare")
-    if bare is not None and bare.lower() in ("true", "yes", "on", "1"):
+    # git's false spellings. Anything outside both lists is not "not true": git
+    # refuses to run at all with `fatal: bad boolean config value`, which breaks
+    # worktrees just as completely. (Codex, #1609.)
+    ONWAAR = ("false", "no", "off", "0", "")
+    if bare is not None and bare.lower() not in ONWAAR and bare.lower() not in (
+        "true", "yes", "on", "1",
+    ):
         klachten.append((
-            "core.bare = true",
+            f"core.bare = {bare}",
+            "git cannot parse that as a boolean and refuses to run: `fatal: bad "
+            "boolean config value`. Set it to false:\n"
+            "    /usr/bin/git config --replace-all core.bare false",
+        ))
+    elif bare is not None and bare.lower() in ("true", "yes", "on", "1"):
+        klachten.append((
+            f"core.bare = {bare}",
             "Elke worktree geeft nu `fatal: this operation must be run in a work "
             "tree` op commit, status en rev-parse --show-toplevel, terwijl "
             "--git-dir het wel doet. Terugzetten met:\n"

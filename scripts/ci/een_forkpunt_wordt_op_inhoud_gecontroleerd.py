@@ -216,8 +216,22 @@ def main() -> int:
             continue
         best = max(n for n, _ in scored)
         if best == 0:
-            # Nothing matches anywhere: this crate has diverged past the method's
-            # reach, which is pdf-render's case and is recorded as such.
+            # Nothing matches at any revision. That is not "fine, skip it": the
+            # entry names a fork point, so something claims to be verifiable and
+            # nothing can verify it. The structural guard passes because the
+            # field exists, and the version check passes anywhere inside one
+            # version window -- so an unverifiable merge base stayed green
+            # through all three. (Codex, #1609.)
+            #
+            # pdf-render is this case and carries `niet_mergen` instead, which is
+            # the honest record; an entry reaching here has a fork point it
+            # should not have.
+            problems.append(
+                f"{crate}: not one of {len(ours)} files is byte-identical to upstream at any "
+                f"revision, so `forkpunt = {point}` cannot be checked by content. Either it is "
+                "wrong, or this crate has diverged past the method's reach -- in which case it "
+                "belongs under `niet_mergen`, not under a fork point."
+            )
             continue
 
         checked += 1

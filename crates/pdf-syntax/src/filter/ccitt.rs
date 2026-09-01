@@ -29,14 +29,37 @@ pub(crate) fn decode(
     // The upper bound is safe: image_params.height is what the pixel-limit
     // check in Stream::decoded_image was applied to, and the count actually
     // produced is checked against that limit again below.
-    let rows = params
+    let mut rows = params
         .get::<u32>(ROWS)
         .unwrap_or(0)
         .max(image_params.height);
+
+    let columns = params.get::<usize>(COLUMNS).unwrap_or(1728) as u32;
+
+    // Clamp BEFORE decoding, not after. The check further down rejected an
+    // over-large image only once hayro_ccitt::decode had already grown the
+    // output to roughly columns * rows / 8 bytes -- so the limit was enforced
+    // after the memory it exists to bound had been allocated. (Codex, #1609.)
+    //
+    // The limit comes from the stream's context via ImageDecodeParams, because
+    // `params` here is /DecodeParms and is Dict::default() when the stream has
+    // none, whose context carries no limits.
+    if let Some(limit) = image_params.pixel_limit
+        && columns > 0
+    {
+        let max_rows = limit / columns;
+        if rows > max_rows {
+            log::warn!(
+                "CCITT asks for {rows} rows of {columns} columns, over the pixel limit \
+                 {limit}; decoding at most {max_rows}"
+            );
+            rows = max_rows;
+        }
+    }
     let end_of_block = params.get::<bool>(END_OF_BLOCK).unwrap_or(true);
 
     let settings = DecodeSettings {
-        columns: params.get::<usize>(COLUMNS).unwrap_or(1728) as u32,
+        columns,
         rows,
         end_of_block,
         end_of_line: params.get::<bool>(END_OF_LINE).unwrap_or(false),
@@ -140,7 +163,11 @@ pub(crate) fn decode(
     // one hole opened another. (Codex, #1609.)
     //
     // So the limit is applied again, to what was actually produced.
-    if let Some(limit) = params.ctx().load_limits().image_pixel_limit() {
+    // Belt and braces: the clamp above bounds what the decoder is asked for, and
+    // this bounds what it produced. Both are cheap and they fail differently --
+    // the clamp truncates a hostile image, this refuses one that somehow grew
+    // past the cap anyway.
+    if let Some(limit) = image_params.pixel_limit {
         let pixels = u64::from(settings.columns).saturating_mul(u64::from(decoder.decoded_rows));
         if pixels > u64::from(limit) {
             log::warn!(
@@ -188,19 +215,24 @@ mod upstream_hardening_tests {
     /// Taken from upstream's own regression fixture for LaurenzV/hayro#1258.
     const ONE_ROW_G3: &[u8] = &[0x35, 0x14];
 
-    /// The same dictionary, but read through a context that carries a pixel
-    /// limit -- which `Dict::from_bytes` cannot give us, since it uses a dummy
-    /// context with the defaults.
-    fn params_with_pixel_limit(src: &[u8], limit: u32) -> Dict<'_> {
-        let limits = crate::pdf::PdfLoadLimits::new().max_image_pixels(u64::from(limit));
-        Reader::new(src)
-            .read_with_context::<Dict<'_>>(&ReaderContext::dummy_with_limits(limits))
-            .expect("the test's own dictionary must parse")
-    }
-
     fn params_with(height: u32) -> ImageDecodeParams {
         ImageDecodeParams {
             height,
+            ..Default::default()
+        }
+    }
+
+    /// The limit as a stream really carries it: on ImageDecodeParams, set by
+    /// Stream::decoded_image from the stream's own context.
+    ///
+    /// The first version of these tests set it on the /DecodeParms dictionary
+    /// instead, which is where the CCITT decoder used to read it -- and that is
+    /// precisely the path a stream without /DecodeParms does not have. The test
+    /// passed while the check it tested was unreachable in production.
+    fn params_with_limit(height: u32, limit: u32) -> ImageDecodeParams {
+        ImageDecodeParams {
+            height,
+            pixel_limit: Some(limit),
             ..Default::default()
         }
     }
@@ -290,12 +322,14 @@ mod upstream_hardening_tests {
     /// (Codex, #1609.)
     #[test]
     fn decoded_rows_are_checked_against_the_pixel_limit_too() {
-        // Declared height 1, so the limit upstream of here is satisfied. The
-        // data decodes one row of eight columns: 8 pixels against a limit of 4.
-        let params = params_with_pixel_limit(b"<< /K 0 /Columns 8 /Rows 1 >>", 4);
+        // Declared height 1, so the check before decoding is satisfied. Eight
+        // columns against a limit of 4 pixels: the row count is clamped to zero
+        // before the decoder allocates anything.
+        let params = Dict::from_bytes(b"<< /K 0 /Columns 8 /Rows 1 >>").unwrap();
+        let decoded = decode(ONE_ROW_G3, params, &params_with_limit(1, 4));
         assert!(
-            decode(ONE_ROW_G3, params, &params_with(1)).is_none(),
-            "8 decoded pixels must not pass a 4-pixel limit"
+            decoded.is_none() || decoded.unwrap().image_data.unwrap().height == 0,
+            "8 pixels must not be produced under a 4-pixel limit"
         );
     }
 
@@ -303,8 +337,9 @@ mod upstream_hardening_tests {
     /// in a document with a limit set would vanish.
     #[test]
     fn an_image_inside_the_pixel_limit_still_decodes() {
-        let params = params_with_pixel_limit(b"<< /K 0 /Columns 8 /Rows 1 >>", 64);
-        assert!(decode(ONE_ROW_G3, params, &params_with(1)).is_some());
+        let params = Dict::from_bytes(b"<< /K 0 /Columns 8 /Rows 1 >>").unwrap();
+        let decoded = decode(ONE_ROW_G3, params, &params_with_limit(1, 64)).unwrap();
+        assert_eq!(decoded.image_data.unwrap().height, 1);
     }
 
     /// Ported from LaurenzV/hayro#1339: `/Rows` below the declared height is a

@@ -57,6 +57,15 @@ pub struct ImageDecodeParams {
     pub width: u32,
     /// The height of the image as indicated by the image dictionary.
     pub height: u32,
+    /// The image pixel limit in force, if one is configured.
+    ///
+    /// Set by [`Stream::decoded_image`] from the stream's own context, not by
+    /// the caller. A filter cannot read it for itself: the only dictionary it
+    /// receives is `/DecodeParms`, which is `Dict::default()` when the stream
+    /// has none -- and that carries a context with no limits at all. The CCITT
+    /// decoder's own limit check was reading exactly that, so a stream without
+    /// `/DecodeParms` skipped it entirely. (Codex, #1609.)
+    pub pixel_limit: Option<u32>,
 }
 
 impl<'a> Stream<'a> {
@@ -171,7 +180,14 @@ impl<'a> Stream<'a> {
         &self,
         image_params: &ImageDecodeParams,
     ) -> Result<FilterResult, DecodeFailure> {
-        if let Some(limit) = self.0.dict.ctx().load_limits().image_pixel_limit()
+        // Carried down to the filters, which have no other way to reach it.
+        let limit_in_force = self.0.dict.ctx().load_limits().image_pixel_limit();
+        let image_params = &ImageDecodeParams {
+            pixel_limit: limit_in_force,
+            ..image_params.clone()
+        };
+
+        if let Some(limit) = limit_in_force
             && image_params.width > 0
             && image_params.height > 0
         {
@@ -549,5 +565,48 @@ mod tests {
             Err(DecodeFailure::StreamTooLarge { .. }) => {}
             other => panic!("expected StreamTooLarge, got {other:?}"),
         }
+    }
+
+    /// The wiring, not the check: does the limit reach the filter at all?
+    ///
+    /// The CCITT decoder used to read the limit from its own `/DecodeParms`
+    /// dictionary. When a stream has none that is `Dict::default()`, whose
+    /// context carries no limits -- so the check existed, its unit tests passed,
+    /// and it was unreachable. `Stream::decoded_image` now puts the limit on
+    /// `ImageDecodeParams`, where every filter can see it. (Codex, #1609.)
+    ///
+    /// `/DecodeParms` is present here on purpose. The absent case cannot
+    /// discriminate: `/Columns` then defaults to 1728 and two bytes of data
+    /// never complete a row, so nothing is produced either way. With
+    /// `/Columns 8` the row completes, and the limit either stops it or does not.
+    #[test]
+    fn the_pixel_limit_reaches_the_filter_that_needs_it() {
+        use super::ImageDecodeParams;
+
+        // One row of eight white pixels, Group 3 one-dimensional.
+        let data = b"<< /Length 2 /Filter /CCITTFaxDecode /DecodeParms << /K 0 /Columns 8 /Rows 1 >> >> stream\n\x35\x14\nendstream";
+        let limits = PdfLoadLimits::new().max_image_pixels(4);
+        let mut r = Reader::new(data);
+        let stream = r
+            .read_with_context::<Stream<'_>>(&ReaderContext::dummy_with_limits(limits))
+            .unwrap();
+
+        // Declared 1x1, so the check before decoding is satisfied; the CCITT
+        // parameters ask for 8 pixels against a limit of 4.
+        let params = ImageDecodeParams {
+            width: 1,
+            height: 1,
+            ..Default::default()
+        };
+
+        let produced = stream
+            .decoded_image(&params)
+            .ok()
+            .and_then(|res| res.image_data)
+            .map(|i| u64::from(i.width) * u64::from(i.height));
+        assert!(
+            produced.is_none_or(|pixels| pixels <= 4),
+            "produced {produced:?} pixels under a limit of 4"
+        );
     }
 }
