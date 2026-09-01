@@ -38,52 +38,71 @@ upstream = "hayro-syntax"
 #
 # Distance to upstream head 5a5f0e24: 65 commits, 37 files, +3400/-1028.
 #
-# Those 65 were read one by one on 31-08-2026 rather than merged wholesale. The
-# split: 9 are correctness or robustness fixes, the other 56 are performance,
-# refactors and version bumps. Of the 9, five were already ours -- three of them
-# reached independently, and two in a stronger form than upstream's:
+# Those 65 were read one by one on 31-08-2026 rather than merged wholesale, and
+# the balance was closed on 01-09-2026. Nine are correctness or robustness; the
+# other 56 are performance, refactors and version bumps.
 #
-#   #1192 stream object id   ours returns Option and leaves the data undecrypted;
-#                            upstream fabricates ObjectIdentifier::new(0, 0),
-#                            which decrypts with the wrong key.
-#   #1271 encryption /Length ours clamps to the MD5 output size; upstream rejects.
-#   #1150 circular /Prev     ours bounds the chain at 64, upstream at 256 with a
-#                            visited-set. Ours is stricter and does not hang; a
-#                            document with more than 64 revisions is refused,
-#                            which upstream would accept.
-#   #1194 xref overflows     ported on #1603.
-#   #1034 negative /Rotate   ours, see above.
+# ALL NINE, each either already ours or taken, with nothing left unexplained:
 #
-# Taken here: #1193, the zero-length decryption key -- the one panic of the nine
-# that nothing carried. See crypto/mod.rs.
+#   #1192 stream object id   OURS, and stronger: we return Option and leave the
+#                            data undecrypted; upstream fabricates
+#                            ObjectIdentifier::new(0, 0) and decrypts with the
+#                            wrong key, producing plausible garbage.
+#   #1271 encryption /Length OURS: we clamp to the MD5 output size, upstream
+#                            rejects. Same panic prevented.
+#   #1150 circular /Prev     OURS, and stricter: we bound the chain at 64,
+#                            upstream at 256 with a visited-set. Neither hangs.
+#                            The cost of ours is that a document with more than
+#                            64 revisions is refused where upstream opens it.
+#   #1194 xref overflows     TAKEN on #1603.
+#   #1034 negative /Rotate   OURS, reached independently -- our rem_euclid sits
+#                            on our own Option<u32> field, not upstream's i32.
+#   #1193 zero-length key    TAKEN. The one panic nothing carried: /Length under
+#                            8 bits divides to a key of zero bytes, which reaches
+#                            Rc4::new and does key[i % key.len()].
+#   #1269 CCITT rows         TAKEN, and carried further than upstream. Upstream
+#                            reports /Rows; we report decoder.decoded_rows,
+#                            because /Rows is still an upper bound when a stream
+#                            ends early. That opened a second hole -- the pixel
+#                            limit had been checked against the DECLARED height
+#                            -- so the limit is re-applied to what was produced.
+#   #1339 CCITT /Rows < height TAKEN. Half does not apply (our decoder grows its
+#                            output rather than preallocating). The other half
+#                            does: /Rows below the declared height is malformed,
+#                            and the image is decoded to the height rather than
+#                            rendered as a sliver. Chromium does the same.
+#   #1191 number then letter TAKEN. Issue 994's rule reached two of our three
+#                            parsing paths; the int_num! macro's skip lacked it,
+#                            so `[8 0R]` read as two integers instead of the
+#                            malformed reference it is.
+#   #1342 numbers past u64   TAKEN. Wrapping arithmetic turned an out-of-range
+#                            number into a small plausible one -- measured:
+#                            10^25 became 1590897978359414800. The digits are
+#                            re-read and parsed properly on overflow.
+#   #1268 Debug impls        TAKEN. Both ended in Ok(()) rather than finish(),
+#                            so the formatter never closed the list and the
+#                            output was not the object being logged.
 #
-# NOT taken, deliberately, so it is a choice rather than an omission:
+# (Eleven entries for nine fixes: #1269/#1339 are one CCITT pair, and #1191 is
+# the tail of #996 which we already had.)
+#
+# NOT taken, deliberately, so these are choices rather than omissions:
 #
 #   #1132 the `unsafe` feature, and #1212 which depends on it. This parser reads
 #         hostile input; unsafe for speed nobody has measured is the wrong trade.
 #   the ~50 performance commits (LUTs, memchr, smallvec, inlining, FxHashMap).
-#         Adopting them means adopting the refactors they sit on, and question 4
-#         on #262 is still open.
-#   #1339, invalid CCITT image heights. Half of the pair does not apply -- our
-#         decoder grows its output rather than preallocating, so there is no
-#         allocation to size wrongly.
+#         They sit on the refactors -- skip_in_* removal, the logging
+#         unification, the native Transform type -- so taking them means taking
+#         those.
 #
-# #1269's other half IS taken, now that #1602 has landed and the decoder API it
-# touches has stopped moving: filter/ccitt.rs reported image_params.height where
-# the buffer held `rows`, so a stream with /Rows below the image height sent a
-# consumer computing height * stride past the end of the data.
+# THE DECISION:
 #
-# THE DECISION, so this is not read as unfinished work:
-#
-# pdf-syntax does NOT go to the upstream head. Nine of the 65 commits are
-# correctness, and after this one they are all either ours already or taken. The
-# remaining 56 are performance and the refactors they sit on. A full three-way
-# merge is 14 conflicting files, 38 hunks and roughly a thousand lines --
-# xref.rs 367, content/mod.rs 198, object/stream.rs 108 -- and every line of that
-# buys speed, not correctness, in a parser whose divergence from upstream is
-# mostly bounds this fork added on purpose. Question 4 on #262 is answered:
-# keep picking fixes, leave the performance work. Revisit if a measurement ever
-# shows the parser is the bottleneck.
+# pdf-syntax does NOT go to the upstream head. The correctness is now all here.
+# A full three-way merge is 14 conflicting files, 38 hunks and roughly a thousand
+# lines -- xref.rs 367, content/mod.rs 198, object/stream.rs 108 -- and every
+# line of it buys speed rather than correctness, in a parser whose divergence
+# from upstream is mostly bounds this fork added on purpose. Revisit if a
+# measurement ever shows the parser is the bottleneck.
 gelijk_met = "0.5.0"
 forkpunt = "3bda7cbc3"  # commit in LaurenzV/hayro, 2026-03-05
 aanvaard_tot = "0.7.2"  # in uitvoering, #256

@@ -134,7 +134,10 @@ impl Debug for Dict<'_> {
                 None => debug_struct.field(&key_str, &"<parse error>"),
             };
         }
-        Ok(())
+        // finish(), not Ok(()). See the note in array.rs: an unfinished
+        // debug_struct does not render as the dictionary it describes.
+        // Ported from LaurenzV/hayro#1268.
+        debug_struct.finish()
     }
 }
 

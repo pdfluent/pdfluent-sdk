@@ -63,7 +63,11 @@ impl Debug for Array<'_> {
             debug_list.entry(&i);
         });
 
-        Ok(())
+        // finish(), not Ok(()). A DebugList that is never finished writes no
+        // closing bracket and, depending on the formatter, no entries either --
+        // so `{array:?}` produced something that was not the array. Ported from
+        // LaurenzV/hayro#1268.
+        debug_list.finish()
     }
 }
 
@@ -402,5 +406,53 @@ mod tests {
         let res = array_impl(b"[(Hi) /Test]trialing data").unwrap();
         assert!(matches!(res[0], Object::String(_)));
         assert!(matches!(res[1], Object::Name(_)));
+    }
+
+    /// Ported from LaurenzV/hayro#1191, which applied issue 994's rule to the
+    /// third of three parsing paths.
+    ///
+    /// `Number::skip` and `read_inner` already refused a number pressed against
+    /// a regular character; the `int_num!` macro's own `skip` did not. So an
+    /// array being skipped as integers accepted `[8 0R]` -- a reference with the
+    /// space missing before `R` -- as two integers, and the malformed reference
+    /// became a silently different document rather than a parse failure.
+    #[test]
+    fn a_reference_missing_its_space_is_not_an_array_of_integers() {
+        assert!(array_ref_impl(b"[8 0R]").is_none());
+    }
+
+    /// The guard must not reject a number that legitimately ends the array.
+    #[test]
+    fn a_single_large_number_is_still_an_array() {
+        assert!(array_ref_impl(b"[345345345]").is_some());
+    }
+
+    /// And a properly spaced reference still reads as one.
+    #[test]
+    fn a_well_formed_reference_still_reads() {
+        assert!(array_ref_impl(b"[8 0 R]").is_some());
+    }
+
+    /// Ported from LaurenzV/hayro#1268: the Debug impls ended in `Ok(())`
+    /// rather than `finish()`, so the formatter never closed the list and the
+    /// output was not the array. Cosmetic until you are reading a log to work
+    /// out what a malformed file contained.
+    #[test]
+    fn the_debug_output_is_the_array() {
+        // Not array_impl: that returns a Vec<Object>, so formatting it exercises
+        // the standard library's Debug and not ours. The first version of this
+        // test did exactly that and passed against the unfixed code.
+        let array = Reader::new(b"[34]")
+            .read_with_context::<Array<'_>>(&ReaderContext::new(XRef::dummy(), false))
+            .unwrap();
+        let rendered = format!("{array:?}");
+        assert!(
+            rendered.starts_with('[') && rendered.ends_with(']'),
+            "expected a bracketed list, got {rendered:?}"
+        );
+        assert!(
+            rendered.contains("34"),
+            "the value is missing from {rendered:?}"
+        );
     }
 }
