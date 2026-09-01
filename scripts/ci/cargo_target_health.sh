@@ -117,11 +117,27 @@ _target_in_use() {
     # same self-match that made `pgrep -f "git push"` report other sessions'
     # monitors as pushes. A line has to look like a BUILD -- cargo or rustc --
     # and name this target.
-    local n
+    local n m
+    # (a) a build that names this target on its command line.
     n=$(ps -Ao args= 2>/dev/null \
         | grep -F -- "${TARGET}" \
         | grep -cE '(^|/)(cargo|rustc|sccache)( |$)' || true)
-    [ "${n:-0}" -gt 0 ]
+    [ "${n:-0}" -gt 0 ] && return 0
+
+    # (b) ANY build at all. The GitLab jobs pass CARGO_TARGET_DIR through the
+    # environment, so cargo's command line need not contain the path -- and in a
+    # linker or build-script phase there may be no rustc process to find either.
+    # A scan of command lines therefore misses exactly our own runners, which is
+    # the population this is meant to protect. (codex, #1621)
+    #
+    # Reading other processes' environments is not portable and needs privileges
+    # we should not want here, so `--sweep` takes the conservative branch
+    # instead: any cargo-family process anywhere on this host and we do not
+    # touch anything. Sweeping is a maintenance action on a machine somebody has
+    # decided is idle; refusing while a build runs costs that person one retry,
+    # and being wrong costs the cache.
+    m=$(ps -Ao args= 2>/dev/null | grep -cE '(^|/)(cargo|rustc|sccache)( |$)' || true)
+    [ "${m:-0}" -gt 0 ]
 }
 # This is a snapshot, not a lock, and it is worth being plain about that: a
 # build can start in the moment between this check and the deletions below. The
@@ -212,7 +228,12 @@ fi
 #    job; removing a live one costs the cache.
 if [ -f "${TARGET}/.cargo-lock" ]; then
     if [ "${SWEEP}" -eq 0 ]; then
+        # Counted, or a lock as the ONLY finding leaves `cleaned` at zero and the
+        # summary below says the directory "is clean" -- a healthy verdict
+        # contradicting the one thing the scan just found, in the mode that runs
+        # on every build. (codex, #1621)
         echo "[cargo-target-health] .cargo-lock present — reported, not removed (run with --sweep when idle)"
+        cleaned=$((cleaned + 1))
     elif ! pgrep -x cargo >/dev/null 2>&1; then
         echo "[cargo-target-health] .cargo-lock with no cargo process running — removed"
         rm -f "${TARGET}/.cargo-lock"
