@@ -79,8 +79,29 @@ def git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]
     )
 
 
-def ensure_clone() -> str | None:
+def ensure_clone(needed: list[str]) -> str | None:
+    """Cache upstream's history, and make sure it reaches the commits we score.
+
+    A valid but stale cache is the dangerous case, not a missing one. `score()`
+    only walks what the clone holds, so a register change pointing at a newer
+    commit would be measured against an older history -- and an older commit
+    already in the cache can then hold the maximum and pass, while the real
+    maximum sits in a revision that was never fetched. Green, on the wrong
+    evidence. (Codex, #1609.)
+    """
     if CLONE.exists() and git("rev-parse", "--git-dir", cwd=CLONE).returncode == 0:
+        missing = [
+            c for c in needed
+            if git("cat-file", "-e", f"{c}^{{commit}}", cwd=CLONE).returncode != 0
+        ]
+        # HEAD is refreshed too, not only the named commits: the scoring walks
+        # `log HEAD`, so a cache whose HEAD predates upstream's would leave the
+        # newest revisions out of the comparison entirely.
+        out = git("fetch", "--quiet", "--filter=blob:none", "origin",
+                  "+refs/heads/*:refs/heads/*", cwd=CLONE)
+        if out.returncode != 0 and missing:
+            return (f"cache is missing {len(missing)} recorded commit(s) and the refresh "
+                    f"failed: {out.stderr.strip()[:160]}")
         return None
     if _EXPLICIT:
         return f"HAYRO_CLONE={CLONE} is not a git repository"
@@ -163,7 +184,8 @@ def main() -> int:
     if not REGISTER.exists():
         print(f"SKIPPED (not a pass): {REGISTER} is missing", file=sys.stderr)
         return 3
-    if (why := ensure_clone()) is not None:
+    needed = [f["forkpunt"] for f in tomllib.loads(REGISTER.read_text())["fork"] if f.get("forkpunt")]
+    if (why := ensure_clone(needed)) is not None:
         print(f"SKIPPED (not a pass): {why}", file=sys.stderr)
         return 3
 

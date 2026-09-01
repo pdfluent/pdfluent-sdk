@@ -73,19 +73,34 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 REGISTER = ROOT / "docs/UPSTREAM_FORKS.toml"
 
-UPSTREAM_URL = "https://github.com/LaurenzV/hayro.git"
+# These forks come from three different upstreams, which the first version of
+# this check did not know: it looked everything up in the hayro clone. `lopdf`
+# had no fork point then, so nothing failed. #1614 landed one, and this check
+# immediately reported "the register points at a commit that is not there" for
+# a commit that is perfectly real -- in another repository.
+#
+# Keyed by the `upstream` field. The value is the repository and the directory
+# the crate sits in, which is a subdirectory in hayro's monorepo and the root
+# everywhere else.
+UPSTREAMS: dict[str, tuple[str, str]] = {
+    "hayro": ("https://github.com/LaurenzV/hayro.git", "hayro"),
+    "hayro-syntax": ("https://github.com/LaurenzV/hayro.git", "hayro-syntax"),
+    "hayro-interpret": ("https://github.com/LaurenzV/hayro.git", "hayro-interpret"),
+    "hayro-jbig2": ("https://github.com/LaurenzV/hayro.git", "hayro-jbig2"),
+    "hayro-jpeg2000": ("https://github.com/LaurenzV/hayro.git", "hayro-jpeg2000"),
+    "hayro-ccitt": ("https://github.com/LaurenzV/hayro.git", "hayro-ccitt"),
+    "lopdf": ("https://github.com/J-F-Liu/lopdf.git", ""),
+    "cff-parser": ("https://github.com/jrmuizel/cff-parser.git", ""),
+}
 
 # Where to keep the history between runs. Outside the checkout on purpose: a
 # runner that reuses its workspace keeps it warm, and one that does not is only
 # paying a cold clone.
-CACHE = Path(
-    os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")
-) / "pdfluent" / "hayro-register.git"
+CACHE_ROOT = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "pdfluent"
 
-# A clone somebody already has wins: developers usually have one from the last
-# upgrade, and using it avoids a second copy of 100-odd megabytes.
+# A hayro clone somebody already has wins: developers usually have one from the
+# last upgrade, and using it avoids a second copy of 100-odd megabytes.
 _EXPLICIT = os.environ.get("HAYRO_CLONE")
-CLONE = Path(_EXPLICIT) if _EXPLICIT else CACHE
 
 
 def git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -96,6 +111,13 @@ def git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]
         text=True,
         check=False,
     )
+
+
+def cache_for(url: str) -> Path:
+    """One bare cache per upstream, named after the repository."""
+    if _EXPLICIT and url.endswith("hayro.git"):
+        return Path(_EXPLICIT)
+    return CACHE_ROOT / (url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git") + "-register.git")
 
 
 def usable(path: Path) -> bool:
@@ -109,49 +131,57 @@ def usable(path: Path) -> bool:
     return git("rev-parse", "--git-dir", cwd=path).returncode == 0
 
 
-def ensure_clone() -> str | None:
-    """Make sure CLONE has upstream's history. Returns a reason on failure.
+def ensure_clone(url: str) -> str | None:
+    """Make sure this upstream's history is cached. Returns a reason on failure.
 
     Blobless and bare: this only ever reads a few Cargo.toml files, so fetching
     every blob in the repository would be paying for history nobody looks at.
     The blobs it does need are fetched on demand from the promisor remote.
     """
-    if usable(CLONE):
+    clone = cache_for(url)
+    if usable(clone):
         return None
 
-    if _EXPLICIT:
+    if _EXPLICIT and clone == Path(_EXPLICIT):
         # An explicit path that is not a clone is a mistake worth naming, rather
         # than silently replacing with our own.
-        return f"HAYRO_CLONE={CLONE} is not a git repository"
+        return f"HAYRO_CLONE={clone} is not a git repository"
 
-    CLONE.parent.mkdir(parents=True, exist_ok=True)
-    out = git(
-        "clone", "--bare", "--filter=blob:none", "--quiet", UPSTREAM_URL, str(CLONE)
-    )
+    clone.parent.mkdir(parents=True, exist_ok=True)
+    out = git("clone", "--bare", "--filter=blob:none", "--quiet", url, str(clone))
     if out.returncode != 0:
-        return f"could not clone {UPSTREAM_URL}: {out.stderr.strip()[:200]}"
+        return f"could not clone {url}: {out.stderr.strip()[:200]}"
     return None
 
 
-def have_commit(commit: str) -> bool:
-    return git("cat-file", "-e", f"{commit}^{{commit}}", cwd=CLONE).returncode == 0
+def have_commit(clone: Path, commit: str) -> bool:
+    return git("cat-file", "-e", f"{commit}^{{commit}}", cwd=clone).returncode == 0
 
 
-def refresh_for(commits: list[str]) -> None:
+def refresh_for(clone: Path, commits: list[str]) -> str | None:
     """Fetch once if the register points at something the cache predates.
 
     Only when needed: a fetch on every run is a network round-trip to learn
     nothing, and this check runs on every push.
     """
-    if all(have_commit(c) for c in commits):
-        return
-    git("fetch", "--quiet", "--filter=blob:none", "origin", "+refs/heads/*:refs/heads/*", cwd=CLONE)
+    if all(have_commit(clone, c) for c in commits):
+        return None
+    out = git("fetch", "--quiet", "--filter=blob:none", "origin",
+              "+refs/heads/*:refs/heads/*", cwd=clone)
+    if out.returncode != 0:
+        # Not swallowed. Ignoring it made version_at() treat a still-missing
+        # commit as a bad register entry and return 1 -- so a network outage was
+        # reported as bad fork data and sent the reader at the wrong problem.
+        # (Codex, #1609.)
+        return f"could not refresh {clone.name}: {out.stderr.strip()[:200]}"
+    return None
 
 
-def version_at(commit: str, crate_dir: str) -> str | None:
+def version_at(clone: Path, commit: str, crate_dir: str) -> str | None:
+    manifest = f"{crate_dir}/Cargo.toml" if crate_dir else "Cargo.toml"
     out = subprocess.run(
-        ["/usr/bin/git", "show", f"{commit}:{crate_dir}/Cargo.toml"],
-        cwd=CLONE,
+        ["/usr/bin/git", "show", f"{commit}:{manifest}"],
+        cwd=clone,
         capture_output=True,
         text=True,
         check=False,
@@ -180,25 +210,40 @@ def main() -> int:
         )
         return 3
 
-    if (why := ensure_clone()) is not None:
-        print(
-            f"SKIPPED (not a pass): {why}.\n"
-            "  Without upstream's history the register's claims cannot be checked,\n"
-            "  only repeated.",
-            file=sys.stderr,
-        )
-        return 3
-
-    refresh_for([f["forkpunt"] for f in with_point])
+    # One clone per upstream, and only the ones this register actually names.
+    for upstream in sorted({f["upstream"] for f in with_point}):
+        if upstream not in UPSTREAMS:
+            print(
+                f"SKIPPED (not a pass): no repository recorded for upstream "
+                f"`{upstream}`. Add it to UPSTREAMS; a fork point that cannot be\n"
+                "  looked up is not a fork point that is right.",
+                file=sys.stderr,
+            )
+            return 3
+        url, _ = UPSTREAMS[upstream]
+        if (why := ensure_clone(url)) is not None:
+            print(
+                f"SKIPPED (not a pass): {why}.\n"
+                "  Without upstream's history the register's claims cannot be checked,\n"
+                "  only repeated.",
+                file=sys.stderr,
+            )
+            return 3
+        wanted = [f["forkpunt"] for f in with_point if f["upstream"] == upstream]
+        if (why := refresh_for(cache_for(url), wanted)) is not None:
+            print(f"SKIPPED (not a pass): {why}", file=sys.stderr)
+            return 3
 
     problems: list[str] = []
     checked = 0
     for f in with_point:
         crate, point, claimed = f["onze_crate"], f["forkpunt"], f["gelijk_met"]
-        actual = version_at(point, f["upstream"])
+        url, crate_dir = UPSTREAMS[f["upstream"]]
+        actual = version_at(cache_for(url), point, crate_dir)
         if actual is None:
             problems.append(
-                f"{crate}: fork point {point} does not resolve, or has no {f['upstream']}/Cargo.toml. "
+                f"{crate}: fork point {point} does not resolve in {url}, or carries no "
+                f"{crate_dir + '/' if crate_dir else ''}Cargo.toml. "
                 "The register points at a commit that is not there."
             )
             continue
