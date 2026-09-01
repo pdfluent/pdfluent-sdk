@@ -255,6 +255,12 @@ def main() -> int:
     # A git command that FAILS must not read as "nothing found". With a bad
     # --head the diff exited non-zero, stdout was empty, and the guard reported
     # OK having compared nothing. (codex, #1635)
+    #
+    # This case proves the PAIR of return-code checks, not either alone:
+    # measured, disabling only the diff check leaves it green, because the log
+    # check then catches the same bad --head. Disabling both turns it red. They
+    # are defence in depth over one class of failure rather than two independent
+    # ones, and saying otherwise would claim a coverage this case does not have.
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))
         run(wd, "rm", "-q", "doomed.txt")
