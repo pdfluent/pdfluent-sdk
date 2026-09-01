@@ -194,6 +194,39 @@ def schone_omgeving() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
+def verzegelde_omgeving() -> dict[str, str]:
+    """A clean environment, and a git that cannot be redirected by config.
+
+    `schone_omgeving()` stops git reading the *repository* the caller is in. It
+    does nothing about the caller's *config*, and `url.<base>.insteadOf` rewrites
+    clone and fetch URLs silently.
+
+    Measured: with a global config redirecting hayro's URL to a local decoy,
+    cloning the real URL produced the decoy's single commit while
+    `remote.origin.url` still read `https://github.com/LaurenzV/hayro.git`. The
+    origin check above reads exactly that field, so it would have approved --
+    and the register would then have been verified against substituted content
+    and reported green. A guard that can be aimed at a decoy is worse than no
+    guard, because it reports success.
+    """
+    env = schone_omgeving()
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    return env
+
+
+def git_verzegeld(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """git for clone and fetch: no repository *and* no config can redirect it."""
+    return subprocess.run(
+        ["/usr/bin/git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        env=verzegelde_omgeving(),
+        check=False,
+    )
+
+
 def git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["/usr/bin/git", *args], cwd=cwd, capture_output=True, text=True, env=schone_omgeving(),
@@ -221,7 +254,7 @@ def ensure_clone(needed: list[str]) -> str | None:
         # newest revisions out of the comparison entirely.
         if (waarom := de_fetch_gaat_naar_de_cache(CLONE)) is not None:
             return waarom
-        out = git("fetch", "--quiet", "--filter=blob:none", "origin",
+        out = git_verzegeld("fetch", "--quiet", "--filter=blob:none", "origin",
                   "+refs/heads/*:refs/heads/*", cwd=CLONE)
         if out.returncode != 0 and missing:
             return (f"cache is missing {len(missing)} recorded commit(s) and the refresh "
@@ -230,7 +263,7 @@ def ensure_clone(needed: list[str]) -> str | None:
     if _EXPLICIT:
         return f"HAYRO_CLONE={CLONE} is not a git repository"
     CLONE.parent.mkdir(parents=True, exist_ok=True)
-    out = git("clone", "--bare", "--filter=blob:none", "--quiet", UPSTREAM_URL, str(CLONE))
+    out = git_verzegeld("clone", "--bare", "--filter=blob:none", "--quiet", UPSTREAM_URL, str(CLONE))
     if out.returncode != 0:
         return f"could not clone {UPSTREAM_URL}: {out.stderr.strip()[:200]}"
     return None

@@ -289,6 +289,71 @@ def main() -> int:
                 "a repository named hayro but with a different origin was accepted"
             )
 
+    # --- config cannot redirect the clone -------------------------------
+    #
+    # `url.<base>.insteadOf` rewrites clone and fetch URLs. Stripping `GIT_*`
+    # does not touch it: that stops git reading the caller's *repository*, not
+    # the caller's *config*. Unsealed, a clone of the register's own upstream
+    # URL yields whatever the redirect points at, while `remote.origin.url`
+    # still records the URL that was asked for -- so the origin check approves
+    # substituted content and the fork points are verified against a decoy.
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        echt, lok = tmp / "real.git", tmp / "decoy.git"
+        for pad, tekst in ((echt, "REAL"), (lok, "DECOY")):
+            run("init", "-q", "--bare", str(pad), cwd=tmp)
+            seed = tmp / f"seed-{pad.stem}"
+            run("clone", "-q", str(pad), str(seed), cwd=tmp)
+            (seed / "README").write_text(tekst)
+            run("add", "README", cwd=seed)
+            run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", tekst, cwd=seed)
+            run("push", "-q", "origin", "HEAD:master", cwd=seed)
+        # The redirect goes where a developer's config actually lives, so the
+        # seal has to *ignore* it rather than be handed something else. Writing
+        # it into `GIT_CONFIG_GLOBAL` and then also sealing that variable tests
+        # nothing: the first version of this case did exactly that, overriding
+        # the seal with the redirect and then reporting the seal broken.
+        thuis = tmp / "home"
+        thuis.mkdir()
+        (thuis / ".gitconfig").write_text(
+            f'[url "file://{lok}"]\n\tinsteadOf = file://{echt}\n'
+        )
+
+        def kloon(env: dict[str, str], naar: Path) -> str:
+            subprocess.run(
+                [GIT, "clone", "-q", "--bare", f"file://{echt}", str(naar)],
+                cwd=tmp, capture_output=True, text=True, check=False, env=env,
+            )
+            got = subprocess.run(
+                [GIT, "log", "-1", "--format=%s", "--all"], cwd=naar,
+                capture_output=True, text=True, check=False, env=schone_omgeving(),
+            )
+            return got.stdout.strip()
+
+        vuil = dict(schone_omgeving(), HOME=str(thuis))
+        if kloon(vuil, tmp / "unsealed.git") != "DECOY":
+            failures.append(
+                "the control did not reproduce the redirect, so this proves nothing"
+            )
+        verzegeld = dict(reg.verzegelde_omgeving(), HOME=str(thuis))
+        if kloon(verzegeld, tmp / "sealed.git") != "REAL":
+            failures.append(
+                "a redirecting config still reached the clone -- the seal is not sealing"
+            )
+
+        # The two above test the *helper*. They say nothing about whether the
+        # clone and fetch actually use it: unsealing a call site left them
+        # green, because they never run one. So the call sites are checked too.
+        for naam in ("the_fork_register_is_verifiable.py",
+                     "een_forkpunt_wordt_op_inhoud_gecontroleerd.py"):
+            bron = (ROOT / "scripts/ci" / naam).read_text()
+            for handeling in ('git("clone"', 'git("fetch"'):
+                if handeling in bron.replace("git_verzegeld(", "SEALED("):
+                    failures.append(
+                        f"{naam} reaches the network with the unsealed helper "
+                        f"({handeling}...), so a redirecting config applies to it"
+                    )
+
     if failures:
         print("[registerwachters] the guards can reach the real repository:\n", file=sys.stderr)
         for f in failures:
