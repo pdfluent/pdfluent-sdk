@@ -398,6 +398,12 @@ jobs:
       - name: The register guards cannot reach the real repository
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_de_registerwachters_raken_de_echte_repo_niet.py
+      - name: The licence policy still says what it must
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_licence_policy_says_what_it_must.py
+      - name: The policy guard bites when an entry is removed
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_licence_policy_says_what_it_must.py
       - name: The licence gate rejects what it should
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_license_gate.py
