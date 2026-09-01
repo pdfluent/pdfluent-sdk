@@ -57,7 +57,62 @@ if [ "${seen}" -eq 124 ]; then
     exit 1
 fi
 if [ "${seen}" -ne 0 ]; then
-    echo "SKIPPED (not a pass): ${TARGET} does not exist — no shared build directory to check" >&2
+    # Exiting 0 here was the fault this whole file exists to prevent, one level
+    # up. Six workflows -- bench, crash-guard, enterprise-acceptance, gate-ci,
+    # publish-crates, wasm-gate -- call this script and NOT
+    # shared_build_dir_is_there.sh, though the note above says to run that
+    # first. So on the morning the mount is gone, the step every one of them
+    # relies on reported a pass and cargo walked into the broken path. That is
+    # #264 reported as green. (codex, #1616)
+    #
+    # The split that keeps this honest: a directory somebody CONFIGURED and
+    # which is not there is the failure. An unconfigured default that is not
+    # there means you are not on the shared-build machine at all, and failing a
+    # contributor's clone for that helps nobody.
+    if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+        echo "[cargo-target-health] FATAL: CARGO_TARGET_DIR=${TARGET} is set and the" >&2
+        echo "[cargo-target-health]   directory is not there. That is the missing mount of" >&2
+        echo "[cargo-target-health]   #264, not an absent option. Run" >&2
+        echo "[cargo-target-health]   scripts/ci/shared_build_dir_is_there.sh for which of the" >&2
+        echo "[cargo-target-health]   three it is: gone, dead, or unwritable." >&2
+        exit 1
+    fi
+    echo "SKIPPED (not a pass): ${TARGET} does not exist and CARGO_TARGET_DIR is unset," >&2
+    echo "  so this is not the shared-build machine and there is nothing to check." >&2
+    exit 0
+fi
+
+# P1: nothing below deletes anything while a cargo is running anywhere on this
+# host. The reasoning was already written down for `.cargo-lock` -- "a lock
+# removed out from under a live build corrupts the directory this file exists to
+# protect" -- and then the two deletions above it did not apply it. A live
+# `.part.bin` removed before cargo renames it reproduces exactly the 25-08
+# failure this script repairs. (codex, #1616)
+#
+# The concurrency groups do not help: GitHub and GitLab jobs share this machine
+# and each other's target directory, and neither knows about the other's lock.
+# Scoped to THIS directory, not to the machine. `pgrep -x cargo` was the first
+# attempt and it is useless here: this host runs GitHub and GitLab jobs and
+# several worktrees at once, so some cargo is nearly always alive and the script
+# would never clean anything again. What matters is whether a build is using
+# *this* target -- which the rustc command lines say, because cargo passes
+# `--out-dir <target>/debug/deps` and `-L dependency=<target>/...`.
+_target_in_use() {
+    ps -Ao args= 2>/dev/null | grep -F -- "${TARGET}" | grep -qvE '^\s*(grep|ps)\b'
+}
+# This is a snapshot, not a lock, and it is worth being plain about that: a
+# build can start in the moment between this check and the deletions below. The
+# finding offered two remedies -- take an exclusive lock, or establish no cargo
+# is using the target -- and this is the second. It closes the common case (a
+# job running on the shared machine) and not the rare one (a job starting during
+# the sweep). A real cross-CI lock is the fix if this ever bites; it has not
+# yet, and I would rather leave the limitation written down than implied.
+if _target_in_use; then
+    echo "[cargo-target-health] a build is using ${TARGET} — nothing removed."
+    echo "[cargo-target-health]   Debris is cheap to leave and expensive to delete from"
+    echo "[cargo-target-health]   under a live build: a .part.bin removed before cargo"
+    echo "[cargo-target-health]   renames it is the 25-08 failure this script repairs."
+    echo "[cargo-target-health]   Re-run when this directory is idle."
     exit 0
 fi
 
@@ -70,7 +125,16 @@ cleaned=0
 if [ -d "${TARGET}/debug/incremental" ] || [ -d "${TARGET}/release/incremental" ]; then
     n=$(_bounded_probe "${DEADLINE}" find "${TARGET}"/*/incremental -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
     echo "[cargo-target-health] incremental state present (${n} directories) while CARGO_INCREMENTAL=0 — removed"
-    _bounded_probe "${DEADLINE}" rm -rf "${TARGET}/debug/incremental" "${TARGET}/release/incremental" >/dev/null 2>&1
+    if ! _bounded_probe "${DEADLINE}" rm -rf "${TARGET}/debug/incremental" "${TARGET}/release/incremental" >/dev/null 2>&1; then
+        # 124 is the probe's timeout, anything else is a real rm failure. Either
+        # way the debris is still there, and saying "removed" would send the next
+        # build into the files this step claims to have cleared. (codex, #1616)
+        echo "[cargo-target-health] FATAL: could not remove the incremental state." >&2
+        echo "[cargo-target-health]   The subtree is unresponsive or not ours to delete;" >&2
+        echo "[cargo-target-health]   the initial probe does not walk into it, so this is the" >&2
+        echo "[cargo-target-health]   first place it shows. (#264)" >&2
+        exit 1
+    fi
     cleaned=$((cleaned + 1))
 fi
 
@@ -79,7 +143,10 @@ part=$(_bounded_probe "${DEADLINE}" find "${TARGET}" -name '*.part.bin' -type f 
 if [ -n "${part}" ]; then
     n=$(echo "${part}" | wc -l | tr -d ' ')
     echo "[cargo-target-health] ${n} half-written .part.bin — removed"
-    echo "${part}" | xargs rm -f 2>/dev/null
+    if ! echo "${part}" | xargs rm -f 2>/dev/null; then
+        echo "[cargo-target-health] FATAL: could not remove ${n} .part.bin file(s)." >&2
+        exit 1
+    fi
     cleaned=$((cleaned + 1))
 fi
 

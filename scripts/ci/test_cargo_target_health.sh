@@ -56,12 +56,30 @@ fresh_target() {
     printf '%s\n' "$dir"
 }
 
-# --- 1. A missing directory is announced, not silently called clean ---------
+# --- 1. A CONFIGURED directory that is not there is the #264 failure --------
+#
+# This case used to assert exit 0, which pinned the defect rather than the
+# behaviour: six workflows call this script and not shared_build_dir_is_there.sh,
+# so on the morning the mount vanished the step they all rely on reported a pass
+# and cargo walked into the broken path. (codex, #1616)
 case_
 out="$(CARGO_TARGET_DIR="${WORK}/never-existed" bash "${BENCH}/cargo_target_health.sh" 2>&1)"; rc=$?
-grep -q 'SKIPPED (not a pass)' <<<"${out}" || fail "a missing build directory is not announced: ${out}"
+grep -q 'FATAL' <<<"${out}" || fail "a missing configured build directory is not announced: ${out}"
 case_
-[[ ${rc} -eq 0 ]] || fail "a missing build directory should not be an error, got ${rc}"
+[[ ${rc} -ne 0 ]] || fail "a missing CONFIGURED build directory must be an error, got ${rc}"
+
+# --- 1b. An unconfigured default that is absent means: not this machine -----
+case_
+out="$(env -u CARGO_TARGET_DIR CARGO_TARGET_HEALTH_DEADLINE=5 bash -c '
+  TARGET_DEFAULT=/var/cache/cargo-target
+  [ -d "$TARGET_DEFAULT" ] && exit 42
+  bash "'"${BENCH}"'/cargo_target_health.sh"' 2>&1)"; rc=$?
+if [[ ${rc} -eq 42 ]]; then
+    echo "  (skipped: this host actually has /var/cache/cargo-target)"
+else
+    grep -q 'SKIPPED (not a pass)' <<<"${out}" || fail "an unconfigured absent default is not announced: ${out}"
+    [[ ${rc} -eq 0 ]] || fail "an unconfigured absent default must not be an error, got ${rc}"
+fi
 
 # --- 2. The file from the 25-08 failure is removed --------------------------
 t="$(fresh_target part)"
