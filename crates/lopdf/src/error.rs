@@ -20,10 +20,7 @@ pub enum Error {
         found: &'static str,
     },
     #[error("dictionary has wrong type: ")]
-    DictType {
-        expected: &'static str,
-        found: String,
-    },
+    DictType { expected: &'static str, found: String },
     /// PDF document is already encrypted.
     #[error("PDF document is already encrypted")]
     AlreadyEncrypted,
@@ -131,6 +128,12 @@ pub enum Error {
     /// `MAX_DECOMPRESSED_BYTES`, preventing zip-bomb DoS attacks.
     #[error("decompressed stream too large: exceeds {limit} bytes")]
     StreamTooLarge { limit: usize },
+    /// Encountered when a differences code is out of bounds.
+    #[error("invalid encoding difference code: {code}")]
+    InvalidEncodingDifferenceCode { code: i64 },
+    /// Encountered when a differences glyph name is invalid.
+    #[error("invalid encoding difference glyph name: {name}")]
+    InvalidEncodingDifferenceGlyph { name: String },
 }
 
 #[derive(Error, Debug)]
@@ -139,6 +142,12 @@ pub enum DecompressError {
     Ascii85(&'static str),
     #[error("decoding ASCIIHex failed: {0}")]
     AsciiHex(&'static str),
+    /// The decompressed output exceeded the allowed size limit. This guards
+    /// against decompression bombs: a small compressed stream that inflates to
+    /// an enormous size (potentially exhausting memory). The `limit` is the
+    /// maximum number of output bytes that were permitted.
+    #[error("decompressed output exceeded the {limit}-byte limit (possible decompression bomb)")]
+    MemoryLimitExceeded { limit: usize },
 }
 
 #[derive(Error, Debug)]

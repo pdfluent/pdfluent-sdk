@@ -1,3 +1,6 @@
+use crate::Object;
+use crate::object::MAX_DECOMPRESSED_BYTES;
+
 /// Default maximum input size: 256 MiB.
 ///
 /// Chosen so that a single document load can never exceed ~2 GB of RSS on
@@ -7,14 +10,25 @@
 /// need larger files can pass a higher limit via `LoadOptions::max_file_bytes`.
 pub const DEFAULT_MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
 
+/// Type alias for the filter function used during PDF loading.
+///
+/// The function receives an object ID and a mutable reference to the object,
+/// and returns `Some((id, object))` to keep it or `None` to discard it.
+pub type FilterFunc = fn((u32, u16), &mut Object) -> Option<((u32, u16), Object)>;
+
 /// Options that control how a PDF document is loaded into memory.
 ///
-/// All options have safe defaults:
-/// - `max_file_bytes`: `Some(256 MiB)` — rejects enormous inputs before
-///   allocating the full object graph.
-/// - `lazy_objstm`: `false` — ObjStm streams are decompressed eagerly, but
-///   their container streams are dropped immediately after extraction
-///   (saves the decompressed container bytes; Phase 2a optimisation).
+/// This is the union of upstream lopdf's `LoadOptions` (`password`, `filter`,
+/// `strict`, `max_decompressed_size`) and the two options this fork added
+/// independently (`max_file_bytes`, `lazy_objstm`). Both structs existed under
+/// the same name with disjoint fields; merging them was the only resolution
+/// that kept upstream's loading paths and ours working at once.
+///
+/// The defaults differ from upstream on purpose. Upstream defaults
+/// `max_decompressed_size` to `None` — no bound at all. This fork defaults it
+/// to [`crate::object::MAX_DECOMPRESSED_BYTES`], because LOPDF-ZBOMB-01 is a
+/// guarantee this crate already shipped and a default of `None` would revoke it
+/// for every caller that does not opt in.
 ///
 /// # Example
 ///
@@ -25,14 +39,37 @@ pub const DEFAULT_MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
 /// let doc = Document::load_mem_with_options(data, &opts)?;
 /// doc.resolve_pending_object_streams()?;   // required when lazy_objstm = true
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LoadOptions {
+    /// Password for encrypted PDFs.
+    pub password: Option<String>,
+
+    /// Object filter applied during loading.
+    pub filter: Option<FilterFunc>,
+
+    /// When `true`, reject non-conforming PDFs instead of silently accepting
+    /// them. Defaults to `false` (lenient parsing).
+    pub strict: bool,
+
+    /// Maximum number of bytes any single stream may decompress to during
+    /// loading (object streams and cross-reference streams).
+    ///
+    /// Compression filters can inflate a tiny input into an enormous output (a
+    /// "decompression bomb"). Because object and xref streams are decoded
+    /// eagerly while the document is loaded, an unbounded stream can exhaust
+    /// memory before any of your code runs. A stream that would exceed this
+    /// fails with [`crate::DecompressError::MemoryLimitExceeded`].
+    ///
+    /// Defaults to `Some(MAX_DECOMPRESSED_BYTES)` (256 MiB). Upstream defaults
+    /// this to `None`; see the type-level note for why we do not.
+    pub max_decompressed_size: Option<usize>,
+
     /// Maximum allowed size of the input buffer in bytes.
     ///
     /// When `Some(limit)`, `load_mem_with_options` / `load_with_options` return
     /// `Err(Error::DocumentTooLarge)` without allocating the object graph if the
     /// input exceeds `limit`.  `None` disables the check entirely.
-    pub(crate) max_file_bytes: Option<usize>,
+    pub max_file_bytes: Option<usize>,
 
     /// When `true`, ObjStm streams are **not** decompressed during loading.
     ///
@@ -44,15 +81,32 @@ pub struct LoadOptions {
     /// When `false` (default), ObjStm streams are decompressed eagerly during
     /// load and their container streams are discarded immediately after
     /// extraction (Phase 2a memory optimisation).
-    pub(crate) lazy_objstm: bool,
+    pub lazy_objstm: bool,
 }
 
 impl Default for LoadOptions {
     fn default() -> Self {
         Self {
+            password: None,
+            filter: None,
+            strict: false,
+            max_decompressed_size: Some(MAX_DECOMPRESSED_BYTES),
             max_file_bytes: Some(DEFAULT_MAX_FILE_BYTES),
             lazy_objstm: false,
         }
+    }
+}
+
+impl std::fmt::Debug for LoadOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoadOptions")
+            .field("password", &self.password.as_ref().map(|_| "***"))
+            .field("filter", &self.filter.map(|_| "fn(..)"))
+            .field("strict", &self.strict)
+            .field("max_decompressed_size", &self.max_decompressed_size)
+            .field("max_file_bytes", &self.max_file_bytes)
+            .field("lazy_objstm", &self.lazy_objstm)
+            .finish()
     }
 }
 
@@ -60,6 +114,32 @@ impl LoadOptions {
     /// Create options with default values.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create options with a password for encrypted PDFs.
+    pub fn with_password(password: &str) -> Self {
+        Self {
+            password: Some(password.to_string()),
+            ..Default::default()
+        }
+    }
+
+    /// Create options with an object filter.
+    pub fn with_filter(filter: FilterFunc) -> Self {
+        Self {
+            filter: Some(filter),
+            ..Default::default()
+        }
+    }
+
+    /// Create options that bound how large any single stream may decompress to
+    /// during loading, to defend against decompression bombs in untrusted PDFs.
+    /// See [`LoadOptions::max_decompressed_size`].
+    pub fn with_max_decompressed_size(max_decompressed_size: usize) -> Self {
+        Self {
+            max_decompressed_size: Some(max_decompressed_size),
+            ..Default::default()
+        }
     }
 
     /// Set the maximum allowed input size in bytes.
@@ -78,6 +158,16 @@ impl LoadOptions {
     /// document.
     pub fn lazy_objstm(mut self, lazy: bool) -> Self {
         self.lazy_objstm = lazy;
+        self
+    }
+
+    /// Bound how large any single stream may decompress to during loading.
+    ///
+    /// Builder counterpart to [`LoadOptions::with_max_decompressed_size`].
+    /// Pass `None` to remove the bound entirely — which also removes the
+    /// LOPDF-ZBOMB-01 protection that is on by default.
+    pub fn max_decompressed_size(mut self, limit: impl Into<Option<usize>>) -> Self {
+        self.max_decompressed_size = limit.into();
         self
     }
 }

@@ -1607,23 +1607,29 @@ impl PdfDocument {
 
     /// Embed an OpenType/TrueType font into the document.
     ///
-    /// # 1.0 scope — honest deferred
+    /// Writes the font programme, a `/FontDescriptor`, and a simple
+    /// `/Subtype /TrueType` dictionary carrying `/FirstChar`, `/LastChar` and
+    /// `/Widths`, then names it in every page's `/Resources/Font`. The returned
+    /// string is the name page content should use in a `Tf` operator.
     ///
-    /// `pdf-manip` currently only has PDF/A-driven font embedding
-    /// (`pdfa_fonts::embed_fonts`), which assumes existing font
-    /// references in the page tree. A general-purpose "add a new font
-    /// for future content" pipeline (write a fresh Type0 composite
-    /// font dict + CIDFont + FontDescriptor + FontFile2/3 stream, then
-    /// register it in every page's `/Resources/Font`) is a multi-day
-    /// task. Per issue #1224 and RFC D8 this method is part of the
-    /// 1.0 surface but a call returns [`Error::MissingDependency`].
-    pub fn embed_font(&mut self, _font_data: &[u8], _name: &str) -> Result<()> {
+    /// # What this does not do
+    ///
+    /// Composite (Type0/CID) fonts. A simple font reaches at most 256 glyphs
+    /// through a single-byte encoding, which covers WinAnsi text and does not
+    /// cover CJK. A font with no `cmap` is refused rather than embedded as
+    /// something that would render the wrong glyphs; the Type0 route stays
+    /// deferred (#1224).
+    ///
+    /// Until 2026-09-01 this returned `Error::MissingDependency`. It was
+    /// tempting to wire it to `lopdf::Document::add_font` alone, but that
+    /// writes no widths and registers the font on no page -- an `Ok(())` the
+    /// caller could not tell from a real one.
+    pub fn embed_font(&mut self, font_data: &[u8], name: &str) -> Result<String> {
         self.require_capability(Capability::PdfWrite)?;
-        Err(Error::MissingDependency {
-            dep: "pdf-manip::embed_font",
-            install_hint:
-                "arbitrary font embedding not yet implemented; tracked as a 1.1 follow-up to #1224",
-        })
+        let embedded = pdf_manip::embed_font::embed_font(&mut self.lopdf, font_data, name)
+            .map_err(|e| internal_error(format!("font embedding failed: {e}")))?;
+        self.refresh_from_lopdf()?;
+        Ok(embedded.resource_name)
     }
 
     /// Insert a JPEG or PNG image onto a page.

@@ -1,0 +1,16 @@
+# Upstream lopdf's rustfmt configuration, restricted to the keys stable
+# rustfmt accepts.
+#
+# Not a style preference: it is what makes merging from upstream affordable.
+# With the workspace default (max_width = 100) against upstream's 120, a
+# three-way merge of the 0.39.0 -> 0.44.0 delta produced 99 conflict hunks
+# across 21 files. Formatting all three trees with THIS file first brought
+# that down to 31 hunks across 8 files -- two thirds of the conflicts were
+# line wrapping and nothing else. Dropping this file re-creates them.
+#
+# Upstream also sets format_strings = false, comment_width = 120 and
+# wrap_comments = true. Those are nightly-only; stable rustfmt ignores them
+# and warns on every run, so they are recorded here rather than set.
+reorder_imports = true
+fn_params_layout = "Compressed"
+max_width = 120

@@ -1,6 +1,4 @@
-use crate::cmap_section::{
-    ArrayOfTargetStrings, CMapParseError, CMapSection, CodeLen, SourceCode, SourceRangeMapping,
-};
+use crate::cmap_section::{ArrayOfTargetStrings, CMapParseError, CMapSection, CodeLen, SourceCode, SourceRangeMapping};
 use crate::parser::{NomResult, ParserInput, comment, dict_dup, dictionary, eol, hex_char, name};
 use nom::Parser;
 use nom::branch::alt;
@@ -113,8 +111,16 @@ fn cmap_data(input: ParserInput) -> NomResult<Vec<CMapSection>> {
 }
 
 fn cmap_metadata(input: ParserInput) -> NomResult<()> {
-    let metadata_parser = alt((cid_system_info, cmap_name, cmap_type));
-    fold_many_m_n(1, 4, metadata_parser, || (), |_, _| ()).parse(input)
+    let metadata_parser = alt((
+        cid_system_info,
+        cmap_name,
+        cmap_type,
+        cmap_version,
+        uidoffset,
+        wmode,
+        xuid,
+    ));
+    fold_many_m_n(1, 7, metadata_parser, || (), |_, _| ()).parse(input)
 }
 
 fn cid_system_info(input: ParserInput) -> NomResult<()> {
@@ -158,26 +164,62 @@ fn cmap_type(input: ParserInput) -> NomResult<()> {
         .map(|(i, _)| (i, ()))
 }
 
+fn cmap_version(input: ParserInput) -> NomResult<()> {
+    let version = (digit1, opt((tag(&b"."[..]), digit1)));
+    (
+        tag(&b"/CMapVersion"[..]),
+        space1,
+        version,
+        space1,
+        tag(&b"def"[..]),
+        multispace1,
+    )
+        .parse(input)
+        .map(|(i, _)| (i, ()))
+}
+
+fn wmode(input: ParserInput) -> NomResult<()> {
+    (
+        tag(&b"/WMode"[..]),
+        space1,
+        digit1,
+        space1,
+        tag(&b"def"[..]),
+        multispace1,
+    )
+        .parse(input)
+        .map(|(i, _)| (i, ()))
+}
+
+fn uidoffset(input: ParserInput) -> NomResult<()> {
+    (
+        tag(&b"/UIDOffset"[..]),
+        space1,
+        digit1,
+        space1,
+        tag(&b"def"[..]),
+        multispace1,
+    )
+        .parse(input)
+        .map(|(i, _)| (i, ()))
+}
+
+fn xuid(input: ParserInput) -> NomResult<()> {
+    let array = (tag(&b"["[..]), separated_list1(space1, digit1), tag(&b"]"[..]));
+    (tag(&b"/XUID"[..]), space1, array, space1, tag(&b"def"[..]), multispace1)
+        .parse(input)
+        .map(|(i, _)| (i, ()))
+}
+
 fn cmap_codespace_and_mappings(input: ParserInput) -> NomResult<Vec<CMapSection>> {
-    many1(alt((
-        codespace_range_section,
-        bf_char_section,
-        bf_range_section,
-    )))
-    .parse(input)
+    many1(alt((codespace_range_section, bf_char_section, bf_range_section))).parse(input)
 }
 
 fn codespace_range_section(input: ParserInput) -> NomResult<CMapSection> {
-    let begin_section = (
-        digit1,
-        space1,
-        tag(&b"begincodespacerange"[..]),
-        multispace1,
-    );
+    let begin_section = (digit1, space1, tag(&b"begincodespacerange"[..]), multispace1);
     let end_section = (tag(&b"endcodespacerange"[..]), multispace1);
     let parse_range = delimited(space0, code_range_pair, multispace1);
-    let (rest_of_input, ranges_result) =
-        delimited(begin_section, many1(parse_range), end_section).parse(input)?;
+    let (rest_of_input, ranges_result) = delimited(begin_section, many1(parse_range), end_section).parse(input)?;
     Ok((rest_of_input, CMapSection::CsRange(ranges_result)))
 }
 
@@ -191,9 +233,7 @@ fn code_range_pair(input: ParserInput) -> NomResult<(SourceCode, SourceCode, Cod
     }
 }
 
-fn create_code_len_err<'a, T, E: ParseError<ParserInput<'a>>>(
-    input: ParserInput<'a>,
-) -> Result<T, nom::Err<E>> {
+fn create_code_len_err<'a, T, E: ParseError<ParserInput<'a>>>(input: ParserInput<'a>) -> Result<T, nom::Err<E>> {
     Err(nom::Err::Failure(nom::error::make_error(
         input,
         nom::error::ErrorKind::LengthValue,
@@ -201,8 +241,7 @@ fn create_code_len_err<'a, T, E: ParseError<ParserInput<'a>>>(
 }
 
 fn source_code(input: ParserInput) -> NomResult<(SourceCode, CodeLen)> {
-    let (rest_of_input, bytes) =
-        delimited(tag(&b"<"[..]), many_m_n(1, 4, hex_char), tag(&b">"[..])).parse(input)?;
+    let (rest_of_input, bytes) = delimited(tag(&b"<"[..]), many_m_n(1, 4, hex_char), tag(&b">"[..])).parse(input)?;
     let code_len = bytes.len();
     let source_code = bytes
         .into_iter()
@@ -214,24 +253,16 @@ fn source_code(input: ParserInput) -> NomResult<(SourceCode, CodeLen)> {
 }
 
 fn hex_u16(input: ParserInput) -> NomResult<u16> {
-    map(pair(hex_char, hex_char), |(h1, h2)| {
-        h1 as u16 * 256 + h2 as u16
-    })
-    .parse(input)
+    map(pair(hex_char, hex_char), |(h1, h2)| h1 as u16 * 256 + h2 as u16).parse(input)
 }
 
 fn bf_char_section(input: ParserInput) -> NomResult<CMapSection> {
     let begin_section = (digit1, space1, tag(&b"beginbfchar"[..]), multispace1);
     let end_section = (tag(&b"endbfchar"[..]), multispace1);
-    let bf_char_line = delimited(
-        space0,
-        separated_pair(source_code, space0, target_string),
-        multispace1,
-    );
+    let bf_char_line = delimited(space0, separated_pair(source_code, space0, target_string), multispace1);
     // Some real-world ToUnicode CMaps contain sections like `0 beginbfchar ... endbfchar`.
     // Accept empty sections to avoid failing extraction (specifically calling extract_text)
-    let (rest_of_input, bf_char_mappings) =
-        delimited(begin_section, many0(bf_char_line), end_section).parse(input)?;
+    let (rest_of_input, bf_char_mappings) = delimited(begin_section, many0(bf_char_line), end_section).parse(input)?;
     Ok((rest_of_input, CMapSection::BfChar(bf_char_mappings)))
 }
 
@@ -279,13 +310,13 @@ mod tests {
     use super::*;
 
     fn test_span(s: &'_ [u8]) -> ParserInput<'_> {
-        ParserInput::new_extra(s, "")
+        s
     }
     #[test]
     fn parse_1byte_source_code() {
         let data = b"<0A>";
         let (rem, res) = source_code(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, (0x0a, 1));
     }
 
@@ -293,7 +324,7 @@ mod tests {
     fn parse_source_code() {
         let data = b"<080F>";
         let (rem, res) = source_code(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, (0x080f, 2));
     }
 
@@ -313,7 +344,7 @@ mod tests {
     fn parse_code_range_pair() {
         let data = b"<080F> <08FF> ";
         let (rem, res) = code_range_pair(test_span(data)).unwrap();
-        assert_eq!(*rem, b" ");
+        assert_eq!(rem, b" ");
         assert_eq!(res, (0x080f, 0x08ff, 2));
     }
 
@@ -322,7 +353,7 @@ mod tests {
         let data = b"<080F><08FF>";
 
         let (rem, res) = code_range_pair(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, (0x080f, 0x08ff, 2));
     }
 
@@ -336,14 +367,14 @@ mod tests {
     fn parse_bfrange_line() {
         let data = b"<080f> <08ff> <09000110>\n";
         let (rem, res) = bf_range_line(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, ((0x080f, 0x08ff, 2), vec![vec![0x0900, 0x0110]]));
     }
     #[test]
     fn parse_bfrange_line_without_spaces() {
         let data = b"<080f><08ff><09000110>\n";
         let (rem, res) = bf_range_line(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, ((0x080f, 0x08ff, 2), vec![vec![0x0900, 0x0110]]));
     }
 
@@ -351,14 +382,8 @@ mod tests {
     fn parse_bfrange_line_array() {
         let data = b"<080f> <08ff> [ <09000110> <08fe> ] \n";
         let (rem, res) = bf_range_line(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
-        assert_eq!(
-            res,
-            (
-                (0x080f, 0x08ff, 2),
-                vec![vec![0x0900, 0x0110], vec![0x08fe]]
-            )
-        );
+        assert_eq!(rem, b"");
+        assert_eq!(res, ((0x080f, 0x08ff, 2), vec![vec![0x0900, 0x0110], vec![0x08fe]]));
     }
     #[test]
     fn parse_invalid_bfrange_line() {
@@ -372,7 +397,7 @@ mod tests {
             <0000> <FFFF> \n\
         endcodespacerange\n";
         let (rem, res) = codespace_range_section(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(res, CMapSection::CsRange(vec![(0x0000, 0xffff, 2)]));
     }
 
@@ -385,16 +410,13 @@ mod tests {
         endbfrange\n";
 
         let (rem, res) = bf_range_section(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(
             res,
             CMapSection::BfRange(vec![
                 ((0x0000, 0x000f, 2), vec![vec![0x0000]]),
                 ((0x0010, 0x001f, 2), vec![vec![0x0000, 0x0010]]),
-                (
-                    (0x0020, 0x002f, 2),
-                    vec![vec![0x0000], vec![0x0000, 0x0010]]
-                ),
+                ((0x0020, 0x002f, 2), vec![vec![0x0000], vec![0x0000, 0x0010]]),
             ])
         );
     }
@@ -408,7 +430,7 @@ mod tests {
             <20> <0020>\n\
         endbfchar\n";
         let (rem, res) = bf_char_section(test_span(data)).unwrap();
-        assert_eq!(*rem, b"");
+        assert_eq!(rem, b"");
         assert_eq!(
             res,
             CMapSection::BfChar(vec![
@@ -465,6 +487,36 @@ end def
     fn parse_cmap_type() {
         let data = b"/CMapType 2 def\n";
         assert!(cmap_type(test_span(data)).is_ok())
+    }
+
+    #[test]
+    fn parse_cmap_version() {
+        let data = b"/CMapVersion 0 def\n";
+        assert!(cmap_version(test_span(data)).is_ok())
+    }
+
+    #[test]
+    fn parse_cmap_version2() {
+        let data = b"/CMapVersion 10.001 def\n";
+        assert!(cmap_version(test_span(data)).is_ok())
+    }
+
+    #[test]
+    fn parse_uidoffset() {
+        let data = b"/UIDOffset 950 def\n";
+        assert!(uidoffset(test_span(data)).is_ok())
+    }
+
+    #[test]
+    fn parse_xuid() {
+        let data = b"/XUID [1 10 25343] def\n";
+        assert!(xuid(test_span(data)).is_ok())
+    }
+
+    #[test]
+    fn parse_wmode() {
+        let data = b"/WMode 0 def\n";
+        assert!(wmode(test_span(data)).is_ok())
     }
 
     #[test]

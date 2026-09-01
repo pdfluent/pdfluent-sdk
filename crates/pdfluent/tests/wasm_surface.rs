@@ -89,12 +89,10 @@ fn linearize_returns_missing_dependency_on_both_targets() {
 }
 
 #[test]
-fn embed_font_returns_missing_dependency_on_both_targets() {
+fn embed_font_rejects_data_that_is_not_a_font_on_both_targets() {
     let mut doc = enterprise_doc("tests/fixtures/sample.pdf");
-    let err = doc
-        .embed_font(b"not-a-real-font", "Unknown")
-        .expect_err("deferred");
-    assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
+    doc.embed_font(b"not-a-real-font", "Unknown")
+        .expect_err("bytes that are not a font must not embed");
 }
 
 #[test]

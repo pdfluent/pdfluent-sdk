@@ -9,9 +9,7 @@ fn test_ascii_hex_decode_stream() {
     dict.set("Filter", Object::Name(b"ASCIIHexDecode".to_vec()));
     dict.set("Length", Object::Integer(hex_content.len() as i64));
     let stream = Stream::new(dict, hex_content);
-    let decoded = stream
-        .decompressed_content()
-        .expect("ASCIIHexDecode should work");
+    let decoded = stream.decompressed_content().expect("ASCIIHexDecode should work");
     assert_eq!(decoded, b"Hello World!");
 }
 
@@ -22,9 +20,7 @@ fn test_ascii_hex_decode_abbreviation() {
     dict.set("Filter", Object::Name(b"AHx".to_vec()));
     dict.set("Length", Object::Integer(hex_content.len() as i64));
     let stream = Stream::new(dict, hex_content);
-    let decoded = stream
-        .decompressed_content()
-        .expect("AHx abbreviation should work");
+    let decoded = stream.decompressed_content().expect("AHx abbreviation should work");
     assert_eq!(decoded, b"AB");
 }
 
@@ -36,9 +32,7 @@ fn test_run_length_decode_stream() {
     dict.set("Filter", Object::Name(b"RunLengthDecode".to_vec()));
     dict.set("Length", Object::Integer(rl_content.len() as i64));
     let stream = Stream::new(dict, rl_content);
-    let decoded = stream
-        .decompressed_content()
-        .expect("RunLengthDecode should work");
+    let decoded = stream.decompressed_content().expect("RunLengthDecode should work");
     assert_eq!(decoded, vec![10, 11, 12, 13, 14, 3, 3, 3, 3]);
 }
 
@@ -49,9 +43,7 @@ fn test_run_length_abbreviation() {
     dict.set("Filter", Object::Name(b"RL".to_vec()));
     dict.set("Length", Object::Integer(rl_content.len() as i64));
     let stream = Stream::new(dict, rl_content);
-    let decoded = stream
-        .decompressed_content()
-        .expect("RL abbreviation should work");
+    let decoded = stream.decompressed_content().expect("RL abbreviation should work");
     assert_eq!(decoded, vec![42]);
 }
 
@@ -116,9 +108,7 @@ fn test_ascii_hex_decode_odd_nibble_trailing() {
     dict.set("Filter", Object::Name(b"ASCIIHexDecode".to_vec()));
     dict.set("Length", Object::Integer(hex_content.len() as i64));
     let stream = Stream::new(dict, hex_content);
-    let decoded = stream
-        .decompressed_content()
-        .expect("odd hex should pad with 0");
+    let decoded = stream.decompressed_content().expect("odd hex should pad with 0");
     assert_eq!(decoded, vec![0xA0]);
 }
 
@@ -130,9 +120,7 @@ fn test_ascii_hex_decode_missing_eod_marker() {
     dict.set("Filter", Object::Name(b"ASCIIHexDecode".to_vec()));
     dict.set("Length", Object::Integer(hex_content.len() as i64));
     let stream = Stream::new(dict, hex_content);
-    let decoded = stream
-        .decompressed_content()
-        .expect("missing EOD should still decode");
+    let decoded = stream.decompressed_content().expect("missing EOD should still decode");
     assert_eq!(decoded, b"Hello");
 }
 
@@ -144,9 +132,7 @@ fn test_ascii_hex_decode_with_whitespace() {
     dict.set("Filter", Object::Name(b"ASCIIHexDecode".to_vec()));
     dict.set("Length", Object::Integer(hex_content.len() as i64));
     let stream = Stream::new(dict, hex_content);
-    let decoded = stream
-        .decompressed_content()
-        .expect("whitespace should be ignored");
+    let decoded = stream.decompressed_content().expect("whitespace should be ignored");
     assert_eq!(decoded, b"Hello");
 }
 
@@ -158,9 +144,7 @@ fn test_ascii_hex_decode_lowercase() {
     dict.set("Filter", Object::Name(b"ASCIIHexDecode".to_vec()));
     dict.set("Length", Object::Integer(hex_content.len() as i64));
     let stream = Stream::new(dict, hex_content);
-    let decoded = stream
-        .decompressed_content()
-        .expect("lowercase hex should work");
+    let decoded = stream.decompressed_content().expect("lowercase hex should work");
     assert_eq!(decoded, b"hello");
 }
 
@@ -175,10 +159,7 @@ fn test_ascii_hex_decode_invalid_digit() {
     let result = stream.decompressed_content();
     assert!(result.is_err(), "invalid hex digit should error");
     let err = result.unwrap_err();
-    assert!(
-        matches!(err, Error::Decompress(_)),
-        "should be Decompress error"
-    );
+    assert!(matches!(err, Error::Decompress(_)), "should be Decompress error");
 }
 
 #[test]
@@ -207,9 +188,7 @@ fn test_run_length_decode_just_eod() {
     dict.set("Filter", Object::Name(b"RunLengthDecode".to_vec()));
     dict.set("Length", Object::Integer(rl_content.len() as i64));
     let stream = Stream::new(dict, rl_content);
-    let decoded = stream
-        .decompressed_content()
-        .expect("EOD only should return empty");
+    let decoded = stream.decompressed_content().expect("EOD only should return empty");
     assert_eq!(decoded, vec![]);
 }
 
@@ -252,9 +231,7 @@ fn test_run_length_decode_max_literal() {
     dict.set("Filter", Object::Name(b"RunLengthDecode".to_vec()));
     dict.set("Length", Object::Integer(rl_content.len() as i64));
     let stream = Stream::new(dict, rl_content);
-    let decoded = stream
-        .decompressed_content()
-        .expect("max literal should work");
+    let decoded = stream.decompressed_content().expect("max literal should work");
     assert_eq!(decoded.len(), 128);
     assert!(decoded.iter().all(|&b| b == 42));
 }
@@ -267,9 +244,7 @@ fn test_run_length_decode_max_repeat() {
     dict.set("Filter", Object::Name(b"RunLengthDecode".to_vec()));
     dict.set("Length", Object::Integer(rl_content.len() as i64));
     let stream = Stream::new(dict, rl_content);
-    let decoded = stream
-        .decompressed_content()
-        .expect("max repeat should work");
+    let decoded = stream.decompressed_content().expect("max repeat should work");
     assert_eq!(decoded.len(), 128);
     assert!(decoded.iter().all(|&b| b == 255));
 }
@@ -320,10 +295,7 @@ fn test_flate_decode_truncated_data() {
     dict.set("Length", Object::Integer(truncated.len() as i64));
     let stream = Stream::new(dict, truncated.to_vec());
     let result = stream.decompressed_content();
-    assert!(
-        result.is_ok(),
-        "truncated FlateDecode should return partial"
-    );
+    assert!(result.is_ok(), "truncated FlateDecode should return partial");
 }
 
 #[test]
@@ -377,8 +349,7 @@ fn test_lzw_decode_empty_input() {
 #[test]
 fn test_lzw_decode_early_change_zero() {
     let input = vec![
-        0x80, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D,
-        0x4E, 0x4F, 0x80,
+        0x80, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x80,
     ];
     let mut dict = Dictionary::new();
     dict.set("Filter", Object::Name(b"LZWDecode".to_vec()));
@@ -399,8 +370,7 @@ fn test_lzw_decode_early_change_zero() {
 #[test]
 fn test_lzw_decode_early_change_one() {
     let input = vec![
-        0x80, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D,
-        0x4E, 0x4F, 0x80,
+        0x80, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x80,
     ];
     let mut dict = Dictionary::new();
     dict.set("Filter", Object::Name(b"LZWDecode".to_vec()));
@@ -426,10 +396,7 @@ fn test_lzw_decode_invalid_sequence() {
     dict.set("Length", Object::Integer(input.len() as i64));
     let stream = Stream::new(dict, input);
     let result = stream.decompressed_content();
-    assert!(
-        result.is_ok(),
-        "invalid LZW should not panic, just return partial"
-    );
+    assert!(result.is_ok(), "invalid LZW should not panic, just return partial");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -545,8 +512,6 @@ fn test_chained_multiple_filters() {
     );
     dict.set("Length", Object::Integer(hex.len() as i64));
     let stream = Stream::new(dict, hex);
-    let decoded = stream
-        .decompressed_content()
-        .expect("chained filters should work");
+    let decoded = stream.decompressed_content().expect("chained filters should work");
     assert_eq!(decoded, original);
 }

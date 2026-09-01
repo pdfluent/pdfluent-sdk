@@ -1853,7 +1853,7 @@ pub fn extract_positioned_chars(doc: &Document, page_num: u32) -> Result<Vec<Pos
 
 /// Get content stream bytes for a page.
 fn get_page_content_bytes(doc: &Document, page_id: ObjectId) -> std::result::Result<Vec<u8>, ()> {
-    doc.get_page_content(page_id).map_err(|_| ())
+    Ok(doc.get_page_content(page_id))
 }
 
 /// One entry on the marked-content stack. PDF marked-content sequences nest

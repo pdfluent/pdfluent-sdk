@@ -32,10 +32,7 @@ pub fn form(boundingbox: Vec<f32>, matrix: Vec<f32>, content: Vec<u8>) -> Stream
         "BBox",
         Object::Array(boundingbox.into_iter().map(Object::Real).collect()),
     );
-    dict.set(
-        "Matrix",
-        Object::Array(matrix.into_iter().map(Object::Real).collect()),
-    );
+    dict.set("Matrix", Object::Array(matrix.into_iter().map(Object::Real).collect()));
     let mut xobject = Stream::new(dict, content);
     // Ignore any compression error.
     let _ = xobject.compress();
@@ -175,51 +172,140 @@ fn get_dimensions_and_color_type(buffer: &Vec<u8>) -> Result<((u32, u32), ColorT
     Ok((dimensions, color_type))
 }
 
+/// Write a small image of the given colour type to `dir`, and return its path.
+///
+/// The three tests below carried `#[ignore]` because they read
+/// `assets/pdf_icon.jpg` and `assets/supported_color_type/`, neither of which
+/// this fork ships. An ignored test reports as neither pass nor failure, so all
+/// three had been running nowhere -- and `insert_image` in particular covers
+/// the JPEG passthrough that `image_from` does without re-encoding.
+///
+/// The `image` crate is already a dependency of this feature, so the fixtures
+/// are generated rather than committed. That also makes the colour-type test
+/// state which types it covers, instead of it depending on whatever happens to
+/// sit in a directory.
+#[cfg(all(test, feature = "embed_image"))]
+fn write_test_image(dir: &std::path::Path, name: &str, colour: image::ColorType) -> std::path::PathBuf {
+    use image::{DynamicImage, GrayAlphaImage, GrayImage, RgbImage, RgbaImage};
+
+    let (w, h) = (4u32, 3u32);
+    let img = match colour {
+        image::ColorType::L8 => {
+            DynamicImage::ImageLuma8(GrayImage::from_fn(w, h, |x, _| image::Luma([(x * 60) as u8])))
+        }
+        image::ColorType::La8 => DynamicImage::ImageLumaA8(GrayAlphaImage::from_fn(w, h, |x, _| {
+            image::LumaA([(x * 60) as u8, 255])
+        })),
+        image::ColorType::Rgb8 => DynamicImage::ImageRgb8(RgbImage::from_fn(w, h, |x, y| {
+            image::Rgb([(x * 60) as u8, (y * 80) as u8, 30])
+        })),
+        image::ColorType::Rgba8 => DynamicImage::ImageRgba8(RgbaImage::from_fn(w, h, |x, y| {
+            image::Rgba([(x * 60) as u8, (y * 80) as u8, 30, 255])
+        })),
+        other => panic!("the test does not build {other:?}"),
+    };
+
+    let path = dir.join(name);
+    img.save(&path).expect("writing the generated fixture");
+    path
+}
+
 #[cfg(all(feature = "embed_image", not(feature = "async")))]
 #[test]
-#[ignore = "depends on assets/pdf_icon.jpg fixture not committed to the repo"]
 fn insert_image() {
     use super::xobject;
-    let mut doc = Document::load("assets/example.pdf").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let jpeg = write_test_image(dir.path(), "icon.jpg", image::ColorType::Rgb8);
+
+    // Not assets/example.pdf: its first page carries no /Contents, so
+    // insert_image returns DictKey("Contents") on it. Upstream's version would
+    // have failed the same way had it ever run -- the missing fixture hid a
+    // second reason it could not pass.
+    let mut doc = crate::creator::tests::create_document();
     let pages = doc.get_pages();
-    let page_id = *pages
-        .get(&1)
-        .unwrap_or_else(|| panic!("Page {} not exist.", 1));
-    let img = xobject::image("assets/pdf_icon.jpg").unwrap();
-    doc.insert_image(page_id, img, (100.0, 210.0), (400.0, 225.0))
-        .unwrap();
-    doc.save("test_5_image.pdf").unwrap();
+    let page_id = *pages.get(&1).unwrap_or_else(|| panic!("Page {} not exist.", 1));
+    let img = xobject::image(&jpeg).unwrap();
+    doc.insert_image(page_id, img, (100.0, 210.0), (400.0, 225.0)).unwrap();
+
+    // Upstream's version saved a PDF into the working directory and asserted
+    // nothing, so it could only fail by panicking. The image has to end up
+    // referenced from the page, which is the part insert_image exists to do.
+    let (resources, _) = doc.get_page_resources(page_id).expect("page resources");
+    let xobjects = resources
+        .expect("a resources dictionary")
+        .get(b"XObject")
+        .and_then(|o| o.as_dict())
+        .expect("an /XObject dictionary on the page");
+    assert_eq!(xobjects.len(), 1, "exactly the image just inserted");
+
+    let (_, entry) = xobjects.iter().next().unwrap();
+    let img_id = entry.as_reference().unwrap();
+    let stream = doc.get_object(img_id).unwrap().as_stream().unwrap();
+    assert_eq!(stream.dict.get(b"Subtype").unwrap(), &Object::Name(b"Image".to_vec()));
+    // JPEG data is passed through rather than re-encoded, so the filter must say so.
+    assert_eq!(
+        stream.dict.get(b"Filter").unwrap(),
+        &Object::Name(b"DCTDecode".to_vec())
+    );
+
+    // Registering the image is only half of it; the page content has to draw it.
+    // Without this the test passes against an insert_image that emits no `Do`.
+    let content = doc.get_and_decode_page_content(page_id).unwrap();
+    let drawn: Vec<_> = content.operations.iter().filter(|op| op.operator == "Do").collect();
+    assert_eq!(drawn.len(), 1, "the image is drawn exactly once");
+    assert_eq!(
+        drawn[0].operands,
+        vec![Object::Name(format!("X{}", img_id.0).into_bytes())],
+        "the Do operator names the XObject that was registered"
+    );
+
+    let mut out = Vec::new();
+    doc.save_to(&mut out).unwrap();
+    assert!(out.starts_with(b"%PDF-"));
 }
 
 #[cfg(all(feature = "embed_image", feature = "async"))]
 #[tokio::test]
-#[ignore = "depends on assets/pdf_icon.jpg fixture not committed to the repo"]
 async fn insert_image() {
     use super::xobject;
-    let mut doc = Document::load("assets/example.pdf").await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let jpeg = write_test_image(dir.path(), "icon.jpg", image::ColorType::Rgb8);
+
+    let mut doc = crate::creator::tests::create_document();
     let pages = doc.get_pages();
-    let page_id = *pages
-        .get(&1)
-        .unwrap_or_else(|| panic!("Page {} not exist.", 1));
-    let img = xobject::image("assets/pdf_icon.jpg").unwrap();
-    doc.insert_image(page_id, img, (100.0, 210.0), (400.0, 225.0))
-        .unwrap();
-    doc.save("test_5_image.pdf").unwrap();
+    let page_id = *pages.get(&1).unwrap_or_else(|| panic!("Page {} not exist.", 1));
+    let img = xobject::image(&jpeg).unwrap();
+    doc.insert_image(page_id, img, (100.0, 210.0), (400.0, 225.0)).unwrap();
+
+    let (resources, _) = doc.get_page_resources(page_id).expect("page resources");
+    let xobjects = resources
+        .expect("a resources dictionary")
+        .get(b"XObject")
+        .and_then(|o| o.as_dict())
+        .expect("an /XObject dictionary on the page");
+    assert_eq!(xobjects.len(), 1);
+
+    let mut out = Vec::new();
+    doc.save_to(&mut out).unwrap();
+    assert!(out.starts_with(b"%PDF-"));
 }
 
 #[cfg(feature = "embed_image")]
 #[test]
-#[ignore = "depends on assets/supported_color_type/ fixture dir not committed to the repo"]
 fn embed_supported_color_type() -> Result<()> {
     use content::{Content, Operation};
     use image::GenericImageView;
 
-    let mut img_paths = std::fs::read_dir("assets/supported_color_type")?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    // sort by file name
-    img_paths.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    // Named rather than read from a directory: the point of the test is which
+    // colour types survive the conversion, and a directory listing does not say.
+    let dir = tempfile::tempdir()?;
+    let img_paths = [
+        ("gray.png", image::ColorType::L8),
+        ("gray_alpha.png", image::ColorType::La8),
+        ("rgb.png", image::ColorType::Rgb8),
+        ("rgba.png", image::ColorType::Rgba8),
+    ]
+    .map(|(name, colour)| write_test_image(dir.path(), name, colour));
 
     let mut doc = Document::with_version("1.5");
     let pages_id = doc.new_object_id();
@@ -229,9 +315,7 @@ fn embed_supported_color_type() -> Result<()> {
         let img = image::open(&img_path)?;
         let (width, height) = img.dimensions();
         let color_type = img.color();
-        println!(
-            "Image: {img_path:?}, width: {width}, height: {height}, color type: {color_type:?}"
-        );
+        println!("Image: {img_path:?}, width: {width}, height: {height}, color type: {color_type:?}");
 
         let image_stream = xobject::image(img_path)?;
 
@@ -240,14 +324,7 @@ fn embed_supported_color_type() -> Result<()> {
 
         let cm_operation = Operation::new(
             "cm",
-            vec![
-                width.into(),
-                0.into(),
-                0.into(),
-                height.into(),
-                0.into(),
-                0.into(),
-            ],
+            vec![width.into(), 0.into(), 0.into(), height.into(), 0.into(), 0.into()],
         );
 
         let do_operation = Operation::new("Do", vec![Object::Name(img_name.as_bytes().to_vec())]);

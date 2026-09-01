@@ -7,27 +7,25 @@ use std::io::Write;
 impl Document {
     /// Change producer of document information dictionary.
     pub fn change_producer(&mut self, producer: &str) {
-        if let Ok(info) = self.trailer.get_mut(b"Info") {
-            if let Some(dict) = match info {
+        if let Ok(info) = self.trailer.get_mut(b"Info")
+            && let Some(dict) = match info {
                 Object::Dictionary(dict) => Some(dict),
-                Object::Reference(id) => {
-                    self.objects.get_mut(id).and_then(|o| o.as_dict_mut().ok())
-                }
+                Object::Reference(id) => self.objects.get_mut(id).and_then(|o| o.as_dict_mut().ok()),
                 _ => None,
-            } {
-                dict.set("Producer", Object::string_literal(producer));
             }
+        {
+            dict.set("Producer", Object::string_literal(producer));
         }
     }
 
     /// Compress PDF stream objects.
     pub fn compress(&mut self) {
         for object in self.objects.values_mut() {
-            if let Object::Stream(stream) = object {
-                if stream.allows_compression {
-                    // Ignore any error and continue to compress other streams.
-                    let _ = stream.compress();
-                }
+            if let Object::Stream(stream) = object
+                && stream.allows_compression
+            {
+                // Ignore any error and continue to compress other streams.
+                let _ = stream.compress();
             }
         }
     }
@@ -51,10 +49,7 @@ impl Document {
         use std::collections::HashSet;
 
         let pages = self.get_pages();
-        let ids_to_delete: HashSet<ObjectId> = page_numbers
-            .iter()
-            .filter_map(|pn| pages.get(pn).copied())
-            .collect();
+        let ids_to_delete: HashSet<ObjectId> = page_numbers.iter().filter_map(|pn| pages.get(pn).copied()).collect();
 
         if ids_to_delete.is_empty() {
             return;
@@ -107,12 +102,11 @@ impl Document {
 
         // Apply Count decrements to page-tree nodes.
         for (tree_id, delta) in count_delta {
-            if let Some(obj) = self.objects.get_mut(&tree_id) {
-                if let Ok(dict) = obj.as_dict_mut() {
-                    if let Ok(count) = dict.get(b"Count").and_then(Object::as_i64) {
-                        dict.set("Count", (count - delta).max(0));
-                    }
-                }
+            if let Some(obj) = self.objects.get_mut(&tree_id)
+                && let Ok(dict) = obj.as_dict_mut()
+                && let Ok(count) = dict.get(b"Count").and_then(Object::as_i64)
+            {
+                dict.set("Count", (count - delta).max(0));
             }
         }
 
@@ -268,10 +262,10 @@ impl Document {
             }
 
             let action = |object: &mut Object| {
-                if let Object::Reference(id) = object {
-                    if replace.contains_key(id) {
-                        *id = replace[id];
-                    }
+                if let Object::Reference(id) = object
+                    && let Some(new_id) = replace.get(id)
+                {
+                    *id = *new_id;
                 }
             };
 
@@ -309,10 +303,10 @@ impl Document {
         }
 
         let action = |object: &mut Object| {
-            if let Object::Reference(id) = object {
-                if replace.contains_key(id) {
-                    *id = replace[id];
-                }
+            if let Object::Reference(id) = object
+                && let Some(new_id) = replace.get(id)
+            {
+                *id = *new_id;
             }
         };
 
@@ -330,9 +324,7 @@ impl Document {
     }
 
     pub fn change_page_content(&mut self, page_id: ObjectId, content: Vec<u8>) -> Result<()> {
-        let contents = self
-            .get_dictionary(page_id)
-            .and_then(|page| page.get(b"Contents"))?;
+        let contents = self.get_dictionary(page_id).and_then(|page| page.get(b"Contents"))?;
         match contents {
             Object::Reference(id) => self.change_content_stream(*id, content),
             Object::Array(arr) => {

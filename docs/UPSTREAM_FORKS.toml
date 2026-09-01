@@ -49,9 +49,16 @@ waarom = "Rasteriser. Substantially extended; diverged furthest."
 [[fork]]
 onze_crate = "lopdf"
 upstream = "lopdf"
-gelijk_met = "0.39.5"
-aanvaard_tot = "0.44.0"  # grootste gat dat we hebben, #256
-waarom = "PDF document model used by pdf-manip. Five minor releases behind."
+# Established by content, not by version: the recorded 0.39.5 is a release
+# upstream never made -- it had drifted to our own crate version. Our tree is
+# closest to tag v0.39.0 and the distance grows monotonically at every commit
+# after it (#262).
+forkpunt = "6cd9a62"  # J-F-Liu/lopdf v0.39.0, 2026-01-12
+# Was recorded as 0.39.5, a version upstream has never released -- it had
+# drifted to our own crate version. Verified against the code: the fork point
+# was upstream tag v0.39.0, and the tree now sits on v0.44.0 (#262).
+gelijk_met = "0.44.0"
+waarom = "PDF document model used by pdf-manip."
 
 [[fork]]
 onze_crate = "cff-parser"
