@@ -75,6 +75,9 @@ fn bytes_from_a_fresh_process() -> String {
 #[ignore]
 fn print_isolated_bytes() {
     if std::env::var("PDFLUENT_PRINT_ISOLATED").is_err() {
+        eprintln!(
+            "SKIPPED (not a pass): PDFLUENT_PRINT_ISOLATED is not set, so nothing was printed"
+        );
         return;
     }
     let bytes = isolate_and_serialise();
