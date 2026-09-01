@@ -73,14 +73,43 @@ LIJST = WORTEL / "docs" / "UPSTREAM_FORKS.toml"
 MINIMAAL_AANTAL_FORKS = 5
 
 
-def gewijzigde_crates() -> set[str]:
-    """Which crates this branch touches, by directory name under crates/.
+def registerregels_die_bewogen() -> set[str]:
+    """Crates whose `gelijk_met` or `forkpunt` this branch changes.
 
-    Against the merge base, not the working tree: the question is what the
-    branch proposes to merge. When no base can be found the answer is the empty
-    set, and that is stated rather than assumed -- a branch whose base cannot be
-    determined is not a branch that changed nothing.
+    NOT "crates whose files changed", which is what the first version asked.
+    That blocked any edit at all to a crate carrying `niet_mergen`, and #1543
+    showed what that costs: it failed on `cff-parser` because the branch added a
+    fork-attribution note to the README and 99 lines of tests. Neither is merging
+    a fork forward, and the rule would have blocked routine licence work across
+    every forked crate.
+
+    There is no way to tell an upstream merge from added tests by looking at the
+    diff -- both are substantive source changes, and I measured that rather than
+    assumed it. What an upstream merge does have is a claim: it says the crate now
+    corresponds to a newer upstream. That claim lives in `gelijk_met` and
+    `forkpunt`, and moving either of them for a crate that has no verifiable fork
+    point is the thing worth refusing.
+
+    The other half -- code moved forward while the register stayed still -- is a
+    real fault and is NOT this check's to catch. It has an owner:
+    `een_forkpunt_wordt_op_inhoud_gecontroleerd.py` scores each fork point by how
+    many files are byte-identical to upstream there, and a tree that moved toward
+    a newer upstream stops sitting at the maximum. Measured: pointing pdf-syntax
+    at `758948489` gives 15 of 47 where 20 is reachable. That guard fails; this
+    one is silent about it, on purpose, rather than pretending to a discriminator
+    it does not have.
     """
+    import tomllib
+
+    def velden(tekst: str) -> dict[str, tuple[str | None, str | None]]:
+        try:
+            forks = tomllib.loads(tekst)["fork"]
+        except Exception:  # noqa: BLE001 - unreadable means "cannot tell"
+            return {}
+        return {
+            f["onze_crate"]: (f.get("gelijk_met"), f.get("forkpunt")) for f in forks
+        }
+
     for ref in ("github/master", "origin/master", "master"):
         basis = subprocess.run(
             ["/usr/bin/git", "merge-base", "HEAD", ref],
@@ -88,19 +117,20 @@ def gewijzigde_crates() -> set[str]:
         )
         if basis.returncode != 0:
             continue
-        uit = subprocess.run(
-            ["/usr/bin/git", "diff", "--name-only", basis.stdout.strip(), "--", "crates/"],
+        eerder = subprocess.run(
+            ["/usr/bin/git", "show", f"{basis.stdout.strip()}:docs/UPSTREAM_FORKS.toml"],
             cwd=WORTEL, capture_output=True, text=True, check=False,
         )
-        if uit.returncode != 0:
+        if eerder.returncode != 0:
             continue
-        return {
-            regel.split("/")[1]
-            for regel in uit.stdout.splitlines()
-            if regel.startswith("crates/") and "/" in regel[7:]
-        }
+        toen = velden(eerder.stdout)
+        nu = velden(LIJST.read_text())
+        if not toen or not nu:
+            return set()
+        return {c for c, v in nu.items() if c in toen and toen[c] != v}
+
     print("SKIPPED (not a pass): geen merge-base gevonden, dus niet vastgesteld "
-          "welke crates deze tak wijzigt; `niet_mergen` blokkeert hier niets.",
+          "welke registerregels deze tak beweegt; `niet_mergen` blokkeert hier niets.",
           file=sys.stderr)
     return set()
 
@@ -125,7 +155,7 @@ def main() -> int:
 
     fouten: list[str] = []
     geblokkeerd: list[tuple[str, str]] = []
-    gewijzigd = gewijzigde_crates()
+    bewogen = registerregels_die_bewogen()
 
     for f in forks:
         naam = f.get("onze_crate", "<naamloos>")
@@ -153,12 +183,14 @@ def main() -> int:
         # reads the exit status and nothing else, so a branch that upgraded one
         # of these crates while leaving the field in place passed with a warning
         # in the log that nobody reads. (Codex, #1609.)
-        if naam in gewijzigd:
+        if naam in bewogen:
             fouten.append(
-                f"  {naam}: carries `niet_mergen` and this branch changes "
-                f"crates/{naam}/. That field says the crate is not to be merged "
-                "until its fork point is established -- so either establish it "
-                "and replace the field, or leave the crate alone."
+                f"  {naam}: carries `niet_mergen`, and this branch moves its "
+                "`gelijk_met` or `forkpunt`. Those fields claim the crate now "
+                "corresponds to a particular upstream -- which is exactly what "
+                "`niet_mergen` says cannot be established for it. Establish the "
+                "fork point by content and replace the field, or leave both alone. "
+                "(Editing the crate's files is fine; this is about the claim.)"
             )
 
     if fouten:
