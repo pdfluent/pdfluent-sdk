@@ -120,6 +120,17 @@ def current_branch() -> str | None:
     # changes.
     names = [n.strip() for n in pointing.stdout.splitlines()
              if n.strip() and not n.startswith("(")]
+
+    # Prefer a name whose prefix is an actual territory. A commit can carry
+    # several branches -- `t2/ci-fix` and `feature/alias` both pointing here --
+    # and taking whichever git listed first would judge the work against a
+    # territory nobody named, or against none. The gate would then reject a
+    # correct change for belonging to the wrong owner, which is worse than not
+    # checking: it teaches people the guard is unreliable. (codex, #1636)
+    known = {t["id"] for t in load()}
+    for n in names:
+        if "/" in n and n.split("/")[0] in known:
+            return n
     for n in names:
         if "/" in n:
             return n
