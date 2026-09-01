@@ -12,6 +12,14 @@ inclusief commerciële afwegingen, partnernamen en interne infrastructuur. De
 repository is dichtgezet, maar het onderliggende gat zat niet in de instelling:
 er was nergens een moment waarop iemand zich afvroeg of dít naar buiten mocht.
 
+De klant- en partnernamen staan NIET in dit bestand. Ze staan in een lijst
+buiten de boom, standaard `~/.config/pdfluent/interne-termen.txt`, te overrulen
+met `PDFLUENT_INTERNE_TERMEN`. Formaat: één term per regel, regels die met `#`
+beginnen zijn commentaar, elke term wordt als regex-alternatief gebruikt (punten
+dus ontsnappen: `Instantly\\.ai`). Aanvullen doe je daar, nooit hier -- een
+verbodslijst die haar eigen termen publiceert lekt precies wat zij tegenhoudt.
+Ontbreekt de lijst, dan weigert deze controle zichtbaar in plaats van te slagen.
+
 Commitboodschappen dragen hetzelfde risico en ze zijn moeilijker terug te nemen:
 een issue sluit je, een commit staat in elke kloon. Deze repository gaat publiek
 (LC10), dus elke boodschap die er nu bij komt, publiceert zichzelf later.
