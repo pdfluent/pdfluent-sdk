@@ -70,6 +70,9 @@ jobs:
       - name: Enough disk to finish a build
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/disk_headroom.py
+      - name: One owner per path, and branches stay inside their own
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/territories_do_not_overlap.py
       - name: Orchestration stays on hosted runners
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/orchestration_stays_hosted.py
@@ -113,6 +116,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_installer_escapes_the_path.py
       - name: The fork register matches its fork points
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/the_fork_register_is_verifiable.py
       - name: Our forks have not fallen behind upstream
         if: ${{ !cancelled() }}

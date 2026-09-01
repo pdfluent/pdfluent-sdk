@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 Innovation Trigger B.V. All rights reserved.
+#
+# This software is proprietary. The PDFluent application is free to use,
+# including for commercial purposes. Redistribution, or extraction or reuse
+# of its components (including the embedded PDF engine), requires a licence.
+# See https://pdfluent.com/license for terms.
+"""Several terminals, one repository, no collisions -- enforced rather than agreed.
+
+Allocating issues is not enough. Two terminals can hold different issues and
+still edit the same file, which is how the collisions actually happen. So the
+unit of ownership is a PATH, declared in .claude/territories.toml, and a branch
+declares which territory it is working in through its name: `t2/ci-guards`
+belongs to t2.
+
+Two checks, and the second is the one that earns its place:
+
+1. No two territories claim the same path. An overlap in the map is a collision
+   waiting for the day both terminals are busy.
+2. A branch has not changed files outside the territory it named. This is what a
+   convention cannot do: it catches the edit that seemed harmless at the time.
+
+Working outside your territory is allowed, but not quietly: change
+.claude/territories.toml in a commit, so it comes past review.
+
+Exit codes:
+  0  the map is consistent and the branch stayed inside it
+  1  two territories overlap, or the branch reached outside its own
+  3  cannot check (announced, never silent)
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+MAP = ROOT / ".claude/territories.toml"
+GIT = "/usr/bin/git"
+
+
+def load() -> list[dict]:
+    return tomllib.loads(MAP.read_text()).get("territory", [])
+
+
+def owns(territory: dict, path: str) -> bool:
+    for pattern in territory.get("uitgezonderd", []):
+        if fnmatch.fnmatch(path, pattern):
+            return False
+    return any(fnmatch.fnmatch(path, p) for p in territory.get("paden", []))
+
+
+def changed_files() -> tuple[list[str], str] | None:
+    """Diff against the PRIMARY remote's master, and say which one that was.
+
+    GitHub has been primary since 25-08-2026 and GitLab is a nightly mirror that
+    runs behind. Diffing against the mirror shows every commit the mirror has not
+    received yet as if this branch had made it -- the first run of this check
+    reported 62 files that were not mine. mr_staleness.py had the same bug.
+    """
+    for base in ("github/master", "origin/master"):
+        exists = subprocess.run([GIT, "rev-parse", "--verify", "--quiet", base],
+                                cwd=ROOT, capture_output=True, text=True, check=False)
+        if exists.returncode != 0:
+            continue
+        out = subprocess.run([GIT, "diff", "--name-only", f"{base}...HEAD"],
+                             cwd=ROOT, capture_output=True, text=True, check=False)
+        if out.returncode == 0:
+            return [line for line in out.stdout.splitlines() if line], base
+    return None
+
+
+def current_branch() -> str | None:
+    out = subprocess.run(
+        [GIT, "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    return out.stdout.strip() or None if out.returncode == 0 else None
+
+
+def main() -> int:
+    if not MAP.exists():
+        print(f"SKIPPED (not a pass): {MAP} is missing, so nothing declares who owns what",
+              file=sys.stderr)
+        return 3
+
+    territories = load()
+    if not territories:
+        print("SKIPPED (not a pass): the territory map is empty, so this checked nothing",
+              file=sys.stderr)
+        return 3
+
+    problems: list[str] = []
+
+    # --- 1. the map must not contradict itself ---------------------------
+    # Compared as literal patterns rather than by expanding them: two globs that
+    # overlap only on files nobody has created yet still overlap, and that is a
+    # collision waiting for someone to create the file.
+    in_repo = [t for t in territories if "repo" not in t]
+    for i, a in enumerate(in_repo):
+        for b in in_repo[i + 1:]:
+            shared = set(a.get("paden", [])) & set(b.get("paden", []))
+            for pattern in sorted(shared):
+                if any(fnmatch.fnmatch(pattern, e) for e in a.get("uitgezonderd", [])):
+                    continue
+                if any(fnmatch.fnmatch(pattern, e) for e in b.get("uitgezonderd", [])):
+                    continue
+                problems.append(
+                    f"{a['id']} and {b['id']} both claim `{pattern}`. "
+                    "Two owners for one path is the collision this map exists to prevent."
+                )
+
+    # --- 2. the branch must have stayed inside its own -------------------
+    branch = current_branch()
+    checked_files = 0
+    if branch and "/" in branch and branch.split("/")[0] in {t["id"] for t in territories}:
+        tid = branch.split("/")[0]
+        mine = next(t for t in territories if t["id"] == tid)
+        result = changed_files()
+        if result is None:
+            print("SKIPPED (not a pass): could not diff against master, so the branch's "
+                  "reach is unknown", file=sys.stderr)
+            return 3
+        files, base = result
+        checked_files = len(files)
+        unowned = 0
+        for path in files:
+            # The map itself is deliberately editable from anywhere: taking on
+            # work in another territory is a commit, not a silent edit.
+            if path == ".claude/territories.toml":
+                continue
+            if owns(mine, path):
+                continue
+            other = [t["id"] for t in in_repo if owns(t, path)]
+            if not other:
+                # Nobody claims it. Allowed -- a complete map of a repository this
+                # size is not maintainable -- but counted, so the map can grow
+                # towards the places that turn out to be contested.
+                unowned += 1
+                continue
+            problems.append(
+                f"branch `{branch}` is in {tid} but changed `{path}` "
+                f"(that belongs to {', '.join(other)}). "
+                "Claim it in .claude/territories.toml, or leave it to its owner."
+            )
+    elif branch and branch not in ("master", "HEAD"):
+        print(f"SKIPPED (not a pass): branch `{branch}` does not name a territory. "
+              "Name branches `<territory>/<what>`, e.g. `t2/ci-guards`.", file=sys.stderr)
+        return 3
+
+    if problems:
+        print(f"Territories: {len(problems)} problem(s)\n", file=sys.stderr)
+        for p in problems:
+            print(f"  - {p}", file=sys.stderr)
+        return 1
+
+    print(f"✓ {len(territories)} territories, no overlap"
+          + (f"; branch stayed inside its own across {checked_files} changed file(s)"
+             + (f" ({unowned} unclaimed)" if unowned else "")
+             if checked_files else ""))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
