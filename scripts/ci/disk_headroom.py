@@ -58,18 +58,32 @@ import sys
 import time
 from pathlib import Path
 
-# FLOOR: free gigabytes on the volume that can still grow >= 25 -- a cold Rust
-# build of this workspace peaks around 15 GB of transient target/ output, and the
-# 31-08 corruption happened with less headroom than that.
+# FLOOR: free gigabytes on the volume that can still grow.
 #
-# TWO-WAY RATCHET. test_disk_headroom.py pins this number and checks the verdict
-# turns over at it, so it cannot move in either direction without someone editing
-# the test too. Lowering it is the obvious danger -- a floor quietly dropped to 5
-# is a guard that has been switched off while still reporting. Raising it is the
-# less obvious one: a floor above what the machine can ever offer makes every
-# lane red for a reason that has nothing to do with the change under test, and
-# the usual repair for that is to stop running the guard.
-DEFAULT_FLOOR_GB = 25
+# Expressed as the build it has to survive plus a margin, not as a bare number,
+# because the bare number drifted away from the thing it was protecting and
+# nobody could see it happen. The comment here used to say "a cold Rust build of
+# this workspace peaks around 15 GB" against a floor of 25, which reads as ten
+# gigabytes of headroom. Measured 01-09-2026: a full local gate run from a cold
+# target (check, test --no-run, clippy, wasm, examples) leaves a **30 GB**
+# target/ directory. So the floor was five gigabytes BELOW the build it was
+# meant to permit, and the gate's verdict came out of how warm the previous run
+# had left the cache -- it passed on a warm one and failed partway through a cold
+# one, which is not a property of the change under test.
+#
+# Both numbers are pinned by test_disk_headroom.py, and so is the relationship:
+# a floor at or below COLD_BUILD_GB is the defect this replaces, so the test
+# refuses it rather than trusting whoever edits next to notice.
+#
+# TWO-WAY RATCHET, unchanged in spirit. Lowering it is the obvious danger -- a
+# floor quietly dropped to 5 is a guard switched off while still reporting.
+# Raising it is the less obvious one: a floor above what the machine can ever
+# offer makes every lane red for a reason that has nothing to do with the change
+# under test, and the usual repair for that is to stop running the guard. That is
+# why the margin is small and the build cost is measured rather than padded.
+COLD_BUILD_GB = 30
+SAFETY_MARGIN_GB = 5
+DEFAULT_FLOOR_GB = COLD_BUILD_GB + SAFETY_MARGIN_GB
 
 HEARTBEAT_DEFAULT = Path.home() / "Library/Application Support/pdfluent/disk_headroom.json"
 GB = 1024**3
