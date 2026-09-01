@@ -50,7 +50,9 @@
 //! - CID-to-Unicode mapping (ToUnicode CMap) is not yet parsed
 //! - System font fallback may have different metrics than the PDF's embedded font
 
-use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, StringFormat};
+use lopdf::{
+    dictionary, Dictionary, Document, LoadOptions, Object, ObjectId, Stream, StringFormat,
+};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
@@ -341,7 +343,7 @@ fn try_decrypt_pdf(pdf_bytes: &[u8]) -> DecryptResult {
 
     if doc.trailer.get(b"Encrypt").is_ok() {
         // /Encrypt present but lopdf couldn't auto-decrypt — try explicit empty password.
-        match Document::load_mem_with_password(pdf_bytes, "") {
+        match Document::load_mem_with_options(pdf_bytes, LoadOptions::with_password("")) {
             Ok(mut decrypted_doc) => {
                 decrypted_doc.trailer.remove(b"Encrypt");
                 let mut buf = Vec::new();

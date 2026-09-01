@@ -1,6 +1,5 @@
 use crate::Result;
 use crate::{Dictionary, Document, Object, ObjectId};
-#[cfg(feature = "font_embedding")]
 use crate::{FontData, Stream};
 
 impl Document {
@@ -156,7 +155,6 @@ impl Document {
     ///     },
     /// });
     /// ```
-    #[cfg(feature = "font_embedding")]
     pub fn add_font(&mut self, font_data: FontData) -> Result<ObjectId> {
         // Create embedded font stream
         let font_stream = Stream::new(
@@ -204,7 +202,6 @@ impl Document {
 pub mod tests {
     use std::path::PathBuf;
 
-    #[cfg(feature = "font_embedding")]
     use crate::FontData;
     use crate::content::*;
     use crate::{Document, Object, Stream};
@@ -357,12 +354,17 @@ pub mod tests {
         assert!(file_path.exists());
     }
 
-    #[cfg(feature = "font_embedding")]
+    // Upstream's version of this test reads ./assets/fonts/Montserrat-Regular.ttf,
+    // which this fork does not ship, so it carried #[ignore] and ran nowhere.
+    // An ignored test reports as neither pass nor failure, which is the shape
+    // this project keeps being caught by; the font is built in memory instead.
+    //
+    // Upstream gates this whole surface behind a `font_embedding` feature. We do
+    // not: see the note on FontData in font.rs.
     #[test]
-    #[ignore] // Requires test font file not included in fork
     fn test_add_font_embeds_font_correctly() {
-        // Create a dummy TTF font in memory (fake content, just to test structure)
-        let font_file = std::fs::read("./assets/fonts/Montserrat-Regular.ttf").unwrap();
+        use crate::font::synthetic::{self, Metrics};
+        let font_file = synthetic::font(&Metrics::default());
 
         // Construct FontData manually
         let mut font_data = FontData::new(&font_file, "MyFont".to_string());
@@ -411,5 +413,13 @@ pub mod tests {
         let font_file_ref = descriptor_obj.get(b"FontFile2").unwrap().as_reference().unwrap();
         let font_stream = doc.get_object(font_file_ref).unwrap().as_stream().unwrap();
         assert_eq!(font_stream.content, font_file);
+
+        // Length1 is the unencoded length of the embedded font program. Getting
+        // it wrong makes a PDF that opens and renders nothing, so it is asserted
+        // rather than assumed.
+        assert_eq!(
+            font_stream.dict.get(b"Length1").unwrap(),
+            &Object::Integer(font_file.len() as i64)
+        );
     }
 }

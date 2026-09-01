@@ -149,75 +149,151 @@ impl Document {
 #[cfg(not(feature = "async"))]
 #[cfg(test)]
 mod tests {
-    use crate::{Document, TocType};
+    use crate::{Document, Object, TocType};
+
+    /// Build a document with `page_count` pages and an outline tree over them.
+    ///
+    /// Upstream's test for `get_toc` loads `assets/test.pdf`, a 38 MB fixture
+    /// this fork does not ship. It came across in the 0.44.0 merge and has been
+    /// failing ever since, unnoticed, because no gate runs this crate's tests.
+    /// A document assembled here costs nothing to carry and, unlike the fixture,
+    /// says in the test itself what shape is being parsed.
+    /// Each entry is (title, page index, depth), depth 0 being top level.
+    fn document_with_outline(titles: &[(&[u8], usize, usize)]) -> Document {
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+
+        let page_ids: Vec<_> = (0..3)
+            .map(|_| {
+                doc.add_object(dictionary! {
+                    "Type" => "Page",
+                    "Parent" => pages_id,
+                })
+            })
+            .collect();
+
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => page_ids.iter().map(|id| Object::Reference(*id)).collect::<Vec<_>>(),
+                "Count" => page_ids.len() as i64,
+                "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            }),
+        );
+
+        // Reserve every outline item's id first, so /Next and /First can point
+        // forwards. Writing the chain backwards instead would work, but reads
+        // as the opposite of the order the parser walks.
+        let item_ids: Vec<_> = titles.iter().map(|_| doc.new_object_id()).collect();
+
+        for (i, (title, page_index, depth)) in titles.iter().enumerate() {
+            let mut item = dictionary! {
+                "Title" => Object::String(title.to_vec(), crate::StringFormat::Literal),
+                "Dest" => vec![
+                    Object::Reference(page_ids[*page_index]),
+                    Object::Name(b"XYZ".to_vec()),
+                    Object::Null,
+                    Object::Null,
+                    Object::Null,
+                ],
+            };
+            // /Next is the next sibling: the next entry at the same depth,
+            // searching no further than the first entry that is shallower --
+            // that one belongs to an enclosing parent. Linking to it instead is
+            // what a first attempt at this helper did, and it silently reparents
+            // the rest of the tree one level down.
+            let sibling = titles[i + 1..]
+                .iter()
+                .position(|(_, _, d)| d <= depth)
+                .filter(|off| titles[i + 1 + off].2 == *depth)
+                .map(|off| item_ids[i + 1 + off]);
+            if let Some(next) = sibling {
+                item.set("Next", Object::Reference(next));
+            }
+            // /First is the first child, which in a well-formed tree is the very
+            // next entry when it is one level deeper.
+            if let Some((_, _, d)) = titles.get(i + 1)
+                && *d == depth + 1
+            {
+                item.set("First", Object::Reference(item_ids[i + 1]));
+            }
+            doc.objects.insert(item_ids[i], Object::Dictionary(item));
+        }
+
+        let outlines_id = doc.add_object(dictionary! {
+            "Type" => "Outlines",
+            "First" => Object::Reference(item_ids[0]),
+            "Last" => Object::Reference(*item_ids.last().unwrap()),
+        });
+
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+            "Outlines" => outlines_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc
+    }
 
     #[test]
-    fn parse_toc() {
-        let expected = vec![
-            TocType {
-                level: 1,
-                title: String::from("1. Flesh Fruits"),
-                page: 1,
-            },
-            TocType {
-                level: 2,
-                title: String::from("1.1. Stone Fruits"),
-                page: 2,
-            },
-            TocType {
-                level: 3,
-                title: String::from("1.1.1. Peaches"),
-                page: 3,
-            },
-            TocType {
-                level: 3,
-                title: String::from("1.1.2. Plums"),
-                page: 6,
-            },
-            TocType {
-                level: 2,
-                title: String::from("1.2. Pomes"),
-                page: 28,
-            },
-            TocType {
-                level: 3,
-                title: String::from("1.2.1. Apples"),
-                page: 30,
-            },
-            TocType {
-                level: 3,
-                title: String::from("1.2.2. Pears"),
-                page: 35,
-            },
-            TocType {
-                level: 2,
-                title: String::from("Summary"),
-                page: 36,
-            },
-            TocType {
-                level: 1,
-                title: String::from("2. Berries & Hesperidia"),
-                page: 40,
-            },
-            TocType {
-                level: 2,
-                title: String::from("2.1. True Berries"),
-                page: 40,
-            },
-            TocType {
-                level: 2,
-                title: String::from("Summary"),
-                page: 41,
-            },
-            TocType {
-                level: 1,
-                title: String::from("3. The End"),
-                page: 100,
-            },
-        ];
+    fn a_nested_outline_becomes_a_table_of_contents() {
+        let doc = document_with_outline(&[
+            (b"1. Introduction", 0, 0),
+            (b"1.1. Details", 1, 1),
+            (b"2. The End", 2, 0),
+        ]);
 
-        let doc = Document::load("assets/test.pdf").unwrap();
+        assert_eq!(
+            doc.get_toc().unwrap().toc,
+            vec![
+                TocType {
+                    level: 1,
+                    title: String::from("1. Introduction"),
+                    page: 1,
+                },
+                // Nesting is what distinguishes this from a flat list, and it is
+                // the only thing setup_outline_page_ids computes.
+                TocType {
+                    level: 2,
+                    title: String::from("1.1. Details"),
+                    page: 2,
+                },
+                TocType {
+                    level: 1,
+                    title: String::from("2. The End"),
+                    page: 3,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_utf16_be_title_is_decoded_rather_than_read_as_bytes() {
+        // "Kapitel" with the byte-order mark PDF requires for UTF-16 text
+        // strings. Read as Latin-1 this is nine characters of noise, so the
+        // assertion fails if the BOM branch stops firing.
+        let mut title = vec![0xfe, 0xff];
+        for c in "Kapitel".encode_utf16() {
+            title.extend_from_slice(&c.to_be_bytes());
+        }
+        let doc = document_with_outline(&[(&title, 0, 0)]);
+
         let toc = doc.get_toc().unwrap();
-        assert_eq!(toc.toc, expected);
+        assert_eq!(toc.toc.len(), 1);
+        assert_eq!(toc.toc[0].title, "Kapitel");
+        assert!(toc.errors.is_empty(), "{:?}", toc.errors);
+    }
+
+    #[test]
+    fn a_truncated_utf16_title_is_reported_and_not_decoded() {
+        // An odd byte count cannot be UTF-16. The parser records it and drops
+        // the entry rather than reading one byte past the end.
+        let title = vec![0xfe, 0xff, 0x00, 0x4b, 0x00];
+        let doc = document_with_outline(&[(&title, 0, 0)]);
+
+        let toc = doc.get_toc().unwrap();
+        assert!(toc.toc.is_empty(), "the entry should have been dropped");
+        assert_eq!(toc.errors.len(), 1);
     }
 }

@@ -1141,7 +1141,10 @@ pub extern "system" fn Java_com_pdfluent_PdfluentDocument_nativeDecrypt<'a>(
         }
     };
 
-    let mut decrypted_doc = match LopdfDocument::load_mem_with_password(&doc.raw_bytes, &pw_str) {
+    let mut decrypted_doc = match LopdfDocument::load_mem_with_options(
+        &doc.raw_bytes,
+        lopdf::LoadOptions::with_password(&pw_str),
+    ) {
         Ok(d) => d,
         Err(e) => {
             throw_pdf_exception(
