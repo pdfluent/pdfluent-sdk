@@ -75,6 +75,25 @@ def code_strings(tree: ast.AST) -> set[str]:
             and id(n) not in docstrings}
 
 
+def calls_made(tree: ast.AST) -> set[str]:
+    """Function names that are actually CALLED.
+
+    Separate from imports on purpose: an unused `from fixture_env import
+    sealed_env` sitting beside the old environment satisfied a name check while
+    changing nothing. An import is an intention; a call is the behaviour.
+    (codex, #1647)
+    """
+    out: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            f = n.func
+            if isinstance(f, ast.Name):
+                out.add(f.id)
+            elif isinstance(f, ast.Attribute):
+                out.add(f.attr)
+    return out
+
+
 def names_used(tree: ast.AST) -> set[str]:
     """Imported and called names.
 
@@ -119,12 +138,12 @@ def main() -> int:
             problems.append(f"{path.name}: does not parse ({exc})")
             continue
         strings = code_strings(tree)
-        used = names_used(tree)
+        used = calls_made(tree)
         if not any(v in strings for v in BUILDS_A_REPO):
             continue
         checked += 1
-        if "sealed_env" in used or "fixture_env" in used:
-            continue   # delegates to the shared helper, which sets all three
+        if "sealed_env" in used:
+            continue   # actually calls the shared helper, which sets all three
         missing = [k for k in REQUIRED if k not in strings]
         if missing:
             problems.append(

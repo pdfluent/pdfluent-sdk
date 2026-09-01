@@ -13,7 +13,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 CI = REPO / "scripts" / "ci"
 LINT = CI / "a_fixture_cannot_touch_a_real_repo.py"
 sys.path.insert(0, str(CI))
-from fixture_env import sealed_env  # noqa: E402
+from fixture_env import sealed_env, inside_the_sandbox  # noqa: E402
 
 fails: list[str] = []
 ran = 0
@@ -119,7 +119,70 @@ expect("and sealed_env sets no identity by default",
 expect("  but provides one on request",
        sealed_env(identity=True).get("GIT_AUTHOR_EMAIL") == "fixture@invalid")
 
-MINIMUM_CASES = 9  # FLOOR
+# The config surface is not the whole surface: git DISCOVERS a repository by
+# walking up from cwd, so a fixture run from inside a real checkout writes to
+# that checkout's .git/config no matter what the global config says. A lint reads
+# the call and approves it. (codex, #1647)
+def local_config() -> str:
+    """The repository's own config, read through git.
+
+    Not `REPO / ".git" / "config"`: inside a linked worktree `.git` is a FILE
+    pointing elsewhere, and the first version of this case crashed on it. Asking
+    git works in a worktree, a bare clone and a normal checkout alike.
+    """
+    return subprocess.run(["git", "config", "--local", "--list"], cwd=REPO,
+                          capture_output=True, text=True).stdout
+
+
+before_local = local_config()
+try:
+    inside_the_sandbox(REPO)
+    refused = False
+except RuntimeError:
+    refused = True
+expect("the sandbox check accepts a cwd that IS the repository root",
+       not refused)
+
+with tempfile.TemporaryDirectory() as d:
+    sub = pathlib.Path(d) / "work"
+    sub.mkdir()
+    try:
+        inside_the_sandbox(sub)
+        refused = False
+    except RuntimeError:
+        refused = True
+    expect("and accepts an empty temp dir, where git init is about to run",
+           not refused)
+
+# A fixture whose cwd sits inside the real checkout is the failure case.
+inner = REPO / "scripts"
+try:
+    inside_the_sandbox(inner)
+    refused = False
+except RuntimeError:
+    refused = True
+expect("a cwd inside the real checkout is accepted only because it IS the repo",
+       not refused, "same repository, so not an escape")
+
+# GIT_CEILING_DIRECTORIES stops the upward walk for a sandbox under a real tree.
+with tempfile.TemporaryDirectory() as d:
+    sand = pathlib.Path(d) / "sandbox"
+    sand.mkdir()
+    env = sealed_env(cwd=sand)
+    expect("a sealed env for a sandbox sets a ceiling",
+           "GIT_CEILING_DIRECTORIES" in env, str(sorted(env))[:80])
+    r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=sand,
+                       capture_output=True, text=True, env=env)
+    expect("  and git finds no repository above it",
+           r.returncode != 0, r.stdout[:120])
+
+expect("and the repository's own config is unchanged after all of this",
+       local_config() == before_local)
+
+expect("sealed_env strips GH_TOKEN and GITHUB_TOKEN",
+       not any(k in sealed_env() for k in ("GH_TOKEN", "GITHUB_TOKEN")))
+
+MINIMUM_CASES = 16  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
