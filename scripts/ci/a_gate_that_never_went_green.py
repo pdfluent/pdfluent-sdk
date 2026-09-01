@@ -305,8 +305,30 @@ def main() -> int:
         # on a congested runner -- and there is one runner -- would read as
         # three runs, none green, therefore dead.
         tak = f"&branch={STANDAARDTAK}"
-        alle = gh(f"repos/{{owner}}/{{repo}}/actions/workflows/{wf['id']}/runs"
-                  f"?per_page=1&status=completed{tak}&created=%3E{vanaf}")
+
+        # `status=completed` was not enough, and the difference is not academic.
+        # Measured on ci-ephemeral.yml, 01-09-2026, since its file last changed:
+        #
+        #     status=completed  5      status=cancelled  4
+        #     status=failure    1      status=success    0
+        #
+        # Four of those five were cancelled by `cancel-in-progress` when pushes
+        # landed on top of each other. This guard then read five runs, none
+        # green, and called the workflow dead on the strength of four runs that
+        # judged nothing -- the same mistake as counting a build the kernel
+        # killed as a failing gate.
+        #
+        # A cancellation is an absence of a verdict. Only conclusions that
+        # actually judged something count towards GENOEG.
+        alle_n = 0
+        for uitkomst in ("success", "failure", "timed_out"):
+            deel = gh(f"repos/{{owner}}/{{repo}}/actions/workflows/{wf['id']}/runs"
+                      f"?per_page=1&status={uitkomst}{tak}&created=%3E{vanaf}")
+            if deel is None:
+                alle_n = None
+                break
+            alle_n += deel["total_count"]
+        alle = None if alle_n is None else {"total_count": alle_n}
         groen = gh(f"repos/{{owner}}/{{repo}}/actions/workflows/{wf['id']}/runs"
                    f"?per_page=1&status=success{tak}&created=%3E{vanaf}")
         if alle is None or groen is None:
