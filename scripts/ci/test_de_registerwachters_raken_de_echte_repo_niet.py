@@ -137,6 +137,11 @@ def main() -> int:
         run("init", "-q", "--bare", str(bare), cwd=tmp)
         run("init", "-q", str(nonbare), cwd=tmp)
 
+        # Both need a hayro origin: the lock requires the target to be the
+        # upstream, not merely somewhere that is not us.
+        run("remote", "add", "origin", "https://github.com/LaurenzV/hayro.git", cwd=bare)
+        run("remote", "add", "origin", "https://github.com/LaurenzV/hayro.git", cwd=nonbare)
+
         if reg.de_fetch_gaat_naar_de_cache(bare) is not None:
             failures.append("the bare cache was refused as a fetch target")
         if reg.de_fetch_gaat_naar_de_cache(nonbare) is not None:
@@ -148,6 +153,51 @@ def main() -> int:
             failures.append(
                 "the repository root was accepted as a fetch target -- the second "
                 "lock is not locking"
+            )
+
+        # A plain checkout, which is what ROOT is outside a worktree. The
+        # previous version of this test passed on ROOT only because it ran in a
+        # worktree, whose git-dir is `<main>/.git/worktrees/<name>` and so did
+        # not match the shape being accepted. In a plain clone the repository
+        # was accepted outright, and this test said nothing.
+        plain = tmp / "plain"
+        run("init", "-q", str(plain), cwd=tmp)
+        if reg.de_fetch_gaat_naar_de_cache(plain) is None:
+            failures.append(
+                "a plain checkout with no hayro origin was accepted as a fetch target"
+            )
+
+        # The case the origin check alone cannot see: a repository that *does*
+        # have hayro as its origin and is also the one the script is running
+        # inside. That is what these scripts vendored into a hayro fork would
+        # look like, and there the origin test passes while a force-fetch would
+        # rewrite the developer's own branches. Only "the target is not us"
+        # refuses it.
+        vendored = tmp / "hayro-fork"
+        (vendored / "scripts" / "ci").mkdir(parents=True)
+        run("init", "-q", str(vendored), cwd=tmp)
+        run("remote", "add", "origin", "https://github.com/LaurenzV/hayro.git", cwd=vendored)
+        script = ROOT / "scripts/ci/the_fork_register_is_verifiable.py"
+        (vendored / "scripts/ci" / script.name).write_bytes(script.read_bytes())
+        spec_v = importlib.util.spec_from_file_location(
+            "reg_vendored", vendored / "scripts/ci" / script.name
+        )
+        reg_v = importlib.util.module_from_spec(spec_v)
+        spec_v.loader.exec_module(reg_v)
+        if reg_v.de_fetch_gaat_naar_de_cache(vendored) is None:
+            failures.append(
+                "a hayro-origin repository that is the script's own checkout was "
+                "accepted -- the origin check passes there, so only the "
+                "'not this repository' clause can refuse it"
+            )
+
+        # And somewhere that *is* a hayro clone by name but not by origin.
+        impostor = tmp / "hayro-lookalike"
+        run("init", "-q", str(impostor), cwd=tmp)
+        run("remote", "add", "origin", "https://example.invalid/other.git", cwd=impostor)
+        if reg.de_fetch_gaat_naar_de_cache(impostor) is None:
+            failures.append(
+                "a repository named hayro but with a different origin was accepted"
             )
 
     if failures:
