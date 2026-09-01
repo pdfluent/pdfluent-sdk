@@ -459,6 +459,19 @@ jobs:
               fi
             done
             if [ "$FAIL" = "1" ]; then exit 1; fi
+      - name: A fork declares where it forked from
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py
+      - name: A fork point is checked against the content it claims
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py
+      - name: The shared config does not break worktrees
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py
+      - name: Every self-hosted label has a runner that answers it
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_label_has_a_runner.py
+
 
   # --------------------------------------------------------------------------
   # #288. Until 31-08-2026 the guards below ran in .gitlab-ci.yml and nowhere

@@ -137,6 +137,18 @@ ALLOWED: dict[str, str] = {
         "proprietary header and the rest carry none, which the flip (#257) and "
         "the header commit on #1543 fix together"
     ),
+    # Diagnostics, not gates. Both answer a question a human is already asking
+    # when something has gone wrong; neither has a verdict a pipeline could act
+    # on. A job for either would report success for having run.
+    "bounded_probe.sh": (
+        "touches a filesystem that may be dead, on purpose and with a bound. "
+        "It is the tool you reach for when a mount hangs, and it has no pass "
+        "or fail of its own"
+    ),
+    "why_not_writable.sh": (
+        "tells a human which of three causes made a path unwritable. It "
+        "diagnoses an already-failed gate rather than being one"
+    ),
 
     # Deliberately local: they exist to do something *before* the pipeline.
     "local_ci_gate.sh": (
