@@ -54,6 +54,7 @@ impl Xref {
 
     pub fn insert(&mut self, id: u32, entry: XrefEntry) {
         self.entries.insert(id, entry);
+        self.size = self.size.max(id.saturating_add(1));
     }
 
     /// Combine Xref entries. Only add them if they do not exists already.
@@ -75,16 +76,23 @@ impl Xref {
         }
     }
 
-    pub(crate) fn compressed_object_belongs_to(
-        &self,
-        object_id: ObjectId,
-        container_id: ObjectId,
-    ) -> bool {
-        matches!(
-            self.get(object_id.0),
-            Some(XrefEntry::Compressed { container, .. })
-                if *container == container_id.0 && object_id.1 == 0
-        )
+    /// Does the cross-reference table assign `object_id` to `container_id`?
+    ///
+    /// An object the table does not list as compressed at all is accepted by any
+    /// container. That leniency is upstream's (J-F-Liu/lopdf 3bc6a52, "fall back
+    /// to keeping ObjStm objects not tracked by xref"): real files carry objects
+    /// inside an ObjStm that the xref never mentions, and the earlier strict rule
+    /// silently dropped them. An object the table *does* place in a different
+    /// container is still rejected, which is what stops a stale ObjStm from a
+    /// linearized first-page section from overriding the current one.
+    pub(crate) fn compressed_object_belongs_to(&self, object_id: ObjectId, container_id: ObjectId) -> bool {
+        if object_id.1 != 0 {
+            return false;
+        }
+        match self.get(object_id.0) {
+            Some(XrefEntry::Compressed { container, .. }) => *container == container_id.0,
+            _ => true,
+        }
     }
 }
 
@@ -135,10 +143,7 @@ impl XrefEntry {
             XrefEntry::Normal { offset, generation } => {
                 write!(file, "{offset:>010} {generation:>05} n\r\n")?;
             }
-            XrefEntry::Compressed {
-                container: _,
-                index: _,
-            } => {
+            XrefEntry::Compressed { container: _, index: _ } => {
                 write!(file, "{:>010} {:>05} f\r\n", 0, 65535)?;
             }
             XrefEntry::Free => {
@@ -186,7 +191,7 @@ impl XrefSection {
     }
 }
 
-pub use crate::parser_aux::decode_xref_stream;
+pub use crate::parser_aux::{decode_xref_stream, decode_xref_stream_with_limit};
 
 /// Encode a field value as big-endian bytes with specified width
 fn encode_field(value: u64, width: usize, output: &mut Vec<u8>) {
@@ -205,11 +210,7 @@ pub struct XrefStreamBuilder<'a> {
 impl<'a> XrefStreamBuilder<'a> {
     /// Create a new builder from an Xref
     pub fn new(xref: &'a Xref) -> Self {
-        let entries: Vec<_> = xref
-            .entries
-            .iter()
-            .map(|(&id, entry)| (id, entry))
-            .collect();
+        let entries: Vec<_> = xref.entries.iter().map(|(&id, entry)| (id, entry)).collect();
 
         Self {
             xref,

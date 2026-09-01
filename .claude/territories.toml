@@ -31,7 +31,23 @@ paden = [
   "crates/lopdf/**",
   "docs/UPSTREAM_FORKS.toml",
   "docs/FORKDIVERGENTIE.md",
+  # Claimed 01-09-2026 for `embed_font` (#292). The owner decision was to turn
+  # lopdf's `font_embedding` on and wire it through to `PdfDocument::embed_font`.
+  # lopdf is t1, the two crates the wiring passes through are not, and splitting
+  # the change across an ownership line would have meant landing a feature flag
+  # here and the thing that uses it somewhere else -- with the SDK returning Ok
+  # in between. The whole path is one change or it is a lie.
+  "crates/pdf-manip/src/embed_font.rs",
+  "crates/pdf-manip/tests/embed_font.rs",
+  # These two guards read docs/UPSTREAM_FORKS.toml, which is t1's file. A rule
+  # about the register cannot live anywhere else and be enforced (#1609).
+  "scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py",
+  "scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py",
 ]
+# NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
+# parity tests are edited by this change but stay with whoever owns the SDK
+# facade. The edit is the delegation itself -- eight lines calling the function
+# above -- so an owner reading it does not have to reconstruct the reasoning.
 issues = [262, 256, 255, 210]
 
 [[territory]]

@@ -867,7 +867,7 @@ impl PyDocument {
     /// password : str
     ///     User or owner password.
     fn decrypt(&self, output_path: &str, password: &str) -> PyResult<()> {
-        let mut doc = LopdfDocument::load_mem_with_password(self.raw_bytes.as_ref(), password)
+        let mut doc = LopdfDocument::load_mem_with_options(self.raw_bytes.as_ref(), lopdf::LoadOptions::with_password(password))
             .map_err(|e| {
                 PdfluentEncryptedError::new_err(format!("failed to open with password: {e}"))
             })?;
@@ -1710,7 +1710,7 @@ fn merge_pdfs(input_paths: Vec<String>, output_path: &str) -> PyResult<()> {
 fn decrypt_pdf(input_path: &str, output_path: &str, password: &str) -> PyResult<()> {
     let data = std::fs::read(input_path)
         .map_err(|e| PdfluentIoError::new_err(format!("{input_path}: {e}")))?;
-    let mut doc = LopdfDocument::load_mem_with_password(&data, password).map_err(|e| {
+    let mut doc = LopdfDocument::load_mem_with_options(&data, lopdf::LoadOptions::with_password(password)).map_err(|e| {
         PdfluentEncryptedError::new_err(format!("failed to open with password: {e}"))
     })?;
     remove_encryption(&mut doc);

@@ -43,14 +43,14 @@ pub use common_data_structures::{decode_text_string, text_string};
 pub use destinations::Destination;
 pub use encodings::{Encoding, encode_utf8, encode_utf16_be};
 pub use encryption::{EncryptionState, EncryptionVersion, Permissions, aes256_encryption_state};
-pub use error::{Error, Result};
+pub use error::{DecompressError, Error, Result};
 pub use incremental_document::IncrementalDocument;
-pub use load_options::{DEFAULT_MAX_FILE_BYTES, LoadOptions};
+pub use load_options::{DEFAULT_MAX_FILE_BYTES, FilterFunc, LoadOptions};
 pub use object_stream::{ObjectStream, ObjectStreamBuilder, ObjectStreamConfig};
 pub use outlines::Outline;
 pub use reader::{PdfMetadata, Reader};
 pub use save_options::{SaveOptions, SaveOptionsBuilder};
-pub use toc::Toc;
+pub use toc::{Toc, TocType};
 
 pub use parser_aux::substr;
 pub use parser_aux::substring;

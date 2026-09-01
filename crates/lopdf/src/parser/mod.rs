@@ -17,11 +17,10 @@ use nom::error::{ErrorKind, ParseError};
 use nom::multi::{fold_many0, fold_many1, many0, many0_count};
 use nom::sequence::{delimited, pair, preceded, separated_pair, terminated};
 use nom::{AsBytes, AsChar, IResult, Input, Parser};
-use nom_locate::LocatedSpan;
 
 pub(crate) mod cmap_parser;
 
-pub(crate) type ParserInput<'a> = LocatedSpan<&'a [u8], &'a str>;
+pub(crate) type ParserInput<'a> = &'a [u8];
 // Change this to something else that implements ParseError to get a
 // different error type out of nom.
 pub(crate) type NomError<'a> = nom::error::Error<ParserInput<'a>>;
@@ -34,11 +33,7 @@ fn strip_nom<O>(r: NomResult<O>) -> Option<O> {
 }
 
 #[inline]
-fn convert_result<O, E>(
-    result: Result<O, E>,
-    input: ParserInput,
-    error_kind: ErrorKind,
-) -> NomResult<O> {
+fn convert_result<O, E>(result: Result<O, E>, input: ParserInput, error_kind: ErrorKind) -> NomResult<O> {
     result.map(|o| (input, o)).map_err(|_| {
         // this is a unit bind if NomError = ()
         let err: NomError = nom::error::Error::from_error_kind(input, error_kind);
@@ -58,15 +53,7 @@ pub(crate) fn eol(input: ParserInput) -> NomResult<ParserInput> {
 }
 
 pub(crate) fn comment(input: ParserInput) -> NomResult<()> {
-    map(
-        (
-            tag(&b"%"[..]),
-            take_while(|c: u8| !b"\r\n".contains(&c)),
-            eol,
-        ),
-        |_| (),
-    )
-    .parse(input)
+    map((tag(&b"%"[..]), take_while(|c: u8| !b"\r\n".contains(&c)), eol), |_| ()).parse(input)
 }
 
 #[inline]
@@ -138,12 +125,16 @@ fn real(input: ParserInput) -> NomResult<f32> {
 
 pub(crate) fn hex_char(input: ParserInput) -> NomResult<u8> {
     map_res(
-        verify(take(2usize), |h: &ParserInput| {
+        verify(take(2usize), |h: ParserInput| {
             h.as_bytes().iter().copied().all(AsChar::is_hex_digit)
         }),
-        // is_hex_digit guarantees ASCII; unwrap_or propagates failure as
-        // parse error instead of panic (M8-PAR-01).
-        |x: ParserInput| u8::from_str_radix(str::from_utf8(&x).unwrap_or(""), 16),
+        // Divergence from upstream, kept deliberately (M8-PAR-01): upstream
+        // still writes `.unwrap()` here. is_hex_digit only admits ASCII, so the
+        // unwrap is unreachable today -- but it is one parser change away from
+        // being a panic on attacker-controlled bytes, and this crate is the
+        // first thing a malformed PDF touches. unwrap_or("") turns that into a
+        // parse error instead.
+        |x: ParserInput| u8::from_str_radix(str::from_utf8(x).unwrap_or(""), 16),
     )
     .parse(input)
 }
@@ -151,10 +142,10 @@ pub(crate) fn hex_char(input: ParserInput) -> NomResult<u8> {
 fn oct_char(input: ParserInput) -> NomResult<u8> {
     map_res(
         take_while_m_n(1, 3, AsChar::is_oct_digit),
-        // Spec requires us to ignore any overflow; is_oct_digit guarantees
-        // ASCII bytes, so unwrap_or propagates utf8 failure as a parse
-        // error instead of panic (M8-PAR-01).
-        |x: ParserInput| u16::from_str_radix(str::from_utf8(&x).unwrap_or(""), 8).map(|o| o as u8),
+        // Spec requires us to ignore any overflow. The unwrap_or("") is a
+        // deliberate divergence from upstream's `.unwrap()`, for the reason
+        // given on the hex-digit parser above (M8-PAR-01).
+        |x: ParserInput| u16::from_str_radix(str::from_utf8(x).unwrap_or(""), 8).map(|o| o as u8),
     )
     .parse(input)
 }
@@ -167,9 +158,12 @@ pub(crate) fn name(input: ParserInput) -> NomResult<Vec<u8>> {
             // Bare '#' not followed by two hex digits: treat as literal 0x23.
             // Many real-world PDFs contain malformed #-sequences in names.
             map(tag(&b"#"[..]), |_: ParserInput| b'#'),
-            map_opt(take(1usize), |c: ParserInput| {
-                if is_regular(c[0]) { Some(c[0]) } else { None }
-            }),
+            map_opt(
+                take(1usize),
+                |c: ParserInput| {
+                    if is_regular(c[0]) { Some(c[0]) } else { None }
+                },
+            ),
         ))),
     )
     .parse(input)
@@ -202,9 +196,7 @@ enum InnerLiteralString<'a> {
 impl InnerLiteralString<'_> {
     fn push(&self, output: &mut Vec<u8>) {
         match self {
-            InnerLiteralString::Direct(s) | InnerLiteralString::Eol(s) => {
-                output.extend_from_slice(s)
-            }
+            InnerLiteralString::Direct(s) | InnerLiteralString::Eol(s) => output.extend_from_slice(s),
             InnerLiteralString::Escape(e) => output.extend(e),
             InnerLiteralString::Nested(n) => output.extend_from_slice(n),
         }
@@ -215,10 +207,7 @@ fn inner_literal_string(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<u
     move |input| {
         fold_many0(
             alt((
-                map(
-                    take_while1(is_direct_literal_string),
-                    InnerLiteralString::Direct,
-                ),
+                map(take_while1(is_direct_literal_string), InnerLiteralString::Direct),
                 map(escape_sequence, InnerLiteralString::Escape),
                 map(eol, InnerLiteralString::Eol),
                 map(nested_literal_string(depth), InnerLiteralString::Nested),
@@ -236,14 +225,10 @@ fn inner_literal_string(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<u
 fn nested_literal_string(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<u8>> {
     move |input| {
         if depth == 0 {
-            map(verify(tag(&b"too deep"[..]), |_| false), |_| vec![]).parse(input)
+            map(verify(tag(&b"too deep"[..]), |_: &[u8]| false), |_| vec![]).parse(input)
         } else {
             map(
-                delimited(
-                    tag(&b"("[..]),
-                    inner_literal_string(depth - 1),
-                    tag(&b")"[..]),
-                ),
+                delimited(tag(&b"("[..]), inner_literal_string(depth - 1), tag(&b")"[..])),
                 |mut content| {
                     content.insert(0, b'(');
                     content.push(b')');
@@ -267,9 +252,7 @@ fn literal_string(input: ParserInput) -> NomResult<Vec<u8>> {
 #[inline]
 fn hex_digit(input: ParserInput) -> NomResult<u8> {
     map_opt(take(1usize), |c: ParserInput| {
-        str::from_utf8(&c)
-            .ok()
-            .and_then(|c| u8::from_str_radix(c, 16).ok())
+        str::from_utf8(c).ok().and_then(|c| u8::from_str_radix(c, 16).ok())
     })
     .parse(input)
 }
@@ -314,34 +297,37 @@ fn null(input: ParserInput) -> NomResult<Object> {
     map(tag(&b"null"[..]), |_| Object::Null).parse(input)
 }
 
-fn array(input: ParserInput) -> NomResult<Vec<Object>> {
-    delimited(
-        pair(tag(&b"["[..]), space),
-        many0(_direct_object),
-        tag(&b"]"[..]),
-    )
-    .parse(input)
+fn array(depth: usize) -> impl Fn(ParserInput) -> NomResult<Vec<Object>> {
+    move |input| {
+        delimited(
+            pair(tag(&b"["[..]), space),
+            many0(_direct_object(depth)),
+            tag(&b"]"[..]),
+        )
+        .parse(input)
+    }
 }
 
 pub(crate) fn dictionary(input: ParserInput) -> NomResult<Dictionary> {
-    delimited(
-        pair(tag(&b"<<"[..]), space),
-        inner_dictionary,
-        tag(&b">>"[..]),
-    )
-    .parse(input)
+    _dictionary(crate::reader::MAX_NESTING_DEPTH)(input)
 }
 
-fn inner_dictionary(input: ParserInput) -> NomResult<Dictionary> {
-    fold_many0(
-        pair(terminated(name, space), _direct_object),
-        Dictionary::new,
-        |mut dict, (key, value)| {
-            dict.set(key, value);
-            dict
-        },
-    )
-    .parse(input)
+fn _dictionary(depth: usize) -> impl Fn(ParserInput) -> NomResult<Dictionary> {
+    move |input| delimited(pair(tag(&b"<<"[..]), space), inner_dictionary(depth), tag(&b">>"[..])).parse(input)
+}
+
+fn inner_dictionary(depth: usize) -> impl Fn(ParserInput) -> NomResult<Dictionary> {
+    move |input| {
+        fold_many0(
+            pair(terminated(name, space), _direct_object(depth)),
+            Dictionary::new,
+            |mut dict, (key, value)| {
+                dict.set(key, value);
+                dict
+            },
+        )
+        .parse(input)
+    }
 }
 
 pub(crate) fn dict_dup(input: ParserInput) -> NomResult<Dictionary> {
@@ -358,7 +344,10 @@ pub(crate) fn dict_dup(input: ParserInput) -> NomResult<Dictionary> {
         ),
         fold_many0(
             terminated(
-                pair(terminated(name, space), _direct_object),
+                pair(
+                    terminated(name, space),
+                    _direct_object(crate::reader::MAX_NESTING_DEPTH),
+                ),
                 pair(tag(&b"def"[..]), multispace1),
             ),
             Dictionary::new,
@@ -372,145 +361,116 @@ pub(crate) fn dict_dup(input: ParserInput) -> NomResult<Dictionary> {
     .parse(input)
 }
 
-fn stream<'a>(
-    input: ParserInput<'a>,
-    reader: &Reader,
-    already_seen: &mut HashSet<ObjectId>,
-) -> NomResult<'a, Object> {
-    let (i, dict) =
-        terminated(dictionary, (space, tag(&b"stream"[..]), space0, eol)).parse(input)?;
+fn stream<'a>(input: ParserInput<'a>, reader: &Reader, already_seen: &mut HashSet<ObjectId>) -> NomResult<'a, Object> {
+    let (i, dict) = terminated(dictionary, (space, tag(&b"stream"[..]), space0, eol)).parse(input)?;
 
     if let Ok(length) = dict.get(b"Length").and_then(|value| {
         if let Ok(id) = value.as_reference() {
-            reader
-                .get_object(id, already_seen)
-                .and_then(|value| value.as_i64())
+            reader.get_object(id, already_seen).and_then(|value| value.as_i64())
         } else {
             value.as_i64()
         }
     }) {
         if length < 0 {
             // artificial error kind is created to allow descriptive nom errors
-            return Err(nom::Err::Failure(NomError::from_error_kind(
-                i,
-                ErrorKind::LengthValue,
-            )));
+            return Err(nom::Err::Failure(NomError::from_error_kind(i, ErrorKind::LengthValue)));
         }
-        let (i, data): (ParserInput, &[u8]) = match terminated(
-            take(length as usize),
-            pair(opt(eol), tag(&b"endstream"[..])),
-        )
-        .parse(i)
-        {
-            Ok((i2, taken)) => (i2, *taken.fragment()),
-            Err(primary_err) => {
-                // Recover from an incorrect /Length (govdocs holdout
-                // 885_885832: declared lengths are short, so the declared
-                // slice does not end at "endstream", the stream parse fails,
-                // and the object is silently re-parsed as a bare dictionary —
-                // losing the page's content outright). Scan for the
-                // "endstream" keyword instead and take the data up to it,
-                // trimming the EOL that precedes it.
-                let hay: &[u8] = &i;
-                let Some(end) = hay
-                    .windows(b"endstream".len())
-                    .position(|window| window == b"endstream")
-                else {
-                    return Err(primary_err);
-                };
-                let mut data = &hay[..end];
-                if data.ends_with(b"\r\n") {
-                    data = &data[..data.len() - 2];
-                } else if data.ends_with(b"\n") || data.ends_with(b"\r") {
-                    data = &data[..data.len() - 1];
+        let (i, data): (ParserInput, &[u8]) =
+            match terminated(take(length as usize), pair(opt(eol), tag(&b"endstream"[..]))).parse(i) {
+                Ok((i2, taken)) => (i2, taken),
+                Err(primary_err) => {
+                    // Recover from an incorrect /Length (govdocs holdout
+                    // 885_885832: declared lengths are short, so the declared
+                    // slice does not end at "endstream", the stream parse fails,
+                    // and the object is silently re-parsed as a bare dictionary —
+                    // losing the page's content outright). Scan for the
+                    // "endstream" keyword instead and take the data up to it,
+                    // trimming the EOL that precedes it.
+                    let hay: &[u8] = i;
+                    let Some(end) = hay
+                        .windows(b"endstream".len())
+                        .position(|window| window == b"endstream")
+                    else {
+                        return Err(primary_err);
+                    };
+                    let mut data = &hay[..end];
+                    if data.ends_with(b"\r\n") {
+                        data = &data[..data.len() - 2];
+                    } else if data.ends_with(b"\n") || data.ends_with(b"\r") {
+                        data = &data[..data.len() - 1];
+                    }
+                    (i.take_from(end + b"endstream".len()), data)
                 }
-                (i.take_from(end + b"endstream".len()), data)
-            }
-        };
+            };
         Ok((i, Object::Stream(Stream::new(dict, data.to_vec()))))
     } else {
         // Return position relative to the start of the stream dictionary.
-        Ok((
-            i,
-            Object::Stream(Stream::with_position(dict, input.len() - i.len())),
-        ))
+        Ok((i, Object::Stream(Stream::with_position(dict, input.len() - i.len()))))
     }
 }
 
 fn unsigned_int<I: FromStr>(input: ParserInput) -> NomResult<I> {
     map_res(digit1, |digits: ParserInput| {
-        I::from_str(str::from_utf8(&digits).unwrap())
+        I::from_str(str::from_utf8(digits).unwrap())
     })
     .parse(input)
 }
 
 fn object_id(input: ParserInput) -> NomResult<ObjectId> {
-    pair(
-        terminated(unsigned_int, space),
-        terminated(unsigned_int, space),
-    )
-    .parse(input)
+    pair(terminated(unsigned_int, space), terminated(unsigned_int, space)).parse(input)
 }
 
 fn reference(input: ParserInput) -> NomResult<Object> {
     map(terminated(object_id, tag(&b"R"[..])), Object::Reference).parse(input)
 }
 
-fn _direct_objects(input: ParserInput) -> NomResult<Object> {
-    alt((
-        null,
-        boolean,
-        reference,
-        map(real, Object::Real),
-        map(integer, Object::Integer),
-        map(name, Object::Name),
-        map(literal_string, Object::string_literal),
-        hexadecimal_string,
-        map(array, Object::Array),
-        map(dictionary, Object::Dictionary),
-    ))
-    .parse(input)
+fn _direct_objects(depth: usize) -> impl Fn(ParserInput) -> NomResult<Object> {
+    move |input| {
+        alt((
+            null,
+            boolean,
+            reference,
+            map(real, Object::Real),
+            map(integer, Object::Integer),
+            map(name, Object::Name),
+            map(literal_string, Object::string_literal),
+            hexadecimal_string,
+            map(array(depth), Object::Array),
+            map(_dictionary(depth), Object::Dictionary),
+        ))
+        .parse(input)
+    }
 }
 
-fn _direct_object(input: ParserInput) -> NomResult<Object> {
-    // Skip leading whitespace/comments before parsing the object value.
-    // PDF spec allows comments anywhere whitespace is allowed, including
-    // at the start of ObjStm-compressed objects that use "% N 0 obj" comments
-    // as human-readable markers.
-    let (input, _) = space(input)?;
-    terminated(_direct_objects, space).parse(input)
+fn _direct_object(depth: usize) -> impl Fn(ParserInput) -> NomResult<Object> {
+    move |input| {
+        if depth == 0 {
+            return Err(nom::Err::Failure(NomError::from_error_kind(input, ErrorKind::TooLarge)));
+        }
+        terminated(_direct_objects(depth - 1), space).parse(input)
+    }
 }
 
 pub fn direct_object(input: ParserInput) -> Option<Object> {
-    strip_nom(_direct_object.parse(input))
+    strip_nom(_direct_object(crate::reader::MAX_NESTING_DEPTH)(input))
 }
 
-fn object<'a>(
-    input: ParserInput<'a>,
-    reader: &Reader,
-    already_seen: &mut HashSet<ObjectId>,
-) -> NomResult<'a, Object> {
+fn object<'a>(input: ParserInput<'a>, reader: &Reader, already_seen: &mut HashSet<ObjectId>) -> NomResult<'a, Object> {
     terminated(
-        alt((|input| stream(input, reader, already_seen), _direct_objects)),
+        alt((
+            |input| stream(input, reader, already_seen),
+            _direct_objects(crate::reader::MAX_NESTING_DEPTH),
+        )),
         space,
     )
     .parse(input)
 }
 
 pub fn indirect_object(
-    input: ParserInput,
-    offset: usize,
-    expected_id: Option<ObjectId>,
-    reader: &Reader,
+    input: ParserInput, offset: usize, expected_id: Option<ObjectId>, reader: &Reader,
     already_seen: &mut HashSet<ObjectId>,
 ) -> crate::Result<(ObjectId, Object)> {
-    let (id, mut object) = _indirect_object(
-        input.take_from(offset),
-        offset,
-        expected_id,
-        reader,
-        already_seen,
-    )?;
+    let (id, mut object) = _indirect_object(input.take_from(offset), offset, expected_id, reader, already_seen)?;
 
     offset_stream(&mut object, offset);
 
@@ -518,19 +478,16 @@ pub fn indirect_object(
 }
 
 fn _indirect_object<'a>(
-    input: ParserInput<'a>,
-    offset: usize,
-    expected_id: Option<ObjectId>,
-    reader: &Reader,
+    input: ParserInput<'a>, offset: usize, expected_id: Option<ObjectId>, reader: &Reader,
     already_seen: &mut HashSet<ObjectId>,
 ) -> crate::Result<(ObjectId, Object)> {
     let (i, (_, object_id)) = terminated((space, object_id), pair(tag(&b"obj"[..]), space))
         .parse(input)
         .map_err(|_| Error::IndirectObject { offset })?;
-    if let Some(expected_id) = expected_id {
-        if object_id != expected_id {
-            return Err(crate::error::Error::ObjectIdMismatch);
-        }
+    if let Some(expected_id) = expected_id
+        && object_id != expected_id
+    {
+        return Err(crate::error::Error::ObjectIdMismatch);
     }
 
     let object_offset = input.len() - i.len();
@@ -546,18 +503,28 @@ fn _indirect_object<'a>(
     Ok((object_id, object))
 }
 
-pub fn header(input: ParserInput) -> Option<String> {
-    strip_nom(
-        map_res(
-            delimited(
-                tag(&b"%PDF-"[..]),
-                take_while(|c: u8| !b"\r\n".contains(&c)),
-                pair(eol, many0_count(comment)),
-            ),
-            |v: ParserInput| str::from_utf8(&v).map(Into::into),
-        )
-        .parse(input),
+pub fn header(input: ParserInput, strict: bool) -> Option<String> {
+    // Parse version digits (e.g. "1.7") separately from any trailing bytes
+    // before the newline.  Some PDF generators (e.g. ImageMill) place binary
+    // marker bytes on the header line which would fail UTF-8 validation.
+    // In strict mode we reject such trailing bytes; in lenient mode we skip them.
+    let (_, (version_raw, trailing)) = delimited(
+        tag(&b"%PDF-"[..]),
+        pair(
+            take_while(|c: u8| c.is_ascii_digit() || c == b'.'),
+            take_while(|c: u8| !b"\r\n".contains(&c)),
+        ),
+        pair(eol, many0_count(comment)),
     )
+    .parse(input)
+    .ok()?;
+
+    if strict && !trailing.is_empty() {
+        return None;
+    }
+
+    let version = str::from_utf8(version_raw).ok()?.to_string();
+    Some(version)
 }
 
 pub fn binary_mark(input: ParserInput) -> Option<Vec<u8>> {
@@ -576,10 +543,7 @@ pub fn binary_mark(input: ParserInput) -> Option<Vec<u8>> {
 
 /// Decode CrossReferenceTable
 fn xref(input: ParserInput) -> NomResult<Xref> {
-    let xref_eol = map(
-        alt((tag(&b" \r"[..]), tag(&b" \n"[..]), tag(&b"\r\n"[..]))),
-        |_| (),
-    );
+    let xref_eol = map(alt((tag(&b" \r"[..]), tag(&b" \n"[..]), tag(&b"\r\n"[..]))), |_| ());
     let xref_entry = pair(
         separated_pair(unsigned_int, tag(&b" "[..]), unsigned_int::<u32>),
         delimited(tag(&b" "[..]), map(one_of("nf"), |k| k == 'n'), xref_eol),
@@ -591,19 +555,14 @@ fn xref(input: ParserInput) -> NomResult<Xref> {
     );
 
     delimited(
-        pair(tag(&b"xref"[..]), eol),
+        pair(tag(&b"xref"[..]), preceded(opt(tag(&b" "[..])), eol)),
         fold_many1(
             xref_section,
             || -> Xref { Xref::new(0, XrefType::CrossReferenceTable) },
             |mut xref, ((start, _count), entries)| {
                 for (index, ((offset, generation), is_normal)) in entries.into_iter().enumerate() {
-                    if is_normal {
-                        if let Ok(generation) = generation.try_into() {
-                            xref.insert(
-                                (start + index) as u32,
-                                XrefEntry::Normal { offset, generation },
-                            );
-                        }
+                    if is_normal && let Ok(generation) = generation.try_into() {
+                        xref.insert((start + index) as u32, XrefEntry::Normal { offset, generation });
                     }
                 }
                 xref
@@ -632,7 +591,9 @@ pub fn xref_and_trailer(input: ParserInput, reader: &Reader) -> crate::Result<(X
             _indirect_object(input, 0, None, reader, &mut HashSet::new())
                 .map(|(_, obj)| {
                     let res = match obj {
-                        Object::Stream(stream) => decode_xref_stream(stream),
+                        Object::Stream(stream) => {
+                            decode_xref_stream_with_limit(stream, reader.options.max_decompressed_size)
+                        }
                         _ => Err(crate::error::ParseError::InvalidXref.into()),
                     };
                     (input, res)
@@ -651,7 +612,7 @@ pub fn xref_and_trailer(input: ParserInput, reader: &Reader) -> crate::Result<(X
 pub fn xref_start(input: ParserInput) -> Option<i64> {
     strip_nom(
         delimited(
-            pair(tag(&b"startxref"[..]), eol),
+            pair(tag(&b"startxref"[..]), preceded(opt(tag(&b" "[..])), eol)),
             trim_spaces(integer),
             (eol, tag(&b"%%EOF"[..]), space),
         )
@@ -660,13 +621,8 @@ pub fn xref_start(input: ParserInput) -> Option<i64> {
 }
 
 fn trim_spaces<'a, O>(
-    p: impl Parser<
-        ParserInput<'a>,
-        Output = O,
-        Error = nom::error::Error<LocatedSpan<&'a [u8], &'a str>>,
-    >,
-) -> impl Parser<ParserInput<'a>, Output = O, Error = nom::error::Error<LocatedSpan<&'a [u8], &'a str>>>
-{
+    p: impl Parser<ParserInput<'a>, Output = O, Error = NomError<'a>>,
+) -> impl Parser<ParserInput<'a>, Output = O, Error = NomError<'a>> {
     delimited(many0(tag(" ")), p, many0(tag(" ")))
 }
 
@@ -679,7 +635,7 @@ fn content_space(input: ParserInput) -> NomResult<()> {
 fn operator(input: ParserInput) -> NomResult<String> {
     map_res(
         take_while1(|c: u8| c.is_ascii_alphabetic() || b"*'\"".contains(&c)),
-        |op: ParserInput| str::from_utf8(&op).map(Into::into),
+        |op: ParserInput| str::from_utf8(op).map(Into::into),
     )
     .parse(input)
 }
@@ -694,7 +650,7 @@ fn operand(input: ParserInput) -> NomResult<Object> {
             map(name, Object::Name),
             map(literal_string, Object::string_literal),
             hexadecimal_string,
-            map(array, Object::Array),
+            map(array(crate::reader::MAX_NESTING_DEPTH), Object::Array),
             map(dictionary, Object::Dictionary),
         )),
         content_space,
@@ -706,10 +662,7 @@ fn operation(input: ParserInput) -> NomResult<Operation> {
     map(
         preceded(
             many0(comment),
-            alt((
-                inline_image,
-                terminated(pair(many0(operand), operator), content_space),
-            )),
+            alt((inline_image, terminated(pair(many0(operand), operator), content_space))),
         ),
         |(operands, operator)| Operation { operator, operands },
     )
@@ -721,23 +674,42 @@ fn inline_image(input: ParserInput) -> NomResult<(Vec<Object>, String)> {
 }
 
 fn inline_image_impl(input: ParserInput) -> NomResult<(Vec<Object>, String)> {
-    let (input, stream_dict) = inner_dictionary.parse(input)?;
+    let (input, stream_dict) = inner_dictionary(crate::reader::MAX_NESTING_DEPTH).parse(input)?;
     let (input, _) = pair(tag(&b"ID"[..]), content_space).parse(input)?;
-    let (_, (input, stream)) = convert_result(
-        image_data_stream(input, stream_dict),
-        input,
-        ErrorKind::Fail,
-    )?;
-    let (input, _) = (content_space, tag(&b"EI"[..]), content_space).parse(input)?;
-    Ok((input, (vec![Object::Stream(stream)], String::from("BI"))))
+    match image_data_stream(input, stream_dict) {
+        Ok((input, stream)) => {
+            let (input, _) = (content_space, tag(&b"EI"[..]), content_space).parse(input)?;
+            Ok((input, (vec![Object::Stream(stream)], String::from("BI"))))
+        }
+        Err(e) => {
+            // Skip to EI marker so the rest of the content stream can still be parsed.
+            log::warn!("Skipping unparseable inline image: {e}");
+            let bytes = input;
+            // EI must appear after whitespace to distinguish from data bytes.
+            let ei_pos = bytes
+                .windows(4)
+                .position(|w| {
+                    (w[0] == b' ' || w[0] == b'\n' || w[0] == b'\r')
+                        && w[1] == b'E'
+                        && w[2] == b'I'
+                        && (w[3] == b' ' || w[3] == b'\n' || w[3] == b'\r')
+                })
+                .ok_or_else(|| {
+                    let err: NomError = nom::error::Error::from_error_kind(input, ErrorKind::Fail);
+                    nom::Err::Failure(err)
+                })?;
+            let (input, _) = take(ei_pos + 3).parse(input).map_err(|_: nom::Err<()>| {
+                let err: NomError = nom::error::Error::from_error_kind(input, ErrorKind::Fail);
+                nom::Err::Failure(err)
+            })?;
+            let (input, _) = content_space(input)?;
+            Ok((input, (vec![], String::from("BI"))))
+        }
+    }
 }
 
-fn image_data_stream(
-    input: ParserInput,
-    stream_dict: Dictionary,
-) -> crate::Result<(ParserInput, Stream)> {
-    let get_abbr =
-        |key_abbr: &[u8], key: &[u8]| stream_dict.get(key_abbr).or_else(|_| stream_dict.get(key));
+fn image_data_stream(input: ParserInput, stream_dict: Dictionary) -> crate::Result<(ParserInput, Stream)> {
+    let get_abbr = |key_abbr: &[u8], key: &[u8]| stream_dict.get(key_abbr).or_else(|_| stream_dict.get(key));
     let width = get_abbr(b"W", b"Width")?.as_i64()? as usize;
     let height = get_abbr(b"H", b"Height")?.as_i64()? as usize;
     let bpc = get_abbr(b"BPC", b"BitsPerComponent")?.as_i64()? as usize;
@@ -796,9 +768,10 @@ fn image_data_stream(
 }
 
 fn _content(input: ParserInput) -> NomResult<Content<Vec<Operation>>> {
-    preceded(
+    delimited(
         content_space,
         map(many0(operation), |operations| Content { operations }),
+        many0(terminated(comment, content_space)),
     )
     .parse(input)
 }
@@ -807,17 +780,26 @@ pub fn content(input: ParserInput) -> Option<Content<Vec<Operation>>> {
     strip_nom(_content.parse(input))
 }
 
+pub fn content_strict(input: ParserInput) -> Result<Content<Vec<Operation>>, error::ParseError> {
+    let (rest, content) = _content
+        .parse(input)
+        .map_err(|_| error::ParseError::InvalidContentStream)?;
+    if !rest.is_empty() {
+        return Err(error::ParseError::InvalidContentStream);
+    }
+    Ok(content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn test_span(s: &'_ [u8]) -> ParserInput<'_> {
-        LocatedSpan::new_extra(s, "test")
+        s
     }
 
     fn tstrip<O>(r: NomResult<O>) -> Option<O> {
-        r.ok()
-            .and_then(|(i, o)| if !i.is_empty() { None } else { Some(o) })
+        r.ok().and_then(|(i, o)| if !i.is_empty() { None } else { Some(o) })
     }
 
     #[test]
@@ -836,10 +818,7 @@ mod tests {
         let data = vec![
             ("()", ""),
             ("(text())", "text()"),
-            (
-                "(text\r\n\\\\(nested\\t\\b\\f))",
-                "text\r\n\\(nested\t\x08\x0C)",
-            ),
+            ("(text\r\n\\\\(nested\\t\\b\\f))", "text\r\n\\(nested\t\x08\x0C)"),
             ("(text\\0\\53\\053\\0053)", "text\0++\x053"),
             ("(text line\\\n())", "text line()"),
         ];
@@ -870,9 +849,7 @@ mod tests {
         let result = tstrip(name(test_span(text)));
         eprintln!(
             "Im#221 parsed as: {:?}",
-            result
-                .as_ref()
-                .map(|v| String::from_utf8_lossy(v).to_string())
+            result.as_ref().map(|v| String::from_utf8_lossy(v).to_string())
         );
         // #22 is '"' (0x22) — currently decoded to raw byte
         // Expected: [73, 109, 34, 49] = Im"1
@@ -883,9 +860,7 @@ mod tests {
         let result = tstrip(name(test_span(text)));
         eprintln!(
             "Foo#GH parsed as: {:?}",
-            result
-                .as_ref()
-                .map(|v| String::from_utf8_lossy(v).to_string())
+            result.as_ref().map(|v| String::from_utf8_lossy(v).to_string())
         );
         assert_eq!(result, Some(b"Foo#GH".to_vec()));
 
@@ -950,24 +925,24 @@ T* (encoded streams.) Tj
     fn big_generation_value() {
         let input = b"xref
 0 1
-0000000000 65536 f 
+0000000000 65536 f\x20
 0 16
-0000000000 65535 f 
-0000153238 00000 n 
-0000000019 00000 n 
-0000000313 00000 n 
-0000000333 00000 n 
-0000145531 00000 n 
-0000153407 00000 n 
-0000145554 00000 n 
-0000152303 00000 n 
-0000152324 00000 n 
-0000152514 00000 n 
-0000152880 00000 n 
-0000153106 00000 n 
-0000153139 00000 n 
-0000153532 00000 n 
-0000153629 00000 n 
+0000000000 65535 f\x20
+0000153238 00000 n\x20
+0000000019 00000 n\x20
+0000000313 00000 n\x20
+0000000333 00000 n\x20
+0000145531 00000 n\x20
+0000153407 00000 n\x20
+0000145554 00000 n\x20
+0000152303 00000 n\x20
+0000152324 00000 n\x20
+0000152514 00000 n\x20
+0000152880 00000 n\x20
+0000153106 00000 n\x20
+0000153139 00000 n\x20
+0000153532 00000 n\x20
+0000153629 00000 n\x20
 trailer
 <</Size 16/Root 14 0 R
 /Info 15 0 R
@@ -976,7 +951,7 @@ trailer
 /DocChecksum /2BCC3C7DE26E6BF3573E4A6E8362221F
 >>
 startxref
-153804
+153804\x20
 %%EOF
 ";
         match xref(test_span(input)) {
@@ -988,13 +963,56 @@ startxref
     #[test]
     fn space_in_startxref_number() {
         let input = b"startxref
-153804 
+153804\x20
 %%EOF
 ";
         match xref_start(test_span(input)) {
             Some(num) => assert_eq!(num, 153804),
             None => panic!("could not parse number in startxref"),
         }
+    }
+
+    #[test]
+    fn header_standard() {
+        // Standard header with proper EOL
+        let input = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n";
+        assert_eq!(header(test_span(input), false), Some("1.7".to_string()));
+    }
+
+    #[test]
+    fn header_with_binary_bytes_on_same_line() {
+        // Some generators (e.g. ImageMill) place binary marker bytes on the
+        // header line without a separating newline or '%' prefix.
+        let input = b"%PDF-1.3 \xb0\x9f\x92\x9c\x9f\xd4\xe0\xce\xd0\xd0\xd0\r1 0 obj\r";
+        assert_eq!(header(test_span(input), false), Some("1.3".to_string()));
+    }
+
+    #[test]
+    fn header_with_binary_bytes_strict_rejects() {
+        // In strict mode, binary bytes on the header line should cause a
+        // parse failure (the raw bytes are not valid UTF-8).
+        let input = b"%PDF-1.3 \xb0\x9f\x92\x9c\x9f\xd4\xe0\xce\xd0\xd0\xd0\r1 0 obj\r";
+        assert_eq!(header(test_span(input), true), None);
+    }
+
+    #[test]
+    fn header_cr_line_ending() {
+        // CR-only line ending (common in older PDFs)
+        let input = b"%PDF-1.3\r%\xe2\xe3\xcf\xd3\r";
+        assert_eq!(header(test_span(input), false), Some("1.3".to_string()));
+    }
+
+    #[test]
+    fn header_crlf_line_ending() {
+        // CRLF line ending (common on Windows-generated PDFs)
+        let input = b"%PDF-1.7\r\n%\xe2\xe3\xcf\xd3\r\n";
+        assert_eq!(header(test_span(input), false), Some("1.7".to_string()));
+    }
+
+    #[test]
+    fn header_pdf_2_0() {
+        let input = b"%PDF-2.0\n%\xe2\xe3\xcf\xd3\n";
+        assert_eq!(header(test_span(input), false), Some("2.0".to_string()));
     }
 
     #[test]
@@ -1007,12 +1025,32 @@ startxref
 % Another comment
 ";
         let out = content(test_span(input)).unwrap();
+        let out_strict = content_strict(test_span(input)).unwrap();
+        assert_eq!(out.operations.len(), out_strict.operations.len());
         assert_eq!(out.operations.len(), 3);
     }
 
     #[test]
+    fn inline_image_unknown_colorspace_skipped() {
+        // Inline image with an unrecognized colorspace ("ICCBased" is not handled).
+        // The parser should skip it and still parse the surrounding operations.
+        let input = b"q 100 100 moveto
+BI /W 2 /H 2 /CS /ICCBased /BPC 8
+ID
+\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00
+EI
+(Hello) Tj Q";
+        let out = content(test_span(input)).unwrap();
+        // Should have: q, moveto, BI (skipped), Tj, Q = 5 operations
+        let ops: Vec<&str> = out.operations.iter().map(|o| o.operator.as_str()).collect();
+        assert!(ops.contains(&"q"), "missing q, got: {:?}", ops);
+        assert!(ops.contains(&"Tj"), "missing Tj, got: {:?}", ops);
+        assert!(ops.contains(&"Q"), "missing Q, got: {:?}", ops);
+    }
+
+    #[test]
     fn inline_image() {
-        env_logger::init();
+        let _ = env_logger::try_init();
         let input = b"BI /W 4 /H 4 /CS /RGB /BPC 8
 ID
 00000z0z00zzz00z0zzz0zzzEI aazazaazzzaazazzzazzz
@@ -1023,5 +1061,89 @@ EI";
             &out.0[0].as_stream().unwrap().content,
             b"00000z0z00zzz00z0zzz0zzzEI aazazaazzzaazazzzazzz"
         )
+    }
+
+    #[test]
+    fn xref_trailing_space_after_keyword() {
+        // Some PDF generators emit "xref \n" with a trailing space.
+        let input = b"xref \n0 3\n0000000000 65535 f \n0000000017 00000 n \n0000000081 00000 n \ntrailer\n<</Size 3/Root 1 0 R>>\nstartxref\n175\n%%EOF\n";
+        match xref(test_span(input)) {
+            Ok((_, re)) => assert_eq!(re.entries.len(), 2),
+            Err(err) => panic!("xref with trailing space should parse: {:?}", err),
+        }
+    }
+
+    #[test]
+    fn startxref_trailing_space_after_keyword() {
+        // Some PDF generators emit "startxref \n" with a trailing space.
+        let input = b"startxref \n135738\n%%EOF\n";
+        match xref_start(test_span(input)) {
+            Some(num) => assert_eq!(num, 135738),
+            None => panic!("startxref with trailing space should parse"),
+        }
+    }
+
+    #[test]
+    fn content_silently_truncates_corrupted_data() {
+        // Corrupted data with unterminated string literal
+        let data = b"q 1 0 0 1 10 10 cm (corrupted Q";
+
+        let content = content(data).unwrap();
+
+        // Operations before the corruption returned without an error.
+        // Trailing Q was silently dropped.
+        assert_eq!(content.operations.len(), 2);
+        assert_eq!(content.operations[0].operator, "q");
+        assert_eq!(content.operations[1].operator, "cm");
+    }
+
+    #[test]
+    fn content_strict_rejects_corrupted_data() {
+        let data = b"q 1 0 0 1 10 10 cm (corrupted Q";
+        assert!(content_strict(data).is_err());
+    }
+
+    fn on_big_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn deeply_nested_array_is_rejected() {
+        on_big_stack(|| {
+            let depth = 200_000;
+            let mut input = Vec::with_capacity(depth * 2);
+            input.extend(std::iter::repeat_n(b'[', depth));
+            input.extend(std::iter::repeat_n(b']', depth));
+            let result = _direct_object(crate::reader::MAX_NESTING_DEPTH)(input.as_slice());
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn deeply_nested_dictionary_is_rejected() {
+        on_big_stack(|| {
+            let depth = 200_000;
+            let mut input = Vec::with_capacity(depth * 6);
+            for _ in 0..depth {
+                input.extend_from_slice(b"<</K ");
+            }
+            for _ in 0..depth {
+                input.extend_from_slice(b">>");
+            }
+            let result = _direct_object(crate::reader::MAX_NESTING_DEPTH)(input.as_slice());
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn modestly_nested_array_still_parses() {
+        let input = b"[[[[[1]]]]]";
+        let obj = _direct_object(crate::reader::MAX_NESTING_DEPTH)(test_span(input));
+        assert!(obj.is_ok());
     }
 }

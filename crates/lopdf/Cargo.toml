@@ -14,36 +14,39 @@ readme = "README.md"
 name = "pdfluent-lopdf"
 repository = "https://pdfluent.com/source"
 version = "0.39.5"
-rust-version = "1.85"
+# Raised from 1.85 by the merge to upstream 0.44.0, not by choice: the merged
+# code uses let-chains (`if let Some(x) = e && ...`), stable in Rust 1.88, in
+# the reader, parser and object model. 1.85 was already wrong the moment those
+# landed; upstream 0.44.0 declares 1.88 for the same reason.
+rust-version = "1.88"
 
 [dependencies]
-aes = "0.8.4"
-bitflags = "2.8.0"
-cbc = "0.1.2"
+aes = "0.9"
+bitflags = "2.13"
+cbc = "0.2"
 chrono = { version = "0.4", optional = true, default-features = false, features = [
     "std",
     "clock",
 ] }
-ecb = "0.1.2"
+ecb = "0.2"
 encoding_rs = "0.8.32"
-flate2 = "1.0"
+flate2 = "1.1"
 hayro-ccitt = { package = "pdfluent-ccitt", path = "../hayro-ccitt", optional = true, version = "=0.2.2" }
 hayro-jbig2 = { package = "pdfluent-jbig2", path = "../hayro-jbig2", optional = true, version = "=0.2.3" }
 hayro-jpeg2000 = { package = "pdfluent-jpeg2000", path = "../hayro-jpeg2000", optional = true, default-features = false, version = "=0.4.0" }
 image = { version = "0.25", optional = true }
-indexmap = "2.2.3"
+indexmap = "2.14"
 itoa = "1.0"
 jiff = { version = "0.2", optional = true }
-getrandom = "0.3"
+getrandom = "0.4"
 log = "0.4"
-md-5 = "0.10"
+md-5 = "0.11"
 nom = "8.0"
-nom_locate = "5.0"
-rand = { version = "0.9" }
-rangemap = "1.5"
-rayon = { version = "1.6", optional = true }
+rand = { version = "0.10" }
+rangemap = "1.7"
+rayon = { version = "1.12", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
-sha2 = "0.10.8"
+sha2 = "0.11"
 stringprep = "0.1.5"
 thiserror = "2.0.3"
 time = { version = "0.3", features = [
@@ -51,7 +54,7 @@ time = { version = "0.3", features = [
     "parsing",
 ], optional = true }
 tokio = { version = "1", features = ["fs", "io-util"], optional = true }
-weezl = "0.1"
+weezl = "0.2"
 ttf-parser = "0.25.1"
 
 [dev-dependencies]

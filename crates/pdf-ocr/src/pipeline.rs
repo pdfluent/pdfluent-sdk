@@ -340,7 +340,7 @@ fn get_media_box(doc: &Document, page_id: ObjectId) -> [f64; 4] {
 
 /// Get content stream bytes for a page.
 fn get_page_content_bytes(doc: &Document, page_id: ObjectId) -> Option<Vec<u8>> {
-    doc.get_page_content(page_id).ok()
+    Some(doc.get_page_content(page_id))
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 use crate::Result;
-use crate::{Dictionary, Document, FontData, Object, ObjectId, Stream};
+use crate::{Dictionary, Document, Object, ObjectId};
+use crate::{FontData, Stream};
 
 impl Document {
     /// Create new PDF document with version.
@@ -85,15 +86,9 @@ impl Document {
     ///
     /// Get Object that has the key `Resources -> XObject`.
     pub fn add_xobject<N: Into<Vec<u8>>>(
-        &mut self,
-        page_id: ObjectId,
-        xobject_name: N,
-        xobject_id: ObjectId,
+        &mut self, page_id: ObjectId, xobject_name: N, xobject_id: ObjectId,
     ) -> Result<()> {
-        if let Ok(resources) = self
-            .get_or_create_resources(page_id)
-            .and_then(Object::as_dict_mut)
-        {
+        if let Ok(resources) = self.get_or_create_resources(page_id).and_then(Object::as_dict_mut) {
             if !resources.has(b"XObject") {
                 resources.set("XObject", Dictionary::new());
             }
@@ -115,21 +110,13 @@ impl Document {
     ///
     /// Get Object that has the key `Resources -> ExtGState`.
     pub fn add_graphics_state<N: Into<Vec<u8>>>(
-        &mut self,
-        page_id: ObjectId,
-        gs_name: N,
-        gs_id: ObjectId,
+        &mut self, page_id: ObjectId, gs_name: N, gs_id: ObjectId,
     ) -> Result<()> {
-        if let Ok(resources) = self
-            .get_or_create_resources(page_id)
-            .and_then(Object::as_dict_mut)
-        {
+        if let Ok(resources) = self.get_or_create_resources(page_id).and_then(Object::as_dict_mut) {
             if !resources.has(b"ExtGState") {
                 resources.set("ExtGState", Dictionary::new());
             }
-            let states = resources
-                .get_mut(b"ExtGState")
-                .and_then(Object::as_dict_mut)?;
+            let states = resources.get_mut(b"ExtGState").and_then(Object::as_dict_mut)?;
             states.set(gs_name, Object::Reference(gs_id));
         }
         Ok(())
@@ -215,8 +202,9 @@ impl Document {
 pub mod tests {
     use std::path::PathBuf;
 
+    use crate::FontData;
     use crate::content::*;
-    use crate::{Document, FontData, Object, Stream};
+    use crate::{Document, Object, Stream};
 
     #[cfg(not(feature = "time"))]
     pub fn get_timestamp() -> Object {
@@ -287,10 +275,58 @@ pub mod tests {
         doc.trailer.set("Info", info_id);
         doc.trailer.set(
             "ID",
-            Object::Array(vec![
-                Object::string_literal(b"ABC"),
-                Object::string_literal(b"DEF"),
-            ]),
+            Object::Array(vec![Object::string_literal(b"ABC"), Object::string_literal(b"DEF")]),
+        );
+        doc.compress();
+        doc
+    }
+
+    /// Create a single-page document whose content stream is the
+    /// caller-supplied list of operations (wrapped in `BT`/`ET` if not
+    /// already). Used by tests that need to exercise specific
+    /// content-stream operators not produced by `create_document_with_texts`.
+    pub fn create_document_with_operations(operations: Vec<Operation>) -> Document {
+        let mut doc = Document::with_version("1.5");
+        let info_id = doc.add_object(dictionary! {
+            "Title" => Object::string_literal("Create PDF document example"),
+            "Creator" => Object::string_literal("https://crates.io/crates/lopdf"),
+            "CreationDate" => get_timestamp(),
+        });
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Courier",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! {
+                "F1" => font_id,
+            },
+        });
+        let content = Content { operations };
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+        });
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page.into()],
+            "Count" => 1,
+            "Resources" => resources_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc.trailer.set("Info", info_id);
+        doc.trailer.set(
+            "ID",
+            Object::Array(vec![Object::string_literal(b"ABC"), Object::string_literal(b"DEF")]),
         );
         doc.compress();
         doc
@@ -318,11 +354,17 @@ pub mod tests {
         assert!(file_path.exists());
     }
 
+    // Upstream's version of this test reads ./assets/fonts/Montserrat-Regular.ttf,
+    // which this fork does not ship, so it carried #[ignore] and ran nowhere.
+    // An ignored test reports as neither pass nor failure, which is the shape
+    // this project keeps being caught by; the font is built in memory instead.
+    //
+    // Upstream gates this whole surface behind a `font_embedding` feature. We do
+    // not: see the note on FontData in font.rs.
     #[test]
-    #[ignore] // Requires test font file not included in fork
     fn test_add_font_embeds_font_correctly() {
-        // Create a dummy TTF font in memory (fake content, just to test structure)
-        let font_file = std::fs::read("./tests/resources/fonts/Montserrat-Regular.ttf").unwrap();
+        use crate::font::synthetic::{self, Metrics};
+        let font_file = synthetic::font(&Metrics::default());
 
         // Construct FontData manually
         let mut font_data = FontData::new(&font_file, "MyFont".to_string());
@@ -351,10 +393,7 @@ pub mod tests {
         let font_dict = font_obj.as_dict().unwrap();
 
         // Check base font name
-        assert_eq!(
-            font_dict.get(b"BaseFont").unwrap(),
-            &Object::Name(b"MyFont".to_vec())
-        );
+        assert_eq!(font_dict.get(b"BaseFont").unwrap(), &Object::Name(b"MyFont".to_vec()));
 
         // Check encoding
         assert_eq!(
@@ -363,11 +402,7 @@ pub mod tests {
         );
 
         // Check font descriptor exists and is referenced
-        let descriptor_ref = font_dict
-            .get(b"FontDescriptor")
-            .unwrap()
-            .as_reference()
-            .unwrap();
+        let descriptor_ref = font_dict.get(b"FontDescriptor").unwrap().as_reference().unwrap();
         let descriptor_obj = doc.get_object(descriptor_ref).unwrap().as_dict().unwrap();
         assert_eq!(
             descriptor_obj.get(b"FontName").unwrap(),
@@ -375,12 +410,16 @@ pub mod tests {
         );
 
         // Check font file is embedded
-        let font_file_ref = descriptor_obj
-            .get(b"FontFile2")
-            .unwrap()
-            .as_reference()
-            .unwrap();
+        let font_file_ref = descriptor_obj.get(b"FontFile2").unwrap().as_reference().unwrap();
         let font_stream = doc.get_object(font_file_ref).unwrap().as_stream().unwrap();
         assert_eq!(font_stream.content, font_file);
+
+        // Length1 is the unencoded length of the embedded font program. Getting
+        // it wrong makes a PDF that opens and renders nothing, so it is asserted
+        // rather than assumed.
+        assert_eq!(
+            font_stream.dict.get(b"Length1").unwrap(),
+            &Object::Integer(font_file.len() as i64)
+        );
     }
 }

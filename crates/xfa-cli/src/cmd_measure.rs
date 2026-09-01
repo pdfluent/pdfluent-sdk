@@ -220,7 +220,9 @@ pub fn run(
 fn count_text_ops(doc: &lopdf::Document) -> usize {
     let mut count = 0usize;
     for (_, page_id) in doc.get_pages() {
-        if let Ok(content_bytes) = doc.get_page_content(page_id) {
+        // lopdf 0.44: get_page_content is infallible and returns Vec<u8>.
+        let content_bytes = doc.get_page_content(page_id);
+        {
             if let Ok(content) = lopdf::content::Content::decode(&content_bytes) {
                 for op in content.operations {
                     if op.operator == "Tj" || op.operator == "TJ" {

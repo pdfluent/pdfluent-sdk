@@ -8,7 +8,6 @@ use crate::{
     encodings::Encoding,
     error::ParseError,
     object::Object::Name,
-    parser::ParserInput,
     xref::{Xref, XrefEntry, XrefType},
 };
 use std::{
@@ -19,8 +18,12 @@ use std::{
 impl Content<Vec<Operation>> {
     /// Decode content operations.
     pub fn decode(data: &[u8]) -> Result<Self> {
-        parser::content(ParserInput::new_extra(data, "content operations"))
-            .ok_or(ParseError::InvalidContentStream.into())
+        parser::content(data).ok_or(ParseError::InvalidContentStream.into())
+    }
+
+    /// Strict decode content operations.
+    pub fn decode_strict(data: &[u8]) -> Result<Self> {
+        parser::content_strict(data).map_err(|e| e.into())
     }
 }
 
@@ -33,27 +36,38 @@ impl Stream {
 
 impl Document {
     /// Get decoded page content;
-    pub fn get_and_decode_page_content(
-        &self,
-        page_id: ObjectId,
-    ) -> Result<Content<Vec<Operation>>> {
-        let content_data = self.get_page_content(page_id)?;
+    pub fn get_and_decode_page_content(&self, page_id: ObjectId) -> Result<Content<Vec<Operation>>> {
+        let content_data = self.get_page_content(page_id);
         Content::decode(&content_data)
     }
 
     /// Add content to a page. All existing content will be unchanged.
-    pub fn add_to_page_content(
-        &mut self,
-        page_id: ObjectId,
-        content: Content<Vec<Operation>>,
-    ) -> Result<()> {
+    pub fn add_to_page_content(&mut self, page_id: ObjectId, content: Content<Vec<Operation>>) -> Result<()> {
         let content_data = Content::encode(&content)?;
         self.add_page_contents(page_id, content_data)?;
         Ok(())
     }
 
     pub fn extract_text(&self, page_numbers: &[u32]) -> Result<String> {
-        let text_fragments = self.extract_text_chunks(page_numbers);
+        self.extract_text_inner(page_numbers, None)
+    }
+
+    /// Extract text from the given pages, bounding the total decompressed content
+    /// of each page to `max_decompressed_size` bytes.
+    ///
+    /// This is the decompression-bomb-safe counterpart to
+    /// [`Document::extract_text`]: page content is decoded via
+    /// [`Document::get_page_content_with_limit`], so a small compressed content
+    /// stream cannot inflate without limit. Prefer it over [`Document::extract_text`]
+    /// for PDFs from an untrusted source. Returns
+    /// [`DecompressError::MemoryLimitExceeded`](crate::DecompressError::MemoryLimitExceeded)
+    /// if any requested page's content would exceed the limit.
+    pub fn extract_text_with_limit(&self, page_numbers: &[u32], max_decompressed_size: usize) -> Result<String> {
+        self.extract_text_inner(page_numbers, Some(max_decompressed_size))
+    }
+
+    fn extract_text_inner(&self, page_numbers: &[u32], limit: Option<usize>) -> Result<String> {
+        let text_fragments = self.extract_text_chunks_inner(page_numbers, limit);
         let mut text = String::new();
         for maybe_text_fragment in text_fragments.into_iter() {
             let text_fragment = maybe_text_fragment?;
@@ -64,11 +78,25 @@ impl Document {
     }
 
     pub fn extract_text_chunks(&self, page_numbers: &[u32]) -> Vec<Result<String>> {
+        self.extract_text_chunks_inner(page_numbers, None)
+    }
+
+    /// Bomb-safe counterpart to [`Document::extract_text_chunks`], bounding the
+    /// total decompressed content of each page to `max_decompressed_size` bytes.
+    /// A page whose content exceeds the limit yields an `Err` chunk carrying
+    /// [`DecompressError::MemoryLimitExceeded`](crate::DecompressError::MemoryLimitExceeded).
+    pub fn extract_text_chunks_with_limit(
+        &self, page_numbers: &[u32], max_decompressed_size: usize,
+    ) -> Vec<Result<String>> {
+        self.extract_text_chunks_inner(page_numbers, Some(max_decompressed_size))
+    }
+
+    fn extract_text_chunks_inner(&self, page_numbers: &[u32], limit: Option<usize>) -> Vec<Result<String>> {
         let pages: BTreeMap<u32, (u32, u16)> = self.get_pages();
         page_numbers
             .iter()
             .flat_map(|page_number| {
-                let result = self.extract_text_chunks_from_page(&pages, *page_number);
+                let result = self.extract_text_chunks_from_page(&pages, *page_number, limit);
                 match result {
                     Ok(text_chunks) => text_chunks,
                     Err(err) => vec![Err(err)],
@@ -78,27 +106,32 @@ impl Document {
     }
 
     fn extract_text_chunks_from_page(
-        &self,
-        pages: &BTreeMap<u32, (u32, u16)>,
-        page_number: u32,
+        &self, pages: &BTreeMap<u32, (u32, u16)>, page_number: u32, limit: Option<usize>,
     ) -> Result<Vec<Result<String>>> {
         let mut collected_chunks_and_errs: Vec<std::result::Result<String, Error>> = Vec::new();
 
-        let page_id = *pages
-            .get(&page_number)
-            .ok_or(Error::PageNumberNotFound(page_number))?;
+        let page_id = *pages.get(&page_number).ok_or(Error::PageNumberNotFound(page_number))?;
         let fonts = self.get_page_fonts(page_id)?;
         let encodings: BTreeMap<Vec<u8>, Encoding> = fonts
             .into_iter()
-            .filter_map(|(name, font)| match font.get_font_encoding(self) {
-                Ok(it) => Some((name, it)),
-                Err(err) => {
-                    collected_chunks_and_errs.push(Err(err));
-                    None
+            .filter_map(|(name, font)| {
+                let encoding = match limit {
+                    Some(max) => font.get_font_encoding_with_limit(self, max),
+                    None => font.get_font_encoding(self),
+                };
+                match encoding {
+                    Ok(it) => Some((name, it)),
+                    Err(err) => {
+                        collected_chunks_and_errs.push(Err(err));
+                        None
+                    }
                 }
             })
             .collect();
-        let content_data = self.get_page_content(page_id)?;
+        let content_data = match limit {
+            Some(max) => self.get_page_content_with_limit(page_id, max)?,
+            None => self.get_page_content(page_id),
+        };
         let content = Content::decode(&content_data)?;
 
         // each text with different encoding is extracted as separate chunk
@@ -135,6 +168,48 @@ impl Document {
                     None => warn!("Could not decode extracted text"),
                 },
                 "ET" if !current_text.ends_with('\n') => current_text.push('\n'),
+                // PDF 32000-1 §9.4.3 — `'` is equivalent to `T* Tj`:
+                // move to next line, then show string from the single
+                // string operand.
+                "'" => match current_encoding {
+                    Some(encoding) => {
+                        if !current_text.ends_with('\n') {
+                            current_text.push('\n');
+                        }
+                        let res = collect_text(&mut current_text, encoding, &operation.operands);
+                        if let Err(err) = res {
+                            collected_chunks_and_errs.push(Err(err));
+                        }
+                    }
+                    None => warn!("Could not decode extracted text"),
+                },
+                // PDF 32000-1 §9.4.3 — `"` is equivalent to
+                // `aw Tw ac Tc T* Tj` with operands `[aw, ac, string]`.
+                // Operands 0/1 set word/character spacing for rendering
+                // and don't affect the extracted character sequence;
+                // operand 2 is the string to show.
+                "\"" => match current_encoding {
+                    Some(encoding) => {
+                        if !current_text.ends_with('\n') {
+                            current_text.push('\n');
+                        }
+                        if let Some(string_operand) = operation.operands.get(2) {
+                            let res = collect_text(&mut current_text, encoding, std::slice::from_ref(string_operand));
+                            if let Err(err) = res {
+                                collected_chunks_and_errs.push(Err(err));
+                            }
+                        }
+                    }
+                    None => warn!("Could not decode extracted text"),
+                },
+                // PDF 32000-1 §9.4.2 — `T*` moves to the start of the
+                // next line. For text extraction we approximate this
+                // as `\n`, matching how the `ET` arm above handles end
+                // of text object.
+                "T*" if !current_text.ends_with('\n') => current_text.push('\n'),
+                "T*" => {}
+                "ET" if !current_text.ends_with('\n') => current_text.push('\n'),
+                "ET" => {}
                 _ => {}
             }
         }
@@ -146,11 +221,7 @@ impl Document {
     }
 
     pub fn replace_text(
-        &mut self,
-        page_number: u32,
-        text: &str,
-        other_text: &str,
-        default_str: Option<&str>,
+        &mut self, page_number: u32, text: &str, other_text: &str, default_str: Option<&str>,
     ) -> Result<()> {
         let page = page_number.saturating_sub(1) as usize;
         let page_id = self
@@ -162,7 +233,7 @@ impl Document {
             .into_iter()
             .map(|(name, font)| font.get_font_encoding(self).map(|it| (name, it)))
             .collect::<Result<BTreeMap<Vec<u8>, Encoding>>>()?;
-        let content_data = self.get_page_content(page_id)?;
+        let content_data = self.get_page_content(page_id);
         let mut content = Content::decode(&content_data)?;
         let mut current_encoding = None;
         for operation in &mut content.operations {
@@ -176,17 +247,11 @@ impl Document {
                     current_encoding = encodings.get(current_font);
                 }
                 "Tj" | "TJ" => match current_encoding {
-                    Some(encoding) => try_to_replace_encoded_text(
-                        operation,
-                        encoding,
-                        text,
-                        other_text,
-                        default_str.unwrap_or(""),
-                    )?,
+                    Some(encoding) => {
+                        try_to_replace_encoded_text(operation, encoding, text, other_text, default_str.unwrap_or(""))?
+                    }
                     None => {
-                        warn!(
-                            "Could not decode extracted text, some of the occurances might not be properly replaced"
-                        )
+                        warn!("Could not decode extracted text, some of the occurances might not be properly replaced")
                     }
                 },
                 _ => {}
@@ -197,11 +262,7 @@ impl Document {
     }
 
     pub fn replace_partial_text(
-        &mut self,
-        page_number: u32,
-        search_text: &str,
-        replacement_text: &str,
-        default_char: Option<&str>,
+        &mut self, page_number: u32, search_text: &str, replacement_text: &str, default_char: Option<&str>,
     ) -> Result<usize> {
         let page = page_number.saturating_sub(1) as usize;
         let page_id = self
@@ -215,7 +276,7 @@ impl Document {
             .map(|(name, font)| font.get_font_encoding(self).map(|it| (name, it)))
             .collect::<Result<BTreeMap<Vec<u8>, Encoding>>>()?;
 
-        let content_data = self.get_page_content(page_id)?;
+        let content_data = self.get_page_content(page_id);
         let mut content = Content::decode(&content_data)?;
         let mut current_encoding = None;
         let mut replacement_count = 0;
@@ -256,11 +317,7 @@ impl Document {
     }
 
     pub fn insert_image(
-        &mut self,
-        page_id: ObjectId,
-        img_object: Stream,
-        position: (f32, f32),
-        size: (f32, f32),
+        &mut self, page_id: ObjectId, img_object: Stream, position: (f32, f32), size: (f32, f32),
     ) -> Result<()> {
         let img_id = self.add_object(img_object);
         let img_name = format!("X{}", img_id.0);
@@ -280,10 +337,9 @@ impl Document {
                 position.1.into(),
             ],
         ));
-        content.operations.push(Operation::new(
-            "Do",
-            vec![Name(img_name.as_bytes().to_vec())],
-        ));
+        content
+            .operations
+            .push(Operation::new("Do", vec![Name(img_name.as_bytes().to_vec())]));
         content.operations.push(Operation::new("Q", vec![]));
 
         self.change_page_content(page_id, content.encode()?)
@@ -296,10 +352,9 @@ impl Document {
         let mut content = self.get_and_decode_page_content(page_id)?;
         content.operations.insert(0, Operation::new("q", vec![]));
         content.operations.push(Operation::new("Q", vec![]));
-        content.operations.push(Operation::new(
-            "Do",
-            vec![Name(form_name.as_bytes().to_vec())],
-        ));
+        content
+            .operations
+            .push(Operation::new("Do", vec![Name(form_name.as_bytes().to_vec())]));
         let modified_content = content.encode()?;
         self.add_xobject(page_id, form_name, form_id)?;
 
@@ -310,7 +365,7 @@ fn collect_text(text: &mut String, encoding: &Encoding, operands: &[Object]) -> 
     for operand in operands.iter() {
         match operand {
             Object::String(bytes, _) => {
-                text.push_str(&Document::decode_text(encoding, bytes)?);
+                encoding.write_to_string(bytes, text)?;
             }
             Object::Array(arr) => {
                 collect_text(text, encoding, arr)?;
@@ -345,10 +400,7 @@ pub fn substr(s: &str, start: usize, len: usize) -> &str {
     &s[start_idx..end_idx]
 }
 pub fn substring(s: &str, start: usize) -> &str {
-    s.char_indices()
-        .nth(start)
-        .map(|(idx, _)| &s[idx..])
-        .unwrap_or("")
+    s.char_indices().nth(start).map(|(idx, _)| &s[idx..]).unwrap_or("")
 }
 
 fn encode(encoding: &Encoding, txt: &str, default_str: &str) -> Vec<u8> {
@@ -371,11 +423,7 @@ fn encode(encoding: &Encoding, txt: &str, default_str: &str) -> Vec<u8> {
     }
 }
 fn try_to_replace_encoded_text(
-    operation: &mut Operation,
-    encoding: &Encoding,
-    text_to_replace: &str,
-    replacement: &str,
-    default_str: &str,
+    operation: &mut Operation, encoding: &Encoding, text_to_replace: &str, replacement: &str, default_str: &str,
 ) -> Result<()> {
     for operand in &mut operation.operands {
         match operand {
@@ -390,24 +438,26 @@ fn try_to_replace_encoded_text(
                 let mut str_collected = String::new();
                 collect_text(&mut str_collected, encoding, arr)?;
                 if str_collected == text_to_replace {
-                    let s_len = str_collected.chars().count();
-                    let r_len = replacement.chars().count();
-                    let mut cur = 0;
+                    // The number of `Object::String` items in a `TJ` array is
+                    // not guaranteed to match the character count of the
+                    // decoded text (each string may hold several glyphs, and
+                    // numeric kerning entries are interleaved).
+                    //
+                    // There is no **good** way to interpolate between the OG
+                    // and the replacement, but putting the full encoded replacement
+                    // into the first string slot and emptying out the remaining
+                    // string slots, leaving any numeric kerning entries in place
+                    // seems like the least bad option.
+                    let encoded_replacement = encode(encoding, replacement, default_str);
+                    let mut placed = false;
                     for item in arr.iter_mut() {
                         if let Object::String(bytes, _f) = item {
-                            if cur == s_len - 1 {
-                                let sub = substring(replacement, cur);
-                                let encoded_bytes = encode(encoding, sub, default_str);
-                                *bytes = encoded_bytes;
-                                break;
-                            } else if cur > r_len {
-                                *item = Object::Null;
+                            if placed {
+                                *bytes = Vec::new();
                             } else {
-                                let sub = substr(replacement, cur, 1);
-                                let encoded_bytes = encode(encoding, sub, default_str);
-                                *bytes = encoded_bytes;
+                                bytes.clone_from(&encoded_replacement);
+                                placed = true;
                             }
-                            cur += 1;
                         }
                     }
                 }
@@ -420,11 +470,7 @@ fn try_to_replace_encoded_text(
 }
 
 fn replace_partial_in_operation(
-    operation: &mut Operation,
-    encoding: &Encoding,
-    search_text: &str,
-    replacement_text: &str,
-    default_char: &str,
+    operation: &mut Operation, encoding: &Encoding, search_text: &str, replacement_text: &str, default_char: &str,
 ) -> Result<usize> {
     let mut replacement_count = 0;
 
@@ -440,13 +486,8 @@ fn replace_partial_in_operation(
                 }
             }
             Object::Array(arr) => {
-                replacement_count += replace_partial_in_array(
-                    arr,
-                    encoding,
-                    search_text,
-                    replacement_text,
-                    default_char,
-                )?;
+                replacement_count +=
+                    replace_partial_in_array(arr, encoding, search_text, replacement_text, default_char)?;
             }
             _ => {}
         }
@@ -456,11 +497,7 @@ fn replace_partial_in_operation(
 }
 
 fn replace_partial_in_array(
-    arr: &mut [Object],
-    encoding: &Encoding,
-    search_text: &str,
-    replacement_text: &str,
-    default_char: &str,
+    arr: &mut [Object], encoding: &Encoding, search_text: &str, replacement_text: &str, default_char: &str,
 ) -> Result<usize> {
     let mut replacement_count = 0;
 
@@ -489,9 +526,22 @@ fn encode_with_fallback(encoding: &Encoding, text: &str, default_char: &str) -> 
 }
 
 /// Decode CrossReferenceStream
-pub fn decode_xref_stream(mut stream: Stream) -> Result<(Xref, Dictionary)> {
+pub fn decode_xref_stream(stream: Stream) -> Result<(Xref, Dictionary)> {
+    decode_xref_stream_with_limit(stream, None)
+}
+
+/// Decode a cross-reference stream, rejecting it if its decompressed content
+/// would exceed `max_decompressed_size` bytes. `None` means no limit (the
+/// behavior of [`decode_xref_stream`]). Cross-reference streams are decoded
+/// early during loading, so this bounds the memory a `/XRef` stream can use.
+pub fn decode_xref_stream_with_limit(
+    mut stream: Stream, max_decompressed_size: Option<usize>,
+) -> Result<(Xref, Dictionary)> {
     if stream.is_compressed() {
-        stream.decompress()?;
+        match max_decompressed_size {
+            Some(max) => stream.decompress_with_limit(max)?,
+            None => stream.decompress()?,
+        }
     }
     let mut dict = stream.dict;
     let mut reader = Cursor::new(stream.content);
@@ -558,14 +608,9 @@ pub fn decode_xref_stream(mut stream: Stream) -> Result<(Xref, Dictionary)> {
                     }
                     2 => {
                         // compressed object
-                        let container =
-                            read_big_endian_integer(&mut reader, bytes2.as_mut_slice())?;
-                        let index =
-                            read_big_endian_integer(&mut reader, bytes3.as_mut_slice())? as u16;
-                        xref.insert(
-                            (start + j) as u32,
-                            XrefEntry::Compressed { container, index },
-                        );
+                        let container = read_big_endian_integer(&mut reader, bytes2.as_mut_slice())?;
+                        let index = read_big_endian_integer(&mut reader, bytes3.as_mut_slice())? as u16;
+                        xref.insert((start + j) as u32, XrefEntry::Compressed { container, index });
                     }
                     _ => {}
                 }
@@ -656,6 +701,134 @@ mod tests {
         assert_eq!(extracted_text.unwrap(), format!("{text1}\n{text2}\n"));
     }
 
+    const BOMB_MIB: usize = 1024 * 1024;
+
+    /// A FlateDecode-compressed stream that inflates to `target` zero-bytes, built
+    /// by streaming zeros through the compressor so the test process never holds
+    /// `target` bytes at once.
+    fn flate_bomb(target: usize) -> Vec<u8> {
+        use flate2::Compression;
+        use flate2::write::ZlibEncoder;
+        use std::io::Write;
+
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
+        let zeros = [0u8; 64 * 1024];
+        let mut remaining = target;
+        while remaining > 0 {
+            let n = remaining.min(zeros.len());
+            encoder.write_all(&zeros[..n]).unwrap();
+            remaining -= n;
+        }
+        encoder.finish().unwrap()
+    }
+
+    /// A `create_document_with_texts` document whose first page's content stream
+    /// has been swapped for a FlateDecode bomb that inflates to `target` bytes.
+    fn doc_with_page_content_bomb(target: usize) -> crate::Document {
+        use crate::{Dictionary, Object, Stream};
+
+        let mut doc = create_document_with_texts(&["Hello"]);
+        let page_id = *doc.get_pages().get(&1).expect("page 1 exists");
+        let content_id = doc.get_page_contents(page_id)[0];
+        let mut dict = Dictionary::new();
+        dict.set("Filter", "FlateDecode");
+        doc.objects
+            .insert(content_id, Object::Stream(Stream::new(dict, flate_bomb(target))));
+        doc
+    }
+
+    /// A `create_document_with_texts` document whose font carries a `/ToUnicode`
+    /// CMap that is a FlateDecode bomb. Font encodings are resolved (and thus this
+    /// stream is decoded) during text extraction, *before* the page content — so
+    /// this exercises a decompression vector distinct from page content.
+    fn doc_with_tounicode_font_bomb(target: usize) -> crate::Document {
+        use crate::{Dictionary, Object, Stream};
+
+        let mut doc = create_document_with_texts(&["Hello"]);
+        let font_id = doc
+            .objects
+            .iter()
+            .find(|(_, obj)| obj.as_dict().map(|d| d.has_type(b"Font")).unwrap_or(false))
+            .map(|(id, _)| *id)
+            .expect("font object exists");
+
+        let mut tounicode_dict = Dictionary::new();
+        tounicode_dict.set("Filter", "FlateDecode");
+        let tounicode_id = doc.add_object(Object::Stream(Stream::new(tounicode_dict, flate_bomb(target))));
+
+        let font = doc.get_object_mut(font_id).and_then(Object::as_dict_mut).unwrap();
+        font.set("ToUnicode", Object::Reference(tounicode_id));
+        doc
+    }
+
+    use crate::creator::tests::create_document_with_texts;
+
+    /// Under a generous limit, `extract_text_with_limit` returns exactly the same
+    /// text as the unbounded `extract_text`.
+    #[test]
+    fn extract_text_with_limit_matches_unbounded_under_limit() {
+        use crate::creator::tests::create_document_with_texts;
+
+        let text1 = "Hello world!";
+        let text2 = "Ferris is the best!";
+        let doc = create_document_with_texts(&[text1, text2]);
+
+        let bounded = doc.extract_text_with_limit(&[1, 2], BOMB_MIB).unwrap();
+        let unbounded = doc.extract_text(&[1, 2]).unwrap();
+        assert_eq!(bounded, unbounded);
+    }
+
+    /// A page-content decompression bomb is rejected end-to-end by
+    /// `extract_text_with_limit` instead of inflating without bound.
+    #[test]
+    fn extract_text_with_limit_rejects_page_content_bomb() {
+        use crate::{DecompressError, Error};
+
+        let doc = doc_with_page_content_bomb(32 * BOMB_MIB);
+
+        match doc.extract_text_with_limit(&[1], 4 * BOMB_MIB).map(|s| s.len()) {
+            Err(Error::Decompress(DecompressError::MemoryLimitExceeded { limit })) => {
+                assert_eq!(limit, 4 * BOMB_MIB);
+            }
+            other => panic!("expected MemoryLimitExceeded, got {other:?}"),
+        }
+    }
+
+    /// The chunked variant surfaces the same bomb as an `Err` chunk rather than
+    /// panicking or silently truncating.
+    #[test]
+    fn extract_text_chunks_with_limit_surfaces_limit_error() {
+        use crate::{DecompressError, Error};
+
+        let doc = doc_with_page_content_bomb(32 * BOMB_MIB);
+        let chunks = doc.extract_text_chunks_with_limit(&[1], 4 * BOMB_MIB);
+
+        assert!(
+            chunks.iter().any(|chunk| matches!(
+                chunk,
+                Err(Error::Decompress(DecompressError::MemoryLimitExceeded { .. }))
+            )),
+            "expected a MemoryLimitExceeded error chunk"
+        );
+    }
+
+    /// A bomb reached through a font's `/ToUnicode` CMap (decoded during encoding
+    /// resolution, before page content) is also bounded by `extract_text_with_limit`
+    /// — otherwise the "safe for untrusted input" guarantee has a hole.
+    #[test]
+    fn extract_text_with_limit_rejects_tounicode_font_bomb() {
+        use crate::{DecompressError, Error};
+
+        let doc = doc_with_tounicode_font_bomb(32 * BOMB_MIB);
+
+        match doc.extract_text_with_limit(&[1], 4 * BOMB_MIB).map(|s| s.len()) {
+            Err(Error::Decompress(DecompressError::MemoryLimitExceeded { limit })) => {
+                assert_eq!(limit, 4 * BOMB_MIB);
+            }
+            other => panic!("expected MemoryLimitExceeded from ToUnicode font bomb, got {other:?}"),
+        }
+    }
+
     #[test]
     fn xref_stream_oversized_field_width_is_rejected() {
         // M8-PAR-02: field_widths exceeding MAX_XREF_FIELD_WIDTH (8) must be
@@ -692,11 +865,7 @@ mod tests {
         dict.set("Size", Object::Integer(1));
         dict.set(
             "W",
-            Object::Array(vec![
-                Object::Integer(-1),
-                Object::Integer(4),
-                Object::Integer(2),
-            ]),
+            Object::Array(vec![Object::Integer(-1), Object::Integer(4), Object::Integer(2)]),
         );
         let stream = Stream::new(dict, vec![]);
         let result = decode_xref_stream(stream);
@@ -713,6 +882,84 @@ mod tests {
 
         let extracted_text = doc.extract_text(&[1]).unwrap();
         assert!(extracted_text.contains("Hi World! Hi Universe!"));
+    }
+
+    /// PDF 1.7 / ISO 32000-1 §9.4.3 — `'` is equivalent to `T* Tj`:
+    /// move to the next line and show a string. extract_text should
+    /// recover the string operand and emit a line break before it.
+    #[test]
+    fn extract_text_handles_apostrophe_show_text_op() {
+        use crate::Object;
+        use crate::content::Operation;
+        use crate::creator::tests::create_document_with_operations;
+
+        let doc = create_document_with_operations(vec![
+            Operation::new("BT", vec![]),
+            Operation::new("Tf", vec!["F1".into(), 12.into()]),
+            Operation::new("Td", vec![100.into(), 700.into()]),
+            Operation::new("Tj", vec![Object::string_literal("first")]),
+            Operation::new("'", vec![Object::string_literal("second")]),
+            Operation::new("'", vec![Object::string_literal("third")]),
+            Operation::new("ET", vec![]),
+        ]);
+
+        let text = doc.extract_text(&[1]).unwrap();
+        assert!(text.contains("first"), "Tj string lost: {text:?}");
+        assert!(text.contains("second"), "first ' string lost: {text:?}");
+        assert!(text.contains("third"), "second ' string lost: {text:?}");
+    }
+
+    /// PDF 1.7 / ISO 32000-1 §9.4.3 — `"` is equivalent to
+    /// `aw Tw ac Tc T* Tj` with operands `[aw, ac, string]`. extract_text
+    /// should recover operand index 2 (the string); operands 0 and 1 set
+    /// rendering spacing and don't affect the extracted character sequence.
+    #[test]
+    fn extract_text_handles_quote_show_text_op() {
+        use crate::Object;
+        use crate::content::Operation;
+        use crate::creator::tests::create_document_with_operations;
+
+        let doc = create_document_with_operations(vec![
+            Operation::new("BT", vec![]),
+            Operation::new("Tf", vec!["F1".into(), 12.into()]),
+            Operation::new("Td", vec![100.into(), 700.into()]),
+            Operation::new("\"", vec![0.into(), 0.into(), Object::string_literal("from-quote-op")]),
+            Operation::new("ET", vec![]),
+        ]);
+
+        let text = doc.extract_text(&[1]).unwrap();
+        assert!(text.contains("from-quote-op"), "\" string operand lost: {text:?}");
+    }
+
+    /// PDF 1.7 / ISO 32000-1 §9.4.2 — `T*` moves to the start of the
+    /// next line. For text extraction we approximate as `\n`, so a
+    /// `Tj T* Tj` sequence should produce two strings separated by a
+    /// newline rather than running together.
+    #[test]
+    fn extract_text_preserves_line_breaks_for_t_star() {
+        use crate::Object;
+        use crate::content::Operation;
+        use crate::creator::tests::create_document_with_operations;
+
+        let doc = create_document_with_operations(vec![
+            Operation::new("BT", vec![]),
+            Operation::new("Tf", vec!["F1".into(), 12.into()]),
+            Operation::new("Td", vec![100.into(), 700.into()]),
+            Operation::new("Tj", vec![Object::string_literal("line-one")]),
+            Operation::new("T*", vec![]),
+            Operation::new("Tj", vec![Object::string_literal("line-two")]),
+            Operation::new("ET", vec![]),
+        ]);
+
+        let text = doc.extract_text(&[1]).unwrap();
+        let one = text.find("line-one").expect("line-one missing");
+        let two = text.find("line-two").expect("line-two missing");
+        assert!(one < two, "order wrong: {text:?}");
+        let between = &text[one + "line-one".len()..two];
+        assert!(
+            between.contains('\n'),
+            "T* did not insert a line break between Tj strings: between={between:?}"
+        );
     }
 }
 

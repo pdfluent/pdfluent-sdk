@@ -221,7 +221,7 @@ fn debug_r3_501_page_structure() {
     }
 
     // Check if "Are" appears in the raw content stream bytes
-    let page_stream = doc.get_page_content(*page_id).unwrap();
+    let page_stream = doc.get_page_content(*page_id);
     let text_preview: Vec<u8> = page_stream
         .iter()
         .copied()

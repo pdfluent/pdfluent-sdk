@@ -489,11 +489,13 @@ impl PdfDocument {
         let doc =
             RustDocument::open_with_password(bytes.clone(), &password).map_err(to_napi_error)?;
         let form_engine = FormEngine::from_pdf(doc.pdf()).map(Arc::new);
-        let (lopdf_doc, doc_load_error) =
-            match LopdfDocument::load_mem_with_password(&bytes, &password) {
-                Ok(d) => (Some(Arc::new(Mutex::new(d))), None),
-                Err(e) => (None, Some(e.to_string())),
-            };
+        let (lopdf_doc, doc_load_error) = match LopdfDocument::load_mem_with_options(
+            &bytes,
+            lopdf::LoadOptions::with_password(&password),
+        ) {
+            Ok(d) => (Some(Arc::new(Mutex::new(d))), None),
+            Err(e) => (None, Some(e.to_string())),
+        };
         Ok(PdfDocument {
             inner: Arc::new(doc),
             form_engine,
