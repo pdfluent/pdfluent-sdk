@@ -108,6 +108,12 @@ ZWAAR = re.compile(r"\bcargo\s+(build|test|check|clippy|bench|doc)\b")
 # instance on every run. Recorded so the count cannot grow, and so that removing
 # one is a decision rather than a line that ages.
 ZWARE_BASELINE = {
+    # Seven entries left on 02-09-2026: #311 moved every ci.yml guard job and
+    # both security-audit jobs onto the canonical per-event runs-on, so their
+    # rows described nothing. Removed rather than kept, for the reason this
+    # guard already enforces -- a baseline that outlives its subject stops
+    # meaning anything, and the count is supposed to fall.
+
     ("bench.yml", "benchmark"),
     ("crash-guard.yml", "crash-guard"),
     ("gate-ci.yml", "gate"),
@@ -203,15 +209,12 @@ BASELINE = {
     # working, so this is where the guards keep running at all. Seconds of file
     # scanning each; booting an instance would cost more than the work. Under
     # the same 28-08 decision about branch code on the desktop (#274).
-    ("ci.yml", "orchestration-guard"),
     # #288 moved thirteen guards off the GitLab mirror, where a failure stopped
     # nothing, into these two jobs. They land on the desktop for the same reason
     # orchestration-guard did: a spending limit disables hosted runners and
     # leaves self-hosted ones working, and a guard that stops on the day the
     # bill stops is worthless on the day it matters. Python file scans plus
     # `cargo metadata` and `cargo tree` -- no compilation, seconds of work.
-    ("ci.yml", "promise-guard"),
-    ("ci.yml", "measurement-guard"),
     # Same shape and same 28-08 decision: checkout, python, two file scans,
     # seconds. It is a second job rather than two more steps on the one above
     # because that job runs thirty-seven steps in sequence and aborts on the
@@ -219,15 +222,11 @@ BASELINE = {
     # last thirty runs on master, so the thirty-five guards below that step
     # were installed and not executing. A gate nobody can see pass is not a
     # gate (#283).
-    ("ci.yml", "baseline-hardware-guard"),
     # Same shape as orchestration-guard and there for the same reason, split off
     # only because it is the one job here that needs `fetch-depth: 0`: it reads
     # the author and committer address of the commits a change introduces, and
     # over a shallow clone that range is empty. It reads commit metadata and
     # nothing else -- seconds of `git log`, no compilation, no secrets (#261).
-    ("ci.yml", "commit-identity-guard"),
-    ("security-audit.yml", "cargo-audit"),
-    ("security-audit.yml", "cargo-deny-advisories"),
     # Orchestration for a pull request, under the 28-08 decision above: the
     # heavy build goes to a throwaway instance and the desktop only creates and
     # deletes it. A PR branch could change what those two jobs do; accepted

@@ -93,7 +93,7 @@ jobs:
     # last thirty runs on master, which left thirty-five guards installed and
     # not executing. A gate that cannot be seen passing is the same shape as the
     # defect this one exists to catch (#283).
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -128,7 +128,7 @@ jobs:
       contents: read
       actions: read
       pull-requests: read
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -580,7 +580,7 @@ jobs:
 
   promise-guard:
     name: Every promise has a test that reaches it
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -669,7 +669,7 @@ jobs:
   # failures in #286 actually lived.
   measurement-guard:
     name: The published measurements still measure what they say
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -750,7 +750,7 @@ jobs:
     # On the persistent desktop like orchestration-guard, and for the same
     # reason: a spending limit disables hosted runners, and a check that stops
     # running exactly when the bill does is not a check.
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
