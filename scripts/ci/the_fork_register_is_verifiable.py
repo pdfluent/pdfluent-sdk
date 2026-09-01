@@ -19,11 +19,45 @@ verifies that the version declared in that commit's Cargo.toml is the version
 claimed. A typo, a stale entry or an optimistic update fails here instead of
 becoming a fact the other guard repeats.
 
-It needs a clone of upstream, which CI may not have. That case announces itself
-rather than passing: a check that cannot reach its evidence has not checked.
+It needs upstream's history. Until 01-09-2026 it expected somebody else to have
+provided a clone, and on the CI runner nobody had -- so it exited 3 with an
+honest message on every single run. An honest message that never changes is a
+red step everybody learns to scroll past, which is the same end state as no
+check at all.
+
+So it fetches its own, into a cache directory, and only the objects it needs: a
+bare blobless clone, with the handful of Cargo.toml blobs pulled on demand. That
+is seconds on a warm cache and well under a minute cold. `HAYRO_CLONE` still
+wins if it is set, so a developer with a clone lying around pays nothing.
+
+Exit 3 now means the fetch itself failed -- no network, upstream gone -- which
+is a real "cannot check" rather than a missing prerequisite.
+
+WHAT THIS CANNOT SEE, MEASURED RATHER THAN GUESSED
+
+It checks that the version declared at the recorded commit is the version
+claimed. It does NOT check that the commit is where our code actually forked,
+and those are different questions.
+
+Mutated on 01-09-2026 by moving `pdf-syntax`'s fork point from `3bda7cbc3` to
+`758948489` -- the value master carried, ninety commits too late, proven wrong
+by content. This check stayed green, because upstream did not bump the manifest
+between the two: both commits carry `version = "0.5.0"`, and four commits touch
+that Cargo.toml in between without changing it.
+
+So a fork point that is wrong inside one version window is invisible here. That
+is the third kind of error in this register's history and the most common: five
+of the six wrong entries were of exactly that shape.
+
+What catches it is content -- windows of files byte-identical to upstream,
+intersected. Automating that means scoring our tree against every upstream
+revision touching each crate (515 for hayro-syntax, 579 for hayro-interpret),
+which is minutes rather than the second this check takes, so it belongs in a
+scheduled job rather than on every push. Until then the method is manual and
+recorded on #262, and this check should not be read as confirming a fork point.
 
 Exit codes:
-  0  every entry with a fork point matches that commit
+  0  every entry with a fork point matches the version at that commit
   1  an entry claims a version its fork point does not carry
   3  cannot check (announced, never silent)
 """
@@ -39,9 +73,79 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 REGISTER = ROOT / "docs/UPSTREAM_FORKS.toml"
 
-# Where a clone of LaurenzV/hayro can be found. CI may set this; a developer
-# usually has one lying around from the last upgrade.
-CLONE = Path(os.environ.get("HAYRO_CLONE", "/tmp/hayro-up"))
+UPSTREAM_URL = "https://github.com/LaurenzV/hayro.git"
+
+# Where to keep the history between runs. Outside the checkout on purpose: a
+# runner that reuses its workspace keeps it warm, and one that does not is only
+# paying a cold clone.
+CACHE = Path(
+    os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")
+) / "pdfluent" / "hayro-register.git"
+
+# A clone somebody already has wins: developers usually have one from the last
+# upgrade, and using it avoids a second copy of 100-odd megabytes.
+_EXPLICIT = os.environ.get("HAYRO_CLONE")
+CLONE = Path(_EXPLICIT) if _EXPLICIT else CACHE
+
+
+def git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["/usr/bin/git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def usable(path: Path) -> bool:
+    """Is this a git directory we can read history from?
+
+    Both shapes count: a bare repository (the cache) and a normal checkout
+    (whatever a developer pointed HAYRO_CLONE at).
+    """
+    if not path.exists():
+        return False
+    return git("rev-parse", "--git-dir", cwd=path).returncode == 0
+
+
+def ensure_clone() -> str | None:
+    """Make sure CLONE has upstream's history. Returns a reason on failure.
+
+    Blobless and bare: this only ever reads a few Cargo.toml files, so fetching
+    every blob in the repository would be paying for history nobody looks at.
+    The blobs it does need are fetched on demand from the promisor remote.
+    """
+    if usable(CLONE):
+        return None
+
+    if _EXPLICIT:
+        # An explicit path that is not a clone is a mistake worth naming, rather
+        # than silently replacing with our own.
+        return f"HAYRO_CLONE={CLONE} is not a git repository"
+
+    CLONE.parent.mkdir(parents=True, exist_ok=True)
+    out = git(
+        "clone", "--bare", "--filter=blob:none", "--quiet", UPSTREAM_URL, str(CLONE)
+    )
+    if out.returncode != 0:
+        return f"could not clone {UPSTREAM_URL}: {out.stderr.strip()[:200]}"
+    return None
+
+
+def have_commit(commit: str) -> bool:
+    return git("cat-file", "-e", f"{commit}^{{commit}}", cwd=CLONE).returncode == 0
+
+
+def refresh_for(commits: list[str]) -> None:
+    """Fetch once if the register points at something the cache predates.
+
+    Only when needed: a fetch on every run is a network round-trip to learn
+    nothing, and this check runs on every push.
+    """
+    if all(have_commit(c) for c in commits):
+        return
+    git("fetch", "--quiet", "--filter=blob:none", "origin", "+refs/heads/*:refs/heads/*", cwd=CLONE)
 
 
 def version_at(commit: str, crate_dir: str) -> str | None:
@@ -76,14 +180,16 @@ def main() -> int:
         )
         return 3
 
-    if not (CLONE / ".git").is_dir():
+    if (why := ensure_clone()) is not None:
         print(
-            f"SKIPPED (not a pass): no clone of LaurenzV/hayro at {CLONE}.\n"
-            "  Set HAYRO_CLONE, or clone it there. Without upstream's history the\n"
-            "  register's claims cannot be checked, only repeated.",
+            f"SKIPPED (not a pass): {why}.\n"
+            "  Without upstream's history the register's claims cannot be checked,\n"
+            "  only repeated.",
             file=sys.stderr,
         )
         return 3
+
+    refresh_for([f["forkpunt"] for f in with_point])
 
     problems: list[str] = []
     checked = 0
