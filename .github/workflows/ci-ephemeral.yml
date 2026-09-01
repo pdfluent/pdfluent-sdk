@@ -222,9 +222,21 @@ jobs:
             --cache-dir tools/pdfluent-snippet-extract/cache \
             --out-dir   crates/pdfluent/tests/web_examples \
             --fetched   "$(cat "$stamp")"
-          if ! git diff --exit-code --stat -- crates/pdfluent/tests/web_examples/; then
+          # `git diff` alone misses the case this check exists for. Add a page
+          # to the manifest and forget to commit its generated .rs, and the
+          # extractor creates that file as untracked -- which `git diff` does
+          # not see, so the guard reports no drift for precisely the
+          # manifest-expansion it is meant to catch. (codex, #1610)
+          nieuw=$(git status --porcelain -- crates/pdfluent/tests/web_examples/ \
+                  | awk '$1 == "??" { print $2 }')
+          if ! git diff --exit-code --stat -- crates/pdfluent/tests/web_examples/ || [ -n "$nieuw" ]; then
+            if [ -n "$nieuw" ]; then
+              echo "Generated but never committed:"
+              printf '  %s\n' $nieuw
+            fi
             echo "::warning::Docs drift: the extractor's output differs from the committed tests/web_examples/*.rs. Advisory until #1488."
             git checkout -- crates/pdfluent/tests/web_examples/
+            [ -n "$nieuw" ] && rm -f $nieuw
             exit 1
           fi
 
