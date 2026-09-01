@@ -36,6 +36,32 @@ run() { local name="$1"; shift
   if "$@" >"/tmp/lcg_${name}.log" 2>&1; then echo " PASS"; pass=$((pass+1))
   else echo " FAIL — see /tmp/lcg_${name}.log"; tail -15 "/tmp/lcg_${name}.log" | sed 's/^/    /'; fail=$((fail+1)); fi
 }
+# DISK FIRST, before anything compiles.
+#
+# On 01-09-2026 a docs-only commit was refused with LOCAL_CI_GATE: FAIL (2 of
+# 33). Neither failure was real: the disk had fallen to 33 GB with three
+# terminals building at once and the OS killed a build script --
+# `signal: 9, SIGKILL`. A gate the kernel killed has judged nothing, so those
+# two "failures" were the absence of a verdict wearing the costume of one.
+#
+# That is also why reaching for PRE_PUSH_SKIP=1 there would have been wrong: it
+# skips everything the gate would have judged, not just the two that died.
+#
+# scripts/ci/disk_headroom.py already answers this in a second and names what
+# can be swept. Running it first turns twenty minutes ending in SIGKILL into a
+# refusal you can act on. It exits rather than continuing, because every gate
+# below it would be measuring the disk rather than the code.
+_dh_uit="$(python3 scripts/ci/disk_headroom.py 2>&1)"; _dh=$?
+printf '%s\n' "$_dh_uit" | sed 's/^/  /'
+if [ $_dh -ne 0 ]; then
+  echo "LOCAL_CI_GATE: disk-headroom FAILED — stopping here." >&2
+  echo "  Nothing below this point can be trusted: a build the kernel kills reports" >&2
+  echo "  as a failing gate while having judged nothing. Sweep what is listed above" >&2
+  echo "  and run again. Do not reach for PRE_PUSH_SKIP=1 — that skips every gate," >&2
+  echo "  not the ones that died." >&2
+  exit 1
+fi
+
 # Clean-tree advisory (the CI audit job requires it; auto-generated gen/schemas
 # churn is a known false-positive — see docs).
 if [ -n "$(git status --porcelain | grep -vE 'gen/schemas|\.e1_gaps')" ]; then
