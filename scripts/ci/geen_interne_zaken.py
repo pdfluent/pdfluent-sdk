@@ -201,14 +201,34 @@ def uit_boom():
             "klopt niet -- een lege boom keurt alles goed zonder iets te lezen."
         )
 
+    # In geforkte crates telt alleen `commercieel` niet mee: `MRR` in
+    # hayro-jpeg2000 is een JPEG2000-coderingspas (SPP -> MRR -> C), geen
+    # omzetbegrip. De andere regels blijven wel gelden, want een hostnaam of
+    # een klantnaam staat niet in andermans code -- die hebben wij er dan in
+    # gezet, via een patch op de fork, en dat is juist het geval dat je wilt zien.
+    # `is_geforkt` komt uit header_sweep, dat herkomsttabel.UPSTREAM leest --
+    # één bron voor wat geforkt is, geen tweede lijst hier.
+    _hs_spec = importlib.util.spec_from_file_location(
+        "header_sweep", os.path.join(_hier, "header_sweep.py"))
+    _hs = importlib.util.module_from_spec(_hs_spec)
+    _hs_spec.loader.exec_module(_hs)
+
+    def _in_fork(pad):
+        deel = pad.split("/")
+        return (len(deel) > 1 and deel[0] == "crates"
+                and _hs.is_geforkt(_hs.CRATES / deel[1]))
+
     fouten, gelezen = [], 0
     for pad in paden:
         if not _is_tekst(pad):
             continue
         gelezen += 1
+        geforkt = _in_fork(pad)
         with open(pad, encoding="utf-8", errors="ignore") as f:
             for nr, regel in enumerate(f, 1):
                 for naam, rx in REGELS:
+                    if geforkt and naam == "commercieel":
+                        continue
                     for m in rx.finditer(regel):
                         fouten.append((naam, m.group(0), f"{pad}:{nr}", regel.strip()[:90]))
     return fouten, gelezen
