@@ -39,10 +39,18 @@ paden = [
   # in between. The whole path is one change or it is a lie.
   "crates/pdf-manip/src/embed_font.rs",
   "crates/pdf-manip/tests/embed_font.rs",
-  # These two guards read docs/UPSTREAM_FORKS.toml, which is t1's file. A rule
-  # about the register cannot live anywhere else and be enforced (#1609).
+  # Two guards about the fork register, which is t1's file. Carved out of t2's
+  # scripts/ci/** below, the same way t3's licence guards are -- the mechanism
+  # already exists, so this is not a new kind of exception.
+  #
+  # Their *wiring* is not claimed: local_ci_gate.sh and .github/workflows/ci.yml
+  # stay with t2, and the lines that call these two are handed over on #292
+  # rather than taken. Until t2 adds them the guards run nowhere, which is said
+  # out loud in the pull request instead of being left to look finished.
   "scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py",
   "scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py",
+  "scripts/ci/the_fork_register_is_verifiable.py",
+  "scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py",
 ]
 # NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
 # parity tests are edited by this change but stay with whoever owns the SDK
@@ -75,6 +83,14 @@ uitgezonderd = [
   "scripts/ci/geen_interne_zaken.py",
   "scripts/ci/contributors.toml",
   "scripts/ci/repos_staan_zoals_bedoeld.py",
+  # t1: guards whose subject is docs/UPSTREAM_FORKS.toml and the worktrees this
+  # repository is checked out into. Same carve-out as the licence guards above.
+  "scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py",
+  "scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py",
+  # Handed to t1 on #292 because the runner had no upstream clone and it exited 3
+  # on every run. It reads the same register as the two above.
+  "scripts/ci/the_fork_register_is_verifiable.py",
+  "scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py",
 ]
 issues = [288, 286, 290, 276, 283, 264]
 

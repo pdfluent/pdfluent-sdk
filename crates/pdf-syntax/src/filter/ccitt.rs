@@ -14,17 +14,52 @@ pub(crate) fn decode(
 ) -> Option<FilterResult> {
     let k = params.get::<i32>(K).unwrap_or(0);
 
-    // /Rows 0 means "derive row count from end-of-block marker or image height".
-    // Treat 0 as absent so the fallback to image_params.height is used.
-    // Without this, the Group4 decoder exits immediately (decoded_rows=0 == rows=0).
-    let rows = params
+    // How many rows to decode. Three sources disagree and all three come from
+    // the file, so the rule is the maximum of what /Rows asks for and what the
+    // image dictionary declares:
+    //
+    // * /Rows 0 means "derive it from the end-of-block marker or the image
+    //   height". Treated as absent; without this the Group4 decoder exits
+    //   immediately, because decoded_rows == rows == 0.
+    // * /Rows *below* the declared height means the file is malformed, and
+    //   upstream decodes to the height anyway rather than truncating the image
+    //   -- Chromium does the same. Ported from LaurenzV/hayro#1339; before it,
+    //   a page whose /Rows undercounted rendered as a sliver.
+    //
+    // The upper bound is safe: image_params.height is what the pixel-limit
+    // check in Stream::decoded_image was applied to, and the count actually
+    // produced is checked against that limit again below.
+    let mut rows = params
         .get::<u32>(ROWS)
-        .filter(|&r| r > 0)
-        .unwrap_or(image_params.height);
+        .unwrap_or(0)
+        .max(image_params.height);
+
+    let columns = params.get::<usize>(COLUMNS).unwrap_or(1728) as u32;
+
+    // Clamp BEFORE decoding, not after. The check further down rejected an
+    // over-large image only once hayro_ccitt::decode had already grown the
+    // output to roughly columns * rows / 8 bytes -- so the limit was enforced
+    // after the memory it exists to bound had been allocated. (Codex, #1609.)
+    //
+    // The limit comes from the stream's context via ImageDecodeParams, because
+    // `params` here is /DecodeParms and is Dict::default() when the stream has
+    // none, whose context carries no limits.
+    if let Some(limit) = image_params.pixel_limit
+        && columns > 0
+    {
+        let max_rows = limit / columns;
+        if rows > max_rows {
+            log::warn!(
+                "CCITT asks for {rows} rows of {columns} columns, over the pixel limit \
+                 {limit}; decoding at most {max_rows}"
+            );
+            rows = max_rows;
+        }
+    }
     let end_of_block = params.get::<bool>(END_OF_BLOCK).unwrap_or(true);
 
     let settings = DecodeSettings {
-        columns: params.get::<usize>(COLUMNS).unwrap_or(1728) as u32,
+        columns,
         rows,
         end_of_block,
         end_of_line: params.get::<bool>(END_OF_LINE).unwrap_or(false),
@@ -120,6 +155,30 @@ pub(crate) fn decode(
         crate::leniency::emit(crate::leniency::CCITT_PARTIAL_DECODE);
     }
 
+    // The pixel limit in Stream::decoded_image was checked against the DECLARED
+    // /Height, before any of this ran. Reporting decoded_rows -- which is the
+    // honest count, and the point of the fix above -- lets a file declare a
+    // small /Height to get past that check and then hand a much larger row count
+    // to get_components, which allocates at least a u16 per pixel. The fix for
+    // one hole opened another. (Codex, #1609.)
+    //
+    // So the limit is applied again, to what was actually produced.
+    // Belt and braces: the clamp above bounds what the decoder is asked for, and
+    // this bounds what it produced. Both are cheap and they fail differently --
+    // the clamp truncates a hostile image, this refuses one that somehow grew
+    // past the cap anyway.
+    if let Some(limit) = image_params.pixel_limit {
+        let pixels = u64::from(settings.columns).saturating_mul(u64::from(decoder.decoded_rows));
+        if pixels > u64::from(limit) {
+            log::warn!(
+                "CCITT decoded {} rows of {} columns = {pixels} pixels, over the limit {limit}",
+                decoder.decoded_rows,
+                settings.columns
+            );
+            return None;
+        }
+    }
+
     Some(FilterResult {
         data: decoder.output,
         image_data: Some(ImageData {
@@ -127,7 +186,178 @@ pub(crate) fn decode(
             color_space: Some(ImageColorSpace::Gray),
             bits_per_component: 1,
             width: settings.columns,
-            height: image_params.height,
+            // The rows actually decoded -- not `image_params.height`, and not
+            // `rows` either.
+            //
+            // Upstream (LaurenzV/hayro#1269) moved from /Height to /Rows, which
+            // fixes the common case. It is still an upper bound: a stream that
+            // ends early, or carries an end-of-block before /Rows, decodes fewer.
+            // The leniency branch above exists precisely because that happens.
+            //
+            // The gap is reachable on purpose. A file declaring a small /Height
+            // (so the pixel-limit check passes) and a huge /Rows, carrying one
+            // encoded row, would have get_components allocate and zero-pad
+            // rows * width samples. decoded_rows is what the buffer holds.
+            // (Codex, #1609.)
+            height: decoder.decoded_rows,
         }),
     })
+}
+
+#[cfg(test)]
+mod upstream_hardening_tests {
+    use super::*;
+    use crate::object::FromBytes;
+    use crate::reader::{Reader, ReaderContext, ReaderExt};
+
+    /// One row of eight white pixels, Group 3 one-dimensional.
+    ///
+    /// Taken from upstream's own regression fixture for LaurenzV/hayro#1258.
+    const ONE_ROW_G3: &[u8] = &[0x35, 0x14];
+
+    fn params_with(height: u32) -> ImageDecodeParams {
+        ImageDecodeParams {
+            height,
+            ..Default::default()
+        }
+    }
+
+    /// The limit as a stream really carries it: on ImageDecodeParams, set by
+    /// Stream::decoded_image from the stream's own context.
+    ///
+    /// The first version of these tests set it on the /DecodeParms dictionary
+    /// instead, which is where the CCITT decoder used to read it -- and that is
+    /// precisely the path a stream without /DecodeParms does not have. The test
+    /// passed while the check it tested was unreachable in production.
+    fn params_with_limit(height: u32, limit: u32) -> ImageDecodeParams {
+        ImageDecodeParams {
+            height,
+            pixel_limit: Some(limit),
+            ..Default::default()
+        }
+    }
+
+    /// Ported from LaurenzV/hayro#1269.
+    ///
+    /// `/Rows` and the image's `/Height` are two numbers from the same file and
+    /// nothing makes them agree. The decoder stops after `/Rows` rows, so the
+    /// buffer holds that many -- but the reported height was `/Height`, so a
+    /// consumer computing `height * stride` walked off the end of the data.
+    ///
+    /// Upstream's other half of this fix -- sizing the output allocation with a
+    /// `checked_mul` -- does not apply here: this decoder grows its output as it
+    /// goes rather than preallocating `columns * height`, so there is no
+    /// allocation to size wrongly.
+    #[test]
+    fn the_reported_height_is_the_number_of_rows_decoded_not_the_declared_one() {
+        let params = Dict::from_bytes(b"<< /K 0 /Columns 8 /Rows 1 >>").unwrap();
+        // The image claims four rows; the CCITT parameters say one.
+        let decoded = decode(ONE_ROW_G3, params, &params_with(4)).unwrap();
+
+        let image = decoded.image_data.unwrap();
+        assert_eq!(
+            image.height, 1,
+            "the height must describe the data returned"
+        );
+
+        // The invariant the height exists to support: a consumer reading
+        // height * stride bytes must not read past what was decoded.
+        let stride = (image.width as usize).div_ceil(8);
+        assert!(
+            decoded.data.len() >= stride * image.height as usize,
+            "reported {}x{} needs {} bytes, got {}",
+            image.width,
+            image.height,
+            stride * image.height as usize,
+            decoded.data.len()
+        );
+    }
+
+    /// The gap between "asked for" and "produced", which `/Rows` alone does not
+    /// close (Codex, #1609).
+    ///
+    /// A small `/Height` passes the pixel-limit check upstream of here; a huge
+    /// `/Rows` then sets the reported height, while the data encodes one row.
+    /// A consumer sizing a buffer from the reported height allocates and
+    /// zero-pads a thousand rows for eight bytes of data.
+    #[test]
+    fn a_stream_that_stops_early_reports_what_it_produced_not_what_it_promised() {
+        let params = Dict::from_bytes(b"<< /K 0 /Columns 8 /Rows 1000 >>").unwrap();
+        let decoded = decode(ONE_ROW_G3, params, &params_with(1)).unwrap();
+
+        let image = decoded.image_data.unwrap();
+        assert_eq!(
+            image.height, 1,
+            "one row was encoded, whatever /Rows claims"
+        );
+
+        let stride = (image.width as usize).div_ceil(8);
+        assert!(
+            decoded.data.len() >= stride * image.height as usize,
+            "reported {}x{} needs {} bytes, got {}",
+            image.width,
+            image.height,
+            stride * image.height as usize,
+            decoded.data.len()
+        );
+    }
+
+    /// The usual case must keep working: with no `/Rows`, the image height is
+    /// still what the decoder is told to produce and still what it reports.
+    #[test]
+    fn without_rows_the_image_height_is_still_used() {
+        let params = Dict::from_bytes(b"<< /K 0 /Columns 8 >>").unwrap();
+        let decoded = decode(ONE_ROW_G3, params, &params_with(1)).unwrap();
+
+        assert_eq!(decoded.image_data.unwrap().height, 1);
+    }
+
+    /// The hole the `decoded_rows` fix opened, and the second check that closes it.
+    ///
+    /// `Stream::decoded_image` applies the pixel limit to the DECLARED
+    /// `/Height`, before any decoding. Reporting the decoded row count is the
+    /// honest answer, and it also means a file can declare a tiny `/Height` to
+    /// slip past that check and then hand a far larger count to
+    /// `get_components`, which allocates at least a `u16` per pixel.
+    /// (Codex, #1609.)
+    #[test]
+    fn decoded_rows_are_checked_against_the_pixel_limit_too() {
+        // Declared height 1, so the check before decoding is satisfied. Eight
+        // columns against a limit of 4 pixels: the row count is clamped to zero
+        // before the decoder allocates anything.
+        let params = Dict::from_bytes(b"<< /K 0 /Columns 8 /Rows 1 >>").unwrap();
+        let decoded = decode(ONE_ROW_G3, params, &params_with_limit(1, 4));
+        assert!(
+            decoded.is_none() || decoded.unwrap().image_data.unwrap().height == 0,
+            "8 pixels must not be produced under a 4-pixel limit"
+        );
+    }
+
+    /// And the limit must not fire on an image that fits, or every CCITT image
+    /// in a document with a limit set would vanish.
+    #[test]
+    fn an_image_inside_the_pixel_limit_still_decodes() {
+        let params = Dict::from_bytes(b"<< /K 0 /Columns 8 /Rows 1 >>").unwrap();
+        let decoded = decode(ONE_ROW_G3, params, &params_with_limit(1, 64)).unwrap();
+        assert_eq!(decoded.image_data.unwrap().height, 1);
+    }
+
+    /// Ported from LaurenzV/hayro#1339: `/Rows` below the declared height is a
+    /// malformed file, and the image is decoded to the height rather than
+    /// truncated. Chromium does the same.
+    ///
+    /// Before the port this rendered as a single row out of four -- a sliver
+    /// where the page has a picture.
+    #[test]
+    fn rows_below_the_declared_height_decodes_the_whole_image_anyway() {
+        let data: Vec<u8> = ONE_ROW_G3.iter().copied().cycle().take(4).collect();
+        let params = Dict::from_bytes(b"<< /K 0 /Columns 8 /Rows 1 >>").unwrap();
+        let decoded = decode(&data, params, &params_with(4)).unwrap();
+
+        assert_eq!(
+            decoded.image_data.unwrap().height,
+            4,
+            "/Rows 1 against a declared height of 4 must not truncate the image"
+        );
+    }
 }

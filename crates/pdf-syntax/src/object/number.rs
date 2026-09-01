@@ -122,6 +122,9 @@ impl Readable<'_> for Number {
 
 #[inline(always)]
 fn read_inner(r: &mut Reader<'_>) -> Option<Number> {
+    let start_offset = r.offset();
+    let mut overflowed = false;
+    let mut number_end = None;
     let negative = match r.peek_byte()? {
         b'-' => {
             r.forward();
@@ -143,13 +146,21 @@ fn read_inner(r: &mut Reader<'_>) -> Option<Number> {
         match r.peek_byte() {
             Some(b'0'..=b'9') => {
                 let d = r.read_byte().expect("peek_byte returned Some");
-                mantissa = mantissa
-                    // Using `saturating` would arguably be better here, but
-                    // profiling showed that it seems to be more expensive, at least
-                    // on ARM. Since such large numbers shouldn't appear anyway,
-                    // it doesn't really matter a lot what mode we use.
-                    .wrapping_mul(10)
-                    .wrapping_add((d - b'0') as u64);
+                // Wrapping was here, with a note that such numbers should not
+                // appear. They do, and wrapping turns an out-of-range number
+                // into a small plausible one -- a wrong document that parses
+                // cleanly. Overflow is recorded and the span re-read below.
+                // Ported from LaurenzV/hayro#1342.
+                if !overflowed {
+                    match mantissa
+                        .checked_mul(10)
+                        .and_then(|v| v.checked_add(u64::from(d - b'0')))
+                    {
+                        Some(value) => mantissa = value,
+                        None => overflowed = true,
+                    }
+                }
+                number_end = Some(r.offset());
                 has_digits = true;
                 if has_dot {
                     decimal_shift += 1;
@@ -181,6 +192,23 @@ fn read_inner(r: &mut Reader<'_>) -> Option<Number> {
     // without any white space in-between.
     if r.peek_byte().is_some_and(is_regular_character) {
         return None;
+    }
+
+    // `mantissa as i64` is a wrap of its own once the value passes i64::MAX,
+    // and i64::MIN is exactly the case that cannot be produced by negating a
+    // positive i64 -- which is what int_min_does_not_panic guards. Re-reading
+    // the digits and letting the standard library parse them handles both, and
+    // costs nothing on the ordinary path.
+    let integer_overflow = !has_dot && mantissa > i64::MAX as u64;
+    if overflowed || integer_overflow {
+        let end_offset = number_end.unwrap_or_else(|| r.offset());
+        let text = core::str::from_utf8(r.range(start_offset..end_offset)?).ok()?;
+
+        if !has_dot && let Ok(value) = text.parse::<i64>() {
+            return Some(Number(InternalNumber::Integer(value)));
+        }
+        let value = text.parse::<f64>().ok()?;
+        return Some(Number(InternalNumber::Real(value)));
     }
 
     if !has_dot {
@@ -226,6 +254,15 @@ macro_rules! int_num {
 
                 // We have a float instead of an integer.
                 if r.peek_byte() == Some(b'.') {
+                    return None;
+                }
+
+                // See issue 994, and LaurenzV/hayro#1191 which applied it here.
+                // Number::skip and read_inner already refused a number butted up
+                // against a regular character; this third path did not, so
+                // `[8 0R]` parsed as an array of two integers instead of the
+                // malformed reference it is.
+                if r.peek_byte().is_some_and(is_regular_character) {
                     return None;
                 }
 
@@ -529,5 +566,43 @@ mod tests {
                 .unwrap(),
             4294966260
         );
+    }
+
+    /// Ported from LaurenzV/hayro#1342.
+    ///
+    /// A number too large for u64 used to wrap, turning an out-of-range value
+    /// into a small plausible one. A `/Length` or a coordinate silently became a
+    /// different number and the document parsed cleanly around it.
+    #[test]
+    fn a_number_past_u64_does_not_wrap_into_a_small_one() {
+        // 10^25: twenty-six digits, far past u64::MAX (about 1.8e19).
+        let n = Reader::new(b"10000000000000000000000000")
+            .read_without_context::<Number>()
+            .unwrap();
+        let value = n.as_f64();
+        assert!(
+            value > 9.9e24 && value < 1.01e25,
+            "expected about 1e25, got {value}"
+        );
+    }
+
+    /// i64::MIN cannot be produced by negating a positive i64, which is the
+    /// shape int_min_does_not_panic already guarded. It must still come back as
+    /// an integer rather than being widened to a float.
+    #[test]
+    fn int_min_stays_an_integer() {
+        let n = Reader::new(b"-9223372036854775808")
+            .read_without_context::<Number>()
+            .unwrap();
+        assert_eq!(n.as_i64(), i64::MIN);
+    }
+
+    /// And the ordinary path is untouched: no re-read, no float widening.
+    #[test]
+    fn an_ordinary_integer_is_still_an_integer() {
+        let n = Reader::new(b"12345")
+            .read_without_context::<Number>()
+            .unwrap();
+        assert_eq!(n.as_i64(), 12345);
     }
 }
