@@ -109,6 +109,17 @@ ALLOWED: dict[str, str] = {
     ),
     "qr11_binding_runtime_mapping.sh": "a one-off quality review (QR-11)",
 
+    # Says so itself, in its own first line: "Run by hand, not in CI." It talks
+    # to github.com and raw.githubusercontent, reads each source's file list at a
+    # pinned commit and downloads every pick. A job for it would put a network
+    # fetch of somebody else's repository on the critical path of every build,
+    # and the thing it produces -- corpus/CI_CORPUS_MANIFEST.json -- is committed,
+    # so the pipeline reads the result rather than re-earning it.
+    "build_gate_corpus_manifest.py": (
+        "builds the gate-corpus manifest by downloading from upstream suites; run "
+        "by hand when the manifest changes, and its output is committed"
+    ),
+
     # Release moment, not every commit.
     # Maintenance, run when the disk-headroom floor is reached from below --
     # exactly the moment a job must not start. A job for it would delete build
