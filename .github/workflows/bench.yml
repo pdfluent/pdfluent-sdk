@@ -94,6 +94,11 @@ jobs:
       # The persistent runner hands every job the state the last one left. Clear
       # debris from an aborted build, and fail in seconds if the directory has
       # stopped answering, rather than forty minutes in. (#264)
+      # Which of the three it is -- gone, dead or unwritable -- before a build
+      # spends forty minutes finding out. Seven GitLab jobs already ask this;
+      # these six run cargo on the same persistent machine and did not.
+      - name: A mount, a dead disk and a rights problem are told apart
+        run: bash scripts/ci/shared_build_dir_is_there.sh
       - name: The shared build directory is there and undamaged
         run: bash scripts/ci/cargo_target_health.sh
       - name: Run benchmarks
