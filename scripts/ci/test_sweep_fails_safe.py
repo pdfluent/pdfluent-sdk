@@ -17,9 +17,12 @@ sweeper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sweeper)
 
 fails: list[str] = []
+ran = 0
 
 
 def expect(what: str, ok: bool, detail: str = "") -> None:
+    global ran
+    ran += 1
     print(f"  {'ok  ' if ok else 'FAIL'}  {what}" + (f"   [{detail}]" if not ok and detail else ""))
     if not ok:
         fails.append(what)
@@ -156,8 +159,20 @@ with tempfile.TemporaryDirectory() as d:
            "freed of" in out and "GB found" in out, out[-200:])
     expect("  and the target is still there", (r / "target" / "more.bin").exists())
 
-MINIMUM_CASES = 13  # FLOOR
-print(f"\n  {len(fails)} failure(s)")
+# Set to what actually runs. A floor BELOW the real count tolerates exactly
+# the silent shrinkage it exists to catch: at 13 with 15 running, a deleted
+# case still cleared it.
+MINIMUM_CASES = 15  # FLOOR
+print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
+# The floor was declared and never compared: len(fails) counts only what FAILED,
+# so deleting cases -- or skipping them by accident -- left the gate green while
+# the suite shrank. A floor that is not compared is a comment, and this one was
+# meant to prevent exactly that. (codex, #1641)
+if ran < MINIMUM_CASES:
+    print(f"  FATAL: {ran} assertions ran, floor is {MINIMUM_CASES}. Cases have "
+          "gone missing; a smaller suite passing is not the same as this suite "
+          "passing.", file=sys.stderr)
+    raise SystemExit(2)
 raise SystemExit(1 if fails else 0)
