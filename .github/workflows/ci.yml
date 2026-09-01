@@ -14,13 +14,26 @@ name: CI
 # license-metadata-guard stay on ubuntu-latest — no compilation,
 # near-zero cost either way.
 #
-# On pull_request they stay on ubuntu-latest deliberately (Codex review
-# on #1532): xfa-fast is a persistent desktop runner, not an isolated
-# ephemeral one, so a PR's Cargo build scripts/proc-macros would execute
-# as the runner user with host access if PR runs used it. Only code
-# that's already merged (push) touches it. This repo is private today
-# but is slated to go public at LC10 — this boundary needs to hold
-# before that, not be added after.
+# On pull_request nothing here touches the persistent desktop. xfa-fast is a
+# desktop, not an isolated ephemeral runner, so a PR's build scripts, proc-macros
+# -- or simply the scripts/ci/*.py these jobs execute out of the checkout --
+# would run as the runner user with host access. Only merged code (push) reaches
+# it.
+#
+# That was written as a comment first and drifted: by 02-09-2026 every job in
+# this file was self-hosted on both events, including the five guard jobs, while
+# this header still claimed two were hosted. A workflow added the day before
+# inherited the mistake by copying `runs-on` from a neighbour.
+#
+# So it is a guard now, not a description: scripts/ci/pr_code_stays_off_the_desktop.py
+# fails on any pull_request-reachable job that asks for a self-hosted runner
+# unconditionally, and its register of exceptions is empty. Do not restate the
+# rule below this line -- a second description is a second thing that can drift.
+#
+# ci-ephemeral.yml's create-runner and reap are the exception that proves it:
+# they must run ON the desktop, because creating and reaping instances is host
+# work. They pin the base revision on a pull_request instead, so the code they
+# execute is merged code even though the machine is the desktop.
 #
 # See `docs/ci-cost-control.md` for the full rationale.
 #
@@ -80,7 +93,7 @@ jobs:
     # last thirty runs on master, which left thirty-five guards installed and
     # not executing. A gate that cannot be seen passing is the same shape as the
     # defect this one exists to catch (#283).
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -115,7 +128,7 @@ jobs:
       contents: read
       actions: read
       pull-requests: read
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -567,7 +580,7 @@ jobs:
 
   promise-guard:
     name: Every promise has a test that reaches it
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -656,7 +669,7 @@ jobs:
   # failures in #286 actually lived.
   measurement-guard:
     name: The published measurements still measure what they say
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -737,7 +750,7 @@ jobs:
     # On the persistent desktop like orchestration-guard, and for the same
     # reason: a spending limit disables hosted runners, and a check that stops
     # running exactly when the bill does is not a check.
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","xfa-fast"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
