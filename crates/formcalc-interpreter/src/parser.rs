@@ -651,36 +651,45 @@ impl Parser {
 
     fn parse_or(&mut self) -> Result<Expr> {
         let mut left = self.parse_and()?;
+        let mut links = 0;
         while self.peek() == &TokenKind::Or {
             self.advance();
             self.skip_newlines();
             let right = self.parse_and()?;
+            self.enter()?;
+            links += 1;
             left = Expr::BinaryOp {
                 op: BinOp::Or,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
+        self.leave(links);
         Ok(left)
     }
 
     fn parse_and(&mut self) -> Result<Expr> {
         let mut left = self.parse_equality()?;
+        let mut links = 0;
         while matches!(self.peek(), TokenKind::And | TokenKind::Amp) {
             self.advance();
             self.skip_newlines();
             let right = self.parse_equality()?;
+            self.enter()?;
+            links += 1;
             left = Expr::BinaryOp {
                 op: BinOp::And,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
+        self.leave(links);
         Ok(left)
     }
 
     fn parse_equality(&mut self) -> Result<Expr> {
         let mut left = self.parse_relational()?;
+        let mut links = 0;
         loop {
             let op = match self.peek() {
                 TokenKind::Eq => BinOp::Eq,
@@ -690,17 +699,21 @@ impl Parser {
             self.advance();
             self.skip_newlines();
             let right = self.parse_relational()?;
+            self.enter()?;
+            links += 1;
             left = Expr::BinaryOp {
                 op,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
+        self.leave(links);
         Ok(left)
     }
 
     fn parse_relational(&mut self) -> Result<Expr> {
         let mut left = self.parse_additive()?;
+        let mut links = 0;
         loop {
             let op = match self.peek() {
                 TokenKind::Lt => BinOp::Lt,
@@ -712,17 +725,21 @@ impl Parser {
             self.advance();
             self.skip_newlines();
             let right = self.parse_additive()?;
+            self.enter()?;
+            links += 1;
             left = Expr::BinaryOp {
                 op,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
+        self.leave(links);
         Ok(left)
     }
 
     fn parse_additive(&mut self) -> Result<Expr> {
         let mut left = self.parse_multiplicative()?;
+        let mut links = 0;
         loop {
             let op = match self.peek() {
                 TokenKind::Plus => BinOp::Add,
@@ -732,17 +749,21 @@ impl Parser {
             self.advance();
             self.skip_newlines();
             let right = self.parse_multiplicative()?;
+            self.enter()?;
+            links += 1;
             left = Expr::BinaryOp {
                 op,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
+        self.leave(links);
         Ok(left)
     }
 
     fn parse_multiplicative(&mut self) -> Result<Expr> {
         let mut left = self.parse_unary()?;
+        let mut links = 0;
         loop {
             let op = match self.peek() {
                 TokenKind::Star => BinOp::Mul,
@@ -752,12 +773,15 @@ impl Parser {
             self.advance();
             self.skip_newlines();
             let right = self.parse_unary()?;
+            self.enter()?;
+            links += 1;
             left = Expr::BinaryOp {
                 op,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
+        self.leave(links);
         Ok(left)
     }
 
@@ -847,6 +871,18 @@ impl Parser {
         }
     }
 
+    /// Depth-guarded entry to accessor chains.
+    ///
+    /// `a.b[0]..c` is built by a loop, so it costs no parser stack, but it
+    /// nests in the AST exactly as deep as the chain is long. Saving and
+    /// restoring `depth` covers this function's several exit paths at once.
+    fn parse_accessor_tail(&mut self, expr: Expr) -> Result<Expr> {
+        let outer = self.depth;
+        let out = self.parse_accessor_tail_inner(expr);
+        self.depth = outer;
+        out
+    }
+
     /// Parse accessor tail: `.member`, `[index]`, `..member`, `.#name` chains.
     ///
     /// XFA Spec 3.3 §25.1 (p1055) — SOM accessor grammar:
@@ -855,7 +891,7 @@ impl Parser {
     /// - `[*]`   — all occurrences
     /// - `..name` — recursive descent
     /// - `.#name` — class-based access
-    fn parse_accessor_tail(&mut self, mut expr: Expr) -> Result<Expr> {
+    fn parse_accessor_tail_inner(&mut self, mut expr: Expr) -> Result<Expr> {
         loop {
             match self.peek().clone() {
                 // `.member` or `.#member`
@@ -888,6 +924,7 @@ impl Parser {
                                         args,
                                     });
                                 }
+                                self.enter()?;
                                 expr = Expr::MemberAccess {
                                     object: Box::new(expr),
                                     member,
@@ -900,6 +937,7 @@ impl Parser {
                             self.advance(); // consume hash
                             if let TokenKind::Ident(member) = self.peek().clone() {
                                 self.advance(); // consume member name
+                                self.enter()?;
                                 expr = Expr::MemberAccess {
                                     object: Box::new(expr),
                                     member: format!("#{}", member),
@@ -917,6 +955,7 @@ impl Parser {
                     if let Some(TokenKind::Ident(member)) = next_kind {
                         self.advance(); // consume ..
                         self.advance(); // consume member
+                        self.enter()?;
                         expr = Expr::RecursiveDescent {
                             object: Box::new(expr),
                             member,
@@ -947,6 +986,7 @@ impl Parser {
                         }
                     };
                     self.expect(&TokenKind::RBracket)?;
+                    self.enter()?;
                     expr = Expr::IndexAccess {
                         object: Box::new(expr),
                         index,
@@ -1216,6 +1256,47 @@ mod depth_bounds {
                 );
             }
         }
+    }
+
+    /// Input that builds a deep tree and *then* fails to parse.
+    ///
+    /// This is the case that the exact post-parse check cannot reach: `?`
+    /// returns before it runs, and the half-built tree is dropped by unwinding
+    /// instead. Recursive `Drop` costs ~61 bytes per level, so an unbounded
+    /// chain here overflowed a 256 KB stack at about 4250 levels -- a crash on
+    /// the error path, in a fix whose success path was already clean.
+    ///
+    /// The bound therefore has to be applied while the tree is being built,
+    /// which is what the per-link counters in the chain loops do. Deleting them
+    /// leaves every test above green and turns these red.
+    #[test]
+    fn a_deep_tree_that_then_fails_to_parse_is_still_bounded() {
+        let deep = 20_000;
+        for src in [
+            format!("{}1 +", "1 + ".repeat(deep)),
+            format!("{}2 *", "2 * ".repeat(deep)),
+            format!("{}1 or", "1 or ".repeat(deep)),
+            format!("Abs({}1", "1 + ".repeat(deep)),
+            format!("a{}.", ".b".repeat(deep)),
+        ] {
+            assert!(
+                refused(&src),
+                "a {deep}-deep tree was built before the parse failed; unwinding drops it"
+            );
+        }
+    }
+
+    /// The same, composed: the held-path counter under-counts nesting, so this
+    /// is the deepest half-tree the guard can be made to leave for `Drop`.
+    #[test]
+    fn a_composed_deep_tree_that_fails_to_parse_is_still_bounded() {
+        let tail = " + 1".repeat(200);
+        let mut src = String::from("1");
+        for _ in 0..200 {
+            src = format!("Abs({src}{tail})");
+        }
+        src.push_str(" +");
+        assert!(refused(&src));
     }
 
     /// The other half: a bound low enough to break real forms is also a bug.
