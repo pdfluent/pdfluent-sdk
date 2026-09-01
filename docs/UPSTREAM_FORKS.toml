@@ -15,6 +15,7 @@
 onze_crate = "pdf-syntax"
 upstream = "hayro-syntax"
 gelijk_met = "0.5.0"
+forkpunt = "758948489"  # commit in LaurenzV/hayro
 aanvaard_tot = "0.7.2"  # in uitvoering, #256
 waarom = "PDF object model and parser. Closest to upstream; still MIT OR Apache-2.0."
 
@@ -22,6 +23,7 @@ waarom = "PDF object model and parser. Closest to upstream; still MIT OR Apache-
 onze_crate = "pdf-interpret"
 upstream = "hayro-interpret"
 gelijk_met = "0.5.0"
+forkpunt = "357b0a8c7"  # commit in LaurenzV/hayro
 aanvaard_tot = "0.7.0"  # in uitvoering, #256
 waarom = "Content-stream interpreter and font handling. Still MIT OR Apache-2.0."
 
@@ -33,6 +35,7 @@ onze_crate = "pdf-font"
 # upgrade, which is why this one is not planned.
 upstream = "hayro-interpret"
 gelijk_met = "0.5.0"
+forkpunt = "357b0a8c7"  # commit in LaurenzV/hayro
 aanvaard_tot = "0.7.0"  # in uitvoering, #256
 waarom = "Split out of hayro-interpret and substantially extended."
 
@@ -40,6 +43,7 @@ waarom = "Split out of hayro-interpret and substantially extended."
 onze_crate = "pdf-render"
 upstream = "hayro"
 gelijk_met = "0.5.0"
+forkpunt = "4b8511cbb"  # commit in LaurenzV/hayro
 aanvaard_tot = "0.7.1"  # in uitvoering, #256
 waarom = "Rasteriser. Substantially extended; diverged furthest."
 [[fork]]
@@ -58,18 +62,43 @@ waarom = "CFF font parsing. Level with upstream, or slightly ahead."
 [[fork]]
 onze_crate = "hayro-jbig2"
 upstream = "hayro-jbig2"
-gelijk_met = "0.2.3"
+# Corrected twice. The register first claimed 0.2.3, then 0.2.0 after the fork
+# point was written down as 09d24e745. Both were wrong in the same direction:
+# our bitmap.rs, generic.rs and generic_refinement.rs are byte-identical to
+# e1b5604 and carry none of upstream's March 2026 rewrite -- no MAX_DIMENSION,
+# no Word buffers, no RefinementContextGatherer. Measured file by file across
+# all 154 upstream commits touching the crate; e1b5604 is the closest tree by a
+# wide margin (795 differing lines against 2787 for 09d24e745).
+#
+# 7de56bb, d1e6b42 and e1b5604 share one src tree; e1b5604 is named because our
+# vendoring commits reference upstream #945 and #946, which sit right after it.
+#
+# We are 50 upstream commits (+2601/-1070) past this point, not 8. Cherry-picked
+# on top since: the fast arithmetic decoder (~#1070/#1071), and the two hardening
+# fixes ported under #262 -- #1262 (zero-dimension guard) and #1278 (symbol
+# instance bound). Those do not move `gelijk_met`, which names a commit.
+gelijk_met = "0.1.0"
+forkpunt = "e1b5604d0"  # commit in LaurenzV/hayro, 2026-02-09
 aanvaard_tot = "0.3.0"  # #256
-waarom = "JBIG2 image codec."
+waarom = "JBIG2 image codec. Two minors behind; re-baselining needs a corpus run (#264)."
 
 [[fork]]
 onze_crate = "hayro-jpeg2000"
 upstream = "hayro-jpeg2000"
 gelijk_met = "0.4.0"
+# Merged to upstream HEAD on 31-08-2026, so the fork point is that commit and
+# the accepted gap is closed. The register previously claimed 0.3.5 at
+# 1c42f8cee; both were wrong. The code actually sat at 0.3.3 (4d923bd4) with two
+# later commits already cherry-picked on top, so merging against the recorded
+# commit would have REVERTED that work while looking like an upgrade. Found by
+# blob-comparing every source file against every upstream revision -- the
+# version alone cannot catch this class.
+forkpunt = "5a5f0e2"  # LaurenzV/hayro HEAD on 2026-08-24
 waarom = "JPEG 2000 image codec."
 
 [[fork]]
 onze_crate = "hayro-ccitt"
 upstream = "hayro-ccitt"
 gelijk_met = "0.3.0"
-waarom = "CCITT fax codec."
+forkpunt = "5a5f0e2"  # LaurenzV/hayro HEAD on 2026-08-24, merged 31-08-2026
+waarom = "CCITT fax codec. First crate brought level; see #262."

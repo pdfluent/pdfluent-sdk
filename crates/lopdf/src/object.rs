@@ -981,7 +981,7 @@ impl Stream {
             }
         }
 
-        impl hayro_ccitt::Decoder for ByteDecoder {
+        impl ByteDecoder {
             fn push_pixel(&mut self, white: bool) {
                 self.buffer = (self.buffer << 1) | u8::from(white);
                 self.bit_count += 1;
@@ -991,11 +991,28 @@ impl Stream {
                     self.bit_count = 0;
                 }
             }
+        }
 
-            fn push_pixel_chunk(&mut self, white: bool, chunk_count: u32) {
-                let byte = if white { 0xFF } else { 0x00 };
-                self.output
-                    .extend(std::iter::repeat_n(byte, chunk_count as usize));
+        impl hayro_ccitt::Decoder for ByteDecoder {
+            // Upstream collapsed push_pixel and push_pixel_chunk into a single
+            // push_pixels, handing the implementor the whole run. The
+            // whole-byte fast path is unchanged; it only needs the output to be
+            // byte-aligned first, which is what the prefix loop does.
+            fn push_pixels(&mut self, white: bool, count: u32) {
+                let (prefix, whole_bytes, tail) =
+                    hayro_ccitt::split_run(u32::from(self.bit_count), count);
+
+                for _ in 0..prefix {
+                    self.push_pixel(white);
+                }
+                if whole_bytes > 0 {
+                    let byte = if white { 0xFF } else { 0x00 };
+                    self.output
+                        .extend(std::iter::repeat_n(byte, whole_bytes as usize));
+                }
+                for _ in 0..tail {
+                    self.push_pixel(white);
+                }
             }
 
             fn next_line(&mut self) {
