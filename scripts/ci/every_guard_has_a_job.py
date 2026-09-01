@@ -81,7 +81,7 @@ MIN_SCRIPTS = 25
 # The GitHub remote of this repository is private, so none of these guards
 # touches a pull request from outside today. That is the gap in #232, and this
 # number does not measure it -- it measures the step towards it.
-SPIEGEL_RATEL = 13
+SPIEGEL_RATEL = 12
 
 # The reasons that can justify a place on the mirror. Free text would approve
 # every reason, including "later".

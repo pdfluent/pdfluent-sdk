@@ -163,20 +163,3 @@ that project. GitHub is where merges happen now, and pr_staleness.py asks the \
 same question there -- it runs in orchestration-guard with the workflow token \
 and fails on a pull request left to rot. Keeping this one on the mirror keeps \
 the GitLab side honest for as long as branches still land there."""
-
-# --- runner ------------------------------------------------------------------
-[[guard]]
-script = "shared_build_dir_is_there.sh"
-reason = "runner"
-why = """
-It asks whether the persistent runner's shared build directory is mounted,
-readable and writable, and says which of the three failed. Seven GitLab jobs call
-it at their first step so a broken mount costs seconds instead of forty minutes.
-
-There is nothing for it to check on the GitHub side: those jobs run on throwaway
-Hetzner instances created per workflow run, which have no shared directory and
-no mount to lose. A job for it there would report SKIPPED on every run, and a
-check that can only skip is worse than none -- it occupies the place where a real
-one would go. (#264)
-"""
-issue = "#264"
