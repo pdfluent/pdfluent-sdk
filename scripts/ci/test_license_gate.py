@@ -39,6 +39,24 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+
+# Load the gate from source, never from a cached .pyc.
+#
+# This file is used to check the gate by breaking it on purpose and watching the
+# test go red, then restoring the source. On 01-09-2026 a restore looked like it
+# had failed: the source was byte-identical to the backup and the test still
+# reported the mutation. Python was serving
+# scripts/ci/__pycache__/license_gate.cpython-311.pyc, written while the file was
+# mutated, because spec_from_file_location honours the bytecode cache.
+#
+# The direction it happened in was harmless -- a restored gate looking broken.
+# The other direction is not: a mutation applied and then *not* recompiled would
+# leave the working module running, the test would pass, and the result would
+# read as "the gate caught it" when nothing was checked at all. That is the exact
+# class of false green this whole test exists to prevent, sitting in the harness
+# rather than in the thing under test.
+sys.dont_write_bytecode = True
+importlib.invalidate_caches()
 spec = importlib.util.spec_from_file_location("lg", HERE / "license_gate.py")
 assert spec and spec.loader
 lg = importlib.util.module_from_spec(spec)
@@ -161,9 +179,16 @@ def main() -> int:
     # statement about licences at all. Exit 1 for "a crate is GPL" and exit 1
     # for "nothing was read" are not the same result, and the message is the
     # only thing that distinguishes them.
-    echt_pad = os.environ.get("PATH", "")
+    # Genuinely absent means absent everywhere the gate looks, not just off
+    # PATH: _cargo() also checks $CARGO_HOME/bin and ~/.cargo/bin, because the
+    # runner has rustup installed without putting it on PATH. Stripping PATH
+    # alone made this case pass by finding the developer's own cargo, and the
+    # test then reported the opposite of what it meant to.
+    bewaard = {k: os.environ.get(k) for k in ("PATH", "CARGO_HOME", "HOME")}
     with tempfile.TemporaryDirectory() as leeg:
         os.environ["PATH"] = leeg
+        os.environ["CARGO_HOME"] = leeg
+        os.environ["HOME"] = leeg
         try:
             lg.scan_cargo({})
             fouten.append("a missing cargo was not reported at all")
@@ -174,7 +199,11 @@ def main() -> int:
         except FileNotFoundError:
             fouten.append("a missing cargo escaped as a traceback instead of a verdict")
         finally:
-            os.environ["PATH"] = echt_pad
+            for k, v in bewaard.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
     print(f"[test_license_gate] {len(CASES)} expression case(s) + 4 scanner case(s)")
     if not fouten:

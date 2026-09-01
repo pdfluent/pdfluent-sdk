@@ -46,6 +46,7 @@ from __future__ import annotations
 # that reads nothing must fail rather than report a clean tree.
 import json
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -182,10 +183,35 @@ def embedded_assets_are_attributed() -> list[str]:
 
 # --- scanners ---------------------------------------------------------------
 
+def _cargo() -> str:
+    """Where cargo actually is, not where PATH says it is.
+
+    The GitHub runner has rustup installed and does not put ~/.cargo/bin on PATH
+    for this job, so this gate reported `SKIPPED (not a pass): cargo is not on
+    PATH` on every run -- honest, legible, and still a licence policy that had
+    never once been evaluated. Announcing a skip clearly is better than a
+    traceback and is not the same as doing the work.
+
+    rustup's own layout is the answer: $CARGO_HOME/bin/cargo, else
+    ~/.cargo/bin/cargo. If neither exists, fall back to the bare name so the
+    FileNotFoundError below still produces the message rather than a crash.
+    """
+    from shutil import which
+    gevonden = which("cargo")
+    if gevonden:
+        return gevonden
+    for kandidaat in (
+        pathlib.Path(os.environ.get("CARGO_HOME", "")) / "bin" / "cargo",
+        pathlib.Path.home() / ".cargo" / "bin" / "cargo",
+    ):
+        if kandidaat.is_file() and os.access(kandidaat, os.X_OK):
+            return str(kandidaat)
+    return "cargo"
+
 def scan_cargo(_: dict) -> list[tuple[str, str]]:
     """Every third-party crate in the resolved graph, build and dev included."""
     try:
-        r = subprocess.run(["cargo", "metadata", "--format-version", "1"],
+        r = subprocess.run([_cargo(), "metadata", "--format-version", "1"],
                            capture_output=True, text=True, cwd=REPO,
                            env={k: v for k, v in os.environ.items()
                                 if not k.startswith("GIT_")})
