@@ -8,6 +8,9 @@ that reads failure as clean is worse than sweeping by hand, so each case proves
 both directions: the failure refuses, the healthy equivalent still proceeds.
 """
 from __future__ import annotations
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
+from fixture_env import sealed_env
 import contextlib, importlib.util, io, os, pathlib, shutil, subprocess, sys, tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -72,7 +75,9 @@ expect("run() reports FAILURE rather than an empty string", ok is False)
 def repo_with_worktree(root: pathlib.Path) -> pathlib.Path:
     r = root / "r"
     r.mkdir()
-    env = sweeper.clean_env()
+    # Sealed for the FIXTURE, which builds a repository; the sweeper's own
+    # clean_env() is what production uses and is tested separately. (#297)
+    env = sealed_env(identity=True)
     def g(*a, cwd=r):
         return subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True, env=env)
     g("init", "-q", "-b", "master")

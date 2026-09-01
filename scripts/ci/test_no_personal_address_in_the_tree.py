@@ -23,6 +23,9 @@ this family of guards before:
 """
 
 from __future__ import annotations
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
+from fixture_env import sealed_env
 
 import hashlib
 import os
@@ -56,7 +59,11 @@ ONSCHULDIG = [
 
 
 def _git_env() -> dict[str, str]:
-    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    # Sealed rather than merely GIT_*-stripped: dropping GIT_* stops a
+    # fixture READING the real repository, not WRITING to the real config.
+    # A fixture's `git config user.email t@t` reached a real worktree that
+    # way and stamped a test identity onto every later rebase there. (#297)
+    return sealed_env()
 
 
 def _git(wd: Path, *args: str) -> subprocess.CompletedProcess:

@@ -19,6 +19,9 @@ quietly blind, and a table of strings cannot exercise either.
 """
 
 from __future__ import annotations
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
+from fixture_env import sealed_env
 
 import os
 import subprocess
@@ -72,14 +75,12 @@ REFUSE = [
 
 
 def _git_env() -> dict[str, str]:
-    """git without the caller's GIT_* variables.
-
-    This test builds repositories with `git init`, and inside a hook GIT_DIR and
-    GIT_WORK_TREE are absolute and inherited. A `git init` under those runs on
-    the real repository -- which is how `core.bare = true` landed on it on
-    25-08-2026 and stopped all thirty worktrees (#240).
-    """
-    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    """git without the caller's GIT_* variables."""
+    # Sealed rather than merely GIT_*-stripped: dropping GIT_* stops a
+    # fixture READING the real repository, not WRITING to the real config.
+    # A fixture's `git config user.email t@t` reached a real worktree that
+    # way and stamped a test identity onto every later rebase there. (#297)
+    return sealed_env()
 
 
 def _git(wd: Path, *args: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
