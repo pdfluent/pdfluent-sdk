@@ -19976,10 +19976,33 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                         // glyph a subsetter stripped.
                         let blanco = tounicode_blank_cids(doc, font_dict);
                         let has_glyph_data = |gid: u16| -> bool {
-                            gid > 0
-                                && gid < num_glyphs
-                                && (tt_glyph_has_data(&face, ttf_parser::GlyphId(gid))
-                                    || blanco.contains(&gid))
+                            if gid >= num_glyphs {
+                                return false;
+                            }
+                            if gid == 0 {
+                                // CID 0 is .notdef by convention, and this used
+                                // to be a flat `gid > 0`. Some subsetted CID
+                                // fonts put the SPACE there and say so in their
+                                // ToUnicode -- `<0000>` to `<0020>`. Excluding
+                                // it made every space in the document a .notdef
+                                // reference, and fix_cid_font_notdef replaced
+                                // each with whichever glyph the font offered
+                                // instead: "AFFILIATIONS (alphabetical by
+                                // author)" came back as
+                                // "AFFILIATIONS((alphabetical(by(author)(".
+                                // 2572 spaces became 89. (#210, and #182 where
+                                // it was first seen on one document.)
+                                //
+                                // `blanco` is the test, not `tt_glyph_has_data`:
+                                // a space has no outline, so it never has glyph
+                                // data, while a drawn .notdef box does. Asking
+                                // the font's own ToUnicode separates the two,
+                                // and tounicode_blank_cids already computes
+                                // exactly that set for the line below.
+                                return blanco.contains(&0);
+                            }
+                            tt_glyph_has_data(&face, ttf_parser::GlyphId(gid))
+                                || blanco.contains(&gid)
                         };
                         let space_gid = face
                             .glyph_index(' ')
@@ -19990,7 +20013,7 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                         match map_obj {
                             None => {
                                 // Identity mapping: CID == GID.
-                                for gid in 1..num_glyphs {
+                                for gid in 0..num_glyphs {
                                     if has_glyph_data(gid) {
                                         valid_cids.insert(gid);
                                     }
@@ -20001,7 +20024,7 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                             }
                             Some(Object::Name(n)) if n == b"Identity" => {
                                 // Identity mapping: CID == GID.
-                                for gid in 1..num_glyphs {
+                                for gid in 0..num_glyphs {
                                     if has_glyph_data(gid) {
                                         valid_cids.insert(gid);
                                     }
@@ -20056,7 +20079,7 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                         // Fallback: if stream mapping yielded nothing, fall back
                         // to Identity semantics.
                         if valid_cids.is_empty() {
-                            for gid in 1..num_glyphs {
+                            for gid in 0..num_glyphs {
                                 if has_glyph_data(gid) {
                                     valid_cids.insert(gid);
                                 }
@@ -20072,6 +20095,13 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                 }
             } else {
                 // CFF-based CID font (CIDFontType0): parse CFF for CID mapping.
+                // Which CIDs this font's own ToUnicode calls blank. GID 0 is
+                // .notdef by convention and excluded below because of it; these
+                // subsetted CID fonts put the SPACE there and say so, mapping
+                // `<0000>` to `<0020>`. This is the same set the TrueType branch
+                // above consults, computed here because the two branches never
+                // meet. (#210, #182.)
+                let blanco = tounicode_blank_cids(doc, font_dict);
                 match cff_parser::Table::parse(&font_data) {
                     Some(cff) => {
                         let num_glyphs = cff.number_of_glyphs();
@@ -20080,7 +20110,16 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                             if let Some(cid) = cff.glyph_cid(glyph_id) {
                                 let has_usable_width =
                                     cff.glyph_width(glyph_id).map(|w| w > 0).unwrap_or(false);
-                                if gid > 0 && has_usable_width {
+                                // `gid > 0`, unless the font says CID 0 is a real
+                                // blank. Excluding it made every space a .notdef
+                                // reference, and the replacement below turned it
+                                // into whichever glyph CFF names "space" -- which
+                                // in a subsetted font is not the space at all:
+                                // for C0_0 of 000_000338 it is CID 8, whose
+                                // ToUnicode is `(`. "AFFILIATIONS (alphabetical
+                                // by author)" came back as
+                                // "AFFILIATIONS((alphabetical(by(author)(".
+                                if (gid > 0 || blanco.contains(&cid)) && has_usable_width {
                                     valid_cids.insert(cid);
                                 }
                                 if let Some(name) = cff.glyph_name(glyph_id) {
@@ -20098,7 +20137,7 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                         match ttf_parser::Face::parse(&font_data, 0) {
                             Ok(face) => {
                                 let num_glyphs = face.number_of_glyphs();
-                                for gid in 1..num_glyphs {
+                                for gid in 0..num_glyphs {
                                     if tt_glyph_has_data(&face, ttf_parser::GlyphId(gid)) {
                                         valid_cids.insert(gid);
                                     }
@@ -20594,7 +20633,17 @@ fn fix_cid_text_string(
     let mut repaired = Vec::with_capacity(bytes.len());
     for i in (0..bytes.len()).step_by(2) {
         let value = ((bytes[i] as u16) << 8) | (bytes[i + 1] as u16);
-        if value != 0 && valid_values.contains(&value) {
+        // `valid_values` decides, on its own. This used to read
+        // `value != 0 && valid_values.contains(&value)` -- the fourth place in
+        // this function encoding "CID 0 is .notdef", after the two collection
+        // loops and has_glyph_data. With the other three corrected, this one
+        // still dropped every code 0x0000, so the set said the space was valid
+        // and the rewriter deleted it anyway. (#210, #182.)
+        //
+        // Nothing is lost by removing it: the collectors only admit CID 0 when
+        // the font's own ToUnicode calls it a blank character, so a genuine
+        // .notdef is still absent from the set and still removed here.
+        if valid_values.contains(&value) {
             repaired.push(bytes[i]);
             repaired.push(bytes[i + 1]);
             continue;
@@ -27088,5 +27137,85 @@ mod round4_encoding_resolution_tests {
         assert_eq!(filtered.get(&32).map(String::as_str), Some("space"));
         assert_eq!(filtered.get(&176).map(String::as_str), Some("degree"));
         assert_eq!(filtered.len(), 2, "got {filtered:?}");
+    }
+}
+
+#[cfg(test)]
+mod woordscheiding_tests {
+    //! CID 0 is not always .notdef, and a font that says so must be believed.
+    //!
+    //! On six documents of a 300-document govdocs sample the PDF/A conversion
+    //! replaced every space with another glyph: "AFFILIATIONS (alphabetical by
+    //! author)" came back as "AFFILIATIONS((alphabetical(by(author)(", and
+    //! "Institutionen för" as "Institutionen$för". Every letter survived, so
+    //! character retention read 100% while word retention read 1-8%. (#210, and
+    //! #182 where it was first seen on one document.)
+    //!
+    //! The cause was one assumption written down four times in this file: that
+    //! CID 0 is `.notdef` and may be dropped. These fonts put the SPACE there
+    //! and say so in their own ToUnicode, `<0000>` to `<0020>`.
+    use super::*;
+
+    /// A ToUnicode CMap in the shape the affected fonts use.
+    fn tounicode(pairs: &[(&str, &str)]) -> Vec<u8> {
+        let mut s = String::from(
+            "/CIDInit /ProcSet findresource begin\n             1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n",
+        );
+        s.push_str(&format!("{} beginbfchar\n", pairs.len()));
+        for (from, to) in pairs {
+            s.push_str(&format!("<{from}> <{to}>\n"));
+        }
+        s.push_str("endbfchar\nendcmap\n");
+        s.into_bytes()
+    }
+
+    fn doc_with_tounicode(content: Vec<u8>) -> (Document, lopdf::Dictionary) {
+        let mut doc = Document::with_version("1.5");
+        let id = doc.add_object(Object::Stream(lopdf::Stream::new(
+            lopdf::Dictionary::new(),
+            content,
+        )));
+        let mut font = lopdf::Dictionary::new();
+        font.set("ToUnicode", Object::Reference(id));
+        (doc, font)
+    }
+
+    #[test]
+    fn a_font_that_maps_cid_zero_to_a_space_says_so() {
+        let (doc, font) = doc_with_tounicode(tounicode(&[("0000", "0020"), ("0008", "0028")]));
+        let blank = tounicode_blank_cids(&doc, &font);
+        assert!(
+            blank.contains(&0),
+            "CID 0 maps to U+0020 and must be recognised as blank"
+        );
+        assert!(!blank.contains(&8), "CID 8 maps to '(' and is not blank");
+    }
+
+    /// The other kind, in the same file: `000_000338.pdf` has twenty-two fonts,
+    /// some mapping `<0000>` to `<0020>` and some to `<FFFF>`. A guard that
+    /// admitted CID 0 for both would re-admit genuine .notdef everywhere.
+    #[test]
+    fn a_font_that_maps_cid_zero_to_ffff_does_not() {
+        let (doc, font) = doc_with_tounicode(tounicode(&[("0000", "FFFF")]));
+        assert!(!tounicode_blank_cids(&doc, &font).contains(&0));
+    }
+
+    #[test]
+    fn the_rewriter_keeps_cid_zero_when_the_set_says_it_is_valid() {
+        let valid: std::collections::HashSet<u16> = [0u16, 8].into_iter().collect();
+        // Two glyphs with a space between them, Identity-H: 0008 0000 0008.
+        let mut text = vec![0x00, 0x08, 0x00, 0x00, 0x00, 0x08];
+        let changed = fix_cid_text_string(&mut text, &valid, None);
+        assert!(!changed, "nothing is invalid here, so nothing may change");
+        assert_eq!(text, vec![0x00, 0x08, 0x00, 0x00, 0x00, 0x08]);
+    }
+
+    #[test]
+    fn the_rewriter_still_drops_cid_zero_when_it_is_not_valid() {
+        let valid: std::collections::HashSet<u16> = [8u16].into_iter().collect();
+        let mut text = vec![0x00, 0x08, 0x00, 0x00, 0x00, 0x08];
+        let changed = fix_cid_text_string(&mut text, &valid, None);
+        assert!(changed, "a genuine .notdef reference must still be removed");
+        assert_eq!(text, vec![0x00, 0x08, 0x00, 0x08]);
     }
 }
