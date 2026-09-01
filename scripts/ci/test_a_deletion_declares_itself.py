@@ -11,7 +11,7 @@ import os, subprocess, sys, tempfile
 from pathlib import Path
 
 GUARD = Path(__file__).with_name("a_deletion_declares_itself.py")
-MINIMUM_CASES = 29  # FLOOR
+MINIMUM_CASES = 31  # FLOOR
 
 
 def clean_env() -> dict[str, str]:
@@ -251,6 +251,21 @@ def main() -> int:
         # questions asked, which is why the flag exists rather than a new default.
         expect("and the merge-base reading deliberately does not see it",
                r2.returncode == 0, f"exit {r2.returncode}")
+
+    # A git command that FAILS must not read as "nothing found". With a bad
+    # --head the diff exited non-zero, stdout was empty, and the guard reported
+    # OK having compared nothing. (codex, #1635)
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "remove it\n\nRemoves-deliberately: doomed.txt")
+        r = guard(wd, "--base", "master", "--head", "no-such-revision",
+                  "--exact-base")
+        expect("a head that does not resolve is FATAL, not a pass",
+               r.returncode == 2, f"exit {r.returncode} {r.stdout[:120]}")
+        expect("and it says the comparison did not happen",
+               "did not happen" in r.stderr or "could not be read" in r.stderr,
+               r.stderr[:200])
 
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))
