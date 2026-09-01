@@ -115,22 +115,38 @@ def de_fetch_gaat_naar_de_cache(clone) -> str | None:
     the whole failure being guarded against is git disagreeing with `cwd`.
     """
     from pathlib import Path as _P
+
     out = git("rev-parse", "--absolute-git-dir", cwd=clone)
     if out.returncode != 0:
         return f"cannot tell which repository {clone} is, so the fetch is refused"
-    actual = _P(out.stdout.strip()).resolve()
-    wanted = _P(clone).resolve()
-    # Two shapes are legitimate, and the first version of this check only knew
-    # one of them. The cache we fetch ourselves is bare, so its git-dir *is* the
-    # directory. A clone a developer points `HAYRO_CLONE` at is an ordinary
-    # checkout, and its git-dir is `<clone>/.git` -- which this refused, taking
-    # the guard from "stricter than the environment" to "stricter than the
-    # user" and failing the run with exit 3 before it scored anything.
-    if actual != wanted and actual != wanted / ".git":
+    doel = _P(out.stdout.strip()).resolve()
+
+    # (a) Never this repository, whatever the configuration says.
+    #
+    # Comparing the target against the path it was *asked* to be is not a lock:
+    # for any ordinary checkout `--absolute-git-dir` is `<checkout>/.git`, so
+    # accepting that shape accepts the very repository the guard exists to
+    # protect. The first version of this check passed its own ROOT test only
+    # because it ran in a worktree, whose git-dir is
+    # `<main>/.git/worktrees/<name>` and therefore happened not to match.
+    # Measured in a plain checkout, the repository root was accepted.
+    #
+    # So the question is not "is the target the path we wanted" but "is the
+    # target us", asked of git from the script's own location.
+    ons = git("rev-parse", "--absolute-git-dir", cwd=_P(__file__).resolve().parent)
+    if ons.returncode == 0 and _P(ons.stdout.strip()).resolve() == doel:
         return (
-            f"refusing to fetch: the target resolved to {actual}, which is neither "
-            f"{wanted} nor {wanted / '.git'}. The refspec force-updates every branch, "
-            "so this would rewrite local branches -- see schone_omgeving()."
+            f"refusing to fetch: the target is this repository ({doel}). The refspec "
+            "force-updates every branch, so this would rewrite local branches."
+        )
+
+    # (b) And it must actually be the upstream, not merely somewhere else.
+    herkomst = git("config", "--get", "remote.origin.url", cwd=clone)
+    url = herkomst.stdout.strip()
+    if not url or "hayro" not in url.lower():
+        return (
+            f"refusing to fetch: {clone} has origin {url or '<none>'}, which is not "
+            "the hayro upstream this cache is for."
         )
     return None
 
