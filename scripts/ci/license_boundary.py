@@ -163,6 +163,52 @@ def eigen_refs_zijn_gedefinieerd() -> list[str]:
                                "typo with legal shape")
     return uit
 
+# Every shipped copy of a licence text, and where it must be identical to.
+KOPIEEN = ("LICENSE", "LICENSE-AGPL", "LICENSE-ADDITIONAL-TERMS", "LICENSE-COMMERCIAL")
+KOPIE_MAPPEN = ("crates/*", "bindings/java", "bindings/dotnet/src/PDFluent")
+
+
+def kopieen_zijn_gelijk() -> list[str]:
+    """A shipped licence copy that has drifted from the root is a second licence.
+
+    This is not hypothetical and it was mine. On 01-09-2026 I corrected the root
+    LICENSE -- it had claimed there was no enforcement while the build still
+    refuses capabilities -- and thirty per-crate copies kept the false sentence.
+    A crates.io tarball would then have carried LICENSE saying no enforcement
+    exists and LICENSE-COMMERCIAL saying it does, in one package.
+
+    Copying legal text into thirty directories is the design; nothing here can
+    change that today. What can change is whether a copy may quietly differ.
+    """
+    # Forks keep their upstream licence text. Ours must never be copied over it:
+    # crates/lopdf carries the MIT notice naming its upstream author, and a
+    # re-sync loop that globs crates/* will overwrite it. That is not a
+    # hypothetical -- I did it, twice, and license_registry_check.py caught it
+    # both times by insisting the file still names him.
+    vorken = {c["dir"] for c in
+              tomllib.loads(KAART.read_text(encoding="utf-8")).get("crate", [])
+              if c["side"] == "forked"}
+    uit = []
+    for patroon in KOPIE_MAPPEN:
+        for d in sorted(REPO.glob(patroon)):
+            if not d.is_dir():
+                continue
+            if str(d.relative_to(REPO)) in vorken:
+                continue
+            for naam in KOPIEEN:
+                f = d / naam
+                if not f.is_file():
+                    continue
+                bron = REPO / naam
+                if not bron.is_file():
+                    uit.append(f"{f.relative_to(REPO)} exists and {naam} does not "
+                               "at the repository root")
+                elif f.read_bytes() != bron.read_bytes():
+                    uit.append(f"{f.relative_to(REPO)} differs from the root {naam}. "
+                               "A shipped copy that may differ is a second licence, "
+                               "and the tarball would carry both")
+    return uit
+
 def agpl_is_onaangeroerd() -> list[str]:
     """The AGPL text is byte-for-byte the one we pinned."""
     if not AGPL.is_file():
@@ -203,7 +249,8 @@ def main() -> int:
         return 1
 
     problemen: list[str] = (agpl_is_onaangeroerd() + registers_agree()
-                            + eigen_refs_zijn_gedefinieerd())
+                            + eigen_refs_zijn_gedefinieerd()
+                            + kopieen_zijn_gelijk())
     gezien: set[str] = set()
 
     for rij in rijen:

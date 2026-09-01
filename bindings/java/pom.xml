@@ -103,6 +103,9 @@
                 <directory>${project.basedir}</directory>
                 <includes>
                     <include>LICENSE</include>
+                    <include>LICENSE-AGPL</include>
+                    <include>LICENSE-ADDITIONAL-TERMS</include>
+                    <include>LICENSE-COMMERCIAL</include>
                 </includes>
                 <targetPath>META-INF</targetPath>
             </resource>
