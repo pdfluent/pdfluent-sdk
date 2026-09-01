@@ -49,7 +49,7 @@
       "pin": "1.0.0-beta.8",
       "state": "released",
       "install_command": "curl -H \"PRIVATE-TOKEN: $GITLAB_PAT\" \"https://gitlab.com/api/v4/projects/82044173/packages/generic/pdfluent-capi/1.0.0-beta.8/pdfluent-capi-1.0.0-beta.8.tar.gz\" -o pdfluent-capi.tar.gz",
-      "registry_url": "https://github.com/pdfluent/PDFluent-project/-/packages"
+      "registry_url": "https://github.com/pdfluent/pdfluent-sdk/-/packages"
     },
     "npm_napi": {
       "package": "@pdfluent/node",

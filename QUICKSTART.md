@@ -142,7 +142,7 @@ Pre-built wheels — no Rust toolchain required.
 
 ```bash
 pip install maturin
-git clone https://github.com/pdfluent/PDFluent-project.git pdfluent
+git clone https://github.com/pdfluent/pdfluent-sdk.git pdfluent
 cd pdfluent/pdfluent-examples/rust
 maturin develop --release
 ```
@@ -328,5 +328,5 @@ automatic cleanup.
 - **Docs:** <https://pdfluent.com/docs>
 - **Trial license:** <https://pdfluent.com/trial>
 - **Pricing:** <https://pdfluent.com/pricing>
-- **Issues:** <https://github.com/pdfluent/PDFluent-project/-/issues>
+- **Issues:** <https://github.com/pdfluent/pdfluent-sdk/-/issues>
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)

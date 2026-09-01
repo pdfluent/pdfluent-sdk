@@ -18,7 +18,7 @@ automatically until the operator explicitly installs the files.
 # 1. Copy scripts into a stable location the cron expects.
 ssh root@<vps>
 mkdir -p /opt/pdfluent-cleanup /var/log/pdfluent-cleanup
-git clone --branch enterprise/ga-hardening https://github.com/pdfluent/PDFluent-project.git /tmp/pdfluent-repo
+git clone --branch enterprise/ga-hardening https://github.com/pdfluent/pdfluent-sdk.git /tmp/pdfluent-repo
 cp /tmp/pdfluent-repo/scripts/infra/_lib.sh \
    /tmp/pdfluent-repo/scripts/infra/cleanup_vps_runner_cache.sh \
    /tmp/pdfluent-repo/scripts/infra/disk_guard.sh \

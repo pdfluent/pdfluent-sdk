@@ -82,7 +82,6 @@ REGELS = [
             # het woord maar de accountnaam, en die haal je op met deze twee
             # commando's.
             r"(\b192\.168\.\d+\.\d+\b|"
-            r"find-internet-password|find-generic-password|"
             r"gitlab\.com/pdfluent-group)",
             re.I,
         ),
@@ -146,6 +145,38 @@ def alle_regels():
             "geoordeeld worden, en groen zou hier betekenen dat niemand gekeken heeft."
         )
     return REGELS + [pr]
+
+
+# --- keychain-aanroepen: een aanwijzer, geen lek ------------------------------
+#
+# `security find-generic-password` / `find-internet-password` stonden in de
+# infrastructuurregel, en elke treffer was vals: het geheim staat in de keychain
+# en wordt daar OPGEHAALD. Dat is precies het gedrag dat je wilt zien, en het als
+# lek melden leert de lezer de melding te negeren.
+#
+# Wat wel gevoelig kan zijn, is het label ernaast: `-a <account>` / `-s <service>`.
+# Een generiek label (`pypi-token`, `HCLOUD_TOKEN`) zegt hooguit welke dienst we
+# gebruiken; een e-mailadres, een hostnaam of een klantnaam als label hoort er
+# niet te staan. Deze klasse laat de aanroep door en beoordeelt het operand.
+KEYCHAIN = re.compile(r"find-(?:generic|internet)-password")
+KEYCHAIN_LABEL = re.compile(r"-[as]\s+['\"]?([A-Za-z0-9@._-]+)")
+EMAILACHTIG = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def keychain_overtredingen(regel, regels):
+    """Treffers voor een keychain-regel: alleen als het LABEL zelf gevoelig is."""
+    if not KEYCHAIN.search(regel):
+        return []
+    uit = []
+    for label in KEYCHAIN_LABEL.findall(regel):
+        if EMAILACHTIG.search(label):
+            uit.append(("keychain-label", label))
+            continue
+        for naam, rx in regels:
+            if rx.search(label):
+                uit.append(("keychain-label", label))
+                break
+    return uit
 
 
 def overtredingen(tekst):
@@ -281,6 +312,10 @@ def uit_boom():
         geforkt = _in_fork(pad)
         with open(pad, encoding="utf-8", errors="ignore") as f:
             for nr, regel in enumerate(f, 1):
+                for naam, label in keychain_overtredingen(regel, _regels):
+                    fouten.append((naam, label, f"{pad}:{nr}", regel.strip()[:90]))
+                if KEYCHAIN.search(regel):
+                    continue
                 for naam, rx in _regels:
                     if geforkt and naam == "commercieel":
                         continue
