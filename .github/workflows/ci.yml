@@ -58,6 +58,30 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  baseline-hardware-guard:
+    name: Every baseline names the machine it came from
+    # Its own job, not two more steps on `orchestration-guard`. That job runs
+    # thirty-seven steps in sequence and aborts on the first failure, so a step
+    # near the end reports nothing at all about itself -- it reports the health
+    # of everything above it. On 31-08-2026 it had failed at step two for the
+    # last thirty runs on master, which left thirty-five guards installed and
+    # not executing. A gate that cannot be seen passing is the same shape as the
+    # defect this one exists to catch (#283).
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The guard first, then its own test -- a guard whose parser stopped
+      # understanding the files reports a clean tree in exactly the same words
+      # as a clean tree.
+      - name: Every baseline names the machine it came from
+        run: python3 scripts/ci/a_baseline_names_the_machine.py
+      - name: The baseline-hardware guard still bites
+        run: python3 scripts/ci/test_a_baseline_names_the_machine.py
+
   orchestration-guard:
     name: No ref-dispatchable job on the persistent runner
     # The repository's default workflow token is "read", which grants
