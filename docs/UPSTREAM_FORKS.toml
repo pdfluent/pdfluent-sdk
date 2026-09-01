@@ -62,10 +62,25 @@ waarom = "CFF font parsing. Level with upstream, or slightly ahead."
 [[fork]]
 onze_crate = "hayro-jbig2"
 upstream = "hayro-jbig2"
-gelijk_met = "0.2.0"  # was 0.2.3; the fork point carries 0.2.0 (#262)
-forkpunt = "09d24e745"  # commit in LaurenzV/hayro
+# Corrected twice. The register first claimed 0.2.3, then 0.2.0 after the fork
+# point was written down as 09d24e745. Both were wrong in the same direction:
+# our bitmap.rs, generic.rs and generic_refinement.rs are byte-identical to
+# e1b5604 and carry none of upstream's March 2026 rewrite -- no MAX_DIMENSION,
+# no Word buffers, no RefinementContextGatherer. Measured file by file across
+# all 154 upstream commits touching the crate; e1b5604 is the closest tree by a
+# wide margin (795 differing lines against 2787 for 09d24e745).
+#
+# 7de56bb, d1e6b42 and e1b5604 share one src tree; e1b5604 is named because our
+# vendoring commits reference upstream #945 and #946, which sit right after it.
+#
+# We are 50 upstream commits (+2601/-1070) past this point, not 8. Cherry-picked
+# on top since: the fast arithmetic decoder (~#1070/#1071), and the two hardening
+# fixes ported under #262 -- #1262 (zero-dimension guard) and #1278 (symbol
+# instance bound). Those do not move `gelijk_met`, which names a commit.
+gelijk_met = "0.1.0"
+forkpunt = "e1b5604d0"  # commit in LaurenzV/hayro, 2026-02-09
 aanvaard_tot = "0.3.0"  # #256
-waarom = "JBIG2 image codec."
+waarom = "JBIG2 image codec. Two minors behind; re-baselining needs a corpus run (#264)."
 
 [[fork]]
 onze_crate = "hayro-jpeg2000"
