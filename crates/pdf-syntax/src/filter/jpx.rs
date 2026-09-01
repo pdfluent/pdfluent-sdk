@@ -47,7 +47,11 @@ pub(crate) fn decode(data: &[u8], params: &ImageDecodeParams) -> Option<FilterRe
         },
     };
     let has_alpha = image.has_alpha();
-    let bitmap = image.decode().ok()?;
+    // Upstream 0.4.0 moved the scratch buffers into a caller-owned DecoderContext
+    // so they can be reused across images; a fresh one per call keeps the old
+    // one-shot behaviour.
+    let mut decoder_context = hayro_jpeg2000::DecoderContext::default();
+    let bitmap = image.decode(&mut decoder_context).ok()?.data_u8();
 
     let (mut data, mut alpha) = if !has_alpha {
         (bitmap, None)
@@ -90,7 +94,9 @@ pub(crate) fn decode(data: &[u8], params: &ImageDecodeParams) -> Option<FilterRe
 }
 
 // Hard cap on scale() output allocation: prevents DoS on pathological images
-// that pass codec dimension checks (≤60000) but still request huge re-encoding.
+// that decode successfully but still request huge re-encoding. Upstream #1355
+// removed the codec's hardcoded 60000-pixel dimension cap in favour of checked
+// allocation arithmetic, so this crate must not assume any dimension bound.
 // 512 MiB is generous for any real-world PDF image rescaling use case.
 const MAX_SCALE_BYTES: usize = 512 * 1024 * 1024;
 

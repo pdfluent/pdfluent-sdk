@@ -22,8 +22,8 @@ pub(crate) struct IDWTOutput {
     pub(crate) rect: IntRect,
 }
 
-impl IDWTOutput {
-    pub(crate) fn dummy() -> Self {
+impl Default for IDWTOutput {
+    fn default() -> Self {
         Self {
             coefficients: vec![],
             rect: IntRect::from_ltrb(0, 0, u32::MAX, u32::MAX),
@@ -40,7 +40,7 @@ struct IDWTTempOutput {
 /// decomposition level.
 pub(crate) fn apply(
     storage: &DecompositionStorage<'_>,
-    tile_ctx: &mut TileDecodeContext<'_>,
+    tile_ctx: &mut TileDecodeContext,
     component_idx: usize,
     header: &Header<'_>,
     transform: WaveletTransform,
