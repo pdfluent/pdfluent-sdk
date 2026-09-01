@@ -37,7 +37,11 @@ WORTEL = Path(__file__).resolve().parent.parent.parent
 MAP = WORTEL / "scripts" / "ci"
 
 # Een aanroep van git via subprocess.
-GIT_AANROEP = re.compile(r"subprocess\.\w+\(\s*\[\s*[\"']git[\"']")
+# Ook met een absoluut pad: `["/usr/bin/git", ...]` is dezelfde aanroep en
+# dezelfde schade. the_fork_register_is_verifiable.py schreef het zo en kwam
+# er daardoor jarenlang doorheen, terwijl juist die aanroep een force-fetch
+# over alle takken doet. (#1642)
+GIT_AANROEP = re.compile(r"subprocess\.\w+\(\s*\[\s*[\"'](?:[\w./-]*/)?git[\"']")
 
 
 def aanroepen_zonder_schone_omgeving(tekst: str) -> list[int]:
