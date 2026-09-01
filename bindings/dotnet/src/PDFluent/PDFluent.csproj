@@ -16,10 +16,15 @@
     <Product>PDFluent</Product>
     <Copyright>Copyright (c) 2026 Innovation Trigger BV (operating as PDFluent)</Copyright>
     <Description>Enterprise PDF SDK — find and replace PDF text while preserving fonts and layout, plus render, extract, forms, signatures, PDF/A. Pure-Rust core via P/Invoke. Requires netstandard2.1+ (Core 3.0+, .NET 5/6/7/8/9/10, Mono 6.4+, Xamarin/MAUI, Unity 2021.2+).</Description>
-    <!-- NU5033: an expression and a licence file are mutually exclusive. The
-         expression is the one a policy gate can compare, so it wins; LICENSE
-         still ships, as ordinary package content (see the None items below). -->
-    <PackageLicenseExpression>AGPL-3.0-only OR LicenseRef-PDFluent-Commercial</PackageLicenseExpression>
+    <!-- NU5033 makes an expression and a licence file mutually exclusive, so one
+         of the two has to go. It is the expression: `dotnet pack` accepts the
+         compound but warns NU5124 that LicenseRef-PDFluent-Commercial is not a
+         recognised identifier, and nuget.org refuses an expression it cannot
+         recognise at publish time. The file form is NuGet's own route for a
+         licence its validator cannot name, and LICENSE opens with the canonical
+         SPDX expression, so the offer is still stated in full.
+         Declared in docs/LICENSE_POLICY.toml [channel_representation]. -->
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageProjectUrl>https://pdfluent.com</PackageProjectUrl>
     <RepositoryUrl>https://github.com/pdfluent/pdfluent-sdk</RepositoryUrl>

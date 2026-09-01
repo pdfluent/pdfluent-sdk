@@ -238,7 +238,7 @@ def scan_cargo(_: dict) -> list[tuple[str, str]]:
 
 # A declaration npm or cargo accepts that is not an SPDX expression, so the
 # policy has to say what it means. Anything else is checkable and gets checked.
-NIET_SPDX = re.compile(r"^\s*(SEE LICENSE IN|LicenseRef-|UNLICENSED)", re.I)
+NIET_SPDX = re.compile(r"^\s*(SEE LICENSE IN|LicenseRef-|UNLICENSED|PackageLicenseFile:)", re.I)
 
 
 def eigen_verklaring(rel: str, gedeclareerd: str | None, pol: dict) -> tuple[str, str | None]:
@@ -409,19 +409,33 @@ def scan_nuget(_: dict) -> list[tuple[str, str]]:
         rel = p.relative_to(REPO).as_posix()
         if rel not in _.get("own_packages", {}):
             continue
-        m = re.search(r"<PackageLicenseExpression>([^<]+)</PackageLicenseExpression>", p.read_text())
-        oordeel, klacht = eigen_verklaring(rel, m.group(1) if m else None, _)
+        tekst = p.read_text()
+        m = re.search(r"<PackageLicenseExpression>([^<]+)</PackageLicenseExpression>", tekst)
+        if m:
+            gedeclareerd = m.group(1)
+        else:
+            # NuGet's other form. NU5033 forbids both at once, and NU5124 makes the
+            # expression unusable here, so the file IS the declaration -- reading
+            # only the expression element would see nothing and call that "no
+            # licence", which is the opposite of what the manifest says.
+            f = re.search(r"<PackageLicenseFile>([^<]+)</PackageLicenseFile>", tekst)
+            gedeclareerd = f"PackageLicenseFile:{f.group(1)}" if f else None
+        oordeel, klacht = eigen_verklaring(rel, gedeclareerd, _)
         if klacht:
             raise Onleesbaar(klacht)
         uit_eigen.append((f"nuget {p.stem} (package)", oordeel))
     if not projecten:
         raise Onleesbaar("no .csproj found under bindings/dotnet/src")
+    # uit_eigen used to be built and then dropped: the function returned `uit`,
+    # whose first entry was the constant "LicenseRef-PDFluent-Commercial". So the
+    # validation above ran, its verdict went nowhere, and the gate reported a
+    # hardcoded answer -- the same shape as the wheel scanner, and the comment at
+    # the top of this block described a repair that never reached the output.
     uit = []
     for p in projecten:
-        uit.append((f"dotnet {p.stem}", "LicenseRef-PDFluent-Commercial"))
         for m in re.finditer(r'<PackageReference\s+Include="([^"]+)"', p.read_text()):
             uit.append((f"nuget {m.group(1)}", "UNKNOWN (licence unread)"))
-    return uit
+    return uit_eigen + uit
 
 
 def scan_python(_: dict) -> list[tuple[str, str]]:
