@@ -1,7 +1,7 @@
 //! Phase 2A acceptance tests: writing scripts the source document never
 //! contained, via an embedded Type0/Identity-H font.
 //!
-//! These are the cases the [redacted] assessment (13 Aug 2026) named as the
+//! These are the cases an integration assessment (13 Aug 2026) named as the
 //! blocker for using Text Replace as a translation substrate: Polish, Czech,
 //! Russian, Greek and CJK all sit above U+00FF and were unreachable through
 //! either the original-font route or the WinAnsi fallback.

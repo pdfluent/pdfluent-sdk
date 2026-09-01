@@ -41,6 +41,13 @@ allow = [
     # PDFluent proprietary crates (clarified below via [[licenses.clarify]]).
     # These are our own workspace crates, not third-party dependencies.
     "LicenseRef-PDFluent-Commercial",
+    # After LC9 (#221) our own crates declare AGPL-3.0-or-later and offer a
+    # commercial licence beside it. This ref is how the policy names that pair.
+    # It is deliberately NOT "AGPL-3.0-or-later": that must stay absent from
+    # this list, because a third-party AGPL DEPENDENCY would reach the whole
+    # product, and the allow-list is about the graph rather than about what we
+    # ourselves publish.
+    "LicenseRef-PDFluent-Dual",
 
     # Additional permissive licenses present in the resolved dependency tree
     # (confirmed via `cargo license --avoid-build-deps --avoid-dev-deps`).

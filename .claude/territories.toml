@@ -76,6 +76,12 @@ paden = [
   "scripts/ci/repos_staan_zoals_bedoeld.py",
   "crates/xfa-license/**",
   "crates/xfa-license-gen/**",
+  # Claimed 01-09-2026. This file decides what leaves the building, which is the
+  # same question as the licence texts and the publication guards already here.
+  # t3 edited it three times in a day while calling it "not mine" -- unclaimed
+  # means permitted and merely counted, so that was more cautious than the rule
+  # asks. The map is meant to grow towards the friction; this is it catching up.
+  "docs/PUBLIC_TREE.toml",
 ]
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
 

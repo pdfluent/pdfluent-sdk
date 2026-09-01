@@ -883,7 +883,7 @@ expect to re-cut whatever went out ahead of the change.
 
 ## §16 Phase 2A — writing scripts the document never contained
 
-Shipped 2026-08-15. Closes the first of the two blockers the [redacted]
+Shipped 2026-08-15. Closes the first of the two blockers the integration
 assessment (13 Aug 2026) named against using Text Replace as a translation
 substrate: everything above U+00FF was unreachable.
 
@@ -972,7 +972,7 @@ extraction; verify with a reader that did not write the file. Pinned by
 
 ## §17 Phase 2B — width-aware fitting
 
-Shipped 2026-08-15. Closes the second and last blocker the [redacted] assessment
+Shipped 2026-08-15. Closes the second and last blocker the integration assessment
 named: a translation is usually longer than its source, and `FitPolicy::Exact`
 let the surplus run straight over whatever sat next to it.
 

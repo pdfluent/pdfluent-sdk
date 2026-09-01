@@ -46,6 +46,7 @@ from __future__ import annotations
 # that reads nothing must fail rather than report a clean tree.
 import json
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -106,13 +107,123 @@ def toegestaan(expr: str, ok: set[str], zwak: set[str], verboden: set[str],
     return (not slecht), "; ".join(slecht)
 
 
+# --- attribution -------------------------------------------------------------
+
+ATTRIBUTIE = REPO / "THIRD_PARTY_LICENSES.txt"
+
+
+def elections_are_attributed(pol: dict) -> list[str]:
+    """Every recorded election must also be stated in the file we ship.
+
+    An election lives in two places on purpose. `[elections]` in the policy is
+    what CI reads; THIRD_PARTY_LICENSES.txt is what a buyer's lawyer reads, and
+    it is the only one of the two that leaves the building. JNA sat in neither
+    for months, then in the policy alone -- which passes every automated check
+    while the shipped attribution still implies the copyleft half of a dual
+    licence. Recording the choice where nobody reads it is not recording it.
+    """
+    keuzes = pol.get("elections", {})
+    if not keuzes:
+        return []
+    if not ATTRIBUTIE.is_file():
+        return [f"{ATTRIBUTIE.name} is missing, so no election can be stated in it"]
+    regels = ATTRIBUTIE.read_text(encoding="utf-8", errors="ignore").split("\n")
+    uit = []
+    for coord, keuze in keuzes.items():
+        artefact = coord.split(":")[-1]
+        raken = [i for i, r in enumerate(regels) if artefact in r]
+        if not raken:
+            uit.append(f"election for {coord} is in the policy but {artefact} "
+                       f"is absent from {ATTRIBUTIE.name}")
+            continue
+        # Look for the elected licence NEAR the artefact, not anywhere in the
+        # file. `Apache-2.0` occurs 23 times in the Rust crate list, so a
+        # whole-file substring test passes even when JNA's own entry names the
+        # copyleft half -- which is the one mistake this check exists to catch.
+        # VENSTER: the entry plus its explanatory paragraph, measured against
+        # the real file; the two are never further apart than this.
+        VENSTER = 12
+        dichtbij = any(
+            keuze["take"] in r
+            for i in raken
+            for r in regels[max(0, i - 2):i + VENSTER]
+        )
+        if not dichtbij:
+            uit.append(f"{artefact} is attributed in {ATTRIBUTIE.name} but the "
+                       f"elected licence {keuze['take']} is not named within "
+                       f"{VENSTER} lines of it")
+    return uit
+
+
+def embedded_assets_are_attributed() -> list[str]:
+    """Every binary asset we ship inside a crate must be named in the attribution.
+
+    A .icc carries someone else's rights and no manifest declares it, so no
+    ecosystem scanner above will ever see it: cargo metadata lists crates, not
+    the bytes baked into them. ProPhoto-v2-micro.icc sat in the tree for months,
+    correctly attributed in its own crate's README and absent from the file that
+    actually ships -- found only because someone counted the files by hand. This
+    is that count, kept.
+
+    Matched on filename, which is the string a reader greps for. It is a weaker
+    check than a hash, and deliberately: the profiles are upstream artefacts we
+    do not modify, so drift here is a file appearing or disappearing, not one
+    changing underneath us.
+    """
+    if not ATTRIBUTIE.is_file():
+        return [f"{ATTRIBUTIE.name} is missing"]
+    tekst = ATTRIBUTIE.read_text(encoding="utf-8", errors="ignore")
+    uit = []
+    for pad in sorted(REPO.glob("crates/*/assets/*.icc")):
+        if pad.name not in tekst:
+            uit.append(f"{pad.relative_to(REPO)} is shipped but not named in "
+                       f"{ATTRIBUTIE.name}")
+    return uit
+
+
 # --- scanners ---------------------------------------------------------------
+
+def _cargo() -> str:
+    """Where cargo actually is, not where PATH says it is.
+
+    The GitHub runner has rustup installed and does not put ~/.cargo/bin on PATH
+    for this job, so this gate reported `SKIPPED (not a pass): cargo is not on
+    PATH` on every run -- honest, legible, and still a licence policy that had
+    never once been evaluated. Announcing a skip clearly is better than a
+    traceback and is not the same as doing the work.
+
+    rustup's own layout is the answer: $CARGO_HOME/bin/cargo, else
+    ~/.cargo/bin/cargo. If neither exists, fall back to the bare name so the
+    FileNotFoundError below still produces the message rather than a crash.
+    """
+    from shutil import which
+    gevonden = which("cargo")
+    if gevonden:
+        return gevonden
+    for kandidaat in (
+        pathlib.Path(os.environ.get("CARGO_HOME", "")) / "bin" / "cargo",
+        pathlib.Path.home() / ".cargo" / "bin" / "cargo",
+    ):
+        if kandidaat.is_file() and os.access(kandidaat, os.X_OK):
+            return str(kandidaat)
+    return "cargo"
 
 def scan_cargo(_: dict) -> list[tuple[str, str]]:
     """Every third-party crate in the resolved graph, build and dev included."""
-    r = subprocess.run(["cargo", "metadata", "--format-version", "1"],
-                       capture_output=True, text=True, cwd=REPO,
-                       env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+    try:
+        r = subprocess.run([_cargo(), "metadata", "--format-version", "1"],
+                           capture_output=True, text=True, cwd=REPO,
+                           env={k: v for k, v in os.environ.items()
+                                if not k.startswith("GIT_")})
+    except FileNotFoundError as e:
+        # A runner without cargo on PATH used to escape as a bare traceback out
+        # of subprocess, which is a crash and not a verdict: the step went red
+        # with a stack trace that says nothing about licences, and the reader
+        # has no way to tell "769 crates were checked and one is GPL" from
+        # "nothing was checked at all". Both are exit 1. This is the second
+        # kind, and it says so.
+        raise Onleesbaar("SKIPPED (not a pass): cargo is not on PATH, so the "
+                         "resolved crate graph was never read") from e
     if r.returncode != 0:
         raise Onleesbaar(f"cargo metadata failed: {r.stderr[-200:]}")
     m = json.loads(r.stdout)
@@ -124,6 +235,42 @@ def scan_cargo(_: dict) -> list[tuple[str, str]]:
         uit.append((f"{p['name']} {p['version']}", lic or "UNKNOWN (no license field)"))
     return uit
 
+
+# A declaration npm or cargo accepts that is not an SPDX expression, so the
+# policy has to say what it means. Anything else is checkable and gets checked.
+NIET_SPDX = re.compile(r"^\s*(SEE LICENSE IN|LicenseRef-|UNLICENSED)", re.I)
+
+
+def eigen_verklaring(rel: str, gedeclareerd: str | None, pol: dict) -> tuple[str, str | None]:
+    """(the licence to judge, a complaint if the policy and the manifest disagree).
+
+    `own_packages` exists because npm accepts `SEE LICENSE IN LICENSE`, which is
+    not an SPDX expression and cannot be judged against a policy. It used to
+    override the manifest unconditionally -- so when LC9 changed
+    crates/xfa-wasm/Cargo.toml to AGPL-3.0-or-later while the policy still said
+    LicenseRef-PDFluent-Commercial, this gate printed `npm ok` over two files
+    that disagreed with each other. Two sources of truth, and the silent one won.
+
+    Now the policy only speaks where the manifest cannot. Where the manifest
+    gives a real SPDX expression, that is the answer, and a policy entry that
+    contradicts it is itself the finding.
+    """
+    verwacht = pol.get("own_packages", {}).get(rel)
+    if verwacht is None:
+        return (gedeclareerd or "UNKNOWN"), None
+
+    # Judged as our own dual licence, not as the AGPL. The allow-list answers
+    # "may this licence be in our dependency graph", and AGPL is forbidden there
+    # for a good reason: an AGPL DEPENDENCY would reach the whole product. Our
+    # own crate declaring AGPL is the opposite -- it is the thing being licensed
+    # out, and it is exactly what LC9 set out to do. Reading one rule as the
+    # other would have made the licence switch fail its own gate.
+    oordeel = "LicenseRef-PDFluent-Dual"
+    if gedeclareerd and not NIET_SPDX.match(gedeclareerd) and gedeclareerd != verwacht:
+        return oordeel, (f"{rel} declares {gedeclareerd!r}; "
+                         f"docs/LICENSE_POLICY.toml [own_packages] expects "
+                         f"{verwacht!r}. One of the two is out of date")
+    return oordeel, None
 
 def scan_npm(pol: dict) -> list[tuple[str, str]]:
     """Declared runtime dependencies of the npm packages, from tracked sources.
@@ -144,8 +291,10 @@ def scan_npm(pol: dict) -> list[tuple[str, str]]:
         except json.JSONDecodeError as e:
             raise Onleesbaar(f"{pad.relative_to(REPO)}: {e}") from e
         rel = str(pad.relative_to(REPO))
-        eigen = pol.get("own_packages", {}).get(rel)
-        uit.append((rel, eigen or d.get("license", "UNKNOWN")))
+        oordeel, klacht = eigen_verklaring(rel, d.get("license"), pol)
+        if klacht:
+            uit.append((f"{rel} [policy drift]", "UNKNOWN (" + klacht + ")"))
+        uit.append((rel, oordeel))
         for naam, _v in (d.get("dependencies") or {}).items():
             uit.append((f"npm {naam}", "UNKNOWN (runtime dependency, licence unread)"))
 
@@ -154,9 +303,13 @@ def scan_npm(pol: dict) -> list[tuple[str, str]]:
     wasm = REPO / "crates/xfa-wasm/Cargo.toml"
     if not wasm.is_file():
         raise Onleesbaar("crates/xfa-wasm/Cargo.toml is missing")
-    eigen = pol.get("own_packages", {}).get("crates/xfa-wasm/Cargo.toml")
-    uit.append(("crates/xfa-wasm/Cargo.toml (npm: @pdfluent/sdk-wasm)",
-                eigen or "UNKNOWN"))
+    m = re.search(r'^\s*license\s*=\s*"([^"]+)"', wasm.read_text(encoding="utf-8"), re.M)
+    oordeel, klacht = eigen_verklaring("crates/xfa-wasm/Cargo.toml",
+                                       m.group(1) if m else None, pol)
+    if klacht:
+        uit.append(("crates/xfa-wasm/Cargo.toml [policy drift]",
+                    "UNKNOWN (" + klacht + ")"))
+    uit.append(("crates/xfa-wasm/Cargo.toml (npm: @pdfluent/sdk-wasm)", oordeel))
     return uit
 
 
@@ -297,6 +450,10 @@ def main() -> int:
         for s in slecht[:10]:
             print(f"      {s}")
         problemen += [f"{naam}: {s}" for s in slecht]
+
+    for m in elections_are_attributed(pol) + embedded_assets_are_attributed():
+        problemen.append(f"attribution: {m}")
+        print(f"  {'attrib':8} FAIL        {m}")
 
     if not problemen:
         print("[license_gate] every ecosystem satisfies the policy")
