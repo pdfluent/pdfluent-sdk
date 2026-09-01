@@ -61,12 +61,6 @@ REGELS = [
         re.compile(r"\b(MRR|ARR)\b"),
     ),
     (
-        "partner",
-        # Namen van klanten en partners. Eentje per regel, want dit is een lijst
-        # die groeit met de klantenlijst en niet met de taal.
-        re.compile(r"\b(Langbly|Instantly\.ai|SnapTale)\b", re.I),
-    ),
-    (
         "infrastructuur",
         re.compile(
             # `10.x.x.x` stond hier ook. Dat is eruit: een Windows-SDK-versie
@@ -100,9 +94,55 @@ REGELS = [
 ]
 
 
+# --- de lijst die niet in de boom staat --------------------------------------
+#
+# De klant- en partnernamen stonden hier letterlijk, in een bestand dat publiek
+# meegaat. Een verbodslijst die zijn eigen termen publiceert lekt precies wat
+# hij moet tegenhouden, en erger dan de commitboodschappen die hij afving: een
+# boodschap kun je herschrijven, een gepubliceerd bronbestand staat in elke
+# kloon en is niet meer terug te nemen.
+#
+# Ze uitzonderen van de eigen scan -- wat ik eerst deed -- dicht het lek niet,
+# het zet alleen het alarm uit op het ene bestand waar het het meest telt.
+PRIVATE_PAD = os.environ.get(
+    "PDFLUENT_INTERNE_TERMEN",
+    os.path.expanduser("~/.config/pdfluent/interne-termen.txt"),
+)
+
+
+def private_regel():
+    """De partnerregel, of None als de lijst ontbreekt.
+
+    GEEN stille terugval op een ingebouwde lijst: dan zou het bestand dat de
+    namen uit de boom houdt ze bij afwezigheid weer introduceren. Ontbreekt de
+    lijst, dan kan deze regel niet geoordeeld worden, en dat is geen pass.
+    """
+    try:
+        with open(PRIVATE_PAD, encoding="utf-8") as f:
+            termen = [r.strip() for r in f if r.strip() and not r.startswith("#")]
+    except OSError:
+        return None
+    if not termen:
+        return None
+    return ("partner", re.compile(r"\b(" + "|".join(termen) + r")\b", re.I))
+
+
+def alle_regels():
+    """REGELS plus de partnerregel; roept SystemExit op als die niet te laden is."""
+    pr = private_regel()
+    if pr is None:
+        raise SystemExit(
+            "geen_interne_zaken: SKIPPED (not a pass) -- de lijst met klant- en "
+            f"partnernamen ontbreekt op {PRIVATE_PAD}.\nZet PDFLUENT_INTERNE_TERMEN "
+            "naar het pad van die lijst. Zonder haar kan de partnerregel niet "
+            "geoordeeld worden, en groen zou hier betekenen dat niemand gekeken heeft."
+        )
+    return REGELS + [pr]
+
+
 def overtredingen(tekst):
     uit = []
-    for naam, rx in REGELS:
+    for naam, rx in alle_regels():
         for m in rx.finditer(tekst):
             begin = max(0, m.start() - 40)
             uit.append((naam, m.group(0), tekst[begin:m.end() + 30].replace("\n", " ").strip()))
@@ -153,8 +193,14 @@ def uit_git(bereik):
 # scan van nul bestanden is niet te onderscheiden van een schone boom.
 MIN_BESTANDEN = 1
 
-# Dit script draagt de klant- en partnernamen zelf, in REGELS. Het vindt zichzelf
-# dus altijd, en zou zonder deze uitzondering nooit groen kunnen staan.
+
+
+# Dit bestand vindt zijn eigen REGELS: `prijsstrategie` en `MRR` staan er
+# letterlijk in. Dat is een uitzondering van dezelfde vorm als die welke ik
+# hierboven afwijs, en het verschil is materieel: wat hier nog staat is gewone
+# handelswoordenschat, die publiceren lekt niets. Het enige dat wel geheim was
+# -- de klant- en partnernamen -- staat niet meer in de boom maar in
+# PRIVATE_PAD. De uitzondering onderdrukt dus niets dat ertoe doet meer.
 EIGEN_BESTANDEN = {"scripts/ci/geen_interne_zaken.py"}
 
 
@@ -218,6 +264,7 @@ def uit_boom():
         return (len(deel) > 1 and deel[0] == "crates"
                 and _hs.is_geforkt(_hs.CRATES / deel[1]))
 
+    _regels = alle_regels()
     fouten, gelezen = [], 0
     for pad in paden:
         if not _is_tekst(pad):
@@ -226,7 +273,7 @@ def uit_boom():
         geforkt = _in_fork(pad)
         with open(pad, encoding="utf-8", errors="ignore") as f:
             for nr, regel in enumerate(f, 1):
-                for naam, rx in REGELS:
+                for naam, rx in _regels:
                     if geforkt and naam == "commercieel":
                         continue
                     for m in rx.finditer(regel):
