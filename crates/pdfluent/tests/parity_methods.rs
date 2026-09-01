@@ -7,7 +7,7 @@
 //! - `compress` — runs the optimisation stack and returns a report
 //! - `subset_fonts` — returns a FontSubsetReport
 //! - `insert_image` — inserts a JPEG into a page and survives reopen
-//! - `linearize` / `embed_font` — honestly deferred; calls return
+//! - `linearize` — honestly deferred; calls return
 //!   [`Error::MissingDependency`]
 //!
 //! Page-range validation and wasm-stub paths are covered where
@@ -228,7 +228,7 @@ fn insert_image_rejects_out_of_range_page() {
 }
 
 // ---------------------------------------------------------------------------
-// Honest deferreds: linearize / embed_font
+// Honest deferred: linearize. embed_font landed 2026-09-01.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -243,13 +243,20 @@ fn linearize_returns_missing_dependency() {
     );
 }
 
+/// `embed_font` stopped being deferred on 2026-09-01. What it must not do is
+/// accept bytes that are not a font: the failure there is a viewer showing
+/// nothing, long after the call returned Ok.
 #[test]
-fn embed_font_returns_missing_dependency() {
+fn embed_font_rejects_data_that_is_not_a_font() {
     let mut doc = business_doc("tests/fixtures/sample.pdf");
     let err = doc
         .embed_font(b"not-a-real-font", "MyFont")
-        .expect_err("embed_font should be deferred");
-    assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
+        .expect_err("bytes that are not a font must not embed");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("not a readable TrueType or OpenType font"),
+        "the error should say what was wrong with the data, got: {msg}",
+    );
 }
 
 /// Codex #1269 P2 regression guard: `to_images` on a document with zero

@@ -59,6 +59,7 @@ pub mod clock;
 pub mod content_editor;
 #[cfg(feature = "image-insert")]
 pub mod downsample;
+pub mod embed_font;
 pub(crate) mod encoding_utils;
 pub mod encrypt;
 pub mod error;
