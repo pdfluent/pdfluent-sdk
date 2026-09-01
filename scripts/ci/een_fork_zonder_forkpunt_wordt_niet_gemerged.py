@@ -73,6 +73,25 @@ LIJST = WORTEL / "docs" / "UPSTREAM_FORKS.toml"
 MINIMAAL_AANTAL_FORKS = 5
 
 
+def schone_omgeving() -> dict[str, str]:
+    """The caller's environment with every GIT_* variable removed.
+
+    A git hook exports `GIT_DIR` and `GIT_WORK_TREE`, and git then works on the
+    repository they name and ignores `cwd=` entirely. For a read-only command
+    that is merely wrong; for the fetch in the register guards it was
+    destructive, because the refspec is a force-update of every branch.
+
+    Reproduced in a throwaway repository: a branch with an unpushed commit on
+    top of a pushed one lost that commit outright. What hid it is luck -- git
+    refuses to fetch into a branch that is checked out in a worktree and aborts
+    the whole fetch, and one of ours always is, which is why this surfaced in
+    the logs as `SKIPPED (not a pass)` rather than as damage. A detached HEAD
+    has no such protection, and detached HEAD is what `actions/checkout`
+    produces and what half of our worktrees are.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def registerregels_die_bewogen() -> set[str]:
     """Crates whose `gelijk_met` or `forkpunt` this branch changes.
 
@@ -113,13 +132,15 @@ def registerregels_die_bewogen() -> set[str]:
     for ref in ("github/master", "origin/master", "master"):
         basis = subprocess.run(
             ["/usr/bin/git", "merge-base", "HEAD", ref],
-            cwd=WORTEL, capture_output=True, text=True, check=False,
+            cwd=WORTEL, capture_output=True, text=True, env=schone_omgeving(),
+        check=False,
         )
         if basis.returncode != 0:
             continue
         eerder = subprocess.run(
             ["/usr/bin/git", "show", f"{basis.stdout.strip()}:docs/UPSTREAM_FORKS.toml"],
-            cwd=WORTEL, capture_output=True, text=True, check=False,
+            cwd=WORTEL, capture_output=True, text=True, env=schone_omgeving(),
+        check=False,
         )
         if eerder.returncode != 0:
             continue
