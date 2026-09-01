@@ -331,6 +331,33 @@ def main() -> int:
                 f"reader cannot see why: {oordeel}"
             )
 
+        # The mirror image: a *global* rewrite that the probe would see and the
+        # fetch would not. The probe must run in the same environment as the
+        # fetch, or it reports on a repository the fetch never contacts.
+        spiegel = tmp / "mirror-cache.git"
+        run("init", "-q", "--bare", str(spiegel), cwd=tmp)
+        run("remote", "add", "origin", "https://mirror.invalid/hayro.git", cwd=spiegel)
+        globaal = tmp / "home-global"
+        globaal.mkdir()
+        (globaal / ".gitconfig").write_text(
+            f'[url "{HAYRO}"]\n\tinsteadOf = https://mirror.invalid/hayro.git\n'
+        )
+        vorige_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(globaal)
+        try:
+            oordeel_spiegel = reg.de_fetch_gaat_naar_de_cache(spiegel, HAYRO)
+        finally:
+            if vorige_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = vorige_home
+        if oordeel_spiegel is None:
+            failures.append(
+                "a cache whose origin is a mirror was accepted because a global "
+                "insteadOf made the probe report the canonical URL -- the fetch "
+                "seals that config away and would have taken the mirror"
+            )
+
         # And somewhere that *is* a hayro clone by name but not by origin.
         impostor = tmp / "hayro-lookalike"
         run("init", "-q", str(impostor), cwd=tmp)
