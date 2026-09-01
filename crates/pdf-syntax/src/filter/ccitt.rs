@@ -222,7 +222,6 @@ pub(crate) fn decode(
 mod upstream_hardening_tests {
     use super::*;
     use crate::object::FromBytes;
-    use crate::reader::{Reader, ReaderContext, ReaderExt};
 
     /// One row of eight white pixels, Group 3 one-dimensional.
     ///
