@@ -78,6 +78,19 @@ for wf in tabel["workflows"]:
         if "branch=" not in url:
             n = wf.get("_green_anyref", wf["_green_all"]) if groen else wf.get("_runs_anyref", wf["_runs_all"])
             print(json.dumps({"total_count": n, "workflow_runs": []})); raise SystemExit(0)
+        # Per-conclusion, because the guard must add up only the conclusions
+        # that judged something. A cancellation is not one of them.
+        if "status=cancelled" in url:
+            print(json.dumps({"total_count": wf.get("_cancelled", 0), "workflow_runs": []}))
+            raise SystemExit(0)
+        if "status=completed" in url:
+            n = wf["_runs_in"] + wf.get("_cancelled", 0)
+            print(json.dumps({"total_count": n, "workflow_runs": []})); raise SystemExit(0)
+        if "status=failure" in url:
+            n = max(0, wf["_runs_in"] - wf["_green_in"])
+            print(json.dumps({"total_count": n, "workflow_runs": []})); raise SystemExit(0)
+        if "status=timed_out" in url:
+            print(json.dumps({"total_count": 0, "workflow_runs": []})); raise SystemExit(0)
         n = wf["_green_in"] if groen else wf["_runs_in"]
         if not binnen:
             n = wf["_green_all"] if groen else wf["_runs_all"]
@@ -135,7 +148,7 @@ def draai(map_: pathlib.Path) -> subprocess.CompletedProcess[str]:
 
 
 def wf(naam, runs_in, green_in, runs_all=None, green_all=None, state="active",
-       runs_anyref=None, green_anyref=None):
+       runs_anyref=None, green_anyref=None, cancelled=0):
     d = {"id": abs(hash(naam)) % 100000, "path": f".github/workflows/{naam}",
          "state": state, "_runs_in": runs_in, "_green_in": green_in,
          "_runs_all": runs_all if runs_all is not None else runs_in,
@@ -144,6 +157,7 @@ def wf(naam, runs_in, green_in, runs_all=None, green_all=None, state="active",
         d["_runs_anyref"] = runs_anyref
     if green_anyref is not None:
         d["_green_anyref"] = green_anyref
+    d["_cancelled"] = cancelled
     return d
 
 
@@ -185,6 +199,13 @@ GEVALLEN = [
     # first version asked for BEKEND minus everything currently dead, so a
     # commit touching a known-dead workflow demanded its own baseline entry be
     # deleted -- which is how a baseline quietly empties itself.
+    # Cancellations judged nothing. Four of them plus one real failure is one
+    # run's worth of evidence, not five -- and on a repository with one runner
+    # and `cancel-in-progress`, bursts of cancellations are the normal case.
+    ("four cancellations and one failure is too few to judge",
+     [wf("druk.yml", 1, 0, cancelled=4)], False),
+    ("three real failures still count",
+     [wf("echt.yml", 3, 0, cancelled=0)], True),
     ("a BEKEND entry with too few runs is not a recovery",
      [wf(BEKEND[0], 0, 0)] + [wf(b, 40, 0) for b in BEKEND[1:]], False),
     ("a BEKEND entry with one red run is not a recovery either",
