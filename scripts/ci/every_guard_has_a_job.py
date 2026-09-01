@@ -92,6 +92,41 @@ REASONS = {"corpus", "runner", "covered-elsewhere", "credentials"}
 ALLOWED: dict[str, str] = {
     "every_guard_has_a_job.py": "this file itself; its own job does name it",
 
+    # ---- publication guards, split onto master ahead of their wiring (#222) ----
+    # These five arrived from t3/1543-resolve so they can be read and reviewed on
+    # master. Two of them cannot be wired yet, and the reason is not scheduling:
+    #
+    # PUBLIC_TREE.toml declares docs/decisions/*.md internal, and those documents
+    # only exist on t3/215-doc-register (#1543). Deleting the entries here to get
+    # a green would be worse than the wait -- measured with `git merge-file`
+    # (master without the line, base and branch with it): the protective line
+    # disappears silently on the merge, and the documents then arrive with no
+    # [internal] entry at all and ship. So the entries stay, the registers stay
+    # red about files that are not here yet, and the jobs go on after #1543.
+    "every_document_is_registered.py": (
+        "register gate; its PUBLIC_TREE entries name documents that land with "
+        "#1543, and removing them to go green would silently drop the protection "
+        "at merge time"
+    ),
+    "corpus_herkomst.py": (
+        "provenance register read by every_document_is_registered; wired with it "
+        "after #1543"
+    ),
+    # The other three measure the tree as it stands and could be wired today; they
+    # are held back only so the five land and are reviewed as one set.
+    "geen_interne_zaken.py": "wired with the other publication guards after #1543",
+    "internal_stays_internal.py": "wired with the other publication guards after #1543",
+    "simulate_public_tree.py": "wired with the other publication guards after #1543",
+    "herkomsttabel.py": (
+        "generates docs/HERKOMST.md and is imported by header_sweep for the list "
+        "of forked crates; wired with the set after #1543"
+    ),
+    "header_sweep.py": (
+        "red on master on purpose: 18 of 630 own source files carry the old "
+        "proprietary header and the rest carry none, which the flip (#257) and "
+        "the header commit on #1543 fix together"
+    ),
+
     # Deliberately local: they exist to do something *before* the pipeline.
     "local_ci_gate.sh": (
         "runs the pipeline gates locally before a push; a job for this would "
