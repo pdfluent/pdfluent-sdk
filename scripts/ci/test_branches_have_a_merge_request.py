@@ -17,6 +17,9 @@ about, so this file refuses to let its own guard have it.
 """
 
 from __future__ import annotations
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
+from fixture_env import sealed_env
 
 import os
 import pathlib
@@ -26,14 +29,12 @@ import sys
 import tempfile
 
 def schone_omgeving() -> dict[str, str]:
-    """The caller's environment with every GIT_* variable removed.
-
-    A pre-push hook exports GIT_DIR and GIT_INDEX_FILE, and a subprocess
-    inherits them: a git command meant for a scratch directory then operates on
-    the real repository. That put `core.bare = true` on this one and stopped
-    thirty worktrees -- damage outside the script, not a wrong answer inside it.
-    """
-    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    """The caller's environment with every GIT_* variable removed."""
+    # Sealed rather than merely GIT_*-stripped: dropping GIT_* stops a
+    # fixture READING the real repository, not WRITING to the real config.
+    # A fixture's `git config user.email t@t` reached a real worktree that
+    # way and stamped a test identity onto every later rebase there. (#297)
+    return sealed_env()
 
 
 BEWAKER = pathlib.Path(__file__).with_name("branches_have_a_merge_request.py")

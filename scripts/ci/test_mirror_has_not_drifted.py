@@ -18,6 +18,9 @@ mirroring in the agreed direction would destroy it (#265, #231).
 """
 
 from __future__ import annotations
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
+from fixture_env import sealed_env
 
 import os
 import pathlib
@@ -32,7 +35,8 @@ BEWAKER = pathlib.Path(__file__).with_name("mirror_has_not_drifted.py")
 # a subprocess into a scratch repository -- where `git add` then writes into the
 # real repository's index and exits 128. The local gate runs this from the
 # pre-push hook, so it failed there and nowhere else.
-SCHOON = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+# Sealed, not merely GIT_*-stripped: see fixture_env.py. (#297)
+SCHOON = sealed_env()
 
 
 def git(map_: pathlib.Path, *args: str) -> None:
