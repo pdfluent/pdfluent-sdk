@@ -25,7 +25,7 @@ Sealing means three things, and all three matter:
 Use it as `env=sealed_env()` on every git call in a fixture.
 """
 from __future__ import annotations
-import atexit, os, tempfile
+import atexit, os, pathlib, subprocess, tempfile
 
 _EMPTY: str | None = None
 
@@ -41,11 +41,24 @@ def _empty_config() -> str:
     return _EMPTY
 
 
-def sealed_env(identity: bool = False, **extra: str) -> dict[str, str]:
+def sealed_env(identity: bool = False, cwd: str | os.PathLike | None = None,
+               **extra: str) -> dict[str, str]:
     """The caller's environment with git's own inputs removed and pinned."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = _empty_config()
+    # Global and system config sealed is not the whole surface. A fixture that
+    # forgets cwd, or points it at a real checkout, makes git DISCOVER that
+    # repository -- and `git config user.email …` then writes its .git/config.
+    # Both lints read the call and approve it. GIT_CEILING_DIRECTORIES stops the
+    # upward search at the sandbox root. (codex, #1647)
+    if cwd is not None:
+        env["GIT_CEILING_DIRECTORIES"] = str(pathlib.Path(cwd).resolve().parent)
+    # The child guard in test_a_gate_that_never_went_green.py picks its live
+    # urllib route when a token is present instead of the fake `gh` the fixture
+    # installs. The helper it replaced stripped these on purpose.
+    for tok in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"):
+        env.pop(tok, None)
     if identity:
         env.update({"GIT_AUTHOR_NAME": "fixture", "GIT_AUTHOR_EMAIL": "fixture@invalid",
                     "GIT_COMMITTER_NAME": "fixture", "GIT_COMMITTER_EMAIL": "fixture@invalid"})
@@ -63,3 +76,25 @@ def sealed_env(identity: bool = False, **extra: str) -> dict[str, str]:
     # environment rather than the config.
     env.update(extra)
     return env
+
+
+def inside_the_sandbox(cwd: str | os.PathLike) -> None:
+    """Refuse before git writes anything outside `cwd`.
+
+    A lint reads code; this runs. If the repository git would act on is not
+    under `cwd`, the fixture is about to configure or commit somewhere real, and
+    the honest moment to stop is before the first write, not after the gate
+    notices the identity in a later commit. (codex, #1647)
+    """
+    r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=str(cwd),
+                       capture_output=True, text=True, env=sealed_env(cwd=cwd))
+    if r.returncode != 0:
+        return  # no repository here yet: `git init` is about to make one
+    top = pathlib.Path(r.stdout.strip()).resolve()
+    root = pathlib.Path(cwd).resolve()
+    if root != top and root not in top.parents and top not in root.parents:
+        raise RuntimeError(
+            f"a fixture in {root} would act on the repository at {top}, which is "
+            "outside its sandbox. Pass cwd= pointing inside a temporary "
+            "directory; sealing the config surface does not protect a repository "
+            "git discovers by walking up.")
