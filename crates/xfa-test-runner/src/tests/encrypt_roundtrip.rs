@@ -188,7 +188,10 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
     // no longer works because the reader's encrypted loading path requires the
     // password up-front to populate the object graph.
     let dec_doc = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        lopdf::Document::load_mem_with_password(&enc_bytes, "testuser")
+        lopdf::Document::load_mem_with_options(
+            &enc_bytes,
+            lopdf::LoadOptions::with_password("testuser"),
+        )
     })) {
         Ok(Ok(d)) => d,
         Ok(Err(e)) => {
