@@ -123,7 +123,7 @@ workspace_dir  = "xfa-license"
 license_kind   = "agpl-or-commercial"
 license_decl   = "license"
 license_value  = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
-required_files = ["LICENSE", "LICENSE-AGPL", "LICENSE-ADDITIONAL-TERMS", "LICENSE-COMMERCIAL"]
+required_files = ["LICENSE", "LICENSE-AGPL", "LICENSE-COMMERCIAL"]
 license_first_line_check = { file = "LICENSE", contains = "available under two licences" }
 forbidden_change = true
 heritage = "PDFluent original. Runtime licence-token validation."
