@@ -36,6 +36,10 @@ from pathlib import Path
 WORTEL = Path(__file__).resolve().parent.parent.parent
 MAP = WORTEL / "scripts" / "ci"
 
+# Op de vloer gezet op het werkelijke aantal, niet eronder: een vloer onder het
+# echte aantal tolereert precies de krimp waarvoor hij bedoeld is.
+MINIMAAL_GIT_SCRIPTS = 10  # FLOOR
+
 # Een aanroep van git via subprocess.
 # Ook met een absoluut pad: `["/usr/bin/git", ...]` is dezelfde aanroep en
 # dezelfde schade. the_fork_register_is_verifiable.py schreef het zo en kwam
@@ -95,6 +99,21 @@ def main() -> int:
                 f"{pad.name}:{regel} roept git aan zonder `env=`, dus met de "
                 f"GIT_*-variabelen van de aanroeper"
             )
+
+    # Een schone uitslag over nul aanroepen is geen schone uitslag. De vloer op
+    # regel 78 telt gevonden BESTANDEN, niet aanroepen: vijf .py-bestanden die
+    # geen van alle git aanroepen kwamen er als "0 script(s) die git aanroepen,
+    # alle met een schone omgeving" en exit 0 doorheen. Dat is een SKIPPED die
+    # zich als pass voordoet, in de poort die daar juist tegen is. (#1642)
+    if gecontroleerd < MINIMAAL_GIT_SCRIPTS:
+        print(
+            f"[geen-echte-repo] FATAAL: maar {gecontroleerd} script(s) roepen git "
+            f"aan; de vloer is {MINIMAAL_GIT_SCRIPTS}. Deze lint heeft dan bijna "
+            "niets bekeken en mag geen schoon resultaat melden -- draai hem vanuit "
+            "de repository.",
+            file=sys.stderr,
+        )
+        return 2
 
     print(f"[geen-echte-repo] {gecontroleerd} script(s) die git aanroepen, alle met een schone omgeving")
 
