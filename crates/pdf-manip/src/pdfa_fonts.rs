@@ -20896,7 +20896,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         None => cmap_has_glyph(code),
                     };
 
-                    if !has_glyph && !ruimte_codes.contains(&code) {
+                    if !has_glyph {
                         invalid_codes.insert(code);
                     }
                 }
@@ -20948,7 +20948,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         has_glyph = enc_map.get(&code).map(|&gid| gid != 0).unwrap_or(false);
                     }
 
-                    if !has_glyph && !ruimte_codes.contains(&code) {
+                    if !has_glyph {
                         invalid_codes.insert(code);
                     }
                 }
@@ -20983,9 +20983,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         ".notdef".to_string()
                     };
 
-                    if (glyph_name == ".notdef" || !available_glyphs.contains_key(&glyph_name))
-                        && !ruimte_codes.contains(&code)
-                    {
+                    if glyph_name == ".notdef" || !available_glyphs.contains_key(&glyph_name) {
                         invalid_codes.insert(code);
                     }
                 }
@@ -21008,20 +21006,26 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
             // is not defined by the font dictionary and should be stripped.
             let first_bound = first_char.min(256);
             for code in 0..first_bound {
-                if !ruimte_codes.contains(&(code as u8)) {
-                    invalid_codes.insert(code as u8);
-                }
+                invalid_codes.insert(code as u8);
             }
             let last_bound = last_char.min(255);
             if last_bound < 255 {
                 for code in (last_bound + 1)..=255 {
-                    if !ruimte_codes.contains(&(code as u8)) {
-                        invalid_codes.insert(code as u8);
-                    }
+                    invalid_codes.insert(code as u8);
                 }
             }
 
             if !invalid_codes.is_empty() {
+                // Filtered here rather than at each site that condemns a code.
+                //
+                // The first version guarded the glyph checks and the range
+                // loops and missed `invalid_simple_codes_from_widths`, which
+                // only runs when no font-program parser recognised the embedded
+                // program -- so on that path a space code with a zero width was
+                // still overwritten with 0x20, which is the corruption this
+                // whole change exists to prevent. Filtering the union cannot
+                // miss a route, including one added later.
+                invalid_codes.retain(|code| !ruimte_codes.contains(code));
                 notdef_fonts.insert(res_name.clone(), invalid_codes);
             }
         }
@@ -26914,6 +26918,65 @@ mod symbolic_subset_tests {
 
         assert_eq!(n, 0, "no font may be condemned, everything resolves");
         assert_eq!(fx::page_content(&doc), b"BT /F1 12 Tf (AB) Tj ET");
+    }
+
+    /// The widths fallback must respect the font's own space codes too (#210).
+    ///
+    /// When no font-program parser recognises the embedded program,
+    /// `invalid_simple_codes_from_widths` supplies the answer instead — and its
+    /// result was unioned in *after* the space codes were filtered out, so on
+    /// that path a code the font's ToUnicode calls a space, carrying a zero
+    /// width, was still condemned and overwritten with `0x20`. That is the
+    /// corruption this whole change prevents, arriving by the one route the
+    /// first version did not cover.
+    ///
+    /// The filter is applied to the union for that reason: a route added later
+    /// cannot miss it.
+    #[test]
+    fn the_widths_fallback_respects_the_fonts_own_space_code() {
+        // Not a font program any parser will accept, so `program_parsed` stays
+        // false and the widths route is the one that answers.
+        let mut doc = fx::make_symbolic_subset_doc(b"not a font program".to_vec(), vec![0, 0]);
+
+        // The font says code 65 is a space, and gives it a zero width — exactly
+        // the combination the fallback condemns.
+        let tounicode = lopdf::Stream::new(
+            lopdf::dictionary! {},
+            b"/CIDInit /ProcSet findresource begin\n\
+              1 begincmap\n1 beginbfchar\n<41> <0020>\nendbfchar\nendcmap\nend"
+                .to_vec(),
+        );
+        let tu_id = doc.add_object(Object::Stream(tounicode));
+        let font_id = *doc
+            .objects
+            .iter()
+            .find(|(_, o)| {
+                matches!(o, Object::Dictionary(d) if d.get(b"Type").ok()
+                == Some(&Object::Name(b"Font".to_vec())))
+            })
+            .map(|(id, _)| id)
+            .expect("the fixture has a font");
+        if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
+            font.set("ToUnicode", Object::Reference(tu_id));
+        }
+
+        fix_symbolic_font_notdef_streams(&mut doc);
+
+        // Only the space code is claimed here. Code 66 has a zero width and no
+        // ToUnicode entry, so the fallback is right to condemn it; asserting
+        // that both survive would be asserting the fallback does nothing.
+        let content = fx::page_content(&doc);
+        let start = content
+            .iter()
+            .position(|b| *b == b'(')
+            .expect("a shown string");
+        assert_eq!(
+            content[start + 1],
+            0x41,
+            "code 0x41 is this font's space by its own ToUnicode and must survive \
+             the widths fallback; it was overwritten with {:#04x}",
+            content[start + 1]
+        );
     }
 
     /// A parseable program with zero declared widths is not "inconclusive":
