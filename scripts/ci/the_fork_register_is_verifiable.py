@@ -182,12 +182,28 @@ def de_fetch_gaat_naar_de_cache(clone, upstream_url: str) -> str | None:
     # entry: the same loop refreshes the lopdf cache, whose legitimate origin is
     # `J-F-Liu/lopdf.git`, so a hardcoded "hayro" refused it and left the next
     # lopdf fork-point update unverifiable.
-    herkomst = git("config", "--get", "remote.origin.url", cwd=clone)
-    url = herkomst.stdout.strip()
-    if not url or _zelfde_upstream(url, upstream_url) is False:
+    # Any remote may name the upstream, not `origin` specifically.
+    #
+    # A remote's *name* is a local preference, not a property of the repository:
+    # the ordinary fork layout is `origin` = the developer's fork and `upstream`
+    # = the real project, and insisting on `origin` refused a checkout that
+    # holds exactly the history this guard needs.
+    #
+    # A local mirror with no remote naming the upstream is still refused, and
+    # that is deliberate: this guard verifies our fork points against upstream,
+    # and a repository that cannot say it is upstream is not something to verify
+    # against silently. The refusal says which URLs were seen.
+    remotes = git("remote", "-v", cwd=clone)
+    urls = sorted({
+        regel.split()[1]
+        for regel in remotes.stdout.splitlines()
+        if len(regel.split()) >= 2
+    })
+    if not any(_zelfde_upstream(u, upstream_url) for u in urls):
+        gezien = ", ".join(urls) if urls else "<no remotes>"
         return (
-            f"refusing to fetch: {clone} has origin {url or '<none>'}, not the "
-            f"{upstream_url} this cache is for."
+            f"refusing to fetch: no remote of {clone} names {upstream_url} "
+            f"(saw: {gezien}), so this is not the cache it is for."
         )
     return None
 

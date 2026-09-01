@@ -280,6 +280,34 @@ def main() -> int:
             if reg.de_fetch_gaat_naar_de_cache(alt, reg.UPSTREAMS["hayro"][0]) is not None:
                 failures.append(f"origin spelled {spelling} was refused")
 
+        # The ordinary fork layout: `origin` is the developer's fork and
+        # `upstream` is the real project. A remote's name is a local preference,
+        # so insisting on `origin` refused a checkout holding exactly the
+        # history this guard needs.
+        fork = tmp / "fork-layout"
+        run("init", "-q", str(fork), cwd=tmp)
+        run("remote", "add", "origin", "https://github.com/someone/hayro-fork.git", cwd=fork)
+        run("remote", "add", "upstream", HAYRO, cwd=fork)
+        if reg.de_fetch_gaat_naar_de_cache(fork, HAYRO) is not None:
+            failures.append(
+                "a fork layout (origin=fork, upstream=hayro) was refused, though a "
+                "remote does name the registered upstream"
+            )
+
+        # A checkout with only a fork remote is still refused, deliberately, and
+        # the refusal has to say what it saw rather than fail blankly.
+        alleen_fork = tmp / "fork-only"
+        run("init", "-q", str(alleen_fork), cwd=tmp)
+        run("remote", "add", "origin", "https://github.com/someone/hayro-fork.git", cwd=alleen_fork)
+        verdict = reg.de_fetch_gaat_naar_de_cache(alleen_fork, HAYRO)
+        if verdict is None:
+            failures.append("a checkout with no remote naming the upstream was accepted")
+        elif "hayro-fork" not in verdict:
+            failures.append(
+                "the refusal does not name the remotes it saw, so the reader cannot "
+                f"tell why: {verdict}"
+            )
+
         # And somewhere that *is* a hayro clone by name but not by origin.
         impostor = tmp / "hayro-lookalike"
         run("init", "-q", str(impostor), cwd=tmp)
@@ -353,6 +381,30 @@ def main() -> int:
                         f"{naam} reaches the network with the unsealed helper "
                         f"({handeling}...), so a redirecting config applies to it"
                     )
+
+    # --- a change that does not touch the register needs no clone ---------
+    #
+    # This guard blocks every push. Requiring an upstream clone before asking
+    # whether the register changed put a network fetch, and a possible exit 3,
+    # on the critical path of work that has nothing to do with fork points.
+    with tempfile.TemporaryDirectory() as raw:
+        leeg = Path(raw) / "cache-home"
+        omgeving = dict(schone_omgeving(), XDG_CACHE_HOME=str(leeg))
+        omgeving.pop("HAYRO_CLONE", None)
+        uitkomst = subprocess.run(
+            [sys.executable, str(ROOT / "scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py")],
+            cwd=ROOT, capture_output=True, text=True, check=False, env=omgeving,
+        )
+        if uitkomst.returncode != 0:
+            failures.append(
+                "a branch that does not touch the register did not pass cleanly: "
+                f"exit {uitkomst.returncode}, {uitkomst.stderr.strip()[:160]}"
+            )
+        if (leeg / "pdfluent").exists():
+            failures.append(
+                "a branch that does not touch the register still built an upstream "
+                "cache -- the clone is being demanded before the question is asked"
+            )
 
     if failures:
         print("[registerwachters] the guards can reach the real repository:\n", file=sys.stderr)
