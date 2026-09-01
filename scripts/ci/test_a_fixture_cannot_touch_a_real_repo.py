@@ -7,7 +7,7 @@ untouched afterwards. A lint that only reads code would pass a helper that sets
 the right variable names and the wrong values.
 """
 from __future__ import annotations
-import pathlib, shutil, subprocess, sys, tempfile
+import os, pathlib, shutil, subprocess, sys, tempfile
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 CI = REPO / "scripts" / "ci"
@@ -94,8 +94,13 @@ expect("too few files to scan is FATAL, not a pass", r.returncode == 2,
        f"exit={r.returncode}")
 
 # Not source inspection: does the seal actually hold?
+# These two READ the machine's real global config on purpose -- that is the
+# observation. env= is passed explicitly, as os.environ, so the intent is stated
+# rather than inherited: this is the one place in the file that must NOT be
+# sealed, and a bare call would look like the oversight the lint hunts for.
+REAL = dict(os.environ)
 before = subprocess.run(["git", "config", "--global", "--get", "user.email"],
-                        capture_output=True, text=True).stdout.strip()
+                        capture_output=True, text=True, env=REAL).stdout.strip()
 with tempfile.TemporaryDirectory() as d:
     env = sealed_env()
     subprocess.run(["git", "init", "-q", "-b", "master", "."], cwd=d, env=env,
@@ -103,7 +108,7 @@ with tempfile.TemporaryDirectory() as d:
     subprocess.run(["git", "config", "--global", "user.email", "leaked@test"],
                    cwd=d, env=env, capture_output=True)
 after = subprocess.run(["git", "config", "--global", "--get", "user.email"],
-                       capture_output=True, text=True).stdout.strip()
+                       capture_output=True, text=True, env=REAL).stdout.strip()
 expect("a sealed fixture cannot write the real global config",
        before == after and after != "leaked@test", f"{before!r} -> {after!r}")
 
