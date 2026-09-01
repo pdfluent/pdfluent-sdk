@@ -98,6 +98,25 @@ A related trap in the same family: `grep -q` at the end of a pipeline under
 so the check silently reports "no match" exactly when there are many matches.
 Count with `grep -c` and compare, or drop `pipefail` for that line.
 
+## A measurement has a timestamp
+
+"Not pushed", "still failing", "nobody owns it" are readings, not properties. On
+01-09-2026 I reported a colleague's fix as unpushed, correctly; twenty minutes
+later I repeated it, and by then they had pushed. The first statement was true
+and the second was an assertion about something I no longer knew.
+
+The same drift has three shapes, and all three cost time today:
+
+- **local is not the branch** — a commit that failed silently leaves your
+  working tree right and the branch wrong
+- **the branch is not master** — `git rev-parse` matching means nothing if both
+  sides are stale
+- **then is not now** — a finding you made an hour ago is not a finding you have
+
+Re-measure before repeating, especially when the claim is about somebody else's
+work. `git fetch` costs a second; being the reason a colleague is thought to be
+blocked costs them the afternoon.
+
 ## Reporting back
 
 State what you verified rather than what you did. Include every mutation and its
