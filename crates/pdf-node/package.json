@@ -62,7 +62,7 @@
     "napi",
     "pdfluent"
   ],
-  "license": "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial",
+  "license": "SEE LICENSE IN LICENSE",
   "licenseUrl": "https://pdfluent.com/terms",
   "repository": {
     "type": "git",
