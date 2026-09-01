@@ -49,6 +49,13 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # Incremental state is a cache that only pays back across edits by a person,
+  # and CI never edits twice. What it does instead is take up room and break:
+  # the 25-08 failure was `failed to move dependency graph from
+  # dep-graph.part.bin`, half-written state from a job that had been killed, and
+  # it read as a broken crate. Measured 31-08-2026: 23 GB of incremental across
+  # four checkouts, on a machine whose real headroom was 9.4 GB. (#264)
+  CARGO_INCREMENTAL: 0
 
 jobs:
   orchestration-guard:
@@ -85,6 +92,28 @@ jobs:
       - name: One owner per path, and branches stay inside their own
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/territories_do_not_overlap.py
+      # Only GitLab ran these, and GitLab is the mirror -- a red job there stops
+      # nothing. The machine both pipelines share is the one whose build
+      # directory keeps going away, so the verdict drifted unwatched on the side
+      # that actually blocks a merge. (#264)
+      - name: A mount, a dead disk and a rights problem are told apart
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_desktop_env.sh
+      - name: A damaged shared build directory heals instead of failing the next job
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/test_cargo_target_health.sh
+      - name: Every job building into the shared directory checks it first
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/shared_build_dir_fails_loudly.py
+      # The guard before its own test, deliberately: a scanner that has stopped
+      # recognising jobs reports a clean pipeline in the same words as a clean
+      # pipeline, so the test has to be able to fail on its own.
+      - name: The persistent-build guard still bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_persistent_builds_check_their_build_dir.py
+      - name: Every build on the persistent runner checks its build directory
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/persistent_builds_check_their_build_dir.py
       - name: Orchestration stays on hosted runners
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/orchestration_stays_hosted.py
