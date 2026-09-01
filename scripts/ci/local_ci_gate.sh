@@ -117,6 +117,15 @@ run builddir  python3 scripts/ci/shared_build_dir_fails_loudly.py
 run builddir2 python3 scripts/ci/test_persistent_builds_check_their_build_dir.py
 run builddir3 python3 scripts/ci/persistent_builds_check_their_build_dir.py
 run diskguard python3 scripts/ci/test_disk_headroom.py
+# And the identity on the commits this branch adds. The pre-commit hook refuses
+# one before it exists; this catches what a `--no-verify`, or a clone without
+# core.hooksPath set, let through -- before it reaches a remote.
+run identtest python3 scripts/ci/test_commits_use_the_noreply_alias.py
+run identity  python3 scripts/ci/commits_use_the_noreply_alias.py
+# And the same address in the tree rather than in a commit field, which is the
+# half a guard on author/committer cannot see.
+run treetest  python3 scripts/ci/test_no_personal_address_in_the_tree.py
+run treeaddr  python3 scripts/ci/no_personal_address_in_the_tree.py
 # Advisory, never blocking. It reports on live machines -- a queue, a busy
 # runner, a server someone is still using -- and none of that is a reason to
 # refuse a commit. The three-hourly run is where its exit code matters.

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Innovation Trigger B.V. All rights reserved.
+#
+# Refuse a commit that would publish an address which is not a noreply alias.
+#
+# A commit carries the author and committer address into every clone and into
+# the public API of the repository, where reading it needs no login. This hook
+# refuses rather than repairing: the repair is a one-line config change the
+# writer has to make on purpose, and a hook that silently rewrote someone's
+# identity would be worse than the problem.
+#
+# A HOOK IS SHARED, A BRANCH IS NOT.
+#
+# `core.hooksPath` points at `.githooks/`, which is resolved per worktree, so
+# this file is in force on every branch the moment it lands on one -- including
+# branches that predate the guard script it calls. Landing a hook without the
+# check below broke every commit in the other worktrees once already, and the
+# answer people reach for is `--no-verify`, which switches off every hook rather
+# than the one that is missing.
+#
+# So: no script on this branch, no check -- said out loud, never silently.
+set -euo pipefail
+WORTEL="$(git rev-parse --show-toplevel)"
+
+BEWAKER="$WORTEL/scripts/ci/commits_use_the_noreply_alias.py"
+if [ -f "$BEWAKER" ]; then
+    python3 "$BEWAKER" --pending
+else
+    echo "SKIPPED (not a pass): $BEWAKER does not exist on this branch" >&2
+fi
