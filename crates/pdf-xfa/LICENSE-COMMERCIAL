@@ -12,9 +12,9 @@ those exist. This text describes what the software actually is.
 1. Why this licence exists
 --------------------------
 
-PDFluent is published under the GNU AGPLv3 (LICENSE-AGPL) with an additional
-That is the default, and it is the
-complete product: no feature is withheld, no key is required, nothing expires.
+PDFluent is published under the GNU AGPLv3 (LICENSE-AGPL). That is the
+default, and it is the complete product: no feature is withheld, no key is
+required, nothing expires.
 
 The AGPL asks something in return. If you convey the software, or let users
 interact with a modified version over a network, you must offer those users the
