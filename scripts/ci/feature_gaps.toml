@@ -1,0 +1,99 @@
+# Feature-gated tests that deliberately do not run in CI, with the reason.
+#
+# This lived as a dict inside scripts/ci/test_feature_gated_tests_run.py, which
+# is t2 territory. Declaring a gap therefore meant editing a t2 file, and on
+# 01-09-2026 T1 deleted a feature flag rather than declare it -- the guard was
+# right and its only escape hatch was behind someone else's door.
+#
+# So the list moved out here and this path is excluded from t2 in
+# .claude/territories.toml, which makes it unclaimed and free to edit. Adding
+# a feature flag no longer requires entering another terminal's ground.
+#
+# A name here without a reason should not exist, and an empty file is the goal.
+# The guard checks both directions: a pair that starts running in CI and stays
+# listed here fails too, so this cannot quietly become a list of excuses.
+
+[[gap]]
+pakket  = "pdf-annot"
+feature = "write"
+waarom  = "#285 -- 38 tests pass locally, no job runs them"
+
+[[gap]]
+pakket  = "pdf-engine"
+feature = "ocr-aws"
+waarom  = "#285 -- cloud OCR, no job enables it"
+
+[[gap]]
+pakket  = "pdf-engine"
+feature = "ocr-azure"
+waarom  = "#285 -- cloud OCR, no job enables it"
+
+[[gap]]
+pakket  = "pdf-engine"
+feature = "ocr-google"
+waarom  = "#285 -- cloud OCR, no job enables it"
+
+[[gap]]
+pakket  = "pdf-engine"
+feature = "ocr-mistral"
+waarom  = "#285 -- cloud OCR, no job enables it"
+
+[[gap]]
+pakket  = "pdf-font"
+feature = "embed-cmaps"
+waarom  = "#285 -- 117 tests pass locally, no job runs them"
+
+[[gap]]
+pakket  = "pdf-manip"
+feature = "serde"
+waarom  = "#285 -- 279 tests pass locally, no job runs them"
+
+[[gap]]
+pakket  = "pdf-ocr"
+feature = "tesseract"
+waarom  = "#244 -- libtesseract is not on the runner"
+
+[[gap]]
+pakket  = "pdf-xfa"
+feature = "xfa-js-sandboxed"
+waarom  = "#285 -- no job enables it"
+
+[[gap]]
+pakket  = "pdfluent"
+feature = "pdfa"
+waarom  = "#285 -- 24 tests pass locally, no job runs them"
+
+[[gap]]
+pakket  = "pdfluent-lopdf"
+feature = "async"
+waarom  = "#285 -- no job enables it"
+
+[[gap]]
+pakket  = "pdfluent-lopdf"
+feature = "chrono"
+waarom  = "#285 -- no job enables it"
+
+[[gap]]
+pakket  = "pdfluent-lopdf"
+feature = "embed_image"
+waarom  = "#285 -- no job enables it"
+
+[[gap]]
+pakket  = "pdfluent-lopdf"
+feature = "jiff"
+waarom  = "#285 -- no job enables it"
+
+[[gap]]
+pakket  = "pdfluent-lopdf"
+feature = "time"
+waarom  = "#285 -- no job enables it"
+
+[[gap]]
+pakket  = "pdfluent-sign"
+feature = "tsa"
+waarom  = "#285 -- one test FAILS here; fix before enabling"
+
+[[gap]]
+pakket  = "xfa-license"
+feature = "signing"
+waarom  = "#285 -- 26 tests pass locally, no job runs them"

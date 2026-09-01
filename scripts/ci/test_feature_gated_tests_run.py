@@ -25,6 +25,7 @@ dragen, en welke paren een pipelinejob daadwerkelijk aanzet.
 import pathlib
 import re
 import sys
+import tomllib
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 CI = REPO / ".gitlab-ci.yml"
@@ -33,38 +34,46 @@ CI = REPO / ".gitlab-ci.yml"
 # deze controle er minder, dan is de boomwandeling stuk en niet de codebase leeg.
 MIN_CRATES = 30
 
-# Paren die met opzet niet in CI draaien, mét reden. Een naam hier zonder reden
-# hoort niet te bestaan; een lege lijst is het doel.
-TOEGESTAAN: dict[tuple[str, str], str] = {
-    # The thirteen gaps as measured on master, 30-08-2026. Recorded rather than
-    # left failing, because closing them means adding CI jobs -- and for `tsa`,
-    # fixing a defect first: extract_cms_from_signed cannot read back a document
-    # sign_pdf just produced (#285).
-    #
-    # Named individually so the list cannot grow quietly, and checked in both
-    # directions: a pair that starts running and stays listed here fails too.
-    ("pdfluent-lopdf", "chrono"): "#285 -- no job enables it",
-    ("pdfluent-lopdf", "embed_image"): "#285 -- no job enables it",
-    ("pdfluent-lopdf", "jiff"): "#285 -- no job enables it",
-    ("pdfluent-lopdf", "time"): "#285 -- no job enables it",
-    ("pdf-engine", "ocr-aws"): "#285 -- cloud OCR, no job enables it",
-    ("pdf-engine", "ocr-azure"): "#285 -- cloud OCR, no job enables it",
-    ("pdf-engine", "ocr-google"): "#285 -- cloud OCR, no job enables it",
-    ("pdf-engine", "ocr-mistral"): "#285 -- cloud OCR, no job enables it",
-    ("pdf-manip", "serde"): "#285 -- 279 tests pass locally, no job runs them",
-    ("pdfluent-sign", "tsa"): "#285 -- one test FAILS here; fix before enabling",
-    ("pdf-xfa", "xfa-js-sandboxed"): "#285 -- no job enables it",
-    ("pdfluent", "pdfa"): "#285 -- 24 tests pass locally, no job runs them",
-    ("xfa-license", "signing"): "#285 -- 26 tests pass locally, no job runs them",
-    ("pdf-ocr", "tesseract"): "#244 -- libtesseract is not on the runner",
-    # Found only after the parsing was widened to see crate-level gates,
-    # compound cfgs and non-plain test attributes (Codex, #1583). The guard had
-    # been reporting a subset and calling it the total -- which is the shape it
-    # exists to catch, in itself.
-    ("pdfluent-lopdf", "async"): "#285 -- no job enables it",
-    ("pdf-annot", "write"): "#285 -- 38 tests pass locally, no job runs them",
-    ("pdf-font", "embed-cmaps"): "#285 -- 117 tests pass locally, no job runs them",
-}
+# Paren die met opzet niet in CI draaien staan in scripts/ci/feature_gaps.toml,
+# niet hier. Die tabel lag als dict in dit bestand, en dit bestand is t2-gebied:
+# een gat verklaren betekende dus een t2-bestand aanraken. Op 01-09-2026 haalde
+# T1 daarom een feature-vlag wég in plaats van hem te verklaren. De bewaker had
+# gelijk en zijn enige uitweg zat achter andermans deur.
+#
+# Het TOML-bestand is in .claude/territories.toml uitgezonderd van t2, dus
+# niemand claimt het en iedereen mag het bewerken.
+GAPS = REPO / "scripts" / "ci" / "feature_gaps.toml"
+
+
+def toegestaan() -> dict[tuple[str, str], str]:
+    """De verklaarde gaten, of stoppen.
+
+    Een ontbrekend of kapot bestand levert géén lege verzameling op. Leeg
+    betekent "geen enkel gat is verklaard", en dan keurt deze controle elk gat
+    af dat wél verklaard was -- of erger, bij een andere lezing keurt hij alles
+    goed. Beide zijn een antwoord dat niemand heeft opgeschreven.
+    """
+    if not GAPS.is_file():
+        print(f"[featgate] FATAL: {GAPS} ontbreekt. Zonder die tabel is niet te "
+              "zeggen welk gat verklaard is en welk niet.", file=sys.stderr)
+        raise SystemExit(2)
+    try:
+        doc = tomllib.loads(GAPS.read_text())
+    except tomllib.TOMLDecodeError as fout:
+        print(f"[featgate] FATAL: {GAPS} parseert niet: {fout}", file=sys.stderr)
+        raise SystemExit(2) from None
+    uit: dict[tuple[str, str], str] = {}
+    for rij in doc.get("gap", []):
+        pkt, feat, waarom = rij.get("pakket"), rij.get("feature"), rij.get("waarom")
+        if not (pkt and feat and waarom):
+            print(f"[featgate] FATAL: een regel in {GAPS.name} mist pakket, feature "
+                  f"of waarom: {rij}", file=sys.stderr)
+            raise SystemExit(2)
+        uit[(pkt, feat)] = waarom
+    return uit
+
+
+TOEGESTAAN = toegestaan()
 
 # Matches an inner attribute too (`#![cfg(...)]`), which is how an integration
 # test gates its whole file -- and the previous pattern required `#[`, so a
