@@ -36,11 +36,23 @@ Both directions, because that is what makes a declaration worth reading:
 Usage: a_deletion_declares_itself.py [--base github/master] [--head HEAD]
 """
 from __future__ import annotations
-import argparse, subprocess, sys
+import argparse, os, subprocess, sys
+
+
+def clean_env() -> dict[str, str]:
+    """git must read the repository we are standing in, not the caller's.
+
+    Inside a hook GIT_DIR and GIT_WORK_TREE name the real repository and git
+    ignores where you point it. test_no_test_can_touch_the_real_repo.py caught
+    this guard itself once the branch was rebased onto the #1641 fix -- the
+    lint's other findings had been masking it.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
 def git(*args: str) -> tuple[int, str]:
-    r = subprocess.run(["git", *args], capture_output=True, text=True)
+    r = subprocess.run(["git", *args], capture_output=True, text=True,
+                       env=clean_env())
     return r.returncode, r.stdout
 
 
