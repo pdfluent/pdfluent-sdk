@@ -11,7 +11,7 @@ pdfluent = "1.0.0-beta.5"
 
 > Voor de low-level XFA-JSON pipeline (geavanceerd, intern), gebruik
 > de `xfa-json` en `pdfium-ffi-bridge` crates uit de PDFluent GitLab
-> workspace: <https://github.com/pdfluent/PDFluent-project>.
+> workspace: <https://github.com/pdfluent/pdfluent-sdk>.
 
 ## Velden Extraheren uit een XFA PDF
 

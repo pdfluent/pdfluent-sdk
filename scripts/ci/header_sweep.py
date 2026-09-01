@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Innovation Trigger B.V. All rights reserved.
+# Copyright (c) 2026 Innovation Trigger B.V.
 #
-# This software is proprietary. The PDFluent application is free to use,
-# including for commercial purposes. Redistribution, or extraction or reuse
-# of its components (including the embedded PDF engine), requires a licence.
-# See https://pdfluent.com/license for terms.
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
 """Elke eigen bronregel draagt de proprietary header. Geforkte code niet.
 
 LC1 (#213). Headers zijn hoe je bij een audit per bestand herkomst aantoont: een
@@ -28,14 +27,29 @@ CRATES = REPO / "crates"
 sys.path.insert(0, str(REPO / "scripts" / "ci"))
 from herkomsttabel import UPSTREAM  # noqa: E402  -- één bron voor wat geforkt is
 
-HEADER = """// Copyright (c) 2026 Innovation Trigger B.V. All rights reserved.
+HEADER = """// Copyright (c) 2026 Innovation Trigger B.V.
 //
-// This software is proprietary. The PDFluent application is free to use,
-// including for commercial purposes. Redistribution, or extraction or reuse
-// of its components (including the embedded PDF engine), requires a licence.
-// See https://pdfluent.com/license for terms.
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
 """
 MERK = "Innovation Trigger B.V."
+
+# WAT DE KOP MOET ZEGGEN, NIET ALLEEN DAT ER EEN KOP STAAT
+#
+# Tot 01-09-2026 controleerde dit bestand alleen of MERK in de eerste zestig
+# regels stond. Een kop met willekeurige inhoud kwam er dus door zolang de
+# bedrijfsnaam erin voorkwam -- en dat is precies wat er gebeurde: 800 bestanden
+# droegen "This software is proprietary ... See https://pdfluent.com/license",
+# het model dat op 24-08 was afgeschaft, en deze poort stond al die tijd op
+# groen. Een poort die aanwezigheid toetst in plaats van inhoud, keurt de fout
+# goed die hij moet vangen (#301).
+LICENTIEREGEL = "PDFluent is available under two licences"
+
+# En andersom: onze kop hoort NIET in een geforkte crate. Twee bestanden in
+# hayro-jbig2 en lopdf droegen hem wel, tegenover een NOTICE die publiek belooft
+# dat die crates zonder commerciële licentie van PDFluent te gebruiken zijn.
+# Twee onverenigbare claims in één bestand.
 
 # ONDERGRENS: onderzochte bestanden >= 200 -- er zijn er ruim driehonderd in de
 # eigen crates. Minder betekent dat het zoeken stuk is en niet dat het werk af is.
@@ -58,8 +72,18 @@ def main() -> int:
     schrijven = "--write" in sys.argv
     zonder, gezien = [], 0
 
+    verkeerd, in_fork = [], []
+
     for crate in sorted(p for p in CRATES.iterdir() if p.is_dir()):
         if is_geforkt(crate):
+            # Geforkte crates krijgen onze kop niet, en het is een fout als er
+            # er toch een staat: dat claimt andermans werk.
+            for bron in sorted(crate.rglob("*.rs")):
+                if "target" in bron.parts:
+                    continue
+                kop = "".join(bron.read_text(errors="replace").splitlines(keepends=True)[:60])
+                if LICENTIEREGEL in kop or "This software is proprietary" in kop:
+                    in_fork.append(str(bron.relative_to(REPO)))
             continue
         for bron in sorted(crate.rglob("*.rs")):
             if "target" in bron.parts:
@@ -73,7 +97,21 @@ def main() -> int:
             # in 400 tekens. De controle meldde toen 176 ontbrekende headers die
             # er gewoon stonden -- en de sweep die je dan draait, zet ze er een
             # tweede keer in.
-            if MERK in "".join(tekst.splitlines(keepends=True)[:60]):
+            regels60 = tekst.splitlines(keepends=True)[:60]
+            kop = "".join(regels60)
+            if MERK in kop:
+                # De kop staat er. Zegt hij ook het juiste?
+                #
+                # Het venster wordt aan de kop zelf verankerd en niet blind
+                # opgerekt: `regex_guard.rs` draagt 58 regels `//!` en dan de
+                # header, zodat MERK op regel 59 net binnen de zestig valt en de
+                # licentieregel op 61 er net buiten. Dat als "verkeerde kop"
+                # melden zou een vals alarm zijn van het meetvenster, niet een
+                # bevinding over het bestand.
+                i = next(j for j, r in enumerate(regels60) if MERK in r)
+                blok = "".join(tekst.splitlines(keepends=True)[i:i + 8])
+                if LICENTIEREGEL not in blok:
+                    verkeerd.append(str(bron.relative_to(REPO)))
                 continue
             if schrijven:
                 # Een `#![…]`-attribuut hoort bovenaan te blijven staan; de
@@ -103,6 +141,32 @@ def main() -> int:
     if schrijven:
         print(f"OK: {gezien} eigen bronbestanden voorzien van de header.")
         return 0
+
+    if in_fork:
+        print(
+            f"{len(in_fork)} bestand(en) in een GEFORKTE crate dragen onze licentiekop.\n"
+            "Die crates staan onder hun upstream-licentie en NOTICE belooft publiek dat\n"
+            "ze zonder commerciele licentie van PDFluent te gebruiken zijn. Onze kop\n"
+            "erbovenop zijn twee onverenigbare claims in een bestand.\n",
+            file=sys.stderr,
+        )
+        for q in in_fork[:25]:
+            print(f"  {q}", file=sys.stderr)
+        return 1
+
+    if verkeerd:
+        print(
+            f"{len(verkeerd)} van {gezien} eigen bronbestanden dragen een kop die niet\n"
+            "het duale model beschrijft. Aanwezigheid is niet genoeg: een kop die zegt\n"
+            "dat de software propriëtair is, spreekt LICENSE tegen in het bestand\n"
+            "ernaast (#301).\n",
+            file=sys.stderr,
+        )
+        for q in verkeerd[:25]:
+            print(f"  {q}", file=sys.stderr)
+        if len(verkeerd) > 25:
+            print(f"  ... en nog {len(verkeerd) - 25}", file=sys.stderr)
+        return 1
 
     if zonder:
         print(

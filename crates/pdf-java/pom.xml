@@ -33,7 +33,7 @@
     DEPRECATED legacy `com.xfa.pdf` Java binding. Not published. The
     supported Java SDK is `com.pdfluent:pdfluent` (bindings/java).
   </description>
-  <url>https://github.com/pdfluent/PDFluent-project</url>
+  <url>https://github.com/pdfluent/pdfluent-sdk</url>
 
   <!-- =========================================================== -->
   <!-- License                                                      -->
@@ -61,9 +61,9 @@
   <!-- Source control                                               -->
   <!-- =========================================================== -->
   <scm>
-    <connection>scm:git:git://github.com/pdfluent/PDFluent-project.git</connection>
-    <developerConnection>scm:git:ssh://github.com/pdfluent/PDFluent-project.git</developerConnection>
-    <url>https://github.com/pdfluent/PDFluent-project</url>
+    <connection>scm:git:git://github.com/pdfluent/pdfluent-sdk.git</connection>
+    <developerConnection>scm:git:ssh://github.com/pdfluent/pdfluent-sdk.git</developerConnection>
+    <url>https://github.com/pdfluent/pdfluent-sdk</url>
     <tag>HEAD</tag>
   </scm>
 
