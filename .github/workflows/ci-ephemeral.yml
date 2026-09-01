@@ -188,12 +188,20 @@ jobs:
       # `pull_request` with a create-runner would buy a second instance for the
       # same event -- the thing one_instance_per_event.py exists to stop. This
       # instance is already up and already has the workspace built.
+      # `if: ${{ !cancelled() }}` on all three, because without it they only ran
+      # while everything above was green -- and `test` is failing on master, so
+      # the PDF/A gate has been skipped on every run since it was written. It
+      # has never produced a Linux measurement, which is exactly why FLOORS has
+      # no `linux` entry to gate against. A gate that never runs cannot be
+      # calibrated, and it looks identical in the summary to one that passed.
       - name: Set up Java for veraPDF
+        if: ${{ !cancelled() }}
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
       - name: Install veraPDF and mutool
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           # The runner user on this image may already be root, in which case
@@ -211,6 +219,7 @@ jobs:
           echo "/opt/verapdf" >> "$GITHUB_PATH"
           mutool -v
       - name: PDF/A conversion output conforms and keeps its text
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           cargo build --release -p pdf-manip --example pdfa_convert_real

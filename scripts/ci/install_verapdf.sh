@@ -37,9 +37,22 @@ DEST="${1:-/opt/verapdf}"
 URL="https://software.verapdf.org/releases/${SERIES}/verapdf-greenfield-${VERSION}-installer.zip"
 
 if [ -x "${DEST}/verapdf" ]; then
-    echo "[verapdf] already present at ${DEST}"
-    "${DEST}/verapdf" --version
-    exit 0
+    # "Already present" is not "already correct". The Hetzner image is reused
+    # between runs, so a validator installed by an older commit survives here --
+    # and the retention floors this repository records were measured against a
+    # named version. A different one grades the same bytes differently, which
+    # produces a pass or a failure nobody can trace to a version change.
+    # (codex, #1617)
+    have="$("${DEST}/verapdf" --version 2>&1 | head -1)"
+    if printf '%s' "${have}" | grep -qF "${VERSION}"; then
+        echo "[verapdf] ${VERSION} already present at ${DEST}"
+        exit 0
+    fi
+    echo "[verapdf] ${DEST} holds a different version than the pinned ${VERSION}:"
+    echo "[verapdf]   ${have}"
+    echo "[verapdf] replacing it, so the floors are graded by the validator they"
+    echo "[verapdf] were measured with."
+    rm -rf "${DEST}"
 fi
 
 java -version >/dev/null 2>&1 || {

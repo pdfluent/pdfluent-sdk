@@ -112,7 +112,21 @@ RETENTION_MIN_PCT = 100.0
 #
 #   converted  — conversions that returned bytes at all
 #   conformant — outputs veraPDF calls PDF/A-2b compliant
-#   retained   — outputs holding >= RETENTION_MIN_PCT of the source's characters
+#   retained   — outputs in which >= RETENTION_MIN_PCT of the SOURCE's characters
+#                are still present, in order. Not a length ratio: see
+#                behouden_deel(). Measured on darwin, 01-09-2026, veraPDF 1.28.2
+#                and mutool from mupdf-tools, on the five corpus fixtures:
+#
+#                  fixture                len %   kept %
+#                  PDFBOX-4322-3.pdf     103.31   100.0
+#                  f1040.pdf             100.90   100.0
+#                  fw7.pdf               101.01   100.0
+#                  sf15.pdf              100.82   100.0
+#                  sf181.pdf             101.35   100.0
+#
+#                The surplus is real and additive -- every source character
+#                survives -- which is why the threshold needs no tolerance and
+#                why a length ratio could never have told the two apart.
 #
 # Raise or lower a number only after a measured change on that same platform,
 # in the same commit as the change that moved it, and never to turn a red gate
@@ -120,6 +134,26 @@ RETENTION_MIN_PCT = 100.0
 FLOORS: dict[str, dict[str, int]] = {
     "darwin": {"fixtures": 5, "converted": 5, "conformant": 5, "retained": 5},
 }
+
+# Platforms this gate BLOCKS on. A platform with no floor cannot block: it has
+# no number to compare against, so `judge()` would fail every run on evidence it
+# does not have -- which is how a gate becomes a permanent red nobody reads.
+#
+# `linux` is deliberately absent. The blocking step runs on the Hetzner image,
+# and the floor for it has never been measured, because the step it lives in was
+# skipped on every run so far: `workspace::test` fails ahead of it and the step
+# carried no `if: ${{ !cancelled() }}`. Both are fixed in this change, so a
+# Linux run will now produce the numbers.
+#
+# To add it, in one commit, with the run it came from named in the message:
+#
+#   1. read the `[pdfa-output] {...}` line from a Linux run of this script
+#   2. add "linux": {...} to FLOORS with exactly those counts
+#   3. add "linux" to BLOKKEERT
+#
+# Never the other way round: a floor invented on a different platform is worse
+# than none, because it looks measured. (codex, #1617)
+BLOKKEERT: frozenset[str] = frozenset({"darwin"})
 
 PROFILE = "2b"
 
@@ -171,8 +205,8 @@ def verapdf_verdict(verapdf: str, pdf: Path) -> tuple[bool, str]:
     return bool(results[0].get("compliant")), ""
 
 
-def chars(mutool: str, pdf: Path) -> int:
-    """Non-whitespace characters mutool extracts, or -1 when it cannot read."""
+def tekst(mutool: str, pdf: Path) -> bytes | None:
+    """The text mutool extracts, whitespace removed. None when it cannot read."""
     try:
         out = subprocess.run(
             [mutool, "draw", "-F", "txt", str(pdf)],
@@ -180,8 +214,49 @@ def chars(mutool: str, pdf: Path) -> int:
             timeout=300,
         )
     except (subprocess.TimeoutExpired, OSError):
-        return -1
-    return len(b"".join(out.stdout.split()))
+        return None
+    if out.returncode != 0:
+        # A mutool that FAILS is not a document with no text, and the two were
+        # indistinguishable here: a broken binary returned empty output, every
+        # fixture read as "source exposes no extractable text", and all five
+        # counted as retained. That is a green gate on a measurement that never
+        # happened -- which I introduced while fixing the missing-mutool case,
+        # having only handled the binary being absent.
+        return None
+    return b"".join(out.stdout.split())
+
+
+def chars(mutool: str, pdf: Path) -> int:
+    """Non-whitespace characters mutool extracts, or -1 when it cannot read."""
+    t = tekst(mutool, pdf)
+    return -1 if t is None else len(t)
+
+
+def behouden_deel(bron: bytes, uit: bytes) -> float:
+    """How much of the SOURCE's text survives in the output, 0..100.
+
+    A ratio of lengths cannot answer this and that is the point. Conversion
+    normally exposes a little more text than the source -- the measured range
+    here is 100.8 to 103.3 per cent -- and inside that surplus an output can
+    drop several per cent of the original characters, or replace them with the
+    same number of unrelated ones, and still count as retained. The gate exists
+    to catch deletion, and a length was never going to see it. (codex, #1617)
+
+    Longest-common-subsequence-free and deliberately cheap: walk the source in
+    order and count how much of it can be found, in order, in the output.
+    Reordering therefore reads as loss, which is the safe direction for a gate
+    whose job is to notice missing content.
+    """
+    if not bron:
+        return 100.0
+    gevonden, k = 0, 0
+    for teken in bron:
+        j = uit.find(bytes([teken]), k)
+        if j < 0:
+            continue
+        gevonden += 1
+        k = j + 1
+    return round(gevonden / len(bron) * 100, 2)
 
 
 def judge(measured: dict, floors: dict[str, dict[str, int]], key: str) -> tuple[int, list[str]]:
@@ -202,13 +277,22 @@ def judge(measured: dict, floors: dict[str, dict[str, int]], key: str) -> tuple[
         ]
 
     floor = floors.get(key)
+    if floor is None and key not in BLOKKEERT:
+        # Measured, printed, and not blocking -- because there is no number on
+        # this platform to block against. Announced in the words this repository
+        # reserves for "did not judge", so it cannot be read as a pass.
+        return 3, [
+            f"SKIPPED (not a pass): no floor recorded for platform {key!r}, so this",
+            "run graded nothing. It measured:",
+            f'    "{key}": {json.dumps(measured, sort_keys=True)},',
+            f"Add that to FLOORS and {key!r} to BLOKKEERT, in one commit, naming the",
+            "run the numbers came from. Until then this platform is not gated and",
+            "that gap is deliberate rather than hidden.",
+        ]
     if floor is None:
         return 1, [
-            f"no floor recorded for platform {key!r} (have: {sorted(floors)}).",
-            "Font substitution is OS-dependent, so a floor from another platform",
-            "would be measuring a different document. This run measured:",
-            f'    "{key}": {json.dumps(measured, sort_keys=True)},',
-            "Add that line to FLOORS in this file once you have read it.",
+            f"platform {key!r} is in BLOKKEERT but has no floor. One of the two is",
+            "wrong: either record the numbers or stop claiming to gate here.",
         ]
 
     verdict = 0
@@ -310,13 +394,33 @@ def main() -> int:
 
         pct = None
         if mutool is not None:
-            src_chars, dst_chars = chars(mutool, src), chars(mutool, dst)
+            bron_t, uit_t = tekst(mutool, src), tekst(mutool, dst)
+            if bron_t is None or uit_t is None:
+                # Could not read one side. Not "no text": unreadable.
+                print(f"SKIPPED (not a pass): mutool could not read "
+                      f"{src.name if bron_t is None else dst.name}, so retention was "
+                      "not measured for it. A validator that fails is not a document "
+                      "without text.", file=sys.stderr)
+                return 3
+            src_chars = -1 if bron_t is None else len(bron_t)
+            dst_chars = -1 if uit_t is None else len(uit_t)
             row["src_chars"], row["out_chars"] = src_chars, dst_chars
             if src_chars > 0 and dst_chars >= 0:
+                # Two numbers, and the second is the one that decides. The length
+                # ratio stays because it is what the floors were measured with
+                # and it says something about surplus; the containment figure is
+                # what notices deletion and replacement.
                 pct = round(dst_chars / src_chars * 100, 2)
                 row["retention_pct"] = pct
-                if pct >= RETENTION_MIN_PCT:
+                behouden = behouden_deel(bron_t, uit_t)
+                row["source_kept_pct"] = behouden
+                if behouden >= RETENTION_MIN_PCT:
                     retained += 1
+                else:
+                    row["note"] = (
+                        f"only {behouden}% of the source's characters survive in "
+                        f"order, though the output is {pct}% of its length"
+                    )
             elif src_chars == 0 and dst_chars >= 0:
                 # No extractable text to lose. Counted as retained, recorded so
                 # nobody reads it as a measurement that happened.
@@ -343,16 +447,32 @@ def main() -> int:
     print(f"[pdfa-output] platform {key}, profile PDF/A-{PROFILE}")
     print(f"[pdfa-output] {json.dumps(measured, sort_keys=True)}")
     if mutool is None:
-        # Without mutool `retained` is not a measurement, so it must not be
-        # compared against a floor that was measured with one.
-        floors = {k: dict(v, retained=0) for k, v in FLOORS.items()}
-    else:
-        floors = FLOORS
+        # Zeroing the retention floor here turned "we could not measure" into
+        # "every number matched", on a script whose own header says conformance
+        # alone cannot detect content deletion. That is the cannot-run-reported-
+        # as-a-pass fault this gate exists to remove, inside the gate.
+        # (codex, #1617)
+        print("SKIPPED (not a pass): mutool is not installed, so no text was read "
+              "back and retention was not measured. Conformance alone cannot see "
+              "deleted content, which is the whole reason this gate exists.",
+              file=sys.stderr)
+        return 3
+    floors = FLOORS
 
     verdict, lines = judge(measured, floors, key)
     if verdict == 0:
         print("[pdfa-output] every number matches the floor for this platform")
         return 0
+
+    if verdict == 3:
+        # Did not judge, and says so. Distinct from a failure on purpose: a
+        # platform with no recorded floor has nothing to be measured against,
+        # and failing every run on evidence we do not have is how a gate becomes
+        # a red nobody reads. The numbers to record are in `lines`.
+        print(file=sys.stderr)
+        for line in lines:
+            print(f"  {line}", file=sys.stderr)
+        return 3
 
     print(file=sys.stderr)
     print("[pdfa-output] FATAL:", file=sys.stderr)

@@ -45,8 +45,9 @@ FLOOR = {"fixtures": 5, "converted": 5, "conformant": 5, "retained": 5}
 FLOORS_UNDER_TEST = {"linux": dict(FLOOR)}
 
 
-def case(naam: str, measured: dict, key: str, verwacht: int) -> bool:
-    gekregen, regels = judge(measured, FLOORS_UNDER_TEST, key)
+def case(naam: str, measured: dict, key: str, verwacht: int,
+         floors: dict | None = None) -> bool:
+    gekregen, regels = judge(measured, FLOORS_UNDER_TEST if floors is None else floors, key)
     ok = gekregen == verwacht
     print(f"  {'ok  ' if ok else 'FAIL'}  {naam}: exit {gekregen}, expected {verwacht}")
     if not ok:
@@ -101,12 +102,27 @@ def main() -> int:
             1,
         ),
         # Font substitution is OS-dependent, so another platform's floor is a
-        # measurement of a different document. Refusing beats guessing.
+        # measurement of a different document. Refusing beats guessing -- but
+        # what "refusing" means depends on whether we claim to gate there.
+        #
+        # A platform we do NOT gate on has nothing to be measured against, so
+        # failing every run on evidence we do not have would make this a
+        # permanent red. It measures, prints the numbers to record, and says it
+        # did not judge: exit 3. (codex, #1617)
         case(
-            "no floor recorded for this platform",
+            "an ungated platform with no floor announces, and does not judge",
             dict(FLOOR),
             "sunos",
+            3,
+        ),
+        # A platform we DO claim to gate on, with no floor, is a contradiction
+        # in the file itself and must be loud: one of the two is wrong.
+        case(
+            "a gated platform with no floor is an error in this file",
+            dict(FLOOR),
+            "darwin",
             1,
+            floors={},
         ),
         # And it does pass when everything matches, or it is not a gate but a
         # tripwire.
