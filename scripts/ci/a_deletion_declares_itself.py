@@ -60,9 +60,20 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="github/master")
     ap.add_argument("--head", default="HEAD")
+    ap.add_argument("--exact-base", action="store_true",
+                    help="compare against --base itself instead of the merge "
+                         "base. A push event reports where the branch actually "
+                         "WAS; deriving a merge base from it loses anything "
+                         "added between the common ancestor and that tip, so a "
+                         "force-push could drop a file and report nothing. A "
+                         "pull request wants the merge base, because its base "
+                         "branch may have moved on. (codex, #1635)")
     args = ap.parse_args(argv[1:])
 
-    rc, base_sha = git("merge-base", args.base, args.head)
+    if args.exact_base:
+        rc, base_sha = git("rev-parse", "--verify", f"{args.base}^{{commit}}")
+    else:
+        rc, base_sha = git("merge-base", args.base, args.head)
     base_sha = base_sha.strip()
     if rc != 0 or not base_sha:
         # Never a silent pass. Without a base there is no question to answer, and
@@ -132,16 +143,38 @@ def main(argv: list[str]) -> int:
         # commit landing on master. The deletion belongs to the commit on the
         # side branch that performed it, so merges are skipped when choosing the
         # last deleter. (codex, #1635)
-        parents = git("rev-list", "--parents", "-n", "1", sha)[1].split()
-        is_merge = len(parents) > 2
+        parents = git("rev-list", "--parents", "-n", "1", sha)[1].split()[1:]
         _, own = git("show", "--diff-filter=D", "--name-only", "--format=", "-z",
                      "--first-parent", "-m", sha)
         removed_here = {x for x in own.split("\0") if x.strip()}
-        trailers[sha] = named
-        deletes[sha] = set() if is_merge else removed_here
-        if not is_merge:
+
+        if len(parents) > 1:
+            # A merge's OWN deletion is one the merge performed, not one it
+            # inherited. Against its first parent a merge shows everything the
+            # other side removed -- which on a `pull_request` run is the whole
+            # PR, because actions/checkout resolves the synthetic merge GitHub
+            # builds from base and head, and its generated message has no
+            # trailer.
+            #
+            # The discriminator is the other parents. If the path is already
+            # absent in ANY parent, the merge merely took that side. If it is
+            # present in EVERY parent and absent in the result, the merge itself
+            # removed it -- a conflict resolution that drops a file -- and it can
+            # and must declare it. Discarding every merge deletion outright made
+            # such a commit report as undeclared AND misplaced at once.
+            # (codex, #1635)
+            inherited = set()
             for path in removed_here:
-                last_deleter[path] = sha
+                for par in parents[1:]:
+                    if git("cat-file", "-e", f"{par}:{path}")[0] != 0:
+                        inherited.add(path)
+                        break
+            removed_here = removed_here - inherited
+
+        trailers[sha] = named
+        deletes[sha] = removed_here
+        for path in removed_here:
+            last_deleter[path] = sha
 
     declared: dict[str, str] = {}
     for path, sha in last_deleter.items():
