@@ -7,7 +7,7 @@ alias in plain text. The owner's personal and work addresses are recorded as
 ## Why this is not covered by the 27-08 decision
 
 That decision said: fix going forward, leave the history, treat
-`jasper@jasperdewinter.nl` as already public. It was about **commit metadata that
+the owner's personal address as already public. It was about **commit metadata that
 already exists and cannot be retracted.** `contributors.toml` was written after
 it, and this tree becomes public under #222 — so writing the address there is a
 *new* publication of it, as fresh harvestable plain text, arriving through the
@@ -38,7 +38,8 @@ the address it could not place. **That message goes to a CI log, and on a public
 repository the log is public.** So the gate would have republished the address
 in full, on the day something went wrong, which is the worst day for it.
 
-Failures now print `j*****@jasperdewinter.nl (sha256:0de40f61…)`. The operator
+Failures now print the address masked to its first character and domain,
+with the digest beside it. The operator
 can still act — the digest is what the register wants anyway — and the plaintext
 is never printed.
 
