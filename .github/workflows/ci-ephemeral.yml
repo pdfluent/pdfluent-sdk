@@ -307,6 +307,44 @@ jobs:
             --corpus corpus/gate \
             --known corpus/GATE_CORPUS_KNOWN_CRASHES.json \
             --workers 8
+      # SSIM regression, from #1349 -- opened 25-04-2026, never merged, and its
+      # own workflow ran once and failed. It is not resurrected as a workflow:
+      # `ssim-gate.yml` was `runs-on: ubuntu-latest` and compiles the CLI, so it
+      # can be neither hosted (zero hosted minutes) nor on the persistent runner
+      # (orchestration_stays_hosted refuses jobs that compile there). A fifth
+      # workflow provisioning its own instance is what #275 removed. So it lives
+      # here, on the instance this push already paid for.
+      #
+      # The gate itself is unchanged: 50 stratified-random PDFs from the manifest,
+      # mean SSIM >= 0.94 and >= 35% fully correct. `check_ssim_gate.py` excludes
+      # degenerate / oracle_fault / not_found from both figures so a flaky oracle
+      # cannot poison the verdict -- which is why the "SSIM measures the binary
+      # oracle artefact" objection does not apply to it.
+      - name: SSIM regression against the pinned fifty
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          cargo build --release -p xfa-cli --bin pdfluent
+          python3 scripts/prepare_ci_corpus.py \
+            --manifest corpus/SSIM_GATE_MANIFEST.json \
+            --out corpus/ssim-gate-50
+          python3 scripts/run_gate_ssim.py \
+            --binary target/release/pdfluent \
+            --corpus corpus/ssim-gate-50 \
+            --out "${RUNNER_TEMP}/ssim_gate_result.json" \
+            --threshold 0.94 --dpi 150 --workers 2
+          # Evaluate, then enforce, so the report exists even when it fails.
+          set +e
+          python3 scripts/check_ssim_gate.py \
+            --result "${RUNNER_TEMP}/ssim_gate_result.json" \
+            --mean-ssim-threshold 0.94 \
+            --fully-correct-threshold 35.0 \
+            --report "${RUNNER_TEMP}/ssim_gate_report.md" \
+            --summary-json "${RUNNER_TEMP}/ssim_gate_summary.json"
+          rc=$?
+          set -e
+          [ -f "${RUNNER_TEMP}/ssim_gate_report.md" ] && cat "${RUNNER_TEMP}/ssim_gate_report.md"
+          exit "$rc"
 
       - name: docs drift (advisory)
         continue-on-error: true
