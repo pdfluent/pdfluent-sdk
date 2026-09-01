@@ -51,6 +51,14 @@ jobs:
     # Criterion baseline cache (target/criterion) persists between runs on self-hosted.
     runs-on: [self-hosted, xfa-corpus]
     timeout-minutes: 60
+    env:
+      # The criterion baseline below is restored by cache key, and restoring it
+      # is the comparison. Keyed on `runner.os` alone it hands this run whichever
+      # machine last wrote that key -- the same defect as a result file that
+      # named a machine it was never on (#283). The class must match the runner
+      # label this job asks for, and it must have an entry in
+      # benchmarks/BASELINE_HARDWARE.toml.
+      BENCH_MACHINE_CLASS: xfa-corpus
     steps:
       - uses: actions/checkout@v4
 
@@ -65,9 +73,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: target/criterion
-          key: bench-baseline-${{ runner.os }}-master-${{ github.base_sha }}
+          key: bench-baseline-${{ env.BENCH_MACHINE_CLASS }}-master-${{ github.base_sha }}
           restore-keys: |
-            bench-baseline-${{ runner.os }}-master-
+            bench-baseline-${{ env.BENCH_MACHINE_CLASS }}-master-
 
       # The persistent runner hands every job the state the last one left. Clear
       # debris from an aborted build, and fail in seconds if the directory has
@@ -85,7 +93,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: target/criterion
-          key: bench-baseline-${{ runner.os }}-master-${{ github.sha }}
+          key: bench-baseline-${{ env.BENCH_MACHINE_CLASS }}-master-${{ github.sha }}
 
       # Detect >10% regressions and write a markdown table for the PR comment.
       # Criterion outputs: change: [+lo% +mid% +hi%] — we use the median (mid).

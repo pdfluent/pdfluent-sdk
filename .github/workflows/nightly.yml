@@ -152,6 +152,15 @@ jobs:
     needs: create-runner
     name: Nightly Benchmarks
     runs-on: ${{ needs.create-runner.outputs.label }}
+    env:
+      # This job runs on a fresh instance every night, and the step below
+      # restores criterion's previous run to compare against. Keyed on
+      # `runner.os` that comparison crossed machines silently: last night's
+      # numbers came from a different box, so a real regression could clear and
+      # a stable build could look regressed (#283). Must match the server_type
+      # `create-runner` provisions, and have an entry in
+      # benchmarks/BASELINE_HARDWARE.toml.
+      BENCH_MACHINE_CLASS: hetzner-cx53
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -161,9 +170,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target/criterion
-          key: bench-nightly-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: bench-nightly-${{ env.BENCH_MACHINE_CLASS }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            bench-nightly-${{ runner.os }}-
+            bench-nightly-${{ env.BENCH_MACHINE_CLASS }}-
 
       - name: Run benchmarks
         run: |
