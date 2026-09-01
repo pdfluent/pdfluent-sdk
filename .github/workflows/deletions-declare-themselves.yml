@@ -1,0 +1,74 @@
+# A deletion declares itself (#297).
+#
+# Its own workflow, and that is the whole point. ci.yml carries a workflow-wide
+# `paths-ignore: '**.md'`, so a pull request that ONLY removes Markdown never
+# starts it -- and a Markdown removal is exactly what this guard exists to
+# notice. The guard lived in ci.yml's commit-identity-guard job and could not run
+# for the case its own tests cover. (codex, #1635)
+#
+# Nothing is filtered here. It is two Python scripts and a checkout; running it
+# on every event costs less than the class of change it would otherwise miss.
+name: A deletion declares itself
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deletions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deletions-guard:
+    name: A deletion declares itself
+    # On the persistent desktop, like the guards in ci.yml and for the same
+    # reason: a spending limit disables hosted runners, and a check that stops
+    # running exactly when the bill does is not a check.
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Without the base commit there is no range to read, and over a
+          # shallow clone `git log <base>..<head>` prints nothing and exits 0 --
+          # the state this guard exists to refuse, dressed as a pass.
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: The deletion guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_deletion_declares_itself.py
+      - name: Every deletion is declared by the commit that performs it
+        if: ${{ !cancelled() }}
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          BASE="${PR_BASE:-}"
+          EXACT=""
+          if [ -z "$BASE" ]; then
+            BASE="${PUSH_BEFORE:-}"
+            # A push reports where the branch actually WAS. Resolving a merge
+            # base from it loses anything added between the common ancestor and
+            # that tip, so a force-push could drop a file and report nothing.
+            # (codex, #1635)
+            EXACT="--exact-base"
+          fi
+          # A brand-new branch has no "before"; git reports all-zeros for it.
+          case "$BASE" in
+            ""|0000000000000000000000000000000000000000)
+              echo "SKIPPED (not a pass): this event carries no base revision, so" >&2
+              echo "  there is nothing to compare against and no deletion could be" >&2
+              echo "  detected. That is not the same as a clean branch." >&2
+              exit 3
+              ;;
+          esac
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE"
+          python3 scripts/ci/a_deletion_declares_itself.py --base "$BASE" $EXACT

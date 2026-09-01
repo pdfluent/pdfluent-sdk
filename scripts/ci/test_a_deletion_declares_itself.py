@@ -11,7 +11,7 @@ import os, subprocess, sys, tempfile
 from pathlib import Path
 
 GUARD = Path(__file__).with_name("a_deletion_declares_itself.py")
-MINIMUM_CASES = 21  # FLOOR
+MINIMUM_CASES = 29  # FLOOR
 
 
 def clean_env() -> dict[str, str]:
@@ -188,6 +188,69 @@ def main() -> int:
                r.returncode == 1, f"exit {r.returncode}")
         expect("and the path is printed readably, not C-quoted",
                "\\316" not in r.stderr, r.stderr[:160])
+
+    # A merge that performs its OWN deletion -- a conflict resolution that drops
+    # a file both sides still had -- can and must declare it. Discarding every
+    # merge deletion outright reported such a commit as undeclared AND misplaced
+    # at once. The discriminator is the other parents: absent in any parent means
+    # the merge inherited it; present in all of them means the merge did it.
+    # (codex, #1635)
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        (wd / "x.txt").write_text("topic\n")
+        run(wd, "add", "-A"); run(wd, "commit", "-qm", "topic work")
+        run(wd, "checkout", "-q", "master")
+        (wd / "y.txt").write_text("master\n")
+        run(wd, "add", "-A"); run(wd, "commit", "-qm", "master work")
+        base = run(wd, "rev-parse", "HEAD").stdout.strip()
+        run(wd, "merge", "-q", "--no-commit", "--no-ff", "topic")
+        run(wd, "rm", "-q", "doomed.txt")   # neither side removed it; the merge does
+        run(wd, "commit", "-qm", "merge and drop it\n\nRemoves-deliberately: doomed.txt")
+        r = guard(wd, "--base", base)
+        expect("a merge declaring its own deletion passes",
+               r.returncode == 0, f"exit {r.returncode} {r.stderr[:200]}")
+        expect("and it is not called misplaced",
+               "does not delete it" not in r.stderr, r.stderr[:160])
+
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        (wd / "x.txt").write_text("topic\n")
+        run(wd, "add", "-A"); run(wd, "commit", "-qm", "topic work")
+        run(wd, "checkout", "-q", "master")
+        (wd / "y.txt").write_text("master\n")
+        run(wd, "add", "-A"); run(wd, "commit", "-qm", "master work")
+        base = run(wd, "rev-parse", "HEAD").stdout.strip()
+        run(wd, "merge", "-q", "--no-commit", "--no-ff", "topic")
+        run(wd, "rm", "-q", "doomed.txt")
+        run(wd, "commit", "-qm", "merge and drop it silently")
+        r = guard(wd, "--base", base)
+        expect("a merge deleting silently still fails", r.returncode == 1,
+               f"exit {r.returncode}")
+
+    # A push reports where the branch WAS. Deriving a merge base from it loses
+    # anything added between the common ancestor and that tip, so a force-push
+    # that drops such a file reported nothing at all. (codex, #1635)
+    with tempfile.TemporaryDirectory() as d:
+        wd = repo(Path(d))
+        (wd / "later.txt").write_text("added after the ancestor\n")
+        run(wd, "add", "-A"); run(wd, "commit", "-qm", "add later.txt")
+        before = run(wd, "rev-parse", "HEAD").stdout.strip()
+        # Force the tip elsewhere: later.txt never existed on this line.
+        run(wd, "reset", "-q", "--hard", "master")
+        run(wd, "checkout", "-q", "-b", "forced")
+        (wd / "z.txt").write_text("other work\n")
+        run(wd, "add", "-A"); run(wd, "commit", "-qm", "unrelated work")
+        r = guard(wd, "--base", before, "--exact-base")
+        expect("a force-push that drops a file is seen with --exact-base",
+               r.returncode == 1, f"exit {r.returncode} {r.stdout[:160]}")
+        expect("and it names the lost file", "later.txt" in r.stderr, r.stderr[:200])
+        r2 = guard(wd, "--base", before)
+        # Not a bug to be fixed later: for a PULL REQUEST the merge base is the
+        # right reading, because the base branch may have moved on and its
+        # commits are not the PR's deletions. The two events want different
+        # questions asked, which is why the flag exists rather than a new default.
+        expect("and the merge-base reading deliberately does not see it",
+               r2.returncode == 0, f"exit {r2.returncode}")
 
     with tempfile.TemporaryDirectory() as d:
         wd = repo(Path(d))
