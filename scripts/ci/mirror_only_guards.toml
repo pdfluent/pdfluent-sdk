@@ -1,0 +1,165 @@
+# Copyright (c) 2026 Innovation Trigger B.V. All rights reserved.
+#
+# This software is proprietary. The PDFluent application is free to use,
+# including for commercial purposes. Redistribution, or extraction or reuse
+# of its components (including the embedded PDF engine), requires a licence.
+# See https://pdfluent.com/license for terms.
+#
+# Guards that run on the GitLab mirror and nowhere else, each with the reason
+# it stays there.
+#
+# GitHub has been the main remote since 25-08-2026 and GitLab a nightly copy of
+# it. A job declared only in .gitlab-ci.yml therefore runs after the night, on a
+# backup, against a branch nobody is merging. It cannot block anything, and a
+# red job on a mirror is read by nobody -- which is worse than no job at all,
+# because a check by that name still appears to exist.
+#
+# Two cases had already cost something by the time they were counted. The real
+# PDF/A gate converts a thousand documents against a stored baseline and ran on
+# the mirror alone, while what stood before a merge on GitHub was a second,
+# broken gate that could not fail (#286). The advisory scan was on GitHub but
+# used a Docker action on a runner without docker, and four vulnerabilities sat
+# behind it for months (#287).
+#
+# `every_guard_has_a_job.py` reads this file in both directions:
+#
+#   * a guard that runs only on the mirror and is not named here fails the
+#     build -- the decision has to be written down, not assumed;
+#   * an entry naming a guard that now runs on GitHub fails too, and so does an
+#     entry naming a script that no longer exists -- otherwise the reason
+#     outlives the situation it describes and goes on reading as current.
+#
+# Fields, all required:
+#   script  the file in scripts/ci/, by name
+#   reason  one of: corpus, runner, covered-elsewhere, credentials
+#   why     what would break if this ran in GitHub Actions
+#   issue   where it was decided
+
+# --- corpus ----------------------------------------------------------------
+# The corpus machine is not registered as a GitHub runner (#276) and does not
+# see master (#284). Until it is, these cannot stand before a merge on GitHub
+# without being permanently skipped, and a permanent skip reports the same
+# green as a pass.
+
+[[guard]]
+script = "pdfa_conformance_gate.py"
+reason = "corpus"
+issue = "#286"
+why = """Converts a thousand holdout documents and compares conformance against \
+a stored baseline. It needs the corpus disk and a veraPDF install, and it runs \
+for tens of minutes. The offline half now runs on GitHub instead: \
+test_pdfa_gate_label.py holds the gate to naming the sample its number came \
+from, and test_retention_report.py holds the retention arithmetic to counting \
+only numbers. A gate whose parser stops understanding its own output therefore \
+fails before a merge, even though the measurement itself does not."""
+
+[[guard]]
+script = "text_replace_corpus_gate.py"
+reason = "corpus"
+issue = "#276"
+why = """Measures text replacement across the corpus on the `pdfluent-xfa-corpus` \
+runner. Same reason as the PDF/A gate: the corpus is not reachable from a GitHub \
+runner. What it passes on to that runner is checked on GitHub by \
+test_text_replace_gate.py -- the failure that mattered was an argument the gate \
+never had, which made the job exit in under a second for months."""
+
+[[guard]]
+script = "corpus_preflight.sh"
+reason = "corpus"
+issue = "#276"
+why = """Checks the corpus is mounted and readable before a corpus job spends an \
+hour finding out it is not. On a machine without the corpus it can only report \
+absence, every single run. Its behaviour without a corpus -- and against a disk \
+that answers stat but not read -- is tested on GitHub by test_corpus_preflight.py."""
+
+# --- runner ----------------------------------------------------------------
+# These do not check the change under review. They check the machine, and they
+# are wired into the GitLab jobs as before_script or as maintenance. Running
+# them as a GitHub gate would fail merges over a full disk, which is an
+# operations problem and not a property of anyone's branch.
+
+[[guard]]
+script = "desktop_env.sh"
+reason = "runner"
+issue = "#288"
+why = """Sourced, not executed: it puts the per-user Rust toolchain on PATH and \
+points CARGO_TARGET_DIR at the runner's warm cache. Both facts are about one \
+machine. A GitHub runner sets its own toolchain up and has no warm cache to \
+find, so there is nothing here for a hosted job to assert."""
+
+[[guard]]
+script = "runner_disk_guard.sh"
+reason = "runner"
+issue = "#288"
+why = """Runs as before_script in six GitLab jobs and refuses to start a build \
+that cannot finish. It reports on that machine's root filesystem and its \
+storage mount. GitHub has its own answer to the same question in \
+disk_headroom.py, which runs in orchestration-guard on every pull request."""
+
+[[guard]]
+script = "runner_cleanup_report.sh"
+reason = "runner"
+issue = "#288"
+why = """Reports what is consuming disk on the build machine. Maintenance, not a \
+verdict on a change: it is allow_failure on the mirror for exactly that reason, \
+and a job that may fail is not a gate wherever it is declared."""
+
+[[guard]]
+script = "runner_cleanup_safe.sh"
+reason = "runner"
+issue = "#288"
+why = """Deletes caches and stale build directories on the build machine. It \
+touches paths that only exist there, and the protected list it honours \
+(corpus, golden, reference, storage box) names that machine's mounts. There is \
+nothing to run and nothing to protect on a hosted runner."""
+
+# --- covered-elsewhere -----------------------------------------------------
+# The check exists on GitHub; the GitLab wrapper script does not. Moving the
+# script would add a second way to ask a question already being asked before a
+# merge.
+
+[[guard]]
+script = "run_build.sh"
+reason = "covered-elsewhere"
+issue = "#288"
+why = """Two lines around `cargo test --no-run --workspace`. ci-ephemeral.yml \
+runs `cargo check --workspace --exclude pdf-desktop` on every pull request, \
+which answers the same question -- does this branch compile -- before a merge."""
+
+[[guard]]
+script = "run_clippy.sh"
+reason = "covered-elsewhere"
+issue = "#288"
+why = """A one-line wrapper around clippy. ci-ephemeral.yml runs \
+`cargo clippy --workspace --exclude pdf-desktop -- -D warnings` on every pull \
+request."""
+
+[[guard]]
+script = "run_test.sh"
+reason = "covered-elsewhere"
+issue = "#288"
+why = """A one-line wrapper around the workspace test run. ci-ephemeral.yml runs \
+`cargo test --workspace --exclude pdf-desktop --no-fail-fast` on every pull \
+request, on an ephemeral instance rather than the persistent desktop -- which \
+is the arrangement #1535 settled on for pre-merge code."""
+
+[[guard]]
+script = "run_audit.sh"
+reason = "covered-elsewhere"
+issue = "#287"
+why = """A one-line wrapper around `cargo audit`. security-audit.yml runs the \
+advisory scan on every pull request. That workflow is the one from #287: it \
+existed and used a Docker action on a runner without docker, so the port is \
+only worth anything now that it runs the binary directly."""
+
+# --- credentials -----------------------------------------------------------
+
+[[guard]]
+script = "mr_staleness.py"
+reason = "credentials"
+issue = "#288"
+why = """Reads GitLab merge requests over the GitLab API and needs a token for \
+that project. GitHub is where merges happen now, and pr_staleness.py asks the \
+same question there -- it runs in orchestration-guard with the workflow token \
+and fails on a pull request left to rot. Keeping this one on the mirror keeps \
+the GitLab side honest for as long as branches still land there."""

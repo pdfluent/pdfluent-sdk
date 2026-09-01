@@ -247,6 +247,20 @@ jobs:
               exit 1
             fi
             echo "OK: no compiled build artifacts found in the repository."
+      # The test first, then the guard: a guard whose parser stopped recognising
+      # jobs reports a clean tree in exactly the same words as a clean tree.
+      - name: The guard on the guards still bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_guard_has_a_job.py
+      - name: Every guard has a job, and it is not only on the mirror
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_guard_has_a_job.py
+      - name: The mirror pipeline still parses
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/ci_config_lint.py
+      - name: The branch-without-a-request guard still counts
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_branches_have_a_merge_request.py
       - name: Verify commercial packages declare correct license
         if: ${{ !cancelled() }}
         run: |
@@ -266,3 +280,122 @@ jobs:
             done
             if [ "$FAIL" = "1" ]; then exit 1; fi
 
+  # --------------------------------------------------------------------------
+  # #288. Until 31-08-2026 the guards below ran in .gitlab-ci.yml and nowhere
+  # else. GitHub has been the main remote since 25-08 and GitLab a nightly
+  # mirror of it, so a job declared only there runs after the night, on a copy,
+  # against a branch nobody is merging -- it cannot block a merge, and nobody
+  # reads it when it goes red.
+  #
+  # Every step carries `if: ${{ !cancelled() }}` for the reason in
+  # scripts/ci/guards_do_not_hide_behind_each_other.py: orchestration-guard
+  # aborted at step four for thirty runs and the thirty-three guards below it
+  # never executed, while the summary showed them as installed. Both jobs are
+  # named in that script's GUARD_JOBS so the property is enforced, not intended.
+  #
+  # Nothing here is continue-on-error. Each one stands in front of a product
+  # promise, and a soft gate recreates exactly the situation this issue is about.
+  promise-guard:
+    name: Every promise has a test that reaches it
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml
+      - name: Cargo on PATH
+        if: ${{ !cancelled() }}
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      # Which exported symbols does no test call? A floor, not a percentage:
+      # 198 of 262 is not 100, and a soft job at that number is one everybody
+      # scrolls past -- so the floor passes at today's count and fails on a drop.
+      - name: Every exported symbol a test calls, still called
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/api_coverage.py
+      # The product question rather than the binding one: does every capability
+      # the website and the editor advertise map to a test, and is it reachable
+      # from the pdfluent facade at all? OCR, Excel and PowerPoint each had tests
+      # in a crate the facade did not depend on.
+      - name: Every advertised capability has a test and a route to it
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/feature_promises.py
+      # Three hand-written descriptions of what this codebase can do were four
+      # months stale at the same time, and each still read as authoritative.
+      - name: The capability register matches the code
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/capability_register.py --check
+      # crates/pdf-python sits outside the workspace on purpose; a second
+      # Cargo.lock drifting on its own was never the decision. It had 35 packages
+      # pinned older than the workspace.
+      - name: The Python binding resolves the versions we ship
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/lockfile_agreement.py
+      # A ratchet in both directions: a new public function without a test turns
+      # it red, and so does one that gains coverage without the file shrinking.
+      - name: Test reachability has not slipped
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_reachability.py --check
+      - name: The reachability guard can still tell delegation apart
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_reachability_unit.py
+
+  # The offline half of the corpus gates. The measurements themselves need the
+  # corpus machine and stay on the mirror with their reason in
+  # scripts/ci/mirror_only_guards.toml -- but the arithmetic, the argument
+  # handling and the reporting are plain Python, and those are where the two
+  # failures in #286 actually lived.
+  measurement-guard:
+    name: The published measurements still measure what they say
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml
+      # A test that returns early without saying so is indistinguishable from a
+      # passing one. That is how a doubled /ToUnicode survived a fully green suite.
+      - name: No test bails out in silence
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_skip_lint.py
+      # Counting characters scored a wrecked document at 80.1%: every letter had
+      # become an 'x'. This measure counts which of the source's words come back.
+      - name: Text retention is measured in words, not characters
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_text_fidelity.py
+      # A print function that quietly does nothing leaves the gate saying OK with
+      # no figure at all -- and the figure then gets fetched by hand from
+      # somewhere else, which is how a wrong one stays on a website for months.
+      - name: The retention gate still prints its distribution
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_retention_report.py
+      # #286: measured.json wrote "govdocs (fixed 300-document sample)" while
+      # sample_size said 1000. A conformance figure has to name the sample it
+      # came from, and the two gates have to be tellable apart.
+      - name: A conformance figure names the sample it came from
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_pdfa_gate_label.py
+      # The corpus job handed the text-replacement gate an argument it did not
+      # have. It failed on argument parsing in under a second, for months, and
+      # the measurement it exists to produce had therefore never run.
+      - name: The text-replacement gate accepts what its job passes
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_text_replace_gate.py
+      # A cache in front of a validator is the one place where fast quietly turns
+      # into wrong, so these check that it declines to answer far more often than
+      # that it answers quickly.
+      - name: The veraPDF verdict cache declines when it should
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_verapdf_cached.py
+      # The corpus disk threw read errors for five hours while its mount stayed
+      # in place. `test -d` passed on a cached dentry, and a corpus job ran 68
+      # minutes without a line of output.
+      - name: The corpus preflight can tell a dead disk from a missing one
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_corpus_preflight.py
+      - name: The test fixtures are still well formed
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_fixtures_are_wellformed.py
