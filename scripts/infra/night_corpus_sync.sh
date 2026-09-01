@@ -24,7 +24,19 @@
 # multi-night copy that destroys work rather than syncing it.
 set -uo pipefail
 
-VPS="${VPS_HOST:-root@46.225.223.175}"
+# The Hetzner VPS behind this was cancelled on 24-08-2026 and the address has
+# since been reassigned: 46.225.223.175 now answers for somebody else. A script
+# that keeps a dead address as a default does not fail when the host goes away --
+# it connects to whoever holds it next. So the host is required, and its absence
+# is loud.
+if [ -z "${VPS_HOST:-}" ]; then
+    echo "FATAL: VPS_HOST is not set, and this script will not guess." >&2
+    echo "  The old address (a cancelled Hetzner VPS) now belongs to a stranger," >&2
+    echo "  so a default here would send this run, and anything it copies, there." >&2
+    echo "  Export VPS_HOST=user@host and run again." >&2
+    exit 2
+fi
+VPS="${VPS_HOST}"
 SRC_ROOT="/mnt/storagebox"
 DST_ROOT="/mnt/storagebox"
 STATE_DIR="/var/lib/night-corpus-sync"

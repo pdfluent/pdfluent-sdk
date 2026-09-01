@@ -112,6 +112,11 @@ jobs:
       - name: Enough disk to finish a build
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/disk_headroom.py
+      # A cancelled host's address gets reassigned, and a script that keeps it
+      # does not break -- it connects to whoever holds it next. (#261 family)
+      - name: No connecting script carries a literal address
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_dead_host_in_a_connecting_script.py
       - name: One owner per path, and branches stay inside their own
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/territories_do_not_overlap.py
