@@ -16,20 +16,238 @@ use crate::ast::{AccessIndex, BinOp, Expr};
 use crate::error::{FormCalcError, Result};
 use crate::lexer::{Token, TokenKind};
 
+/// How deep an expression may nest before the parser refuses it.
+///
+/// FormCalc arrives inside XFA forms, which arrive inside PDFs, which arrive
+/// from whoever sends one -- so this is a bound against hostile input, not a
+/// fidelity claim. Two measurements set the number:
+///
+/// * The 51 FormCalc scripts in `fixtures/formcalc` reach a maximum AST depth
+///   of **10**, so 64 leaves a factor of six for real forms.
+/// * Measured cost is ~3.7 KB of native stack per nesting level while parsing
+///   and ~750 bytes per level while evaluating. 64 levels therefore survives
+///   even a 256 KB stack, which the smallest embedder thread might have. The
+///   unguarded parser overflowed an 8 MB stack at 2242 levels.
+///
+/// It matches `interpreter::MAX_CALL_DEPTH`, which bounds the other recursion
+/// in this crate, deliberately: one number for "how deep is too deep".
+const MAX_DEPTH: usize = 64;
+
 /// Parse a token stream into a list of expressions (a script).
 pub fn parse(tokens: Vec<Token>) -> Result<Vec<Expr>> {
     let mut parser = Parser::new(tokens);
-    parser.parse_script()
+    let script = parser.parse_script()?;
+
+    // The parser's own counter bounds how deep it may *recurse*, which is what
+    // keeps parsing itself off the end of the stack. It does not bound how deep
+    // the finished tree is: a completed subtree's depth is released when its
+    // parse function returns, so `Abs(x + 1 + 1 + ...)` nested 32 deep with a
+    // 31-link chain at each level is accepted at a held path of 63 while being
+    // 1025 nodes deep. Measured: that tree still overflowed a 512 KB stack in
+    // the evaluator. So the tree is measured once, exactly, before it is handed
+    // to anything that walks it recursively.
+    let depth = ast_depth(&script);
+    if depth > MAX_DEPTH {
+        // Dropping it normally would recurse to the depth we just refused, so
+        // the refusal would crash exactly where acceptance used to.
+        dismantle(script);
+        return Err(FormCalcError::ExpressionTooDeep {
+            max_depth: MAX_DEPTH,
+        });
+    }
+    Ok(script)
+}
+
+/// Depth of the deepest path in a script, measured with an explicit stack.
+///
+/// The match is exhaustive on purpose: a variant added later must not be
+/// scored as a leaf by a wildcard arm, which would silently reopen this hole.
+fn ast_depth(script: &[Expr]) -> usize {
+    let mut max = 0;
+    let mut work: Vec<(&Expr, usize)> = script.iter().map(|e| (e, 1)).collect();
+    while let Some((expr, d)) = work.pop() {
+        max = max.max(d);
+        match expr {
+            Expr::Number(_)
+            | Expr::StringLit(_)
+            | Expr::Null
+            | Expr::Ident(_)
+            | Expr::Break
+            | Expr::Continue => {}
+            Expr::MemberAccess { object, .. }
+            | Expr::RecursiveDescent { object, .. }
+            | Expr::IndexAccess { object, .. }
+            | Expr::Negate(object)
+            | Expr::Positive(object)
+            | Expr::Not(object) => work.push((object, d + 1)),
+            Expr::BinaryOp { left, right, .. }
+            | Expr::Concat(left, right)
+            | Expr::Assign {
+                target: left,
+                value: right,
+            } => {
+                work.push((left, d + 1));
+                work.push((right, d + 1));
+            }
+            Expr::FuncCall { args, .. } => work.extend(args.iter().map(|a| (a, d + 1))),
+            Expr::If {
+                condition,
+                then_body,
+                elseif_clauses,
+                else_body,
+            } => {
+                work.push((condition, d + 1));
+                work.extend(then_body.iter().map(|e| (e, d + 1)));
+                for (cond, body) in elseif_clauses {
+                    work.push((cond, d + 1));
+                    work.extend(body.iter().map(|e| (e, d + 1)));
+                }
+                if let Some(body) = else_body {
+                    work.extend(body.iter().map(|e| (e, d + 1)));
+                }
+            }
+            Expr::While { condition, body } => {
+                work.push((condition, d + 1));
+                work.extend(body.iter().map(|e| (e, d + 1)));
+            }
+            Expr::For {
+                start,
+                end,
+                step,
+                body,
+                ..
+            } => {
+                work.push((start, d + 1));
+                work.push((end, d + 1));
+                if let Some(step) = step {
+                    work.push((step, d + 1));
+                }
+                work.extend(body.iter().map(|e| (e, d + 1)));
+            }
+            Expr::Foreach { list, body, .. } => {
+                work.push((list, d + 1));
+                work.extend(body.iter().map(|e| (e, d + 1)));
+            }
+            Expr::FuncDecl { body, .. } => work.extend(body.iter().map(|e| (e, d + 1))),
+            Expr::VarDecl { init, .. } | Expr::Return(init) => {
+                if let Some(init) = init {
+                    work.push((init, d + 1));
+                }
+            }
+        }
+    }
+    max
+}
+
+/// Take a refused tree apart one node at a time, so no `Drop` recurses.
+fn dismantle(script: Vec<Expr>) {
+    let mut work = script;
+    while let Some(mut expr) = work.pop() {
+        // Children are moved into `work`; the shell left behind drops shallowly.
+        match &mut expr {
+            Expr::Number(_)
+            | Expr::StringLit(_)
+            | Expr::Null
+            | Expr::Ident(_)
+            | Expr::Break
+            | Expr::Continue => {}
+            Expr::MemberAccess { object, .. }
+            | Expr::RecursiveDescent { object, .. }
+            | Expr::IndexAccess { object, .. }
+            | Expr::Negate(object)
+            | Expr::Positive(object)
+            | Expr::Not(object) => work.push(std::mem::replace(object.as_mut(), Expr::Break)),
+            Expr::BinaryOp { left, right, .. }
+            | Expr::Concat(left, right)
+            | Expr::Assign {
+                target: left,
+                value: right,
+            } => {
+                work.push(std::mem::replace(left.as_mut(), Expr::Break));
+                work.push(std::mem::replace(right.as_mut(), Expr::Break));
+            }
+            Expr::FuncCall { args, .. } => work.append(args),
+            Expr::If {
+                condition,
+                then_body,
+                elseif_clauses,
+                else_body,
+            } => {
+                work.push(std::mem::replace(condition.as_mut(), Expr::Break));
+                work.append(then_body);
+                for (cond, body) in elseif_clauses.iter_mut() {
+                    work.push(std::mem::replace(cond, Expr::Break));
+                    work.append(body);
+                }
+                if let Some(body) = else_body {
+                    work.append(body);
+                }
+            }
+            Expr::While { condition, body } => {
+                work.push(std::mem::replace(condition.as_mut(), Expr::Break));
+                work.append(body);
+            }
+            Expr::For {
+                start,
+                end,
+                step,
+                body,
+                ..
+            } => {
+                work.push(std::mem::replace(start.as_mut(), Expr::Break));
+                work.push(std::mem::replace(end.as_mut(), Expr::Break));
+                if let Some(step) = step.take() {
+                    work.push(*step);
+                }
+                work.append(body);
+            }
+            Expr::Foreach { list, body, .. } => {
+                work.push(std::mem::replace(list.as_mut(), Expr::Break));
+                work.append(body);
+            }
+            Expr::FuncDecl { body, .. } => work.append(body),
+            Expr::VarDecl { init, .. } | Expr::Return(init) => {
+                if let Some(init) = init.take() {
+                    work.push(*init);
+                }
+            }
+        }
+    }
 }
 
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// How deep the recursive descent currently is.
+    ///
+    /// This bounds the parser's own stack only. It says nothing about how deep
+    /// the finished tree is -- `a+b+c+...` is built by a loop and costs no
+    /// recursion at all -- so `ast_depth` measures the tree separately.
+    depth: usize,
 }
 
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            depth: 0,
+        }
+    }
+
+    /// Descend one level, refusing rather than overflowing the native stack.
+    fn enter(&mut self) -> Result<()> {
+        if self.depth >= MAX_DEPTH {
+            return Err(FormCalcError::ExpressionTooDeep {
+                max_depth: MAX_DEPTH,
+            });
+        }
+        self.depth += 1;
+        Ok(())
+    }
+
+    fn leave(&mut self, levels: usize) {
+        self.depth = self.depth.saturating_sub(levels);
     }
 
     fn peek(&self) -> &TokenKind {
@@ -104,7 +322,19 @@ impl Parser {
         Ok(body)
     }
 
+    /// Depth-guarded entry to expression parsing.
+    ///
+    /// `?` inside the parser abandons the whole parse, so `leave` is only
+    /// needed on the success path: an error discards the `Parser` with its
+    /// counter. Siblings, which do share a counter, are restored here.
     fn parse_expr(&mut self) -> Result<Expr> {
+        self.enter()?;
+        let expr = self.parse_expr_inner();
+        self.leave(1);
+        expr
+    }
+
+    fn parse_expr_inner(&mut self) -> Result<Expr> {
         self.skip_newlines();
         match self.peek().clone() {
             // `if (` could be If(a,b,c) function OR if (cond) then...endif statement.
@@ -532,6 +762,13 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr> {
+        self.enter()?;
+        let expr = self.parse_unary_inner();
+        self.leave(1);
+        expr
+    }
+
+    fn parse_unary_inner(&mut self) -> Result<Expr> {
         match self.peek() {
             TokenKind::Plus => {
                 self.advance();
@@ -880,5 +1117,114 @@ mod tests {
     fn parse_multiline_script() {
         let exprs = parse_str("var x = 1\nvar y = 2\nx + y");
         assert_eq!(exprs.len(), 3);
+    }
+}
+
+/// Depth bounds against hostile input (#299).
+///
+/// FormCalc reaches this parser from inside a PDF, so "too deep" has to be a
+/// `Result`, never a stack overflow. Every depth here is chosen to be refused
+/// by the guard but *shallow enough to parse fine without it* -- so removing
+/// the guard fails these as assertions rather than aborting the test binary,
+/// which is the difference between a red test and a dead one.
+#[cfg(test)]
+mod depth_bounds {
+    use super::*;
+    use crate::lexer::tokenize;
+
+    fn refused(src: &str) -> bool {
+        match tokenize(src).and_then(parse) {
+            Err(FormCalcError::ExpressionTooDeep { .. }) => true,
+            Err(_) | Ok(_) => false,
+        }
+    }
+
+    fn accepted(src: &str) -> Vec<Expr> {
+        tokenize(src).and_then(parse).expect("should parse")
+    }
+
+    #[test]
+    fn nested_parentheses_are_refused_not_overflowed() {
+        assert!(refused(&format!("{}1{}", "(".repeat(200), ")".repeat(200))));
+    }
+
+    #[test]
+    fn nested_unary_is_refused() {
+        assert!(refused(&format!("{}1", "-".repeat(200))));
+        assert!(refused(&format!("{}1", "not ".repeat(200))));
+    }
+
+    #[test]
+    fn nested_calls_are_refused() {
+        assert!(refused(&format!(
+            "{}1{}",
+            "Abs(".repeat(200),
+            ")".repeat(200)
+        )));
+    }
+
+    /// A left-associative chain costs the parser no stack at all -- it is built
+    /// by a loop -- but the tree it builds is exactly as deep as the chain is
+    /// long, and the evaluator walks that tree recursively. A guard that only
+    /// counted recursion would pass every other test here and still let this
+    /// one through.
+    #[test]
+    fn long_operator_chains_are_refused() {
+        for op in [" + ", " * ", " or ", " and ", " < ", " == "] {
+            let src = (0..200).map(|_| "1").collect::<Vec<_>>().join(op);
+            assert!(refused(&src), "chain of `{op}` was accepted");
+        }
+    }
+
+    /// `a.b.c` and `a[0][0]` are built by the same kind of loop.
+    #[test]
+    fn long_accessor_chains_are_refused() {
+        assert!(refused(&format!("a{}", ".b".repeat(200))));
+        assert!(refused(&format!("a{}", "[0]".repeat(200))));
+        assert!(refused(&format!("a{}", "..b".repeat(200))));
+    }
+
+    /// The case that a recursion-only counter accepts.
+    ///
+    /// 32 levels of `Abs(...)`, each holding a 31-link chain, keeps the parser's
+    /// own recursion at 63 -- under the limit -- while building a tree 1025
+    /// nodes deep. Measured before the tree was checked exactly: that tree still
+    /// overflowed a 512 KB stack inside the evaluator.
+    #[test]
+    fn depth_released_on_return_does_not_compose_past_the_bound() {
+        let tail = " + 1".repeat(31);
+        let mut src = String::from("1");
+        for _ in 0..32 {
+            src = format!("Abs({src}{tail})");
+        }
+        assert!(refused(&src));
+    }
+
+    /// The bound has to mean what it says, not "64 per stack frame".
+    #[test]
+    fn nothing_accepted_is_deeper_than_the_bound() {
+        let shapes = [
+            format!("{}1{}", "Abs(".repeat(60), ")".repeat(60)),
+            (0..60).map(|_| "1").collect::<Vec<_>>().join(" + "),
+            format!("a{}", ".b".repeat(60)),
+        ];
+        for src in shapes {
+            if let Ok(ast) = tokenize(&src).and_then(parse) {
+                assert!(
+                    ast_depth(&ast) <= MAX_DEPTH,
+                    "accepted a tree deeper than the bound"
+                );
+            }
+        }
+    }
+
+    /// The other half: a bound low enough to break real forms is also a bug.
+    /// The deepest of the 51 FormCalc scripts in `fixtures/formcalc` measures
+    /// 10, so ordinary nesting must keep working.
+    #[test]
+    fn ordinary_nesting_still_parses() {
+        let ast = accepted("var t = Abs(Round(Sum(1 + 2 * 3, 4), 2)) + Len(\"x\" & \"y\")");
+        assert!(ast_depth(&ast) > 3, "test lost its own nesting");
+        accepted("if (a > 1) then\n  b = c.d.e[0] + 2\nelse\n  b = 0\nendif");
     }
 }
