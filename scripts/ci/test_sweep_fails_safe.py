@@ -8,7 +8,7 @@ that reads failure as clean is worse than sweeping by hand, so each case proves
 both directions: the failure refuses, the healthy equivalent still proceeds.
 """
 from __future__ import annotations
-import importlib.util, os, pathlib, shutil, stat, subprocess, sys, tempfile
+import contextlib, importlib.util, io, os, pathlib, shutil, subprocess, sys, tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location(
@@ -107,31 +107,46 @@ with tempfile.TemporaryDirectory() as d:
     expect("  and the target survives", (r / "target" / "big.bin").exists())
 
 # --- rmtree failure: report it, and count only what went away --------------
+# The first version of this case made the removal fail with chmod. As root, or
+# with CAP_DAC_OVERRIDE -- which many CI containers run with -- rmtree ignores
+# the mode, the target is deleted, both assertions fail and the cleanup raises
+# FileNotFoundError on a path that is already gone. Codex reproduced it as root.
+# A fixture that fails-as-intended only on one machine measures something else
+# everywhere else, so the failure is injected directly and depends on no
+# filesystem permission at all. (codex, #1641)
 with tempfile.TemporaryDirectory() as d:
     r = repo_with_worktree(pathlib.Path(d))
-    locked = r / "target" / "locked"
-    locked.mkdir()
-    (locked / "inner.bin").write_text("z" * 2048)
-    os.chmod(locked, stat.S_IRUSR | stat.S_IXUSR)  # cannot unlink what is inside
-    # A real cargo may be running on the host -- the guard would then refuse for
-    # the RIGHT reason and this case would never reach the removal it tests.
-    fake = with_fake_ps("#!/bin/sh\necho '/bin/zsh'\n")
-    env = sweeper.clean_env(); env["PATH"] = fake + os.pathsep + env.get("PATH", "")
-    try:
-        res = subprocess.run([sys.executable, str(HERE / "sweep_merged_build_caches.py"),
-                              "--base", "master", "--sweep"], cwd=r,
-                             capture_output=True, text=True, env=env)
-        expect("a failed removal exits non-zero", res.returncode == 1,
-               f"exit={res.returncode} {res.stdout[-160:]}")
-        expect("  and says the removal FAILED", "FAILED to remove" in res.stderr,
-               res.stderr[-200:])
-        expect("  and reports 0.0 GB freed, not the pre-scan size",
-               "0.0 GB freed" in res.stdout, res.stdout[-200:])
-    finally:
-        os.chmod(locked, stat.S_IRWXU)
-        shutil.rmtree(fake, ignore_errors=True)
+    (r / "target" / "more.bin").write_text("z" * 2048)
 
-MINIMUM_CASES = 12  # FLOOR
+    real_rmtree = sweeper.shutil.rmtree
+    real_busy = sweeper.a_build_may_be_running
+    old_cwd = os.getcwd()
+
+    def refuses_to_delete(path, *a, **k):
+        raise PermissionError(13, "Permission denied", str(path))
+
+    buf_out, buf_err = io.StringIO(), io.StringIO()
+    try:
+        os.chdir(r)
+        sweeper.shutil.rmtree = refuses_to_delete
+        # Whether a build is running is covered by its own four cases above; here
+        # it must simply not decide the outcome, so it is pinned to "no build".
+        sweeper.a_build_may_be_running = lambda: (False, "")
+        with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+            rc = sweeper.main(["sweep", "--base", "master", "--sweep"])
+    finally:
+        sweeper.shutil.rmtree = real_rmtree
+        sweeper.a_build_may_be_running = real_busy
+        os.chdir(old_cwd)
+
+    out, err = buf_out.getvalue(), buf_err.getvalue()
+    expect("a failed removal exits non-zero", rc == 1, f"exit={rc} {out[-160:]}")
+    expect("  and says the removal FAILED", "FAILED to remove" in err, err[-200:])
+    expect("  and reports 0.0 GB freed, not the pre-scan size",
+           "0.0 GB freed" in out, out[-200:])
+    expect("  and the target is still there", (r / "target" / "more.bin").exists())
+
+MINIMUM_CASES = 13  # FLOOR
 print(f"\n  {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
