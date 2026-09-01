@@ -71,6 +71,33 @@ Anything that cannot run announces itself: `SKIPPED (not a pass): <reason>` on
 stderr. A silent skip is indistinguishable from a pass, and that is how a
 `/ToUnicode` bug survived a fully green suite.
 
+## Never truncate at the moment of capture
+
+`| tail -3` on a push or a gate is not a summary. It is the destruction of the
+evidence, and you find out only when the thing you threw away is the thing you
+needed.
+
+Three times on 01-09-2026, by one terminal, twice after reporting it as a lesson:
+
+- a push blocked by the local gate, `| tail -4` — the failing gate's name gone,
+  and the whole run repeated to recover one line
+- the same again on a second branch
+- and separately, a reviewer's findings read through a `[0:400]` slice and
+  reported as "no suggestions" when there were nine
+
+Write the whole thing to a file and read the file:
+
+    git push … 2>&1 | tee "/tmp/push-$(date +%s).log" | tail -3
+
+Now the short view is a *view of* the evidence rather than its replacement. The
+same applies to `gh api … | head`, to `--log | grep`, and to any pipeline whose
+first stage is the only place the full text ever existed.
+
+A related trap in the same family: `grep -q` at the end of a pipeline under
+`set -o pipefail` returns 141, not 0, once the upstream writer takes SIGPIPE —
+so the check silently reports "no match" exactly when there are many matches.
+Count with `grep -c` and compare, or drop `pipefail` for that line.
+
 ## Reporting back
 
 State what you verified rather than what you did. Include every mutation and its
