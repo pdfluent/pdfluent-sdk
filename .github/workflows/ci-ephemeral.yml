@@ -195,10 +195,50 @@ jobs:
           cargo check --target wasm32-unknown-unknown -p pdfluent --tests
           cargo test -p pdfluent --test wasm_surface
 
+      # This step built the extractor and stopped there, which measures
+      # nothing: the drift it is named after is the difference between what
+      # the extractor produces and what is committed, and neither half was
+      # computed. docs-drift-guard.yml had been pointed at this step as the
+      # place the work moved to (#275), so between 28-08 and 31-08-2026 the
+      # check existed twice and ran nowhere (#290). Re-extract and diff, on the
+      # machine that already paid for the build.
+      #
+      # Advisory on purpose, as it was before: the website documents API the
+      # SDK does not have yet (#1488), so there is real drift today and it must
+      # report without blocking. When #1488 closes, drop continue-on-error.
       - name: docs drift (advisory)
         continue-on-error: true
         run: |
           cargo build -p pdfluent-snippet-extract --release
+          stamp=tools/pdfluent-snippet-extract/cache/.last-fetched
+          if [ ! -s "$stamp" ]; then
+            echo "SKIPPED (not a pass): $stamp is missing or empty, so the" >&2
+            echo "extract has no deterministic --fetched tag and its output" >&2
+            echo "would differ from the committed files for that reason alone." >&2
+            exit 1
+          fi
+          cargo run --release -p pdfluent-snippet-extract -- \
+            --manifest  tools/pdfluent-snippet-extract/manifest.toml \
+            --cache-dir tools/pdfluent-snippet-extract/cache \
+            --out-dir   crates/pdfluent/tests/web_examples \
+            --fetched   "$(cat "$stamp")"
+          # `git diff` alone misses the case this check exists for. Add a page
+          # to the manifest and forget to commit its generated .rs, and the
+          # extractor creates that file as untracked -- which `git diff` does
+          # not see, so the guard reports no drift for precisely the
+          # manifest-expansion it is meant to catch. (codex, #1610)
+          nieuw=$(git status --porcelain -- crates/pdfluent/tests/web_examples/ \
+                  | awk '$1 == "??" { print $2 }')
+          if ! git diff --exit-code --stat -- crates/pdfluent/tests/web_examples/ || [ -n "$nieuw" ]; then
+            if [ -n "$nieuw" ]; then
+              echo "Generated but never committed:"
+              printf '  %s\n' $nieuw
+            fi
+            echo "::warning::Docs drift: the extractor's output differs from the committed tests/web_examples/*.rs. Advisory until #1488."
+            git checkout -- crates/pdfluent/tests/web_examples/
+            [ -n "$nieuw" ] && rm -f $nieuw
+            exit 1
+          fi
 
       # The WASM build that wasm.yml used to do on a push to master. Publishing
       # stays there, on tags; this is the build and the website rebuild.

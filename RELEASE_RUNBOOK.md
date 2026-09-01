@@ -225,6 +225,8 @@ local-green before admin-merge. When CI is restored:
 
 - Re-run every green-locally PR merged during the outage to confirm
   CI parity.
-- The drift-guard workflow (`docs-drift-guard.yml`) will start
-  firing on PRs touching `tests/web_examples/` or the extractor.
+- The drift guard is the `docs drift (advisory)` step of
+  `ci-ephemeral.yml`, which runs on every push and pull request.
+  (`docs-drift-guard.yml` was deleted on 31-08-2026: it duplicated
+  that step and could not start at all. See #290.)
 - No code change is expected; this is a retrospective audit only.

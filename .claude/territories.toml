@@ -48,6 +48,12 @@ paden = [
   "docs/ci/**",
 ]
 uitgezonderd = [
+  # Not t2's, on purpose. Declaring a feature-gated test as deliberately not
+  # running used to mean editing a t2 python file, so on 01-09-2026 T1 removed
+  # a feature flag rather than declare it. A guard whose only escape hatch is
+  # behind another terminal's door is a guard people route around. Unclaimed,
+  # so anyone adding a feature flag can declare its gap in their own change.
+  "scripts/ci/feature_gaps.toml",
   "scripts/ci/*licen*",
   "scripts/ci/*publicat*",
   "scripts/ci/geen_interne_zaken.py",
