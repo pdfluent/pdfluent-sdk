@@ -84,6 +84,19 @@ pub(crate) fn decode_with(
 ) -> Result<()> {
     let strip_size = header.strip_size();
 
+    // A text region cannot hold more instances than its own segment data can
+    // encode, so a declared count far above that is a malformed file asking us
+    // to loop. Upstream took the bound from Chromium's JBIG2 reader
+    // (LaurenzV/hayro#1278); our fork had no bound at all, so a region claiming
+    // u32::MAX instances got four billion decode rounds and never panicked --
+    // which is why nothing ever found it.
+    //
+    // https://pdfium.googlesource.com/pdfium/%2B/refs/heads/main/core/fxcodec/jbig2/jbig2_context.cpp#666
+    let max_instances = header.segment_data_len.saturating_mul(32);
+    if header.num_instances as usize > max_instances {
+        bail!(SymbolError::TooManyInstances);
+    }
+
     let mut strip_t = ctx
         .read_strip_delta_t(strip_size)?
         .checked_neg()
@@ -772,6 +785,9 @@ pub(crate) struct TextRegionHeader<'a> {
     pub(crate) refinement_at_pixels: Vec<AdaptiveTemplatePixel>,
     pub(crate) num_instances: u32,
     pub(crate) symbol_id_table: Option<HuffmanTable>,
+    /// Length of the segment payload this header was parsed from, used to
+    /// bound `num_instances`.
+    pub(crate) segment_data_len: usize,
     pub(crate) data: &'a [u8],
 }
 
@@ -841,6 +857,7 @@ fn parse_text_region_huffman_flags(reader: &mut Reader<'_>) -> Result<TextRegion
 
 /// Parse a text region segment header (7.4.3.1).
 pub(crate) fn parse<'a>(reader: &mut Reader<'a>, num_symbols: u32) -> Result<TextRegionHeader<'a>> {
+    let segment_data_len = reader.tail().ok_or(ParseError::UnexpectedEof)?.len();
     let region_info = parse_region_segment_info(reader)?;
     let flags = parse_text_region_flags(reader)?;
     let huffman_flags = if flags.use_huffman {
@@ -873,6 +890,114 @@ pub(crate) fn parse<'a>(reader: &mut Reader<'a>, num_symbols: u32) -> Result<Tex
         refinement_at_pixels,
         num_instances,
         symbol_id_table,
+        segment_data_len,
         data,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decode::{CombinationOperator, RefinementTemplate};
+
+    /// Build a text region header that claims `num_instances` instances while
+    /// carrying `data`, which is the only thing those instances can be encoded
+    /// in.
+    fn header_claiming<'a>(num_instances: u32, data: &'a [u8]) -> TextRegionHeader<'a> {
+        TextRegionHeader {
+            region_info: RegionSegmentInfo {
+                width: 8,
+                height: 8,
+                x_location: 0,
+                y_location: 0,
+                combination_operator: CombinationOperator::Or,
+                _colour_extension: false,
+            },
+            flags: TextRegionFlags {
+                use_huffman: false,
+                use_refinement: false,
+                log_strip_size: 0,
+                reference_corner: ReferenceCorner::TopLeft,
+                transposed: false,
+                combination_operator: CombinationOperator::Or,
+                default_pixel: false,
+                delta_s_offset: 0,
+                refinement_template: RefinementTemplate::Template0,
+            },
+            huffman_flags: None,
+            refinement_at_pixels: Vec::new(),
+            num_instances,
+            symbol_id_table: None,
+            segment_data_len: data.len(),
+            data,
+        }
+    }
+
+    fn decode_claiming(num_instances: u32) -> Result<()> {
+        // Sixteen bytes of payload: the bound allows 16 * 32 = 512 instances.
+        let data = [0_u8; 16];
+        let header = header_claiming(num_instances, &data);
+        let symbol = Bitmap::new(2, 2);
+        let symbols = [&symbol];
+        let mut region = Bitmap::new(8, 8);
+
+        decode_into(
+            &header,
+            &symbols,
+            &[],
+            &StandardHuffmanTables::new(),
+            &mut region,
+        )
+    }
+
+    /// LaurenzV/hayro#1278. A text region may not claim more symbol instances
+    /// than its own segment data could possibly encode. Our fork carried no
+    /// bound at all, so a region claiming a huge count simply got that many
+    /// decode rounds -- no panic, no error, just work.
+    #[test]
+    fn instance_count_beyond_the_data_is_refused() {
+        let err = decode_claiming(100_000).expect_err("must be refused");
+        assert!(
+            matches!(err, DecodeError::Symbol(SymbolError::TooManyInstances)),
+            "expected TooManyInstances, got {err:?}"
+        );
+    }
+
+    /// The bound is only as good as the length it is measured against, and
+    /// `segment_data_len` is captured in `parse`, which the two tests above
+    /// bypass by building the header directly.
+    #[test]
+    fn parse_records_the_whole_segment_payload() {
+        // Region segment info (7.4.1): 8x8 at (0, 0), OR combination.
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&8_u32.to_be_bytes());
+        payload.extend_from_slice(&8_u32.to_be_bytes());
+        payload.extend_from_slice(&0_u32.to_be_bytes());
+        payload.extend_from_slice(&0_u32.to_be_bytes());
+        payload.push(0);
+        // Text region flags: no Huffman, no refinement.
+        payload.extend_from_slice(&0_u16.to_be_bytes());
+        // SBNUMINSTANCES.
+        payload.extend_from_slice(&7_u32.to_be_bytes());
+        // Coded data.
+        payload.extend_from_slice(&[0xAB; 12]);
+
+        let mut reader = Reader::new(&payload);
+        let header = parse(&mut reader, 1).expect("header must parse");
+
+        assert_eq!(header.segment_data_len, payload.len());
+        assert_eq!(header.num_instances, 7);
+    }
+
+    /// The same bound must not reject a plausible count, or it would turn a
+    /// hardening fix into a decoding regression.
+    #[test]
+    fn instance_count_within_the_data_is_allowed() {
+        // 512 is exactly the bound for a 16-byte payload.
+        let err = decode_claiming(512);
+        assert!(
+            !matches!(err, Err(DecodeError::Symbol(SymbolError::TooManyInstances))),
+            "a count the data could encode must not trip the bound"
+        );
+    }
 }

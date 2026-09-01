@@ -286,6 +286,17 @@ pub(crate) fn decode_bitmap_arithmetic_coding(
     tpgdon: bool,
     adaptive_template_pixels: &[AdaptiveTemplatePixel],
 ) -> Result<()> {
+    // A region may legally declare a zero dimension, and every loop below is
+    // then empty, so today this changes no outcome. It is here because the
+    // immunity is incidental -- it rests on `Bitmap::get_word` returning zero
+    // out of range -- and the first row-at-a-time decoder we adopt will compute
+    // `width - 1` and underflow, which is exactly what upstream hit in
+    // LaurenzV/hayro#1262. `zero_dimension_generic_region` is proven to catch
+    // that arithmetic.
+    if bitmap.width == 0 || bitmap.height == 0 {
+        return Ok(());
+    }
+
     let width = bitmap.width;
     let height = bitmap.height;
 
