@@ -5792,7 +5792,7 @@ mod tests {
     fn an_escaped_backslash_does_not_swallow_the_string_after_it() {
         let mut content = Vec::new();
         content.extend_from_slice(b"(a\\\\)Tj\n(");
-        content.extend(std::iter::repeat(b'A').take(40_000));
+        content.extend(std::iter::repeat_n(b'A', 40_000));
         content.extend_from_slice(b")Tj\nET\n");
 
         let uit = super::truncate_long_strings_in_content(&content);
@@ -5817,7 +5817,7 @@ mod tests {
     fn an_over_long_string_is_cut_but_the_operators_after_it_survive() {
         let mut content = Vec::new();
         content.extend_from_slice(b"BT\n(");
-        content.extend(std::iter::repeat(b'A').take(40_000));
+        content.extend(std::iter::repeat_n(b'A', 40_000));
         content.extend_from_slice(b")Tj\n(kort)Tj\nET\n");
 
         let uit = super::truncate_long_strings_in_content(&content);
@@ -5838,7 +5838,7 @@ mod tests {
     fn an_unterminated_string_leaves_the_content_alone() {
         let mut content = Vec::new();
         content.extend_from_slice(b"BT\n(nooit gesloten ");
-        content.extend(std::iter::repeat(b'B').take(40_000));
+        content.extend(std::iter::repeat_n(b'B', 40_000));
         content.extend_from_slice(b"\nET\n");
 
         let uit = super::truncate_long_strings_in_content(&content);
