@@ -938,16 +938,30 @@ fn flatten_xfa_to_pdf_internal(
         let pdf_bytes_ref = pdf_bytes.to_vec();
         let template_xml_owned = template_xml.clone();
 
-        let handle = thread::spawn(move || {
-            xfa_flatten_inner(
-                &pdf_bytes_ref,
-                &template_xml_owned,
-                datasets_xml_owned.as_deref(),
-                form_xml_owned.as_deref(),
-                collect_layout_dump,
-                policy,
-            )
-        });
+        // An explicit stack rather than the platform default.
+        //
+        // This thread exists for the timeout above, but its stack is what the
+        // FormCalc evaluator actually recurses on -- the caller cannot size it,
+        // so `render_page` behaved the same whether its own thread had 256 KB or
+        // 8 MB. `MAX_EVAL_DEPTH` is the bound; this only makes sure the bound is
+        // reachable before the stack runs out. Rust's default is 2 MB, and a
+        // *debug* build costs ~17 KB per evaluation level against release's
+        // ~780 B, so 2 MB ran out around depth 122 -- below the budget, which
+        // meant a debug build still aborted where a release build refused.
+        const FLATTEN_STACK: usize = 32 * 1024 * 1024;
+        let handle = thread::Builder::new()
+            .stack_size(FLATTEN_STACK)
+            .spawn(move || {
+                xfa_flatten_inner(
+                    &pdf_bytes_ref,
+                    &template_xml_owned,
+                    datasets_xml_owned.as_deref(),
+                    form_xml_owned.as_deref(),
+                    collect_layout_dump,
+                    policy,
+                )
+            })
+            .map_err(XfaError::Io)?;
 
         match handle.join() {
             Ok(Ok(out)) => Ok(out),

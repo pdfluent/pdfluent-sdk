@@ -75,6 +75,37 @@ const MAX_INSTRUCTIONS: u64 = 100_000;
 /// Maximum user-defined function call depth before aborting.
 const MAX_CALL_DEPTH: usize = 64;
 
+/// How many recursive steps the evaluator may take, counting an expression
+/// node and a user-defined call frame alike.
+///
+/// `MAX_DEPTH` (expressions, in the parser) and `MAX_CALL_DEPTH` (frames, here)
+/// were set independently and multiplied at run time: 63 frames each carrying a
+/// 60-term expression descends 3904 levels with both respected. One budget for
+/// both makes that impossible, and it is *counted* rather than measured against
+/// the stack -- which matters because the pipeline does not always get a stack
+/// of its own. `flatten` hands native work to a 2 MB thread; wasm32 has no
+/// `std::thread` and runs the same pipeline inline on the host's stack.
+///
+/// Four measurements set the number:
+///
+/// * the 51 FormCalc scripts in `fixtures/formcalc` reach depth **8**;
+/// * deliberately generous but realistic scripts -- ten chained helpers, twenty
+///   nested `if`s, a sixty-term sum -- reach **60**;
+/// * evaluation overflows a **1 MiB** stack past depth **1342**, and 1 MiB is
+///   the wasm32 default (nothing sets `-zstack-size` anywhere in the tree);
+/// * on the 2 MB thread `flatten` spawns, past **2684**.
+///
+/// 256 therefore sits four times above the deepest realistic script and five
+/// times below the cliff on the smallest stack we ship on.
+///
+/// Those cliffs are for **release** builds, which is what ships. A debug build
+/// costs about 17 KB of stack per level against release's ~780 B — 22 times
+/// more — so evaluation there overflows a 2 MB thread around depth 122, below
+/// this bound. A debug build of the SDK therefore does not get the
+/// "refused, not crashed" guarantee on the deepest inputs; sizing the bound for
+/// debug instead would put it under the 60 that real scripts already reach.
+const MAX_EVAL_DEPTH: usize = 256;
+
 /// Maximum loop iterations before aborting.
 const MAX_LOOP_ITERATIONS: u64 = 10_000;
 
@@ -88,6 +119,13 @@ pub struct Interpreter {
     instruction_count: u64,
     /// User-defined function call depth.
     call_depth: usize,
+
+    /// Current depth of the evaluator's recursion, expression nodes and call
+    /// frames together.
+    eval_depth: usize,
+
+    /// High-water mark of `eval_depth`, for measuring what real scripts need.
+    pub deepest_eval: usize,
 }
 
 impl Default for Interpreter {
@@ -104,6 +142,8 @@ impl Interpreter {
             som_resolver: None,
             instruction_count: 0,
             call_depth: 0,
+            eval_depth: 0,
+            deepest_eval: 0,
         }
     }
 
@@ -178,6 +218,30 @@ impl Interpreter {
     }
 
     fn eval_signal(&mut self, expr: &Expr) -> Result<Signal> {
+        // One budget for every recursive step the evaluator takes: an
+        // expression node and a user-defined call frame cost the same one
+        // level. Two separate counters (MAX_DEPTH on expressions,
+        // MAX_CALL_DEPTH on frames) each stayed inside its own limit while
+        // multiplying at run time -- 63 frames each carrying a 60-term
+        // expression descends ~3800 levels with both bounds respected. Counted,
+        // never measured against the stack, so it holds wherever the pipeline
+        // runs: `flatten` gives native a 2 MB thread of its own, and wasm32 has
+        // no thread at all and runs on the host's stack.
+        if self.eval_depth >= MAX_EVAL_DEPTH {
+            return Err(FormCalcError::EvalDepthExceeded {
+                max_depth: MAX_EVAL_DEPTH,
+            });
+        }
+        self.eval_depth += 1;
+        if self.eval_depth > self.deepest_eval {
+            self.deepest_eval = self.eval_depth;
+        }
+        let out = self.eval_signal_inner(expr);
+        self.eval_depth -= 1;
+        out
+    }
+
+    fn eval_signal_inner(&mut self, expr: &Expr) -> Result<Signal> {
         match expr {
             Expr::Number(n) => Ok(Signal::Value(Value::Number(*n))),
             Expr::StringLit(s) => Ok(Signal::Value(Value::String(s.clone()))),
@@ -899,6 +963,90 @@ mod tests {
             run("func double(x)\n  x * 2\nendfunc\ndouble(21)"),
             Value::Number(42.0)
         );
+    }
+
+    /// The two bounds used to multiply, and this is the shape that did it.
+    ///
+    /// 63 nested user functions, each body carrying a 60-term expression: both
+    /// `MAX_CALL_DEPTH` (63 < 64) and the parser's expression bound (60 < 64)
+    /// are respected, and evaluation still descended 3904 levels. Measured, that
+    /// overflows a 1 MiB stack past 1342 — and 1 MiB is the wasm32 default,
+    /// where `flatten` runs inline with no thread of its own.
+    #[test]
+    fn frames_and_expressions_share_one_budget() {
+        let chain = vec!["1"; 60].join(" + ");
+        let mut src = format!("func f0()\n  {chain}\nendfunc\n");
+        for k in 1..=63 {
+            src.push_str(&format!("func f{k}()\n  f{}() + {chain}\nendfunc\n", k - 1));
+        }
+        src.push_str("f63()\n");
+
+        // Run on a thread with room to spare, because reaching the bound means
+        // descending to it: a debug build costs ~17 KB of stack per level
+        // against release's ~780 B, so a default 2 MB test thread overflows
+        // around depth 122 -- before the budget at 256 can refuse anything. The
+        // bound is sized for the shipped configuration (release, and wasm32's
+        // 1 MiB default, where evaluation overflows past 1342); this stack is
+        // the test's own need, not the guard's.
+        let refused = std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(move || {
+                matches!(
+                    run_result(&src),
+                    Err(FormCalcError::EvalDepthExceeded { .. })
+                )
+            })
+            .expect("spawn")
+            .join()
+            .expect("the budget must refuse this, not overflow the stack");
+        assert!(
+            refused,
+            "63 frames x 60 terms must be refused, not descend 3904 levels"
+        );
+    }
+
+    /// The other failure direction: a budget low enough to break real forms.
+    ///
+    /// The 51 scripts in `fixtures/formcalc` reach depth 8; these are
+    /// deliberately more generous than any of them and must still run.
+    #[test]
+    fn ordinary_scripts_fit_the_budget() {
+        // ten chained helpers
+        let mut helpers = String::from("func h0()\n  1\nendfunc\n");
+        for k in 1..10 {
+            helpers.push_str(&format!("func h{k}()\n  h{}() + 1\nendfunc\n", k - 1));
+        }
+        helpers.push_str("h9()\n");
+        assert_eq!(run(&helpers), Value::Number(10.0));
+
+        // a sixty-term sum
+        assert_eq!(run(&vec!["1"; 60].join(" + ")), Value::Number(60.0));
+
+        // twenty nested ifs
+        let mut nested = String::from("var x = 1\nx");
+        for _ in 0..20 {
+            nested = format!("if (1 > 0) then\n{nested}\nendif");
+        }
+        run_result(&nested).expect("twenty nested ifs must still evaluate");
+
+        // a hundred flat statements: breadth, not depth
+        let flat = (0..100)
+            .map(|i| format!("var v{i} = {i} + 1"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        run_result(&flat).expect("a hundred statements must still evaluate");
+    }
+
+    /// The shared budget must not quietly replace the frame bound.
+    ///
+    /// Plain recursion costs only a few levels per frame, so `MAX_CALL_DEPTH`
+    /// is still what stops it, and its error is the one that names the cause.
+    #[test]
+    fn plain_recursion_is_still_caught_by_the_frame_bound() {
+        assert!(matches!(
+            run_result("func f()\n  f()\nendfunc\nf()"),
+            Err(FormCalcError::CallDepthExceeded { .. })
+        ));
     }
 
     #[test]
