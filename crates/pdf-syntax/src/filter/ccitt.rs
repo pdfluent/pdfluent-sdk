@@ -127,7 +127,76 @@ pub(crate) fn decode(
             color_space: Some(ImageColorSpace::Gray),
             bits_per_component: 1,
             width: settings.columns,
-            height: image_params.height,
+            // `rows`, not image_params.height. The two come from different
+            // places in the same file and nothing makes them agree: the decoder
+            // stops after `rows`, so reporting the declared /Height sends a
+            // consumer computing height * stride past the end of the data.
+            // Ported from hayro upstream (LaurenzV/hayro#1269).
+            height: rows,
         }),
     })
+}
+
+#[cfg(test)]
+mod upstream_hardening_tests {
+    use super::*;
+    use crate::object::FromBytes;
+
+    /// One row of eight white pixels, Group 3 one-dimensional.
+    ///
+    /// Taken from upstream's own regression fixture for LaurenzV/hayro#1258.
+    const ONE_ROW_G3: &[u8] = &[0x35, 0x14];
+
+    fn params_with(height: u32) -> ImageDecodeParams {
+        ImageDecodeParams {
+            height,
+            ..Default::default()
+        }
+    }
+
+    /// Ported from LaurenzV/hayro#1269.
+    ///
+    /// `/Rows` and the image's `/Height` are two numbers from the same file and
+    /// nothing makes them agree. The decoder stops after `/Rows` rows, so the
+    /// buffer holds that many -- but the reported height was `/Height`, so a
+    /// consumer computing `height * stride` walked off the end of the data.
+    ///
+    /// Upstream's other half of this fix -- sizing the output allocation with a
+    /// `checked_mul` -- does not apply here: this decoder grows its output as it
+    /// goes rather than preallocating `columns * height`, so there is no
+    /// allocation to size wrongly.
+    #[test]
+    fn the_reported_height_is_the_number_of_rows_decoded_not_the_declared_one() {
+        let params = Dict::from_bytes(b"<< /K 0 /Columns 8 /Rows 1 >>").unwrap();
+        // The image claims four rows; the CCITT parameters say one.
+        let decoded = decode(ONE_ROW_G3, params, &params_with(4)).unwrap();
+
+        let image = decoded.image_data.unwrap();
+        assert_eq!(
+            image.height, 1,
+            "the height must describe the data returned"
+        );
+
+        // The invariant the height exists to support: a consumer reading
+        // height * stride bytes must not read past what was decoded.
+        let stride = (image.width as usize).div_ceil(8);
+        assert!(
+            decoded.data.len() >= stride * image.height as usize,
+            "reported {}x{} needs {} bytes, got {}",
+            image.width,
+            image.height,
+            stride * image.height as usize,
+            decoded.data.len()
+        );
+    }
+
+    /// The usual case must keep working: with no `/Rows`, the image height is
+    /// still what the decoder is told to produce and still what it reports.
+    #[test]
+    fn without_rows_the_image_height_is_still_used() {
+        let params = Dict::from_bytes(b"<< /K 0 /Columns 8 >>").unwrap();
+        let decoded = decode(ONE_ROW_G3, params, &params_with(1)).unwrap();
+
+        assert_eq!(decoded.image_data.unwrap().height, 1);
+    }
 }
