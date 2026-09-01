@@ -175,6 +175,76 @@ jobs:
       - name: test
         run: cargo test --workspace --exclude pdf-desktop --no-fail-fast
 
+      # PDF/A, on the pipeline that blocks a merge (#286).
+      #
+      # `verapdf.yml` used to do this on ubuntu-latest and it measured nothing:
+      # it validated the five XFA *input* fixtures under corpus/ -- ordinary
+      # government forms, which are not PDF/A and never will be -- with a flag
+      # veraPDF rejects, and then exited 0 because the workflow called the
+      # wrapper without `--ci`. It posted "Pass Rate 0%" on #1543 under a green
+      # tick. The file is gone; this is what replaces it.
+      #
+      # Here rather than in its own workflow because a second workflow on
+      # `pull_request` with a create-runner would buy a second instance for the
+      # same event -- the thing one_instance_per_event.py exists to stop. This
+      # instance is already up and already has the workspace built.
+      # `if: ${{ !cancelled() }}` on all three, because without it they only ran
+      # while everything above was green -- and `test` is failing on master, so
+      # the PDF/A gate has been skipped on every run since it was written. It
+      # has never produced a Linux measurement, which is exactly why FLOORS has
+      # no `linux` entry to gate against. A gate that never runs cannot be
+      # calibrated, and it looks identical in the summary to one that passed.
+      - name: Set up Java for veraPDF
+        if: ${{ !cancelled() }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Install veraPDF and mutool
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          # The runner user on this image may already be root, in which case
+          # there is no sudo to call and asking for one fails the step for the
+          # wrong reason.
+          SUDO=""
+          [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+          # mutool reads the converted text back. An independent extractor on
+          # purpose: grading our own output with our own parser measures the
+          # parser. No `|| true` on either -- see scripts/ci/install_verapdf.sh.
+          $SUDO apt-get update -qq
+          $SUDO apt-get install -y -qq mupdf-tools unzip
+          $SUDO env "JAVA_HOME=${JAVA_HOME}" "PATH=${PATH}" \
+            bash scripts/ci/install_verapdf.sh /opt/verapdf
+          echo "/opt/verapdf" >> "$GITHUB_PATH"
+          mutool -v
+      - name: PDF/A conversion output conforms and keeps its text
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          cargo build --release -p pdf-manip --example pdfa_convert_real
+          # Exit 3 is "measured, did not judge" -- this platform has no
+          # recorded floor yet, so the script printed the numbers to record and
+          # deliberately did not gate. Under `set -e` that would fail the job
+          # exactly like a real failure, which would keep every pull request red
+          # until somebody commits a Linux floor: the outage the exit-3 branch
+          # exists to avoid, reintroduced by the caller. (codex, #1617)
+          #
+          # 0 and 3 pass; anything else fails. When "linux" joins BLOKKEERT this
+          # stays correct, because a gated platform never returns 3.
+          set +e
+          python3 scripts/ci/pdfa_output_conformance_gate.py \
+            --converter target/release/examples/pdfa_convert_real \
+            --verapdf /opt/verapdf/verapdf \
+            --out "${RUNNER_TEMP}/pdfa-output"
+          rc=$?
+          set -e
+          case "$rc" in
+            0) ;;
+            3) echo "::notice::PDF/A gate measured but did not judge (no floor for this platform yet). See the log for the numbers to record." ;;
+            *) exit "$rc" ;;
+          esac
+
       # What used to be four workflows, each creating its own instance. One push
       # fired them together and Hetzner made five cpx42s inside five minutes
       # (#275). They are steps on the one instance now; the workflows they came

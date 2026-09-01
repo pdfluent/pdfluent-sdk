@@ -78,14 +78,15 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      # Was `|| true`, followed by putting /opt/verapdf on PATH whether or not
+      # anything had landed there and calling the oracle "optional". A tool that
+      # is optional is not an oracle; the run downstream then measures whatever
+      # its absence happens to look like. The installer verifies the binary
+      # answers with the pinned version, and stops if it does not.
       - name: Install veraPDF
         run: |
-          curl -sL https://downloads.verapdf.com/rel/verapdf-installer.zip -o /tmp/verapdf.zip
-          unzip -q /tmp/verapdf.zip -d /tmp/verapdf-install
-          /tmp/verapdf-install/verapdf-*-installer.jar -console -dir /opt/verapdf 2>/dev/null || \
-            java -jar /tmp/verapdf-install/verapdf-*-installer.jar -console -dir /opt/verapdf 2>/dev/null || true
-          echo "/opt/verapdf" >> $GITHUB_PATH
-          /opt/verapdf/verapdf --version 2>/dev/null || echo "veraPDF install optional — proceeding without oracle"
+          bash scripts/ci/install_verapdf.sh /opt/verapdf
+          echo "/opt/verapdf" >> "$GITHUB_PATH"
 
       - name: Run corpus tests (extended matrix)
         run: |
@@ -224,50 +225,25 @@ jobs:
           cargo test --package pdf-xlsx
           cargo test --package pdf-pptx
 
-  conformance:
-    needs: create-runner
-    name: Nightly Conformance (veraPDF)
-    runs-on: ${{ needs.create-runner.outputs.label }}
-    if: false  # Enable when veraPDF is installed and gold masters are available
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Cache veraPDF
-        uses: actions/cache@v4
-        with:
-          path: /opt/verapdf
-          key: verapdf-nightly
-
-      - name: Run veraPDF
-        run: ./scripts/run-verapdf.sh --profile 2b --output reports/verapdf --ci corpus/
-
-      - name: Generate report
-        if: always()
-        run: ./scripts/verapdf-report.sh
-
-      - name: Upload report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nightly-verapdf-report
-          path: reports/verapdf/
-          retention-days: 30
-
   delete-runner:
-    # `visual-regression` was removed with avrt.yml on 31-08-2026: the gold
-    # masters it compares against have never existed on any branch, so it
-    # sat behind `if: false` measuring nothing. What is missing is the
-    # capability, not the job -- we have no visual regression testing at all.
-    # That is #293, which says what each of the three ways to get it costs.
-    # Do not re-add a job here before that issue is decided; a parked job is
-    # how this stayed invisible for four months (#290).
-    needs: [create-runner, full-corpus-test, benchmarks, desktop-tests, conversion-tests, conformance]
+    # Two jobs left this list, both behind `if: false`, both measuring nothing
+    # while reading as coverage.
+    #
+    # `visual-regression` went with avrt.yml on 31-08-2026: the gold masters it
+    # compares against have never existed on any branch. What is missing there
+    # is the capability, not the job -- we have no visual regression testing at
+    # all, which is #293, and it says what each of the three ways to get it
+    # costs.
+    #
+    # `conformance` goes with this change. It ran the veraPDF wrapper on the
+    # same five input fixtures as the workflow this PR removes, with the same
+    # `--profile 2b` that made veraPDF print its usage text instead of a
+    # verdict. Its replacement grades our own PDF/A output on the pipeline that
+    # blocks a merge (#286).
+    #
+    # Do not re-add either before its issue is decided. A parked job is how the
+    # first one stayed invisible for four months (#290).
+    needs: [create-runner, full-corpus-test, benchmarks, desktop-tests, conversion-tests]
     if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     # Without this the create action polls for a runner that may never
     # register, holding the one desktop runner while everything else
