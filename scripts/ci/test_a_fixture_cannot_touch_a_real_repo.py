@@ -130,8 +130,12 @@ def local_config() -> str:
     pointing elsewhere, and the first version of this case crashed on it. Asking
     git works in a worktree, a bare clone and a normal checkout alike.
     """
+    # env=os.environ on purpose, like the two global reads below: this is meant
+    # to see the REAL repository. A bare call would be indistinguishable from
+    # the oversight the sibling lint hunts for.
     return subprocess.run(["git", "config", "--local", "--list"], cwd=REPO,
-                          capture_output=True, text=True).stdout
+                          capture_output=True, text=True,
+                          env=dict(os.environ)).stdout
 
 
 before_local = local_config()
