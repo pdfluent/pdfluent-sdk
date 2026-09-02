@@ -19,6 +19,18 @@ counting them (#272).
 The rule in CLAUDE.md is that a merge request is a question waiting for an
 answer. A branch without one is not even a question.
 
+WHERE THE DESTINATION COMES FROM
+
+Run from the pre-push hook, git hands this process one line per ref on stdin:
+`<local ref> <local sha> <remote ref> <remote sha>`. That line is the only
+honest answer to "is this branch on the remote, and under what name" -- a
+push with a renaming refspec never produces a `github/<branch>`, so asking
+for that ref answered "not yet" on every push, for ever, and the promise
+"the next push fails" was empty (codex, #1610). When the line is there it is
+used, for both the existence check and the name handed to `gh pr list`. When
+it is not -- run by hand, from a terminal -- the guard falls back to the
+tracking ref and says so, instead of promising what it cannot see.
+
 # NO-FLOOR: this guard discovers nothing it could stop finding. It asks one
 # question about one branch -- the checked-out one -- and the ahead-count comes
 # from git, which fails loudly rather than returning zero.
@@ -27,8 +39,11 @@ answer. A branch without one is not even a question.
 from __future__ import annotations
 
 import json
+import select
 import subprocess
 import sys
+
+NUL_SHA = "0" * 40
 
 # A branch this far ahead is a body of work, not a fix in progress.
 WAARSCHUW_VANAF = 50
@@ -41,6 +56,30 @@ def draai(*args: str) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout.strip() if r.returncode == 0 else None
+
+
+def push_refs() -> list[tuple[str, str, str, str]]:
+    """The ref lines a pre-push hook receives on stdin, if any are waiting.
+
+    Never blocks: on a terminal there is nothing to read, and on a pipe nobody
+    has written to `select` says so at once. Anything that is not a four-field
+    line is not a ref line and is dropped."""
+    try:
+        if sys.stdin is None or sys.stdin.closed or sys.stdin.isatty():
+            return []
+        ready, _, _ = select.select([sys.stdin], [], [], 0)
+        if not ready:
+            return []
+        lines = sys.stdin.read().splitlines()
+    except (OSError, ValueError):
+        # Windows has no select on a pipe; a closed descriptor raises ValueError.
+        return []
+    out: list[tuple[str, str, str, str]] = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) == 4:
+            out.append((parts[0], parts[1], parts[2], parts[3]))
+    return out
 
 
 def main() -> int:
@@ -77,7 +116,23 @@ def main() -> int:
         print(f"[branch-mr] {tak} is {vooruit} commit(s) ahead of {standaard}.")
         return 0
 
-    uit = draai("gh", "pr", "list", "--head", tak, "--state", "all",
+    # What the remote will call this branch. From the hook that is the remote
+    # ref git is about to update; by hand it can only be the local name.
+    mijn = [r for r in push_refs() if r[0] == f"refs/heads/{tak}"]
+    if mijn:
+        _, _, remote_ref, remote_sha = mijn[0]
+        bestemming = remote_ref.removeprefix("refs/heads/")
+        op_de_remote = remote_sha != NUL_SHA
+        bron = "the pre-push ref list"
+    else:
+        bestemming = tak
+        op_de_remote = bool(
+            draai("git", "rev-parse", "--verify", "--quiet", f"github/{tak}")
+            or draai("git", "rev-parse", "--verify", "--quiet", f"origin/{tak}")
+        )
+        bron = None
+
+    uit = draai("gh", "pr", "list", "--head", bestemming, "--state", "all",
                 "--json", "number,state", "--limit", "5")
     if uit is None:
         print(
@@ -95,7 +150,8 @@ def main() -> int:
 
     if prs:
         staat = ", ".join(f"#{p['number']} {p['state']}" for p in prs)
-        print(f"[branch-mr] {tak} is {vooruit} ahead and has {staat}.")
+        naam = tak if bestemming == tak else f"{tak} (pushed as {bestemming})"
+        print(f"[branch-mr] {naam} is {vooruit} ahead and has {staat}.")
         return 0
 
     # A branch that is not on the remote yet cannot have a merge request, and
@@ -115,18 +171,32 @@ def main() -> int:
     # So: still fatal for a branch that IS on the remote and far ahead with no
     # merge request, which is the case #272 was about. Not fatal for one that has
     # never been pushed, where the demand is unmeetable by construction.
-    op_de_remote = draai("git", "rev-parse", "--verify", "--quiet",
-                         f"github/{tak}") or draai(
-                         "git", "rev-parse", "--verify", "--quiet", f"origin/{tak}")
+    #
+    # "Not on the remote" is decided from the pre-push ref list when there is
+    # one -- the remote sha is all zeros for a branch the remote has never seen
+    # -- because a tracking ref cannot answer it: a renaming refspec never
+    # creates `github/<branch>`, and the first version of this guard asked for
+    # exactly that ref and so said "not yet" on every push. (codex, #1610)
+    if not op_de_remote and bron:
+        print(f"[branch-mr] {tak} is {vooruit} ahead of {standaard} and "
+              f"{bestemming} does not exist on the remote yet, so it cannot have a "
+              "merge request. Push it, then open one -- the next push hands this "
+              "guard the remote ref again, and if the branch is still without one, "
+              "this fails.")
+        return 0
     if not op_de_remote:
-        print(f"[branch-mr] {tak} is {vooruit} ahead of {standaard} and is not on the "
-              "remote yet, so it cannot have a merge request. Push it, then open one "
-              "-- and if it is still without one on the next push, this fails.")
+        print(f"[branch-mr] {tak} is {vooruit} ahead of {standaard} and neither "
+              f"github/{tak} nor origin/{tak} is known here, so as far as this "
+              "checkout can see it cannot have a merge request. Read from a "
+              "terminal, not from the pre-push hook: only the hook hands over the "
+              "real destination ref, so this is a guess about the name, not a "
+              "verdict about the branch.")
         return 0
 
     ernst = "FATAL" if vooruit >= FAAL_VANAF else "WARNING"
-    print(f"[branch-mr] {ernst}: {tak} is {vooruit} commits ahead of {standaard} "
-          "and has no merge request.", file=sys.stderr)
+    waar = f" (on the remote as {bestemming})" if bestemming != tak else ""
+    print(f"[branch-mr] {ernst}: {tak} is {vooruit} commits ahead of {standaard}"
+          f"{waar} and has no merge request.", file=sys.stderr)
     print(
         "\nmr_staleness.py cannot see this: it reads merge requests, so a branch "
         "that never got one is not late in its eyes, it is absent. Open one now, "
