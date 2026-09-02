@@ -70,6 +70,8 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<Expr>> {
          {MAX_DEPTH}; some node is not being counted"
     );
     if depth > MAX_DEPTH {
+        #[cfg(test)]
+        BACKSTOP_FIRED.with(|n| n.set(n.get() + 1));
         // Dropping it normally would recurse to the depth we just refused, so
         // the refusal would crash exactly where acceptance used to.
         dismantle(script);
@@ -84,6 +86,20 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<Expr>> {
 ///
 /// The match is exhaustive on purpose: a variant added later must not be
 /// scored as a leaf by a wildcard arm, which would silently reopen this hole.
+/// How often the backstop had to refuse a tree that construction accepted.
+///
+/// Test-only, and it exists because there is nothing else to observe. The
+/// backstop below refuses an under-counted tree in *both* profiles, so
+/// "accepted implies `ast_depth <= MAX_DEPTH`" is true no matter how badly
+/// construction miscounts -- an assertion on the returned tree cannot fail.
+/// Only the `debug_assert` told the two apart, and that is compiled out of the
+/// `cargo test --release` that nightly.yml runs. (T2 review, #1642)
+#[cfg(test)]
+thread_local! {
+    pub(crate) static BACKSTOP_FIRED: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 fn ast_depth(script: &[Expr]) -> usize {
     let mut max = 0;
     let mut work: Vec<(&Expr, usize)> = script.iter().map(|e| (e, 1)).collect();
@@ -1653,21 +1669,35 @@ mod depth_bounds {
     /// depth and so left the previous subtree's value in place.
     #[test]
     fn synthetic_nodes_and_childless_leaves_are_counted() {
-        // The backstop is disabled for this test's purpose by measuring the
-        // tree the parser accepted: if construction under-counts, `ast_depth`
-        // of an accepted tree exceeds the bound, which is exactly the state the
-        // error path cannot survive.
-        // Sweeping the boundary rather than guessing where it is: whichever
-        // depth trips the mismatch, the `debug_assert` in `parse` turns it into
-        // a panic. Both refusal and acceptance are fine answers; building more
-        // than was counted is not.
+        // This test asserts for itself rather than leaning on the
+        // `debug_assert` in `parse`. It used to do the latter and nothing else:
+        // no assertion in the body, so under `cargo test --release` -- which
+        // nightly.yml:70 runs -- the debug assertion is compiled out and the
+        // whole test passed in 0.00 s having checked nothing. A test that only
+        // holds in debug does not cover the build we ship. (T2 review, #1642)
+        //
+        // What it checks instead is the invariant itself: any tree the parser
+        // ACCEPTS measures within the bound. If construction under-counts, an
+        // accepted tree is deeper than `MAX_DEPTH`, which is exactly the state
+        // the error path cannot survive. Refusal is a fine answer too --
+        // building more than was counted is not.
+        BACKSTOP_FIRED.with(|n| n.set(0));
+        let mut gemeten = 0usize;
+        let mut controleer = |bron: &str| {
+            if let Ok(ast) = tokenize(bron).and_then(parse) {
+                assert!(
+                    ast_depth(&ast) <= MAX_DEPTH,
+                    "an accepted tree measured deeper than the bound"
+                );
+                gemeten += 1;
+            }
+        };
+
         for n in 50..=64 {
             let inner = format!("{}1{}", "Abs(".repeat(n), ")".repeat(n));
-            let _ = tokenize(&format!("foreach v in ({inner}) do\n  1\nendfor")).and_then(parse);
-            let _ =
-                tokenize(&format!("while (1) do\n  {inner}\n  break\nendwhile")).and_then(parse);
-            let _ =
-                tokenize(&format!("while (1) do\n  break\n  {inner}\nendwhile")).and_then(parse);
+            controleer(&format!("foreach v in ({inner}) do\n  1\nendfor"));
+            controleer(&format!("while (1) do\n  {inner}\n  break\nendwhile"));
+            controleer(&format!("while (1) do\n  break\n  {inner}\nendwhile"));
         }
 
         // `break` and `continue` are swept too, though no input here fails
@@ -1684,14 +1714,34 @@ mod depth_bounds {
             for _ in 0..n {
                 src = format!("while (1) do\n{src}\nendwhile");
             }
-            let _ = tokenize(&src).and_then(parse);
+            controleer(&src);
 
             let mut cont = String::from("continue");
             for _ in 0..n {
                 cont = format!("while (1) do\n{cont}\nendwhile");
             }
-            let _ = tokenize(&cont).and_then(parse);
+            controleer(&cont);
         }
+
+        // A sweep that accepted nothing would assert nothing, and would say so
+        // by passing. The bound is 64 and the shallow end of each sweep is well
+        // inside it, so acceptances are expected.
+        assert!(
+            gemeten > 0,
+            "the sweep accepted no tree at all, so nothing above was measured"
+        );
+
+        // The assertion that actually distinguishes the two failures. Every
+        // refusal above must come from construction counting correctly and
+        // stopping; if the backstop had to catch anything, construction built
+        // more than it measured -- and on the error path, where a syntax error
+        // unwinds through whatever was built, there is no backstop to catch it.
+        let backstop = BACKSTOP_FIRED.with(|n| n.get());
+        assert_eq!(
+            backstop, 0,
+            "the backstop refused {backstop} tree(s) that construction had \
+             accepted; some node is built without being counted"
+        );
 
         // and the plain statement forms still round-trip
         accepted("while (1) do\n  break\nendwhile");
