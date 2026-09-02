@@ -626,8 +626,40 @@ jobs:
       # would have been caught after the merge, in the publication run. I checked
       # whether that job builds and not whether it RUNS, which is the question I
       # have asked of every other guard this week. (T1 review, #1654)
-      - name: The Java binding fixture is the one we generate
+      # Only when the two things it compares can have moved.
+      #
+      # This job goes to a hosted runner for pull requests (below), so the step
+      # would otherwise be a cold debug build of pdf-manip on every PR to compare
+      # 1090 bytes. The guard asks one question: do the committed bytes still
+      # match what the generator produces. If neither the generator nor the
+      # committed file is in the diff, the answer cannot have changed, and
+      # rebuilding to re-confirm it is paying for a fact already established.
+      #
+      # `dorny/paths-filter` rather than a workflow-level `paths:` because this
+      # is one step in a job that must keep running for everything else it does.
+      # (T1 review, #1649)
+      - name: Did the fixture or its generator move?
+        id: fixture-diff
         if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then BASE="${{ github.event.before }}"; fi
+          case "$BASE" in ""|0000000000000000000000000000000000000000)
+              echo "moved=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE"
+          if git diff --name-only "$BASE"..HEAD -- \
+               crates/pdf-manip/examples/java_binding_fixture.rs \
+               crates/pdf-java/src/test/resources/binding-fixture.pdf \
+               scripts/ci/the_java_fixture_is_the_one_we_generate.py \
+             | grep -q .; then
+            echo "moved=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "moved=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: The Java binding fixture is the one we generate
+        if: ${{ !cancelled() && steps.fixture-diff.outputs.moved == 'true' }}
         run: python3 scripts/ci/the_java_fixture_is_the_one_we_generate.py
       # Which exported symbols does no test call? A floor, not a percentage:
       # 198 of 262 is not 100, and a soft job at that number is one everybody
