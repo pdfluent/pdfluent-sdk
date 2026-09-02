@@ -300,8 +300,19 @@ def op_blijvende_runner(runs_on, events: set[str] | None = None,
     """
     if not noemt_blijvende_runner(runs_on):
         return False
-    return not per_gebeurtenis_veilig(str(runs_on), events,
-                                     desktop_toegestaan(triggers))
+    veilig = desktop_toegestaan(triggers)
+    # Same rule as the sibling guard: a LIST demands every label, so a literal
+    # desktop label beside a per-event expression is asked for unconditionally
+    # and the expression excuses nothing. (T1 review, #1649)
+    if isinstance(runs_on, list):
+        letterlijk = [str(l) for l in runs_on if l and "${{" not in str(l)]
+        if any(l in PERSISTENT_LABELS for l in letterlijk):
+            return True
+        expressies = [str(l) for l in runs_on if l and "${{" in str(l)]
+        if expressies:
+            return not all(per_gebeurtenis_veilig(e, events, veilig)
+                           for e in expressies)
+    return not per_gebeurtenis_veilig(str(runs_on), events, veilig)
 
 # Eight jobs that already had this exposure before the ephemeral workflows
 # existed. Recorded so the count cannot grow while they are dealt with

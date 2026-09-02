@@ -172,13 +172,49 @@ r = run(tree({}))
 expect("no pull_request job at all is FATAL, not a pass", r.returncode == 2,
        f"exit={r.returncode}")
 
-# The dormant-DYNAMIC rule is not exercised here: DYNAMIC names
+# A LIST demands every label, so a per-event expression standing beside a
+# literal desktop label excuses nothing -- the expression only decides what the
+# OTHER element resolves to. T1's fixture, which I had looked for and wrongly
+# reported as not reproducing: I built mine with a fromJSON expression, which
+# is rejected for a different reason, and read that as the guard working.
+LIJST_LEK = """
+on: [pull_request]
+jobs:
+  j:
+    runs-on: ["${{ github.event_name == 'push' && 'self-hosted' || 'ubuntu-latest' }}", xfa-fast]
+    steps: [{run: echo}]
+"""
+r = run(tree({"lijst.yml": LIJST_LEK}))
+expect("a desktop label beside a per-event expression FAILS", r.returncode == 1,
+       f"exit={r.returncode} {r.stderr[-200:]}")
+expect("  and the job is named", "lijst.yml" in r.stderr, r.stderr[-200:])
+
+LIJST_LETTERLIJK = LIJST_LEK.replace(
+    '"${{ github.event_name == \'push\' && \'self-hosted\' || \'ubuntu-latest\' }}", xfa-fast',
+    "ubuntu-latest, xfa-fast")
+r = run(tree({"lijst.yml": LIJST_LETTERLIJK}))
+expect("  and so does the same list without the expression", r.returncode == 1,
+       f"exit={r.returncode}")
+
+# The legitimate single choice still passes: one element, one expression.
+LIJST_OK = """
+on: [pull_request]
+jobs:
+  j:
+    runs-on: ["${{ github.event_name == 'push' && 'self-hosted' || 'ubuntu-latest' }}"]
+    steps: [{run: echo}]
+"""
+r = run(tree({"lijst.yml": LIJST_OK}))
+expect("a one-element list holding only the expression passes",
+       r.returncode == 0, f"exit={r.returncode} {r.stderr[-200:]}")
+
+  # The dormant-DYNAMIC rule is not exercised here: DYNAMIC names
 # ci-ephemeral.yml:workspace specifically, and these fixtures build synthetic
 # workflow trees that do not contain it. Proven against the real tree instead --
 # putting the pull_request trigger back on ci-ephemeral.yml turns the guard red
 # and names the entry. Said plainly rather than covered by an assertion that
 # only greps the source for the word.
-MINIMUM_CASES = 22  # FLOOR
+MINIMUM_CASES = 26  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
