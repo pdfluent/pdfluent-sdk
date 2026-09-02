@@ -156,6 +156,9 @@ jobs:
       - name: Every job installs what its scripts import
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/a_job_has_what_its_scripts_import.py
+      - name: The territory guard reaches its own verdict
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_territories_do_not_overlap.py
       # Only GitLab ran these, and GitLab is the mirror -- a red job there stops
       # nothing. The machine both pipelines share is the one whose build
       # directory keeps going away, so the verdict drifted unwatched on the side
