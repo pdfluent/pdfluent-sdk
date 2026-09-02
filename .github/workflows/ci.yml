@@ -130,7 +130,19 @@ jobs:
       pull-requests: read
     runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
+      # Full history, because half of what this job checks needs a base to
+      # compare against. `territories_do_not_overlap` diffs the branch against
+      # master to see which files it touched; on the depth-1 checkout that
+      # actions/checkout makes by default there is no master to diff against, so
+      # it printed "SKIPPED (not a pass): could not diff against master" and
+      # exited 3. CI therefore caught an overlap in the map and never once
+      # caught a cross-territory change -- the half that is about the branch in
+      # front of it. Proven on this pull request's own run. The fork guards
+      # already deepen for the same reason further down this file; this job
+      # needed it too. (peer review, #1636)
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

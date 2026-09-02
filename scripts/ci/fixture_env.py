@@ -51,6 +51,23 @@ def sealed_env(identity: bool = False, cwd: str | os.PathLike | None = None,
     # installs. The helper it replaced stripped these on purpose.
     for tok in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"):
         env.pop(tok, None)
+    # The RUNNER's identity, removed for the same reason git's is.
+    #
+    # A fixture builds a repository and asks a guard about it. On a developer's
+    # machine that is the only repository in sight; on a runner, the environment
+    # is already describing a different one -- GITHUB_HEAD_REF and friends name
+    # the pull request's branch. territories_do_not_overlap reads those BEFORE
+    # the refs a fixture plants, so five cases that passed locally failed in CI
+    # while testing the runner's branch name instead of the fixture's. Green
+    # here and red there is the signature, and the seal that stopped git reading
+    # the developer's config has to stop the guard reading the runner's.
+    #
+    # A test that is ABOUT this behaviour passes the variable back through
+    # `extra`, which is allowed and explicit. (peer review, #1636)
+    for var in [k for k in env
+                if k.startswith(("GITHUB_", "CI_", "RUNNER_", "ACTIONS_"))]:
+        env.pop(var, None)
+    env.pop("CI", None)
     if identity:
         env.update({"GIT_AUTHOR_NAME": "fixture", "GIT_AUTHOR_EMAIL": "fixture@invalid",
                     "GIT_COMMITTER_NAME": "fixture", "GIT_COMMITTER_EMAIL": "fixture@invalid"})
