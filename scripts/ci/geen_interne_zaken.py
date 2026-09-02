@@ -312,6 +312,15 @@ def uit_boom():
     _regels = alle_regels()
     fouten, gelezen = [], 0
     for pad in paden:
+        # THE NAME IS PART OF THE TREE. A file called after a customer publishes
+        # that customer in every clone whatever its contents say, and this scan
+        # read only the contents -- so `docs/ZZQBETA-notes.md` with a spotless
+        # body produced nothing at all. Checked before the text filter, because
+        # a binary named after a partner is exactly as public as a text one.
+        for naam, rx in _regels:
+            m = rx.search(pad)
+            if m:
+                fouten.append((naam, m.group(0), pad, "<in the file name>"))
         if not _is_tekst(pad):
             continue
         gelezen += 1
@@ -381,7 +390,13 @@ def _meld_boom(fouten, gelezen):
         file=sys.stderr,
     )
     for naam, wat, waar, context in fouten[:20]:
+        # `waar` is `{path}:{line}`, and a path can contain the term. It was
+        # printed outside the redaction, so every finding in a file whose NAME
+        # holds a private term published that term in full -- the redaction
+        # covering the match and the context while the location beside them
+        # spelled it out. Three columns, one rule. (peer review, #1663)
         wat, context = _toonbaar(naam, wat, context)
+        waar, _ = _toonbaar(naam, waar, "")
         print(f"  [{naam}] {wat}  --  {waar}: {context}", file=sys.stderr)
     if len(fouten) > 20:
         print(f"  ... en nog {len(fouten) - 20}", file=sys.stderr)
