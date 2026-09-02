@@ -92,8 +92,22 @@ REF_VASTGEZET = re.compile(
     r"(format\('refs/heads/\{0\}',\s*github\.event\.repository\.default_branch\)"
     r"|'refs/heads/(master|main)')")
 
+# Two spellings, one meaning: a pull request lands on a hosted runner.
+#
+#   event_name == 'push'          && <self-hosted> || '<hosted>'
+#   event_name != 'pull_request'  && <self-hosted> || '<hosted>'
+#
+# The second is not a loosening -- it is the rule stated exactly. "is a push"
+# also sends schedule and workflow_dispatch to a hosted runner, which turned the
+# nightly security audit into paid minutes for work that ran free on the desktop
+# and had nothing to do with pull-request code (#1380). What must stay off that
+# machine is a PULL REQUEST, so that is what the condition should say.
+#
+# The inverse -- `== 'pull_request' && <self-hosted>` -- matches neither, which
+# is the whole point: it puts pull requests ON the desktop. (T1 review, #1649)
 ALLEEN_BIJ_PUSH = re.compile(
-    r"github\.event_name\s*==\s*'push'\s*&&.*?\|\|\s*'[^']*ubuntu", re.S)
+    r"github\.event_name\s*(?:==\s*'push'|!=\s*'pull_request')\s*&&.*?"
+    r"\|\|\s*'[^']*ubuntu", re.S)
 
 
 # A job is heavy when it compiles the workspace. Those belong on a throwaway
@@ -108,6 +122,11 @@ ZWAAR = re.compile(r"\bcargo\s+(build|test|check|clippy|bench|doc)\b")
 # instance on every run. Recorded so the count cannot grow, and so that removing
 # one is a decision rather than a line that ages.
 ZWARE_BASELINE = {
+    # ci-ephemeral's create-runner and reap left on 02-09-2026: removing that
+    # workflow's pull_request trigger (#311) means they are no longer reachable
+    # from a pull request at all, so the rows described nothing. Third register
+    # to shrink in this series rather than grow.
+
     # Seven entries left on 02-09-2026: #311 moved every ci.yml guard job and
     # both security-audit jobs onto the canonical per-event runs-on, so their
     # rows described nothing. Removed rather than kept, for the reason this
@@ -232,12 +251,10 @@ BASELINE = {
     # deletes it. A PR branch could change what those two jobs do; accepted
     # while this repository has one contributor. Only ci-ephemeral does this
     # now -- the others hand their work to the instance it creates (#275).
-    ("ci-ephemeral.yml", "create-runner"),
     # `reap` is the other half of `create-runner`: the same workflow deletes the
     # instance it made. It was left out when create-runner was written down, and
     # this check has been failing on it on master ever since -- which is what
     # #288 is about in miniature, since the failure was in a step nothing read.
-    ("ci-ephemeral.yml", "reap"),
     ("bench.yml", "benchmark"),
     # Found only after Codex pointed out that a pull_request branch filter names
     # the base, not the source. Runs on [self-hosted, xfa-corpus] -- a second
