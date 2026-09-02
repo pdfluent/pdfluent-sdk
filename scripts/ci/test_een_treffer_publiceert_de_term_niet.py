@@ -40,18 +40,37 @@ spec = importlib.util.spec_from_file_location("giz", GUARD)
 giz = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(giz)
 
+
+def giz_sha(t: str) -> str:
+    import hashlib
+    return hashlib.sha256(t.lower().encode()).hexdigest()
+
 TERM = "Voorbeeldpartner"
 CONTEXT = f"...werk voor {TERM} afgerond..."
 
 
-def toonbaar(ci: bool):
+def laad_prive(*termen: str) -> None:
+    """Load a private list, the way a real run does.
+
+    The redaction keys on the compiled private PATTERN, so a test that calls
+    `_toonbaar` without loading one is testing the absence of a list rather
+    than the redaction. The real flow always loads it before a finding can
+    exist.
+    """
+    lijst = pathlib.Path(tempfile.mkdtemp()) / "termen.txt"
+    lijst.write_text("\n".join(termen) + "\n")
+    giz.PRIVATE_PAD = str(lijst)
+    assert giz.private_regel() is not None, "fixture list did not load"
+
+
+def toonbaar(ci: bool, naam: str = "partner", wat: str = TERM, context: str = CONTEXT):
     oud = os.environ.get("CI")
     if ci:
         os.environ["CI"] = "true"
     else:
         os.environ.pop("CI", None)
     try:
-        return giz._toonbaar("partner", TERM, CONTEXT)
+        return giz._toonbaar(naam, wat, context)
     finally:
         if oud is None:
             os.environ.pop("CI", None)
@@ -60,17 +79,50 @@ def toonbaar(ci: bool):
 
 
 print("a hit must not publish the term")
+laad_prive(TERM)
 
 wat, ctx = toonbaar(ci=True)
-expect("under CI the term is not printed", TERM not in wat and TERM not in ctx,
+expect("under CI the term is not printed",
+       TERM.lower() not in wat.lower() and TERM.lower() not in ctx.lower(),
        f"{wat!r} {ctx!r}")
-expect("  nor is its context", CONTEXT not in ctx, ctx)
-expect("  and what is printed identifies it", "partner term" in wat and str(len(TERM)) in wat, wat)
-expect("  by a digest, so two different terms differ",
-       giz._toonbaar("partner", "AndereNaam", CONTEXT)[0] != wat)
+expect("  nor is its context", CONTEXT.lower() not in ctx.lower(), ctx)
+expect("  and it says a private term matched", "private term" in wat, wat)
+
+# NO fingerprint. A digest of the term with its exact length beside it is
+# reversible with a word list, so a redaction that publishes one is a slower
+# way of publishing the secret.
+expect("  and reveals neither the length nor a digest of it",
+       str(len(TERM)) not in wat
+       and giz_sha(TERM)[:8] not in wat.lower(), wat)
+expect("  so two different terms are indistinguishable in the log",
+       toonbaar(ci=True, wat="AndereNaam", context="x met AndereNaam erin")[0] == wat
+       or "private term" in toonbaar(ci=True, wat="AndereNaam")[0])
 
 wat, ctx = toonbaar(ci=False)
 expect("locally the term IS printed", wat == TERM and ctx == CONTEXT, f"{wat!r}")
+
+# THE KEYCHAIN PATH. `keychain_overtredingen()` matches a label against every
+# rule including the private one, then reports it as `keychain-label` -- so a
+# redaction keyed on the rule NAME printed the term in full down that path.
+wat, ctx = toonbaar(ci=True, naam="keychain-label",
+                    wat=f"security find-generic-password -s {TERM}",
+                    context=f"...-s {TERM}...")
+expect("a private term reported under ANOTHER rule name is still redacted",
+       TERM.lower() not in wat.lower() and TERM.lower() not in ctx.lower(), f"{wat!r}")
+
+# CASE-INSENSITIVITY, asserted rather than assumed. Removing `re.I` from
+# `private_regel()` left all nine earlier assertions green while the guard
+# stopped seeing `zzqAlpha` written as `ZZQALPHA` -- and that property is the
+# entire argument for redacting these hits at all: `::add-mask::` is exact, so
+# a differently-cased term reaches the log unmasked. A suite that cannot see
+# the property its own subject depends on is testing something else.
+laad_prive("zzqalpha")
+rx = giz.private_regel()[1]
+expect("the private rule matches a differently-cased term",
+       bool(rx.search("werk voor ZZQALPHA gedaan")), "re.I is missing")
+expect("  and the exact spelling too", bool(rx.search("werk voor zzqalpha gedaan")))
+expect("  and does not match an unrelated word", not rx.search("zzqbeta"))
+laad_prive(TERM)
 
 # Only the private rule is redacted. The built-in rules match words that are in
 # the repository already, and hiding those would make the guard unusable for the
@@ -115,7 +167,7 @@ with tempfile.TemporaryDirectory() as td:
     expect("  while the run still fails, so nobody has to read the log to know",
            r.returncode == 1, f"exit={r.returncode}")
 
-MINIMUM_CASES = 9  # FLOOR
+MINIMUM_CASES = 14  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
