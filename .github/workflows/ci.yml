@@ -959,6 +959,8 @@ jobs:
       # Fork pull requests receive no secrets at all, so when this repository
       # stops being private that same base-revision route is what has to carry
       # it, with the fork case failing closed as it does today.
+      - name: The range selection answers or refuses
+        run: python3 scripts/ci/test_internal_matter_range.py
       - name: No commit message names an internal matter
         if: ${{ !cancelled() }}
         env:
@@ -995,22 +997,16 @@ jobs:
           # steered by anything that ran before.
           PY=$(command -v python3)
           case "$PY" in /*) ;; *) echo "::error::python3 is not an absolute path"; exit 1 ;; esac
-          # Which commits this run vouches for. On a pull request the checkout sits
-          # on the merge commit, so origin/master..HEAD is exactly the branch. On a
-          # push to master HEAD *is* origin/master and that range is empty; the guard
-          # refuses an empty range (an empty range approves everything without
-          # reading anything), which is why this job was red on every master push
-          # from the day it landed (seen 02-09-2026, runs on 6f656f6d and 59fea093).
-          # A push knows what it added: github.event.before..HEAD. A first push has
-          # no `before` (all zeros); that is not a range, so it is not a pass.
-          case "$EVENT" in
-            push)
-              case "${PUSH_BEFORE:-}" in
-                ""|0000000000000000000000000000000000000000)
-                  echo "SKIPPED (not a pass): push without a previous revision, the range it added is unknown" >&2
-                  exit 1 ;;
-              esac
-              BEREIK="$PUSH_BEFORE..HEAD" ;;
-            *) BEREIK="origin/master..HEAD" ;;
-          esac
+          # Which commits this run vouches for is decided by
+          # internal_matter_range.sh (pull_request: the branch; push: what the
+          # push added; anything else: not a pass). Until 02-09-2026 that was
+          # an inline `origin/master..HEAD` for every event, which on a push to
+          # master is empty -- the guard refused it, correctly, and this job was
+          # red on every master push from the day it landed (6f656f6d,
+          # 59fea093). On a pull request the selection, like the guard, is
+          # taken from the base revision, so a pull request cannot pick its
+          # own range. Its test runs as the step before this one.
+          KEUZE="scripts/ci/internal_matter_range.sh"
+          if [ -n "${BASE_SHA:-}" ]; then KEUZE="$RUNNER_TEMP/base/scripts/ci/internal_matter_range.sh"; fi
+          BEREIK="$(sh "$KEUZE")" || exit 1
           PYTHONPATH= PDFLUENT_INTERNE_TERMEN="$LIJST" "$PY" "$WACHT" --bereik "$BEREIK"
