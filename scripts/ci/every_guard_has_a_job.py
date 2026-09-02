@@ -127,27 +127,19 @@ ALLOWED: dict[str, str] = {
     ),
 
     # ---- publication guards, split onto master ahead of their wiring (#222) ----
-    # These five arrived from t3/1543-resolve so they can be read and reviewed on
-    # master. Two of them cannot be wired yet, and the reason is not scheduling:
-    #
-    # PUBLIC_TREE.toml declares docs/decisions/*.md internal, and those documents
-    # only exist on t3/215-doc-register (#1543). Deleting the entries here to get
-    # a green would be worse than the wait -- measured with `git merge-file`
-    # (master without the line, base and branch with it): the protective line
-    # disappears silently on the merge, and the documents then arrive with no
-    # [internal] entry at all and ship. So the entries stay, the registers stay
-    # red about files that are not here yet, and the jobs go on after #1543.
-    "every_document_is_registered.py": (
-        "register gate; its PUBLIC_TREE entries name documents that land with "
-        "#1543, and removing them to go green would silently drop the protection "
-        "at merge time"
-    ),
+    # These arrived from t3/1543-resolve so they can be read and reviewed on
+    # master. every_document_is_registered.py is no longer among them: the seven
+    # documents its PUBLIC_TREE entries name -- which until 02-09-2026 existed
+    # only on #1543, so the register stood red on master by decision rather than
+    # delete the protective lines -- landed byte-identical from that branch, and
+    # the guard runs in .github/workflows/document-register.yml.
     "corpus_herkomst.py": (
-        "provenance register read by every_document_is_registered; wired with it "
-        "after #1543"
+        "the provenance register, imported by every_document_is_registered.py "
+        "(document-register.yml), which asks herkomst() for every tracked PDF; "
+        "its own main() regenerates docs/CORPUS_HERKOMST.md and is run by hand"
     ),
     # The other three measure the tree as it stands and could be wired today; they
-    # are held back only so the five land and are reviewed as one set.
+    # are held back only so they land and are reviewed as one set.
     "geen_interne_zaken.py": "wired with the other publication guards after #1543",
     "internal_stays_internal.py": "wired with the other publication guards after #1543",
     "simulate_public_tree.py": "wired with the other publication guards after #1543",

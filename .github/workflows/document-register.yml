@@ -1,0 +1,57 @@
+# Every document is registered (#215).
+#
+# Its own workflow, for the same reason deletions-declare-themselves.yml has
+# one: ci.yml carries a workflow-wide `paths-ignore: '**.md'`, and the register
+# this guard reads (docs/PUBLIC_TREE.toml) is edited alongside Markdown often
+# enough that a pull request touching only the two would never start ci.yml.
+# The seven entries that stood red on master from 02-09-2026 named Markdown
+# files; that pull request would not have run the guard even if ci.yml had
+# carried it.
+#
+# Nothing is filtered here. It is two Python scripts, `git ls-files` and two
+# registers; running it on every event costs seconds.
+name: Every document is registered
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  # A push gets its own group and is never cancelled; two pushes to master in
+  # quick succession must each be judged. (The shape from
+  # deletions-declare-themselves.yml, and the reason is written there.)
+  group: document-register-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  document-register-guard:
+    name: Every document is registered
+    # Hosted on both events, on purpose. The guard reads the index and two
+    # registers; it needs no corpus and no warm cache, so there is nothing the
+    # persistent desktop would add -- and on a pull request the scripts it runs
+    # are PR-authored code, which stays off that machine
+    # (scripts/ci/pr_code_stays_off_the_desktop.py). The price is that a
+    # spending limit which stops hosted runners stops this check too; the
+    # deletion guard took the other side of that trade for its push job, and
+    # says so.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The test first, so a guard that has stopped recognising anything is
+      # caught before its verdict on the tree is read. Both steps run whatever
+      # the other did (`!cancelled()`), so a red test never hides a red tree.
+      - name: The register guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_document_is_registered.py
+      - name: Every tracked document is registered, and every registration names a file
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_document_is_registered.py

@@ -36,6 +36,8 @@ WHAT COUNTS AS REGISTERED
 Exit codes:
     0  every document is registered and every registration names a file
     1  it is not, or the walk found fewer documents than the floor
+    3  cannot check: docs/PUBLIC_TREE.toml is missing, unreadable or not the
+       manifest (announced as SKIPPED, never silent)
 """
 
 from __future__ import annotations
@@ -106,13 +108,39 @@ def haalt_de_publieke_boom(pad: str, m: dict) -> bool:
     return not (pad.startswith(paden) or pad in set(m["internal"]["files"]))
 
 
+def lees_manifest() -> dict | None:
+    """The manifest, or None after saying why there is none to read.
+
+    Missing, unreadable and malformed get the same verdict: without the
+    manifest this guard cannot tell what gets published, so it has checked
+    nothing. That is a skip and it says so. A traceback would exit non-zero
+    too, but it reads as a crash, and a crash gets retried rather than read.
+    """
+    try:
+        tekst = PUBLIC_TREE.read_text(encoding="utf-8")
+    except OSError as e:
+        reden = f"cannot be read ({e.strerror or e})"
+    else:
+        try:
+            manifest = tomllib.loads(tekst)
+        except tomllib.TOMLDecodeError as e:
+            reden = f"is not valid TOML ({e})"
+        else:
+            intern = manifest.get("internal")
+            if isinstance(intern, dict) and isinstance(intern.get("paths"), list) \
+                    and isinstance(intern.get("files"), list):
+                return manifest
+            reden = "has no [internal] table with `paths` and `files`, so it is not the manifest"
+    print(f"SKIPPED (not a pass): docs/PUBLIC_TREE.toml {reden}; without it this "
+          "guard cannot tell what gets published and has checked nothing.",
+          file=sys.stderr)
+    return None
+
+
 def main() -> int:
-    if not PUBLIC_TREE.is_file():
-        print("document-register: docs/PUBLIC_TREE.toml is missing; without it "
-              "this guard cannot tell what gets published and would pass "
-              "everything.", file=sys.stderr)
-        return 1
-    manifest = tomllib.loads(PUBLIC_TREE.read_text(encoding="utf-8"))
+    manifest = lees_manifest()
+    if manifest is None:
+        return 3
     toegestaan: dict[str, str] = dict(manifest.get("documents", {}))
 
     alles = getrackt()
