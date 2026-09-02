@@ -39,6 +39,7 @@ _spec = importlib.util.spec_from_file_location(
 _osh = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_osh)
 ALLEEN_BIJ_PUSH = _osh.ALLEEN_BIJ_PUSH
+PER_GEBEURTENIS_VEILIG = _osh.per_gebeurtenis_veilig
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 FLOW = REPO / ".github" / "workflows"
@@ -100,7 +101,7 @@ MINIMUM_WORKFLOWS = 10  # FLOOR
 
 
 def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
-           target_only: bool = False) -> list[str]:
+           target_only: bool = False, events: set[str] | None = None) -> list[str]:
     """Judge ONE runner choice for one job.
 
     Split out because a job can have several: a matrix supplies a list, and a
@@ -118,7 +119,7 @@ def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
     hosted = all(isinstance(l, str) and GEHOST.match(l) for l in labels if l)
     if hosted:
         return []
-    if ALLEEN_BIJ_PUSH.search(text):
+    if PER_GEBEURTENIS_VEILIG(text, events):
         return []
     # A runner supplied by another job. This is the one shape where running the
     # pull request's own code is CORRECT -- ci-ephemeral's `workspace` is meant
@@ -272,7 +273,7 @@ def main() -> int:
                 seen.add(key)
             for candidate in candidates:
                 problems.extend(_judge(key, job, f.name, name, candidate,
-                                       target_only))
+                                       target_only, events))
             continue
 
     # A dormant DYNAMIC entry must stay unreachable. If its job turns up in the

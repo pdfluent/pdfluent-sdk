@@ -110,6 +110,32 @@ ALLEEN_BIJ_PUSH = re.compile(
     r"\|\|\s*'[^']*ubuntu", re.S)
 
 
+def per_gebeurtenis_veilig(runs_on: str, events: set[str] | None = None) -> bool:
+    """Whether this runs-on sends every pull-request event to a hosted runner.
+
+    `!= 'pull_request'` reads as "not a pull request" and is TRUE for
+    `pull_request_target`, which is a pull-request event carrying the
+    repository's secrets. A job written that way would choose the desktop on
+    that event and be free to check out the pull request's head, and the
+    expression looks correct while doing it.
+
+    So the shared recogniser is not the regex alone: a workflow that can be
+    triggered by pull_request_target has to say `== 'push'`, where the answer
+    does not depend on which events count as "a pull request". One place, both
+    guards. (codex, #1649)
+    """
+    if not ALLEEN_BIJ_PUSH.search(runs_on):
+        return False
+    # The `!=` form is fine wherever pull_request_target cannot fire -- that is
+    # what makes the nightly security audit free on the desktop instead of paid
+    # minutes. It is only unsafe when the workflow can actually be triggered by
+    # the event the condition fails to exclude, so the question needs the
+    # workflow's triggers, not the expression alone.
+    if "!=" in runs_on and "pull_request" in runs_on:
+        return "pull_request_target" not in (events or set())
+    return True
+
+
 # A job is heavy when it compiles the workspace. Those belong on a throwaway
 # instance: the persistent desktop has four cores and also carries the corpus,
 # the warm cargo cache and the runner registration token. On 28-08-2026 two CI
