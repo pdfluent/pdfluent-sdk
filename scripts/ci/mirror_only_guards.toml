@@ -165,6 +165,22 @@ before a merge by test_tests_actually_ran.py in ci.yml. Whether the binding \
 suites themselves should stand before a merge is a runner question (#276), not \
 this wrapper's."""
 
+[[guard]]
+script = "classify_render_outcome.sh"
+reason = "covered-elsewhere"
+issue = "#276"
+why = """Not a guard: a shell function crash-guard.yml sources to decide whether \
+one render was ok, a crash, or a hang. Its only caller is crash-guard.yml, which \
+is dispatch-only and gated behind a `parked` job, because no runner carries the \
+`xfa-corpus` label.
+
+It was moved out of the workflow precisely so something could run it. \
+test_classify_render_outcome.py drives the real function over twelve outcomes \
+and stands before every merge in ci.yml, and it also checks that crash-guard.yml \
+still calls it and still keeps the exit code -- so this file cannot drift away \
+from its caller without turning that suite red. Un-parks with the corpus \
+workflows the day the runner exists."""
+
 # --- credentials -----------------------------------------------------------
 
 [[guard]]
