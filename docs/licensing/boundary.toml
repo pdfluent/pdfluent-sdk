@@ -43,7 +43,13 @@
 # `declares` so that a change to it is a change to this file.
 
 
-# --- ours: AGPLv3 + commercial (license-file = "LICENSE") ---
+# --- ours: license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial" ---
+#
+# Every `ours` row that is publishable also has a row in
+# docs/release/canonical_licenses.toml with license_kind = "agpl-or-commercial";
+# every `forked` row has one with "open-source-derivative"; `internal` and
+# `publish_false` rows have none. scripts/ci/one_licence_three_registers.py
+# holds the three files to that table (#304).
 
 [[crate]]
 name = "formcalc-interpreter"
@@ -196,6 +202,30 @@ dir = "crates/xfa-wasm"
 side = "ours"
 publish_false = true
 
+[[crate]]
+name = "pdf-content-stream"
+dir = "crates/pdf-content-stream"
+side = "ours"
+publish_false = true
+
+[[crate]]
+name = "pdf-diff"
+dir = "crates/pdf-diff"
+side = "ours"
+publish_false = true
+
+[[crate]]
+name = "pdf-java"
+dir = "crates/pdf-java"
+side = "ours"
+publish_false = true
+
+[[crate]]
+name = "xfa-pdfrest-compare"
+dir = "crates/xfa-pdfrest-compare"
+side = "ours"
+publish_false = true
+
 
 # --- forked from upstream: stays permissive, no commercial licence needed ---
 
@@ -230,18 +260,6 @@ side = "forked"
 declares = "MIT"
 
 [[crate]]
-name = "pdf-content-stream"
-dir = "crates/pdf-content-stream"
-side = "ours"
-publish_false = true
-
-[[crate]]
-name = "pdf-diff"
-dir = "crates/pdf-diff"
-side = "ours"
-publish_false = true
-
-[[crate]]
 name = "pdf-font"
 dir = "crates/pdf-font"
 side = "forked"
@@ -254,12 +272,6 @@ side = "forked"
 declares = "Apache-2.0 OR MIT"
 
 [[crate]]
-name = "pdf-java"
-dir = "crates/pdf-java"
-side = "ours"
-publish_false = true
-
-[[crate]]
 name = "pdf-render"
 dir = "crates/pdf-render"
 side = "forked"
@@ -270,12 +282,6 @@ name = "pdf-syntax"
 dir = "crates/pdf-syntax"
 side = "forked"
 declares = "Apache-2.0 OR MIT"
-
-[[crate]]
-name = "xfa-pdfrest-compare"
-dir = "crates/xfa-pdfrest-compare"
-side = "ours"
-publish_false = true
 
 
 # --- internal tooling: workspace MIT, never published ---

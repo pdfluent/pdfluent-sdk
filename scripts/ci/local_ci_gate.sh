@@ -164,6 +164,8 @@ run fixenv    python3 scripts/ci/a_fixture_cannot_touch_a_real_repo.py
 run fixenvtst python3 scripts/ci/test_a_fixture_cannot_touch_a_real_repo.py
 run licpol    python3 scripts/ci/the_licence_policy_says_what_it_must.py
 run licpoltst python3 scripts/ci/test_the_licence_policy_says_what_it_must.py
+run licregs   python3 scripts/ci/one_licence_three_registers.py
+run licregtst python3 scripts/ci/test_one_licence_three_registers.py
 run errdocs   python3 scripts/ci/error_codes_have_an_anchor.py
 run errtests  cargo test -q -p pdfluent --test error_codes_stable --test processing_limits
 run prstale   python3 scripts/ci/pr_staleness.py
