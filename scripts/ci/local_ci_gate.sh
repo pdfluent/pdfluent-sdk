@@ -169,6 +169,7 @@ run hookwire  python3 scripts/ci/the_commit_msg_hook_is_wired.py
 run noai      python3 scripts/ci/no_ai_attribution.py
 run noaitest  python3 scripts/ci/test_no_ai_attribution.py
 run msgclean  python3 scripts/ci/geen_interne_zaken.py --bereik github/master..HEAD
+run msgredact python3 scripts/ci/test_een_treffer_publiceert_de_term_niet.py
 
 run treetest  python3 scripts/ci/test_no_personal_address_in_the_tree.py
 run treeaddr  python3 scripts/ci/no_personal_address_in_the_tree.py
