@@ -964,6 +964,8 @@ jobs:
         env:
           TERMEN: ${{ secrets.PDFLUENT_INTERNE_TERMEN }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -uo pipefail
           LIJST="$RUNNER_TEMP/interne-termen.txt"
@@ -993,4 +995,22 @@ jobs:
           # steered by anything that ran before.
           PY=$(command -v python3)
           case "$PY" in /*) ;; *) echo "::error::python3 is not an absolute path"; exit 1 ;; esac
-          PYTHONPATH= PDFLUENT_INTERNE_TERMEN="$LIJST" "$PY" "$WACHT" --bereik origin/master..HEAD
+          # Which commits this run vouches for. On a pull request the checkout sits
+          # on the merge commit, so origin/master..HEAD is exactly the branch. On a
+          # push to master HEAD *is* origin/master and that range is empty; the guard
+          # refuses an empty range (an empty range approves everything without
+          # reading anything), which is why this job was red on every master push
+          # from the day it landed (seen 02-09-2026, runs on 6f656f6d and 59fea093).
+          # A push knows what it added: github.event.before..HEAD. A first push has
+          # no `before` (all zeros); that is not a range, so it is not a pass.
+          case "$EVENT" in
+            push)
+              case "${PUSH_BEFORE:-}" in
+                ""|0000000000000000000000000000000000000000)
+                  echo "SKIPPED (not a pass): push without a previous revision, the range it added is unknown" >&2
+                  exit 1 ;;
+              esac
+              BEREIK="$PUSH_BEFORE..HEAD" ;;
+            *) BEREIK="origin/master..HEAD" ;;
+          esac
+          PYTHONPATH= PDFLUENT_INTERNE_TERMEN="$LIJST" "$PY" "$WACHT" --bereik "$BEREIK"
