@@ -4846,8 +4846,26 @@ mod tests {
     /// on native -- against the form that descended ~3900 levels (#305).
     #[test]
     fn the_inline_pipeline_returns_for_the_hostile_form_on_a_1_mib_stack() {
-        // Any answer but an abort: refused script, static fallback, or an error.
-        let _ = on_a_stack_of(1 << 20, || flatten_inline(HOSTILE_FORMCALC));
+        // "Any answer but an abort" was the whole assertion here, and an abort
+        // is not something an assertion catches -- it takes the test binary
+        // with it. That made this test, which carries the claim about the
+        // wasm32 shape, indistinguishable from one where `xfa_flatten_inner`
+        // never reaches the evaluator at all. (review of #1677)
+        //
+        // What the fix actually claims is stronger and is assertable: the
+        // evaluator's budget is measured inside the pipeline, so the answer does
+        // not depend on how much stack the caller happened to have. A 1 MiB
+        // inline run -- the shipped wasm32 shape -- must therefore agree with a
+        // roomy one. If the budget were inherited from the caller, or if 1 MiB
+        // silently took a different path, these two would differ.
+        let roomy = on_a_stack_of(8 << 20, || flatten_inline(HOSTILE_FORMCALC));
+        let wasm_shape = on_a_stack_of(1 << 20, || flatten_inline(HOSTILE_FORMCALC));
+        assert_eq!(
+            wasm_shape, roomy,
+            "the hostile form answered differently on a 1 MiB stack ({wasm_shape}) \
+             than on 8 MiB ({roomy}); the budget is supposed to make the caller's \
+             stack irrelevant"
+        );
     }
 
     /// The acceptance side of the same path: an ordinary FormCalc form still

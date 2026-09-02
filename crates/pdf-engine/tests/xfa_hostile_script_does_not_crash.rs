@@ -72,9 +72,22 @@ fn a_hostile_formcalc_script_does_not_abort_render_page() {
 /// counted and measured inside the pipeline, not inherited from whoever calls.
 #[test]
 fn a_hostile_formcalc_script_returns_on_every_caller_stack() {
-    for stack in CALLER_STACKS {
-        let _ = on_a_stack_of(stack, || renders(HOSTILE));
-    }
+    // Discarding each answer left an abort as the only detectable failure, and
+    // an abort takes the test binary with it rather than failing an assertion.
+    // The claim worth asserting is the one the fix makes: the budget is counted
+    // and measured inside the pipeline, so the caller's stack does not change
+    // the verdict. Every size must therefore give the SAME answer -- if 256 KiB
+    // quietly took a different path than 8 MiB, that is the bug this guards
+    // against, and now it is a failure rather than a silence. (review of #1677)
+    let answers: Vec<(usize, bool)> = CALLER_STACKS
+        .iter()
+        .map(|&stack| (stack, on_a_stack_of(stack, || renders(HOSTILE))))
+        .collect();
+    let first = answers[0].1;
+    assert!(
+        answers.iter().all(|&(_, a)| a == first),
+        "the hostile form answered differently depending on the caller's stack: {answers:?}"
+    );
 }
 
 #[test]

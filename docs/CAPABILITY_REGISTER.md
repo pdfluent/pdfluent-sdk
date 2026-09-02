@@ -337,7 +337,7 @@ delivered through it.
 
 | crate | version | in facade | test files | unit tests | run by |
 |---|---|---|---|---|---|
-| `formcalc-interpreter` | 1.0.0 | internal | 4 | 107 | `quality:cargo-test` |
+| `formcalc-interpreter` | 1.0.0 | internal | 4 | 112 | `quality:cargo-test` |
 | `pdf-annot` | 1.0.0 | direct | — | 38 | `quality:cargo-test` |
 | `pdf-compliance` | 1.0.0 | direct | — | 92 | `quality:cargo-test` |
 | `pdf-docx` | 1.0.0 | direct | — | 24 | `quality:cargo-test` |
@@ -353,7 +353,7 @@ delivered through it.
 | `pdf-standard-fonts` | 1.0.0 | internal | — | 9 | `quality:cargo-test` |
 | `pdf-syntax` | 0.5.6 | direct | — | 233 | `quality:cargo-test` |
 | `pdf-text-format` | 1.0.0 | **absent** | — | 21 | `quality:cargo-test` |
-| `pdf-xfa` | 1.0.0 | internal | 48 | 383 | `quality:cargo-test` |
+| `pdf-xfa` | 1.0.0 | internal | 48 | 385 | `quality:cargo-test` |
 | `pdf-xlsx` | 1.0.0 | direct | — | 19 | `quality:cargo-test` |
 | `pdfluent` | 1.0.0 | direct | 32 | 24 | `quality:cargo-test` |
 | `pdfluent-ccitt` | 0.2.2 | internal | — | 9 | `quality:cargo-test` |
