@@ -77,6 +77,21 @@ jobs:
           echo
           echo "## Runner diagnostics"
           du -x -h -s "${ROOT}/_diag" 2>/dev/null || true
+          echo
+          # Temp directories, because `disk_headroom.py` looks for `target/` and
+          # reported finding none -- "the space is going somewhere else" is the
+          # message, and this is one of the elsewheres it cannot see. Three guard
+          # scripts create fixture repositories with `mkdtemp()` and never remove
+          # them (measured 02-09: one run of one script leaves six behind), so a
+          # runner executing the suite on every push accumulates them. Whether
+          # that is where THIS machine's 214 GB went is exactly what these two
+          # numbers answer; until they come back it is a mechanism, not a cause.
+          echo "## Temp directories"
+          for T in "${RUNNER_TEMP:-}" "${TMPDIR:-}" /tmp /var/tmp; do
+            [ -n "$T" ] && [ -d "$T" ] || continue
+            echo "-- $T: $(find "$T" -maxdepth 1 -name 'tmp*' 2>/dev/null | wc -l) tmp* entries"
+            du -x -h -s "$T" 2>/dev/null || true
+          done
 
       # --- and only then, the sweep --------------------------------------
       # The sweeper deletes `target/` directories in worktrees whose HEAD is on
