@@ -70,6 +70,18 @@ paden = [
   ".github/workflows/ci.yml",
   "scripts/ci/local_ci_gate.sh",
   "scripts/ci/test_de_registerwachters_raken_de_echte_repo_niet.py",
+  # The commit-msg wiring, claimed 02-09-2026 because t2 was the bottleneck
+  # (holdout, three re-reviews, two fixes, a PR) and this work is t1's finding:
+  # the hook HERKOMST.md has claimed since 26-08 does not exist. t2 reviews it.
+  # Hand back with the rest of the CI wiring.
+  ".githooks/commit-msg",
+  ".githooks/pre-push",
+  "scripts/git-hooks/commit-msg",
+  "scripts/git-hooks/install.sh",
+  "scripts/ci/no_ai_attribution.py",
+  "scripts/ci/test_no_ai_attribution.py",
+  "scripts/ci/the_commit_msg_hook_is_wired.py",
+  "docs/HERKOMST.md",
 ]
 # NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
 # parity tests are edited by this change but stay with whoever owns the SDK
