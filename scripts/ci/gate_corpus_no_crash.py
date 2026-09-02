@@ -65,17 +65,35 @@ TIMEOUT_S = 30
 # killed by GitHub with no output at all -- a gate that reports nothing looks
 # exactly like a gate that has not got round to you yet, which is #276 again.
 # The budget turns that into a result: too slow is a finding, not a timeout.
+#
+# Enforced WHILE running, not after. The first version compared the wall clock
+# with the budget once the pool had drained, so a run where every file hung
+# was detected 500 x 30 s / 4 workers = about an hour in -- long after the
+# point the budget was meant to stop it (codex, #1627). Now every task gets
+# the run's deadline: one that has not started by then does not start, and one
+# still running is cut at the deadline instead of at its own 30 s.
 BUDGET_S = 900
 
 
-def een(binary: str, pdf: pathlib.Path) -> tuple[str, str, str]:
-    """Return (name, verdict, detail). Verdict is ok | crash | hang."""
+def een(binary: str, pdf: pathlib.Path, deadline: float | None = None,
+        timeout_s: float = TIMEOUT_S) -> tuple[str, str, str]:
+    """Return (name, verdict, detail). Verdict is ok | crash | hang | budget.
+
+    `deadline` is a time.monotonic() value shared by the whole run. Past it,
+    nothing starts; up to it, a task may run for at most the time left."""
+    timeout = timeout_s
+    if deadline is not None:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return (pdf.name, "budget", "not started: the run's budget was spent "
+                                        "before its turn")
+        timeout = min(timeout_s, left)
     uit = tempfile.mkdtemp(prefix="gatepage-")
     try:
         r = subprocess.run(
             [binary, "render", str(pdf), "-o", uit, "-d", "72", "-p", "1"],
             capture_output=True, text=True, errors="replace",
-            timeout=TIMEOUT_S,
+            timeout=timeout,
             # Inherit the environment rather than replace it. A bare env drops
             # HOME and XDG_*, which is where fontconfig looks; every page that
             # needs a substituted font would then fail for a reason that has
@@ -83,8 +101,15 @@ def een(binary: str, pdf: pathlib.Path) -> tuple[str, str, str]:
             env={**os.environ, "RUST_BACKTRACE": "1"},
         )
     except subprocess.TimeoutExpired:
+        if timeout < timeout_s:
+            # Cut by the run's deadline, not by its own limit: a budget
+            # finding, and it says so, rather than a hang it never got the
+            # full 30 s to prove.
+            return (pdf.name, "budget",
+                    f"still running when the run's budget ran out, {timeout:.0f}s "
+                    f"into its {timeout_s:.0f}s")
         return (pdf.name, "hang",
-                f"still running after {TIMEOUT_S}s on page 1 at 72 dpi")
+                f"still running after {timeout_s:.0f}s on page 1 at 72 dpi")
     except OSError as e:
         return (pdf.name, "crash", f"could not be executed: {e}")
     finally:
@@ -106,6 +131,10 @@ def main() -> int:
     p.add_argument("--corpus", required=True)
     p.add_argument("--known", default="corpus/GATE_CORPUS_KNOWN_CRASHES.json")
     p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--budget", type=float, default=BUDGET_S,
+                   help="seconds for the whole run; the test drives this down")
+    p.add_argument("--timeout", type=float, default=TIMEOUT_S,
+                   help="seconds per file before it counts as a hang")
     args = p.parse_args()
 
     binary = pathlib.Path(args.binary).resolve()
@@ -139,11 +168,39 @@ def main() -> int:
 
     crashes: list[tuple[str, str, str]] = []
     begonnen = time.monotonic()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
-        for naam, oordeel, detail in pool.map(
-                lambda f: een(str(binary), f), pdfs):
-            if oordeel != "ok":
-                crashes.append((naam, oordeel, detail))
+    deadline = begonnen + args.budget
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=args.workers)
+    futures = [pool.submit(een, str(binary), f, deadline, args.timeout) for f in pdfs]
+    klaar = 0
+    over_budget: tuple[str, str, str] | None = None
+    # In submission order, so the count of finished files means "the first k".
+    # Every future resolves by the deadline at the latest: a running task is
+    # cut there and a waiting one returns at once.
+    for fut in futures:
+        naam, oordeel, detail = fut.result()
+        if oordeel == "budget":
+            over_budget = (naam, oordeel, detail)
+            break
+        klaar += 1
+        if oordeel != "ok":
+            crashes.append((naam, oordeel, detail))
+    if over_budget is not None:
+        # Nothing waiting starts; whatever is running sees the deadline and
+        # returns. Not `wait=True`: the point is to report now.
+        pool.shutdown(wait=False, cancel_futures=True)
+        duur = time.monotonic() - begonnen
+        print(f"[no-crash] {klaar} of {n} PDFs rendered in {duur:.0f}s, "
+              f"{len(crashes)} crashed or hung, then the budget ran out")
+        print(f"\n[no-crash] FATAL: {args.budget:.0f}s budget spent with {n - klaar} "
+              f"of {n} files still to go (first not finished: {over_budget[0]}, "
+              f"{over_budget[2]}). Page one of a file under 3 MB at 72 dpi does "
+              "not take this long; something got much slower, and left to run "
+              "this would overrun the job and report nothing at all.",
+              file=sys.stderr)
+        for naam, oordeel, detail in crashes:
+            print(f"  {oordeel.upper():5} {naam}: {detail}", file=sys.stderr)
+        return 1
+    pool.shutdown(wait=True)
     duur = time.monotonic() - begonnen
 
     gevonden = {c[0] for c in crashes}
@@ -153,9 +210,9 @@ def main() -> int:
     print(f"[no-crash] {n} PDFs rendered in {duur:.0f}s, {len(crashes)} crashed "
           f"or hung, {len(bekend)} on the known list")
 
-    if duur > BUDGET_S:
+    if duur > args.budget:
         print(f"\n[no-crash] FATAL: {duur:.0f}s for {n} files, budget is "
-              f"{BUDGET_S}s. Page one of a file under 3 MB at 72 dpi does not "
+              f"{args.budget:.0f}s. Page one of a file under 3 MB at 72 dpi does not "
               "take this long; something got much slower, and the next step is "
               "for this to overrun the job and report nothing at all.",
               file=sys.stderr)
