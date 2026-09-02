@@ -793,6 +793,12 @@ jobs:
       - name: No test bails out in silence
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_skip_lint.py
+      # Same family, one layer down: `timeout 30 ... || true` threw the exit
+      # code away, so a render the timeout killed -- which writes nothing to
+      # stderr -- was scored as a clean page by the crash guard.
+      - name: A hang is a crash, not a clean render
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_classify_render_outcome.py
       # Counting characters scored a wrecked document at 80.1%: every letter had
       # become an 'x'. This measure counts which of the source's words come back.
       - name: Text retention is measured in words, not characters

@@ -214,6 +214,7 @@ run treeaddr  python3 scripts/ci/no_personal_address_in_the_tree.py
 echo "--- infra (advisory) ---"
 python3 scripts/ci/infra_health.py 2>&1 | sed 's/^/  /' || true
 run ci-yaml  python3 scripts/ci/ci_config_lint.py
+run hangclass python3 scripts/ci/test_classify_render_outcome.py
 run metadata cargo metadata --no-deps --format-version 1
 run fmt      cargo fmt --all -- --check
 run build    bash scripts/ci/run_build.sh

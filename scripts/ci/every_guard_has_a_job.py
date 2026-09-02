@@ -84,12 +84,19 @@ MIN_SCRIPTS = 25
 # every guard whose only GitHub job is dispatch-only or parked behind
 # `needs: parked`, and that one is in mirror_only_guards.toml with its reason.
 #
+# 02-09-2026 (#276): 13 -> 14. Not a guard at all: crash-guard.yml's verdict --
+# ok, crash or hang -- moved out of the workflow into
+# classify_render_outcome.sh so that a test could drive it, and a shell function
+# in scripts/ci counts here like everything else. Its caller is parked behind
+# `needs: parked`, so it stands before no merge; the suite that drives it does,
+# on every pull request. Reason in mirror_only_guards.toml.
+#
 # WHAT THIS NUMBER DOES NOT SAY
 # It says "also runs in GitHub Actions", not "an outside contributor sees it".
 # The GitHub remote of this repository is private, so none of these guards
 # touches a pull request from outside today. That is the gap in #232, and this
 # number does not measure it -- it measures the step towards it.
-SPIEGEL_RATEL = 13
+SPIEGEL_RATEL = 14
 
 # The reasons that can justify a place on the mirror. Free text would approve
 # every reason, including "later".
