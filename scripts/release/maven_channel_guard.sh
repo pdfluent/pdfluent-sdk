@@ -43,9 +43,9 @@ else
   # version of this check had the same flaw in the other direction: it matched
   # the commercial ref inside the dual string and reported "license=commercial"
   # about an artefact that was not.
-  grep -qx '[[:space:]]*<name>AGPL-3.0-or-later OR LicenseRef-PDFluent-Commercial</name>[[:space:]]*' "$CANON" \
+  grep -qx '[[:space:]]*<name>AGPL-3.0-only OR LicenseRef-PDFluent-Commercial</name>[[:space:]]*' "$CANON" \
     && ok "canonical license=AGPL or commercial (exact)" \
-    || fail "canonical <name> must be exactly 'AGPL-3.0-or-later OR LicenseRef-PDFluent-Commercial' ($CANON)"
+    || fail "canonical <name> must be exactly 'AGPL-3.0-only OR LicenseRef-PDFluent-Commercial' ($CANON)"
   grep -qE '<version>1\.0\.0-beta\.[0-9]+</version>' "$CANON" && ok "canonical version on RC line" \
     || fail "canonical version must be 1.0.0-beta.N ($CANON)"
 fi

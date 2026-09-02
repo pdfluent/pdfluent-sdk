@@ -238,7 +238,47 @@ def scan_cargo(_: dict) -> list[tuple[str, str]]:
 
 # A declaration npm or cargo accepts that is not an SPDX expression, so the
 # policy has to say what it means. Anything else is checkable and gets checked.
-NIET_SPDX = re.compile(r"^\s*(SEE LICENSE IN|LicenseRef-|UNLICENSED)", re.I)
+# The one canonical expression. Every [channel_representation] entry has to
+# resolve to exactly this: the point of a declared representation is that it
+# stands for the SAME statement in a spelling the channel accepts, and an entry
+# free to name its own `canonical` moves the escape one field to the right
+# instead of closing it. Measured 02-09-2026: `canonical = "MIT"` passed. (T2)
+CANONIEK = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+
+VERPLICHTE_VELDEN = ("publishes", "canonical", "reason", "file")
+
+
+def weergave_klopt(rel: str, w: dict) -> str | None:
+    """None if the representation entry is sound, else the complaint.
+
+    Every field is checked, because every unchecked field was a way through:
+    dropping `canonical`, `reason` or `file`, or pointing `file` at a name that
+    does not exist, all left the gate green.
+    """
+    ontbreekt = [k for k in VERPLICHTE_VELDEN if not w.get(k)]
+    if ontbreekt:
+        return (f"docs/LICENSE_POLICY.toml [channel_representation] {rel!r} is "
+                f"missing {', '.join(ontbreekt)}. A representation without all four "
+                "cannot be compared with anything")
+    if w["canonical"] != CANONIEK:
+        return (f"[channel_representation] {rel!r} declares canonical "
+                f"{w['canonical']!r}; the canonical expression is {CANONIEK!r}. "
+                "A channel may spell the offer differently, not state a different one")
+    pad = REPO / w["file"]
+    if not pad.is_file():
+        return (f"[channel_representation] {rel!r} names file {w['file']!r}, "
+                "which is not in the repository. `SEE LICENSE IN <file>` is a "
+                "pointer, and a pointer to nothing is not a licence statement")
+    eerste = pad.read_text(encoding="utf-8", errors="replace").splitlines()
+    if not eerste or CANONIEK not in eerste[0]:
+        return (f"[channel_representation] {rel!r} points at {w['file']!r}, whose "
+                f"first line is {(eerste[0] if eerste else '')!r}. It has to state "
+                f"{CANONIEK!r}: that first line is the only place the pointer "
+                "resolves to the canonical expression")
+    return None
+
+
+NIET_SPDX = re.compile(r"^\s*(SEE LICENSE IN|LicenseRef-|UNLICENSED|PackageLicenseFile:)", re.I)
 
 
 def eigen_verklaring(rel: str, gedeclareerd: str | None, pol: dict) -> tuple[str, str | None]:
@@ -266,7 +306,38 @@ def eigen_verklaring(rel: str, gedeclareerd: str | None, pol: dict) -> tuple[str
     # out, and it is exactly what LC9 set out to do. Reading one rule as the
     # other would have made the licence switch fail its own gate.
     oordeel = "LicenseRef-PDFluent-Dual"
-    if gedeclareerd and not NIET_SPDX.match(gedeclareerd) and gedeclareerd != verwacht:
+    # The non-SPDX escape is gone as of 01-09-2026.
+    #
+    # It existed because npm had no spelling for the offer: `SEE LICENSE IN
+    # LICENSE` is not an SPDX expression and cannot be compared to a policy. But
+    # skipping the comparison meant the `own_packages` entry READ as coverage
+    # while checking nothing -- put `SEE LICENSE IN LICENSE` back and this gate
+    # stayed green, which is how a channel could drift with an entry beside it.
+    #
+    # Now that every channel declares the canonical expression, there is a real
+    # string to compare on all four, so a manifest that retreats to a non-SPDX
+    # form is a finding rather than an exemption.
+    if not gedeclareerd:
+        return oordeel, (f"{rel} declares no licence at all, while "
+                         f"docs/LICENSE_POLICY.toml [own_packages] expects "
+                         f"{verwacht!r}")
+    if NIET_SPDX.match(gedeclareerd):
+        # "every channel can spell it now" was the reasoning here until 02-09-2026,
+        # and npm's own validator falsifies it: validate-npm-package-license 3.0.4
+        # rejects a LicenseRef expression outright. A channel that cannot carry the
+        # canonical string needs a spelling of its own -- but a declared one, named
+        # in [channel_representation] with the expression it stands for, matched
+        # exactly. That is the difference between a representation and an escape:
+        # the escape skipped the comparison, this one still makes it.
+        weergave = pol.get("channel_representation", {}).get(rel)
+        if weergave and gedeclareerd == weergave.get("publishes") == verwacht:
+            klacht = weergave_klopt(rel, weergave)
+            return (oordeel if klacht else weergave["canonical"]), klacht
+        return oordeel, (f"{rel} declares {gedeclareerd!r}, which is not an SPDX "
+                         f"expression. [own_packages] expects {verwacht!r} and no "
+                         f"[channel_representation] entry declares it, so it cannot "
+                         "be compared with anything")
+    if gedeclareerd != verwacht:
         return oordeel, (f"{rel} declares {gedeclareerd!r}; "
                          f"docs/LICENSE_POLICY.toml [own_packages] expects "
                          f"{verwacht!r}. One of the two is out of date")
@@ -297,6 +368,35 @@ def scan_npm(pol: dict) -> list[tuple[str, str]]:
         uit.append((rel, oordeel))
         for naam, _v in (d.get("dependencies") or {}).items():
             uit.append((f"npm {naam}", "UNKNOWN (runtime dependency, licence unread)"))
+
+    # What the publish pipeline WRITES into the generated manifest. The docstring
+    # above used to argue that pkg/package.json need not be read because wasm-pack
+    # copies the licence from Cargo.toml. Two post-build steps overwrite it before
+    # `npm publish`, so that argument held for the file on disk and not for the
+    # package on the registry -- the gate said "canonical" while the channel
+    # published something else. The artefact is gitignored and absent in CI, so
+    # what is checked here is the code that produces it.
+    weergave = pol.get("channel_representation", {}).get("crates/xfa-wasm/pkg/package.json")
+    if weergave:
+        verwacht_str = weergave["publishes"]
+        for bron, patroon in (
+            (REPO / ".github/workflows/wasm.yml", r"""pkg\.license\s*=\s*['"]([^'"]+)['"]"""),
+            (REPO / "scripts/release/transform-wasm-pkg.sh", r"""d\[.license.\]\s*=\s*['"]([^'"]+)['"]"""),
+        ):
+            if not bron.is_file():
+                raise Onleesbaar(f"{bron.relative_to(REPO)} is missing")
+            gevonden = re.findall(patroon, bron.read_text(encoding="utf-8"))
+            if not gevonden:
+                uit.append((f"{bron.relative_to(REPO)} [publish path]",
+                            "UNKNOWN (no licence assignment found; the transform "
+                            "changed shape and this check no longer reads it)"))
+                continue
+            for waarde in gevonden:
+                if waarde != verwacht_str:
+                    uit.append((f"{bron.relative_to(REPO)} [publish path]",
+                                f"UNKNOWN (writes {waarde!r} into the published "
+                                f"manifest; [channel_representation] declares "
+                                f"{verwacht_str!r})"))
 
     # The wasm package, from the manifest wasm-pack reads rather than the one it
     # writes.
@@ -342,14 +442,41 @@ def scan_maven(pol: dict) -> list[tuple[str, str]]:
 
 def scan_nuget(_: dict) -> list[tuple[str, str]]:
     projecten = list((REPO / "bindings/dotnet/src").glob("*/*.csproj"))
+    uit_eigen: list[tuple[str, str]] = []
+    # The project's OWN licence, which this scanner never read: it collected
+    # PackageReference entries and nothing else, so removing
+    # <PackageLicenseExpression> left the gate green (#214/#304).
+    for p in projecten:
+        rel = p.relative_to(REPO).as_posix()
+        if rel not in _.get("own_packages", {}):
+            continue
+        tekst = p.read_text()
+        m = re.search(r"<PackageLicenseExpression>([^<]+)</PackageLicenseExpression>", tekst)
+        if m:
+            gedeclareerd = m.group(1)
+        else:
+            # NuGet's other form. NU5033 forbids both at once, and NU5124 makes the
+            # expression unusable here, so the file IS the declaration -- reading
+            # only the expression element would see nothing and call that "no
+            # licence", which is the opposite of what the manifest says.
+            f = re.search(r"<PackageLicenseFile>([^<]+)</PackageLicenseFile>", tekst)
+            gedeclareerd = f"PackageLicenseFile:{f.group(1)}" if f else None
+        oordeel, klacht = eigen_verklaring(rel, gedeclareerd, _)
+        if klacht:
+            raise Onleesbaar(klacht)
+        uit_eigen.append((f"nuget {p.stem} (package)", oordeel))
     if not projecten:
         raise Onleesbaar("no .csproj found under bindings/dotnet/src")
+    # uit_eigen used to be built and then dropped: the function returned `uit`,
+    # whose first entry was the constant "LicenseRef-PDFluent-Commercial". So the
+    # validation above ran, its verdict went nowhere, and the gate reported a
+    # hardcoded answer -- the same shape as the wheel scanner, and the comment at
+    # the top of this block described a repair that never reached the output.
     uit = []
     for p in projecten:
-        uit.append((f"dotnet {p.stem}", "LicenseRef-PDFluent-Commercial"))
         for m in re.finditer(r'<PackageReference\s+Include="([^"]+)"', p.read_text()):
             uit.append((f"nuget {m.group(1)}", "UNKNOWN (licence unread)"))
-    return uit
+    return uit_eigen + uit
 
 
 def scan_python(_: dict) -> list[tuple[str, str]]:
@@ -360,7 +487,39 @@ def scan_python(_: dict) -> list[tuple[str, str]]:
         d = tomllib.loads(pad.read_text())
     except tomllib.TOMLDecodeError as e:
         raise Onleesbaar(f"pyproject.toml: {e}") from e
-    uit = [("python pdfluent (wheel)", "LicenseRef-PDFluent-Commercial")]
+    # WAT HET BESTAND ZEGT, NIET WAT WIJ ERVAN VONDEN
+    #
+    # Tot 01-09-2026 stond hier onvoorwaardelijk
+    # `("python pdfluent (wheel)", "LicenseRef-PDFluent-Commercial")`. Het
+    # bestand werd wel geparset en de licentie nooit gelezen, dus de wheel werd
+    # als commercieel-only geoordeeld ongeacht wat er stond. Zet de declaratie
+    # op iets anders -- of draai hem terug -- en deze poort bleef groen (#1620).
+    #
+    # Dat is dezelfde vorm als #300, #301 en #304: een controle die een
+    # naastgelegen vraag beantwoordt en er compleet uitziet.
+    #
+    # PEP 621 kent twee vormen: `license = { text = "..." }` (oud) en
+    # `license = "..."` (PEP 639). Allebei lezen; ontbreekt hij, dan is dat een
+    # bevinding en geen aanname.
+    lic = d.get("project", {}).get("license")
+    if isinstance(lic, dict):
+        spdx = lic.get("text") or lic.get("file")
+    elif isinstance(lic, str):
+        spdx = lic
+    else:
+        spdx = None
+    if not spdx:
+        raise Onleesbaar(
+            "crates/pdf-python/pyproject.toml declares no [project] license. "
+            "A wheel without a licence is not a wheel we may publish."
+        )
+    # Judged like our other own packages: the allow-list answers "may this be in
+    # our dependency graph", which is a different question from "is this what we
+    # mean to publish". MIT is fine as a dependency and would be a disaster here.
+    oordeel, klacht = eigen_verklaring("crates/pdf-python/pyproject.toml", spdx, _)
+    if klacht:
+        raise Onleesbaar(klacht)
+    uit = [("python pdfluent (wheel)", oordeel)]
     for spec in d.get("project", {}).get("dependencies", []):
         uit.append((f"pypi {spec}", "UNKNOWN (runtime dependency, licence unread)"))
     return uit

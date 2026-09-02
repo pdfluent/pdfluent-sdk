@@ -5,7 +5,7 @@ edition = "2021"
 # publish = false: Python bindings are distributed via PyPI/maturin, not crates.io.
 publish = false
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 description = "Python bindings for the PDF engine via PyO3."
 
 [lib]

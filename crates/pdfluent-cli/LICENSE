@@ -1,11 +1,11 @@
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-PDFluent-Commercial
+
 PDFluent is available under two licences, at your option.
 =========================================================
 
-    1. The GNU Affero General Public License, version 3 or later,
-       together with the additional term in LICENSE-ADDITIONAL-TERMS.
+    1. The GNU Affero General Public License, version 3.
 
            LICENSE-AGPL                 the FSF text, verbatim
-           LICENSE-ADDITIONAL-TERMS     attribution, under AGPLv3 section 7(b)
 
     2. The PDFluent Commercial Licence.
 

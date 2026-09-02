@@ -3,7 +3,7 @@ name = "pdf-invoice"
 version.workspace = true
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 repository.workspace = true
 description = "Form data exchange (FDF/XFDF) and ZUGFeRD/Factur-X e-invoicing"
 readme = "README.md"

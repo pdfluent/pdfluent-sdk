@@ -3,7 +3,7 @@ name = "pdf-content-stream"
 version = "0.1.0"
 edition = "2021"
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 readme = "README.md"
 description = "PDF content stream parser, state machine, and text-run locator (G3 foundation)"
 repository = "https://github.com/pdfluent/PDFluent-project"
