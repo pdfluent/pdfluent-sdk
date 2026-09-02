@@ -92,6 +92,17 @@ REASONS = {"corpus", "runner", "covered-elsewhere", "credentials"}
 ALLOWED: dict[str, str] = {
     "every_guard_has_a_job.py": "this file itself; its own job does name it",
 
+    # Not a guard. A shared helper the fixtures import; a job for it would run
+    # a module with no verdict and report success for having imported it. It
+    # arrived with #1647 and was counted here as an orphan on every run, which
+    # is the register asking a fair question about a file that does not belong
+    # in it.
+    "fixture_env.py": (
+        "the sealed-environment helper the fixtures import, not a check: it "
+        "has no verdict of its own, and what it does is proven by "
+        "test_a_fixture_cannot_touch_a_real_repo.py"
+    ),
+
     # ---- publication guards, split onto master ahead of their wiring (#222) ----
     # These five arrived from t3/1543-resolve so they can be read and reviewed on
     # master. Two of them cannot be wired yet, and the reason is not scheduling:

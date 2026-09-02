@@ -43,8 +43,21 @@ on:
     branches: [master]
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A push gets its OWN group and is never cancelled; only a pull request
+  # supersedes itself.
+  #
+  # On master every ref is the same ref, so each merge cancelled the previous
+  # merge's run. Measured 02-09-2026 on the last 30 runs against master: the CI
+  # workflow is 10 cancelled, 4 failed, 0 succeeded, and a run takes 246-1320 s
+  # while 6 of the last 11 merges arrived within 1320 s of the one before. Half
+  # of them land inside the previous run's lifetime; one cancelled run had been
+  # going 7600 s.
+  #
+  # So a merge's result was observed only when nobody merged for the length of a
+  # run, which is not this repository's pattern. Every "we will catch it on
+  # master" argument rested on that. Same fix as the deletions workflow (#1635).
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -498,6 +511,20 @@ jobs:
       - name: Cargo on PATH
         if: ${{ !cancelled() }}
         run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      # In promise-guard because it is the job that already has cargo on PATH,
+      # and DEBUG rather than --release: measured profile-independent, the
+      # generator produces the same 1090 bytes either way, and debug shares
+      # whatever this job has already built.
+      #
+      # It was briefly in bindings.yml, which builds for the Java binding this
+      # fixture belongs to -- and which runs only on `push: tags`. That made the
+      # guard release-time-only: drift between generator and committed file
+      # would have been caught after the merge, in the publication run. I checked
+      # whether that job builds and not whether it RUNS, which is the question I
+      # have asked of every other guard this week. (T1 review, #1654)
+      - name: The Java binding fixture is the one we generate
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_java_fixture_is_the_one_we_generate.py
       # Which exported symbols does no test call? A floor, not a percentage:
       # 198 of 262 is not 100, and a soft job at that number is one everybody
       # scrolls past -- so the floor passes at today's count and fails on a drop.

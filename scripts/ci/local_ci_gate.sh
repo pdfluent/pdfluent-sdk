@@ -109,6 +109,7 @@ run prruntst  python3 scripts/ci/test_pr_code_stays_off_the_desktop.py
 run licenses2 python3 scripts/ci/license_gate.py
 run licbound  python3 scripts/ci/license_boundary.py
 run lictest   python3 scripts/ci/test_license_gate.py
+run javafix   python3 scripts/ci/the_java_fixture_is_the_one_we_generate.py
 run fixenv    python3 scripts/ci/a_fixture_cannot_touch_a_real_repo.py
 run fixenvtst python3 scripts/ci/test_a_fixture_cannot_touch_a_real_repo.py
 run errdocs   python3 scripts/ci/error_codes_have_an_anchor.py
