@@ -81,7 +81,37 @@ MUST_ALLOW: dict[str, str] = {
 # `LGPL-2.1-only` contains `GPL-2`, and treating file-level copyleft as strong
 # would contradict the deliberate decision to classify it per surface.
 STERK_COPYLEFT = re.compile(r"(?<![A-Za-z])A?GPL-\d", re.IGNORECASE)
-BESTANDS_COPYLEFT = re.compile(r"(?<![A-Za-z])LGPL-\d", re.IGNORECASE)
+
+# SURFACE-RESTRICTED: licences whose answer depends on WHERE they land, so they
+# may be classified per surface and never granted outright.
+#
+# This was `LGPL` alone, and MPL-2.0 walked out through the gap: move it from
+# `licenses.weak_copyleft` to `licenses.allowed` and this guard passed,
+# license_gate and license_boundary passed, deny.toml stayed consistent (MPL is
+# already in the surface union), and `toegestaan("MPL-2.0", …, weak_allowed=set())`
+# returned True -- MPL accepted on the SDK surface whose weak set is empty ON
+# PURPOSE, because `allowed` is tested first and skips the surface decision
+# entirely.
+#
+# Fourth time in this file that a list of the spellings I happened to know sat
+# where a class belonged. So: a family, and any member appearing in `allowed`
+# is refused whatever its spelling. (codex, #1656)
+SURFACE_BEPERKT = {
+    "LGPL": re.compile(r"(?<![A-Za-z])LGPL-\d", re.IGNORECASE),
+    "MPL": re.compile(r"(?<![A-Za-z])MPL-\d", re.IGNORECASE),
+    "EPL": re.compile(r"(?<![A-Za-z])EPL-\d", re.IGNORECASE),
+    "CDDL": re.compile(r"(?<![A-Za-z])CDDL-\d", re.IGNORECASE),
+    "CPL": re.compile(r"(?<![A-Za-z])CPL-\d", re.IGNORECASE),
+    "Ms-RL": re.compile(r"(?<![A-Za-z])Ms-RL(?![A-Za-z])", re.IGNORECASE),
+}
+
+
+def surface_beperkt(naam: str) -> str | None:
+    """The family this licence belongs to, if it is one that needs a surface."""
+    for familie, patroon in SURFACE_BEPERKT.items():
+        if patroon.search(naam):
+            return familie
+    return None
 
 _STAMMEN = ("GPL-1.0", "GPL-2.0", "GPL-3.0", "AGPL-1.0", "AGPL-3.0")
 # Including the bare and `+` spellings. They are SPDX-deprecated and that is
@@ -193,11 +223,15 @@ def main() -> int:
                     "not by itself a reason.")
 
     for name in sorted(allowed):
-        if BESTANDS_COPYLEFT.search(name):
+        familie = surface_beperkt(name)
+        if familie:
             problems.append(
-                f"{name} is in licenses.allowed. File-level copyleft is decided "
-                "per surface, so it belongs in weak_copyleft (or forbidden) -- "
-                "`allowed` is tested first and skips the surface decision.")
+                f"{name} is in licenses.allowed and it is {familie}: a licence "
+                "whose answer depends on WHERE it lands. `allowed` is tested "
+                "before weak_copyleft and before any surface, so putting it "
+                "there does not override the per-surface decision -- it skips "
+                "it, including on the surfaces whose weak set is deliberately "
+                "empty. It belongs in weak_copyleft, or in forbidden.")
 
     for name, why in MUST_ALLOW.items():
         if name not in allowed:
