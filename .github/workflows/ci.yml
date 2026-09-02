@@ -338,6 +338,9 @@ jobs:
       - name: The fixture-isolation lint bites in both directions
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_a_fixture_cannot_touch_a_real_repo.py
+      - name: The register guards cannot reach the real repository
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_de_registerwachters_raken_de_echte_repo_niet.py
       - name: The licence gate rejects what it should
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_license_gate.py
