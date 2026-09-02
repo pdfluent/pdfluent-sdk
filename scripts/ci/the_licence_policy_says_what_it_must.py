@@ -134,12 +134,25 @@ def main() -> int:
 
     checked = 0
     for name in sorted(forbidden):
-        ok, _ = license_gate.toegestaan(name, allowed, weak, forbidden, set())
+        ok, reason = license_gate.toegestaan(name, allowed, weak, forbidden, set())
         checked += 1
         if ok:
             problems.append(f"{name} is listed forbidden and the evaluator accepts "
                             "it anyway. A list the code does not honour is a "
                             "comment.")
+        elif "forbidden" not in reason:
+            # `False` is the absence of a verdict, not a verdict. Delete the
+            # forbidden branch from toegestaan() and every forbidden licence
+            # falls through to "not classified" -- also False, so a check that
+            # only asked "is it refused" reported agreement while the evaluator
+            # had stopped consulting the list at all. That is precisely the
+            # regression this guard exists for, and it was the one thing it
+            # could not see. (codex, #1656)
+            problems.append(
+                f"{name} is refused for the wrong reason: {reason!r}. It is on "
+                "the forbidden list, so the evaluator should say so -- being "
+                "unclassified refuses it today and stops refusing it the moment "
+                "somebody adds it to `allowed`.")
     for name in sorted(allowed):
         ok, reason = license_gate.toegestaan(name, allowed, weak, forbidden, set())
         checked += 1

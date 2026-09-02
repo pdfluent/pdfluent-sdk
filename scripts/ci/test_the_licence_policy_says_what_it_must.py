@@ -138,6 +138,27 @@ with tempfile.TemporaryDirectory() as td:
                        capture_output=True, text=True)
 expect("an evaluator that stops honouring the list FAILS",
        r.returncode == 1, f"exit={r.returncode}")
+
+# The other way an evaluator stops honouring it: DELETE the forbidden branch.
+# Every forbidden licence then falls through to "not classified" -- also False,
+# so a check that only asked "is it refused" saw agreement. False is the absence
+# of a verdict, not a verdict. (codex, #1656)
+with tempfile.TemporaryDirectory() as td:
+    root = pathlib.Path(td) / "repo"
+    (root / "scripts" / "ci").mkdir(parents=True)
+    (root / "docs").mkdir(parents=True)
+    for name in (pathlib.Path(GUARD).name, "license_gate.py"):
+        shutil.copy(REPO / "scripts" / "ci" / name, root / "scripts" / "ci" / name)
+    shutil.copy(REPO / POLICY_REL, root / POLICY_REL)
+    g = root / "scripts" / "ci" / "license_gate.py"
+    before = g.read_text()
+    g.write_text(before.replace(
+        '        if x in verboden:\n            return False, f"{x} is forbidden"\n', "", 1))
+    assert g.read_text() != before, "the mutation did not apply"
+    r = subprocess.run([sys.executable, str(root / GUARD)], capture_output=True, text=True)
+expect("deleting the forbidden branch FAILS", r.returncode == 1, f"exit={r.returncode}")
+expect("  and says it is refused for the wrong reason",
+       "wrong reason" in r.stderr, r.stderr[-200:])
 expect("  and does not crash", "Traceback" not in r.stderr)
 
 # A guard that cannot read its input must not report a clean policy.
@@ -155,7 +176,7 @@ expect("a missing policy is FATAL, not a pass", r.returncode == 2, f"exit={r.ret
 # how the same floor failed in #1641: len(fails) counts only failures, so a
 # deleted case left the suite green while it shrank, and a floor below the real
 # count tolerated the shrinkage it existed to catch.
-MINIMUM_CASES = 18  # FLOOR
+MINIMUM_CASES = 20  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 if fails:
     for f in fails:
