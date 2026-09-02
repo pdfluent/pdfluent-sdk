@@ -36,8 +36,24 @@ from pathlib import Path
 WORTEL = Path(__file__).resolve().parent.parent.parent
 MAP = WORTEL / "scripts" / "ci"
 
+# Op de vloer gezet op het werkelijke aantal, niet eronder: een vloer onder het
+# echte aantal tolereert precies de krimp waarvoor hij bedoeld is.
+# Set to the population as measured, not below it. At 10 with 25 scripts calling
+# git, fifteen could stop being scanned -- deleted, renamed, or made invisible by
+# a change to the pattern -- without this lint saying a word. That is exactly the
+# shrinkage a floor exists to catch, and a floor below the real count tolerates
+# it. Same correction as #1641's case floor.
+#
+# Raising it with the population is a deliberate act: a change that legitimately
+# removes a script has to say so here.
+MINIMAAL_GIT_SCRIPTS = 25  # FLOOR
+
 # Een aanroep van git via subprocess.
-GIT_AANROEP = re.compile(r"subprocess\.\w+\(\s*\[\s*[\"']git[\"']")
+# Ook met een absoluut pad: `["/usr/bin/git", ...]` is dezelfde aanroep en
+# dezelfde schade. the_fork_register_is_verifiable.py schreef het zo en kwam
+# er daardoor jarenlang doorheen, terwijl juist die aanroep een force-fetch
+# over alle takken doet. (#1642)
+GIT_AANROEP = re.compile(r"subprocess\.\w+\(\s*\[\s*[\"'](?:[\w./-]*/)?git[\"']")
 
 
 def aanroepen_zonder_schone_omgeving(tekst: str) -> list[int]:
@@ -91,6 +107,21 @@ def main() -> int:
                 f"{pad.name}:{regel} roept git aan zonder `env=`, dus met de "
                 f"GIT_*-variabelen van de aanroeper"
             )
+
+    # Een schone uitslag over nul aanroepen is geen schone uitslag. De vloer op
+    # regel 78 telt gevonden BESTANDEN, niet aanroepen: vijf .py-bestanden die
+    # geen van alle git aanroepen kwamen er als "0 script(s) die git aanroepen,
+    # alle met een schone omgeving" en exit 0 doorheen. Dat is een SKIPPED die
+    # zich als pass voordoet, in de poort die daar juist tegen is. (#1642)
+    if gecontroleerd < MINIMAAL_GIT_SCRIPTS:
+        print(
+            f"[geen-echte-repo] FATAAL: maar {gecontroleerd} script(s) roepen git "
+            f"aan; de vloer is {MINIMAAL_GIT_SCRIPTS}. Deze lint heeft dan bijna "
+            "niets bekeken en mag geen schoon resultaat melden -- draai hem vanuit "
+            "de repository.",
+            file=sys.stderr,
+        )
+        return 2
 
     print(f"[geen-echte-repo] {gecontroleerd} script(s) die git aanroepen, alle met een schone omgeving")
 
