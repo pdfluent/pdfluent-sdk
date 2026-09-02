@@ -1,4 +1,15 @@
-# Word separation: what is fixed, and what the last two documents are not
+# Word separation: solved, and the measurement mistake that hid it
+
+**Status 2026-09-02: all six documents are fixed.** This note is kept because
+its dead ends are instructive, but read the closing section first -- one of the
+four things it tells you not to re-test is exactly what worked, and the reason
+it looked dead is a measurement error worth more than the fix.
+
+Everything below the line is the note as it stood on 2026-09-01.
+
+---
+
+# (2026-09-01) What is fixed, and what the last two documents are not
 
 Status on 2026-09-01. Four of the six documents in #210 are fixed; two are not,
 and this records what they are **not**, so the next attempt does not spend a day
@@ -112,3 +123,79 @@ Two threads worth pulling, in this order because the first is cheaper:
 Do not re-test: the CID-0 analogy, the declared-width theory, exempting the
 space code (all five sites), or the paired-code lane. All four are dead by
 measurement, above.
+
+
+---
+
+# 2026-09-02: solved, and why this note said it was not
+
+`002_002193` and `002_002166` are fixed. Through the shipping pipeline,
+`pdfa::convert_bytes`:
+
+| | source | converted |
+|---|---:|---:|
+| `002_002193` | 3265 | 3377 |
+| `002_002166` | 5458 | 5864 |
+
+veraPDF 2b verdicts on all six are unchanged by the fix.
+
+## The fix is the thing this note called dead
+
+A code the font's own ToUnicode calls a space is never condemned. That is the
+"exempting the space code" experiment above, which the note reports as changing
+nothing and lists under "do not re-test". It works.
+
+## Why it looked dead: the harness measured the wrong pipeline
+
+The note says so itself, in the sentence nobody weighed: *"The harness is four
+lines of `save_to` between the stage calls in `convert_pdfa`."*
+
+`convert_pdfa` calls `fix_simple_font_out_of_range_codes`. That function's own
+doc comment says it is superseded by `fix_simple_font_streams`. What ships is
+`pdfa::convert_bytes`, and it calls the other one. So every measurement in this
+note -- the stage-15 bisect, the five-site exemption, the paired-code lane, the
+character counts -- describes a code path users do not run.
+
+The first version of the fix repeated the error in the other direction: it
+changed the shipped function and was measured with the superseded example, and
+reported six documents fixed while the shipped pipeline was unchanged. Both
+mistakes are the same one. A colleague reading the example's source found it,
+which is why the entry point is now named in every measurement here.
+
+## What the shipped pipeline actually does
+
+Writing the document out after each of the forty font steps in
+`pdfa::convert_bytes` and counting spaces:
+
+    simple_range_notdef      3384   <- fix_simple_font_streams; holds
+    subset_missing_glyphs     134   <- fix_type1_subset_missing_glyphs; loses them
+    width_mismatches          127
+
+Not stage 15 of 26, and not `fix_symbolic_font_notdef_streams`. The pass that
+destroys the spaces is `fix_type1_subset_missing_glyphs`, which builds its own
+condemned set through `collect_simple_invalid_codes` and never knew the rule.
+
+## One null result worth keeping
+
+Putting the rule at the tail of `collect_simple_invalid_codes` did nothing. That
+helper returns early on both the TrueType and the Type 1 route, so its tail is
+dead code for every real font: the shipped pipeline still fell from 3384 spaces
+to 134 with the filter in place. The rule lives in a wrapper the routes cannot
+bypass.
+
+## What is still true above
+
+The four dead ends are still dead **on the path they were measured on**, and
+three of them are dead everywhere: the CID-0 analogy, the declared-width theory,
+and the paired-code lane do not depend on which entry point runs them. Only the
+space-code exemption was a false negative, and only because of the entry point.
+
+The "what turns a space into a glyph" reframing was a good question asked about
+the wrong pipeline. On the shipped path nothing turns a space into a glyph: the
+byte is overwritten with `0x20`, in a font that has no glyph for `0x20`, and the
+space is lost rather than transformed.
+
+## The rule that comes out of this
+
+Measure through the entry point the product uses. An example binary is not the
+product, and a doc comment saying "superseded" is a load-bearing sentence.
