@@ -105,6 +105,7 @@ run matrix    python3 scripts/ci/capability_matrix_matches_coverage.py
 run wordsep   python3 scripts/ci/never_delete_the_word_separator.py
 run gitenv    python3 scripts/ci/test_no_test_can_touch_the_real_repo.py
 run licenses2 python3 scripts/ci/license_gate.py
+run licbound  python3 scripts/ci/license_boundary.py
 run lictest   python3 scripts/ci/test_license_gate.py
 run fixenv    python3 scripts/ci/a_fixture_cannot_touch_a_real_repo.py
 run fixenvtst python3 scripts/ci/test_a_fixture_cannot_touch_a_real_repo.py
