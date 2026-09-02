@@ -72,8 +72,12 @@ Usage:
 
 Exit codes:
     0  every number matches the floor for this platform
-    1  a number moved, in either direction, or a tool disagreed with itself
+    1  a number moved, in either direction, a tool disagreed with itself, or
+       mutool could not read a file it was handed -- an unreadable output is
+       a verdict about the output, not a missing tool (codex, #1617)
     2  the gate could not run at all (missing converter, missing veraPDF)
+    3  did not judge, and says so: no floor for this platform, or no mutool
+       installed, so retention was never measured
 """
 
 from __future__ import annotations
@@ -224,6 +228,56 @@ def tekst(mutool: str, pdf: Path) -> bytes | None:
         # having only handled the binary being absent.
         return None
     return b"".join(out.stdout.split())
+
+
+class Onleesbaar(Exception):
+    """mutool is installed and could not read this file.
+
+    Distinct from mutool being absent on purpose. Absent means retention was
+    not measured, which is a skip and exits 3. Present and failing on a file
+    the converter just wrote means the file is not readable, and that is a
+    finding about the file. The first version returned 3 for both, and the
+    workflow reads 3 as "nothing to calibrate against" -- so an output mutool
+    choked on went green (codex, #1617)."""
+
+    def __init__(self, path: Path):
+        super().__init__(str(path))
+        self.path = path
+
+
+def retentie(lees, src: Path, dst: Path, row: dict) -> bool | None:
+    """Did the output keep the source's text? None when there is none to keep.
+
+    `lees` is `tekst` bound to a mutool. Fills `row` with the numbers and
+    raises Onleesbaar, naming the side, when mutool could not read one."""
+    bron_t, uit_t = lees(src), lees(dst)
+    if bron_t is None:
+        raise Onleesbaar(src)
+    if uit_t is None:
+        raise Onleesbaar(dst)
+    src_chars, dst_chars = len(bron_t), len(uit_t)
+    row["src_chars"], row["out_chars"] = src_chars, dst_chars
+    if src_chars == 0:
+        # No extractable text to lose. Counted as retained, recorded so
+        # nobody reads it as a measurement that happened.
+        row["retention_pct"] = None
+        row["note"] = "source exposes no extractable text"
+        return None
+    # Two numbers, and the second is the one that decides. The length ratio
+    # stays because it is what the floors were measured with and it says
+    # something about surplus; the containment figure is what notices
+    # deletion and replacement.
+    pct = round(dst_chars / src_chars * 100, 2)
+    row["retention_pct"] = pct
+    behouden = behouden_deel(bron_t, uit_t)
+    row["source_kept_pct"] = behouden
+    if behouden >= RETENTION_MIN_PCT:
+        return True
+    row["note"] = (
+        f"only {behouden}% of the source's characters survive in order, though "
+        f"the output is {pct}% of its length"
+    )
+    return False
 
 
 def chars(mutool: str, pdf: Path) -> int:
@@ -394,38 +448,23 @@ def main() -> int:
 
         pct = None
         if mutool is not None:
-            bron_t, uit_t = tekst(mutool, src), tekst(mutool, dst)
-            if bron_t is None or uit_t is None:
-                # Could not read one side. Not "no text": unreadable.
-                print(f"SKIPPED (not a pass): mutool could not read "
-                      f"{src.name if bron_t is None else dst.name}, so retention was "
-                      "not measured for it. A validator that fails is not a document "
-                      "without text.", file=sys.stderr)
-                return 3
-            src_chars = -1 if bron_t is None else len(bron_t)
-            dst_chars = -1 if uit_t is None else len(uit_t)
-            row["src_chars"], row["out_chars"] = src_chars, dst_chars
-            if src_chars > 0 and dst_chars >= 0:
-                # Two numbers, and the second is the one that decides. The length
-                # ratio stays because it is what the floors were measured with
-                # and it says something about surplus; the containment figure is
-                # what notices deletion and replacement.
-                pct = round(dst_chars / src_chars * 100, 2)
-                row["retention_pct"] = pct
-                behouden = behouden_deel(bron_t, uit_t)
-                row["source_kept_pct"] = behouden
-                if behouden >= RETENTION_MIN_PCT:
-                    retained += 1
-                else:
-                    row["note"] = (
-                        f"only {behouden}% of the source's characters survive in "
-                        f"order, though the output is {pct}% of its length"
-                    )
-            elif src_chars == 0 and dst_chars >= 0:
-                # No extractable text to lose. Counted as retained, recorded so
-                # nobody reads it as a measurement that happened.
-                row["retention_pct"] = None
-                row["note"] = "source exposes no extractable text"
+            try:
+                kept = retentie(lambda p: tekst(mutool, p), src, dst, row)
+            except Onleesbaar as e:
+                # Not a skip. mutool is here and ran; the file it was handed is
+                # what failed. Named, so the next person opens that file and
+                # not the tool's install notes.
+                kant = "the converter's output" if e.path == dst else "the source"
+                print(file=sys.stderr)
+                print(f"[pdfa-output] FATAL: mutool could not read {e.path.name} "
+                      f"({kant} for {src.name}). A reader that fails is not a "
+                      "document without text; retention for this fixture is "
+                      "unknown, and unknown is not a pass. Run "
+                      f"`{mutool} draw -F txt {e.path}` by hand to see why.",
+                      file=sys.stderr)
+                return 1
+            pct = row.get("retention_pct")
+            if kept is not False:
                 retained += 1
 
         rows.append(row)
