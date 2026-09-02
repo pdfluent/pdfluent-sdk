@@ -123,11 +123,34 @@ r = run(tree({"matrix.yml": (f"{MAP}jobs:\n  guard:\n    strategy:\n"
 expect("a matrix-supplied runner is resolved", r.returncode == 1,
        f"exit={r.returncode}")
 
+# pull_request_target is a pull-request trigger and a worse one: it also carries
+# the repository's secrets. Its safety is INVERTED -- no ref means the base ref,
+# which is safe; naming the head is what puts PR code on the machine.
+# (T1 review, #1635)
+PRT_HEAD = ("on: pull_request_target\njobs:\n  build:\n"
+            f"    runs-on: {DESKTOP}\n    steps:\n"
+            "      - uses: actions/checkout@v4\n        with:\n"
+            "          ref: ${{ github.event.pull_request.head.sha }}\n"
+            "      - run: true\n")
+PRT_BASE = ("on: pull_request_target\njobs:\n  build:\n"
+            f"    runs-on: {DESKTOP}\n    steps:\n"
+            "      - uses: actions/checkout@v4\n      - run: true\n")
+
+r = run(tree({"prt.yml": PRT_HEAD}))
+expect("pull_request_target checking out the HEAD FAILS", r.returncode == 1,
+       f"exit={r.returncode}")
+expect("  and says the secrets make it worse", "secrets" in r.stderr,
+       r.stderr[-160:])
+
+r = run(tree({"prt.yml": PRT_BASE}))
+expect("pull_request_target without a ref passes (it takes the base)",
+       r.returncode == 0, f"exit={r.returncode} {r.stderr[-160:]}")
+
 r = run(tree({}))
 expect("no pull_request job at all is FATAL, not a pass", r.returncode == 2,
        f"exit={r.returncode}")
 
-MINIMUM_CASES = 14  # FLOOR
+MINIMUM_CASES = 17  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
