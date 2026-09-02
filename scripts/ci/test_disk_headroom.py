@@ -44,7 +44,7 @@ GUARD = pathlib.Path(__file__).resolve().parent / "disk_headroom.py"
 
 # FLOOR: cases run >= 20. A test that stops testing reports success in the same
 # words as one that passed.
-MINIMUM_CASES = 20
+MINIMUM_CASES = 24
 
 # TWO-WAY RATCHET. disk_headroom.DEFAULT_FLOOR_GB and this number must move
 # together, in either direction. Lowering the floor silently switches the guard
@@ -275,6 +275,38 @@ def main() -> int:
         expect("at a floor of 0 the verdict is a pass", r.returncode == 0, f"got {r.returncode}")
         r = run_env({}, "--repo", str(repo), "--floor-gb", "999999", "--heartbeat", str(beat))
         expect("at an unreachable floor the verdict is a failure", r.returncode == 2, f"got {r.returncode}")
+
+        # THE TWO NUMBERS. On a machine where the measured volume IS the
+        # repository's own, the sparse-image explanation must not appear -- it
+        # would be nonsense there, and the first version printed it because it
+        # compared a str with a Path and so was always "different".
+        r = run_env({}, "--repo", str(repo), "--floor-gb", "0", "--heartbeat", str(beat))
+        expect("no sparse-image note when the volumes are the same",
+               "maximum size of a sparse image" not in r.stdout, r.stdout[-200:])
+        expect("  and the measured path is still named on every run",
+               "measured:" in r.stdout, r.stdout[-200:])
+
+        # AND THE PATH COMPARISON ITSELF, asserted directly.
+        #
+        # It cannot be pinned through the CLI: the note needs BOTH a differing
+        # path and inner.free > free, and on any real machine the fixture's
+        # "host volume" is a directory on the same filesystem, so the second
+        # condition is False and covers for the first whichever way it is
+        # written. My first attempt hid that behind an `or` chain that made the
+        # assertion true no matter what -- an assertion that cannot fail, in
+        # the test written to stop one.
+        #
+        # So the comparison is asserted as what it is: a str and a Path naming
+        # the same place are the SAME place, and the version that compared them
+        # unresolved said they differed.
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("dh", GUARD)
+        dh = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(dh)
+        expect("the same place named as str and as Path is NOT elsewhere",
+               dh.elders_gemeten(str(repo), repo) is False)
+        expect("  and a genuinely different volume IS",
+               dh.elders_gemeten("/", repo) is True)
 
     if cases < MINIMUM_CASES:  # FLOOR
         print(
