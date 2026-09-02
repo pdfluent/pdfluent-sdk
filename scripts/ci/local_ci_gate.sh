@@ -31,10 +31,25 @@ case "${1:-}" in
   *) echo "usage: local_ci_gate.sh [--fast|--full]" >&2; exit 2 ;;
 esac
 fail=0; pass=0
+
+# A DIRECTORY PER RUN, not a fixed /tmp/lcg_<name>.log.
+#
+# Two gates running at once wrote to the same paths, so each overwrote the
+# other's evidence -- and on 02-09-2026 that is exactly what happened: one
+# terminal opened the log of its own failing gate and read another terminal's
+# passing run. There is no signal when this happens. The verdict on screen is
+# yours, the file it points at is whoever finished last, and both look
+# entirely ordinary.
+#
+# Three terminals share this repository and its worktrees, so concurrent runs
+# are the normal case rather than the exception. The path is printed with every
+# failure so a log can be traced back to the run that produced it.
+LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/lcg.XXXXXX")"
+export LOGDIR
 run() { local name="$1"; shift
   printf '=== %-9s' "$name"
-  if "$@" >"/tmp/lcg_${name}.log" 2>&1; then echo " PASS"; pass=$((pass+1))
-  else echo " FAIL — see /tmp/lcg_${name}.log"; tail -15 "/tmp/lcg_${name}.log" | sed 's/^/    /'; fail=$((fail+1)); fi
+  if "$@" >"${LOGDIR}/${name}.log" 2>&1; then echo " PASS"; pass=$((pass+1))
+  else echo " FAIL — see ${LOGDIR}/${name}.log"; tail -15 "${LOGDIR}/${name}.log" | sed 's/^/    /'; fail=$((fail+1)); fi
 }
 # DISK FIRST, before anything compiles.
 #

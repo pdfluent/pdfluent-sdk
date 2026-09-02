@@ -215,7 +215,26 @@ def volume_free_bytes(path: Path) -> tuple[int, int, str]:
         return host_usage.free, host_usage.total, str(host)
 
     host_usage = shutil.disk_usage(host)
-    if host_usage.free <= own.free:
+
+    # SAME DEVICE MEANS THERE IS NOTHING TO COMPARE.
+    #
+    # `host_usage.free <= own.free` is two separate samples of the disk taken
+    # microseconds apart. When the host mount and the path are on ONE
+    # filesystem those samples are the same number -- until something writes
+    # between the two calls, and then the comparison is a coin flip. Measured
+    # 02-09-2026: a gate went red on "with two host volumes the system drive is
+    # chosen" while a second gate was running, and passed three times alone.
+    # The guard reported the path instead of the host volume, which is the
+    # wrong answer arrived at by a race rather than by a rule.
+    #
+    # If they are the same device the minimum is meaningless: the host is where
+    # the space lives and the host is what gets named. Only when they are
+    # genuinely different filesystems is there a smaller of two things.
+    try:
+        zelfde_apparaat = os.stat(host).st_dev == os.stat(path).st_dev
+    except OSError:
+        zelfde_apparaat = False
+    if zelfde_apparaat or host_usage.free <= own.free:
         return host_usage.free, host_usage.total, f"{host} (Windows volume under the WSL vhdx holding {path})"
     return own.free, own.total, str(path)
 
