@@ -76,8 +76,53 @@ def manifest() -> dict:
     return tomllib.loads(MANIFEST.read_text())
 
 
-TEXT_SUFFIXES = {".rs", ".py", ".js", ".ts", ".java", ".cs", ".c", ".h", ".md",
-                 ".json", ".toml", ".yml", ".yaml", ".sh", ".txt", ".html"}
+# What NOT to read, rather than what to read. An allowlist of text extensions
+# has to be complete to be a guard, and it was not: `.xml` was missing while
+# `crates/pdf-java/pom.xml` sits in this very branch, and `.svg`, `.csv` and
+# `.tsv` were missing too -- a file listing naming the corpus is exactly a
+# `.tsv`. Each miss was silent, because a skipped file cannot report anything.
+# Inverting it means a new text format is covered on the day it appears rather
+# than on the day somebody remembers it. (T1 review, #1650)
+BINAIRE_SUFFIXEN = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp",
+                    ".woff", ".woff2", ".ttf", ".otf", ".eot",
+                    ".zip", ".gz", ".xz", ".bz2", ".tar", ".jar", ".class",
+                    ".so", ".dylib", ".dll", ".a", ".o", ".wasm", ".bin",
+                    ".mp4", ".mov", ".mp3", ".wav", ".pyc", ".pack", ".idx"}
+
+# Above this a file is not prose and reading it costs more than it can find.
+MAX_BYTES = 8 * 1024 * 1024
+
+# Byte-order marks, longest first: UTF-32's little-endian mark starts with
+# UTF-16's, so testing UTF-16 first would decode a UTF-32 file as garbage.
+BOMS = ((b"\x00\x00\xfe\xff", "utf-32-be"), (b"\xff\xfe\x00\x00", "utf-32-le"),
+        (b"\xfe\xff", "utf-16-be"), (b"\xff\xfe", "utf-16-le"),
+        (b"\xef\xbb\xbf", "utf-8-sig"))
+
+
+def lees_tekst(pad) -> str | None:
+    """The file's text, whatever it is encoded in, or None if it is not text.
+
+    `read_text(errors="replace")` decodes as UTF-8 and nothing else, so a UTF-16
+    file became a string with a replacement character between every letter and
+    matched no pattern at all -- silently, because "replace" cannot raise. A
+    name written in UTF-16 is plainly readable in any editor that honours the
+    BOM, and this guard reported the tree clean. (T1 review, #1650)
+    """
+    try:
+        data = pad.read_bytes()
+    except OSError:
+        return None
+    if len(data) > MAX_BYTES:
+        return None
+    for bom, enc in BOMS:
+        if data.startswith(bom):
+            return data.decode(enc, errors="replace")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        # Not UTF-8 and no mark. Latin-1 cannot fail and leaves every ASCII byte
+        # where it was, which is all an internal document name is made of.
+        return data.decode("latin-1", errors="replace")
 
 
 
@@ -161,11 +206,10 @@ def main() -> int:
     blootgesteld = [f for f in lijst if intern(f)]
     namen: list[tuple[str, str]] = []
     for f in lijst:
-        if Path(f).suffix.lower() not in TEXT_SUFFIXES:
+        if Path(f).suffix.lower() in BINAIRE_SUFFIXEN:
             continue
-        try:
-            tekst = lees(f).read_text(errors="replace")
-        except OSError:
+        tekst = lees_tekst(lees(f))
+        if tekst is None:
             continue
         hit = patroon.search(tekst)
         if hit:
