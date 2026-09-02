@@ -1157,22 +1157,88 @@ mod qf2b_objectstream_cache_tests {
     use crate::pdf::Pdf;
     use crate::xref::parse_object_stream_offsets;
 
-    /// Path to an in-tree XFA golden that contains at least one `/ObjStm`.
-    /// Resolved relative to the pdf-syntax crate dir.
-    const FIXTURE: &str = "../xfa-golden-tests/golden/13a7b224_xfa_issue14315.pdf";
+    /// A PDF 1.5 document carrying an `/ObjStm`, built here rather than read
+    /// from the corpus.
+    ///
+    /// This used to name a corpus file and `return` when it was missing — so in
+    /// a tree without the goldens the test passed while asserting nothing, and
+    /// the corpus name travelled into published source. Building the fixture
+    /// fixes both: its provenance is this function, and it exists everywhere
+    /// the test runs.
+    ///
+    /// Two objects (catalog and pages) packed into an object stream, addressed
+    /// by an xref stream — the smallest shape that makes the offsets cache do
+    /// its work.
+    fn objstm_fixture() -> Vec<u8> {
+        fn deflate(data: &[u8]) -> Vec<u8> {
+            use std::io::Write;
+            let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+            e.write_all(data).expect("in-memory write");
+            e.finish().expect("in-memory finish")
+        }
 
-    fn load_fixture() -> Option<Pdf> {
-        let bytes = std::fs::read(FIXTURE).ok()?;
-        Pdf::new(bytes).ok()
+        let catalog = b"<< /Type /Catalog /Pages 3 0 R >>";
+        let pages = b"<< /Type /Pages /Kids [] /Count 0 >>";
+        let pairs = format!("2 0 3 {}", catalog.len() + 1);
+        let first = pairs.len() + 1;
+        let mut payload = pairs.into_bytes();
+        payload.push(b'\n');
+        payload.extend_from_slice(catalog);
+        payload.push(b' ');
+        payload.extend_from_slice(pages);
+        let body = deflate(&payload);
+
+        let mut out = b"%PDF-1.5\n".to_vec();
+        let objstm_at = out.len();
+        out.extend_from_slice(
+            format!(
+                "1 0 obj\n<< /Type /ObjStm /N 2 /First {first} /Length {} \
+                 /Filter /FlateDecode >>\nstream\n",
+                body.len()
+            )
+            .as_bytes(),
+        );
+        out.extend_from_slice(&body);
+        out.extend_from_slice(b"\nendstream\nendobj\n");
+
+        let xref_at = out.len();
+        let entry = |t: u8, a: usize, b: u8| {
+            let mut v = vec![t];
+            v.extend_from_slice(&(a as u16).to_be_bytes());
+            v.push(b);
+            v
+        };
+        let mut rows = Vec::new();
+        rows.extend(entry(0, 0, 255));
+        rows.extend(entry(1, objstm_at, 0));
+        rows.extend(entry(2, 1, 0)); // object 2 lives in stream 1, index 0
+        rows.extend(entry(2, 1, 1)); // object 3 lives in stream 1, index 1
+        rows.extend(entry(1, xref_at, 0));
+        let xbody = deflate(&rows);
+        out.extend_from_slice(
+            format!(
+                "4 0 obj\n<< /Type /XRef /Size 5 /W [1 2 1] /Root 2 0 R /Length {} \
+                 /Filter /FlateDecode >>\nstream\n",
+                xbody.len()
+            )
+            .as_bytes(),
+        );
+        out.extend_from_slice(&xbody);
+        out.extend_from_slice(b"\nendstream\nendobj\n");
+        out.extend_from_slice(format!("startxref\n{xref_at}\n%%EOF\n").as_bytes());
+        out
+    }
+
+    /// The fixture is built, so failing to parse it is a fault in this crate,
+    /// not a missing file. It used to be an `Option` that the tests turned into
+    /// an early `return`, which is how they passed while asserting nothing.
+    fn load_fixture() -> Pdf {
+        Pdf::new(objstm_fixture()).expect("the generated /ObjStm fixture must parse")
     }
 
     #[test]
     fn qf2b_objstm_cache_populates_and_is_stable_on_repeat() {
-        let Some(pdf) = load_fixture() else {
-            // Fixture is in-tree, but be defensive if running with a
-            // pruned workspace.
-            return;
-        };
+        let pdf = load_fixture();
 
         let xref = pdf.xref();
 
@@ -1218,12 +1284,8 @@ mod qf2b_objectstream_cache_tests {
 
     #[test]
     fn qf2b_two_pdfs_have_independent_caches() {
-        let Some(pdf_a) = load_fixture() else {
-            return;
-        };
-        let Some(pdf_b) = load_fixture() else {
-            return;
-        };
+        let pdf_a = load_fixture();
+        let pdf_b = load_fixture();
 
         // Sanity: both start with the same construction-time count for
         // the same fixture (same shape).
