@@ -105,34 +105,58 @@ REF_VASTGEZET = re.compile(
 #
 # The inverse -- `== 'pull_request' && <self-hosted>` -- matches neither, which
 # is the whole point: it puts pull requests ON the desktop. (T1 review, #1649)
+# The SHAPE: some test on github.event_name choosing a runner, falling back to a
+# hosted one. Which events may take the self-hosted branch is decided by
+# per_gebeurtenis_veilig() below -- the regex says "this is a per-event choice",
+# not "this choice is safe". Keeping those two apart is what let the safe set
+# become a positive list without rewriting the pattern a fourth time.
 ALLEEN_BIJ_PUSH = re.compile(
-    r"github\.event_name\s*(?:==\s*'push'|!=\s*'pull_request')\s*&&.*?"
-    r"\|\|\s*'[^']*ubuntu", re.S)
+    r"github\.event_name\s*[=!]=\s*'[a-z_]+'.*?\|\|\s*'[^']*ubuntu", re.S)
+
+
+# The events whose code is already merged and carries no external input. A job
+# may choose the persistent desktop for these and nothing else.
+#
+# `push` is code that is on master. `schedule` runs the default branch. Every
+# other event either carries a contributor's revision (pull_request,
+# pull_request_target) or lets the caller pick one (workflow_dispatch --
+# `gh workflow run --ref <branch>` runs that branch's checkout and actions on the
+# runner, so anyone with dispatch rights could put arbitrary branch code on the
+# desktop).
+DESKTOP_GEBEURTENISSEN = frozenset({"push", "schedule"})
+
+_EVENT_NAAM = re.compile(r"github\.event_name\s*(==|!=)\s*'([a-z_]+)'")
 
 
 def per_gebeurtenis_veilig(runs_on: str, events: set[str] | None = None) -> bool:
-    """Whether this runs-on sends every pull-request event to a hosted runner.
+    """Whether this runs-on can only reach the desktop on a merged-code event.
 
-    `!= 'pull_request'` reads as "not a pull request" and is TRUE for
-    `pull_request_target`, which is a pull-request event carrying the
-    repository's secrets. A job written that way would choose the desktop on
-    that event and be free to check out the pull request's head, and the
-    expression looks correct while doing it.
+    A POSITIVE list, after three rounds of exclusions. `== 'push'` was widened to
+    `!= 'pull_request'` so the nightly audit would stay free, and that let
+    pull_request_target through; excluding that let workflow_dispatch through.
+    Each round was a correct fix to the case in front of it, and each opened the
+    door beside it, because "everything except X" is a claim about an event list
+    that grows without asking.
 
-    So the shared recogniser is not the regex alone: a workflow that can be
-    triggered by pull_request_target has to say `== 'push'`, where the answer
-    does not depend on which events count as "a pull request". One place, both
-    guards. (codex, #1649)
+    So the condition has to NAME the events on which the desktop is chosen, and
+    every one of them has to be in DESKTOP_GEBEURTENISSEN. The next event GitHub
+    adds is then a refusal rather than a leak. (codex, #1649)
     """
     if not ALLEEN_BIJ_PUSH.search(runs_on):
         return False
-    # The `!=` form is fine wherever pull_request_target cannot fire -- that is
-    # what makes the nightly security audit free on the desktop instead of paid
-    # minutes. It is only unsafe when the workflow can actually be triggered by
-    # the event the condition fails to exclude, so the question needs the
-    # workflow's triggers, not the expression alone.
-    if "!=" in runs_on and "pull_request" in runs_on:
-        return "pull_request_target" not in (events or set())
+    genoemd = _EVENT_NAAM.findall(runs_on)
+    if not genoemd:
+        return False
+    for operator, naam in genoemd:
+        if operator == "!=":
+            # An exclusion says nothing about what remains. It is safe only when
+            # the workflow's own triggers happen to leave nothing dangerous, and
+            # that is a fact about the workflow, not about the expression.
+            rest = (events or set()) - {naam}
+            if not rest or not rest <= DESKTOP_GEBEURTENISSEN:
+                return False
+        elif naam not in DESKTOP_GEBEURTENISSEN:
+            return False
     return True
 
 

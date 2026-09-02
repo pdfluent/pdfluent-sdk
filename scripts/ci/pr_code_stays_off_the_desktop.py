@@ -245,9 +245,22 @@ def main() -> int:
                     called = FLOW.parent.parent / target[2:]
                     if called.is_file():
                         inner = yaml.safe_load(called.read_text()) or {}
+                        if not events:
+                            problems.append(
+                                f"{f.name}:{name} calls {target} and this guard "
+                                "could not determine the caller's events. An "
+                                "empty event set is not 'no risk'.")
+                            continue
                         for iname, ijob in (inner.get("jobs") or {}).items():
+                            # The CALLER's events, not the inner workflow's: a
+                            # reusable workflow runs under whatever triggered the
+                            # job that calls it, and passing nothing here let
+                            # _judge treat a pull_request_target caller as
+                            # eventless and approve it. (codex, #1649)
                             problems.extend(_judge(f"{called.name}:{iname}", ijob,
-                                                   called.name, iname))
+                                                   called.name, iname,
+                                                   target_only=target_only,
+                                                   events=events))
                         continue
                 problems.append(
                     f"{f.name}:{name} calls {job['uses']}, which this guard "
