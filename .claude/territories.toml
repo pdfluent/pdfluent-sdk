@@ -51,6 +51,12 @@ paden = [
   "scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py",
   "scripts/ci/the_fork_register_is_verifiable.py",
   "scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py",
+  # T3's file, held by t1 only to carry the fix for two findings t1 raised in
+  # review of #1650. The T3 session ended 02-09-2026 around 00:55Z with the
+  # findings open, and a review finding nobody can act on is not a review. The
+  # commit changes nothing else: the suffix allowlist becomes a binary skiplist,
+  # and the read becomes encoding-aware. Hand back on T3's return.
+  "scripts/ci/internal_stays_internal.py",
 ]
 # NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
 # parity tests are edited by this change but stay with whoever owns the SDK
