@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Innovation Trigger B.V. All rights reserved.
+#
+# Two guards run over the message before it is written, and they behave
+# differently on purpose.
+#
+#   repair what a machine can repair, refuse what a person has to read
+#
+# `no_ai_attribution.py --fix` STRIPS the attribution trailer and lets the
+# commit through. That is deliberate, and the reasoning is older than this file:
+# refusing costs a second attempt and produces the same message in the end, and
+# a hook that irritates gets bypassed with `--no-verify`. The trailer is added
+# by default, so the default works against the standing rule -- on 26-08-2026
+# that produced 26 contaminated commits in one night.
+#
+# `geen_interne_zaken.py` REFUSES, because its findings cannot be repaired. A
+# customer name in prose, a hostname, a private address: removing the words
+# leaves a sentence that no longer says what the author meant. Only the author
+# knows what the message should say instead. And a message is not a tree -- it
+# cannot be excluded by a manifest afterwards, so once it is merged the only
+# remedy is a history rewrite.
+#
+# A SKIP is not a pass. When the terms list is absent the guard cannot judge,
+# and a hook that treats "I could not look" as "I looked and it was fine" is
+# the failure it exists to prevent. It blocks, and says how to get the list.
+set -euo pipefail
+
+BERICHT="$1"
+WORTEL="$(git rev-parse --show-toplevel)"
+
+# Repairable: strip and continue. `|| true` because a missing guard must not
+# block a commit -- that layer is checked by the gate, not here.
+python3 "$WORTEL/scripts/ci/no_ai_attribution.py" --fix "$BERICHT" || true
+
+# Not repairable: judge, and refuse on anything but a clean verdict.
+if [ -f "$WORTEL/scripts/ci/geen_interne_zaken.py" ]; then
+    # `|| CODE=$?` and nothing between: under `set -e` a failing command
+    # substitution in a plain assignment exits before the code can be read, and
+    # any command in between -- a printf, a basename -- overwrites `$?` with its
+    # own success. Both mistakes were made in this repo tonight.
+    CODE=0
+    UIT="$(python3 "$WORTEL/scripts/ci/geen_interne_zaken.py" "$BERICHT" 2>&1)" || CODE=$?
+    if [ "$CODE" -ne 0 ]; then
+        printf '%s\n' "$UIT" >&2
+        printf '\n[commit-msg] refused: exit %s. The message stays in\n' "$CODE" >&2
+        printf '  .git/COMMIT_EDITMSG -- edit it and commit again.\n' >&2
+        exit 1
+    fi
+fi
