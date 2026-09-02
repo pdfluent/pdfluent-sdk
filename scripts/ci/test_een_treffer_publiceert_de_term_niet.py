@@ -49,6 +49,9 @@ TERM = "Voorbeeldpartner"
 CONTEXT = f"...werk voor {TERM} afgerond..."
 
 
+_WEGWERP: list = []
+
+
 def laad_prive(*termen: str) -> None:
     """Load a private list, the way a real run does.
 
@@ -57,7 +60,13 @@ def laad_prive(*termen: str) -> None:
     than the redaction. The real flow always loads it before a finding can
     exist.
     """
-    lijst = pathlib.Path(tempfile.mkdtemp()) / "termen.txt"
+    # Held so it is removed when the process ends. `mkdtemp()` does not clean
+    # up, and this helper is called four times a run -- on a persistent runner
+    # that is four directories per push, which is the leak I measured in the
+    # other suites this morning and would have reintroduced here.
+    td = tempfile.TemporaryDirectory()
+    _WEGWERP.append(td)
+    lijst = pathlib.Path(td.name) / "termen.txt"
     lijst.write_text("\n".join(termen) + "\n")
     giz.PRIVATE_PAD = str(lijst)
     assert giz.private_regel() is not None, "fixture list did not load"
@@ -109,6 +118,24 @@ wat, ctx = toonbaar(ci=True, naam="keychain-label",
                     context=f"...-s {TERM}...")
 expect("a private term reported under ANOTHER rule name is still redacted",
        TERM.lower() not in wat.lower() and TERM.lower() not in ctx.lower(), f"{wat!r}")
+
+# THE LOCATION COLUMN. `{path}:{line}` was printed outside the redaction, so a
+# finding in a file whose NAME holds a private term published it in full --
+# the match and the context withheld while the location beside them spelled it
+# out. Three columns, one rule.
+laad_prive("zzqgamma")
+wat, _ = toonbaar(ci=True, naam="keychain-label",
+                  wat="docs/ZZQGAMMA-contract.md:12", context="")
+expect("a private term in the LOCATION is redacted too",
+       "zzqgamma" not in wat.lower(), wat)
+
+# And the other half: the scan has to look at the name at all. A file called
+# after a customer publishes that customer in every clone however clean its
+# contents are, and only the contents were read.
+rx = giz.private_regel()[1]
+expect("the private rule matches a path, not only a line of text",
+       bool(rx.search("docs/ZZQGAMMA-contract.md")), "paths are not scanned")
+laad_prive(TERM)
 
 # CASE-INSENSITIVITY, asserted rather than assumed. Removing `re.I` from
 # `private_regel()` left all nine earlier assertions green while the guard
@@ -162,12 +189,18 @@ with tempfile.TemporaryDirectory() as td:
     expect(f"end to end, {TREFFER!r} really is a hit",
            r.returncode == 1 and "[partner]" in r.stderr,
            f"exit={r.returncode}: {r.stderr[:200]}")
-    expect("  and the term does not appear in the output",
-           TREFFER not in r.stderr, r.stderr[:250])
+    # `.lower()` on both sides and stdout included: the guard prints
+    # `m.group(0)`, which is the text AS WRITTEN, so an assertion in one casing
+    # against one stream can pass while the term is published in another. An
+    # absence check that is itself case-sensitive proves nothing about a
+    # case-insensitive rule.
+    uitvoer = (r.stdout + r.stderr).lower()
+    expect("  and the term does not appear in stdout or stderr, in any casing",
+           TREFFER.lower() not in uitvoer, uitvoer[:250])
     expect("  while the run still fails, so nobody has to read the log to know",
            r.returncode == 1, f"exit={r.returncode}")
 
-MINIMUM_CASES = 14  # FLOOR
+MINIMUM_CASES = 16  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
