@@ -103,10 +103,11 @@ for forbidden in "${forbidden_list[@]}"; do
         ok=0
     fi
 done
-# LICENSE file must be the PDFluent Commercial License
+# The LICENSE file must carry the dual offer -- `SEE LICENSE IN LICENSE` in the
+# manifest is a pointer, and it is only true if the file says what it points at.
 LIC="$PKG_DIR/LICENSE"
-if ! grep -q "PDFluent Commercial License" "$LIC" 2>/dev/null; then
-    echo "  LICENSE missing or not PDFluent Commercial License: $LIC" >&2
+if ! grep -q "PDFluent is available under two licences" "$LIC" 2>/dev/null; then
+    echo "  LICENSE missing or does not state the dual offer: $LIC" >&2
     ok=0
 fi
 

@@ -82,10 +82,19 @@ internal = { weak_copyleft = ["MPL-2.0"], note = "pdfluent-snippet-extract, benc
 # <file>`. Mapped here per manifest rather than by pattern: allowing that string
 # in general would wave through any third-party package that uses it, and the
 # point of this gate is that nothing unclassified passes.
-"crates/pdf-node/package.json" = "AGPL-3.0-or-later"
-# The generated pkg/package.json is a build artefact and gitignored; the gate
-# reads the manifest wasm-pack copies from instead.
-"crates/xfa-wasm/Cargo.toml" = "AGPL-3.0-or-later"
+"crates/pdf-node/package.json" = "SEE LICENSE IN LICENSE"
+# The Cargo.toml keeps the canonical expression -- it is a crate manifest and
+# cargo accepts it. What npm publishes is the generated pkg/package.json, which
+# two post-build steps rewrite; the gate checks those steps against
+# [channel_representation] rather than trusting this file to survive them.
+"crates/xfa-wasm/Cargo.toml" = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+
+"bindings/dotnet/src/PDFluent/PDFluent.csproj" = "PackageLicenseFile:LICENSE"
+# The wheel states the dual offer in full, and after #257 so does every other
+# channel: one canonical string, comparable against four registers. It was never
+# compared at all until #1620, because `scan_python` hardcoded its verdict and
+# never read the file.
+"crates/pdf-python/pyproject.toml" = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 
 [floors]
 
@@ -97,3 +106,35 @@ npm_manifests = 2
 maven_dependencies = 1
 python_manifests = 1
 dotnet_projects = 1
+
+
+# ---------------------------------------------------------------------------
+# What each channel PUBLISHES, where that differs from the canonical expression.
+#
+# The canonical expression is the source of truth. A channel that cannot carry
+# it needs a spelling of its own, and that spelling has to be written down --
+# otherwise "all four channels agree" is a claim about manifests nobody
+# compared with what was actually uploaded.
+#
+# Measured 02-09-2026 with validate-npm-package-license 3.0.4, the library npm
+# itself uses:
+#
+#   "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"  validForNewPackages FALSE
+#   "PDFluent Commercial License"                      validForNewPackages FALSE
+#   "SEE LICENSE IN LICENSE"                           validForNewPackages TRUE
+#
+# npm expressions admit no LicenseRef, so the offer cannot be spelled as an
+# expression there. `SEE LICENSE IN LICENSE` is npm's own documented route for
+# exactly this case, and it is a pointer: it is only true because the LICENSE
+# file shipped in the package states the dual offer on its first line.
+# ---------------------------------------------------------------------------
+[channel_representation]
+
+"crates/pdf-node/package.json" = { publishes = "SEE LICENSE IN LICENSE", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "npm rejects a LicenseRef expression", file = "crates/pdf-node/LICENSE" }
+"crates/xfa-wasm/pkg/package.json" = { publishes = "SEE LICENSE IN LICENSE", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "npm rejects a LicenseRef expression", file = "LICENSE" }  # the root file wasm.yml copies into pkg/
+"bindings/dotnet/src/PDFluent/PDFluent.csproj" = { publishes = "PackageLicenseFile:LICENSE", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "NU5124: nuget.org does not recognise LicenseRef in an expression", file = "bindings/dotnet/src/PDFluent/LICENSE" }
+
+# `file` is repository-relative, not package-relative: the wasm entry names the
+# root LICENSE because that is the file .github/workflows/wasm.yml copies into
+# pkg/, and pkg/ exists on no runner. A path that cannot be opened cannot be
+# checked, and an unopened file is where the last escape hatch was hiding.

@@ -42,10 +42,21 @@ in their respective source files and in the THIRD_PARTY_LICENSES.txt file.
 PROPRIETARY COMMERCIAL COMPONENTS (PDFluent Commercial License)
 ============================================================================
 
-The following crates contain proprietary code developed by PDFluent and are
-distributed under the PDFluent Commercial License (see the LICENSE file
-in this repository). Production Use of these crates requires a valid
-commercial license. See https://pdfluent.com/pricing for licensing options.
+The following crates are PDFluent's own work and are available under two
+licences, at your option: the GNU AGPLv3, or the PDFluent Commercial Licence.
+See the LICENSE file in this repository.
+
+The AGPL is the complete product; no feature is withheld and nothing expires.
+It asks that you offer your users the corresponding source under the same
+licence if you convey the software or let them use a modified version over a
+network. The commercial licence is the alternative for anyone who cannot do
+that. See https://pdfluent.com/pricing.
+
+(The heading above still reads "PROPRIETARY COMMERCIAL"; it predates the licence
+change of 01-09-2026 and is now a misnomer. It is left in place deliberately:
+scripts/ci/notice_matches_the_registry.py splits this file on that exact string,
+so the heading and the guard have to change in one commit, and the guard is not
+t3's file.)
 
   pdfluent             — the unified facade SDK
   pdf-engine           — orchestration and document model
@@ -91,6 +102,6 @@ website.
 CONTACT
 ============================================================================
 
-  Innovation Trigger BV (operating as PDFluent)
+  Innovation Trigger B.V. (operating as PDFluent)
   hello@pdfluent.com
   https://pdfluent.com

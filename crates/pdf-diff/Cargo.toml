@@ -3,7 +3,7 @@ name = "pdf-diff"
 version = "1.0.0-beta.1"
 edition = "2021"
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 description = "Visual PDF comparison — page-level SSIM similarity and diff image generation."
 publish = false
 

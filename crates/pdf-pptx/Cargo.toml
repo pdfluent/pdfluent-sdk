@@ -3,7 +3,7 @@ name = "pdf-pptx"
 version.workspace = true
 edition.workspace = true
 # AGPLv3-or-later, or the PDFluent Commercial Licence. See LICENSE.
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 repository.workspace = true
 description = "PDF to PowerPoint PPTX conversion"
 readme = "README.md"

@@ -12,9 +12,9 @@ those exist. This text describes what the software actually is.
 1. Why this licence exists
 --------------------------
 
-PDFluent is published under the GNU AGPLv3 (LICENSE-AGPL) with an additional
-attribution term (LICENSE-ADDITIONAL-TERMS). That is the default, and it is the
-complete product: no feature is withheld, no key is required, nothing expires.
+PDFluent is published under the GNU AGPLv3 (LICENSE-AGPL). That is the
+default, and it is the complete product: no feature is withheld, no key is
+required, nothing expires.
 
 The AGPL asks something in return. If you convey the software, or let users
 interact with a modified version over a network, you must offer those users the
@@ -63,8 +63,10 @@ This licence covers the components on PDFluent's side of that boundary.
 
 Documents produced by the software carry "PDFluent" in the PDF `/Producer` entry
 and in XMP metadata. Under this licence you may remove or replace that string in
-your build. The AGPLv3 section 7(b) term that requires it to be preserved does
-not apply to a commercial licensee.
+your build. So may an AGPL licensee: the attribution term that once required
+that string to be preserved was withdrawn with the move to AGPL-3.0-only, and
+nothing replaced it. What a commercial licence changes is the copyleft, not
+the branding.
 
 
 5. What this licence does not contain, and why

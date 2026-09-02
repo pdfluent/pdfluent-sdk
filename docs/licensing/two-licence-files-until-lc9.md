@@ -1,3 +1,12 @@
+> **Superseded, 01-09-2026.** The state this page describes is resolved. `LICENSE`
+> now holds the dual notice rather than the v1.0 commercial licence (the v1.0 text
+> is archived at `docs/licensing/archive/LICENSE-COMMERCIAL-v1.0-2026-05-02.txt`),
+> the crates declare `license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"`
+> instead of `license-file`, and
+> `LICENSE-ADDITIONAL-TERMS` no longer exists — the owner dropped the §7(b) term on
+> 01-09-2026. Kept because it records why two disagreeing files were tolerated for
+> a week, which is the part that would otherwise look like an accident.
+
 # `LICENSE` and `LICENSE-COMMERCIAL` both exist, and disagree. On purpose, briefly.
 
 As of 31-08-2026 the repository root holds:

@@ -47,6 +47,11 @@ jobs:
       - name: Build WASM package
         run: wasm-pack build crates/xfa-wasm --target web --release
 
+      - name: Ship LICENSE beside the manifest
+        # `license: SEE LICENSE IN LICENSE` is a promise about a file. Without
+        # this copy the published package makes that promise and omits the file.
+        run: cp LICENSE crates/xfa-wasm/pkg/LICENSE
+
       - name: Patch npm package metadata
         # wasm-pack regenerates package.json from Cargo.toml metadata.
         # Post-process to inject correct license, version, and repository URLs.
@@ -58,7 +63,11 @@ jobs:
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('crates/xfa-wasm/pkg/package.json', 'utf8'));
             pkg.version = process.env.PDFLUENT_VER;
-            pkg.license = 'PDFluent Commercial License';
+            // npm's validate-npm-package-license rejects a LicenseRef expression
+            // (validForNewPackages: false), so the npm channels use npm's own
+            // route for a non-SPDX offer. The compound expression is the first
+            // line of the LICENSE file shipped beside it.
+            pkg.license = 'SEE LICENSE IN LICENSE';
             pkg.licenseUrl = 'https://pdfluent.com/terms';
             pkg.homepage = 'https://pdfluent.com';
             pkg.repository = { type: 'git', url: 'https://github.com/pdfluent/pdfluent-sdk' };
