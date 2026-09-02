@@ -1,25 +1,32 @@
-# Measure the persistent desktop's disk, then sweep only what is provably
-# rebuildable (#292).
+# Ask the persistent desktop where its disk went. Measurement only (#292).
 #
-# 02-09-2026: the runner reported 8.8 GB free of 222.6 GB against a floor of 35,
-# and `disk_headroom.py` exited 2 with "No target/ directories found -- the
-# space is going somewhere else". Every desktop job fails on that, so the
-# machine cannot be reached by the usual route: the desktop answers neither ping
-# nor ssh from outside, and the only thing still running on it is this runner.
+# 02-09-2026: the runner reports 8.8 GB free of 222.6 GB against a floor of 35,
+# and `disk_headroom.py` exits 2 with "No target/ directories found -- the space
+# is going somewhere else". Every desktop job fails on that. The machine answers
+# neither ping nor ssh from outside, so a workflow is the only way in.
 #
-# MEASURE FIRST. The failing guard's own message says the space is NOT in the
-# places we know how to clean, so a sweep written from a guess would delete
-# something that was not the problem and report success. Every step below either
-# prints or removes something whose absence costs rebuild time and nothing else.
+# WHY THIS SWEEPS NOTHING
 #
-# WHY THIS IS NOT DISPATCHED FROM A BRANCH
+# The first version of this file measured and then swept, and it could not have
+# worked. Two reasons, both found in review:
 #
-# `workflow_dispatch` would let this run before it is merged, which is convenient
-# and is exactly what scripts/ci/pr_code_stays_off_the_desktop.py forbids: a
-# dispatch lets the caller choose the ref, so the body that runs on the
-# persistent machine is whatever that branch says. Authoring it myself does not
-# change the rule -- a guard with a "unless I trust the author" clause is not a
-# guard. So it runs on a push to master, and on a schedule.
+#   * `sweep_merged_build_caches.py` defaults to `--base github/master`, and an
+#     actions/checkout clone has only `origin`. Every worktree would read as
+#     "not on github/master", nothing would be deleted, and the job would report
+#     success having swept nothing.
+#
+#   * More fundamentally, this runner is WSL. `disk_headroom.py` says it in its
+#     own docstring: inside WSL the root filesystem IS the sparse `ext4.vhdx`
+#     and reports the vhdx's MAXIMUM size, so the binding number is the Windows
+#     volume underneath. A vhdx grows and never shrinks on its own -- deleting
+#     files inside ext4 frees space *within* the image and returns nothing to
+#     the host. Reclaiming host space is `wsl --shutdown` plus `Optimize-VHD`,
+#     or making the image sparse: a Windows action, on the owner's machine, not
+#     something a workflow can do from inside.
+#
+# So this job answers "where is it" and leaves "get it back" to somebody who
+# can actually do it. A sweep returns when its base and its scope are right and
+# there is something it can genuinely reclaim.
 name: Desktop maintenance
 
 on:
@@ -38,72 +45,85 @@ permissions:
   contents: read
 
 jobs:
-  measure-and-sweep:
+  measure:
     name: The desktop says where its disk went
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
+      # `clean: false`: actions/checkout runs `git clean -ffdx` and `reset
+      # --hard` on a reused workspace, which would remove part of what this job
+      # exists to find before it has looked. A measurement that first tidies the
+      # thing it is measuring is not a measurement.
       - uses: actions/checkout@v4
+        with:
+          clean: false
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install --quiet pyyaml
 
-      # --- measurement, in one place, before anything is removed -----------
-      - name: Where the disk went
-        if: ${{ !cancelled() }}
+      # No `!cancelled()` and no `|| true`. A step that could not read what it
+      # was asked to read must fail, or the job ends green over an answer nobody
+      # got. `set -euo pipefail` for the same reason.
+      - name: Inside the image, and the volume underneath
+        shell: bash
         run: |
-          set -uo pipefail
-          echo "## Filesystems"
-          df -h || true
+          set -euo pipefail
+          echo "## What the guard itself concludes"
+          python3 scripts/ci/disk_headroom.py || true   # its exit code IS the finding; recorded below
           echo
-          echo "## The runner's work root"
-          WORK="${RUNNER_WORKSPACE:-}"
-          echo "RUNNER_WORKSPACE=${WORK}"
-          ROOT=$(cd "${WORK:-.}/../.." 2>/dev/null && pwd || echo /opt/actions-runner-github)
-          echo "root=${ROOT}"
-          du -x -h --max-depth=2 "${ROOT}" 2>/dev/null | sort -h | tail -40 || true
+          echo "## The filesystem this job runs on (inside the vhdx)"
+          df -h -P . | tail -n +1
           echo
-          echo "## Build output under the work root"
-          find "${ROOT}" -maxdepth 4 -type d -name target -prune -print 2>/dev/null | head -40 || true
+          echo "## Filesystem types, to tell ext4 from the mounted host volume"
+          df -PT | awk 'NR==1 || $2 ~ /ext4|9p|drvfs|virtiofs/ {print $2, $3, $4, $5, $6, $7}'
+
+      - name: The big directories, by size
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=$(cd "${RUNNER_WORKSPACE:-.}/../.." && pwd)
+          echo "## Runner work root"
+          du -x -h --max-depth=2 "${ROOT}" 2>/dev/null | sort -h | tail -30
           echo
-          echo "## CARGO_TARGET_DIR / cargo home"
-          echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<unset>}"
-          du -x -h -s "${CARGO_TARGET_DIR:-/nonexistent}" 2>/dev/null || true
-          du -x -h -s "${HOME}/.cargo" "${HOME}/.rustup" 2>/dev/null || true
+          # The paths this host is actually CONFIGURED with, which are not the
+          # defaults and are not under the work root: scripts/ci/desktop_env.sh
+          # sets CARGO_TARGET_DIR=/var/cache/cargo-target and
+          # CARGO_HOME=/var/cache/cargo-home, and .gitlab-ci.yml sets the same
+          # two. A scan of the work root and ~/.cargo would have missed both,
+          # which is most of the point. (codex, #1662)
+          echo "## Cargo, at the paths this machine is configured with"
+          echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<unset>}  CARGO_HOME=${CARGO_HOME:-<unset>}"
+          for D in "${CARGO_TARGET_DIR:-}" "${CARGO_HOME:-}" \
+                   /var/cache/cargo-target /var/cache/cargo-home \
+                   "${HOME}/.cargo" "${HOME}/.rustup"; do
+            [ -n "$D" ] && [ -d "$D" ] && du -x -h -s "$D"
+          done
           echo
-          echo "## Docker, if present"
-          command -v docker >/dev/null && docker system df || echo "no docker"
-          echo
-          echo "## Runner diagnostics"
-          du -x -h -s "${ROOT}/_diag" 2>/dev/null || true
-          echo
-          # Temp directories, because `disk_headroom.py` looks for `target/` and
-          # reported finding none -- "the space is going somewhere else" is the
-          # message, and this is one of the elsewheres it cannot see. Three guard
-          # scripts create fixture repositories with `mkdtemp()` and never remove
-          # them (measured 02-09: one run of one script leaves six behind), so a
-          # runner executing the suite on every push accumulates them. Whether
-          # that is where THIS machine's 214 GB went is exactly what these two
-          # numbers answer; until they come back it is a mechanism, not a cause.
-          echo "## Temp directories"
-          for T in "${RUNNER_TEMP:-}" "${TMPDIR:-}" /tmp /var/tmp; do
-            [ -n "$T" ] && [ -d "$T" ] || continue
-            echo "-- $T: $(find "$T" -maxdepth 1 -name 'tmp*' 2>/dev/null | wc -l) tmp* entries"
-            du -x -h -s "$T" 2>/dev/null || true
+          echo "## Every target/ on this filesystem, not only in this checkout"
+          find / -xdev -type d -name target -prune 2>/dev/null | head -60 | while read -r T; do
+            du -x -h -s "$T"
           done
 
-      # --- and only then, the sweep --------------------------------------
-      # The sweeper deletes `target/` directories in worktrees whose HEAD is on
-      # master and that hold no uncommitted change: rebuild time is the whole
-      # cost. Reporting run first, so the log says what it intends before it
-      # does it -- the two lines together are the record.
-      - name: What is reclaimable
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/sweep_merged_build_caches.py
-      - name: Reclaim it
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/sweep_merged_build_caches.py --sweep
-      - name: Headroom afterwards
-        if: ${{ !cancelled() }}
+      # The place `disk_headroom.py` cannot see, because it looks for `target/`.
+      # Three guard suites built fixture repositories with mkdtemp() and removed
+      # none (six per run of one script, measured 02-09; fixed in #1660), so a
+      # runner executing the suite on every push accumulates them.
+      - name: Temp directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          for T in "${RUNNER_TEMP:-}" "${TMPDIR:-}" /tmp /var/tmp; do
+            [ -n "$T" ] && [ -d "$T" ] || continue
+            echo "-- $T: $(find "$T" -maxdepth 1 -name 'tmp*' -o -maxdepth 1 -name 'fixture-*' 2>/dev/null | wc -l) entries"
+            du -x -h -s "$T"
+          done
+
+      - name: Docker, if it is here
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v docker >/dev/null; then docker system df; else echo "no docker"; fi
+
+      - name: And the verdict
+        shell: bash
         run: python3 scripts/ci/disk_headroom.py
