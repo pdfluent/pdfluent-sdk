@@ -89,7 +89,14 @@ jobs:
           # more here, in the job whose entire purpose is to survive a machine
           # with too much of something. (peer review, #1662)
           echo "## Runner work root"
-          du -x -h --max-depth=2 "${ROOT}" > "$RUNNER_TEMP/work-root.txt" 2>/dev/null || true
+          # `|| true` would swallow every failure, including "the directory is
+          # not there" -- and this step's whole job is to notice things about
+          # directories. `du` exits 1 when it could not read SOME entry, which is
+          # normal on a machine with other users' files, and 2+ for a real
+          # failure. So 1 is accepted and named; anything above it stops the step.
+          du -x -h --max-depth=2 "${ROOT}" > "$RUNNER_TEMP/work-root.txt" 2>/dev/null && rc=0 || rc=$?
+          [ "$rc" -le 1 ] || { echo "::error::du failed with $rc"; exit "$rc"; }
+          [ "$rc" -eq 0 ] || echo "(du could not read every entry; partial)"
           sort -h "$RUNNER_TEMP/work-root.txt" | tail -30
           echo
           # The paths this host is actually CONFIGURED with, which are not the
@@ -114,7 +121,12 @@ jobs:
           done
           echo
           echo "## Every target/ on this filesystem, not only in this checkout"
-          find / -xdev -type d -name target -prune > "$RUNNER_TEMP/targets.txt" 2>/dev/null || true
+          # Same rule for find: exit 1 means some path could not be read, which
+          # is expected when walking / as the runner user; 2+ is a real error and
+          # must not be hidden behind `|| true`. (codex, #1662)
+          find / -xdev -type d -name target -prune > "$RUNNER_TEMP/targets.txt" 2>/dev/null && rc=0 || rc=$?
+          [ "$rc" -le 1 ] || { echo "::error::find failed with $rc"; exit "$rc"; }
+          [ "$rc" -eq 0 ] || echo "(find could not read every directory; partial)"
           echo "found $(wc -l < "$RUNNER_TEMP/targets.txt") target/ directories"
           head -60 "$RUNNER_TEMP/targets.txt" | while read -r T; do
             [ -d "$T" ] && du -x -h -s "$T"
