@@ -8,6 +8,9 @@ of the same dangerous thing.
 from __future__ import annotations
 import pathlib, shutil, subprocess, sys, tempfile
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from fixture_env import wegwerp_map  # noqa: E402
+
 CI = pathlib.Path(__file__).resolve().parent
 GUARD = CI / "pr_code_stays_off_the_desktop.py"
 
@@ -28,7 +31,7 @@ SAFE = ("${{ github.event_name == 'push' && fromJSON('[\"self-hosted\",\"xfa-fas
 
 
 def tree(workflows: dict[str, str]) -> pathlib.Path:
-    td = tempfile.mkdtemp()
+    td = wegwerp_map()
     root = pathlib.Path(td) / "repo"
     (root / "scripts" / "ci").mkdir(parents=True)
     (root / ".github" / "workflows").mkdir(parents=True)
