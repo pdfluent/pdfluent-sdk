@@ -18,6 +18,9 @@ mirroring in the agreed direction would destroy it (#265, #231).
 """
 
 from __future__ import annotations
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
+from fixture_env import sealed_env, inside_the_sandbox
 
 import os
 import pathlib
@@ -32,11 +35,15 @@ BEWAKER = pathlib.Path(__file__).with_name("mirror_has_not_drifted.py")
 # a subprocess into a scratch repository -- where `git add` then writes into the
 # real repository's index and exits 128. The local gate runs this from the
 # pre-push hook, so it failed there and nowhere else.
-SCHOON = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+# Sealed, not merely GIT_*-stripped: see fixture_env.py. (#297)
+# Built per call now, from the directory being worked in: a module-level
+# environment cannot carry a cwd, so the runtime sandbox check never ran.
+def SCHOON_VOOR(map_):
+    return sealed_env(cwd=map_)
 
 
 def git(map_: pathlib.Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=map_, check=True, env=SCHOON,
+    subprocess.run(["git", *args], cwd=map_, check=True, env=SCHOON_VOOR(map_),
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -62,7 +69,7 @@ def bouw(map_: pathlib.Path, bron_extra: int, spiegel_extra: int) -> None:
 
 
 def draai(map_: pathlib.Path, bron: str, doel: str) -> subprocess.CompletedProcess[str]:
-    omgeving = dict(SCHOON, MIRROR_SOURCE=bron, MIRROR_TARGET=doel)
+    omgeving = dict(SCHOON_VOOR(map_), MIRROR_SOURCE=bron, MIRROR_TARGET=doel)
     return subprocess.run([sys.executable, str(BEWAKER)], cwd=map_,
                           capture_output=True, text=True, env=omgeving, check=False)
 

@@ -332,6 +332,12 @@ jobs:
       - name: The build-cache sweeper fails safe
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_sweep_fails_safe.py
+      - name: A fixture cannot touch a real repository
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_fixture_cannot_touch_a_real_repo.py
+      - name: The fixture-isolation lint bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_fixture_cannot_touch_a_real_repo.py
       - name: The licence gate rejects what it should
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_license_gate.py
