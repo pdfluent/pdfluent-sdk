@@ -144,12 +144,23 @@ def desktop_toegestaan(triggers) -> frozenset[str]:
     if triggers is None:
         return DESKTOP_GEBEURTENISSEN
     if not isinstance(triggers, dict):
-        # `on: [push, pull_request]` carries no filters at all, so push is
-        # unrestricted. Naming an event is not the same as limiting it.
-        return DESKTOP_GEBEURTENISSEN - {"push"}
+        # `on: [push, pull_request]` carries no filters at all, so a push named
+        # there is unrestricted -- naming an event is not the same as limiting
+        # it. A push NOT named there cannot happen, and unreachable is not
+        # unsafe, so it stays in the set.
+        genoemd = set(triggers) if isinstance(triggers, (list, tuple, set)) else set()
+        return DESKTOP_GEBEURTENISSEN - (genoemd & {"push"})
     ok = set()
     for naam in DESKTOP_GEBEURTENISSEN:
         if naam not in triggers:
+            # NOT a trigger of this workflow, so `event_name == '<naam>'` can
+            # never be true and the desktop branch behind it is unreachable.
+            # Unreachable is not unsafe: refusing it flagged the canonical
+            # expression in a pull_request-only workflow, where the condition
+            # cannot select anything at all. A guard that cannot tell "this
+            # never happens" from "this is dangerous" spends its credibility on
+            # the first to protect against the second.
+            ok.add(naam)
             continue
         blok = triggers.get(naam)
         if naam != "push":

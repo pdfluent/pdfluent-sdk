@@ -40,6 +40,7 @@ _osh = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_osh)
 ALLEEN_BIJ_PUSH = _osh.ALLEEN_BIJ_PUSH
 PER_GEBEURTENIS_VEILIG = _osh.per_gebeurtenis_veilig
+DESKTOP_TOEGESTAAN = _osh.desktop_toegestaan
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 FLOW = REPO / ".github" / "workflows"
@@ -101,7 +102,8 @@ MINIMUM_WORKFLOWS = 10  # FLOOR
 
 
 def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
-           target_only: bool = False, events: set[str] | None = None) -> list[str]:
+           target_only: bool = False, events: set[str] | None = None,
+           triggers=None) -> list[str]:
     """Judge ONE runner choice for one job.
 
     Split out because a job can have several: a matrix supplies a list, and a
@@ -149,7 +151,14 @@ def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
         # to the predicate asks it about brackets and escaped quotes, and it
         # answered "not safe" about a runner choice that is.
         kandidaten = expressies if expressies else [text]
-        if all(PER_GEBEURTENIS_VEILIG(k, events) for k in kandidaten):
+        # The caller's TRIGGER BLOCK, not only its event names. `push` is
+        # merged code when its branch filter says so, and passing the names
+        # alone let an unfiltered `push` count as safe -- including down the
+        # reusable-workflow path, where the inner job's canonical
+        # `event_name == 'push'` expression was then approved. Same finding as
+        # the branch-filter one, reached through the other door. (codex, #1649)
+        toegestaan = DESKTOP_TOEGESTAAN(triggers)
+        if all(PER_GEBEURTENIS_VEILIG(k, events, toegestaan) for k in kandidaten):
             return []
     # A runner supplied by another job. This is the one shape where running the
     # pull request's own code is CORRECT -- ci-ephemeral's `workspace` is meant
@@ -290,7 +299,8 @@ def main() -> int:
                             problems.extend(_judge(f"{called.name}:{iname}", ijob,
                                                    called.name, iname,
                                                    target_only=target_only,
-                                                   events=events))
+                                                   events=events,
+                                                   triggers=on))
                         continue
                 problems.append(
                     f"{f.name}:{name} calls {job['uses']}, which this guard "
@@ -316,7 +326,7 @@ def main() -> int:
                 seen.add(key)
             for candidate in candidates:
                 problems.extend(_judge(key, job, f.name, name, candidate,
-                                       target_only, events))
+                                       target_only, events, triggers=on))
             continue
 
     # A dormant DYNAMIC entry must stay unreachable. If its job turns up in the
