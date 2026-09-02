@@ -32,6 +32,7 @@ from __future__ import annotations
 # FLOOR: cases >= 16 -- this file is the specification of the gate's judgement,
 # and a shortened list is a quietly widened policy.
 import importlib.util
+import copy
 import json
 import os
 import sys
@@ -214,7 +215,34 @@ def main() -> int:
                 else:
                     os.environ[k] = v
 
-    print(f"[test_license_gate] {len(CASES)} expression case(s) + 4 scanner case(s)")
+    # Every [channel_representation] entry is validated, INCLUDING the one whose
+    # manifest is not in the repository.
+    #
+    # `weergave_klopt` was reachable only through `eigen_verklaring`, which runs
+    # per manifest read from disk, so the entry for the gitignored, wasm-pack
+    # generated `crates/xfa-wasm/pkg/package.json` was never checked at all.
+    # Measured 02-09-2026 by mutation: `canonical = "MIT"` on that one entry
+    # passed all five licence gates, while the same mutation on either of the
+    # other two turned license_gate red. The escape had been closed for the
+    # entries that happen to be tracked.
+    echte = lg.policy()
+    if lg.weergaven_kloppen(echte):
+        fouten.append("the policy as committed does not satisfy its own "
+                      "representation check")
+    for veld, wat in (("canonical", "MIT"), ("reason", ""), ("file", "no/such/file")):
+        kapot = copy.deepcopy(echte)
+        kapot["channel_representation"]["crates/xfa-wasm/pkg/package.json"][veld] = wat
+        if not lg.weergaven_kloppen(kapot):
+            fouten.append(f"a channel_representation entry with {veld}={wat!r} passed, "
+                          "and that entry's manifest is the one absent from the repo")
+    leeg = copy.deepcopy(echte)
+    leeg["channel_representation"] = dict(
+        list(echte["channel_representation"].items())[:lg.WEERGAVE_VLOER - 1])
+    if not lg.weergaven_kloppen(leeg):
+        fouten.append("dropping a channel_representation entry passed; the table "
+                      "can be emptied and the comparison disappears with it")
+
+    print(f"[test_license_gate] {len(CASES)} expression case(s) + 4 scanner case(s) + 5 representation case(s)")
     if not fouten:
         print("[test_license_gate] every judgement holds")
         return 0
