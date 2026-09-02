@@ -1193,7 +1193,7 @@ impl QuickJsRuntime {
             let app: Object = bridge.get("app").map_err(|e| format!("get app: {e}"))?;
             // JS2-01 (Sprint 2 Batch B): `form` is a top-level alias of
             // `xfa.form`. Adobe Reader exposes both spellings; templates
-            // such as 60df78fe_pdf_0012 reference bare `form.X`.
+            // in the corpus reference bare `form.X`.
             let form: Object = bridge.get("form").map_err(|e| format!("get form: {e}"))?;
             let eval_script: Function = bridge
                 .get("evalScript")
@@ -3805,7 +3805,7 @@ const PHASE_C_BINDINGS_JS: &str = r##"
     app: app,
     // JS2-01 (Sprint 2 Batch B): top-level `form` global alias for
     // `xfa.form`. Adobe Reader exposes both spellings; templates such as
-    // 60df78fe_pdf_0012 reference bare `form.X`. The alias is identity-equal
+    // corpus forms reference bare `form.X`. The alias is identity-equal
     // to `xfa.form` (same Proxy), so cluster C contract preservation is
     // shared between the two surfaces. No new Rust closure introduced.
     form: formNamespace,
