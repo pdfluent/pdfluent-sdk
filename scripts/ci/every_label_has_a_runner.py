@@ -61,13 +61,52 @@ def geregistreerd() -> set[str] | None:
         return None
 
 
+# Labels inside a per-event expression, e.g.
+#   ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]')
+#       || 'ubuntu-latest' }}
+# Both branches count: the job runs on one of them depending on the event, and a
+# label that answers on neither is the thing this guard is for.
+# The array is single-quoted and contains double quotes -- ["self-hosted",…] --
+# so the content class cannot exclude quotes, which is what made the first
+# version return only the other branch.
+_JSON_LIJST = re.compile(r"""fromJSON\(\s*'(\[.*?\])'\s*\)""")
+_LOSSE_STRING = re.compile(r"""(?<!\.)'([A-Za-z0-9][A-Za-z0-9._-]*)'""")
+
+
+# Runner images GitHub hosts. `-latest` and the pinned forms.
+GEHOST = re.compile(r"^(ubuntu|windows|macos)-(latest|\d[\w.-]*)$")
+
+
 def gevraagd(job) -> list[str]:
     ro = job.get("runs-on")
-    if isinstance(ro, str):
-        return [] if "${{" in ro else [ro]
     if isinstance(ro, list):
         return [x for x in ro if isinstance(x, str)]
-    return []
+    if not isinstance(ro, str):
+        return []
+    if "${{" not in ro:
+        return [ro]
+    # An expression used to yield NO labels at all, so every job written this way
+    # was invisible here: rename xfa-fast and each one stays green while the rest
+    # of the file goes red. #311 puts nine jobs into this shape, which would have
+    # turned one blind spot into nine. (T3 review, #1648)
+    uit: list[str] = []
+    rest = ro
+    for m in _JSON_LIJST.finditer(ro):
+        try:
+            uit.extend(x for x in json.loads(m.group(1)) if isinstance(x, str))
+        except json.JSONDecodeError:
+            pass
+        rest = rest.replace(m.group(0), " ")
+    # The other branch is a bare quoted runner name; the comparison operands
+    # ('push', 'pull_request') are not, so anything containing a dot or matching
+    # an event name is dropped.
+    EVENTS = {"push", "pull_request", "schedule", "workflow_dispatch",
+              "workflow_call", "release", "merge_group"}
+    for m in _LOSSE_STRING.finditer(rest):
+        naam = m.group(1)
+        if naam not in EVENTS and not naam.startswith("github"):
+            uit.append(naam)
+    return uit
 
 
 def main() -> int:
@@ -125,6 +164,14 @@ def main() -> int:
                 continue
             for label in labels:
                 if label == "self-hosted" or EFEMEER.search(label):
+                    continue
+                # GitHub provides these; no runner of ours registers them. They
+                # turn up here because a per-event `runs-on` names BOTH branches
+                # -- the job runs on one OR the other depending on the event, not
+                # on all of them at once -- and reading the alternatives as a
+                # single label set made the hosted branch look like a
+                # self-hosted label nobody answers. (T3 review, #1648)
+                if GEHOST.match(label):
                     continue
                 if label not in online:
                     ontbreekt.append((pad.name, naam, label, vanzelf))
