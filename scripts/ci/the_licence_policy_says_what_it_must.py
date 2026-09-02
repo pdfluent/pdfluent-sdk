@@ -74,11 +74,22 @@ MUST_ALLOW: dict[str, str] = {
 # Same shape as the four spellings of the head ref (#1636): a list of names
 # where a class belongs. So the family is generated, and a spelling nobody
 # typed here is an error rather than a hole. (codex, #1656)
-STERK_COPYLEFT = re.compile(r"^A?GPL-\d", re.IGNORECASE)
-BESTANDS_COPYLEFT = re.compile(r"^LGPL-\d", re.IGNORECASE)
+# Not anchored at the start, because a licence field is an EXPRESSION and a
+# name can be embedded in one: `MIT OR GPL-3.0-only` is a disjunction whose
+# second operand is the GPL, and `LicenseRef-AGPL-3.0` is the family wearing a
+# reference's clothes. `^` saw neither. The lookbehind is what keeps LGPL out:
+# `LGPL-2.1-only` contains `GPL-2`, and treating file-level copyleft as strong
+# would contradict the deliberate decision to classify it per surface.
+STERK_COPYLEFT = re.compile(r"(?<![A-Za-z])A?GPL-\d", re.IGNORECASE)
+BESTANDS_COPYLEFT = re.compile(r"(?<![A-Za-z])LGPL-\d", re.IGNORECASE)
 
 _STAMMEN = ("GPL-1.0", "GPL-2.0", "GPL-3.0", "AGPL-1.0", "AGPL-3.0")
-_STAARTEN = ("-only", "-or-later")
+# Including the bare and `+` spellings. They are SPDX-deprecated and that is
+# exactly why they matter: deprecated ids stay in the wild, `AGPL-3.0` is the
+# dominant spelling in npm and PyPI metadata, and a deprecated id nobody
+# classified reports as unknown -- which stops refusing the moment somebody
+# adds it to a list that permits.
+_STAARTEN = ("-only", "-or-later", "", "+")
 MOET_GECLASSIFICEERD = frozenset(f"{k}{s}" for k in _STAMMEN for s in _STAARTEN)
 
 # An exception can genuinely change the answer -- `GPL-2.0-only WITH
@@ -88,7 +99,13 @@ MOET_GECLASSIFICEERD = frozenset(f"{k}{s}" for k in _STAMMEN for s in _STAARTEN)
 # of the word appearing, which is the same mistake one level down.
 UITZONDERINGEN: dict[str, str] = {}
 
-MINIMUM_FORBIDDEN = 10  # FLOOR
+# The floor over what the generated family does NOT cover. A floor of 10 over
+# the whole list was dead the moment MOET_GECLASSIFICEERD reached ten entries:
+# it could never fail while the stronger requirement held, so it recorded
+# nothing and would have gone on passing if every non-family entry -- SSPL,
+# BUSL, the CDDLs, EUPL, Elastic, CC-BY-SA -- were deleted at once. It counts
+# those now, which is the only part still curated by hand.
+MINIMUM_OVERIG_VERBODEN = 6  # FLOOR
 
 
 def main() -> int:
@@ -109,10 +126,13 @@ def main() -> int:
 
     problems: list[str] = []
 
-    if len(forbidden) < MINIMUM_FORBIDDEN:  # FLOOR
+    overig = forbidden - MOET_GECLASSIFICEERD
+    if len(overig) < MINIMUM_OVERIG_VERBODEN:  # FLOOR
         problems.append(
-            f"licenses.forbidden holds {len(forbidden)} entries; the floor is "
-            f"{MINIMUM_FORBIDDEN}. A list this short has been emptied, not curated."
+            f"licenses.forbidden holds {len(overig)} entries beyond the "
+            f"generated copyleft family; the floor is {MINIMUM_OVERIG_VERBODEN}. "
+            "Those are the hand-curated ones -- SSPL, BUSL, the CDDLs and the "
+            "rest -- and nothing else requires them to be there."
         )
 
     for name, why in MUST_FORBID.items():
@@ -129,16 +149,34 @@ def main() -> int:
 
     # And the move that the name list could not see: the family turning up on
     # the side that permits.
+    # EVERY list that can permit, not just `allowed`.
+    #
+    # `weak_copyleft` is the second door and it reads as harmless: put
+    # `AGPL-3.0` there, name it in one surface's weak set, and add it to
+    # deny.toml -- the complete edit -- and all five licence guards are green
+    # with toegestaan() returning True. Worse, license_gate builds the cargo
+    # weak set as the UNION of every surface, so naming it on `editor` alone
+    # makes it acceptable for all 786 cargo packages. A family checked on one
+    # list is a family that moves to another. (codex, #1656)
+    per_lijst = [("licenses.allowed", allowed), ("licenses.weak_copyleft", weak)]
+    for surface, blok in (pol.get("surfaces") or {}).items():
+        if isinstance(blok, dict):
+            per_lijst.append((f"surfaces.{surface}.weak_copyleft",
+                              set(blok.get("weak_copyleft") or [])))
+
+    for waar, namen in per_lijst:
+        for name in sorted(namen):
+            if STERK_COPYLEFT.search(name) and name not in UITZONDERINGEN:
+                problems.append(
+                    f"{name} is in {waar}. Strong copyleft is not a permitted "
+                    "DEPENDENCY licence at any spelling and on no list -- our own "
+                    "packages declaring AGPL-3.0-only is the opposite case and is "
+                    "judged elsewhere. If an exception makes this one different, "
+                    "name it in UITZONDERINGEN with the reason; the word WITH is "
+                    "not by itself a reason.")
+
     for name in sorted(allowed):
-        if STERK_COPYLEFT.match(name) and name not in UITZONDERINGEN:
-            problems.append(
-                f"{name} is in licenses.allowed. Strong copyleft is not an "
-                "allowed DEPENDENCY licence at any spelling -- our own packages "
-                "declaring AGPL-3.0-only is the opposite case and is judged "
-                "elsewhere. If an exception makes this one different, name it in "
-                "UITZONDERINGEN with the reason; the word WITH is not by itself "
-                "a reason.")
-        if BESTANDS_COPYLEFT.match(name):
+        if BESTANDS_COPYLEFT.search(name):
             problems.append(
                 f"{name} is in licenses.allowed. File-level copyleft is decided "
                 "per surface, so it belongs in weak_copyleft (or forbidden) -- "
