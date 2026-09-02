@@ -161,6 +161,25 @@ def desktop_toegestaan(triggers) -> frozenset[str]:
     return frozenset(ok)
 
 
+# The whole expression, taken apart: `<condition> && <desktop> || <hosted>`.
+#
+# Finding the allowed comparison ANYWHERE in the string was not enough. In
+# `${{ event_name == 'push' || fromJSON('["self-hosted",...]') || 'ubuntu-latest' }}`
+# the comparison is present and the structure is inverted: on a pull request the
+# first operand is false, so the disjunction yields the ARRAY -- the desktop --
+# and the scan approved it because it had found the words it was looking for.
+# The operator between the condition and the runner is what decides, so the
+# operator is what gets read. (codex, #1649)
+_STRUCTUUR = re.compile(
+    r"\$\{\{\s*(?P<cond>.+?)\s*&&\s*(?P<desktop>.+?)\s*\|\|\s*(?P<gehost>.+?)\s*\}\}",
+    re.S)
+# What may appear in the condition: event comparisons, booleans, parentheses.
+# Anything else -- a function call, an array, a context lookup -- means the
+# condition is doing something this guard has not been taught to read, and an
+# unread condition is not a safe one.
+_COND_REST = re.compile(r"github\.event_name\s*[=!]=\s*'[a-z_]+'|&&|\|\||[()!\s]")
+
+
 def per_gebeurtenis_veilig(runs_on: str, events: set[str] | None = None,
                            toegestaan: frozenset[str] | None = None) -> bool:
     """Whether this runs-on can only reach the desktop on a merged-code event.
@@ -178,7 +197,16 @@ def per_gebeurtenis_veilig(runs_on: str, events: set[str] | None = None,
     """
     if not ALLEEN_BIJ_PUSH.search(runs_on):
         return False
-    genoemd = _EVENT_NAAM.findall(runs_on)
+    vorm = _STRUCTUUR.search(runs_on)
+    if not vorm:
+        return False
+    cond = vorm.group("cond")
+    # The condition must gate the DESKTOP branch, not sit beside it.
+    if _COND_REST.sub("", cond).strip():
+        return False
+    if "self-hosted" in cond or "self-hosted" in vorm.group("gehost"):
+        return False
+    genoemd = _EVENT_NAAM.findall(cond)
     if not genoemd:
         return False
     veilig = DESKTOP_GEBEURTENISSEN if toegestaan is None else toegestaan
