@@ -171,10 +171,27 @@ expect("a remote-tracking ref names the territory", r.returncode == 0,
 
 # THE HOME, same assertion as the hook guard's: a guard nothing runs is a
 # comment, and `every_guard_has_a_job` stayed green when the gate line went.
-poort = (REPO / "scripts" / "ci" / "local_ci_gate.sh").read_text()
-expect("the local gate still runs the guard",
-       "territories_do_not_overlap.py" in poort)
-expect("  and its test", "test_territories_do_not_overlap.py" in poort)
+#
+# Through the shared helper, matching the exact script ARGUMENT. Written as a
+# substring first -- `"territories_do_not_overlap.py" in poort` -- which the
+# line running THIS file satisfies, so deleting the guard's own invocation left
+# it green. The assertion that a check still had a home was kept alive by the
+# check itself. Measured on the hook guard's twin, #1660. (codex, #1660)
+#
+# Local rather than shared on purpose: the shared `fixture_env.gate_aanroepen`
+# lands with #1660, and importing it here would make this branch depend on a
+# merge order. It collapses into that helper once #1660 is in master.
+def gate_aanroepen(script: str) -> list[str]:
+    poort = (REPO / "scripts" / "ci" / "local_ci_gate.sh").read_text(errors="replace")
+    return [r for r in poort.splitlines()
+            if any(x.rsplit("/", 1)[-1] == script for x in r.split())]
+
+
+expect("the local gate still runs the guard itself",
+       len(gate_aanroepen("territories_do_not_overlap.py")) == 1,
+       str(gate_aanroepen("territories_do_not_overlap.py")))
+expect("  and its test is wired as its own line",
+       len(gate_aanroepen("test_territories_do_not_overlap.py")) == 1)
 
 # Both at once: an overlapping map AND a checkout whose owner cannot be
 # decided. The overlap must survive -- ambiguity is a reason the branch half
