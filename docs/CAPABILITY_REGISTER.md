@@ -15,7 +15,7 @@ mine are not.
 - **13 of 13** advertised capabilities are implemented, reachable,
   tested, and covered by a CI job that actually runs the test.
 - **78** public methods on `pdfluent::prelude::PdfDocument`, of which
-  **3** fail at runtime.
+  **4** fail at runtime.
 - **3** published crates are
   absent from the facade's dependency graph;
   **13** are compiled in but
@@ -241,6 +241,7 @@ The dangerous shape: the type system promises them, the runtime refuses, and
 a caller cannot discover the gap without running it.
 
 - `add_decoration()`
+- `add_watermark()`
 - `flatten_forms()`
 - `linearize()`
 
@@ -249,7 +250,7 @@ a caller cannot discover the gap without running it.
 | method | works |
 |---|---|
 | `add_decoration` | **stub** |
-| `add_watermark` | yes |
+| `add_watermark` | **stub** |
 | `annotations` | yes |
 | `attachment_bytes` | yes |
 | `attachments` | yes |
