@@ -38,6 +38,13 @@ ROOT = Path(__file__).resolve().parents[2]
 GIT = "/usr/bin/git"
 
 
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location(
+    "fixture_env", Path(__file__).resolve().parent / "fixture_env.py")
+_fx = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_fx)
+
+
 def run(*args: str, cwd: Path, env: dict[str, str] | None = None):
     """Run git for the fixtures, with `GIT_*` stripped unless asked otherwise.
 
@@ -54,11 +61,38 @@ def run(*args: str, cwd: Path, env: dict[str, str] | None = None):
     """
     return subprocess.run(
         [GIT, *args], cwd=cwd, capture_output=True, text=True, check=False,
-        env=env if env is not None else schone_omgeving(),
+        # `cwd=` is not decoration: it is what makes sealed_env() run the
+        # sandbox check, and every call here works inside a temporary
+        # directory. A fixture pointed anywhere else should fail loudly.
+        env=env if env is not None else _fx.sealed_env(cwd=cwd),
     )
 
 
 def schone_omgeving() -> dict[str, str]:
+    """The fixture environment, from `fixture_env.sealed_env()`.
+
+    It used to be `{k: v for k, v in os.environ.items() if not k.startswith("GIT_")}`
+    inline, and #1647's lint is right that this is not enough: dropping `GIT_*`
+    stops a fixture READING the real repository, and does nothing about it
+    WRITING to the real config. Two incidents in one night came from that
+    distinction. `sealed_env()` seals the config surface as well, and it is the
+    same helper the register guards themselves now use -- one sealing, not two.
+
+    The name is kept because callers here mean "the environment a fixture runs
+    in", and one call site deliberately does NOT want it: the dirty control in
+    the seal test, which is passed an environment explicitly.
+    """
+    return _fx.sealed_env()
+
+
+def onverzegelde_omgeving() -> dict[str, str]:
+    """`GIT_*` stripped and nothing else -- the environment a fixture used to get.
+
+    Exactly one caller wants this, and it is the control: the test that proves a
+    redirecting config REACHES an unsealed clone. If the control were sealed too
+    it would prove nothing, and the seal test would pass by testing the seal
+    against the seal. Everything else goes through `schone_omgeving()`.
+    """
     return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
@@ -510,7 +544,7 @@ def main() -> int:
             )
             return got.stdout.strip()
 
-        vuil = dict(schone_omgeving(), HOME=str(thuis))
+        vuil = dict(onverzegelde_omgeving(), HOME=str(thuis))
         if kloon(vuil, tmp / "unsealed.git") != "DECOY":
             failures.append(
                 "the control did not reproduce the redirect, so this proves nothing"
