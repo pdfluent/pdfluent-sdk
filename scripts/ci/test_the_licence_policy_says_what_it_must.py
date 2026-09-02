@@ -237,9 +237,15 @@ expect("LGPL is not read as strong copyleft",
 expect("an exception-bearing permissive licence is not read as strong",
        not guard.STERK_COPYLEFT.search("Apache-2.0 WITH LLVM-exception"))
 
-# The floor now counts what the generated family does NOT: delete the
-# hand-curated entries and it must fail, which the old whole-list floor of 10
-# could not do while twenty family entries held it up.
+# The hand-curated half, one name at a time. A floor of six over seven entries
+# let any single one move to `allowed` and pass -- a counter guards an amount
+# and never the contents, which is the same mistake the floor replaced. Driven
+# off the guard's own register so a name added to one appears in the other.
+for naam in sorted(guard.MOET_OVERIG_VERBODEN):
+    r = run_with(verplaats(naam))
+    expect(f"{naam} moved to allowed is refused",
+           r.returncode == 1 and naam in r.stderr, f"exit={r.returncode}")
+
 r = run_with(lambda t: set_list(t, "forbidden",
                                 [x for x in read_list(t, "forbidden")
                                  if x in guard.MOET_GECLASSIFICEERD]))
@@ -261,7 +267,7 @@ expect("a missing policy is FATAL, not a pass", r.returncode == 2, f"exit={r.ret
 # how the same floor failed in #1641: len(fails) counts only failures, so a
 # deleted case left the suite green while it shrank, and a floor below the real
 # count tolerated the shrinkage it existed to catch.
-MINIMUM_CASES = 50  # FLOOR
+MINIMUM_CASES = 57  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 if fails:
     for f in fails:
