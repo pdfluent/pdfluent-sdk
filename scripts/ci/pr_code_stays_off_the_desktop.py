@@ -129,8 +129,28 @@ def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
     hosted = all(GEHOST.match(l) for l in echte)
     if hosted:
         return []
-    if PER_GEBEURTENIS_VEILIG(text, events):
-        return []
+    # A LIST demands EVERY label. `["${{ ...event_name == 'push'... }}",
+    # xfa-fast]` asks for xfa-fast on a pull request too -- the expression only
+    # decides what the OTHER element resolves to -- so a per-event condition
+    # sitting beside a literal desktop label excuses nothing. The check read
+    # `str(runs_on)`, found the condition anywhere in the repr of the whole
+    # list, and approved its neighbours with it.
+    #
+    # I looked for this shape after the first report and said it did not
+    # reproduce. It does; I built the fixture with a `fromJSON` expression,
+    # which GEHOST rejects, so the list was flagged for the wrong reason and I
+    # read that as the guard working. The leaking form is a BARE-STRING
+    # expression, which T1's fixture used. (T1 review, #1649)
+    letterlijk = [l for l in echte if "${{" not in l]
+    onvoorwaardelijk = [l for l in letterlijk if not GEHOST.match(l)]
+    expressies = [l for l in echte if "${{" in l]
+    if not (isinstance(runs_on, list) and onvoorwaardelijk):
+        # Judge the ELEMENTS, not the list's repr. Handing `str(["${{ ... }}"])`
+        # to the predicate asks it about brackets and escaped quotes, and it
+        # answered "not safe" about a runner choice that is.
+        kandidaten = expressies if expressies else [text]
+        if all(PER_GEBEURTENIS_VEILIG(k, events) for k in kandidaten):
+            return []
     # A runner supplied by another job. This is the one shape where running the
     # pull request's own code is CORRECT -- ci-ephemeral's `workspace` is meant
     # to, on a throwaway machine. The guard cannot resolve the label, so it
