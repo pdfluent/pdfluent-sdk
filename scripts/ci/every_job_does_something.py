@@ -26,12 +26,12 @@ ALLOWED holds the deliberate exceptions, each with the reason, because a list
 of names without reasons is how the next person learns to add one.
 """
 from __future__ import annotations
-import pathlib, sys
+import argparse, pathlib, sys
 
 import yaml
 
 WORTEL = pathlib.Path(__file__).resolve().parents[2]
-WORKFLOWS = WORTEL / ".github" / "workflows"
+STANDAARD_WORKFLOWS = WORTEL / ".github" / "workflows"
 
 # `uses:` that do not amount to doing anything on their own.
 OPZET = ("actions/checkout", "actions/setup-python", "actions/setup-node",
@@ -53,11 +53,26 @@ def doet_iets(job: dict) -> bool:
     return False
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    # `--workflows` so a test can point this at a fixture. Without it the
+    # directory comes from `__file__`, and a guard that can only ever read the
+    # real tree cannot be shown to bite on anything -- which is how this one
+    # arrived: it caught the defect it was written for in a scratch run, and
+    # nothing in the pipeline said so. (peer review, #1666)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--workflows", type=pathlib.Path, default=STANDAARD_WORKFLOWS,
+                    help="directory of workflow files to read")
+    args = ap.parse_args(argv)
+    workflows = args.workflows
+
     problemen: list[str] = []
     bekeken = 0
 
-    paden = sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml"))
+    if not workflows.is_dir():
+        print(f"[job-does-something] FATAL: {workflows} is not a directory",
+              file=sys.stderr)
+        return 2
+    paden = sorted(workflows.glob("*.yml")) + sorted(workflows.glob("*.yaml"))
     for pad in paden:
         try:
             doc = yaml.safe_load(pad.read_text()) or {}
@@ -70,10 +85,15 @@ def main() -> int:
         for naam, job in (doc.get("jobs") or {}).items():
             if not isinstance(job, dict):
                 continue
-            # A job that only calls a reusable workflow has its steps there.
+            # Counted before the delegation skip, not after. A job that calls a
+            # reusable workflow HAS been read and judged -- its steps live in
+            # the other file -- so skipping it without counting made a workflow
+            # whose only job delegates report "no job was read", which is this
+            # guard's own FATAL for having looked at nothing. Found by writing
+            # the test it did not have. (peer review, #1666)
+            bekeken += 1
             if job.get("uses"):
                 continue
-            bekeken += 1
             sleutel = f"{pad.name}:{naam}"
             if doet_iets(job) or sleutel in ALLOWED:
                 continue

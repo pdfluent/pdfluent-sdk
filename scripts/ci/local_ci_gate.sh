@@ -46,6 +46,12 @@ fail=0; pass=0
 # failure so a log can be traced back to the run that produced it.
 LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/lcg.XXXXXX")"
 export LOGDIR
+# Said once at the start, not only when something fails: a reader who wants the
+# output of a check that PASSED had nowhere to look, and on a machine where two
+# runs are normal "the log" is not a location. Removed on a clean exit, kept on
+# a failure -- the run that failed is the one whose evidence is wanted.
+echo "logs: ${LOGDIR}"
+trap '[ "$fail" -eq 0 ] && rm -rf "$LOGDIR"' EXIT
 run() { local name="$1"; shift
   printf '=== %-9s' "$name"
   if "$@" >"${LOGDIR}/${name}.log" 2>&1; then echo " PASS"; pass=$((pass+1))
@@ -191,6 +197,7 @@ run hookwire  python3 scripts/ci/the_commit_msg_hook_is_wired.py
 run hookwiretst python3 scripts/ci/test_the_commit_msg_hook_is_wired.py
 run jobimports python3 scripts/ci/a_job_has_what_its_scripts_import.py
 run jobdoes   python3 scripts/ci/every_job_does_something.py
+run jobdoestst python3 scripts/ci/test_every_job_does_something.py
 run noai      python3 scripts/ci/no_ai_attribution.py
 run noaitest  python3 scripts/ci/test_no_ai_attribution.py
 run msgclean  python3 scripts/ci/geen_interne_zaken.py --bereik github/master..HEAD
