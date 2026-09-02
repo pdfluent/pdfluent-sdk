@@ -236,11 +236,35 @@ def compileert(job, wortel: pathlib.Path) -> bool:
     return False
 
 
-def op_blijvende_runner(runs_on) -> bool:
-    tekst = str(runs_on)
-    if not any(l in tekst for l in PERSISTENT_LABELS):
+def noemt_blijvende_runner(runs_on) -> bool:
+    """Does this job ask for the desktop at all, on any event?
+
+    The heavy-job rule asks this and nothing more: compiling the workspace
+    saturates that machine whether the run was reviewed or not, which is what
+    the comment at its call site has always said. It used to ask
+    op_blijvende_runner() instead and so quietly stopped counting every job
+    whose runner choice looked safe -- a different question's answer.
+    """
+    return any(l in str(runs_on) for l in PERSISTENT_LABELS)
+
+
+def op_blijvende_runner(runs_on, events: set[str] | None = None) -> bool:
+    """Can UNMERGED code reach the desktop through this runner choice?
+
+    ONE decision point. This used to answer it with the shape-match alone, and
+    the moment that shape widened to accept `!=` it began waving through
+    exactly the form workflow_dispatch reaches: `!= 'pull_request'` matched, so
+    the job was classified as not-on-the-desktop and never looked at again.
+    Two places deciding the same thing, and the newer one silenced the older.
+    Whether a per-event choice is safe is per_gebeurtenis_veilig's question,
+    here as everywhere. (codex, #1649)
+
+    events=None means the caller could not say which events reach the job.
+    per_gebeurtenis_veilig refuses to call that safe, so the job is judged.
+    """
+    if not noemt_blijvende_runner(runs_on):
         return False
-    return not ALLEEN_BIJ_PUSH.search(tekst)
+    return not per_gebeurtenis_veilig(str(runs_on), events)
 
 # Eight jobs that already had this exposure before the ephemeral workflows
 # existed. Recorded so the count cannot grow while they are dealt with
@@ -405,7 +429,7 @@ def main() -> int:
         # workspace on the persistent desktop saturates it whether the push was
         # reviewed or not.
         for naam, job in (doc.get("jobs") or {}).items():
-            if not op_blijvende_runner(job.get("runs-on", "")) or not compileert(job, WORTEL):
+            if not noemt_blijvende_runner(job.get("runs-on", "")) or not compileert(job, WORTEL):
                 continue
             if (pad.name, naam) in ZWARE_BASELINE:
                 zwaar_bekend.append((pad.name, naam))
@@ -415,7 +439,7 @@ def main() -> int:
         if branch_locked(tr):
             continue
         for naam, job in (doc.get("jobs") or {}).items():
-            if not op_blijvende_runner(job.get("runs-on", "")):
+            if not op_blijvende_runner(job.get("runs-on", ""), set(tr)):
                 continue
             if REF_VASTGEZET.search(str(job.get("if", ""))):
                 # Pinned to the default branch: a dispatch from a feature branch
