@@ -19,7 +19,7 @@ about, so this file refuses to let its own guard have it.
 from __future__ import annotations
 import sys as _sys, pathlib as _pathlib
 _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
-from fixture_env import sealed_env
+from fixture_env import sealed_env, inside_the_sandbox
 
 import os
 import pathlib
@@ -28,13 +28,13 @@ import subprocess
 import sys
 import tempfile
 
-def schone_omgeving() -> dict[str, str]:
+def schone_omgeving(cwd=None) -> dict[str, str]:
     """The caller's environment with every GIT_* variable removed."""
     # Sealed rather than merely GIT_*-stripped: dropping GIT_* stops a
     # fixture READING the real repository, not WRITING to the real config.
     # A fixture's `git config user.email t@t` reached a real worktree that
     # way and stamped a test identity onto every later rebase there. (#297)
-    return sealed_env()
+    return sealed_env(cwd=cwd)
 
 
 BEWAKER = pathlib.Path(__file__).with_name("branches_have_a_merge_request.py")
@@ -42,7 +42,7 @@ BEWAKER = pathlib.Path(__file__).with_name("branches_have_a_merge_request.py")
 
 def git(map_: pathlib.Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=map_, check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=schone_omgeving())
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=schone_omgeving(cwd=map_))
 
 
 def bouw(map_: pathlib.Path, commits: int) -> None:

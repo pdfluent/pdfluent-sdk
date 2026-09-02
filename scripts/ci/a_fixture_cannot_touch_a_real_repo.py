@@ -94,6 +94,18 @@ def calls_made(tree: ast.AST) -> set[str]:
     return out
 
 
+def cwd_kwargs(tree: ast.AST) -> set[str]:
+    """Keyword names passed to any sealed_env() call in the file."""
+    out: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            f = n.func
+            name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", "")
+            if name == "sealed_env":
+                out.update(k.arg for k in n.keywords if k.arg)
+    return out
+
+
 def names_used(tree: ast.AST) -> set[str]:
     """Imported and called names.
 
@@ -142,8 +154,20 @@ def main() -> int:
         if not any(v in strings for v in BUILDS_A_REPO):
             continue
         checked += 1
+        # Calling sealed_env is not enough: it only performs the runtime sandbox
+        # check when it is given a cwd, and NO fixture passed one. The helper
+        # existed, its docstring said "this runs", and it ran nowhere -- the
+        # pattern this whole series is about, inside the fix for it.
+        # (T3 review, #1647)
         if "sealed_env" in used:
-            continue   # actually calls the shared helper, which sets all three
+            if "cwd" not in cwd_kwargs(tree):
+                problems.append(
+                    f"{path.name}: calls sealed_env() but never with cwd=. "
+                    "Without it the ceiling is not tied to the sandbox and the "
+                    "runtime check does not run, so the file is sealed against "
+                    "config and not against a repository git discovers by "
+                    "walking up.")
+            continue
         missing = [k for k in REQUIRED if k not in strings]
         if missing:
             problems.append(
