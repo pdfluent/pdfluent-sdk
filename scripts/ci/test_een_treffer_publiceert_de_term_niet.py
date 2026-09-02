@@ -175,9 +175,20 @@ bereik = "HEAD~3..HEAD"
 boodschappen = subprocess.run(["git", "log", "--format=%B", bereik], cwd=REPO,
                               capture_output=True, text=True, check=True,
                               env=sealed_env()).stdout
-kandidaten = [w for w in ("lockfile", "regenerate", "binding", "workspace")
-              if w in boodschappen.lower()]
-assert kandidaten, f"no usable term in {bereik}; the fixture cannot guarantee a hit"
+# The term is TAKEN FROM the range, not guessed at. A hardcoded candidate list
+# ("lockfile", "binding", ...) held while those words happened to be in master's
+# last three messages and failed the moment this branch had three of its own --
+# a fixture whose guarantee depends on what somebody wrote yesterday. Any word
+# the range actually contains gives the same guarantee and cannot go stale.
+import collections
+import re as _re
+woorden = collections.Counter(
+    w.lower() for w in _re.findall(r"[A-Za-z]{6,}", boodschappen))
+kandidaten = [w for w, _ in woorden.most_common() if w.isalpha()]
+assert kandidaten, (
+    f"no word of six letters or more in {bereik}: the fixture cannot guarantee "
+    "a hit, and a case that cannot guarantee its own premise must say so rather "
+    "than report a skip as a pass")
 TREFFER = kandidaten[0]
 
 with tempfile.TemporaryDirectory() as td:
