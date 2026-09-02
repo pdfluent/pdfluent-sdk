@@ -366,6 +366,32 @@ def main() -> int:
     print(f"measured: {measured}")
     print(f"Volume holding {repo_root}: {free_gb:.1f} GB free of {total / GB:.1f} GB")
 
+    # What the INNER filesystem claims, said out loud and never used to decide.
+    #
+    # On 02-09-2026 the desktop measurement showed ext4 reporting 875 GB free
+    # while the host volume had 9.2 GB, and the honest reading of that pair --
+    # writable space is min(inner, host) -- was nearly lost twice in one
+    # morning: once when I summarised it as "no shortage inside the image", and
+    # once when that summary was taken as a reason to make the inner number the
+    # criterion. Both times the docstring above already had the answer.
+    #
+    # So the pair is printed together. A reader who sees only one of the two
+    # numbers reaches for the wrong one, and this guard exists because somebody
+    # did. It stays informational: the verdict below is unchanged.
+    if measured != repo_root:
+        try:
+            binnen = shutil.disk_usage(repo_root)
+        except OSError:
+            binnen = None
+        if binnen is not None and binnen.free > free:
+            print(f"  (the filesystem at {repo_root} reports "
+                  f"{binnen.free / GB:.1f} GB free, which is the maximum size of "
+                  f"a sparse image and NOT what the host can give it. Writable "
+                  f"space is the smaller of the two: {free_gb:.1f} GB. Deleting "
+                  f"inside frees blocks in the image and returns nothing to the "
+                  f"host until it is compacted -- which is why deleting first is "
+                  f"the precondition for compaction, not an alternative to it.)")
+
     if free_gb >= args.floor_gb:
         print(f"✓ disk_headroom: above the floor of {args.floor_gb:.0f} GB")
         return 0
