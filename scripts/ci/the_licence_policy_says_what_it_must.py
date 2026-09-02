@@ -99,13 +99,33 @@ MOET_GECLASSIFICEERD = frozenset(f"{k}{s}" for k in _STAMMEN for s in _STAARTEN)
 # of the word appearing, which is the same mistake one level down.
 UITZONDERINGEN: dict[str, str] = {}
 
-# The floor over what the generated family does NOT cover. A floor of 10 over
-# the whole list was dead the moment MOET_GECLASSIFICEERD reached ten entries:
-# it could never fail while the stronger requirement held, so it recorded
-# nothing and would have gone on passing if every non-family entry -- SSPL,
-# BUSL, the CDDLs, EUPL, Elastic, CC-BY-SA -- were deleted at once. It counts
-# those now, which is the only part still curated by hand.
-MINIMUM_OVERIG_VERBODEN = 6  # FLOOR
+# The hand-curated half, ENUMERATED. Not counted.
+#
+# A floor of six over seven entries let any one of them move to `allowed` --
+# with the deny.toml update, the whole edit -- past this guard, the evaluator
+# and every other licence check. Which is the same mistake as the one it
+# replaced, one round later and by my hand: `MINIMUM_FORBIDDEN` was dead
+# because a counter guards an amount and never the contents. Swapping a dead
+# counter for a live one does not change what a counter is.
+#
+# These have no generator, because they share no pattern: they are seven
+# separate decisions. So they are seven separate names, each with the reason in
+# the assertion, and adding an eighth is a deliberate edit to code that goes
+# through review -- which is what the register is for.
+MOET_OVERIG_VERBODEN: dict[str, str] = {
+    "SSPL-1.0": "not OSI-approved, and its service clause reaches anything we host",
+    "BUSL-1.1": "source-available with a use limitation; it is not open source and "
+                "the change date is the vendor's to move",
+    "Elastic-2.0": "as BUSL-1.1: it forbids offering the software as a service, "
+                   "which is what a PDF API is",
+    "EUPL-1.2": "copyleft with a compatibility list that pulls in the AGPL, so "
+                "allowing it allows that by another route",
+    "CDDL-1.0": "file-level copyleft with a patent-retaliation clause, and its "
+                "combination with the GPL is unsettled -- we take neither side",
+    "CDDL-1.1": "as CDDL-1.0; both spellings are in the wild",
+    "CC-BY-SA-4.0": "a content licence whose share-alike reaches derived works; "
+                    "it belongs on documents, never in a dependency graph",
+}
 
 
 def main() -> int:
@@ -126,14 +146,11 @@ def main() -> int:
 
     problems: list[str] = []
 
-    overig = forbidden - MOET_GECLASSIFICEERD
-    if len(overig) < MINIMUM_OVERIG_VERBODEN:  # FLOOR
-        problems.append(
-            f"licenses.forbidden holds {len(overig)} entries beyond the "
-            f"generated copyleft family; the floor is {MINIMUM_OVERIG_VERBODEN}. "
-            "Those are the hand-curated ones -- SSPL, BUSL, the CDDLs and the "
-            "rest -- and nothing else requires them to be there."
-        )
+    for name, why in MOET_OVERIG_VERBODEN.items():
+        if name not in forbidden:
+            problems.append(f"{name} is not in licenses.forbidden. It must be: {why}.")
+        if name in allowed:
+            problems.append(f"{name} is in licenses.allowed. It must be forbidden: {why}.")
 
     for name, why in MUST_FORBID.items():
         if name not in forbidden:
