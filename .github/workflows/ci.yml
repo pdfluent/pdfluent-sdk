@@ -510,7 +510,23 @@ jobs:
       - run: pip install --quiet pyyaml
       - name: Cargo on PATH
         if: ${{ !cancelled() }}
-        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        run: |
+          # `$HOME` for the runner service is not necessarily where cargo was
+          # installed, so adding the directory is not the same as making cargo
+          # runnable. Source the env file when it is there, and then CHECK --
+          # measured on master 02-09-2026, this step ran and a later guard still
+          # died on `FileNotFoundError: [Errno 2] No such file or directory:
+          # 'cargo'`, which is a confusing way to learn that the toolchain is not
+          # on PATH. (#292)
+          set -euo pipefail
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
+          export PATH="$HOME/.cargo/bin:$PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "::error::cargo is not runnable on this runner. \$HOME is $HOME; \$HOME/.cargo/bin is $([ -d "$HOME/.cargo/bin" ] && echo present || echo absent). Every step below that needs the toolchain will fail with a FileNotFoundError that says nothing about this." >&2
+            exit 1
+          fi
+          echo "cargo: $(cargo --version)"
       # In promise-guard because it is the job that already has cargo on PATH,
       # and DEBUG rather than --release: measured profile-independent, the
       # generator produces the same 1090 bytes either way, and debug shares
