@@ -5844,7 +5844,36 @@ fn resolve_notdef_container_font_map(
     }
 }
 
+/// Codes this font uses that its embedded program cannot draw.
+///
+/// A code the font's own ToUnicode calls a space is never condemned, by any
+/// route inside. Whatever the font program says about the glyph, the document
+/// reads correctly today, and overwriting the byte with 0x20 turns word
+/// separation into run-on text (#210).
+///
+/// The rule lives in this wrapper rather than in the body because the body has
+/// two early returns that would each bypass it, which is how the first attempt
+/// silently did nothing: measured on 002_002193, the shipped pipeline still
+/// fell from 3384 spaces to 134 with the in-body filter in place.
 fn collect_simple_invalid_codes(
+    doc: &Document,
+    fd: &lopdf::Dictionary,
+    font_data: &[u8],
+    is_subset: bool,
+    available_glyphs: Option<&std::collections::HashSet<String>>,
+) -> std::collections::HashSet<u8> {
+    let mut codes =
+        collect_simple_invalid_codes_inner(doc, fd, font_data, is_subset, available_glyphs);
+    let ruimte_codes: std::collections::HashSet<u8> = read_font_to_unicode_map(doc, fd)
+        .into_iter()
+        .filter(|(_, ch)| *ch == ' ')
+        .map(|(code, _)| code)
+        .collect();
+    codes.retain(|code| !ruimte_codes.contains(code));
+    codes
+}
+
+fn collect_simple_invalid_codes_inner(
     doc: &Document,
     fd: &lopdf::Dictionary,
     font_data: &[u8],
@@ -26979,8 +27008,14 @@ mod symbolic_subset_tests {
     /// Measured through `cleanup_for_pdfa` rather than a single function, for
     /// exactly that reason: a per-pass assertion cannot see a pass that has not
     /// run yet.
+    ///
+    /// `cleanup_for_pdfa` is not the shipped pipeline, and this test was named
+    /// as though it were. What users run is `pdfa::convert_bytes`, which calls
+    /// roughly forty font steps; `fix_type1_subset_missing_glyphs` is one of
+    /// them and destroyed the same space codes while this test stayed green.
+    /// See `the_subset_pass_also_spares_the_fonts_own_space_code`.
     #[test]
-    fn a_space_code_survives_the_whole_pipeline_not_just_one_pass() {
+    fn a_space_code_survives_the_cleanup_passes_not_just_one() {
         let mut doc = fx::make_symbolic_subset_doc(b"not a font program".to_vec(), vec![0, 0]);
         let tounicode = lopdf::Stream::new(
             lopdf::dictionary! {},
@@ -27084,6 +27119,52 @@ mod symbolic_subset_tests {
             0x41,
             "code 0x41 is this font's space by its own ToUnicode and must survive \
              the widths fallback; it was overwritten with {:#04x}",
+            content[start + 1]
+        );
+    }
+
+    /// The subset pass condemns codes through its own call to
+    /// `collect_simple_invalid_codes`, and that helper returns early on both
+    /// the TrueType and the Type 1 route. A space rule placed at the helper's
+    /// tail is therefore dead code for every real font: measured on the
+    /// shipped pipeline, 002_002193 still fell from 3384 spaces to 134 with
+    /// such a filter in place. This test fails if the rule moves back inside.
+    #[test]
+    fn the_subset_pass_also_spares_the_fonts_own_space_code() {
+        let mut doc = fx::make_symbolic_subset_doc(b"not a font program".to_vec(), vec![0, 0]);
+
+        let tounicode = lopdf::Stream::new(
+            lopdf::dictionary! {},
+            b"/CIDInit /ProcSet findresource begin\n\
+              1 begincmap\n1 beginbfchar\n<41> <0020>\nendbfchar\nendcmap\nend"
+                .to_vec(),
+        );
+        let tu_id = doc.add_object(Object::Stream(tounicode));
+        let font_id = *doc
+            .objects
+            .iter()
+            .find(|(_, o)| {
+                matches!(o, Object::Dictionary(d) if d.get(b"Type").ok()
+                == Some(&Object::Name(b"Font".to_vec())))
+            })
+            .map(|(id, _)| id)
+            .expect("the fixture has a font");
+        if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
+            font.set("ToUnicode", Object::Reference(tu_id));
+        }
+
+        fix_type1_subset_missing_glyphs(&mut doc);
+
+        let content = fx::page_content(&doc);
+        let start = content
+            .iter()
+            .position(|b| *b == b'(')
+            .expect("a shown string");
+        assert_eq!(
+            content[start + 1],
+            0x41,
+            "code 0x41 is this font's space by its own ToUnicode; the subset \
+             pass overwrote it with {:#04x}",
             content[start + 1]
         );
     }
