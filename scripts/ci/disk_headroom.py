@@ -333,6 +333,27 @@ def check_heartbeat(path: Path, max_age_hours: float) -> int:
     return 0
 
 
+def elders_gemeten(measured, repo_root) -> bool:
+    """Was the volume we measured a DIFFERENT place from the repository?
+
+    A named function because the decision could not otherwise be tested. Through
+    the CLI the note needs both this AND `inner.free > free`, and on any real
+    machine a fixture's "host volume" is a directory on the same filesystem --
+    so the second condition is False and covers for the first however the first
+    is written. Two earlier attempts at a test proved nothing: an `or` chain
+    that could not fail, and an assertion about Python's own `str != Path`
+    rather than about this guard. (peer review, #1664)
+
+    `measured` arrives as a str and `repo_root` as a Path, so comparing them
+    directly was always True -- the explanation would have printed on a Mac,
+    where there is no sparse image and the sentence is nonsense.
+    """
+    try:
+        return Path(str(measured)).resolve() != Path(repo_root).resolve()
+    except OSError:
+        return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", default=None, help="repository root (default: this script's repository)")
@@ -378,12 +399,7 @@ def main() -> int:
     # So the pair is printed together. A reader who sees only one of the two
     # numbers reaches for the wrong one, and this guard exists because somebody
     # did. It stays informational: the verdict below is unchanged.
-    # `measured` is a str and repo_root a Path, so `!=` was always True and the
-    # explanation below would have printed on any machine where the inner
-    # filesystem happened to report more -- including a Mac, where there is no
-    # sparse image and the sentence would be nonsense. Compared as resolved
-    # paths now. (peer review, #1664)
-    if Path(str(measured)).resolve() != repo_root.resolve():
+    if elders_gemeten(measured, repo_root):
         try:
             inner = shutil.disk_usage(repo_root)
         except OSError:

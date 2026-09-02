@@ -88,7 +88,8 @@ jobs:
           # that is what broke run 33615944995 on four `systemd-private-*`
           # directories, and guarding only the two calls that write to files
           # left the one that actually died untouched. (peer review, #1664)
-          maat() {
+          measure_dir() {
+            [ -d "$1" ] || { echo "::error::$1 is not a directory"; return 1; }
             du -x -h -s "$1" && return 0
             rc=$?
             [ "$rc" -le 1 ] || { echo "::error::du $1 failed with $rc"; return "$rc"; }
@@ -132,7 +133,7 @@ jobs:
           for D in "${CARGO_TARGET_DIR:-}" "${CARGO_HOME:-}" \
                    /var/cache/cargo-target /var/cache/cargo-home \
                    "${HOME}/.cargo" "${HOME}/.rustup"; do
-            if [ -n "$D" ] && [ -d "$D" ]; then maat "$D"; fi
+            if [ -n "$D" ] && [ -d "$D" ]; then measure_dir "$D"; fi
           done
           echo
           echo "## Every target/ on this filesystem, not only in this checkout"
@@ -144,7 +145,7 @@ jobs:
           [ "$rc" -eq 0 ] || echo "(find could not read every directory; partial)"
           echo "found $(wc -l < "$RUNNER_TEMP/targets.txt") target/ directories"
           head -60 "$RUNNER_TEMP/targets.txt" | while read -r T; do
-            if [ -d "$T" ]; then maat "$T"; fi
+            if [ -d "$T" ]; then measure_dir "$T"; fi
           done
 
       # The place `disk_headroom.py` cannot see, because it looks for `target/`.
@@ -162,7 +163,8 @@ jobs:
           # that is what broke run 33615944995 on four `systemd-private-*`
           # directories, and guarding only the two calls that write to files
           # left the one that actually died untouched. (peer review, #1664)
-          maat() {
+          measure_dir() {
+            [ -d "$1" ] || { echo "::error::$1 is not a directory"; return 1; }
             du -x -h -s "$1" && return 0
             rc=$?
             [ "$rc" -le 1 ] || { echo "::error::du $1 failed with $rc"; return "$rc"; }
@@ -173,7 +175,7 @@ jobs:
           for T in "${RUNNER_TEMP:-}" "${TMPDIR:-}" /tmp /var/tmp; do
             [ -n "$T" ] && [ -d "$T" ] || continue
             echo "-- $T: $(find "$T" -maxdepth 1 -name 'tmp*' -o -maxdepth 1 -name 'fixture-*' 2>/dev/null | wc -l) entries"
-            maat "$T"
+            measure_dir "$T"
           done
 
       - name: Docker, if it is here

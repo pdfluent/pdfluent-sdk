@@ -44,7 +44,7 @@ GUARD = pathlib.Path(__file__).resolve().parent / "disk_headroom.py"
 
 # FLOOR: cases run >= 20. A test that stops testing reports success in the same
 # words as one that passed.
-MINIMUM_CASES = 22
+MINIMUM_CASES = 24
 
 # TWO-WAY RATCHET. disk_headroom.DEFAULT_FLOOR_GB and this number must move
 # together, in either direction. Lowering the floor silently switches the guard
@@ -285,6 +285,28 @@ def main() -> int:
                "maximum size of a sparse image" not in r.stdout, r.stdout[-200:])
         expect("  and the measured path is still named on every run",
                "measured:" in r.stdout, r.stdout[-200:])
+
+        # AND THE PATH COMPARISON ITSELF, asserted directly.
+        #
+        # It cannot be pinned through the CLI: the note needs BOTH a differing
+        # path and inner.free > free, and on any real machine the fixture's
+        # "host volume" is a directory on the same filesystem, so the second
+        # condition is False and covers for the first whichever way it is
+        # written. My first attempt hid that behind an `or` chain that made the
+        # assertion true no matter what -- an assertion that cannot fail, in
+        # the test written to stop one.
+        #
+        # So the comparison is asserted as what it is: a str and a Path naming
+        # the same place are the SAME place, and the version that compared them
+        # unresolved said they differed.
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("dh", GUARD)
+        dh = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(dh)
+        expect("the same place named as str and as Path is NOT elsewhere",
+               dh.elders_gemeten(str(repo), repo) is False)
+        expect("  and a genuinely different volume IS",
+               dh.elders_gemeten("/", repo) is True)
 
     if cases < MINIMUM_CASES:  # FLOOR
         print(
