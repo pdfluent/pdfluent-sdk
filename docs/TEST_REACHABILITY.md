@@ -6,11 +6,11 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**75 van 661 publieke functies** (11.3%).
+**76 van 662 publieke functies** (11.5%).
 
 Daarvan dragen er **37** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export), 7 zijn een omhulsel dat niets doet dan doorgeven aan een variant die wél getest wordt, en 14 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **38** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **39** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
@@ -22,9 +22,9 @@ De overige **38** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 | `pdf-xfa` | 5 | 60 |
 | `xfa-test-runner` | 4 | 26 |
 | `cff-parser` | 3 | 8 |
+| `formcalc-interpreter` | 3 | 6 |
 | `lopdf` | 3 | 28 |
 | `pdf-node` | 3 | 12 |
-| `formcalc-interpreter` | 2 | 5 |
 | `pdf-engine` | 2 | 9 |
 | `hayro-jpeg2000` | 1 | 1 |
 | `pdf-annot` | 1 | 4 |
@@ -45,6 +45,7 @@ De overige **38** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 
 - `call_dom_builtin`  — *(geen reden opgegeven)*
 - `call_som_builtin`  — *(geen reden opgegeven)*
+- `stack_position`  — *(geen reden opgegeven)*
 
 ## hayro-jpeg2000
 
