@@ -93,11 +93,34 @@ def main() -> int:
         if name not in allowed:
             problems.append(f"{name} is not in licenses.allowed. It must be: {why}.")
 
-    overlap = forbidden & allowed
-    for name in sorted(overlap):
+    for name in sorted(forbidden & allowed):
         problems.append(f"{name} is in BOTH allowed and forbidden. The evaluator "
                         "takes forbidden first, so the allow entry is a lie that "
                         "reads as permission.")
+
+    # The list that PERMITS is as much an attack surface as the list that
+    # forbids, and this one is worse because it reads as harmless.
+    #
+    # license_gate.toegestaan() tests `allowed` BEFORE `weak_copyleft`, so a
+    # weak-copyleft licence sitting in `allowed` is acceptable everywhere --
+    # including on a surface whose weak set is empty, which is the whole
+    # mechanism by which MPL-2.0 is permitted in one place and not another.
+    # Measured: with MPL-2.0 added to `allowed`, toegestaan() returns True for a
+    # surface with weak_allowed=set(), and False without it. The per-surface
+    # control is simply skipped. (codex, #1656)
+    for name in sorted(allowed & weak):
+        problems.append(
+            f"{name} is in BOTH allowed and weak_copyleft. `allowed` is tested "
+            "first, so this makes it acceptable on every surface -- including "
+            "the ones whose weak-copyleft set is deliberately empty. A licence "
+            "that needs a per-surface decision cannot also be unconditionally "
+            "allowed.")
+    for name in sorted(forbidden & weak):
+        problems.append(
+            f"{name} is in BOTH forbidden and weak_copyleft. One of the two is "
+            "wrong: a licence cannot be refused everywhere and permitted per "
+            "surface, and which the evaluator honours depends on the order it "
+            "happens to test them in.")
 
     # The list and the code that reads it, checked against each other. An entry
     # that is present and ignored passes every list-only check ever written.
