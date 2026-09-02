@@ -203,7 +203,13 @@ def schone_omgeving() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
-def veranderd_op(pad: pathlib.Path) -> dt.datetime | None:
+# What veranderd_op answers for a workflow file that is on this branch and not
+# on the default branch. Distinct from None, which means the API could not be
+# read, because the two deserve opposite verdicts.
+NIEUW = "new on this branch"
+
+
+def veranderd_op(pad: pathlib.Path) -> dt.datetime | str | None:
     """When this workflow file last changed on the default branch, in UTC.
 
     Not from `git log`, for two reasons discovered in that order.
@@ -226,8 +232,17 @@ def veranderd_op(pad: pathlib.Path) -> dt.datetime | None:
     """
     naam = urllib.parse.quote(str(pad))
     doc = gh(f"repos/{{owner}}/{{repo}}/commits?path={naam}&per_page=1")
-    if not doc:
+    if doc is None:
         return None
+    if doc == []:
+        # The API answered, and the answer is that no commit on the default
+        # branch has ever touched this path: the file exists only on this
+        # branch. That is not "could not date" -- it is a workflow with no
+        # history to judge yet. The first version folded both into `not doc`
+        # and printed SKIPPED (not a pass), which in CI is a failure, so every
+        # pull request that ADDED a workflow went red on this guard for having
+        # added one. (review of #1672)
+        return NIEUW
     try:
         stempel = doc[0]["commit"]["committer"]["date"]
         return dt.datetime.fromisoformat(stempel.replace("Z", "+00:00"))
@@ -304,6 +319,14 @@ def main() -> int:
             continue
 
         sinds = veranderd_op(pad)
+        if sinds is NIEUW:
+            # Named, so the log says which file is new; not skipped, because
+            # the API was read and answered; not failed, because there is no
+            # run history to fail on. It is judged like any other file from
+            # the first push to master onwards.
+            jong.append((pad.name, "new on this branch, not on the default "
+                                   "branch yet; nothing to judge until it merges"))
+            continue
         if sinds is None:
             # Not "young". The window could not be established at all, and a
             # workflow that died yesterday looks identical from here to one

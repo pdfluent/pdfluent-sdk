@@ -67,6 +67,11 @@ url = sys.argv[-1]
 if "actions/workflows?" in url:
     print(json.dumps({"workflows": tabel["workflows"]})); raise SystemExit(0)
 if "/commits?path=" in url:
+    # A workflow marked _new has no commit on the default branch: the real API
+    # answers an empty list for that, not an error.
+    for wf in tabel["workflows"]:
+        if wf.get("_new") and wf["path"] in url:
+            print("[]"); raise SystemExit(0)
     # The guard dates each workflow from the default branch. A fixed date far
     # enough back that the run counts in the table are what decides each case.
     print(json.dumps([{"commit": {"committer": {"date": "2026-01-01T00:00:00Z"}}}]))
@@ -144,14 +149,15 @@ def bouw(map_: pathlib.Path, workflows: list[dict]) -> None:
     gh.chmod(0o755)
 
 
-def draai(map_: pathlib.Path) -> subprocess.CompletedProcess[str]:
-    env = {**sealed_env(cwd=map_), "PATH": f"{map_ / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+def draai(map_: pathlib.Path, **extra: str) -> subprocess.CompletedProcess[str]:
+    env = {**sealed_env(cwd=map_), "PATH": f"{map_ / 'bin'}{os.pathsep}{os.environ['PATH']}",
+           **extra}
     return subprocess.run([sys.executable, str(BEWAKER)], cwd=map_,
                           capture_output=True, text=True, check=False, env=env)
 
 
 def wf(naam, runs_in, green_in, runs_all=None, green_all=None, state="active",
-       runs_anyref=None, green_anyref=None, cancelled=0):
+       runs_anyref=None, green_anyref=None, cancelled=0, new=False):
     d = {"id": abs(hash(naam)) % 100000, "path": f".github/workflows/{naam}",
          "state": state, "_runs_in": runs_in, "_green_in": green_in,
          "_runs_all": runs_all if runs_all is not None else runs_in,
@@ -161,6 +167,8 @@ def wf(naam, runs_in, green_in, runs_all=None, green_all=None, state="active",
     if green_anyref is not None:
         d["_green_anyref"] = green_anyref
     d["_cancelled"] = cancelled
+    if new:
+        d["_new"] = True
     return d
 
 
@@ -234,6 +242,26 @@ def main() -> int:
                     f"exit {r.returncode}\n      {r.stdout.strip()[-300:]}\n"
                     f"      {r.stderr.strip()[:300]}")
 
+    # A workflow that exists only on this branch has no commit on the default
+    # branch, and GitHub answers `[]` for it. The guard once read that as "could
+    # not date the file" and printed SKIPPED (not a pass) -- a failure under CI
+    # -- so every pull request that added a workflow was red for having added
+    # one. It must be named on stdout, and neither skipped nor failed, with CI
+    # set as it is in the pipeline. (review of #1672)
+    with tempfile.TemporaryDirectory() as d:
+        m = pathlib.Path(d)
+        bouw(m, [wf("vers.yml", 0, 0, new=True), wf("ok.yml", 40, 12)]
+                + [wf(b, 40, 0) for b in BEKEND])
+        r = draai(m, CI="1")
+        if r.returncode != 0:
+            fouten.append(f"a workflow new on this branch fails the guard: exit "
+                          f"{r.returncode}\n      {r.stderr.strip()[:300]}")
+        if "SKIPPED" in r.stderr:
+            fouten.append(f"a workflow new on this branch is reported as a skip: "
+                          f"{r.stderr.strip()[:300]}")
+        if "vers.yml" not in r.stdout:
+            fouten.append(f"a workflow new on this branch is not named: {r.stdout[-300:]}")
+
     # No `gh` at all must announce itself, not pass quietly.
     with tempfile.TemporaryDirectory() as d:
         m = pathlib.Path(d)
@@ -248,7 +276,8 @@ def main() -> int:
         for f in fouten:
             print(f"  {f}", file=sys.stderr)
         return 1
-    print(f"[test-groen] OK: {len(GEVALLEN)} history shapes and the unreachable-API case.")
+    print(f"[test-groen] OK: {len(GEVALLEN)} history shapes, the new-on-this-branch case "
+          "and the unreachable-API case.")
     return 0
 
 
