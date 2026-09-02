@@ -17,7 +17,7 @@ import pathlib, os, shutil, subprocess, sys, tempfile
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts" / "ci"))
-from fixture_env import gate_aanroepen, sealed_env  # noqa: E402
+from fixture_env import gate_aanroepen, sealed_env, wegwerp_map  # noqa: E402
 
 GUARD = "scripts/ci/the_commit_msg_hook_is_wired.py"
 GIT = "/usr/bin/git"
@@ -36,7 +36,7 @@ def expect(what: str, ok: bool, detail: str = "") -> None:
 
 def build(hook_text: str | None, executable: bool = True, hooks_path: str | None = None):
     """A repo carrying a .githooks/commit-msg, and a clone that may or may not use it."""
-    td = tempfile.mkdtemp()
+    td = wegwerp_map()
     root = pathlib.Path(td) / "repo"
     (root / "scripts" / "ci").mkdir(parents=True)
     (root / ".githooks").mkdir()
