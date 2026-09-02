@@ -5844,7 +5844,36 @@ fn resolve_notdef_container_font_map(
     }
 }
 
+/// Codes this font uses that its embedded program cannot draw.
+///
+/// A code the font's own ToUnicode calls a space is never condemned, by any
+/// route inside. Whatever the font program says about the glyph, the document
+/// reads correctly today, and overwriting the byte with 0x20 turns word
+/// separation into run-on text (#210).
+///
+/// The rule lives in this wrapper rather than in the body because the body has
+/// two early returns that would each bypass it, which is how the first attempt
+/// silently did nothing: measured on 002_002193, the shipped pipeline still
+/// fell from 3384 spaces to 134 with the in-body filter in place.
 fn collect_simple_invalid_codes(
+    doc: &Document,
+    fd: &lopdf::Dictionary,
+    font_data: &[u8],
+    is_subset: bool,
+    available_glyphs: Option<&std::collections::HashSet<String>>,
+) -> std::collections::HashSet<u8> {
+    let mut codes =
+        collect_simple_invalid_codes_inner(doc, fd, font_data, is_subset, available_glyphs);
+    let ruimte_codes: std::collections::HashSet<u8> = read_font_to_unicode_map(doc, fd)
+        .into_iter()
+        .filter(|(_, ch)| *ch == ' ')
+        .map(|(code, _)| code)
+        .collect();
+    codes.retain(|code| !ruimte_codes.contains(code));
+    codes
+}
+
+fn collect_simple_invalid_codes_inner(
     doc: &Document,
     fd: &lopdf::Dictionary,
     font_data: &[u8],
@@ -19535,11 +19564,28 @@ fn control_codes_to_preserve(
     if !can_strip {
         return std::collections::HashSet::new();
     }
+    // A code the font's own ToUnicode calls a space is kept, whatever the
+    // /Differences and the cmap say.
+    //
+    // The pass before this one stops such a code being condemned; this one
+    // decides which control bytes survive, and it read only /Differences and the
+    // symbolic cmap. So a font whose ToUnicode maps 0x01 to U+0020 kept its
+    // space through one pass and lost it in the next — measured, running this
+    // pass alone turns `(A\x01B)` into `(AB)`. Same corruption, one door along.
+    //
+    // Derived from the same source in both passes rather than re-derived per
+    // pass, which is how the two came to disagree.
+    let mut keep: std::collections::HashSet<u8> = read_font_to_unicode_map(doc, fd)
+        .into_iter()
+        .filter(|(_, ch)| *ch == ' ')
+        .map(|(code, _)| code)
+        .collect();
     let (_, differences) = get_simple_encoding_info(doc, fd);
-    let mut keep: std::collections::HashSet<u8> = differences
-        .iter()
-        .filter(|(code, name)| {
-            **code < 32
+    keep.extend(
+        differences
+            .iter()
+            .filter(|(code, name)| {
+                **code < 32
                         && !matches!(**code, 9 | 10 | 13)
                         && name.as_str() != ".notdef"
                         // A /space mapping (usually pipeline-generated
@@ -19547,9 +19593,9 @@ fn control_codes_to_preserve(
                         // stripping it to 32 is what keeps the width
                         // consistent (govdocs 003_003411, cmr9 code 11).
                         && name.as_str() != "space"
-        })
-        .map(|(code, _)| *code as u8)
-        .collect();
+            })
+            .map(|(code, _)| *code as u8),
+    );
     // A symbolic TrueType subset may put real glyphs on
     // control codes without any /Differences saying so —
     // the (3,0)/(1,0) cmap is the evidence (govdocs
@@ -20794,6 +20840,23 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
 
             // Build set of invalid codes using font's cmap.
             let mut invalid_codes = HashSet::new();
+
+            // Codes the font's own ToUnicode calls a space are never condemned.
+            //
+            // A code with no glyph draws nothing, which is what a space looks
+            // like, and `fix_simple_text_string` "repairs" it by writing 0x20
+            // over it. That assumes 0x20 means space. In these fonts it does
+            // not: their ToUnicode maps 0x20 to `.`, `A`, `r`, `S` or `G`, so
+            // the repair replaces an invisible space with visible ink that the
+            // original never drew. Measured on 002_002193: the spaces are codes
+            // 0x01, 0x04 and 0x09, all three mapping to U+0020 in the source's
+            // own ToUnicode -- so the document extracted correctly until we
+            // rewrote it (#210).
+            let ruimte_codes: HashSet<u8> = read_font_to_unicode_map(doc, dict)
+                .into_iter()
+                .filter(|(_, ch)| *ch == ' ')
+                .map(|(code, _)| code)
+                .collect();
             // Tracks whether any font-program parser produced an answer at
             // all. Only then is "no invalid codes" meaningful; the widths
             // fallback below exists for programs that cannot be parsed.
@@ -20999,6 +21062,16 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
             }
 
             if !invalid_codes.is_empty() {
+                // Filtered here rather than at each site that condemns a code.
+                //
+                // The first version guarded the glyph checks and the range
+                // loops and missed `invalid_simple_codes_from_widths`, which
+                // only runs when no font-program parser recognised the embedded
+                // program -- so on that path a space code with a zero width was
+                // still overwritten with 0x20, which is the corruption this
+                // whole change exists to prevent. Filtering the union cannot
+                // miss a route, including one added later.
+                invalid_codes.retain(|code| !ruimte_codes.contains(code));
                 notdef_fonts.insert(res_name.clone(), invalid_codes);
             }
         }
@@ -21143,6 +21216,11 @@ pub fn fix_simple_font_out_of_range_codes(doc: &mut Document) -> usize {
         };
 
         let mut font_ranges: HashMap<String, (u8, u8)> = HashMap::new();
+        // Codes the font's own ToUnicode calls a space, kept even when they
+        // fall outside FirstChar..LastChar. Same source as the pass before this
+        // one; deriving it twice is how the two came to disagree (#210).
+        let mut font_keep: HashMap<String, std::collections::HashSet<u8>> = HashMap::new();
+        let empty_keep: std::collections::HashSet<u8> = std::collections::HashSet::new();
         let mut has_type0_font = false;
         for (res_name, font_id) in &font_map {
             let Some(Object::Dictionary(dict)) = doc.objects.get(font_id) else {
@@ -21176,6 +21254,14 @@ pub fn fix_simple_font_out_of_range_codes(doc: &mut Document) -> usize {
                 .clamp(0, 255) as u8;
 
             font_ranges.insert(res_name.clone(), (first_char, last_char));
+            font_keep.insert(
+                res_name.clone(),
+                read_font_to_unicode_map(doc, dict)
+                    .into_iter()
+                    .filter(|(_, ch)| *ch == ' ')
+                    .map(|(code, _)| code)
+                    .collect(),
+            );
         }
 
         if font_ranges.is_empty() {
@@ -21222,6 +21308,7 @@ pub fn fix_simple_font_out_of_range_codes(doc: &mut Document) -> usize {
                                     *first_char,
                                     *last_char,
                                     !has_type0_font,
+                                    font_keep.get(&current_font).unwrap_or(&empty_keep),
                                 ) {
                                     modified = true;
                                 }
@@ -21242,6 +21329,7 @@ pub fn fix_simple_font_out_of_range_codes(doc: &mut Document) -> usize {
                                             *first_char,
                                             *last_char,
                                             !has_type0_font,
+                                            font_keep.get(&current_font).unwrap_or(&empty_keep),
                                         ) {
                                             modified = true;
                                         }
@@ -21469,7 +21557,11 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
                             {
                                 if let Some((fc, lc)) = fi.range {
                                     if fix_simple_text_string_out_of_range(
-                                        bytes, fc, lc, !has_type0,
+                                        bytes,
+                                        fc,
+                                        lc,
+                                        !has_type0,
+                                        &fi.preserve_ctrl,
                                     ) {
                                         did_range = true;
                                     }
@@ -21494,7 +21586,11 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
                                     if let (Some(fi), Object::String(bytes, _)) = (fi, item) {
                                         if let Some((fc, lc)) = fi.range {
                                             if fix_simple_text_string_out_of_range(
-                                                bytes, fc, lc, !has_type0,
+                                                bytes,
+                                                fc,
+                                                lc,
+                                                !has_type0,
+                                                &fi.preserve_ctrl,
                                             ) {
                                                 did_range = true;
                                             }
@@ -21573,11 +21669,17 @@ fn fix_simple_text_string(
 }
 
 #[allow(clippy::ptr_arg)]
+/// `keep` are codes the font's own tables say are meaningful even though they
+/// fall outside `FirstChar..LastChar` — in practice the space codes taken from
+/// its ToUnicode. Passed in rather than re-derived: the pass before this one
+/// protects the same codes, and the two disagreeing is how a space survived one
+/// pass and was dropped by the next (#210).
 fn fix_simple_text_string_out_of_range(
     bytes: &mut Vec<u8>,
     first_char: u8,
     last_char: u8,
     allow_collapse: bool,
+    keep: &std::collections::HashSet<u8>,
 ) -> bool {
     let changed = allow_collapse && collapse_two_byte_simple_codes(bytes);
     let original_len = bytes.len();
@@ -21612,7 +21714,7 @@ fn fix_simple_text_string_out_of_range(
         }
     }
 
-    bytes.retain(|b| *b >= first_char && *b <= last_char);
+    bytes.retain(|b| (*b >= first_char && *b <= last_char) || keep.contains(b));
     changed || bytes.len() != original_len
 }
 
@@ -26893,6 +26995,180 @@ mod symbolic_subset_tests {
         assert_eq!(fx::page_content(&doc), b"BT /F1 12 Tf (AB) Tj ET");
     }
 
+    /// The whole pipeline, not one pass (#210).
+    ///
+    /// Protecting a space code inside `fix_symbolic_font_notdef_streams` only
+    /// keeps it until the next pass: `simple_range_notdef` runs
+    /// `fix_simple_font_streams`, which strips control bytes to `0x20` unless
+    /// `control_codes_to_preserve` holds them — and that function reads
+    /// `/Differences` and the symbolic cmap, never the ToUnicode. So a font
+    /// whose ToUnicode calls `0x01` a space loses it one pass later, which is
+    /// the same corruption arriving by a different door.
+    ///
+    /// Measured through `cleanup_for_pdfa` rather than a single function, for
+    /// exactly that reason: a per-pass assertion cannot see a pass that has not
+    /// run yet.
+    ///
+    /// `cleanup_for_pdfa` is not the shipped pipeline, and this test was named
+    /// as though it were. What users run is `pdfa::convert_bytes`, which calls
+    /// roughly forty font steps; `fix_type1_subset_missing_glyphs` is one of
+    /// them and destroyed the same space codes while this test stayed green.
+    /// See `the_subset_pass_also_spares_the_fonts_own_space_code`.
+    #[test]
+    fn a_space_code_survives_the_cleanup_passes_not_just_one() {
+        let mut doc = fx::make_symbolic_subset_doc(b"not a font program".to_vec(), vec![0, 0]);
+        let tounicode = lopdf::Stream::new(
+            lopdf::dictionary! {},
+            b"/CIDInit /ProcSet findresource begin\n\
+              1 begincmap\n1 beginbfchar\n<01> <0020>\nendbfchar\nendcmap\nend"
+                .to_vec(),
+        );
+        let tu_id = doc.add_object(Object::Stream(tounicode));
+        let font_id = *doc
+            .objects
+            .iter()
+            .find(|(_, o)| {
+                matches!(o, Object::Dictionary(d) if d.get(b"Type").ok()
+                == Some(&Object::Name(b"Font".to_vec())))
+            })
+            .map(|(id, _)| id)
+            .expect("the fixture has a font");
+        if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
+            font.set("ToUnicode", Object::Reference(tu_id));
+            // 0x01 sits outside the declared range, which is the case that
+            // reaches the stripping pass.
+            font.set("FirstChar", Object::Integer(65));
+            font.set("LastChar", Object::Integer(66));
+        }
+        // text that uses the space code
+        let content_id = *doc
+            .objects
+            .iter()
+            .find(|(_, o)| matches!(o, Object::Stream(st) if st.content.starts_with(b"BT")))
+            .map(|(id, _)| id)
+            .expect("the fixture has a content stream");
+        if let Some(Object::Stream(st)) = doc.objects.get_mut(&content_id) {
+            st.content = b"BT /F1 12 Tf (A\x01B) Tj ET".to_vec();
+        }
+
+        let _ = crate::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false);
+
+        let out = fx::page_content(&doc);
+        let start = out.iter().position(|b| *b == b'(').expect("a shown string");
+        assert_eq!(
+            out[start + 2],
+            0x01,
+            "0x01 is this font's space by its own ToUnicode and must survive the \
+             whole pipeline; it became {:#04x}",
+            out[start + 2]
+        );
+    }
+
+    /// The widths fallback must respect the font's own space codes too (#210).
+    ///
+    /// When no font-program parser recognises the embedded program,
+    /// `invalid_simple_codes_from_widths` supplies the answer instead — and its
+    /// result was unioned in *after* the space codes were filtered out, so on
+    /// that path a code the font's ToUnicode calls a space, carrying a zero
+    /// width, was still condemned and overwritten with `0x20`. That is the
+    /// corruption this whole change prevents, arriving by the one route the
+    /// first version did not cover.
+    ///
+    /// The filter is applied to the union for that reason: a route added later
+    /// cannot miss it.
+    #[test]
+    fn the_widths_fallback_respects_the_fonts_own_space_code() {
+        // Not a font program any parser will accept, so `program_parsed` stays
+        // false and the widths route is the one that answers.
+        let mut doc = fx::make_symbolic_subset_doc(b"not a font program".to_vec(), vec![0, 0]);
+
+        // The font says code 65 is a space, and gives it a zero width — exactly
+        // the combination the fallback condemns.
+        let tounicode = lopdf::Stream::new(
+            lopdf::dictionary! {},
+            b"/CIDInit /ProcSet findresource begin\n\
+              1 begincmap\n1 beginbfchar\n<41> <0020>\nendbfchar\nendcmap\nend"
+                .to_vec(),
+        );
+        let tu_id = doc.add_object(Object::Stream(tounicode));
+        let font_id = *doc
+            .objects
+            .iter()
+            .find(|(_, o)| {
+                matches!(o, Object::Dictionary(d) if d.get(b"Type").ok()
+                == Some(&Object::Name(b"Font".to_vec())))
+            })
+            .map(|(id, _)| id)
+            .expect("the fixture has a font");
+        if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
+            font.set("ToUnicode", Object::Reference(tu_id));
+        }
+
+        fix_symbolic_font_notdef_streams(&mut doc);
+
+        // Only the space code is claimed here. Code 66 has a zero width and no
+        // ToUnicode entry, so the fallback is right to condemn it; asserting
+        // that both survive would be asserting the fallback does nothing.
+        let content = fx::page_content(&doc);
+        let start = content
+            .iter()
+            .position(|b| *b == b'(')
+            .expect("a shown string");
+        assert_eq!(
+            content[start + 1],
+            0x41,
+            "code 0x41 is this font's space by its own ToUnicode and must survive \
+             the widths fallback; it was overwritten with {:#04x}",
+            content[start + 1]
+        );
+    }
+
+    /// The subset pass condemns codes through its own call to
+    /// `collect_simple_invalid_codes`, and that helper returns early on both
+    /// the TrueType and the Type 1 route. A space rule placed at the helper's
+    /// tail is therefore dead code for every real font: measured on the
+    /// shipped pipeline, 002_002193 still fell from 3384 spaces to 134 with
+    /// such a filter in place. This test fails if the rule moves back inside.
+    #[test]
+    fn the_subset_pass_also_spares_the_fonts_own_space_code() {
+        let mut doc = fx::make_symbolic_subset_doc(b"not a font program".to_vec(), vec![0, 0]);
+
+        let tounicode = lopdf::Stream::new(
+            lopdf::dictionary! {},
+            b"/CIDInit /ProcSet findresource begin\n\
+              1 begincmap\n1 beginbfchar\n<41> <0020>\nendbfchar\nendcmap\nend"
+                .to_vec(),
+        );
+        let tu_id = doc.add_object(Object::Stream(tounicode));
+        let font_id = *doc
+            .objects
+            .iter()
+            .find(|(_, o)| {
+                matches!(o, Object::Dictionary(d) if d.get(b"Type").ok()
+                == Some(&Object::Name(b"Font".to_vec())))
+            })
+            .map(|(id, _)| id)
+            .expect("the fixture has a font");
+        if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&font_id) {
+            font.set("ToUnicode", Object::Reference(tu_id));
+        }
+
+        fix_type1_subset_missing_glyphs(&mut doc);
+
+        let content = fx::page_content(&doc);
+        let start = content
+            .iter()
+            .position(|b| *b == b'(')
+            .expect("a shown string");
+        assert_eq!(
+            content[start + 1],
+            0x41,
+            "code 0x41 is this font's space by its own ToUnicode; the subset \
+             pass overwrote it with {:#04x}",
+            content[start + 1]
+        );
+    }
+
     /// A parseable program with zero declared widths is not "inconclusive":
     /// the widths fallback must not fire (568_568972: TeX dcr10, all zero
     /// /Widths entries, text stripped to spaces before the fix).
@@ -27198,6 +27474,53 @@ mod woordscheiding_tests {
     fn a_font_that_maps_cid_zero_to_ffff_does_not() {
         let (doc, font) = doc_with_tounicode(tounicode(&[("0000", "FFFF")]));
         assert!(!tounicode_blank_cids(&doc, &font).contains(&0));
+    }
+
+    /// A simple font's space code is whatever its ToUnicode says it is (#210).
+    ///
+    /// `002_002193` carries its spaces as codes `0x09`, `0x04` and `0x01`, each
+    /// mapping to U+0020 in the font's own ToUnicode — which is why the source
+    /// extracted 3265 spaces correctly. Those codes have no glyph, so the PDF/A
+    /// repair condemned them and wrote `0x20` over them; and in these fonts
+    /// `0x20` is not a space but `.`, `A`, `r` or `G`. An invisible space became
+    /// visible ink the original never drew.
+    ///
+    /// The same assumption as the CID-0 fault fixed above, one layer down: there
+    /// that CID 0 means `.notdef`, here that `0x20` means space. Both are
+    /// contradicted by a table in the same file.
+    #[test]
+    fn a_code_the_font_calls_a_space_is_not_condemned() {
+        let (doc, font) = doc_with_tounicode(tounicode(&[("0009", "0020"), ("0020", "002E")]));
+        let spaces: std::collections::HashSet<u8> = read_font_to_unicode_map(&doc, &font)
+            .into_iter()
+            .filter(|(_, ch)| *ch == ' ')
+            .map(|(code, _)| code)
+            .collect();
+        assert!(
+            spaces.contains(&0x09),
+            "code 0x09 maps to U+0020 and carries this font's spaces"
+        );
+        assert!(
+            !spaces.contains(&0x20),
+            "0x20 maps to '.' here, so substituting it would draw a period"
+        );
+    }
+
+    /// The acceptance side: an ordinary font is not disturbed.
+    ///
+    /// A bound has two failure directions, and every other test here asks
+    /// whether the wrong thing is rejected. This one asks whether the right
+    /// thing still passes: where `0x20` really is the space, it stays the space.
+    #[test]
+    fn an_ordinary_font_still_calls_0x20_the_space() {
+        let (doc, font) = doc_with_tounicode(tounicode(&[("0020", "0020"), ("0041", "0041")]));
+        let spaces: std::collections::HashSet<u8> = read_font_to_unicode_map(&doc, &font)
+            .into_iter()
+            .filter(|(_, ch)| *ch == ' ')
+            .map(|(code, _)| code)
+            .collect();
+        assert!(spaces.contains(&0x20), "0x20 is the space in a normal font");
+        assert!(!spaces.contains(&0x41), "0x41 is 'A', not a space");
     }
 
     #[test]
