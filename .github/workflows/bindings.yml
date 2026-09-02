@@ -74,5 +74,14 @@ jobs:
           java-version: "11"
       - name: Build
         run: cargo build -p pdf-java
+      # Here rather than in ci.yml's guard jobs: it runs `cargo run --release
+      # -p pdf-manip`, which is 0.09 s against a warm target and 584 crates cold.
+      # In orchestration-guard it would have been paid per pull request on a
+      # hosted runner once #1649 moves that job -- a full cold build to compare
+      # 1090 bytes. This job already needs the toolchain for the binding the
+      # fixture belongs to. (T1 review, #1654)
+      - name: The Java binding fixture is the one we generate
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_java_fixture_is_the_one_we_generate.py
       - name: Test
         run: cargo test -p pdf-java
