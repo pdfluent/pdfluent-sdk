@@ -167,13 +167,6 @@ fn every_fixture_script_parses_and_none_hits_the_depth_bound() {
         }
     }
 
-    assert!(
-        scripts_seen >= FIXTURE_FLOOR,
-        "found {scripts_seen} FormCalc scripts across {} files, fewer than the floor \
-         of {FIXTURE_FLOOR}",
-        files.len()
-    );
-
     for failure in &failures {
         eprintln!("fixture failed: {failure}");
     }
@@ -183,6 +176,20 @@ fn every_fixture_script_parses_and_none_hits_the_depth_bound() {
         failures.len(),
         files.len(),
         failures.join("\n  ")
+    );
+
+    // The script floor is a backstop BEHIND the named failures, not in front of
+    // them. It used to sit here, above this block, and it fires on exactly the
+    // input the named list exists to describe: one fixture whose script the byte
+    // search cannot find takes `scripts_seen` from 51 to 50, below
+    // `FIXTURE_FLOOR`, and the run died on "found 50 FormCalc scripts across 51
+    // files" without naming one of the 51. The test that promises "failures by
+    // name" reported a count instead. (review of #1673)
+    assert!(
+        scripts_seen >= FIXTURE_FLOOR,
+        "found {scripts_seen} FormCalc scripts across {} files, fewer than the floor \
+         of {FIXTURE_FLOOR}",
+        files.len()
     );
 }
 
