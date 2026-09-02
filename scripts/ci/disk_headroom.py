@@ -378,14 +378,19 @@ def main() -> int:
     # So the pair is printed together. A reader who sees only one of the two
     # numbers reaches for the wrong one, and this guard exists because somebody
     # did. It stays informational: the verdict below is unchanged.
-    if measured != repo_root:
+    # `measured` is a str and repo_root a Path, so `!=` was always True and the
+    # explanation below would have printed on any machine where the inner
+    # filesystem happened to report more -- including a Mac, where there is no
+    # sparse image and the sentence would be nonsense. Compared as resolved
+    # paths now. (peer review, #1664)
+    if Path(str(measured)).resolve() != repo_root.resolve():
         try:
-            binnen = shutil.disk_usage(repo_root)
+            inner = shutil.disk_usage(repo_root)
         except OSError:
-            binnen = None
-        if binnen is not None and binnen.free > free:
+            inner = None
+        if inner is not None and inner.free > free:
             print(f"  (the filesystem at {repo_root} reports "
-                  f"{binnen.free / GB:.1f} GB free, which is the maximum size of "
+                  f"{inner.free / GB:.1f} GB free, which is the maximum size of "
                   f"a sparse image and NOT what the host can give it. Writable "
                   f"space is the smaller of the two: {free_gb:.1f} GB. Deleting "
                   f"inside frees blocks in the image and returns nothing to the "
