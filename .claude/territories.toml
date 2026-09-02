@@ -156,8 +156,12 @@ uitgezonderd = [
   "scripts/ci/every_document_is_registered.py",
   "scripts/ci/test_every_document_is_registered.py",
   ".github/workflows/document-register.yml",
-  # t3, narrowly, for the commit that retires the guard's ALLOWED entry.
-  "scripts/ci/every_guard_has_a_job.py",
+  # Taken back by t2 on 02-09-2026, as t3's own note said it would be: the
+  # commit that retires the ALLOWED entry (a2ee809d) is on master, so the narrow
+  # claim has done what it was for. Left standing it would be a register that
+  # outlives its subject -- the class this map keeps catching elsewhere -- and it
+  # would block t2's own next edit of the file, which is what it did today
+  # (SPIEGEL_RATEL 13 -> 14 for classify_render_outcome.sh, #276).
 ]
 issues = [288, 286, 290, 276, 283, 264]
 
@@ -219,12 +223,6 @@ paden = [
   "scripts/ci/every_document_is_registered.py",
   "scripts/ci/test_every_document_is_registered.py",
   ".github/workflows/document-register.yml",
-  # t2's file, held by t3 narrowly and for one commit: wiring the guard makes
-  # its ALLOWED entry in every_guard_has_a_job.py untrue, and that file's own
-  # rule is that a reason which has become untrue goes in the same change that
-  # made it untrue. One entry removed, nothing else; t2 reviews, and takes the
-  # line back at its next edit of the file.
-  "scripts/ci/every_guard_has_a_job.py",
 ]
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
 
