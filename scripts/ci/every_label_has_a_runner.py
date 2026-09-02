@@ -69,7 +69,11 @@ def geregistreerd() -> set[str] | None:
 # The array is single-quoted and contains double quotes -- ["self-hosted",…] --
 # so the content class cannot exclude quotes, which is what made the first
 # version return only the other branch.
-_JSON_LIJST = re.compile(r"""fromJSON\(\s*'(\[.*?\])'\s*\)""")
+# re.DOTALL: YAML block scalars wrap an expression across lines, and `.` does
+# not cross a newline without it -- so a multi-line fromJSON returned only the
+# other branch and the self-hosted labels vanished. Same failure as the quoting
+# bug one commit earlier, reached by line breaks instead. (T1 review, #1648)
+_JSON_LIJST = re.compile(r"""fromJSON\(\s*'(\[.*?\])'\s*\)""", re.DOTALL)
 _LOSSE_STRING = re.compile(r"""(?<!\.)'([A-Za-z0-9][A-Za-z0-9._-]*)'""")
 
 
@@ -89,6 +93,11 @@ def gevraagd(job) -> list[str]:
     # was invisible here: rename xfa-fast and each one stays green while the rest
     # of the file goes red. #311 puts nine jobs into this shape, which would have
     # turned one blind spot into nine. (T3 review, #1648)
+    # A fromJSON whose argument is not a literal -- fromJSON(env.RUNNERS) --
+    # cannot be read here. Returning [] made it indistinguishable from "nothing
+    # to check", which is the pass this guard exists to refuse. (T1 review, #1648)
+    if "fromJSON(" in ro and not _JSON_LIJST.search(ro):
+        return ["__onleesbaar__"]
     uit: list[str] = []
     rest = ro
     for m in _JSON_LIJST.finditer(ro):
@@ -171,6 +180,10 @@ def main() -> int:
                 # on all of them at once -- and reading the alternatives as a
                 # single label set made the hosted branch look like a
                 # self-hosted label nobody answers. (T3 review, #1648)
+                if label == "__onleesbaar__":
+                    ontbreekt.append((pad.name, naam,
+                                      "an unreadable fromJSON() argument", vanzelf))
+                    continue
                 if GEHOST.match(label):
                     continue
                 if label not in online:
