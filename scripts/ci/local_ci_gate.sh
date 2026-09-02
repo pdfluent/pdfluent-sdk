@@ -82,7 +82,20 @@ fi
 # Run it once and show what it said either way. (Codex, #1542)
 _bm_uit="$(python3 scripts/ci/branches_have_a_merge_request.py 2>&1)"; _bm=$?
 printf '%s\n' "$_bm_uit" | sed 's/^/  /'
-[ $_bm -eq 0 ] || { echo "LOCAL_CI_GATE: branch-mr FAILED" >&2; exit 1; }
+# Counted, not fatal. This used to `exit 1` here, which aborted the run before
+# any of the 53 gates below it -- so a branch 150 commits ahead without a pull
+# request got NO checking at all, and the one condition that guarantees a long
+# unmerged branch also guaranteed nothing else was looked at. That is the state
+# in which the other guards matter most.
+#
+# Codex found it through the four fork guards this branch adds (#1639), but they
+# were only the newest things standing behind the exit; moving those four in
+# front of it would have made them arbitrarily special and left the other
+# forty-nine where they were.
+if [ $_bm -ne 0 ]; then
+    echo "=== branch-mr  FAIL — see the lines above"
+    fail=$((fail+1))
+fi
 run kosten   python3 scripts/ci/no_hosted_minutes_on_a_push.py
 run instances python3 scripts/ci/one_instance_per_event.py
 run jobsexist python3 scripts/ci/workflow_jobs_exist.py
@@ -97,6 +110,16 @@ run installer python3 scripts/ci/test_installer_escapes_the_path.py
 run upstream  python3 scripts/ci/upstream_has_not_moved_on.py
 run forklist  python3 scripts/ci/fork_lists_agree.py
 run patches   python3 scripts/ci/test_upstream_gap_counts_patches.py
+# The four fork-register guards. Two of them ran nowhere at all -- not in a job,
+# not in this gate -- so they looked like protection and were not. The wiring was
+# named as t2's part when they were written (#1609) and then lost twice: once
+# when it drowned in the #1543 relay, and once when the relay's merge was rebuilt
+# from scratch and only the CONFLICTED paths were carried over. This file was not
+# conflicted, so the edit to it stayed behind in the discarded tree. (#296)
+run forkreg   python3 scripts/ci/the_fork_register_is_verifiable.py
+run forkpunt  python3 scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py
+run wtconfig  python3 scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py
+run forkmerge python3 scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py
 run featgate  python3 scripts/ci/test_feature_gated_tests_run.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json

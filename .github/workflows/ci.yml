@@ -459,6 +459,54 @@ jobs:
               fi
             done
             if [ "$FAIL" = "1" ]; then exit 1; fi
+      # The fork guards compare against the base, and actions/checkout is
+      # shallow: neither github/master nor origin/master nor master exists, so
+      # `merge-base` failed and the register-lines check returned "nothing
+      # moved" -- the answer that lets everything through. Measured: without a
+      # base ref the guard printed SKIPPED and exited 0 while a change to a
+      # `niet_mergen` entry passed underneath it. It is fatal now, so this fetch
+      # is what makes it able to answer rather than what hides it.
+      # (codex, #1639)
+      # actions/checkout is depth-1, and HEAD itself is in .git/shallow. A
+      # TARGETED fetch of the base brings the object in and does not connect it
+      # to HEAD's history, so `git merge-base HEAD origin/master` still fails --
+      # measured on a depth-1 clone: exit 1 after the targeted fetch, exit 0
+      # after --unshallow.
+      #
+      # My first fix made that fatal instead of silent, which turned a guard
+      # that always passed into one that always failed. Both are the same
+      # defect: the check never ran. This is the half that makes it able to run.
+      # (codex, #1639)
+      - name: Give the fork guards a history to compare against
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          if [ -f .git/shallow ]; then
+            git fetch -q --unshallow origin || git fetch -q --deepen=500 origin
+          fi
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then BASE="${{ github.event.before }}"; fi
+          case "$BASE" in ""|0000000000000000000000000000000000000000)
+              git fetch -q origin master
+              git update-ref refs/remotes/origin/master "$(git rev-parse FETCH_HEAD)" ;;
+            *)
+              git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE"
+              git update-ref refs/remotes/origin/master "$BASE" ;;
+          esac
+          git merge-base HEAD refs/remotes/origin/master >/dev/null || {
+            echo "::error::still no merge base after deepening; the fork guards cannot tell which register lines this branch moves." >&2
+            exit 1
+          }
+      - name: A fork declares where it forked from
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py
+      - name: A fork point is checked against the content it claims
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py
+      - name: The shared config does not break worktrees
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py
+
 
   # --------------------------------------------------------------------------
   # #288. Until 31-08-2026 the guards below ran in .gitlab-ci.yml and nowhere

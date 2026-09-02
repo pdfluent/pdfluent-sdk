@@ -92,7 +92,7 @@ def schone_omgeving() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
-def registerregels_die_bewogen() -> set[str]:
+def registerregels_die_bewogen() -> set[str] | None:
     """Crates whose `gelijk_met` or `forkpunt` this branch changes.
 
     NOT "crates whose files changed", which is what the first version asked.
@@ -150,10 +150,16 @@ def registerregels_die_bewogen() -> set[str]:
             return set()
         return {c for c, v in nu.items() if c in toen and toen[c] != v}
 
+    # None, not an empty set. An empty set means "no register line moved", which
+    # is the answer that lets everything through -- and on a shallow checkout
+    # neither github/master nor origin/master nor master exists, so this was the
+    # answer on every Actions run. The guard was wired, ran, printed SKIPPED and
+    # returned 0 while a change to a `niet_mergen` entry's `gelijk_met` or
+    # `forkpunt` passed underneath it. (codex, #1639)
     print("SKIPPED (not a pass): geen merge-base gevonden, dus niet vastgesteld "
           "welke registerregels deze tak beweegt; `niet_mergen` blokkeert hier niets.",
           file=sys.stderr)
-    return set()
+    return None
 
 
 def main() -> int:
@@ -177,6 +183,13 @@ def main() -> int:
     fouten: list[str] = []
     geblokkeerd: list[tuple[str, str]] = []
     bewogen = registerregels_die_bewogen()
+    if bewogen is None:
+        print("[forkpunt] FATAAL: zonder merge-base is niet vast te stellen welke "
+              "registerregels deze tak verplaatst, en een lege verzameling zou "
+              "betekenen dat er niets bewoog. Haal de basis op (fetch-depth: 0 of "
+              "een gerichte fetch van de base-sha) en draai opnieuw.",
+              file=sys.stderr)
+        return 2
 
     for f in forks:
         naam = f.get("onze_crate", "<naamloos>")
