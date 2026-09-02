@@ -331,6 +331,44 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
+          # The pinned fifty are IRS and USCIS forms named in
+          # corpus/SSIM_GATE_MANIFEST.json as paths inside the repository. Those
+          # files left the repository on 26-05-2026 in 2e3d2052 ("M9-A release
+          # hygiene"), and the gate stayed pinned to them: 48 of the 50 have been
+          # missing ever since. `prepare_ci_corpus.py` does fail on that -- "too
+          # many failures (48/50)" -- so this was never a silent pass. But it has
+          # been failing on its INPUT rather than on rendering quality for three
+          # months, and from the outside that is indistinguishable from a real
+          # SSIM regression.
+          #
+          # The fetch step above does not supply them either: it writes the 500
+          # pdfjs/pdfbox/veraPDF documents into corpus/gate, and none of the fifty
+          # pinned names appears among them. Checked on name and on path: 0 of 50.
+          #
+          # So the step says what is missing and stops, in the shape the rest of
+          # this repository uses for a measurement that could not be made. It is
+          # NOT re-pinned to whatever the fetch happens to provide: the 0.94 mean
+          # and the 35% fully-correct floor are calibrated against these fifty
+          # documents, and a threshold carried over to a different corpus is a
+          # number that has stopped meaning anything. The gate returns with its
+          # own corpus, in the ephemeral snapshot. (#276)
+          ontbreekt=$(python3 - <<'PY'
+          import json, pathlib
+          e = json.load(open("corpus/SSIM_GATE_MANIFEST.json"))["entries"]
+          print(sum(1 for x in e if not pathlib.Path(x["source"]).is_file()), len(e))
+          PY
+          )
+          set -- $ontbreekt
+          if [ "$1" -gt 0 ]; then
+            echo "SKIPPED (not a pass): $1/$2 pinned forms not on this runner." >&2
+            echo "  corpus/SSIM_GATE_MANIFEST.json names them as paths inside the" >&2
+            echo "  repository; they were removed in 2e3d2052 on 26-05-2026 and the" >&2
+            echo "  gate corpus fetched above contains none of them. No page was" >&2
+            echo "  rendered and no SSIM was computed, so this is not a regression" >&2
+            echo "  and not a pass. The 0.94/35% thresholds return with the corpus," >&2
+            echo "  not as lower numbers. (#276)" >&2
+            exit 3
+          fi
           cargo build --release -p xfa-cli --bin pdfluent
           python3 scripts/prepare_ci_corpus.py \
             --manifest corpus/SSIM_GATE_MANIFEST.json \
