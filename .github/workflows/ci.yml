@@ -694,6 +694,9 @@ jobs:
       - name: The commit-msg hook exists and calls both message guards
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/the_commit_msg_hook_is_wired.py --alleen-boom
+      - name: The hook guard's layers are told apart
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_commit_msg_hook_is_wired.py
       - name: No commit carries AI attribution
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_ai_attribution.py
@@ -717,9 +720,22 @@ jobs:
         env:
           TERMEN: ${{ secrets.PDFLUENT_INTERNE_TERMEN }}
         run: |
+          # Masking FIRST, and PER LINE. `::add-mask::` is a line-oriented
+          # workflow command: given a multi-line value it masks only the first
+          # line and prints the rest as ordinary log lines. The list is one term
+          # per line by design, so the normal case would have published every
+          # partner name but the first, into the log -- which is the thing that
+          # keeping the list out of the tree exists to prevent. Reproduced:
+          # `TERMEN=$'A\nB\nC'; echo "::add-mask::$TERMEN"` emits
+          # `::add-mask::A`, then a bare `B` and `C`. (peer review, #1660)
+          #
+          # Before the file is written, because anything failing between the two
+          # would leak what the second half was supposed to protect.
+          while IFS= read -r term; do
+            if [ -n "$term" ]; then echo "::add-mask::$term"; fi
+          done <<< "$TERMEN"
           printf '%s\n' "$TERMEN" > "$RUNNER_TEMP/interne-termen.txt"
           echo "PDFLUENT_INTERNE_TERMEN=$RUNNER_TEMP/interne-termen.txt" >> "$GITHUB_ENV"
-          echo "::add-mask::$TERMEN"
       - name: No commit message names an internal matter
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/geen_interne_zaken.py --bereik origin/master..HEAD
