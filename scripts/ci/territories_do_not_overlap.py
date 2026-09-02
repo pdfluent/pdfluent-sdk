@@ -44,7 +44,26 @@ GIT = "/usr/bin/git"
 
 
 def load() -> list[dict]:
-    return tomllib.loads(MAP.read_text()).get("territory", [])
+    """The map AS COMMITTED, falling back to the working tree only if there is
+    no commit to read.
+
+    Reading the file on disk made claiming free. A branch in t1 could touch a
+    path t2 owns, add the claim to `.claude/territories.toml`, leave it
+    uncommitted, and pass: the guard read the edit, agreed the path was claimed,
+    and exited 0 -- while nothing about that claim ever reached a commit, a
+    diff, or a reviewer. The docstring already promised the opposite ("taking on
+    work in another territory is a commit, not a silent edit"), and a promise
+    the code does not keep is the failure this repository keeps finding.
+
+    The fallback is for the one case with no commit to read -- a fixture's
+    freshly initialised repository before its first commit -- and it is narrow
+    on purpose: `git show` failing for any other reason leaves the guard reading
+    what it is supposed to be checking. (peer review, #1636)
+    """
+    uit = subprocess.run([GIT, "show", f"HEAD:{MAP.relative_to(ROOT)}"],
+                         cwd=ROOT, capture_output=True, text=True, check=False)
+    tekst = uit.stdout if uit.returncode == 0 else MAP.read_text()
+    return tomllib.loads(tekst).get("territory", [])
 
 
 def owns(territory: dict, path: str) -> bool:
@@ -117,8 +136,14 @@ def current_branch() -> str | None:
     # A worktree detached at a commit a branch still points to -- the shape every
     # relay worktree had. Prefer a name that looks like a territory claim; a
     # commit can carry several refs and only one of them answers this question.
+    # Local branches AND remote-tracking refs. A CI checkout is detached at a
+    # commit whose only ref is `refs/remotes/github/<branch>`, so asking `git
+    # branch` alone asked the one question the CI shape cannot answer -- which
+    # is the shape this whole function exists for. Tags are left out: a tag is
+    # not a claim of ownership and names no territory.
     pointing = subprocess.run(
-        [GIT, "branch", "--points-at", "HEAD", "--format=%(refname:short)"],
+        [GIT, "for-each-ref", "--points-at", "HEAD", "--format=%(refname:short)",
+         "refs/heads", "refs/remotes"],
         cwd=ROOT, capture_output=True, text=True, check=False,
     )
     # `--points-at` also prints git's pseudo-entry "(HEAD detached at <sha>)".
@@ -136,6 +161,15 @@ def current_branch() -> str | None:
     # correct change for belonging to the wrong owner, which is worse than not
     # checking: it teaches people the guard is unreliable. (codex, #1636)
     known = {t["id"] for t in load()}
+    # `github/t2/ci-fix` is the same claim as `t2/ci-fix`: the remote name is
+    # not a territory, so it is dropped before the prefix is read.
+    def zonder_remote(n: str) -> str:
+        deel = n.split("/")
+        if len(deel) > 2 and deel[0] not in known and deel[1] in known:
+            return "/".join(deel[1:])
+        return n
+
+    names = [zonder_remote(n) for n in names]
     claims = [n for n in names if "/" in n and n.split("/")[0] in known]
     # More than one territory ref on the same commit is not a preference to
     # express, it is a question nobody has answered: the two names disagree
@@ -143,7 +177,10 @@ def current_branch() -> str | None:
     # judge the change against an owner chosen by listing order. The wrong
     # owner approving a change is the failure this map exists to prevent, so
     # ambiguity is raised rather than resolved. (codex, #1636)
-    if len(set(claims)) > 1:
+    # The PREFIX is what decides the owner, so that is what has to disagree.
+    # `t1/a` and `t1/b` on one commit are two names for one territory and no
+    # question at all; refusing them called a naming habit a conflict.
+    if len({n.split("/")[0] for n in claims}) > 1:
         raise Ambigu(sorted(set(claims)))
     if claims:
         return claims[0]
@@ -205,15 +242,19 @@ def main() -> int:
     overgeslagen: str | None = None
     checked_files = 0
     unowned = 0
+    # Collected, not returned. The first version of this returned 2 right here
+    # -- before the shared judgement below -- so a real overlap, found and
+    # collected a few lines up, disappeared behind "could not tell whose branch
+    # this is". That is the third time in this file that a verdict decided in
+    # one arm hid a verdict decided in another, and the second time I wrote it
+    # while removing it. Ambiguity is a reason the branch half cannot run; it is
+    # not a reason to stop reporting the half that did. (codex, #1636)
+    ambigu: Ambigu | None = None
+    branch = None
     try:
         branch = current_branch()
     except Ambigu as exc:
-        print(f"FATAL: {len(exc.namen)} territory refs point at this commit: "
-              f"{', '.join(exc.namen)}. They disagree about who owns this work, "
-              "and choosing between them by listing order would judge it against "
-              "an owner nobody named. Set TERRITORY_BRANCH to the one that "
-              "applies.", file=sys.stderr)
-        return 2
+        ambigu = exc
 
     if branch and "/" in branch and branch.split("/")[0] in {t["id"] for t in territories}:
         tid = branch.split("/")[0]
@@ -288,6 +329,13 @@ def main() -> int:
     # --- one judgement, on everything collected --------------------------
     # An overlap is a real failure and outranks "could not check the rest",
     # so it is tested first and reported whichever arm ran.
+    if ambigu is not None:
+        print(f"{len(ambigu.namen)} territory refs point at this commit: "
+              f"{', '.join(ambigu.namen)}. They name different territories, so "
+              "they disagree about who owns this work, and choosing between them "
+              "by listing order would judge it against an owner nobody named. "
+              "Set TERRITORY_BRANCH to the one that applies.", file=sys.stderr)
+
     if problems:
         print(f"Territories: {len(problems)} problem(s)\n", file=sys.stderr)
         for p in problems:
@@ -295,6 +343,8 @@ def main() -> int:
         if overgeslagen:
             print(f"\n  (and the map WAS checked, but {overgeslagen})", file=sys.stderr)
         return 1
+    if ambigu is not None:
+        return 2
     if overgeslagen:
         print(f"SKIPPED (not a pass): {overgeslagen}. The map itself was checked "
               f"for overlaps and had none.", file=sys.stderr)

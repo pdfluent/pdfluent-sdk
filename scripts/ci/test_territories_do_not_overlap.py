@@ -141,7 +141,53 @@ r = run(root, env, TERRITORY_BRANCH="t2/two")
 expect("TERRITORY_BRANCH resolves an ambiguous checkout", r.returncode == 0,
        f"exit={r.returncode}: {r.stderr[:160]}")
 
-MINIMUM_CASES = 10  # FLOOR
+# The map is read AS COMMITTED. Claiming used to be free: touch a path
+# somebody else owns, add the claim to the map, leave it uncommitted, pass.
+root, env = build(CLEAN, [], detach=False)
+(root / ".claude" / "territories.toml").write_text(CLEAN.replace(
+    'paden = ["scripts/ci/**"]', 'paden = ["scripts/ci/**", "scripts/t1/**"]'))
+subprocess.run([GIT, "checkout", "-qb", "t1/reaching"], cwd=root, env=env, check=True)
+(root / "scripts" / "ci" / "not-mine.py").write_text("# t2 owns scripts/ci\n")
+subprocess.run([GIT, "add", "scripts/ci/not-mine.py"], cwd=root, env=env, check=True)
+subprocess.run([GIT, "commit", "-qm", "reach"], cwd=root, env=env, check=True)
+r = run(root, env, TERRITORY_BRANCH="t1/reaching")
+expect("an UNCOMMITTED claim does not excuse the reach", r.returncode == 1,
+       f"exit={r.returncode}: {r.stderr[:200]}")
+
+# Two branches of one territory are two names, not two owners.
+root, env = build(CLEAN, ["t2/one", "t2/two"], detach=True)
+r = run(root, env)
+expect("two branches of the SAME territory are not a conflict", r.returncode == 0,
+       f"exit={r.returncode}: {r.stderr[:160]}")
+
+# The CI shape: detached at a commit whose only ref is remote-tracking.
+root, env = build(CLEAN, [], detach=False)
+subprocess.run([GIT, "update-ref", "refs/remotes/github/t2/from-ci", "HEAD"],
+               cwd=root, env=env, check=True)
+subprocess.run([GIT, "checkout", "-q", "--detach", "HEAD"], cwd=root, env=env, check=True)
+r = run(root, env)
+expect("a remote-tracking ref names the territory", r.returncode == 0,
+       f"exit={r.returncode}: {r.stderr[:200]}")
+
+# THE HOME, same assertion as the hook guard's: a guard nothing runs is a
+# comment, and `every_guard_has_a_job` stayed green when the gate line went.
+poort = (REPO / "scripts" / "ci" / "local_ci_gate.sh").read_text()
+expect("the local gate still runs the guard",
+       "territories_do_not_overlap.py" in poort)
+expect("  and its test", "test_territories_do_not_overlap.py" in poort)
+
+# Both at once: an overlapping map AND a checkout whose owner cannot be
+# decided. The overlap must survive -- ambiguity is a reason the branch half
+# cannot run, not a reason to stop reporting the half that did.
+root, env = build(OVERLAPPING, ["t1/one", "t2/two"], detach=True)
+r = run(root, env)
+expect("an overlap survives an ambiguous checkout", r.returncode == 1,
+       f"exit={r.returncode}: {r.stderr[:200]}")
+expect("  and the ambiguity is still reported",
+       "t1/one" in r.stderr and "t2/two" in r.stderr, r.stderr[:250])
+expect("  and the overlap is named", "both claim" in r.stderr, r.stderr[:250])
+
+MINIMUM_CASES = 18  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
