@@ -812,6 +812,13 @@ jobs:
       - name: A hit does not publish the term it found
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_een_treffer_publiceert_de_term_niet.py
+      # The range selection of the internal-matter guard lives with the other
+      # message-guard tests, NOT inside internal-matter-guard: that job holds a
+      # secret and runs exactly one step of its own, so nothing that a pull
+      # request controls runs before it (#1660).
+      - name: The range selection answers or refuses
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_internal_matter_range.py
 
 
   commit-identity-guard:
@@ -959,8 +966,6 @@ jobs:
       # Fork pull requests receive no secrets at all, so when this repository
       # stops being private that same base-revision route is what has to carry
       # it, with the fork case failing closed as it does today.
-      - name: The range selection answers or refuses
-        run: python3 scripts/ci/test_internal_matter_range.py
       - name: No commit message names an internal matter
         if: ${{ !cancelled() }}
         env:
