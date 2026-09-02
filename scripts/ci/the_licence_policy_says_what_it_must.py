@@ -176,23 +176,46 @@ def main() -> int:
 
     problems: list[str] = []
 
+    # AND THE OTHER DIRECTION. Everything above asks "is each name the register
+    # requires actually in the policy". Nothing asked the reverse, so an entry
+    # the register has never heard of could be added to `forbidden` and pass:
+    # measured, `Hippocratic-2.1` there gives exit 0 and "OK: 28 forbidden".
+    #
+    # The comment on MOET_OVERIG_VERBODEN says an eighth entry is "a deliberate
+    # edit to code that goes through review" -- and nothing made that true. A
+    # sentence describing a rule is not the rule, which is the failure this file
+    # has now produced five times. (codex, #1656)
+    onbekend = forbidden - MOET_GECLASSIFICEERD - set(MUST_FORBID) - set(MOET_OVERIG_VERBODEN)
+    for name in sorted(onbekend):
+        problems.append(
+            f"{name} is in licenses.forbidden and in no register. Add it to "
+            "MOET_OVERIG_VERBODEN with the reason it may not come in, so the "
+            "next person to remove it has to argue with a sentence rather than "
+            "with an unexplained string.")
+
     for name, why in MOET_OVERIG_VERBODEN.items():
         if name not in forbidden:
             problems.append(f"{name} is not in licenses.forbidden. It must be: {why}.")
         if name in allowed:
             problems.append(f"{name} is in licenses.allowed. It must be forbidden: {why}.")
 
-    for name, why in MUST_FORBID.items():
-        if name not in forbidden:
-            problems.append(f"{name} is not in licenses.forbidden. It must be: {why}.")
+
     # The family, generated. Absence is the finding: a spelling that is in no
     # list at all reports "unknown" rather than "forbidden", and unknown stops
     # refusing the moment somebody adds it to `allowed`.
     for name in sorted(MOET_GECLASSIFICEERD - forbidden):
+        # MUST_FORBID is no longer a second presence check -- every one of its
+        # names is covered by the generated family or by MOET_OVERIG_VERBODEN,
+        # so it reported each of them twice. It is a REASONS table now: the
+        # family says which spellings must be classified, and this adds the
+        # story where one exists. Two registers asserting the same thing is how
+        # they drift apart. (peer review, #1656)
+        extra = MUST_FORBID.get(name)
         problems.append(
             f"{name} is not in licenses.forbidden. Every SPDX spelling of the "
             "strong-copyleft family must be classified there; this one is not, "
-            "so a dependency declaring it reports as unclassified.")
+            "so a dependency declaring it reports as unclassified."
+            + (f" Specifically: {extra}." if extra else ""))
 
     # And the move that the name list could not see: the family turning up on
     # the side that permits.
@@ -320,7 +343,8 @@ def main() -> int:
         return 1
 
     print(f"[policy] OK: {len(forbidden)} forbidden and {len(allowed)} allowed "
-          f"entries; {len(MUST_FORBID) + len(MUST_ALLOW)} required ones present, "
+          f"entries; {len(MOET_GECLASSIFICEERD) + len(MOET_OVERIG_VERBODEN) + len(MUST_ALLOW)} "
+          f"required entries present, "
           f"and the evaluator agrees with all {checked}.")
     return 0
 

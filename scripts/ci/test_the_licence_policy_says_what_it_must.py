@@ -285,7 +285,19 @@ expect("a missing policy is FATAL, not a pass", r.returncode == 2, f"exit={r.ret
 # how the same floor failed in #1641: len(fails) counts only failures, so a
 # deleted case left the suite green while it shrank, and a floor below the real
 # count tolerated the shrinkage it existed to catch.
-MINIMUM_CASES = 66  # FLOOR
+# THE OTHER DIRECTION. Every case above asks whether a name the register
+# requires is in the policy. None asked whether a name in the policy is in the
+# register -- so an entry nobody has explained could be added to `forbidden`
+# and pass, which is what the comment claiming an eighth entry "goes through
+# review" was quietly relying on.
+r = run_with(lambda t: set_list(t, "forbidden",
+                                read_list(t, "forbidden") + ["Hippocratic-2.1"]))
+expect("an unregistered forbidden entry is refused",
+       r.returncode == 1 and "Hippocratic-2.1" in r.stderr, f"exit={r.returncode}")
+expect("  and it says where to write the reason",
+       "MOET_OVERIG_VERBODEN" in r.stderr, r.stderr[-200:])
+
+MINIMUM_CASES = 68  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 if fails:
     for f in fails:
