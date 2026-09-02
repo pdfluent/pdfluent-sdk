@@ -93,6 +93,19 @@ r = run_with(lambda t: set_list(t, "forbidden", []))
 expect("emptying the forbidden list FAILS", r.returncode == 1, f"exit={r.returncode}")
 expect("  and says it was emptied, not curated", "emptied" in r.stderr)
 
+# The permitting list is an attack surface too: `allowed` is tested before
+# `weak_copyleft`, so a weak licence there is acceptable even where the weak set
+# is empty. (codex, #1656)
+r = run_with(lambda t: set_list(t, "allowed", ["MPL-2.0"] + read_list(t, "allowed")))
+expect("a weak-copyleft licence in allowed FAILS", r.returncode == 1,
+       f"exit={r.returncode}")
+expect("  and says the per-surface set is skipped",
+       "deliberately empty" in r.stderr, r.stderr[-200:])
+
+r = run_with(lambda t: set_list(t, "forbidden", ["MPL-2.0"] + read_list(t, "forbidden")))
+expect("a weak-copyleft licence in forbidden FAILS", r.returncode == 1,
+       f"exit={r.returncode}")
+
 r = run_with(lambda t: set_list(t, "forbidden", ["MIT"] + read_list(t, "forbidden")))
 expect("a licence in BOTH lists FAILS", r.returncode == 1, f"exit={r.returncode}")
 expect("  and says which way the evaluator reads it", "forbidden first" in r.stderr)
@@ -142,7 +155,7 @@ expect("a missing policy is FATAL, not a pass", r.returncode == 2, f"exit={r.ret
 # how the same floor failed in #1641: len(fails) counts only failures, so a
 # deleted case left the suite green while it shrank, and a floor below the real
 # count tolerated the shrinkage it existed to catch.
-MINIMUM_CASES = 15  # FLOOR
+MINIMUM_CASES = 18  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 if fails:
     for f in fails:
