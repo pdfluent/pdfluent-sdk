@@ -76,12 +76,20 @@ MIN_SCRIPTS = 25
 # .github/workflows/ci.yml; the remaining twelve are in mirror_only_guards.toml
 # with the reason they stay.
 #
+# 02-09-2026 (#307): 12 -> 13. Not a guard moved onto the mirror: a guard that
+# had always stood before no merge was counted for the first time. The lines a
+# job runs were read without asking whether the job can run on a pull request,
+# so `tests_actually_ran.py`, called only from a workflow_dispatch-only
+# workflow, counted as "has a job" (codex, #1633). The count now includes
+# every guard whose only GitHub job is dispatch-only or parked behind
+# `needs: parked`, and that one is in mirror_only_guards.toml with its reason.
+#
 # WHAT THIS NUMBER DOES NOT SAY
 # It says "also runs in GitHub Actions", not "an outside contributor sees it".
 # The GitHub remote of this repository is private, so none of these guards
 # touches a pull request from outside today. That is the gap in #232, and this
 # number does not measure it -- it measures the step towards it.
-SPIEGEL_RATEL = 12
+SPIEGEL_RATEL = 13
 
 # The reasons that can justify a place on the mirror. Free text would approve
 # every reason, including "later".
@@ -260,21 +268,85 @@ def _gitlab_commands(conf) -> list[str]:
     return out
 
 
-def _actions_commands(conf) -> list[str]:
-    """The `run:` lines of every step of every job in a workflow.
+# The events on which a workflow's verdict can still stop a merge. A workflow
+# that fires on none of these -- `workflow_dispatch` only, or a `schedule` --
+# runs when somebody remembers to ask, on whatever ref they name, and its red
+# reaches no pull request. A `push` that names only tags is a release moment,
+# not a merge, and is treated the same way.
+BLOCKING_EVENTS = {"pull_request", "pull_request_target", "push", "merge_group"}
+
+# A job whose `needs` chain passes through a job by this name never runs: the
+# parked job exists to fail loudly on a dispatch nobody should be making (#276),
+# and everything behind it is a queue entry pretending to be a gate.
+PARKED_JOB = "parked"
+
+
+def _events(conf) -> dict:
+    """The `on:` block, keyed by event name. PyYAML reads a bare `on` as the
+    boolean True (YAML 1.1), so both spellings are looked up."""
+    on = (conf or {}).get("on", (conf or {}).get(True))
+    if isinstance(on, str):
+        return {on: None}
+    if isinstance(on, list):
+        return {str(x): None for x in on}
+    if isinstance(on, dict):
+        return {str(k): v for k, v in on.items()}
+    return {}
+
+
+def _can_block(conf) -> bool:
+    """Can a red from this workflow stand in front of a merge at all?"""
+    for event, spec in _events(conf).items():
+        if event not in BLOCKING_EVENTS:
+            continue
+        if event == "push" and isinstance(spec, dict) and "tags" in spec and "branches" not in spec:
+            continue  # a tag push is a release, not a merge
+        return True
+    return False
+
+
+def _needs(job) -> list[str]:
+    needs = job.get("needs") or []
+    return [str(needs)] if isinstance(needs, str) else [str(n) for n in needs]
+
+
+def _behind_parked(name: str, jobs: dict, seen: frozenset = frozenset()) -> bool:
+    """Does this job's `needs` chain pass through the parked job?"""
+    if name == PARKED_JOB:
+        return True
+    job = jobs.get(name)
+    if not isinstance(job, dict) or name in seen:
+        return False
+    return any(_behind_parked(n, jobs, seen | {name}) for n in _needs(job))
+
+
+def _actions_commands(conf) -> tuple[list[str], list[str]]:
+    """The `run:` lines of every step of every job in a workflow, split into
+    (can stop a merge, cannot).
 
     Only `run:` counts, for the same reason as on GitLab: every step carries a
     `name:` that mentions its script, so searching the whole YAML for a filename
     approves a job that is nothing but a heading.
+
+    The split is the finding from #1633: a guard called only from a job in a
+    dispatch-only workflow, or from a job parked behind `needs: parked`, was
+    counted as "has a job" though nothing it finds can reach a pull request.
+    That is the mirror's shape again -- a check by that name exists, and it
+    stops nothing -- so those lines are handed back separately and judged with
+    the mirror-only guards rather than with the blocking ones.
     """
-    out: list[str] = []
-    for _, job in ((conf or {}).get("jobs") or {}).items():
+    blocking: list[str] = []
+    parked: list[str] = []
+    workflow_blocks = _can_block(conf)
+    jobs = (conf or {}).get("jobs") or {}
+    for name, job in jobs.items():
         if not isinstance(job, dict):
             continue
+        target = blocking if workflow_blocks and not _behind_parked(name, jobs) else parked
         for step in job.get("steps") or []:
             if isinstance(step, dict) and isinstance(step.get("run"), str):
-                out.append(step["run"])
-    return out
+                target.append(step["run"])
+    return blocking, parked
 
 
 def _runs(name: str, blob: str) -> bool:
@@ -355,12 +427,15 @@ def main() -> int:
     # on the mirror and therefore stops nothing.
     gitlab = _gitlab_commands(yaml.safe_load(CI.read_text(errors="replace")))
     actions: list[str] = []
+    parked: list[str] = []
     workflows = sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml"))
     for wf in workflows:
         try:
-            actions.extend(
-                _actions_commands(yaml.safe_load(wf.read_text(errors="replace")))
+            blocking, unblockable = _actions_commands(
+                yaml.safe_load(wf.read_text(errors="replace"))
             )
+            actions.extend(blocking)
+            parked.extend(unblockable)
         except yaml.YAMLError as e:
             print(f"FAIL: {wf.relative_to(REPO)} is not valid YAML: {e}", file=sys.stderr)
             return 1
@@ -377,8 +452,9 @@ def main() -> int:
         return 1
 
     gh = "\n".join(actions)
+    gh_parked = "\n".join(parked)
     gl = "\n".join(gitlab)
-    ci = gh + "\n" + gl
+    ci = gh + "\n" + gh_parked + "\n" + gl
 
     scripts = sorted(
         p for p in MAP.iterdir()
@@ -414,14 +490,30 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    # A guard that runs only on the mirror stops nothing.
+    # A guard that runs only on the mirror stops nothing. Neither does one whose
+    # only GitHub job is in a dispatch-only workflow or parked behind a job that
+    # always fails: the name is in a `run:`, and no pull request ever sees the
+    # result. Both shapes are judged here as one list -- "stands before no
+    # merge" -- against the same register and the same ratchet, because the
+    # question a reader has to answer is the same: why is this not in front of
+    # the merge, and where is that written down?
     mirror_only = [
         p.name for p in scripts
-        if p.name not in ALLOWED and _runs(p.name, gl) and not _runs(p.name, gh)
+        if p.name not in ALLOWED and not _runs(p.name, gh)
+        and (_runs(p.name, gl) or _runs(p.name, gh_parked))
     ]
+    shape = {
+        n: ("only on GitLab" if _runs(n, gl) and not _runs(n, gh_parked)
+            else "only from a dispatch-only or parked job" if not _runs(n, gl)
+            else "on GitLab and from a dispatch-only or parked job")
+        for n in mirror_only
+    }
     print(
         f"[guard-jobs] {len(scripts)} script(s), {len(ALLOWED)} deliberately by "
-        f"hand, {len(mirror_only)} only on GitLab"
+        f"hand, {len(mirror_only)} standing before no merge "
+        f"({sum(1 for v in shape.values() if v == 'only on GitLab')} only on GitLab, "
+        f"{sum(1 for v in shape.values() if v != 'only on GitLab')} only from a "
+        "dispatch-only or parked job)"
     )
 
     # The number on its own is bookkeeping. What it is worth stands per guard in
@@ -440,15 +532,16 @@ def main() -> int:
     if undeclared:
         problems += 1
         print(
-            "\nThese guards run only on the mirror, where a failure stops nothing,\n"
-            "and no reason for that is written down:\n",
+            "\nThese guards stand before no merge -- only on the mirror, or only in\n"
+            "a job that fires on workflow_dispatch or waits behind `needs: parked`\n"
+            "-- so a failure stops nothing, and no reason for that is written down:\n",
             file=sys.stderr,
         )
         for name in sorted(undeclared):
-            print(f"  scripts/ci/{name}", file=sys.stderr)
+            print(f"  scripts/ci/{name}  ({shape[name]})", file=sys.stderr)
         print(
-            f"\nEither give it a job in .github/workflows/, or add it to\n"
-            f"{REGISTER.relative_to(REPO)} with reason and why.",
+            f"\nEither give it a job in .github/workflows/ that runs on pull_request\n"
+            f"or push, or add it to {REGISTER.relative_to(REPO)} with reason and why.",
             file=sys.stderr,
         )
 
@@ -469,7 +562,8 @@ def main() -> int:
             elif name in ALLOWED:
                 print(f"  {name}: is in ALLOWED, so it is not a mirror job", file=sys.stderr)
             elif _runs(name, gh):
-                print(f"  {name}: now runs in GitHub Actions -- remove the entry", file=sys.stderr)
+                print(f"  {name}: now runs in GitHub Actions before a merge -- remove the entry",
+                      file=sys.stderr)
             else:
                 print(f"  {name}: runs on neither pipeline", file=sys.stderr)
         print(
@@ -480,27 +574,28 @@ def main() -> int:
 
     if mirror_only:
         print(
-            "[guard-jobs] only on the mirror, so stopping nothing at a merge:",
+            "[guard-jobs] standing before no merge, so stopping nothing:",
             file=sys.stderr,
         )
         for name in sorted(mirror_only):
             reason = register.get(name, {}).get("reason", "NO REASON WRITTEN DOWN")
-            print(f"[guard-jobs]   scripts/ci/{name}  ({reason})", file=sys.stderr)
+            print(f"[guard-jobs]   scripts/ci/{name}  ({reason}; {shape[name]})",
+                  file=sys.stderr)
 
     if len(mirror_only) != SPIEGEL_RATEL:  # RATCHET
         problems += 1
         direction = "more" if len(mirror_only) > SPIEGEL_RATEL else "fewer"
         print(
-            f"\n[guard-jobs] {len(mirror_only)} guards run only on the mirror, "
+            f"\n[guard-jobs] {len(mirror_only)} guards stand before no merge, "
             f"{direction} than the {SPIEGEL_RATEL} written down here.",
             file=sys.stderr,
         )
         if len(mirror_only) > SPIEGEL_RATEL:
             print(
-                "One has been added. Put a job on it in .github/workflows/, or\n"
-                "raise SPIEGEL_RATEL and add the entry to "
-                f"{REGISTER.relative_to(REPO)}\n"
-                "saying why this guard belongs on the mirror.",
+                "One has been added. Put a job on it in .github/workflows/ that runs\n"
+                "on pull_request or push, or raise SPIEGEL_RATEL and add the entry to\n"
+                f"{REGISTER.relative_to(REPO)} saying why this guard stays out of\n"
+                "the way of a merge.",
                 file=sys.stderr,
             )
         else:
@@ -526,8 +621,8 @@ def main() -> int:
         return 1
 
     print(
-        f"[guard-jobs] every guard has a job; the {len(mirror_only)} on the mirror "
-        "each carry a written reason"
+        f"[guard-jobs] every guard has a job; the {len(mirror_only)} standing before "
+        "no merge each carry a written reason"
     )
     return 0
 
