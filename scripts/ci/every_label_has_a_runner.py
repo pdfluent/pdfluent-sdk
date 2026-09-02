@@ -27,7 +27,7 @@ correctly absent when nothing is running.
 
 from __future__ import annotations
 
-import json
+import os, json
 import pathlib
 import re
 import subprocess
@@ -138,6 +138,17 @@ def main() -> int:
               "authenticated. It cannot work in GitHub Actions: /actions/runners "
               "needs `administration: read`, which GITHUB_TOKEN cannot be granted.",
               file=sys.stderr)
+        # A skip in CI is a pass in CI, and CLAUDE.md's Definition of Done does not
+        # allow that. Locally this is honest -- there is a `gh` to ask, and a
+        # missing one is the operator's problem. In Actions there is no `gh` and
+        # GITHUB_TOKEN cannot be granted `administration: read`, so the skip is
+        # permanent: the step would report success on every run without checking
+        # a single label. (codex, #1639)
+        if os.environ.get("CI"):
+            print("  Running in CI, where this can never succeed. Reporting a "
+                  "pass here would be a green tick for a check that did not "
+                  "happen.", file=sys.stderr)
+            return 1
         return 0
 
     ontbreekt = []
