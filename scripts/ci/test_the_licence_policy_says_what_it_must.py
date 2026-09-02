@@ -185,12 +185,24 @@ for naam in sorted(guard.MOET_GECLASSIFICEERD):
            r.returncode == 1 and naam in r.stderr, f"exit={r.returncode}")
 
 # The weak set is the other door into `allowed`, and it is the one that reads
-# as harmless: LGPL is classified-and-refused everywhere by sitting in
-# weak_copyleft with no surface naming it, so promoting it to `allowed` skips
-# the per-surface decision entirely rather than overriding it.
-r = run_with(lambda t: set_list(t, "allowed", read_list(t, "allowed") + ["LGPL-3.0-or-later"]))
-expect("LGPL promoted to allowed is refused",
-       r.returncode == 1 and "LGPL-3.0-or-later" in r.stderr, f"exit={r.returncode}")
+# as harmless: a surface-restricted licence sitting in weak_copyleft with no
+# surface naming it is classified-and-refused everywhere, so promoting it to
+# `allowed` skips the per-surface decision entirely rather than overriding it.
+#
+# Every family, not the spellings I happened to know. MPL-2.0 walked out
+# through exactly that gap while only LGPL was checked: moved to `allowed` it
+# passed this guard, license_gate and license_boundary, and toegestaan()
+# returned True for it on the SDK surface whose weak set is empty on purpose.
+for naam in ("MPL-2.0", "MPL-1.1", "LGPL-2.1-only", "LGPL-3.0-or-later",
+             "EPL-2.0", "CDDL-1.0", "CPL-1.0", "Ms-RL"):
+    def promoveer(t: str, n: str = naam) -> str:
+        for sleutel in ("weak_copyleft", "forbidden"):
+            t = set_list(t, sleutel, [x for x in read_list(t, sleutel) if x != n])
+        return set_list(t, "allowed", read_list(t, "allowed") + [n])
+
+    r = run_with(promoveer)
+    expect(f"{naam} promoted to allowed is refused",
+           r.returncode == 1 and naam in r.stderr, f"exit={r.returncode}")
 
 # An exception is a decision, not a word. Nothing may reach `allowed` on the
 # strength of "WITH" appearing in it while UITZONDERINGEN is empty.
@@ -233,7 +245,13 @@ for naam in ("MIT OR GPL-3.0-only", "LicenseRef-AGPL-3.0"):
 # deliberate decision to classify it per surface.
 expect("LGPL is not read as strong copyleft",
        not guard.STERK_COPYLEFT.search("LGPL-2.1-only")
-       and bool(guard.BESTANDS_COPYLEFT.search("LGPL-2.1-only")))
+       and guard.surface_beperkt("LGPL-2.1-only") == "LGPL")
+expect("MPL is surface-restricted, not strong copyleft",
+       not guard.STERK_COPYLEFT.search("MPL-2.0")
+       and guard.surface_beperkt("MPL-2.0") == "MPL")
+expect("a permissive licence is neither",
+       not guard.STERK_COPYLEFT.search("Apache-2.0")
+       and guard.surface_beperkt("Apache-2.0") is None)
 expect("an exception-bearing permissive licence is not read as strong",
        not guard.STERK_COPYLEFT.search("Apache-2.0 WITH LLVM-exception"))
 
@@ -267,7 +285,7 @@ expect("a missing policy is FATAL, not a pass", r.returncode == 2, f"exit={r.ret
 # how the same floor failed in #1641: len(fails) counts only failures, so a
 # deleted case left the suite green while it shrank, and a floor below the real
 # count tolerated the shrinkage it existed to catch.
-MINIMUM_CASES = 57  # FLOOR
+MINIMUM_CASES = 66  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 if fails:
     for f in fails:
