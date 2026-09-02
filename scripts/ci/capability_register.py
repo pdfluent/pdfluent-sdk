@@ -189,6 +189,7 @@ def facade_methods() -> dict[str, bool]:
     """
     src = (REPO / "crates" / "pdfluent" / "src" / "document.rs").read_text(errors="replace")
     out: dict[str, bool] = {}
+    lichamen: dict[str, str] = {}
     for m in re.finditer(r"pub fn (\w+)", src):
         name = m.group(1)
         # End the body at whatever starts the NEXT item, not only at the next
@@ -206,7 +207,54 @@ def facade_methods() -> dict[str, bool]:
         stub = any(k in body for k in STUB_MARKERS)
         # A method with both a real arm and a wasm-stub arm counts as real.
         out[name] = out.get(name, True) and stub
+        lichamen[name] = body
+
+    # ONE HOP OF DELEGATION.
+    #
+    # `add_watermark` reads as working: its whole body is
+    # `self.add_decoration(PageDecoration::watermark(text, opts))`, no marker in
+    # sight. `add_decoration`'s only match arm returns Error::MissingDependency,
+    # so every call to add_watermark fails at runtime and the register said it
+    # worked. STABILITY.md had it right and this classifier contradicted it.
+    #
+    # One hop, not a graph walk: a body that is nothing but a call to a sibling
+    # IS that sibling, and anything deeper is a judgement about code this
+    # register should not be making from a regex. Two names swapping calls
+    # cannot loop, because the answer is read from the first pass. (#1658)
+    alleen_delegatie = re.compile(r"^self\.(\w+)\([^;{}]*\)$", re.S)
+    for name, body in lichamen.items():
+        if out.get(name):
+            continue  # already a stub on its own account
+        kern = alleen_het_lichaam(body)
+        d = kern and alleen_delegatie.match(kern)
+        if d and out.get(d.group(1)):
+            out[name] = True
     return out
+
+
+def alleen_het_lichaam(venster: str) -> str | None:
+    """The statements between the braces, or None if they cannot be delimited.
+
+    The window a method is read from starts at its signature and runs to
+    whatever begins the next item, so it carries the parameter list at the
+    front and, often, a trailing comment at the back. Stripping the outer
+    braces off that text does not give a body -- it gives the signature with
+    one brace missing, and a delegation test against it silently matches
+    nothing. It did: the first version of the hop below changed no answer at
+    all and looked exactly like a hop that had found nothing to change. (#1658)
+    """
+    start = venster.find("{")
+    if start < 0:
+        return None
+    diepte = 0
+    for i in range(start, len(venster)):
+        if venster[i] == "{":
+            diepte += 1
+        elif venster[i] == "}":
+            diepte -= 1
+            if diepte == 0:
+                return venster[start + 1:i].strip()
+    return None
 
 
 def rust_sources() -> dict[Path, str]:
