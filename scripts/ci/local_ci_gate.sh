@@ -220,6 +220,8 @@ run fmt      cargo fmt --all -- --check
 run build    bash scripts/ci/run_build.sh
 run clippy   bash scripts/ci/run_clippy.sh
 run licenses python3 scripts/release/license_registry_check.py
+run advlists  python3 scripts/ci/the_advisory_lists_agree.py
+run advliststst python3 scripts/ci/test_the_advisory_lists_agree.py
 if [ "$FULL" = 1 ]; then
   run test  bash scripts/ci/run_test.sh
   run audit bash scripts/ci/run_audit.sh

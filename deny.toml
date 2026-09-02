@@ -14,7 +14,31 @@ feature-depth = 1
 # Advisories — security vulnerability tracking
 # ---------------------------------------------------------------------------
 [advisories]
-ignore = []
+# THE SAME FIVE AS `.cargo/audit.toml`, and that is checked rather than trusted.
+#
+# cargo-audit and cargo-deny read different files, so one decision has to be
+# written twice -- and on 02-09-2026 it was written once: audit.toml accepted
+# these five and this list was empty, so `cargo-deny check advisories` failed
+# on exactly the advisories cargo-audit had been told to accept. The job had
+# been red since 28-08 and the recorded reason was a toolchain error, which was
+# masking this one.
+#
+# Two registers of one decision drift apart; that is not a risk, it is what
+# happened. scripts/ci/the_advisory_lists_agree.py compares them, so the next
+# person to accept an advisory in one file is told about the other.
+ignore = [
+    # rsa 0.9.x -- Marvin Attack timing side-channel (RUSTSEC-2023-0071).
+    # Transitively via pdf-sign -> cms -> rsa. No upstream patch; our signing is
+    # offline, so the timing channel is not network-observable.
+    "RUSTSEC-2023-0071",
+    # rustls-webpki 0.103.x -- four certificate-validation advisories. Via
+    # pdf-sign -> rustls for timestamp/OCSP. Patched in >= 0.103.10; accepted
+    # until the dependency tree is updated.
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0049",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+]
 
 # ---------------------------------------------------------------------------
 # Licenses
