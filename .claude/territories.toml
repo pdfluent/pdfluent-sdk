@@ -133,6 +133,8 @@ uitgezonderd = [
   # taking on work in another territory is a commit and not a silent edit.
   "scripts/ci/contributors.toml",
   "scripts/ci/repos_staan_zoals_bedoeld.py",
+  # t3: the document provenance register, claimed on #310.
+  "scripts/ci/corpus_herkomst.py",
   # t1: guards whose subject is docs/UPSTREAM_FORKS.toml and the worktrees this
   # repository is checked out into. Same carve-out as the licence guards above.
   "scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py",
@@ -160,6 +162,10 @@ paden = [
   "scripts/ci/*publicat*",
   "scripts/ci/contributors.toml",
   "scripts/ci/repos_staan_zoals_bedoeld.py",
+  # Claimed 02-09-2026 on #310. The provenance register answers one question --
+  # may this document leave the building -- which is this territory's question,
+  # not a build concern. Same carve-out as the licence guards above.
+  "scripts/ci/corpus_herkomst.py",
   "crates/xfa-license/**",
   "crates/xfa-license-gen/**",
   # Claimed 01-09-2026. This file decides what leaves the building, which is the
