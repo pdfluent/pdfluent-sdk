@@ -38,7 +38,15 @@ MAP = WORTEL / "scripts" / "ci"
 
 # Op de vloer gezet op het werkelijke aantal, niet eronder: een vloer onder het
 # echte aantal tolereert precies de krimp waarvoor hij bedoeld is.
-MINIMAAL_GIT_SCRIPTS = 10  # FLOOR
+# Set to the population as measured, not below it. At 10 with 25 scripts calling
+# git, fifteen could stop being scanned -- deleted, renamed, or made invisible by
+# a change to the pattern -- without this lint saying a word. That is exactly the
+# shrinkage a floor exists to catch, and a floor below the real count tolerates
+# it. Same correction as #1641's case floor.
+#
+# Raising it with the population is a deliberate act: a change that legitimately
+# removes a script has to say so here.
+MINIMAAL_GIT_SCRIPTS = 25  # FLOOR
 
 # Een aanroep van git via subprocess.
 # Ook met een absoluut pad: `["/usr/bin/git", ...]` is dezelfde aanroep en
