@@ -21,7 +21,7 @@ quietly blind, and a table of strings cannot exercise either.
 from __future__ import annotations
 import sys as _sys, pathlib as _pathlib
 _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
-from fixture_env import sealed_env
+from fixture_env import sealed_env, inside_the_sandbox
 
 import os
 import subprocess
@@ -74,13 +74,13 @@ REFUSE = [
 ]
 
 
-def _git_env() -> dict[str, str]:
+def _git_env(cwd=None) -> dict[str, str]:
     """git without the caller's GIT_* variables."""
     # Sealed rather than merely GIT_*-stripped: dropping GIT_* stops a
     # fixture READING the real repository, not WRITING to the real config.
     # A fixture's `git config user.email t@t` reached a real worktree that
     # way and stamped a test identity onto every later rebase there. (#297)
-    return sealed_env()
+    return sealed_env(cwd=cwd)
 
 
 def _git(wd: Path, *args: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
@@ -91,7 +91,7 @@ def _git(wd: Path, *args: str, extra_env: dict[str, str] | None = None) -> subpr
          "-c", "core.hooksPath=/nonexistent",
          "-c", "commit.gpgsign=false",
          *args],
-        capture_output=True, text=True, env={**_git_env(), **(extra_env or {})},
+        capture_output=True, text=True, env={**_git_env(cwd=wd), **(extra_env or {})},
     )
 
 
@@ -223,7 +223,7 @@ def einde_tot_eind(fouten: list[str]) -> None:
             fouten.append("accepted a personal address authored after the cutover")
 
         # And the pre-commit mode, over the same repository, both ways.
-        omgeving = _git_env()
+        omgeving = _git_env(cwd=wd)
         for email, moet_falen in ((ALIAS, False), ("t@t", True)):
             _git(wd, "config", "user.email", email)
             r = subprocess.run(

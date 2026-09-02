@@ -23,7 +23,7 @@ not excuse red-since-the-file-changed.
 from __future__ import annotations
 import sys as _sys, pathlib as _pathlib
 _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
-from fixture_env import sealed_env
+from fixture_env import sealed_env, inside_the_sandbox
 
 import importlib.util
 import json
@@ -128,7 +128,7 @@ def bouw(map_: pathlib.Path, workflows: list[dict]) -> None:
     for w in workflows:
         (wf / pathlib.Path(w["path"]).name).write_text(WERKSTROOM)
 
-    env = {**sealed_env(identity=True), "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+    env = {**sealed_env(identity=True, cwd=map_), "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
     for cmd in (["git", "init", "-q"],
                 ["git", "add", "--", ".github"],
@@ -145,7 +145,7 @@ def bouw(map_: pathlib.Path, workflows: list[dict]) -> None:
 
 
 def draai(map_: pathlib.Path) -> subprocess.CompletedProcess[str]:
-    env = {**sealed_env(), "PATH": f"{map_ / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+    env = {**sealed_env(cwd=map_), "PATH": f"{map_ / 'bin'}{os.pathsep}{os.environ['PATH']}"}
     return subprocess.run([sys.executable, str(BEWAKER)], cwd=map_,
                           capture_output=True, text=True, check=False, env=env)
 

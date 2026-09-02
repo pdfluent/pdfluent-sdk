@@ -10,7 +10,7 @@ both directions: the failure refuses, the healthy equivalent still proceeds.
 from __future__ import annotations
 import sys as _sys, pathlib as _pathlib
 _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
-from fixture_env import sealed_env
+from fixture_env import sealed_env, inside_the_sandbox
 import contextlib, importlib.util, io, os, pathlib, shutil, subprocess, sys, tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -77,7 +77,7 @@ def repo_with_worktree(root: pathlib.Path) -> pathlib.Path:
     r.mkdir()
     # Sealed for the FIXTURE, which builds a repository; the sweeper's own
     # clean_env() is what production uses and is tested separately. (#297)
-    env = sealed_env(identity=True)
+    env = sealed_env(identity=True, cwd=r)
     def g(*a, cwd=r):
         return subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True, env=env)
     g("init", "-q", "-b", "master")

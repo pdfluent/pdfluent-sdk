@@ -45,15 +45,7 @@ def sealed_env(identity: bool = False, cwd: str | os.PathLike | None = None,
                **extra: str) -> dict[str, str]:
     """The caller's environment with git's own inputs removed and pinned."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = _empty_config()
-    # Global and system config sealed is not the whole surface. A fixture that
-    # forgets cwd, or points it at a real checkout, makes git DISCOVER that
-    # repository -- and `git config user.email …` then writes its .git/config.
-    # Both lints read the call and approve it. GIT_CEILING_DIRECTORIES stops the
-    # upward search at the sandbox root. (codex, #1647)
-    if cwd is not None:
-        env["GIT_CEILING_DIRECTORIES"] = str(pathlib.Path(cwd).resolve().parent)
     # The child guard in test_a_gate_that_never_went_green.py picks its live
     # urllib route when a token is present instead of the fake `gh` the fixture
     # installs. The helper it replaced stripped these on purpose.
@@ -74,11 +66,37 @@ def sealed_env(identity: bool = False, cwd: str | os.PathLike | None = None,
     # `git config` write lands in that repository and nowhere else. Ask for
     # env-level identity explicitly with identity=True when a test is ABOUT the
     # environment rather than the config.
+    # `extra` FIRST, seals after. The other order let
+    # sealed_env(GIT_CONFIG_GLOBAL="~/.gitconfig") return an unsealed
+    # environment -- incident 2 straight through the helper written to prevent
+    # it, and both lints approve the call because it says `env=sealed_env(...)`.
+    # (T3 review, #1647)
     env.update(extra)
+    for key in ("GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL"):
+        if key in extra:
+            raise ValueError(
+                f"sealed_env() will not take {key} from a caller: it is one of "
+                "the seals. Passing it is how a fixture asks for the very "
+                "environment this helper exists to deny.")
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = _empty_config()
+    # Always set, not only when a cwd is given -- no caller passed one, so the
+    # ceiling was never set at all. Without a cwd the sandbox root is the
+    # system temp directory, which is where fixtures build repositories.
+    root = pathlib.Path(cwd).resolve().parent if cwd is not None \
+        else pathlib.Path(tempfile.gettempdir()).resolve()
+    env["GIT_CEILING_DIRECTORIES"] = str(root)
+    if cwd is not None:
+        # Passing a cwd IS the runtime check. inside_the_sandbox() was written
+        # to run and then called from nowhere -- its docstring said "this runs"
+        # while zero fixtures used it. Hanging it here means one place enforces
+        # and one place is enforced, instead of six call sites to remember.
+        # (T3 review, #1647)
+        inside_the_sandbox(cwd, _env=env)
     return env
 
 
-def inside_the_sandbox(cwd: str | os.PathLike) -> None:
+def inside_the_sandbox(cwd: str | os.PathLike, _env: dict | None = None) -> None:
     """Refuse before git writes anything outside `cwd`.
 
     A lint reads code; this runs. If the repository git would act on is not
@@ -86,13 +104,41 @@ def inside_the_sandbox(cwd: str | os.PathLike) -> None:
     the honest moment to stop is before the first write, not after the gate
     notices the identity in a later commit. (codex, #1647)
     """
+    # _env breaks the recursion: sealed_env(cwd=…) calls this, so building a
+    # fresh environment here would call sealed_env again, for ever.
+    #
+    # The ceiling is REMOVED for the probe, deliberately. With it in place git
+    # stops walking at the sandbox root, finds nothing, and the check reports
+    # "no repository here yet" for a cwd sitting inside the real checkout -- the
+    # protection blinding the detection. The question being asked is what git
+    # WOULD reach without the ceiling, because that is what an unsealed call in
+    # the same directory would reach.
+    env = dict(_env) if _env is not None else sealed_env()
+    env.pop("GIT_CEILING_DIRECTORIES", None)
+    here = pathlib.Path(cwd).resolve()
+    # A fixture works in a temporary directory. Anywhere else, whatever git
+    # finds is somebody's real repository -- including the case where the cwd IS
+    # its root, which an earlier version of this check accepted and which is the
+    # incident exactly: a fixture at the checkout root writes to the checkout's
+    # own config.
+    tmp = pathlib.Path(tempfile.gettempdir()).resolve()
+    if not (here == tmp or tmp in here.parents):
+        raise RuntimeError(
+            f"a fixture would run in {here}, which is not under {tmp}. Build "
+            "throwaway repositories in a temporary directory: outside one, any "
+            "repository git finds is a real one.")
     r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=str(cwd),
-                       capture_output=True, text=True, env=sealed_env(cwd=cwd))
+                       capture_output=True, text=True, env=env)
     if r.returncode != 0:
         return  # no repository here yet: `git init` is about to make one
     top = pathlib.Path(r.stdout.strip()).resolve()
     root = pathlib.Path(cwd).resolve()
-    if root != top and root not in top.parents and top not in root.parents:
+    # The repository must be AT or UNDER the sandbox. The first rule also
+    # accepted one discovered ABOVE it ("top in root.parents"), which is the
+    # incident itself: a fixture run from inside the real checkout found the real
+    # repository and was waved through. Discovery upward is the thing being
+    # stopped, so it cannot be the thing that satisfies the check.
+    if not (root == top or root in top.parents):
         raise RuntimeError(
             f"a fixture in {root} would act on the repository at {top}, which is "
             "outside its sandbox. Pass cwd= pointing inside a temporary "

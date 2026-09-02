@@ -46,10 +46,11 @@ def run(root: pathlib.Path) -> subprocess.CompletedProcess:
                           capture_output=True, text=True)
 
 
-SEALED = '''import subprocess, sys, pathlib
+SEALED = '''import subprocess, sys, pathlib, tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from fixture_env import sealed_env
-subprocess.run(["git", "init", "-q"], env=sealed_env())
+d = tempfile.mkdtemp()
+subprocess.run(["git", "init", "-q"], cwd=d, env=sealed_env(cwd=d))
 '''
 UNSEALED = '''import os, subprocess
 env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
@@ -139,13 +140,15 @@ def local_config() -> str:
 
 
 before_local = local_config()
+# This assertion used to say the opposite, and saying it is what made the hole
+# look intentional: a fixture whose cwd IS the checkout root writes to the
+# checkout's own config, which is incident 2 exactly. (T3 review, #1647)
 try:
     inside_the_sandbox(REPO)
     refused = False
 except RuntimeError:
     refused = True
-expect("the sandbox check accepts a cwd that IS the repository root",
-       not refused)
+expect("a cwd that IS the repository root is REFUSED", refused)
 
 with tempfile.TemporaryDirectory() as d:
     sub = pathlib.Path(d) / "work"
@@ -158,15 +161,23 @@ with tempfile.TemporaryDirectory() as d:
     expect("and accepts an empty temp dir, where git init is about to run",
            not refused)
 
-# A fixture whose cwd sits inside the real checkout is the failure case.
+# A fixture whose cwd sits inside the real checkout is the failure case, and the
+# first version of this file called it acceptable.
 inner = REPO / "scripts"
 try:
     inside_the_sandbox(inner)
     refused = False
 except RuntimeError:
     refused = True
-expect("a cwd inside the real checkout is accepted only because it IS the repo",
-       not refused, "same repository, so not an escape")
+expect("a cwd inside the real checkout is REFUSED", refused)
+
+# And the seals cannot be argued away by the caller.
+try:
+    sealed_env(GIT_CONFIG_GLOBAL="/somewhere/real/.gitconfig")
+    refused = False
+except ValueError:
+    refused = True
+expect("a caller cannot pass its own GIT_CONFIG_GLOBAL", refused)
 
 # GIT_CEILING_DIRECTORIES stops the upward walk for a sandbox under a real tree.
 with tempfile.TemporaryDirectory() as d:
@@ -186,7 +197,7 @@ expect("and the repository's own config is unchanged after all of this",
 expect("sealed_env strips GH_TOKEN and GITHUB_TOKEN",
        not any(k in sealed_env() for k in ("GH_TOKEN", "GITHUB_TOKEN")))
 
-MINIMUM_CASES = 16  # FLOOR
+MINIMUM_CASES = 17  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
