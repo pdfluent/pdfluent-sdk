@@ -173,6 +173,17 @@ ALLOWED: dict[str, str] = {
         "diagnoses an already-failed gate rather than being one"
     ),
 
+    # Written 02-09-2026 (#307) while ci.yml was frozen for #1666. It belongs in
+    # orchestration-guard next to test_gate_corpus_is_pinned.py, and that is a
+    # one-line change to make the moment ci.yml is open again; until then it
+    # runs by hand: python3 scripts/ci/test_gate_corpus_no_crash.py. Listed
+    # here so the debt is visible, not so it is excused -- remove this entry in
+    # the change that adds the step.
+    "test_gate_corpus_no_crash.py": (
+        "holds the no-crash gate to stopping at its budget while running; "
+        "awaiting its run: line in ci.yml, which #1666 has frozen (#307)"
+    ),
+
     # Deliberately local: they exist to do something *before* the pipeline.
     "local_ci_gate.sh": (
         "runs the pipeline gates locally before a push; a job for this would "
