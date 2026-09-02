@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -44,7 +45,7 @@ GUARD = pathlib.Path(__file__).resolve().parent / "disk_headroom.py"
 
 # FLOOR: cases run >= 20. A test that stops testing reports success in the same
 # words as one that passed.
-MINIMUM_CASES = 24
+MINIMUM_CASES = 25
 
 # TWO-WAY RATCHET. disk_headroom.DEFAULT_FLOOR_GB and this number must move
 # together, in either direction. Lowering the floor silently switches the guard
@@ -307,6 +308,42 @@ def main() -> int:
                dh.elders_gemeten(str(repo), repo) is False)
         expect("  and a genuinely different volume IS",
                dh.elders_gemeten("/", repo) is True)
+
+        # THE RACE, made deterministic.
+        #
+        # The two-volume case above passed or failed depending on whether
+        # another process wrote to the disk between two disk_usage() calls: on
+        # one filesystem those samples are the same number, and `<=` decides
+        # nothing once they drift. Waiting for it to flake is not a test, so
+        # the two values are forced apart here instead.
+        import importlib.util as _ilu
+        _s = _ilu.spec_from_file_location("dh2", GUARD)
+        dh2 = _ilu.module_from_spec(_s)
+        _s.loader.exec_module(dh2)
+
+        echt = shutil.disk_usage
+        beurten = []
+
+        def wisselend(p):
+            u = echt(p)
+            beurten.append(str(p))
+            # The SECOND sample reports more free space, which is the ordering
+            # that made the guard pick the path over the host volume.
+            if len(beurten) == 2:
+                return type(u)(u.total, u.used, u.free + 4096)
+            return u
+
+        drive = tmpdir / "drives" / "c"
+        drive.mkdir(parents=True, exist_ok=True)
+        dh2.shutil.disk_usage = wisselend
+        try:
+            dh2.running_under_wsl = lambda: True
+            dh2.host_volume_for = lambda _p: drive
+            free, total, measured = dh2.volume_free_bytes(repo)
+        finally:
+            dh2.shutil.disk_usage = echt
+        expect("two drifting samples of ONE filesystem still name the host volume",
+               str(drive) in str(measured), f"measured={measured}")
 
     if cases < MINIMUM_CASES:  # FLOOR
         print(
