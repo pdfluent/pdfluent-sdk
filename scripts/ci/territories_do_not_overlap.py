@@ -74,6 +74,14 @@ def changed_files() -> tuple[list[str], str] | None:
     return None
 
 
+class Ambigu(Exception):
+    """Several territory refs point at this commit; no one of them is the answer."""
+
+    def __init__(self, namen: list[str]) -> None:
+        super().__init__(", ".join(namen))
+        self.namen = namen
+
+
 def current_branch() -> str | None:
     """The branch this work is on, or None if it genuinely cannot be known.
 
@@ -128,9 +136,17 @@ def current_branch() -> str | None:
     # correct change for belonging to the wrong owner, which is worse than not
     # checking: it teaches people the guard is unreliable. (codex, #1636)
     known = {t["id"] for t in load()}
-    for n in names:
-        if "/" in n and n.split("/")[0] in known:
-            return n
+    claims = [n for n in names if "/" in n and n.split("/")[0] in known]
+    # More than one territory ref on the same commit is not a preference to
+    # express, it is a question nobody has answered: the two names disagree
+    # about who owns this work, and picking whichever git printed first would
+    # judge the change against an owner chosen by listing order. The wrong
+    # owner approving a change is the failure this map exists to prevent, so
+    # ambiguity is raised rather than resolved. (codex, #1636)
+    if len(set(claims)) > 1:
+        raise Ambigu(sorted(set(claims)))
+    if claims:
+        return claims[0]
     for n in names:
         if "/" in n:
             return n
@@ -177,62 +193,63 @@ def main() -> int:
     # the per-path review the relay used, not this check alone.
 
     # --- 2. the branch must have stayed inside its own -------------------
-    branch = current_branch()
+    #
+    # Every arm below RECORDS what it found and none of them exits. Three arms
+    # each returning their own verdict is how the map half kept getting
+    # swallowed: the detached-HEAD arm returned before the shared `if problems`
+    # block (fixed once), and the unnamed-branch arm still did -- so a real
+    # overlap, found and collected, went unreported behind "this branch names
+    # no territory". A `feature/alias` ref pointing at a detached HEAD lands in
+    # exactly that arm. One place decides, at the end, on everything collected.
+    # (codex, #1636)
+    overgeslagen: str | None = None
     checked_files = 0
+    unowned = 0
+    try:
+        branch = current_branch()
+    except Ambigu as exc:
+        print(f"FATAL: {len(exc.namen)} territory refs point at this commit: "
+              f"{', '.join(exc.namen)}. They disagree about who owns this work, "
+              "and choosing between them by listing order would judge it against "
+              "an owner nobody named. Set TERRITORY_BRANCH to the one that "
+              "applies.", file=sys.stderr)
+        return 2
+
     if branch and "/" in branch and branch.split("/")[0] in {t["id"] for t in territories}:
         tid = branch.split("/")[0]
         mine = next(t for t in territories if t["id"] == tid)
         result = changed_files()
         if result is None:
-            print("SKIPPED (not a pass): could not diff against master, so the branch's "
-                  "reach is unknown", file=sys.stderr)
-            return 3
-        files, base = result
-        checked_files = len(files)
-        unowned = 0
-        for path in files:
-            # The map itself is deliberately editable from anywhere: taking on
-            # work in another territory is a commit, not a silent edit.
-            if path == ".claude/territories.toml":
-                continue
-            if owns(mine, path):
-                continue
-            other = [t["id"] for t in in_repo if owns(t, path)]
-            if not other:
-                # Nobody claims it. Allowed -- a complete map of a repository this
-                # size is not maintainable -- but counted, so the map can grow
-                # towards the places that turn out to be contested.
-                unowned += 1
-                continue
-            problems.append(
-                f"branch `{branch}` is in {tid} but changed `{path}` "
-                f"(that belongs to {', '.join(other)}). "
-                "Claim it in .claude/territories.toml, or leave it to its owner."
-            )
+            overgeslagen = ("could not diff against master, so the branch's reach "
+                            "is unknown")
+        else:
+            files, base = result
+            checked_files = len(files)
+            for path in files:
+                # The map itself is deliberately editable from anywhere: taking
+                # on work in another territory is a commit, not a silent edit.
+                if path == ".claude/territories.toml":
+                    continue
+                if owns(mine, path):
+                    continue
+                other = [t["id"] for t in in_repo if owns(t, path)]
+                if not other:
+                    # Nobody claims it. Allowed -- a complete map of a repository
+                    # this size is not maintainable -- but counted, so the map can
+                    # grow towards the places that turn out to be contested.
+                    unowned += 1
+                    continue
+                problems.append(
+                    f"branch `{branch}` is in {tid} but changed `{path}` "
+                    f"(that belongs to {', '.join(other)}). "
+                    "Claim it in .claude/territories.toml, or leave it to its owner."
+                )
     elif branch is None or branch == "HEAD":
-        # Nothing could name this checkout, so the branch half did not run. It
-        # must not fall through to the green summary below: a half-run check that
-        # prints the same line as a whole one is worse than no check, because the
-        # line is what people read. (#296)
-        #
-        # But it must not swallow the half that DID run either. The first version
-        # of this returned here, so a real overlap -- found, collected, and worth
-        # exit 1 -- went unreported behind a message claiming the map had been
-        # checked. That is the same silent skip this change exists to remove,
-        # one layer down, introduced by the fix for it. (codex, #1636)
-        if problems:
-            print(f"Territories: {len(problems)} problem(s)\n", file=sys.stderr)
-            for p in problems:
-                print(f"  - {p}", file=sys.stderr)
-            print("", file=sys.stderr)
-        print("SKIPPED (not a pass): detached HEAD and no branch name from the "
-              "environment or from a ref pointing here, so the map WAS checked "
-              "for overlaps (result above) but whether this work stayed inside "
-              "its own territory was NOT. Set TERRITORY_BRANCH=<territory>/<what> "
-              "to check it.", file=sys.stderr)
-        # An overlap is a real failure and outranks "could not check the rest".
-        return 1 if problems else 3
-    elif branch and branch not in ("master", "HEAD"):
+        overgeslagen = ("detached HEAD and no branch name from the environment or "
+                        "from a ref pointing here, so whether this work stayed "
+                        "inside its own territory was NOT checked. Set "
+                        "TERRITORY_BRANCH=<territory>/<what> to check it")
+    elif branch != "master":
         # A branch that names no territory used to be skipped, which made opting
         # out free: rename `t1/x` to `upstream/x` and nothing checks you again.
         # All three `upstream/*` branches went unchecked that way, and the moment
@@ -243,33 +260,47 @@ def main() -> int:
         # is -- which is the whole question the map exists to answer.
         result = changed_files()
         if result is None:
-            print("SKIPPED (not a pass): could not diff against master, so an unnamed "
-                  "branch's reach is unknown", file=sys.stderr)
-            return 3
-        files, _ = result
-        trespass = [(f, [t["id"] for t in in_repo if owns(t, f)]) for f in files]
-        trespass = [(f, o) for f, o in trespass if o]
-        if trespass:
-            print(f"Branch `{branch}` names no territory and changed "
-                  f"{len(trespass)} owned file(s):\n", file=sys.stderr)
-            for f, owners in trespass[:10]:
-                print(f"  - {f} (belongs to {', '.join(owners)})", file=sys.stderr)
-            print("\nName the branch `<territory>/<what>`, e.g. `t2/ci-guards`, so the "
-                  "map can check it. Skipping an unnamed branch would make opting out "
-                  "free, which is how three branches went unchecked.", file=sys.stderr)
-            return 1
-        print(f"SKIPPED (not a pass): branch `{branch}` names no territory, but changed "
-              "no owned file either. Name it `<territory>/<what>` if that changes.",
-              file=sys.stderr)
-        return 3
+            overgeslagen = ("could not diff against master, so an unnamed branch's "
+                            "reach is unknown")
+        else:
+            files, _ = result
+            checked_files = len(files)
+            # Counted here rather than read back off `problems`: that list also
+            # holds the map's own overlaps, so asking it whether THIS arm found
+            # anything is one arm reading another's state -- the mistake this
+            # whole restructure exists to remove.
+            overtreden = 0
+            for f in files:
+                owners = [t["id"] for t in in_repo if owns(t, f)]
+                if owners:
+                    overtreden += 1
+                    problems.append(
+                        f"branch `{branch}` names no territory and changed `{f}` "
+                        f"(that belongs to {', '.join(owners)}). Name it "
+                        "`<territory>/<what>`, e.g. `t2/ci-guards`, so the map can "
+                        "check it -- skipping unnamed branches made opting out free, "
+                        "which is how three branches went unchecked.")
+            if not overtreden:
+                overgeslagen = (f"branch `{branch}` names no territory, but changed no "
+                                "owned file either. Name it `<territory>/<what>` if "
+                                "that changes")
 
+    # --- one judgement, on everything collected --------------------------
+    # An overlap is a real failure and outranks "could not check the rest",
+    # so it is tested first and reported whichever arm ran.
     if problems:
         print(f"Territories: {len(problems)} problem(s)\n", file=sys.stderr)
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
+        if overgeslagen:
+            print(f"\n  (and the map WAS checked, but {overgeslagen})", file=sys.stderr)
         return 1
+    if overgeslagen:
+        print(f"SKIPPED (not a pass): {overgeslagen}. The map itself was checked "
+              f"for overlaps and had none.", file=sys.stderr)
+        return 3
 
-    print(f"✓ {len(territories)} territories, no overlap"
+    print(f"\u2713 {len(territories)} territories, no overlap"
           + (f"; branch stayed inside its own across {checked_files} changed file(s)"
              + (f" ({unowned} unclaimed)" if unowned else "")
              if checked_files else ""))
