@@ -204,7 +204,18 @@ expect("  and the ambiguity is still reported",
        "t1/one" in r.stderr and "t2/two" in r.stderr, r.stderr[:250])
 expect("  and the overlap is named", "both claim" in r.stderr, r.stderr[:250])
 
-MINIMUM_CASES = 18  # FLOOR
+# `feature/t2/disguised` is a LOCAL branch, not a remote-tracking ref. Stripping
+# any leading segment that was not a territory read `feature` as a remote and
+# handed the branch t2's territory -- a branch could take on an owner it never
+# claimed by being named after nothing in particular. (codex, #1636)
+root, env = build(CLEAN, ["feature/t2/disguised"], detach=True)
+r = run(root, env)
+expect("a branch named feature/<territory>/x does not become that territory",
+       r.returncode == 1, f"exit={r.returncode}: {r.stderr[:200]}")
+expect("  and it is judged as naming no territory",
+       "no territory" in r.stderr, r.stderr[:250])
+
+MINIMUM_CASES = 20  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")

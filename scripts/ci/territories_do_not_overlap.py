@@ -141,9 +141,17 @@ def current_branch() -> str | None:
     # branch` alone asked the one question the CI shape cannot answer -- which
     # is the shape this whole function exists for. Tags are left out: a tag is
     # not a claim of ownership and names no territory.
+    # Asked in two passes, so which refs are remote-tracking comes from GIT and
+    # not from the shape of a name. Under `refs/remotes` the first segment IS
+    # the remote by construction; a local branch never has one to strip.
     pointing = subprocess.run(
         [GIT, "for-each-ref", "--points-at", "HEAD", "--format=%(refname:short)",
-         "refs/heads", "refs/remotes"],
+         "refs/heads"],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    op_afstand = subprocess.run(
+        [GIT, "for-each-ref", "--points-at", "HEAD", "--format=%(refname:short)",
+         "refs/remotes"],
         cwd=ROOT, capture_output=True, text=True, check=False,
     )
     # `--points-at` also prints git's pseudo-entry "(HEAD detached at <sha>)".
@@ -153,6 +161,15 @@ def current_branch() -> str | None:
     # changes.
     names = [n.strip() for n in pointing.stdout.splitlines()
              if n.strip() and not n.startswith("(")]
+    # `github/t2/ci-fix` is the same claim as `t2/ci-fix`: the remote name is
+    # not a territory. Only these have one to remove -- the local branch
+    # `feature/t2/disguised` keeps its `feature`, and so names no territory,
+    # which is exactly what it does. (codex, #1636)
+    for n in op_afstand.stdout.splitlines():
+        n = n.strip()
+        if not n or n.startswith("(") or "/" not in n:
+            continue
+        names.append(n.split("/", 1)[1])
 
     # Prefer a name whose prefix is an actual territory. A commit can carry
     # several branches -- `t2/ci-fix` and `feature/alias` both pointing here --
@@ -163,13 +180,6 @@ def current_branch() -> str | None:
     known = {t["id"] for t in load()}
     # `github/t2/ci-fix` is the same claim as `t2/ci-fix`: the remote name is
     # not a territory, so it is dropped before the prefix is read.
-    def zonder_remote(n: str) -> str:
-        deel = n.split("/")
-        if len(deel) > 2 and deel[0] not in known and deel[1] in known:
-            return "/".join(deel[1:])
-        return n
-
-    names = [zonder_remote(n) for n in names]
     claims = [n for n in names if "/" in n and n.split("/")[0] in known]
     # More than one territory ref on the same commit is not a preference to
     # express, it is a question nobody has answered: the two names disagree
