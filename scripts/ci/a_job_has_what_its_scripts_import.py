@@ -27,6 +27,25 @@ SCRIPTS = WORTEL / "scripts" / "ci"
 PAKKET = {"yaml": "pyyaml", "requests": "requests", "tomli": "tomli"}
 
 
+def zonder_commentaar(script: str) -> str:
+    """A `run:` block with its full-line shell comments removed.
+
+    A comment naming a script is not an invocation of it. Measured on
+    02-09-2026: this guard read the sentence explaining WHY a workflow avoids
+    naming a script as the workflow running that script, and demanded a
+    dependency for it -- which is precisely the mistake it was written next to,
+    and the third time today a guard in this repository has read a comment as
+    wiring (a runner label, a job, and now an import).
+
+    Full-line comments only. A trailing `# ...` after a command cannot be
+    stripped safely without parsing the shell -- `"${X#Y}"` is not a comment --
+    and a script named in a trailing comment on the same line as a real command
+    is rare enough to leave to a reader.
+    """
+    return "\n".join(r for r in script.splitlines()
+                      if not r.lstrip().startswith("#"))
+
+
 def importeert(pad: pathlib.Path) -> set[str]:
     tekst = pad.read_text(errors="replace")
     uit = set()
@@ -57,7 +76,8 @@ def main() -> int:
             if not stappen:
                 continue
             bekeken += 1
-            tekst = " ".join(str(s.get("run", "")) for s in stappen)
+            tekst = " ".join(zonder_commentaar(str(s.get("run", "")))
+                             for s in stappen)
             geinstalleerd = tekst.lower()
             for script, modules in per_script.items():
                 if not modules or script not in tekst:
