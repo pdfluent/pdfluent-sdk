@@ -25,22 +25,21 @@
 name: CI (ephemeral Hetzner)
 
 on:
-  # Pull requests too, since 28-08-2026. The heavy build for a PR used to sit on
-  # ubuntu-latest and be billed; a cpx42 has eight cores against a hosted
-  # runner's two to four, so this is cheaper *and* quicker once the ninety
-  # seconds of boot are paid.
+  # NO pull_request trigger, since 02-09-2026.
   #
-  # The orchestration jobs run the workflow file from the PR's merge commit, so
-  # a branch could change what create-runner does on the desktop. Recorded, and
-  # accepted while this repository has one contributor -- see the note in
-  # scripts/ci/orchestration_stays_hosted.py.
-  pull_request:
-    branches: [master]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'CHANGELOG.md'
-      - '.github/**.md'
+  # It had one from 28-08: a cpx42 has eight cores against a hosted runner's two
+  # to four, so the heavy PR build was cheaper and quicker there. Then the
+  # Hetzner VPS was cancelled on 24-08 and nobody removed the trigger. Measured
+  # 02-09: of the last forty ephemeral runs, nineteen cancelled, four failed,
+  # five pending, eleven queued, one in progress -- and NONE succeeded, while
+  # `create-runner` kept reporting success. So it was still provisioning
+  # instances, per pull request, and producing nothing usable. Every push queued
+  # another.
+  #
+  # The workflow stays: it is the only route to an isolated runner if a provider
+  # returns, and #311 keeps create-runner/reap pinned to the base revision for
+  # when it does. What is removed is the trigger that made it run by itself.
+  # (#311)
   push:
     branches: [master]
     paths-ignore:
