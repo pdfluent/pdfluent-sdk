@@ -169,6 +169,7 @@ run licregtst python3 scripts/ci/test_one_licence_three_registers.py
 run errdocs   python3 scripts/ci/error_codes_have_an_anchor.py
 run errtests  cargo test -q -p pdfluent --test error_codes_stable --test processing_limits
 run prstale   python3 scripts/ci/pr_staleness.py
+run prstaletst python3 scripts/ci/test_pr_staleness.py
 run sweep     python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
 run sweepsafe python3 scripts/ci/test_sweep_fails_safe.py
 run regfetch  python3 scripts/ci/test_de_registerwachters_raken_de_echte_repo_niet.py

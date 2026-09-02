@@ -456,6 +456,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/ci/pr_staleness.py
+      - name: The staleness guard quotes gh's own words when it cannot look
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_pr_staleness.py
       - name: The sweep spares the instance this run claimed
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_sweep_spares_the_claimed_instance.py

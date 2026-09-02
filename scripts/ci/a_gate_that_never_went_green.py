@@ -92,10 +92,11 @@ BEKEND = {
     # cargo-deny on "override toolchain '1.94.0-x86_64-unknown-linux-musl' is
     # not installed" in its container. RUSTUP_TOOLCHAIN=stable on those two
     # jobs removes that layer; underneath it are real advisories (lopdf via
-    # xfa-pdfrest-compare, quick-xml, crossbeam-epoch, anyhow, nineteen
-    # unmaintained crates) that are the next pull request. Red for the right
+    # xfa-pdfrest-compare, quick-xml, quinn-proto, crossbeam-epoch, anyhow,
+    # twenty unmaintained crates; run 33648792780) that are the next pull
+    # request. Red for the right
     # reason now, still red.
-    "security-audit.yml": "toolchain fixed (RUSTUP_TOOLCHAIN=stable); now red on real advisories -- lopdf, quick-xml, crossbeam-epoch, anyhow, 19 unmaintained -- next PR (#287, #294)",
+    "security-audit.yml": "toolchain fixed (RUSTUP_TOOLCHAIN=stable); now red on real advisories -- lopdf, quick-xml, quinn-proto, crossbeam-epoch, anyhow, 20 unmaintained -- next PR (#287, #294)",
 }
 
 # A file that has not changed in this long and still has no runs is not new; it

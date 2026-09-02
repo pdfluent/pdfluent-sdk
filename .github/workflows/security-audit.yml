@@ -23,12 +23,14 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/security-audit.yml'
       - '.cargo/audit.toml'
+      - 'deny.toml'
   push:
     branches: [master]
     paths:
       - '**/Cargo.toml'
       - 'Cargo.lock'
       - '.cargo/audit.toml'
+      - 'deny.toml'
   schedule:
     - cron: '0 4 * * 1'
   workflow_dispatch:
