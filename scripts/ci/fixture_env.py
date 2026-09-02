@@ -154,3 +154,50 @@ def inside_the_sandbox(cwd: str | os.PathLike, _env: dict | None = None) -> None
             "outside its sandbox. Pass cwd= pointing inside a temporary "
             "directory; sealing the config surface does not protect a repository "
             "git discovers by walking up.")
+
+
+def gate_aanroepen(script: str, wortel=None) -> list[str]:
+    """Lines of scripts/ci/local_ci_gate.sh that run EXACTLY this script.
+
+    Written once and shared, because the obvious form of this check is wrong in
+    a way that reads as right: `"x.py" in gate_text` is satisfied by
+    `test_x.py`, so an assertion that the gate still runs a guard stays green
+    when only its TEST is wired -- which is exactly the state the assertion
+    exists to detect. Measured on #1660: deleting the guard's own invocation
+    left the suite at 10 passed, 0 failed.
+
+    Compared per whitespace-separated argument on its basename, so `python3
+    scripts/ci/x.py --flag` matches `x.py` and `test_x.py` never does.
+    """
+    import pathlib as _p
+    wortel = _p.Path(wortel) if wortel else _p.Path(__file__).resolve().parents[2]
+    poort = wortel / "scripts" / "ci" / "local_ci_gate.sh"
+    uit = []
+    for regel in poort.read_text(errors="replace").splitlines():
+        if any(stuk.rsplit("/", 1)[-1] == script for stuk in regel.split()):
+            uit.append(regel)
+    return uit
+
+
+def wegwerp_map(prefix: str = "fixture-") -> str:
+    """A temp directory that removes itself when the process ends.
+
+    `tempfile.mkdtemp()` does not clean up, and three guard suites used it to
+    build fixture repositories -- one run of one of them leaves six directories
+    behind (measured 02-09-2026). On a developer's machine that is untidy; on a
+    persistent runner executing the suite on every push it accumulates, and
+    `disk_headroom.py` cannot see it because it looks for `target/`. "The space
+    is going somewhere else" was that guard's exact message on a machine with
+    8.8 GB of 222.6 GB left.
+
+    Registered with atexit rather than returned as a context manager because the
+    suites create several per run and read them after the block they were made
+    in. Failure to remove is ignored: a fixture that cannot be cleaned up must
+    not fail the test that used it.
+    """
+    import atexit as _atexit
+    import shutil as _shutil
+    import tempfile as _tempfile
+    pad = _tempfile.mkdtemp(prefix=prefix)
+    _atexit.register(_shutil.rmtree, pad, ignore_errors=True)
+    return pad
