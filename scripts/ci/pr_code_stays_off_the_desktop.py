@@ -27,7 +27,7 @@ what the fixed workflow does:
                  || fromJSON('["self-hosted","xfa-fast"]') }}
 """
 from __future__ import annotations
-import importlib.util, pathlib, sys, yaml
+import importlib.util, pathlib, re, sys, yaml
 
 # ONE recogniser for the canonical runs-on expression, shared with
 # orchestration_stays_hosted.py rather than written twice. Two guards reading the
@@ -46,6 +46,24 @@ FLOW = REPO / ".github" / "workflows"
 # Each entry is a job that predates the guard, with the reason it is still here.
 # They are not exempt because they are safe -- they are the backlog this guard
 # was written to close, recorded so the count cannot quietly grow. (#311)
+# Jobs whose runner comes from another job's output. Recorded rather than
+# resolved: the guard cannot see what machine appears, so the reason has to be
+# written and the supplier named. If the supplier changes, the claim was made
+# about something else and this goes red.
+DYNAMIC: dict[str, dict] = {
+    "ci-ephemeral.yml:workspace": {
+        "producer": "create-runner",
+        "why": (
+            "the one job that SHOULD run the pull request's own code: "
+            "create-runner brings up a throwaway instance for exactly that, and "
+            "its checkout is deliberately unpinned. What nothing guards is that "
+            "create-runner keeps supplying an ephemeral machine rather than "
+            "falling back to the desktop -- named here so the assumption is at "
+            "least visible (#311)"
+        ),
+    },
+}
+
 KNOWN: dict[str, str] = {
     "ci-ephemeral.yml:create-runner": "starts the ephemeral runner PRs actually use; #311",
     "ci-ephemeral.yml:reap": "tears that runner down; must survive a cancelled run; #311",
@@ -58,7 +76,65 @@ KNOWN: dict[str, str] = {
     "security-audit.yml:cargo-deny-advisories": "predates this guard; #311",
 }
 
+# Runner images GitHub hosts. Anything else -- including a bare custom label
+# like `xfa-fast`, with no "self-hosted" in it -- is a request for one of our
+# own machines. Testing for the WORD "self-hosted" let exactly that through.
+# (T1 review, #1635)
+GEHOST = re.compile(r"^(ubuntu|windows|macos)-(latest|\d[\w.-]*)$")
+
 MINIMUM_WORKFLOWS = 10  # FLOOR
+
+
+def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None) -> list[str]:
+    """Judge ONE runner choice for one job.
+
+    Split out because a job can have several: a matrix supplies a list, and a
+    reusable workflow moves them into another file. The old code judged
+    `job["runs-on"]` once and skipped anything that did not literally contain
+    "self-hosted" -- which is three different spellings of the same request.
+    (T1 review, #1635)
+    """
+    if runs_on is None:
+        runs_on = job.get("runs-on")
+    labels = runs_on if isinstance(runs_on, list) else [runs_on]
+    text = str(runs_on)
+    # NOT `"self-hosted" in text`: a bare custom label like `xfa-fast` is a
+    # self-hosted request without the word in it, and that skip was the hole.
+    hosted = all(isinstance(l, str) and GEHOST.match(l) for l in labels if l)
+    if hosted:
+        return []
+    if ALLEEN_BIJ_PUSH.search(text):
+        return []
+    # A runner supplied by another job. This is the one shape where running the
+    # pull request's own code is CORRECT -- ci-ephemeral's `workspace` is meant
+    # to, on a throwaway machine. The guard cannot resolve the label, so it
+    # cannot confirm the machine is throwaway; it requires the claim to be
+    # written down instead, naming the job that must keep supplying it.
+    # (T1 review, #1635)
+    if "needs." in text and ".outputs." in text:
+        producer = text.split("needs.", 1)[1].split(".", 1)[0]
+        entry = DYNAMIC.get(key)
+        if entry is None:
+            return [f"{key} takes its runner from `{producer}`, so this guard "
+                    "cannot tell whether that machine is ephemeral. Record it in "
+                    "DYNAMIC with the job that supplies it and why running "
+                    "pull-request code there is safe."]
+        if entry.get("producer") != producer:
+            return [f"{key} now takes its runner from `{producer}`, while "
+                    f"DYNAMIC records `{entry.get('producer')}`. The claim was "
+                    "made about a different supplier."]
+        return []
+    checkouts = [st for st in (job.get("steps") or [])
+                 if "actions/checkout" in str(st.get("uses", ""))]
+    if checkouts and all(
+            "pull_request.base.sha" in str((st.get("with") or {}).get("ref", ""))
+            for st in checkouts):
+        return []
+    if key in KNOWN:
+        return []
+    return [f"{key} runs on {runs_on} and is reachable from pull_request. It "
+            "executes PR-authored files as the runner user on the persistent "
+            "desktop."]
 
 
 def main() -> int:
@@ -71,7 +147,7 @@ def main() -> int:
               "report a clean result.", file=sys.stderr)
         return 2
 
-    offenders: list[str] = []
+    problems: list[str] = []
     stale: list[str] = []
     checked = 0
     seen: set[str] = set()
@@ -102,45 +178,45 @@ def main() -> int:
         for name, job in (doc.get("jobs") or {}).items():
             runs_on = job.get("runs-on")
             checked += 1
-            if "self-hosted" not in str(runs_on):
+            # A reusable workflow puts the runner in ANOTHER file. `uses:` at job
+            # level means the jobs that actually run live there, and this file
+            # says nothing about them -- so the guard reported success over jobs
+            # it had not seen. (T1 review, #1635)
+            if job.get("uses"):
+                target = str(job["uses"]).split("@")[0]
+                if target.startswith("./"):
+                    called = FLOW.parent.parent / target[2:]
+                    if called.is_file():
+                        inner = yaml.safe_load(called.read_text()) or {}
+                        for iname, ijob in (inner.get("jobs") or {}).items():
+                            problems.extend(_judge(f"{called.name}:{iname}", ijob,
+                                                   called.name, iname))
+                        continue
+                problems.append(
+                    f"{f.name}:{name} calls {job['uses']}, which this guard "
+                    "cannot read. A job whose runner is defined elsewhere is not "
+                    "a job that was checked.")
                 continue
-            # Two ways to satisfy the rule, because the rule is not "no
-            # self-hosted on a pull request" -- it is "no PR-AUTHORED CODE on the
-            # desktop".
-            #
-            # First: choose the runner per event. Matched against the ONE
-            # canonical form shared with orchestration_stays_hosted.py, not
-            # against the substring "github.event_name" -- that accepted
-            #   event_name == 'pull_request' && <self-hosted> || 'ubuntu-latest'
-            # which is the rule exactly backwards, PR on the desktop. A guard
-            # that approves the inverse of what it checks is worse than none.
-            # (codex, #1635)
-            if ALLEEN_BIJ_PUSH.search(str(runs_on)):
-                continue
-            # Second: stay on the desktop and pin every checkout to the BASE
-            # revision, so the machine is the desktop but the code is merged
-            # code. ci-ephemeral.yml's create-runner and reap need this: creating
-            # and reaping instances is host work and cannot move. EVERY checkout
-            # must be pinned -- one unpinned step puts the pull request's files
-            # on disk, and the steps after it run from that working directory.
-            checkouts = [st for st in (job.get("steps") or [])
-                         if "actions/checkout" in str(st.get("uses", ""))]
-            if checkouts and all(
-                    "pull_request.base.sha" in str((st.get("with") or {}).get("ref", ""))
-                    for st in checkouts):
-                continue
+            # A matrix supplies the labels from `strategy.matrix`, so the
+            # expression alone says nothing. Every value the matrix can produce
+            # has to be judged, not the placeholder. (T1 review, #1635)
+            candidates = [runs_on]
+            if isinstance(runs_on, str) and "matrix." in runs_on:
+                key = runs_on.split("matrix.", 1)[1].split("}")[0].strip()
+                values = ((job.get("strategy") or {}).get("matrix") or {}).get(key)
+                candidates = values if isinstance(values, list) else [runs_on]
+                if not isinstance(values, list):
+                    problems.append(
+                        f"{f.name}:{name} chooses its runner from "
+                        f"`matrix.{key}`, which this guard cannot resolve.")
+                    continue
             key = f"{f.name}:{name}"
-            seen.add(key)
-            if key not in KNOWN:
-                offenders.append(
-                    f"{key} runs on {runs_on} and is reachable from pull_request. "
-                    "It executes PR-authored files as the runner user on the "
-                    "persistent desktop.")
+            if key in KNOWN:
+                seen.add(key)
+            for candidate in candidates:
+                problems.extend(_judge(key, job, f.name, name, candidate))
+            continue
 
-    # Only judge an entry whose workflow FILE is present. Absent, the register
-    # cannot be evaluated at all -- and calling it stale then makes this guard
-    # fail in any tree that does not contain the whole repository, which is
-    # every fixture its own test builds.
     present = {f.name for f in files}
     for key in sorted(set(KNOWN) - seen):
         if key.split(":", 1)[0] not in present:
@@ -154,9 +230,9 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    if offenders or stale:
+    if problems or stale:
         print(f"[pr-runner] FAIL:", file=sys.stderr)
-        for o in offenders + stale:
+        for o in problems + stale:
             print(f"    {o}", file=sys.stderr)
         # The remediation used to print the INVERSE expression -- the very form
         # finding 3 is about. Guidance that tells you to write what the guard
