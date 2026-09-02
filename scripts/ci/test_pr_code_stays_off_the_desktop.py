@@ -101,11 +101,33 @@ r = run(tree({"halfpinned.yml": wf(MAP, DESKTOP, PIN).replace(
 expect("one unpinned checkout in the same job FAILS", r.returncode == 1,
        f"exit={r.returncode}")
 
+# Three spellings of a self-hosted request that carry no "self-hosted" in the
+# place the guard was looking. (T1 review, #1635)
+r = run(tree({"bare.yml": wf(MAP, "xfa-fast")}))
+expect("a bare custom label FAILS", r.returncode == 1, f"exit={r.returncode}")
+
+r = run(tree({
+    "outer.yml": f"{MAP}jobs:\n  call:\n    uses: ./.github/workflows/inner.yml\n",
+    "inner.yml": ("on:\n  workflow_call:\njobs:\n  inner:\n"
+                  "    runs-on: [self-hosted, xfa-fast]\n    steps:\n"
+                  "      - uses: actions/checkout@v4\n      - run: true\n"),
+}))
+expect("a reusable workflow's inner job is judged", r.returncode == 1,
+       f"exit={r.returncode}")
+expect("  and it is named", "inner.yml:inner" in r.stderr, r.stderr[-160:])
+
+r = run(tree({"matrix.yml": (f"{MAP}jobs:\n  guard:\n    strategy:\n"
+                            "      matrix:\n        runner: [[self-hosted, xfa-fast]]\n"
+                            "    runs-on: ${{ matrix.runner }}\n    steps:\n"
+                            "      - uses: actions/checkout@v4\n      - run: true\n")}))
+expect("a matrix-supplied runner is resolved", r.returncode == 1,
+       f"exit={r.returncode}")
+
 r = run(tree({}))
 expect("no pull_request job at all is FATAL, not a pass", r.returncode == 2,
        f"exit={r.returncode}")
 
-MINIMUM_CASES = 10  # FLOOR
+MINIMUM_CASES = 14  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")

@@ -11,7 +11,7 @@ import os, subprocess, sys, tempfile
 from pathlib import Path
 
 GUARD = Path(__file__).with_name("a_deletion_declares_itself.py")
-MINIMUM_CASES = 33  # FLOOR
+MINIMUM_CASES = 35  # FLOOR
 
 
 def clean_env() -> dict[str, str]:
@@ -270,6 +270,20 @@ def main() -> int:
                r.returncode == 0, f"exit {r.returncode} {r.stderr[:200]}")
         expect("and it is not called misplaced",
                "does not delete it" not in r.stderr, r.stderr[:160])
+
+    # The caller's config must not decide what a deletion IS. `git mv` with
+    # diff.renames on was no deletion, with it off it deleted the old path -- the
+    # same commit passing or failing depending on whose machine read it.
+    # (T1 review, #1635)
+    for renames in ("true", "false"):
+        with tempfile.TemporaryDirectory() as d:
+            wd = repo(Path(d))
+            run(wd, "config", "diff.renames", renames)
+            run(wd, "mv", "doomed.txt", "renamed.txt")
+            run(wd, "commit", "-qm", "rename it")
+            r = guard(wd, "--base", "master")
+            expect(f"a rename is a deletion with diff.renames={renames}",
+                   r.returncode == 1, f"exit {r.returncode}")
 
     # A git command that FAILS must not read as "nothing found". With a bad
     # --head the diff exited non-zero, stdout was empty, and the guard reported

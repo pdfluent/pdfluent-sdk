@@ -51,8 +51,20 @@ def clean_env() -> dict[str, str]:
 
 
 def git(*args: str) -> tuple[int, str]:
-    r = subprocess.run(["git", *args], capture_output=True, text=True,
-                       env=clean_env())
+    # Dropping GIT_* is not enough: system and global config still apply, and
+    # `diff.renames` changes what a diff MEANS. Measured -- `git mv a.txt b.txt`
+    # with renames on is no deletion, with renames off it deletes a.txt, so the
+    # same commit passed or failed depending on whose machine read it.
+    # (T1 review, #1635)
+    #
+    # renames=false on purpose, and it is the stricter reading: a rename IS a
+    # deletion of the old path as far as anyone looking for the file is
+    # concerned. A guard about deletions should not be talked out of one by a
+    # heuristic that decided the content moved.
+    r = subprocess.run(
+        ["git", "-c", "diff.renames=false", "-c", "core.quotePath=false", *args],
+        capture_output=True, text=True,
+        env=dict(clean_env(), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull))
     return r.returncode, r.stdout
 
 
