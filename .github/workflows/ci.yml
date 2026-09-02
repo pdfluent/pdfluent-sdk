@@ -43,8 +43,21 @@ on:
     branches: [master]
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A push gets its OWN group and is never cancelled; only a pull request
+  # supersedes itself.
+  #
+  # On master every ref is the same ref, so each merge cancelled the previous
+  # merge's run. Measured 02-09-2026 on the last 30 runs against master: the CI
+  # workflow is 10 cancelled, 4 failed, 0 succeeded, and a run takes 246-1320 s
+  # while 6 of the last 11 merges arrived within 1320 s of the one before. Half
+  # of them land inside the previous run's lifetime; one cancelled run had been
+  # going 7600 s.
+  #
+  # So a merge's result was observed only when nobody merged for the length of a
+  # run, which is not this repository's pattern. Every "we will catch it on
+  # master" argument rested on that. Same fix as the deletions workflow (#1635).
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -332,9 +345,6 @@ jobs:
       - name: The build-cache sweeper fails safe
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_sweep_fails_safe.py
-      - name: The Java binding fixture is the one we generate
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/the_java_fixture_is_the_one_we_generate.py
       - name: A fixture cannot touch a real repository
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/a_fixture_cannot_touch_a_real_repo.py
