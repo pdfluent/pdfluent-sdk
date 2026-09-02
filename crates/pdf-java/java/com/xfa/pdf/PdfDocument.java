@@ -23,11 +23,22 @@ import java.util.List;
 public class PdfDocument implements AutoCloseable {
 
     static {
-        // Load the native library.  The exact name is platform-dependent:
-        //   macOS  → libpdf_java.dylib
-        //   Linux  → libpdf_java.so
-        //   Windows → pdf_java.dll
-        System.loadLibrary("pdf_java");
+        // Load the native library. The name must match `[lib] name` in
+        // crates/pdf-java/Cargo.toml (`pdfluent_java`); the platform-specific
+        // file is:
+        //   macOS   → libpdfluent_java.dylib
+        //   Linux   → libpdfluent_java.so
+        //   Windows → pdfluent_java.dll
+        // The two were out of step for months ("pdf_java" here, "pdfluent_java"
+        // in Cargo.toml), so every test errored with UnsatisfiedLinkError on
+        // every platform -- and nothing ran them, so nobody saw it.
+        //
+        // Loading is as far as this class gets. Its natives resolve to
+        // Java_com_xfa_pdf_PdfDocument_*, and the library has exported
+        // Java_com_pdfluent_PdfluentDocument_* instead since 18742a72. This
+        // pre-rebrand wrapper is kept so it still compiles (see pom.xml); the
+        // wrapper that binds is com.pdfluent.PdfluentDocument in bindings/java.
+        System.loadLibrary("pdfluent_java");
     }
 
     /** Opaque pointer to the Rust JniDocument struct. */

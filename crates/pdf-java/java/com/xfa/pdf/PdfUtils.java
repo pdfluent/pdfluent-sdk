@@ -7,7 +7,9 @@ package com.xfa.pdf;
 public final class PdfUtils {
 
     static {
-        System.loadLibrary("pdf_java");
+        // Same library as PdfDocument, and the same caveat: it loads, but the
+        // symbols are Java_com_pdfluent_PdfUtils_*, not Java_com_xfa_pdf_PdfUtils_*.
+        System.loadLibrary("pdfluent_java");
     }
 
     private PdfUtils() {}

@@ -30,9 +30,18 @@ The output is placed in `../../target/release/`:
 
 | Platform  | File                   |
 |-----------|------------------------|
-| macOS     | `libpdf_java.dylib`    |
-| Linux     | `libpdf_java.so`       |
-| Windows   | `pdf_java.dll`         |
+| macOS     | `libpdfluent_java.dylib` |
+| Linux     | `libpdfluent_java.so`    |
+| Windows   | `pdfluent_java.dll`      |
+
+The Java classes call `System.loadLibrary("pdfluent_java")`, so the name has to
+match `[lib] name` in `Cargo.toml`. CI runs the JUnit suite against a debug build
+(`.github/workflows/java-bindings.yml`); locally:
+
+```bash
+cargo build -p pdf-java
+mvn -f crates/pdf-java/pom.xml -Dnative.lib.dir="$PWD/target/debug" test
+```
 
 ## Compile the Java wrapper classes
 
