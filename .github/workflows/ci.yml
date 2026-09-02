@@ -715,6 +715,13 @@ jobs:
         run: python3 scripts/ci/test_no_ai_attribution.py
       # A message cannot be excluded by a manifest the way a file can, so this
       # is the last point before the messages are published.
+      # Master's, kept: my rebase resolution dropped it, and
+      # every_guard_has_a_job named it within the minute. A guard nothing runs
+      # is a comment, and a rebase is exactly where one goes missing without a
+      # line being deleted on purpose.
+      - name: A hit does not publish the term it found
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_een_treffer_publiceert_de_term_niet.py
 
 
   commit-identity-guard:
