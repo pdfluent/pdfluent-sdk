@@ -86,7 +86,16 @@ BEKEND = {
     "enterprise-acceptance.yml": "`Install system dependencies` fails; needs one re-run for the message (#294)",
     "fuzz.yml": "every fuzz job passes; `delete-runner` gets 422 runner-still-busy and leaks the instance (#294)",
     "node-bindings.yml": "Node 24 red on all three platforms; logs expired, needs a re-run (#294)",
-    "security-audit.yml": "cargo-audit builds under the pinned 1.94.0 and needs 1.96.0; cargo-deny has no docker (#287, #294)",
+    # Measured 02-09-2026, and two layers deep. `rust-toolchain.toml` overrode
+    # dtolnay/rust-toolchain@stable on every cargo call: cargo-audit died on
+    # `kstring v2.0.4 (requires Rust 1.96.0)` under the pinned 1.94.0, and
+    # cargo-deny on "override toolchain '1.94.0-x86_64-unknown-linux-musl' is
+    # not installed" in its container. RUSTUP_TOOLCHAIN=stable on those two
+    # jobs removes that layer; underneath it are real advisories (lopdf via
+    # xfa-pdfrest-compare, quick-xml, crossbeam-epoch, anyhow, nineteen
+    # unmaintained crates) that are the next pull request. Red for the right
+    # reason now, still red.
+    "security-audit.yml": "toolchain fixed (RUSTUP_TOOLCHAIN=stable); now red on real advisories -- lopdf, quick-xml, crossbeam-epoch, anyhow, 19 unmaintained -- next PR (#287, #294)",
 }
 
 # A file that has not changed in this long and still has no runs is not new; it

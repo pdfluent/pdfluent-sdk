@@ -395,6 +395,12 @@ jobs:
       - name: Third-party licences satisfy the policy
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/license_gate.py
+      - name: cargo-audit and cargo-deny accept the same advisories
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_advisory_lists_agree.py
+      - name: The advisory-list comparison bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_advisory_lists_agree.py
       - name: The build-cache sweeper fails safe
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_sweep_fails_safe.py

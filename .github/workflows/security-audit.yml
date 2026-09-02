@@ -45,6 +45,24 @@ jobs:
   cargo-audit:
     name: cargo audit
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+    # RUSTUP_TOOLCHAIN, because `rust-toolchain.toml` wins otherwise.
+    #
+    # `dtolnay/rust-toolchain@stable` installs stable, and then rustup reads the
+    # repository's toolchain file on every cargo invocation and overrides it
+    # back to the pinned 1.94.0 -- the version the product is built with. These
+    # two jobs are not the product build: they audit the dependency tree, and
+    # the tooling that does that tracks current Rust. Measured 02-09-2026:
+    # `cargo audit` fails on `kstring v2.0.4 (requires Rust 1.96.0)` and
+    # cargo-deny fails earlier still with "override toolchain
+    # '1.94.0-x86_64-unknown-linux-musl' is not installed" -- in its container
+    # that toolchain does not exist at all.
+    #
+    # The environment variable takes precedence over the file, so this is the
+    # narrowest way to say "audit with current Rust, build with the pin". Both
+    # jobs have been red since 28-08 for this, and neither failure was ever
+    # about an advisory. (#294, #287)
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v4
 
@@ -69,6 +87,24 @@ jobs:
     # Run in addition to cargo-audit because cargo-deny also enforces
     # license, source, and ban policies declared in deny.toml.
     # If deny.toml is absent the job is a no-op.
+    # RUSTUP_TOOLCHAIN, because `rust-toolchain.toml` wins otherwise.
+    #
+    # `dtolnay/rust-toolchain@stable` installs stable, and then rustup reads the
+    # repository's toolchain file on every cargo invocation and overrides it
+    # back to the pinned 1.94.0 -- the version the product is built with. These
+    # two jobs are not the product build: they audit the dependency tree, and
+    # the tooling that does that tracks current Rust. Measured 02-09-2026:
+    # `cargo audit` fails on `kstring v2.0.4 (requires Rust 1.96.0)` and
+    # cargo-deny fails earlier still with "override toolchain
+    # '1.94.0-x86_64-unknown-linux-musl' is not installed" -- in its container
+    # that toolchain does not exist at all.
+    #
+    # The environment variable takes precedence over the file, so this is the
+    # narrowest way to say "audit with current Rust, build with the pin". Both
+    # jobs have been red since 28-08 for this, and neither failure was ever
+    # about an advisory. (#294, #287)
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v4
 

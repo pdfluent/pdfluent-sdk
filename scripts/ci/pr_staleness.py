@@ -38,27 +38,43 @@ BEKEND_OUD = {1034, 1271, 1272, 1278, 1322, 1349, 1350, 1397, 1398, 1465, 1469, 
 
 
 def gh(pad: str):
+    """(data, reason). Exactly one of the two is None.
+
+    Four different failures used to arrive here as the same `None`: the binary
+    missing, a non-zero exit, a network error and unparseable output. The
+    caller then printed one guess for all four -- "check that `gh` is installed
+    and authenticated" -- and on 02-09-2026 that guess was wrong: seven agents
+    had exhausted the GitHub API rate limit, and the gate said the operator was
+    not logged in. A guard that reports a cause it did not measure sends people
+    to fix the wrong thing, which costs more than saying "I could not tell".
+    """
     try:
         r = subprocess.run(["gh", "api", pad], capture_output=True, text=True, check=False)
-    except (FileNotFoundError, OSError):
-        # gh missing is the ordinary case on a fresh runner, and a traceback
-        # buries the one line that says what to install.
-        return None
+    except FileNotFoundError:
+        return None, "`gh` is not installed on this machine"
+    except OSError as e:
+        return None, f"`gh` could not be started: {e}"
     if r.returncode != 0:
-        return None
+        # gh's own words. It distinguishes a rate limit from a login problem
+        # from a 404, and this guard does not have to guess between them.
+        melding = (r.stderr or r.stdout).strip().splitlines()
+        eerste = melding[0] if melding else f"exit {r.returncode} with no output"
+        return None, f"`gh api {pad}` failed: {eerste}"
     try:
-        return json.loads(r.stdout)
-    except json.JSONDecodeError:
-        return None
+        return json.loads(r.stdout), None
+    except json.JSONDecodeError as e:
+        return None, f"`gh api {pad}` returned something that is not JSON: {e}"
 
 
 def main() -> int:
-    prs = gh(f"repos/{REPO}/pulls?state=open&per_page=100")
+    prs, reden = gh(f"repos/{REPO}/pulls?state=open&per_page=100")
     if prs is None:
-        print("FAIL: could not read the pull request list. A stack nobody can see is "
-              "exactly the state this check exists to prevent, so not being able to "
-              "look is a failure, not a pass. Check that `gh` is installed and "
-              "authenticated where this runs.", file=sys.stderr)
+        print(f"FAIL: could not read the pull request list -- {reden}\n"
+              "A stack nobody can see is exactly the state this check exists to "
+              "prevent, so not being able to look is a failure and not a pass. "
+              "The line above is what the tool said, not a guess: a rate limit, "
+              "a missing login and a missing binary need three different fixes.",
+              file=sys.stderr)
         return 1
 
     nu = datetime.datetime.now(datetime.timezone.utc)
@@ -66,7 +82,7 @@ def main() -> int:
     for pr in prs:
         bij = datetime.datetime.fromisoformat(pr["updated_at"].replace("Z", "+00:00"))
         dagen = (nu - bij).days
-        vergelijk = gh(f"repos/{REPO}/compare/{pr['base']['ref']}...{pr['head']['sha']}")
+        vergelijk, _ = gh(f"repos/{REPO}/compare/{pr['base']['ref']}...{pr['head']['sha']}")
         achter = (vergelijk or {}).get("behind_by")
         if achter is None:
             # The compare call failed. Falling back to the day count alone lets
