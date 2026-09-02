@@ -203,7 +203,7 @@ def runner_labels(text: str, path: pathlib.Path) -> set[str]:
         ro = job.get("runs-on")
         if ro is None:
             continue
-        for keuze in runner_keuzes(ro):
+        for keuze in runner_keuzes(ro, job):
             if "self-hosted" not in keuze:
                 continue
             for n in keuze:
@@ -212,7 +212,28 @@ def runner_labels(text: str, path: pathlib.Path) -> set[str]:
     return uit
 
 
-def runner_keuzes(ro) -> list[list[str]]:
+def matrix_waarden(job: dict, sleutel: str) -> list[str]:
+    """What `matrix.<sleutel>` can be, from the job's own strategy block.
+
+    `runs-on: ${{ matrix.os }}` is three jobs in this repository and the guard
+    read no labels from any of them. Resolving it is cheap and exact -- the
+    values are written down a few lines up -- and guessing was the alternative.
+    """
+    matrix = ((job.get("strategy") or {}).get("matrix") or {})
+    if not isinstance(matrix, dict):
+        return []
+    waarden = matrix.get(sleutel)
+    uit: list[str] = []
+    if isinstance(waarden, list):
+        uit += [str(w) for w in waarden if not isinstance(w, (dict, list))]
+    # `include:` entries can introduce a value the top-level list never names.
+    for extra in (matrix.get("include") or []):
+        if isinstance(extra, dict) and sleutel in extra:
+            uit.append(str(extra[sleutel]))
+    return uit
+
+
+def runner_keuzes(ro, job: dict | None = None) -> list[list[str]]:
     """Each runner this `runs-on` can resolve to, as a list of labels.
 
     A `${{ }}` expression is a program, not a list of names: tokenising it
@@ -221,11 +242,33 @@ def runner_keuzes(ro) -> list[list[str]]:
     are read -- and a per-event expression offers several, which is why this
     returns a list of choices rather than one flattened set.
     """
+    # GitHub's other documented shape: `runs-on: {group: ..., labels: [...]}`.
+    # The labels are the runner request; the group is an organisation grouping
+    # and not a machine class.
+    if isinstance(ro, dict):
+        labels = ro.get("labels")
+        if isinstance(labels, list):
+            return [[str(x) for x in labels]]
+        return [[str(labels)]] if labels else []
     if isinstance(ro, list):
-        return [[str(x) for x in ro]]
+        # Each element separately, because an unresolved expression sitting
+        # beside literal labels is not itself a label -- reading the list as one
+        # string would have demanded a machine class called `${{ env.LBL }}`.
+        vast = [str(x) for x in ro if "${{" not in str(x)]
+        keuzes = [vast] if vast else []
+        for x in ro:
+            if "${{" in str(x):
+                keuzes += runner_keuzes(str(x), job)
+        return keuzes
     tekst = str(ro)
     if "${{" not in tekst:
         return [[tekst.strip()]]
+    # `matrix.<key>`: the values are in the job's own strategy block.
+    m = re.search(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}", tekst)
+    if m and job is not None:
+        waarden = matrix_waarden(job, m.group(1))
+        if waarden:
+            return [[w] for w in waarden]
     keuzes: list[list[str]] = []
     for arg in re.findall(r"fromJSON\(\s*'([^']*)'\s*\)", tekst):
         try:
