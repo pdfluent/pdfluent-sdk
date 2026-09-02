@@ -132,7 +132,13 @@ def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
         # ref takes the base, which is the safe case, and naming the head is
         # what puts the pull request's code on the machine. So "every checkout
         # pinned to base.sha" is the wrong test here -- absence of a head ref is.
-        if all("head.sha" not in str((st.get("with") or {}).get("ref", ""))
+        # Three ways to name the pull request's code, not one. `head.sha` was
+        # the only one recognised; `head.ref` is the same thing by branch name,
+        # and `refs/pull/N/merge` is GitHub's own documented example of what NOT
+        # to check out under this trigger. (T1 review, #1635)
+        HEAD_REFS = ("head.sha", "head.ref", "refs/pull/")
+        if all(not any(h in str((st.get("with") or {}).get("ref", ""))
+                       for h in HEAD_REFS)
                for st in checkouts):
             return []
         return [f"{key} runs on {runs_on} under pull_request_target and checks "

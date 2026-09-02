@@ -142,6 +142,13 @@ expect("pull_request_target checking out the HEAD FAILS", r.returncode == 1,
 expect("  and says the secrets make it worse", "secrets" in r.stderr,
        r.stderr[-160:])
 
+for spelling in ("github.event.pull_request.head.ref",
+                 "refs/pull/${{ github.event.number }}/merge"):
+    body = PRT_HEAD.replace("github.event.pull_request.head.sha", spelling)
+    r = run(tree({"prt.yml": body}))
+    expect(f"pull_request_target checking out {spelling.split('.')[-1]} FAILS",
+           r.returncode == 1, f"exit={r.returncode}")
+
 r = run(tree({"prt.yml": PRT_BASE}))
 expect("pull_request_target without a ref passes (it takes the base)",
        r.returncode == 0, f"exit={r.returncode} {r.stderr[-160:]}")
@@ -150,7 +157,7 @@ r = run(tree({}))
 expect("no pull_request job at all is FATAL, not a pass", r.returncode == 2,
        f"exit={r.returncode}")
 
-MINIMUM_CASES = 17  # FLOOR
+MINIMUM_CASES = 19  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
