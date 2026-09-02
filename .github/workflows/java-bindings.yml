@@ -94,18 +94,32 @@ jobs:
               -Dnative.lib.dir="$GITHUB_WORKSPACE/target/debug" \
               clean test
 
-      # Surefire's own XML is the record; count the tests it says it ran, so a
-      # pass over zero tests cannot slip through a future pom change.
-      - name: At least one test ran
+      # Surefire's own XML is the record. Two floors, not one sum: a total of 5
+      # was satisfied by the licence suite alone (12), so deleting the document
+      # suite -- the one this workflow exists for -- stayed green. Now the
+      # document report must be present with its 6 tests, and the total must be
+      # the 18 the two suites add up to. (review of #1672)
+      - name: The document suite ran, and so did the rest
         run: |
           set -euo pipefail
-          n=$(python3 - <<'PY'
-          import glob, xml.etree.ElementTree as ET
-          total = 0
-          for f in glob.glob("crates/pdf-java/target/surefire-reports/TEST-*.xml"):
-              total += int(ET.parse(f).getroot().get("tests", "0"))
-          print(total)
+          python3 - <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+          reports = "crates/pdf-java/target/surefire-reports"
+          doc = f"{reports}/TEST-com.pdfluent.PdfluentDocumentJniTest.xml"
+          per = {f: int(ET.parse(f).getroot().get("tests", "0"))
+                 for f in glob.glob(f"{reports}/TEST-*.xml")}
+          total = sum(per.values())
+          for f, n in sorted(per.items()):
+              print(f"  {n:3d}  {f.rsplit('/', 1)[-1]}")
+          print(f"surefire reports {total} test(s) in {len(per)} report(s)")
+          bad = []
+          if doc not in per:
+              bad.append(f"{doc.rsplit('/', 1)[-1]} is missing: the document suite did not run")
+          elif per[doc] < 6:
+              bad.append(f"the document suite ran {per[doc]} test(s), floor is 6")
+          if total < 18:
+              bad.append(f"{total} test(s) in total, floor is 18")
+          for b in bad:
+              print(f"::error::{b}", file=sys.stderr)
+          sys.exit(1 if bad else 0)
           PY
-          )
-          echo "surefire reports $n test(s)"
-          [ "$n" -ge 5 ] || { echo "::error::expected at least 5 JUnit tests, surefire reports $n" >&2; exit 1; }
