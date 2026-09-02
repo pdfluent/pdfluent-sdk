@@ -1,0 +1,111 @@
+name: Java Bindings
+
+# The JNI binding's JUnit suite, on a real document, on every pull request and
+# every push to master.
+#
+# Until 02-09-2026 nothing ran `mvn test` for crates/pdf-java. bindings.yml has
+# a Java job, but it fires on release tags only and runs `cargo test`, which
+# never loads the library from Java. So the Java classes could call
+# System.loadLibrary("pdf_java") while Cargo.toml built libpdfluent_java, and
+# every test errored with UnsatisfiedLinkError on every platform for months
+# without anybody seeing it (pdfluent/pdfluent-internal#310). The rule this
+# repository writes down -- a binding's test calls the method on a real
+# document AND runs in CI -- was met on the first half only.
+#
+# ubuntu-latest on both events, unconditionally: nothing here may touch the
+# persistent desktop runner on a pull request (pr_code_stays_off_the_desktop.py),
+# and a push to master is cheap Linux minutes, which
+# no_hosted_minutes_on_a_push.py counts rather than refuses.
+#
+# Debug rather than --release: the suite asks whether the binding loads and
+# answers, not how fast, and a debug build shares the cache with ci.yml's
+# check job. The pom defaults to target/release for a local release build; the
+# override below points Surefire's forked JVM at target/debug instead.
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+concurrency:
+  # Same shape as ci.yml: a pull request supersedes itself, a push to master
+  # gets its own group per commit and is never cancelled by the next merge.
+  group: java-bindings-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  jni-tests:
+    name: JNI tests (mvn test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Build the JNI library
+        run: cargo build -p pdf-java --locked
+
+      # Checked by name before Maven starts. A missing or misnamed library
+      # surfaces inside the JVM as UnsatisfiedLinkError wrapped in
+      # ExceptionInInitializerError and NoClassDefFoundError, which points at
+      # the tests rather than at the build. This is the exact fault the
+      # workflow exists to catch, so it is named here rather than left to be
+      # read out of a stack trace.
+      - name: The library the Java side loads is the one cargo built
+        run: |
+          set -euo pipefail
+          test -f target/debug/libpdfluent_java.so || {
+            echo "::error::target/debug/libpdfluent_java.so was not built; Cargo.toml [lib] name and System.loadLibrary(...) must agree" >&2
+            ls -la target/debug/*.so 2>/dev/null || true
+            exit 1
+          }
+          for f in crates/pdf-java/java/com/xfa/pdf/PdfDocument.java \
+                   crates/pdf-java/java/com/xfa/pdf/PdfUtils.java \
+                   crates/pdf-java/src/test/java/com/pdfluent/PdfluentLicensing.java; do
+            grep -q 'System.loadLibrary("pdfluent_java")' "$f" || {
+              echo "::error::$f does not load pdfluent_java" >&2; exit 1; }
+          done
+
+      - name: Rust unit tests of the binding
+        run: cargo test -p pdf-java --locked
+
+      # Not -q: the "Tests run: N, Failures: F, Errors: E" lines are the
+      # evidence that tests ran, and -q hides them. failIfNoTests is set in the
+      # pom, so an empty run fails instead of reporting green.
+      - name: JUnit suite against the built library
+        run: |
+          set -euo pipefail
+          mvn --batch-mode --no-transfer-progress \
+              -f crates/pdf-java/pom.xml \
+              -Dnative.lib.dir="$GITHUB_WORKSPACE/target/debug" \
+              clean test
+
+      # Surefire's own XML is the record; count the tests it says it ran, so a
+      # pass over zero tests cannot slip through a future pom change.
+      - name: At least one test ran
+        run: |
+          set -euo pipefail
+          n=$(python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          total = 0
+          for f in glob.glob("crates/pdf-java/target/surefire-reports/TEST-*.xml"):
+              total += int(ET.parse(f).getroot().get("tests", "0"))
+          print(total)
+          PY
+          )
+          echo "surefire reports $n test(s)"
+          [ "$n" -ge 5 ] || { echo "::error::expected at least 5 JUnit tests, surefire reports $n" >&2; exit 1; }

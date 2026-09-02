@@ -76,7 +76,12 @@
     <maven.compiler.target>${java.version}</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <!-- Path to the compiled Rust dylib / .so used in tests -->
+    <!-- Directory holding libpdfluent_java (the cdylib `cargo build -p pdf-java`
+         produces). Defaults to a release build; CI builds debug and passes
+         -Dnative.lib.dir=<workspace>/target/debug on the command line, which
+         reaches the forked test JVM because it is interpolated into <argLine>
+         below. A bare -Djava.library.path on the mvn command line does NOT
+         reach it, Surefire says so itself in the log. -->
     <native.lib.dir>${project.basedir}/../../target/release</native.lib.dir>
   </properties>
 
@@ -123,6 +128,11 @@
         <version>3.2.5</version>
         <configuration>
           <argLine>-Djava.library.path=${native.lib.dir}</argLine>
+          <!-- A run that finds no tests is a failure, not a pass. Without this
+               a broken test-source layout prints "No tests to run" and exits 0,
+               which is indistinguishable from green in a CI log. -->
+          <failIfNoTests>true</failIfNoTests>
+          <trimStackTrace>false</trimStackTrace>
         </configuration>
       </plugin>
 
