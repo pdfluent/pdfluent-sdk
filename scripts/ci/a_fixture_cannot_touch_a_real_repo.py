@@ -54,6 +54,12 @@ ALLOWED: dict[str, str] = {
     ),
     "fixture_env.py": "it is the helper; the keys are what it sets",
     "a_fixture_cannot_touch_a_real_repo.py": "this file; the keys are what it looks for",
+    "the_commit_msg_hook_is_wired.py": (
+        "its subject IS this clone: it asks whether core.hooksPath points at "
+        ".githooks here. A sandbox check would refuse the only repository it "
+        "has any reason to look at, and it never writes -- one `git config "
+        "--get`, no init, no commit"
+    ),
 }
 
 MINIMUM_FILES = 20  # FLOOR

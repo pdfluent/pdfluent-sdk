@@ -3,6 +3,30 @@
 # Enable once per clone:   git config core.hooksPath .githooks
 # Bypass intentionally:    PRE_PUSH_SKIP=1 git push ...   (or git push --no-verify)
 [ "${PRE_PUSH_SKIP:-0}" = "1" ] && { echo "[pre-push] skipped (PRE_PUSH_SKIP=1)"; exit 0; }
+# The commit-msg hook only sees messages written in a clone that has it
+# installed. Everything else arrives with its message already fixed: commits
+# from before the hook existed, a rebase, a cherry-pick, `--no-verify`, or a
+# clone where nobody ran `git config core.hooksPath .githooks`. This is the
+# layer that catches those, and it is the last one before the message is
+# published -- after a merge the only remedy is a history rewrite.
+if [ -f scripts/ci/geen_interne_zaken.py ]; then
+  BOVEN="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  if [ -n "$BOVEN" ]; then
+    # `--bereik` is the guard's own calling convention: any dash-prefixed
+    # first argument makes it read the SECOND as a revision range, because a
+    # bare first argument means "this file holds one message".
+    if ! python3 scripts/ci/geen_interne_zaken.py --bereik "${BOVEN}..HEAD"; then
+      echo "[pre-push] BLOCKED: a commit message names something internal." >&2
+      echo "  Rewrite the messages before pushing -- once merged, only a" >&2
+      echo "  history rewrite removes them. See the guard's output above." >&2
+      exit 1
+    fi
+  fi
+  # No upstream: nothing to compare against, and inventing a base here would
+  # judge a range nobody is pushing. The commit-msg hook already covered these
+  # messages, and CI judges the branch once it exists remotely.
+fi
+
 echo "[pre-push] running local CI gate (sanity + lint)…"
 bash scripts/ci/local_ci_gate.sh || {
   echo "[pre-push] BLOCKED: local CI gate failed. Fix, or 'PRE_PUSH_SKIP=1 git push' to override." >&2

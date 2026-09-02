@@ -133,6 +133,20 @@ run identtest python3 scripts/ci/test_commits_use_the_noreply_alias.py
 run identity  python3 scripts/ci/commits_use_the_noreply_alias.py
 # And the same address in the tree rather than in a commit field, which is the
 # half a guard on author/committer cannot see.
+# The message guards, and the wiring that makes them run at all.
+#
+#   hookwire : the commit-msg hook exists, calls both message guards, and this
+#              clone's core.hooksPath actually points at it. HERKOMST.md claimed
+#              that hook since 26-08-2026; on 02-09 there was no commit-msg hook
+#              in the tree and the guard it named lived on an unmerged branch.
+#   noai     : catches attribution the hook could not reach -- a clone that
+#              never installed it, a rebase, a cherry-pick, --no-verify.
+#   msgclean : the same for internal matters, over the messages on this branch.
+run hookwire  python3 scripts/ci/the_commit_msg_hook_is_wired.py
+run noai      python3 scripts/ci/no_ai_attribution.py
+run noaitest  python3 scripts/ci/test_no_ai_attribution.py
+run msgclean  python3 scripts/ci/geen_interne_zaken.py --bereik github/master..HEAD
+
 run treetest  python3 scripts/ci/test_no_personal_address_in_the_tree.py
 run treeaddr  python3 scripts/ci/no_personal_address_in_the_tree.py
 # Advisory, never blocking. It reports on live machines -- a queue, a busy

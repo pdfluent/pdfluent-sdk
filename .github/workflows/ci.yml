@@ -569,6 +569,54 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+  message-guard-wiring:
+    name: The message guards are wired, and run
+    # Its own job, and it checks out the full history for the same reason
+    # commit-identity-guard does: `geen_interne_zaken.py` reads a range of
+    # commit messages, and over a shallow clone that range is empty -- which is
+    # the state it exists to refuse, dressed as a pass.
+    #
+    # Why this job exists at all: `docs/HERKOMST.md` claimed a commit-msg hook
+    # from 26-08-2026 onward. Measured 02-09-2026, `core.hooksPath` pointed at
+    # `.githooks`, that directory held pre-commit and pre-push and no
+    # commit-msg, and the guard the document named sat on a branch that never
+    # merged. A rule described in prose and enforced nowhere is not a rule, and
+    # this is the layer that makes the description checkable.
+    #
+    # Hosted on a pull request, per scripts/ci/pr_code_stays_off_the_desktop.py:
+    # these steps run scripts out of the checkout, and on a pull request those
+    # scripts are whatever the pull request says they are.
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Each step carries `if: ${{ !cancelled() }}`: a failure in one says
+      # nothing about the next, and a step that never ran looks like one that
+      # passed (#288).
+      #
+      # The wiring first. If the hook is missing or does not call both guards,
+      # the two checks below still pass on this branch's own history while
+      # nothing protects the next commit anyone writes.
+      - name: The commit-msg hook exists and calls both message guards
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_commit_msg_hook_is_wired.py
+      - name: No commit carries AI attribution
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_ai_attribution.py
+      - name: The attribution guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_ai_attribution.py
+      # A message cannot be excluded by a manifest the way a file can, so this
+      # is the last point before the messages are published.
+      - name: No commit message names an internal matter
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/geen_interne_zaken.py --bereik origin/master..HEAD
+
   commit-identity-guard:
     name: No commit publishes a personal address
     # Its own job, and the only one here that checks out the whole history.
