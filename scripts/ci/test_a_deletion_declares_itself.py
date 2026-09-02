@@ -14,20 +14,32 @@ GUARD = Path(__file__).with_name("a_deletion_declares_itself.py")
 MINIMUM_CASES = 35  # FLOOR
 
 
-def clean_env() -> dict[str, str]:
-    """Without the caller's GIT_*.
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
+from fixture_env import sealed_env
+
+
+def clean_env(cwd=None) -> dict[str, str]:
+    """Without the caller's GIT_*, and with the config surface sealed.
+
+    Delegates to fixture_env.sealed_env(), which landed in #1647 the same night
+    this file did. The two merged separately and nothing ran them together until
+    a push failed: this fixture builds repositories and sealed only GIT_*, which
+    stops it READING the real repository and not writing to the real config --
+    the second of the two incidents that helper exists for. Passing cwd is what
+    runs the sandbox check, so it is not decoration.
 
     A hook hands GIT_DIR and GIT_WORK_TREE down as absolute paths, git then
     ignores the directory it was pointed at, and a test that builds scratch
     repositories starts editing the real one. On 25-08-2026 that set
     `core.bare = true` on this repository and stopped thirty worktrees.
     """
-    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return sealed_env(cwd=cwd, identity=True)
 
 
 def run(wd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", *args], cwd=str(wd), capture_output=True,
-                          text=True, env=clean_env())
+                          text=True, env=clean_env(cwd=wd))
 
 
 def guard(wd: Path, *args: str) -> subprocess.CompletedProcess[str]:
