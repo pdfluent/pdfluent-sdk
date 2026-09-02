@@ -297,7 +297,36 @@ expect("an unregistered forbidden entry is refused",
 expect("  and it says where to write the reason",
        "MOET_OVERIG_VERBODEN" in r.stderr, r.stderr[-200:])
 
-MINIMUM_CASES = 68  # FLOOR
+# THE SELF-CHECK ITSELF, which had no test. Neutralise the loop that compares
+# MUST_FORBID against the registers and this suite stayed 68/68 green -- the
+# guard I added to stop a reason existing without a register behind it, with no
+# register behind it. Every case above mutates the POLICY; this one has to
+# mutate the GUARD, because that is where the register lives.
+def guard_met_extra_reden(naam: str) -> subprocess.CompletedProcess:
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td) / "repo"
+        (root / "scripts" / "ci").mkdir(parents=True)
+        (root / "docs").mkdir(parents=True)
+        for bestand in (pathlib.Path(GUARD).name, "license_gate.py"):
+            shutil.copy(REPO / "scripts" / "ci" / bestand, root / "scripts" / "ci" / bestand)
+        bron = (root / GUARD).read_text().replace(
+            "MUST_FORBID: dict[str, str] = {",
+            f'MUST_FORBID: dict[str, str] = {{\n    "{naam}": "a reason with no register behind it",',
+            1)
+        (root / GUARD).write_text(bron)
+        (root / POLICY_REL).write_text((REPO / POLICY_REL).read_text())
+        return subprocess.run([sys.executable, str(root / GUARD)],
+                              capture_output=True, text=True)
+
+
+r = guard_met_extra_reden("Parity-7.0.0")
+expect("a reason with no register behind it is refused", r.returncode == 1,
+       f"exit={r.returncode}: {r.stderr[:200]}")
+expect("  and it names the licence", "Parity-7.0.0" in r.stderr, r.stderr[:200])
+expect("  and says which register to put it in",
+       "MOET_OVERIG_VERBODEN" in r.stderr, r.stderr[:250])
+
+MINIMUM_CASES = 71  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 if fails:
     for f in fails:
