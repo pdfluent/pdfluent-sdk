@@ -81,6 +81,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # One place for "measure a directory that may contain entries this
+          # user cannot read". `du` exits 1 when it skipped something -- normal
+          # on a shared machine -- and 2+ for a real failure. As the last
+          # command of an `&&` list under `set -e`, an exit 1 kills the step:
+          # that is what broke run 33615944995 on four `systemd-private-*`
+          # directories, and guarding only the two calls that write to files
+          # left the one that actually died untouched. (peer review, #1664)
+          measure_dir() {
+            [ -d "$1" ] || { echo "::error::$1 is not a directory"; return 1; }
+            du -x -h -s "$1" && return 0
+            rc=$?
+            [ "$rc" -le 1 ] || { echo "::error::du $1 failed with $rc"; return "$rc"; }
+            echo "  ($1: some entries unreadable; partial)"
+            return 0
+          }
+
           ROOT=$(cd "${RUNNER_WORKSPACE:-.}/../.." && pwd)
           # Written to a file first, then read. `du ... | sort | tail -30` under
           # `pipefail` dies with 141 the moment tail stops reading -- SIGPIPE --
@@ -89,7 +105,14 @@ jobs:
           # more here, in the job whose entire purpose is to survive a machine
           # with too much of something. (peer review, #1662)
           echo "## Runner work root"
-          du -x -h --max-depth=2 "${ROOT}" > "$RUNNER_TEMP/work-root.txt" 2>/dev/null || true
+          # `|| true` would swallow every failure, including "the directory is
+          # not there" -- and this step's whole job is to notice things about
+          # directories. `du` exits 1 when it could not read SOME entry, which is
+          # normal on a machine with other users' files, and 2+ for a real
+          # failure. So 1 is accepted and named; anything above it stops the step.
+          du -x -h --max-depth=2 "${ROOT}" > "$RUNNER_TEMP/work-root.txt" 2>/dev/null && rc=0 || rc=$?
+          [ "$rc" -le 1 ] || { echo "::error::du failed with $rc"; exit "$rc"; }
+          [ "$rc" -eq 0 ] || echo "(du could not read every entry; partial)"
           sort -h "$RUNNER_TEMP/work-root.txt" | tail -30
           echo
           # The paths this host is actually CONFIGURED with, which are not the
@@ -110,14 +133,19 @@ jobs:
           for D in "${CARGO_TARGET_DIR:-}" "${CARGO_HOME:-}" \
                    /var/cache/cargo-target /var/cache/cargo-home \
                    "${HOME}/.cargo" "${HOME}/.rustup"; do
-            [ -n "$D" ] && [ -d "$D" ] && du -x -h -s "$D"
+            if [ -n "$D" ] && [ -d "$D" ]; then measure_dir "$D"; fi
           done
           echo
           echo "## Every target/ on this filesystem, not only in this checkout"
-          find / -xdev -type d -name target -prune > "$RUNNER_TEMP/targets.txt" 2>/dev/null || true
+          # Same rule for find: exit 1 means some path could not be read, which
+          # is expected when walking / as the runner user; 2+ is a real error and
+          # must not be hidden behind `|| true`. (codex, #1662)
+          find / -xdev -type d -name target -prune > "$RUNNER_TEMP/targets.txt" 2>/dev/null && rc=0 || rc=$?
+          [ "$rc" -le 1 ] || { echo "::error::find failed with $rc"; exit "$rc"; }
+          [ "$rc" -eq 0 ] || echo "(find could not read every directory; partial)"
           echo "found $(wc -l < "$RUNNER_TEMP/targets.txt") target/ directories"
           head -60 "$RUNNER_TEMP/targets.txt" | while read -r T; do
-            [ -d "$T" ] && du -x -h -s "$T"
+            if [ -d "$T" ]; then measure_dir "$T"; fi
           done
 
       # The place `disk_headroom.py` cannot see, because it looks for `target/`.
@@ -128,18 +156,47 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # One place for "measure a directory that may contain entries this
+          # user cannot read". `du` exits 1 when it skipped something -- normal
+          # on a shared machine -- and 2+ for a real failure. As the last
+          # command of an `&&` list under `set -e`, an exit 1 kills the step:
+          # that is what broke run 33615944995 on four `systemd-private-*`
+          # directories, and guarding only the two calls that write to files
+          # left the one that actually died untouched. (peer review, #1664)
+          measure_dir() {
+            [ -d "$1" ] || { echo "::error::$1 is not a directory"; return 1; }
+            du -x -h -s "$1" && return 0
+            rc=$?
+            [ "$rc" -le 1 ] || { echo "::error::du $1 failed with $rc"; return "$rc"; }
+            echo "  ($1: some entries unreadable; partial)"
+            return 0
+          }
+
           for T in "${RUNNER_TEMP:-}" "${TMPDIR:-}" /tmp /var/tmp; do
             [ -n "$T" ] && [ -d "$T" ] || continue
             echo "-- $T: $(find "$T" -maxdepth 1 -name 'tmp*' -o -maxdepth 1 -name 'fixture-*' 2>/dev/null | wc -l) entries"
-            du -x -h -s "$T"
+            measure_dir "$T"
           done
 
       - name: Docker, if it is here
         shell: bash
         run: |
           set -euo pipefail
-          if command -v docker >/dev/null; then docker system df; else echo "no docker"; fi
+          # `command -v` says the binary is installed, not that the daemon is
+          # up. On a machine where it is stopped, `docker system df` exits
+          # non-zero and would take the step with it -- and this is the one
+          # question the first run never got to ask.
+          if ! command -v docker >/dev/null; then
+            echo "no docker on this machine"
+          elif docker system df; then
+            :
+          else
+            echo "docker is installed but not answering (daemon stopped?)"
+          fi
 
+      # `always()`: the floor is the one number this job exists to report, and
+      # a failure in any measurement above is exactly when somebody wants it.
       - name: And the verdict
+        if: ${{ always() }}
         shell: bash
         run: python3 scripts/ci/disk_headroom.py
