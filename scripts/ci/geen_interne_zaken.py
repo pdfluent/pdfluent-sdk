@@ -44,7 +44,6 @@ waarop terugnemen nog goedkoop is. CI is de vangnetlaag voor wie de haak niet
 heeft geïnstalleerd -- dezelfde opzet als no_ai_attribution.py, en om dezelfde
 reden: `core.hooksPath` maakt een haak op de verkeerde plek onzichtbaar.
 """
-import hashlib
 import os
 import re
 import subprocess
@@ -132,7 +131,13 @@ def private_regel():
         return None
     if not termen:
         return None
-    return ("partner", re.compile(r"\b(" + "|".join(termen) + r")\b", re.I))
+    global _PRIVE_RX
+    # `re.I` is not decoration: the terms are names and a commit message spells
+    # them however it feels like. It is also the whole reason `::add-mask::`
+    # cannot be relied on -- masking is exact -- so removing it would quietly
+    # undo both this rule and the argument for redacting its hits.
+    _PRIVE_RX = re.compile(r"\b(" + "|".join(termen) + r")\b", re.I)
+    return ("partner", _PRIVE_RX)
 
 
 def alle_regels():
@@ -325,6 +330,11 @@ def uit_boom():
     return fouten, gelezen
 
 
+# The compiled private pattern, once `private_regel()` has loaded it. Redaction
+# keys on THIS, not on a rule name.
+_PRIVE_RX = None
+
+
 def _toonbaar(naam: str, wat: str, context: str) -> tuple[str, str]:
     """What may appear in the log, for one finding.
 
@@ -340,10 +350,23 @@ def _toonbaar(naam: str, wat: str, context: str) -> tuple[str, str]:
     position and a short digest are enough to find it in a list you already
     hold. (#1660)
     """
-    if naam != "partner" or not os.environ.get("CI"):
+    if not os.environ.get("CI"):
         return wat, context
-    kort = hashlib.sha256(wat.lower().encode()).hexdigest()[:8]
-    return (f"<partner term {kort}, {len(wat)} chars>",
+    # Keyed on the CONTENT, not on the rule that happened to report it.
+    # `keychain_overtredingen()` matches a label against every rule INCLUDING
+    # the private one and then reports it as `keychain-label`, so a redaction
+    # that asked `naam == "partner"` printed the term in full down that path.
+    # A rule name is a label; what must not be published is the text.
+    if _PRIVE_RX is None:
+        return wat, context
+    if not (_PRIVE_RX.search(wat) or _PRIVE_RX.search(context or "")):
+        return wat, context
+    # No digest and no length. `sha256(term.lower())[:8]` with the exact length
+    # beside it is reversible with a word list in one line -- a redaction that
+    # publishes a checkable fingerprint of the secret is a slower way of
+    # publishing the secret. The rule and the position are what a developer
+    # needs; the term itself is in the list they already hold.
+    return ("<a private term matched here>",
             "<context withheld: it contains the term>")
 
 
