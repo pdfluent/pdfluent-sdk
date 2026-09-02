@@ -82,15 +82,18 @@ def main() -> int:
     for pr in prs:
         bij = datetime.datetime.fromisoformat(pr["updated_at"].replace("Z", "+00:00"))
         dagen = (nu - bij).days
-        vergelijk, _ = gh(f"repos/{REPO}/compare/{pr['base']['ref']}...{pr['head']['sha']}")
+        vergelijk, reden = gh(f"repos/{REPO}/compare/{pr['base']['ref']}...{pr['head']['sha']}")
         achter = (vergelijk or {}).get("behind_by")
         if achter is None:
             # The compare call failed. Falling back to the day count alone lets
             # a pull request that was commented on yesterday and is two thousand
             # commits behind read as healthy -- which is exactly the case the
-            # commit thresholds exist for.
+            # commit thresholds exist for. Same rule as the list call: the
+            # reason is gh's own line, not a guess. A compare that answered
+            # without `behind_by` is reported as that, not as a failure.
             print(f"  ?     #{pr['number']} could not be compared against "
-                  f"{pr['base']['ref']}; commit distance unknown")
+                  f"{pr['base']['ref']}; commit distance unknown -- "
+                  f"{reden or 'the compare answered without behind_by'}")
         if achter is not None and achter >= FAAL_ACHTER and pr["number"] not in BEKEND_OUD:
             faal.append((pr["number"], dagen, f"{achter} commits behind — {pr['title'][:34]}"))
             continue
