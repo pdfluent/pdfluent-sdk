@@ -27,6 +27,20 @@
 #
 # So `internal` carries `publish_false = true` on every row, and the gate
 # refuses any crate that inherits the workspace licence without it.
+#
+# WHAT IS BOOKED HERE, AFTER #295
+#
+# Every tracked manifest, not only `crates/*/Cargo.toml`. The gate globbed one
+# level deep and seven first-party crates sat outside it -- three fuzz
+# directories inside forks, the top-level fuzz crate, the snippet extractor, a
+# probe under scripts/quality and the Rust example -- all MIT-inheriting or
+# licence-less, all `publish = false` by habit, none of them looked at. The
+# bindings' own manifests (npm, PyPI, Maven, NuGet) were not looked at either.
+#
+# `[[crate]]` rows book a Cargo.toml by directory, wherever it is. `[[package]]`
+# rows book everything else by manifest path. A fourth side, `example`, holds
+# sample code: never published, and whatever it declares is recorded in
+# `declares` so that a change to it is a change to this file.
 
 
 # --- ours: AGPLv3 + commercial (license-file = "LICENSE") ---
@@ -302,3 +316,131 @@ dir = "crates/xfa-test-runner"
 side = "internal"
 publish_false = true
 
+
+# --- Cargo packages outside crates/*/ (#295) ---
+#
+# Fuzz targets and tooling. None declares a licence; `internal` means each is
+# refused the moment its `publish = false` goes missing.
+
+[[crate]]
+name = "lopdf-fuzz"
+dir = "crates/lopdf/fuzz"
+side = "internal"
+publish_false = true
+
+[[crate]]
+name = "pdf-font-fuzz"
+dir = "crates/pdf-font/fuzz"
+side = "internal"
+publish_false = true
+
+[[crate]]
+name = "pdf-syntax-fuzz"
+dir = "crates/pdf-syntax/fuzz"
+side = "internal"
+publish_false = true
+
+[[crate]]
+name = "xfa-fuzz"
+dir = "fuzz"
+side = "internal"
+publish_false = true
+
+[[crate]]
+name = "lopdf_probe"
+dir = "scripts/quality/lopdf_probe"
+side = "internal"
+publish_false = true
+
+# The one #295 proved the gap with: no `license` field, a workspace member, and
+# with its `publish = false` removed both licence gates stayed green.
+[[crate]]
+name = "pdfluent-snippet-extract"
+dir = "tools/pdfluent-snippet-extract"
+side = "internal"
+publish_false = true
+
+# Sample code, offered permissively so an integrator can copy it into a
+# proprietary project without asking. That is the choice; it was made when the
+# example was written and is written down here so that it stays a choice.
+[[crate]]
+name = "pdfluent-example-golden-path"
+dir = "pdfluent-examples/rust"
+side = "example"
+declares = "MIT OR Apache-2.0"
+publish_false = true
+
+
+# --- The other ecosystems (#295) ---
+#
+# What PyPI, npm, Maven Central and nuget.org actually read. `ours` here means
+# the manifest carries the canonical expression, or the spelling
+# docs/LICENSE_POLICY.toml [channel_representation] records for a channel that
+# cannot carry it.
+
+[[package]]
+manifest = "crates/pdf-python/pyproject.toml"
+side = "ours"
+
+[[package]]
+manifest = "crates/pdf-node/package.json"
+side = "ours"
+
+[[package]]
+manifest = "bindings/java/pom.xml"
+side = "ours"
+
+[[package]]
+manifest = "bindings/dotnet/src/PDFluent/PDFluent.csproj"
+side = "ours"
+
+# Test harnesses, benchmarks and probes. Unpublishable by marker, declare nothing.
+
+[[package]]
+manifest = "crates/pdf-desktop/package.json"
+side = "internal"
+
+[[package]]
+manifest = "benchmarks/pdfa/reproduce/package.json"
+side = "internal"
+
+[[package]]
+manifest = "bindings/dotnet/test/PDFluent.Tests/PDFluent.Tests.csproj"
+side = "internal"
+
+[[package]]
+manifest = "crates/xfa-test-runner/oracle/itext-xfa-oracle/pom.xml"
+side = "internal"
+
+[[package]]
+manifest = "scripts/ci/qr11_runtime/dotnet/qr11.csproj"
+side = "internal"
+
+[[package]]
+manifest = "scripts/perf/bindings/dotnet/qr_perf.csproj"
+side = "internal"
+
+# The legacy `com.xfa.pdf:xfa-pdf` pom. Superseded by bindings/java, deploy
+# hard-disabled in the file itself, kept so the historic sources still compile.
+# It still says MIT, which is what it was published under before; recorded
+# rather than removed, because removing it would look like relicensing code
+# people already hold. The gate refuses the moment the deploy skip goes.
+[[package]]
+manifest = "crates/pdf-java/pom.xml"
+side = "internal"
+declares = "MIT License"
+
+# Examples in the other three languages declare no licence at all. Recorded as
+# such; the Rust example above is the one that made a choice.
+
+[[package]]
+manifest = "pdfluent-examples/node/strict-ts/package.json"
+side = "example"
+
+[[package]]
+manifest = "pdfluent-examples/java/StrictApi/pom.xml"
+side = "example"
+
+[[package]]
+manifest = "pdfluent-examples/dotnet/StrictApi/StrictApi.csproj"
+side = "example"

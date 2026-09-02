@@ -277,9 +277,12 @@ jobs:
       # is simply true afterwards.
       #
       # The script is t3 territory and untouched. Only the call is mine.
-      - name: Every crate declares the licence its side of the boundary requires
+      - name: Every package declares the licence its side of the boundary requires
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/license_boundary.py
+      - name: The boundary goes red where it must
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_license_boundary.py
       # The other orphan. Blocking, with the cutoff at 2c03659a -- the commit
       # that introduced the DCO this morning (#223). The rule applies from the
       # moment the rule exists, so no history is rewritten.
