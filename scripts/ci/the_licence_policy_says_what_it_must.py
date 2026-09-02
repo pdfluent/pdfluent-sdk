@@ -29,7 +29,7 @@ removing a required entry fails, and so does an evaluator that stops honouring
 one.
 """
 from __future__ import annotations
-import pathlib, sys, tomllib
+import pathlib, re, sys, tomllib
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 POLICY = REPO / "docs" / "LICENSE_POLICY.toml"
@@ -58,6 +58,35 @@ MUST_ALLOW: dict[str, str] = {
     "MIT": "the most common licence in our dependency graph; losing it fails everything at once",
     "Apache-2.0": "as MIT, and it carries the patent grant we rely on",
 }
+
+# A CLASS, not a list of remembered spellings.
+#
+# The list-of-names form above WAS the defect. `MUST_FORBID` named the four
+# `-only` spellings and the two AGPL ones; `GPL-2.0-or-later` and
+# `GPL-3.0-or-later` were in the policy but not in the guard. Measured
+# 02-09-2026 on this branch: move both to `licenses.allowed` and add them to
+# deny.toml's allow list -- the complete, self-consistent edit -- and
+# `the_licence_policy_says_what_it_must`, `license_gate`, `license_boundary`
+# and both test suites are ALL green with strong copyleft an accepted
+# dependency licence. The floor is still met, the sets do not overlap, and the
+# evaluator agrees with the policy, because the policy is what changed.
+#
+# Same shape as the four spellings of the head ref (#1636): a list of names
+# where a class belongs. So the family is generated, and a spelling nobody
+# typed here is an error rather than a hole. (codex, #1656)
+STERK_COPYLEFT = re.compile(r"^A?GPL-\d", re.IGNORECASE)
+BESTANDS_COPYLEFT = re.compile(r"^LGPL-\d", re.IGNORECASE)
+
+_STAMMEN = ("GPL-1.0", "GPL-2.0", "GPL-3.0", "AGPL-1.0", "AGPL-3.0")
+_STAARTEN = ("-only", "-or-later")
+MOET_GECLASSIFICEERD = frozenset(f"{k}{s}" for k in _STAMMEN for s in _STAARTEN)
+
+# An exception can genuinely change the answer -- `GPL-2.0-only WITH
+# Classpath-exception-2.0` does not reach a linking user the way the bare GPL
+# does -- but each one is a decision somebody made, so they are NAMED. Matching
+# `WITH .*` as a pattern would admit any unexamined exception on the strength
+# of the word appearing, which is the same mistake one level down.
+UITZONDERINGEN: dict[str, str] = {}
 
 MINIMUM_FORBIDDEN = 10  # FLOOR
 
@@ -89,6 +118,32 @@ def main() -> int:
     for name, why in MUST_FORBID.items():
         if name not in forbidden:
             problems.append(f"{name} is not in licenses.forbidden. It must be: {why}.")
+    # The family, generated. Absence is the finding: a spelling that is in no
+    # list at all reports "unknown" rather than "forbidden", and unknown stops
+    # refusing the moment somebody adds it to `allowed`.
+    for name in sorted(MOET_GECLASSIFICEERD - forbidden):
+        problems.append(
+            f"{name} is not in licenses.forbidden. Every SPDX spelling of the "
+            "strong-copyleft family must be classified there; this one is not, "
+            "so a dependency declaring it reports as unclassified.")
+
+    # And the move that the name list could not see: the family turning up on
+    # the side that permits.
+    for name in sorted(allowed):
+        if STERK_COPYLEFT.match(name) and name not in UITZONDERINGEN:
+            problems.append(
+                f"{name} is in licenses.allowed. Strong copyleft is not an "
+                "allowed DEPENDENCY licence at any spelling -- our own packages "
+                "declaring AGPL-3.0-only is the opposite case and is judged "
+                "elsewhere. If an exception makes this one different, name it in "
+                "UITZONDERINGEN with the reason; the word WITH is not by itself "
+                "a reason.")
+        if BESTANDS_COPYLEFT.match(name):
+            problems.append(
+                f"{name} is in licenses.allowed. File-level copyleft is decided "
+                "per surface, so it belongs in weak_copyleft (or forbidden) -- "
+                "`allowed` is tested first and skips the surface decision.")
+
     for name, why in MUST_ALLOW.items():
         if name not in allowed:
             problems.append(f"{name} is not in licenses.allowed. It must be: {why}.")

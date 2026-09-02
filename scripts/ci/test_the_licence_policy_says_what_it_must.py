@@ -18,6 +18,10 @@ fails: list[str] = []
 ran = 0
 
 
+sys.path.insert(0, str(REPO / "scripts" / "ci"))
+import the_licence_policy_says_what_it_must as guard  # noqa: E402
+
+
 def expect(what: str, ok: bool, detail: str = "") -> None:
     global ran
     ran += 1
@@ -161,6 +165,40 @@ expect("  and says it is refused for the wrong reason",
        "wrong reason" in r.stderr, r.stderr[-200:])
 expect("  and does not crash", "Traceback" not in r.stderr)
 
+# Every spelling of the family, moved one at a time. The guard used to name
+# six of the ten, so `GPL-2.0-or-later` and `GPL-3.0-or-later` could be moved
+# to `allowed` with every licence gate green (measured, #1656). A per-name
+# check would have needed somebody to think of each name -- which is the thing
+# that failed -- so the case list is generated from the same family the guard
+# generates its requirement from, and a name added to one appears in the other.
+def verplaats(naam: str):
+    def f(text: str) -> str:
+        rest = [x for x in read_list(text, "forbidden") if x != naam]
+        text = set_list(text, "forbidden", rest)
+        return set_list(text, "allowed", read_list(text, "allowed") + [naam])
+    return f
+
+
+for naam in sorted(guard.MOET_GECLASSIFICEERD):
+    r = run_with(verplaats(naam))
+    expect(f"{naam} moved to allowed is refused",
+           r.returncode == 1 and naam in r.stderr, f"exit={r.returncode}")
+
+# The weak set is the other door into `allowed`, and it is the one that reads
+# as harmless: LGPL is classified-and-refused everywhere by sitting in
+# weak_copyleft with no surface naming it, so promoting it to `allowed` skips
+# the per-surface decision entirely rather than overriding it.
+r = run_with(lambda t: set_list(t, "allowed", read_list(t, "allowed") + ["LGPL-3.0-or-later"]))
+expect("LGPL promoted to allowed is refused",
+       r.returncode == 1 and "LGPL-3.0-or-later" in r.stderr, f"exit={r.returncode}")
+
+# An exception is a decision, not a word. Nothing may reach `allowed` on the
+# strength of "WITH" appearing in it while UITZONDERINGEN is empty.
+r = run_with(lambda t: set_list(t, "allowed",
+                                read_list(t, "allowed") + ["GPL-3.0-only WITH Autoconf-exception-3.0"]))
+expect("an unnamed WITH-exception does not admit strong copyleft",
+       r.returncode == 1, f"exit={r.returncode}")
+
 # A guard that cannot read its input must not report a clean policy.
 with tempfile.TemporaryDirectory() as td:
     root = pathlib.Path(td) / "repo"
@@ -176,7 +214,7 @@ expect("a missing policy is FATAL, not a pass", r.returncode == 2, f"exit={r.ret
 # how the same floor failed in #1641: len(fails) counts only failures, so a
 # deleted case left the suite green while it shrank, and a floor below the real
 # count tolerated the shrinkage it existed to catch.
-MINIMUM_CASES = 20  # FLOOR
+MINIMUM_CASES = 32  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 if fails:
     for f in fails:
