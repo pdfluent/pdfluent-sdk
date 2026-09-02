@@ -177,7 +177,14 @@ _STRUCTUUR = re.compile(
 # Anything else -- a function call, an array, a context lookup -- means the
 # condition is doing something this guard has not been taught to read, and an
 # unread condition is not a safe one.
-_COND_REST = re.compile(r"github\.event_name\s*[=!]=\s*'[a-z_]+'|&&|\|\||[()!\s]")
+# NO `!`. Stripping it as punctuation made `!(github.event_name == 'push')`
+# read as an allowed push comparison -- the exact inverse of the rule, calling
+# every event EXCEPT push safe and putting pull requests and dispatches on the
+# desktop. A negation does not decorate a condition, it reverses it, so the
+# only conditions this guard accepts are the un-negated whitelist forms.
+# (codex, #1649)
+_COND_REST = re.compile(r"github\.event_name\s*==\s*'[a-z_]+'|&&|\|\||[()\s]")
+_NEGATIE = re.compile(r"!")
 
 
 def per_gebeurtenis_veilig(runs_on: str, events: set[str] | None = None,
@@ -202,7 +209,7 @@ def per_gebeurtenis_veilig(runs_on: str, events: set[str] | None = None,
         return False
     cond = vorm.group("cond")
     # The condition must gate the DESKTOP branch, not sit beside it.
-    if _COND_REST.sub("", cond).strip():
+    if _NEGATIE.search(cond) or _COND_REST.sub("", cond).strip():
         return False
     if "self-hosted" in cond or "self-hosted" in vorm.group("gehost"):
         return False
