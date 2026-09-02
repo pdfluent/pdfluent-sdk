@@ -160,6 +160,19 @@ def main() -> int:
         # pattern this whole series is about, inside the fix for it.
         # (T3 review, #1647)
         if "sealed_env" in used:
+            # The runtime check has to be CALLED, not merely available. Six of
+            # six fixtures called it and the lint did not require it, so
+            # deleting the call while keeping the import left both lints green.
+            # calls_made() already existed here, aimed only at sealed_env.
+            # (T3 review, #1647)
+            if "inside_the_sandbox" not in used and "cwd" not in cwd_kwargs(tree):
+                problems.append(
+                    f"{path.name}: seals its config but never runs the sandbox "
+                    "check -- neither sealed_env(cwd=...) nor "
+                    "inside_the_sandbox(). Sealing stops a fixture READING the "
+                    "real repository; only the runtime check stops it acting on "
+                    "one git discovers by walking up.")
+                continue
             if "cwd" not in cwd_kwargs(tree):
                 problems.append(
                     f"{path.name}: calls sealed_env() but never with cwd=. "

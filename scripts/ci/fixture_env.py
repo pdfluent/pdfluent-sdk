@@ -71,13 +71,23 @@ def sealed_env(identity: bool = False, cwd: str | os.PathLike | None = None,
     # environment -- incident 2 straight through the helper written to prevent
     # it, and both lints approve the call because it says `env=sealed_env(...)`.
     # (T3 review, #1647)
+    # The SAME prefix filter that is applied to the inherited environment one
+    # line above. Naming two keys by hand let nine others through, including
+    # GIT_DIR -- incident 1, the first sentence of this file -- and
+    # GIT_CONFIG_COUNT/GIT_CONFIG_KEY_0/GIT_CONFIG_VALUE_0, which set config
+    # through the environment and so walk around the sealed global file:
+    # incident 2 through a different door. Stripping GIT_* from what we inherit
+    # and then accepting GIT_* from the caller is not a filter, it is a
+    # doorman who checks the front and holds the back open.
+    # (T3 review, #1647)
+    smuggled = sorted(k for k in extra if k.startswith("GIT_"))
+    if smuggled:
+        raise ValueError(
+            "sealed_env() will not take " + ", ".join(smuggled) + " from a "
+            "caller: git's own variables are exactly what this helper removes. "
+            "A fixture that needs one is asking for the environment this exists "
+            "to deny. Use identity=True for an author, or cwd= for a sandbox.")
     env.update(extra)
-    for key in ("GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL"):
-        if key in extra:
-            raise ValueError(
-                f"sealed_env() will not take {key} from a caller: it is one of "
-                "the seals. Passing it is how a fixture asks for the very "
-                "environment this helper exists to deny.")
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = _empty_config()
     # Always set, not only when a cwd is given -- no caller passed one, so the

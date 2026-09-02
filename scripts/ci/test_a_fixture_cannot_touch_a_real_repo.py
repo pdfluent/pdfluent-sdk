@@ -179,6 +179,18 @@ except ValueError:
     refused = True
 expect("a caller cannot pass its own GIT_CONFIG_GLOBAL", refused)
 
+# Naming two keys by hand let nine others through. GIT_DIR is incident 1;
+# GIT_CONFIG_COUNT/KEY_0/VALUE_0 set config through the environment and walk
+# around the sealed global file, which is incident 2 by another door.
+for smuggled in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+                 "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
+    try:
+        sealed_env(**{smuggled: "x"})
+        ok = False
+    except ValueError:
+        ok = True
+    expect(f"  and cannot smuggle {smuggled}", ok)
+
 # GIT_CEILING_DIRECTORIES stops the upward walk for a sandbox under a real tree.
 with tempfile.TemporaryDirectory() as d:
     sand = pathlib.Path(d) / "sandbox"
@@ -197,7 +209,7 @@ expect("and the repository's own config is unchanged after all of this",
 expect("sealed_env strips GH_TOKEN and GITHUB_TOKEN",
        not any(k in sealed_env() for k in ("GH_TOKEN", "GITHUB_TOKEN")))
 
-MINIMUM_CASES = 17  # FLOOR
+MINIMUM_CASES = 23  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
