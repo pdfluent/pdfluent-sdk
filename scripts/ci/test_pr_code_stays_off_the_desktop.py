@@ -214,7 +214,30 @@ expect("a one-element list holding only the expression passes",
 # putting the pull_request trigger back on ci-ephemeral.yml turns the guard red
 # and names the entry. Said plainly rather than covered by an assertion that
 # only greps the source for the word.
-MINIMUM_CASES = 26  # FLOOR
+# The caller's BRANCH FILTER, not only its event names. `push` is merged code
+# when its filter says so; an unfiltered push runs whatever is on any branch,
+# which is the pull-request case with the review left out. Passing the names
+# alone let that count as safe -- including down the reusable-workflow path,
+# where the inner job's canonical expression was then approved.
+#
+# And the other half: an event the workflow does not trigger on cannot select
+# anything, so it is UNREACHABLE, not unsafe. Refusing it flagged the canonical
+# expression in a pull_request-only workflow, where the condition can never be
+# true. A guard that cannot tell "this never happens" from "this is dangerous"
+# spends its credibility on the first to protect against the second.
+PUSH_LOS = "on:\n  pull_request:\n    branches: [master]\n  push:\n"
+PUSH_ALLE = "on:\n  pull_request:\n    branches: [master]\n  push:\n    branches: ['**']\n"
+PUSH_MASTER = "on:\n  pull_request:\n    branches: [master]\n  push:\n    branches: [master]\n"
+
+r = run(tree({"push.yml": wf(PUSH_MASTER, SAFE)}))
+expect("a push filtered to master keeps the expression safe", r.returncode == 0,
+       f"exit={r.returncode} {r.stderr[-160:]}")
+r = run(tree({"push.yml": wf(PUSH_LOS, SAFE)}))
+expect("an UNFILTERED push makes it unsafe", r.returncode == 1, f"exit={r.returncode}")
+r = run(tree({"push.yml": wf(PUSH_ALLE, SAFE)}))
+expect("  and so does branches: ['**']", r.returncode == 1, f"exit={r.returncode}")
+
+MINIMUM_CASES = 29  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
