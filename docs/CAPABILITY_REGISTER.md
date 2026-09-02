@@ -337,7 +337,7 @@ delivered through it.
 
 | crate | version | in facade | test files | unit tests | run by |
 |---|---|---|---|---|---|
-| `formcalc-interpreter` | 1.0.0 | internal | 3 | 105 | `quality:cargo-test` |
+| `formcalc-interpreter` | 1.0.0 | internal | 3 | 107 | `quality:cargo-test` |
 | `pdf-annot` | 1.0.0 | direct | — | 38 | `quality:cargo-test` |
 | `pdf-compliance` | 1.0.0 | direct | — | 92 | `quality:cargo-test` |
 | `pdf-docx` | 1.0.0 | direct | — | 24 | `quality:cargo-test` |
