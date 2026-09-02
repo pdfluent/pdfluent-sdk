@@ -154,3 +154,26 @@ def inside_the_sandbox(cwd: str | os.PathLike, _env: dict | None = None) -> None
             "outside its sandbox. Pass cwd= pointing inside a temporary "
             "directory; sealing the config surface does not protect a repository "
             "git discovers by walking up.")
+
+
+def gate_aanroepen(script: str, wortel=None) -> list[str]:
+    """Lines of scripts/ci/local_ci_gate.sh that run EXACTLY this script.
+
+    Written once and shared, because the obvious form of this check is wrong in
+    a way that reads as right: `"x.py" in gate_text` is satisfied by
+    `test_x.py`, so an assertion that the gate still runs a guard stays green
+    when only its TEST is wired -- which is exactly the state the assertion
+    exists to detect. Measured on #1660: deleting the guard's own invocation
+    left the suite at 10 passed, 0 failed.
+
+    Compared per whitespace-separated argument on its basename, so `python3
+    scripts/ci/x.py --flag` matches `x.py` and `test_x.py` never does.
+    """
+    import pathlib as _p
+    wortel = _p.Path(wortel) if wortel else _p.Path(__file__).resolve().parents[2]
+    poort = wortel / "scripts" / "ci" / "local_ci_gate.sh"
+    uit = []
+    for regel in poort.read_text(errors="replace").splitlines():
+        if any(stuk.rsplit("/", 1)[-1] == script for stuk in regel.split()):
+            uit.append(regel)
+    return uit

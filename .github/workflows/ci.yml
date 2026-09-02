@@ -140,6 +140,9 @@ jobs:
       - name: One owner per path, and branches stay inside their own
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/territories_do_not_overlap.py
+      - name: Every job installs what its scripts import
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/a_job_has_what_its_scripts_import.py
       # Only GitLab ran these, and GitLab is the mirror -- a red job there stops
       # nothing. The machine both pipelines share is the one whose build
       # directory keeps going away, so the verdict drifted unwatched on the side
@@ -712,40 +715,53 @@ jobs:
         run: python3 scripts/ci/test_no_ai_attribution.py
       # A message cannot be excluded by a manifest the way a file can, so this
       # is the last point before the messages are published.
+      # ONE step: the secret is written, used, and removed without ever being
+      # visible to another step.
+      #
       # The list of customer and partner names is deliberately not in the tree:
       # a forbidden-terms list that publishes its own terms leaks exactly what
       # it exists to stop, and worse than the commit messages it screens -- a
       # message can be rewritten, a published source file is in every clone.
-      # So it arrives as a secret and is written where only this job can read
-      # it. If the secret is absent the file is empty, the guard finds no terms
-      # and exits 1 with "SKIPPED (not a pass)" -- which is the right answer:
-      # nobody looked. Fork pull requests do not receive secrets, so when this
-      # repository stops being private the base-revision route from #1649 is
-      # what has to carry this.
-      - name: Provide the internal-terms list
+      #
+      # AND THE SCRIPT COMES FROM THE BASE REVISION. On a same-repo pull request
+      # this job would otherwise run PR-authored code with a secret in reach:
+      # anyone who can push a branch but cannot read secrets could edit
+      # geen_interne_zaken.py to print the list base64-encoded, and per-term
+      # masking does not stop encoded exfiltration. That is the boundary #1649
+      # guards, one level over: not the desktop this time, but the secrets.
+      # `git archive <base>` gives the reviewed copy; the pull request's commits
+      # are what it reads, as DATA. (codex, #1660)
+      #
+      # If the secret is absent the file is empty, the guard finds no terms and
+      # exits 1 with "SKIPPED (not a pass)" -- the right answer: nobody looked.
+      # Fork pull requests receive no secrets at all, so when this repository
+      # stops being private that same base-revision route is what has to carry
+      # it, with the fork case failing closed as it does today.
+      - name: No commit message names an internal matter
         if: ${{ !cancelled() }}
         env:
           TERMEN: ${{ secrets.PDFLUENT_INTERNE_TERMEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          # Masking FIRST, and PER LINE. `::add-mask::` is a line-oriented
-          # workflow command: given a multi-line value it masks only the first
-          # line and prints the rest as ordinary log lines. The list is one term
-          # per line by design, so the normal case would have published every
-          # partner name but the first, into the log -- which is the thing that
-          # keeping the list out of the tree exists to prevent. Reproduced:
-          # `TERMEN=$'A\nB\nC'; echo "::add-mask::$TERMEN"` emits
-          # `::add-mask::A`, then a bare `B` and `C`. (peer review, #1660)
-          #
-          # Before the file is written, because anything failing between the two
-          # would leak what the second half was supposed to protect.
+          set -uo pipefail
+          LIJST="$RUNNER_TEMP/interne-termen.txt"
+          trap 'rm -f "$LIJST"' EXIT
+          # Masking FIRST, and PER LINE. `::add-mask::` is line-oriented: given a
+          # multi-line value it masks line 1 and prints the rest as ordinary log
+          # lines. The list is one term per line by design, so the normal case
+          # would have published every partner name but the first.
           while IFS= read -r term; do
             if [ -n "$term" ]; then echo "::add-mask::$term"; fi
           done <<< "$TERMEN"
-          printf '%s\n' "$TERMEN" > "$RUNNER_TEMP/interne-termen.txt"
-          echo "PDFLUENT_INTERNE_TERMEN=$RUNNER_TEMP/interne-termen.txt" >> "$GITHUB_ENV"
-      - name: No commit message names an internal matter
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/geen_interne_zaken.py --bereik origin/master..HEAD
+          printf '%s\n' "$TERMEN" > "$LIJST"
+          WACHT="scripts/ci/geen_interne_zaken.py"
+          if [ -n "${BASE_SHA:-}" ]; then
+            mkdir -p "$RUNNER_TEMP/base"
+            git archive "$BASE_SHA" scripts/ci | tar -x -C "$RUNNER_TEMP/base"
+            WACHT="$RUNNER_TEMP/base/scripts/ci/geen_interne_zaken.py"
+            echo "guard taken from base revision ${BASE_SHA}"
+          fi
+          PDFLUENT_INTERNE_TERMEN="$LIJST" python3 "$WACHT" --bereik origin/master..HEAD
       - name: A hit does not publish the term it found
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_een_treffer_publiceert_de_term_niet.py
