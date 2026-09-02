@@ -1,0 +1,145 @@
+# Ask the persistent desktop where its disk went. Measurement only (#292).
+#
+# 02-09-2026: the runner reports 8.8 GB free of 222.6 GB against a floor of 35,
+# and `disk_headroom.py` exits 2 with "No target/ directories found -- the space
+# is going somewhere else". Every desktop job fails on that. The machine answers
+# neither ping nor ssh from outside, so a workflow is the only way in.
+#
+# WHY THIS SWEEPS NOTHING
+#
+# The first version of this file measured and then swept, and it could not have
+# worked. Two reasons, both found in review:
+#
+#   * `sweep_merged_build_caches.py` defaults to `--base github/master`, and an
+#     actions/checkout clone has only `origin`. Every worktree would read as
+#     "not on github/master", nothing would be deleted, and the job would report
+#     success having swept nothing.
+#
+#   * More fundamentally, this runner is WSL. `disk_headroom.py` says it in its
+#     own docstring: inside WSL the root filesystem IS the sparse `ext4.vhdx`
+#     and reports the vhdx's MAXIMUM size, so the binding number is the Windows
+#     volume underneath. A vhdx grows and never shrinks on its own -- deleting
+#     files inside ext4 frees space *within* the image and returns nothing to
+#     the host. Reclaiming host space is `wsl --shutdown` plus `Optimize-VHD`,
+#     or making the image sparse: a Windows action, on the owner's machine, not
+#     something a workflow can do from inside.
+#
+# So this job answers "where is it" and leaves "get it back" to somebody who
+# can actually do it. A sweep returns when its base and its scope are right and
+# there is something it can genuinely reclaim.
+name: Desktop maintenance
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/desktop-maintenance.yml'
+  schedule:
+    - cron: '17 4 * * *'
+
+concurrency:
+  group: desktop-maintenance
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: The desktop says where its disk went
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+    steps:
+      # `clean: false`: actions/checkout runs `git clean -ffdx` and `reset
+      # --hard` on a reused workspace, which would remove part of what this job
+      # exists to find before it has looked. A measurement that first tidies the
+      # thing it is measuring is not a measurement.
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # No `!cancelled()` and no `|| true`. A step that could not read what it
+      # was asked to read must fail, or the job ends green over an answer nobody
+      # got. `set -euo pipefail` for the same reason.
+      - name: Inside the image, and the volume underneath
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "## What the guard itself concludes"
+          python3 scripts/ci/disk_headroom.py || true   # its exit code IS the finding; recorded below
+          echo
+          echo "## The filesystem this job runs on (inside the vhdx)"
+          df -h -P .
+          echo
+          echo "## Filesystem types, to tell ext4 from the mounted host volume"
+          df -PT | awk 'NR==1 || $2 ~ /ext4|9p|drvfs|virtiofs/ {print $2, $3, $4, $5, $6, $7}'
+
+      - name: The big directories, by size
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=$(cd "${RUNNER_WORKSPACE:-.}/../.." && pwd)
+          # Written to a file first, then read. `du ... | sort | tail -30` under
+          # `pipefail` dies with 141 the moment tail stops reading -- SIGPIPE --
+          # and takes every step after it with it. That is the same failure I
+          # removed from the Java fixture check this morning and then wrote twice
+          # more here, in the job whose entire purpose is to survive a machine
+          # with too much of something. (peer review, #1662)
+          echo "## Runner work root"
+          du -x -h --max-depth=2 "${ROOT}" > "$RUNNER_TEMP/work-root.txt" 2>/dev/null || true
+          sort -h "$RUNNER_TEMP/work-root.txt" | tail -30
+          echo
+          # The paths this host is actually CONFIGURED with, which are not the
+          # defaults and are not under the work root: the desktop environment
+          # setup sets CARGO_TARGET_DIR=/var/cache/cargo-target and
+          # CARGO_HOME=/var/cache/cargo-home, and the GitLab pipeline sets the
+          # same two. A scan of the work root and ~/.cargo would have missed
+          # both, which is most of the point.
+          #
+          # Deliberately WITHOUT naming the shell script that does it:
+          # every_guard_has_a_job.py reads a script name appearing in a workflow
+          # file as "this runs in Actions", so mentioning it in a comment moved
+          # a mirror-only guard out of that column and tripped its ratchet. A
+          # comment is not wiring -- the same mistake the baseline guard made
+          # when it read a comment as a runner label. (peer review, #1662)
+          echo "## Cargo, at the paths this machine is configured with"
+          echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<unset>}  CARGO_HOME=${CARGO_HOME:-<unset>}"
+          for D in "${CARGO_TARGET_DIR:-}" "${CARGO_HOME:-}" \
+                   /var/cache/cargo-target /var/cache/cargo-home \
+                   "${HOME}/.cargo" "${HOME}/.rustup"; do
+            [ -n "$D" ] && [ -d "$D" ] && du -x -h -s "$D"
+          done
+          echo
+          echo "## Every target/ on this filesystem, not only in this checkout"
+          find / -xdev -type d -name target -prune > "$RUNNER_TEMP/targets.txt" 2>/dev/null || true
+          echo "found $(wc -l < "$RUNNER_TEMP/targets.txt") target/ directories"
+          head -60 "$RUNNER_TEMP/targets.txt" | while read -r T; do
+            [ -d "$T" ] && du -x -h -s "$T"
+          done
+
+      # The place `disk_headroom.py` cannot see, because it looks for `target/`.
+      # Three guard suites built fixture repositories with mkdtemp() and removed
+      # none (six per run of one script, measured 02-09; fixed in #1660), so a
+      # runner executing the suite on every push accumulates them.
+      - name: Temp directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          for T in "${RUNNER_TEMP:-}" "${TMPDIR:-}" /tmp /var/tmp; do
+            [ -n "$T" ] && [ -d "$T" ] || continue
+            echo "-- $T: $(find "$T" -maxdepth 1 -name 'tmp*' -o -maxdepth 1 -name 'fixture-*' 2>/dev/null | wc -l) entries"
+            du -x -h -s "$T"
+          done
+
+      - name: Docker, if it is here
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v docker >/dev/null; then docker system df; else echo "no docker"; fi
+
+      - name: And the verdict
+        shell: bash
+        run: python3 scripts/ci/disk_headroom.py
