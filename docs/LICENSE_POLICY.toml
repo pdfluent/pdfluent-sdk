@@ -130,6 +130,11 @@ dotnet_projects = 1
 # ---------------------------------------------------------------------------
 [channel_representation]
 
-"crates/pdf-node/package.json" = { publishes = "SEE LICENSE IN LICENSE", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "npm rejects a LicenseRef expression", file = "LICENSE" }
-"crates/xfa-wasm/pkg/package.json" = { publishes = "SEE LICENSE IN LICENSE", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "npm rejects a LicenseRef expression", file = "LICENSE" }
-"bindings/dotnet/src/PDFluent/PDFluent.csproj" = { publishes = "PackageLicenseFile:LICENSE", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "NU5124: nuget.org does not recognise LicenseRef in an expression", file = "LICENSE" }
+"crates/pdf-node/package.json" = { publishes = "SEE LICENSE IN LICENSE", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "npm rejects a LicenseRef expression", file = "crates/pdf-node/LICENSE" }
+"crates/xfa-wasm/pkg/package.json" = { publishes = "SEE LICENSE IN LICENSE", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "npm rejects a LicenseRef expression", file = "LICENSE" }  # the root file wasm.yml copies into pkg/
+"bindings/dotnet/src/PDFluent/PDFluent.csproj" = { publishes = "PackageLicenseFile:LICENSE", canonical = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial", reason = "NU5124: nuget.org does not recognise LicenseRef in an expression", file = "bindings/dotnet/src/PDFluent/LICENSE" }
+
+# `file` is repository-relative, not package-relative: the wasm entry names the
+# root LICENSE because that is the file .github/workflows/wasm.yml copies into
+# pkg/, and pkg/ exists on no runner. A path that cannot be opened cannot be
+# checked, and an unopened file is where the last escape hatch was hiding.

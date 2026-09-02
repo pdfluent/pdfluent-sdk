@@ -238,6 +238,46 @@ def scan_cargo(_: dict) -> list[tuple[str, str]]:
 
 # A declaration npm or cargo accepts that is not an SPDX expression, so the
 # policy has to say what it means. Anything else is checkable and gets checked.
+# The one canonical expression. Every [channel_representation] entry has to
+# resolve to exactly this: the point of a declared representation is that it
+# stands for the SAME statement in a spelling the channel accepts, and an entry
+# free to name its own `canonical` moves the escape one field to the right
+# instead of closing it. Measured 02-09-2026: `canonical = "MIT"` passed. (T2)
+CANONIEK = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
+
+VERPLICHTE_VELDEN = ("publishes", "canonical", "reason", "file")
+
+
+def weergave_klopt(rel: str, w: dict) -> str | None:
+    """None if the representation entry is sound, else the complaint.
+
+    Every field is checked, because every unchecked field was a way through:
+    dropping `canonical`, `reason` or `file`, or pointing `file` at a name that
+    does not exist, all left the gate green.
+    """
+    ontbreekt = [k for k in VERPLICHTE_VELDEN if not w.get(k)]
+    if ontbreekt:
+        return (f"docs/LICENSE_POLICY.toml [channel_representation] {rel!r} is "
+                f"missing {', '.join(ontbreekt)}. A representation without all four "
+                "cannot be compared with anything")
+    if w["canonical"] != CANONIEK:
+        return (f"[channel_representation] {rel!r} declares canonical "
+                f"{w['canonical']!r}; the canonical expression is {CANONIEK!r}. "
+                "A channel may spell the offer differently, not state a different one")
+    pad = REPO / w["file"]
+    if not pad.is_file():
+        return (f"[channel_representation] {rel!r} names file {w['file']!r}, "
+                "which is not in the repository. `SEE LICENSE IN <file>` is a "
+                "pointer, and a pointer to nothing is not a licence statement")
+    eerste = pad.read_text(encoding="utf-8", errors="replace").splitlines()
+    if not eerste or CANONIEK not in eerste[0]:
+        return (f"[channel_representation] {rel!r} points at {w['file']!r}, whose "
+                f"first line is {(eerste[0] if eerste else '')!r}. It has to state "
+                f"{CANONIEK!r}: that first line is the only place the pointer "
+                "resolves to the canonical expression")
+    return None
+
+
 NIET_SPDX = re.compile(r"^\s*(SEE LICENSE IN|LicenseRef-|UNLICENSED|PackageLicenseFile:)", re.I)
 
 
@@ -291,7 +331,8 @@ def eigen_verklaring(rel: str, gedeclareerd: str | None, pol: dict) -> tuple[str
         # the escape skipped the comparison, this one still makes it.
         weergave = pol.get("channel_representation", {}).get(rel)
         if weergave and gedeclareerd == weergave.get("publishes") == verwacht:
-            return weergave.get("canonical", oordeel), None
+            klacht = weergave_klopt(rel, weergave)
+            return (oordeel if klacht else weergave["canonical"]), klacht
         return oordeel, (f"{rel} declares {gedeclareerd!r}, which is not an SPDX "
                          f"expression. [own_packages] expects {verwacht!r} and no "
                          f"[channel_representation] entry declares it, so it cannot "
