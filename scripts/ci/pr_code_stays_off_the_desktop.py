@@ -132,19 +132,32 @@ def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
         # ref takes the base, which is the safe case, and naming the head is
         # what puts the pull request's code on the machine. So "every checkout
         # pinned to base.sha" is the wrong test here -- absence of a head ref is.
-        # Three ways to name the pull request's code, not one. `head.sha` was
-        # the only one recognised; `head.ref` is the same thing by branch name,
-        # and `refs/pull/N/merge` is GitHub's own documented example of what NOT
-        # to check out under this trigger. (T1 review, #1635)
-        HEAD_REFS = ("head.sha", "head.ref", "refs/pull/")
-        if all(not any(h in str((st.get("with") or {}).get("ref", ""))
-                       for h in HEAD_REFS)
-               for st in checkouts):
+        # Enumerating the unsafe spellings does not converge. head.sha, then
+        # head.ref, then refs/pull/N/merge, then github.head_ref -- four rounds,
+        # each one "the last one", and the fourth is the SHORTEST and the one
+        # written most often from memory. The list was the wrong shape: it asked
+        # which names mean the head, and there is no closed answer to that.
+        #
+        # Inverted, it is closed. Under pull_request_target a checkout is safe
+        # when it takes the BASE, and there are only two ways to be sure of that:
+        # no ref at all (the event's default), or a ref that says base. Anything
+        # else -- including an expression this guard has never seen -- is refused
+        # and the message says how to declare it. Fail closed, so the next
+        # spelling costs a message rather than a breach. (T1 review, #1635)
+        def takes_the_base(step: dict) -> bool:
+            with_ = step.get("with") or {}
+            if "ref" not in with_:
+                return True          # the event's default IS the base
+            return "base." in str(with_["ref"])
+
+        if all(takes_the_base(st) for st in checkouts):
             return []
         return [f"{key} runs on {runs_on} under pull_request_target and checks "
-                "out the pull request's HEAD. That trigger runs with the "
-                "repository's secrets, so this is the pull_request case with "
-                "credentials attached."]
+                "out a ref that is not the base. That trigger runs with the "
+                "repository's secrets, so PR-authored code there is the "
+                "pull_request case with credentials attached. If the ref IS the "
+                "base, say so -- `base.sha` -- or drop the ref and take the "
+                "event's default."]
     if checkouts and all(
             "pull_request.base.sha" in str((st.get("with") or {}).get("ref", ""))
             for st in checkouts):
