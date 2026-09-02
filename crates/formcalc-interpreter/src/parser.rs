@@ -1748,6 +1748,178 @@ mod depth_bounds {
         accepted("while (1) do\n  continue\nendwhile");
     }
 
+    /// The question that found every leak so far: *what is the deepest tree
+    /// this parser accepts?* Asked over compositions, not over single shapes.
+    ///
+    /// Nesting and chaining are counted by different code -- recursion for one,
+    /// a loop for the other -- and the held-path counter this replaced got each
+    /// right on its own while under-counting their product sixteen-fold. So the
+    /// grid multiplies them: `n` levels of `Abs(...)` around a chain of `k`
+    /// links, with the chain drawn from every kind the parser has (one
+    /// precedence, two precedences stacked, accessors), and the whole thing
+    /// wrapped in `m` statements. The tree is `n + k + m + 1` deep, so the grid
+    /// straddles the bound from both sides.
+    ///
+    /// Three things are pinned, and each catches a different failure:
+    ///
+    /// * nothing accepted measures deeper than `MAX_DEPTH` -- the bound holds;
+    /// * something accepted measures *exactly* `MAX_DEPTH` -- the bound is
+    ///   tight, so a counter that over-charges (the method-call regression on
+    ///   #1642) shows up as a maximum below 64;
+    /// * the backstop never fired -- every refusal came from construction, which
+    ///   is the only thing that protects the error path. (#303)
+    #[test]
+    fn the_deepest_accepted_tree_is_exactly_the_bound_across_compositions() {
+        BACKSTOP_FIRED.with(|n| n.set(0));
+
+        let chains: [&dyn Fn(usize) -> String; 4] = [
+            // one precedence layer
+            &|k| format!("1{}", " + 1".repeat(k)),
+            // two layers: the multiplicative chain is the left leaf of the
+            // additive one, so the depths add rather than max
+            &|k| format!("1{}{}", " * 1".repeat(k / 2), " + 1".repeat(k - k / 2)),
+            // accessors, built by the other loop
+            &|k| format!("a{}", ".b".repeat(k)),
+            // the six-layer shape from the precedence-layer finding
+            &|k| {
+                let mut s = String::from("1");
+                for (i, lit) in [" * 1", " + 1", " < 1", " == 1", " and 1", " or 1"]
+                    .iter()
+                    .enumerate()
+                {
+                    let share = k / 6 + usize::from(i < k % 6);
+                    for _ in 0..share {
+                        s.push_str(lit);
+                    }
+                }
+                s
+            },
+        ];
+        let nestings = [0usize, 1, 2, 8, 31, 32, 33, 62, 63, 64];
+        let links = [0usize, 1, 2, 8, 31, 32, 33, 62, 63, 64];
+        let statements = [0usize, 1, 3];
+
+        let mut deepest = 0usize;
+        let mut accepted_count = 0usize;
+        for chain in chains {
+            for &n in &nestings {
+                for &k in &links {
+                    for &m in &statements {
+                        let mut src = chain(k);
+                        for _ in 0..n {
+                            src = format!("Abs({src})");
+                        }
+                        for _ in 0..m {
+                            src = format!("while (1) do\n{src}\nendwhile");
+                        }
+                        let expected = n + k + m + 1;
+                        match tokenize(&src).and_then(parse) {
+                            Ok(ast) => {
+                                let d = ast_depth(&ast);
+                                assert_eq!(
+                                    d, expected,
+                                    "shape n={n} k={k} m={m}: the test's own depth \
+                                     arithmetic is wrong, so its bound claims are too"
+                                );
+                                assert!(
+                                    d <= MAX_DEPTH,
+                                    "accepted a tree {d} deep (n={n} k={k} m={m})"
+                                );
+                                deepest = deepest.max(d);
+                                accepted_count += 1;
+                            }
+                            // A refusal is legitimate for one of two reasons: the
+                            // tree would be too deep, or the *descent* would be.
+                            // `MAX_RECURSION` is checked on entry to `parse_expr`
+                            // and to `parse_unary`. Each `Abs(` level passes
+                            // through both on the way to its argument, each
+                            // `while` through `parse_expr` once more for its
+                            // body, and the leaf itself through both -- so the
+                            // leaf's check sees `2n + m + 1`. Chains pass through
+                            // neither, being loops, which is exactly why `k` is
+                            // absent here and why the tree can be 64 deep while
+                            // the descent is 32.
+                            Err(_) => assert!(
+                                expected > MAX_DEPTH || 2 * n + m + 1 >= MAX_RECURSION,
+                                "refused a tree only {expected} deep (n={n} k={k} m={m})"
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            accepted_count > 0,
+            "the grid accepted nothing, so nothing was measured"
+        );
+        assert_eq!(
+            deepest, MAX_DEPTH,
+            "the deepest accepted tree is {deepest}, not {MAX_DEPTH}: the bound is \
+             not where it says it is"
+        );
+        let backstop = BACKSTOP_FIRED.with(|n| n.get());
+        assert_eq!(
+            backstop, 0,
+            "the backstop refused {backstop} tree(s) that construction accepted; on \
+             the error path there is no backstop, so that tree would have been \
+             dropped by recursion at its full depth"
+        );
+    }
+
+    /// The error path, on the smallest stack the bound is meant to hold on.
+    ///
+    /// A deep tree followed by a syntax error is dropped by unwinding, at the
+    /// depth it reached, with nothing after it to measure -- so the only thing
+    /// standing between that input and a crash is construction refusing before
+    /// the tree gets deep. Recursive `Drop` costs ~61 bytes per level: 64 KB
+    /// survives about a thousand levels, and the shapes here would build twenty
+    /// thousand. The shapes are chosen so the *parser's* recursion stays shallow
+    /// -- chains are loops, and the one nested shape nests twice, because a
+    /// debug build's descent costs about 15 KB per level and four levels
+    /// already overflow 64 KB on their own. That is what makes the thread's
+    /// stack a measurement of the drop and not of the descent; the deep
+    /// descent on a small stack is `MAX_RECURSION`'s job, tested elsewhere.
+    ///
+    /// Removing the construction bound does not fail this test -- it aborts the
+    /// test binary with a stack overflow, which is red in a louder register.
+    /// That is stated so nobody reads the SIGABRT as flake. (#303)
+    #[test]
+    fn a_deep_tree_that_fails_to_parse_is_refused_on_a_64_kb_stack() {
+        let deep = 20_000;
+        let shapes = vec![
+            format!("{}1 +", "1 + ".repeat(deep)),
+            format!("{}2 *", "2 * ".repeat(deep)),
+            format!("{}1 or", "1 or ".repeat(deep)),
+            format!("a{}.", ".b".repeat(deep)),
+            {
+                let tail = " + 1".repeat(2_000);
+                let mut src = String::from("1");
+                for _ in 0..2 {
+                    src = format!("Abs({src}{tail})");
+                }
+                src.push_str(" +");
+                src
+            },
+        ];
+        let worker = std::thread::Builder::new()
+            .name("formcalc-64kb".into())
+            .stack_size(64 * 1024)
+            .spawn(move || {
+                for src in shapes {
+                    assert!(
+                        refused(&src),
+                        "a tree was built to full depth before the parse failed; \
+                         unwinding then drops it recursively"
+                    );
+                }
+            })
+            .expect("spawn a 64 KB thread");
+        worker
+            .join()
+            .expect("the 64 KB thread must finish without overflowing");
+    }
+
     /// The other half: a bound low enough to break real forms is also a bug.
     /// The deepest of the 51 FormCalc scripts in `fixtures/formcalc` measures
     /// 10, so ordinary nesting must keep working.
