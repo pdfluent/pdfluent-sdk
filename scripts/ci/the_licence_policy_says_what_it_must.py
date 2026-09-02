@@ -34,9 +34,15 @@ import pathlib, re, sys, tomllib
 REPO = pathlib.Path(__file__).resolve().parents[2]
 POLICY = REPO / "docs" / "LICENSE_POLICY.toml"
 
-# Required, with the reason as data. Each is here because losing it would let
-# something specific through, and that sentence is what a reader needs when the
-# guard fails.
+# REASONS, not requirements. Every name here is required by the generated
+# family or by MOET_OVERIG_VERBODEN -- checked just below, so a reason without a
+# register behind it is a failure rather than a comment. What this table adds is
+# the specific story: why THIS spelling is the one most likely to be edited by
+# accident, which a generated rule cannot say. It is attached to the family's
+# message when the family reports a name missing.
+#
+# It used to assert presence as well, which meant two registers claiming the
+# same five names and reporting each of them twice.
 MUST_FORBID: dict[str, str] = {
     "AGPL-3.0-only": (
         "our own packages declare this after the #257 flip, so it is the "
@@ -51,7 +57,6 @@ MUST_FORBID: dict[str, str] = {
     ),
     "GPL-2.0-only": "linking it into a product we license commercially is the case this list exists for",
     "GPL-3.0-only": "as GPL-2.0-only, and it adds the anti-tivoisation terms",
-    "SSPL-1.0": "not OSI-approved and its service clause reaches anything we host",
 }
 
 MUST_ALLOW: dict[str, str] = {
@@ -185,6 +190,19 @@ def main() -> int:
     # edit to code that goes through review" -- and nothing made that true. A
     # sentence describing a rule is not the rule, which is the failure this file
     # has now produced five times. (codex, #1656)
+    # MUST_FORBID is a REASONS table and asserts nothing on its own, so a name
+    # that lives only there is a name nothing requires -- it would be subtracted
+    # from the unknown set below and then never checked for presence. Latent
+    # today (all five are covered), and this is what keeps it latent: a reason
+    # without a register behind it is a comment, which is the shape this file
+    # keeps producing. (peer review, #1656)
+    for name in sorted(set(MUST_FORBID) - MOET_GECLASSIFICEERD - set(MOET_OVERIG_VERBODEN)):
+        problems.append(
+            f"{name} has a reason in MUST_FORBID and is in no register that "
+            "requires it. A reasons table asserts nothing: put it in "
+            "MOET_OVERIG_VERBODEN, or in the generated family if it belongs to "
+            "one, so that removing it from the policy is a failure.")
+
     onbekend = forbidden - MOET_GECLASSIFICEERD - set(MUST_FORBID) - set(MOET_OVERIG_VERBODEN)
     for name in sorted(onbekend):
         problems.append(
