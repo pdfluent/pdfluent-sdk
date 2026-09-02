@@ -44,6 +44,7 @@ waarop terugnemen nog goedkoop is. CI is de vangnetlaag voor wie de haak niet
 heeft geïnstalleerd -- dezelfde opzet als no_ai_attribution.py, en om dezelfde
 reden: `core.hooksPath` maakt een haak op de verkeerde plek onzichtbaar.
 """
+import hashlib
 import os
 import re
 import subprocess
@@ -324,6 +325,28 @@ def uit_boom():
     return fouten, gelezen
 
 
+def _toonbaar(naam: str, wat: str, context: str) -> tuple[str, str]:
+    """What may appear in the log, for one finding.
+
+    The `partner` rule's terms come from the private list, so printing a hit
+    literally publishes the very name the list exists to keep out of the tree --
+    and a failing run's log is as public as the tree is. `::add-mask::` does not
+    cover it: the rule matches case-insensitively and masking is exact, so a
+    differently-cased hit reaches the log unredacted. The context is withheld
+    for the same reason, since it is the surrounding text of the term.
+
+    Tied to CI rather than applied always: locally the literal term is what
+    makes the message useful, and that log is nobody's but the developer's. The
+    position and a short digest are enough to find it in a list you already
+    hold. (#1660)
+    """
+    if naam != "partner" or not os.environ.get("CI"):
+        return wat, context
+    kort = hashlib.sha256(wat.lower().encode()).hexdigest()[:8]
+    return (f"<partner term {kort}, {len(wat)} chars>",
+            "<context withheld: it contains the term>")
+
+
 def _meld_boom(fouten, gelezen):
     if not fouten:
         print(f"OK: {gelezen} publiek wordende tekstbestanden bevatten geen interne zaken.")
@@ -335,6 +358,7 @@ def _meld_boom(fouten, gelezen):
         file=sys.stderr,
     )
     for naam, wat, waar, context in fouten[:20]:
+        wat, context = _toonbaar(naam, wat, context)
         print(f"  [{naam}] {wat}  --  {waar}: {context}", file=sys.stderr)
     if len(fouten) > 20:
         print(f"  ... en nog {len(fouten) - 20}", file=sys.stderr)
@@ -362,6 +386,7 @@ def main(argv):
         file=sys.stderr,
     )
     for naam, wat, context in fouten[:12]:
+        wat, context = _toonbaar(naam, wat, context)
         print(f"  [{naam}] {wat}  --  …{context}…", file=sys.stderr)
     print(
         "\nHerschrijf de boodschap. Wat er technisch gebeurde mag er staan; waarom\n"
