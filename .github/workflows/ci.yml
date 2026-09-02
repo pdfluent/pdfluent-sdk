@@ -715,56 +715,7 @@ jobs:
         run: python3 scripts/ci/test_no_ai_attribution.py
       # A message cannot be excluded by a manifest the way a file can, so this
       # is the last point before the messages are published.
-      # ONE step: the secret is written, used, and removed without ever being
-      # visible to another step.
-      #
-      # The list of customer and partner names is deliberately not in the tree:
-      # a forbidden-terms list that publishes its own terms leaks exactly what
-      # it exists to stop, and worse than the commit messages it screens -- a
-      # message can be rewritten, a published source file is in every clone.
-      #
-      # AND THE SCRIPT COMES FROM THE BASE REVISION. On a same-repo pull request
-      # this job would otherwise run PR-authored code with a secret in reach:
-      # anyone who can push a branch but cannot read secrets could edit
-      # geen_interne_zaken.py to print the list base64-encoded, and per-term
-      # masking does not stop encoded exfiltration. That is the boundary #1649
-      # guards, one level over: not the desktop this time, but the secrets.
-      # `git archive <base>` gives the reviewed copy; the pull request's commits
-      # are what it reads, as DATA. (codex, #1660)
-      #
-      # If the secret is absent the file is empty, the guard finds no terms and
-      # exits 1 with "SKIPPED (not a pass)" -- the right answer: nobody looked.
-      # Fork pull requests receive no secrets at all, so when this repository
-      # stops being private that same base-revision route is what has to carry
-      # it, with the fork case failing closed as it does today.
-      - name: No commit message names an internal matter
-        if: ${{ !cancelled() }}
-        env:
-          TERMEN: ${{ secrets.PDFLUENT_INTERNE_TERMEN }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -uo pipefail
-          LIJST="$RUNNER_TEMP/interne-termen.txt"
-          trap 'rm -f "$LIJST"' EXIT
-          # Masking FIRST, and PER LINE. `::add-mask::` is line-oriented: given a
-          # multi-line value it masks line 1 and prints the rest as ordinary log
-          # lines. The list is one term per line by design, so the normal case
-          # would have published every partner name but the first.
-          while IFS= read -r term; do
-            if [ -n "$term" ]; then echo "::add-mask::$term"; fi
-          done <<< "$TERMEN"
-          printf '%s\n' "$TERMEN" > "$LIJST"
-          WACHT="scripts/ci/geen_interne_zaken.py"
-          if [ -n "${BASE_SHA:-}" ]; then
-            mkdir -p "$RUNNER_TEMP/base"
-            git archive "$BASE_SHA" scripts/ci | tar -x -C "$RUNNER_TEMP/base"
-            WACHT="$RUNNER_TEMP/base/scripts/ci/geen_interne_zaken.py"
-            echo "guard taken from base revision ${BASE_SHA}"
-          fi
-          PDFLUENT_INTERNE_TERMEN="$LIJST" python3 "$WACHT" --bereik origin/master..HEAD
-      - name: A hit does not publish the term it found
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_een_treffer_publiceert_de_term_niet.py
+
 
   commit-identity-guard:
     name: No commit publishes a personal address
@@ -860,3 +811,89 @@ jobs:
       - name: No tracked file carries an address we decided not to publish
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_personal_address_in_the_tree.py
+
+  internal-matter-guard:
+    name: No commit message names an internal matter
+    # ITS OWN JOB, and that is the point of it.
+    #
+    # The base-revision route pins the SCRIPT. It does not pin the interpreter.
+    # In `message-guard-wiring` four earlier steps run scripts out of the pull
+    # request's checkout, and any of them can append to `$GITHUB_PATH` or
+    # `$GITHUB_ENV` -- a `python3` shim ahead on PATH, or `PYTHONPATH=/tmp/x`
+    # with an `os.py` in it -- so the pinned guard would have run attacker-chosen
+    # code with the terms secret in its environment. Pinning the file while the
+    # thing that executes the file is still chosen by the pull request is half a
+    # boundary. (peer review, #1660)
+    #
+    # So: a fresh checkout, no pull-request code before it, one step, and the
+    # secret gone before the job ends.
+    # The plain form, not `(push || schedule)`: ci.yml has no schedule trigger,
+    # so naming one would be a condition that can never be true, and the
+    # recogniser on master reads only this shape until #1649 lands. Writing the
+    # wider form here would have been a guard failure in exchange for nothing.
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # ONE step: the secret is written, used, and removed without ever being
+      # visible to another step.
+      #
+      # The list of customer and partner names is deliberately not in the tree:
+      # a forbidden-terms list that publishes its own terms leaks exactly what
+      # it exists to stop, and worse than the commit messages it screens -- a
+      # message can be rewritten, a published source file is in every clone.
+      #
+      # AND THE SCRIPT COMES FROM THE BASE REVISION. On a same-repo pull request
+      # this job would otherwise run PR-authored code with a secret in reach:
+      # anyone who can push a branch but cannot read secrets could edit
+      # geen_interne_zaken.py to print the list base64-encoded, and per-term
+      # masking does not stop encoded exfiltration. That is the boundary #1649
+      # guards, one level over: not the desktop this time, but the secrets.
+      # `git archive <base>` gives the reviewed copy; the pull request's commits
+      # are what it reads, as DATA. (codex, #1660)
+      #
+      # If the secret is absent the file is empty, the guard finds no terms and
+      # exits 1 with "SKIPPED (not a pass)" -- the right answer: nobody looked.
+      # Fork pull requests receive no secrets at all, so when this repository
+      # stops being private that same base-revision route is what has to carry
+      # it, with the fork case failing closed as it does today.
+      - name: No commit message names an internal matter
+        if: ${{ !cancelled() }}
+        env:
+          TERMEN: ${{ secrets.PDFLUENT_INTERNE_TERMEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+          LIJST="$RUNNER_TEMP/interne-termen.txt"
+          trap 'rm -f "$LIJST" "$LIJST.raw"' EXIT
+          # Masking FIRST, and PER LINE. `::add-mask::` is line-oriented: given a
+          # multi-line value it masks line 1 and prints the rest as ordinary log
+          # lines. The list is one term per line by design, so the normal case
+          # would have published every partner name but the first.
+          # `\r` and stray spaces are not part of a term, and masking is exact:
+          # a list saved with CRLF would have masked "acme\r" while the guard
+          # matched "acme". Trimmed before masking and before writing.
+          printf '%s\n' "$TERMEN" | tr -d '\r' > "$LIJST.raw"
+          while IFS= read -r term; do
+            term="$(printf '%s' "$term" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            if [ -n "$term" ]; then echo "::add-mask::$term"; fi
+          done < "$LIJST.raw"
+          sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$LIJST.raw" > "$LIJST"
+          WACHT="scripts/ci/geen_interne_zaken.py"
+          if [ -n "${BASE_SHA:-}" ]; then
+            mkdir -p "$RUNNER_TEMP/base"
+            git archive "$BASE_SHA" scripts/ci | tar -x -C "$RUNNER_TEMP/base"
+            WACHT="$RUNNER_TEMP/base/scripts/ci/geen_interne_zaken.py"
+            echo "guard taken from base revision ${BASE_SHA}"
+          fi
+          # Belt and braces even in a clean job: an absolute interpreter and an
+          # emptied PYTHONPATH, so neither PATH nor the import path can be
+          # steered by anything that ran before.
+          PY=$(command -v python3)
+          case "$PY" in /*) ;; *) echo "::error::python3 is not an absolute path"; exit 1 ;; esac
+          PYTHONPATH= PDFLUENT_INTERNE_TERMEN="$LIJST" "$PY" "$WACHT" --bereik origin/master..HEAD
