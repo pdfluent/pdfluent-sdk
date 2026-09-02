@@ -47,7 +47,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         opnieuw = Path(raw) / "regenerated.pdf"
         run = subprocess.run(
-            ["cargo", "run", "--quiet", "--release", "-p", "pdf-manip",
+            ["cargo", "run", "--quiet", "-p", "pdf-manip",
              "--example", EXAMPLE, "--", str(opnieuw)],
             cwd=REPO, capture_output=True, text=True, check=False,
             env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
@@ -74,7 +74,7 @@ def main() -> int:
           f"  first difference at byte {verschil}\n\n"
           "  Either the generator changed and the file was not regenerated, or "
           "the file was edited by hand. Regenerate it:\n\n"
-          f"    cargo run --release -p pdf-manip --example {EXAMPLE} -- \\\n"
+          f"    cargo run -p pdf-manip --example {EXAMPLE} -- \\\n"
           f"      {FIXTURE.relative_to(REPO)}\n\n"
           "  If the generator's output stopped being deterministic, that is the "
           "bug -- a date or an /ID leaking from the clock -- and normalising it "
