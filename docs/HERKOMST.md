@@ -13,9 +13,28 @@ CI-bot. Geen enkele externe menselijke bijdrager, dus herlicentiëren vereist
 niemands toestemming.
 
 De `Co-Authored-By`-trailers waren geen auteursrechtclaim — een assistent is geen
-rechthebbende. Ze zijn uit de historie geschreven (#229) en kunnen er sinds
-26-08-2026 niet meer in komen: `scripts/ci/no_ai_attribution.py` plus een
-`commit-msg`-haak.
+rechthebbende. Ze zijn uit de historie geschreven (#229).
+
+**Correctie, 02-09-2026.** Hier stond dat ze er sinds 26-08-2026 niet meer in
+kunnen komen, "`scripts/ci/no_ai_attribution.py` plus een `commit-msg`-haak".
+Dat was niet waar toen het werd opgeschreven en het is vier maanden lang niet
+waar geweest. Gemeten op 02-09: `core.hooksPath` wees naar `.githooks`, die map
+bevatte `pre-commit` en `pre-push` en géén `commit-msg`, en het genoemde script
+stond op een tak die nooit gemerged is — geschreven op 31-08, vijf dagen ná de
+datum die deze zin claimde.
+
+Sinds 02-09-2026 klopt de zin wel, en hij is nu ook controleerbaar:
+
+- `.githooks/commit-msg` roept beide boodschapwachten aan;
+- `scripts/ci/the_commit_msg_hook_is_wired.py` faalt als die haak ontbreekt, als
+  hij een van de twee niet aanroept, of als `core.hooksPath` in déze kloon niet
+  naar `.githooks` wijst — die laatste laag is per kloon en is precies de laag
+  die niemand controleerde;
+- de wacht draait in de lokale poort én in CI.
+
+Wie deze alinea in de toekomst wil aanpassen: laat die wacht meeveranderen, of
+laat de alinea weg. Een afspraak die alleen in een document staat is geen
+afspraak, en dit document heeft er vier maanden een beschreven die er niet was.
 
 **De Foxit-fonts zijn in orde.** `crates/pdf-interpret/assets/*.pfb` draagt
 BSD-3-Clause van de PDFium Authors, volledig herdistribueerbaar. Dat is het
