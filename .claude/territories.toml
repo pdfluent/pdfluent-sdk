@@ -96,6 +96,11 @@ waarom = """
 Workflows and the guard scripts. The one place where a careless edit stops every
 other terminal from being able to verify anything, so it gets a single owner."""
 paden = [
+  # The policy itself. `docs/licen*` is t3's and is lowercase, so this file --
+  # the one the whole licence policy is written in -- matched no territory at
+  # all until today. A map that covers the guard but not the thing it reads
+  # leaves the argument about which is authoritative to whoever notices first.
+  "docs/LICENSE_POLICY.toml",
   ".claude/**",
   ".github/workflows/**",
   ".gitlab-ci.yml",
@@ -109,7 +114,16 @@ uitgezonderd = [
   # behind another terminal's door is a guard people route around. Unclaimed,
   # so anyone adding a feature flag can declare its gap in their own change.
   "scripts/ci/feature_gaps.toml",
-  "scripts/ci/*licen*",
+  # Claimed BACK by t2 on 02-09-2026, so no longer excepted here. T3's session
+  # ended, and the licence-policy guard has become CI wiring like the rest of
+  # scripts/ci: it is the file that says what the policy IS, and it is
+  # maintained where the wiring lives. It returns to t3 the moment that session
+  # exists again and opens a pull request of its own.
+  #
+  # Found by the territory guard refusing my own #1656, hours after I had been
+  # editing these files: it could not say so until today, because it ran on a
+  # depth-1 checkout and its branch half skipped in silence. The two repairs I
+  # made to that guard are what let it stop me.
   "scripts/ci/*publicat*",
   # Claimed BACK by t2 on 02-09-2026, so no longer excepted here. T3's session
   # ended and this guard has become CI wiring: it runs from the commit-msg hook
@@ -143,7 +157,6 @@ paden = [
   "THIRD_PARTY*",
   "docs/licen*",
   "docs/KWALITEITSSPOOR.md",
-  "scripts/ci/*licen*",
   "scripts/ci/*publicat*",
   "scripts/ci/contributors.toml",
   "scripts/ci/repos_staan_zoals_bedoeld.py",
