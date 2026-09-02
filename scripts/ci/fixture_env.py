@@ -68,6 +68,17 @@ def sealed_env(identity: bool = False, cwd: str | os.PathLike | None = None,
                 if k.startswith(("GITHUB_", "CI_", "RUNNER_", "ACTIONS_"))]:
         env.pop(var, None)
     env.pop("CI", None)
+    # And the one this repository's own guards read. `TERRITORY_BRANCH` is what
+    # territories_do_not_overlap tells a detached HEAD to set, so it is set
+    # exactly when somebody is pushing -- and a fixture that inherits it thinks
+    # every branch it builds is named that. Measured: with it set, ten cases of
+    # test_territories_do_not_overlap fail, including three that assert an
+    # UNNAMED branch is treated as unnamed.
+    #
+    # Same class as the block above, one variable short: I stripped the
+    # runner's identity and left the one our own guards use. A test that is
+    # ABOUT this passes it back through `extra`. (peer review, #1666)
+    env.pop("TERRITORY_BRANCH", None)
     if identity:
         env.update({"GIT_AUTHOR_NAME": "fixture", "GIT_AUTHOR_EMAIL": "fixture@invalid",
                     "GIT_COMMITTER_NAME": "fixture", "GIT_COMMITTER_EMAIL": "fixture@invalid"})

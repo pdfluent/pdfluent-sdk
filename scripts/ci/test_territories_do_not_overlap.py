@@ -253,7 +253,29 @@ expect("  and it says so in those words",
 expect("  and states the map itself was checked",
        "map" in r.stderr.lower(), r.stderr[:250])
 
-MINIMUM_CASES = 23  # FLOOR
+# THE VARIABLE THE GUARD RECOMMENDS. `TERRITORY_BRANCH` is what the SKIPPED
+# message tells a detached HEAD to set, so it is set precisely when somebody is
+# pushing -- and the fixtures inherited it, which made every nameless branch
+# they built look like it was called that. Ten cases failed with it set,
+# including three asserting an UNNAMED branch is treated as unnamed. The seal
+# strips it now.
+#
+# Which could just as easily disable the documented escape, so this proves it
+# still works when a caller means it: passed deliberately, on a detached HEAD,
+# it names the territory.
+root, env = build(CLEAN, [], detach=True, commit_na_detach=True)
+# t1, deliberately: the fixture's change is in scripts/ci, which CLEAN gives to
+# t2. A t2 name would pass and prove nothing -- it has to be a name that makes
+# the same change a violation, or the assertion cannot tell "the variable was
+# read" from "the variable was ignored and nothing was wrong anyway".
+r = run(root, env, TERRITORY_BRANCH="t1/deliberate")
+expect("a deliberately passed TERRITORY_BRANCH is still read",
+       r.returncode == 1 and "t1/deliberate" in r.stderr,
+       f"exit={r.returncode}: {r.stderr[:200]}")
+expect("  and it judges the branch rather than skipping it",
+       "SKIPPED" not in r.stderr, r.stderr[:200])
+
+MINIMUM_CASES = 25  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
