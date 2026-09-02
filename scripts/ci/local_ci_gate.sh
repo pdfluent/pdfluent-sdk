@@ -190,6 +190,7 @@ run identity  python3 scripts/ci/commits_use_the_noreply_alias.py
 run hookwire  python3 scripts/ci/the_commit_msg_hook_is_wired.py
 run hookwiretst python3 scripts/ci/test_the_commit_msg_hook_is_wired.py
 run jobimports python3 scripts/ci/a_job_has_what_its_scripts_import.py
+run jobdoes   python3 scripts/ci/every_job_does_something.py
 run noai      python3 scripts/ci/no_ai_attribution.py
 run noaitest  python3 scripts/ci/test_no_ai_attribution.py
 run msgclean  python3 scripts/ci/geen_interne_zaken.py --bereik github/master..HEAD

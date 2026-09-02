@@ -171,6 +171,9 @@ jobs:
       - name: The territory guard reaches its own verdict
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_territories_do_not_overlap.py
+      - name: Every job runs at least one command
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_job_does_something.py
       # Only GitLab ran these, and GitLab is the mirror -- a red job there stops
       # nothing. The machine both pipelines share is the one whose build
       # directory keeps going away, so the verdict drifted unwatched on the side
@@ -752,9 +755,73 @@ jobs:
   # failures in #286 actually lived.
   measurement-guard:
     name: The published measurements still measure what they say
+    # These eight came back from commit-identity-guard, where they had been
+    # since c3b4b08b. Nothing moved them on purpose: that commit inserted a new
+    # job BETWEEN this one's checkout and its remaining steps, so everything
+    # from `Set up Python` onward silently changed owner. The diff was +29/-1,
+    # a pure addition -- no line deleted, no step text altered -- which is why
+    # no reviewer, no `git log -S` and no `-G` could see it. Found by parsing
+    # the YAML at each commit and counting run-steps per job. (#292)
+    #
+    # What was lost was not the checks. It was the NAME that says what is being
+    # checked: a job called "The published measurements still measure what they
+    # say" that measured nothing and ticked green on every pull request, while
+    # "No commit publishes a personal address" quietly ran eight measurement
+    # guards and reported their failures under its own subject.
     runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml
+      - name: No test bails out in silence
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_skip_lint.py
+      # Counting characters scored a wrecked document at 80.1%: every letter had
+      # become an 'x'. This measure counts which of the source's words come back.
+      - name: Text retention is measured in words, not characters
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_text_fidelity.py
+      # A print function that quietly does nothing leaves the gate saying OK with
+      # no figure at all -- and the figure then gets fetched by hand from
+      # somewhere else, which is how a wrong one stays on a website for months.
+      - name: The retention gate still prints its distribution
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_retention_report.py
+      # #286: measured.json wrote "govdocs (fixed 300-document sample)" while
+      # sample_size said 1000. A conformance figure has to name the sample it
+      # came from, and the two gates have to be tellable apart.
+      - name: A conformance figure names the sample it came from
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_pdfa_gate_label.py
+      # The corpus job handed the text-replacement gate an argument it did not
+      # have. It failed on argument parsing in under a second, for months, and
+      # the measurement it exists to produce had therefore never run.
+      - name: The text-replacement gate accepts what its job passes
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_text_replace_gate.py
+      # A cache in front of a validator is the one place where fast quietly turns
+      # into wrong, so these check that it declines to answer far more often than
+      # that it answers quickly.
+      - name: The veraPDF verdict cache declines when it should
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_verapdf_cached.py
+      # The corpus disk threw read errors for five hours while its mount stayed
+      # in place. `test -d` passed on a cached dentry, and a corpus job ran 68
+      # minutes without a line of output.
+      - name: The corpus preflight can tell a dead disk from a missing one
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_corpus_preflight.py
+      - name: The test fixtures are still well formed
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_fixtures_are_wellformed.py
+      # The test first, and for the usual reason: this guard's whole job is to
+      # find nothing most days, so green says nothing until something has proved
+      # it can go red. It exercises the range, the nearest base, the floor, the
+      # cutover and the legacy budget against a repository built in a temporary
+      # directory.
 
   message-guard-wiring:
     name: The message guards are wired, and run
@@ -860,52 +927,6 @@ jobs:
       - run: pip install --quiet pyyaml
       # A test that returns early without saying so is indistinguishable from a
       # passing one. That is how a doubled /ToUnicode survived a fully green suite.
-      - name: No test bails out in silence
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_skip_lint.py
-      # Counting characters scored a wrecked document at 80.1%: every letter had
-      # become an 'x'. This measure counts which of the source's words come back.
-      - name: Text retention is measured in words, not characters
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_text_fidelity.py
-      # A print function that quietly does nothing leaves the gate saying OK with
-      # no figure at all -- and the figure then gets fetched by hand from
-      # somewhere else, which is how a wrong one stays on a website for months.
-      - name: The retention gate still prints its distribution
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_retention_report.py
-      # #286: measured.json wrote "govdocs (fixed 300-document sample)" while
-      # sample_size said 1000. A conformance figure has to name the sample it
-      # came from, and the two gates have to be tellable apart.
-      - name: A conformance figure names the sample it came from
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_pdfa_gate_label.py
-      # The corpus job handed the text-replacement gate an argument it did not
-      # have. It failed on argument parsing in under a second, for months, and
-      # the measurement it exists to produce had therefore never run.
-      - name: The text-replacement gate accepts what its job passes
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_text_replace_gate.py
-      # A cache in front of a validator is the one place where fast quietly turns
-      # into wrong, so these check that it declines to answer far more often than
-      # that it answers quickly.
-      - name: The veraPDF verdict cache declines when it should
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_verapdf_cached.py
-      # The corpus disk threw read errors for five hours while its mount stayed
-      # in place. `test -d` passed on a cached dentry, and a corpus job ran 68
-      # minutes without a line of output.
-      - name: The corpus preflight can tell a dead disk from a missing one
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_corpus_preflight.py
-      - name: The test fixtures are still well formed
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_fixtures_are_wellformed.py
-      # The test first, and for the usual reason: this guard's whole job is to
-      # find nothing most days, so green says nothing until something has proved
-      # it can go red. It exercises the range, the nearest base, the floor, the
-      # cutover and the legacy budget against a repository built in a temporary
-      # directory.
       - name: The identity guard refuses what it should, and only that
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_commits_use_the_noreply_alias.py
