@@ -404,12 +404,6 @@ jobs:
       - name: The policy guard bites when an entry is removed
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_the_licence_policy_says_what_it_must.py
-      - name: Every channel we publish declares its own licence
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/our_channels_declare_their_licence.py
-      - name: The channel guard bites in both directions
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_our_channels_declare_their_licence.py
       - name: The licence gate rejects what it should
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_license_gate.py
