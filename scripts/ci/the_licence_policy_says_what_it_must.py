@@ -45,8 +45,9 @@ MUST_FORBID: dict[str, str] = {
     ),
     "AGPL-3.0-or-later": (
         "the spelling our packages used before #257. It must stay forbidden as "
-        "a dependency licence, and it is the one a half-finished flip would "
-        "remove first"
+        "a DEPENDENCY licence -- our own packages declaring it is the opposite "
+        "case and is judged elsewhere -- and it is the one a half-finished flip "
+        "would remove first"
     ),
     "GPL-2.0-only": "linking it into a product we license commercially is the case this list exists for",
     "GPL-3.0-only": "as GPL-2.0-only, and it adds the anti-tivoisation terms",
