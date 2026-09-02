@@ -39,7 +39,7 @@ The original copyright notices for these upstream projects are preserved
 in their respective source files and in the THIRD_PARTY_LICENSES.txt file.
 
 ============================================================================
-PROPRIETARY COMMERCIAL COMPONENTS (PDFluent Commercial License)
+PDFLUENT'S OWN COMPONENTS (AGPL-3.0-only OR PDFluent Commercial Licence)
 ============================================================================
 
 The following crates are PDFluent's own work and are available under two
@@ -51,12 +51,6 @@ It asks that you offer your users the corresponding source under the same
 licence if you convey the software or let them use a modified version over a
 network. The commercial licence is the alternative for anyone who cannot do
 that. See https://pdfluent.com/pricing.
-
-(The heading above still reads "PROPRIETARY COMMERCIAL"; it predates the licence
-change of 01-09-2026 and is now a misnomer. It is left in place deliberately:
-scripts/ci/notice_matches_the_registry.py splits this file on that exact string,
-so the heading and the guard have to change in one commit, and the guard is not
-t3's file.)
 
   pdfluent             — the unified facade SDK
   pdf-engine           — orchestration and document model
