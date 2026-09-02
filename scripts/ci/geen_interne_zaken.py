@@ -131,12 +131,21 @@ def private_regel():
         return None
     if not termen:
         return None
-    global _PRIVE_RX
+    global _PRIVE_RX, _PRIVE_RX_LOS
     # `re.I` is not decoration: the terms are names and a commit message spells
     # them however it feels like. It is also the whole reason `::add-mask::`
     # cannot be relied on -- masking is exact -- so removing it would quietly
     # undo both this rule and the argument for redacting its hits.
     _PRIVE_RX = re.compile(r"\b(" + "|".join(termen) + r")\b", re.I)
+    # A second pattern WITHOUT word boundaries, for paths.
+    #
+    # `\b` sits between a word character and a non-word one, and `_` is a word
+    # character -- so `X_BACKLOG.md` does not match `\bBACKLOG\b`. A customer
+    # name inside `ACME_contract.md` is published exactly as loudly as one in
+    # `acme-contract.md`, and the bounded pattern saw only the second. Used for
+    # scanning names and for redacting the location, where over-redacting costs
+    # a little clarity and under-redacting costs the secret.
+    _PRIVE_RX_LOS = re.compile("(" + "|".join(re.escape(t) for t in termen) + ")", re.I)
     return ("partner", _PRIVE_RX)
 
 
@@ -318,7 +327,9 @@ def uit_boom():
         # body produced nothing at all. Checked before the text filter, because
         # a binary named after a partner is exactly as public as a text one.
         for naam, rx in _regels:
-            m = rx.search(pad)
+            # The unbounded pattern for the private rule: see private_regel().
+            zoek = _PRIVE_RX_LOS if (naam == "partner" and _PRIVE_RX_LOS) else rx
+            m = zoek.search(pad)
             if m:
                 fouten.append((naam, m.group(0), pad, "<in the file name>"))
         if not _is_tekst(pad):
@@ -342,6 +353,7 @@ def uit_boom():
 # The compiled private pattern, once `private_regel()` has loaded it. Redaction
 # keys on THIS, not on a rule name.
 _PRIVE_RX = None
+_PRIVE_RX_LOS = None
 
 
 def _toonbaar(naam: str, wat: str, context: str) -> tuple[str, str]:
@@ -368,15 +380,24 @@ def _toonbaar(naam: str, wat: str, context: str) -> tuple[str, str]:
     # A rule name is a label; what must not be published is the text.
     if _PRIVE_RX is None:
         return wat, context
-    if not (_PRIVE_RX.search(wat) or _PRIVE_RX.search(context or "")):
+    # Each field on its own merits. Withholding the context because the MATCH
+    # contained a term threw away `<in the file name>`, which carries nothing
+    # secret and is the only thing telling a reader where to look. A redaction
+    # that removes more than the secret costs the report its usefulness and
+    # buys nothing.
+    rx = _PRIVE_RX_LOS or _PRIVE_RX
+    schoon_wat = wat if not rx.search(wat) else None
+    schoon_ctx = context if not rx.search(context or "") else None
+    if schoon_wat is not None and schoon_ctx is not None:
         return wat, context
+    return (wat if schoon_wat is not None else "<a private term matched here>",
+            context if schoon_ctx is not None
+            else "<context withheld: it contains the term>")
     # No digest and no length. `sha256(term.lower())[:8]` with the exact length
     # beside it is reversible with a word list in one line -- a redaction that
     # publishes a checkable fingerprint of the secret is a slower way of
     # publishing the secret. The rule and the position are what a developer
     # needs; the term itself is in the list they already hold.
-    return ("<a private term matched here>",
-            "<context withheld: it contains the term>")
 
 
 def _meld_boom(fouten, gelezen):

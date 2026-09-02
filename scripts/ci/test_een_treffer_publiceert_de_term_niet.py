@@ -103,9 +103,12 @@ expect("  and it says a private term matched", "private term" in wat, wat)
 expect("  and reveals neither the length nor a digest of it",
        str(len(TERM)) not in wat
        and giz_sha(TERM)[:8] not in wat.lower(), wat)
-expect("  so two different terms are indistinguishable in the log",
-       toonbaar(ci=True, wat="AndereNaam", context="x met AndereNaam erin")[0] == wat
-       or "private term" in toonbaar(ci=True, wat="AndereNaam")[0])
+# Two different PRIVATE terms must look the same in the log. (A word that is
+# not on the list is not redacted at all, which is the point of the list.)
+laad_prive(TERM, "TweedePartner")
+expect("  so two different private terms are indistinguishable in the log",
+       toonbaar(ci=True, wat=TERM)[0] == toonbaar(ci=True, wat="TweedePartner")[0])
+laad_prive(TERM)
 
 wat, ctx = toonbaar(ci=False)
 expect("locally the term IS printed", wat == TERM and ctx == CONTEXT, f"{wat!r}")
@@ -184,7 +187,19 @@ import collections
 import re as _re
 woorden = collections.Counter(
     w.lower() for w in _re.findall(r"[A-Za-z]{6,}", boodschappen))
-kandidaten = [w for w, _ in woorden.most_common() if w.isalpha()]
+# Words the guard prints ANYWAY -- its banner says "commit", "repository",
+# "publiek" -- would make the absence check fail for a reason that has nothing
+# to do with redaction. Collected from a clean run rather than guessed at, so
+# the exclusion cannot go stale the way the hardcoded candidate list did.
+with tempfile.TemporaryDirectory() as _td:
+    _leeg = pathlib.Path(_td) / "geen.txt"
+    _leeg.write_text("zzqnietbestaandeterm\n")
+    _basis = subprocess.run([sys.executable, str(GUARD), "--bereik", bereik],
+                            cwd=REPO, capture_output=True, text=True,
+                            env=dict(os.environ, CI="true",
+                                     PDFLUENT_INTERNE_TERMEN=str(_leeg)))
+_eigen = set(_re.findall(r"[A-Za-z]{6,}", (_basis.stdout + _basis.stderr).lower()))
+kandidaten = [w for w, _ in woorden.most_common() if w.isalpha() and w not in _eigen]
 assert kandidaten, (
     f"no word of six letters or more in {bereik}: the fixture cannot guarantee "
     "a hit, and a case that cannot guarantee its own premise must say so rather "
@@ -211,7 +226,37 @@ with tempfile.TemporaryDirectory() as td:
     expect("  while the run still fails, so nobody has to read the log to know",
            r.returncode == 1, f"exit={r.returncode}")
 
-MINIMUM_CASES = 16  # FLOOR
+# END TO END THROUGH `--boom`, because the two assertions above pass with the
+# fix removed. They exercise `_toonbaar` on a hand-made tuple and the regex on
+# a string -- both were already true before the location was redacted and
+# before paths were scanned at all. A test that passes on the bug is not a test
+# of the fix.
+#
+# So: a term that really is in a tracked FILE NAME in this repository, through
+# the real scan, with the real reporting. Remove the path scan and there is no
+# finding; remove the location redaction and the term is in the log.
+NAAM_TERM = "BACKLOG"           # BACKLOG.md is tracked here
+with tempfile.TemporaryDirectory() as td:
+    lijst = pathlib.Path(td) / "termen.txt"
+    lijst.write_text(NAAM_TERM + "\n")
+    basis = dict(os.environ, PDFLUENT_INTERNE_TERMEN=str(lijst))
+
+    r = subprocess.run([sys.executable, str(GUARD), "--boom"], cwd=REPO,
+                       capture_output=True, text=True, env=dict(basis, CI="true"))
+    uit = (r.stdout + r.stderr)
+    expect("--boom finds the term in a FILE NAME",
+           "in the file name" in uit, uit[:250])
+    expect("  and under CI the name is not published",
+           NAAM_TERM.lower() not in uit.lower(), uit[:400])
+
+    schoon = {k: v for k, v in basis.items() if k != "CI"}
+    r2 = subprocess.run([sys.executable, str(GUARD), "--boom"], cwd=REPO,
+                        capture_output=True, text=True, env=schoon)
+    uit2 = (r2.stdout + r2.stderr)
+    expect("  while locally the same run does name it",
+           NAAM_TERM.lower() in uit2.lower(), uit2[:250])
+
+MINIMUM_CASES = 19  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
