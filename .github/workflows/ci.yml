@@ -14,13 +14,26 @@ name: CI
 # license-metadata-guard stay on ubuntu-latest — no compilation,
 # near-zero cost either way.
 #
-# On pull_request they stay on ubuntu-latest deliberately (Codex review
-# on #1532): xfa-fast is a persistent desktop runner, not an isolated
-# ephemeral one, so a PR's Cargo build scripts/proc-macros would execute
-# as the runner user with host access if PR runs used it. Only code
-# that's already merged (push) touches it. This repo is private today
-# but is slated to go public at LC10 — this boundary needs to hold
-# before that, not be added after.
+# On pull_request nothing here touches the persistent desktop. xfa-fast is a
+# desktop, not an isolated ephemeral runner, so a PR's build scripts, proc-macros
+# -- or simply the scripts/ci/*.py these jobs execute out of the checkout --
+# would run as the runner user with host access. Only merged code (push) reaches
+# it.
+#
+# That was written as a comment first and drifted: by 02-09-2026 every job in
+# this file was self-hosted on both events, including the five guard jobs, while
+# this header still claimed two were hosted. A workflow added the day before
+# inherited the mistake by copying `runs-on` from a neighbour.
+#
+# So it is a guard now, not a description: scripts/ci/pr_code_stays_off_the_desktop.py
+# fails on any pull_request-reachable job that asks for a self-hosted runner
+# unconditionally, and its register of exceptions is empty. Do not restate the
+# rule below this line -- a second description is a second thing that can drift.
+#
+# ci-ephemeral.yml's create-runner and reap are the exception that proves it:
+# they must run ON the desktop, because creating and reaping instances is host
+# work. They pin the base revision on a pull_request instead, so the code they
+# execute is merged code even though the machine is the desktop.
 #
 # See `docs/ci-cost-control.md` for the full rationale.
 #
@@ -80,7 +93,7 @@ jobs:
     # last thirty runs on master, which left thirty-five guards installed and
     # not executing. A gate that cannot be seen passing is the same shape as the
     # defect this one exists to catch (#283).
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -115,7 +128,7 @@ jobs:
       contents: read
       actions: read
       pull-requests: read
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -567,7 +580,7 @@ jobs:
 
   promise-guard:
     name: Every promise has a test that reaches it
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -613,8 +626,70 @@ jobs:
       # would have been caught after the merge, in the publication run. I checked
       # whether that job builds and not whether it RUNS, which is the question I
       # have asked of every other guard this week. (T1 review, #1654)
-      - name: The Java binding fixture is the one we generate
+      # Only when the two things it compares can have moved.
+      #
+      # This job goes to a hosted runner for pull requests (below), so the step
+      # would otherwise be a cold debug build of pdf-manip on every PR to compare
+      # 1090 bytes. The guard asks one question: do the committed bytes still
+      # match what the generator produces. If neither the generator nor the
+      # committed file is in the diff, the answer cannot have changed, and
+      # rebuilding to re-confirm it is paying for a fact already established.
+      #
+      # `dorny/paths-filter` rather than a workflow-level `paths:` because this
+      # is one step in a job that must keep running for everything else it does.
+      # (T1 review, #1649)
+      - name: Did the fixture or its generator move?
+        id: fixture-diff
         if: ${{ !cancelled() }}
+        # Through `env:`, not interpolated into the script. A `${{ }}` expansion
+        # is textual, so a caller-supplied value becomes part of the program
+        # rather than an argument to it. Both are shas today, which is why this
+        # read as harmless -- and harmless-today is what the guard checks the
+        # shape instead of.
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          BASE="$PR_BASE"
+          if [ -z "$BASE" ]; then BASE="$PUSH_BEFORE"; fi
+          case "$BASE" in ""|0000000000000000000000000000000000000000)
+              echo "moved=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE"
+          # Everything the generated bytes can depend on, not only the three
+          # files the guard names. The generator writes a PDF through lopdf, so
+          # a change to serialisation there moves the output while none of the
+          # three has moved -- the check would report moved=false and sleep
+          # through exactly the change that breaks it. Manifests and the lock
+          # file are here for the same reason: a version bump changes the
+          # writer. (codex, #1649)
+          # `--quiet` and its exit code, NOT a pipe into grep. Under `pipefail`,
+          # `git diff --name-only ... | grep -q .` fails the whole pipeline with
+          # 141 as soon as grep stops reading and git takes SIGPIPE -- which is
+          # what happens when there are MANY matches, e.g. a bulk edit under
+          # crates/lopdf/. The `else` branch then wrote moved=false and skipped
+          # the fixture check precisely when the input it guards had changed
+          # most. A detector whose failure mode is "too much evidence" is not a
+          # detector. (codex, #1649)
+          #
+          # `git diff --quiet` exits 0 for no change, 1 for a change and 2 on
+          # error, so anything that is not a clean "nothing moved" runs the
+          # guard. It fails towards checking.
+          if git diff --quiet "$BASE"..HEAD -- \
+               crates/pdf-manip/examples/java_binding_fixture.rs \
+               crates/pdf-java/src/test/resources/binding-fixture.pdf \
+               scripts/ci/the_java_fixture_is_the_one_we_generate.py \
+               crates/lopdf/ \
+               crates/pdf-manip/Cargo.toml \
+               crates/pdf-java/Cargo.toml \
+               Cargo.toml Cargo.lock; then
+            echo "moved=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "moved=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: The Java binding fixture is the one we generate
+        if: ${{ !cancelled() && steps.fixture-diff.outputs.moved == 'true' }}
         run: python3 scripts/ci/the_java_fixture_is_the_one_we_generate.py
       # Which exported symbols does no test call? A floor, not a percentage:
       # 198 of 262 is not 100, and a soft job at that number is one everybody
@@ -656,7 +731,7 @@ jobs:
   # failures in #286 actually lived.
   measurement-guard:
     name: The published measurements still measure what they say
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -737,7 +812,7 @@ jobs:
     # On the persistent desktop like orchestration-guard, and for the same
     # reason: a spending limit disables hosted runners, and a check that stops
     # running exactly when the bill does is not a check.
-    runs-on: [self-hosted, xfa-fast]
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:

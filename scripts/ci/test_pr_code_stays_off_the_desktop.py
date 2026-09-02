@@ -172,7 +172,72 @@ r = run(tree({}))
 expect("no pull_request job at all is FATAL, not a pass", r.returncode == 2,
        f"exit={r.returncode}")
 
-MINIMUM_CASES = 22  # FLOOR
+# A LIST demands every label, so a per-event expression standing beside a
+# literal desktop label excuses nothing -- the expression only decides what the
+# OTHER element resolves to. T1's fixture, which I had looked for and wrongly
+# reported as not reproducing: I built mine with a fromJSON expression, which
+# is rejected for a different reason, and read that as the guard working.
+LIJST_LEK = """
+on: [pull_request]
+jobs:
+  j:
+    runs-on: ["${{ github.event_name == 'push' && 'self-hosted' || 'ubuntu-latest' }}", xfa-fast]
+    steps: [{run: echo}]
+"""
+r = run(tree({"lijst.yml": LIJST_LEK}))
+expect("a desktop label beside a per-event expression FAILS", r.returncode == 1,
+       f"exit={r.returncode} {r.stderr[-200:]}")
+expect("  and the job is named", "lijst.yml" in r.stderr, r.stderr[-200:])
+
+LIJST_LETTERLIJK = LIJST_LEK.replace(
+    '"${{ github.event_name == \'push\' && \'self-hosted\' || \'ubuntu-latest\' }}", xfa-fast',
+    "ubuntu-latest, xfa-fast")
+r = run(tree({"lijst.yml": LIJST_LETTERLIJK}))
+expect("  and so does the same list without the expression", r.returncode == 1,
+       f"exit={r.returncode}")
+
+# The legitimate single choice still passes: one element, one expression.
+LIJST_OK = """
+on: [pull_request]
+jobs:
+  j:
+    runs-on: ["${{ github.event_name == 'push' && 'self-hosted' || 'ubuntu-latest' }}"]
+    steps: [{run: echo}]
+"""
+r = run(tree({"lijst.yml": LIJST_OK}))
+expect("a one-element list holding only the expression passes",
+       r.returncode == 0, f"exit={r.returncode} {r.stderr[-200:]}")
+
+  # The dormant-DYNAMIC rule is not exercised here: DYNAMIC names
+# ci-ephemeral.yml:workspace specifically, and these fixtures build synthetic
+# workflow trees that do not contain it. Proven against the real tree instead --
+# putting the pull_request trigger back on ci-ephemeral.yml turns the guard red
+# and names the entry. Said plainly rather than covered by an assertion that
+# only greps the source for the word.
+# The caller's BRANCH FILTER, not only its event names. `push` is merged code
+# when its filter says so; an unfiltered push runs whatever is on any branch,
+# which is the pull-request case with the review left out. Passing the names
+# alone let that count as safe -- including down the reusable-workflow path,
+# where the inner job's canonical expression was then approved.
+#
+# And the other half: an event the workflow does not trigger on cannot select
+# anything, so it is UNREACHABLE, not unsafe. Refusing it flagged the canonical
+# expression in a pull_request-only workflow, where the condition can never be
+# true. A guard that cannot tell "this never happens" from "this is dangerous"
+# spends its credibility on the first to protect against the second.
+PUSH_LOS = "on:\n  pull_request:\n    branches: [master]\n  push:\n"
+PUSH_ALLE = "on:\n  pull_request:\n    branches: [master]\n  push:\n    branches: ['**']\n"
+PUSH_MASTER = "on:\n  pull_request:\n    branches: [master]\n  push:\n    branches: [master]\n"
+
+r = run(tree({"push.yml": wf(PUSH_MASTER, SAFE)}))
+expect("a push filtered to master keeps the expression safe", r.returncode == 0,
+       f"exit={r.returncode} {r.stderr[-160:]}")
+r = run(tree({"push.yml": wf(PUSH_LOS, SAFE)}))
+expect("an UNFILTERED push makes it unsafe", r.returncode == 1, f"exit={r.returncode}")
+r = run(tree({"push.yml": wf(PUSH_ALLE, SAFE)}))
+expect("  and so does branches: ['**']", r.returncode == 1, f"exit={r.returncode}")
+
+MINIMUM_CASES = 29  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
