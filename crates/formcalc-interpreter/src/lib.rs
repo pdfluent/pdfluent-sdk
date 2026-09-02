@@ -8,6 +8,8 @@
 
 /// Abstract syntax tree for FormCalc expressions.
 pub mod ast;
+/// The stack budget shared by everything that recurses over a script.
+pub mod budget;
 /// Built-in FormCalc functions.
 pub mod builtins;
 /// Error types for the FormCalc interpreter.

@@ -71,6 +71,15 @@ pub enum FormCalcError {
         max_depth: usize,
     },
 
+    #[error("evaluation needs more than {max_bytes} bytes of stack")]
+    /// The evaluator consumed its stack budget before its step budget: this
+    /// build costs more stack per step than the count assumes. Measured, not
+    /// counted, so it holds in every build profile and on every stack size.
+    StackBudgetExceeded {
+        /// The budget, in bytes, that was reached.
+        max_bytes: usize,
+    },
+
     #[error("Division by zero")]
     /// Division by zero.
     DivisionByZero,

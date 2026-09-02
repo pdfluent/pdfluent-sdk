@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{AccessIndex, BinOp, Expr};
+use crate::budget::{StackBudget, STACK_BUDGET_BYTES};
 use crate::builtins;
 use crate::error::{FormCalcError, Result};
 use crate::som_bridge::{self, DomContext, SomResolver};
@@ -83,27 +84,25 @@ const MAX_CALL_DEPTH: usize = 64;
 /// 60-term expression descends 3904 levels with both respected. One budget for
 /// both makes that impossible, and it is *counted* rather than measured against
 /// the stack -- which matters because the pipeline does not always get a stack
-/// of its own. `flatten` hands native work to a 2 MB thread; wasm32 has no
+/// of its own. `flatten` hands native work to a 32 MB thread; wasm32 has no
 /// `std::thread` and runs the same pipeline inline on the host's stack.
 ///
-/// Four measurements set the number:
+/// The measurements behind the number:
 ///
 /// * the 51 FormCalc scripts in `fixtures/formcalc` reach depth **8**;
 /// * deliberately generous but realistic scripts -- ten chained helpers, twenty
 ///   nested `if`s, a sixty-term sum -- reach **60**;
-/// * evaluation overflows a **1 MiB** stack past depth **1342**, and 1 MiB is
-///   the wasm32 default (nothing sets `-zstack-size` anywhere in the tree);
-/// * on the 2 MB thread `flatten` spawns, past **2684**.
+/// * a level costs about **440 bytes** of stack in a release build and about
+///   **1.7 KB** in a debug build, now that the evaluator's arms each have a
+///   frame of their own (one function holding every arm cost 780 bytes and
+///   17 KB respectively), so 256 levels spend 113 KB or 445 KB.
 ///
-/// 256 therefore sits four times above the deepest realistic script and five
-/// times below the cliff on the smallest stack we ship on.
-///
-/// Those cliffs are for **release** builds, which is what ships. A debug build
-/// costs about 17 KB of stack per level against release's ~780 B — 22 times
-/// more — so evaluation there overflows a 2 MB thread around depth 122, below
-/// this bound. A debug build of the SDK therefore does not get the
-/// "refused, not crashed" guarantee on the deepest inputs; sizing the bound for
-/// debug instead would put it under the 60 that real scripts already reach.
+/// 256 therefore sits four times above the deepest realistic script, and the
+/// stack it spends fits inside `budget::STACK_BUDGET_BYTES` in both profiles.
+/// A count only protects the stack while a level costs what it cost when the
+/// count was chosen; `Interpreter::enter` also *measures* the stack spent and
+/// refuses at the byte budget, so the guarantee does not rest on this number
+/// alone.
 const MAX_EVAL_DEPTH: usize = 256;
 
 /// Maximum loop iterations before aborting.
@@ -126,6 +125,19 @@ pub struct Interpreter {
 
     /// High-water mark of `eval_depth`, for measuring what real scripts need.
     pub deepest_eval: usize,
+
+    /// Bytes of stack the evaluator may consume below the frame that entered
+    /// it. `budget::STACK_BUDGET_BYTES` unless a host that knows its own stack
+    /// set otherwise with [`Interpreter::with_stack_budget`].
+    stack_limit: usize,
+
+    /// The budget for the evaluation in progress, started when the outermost
+    /// `eval_signal` is entered. `None` between evaluations.
+    stack: Option<StackBudget>,
+
+    /// High-water mark of stack consumed, in bytes, for measuring what a level
+    /// costs in this build.
+    pub deepest_stack: usize,
 }
 
 impl Default for Interpreter {
@@ -144,7 +156,21 @@ impl Interpreter {
             call_depth: 0,
             eval_depth: 0,
             deepest_eval: 0,
+            stack_limit: STACK_BUDGET_BYTES,
+            stack: None,
+            deepest_stack: 0,
         }
+    }
+
+    /// Evaluate with `bytes` of stack instead of `STACK_BUDGET_BYTES`.
+    ///
+    /// For a host that knows how much stack it is standing on. The default is
+    /// sized for the smallest stack the pipeline ships on; a host with less
+    /// must say so, and one with more gains nothing by saying so, because
+    /// `MAX_EVAL_DEPTH` refuses first on every stack the default fits.
+    pub fn with_stack_budget(mut self, bytes: usize) -> Self {
+        self.stack_limit = bytes;
+        self
     }
 
     /// Reset the instruction counter. Called between script passes.
@@ -154,21 +180,15 @@ impl Interpreter {
 
     /// Execute a list of expressions (a script) and return the last value.
     pub fn exec(&mut self, exprs: &[Expr]) -> Result<Value> {
+        // Live once per user-function frame; see `eval` for why the work
+        // around the recursive call is elsewhere.
         let mut result = Value::Null;
         for expr in exprs {
-            match self.eval_signal(expr)? {
-                Signal::Value(v) => result = v,
-                Signal::Return(v) => return Ok(v),
-                Signal::Break => {
-                    return Err(FormCalcError::RuntimeError(
-                        "break outside of loop".to_string(),
-                    ))
-                }
-                Signal::Continue => {
-                    return Err(FormCalcError::RuntimeError(
-                        "continue outside of loop".to_string(),
-                    ))
-                }
+            match self.eval_signal(expr) {
+                Ok(Signal::Value(v)) => result = v,
+                Ok(Signal::Return(v)) => return Ok(v),
+                Ok(stray) => return Err(stray_signal(stray)),
+                Err(e) => return Err(e),
             }
         }
         Ok(result)
@@ -199,24 +219,35 @@ impl Interpreter {
     }
 
     /// Evaluate an expression and return its value.
+    // Not `?`: at opt-level 0 its `ControlFlow` and residual temporaries stay
+    // in a frame that is live once per level; see `eval_binary`.
+    #[allow(clippy::question_mark)]
     pub fn eval(&mut self, expr: &Expr) -> Result<Value> {
+        // This frame is live once per level of every expression chain, so the
+        // work around the recursive call is kept in helpers that are not.
+        if let Err(e) = self.tick() {
+            return Err(e);
+        }
+        match self.eval_signal(expr) {
+            Ok(signal) => value_of(signal),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Count one instruction against `MAX_INSTRUCTIONS`.
+    #[inline(never)]
+    fn tick(&mut self) -> Result<()> {
         self.instruction_count += 1;
         if self.instruction_count > MAX_INSTRUCTIONS {
             return Err(FormCalcError::RuntimeError(
                 "instruction limit exceeded (possible infinite loop)".to_string(),
             ));
         }
-        match self.eval_signal(expr)? {
-            Signal::Value(v) | Signal::Return(v) => Ok(v),
-            Signal::Break => Err(FormCalcError::RuntimeError(
-                "break outside of loop".to_string(),
-            )),
-            Signal::Continue => Err(FormCalcError::RuntimeError(
-                "continue outside of loop".to_string(),
-            )),
-        }
+        Ok(())
     }
 
+    // Not `?`, for the frame's sake; see `eval_binary`.
+    #[allow(clippy::question_mark)]
     fn eval_signal(&mut self, expr: &Expr) -> Result<Signal> {
         // One budget for every recursive step the evaluator takes: an
         // expression node and a user-defined call frame cost the same one
@@ -225,254 +256,127 @@ impl Interpreter {
         // multiplying at run time -- 63 frames each carrying a 60-term
         // expression descends ~3800 levels with both bounds respected. Counted,
         // never measured against the stack, so it holds wherever the pipeline
-        // runs: `flatten` gives native a 2 MB thread of its own, and wasm32 has
-        // no thread at all and runs on the host's stack.
+        // runs: `flatten` gives native a 32 MB thread of its own, and wasm32
+        // has no thread at all and runs on the host's stack.
+        //
+        // The count assumes a level costs what it cost when the number was
+        // chosen. `enter` also measures what a level costs *now*, in this
+        // build, and refuses when the levels so far have consumed
+        // `STACK_BUDGET_BYTES` -- so a profile, a compiler, or a future arm
+        // that spends more stack per level becomes a refusal, not an overflow.
+        //
+        // This frame is live once per level; the checks live in `enter` and
+        // `leave`, whose frames are not.
+        if let Err(refused) = self.enter() {
+            return Err(refused);
+        }
+        let out = self.eval_signal_inner(expr);
+        self.leave();
+        out
+    }
+
+    /// Charge one level against both budgets, or refuse.
+    #[inline(never)]
+    fn enter(&mut self) -> Result<()> {
         if self.eval_depth >= MAX_EVAL_DEPTH {
             return Err(FormCalcError::EvalDepthExceeded {
                 max_depth: MAX_EVAL_DEPTH,
+            });
+        }
+        let budget = match self.stack {
+            Some(budget) if self.eval_depth > 0 => budget,
+            _ => {
+                let budget = StackBudget::start(self.stack_limit);
+                self.stack = Some(budget);
+                budget
+            }
+        };
+        let used = budget.used();
+        if used > self.deepest_stack {
+            self.deepest_stack = used;
+        }
+        if used > budget.limit() {
+            return Err(FormCalcError::StackBudgetExceeded {
+                max_bytes: budget.limit(),
             });
         }
         self.eval_depth += 1;
         if self.eval_depth > self.deepest_eval {
             self.deepest_eval = self.eval_depth;
         }
-        let out = self.eval_signal_inner(expr);
-        self.eval_depth -= 1;
-        out
+        Ok(())
     }
 
+    /// Give one level back; close the stack budget when the last one is.
+    #[inline(never)]
+    fn leave(&mut self) {
+        self.eval_depth -= 1;
+        if self.eval_depth == 0 {
+            self.stack = None;
+        }
+    }
+
+    /// Dispatch only, and only the forms that make up expression chains.
+    ///
+    /// This frame sits on the stack once per level of recursion, so it has to
+    /// be small, and at opt-level 0 a frame is as large as the temporaries of
+    /// *all* its arms together. Every arm that does work lives in its own
+    /// `#[inline(never)]` method, and the statement forms -- which nest a few
+    /// deep at most -- are one more call away in `eval_statement`, so that a
+    /// `1 + 1 + 1 ...` chain pays for ten arms a level and not twenty-five.
+    ///
+    /// As one function holding every arm, a debug build spent about 17 KB of
+    /// stack per level (release: ~780 bytes), which put `MAX_EVAL_DEPTH` far
+    /// past the 1 MiB the pipeline has on wasm32: the count refused nothing,
+    /// because the stack ran out first. `budget::StackBudget` is the guard
+    /// against that; keeping frames small is what keeps the guard from firing
+    /// on ordinary scripts.
     fn eval_signal_inner(&mut self, expr: &Expr) -> Result<Signal> {
         match expr {
             Expr::Number(n) => Ok(Signal::Value(Value::Number(*n))),
             Expr::StringLit(s) => Ok(Signal::Value(Value::String(s.clone()))),
             Expr::Null => Ok(Signal::Value(Value::Null)),
+            Expr::Ident(name) => self.eval_ident(name),
+            Expr::Negate(inner) => self.eval_negate(inner),
+            Expr::Positive(inner) => self.eval_positive(inner),
+            Expr::Not(inner) => self.eval_not(inner),
+            Expr::BinaryOp { op, left, right } => self.eval_binary(*op, left, right),
+            Expr::Concat(left, right) => self.eval_concat(left, right),
+            Expr::FuncCall { name, args } => self.eval_func_call(name, args),
+            other => self.eval_statement(other),
+        }
+    }
 
-            Expr::Ident(name) => {
-                let val = self
-                    .env
-                    .get(name)
-                    .cloned()
-                    .or_else(|| self.resolve_som_value(name))
-                    .unwrap_or(Value::Null);
-                Ok(Signal::Value(val))
-            }
-
-            Expr::MemberAccess { object, member } => {
-                let path = flatten_som_path(object, member);
-                let val = if self.som_resolver.is_some() {
-                    self.resolve_som_value(&path).unwrap_or(Value::Null)
-                } else {
-                    self.env.get(&path).cloned().unwrap_or(Value::Null)
-                };
-                Ok(Signal::Value(val))
-            }
-
-            Expr::IndexAccess { object, index } => {
-                let path = flatten_index_path(object, index);
-                let val = if self.som_resolver.is_some() {
-                    self.resolve_som_value(&path).unwrap_or(Value::Null)
-                } else {
-                    self.env.get(&path).cloned().unwrap_or(Value::Null)
-                };
-                Ok(Signal::Value(val))
-            }
-
+    /// The forms `eval_signal_inner` does not dispatch itself: accessors,
+    /// assignment, control flow and declarations. Exhaustive, so a new `Expr`
+    /// variant lands here by construction and is dispatched from here even if
+    /// it is never added to the fast path above.
+    #[inline(never)]
+    fn eval_statement(&mut self, expr: &Expr) -> Result<Signal> {
+        match expr {
+            Expr::Number(n) => Ok(Signal::Value(Value::Number(*n))),
+            Expr::StringLit(s) => Ok(Signal::Value(Value::String(s.clone()))),
+            Expr::Null => Ok(Signal::Value(Value::Null)),
+            Expr::Ident(name) => self.eval_ident(name),
+            Expr::MemberAccess { object, member } => self.eval_member_access(object, member),
+            Expr::IndexAccess { object, index } => self.eval_index_access(object, index),
             Expr::RecursiveDescent { object, member } => {
-                let base = expr_to_accessor_path(object).unwrap_or_else(|| "<expr>".to_string());
-                let path = format!("{}..{}", base, member);
-                let val = if self.som_resolver.is_some() {
-                    self.resolve_som_value(&path).unwrap_or(Value::Null)
-                } else {
-                    self.env.get(&path).cloned().unwrap_or(Value::Null)
-                };
-                Ok(Signal::Value(val))
+                self.eval_recursive_descent(object, member)
             }
-
-            Expr::Negate(inner) => {
-                let val = self.eval(inner)?;
-                if val.is_null() {
-                    Ok(Signal::Value(Value::Null))
-                } else {
-                    Ok(Signal::Value(Value::Number(-val.to_number())))
-                }
-            }
-
-            Expr::Positive(inner) => {
-                let val = self.eval(inner)?;
-                if val.is_null() {
-                    Ok(Signal::Value(Value::Null))
-                } else {
-                    Ok(Signal::Value(Value::Number(val.to_number())))
-                }
-            }
-
-            Expr::Not(inner) => {
-                let val = self.eval(inner)?;
-                Ok(Signal::Value(Value::Number(if val.to_bool() {
-                    0.0
-                } else {
-                    1.0
-                })))
-            }
-
-            Expr::BinaryOp { op, left, right } => {
-                let lval = self.eval(left)?;
-                let rval = self.eval(right)?;
-                let result = eval_binop(*op, &lval, &rval)?;
-                Ok(Signal::Value(result))
-            }
-
-            Expr::Concat(left, right) => {
-                let l = self.eval(left)?;
-                let r = self.eval(right)?;
-                Ok(Signal::Value(Value::String(
-                    l.to_string_val() + &r.to_string_val(),
-                )))
-            }
-
-            Expr::Assign { target, value } => {
-                let val = self.eval(value)?;
-                match target.as_ref() {
-                    Expr::Ident(name) => {
-                        if self.env.get(name).is_some()
-                            || !self.assign_som_value(name, val.clone())?
-                        {
-                            self.env.set(name, val.clone());
-                        }
-                        Ok(Signal::Value(val))
-                    }
-                    Expr::MemberAccess { object, member } => {
-                        let path = flatten_som_path(object, member);
-                        if self.som_resolver.is_some() {
-                            let _ = self.assign_som_value(&path, val.clone())?;
-                        } else {
-                            self.env.set(&path, val.clone());
-                        }
-                        Ok(Signal::Value(val))
-                    }
-                    Expr::IndexAccess { object, index } => {
-                        let path = flatten_index_path(object, index);
-                        if self.som_resolver.is_some() {
-                            let _ = self.assign_som_value(&path, val.clone())?;
-                        } else {
-                            self.env.set(&path, val.clone());
-                        }
-                        Ok(Signal::Value(val))
-                    }
-                    _ => Err(FormCalcError::RuntimeError(
-                        "invalid assignment target".to_string(),
-                    )),
-                }
-            }
-
-            Expr::FuncCall { name, args } => {
-                if name.eq_ignore_ascii_case("Exists")
-                    && args.len() == 1
-                    && expr_to_accessor_path(&args[0]).is_some()
-                {
-                    return Ok(Signal::Value(self.eval_exists_arg(&args[0])?));
-                }
-                if name.eq_ignore_ascii_case("HasValue")
-                    && args.len() == 1
-                    && expr_to_accessor_path(&args[0]).is_some()
-                {
-                    return Ok(Signal::Value(self.eval_has_value_arg(&args[0])?));
-                }
-
-                let mut arg_vals = Vec::with_capacity(args.len());
-                for arg in args {
-                    arg_vals.push(self.eval(arg)?);
-                }
-
-                // Try SOM built-ins first (if a resolver is bound)
-                if let Some(resolver) = self.resolver_mut() {
-                    if let Some(result) = som_bridge::call_som_builtin(resolver, name, &arg_vals)? {
-                        return Ok(Signal::Value(result));
-                    }
-                }
-
-                // Try built-in
-                if let Some(result) = builtins::call_builtin(name, &arg_vals)? {
-                    return Ok(Signal::Value(result));
-                }
-
-                // Try user-defined function
-                if let Some((params, body)) = self.env.functions.get(name).cloned() {
-                    if params.len() != arg_vals.len() {
-                        return Err(FormCalcError::ArityError {
-                            name: name.clone(),
-                            expected: params.len().to_string(),
-                            got: arg_vals.len(),
-                        });
-                    }
-                    if self.call_depth >= MAX_CALL_DEPTH {
-                        return Err(FormCalcError::CallDepthExceeded {
-                            max_depth: MAX_CALL_DEPTH,
-                        });
-                    }
-                    self.env.push_scope();
-                    for (param, val) in params.iter().zip(arg_vals) {
-                        self.env.declare(param, val);
-                    }
-                    self.call_depth += 1;
-                    let result = self.exec(&body);
-                    self.call_depth -= 1;
-                    self.env.pop_scope();
-                    return Ok(Signal::Value(result?));
-                }
-
-                // DOM method calls (dotted names like xfa.host.resetData) silently
-                // return Null — these are XFA host methods we don't implement.
-                if name.contains('.') {
-                    Ok(Signal::Value(Value::Null))
-                } else {
-                    Err(FormCalcError::UnknownFunction(name.clone()))
-                }
-            }
-
+            Expr::Negate(inner) => self.eval_negate(inner),
+            Expr::Positive(inner) => self.eval_positive(inner),
+            Expr::Not(inner) => self.eval_not(inner),
+            Expr::BinaryOp { op, left, right } => self.eval_binary(*op, left, right),
+            Expr::Concat(left, right) => self.eval_concat(left, right),
+            Expr::Assign { target, value } => self.eval_assign(target, value),
+            Expr::FuncCall { name, args } => self.eval_func_call(name, args),
             Expr::If {
                 condition,
                 then_body,
                 elseif_clauses,
                 else_body,
-            } => {
-                if self.eval(condition)?.to_bool() {
-                    return self.exec_block(then_body);
-                }
-                for (cond, body) in elseif_clauses {
-                    if self.eval(cond)?.to_bool() {
-                        return self.exec_block(body);
-                    }
-                }
-                if let Some(body) = else_body {
-                    return self.exec_block(body);
-                }
-                Ok(Signal::Value(Value::Number(0.0)))
-            }
-
-            Expr::While { condition, body } => {
-                let mut result = Value::Number(0.0);
-                let mut iterations: u64 = 0;
-                loop {
-                    if iterations >= MAX_LOOP_ITERATIONS {
-                        return Err(FormCalcError::RuntimeError(
-                            "while loop iteration limit exceeded".to_string(),
-                        ));
-                    }
-                    if !self.eval(condition)?.to_bool() {
-                        break;
-                    }
-                    iterations += 1;
-                    match self.exec_block(body)? {
-                        Signal::Value(v) => result = v,
-                        Signal::Return(v) => return Ok(Signal::Return(v)),
-                        Signal::Break => break,
-                        Signal::Continue => continue,
-                    }
-                }
-                Ok(Signal::Value(result))
-            }
-
+            } => self.eval_if(condition, then_body, elseif_clauses, else_body.as_deref()),
+            Expr::While { condition, body } => self.eval_while(condition, body),
             Expr::For {
                 var,
                 start,
@@ -480,132 +384,445 @@ impl Interpreter {
                 step,
                 ascending,
                 body,
-            } => {
-                let start_val = self.eval(start)?.to_number();
-                let end_val = self.eval(end)?.to_number();
-                let step_val = step
-                    .as_ref()
-                    .map(|s| self.eval(s))
-                    .transpose()?
-                    .map(|v| v.to_number())
-                    .unwrap_or(1.0);
-
-                let mut i = start_val;
-                let mut result = Value::Number(0.0);
-                let mut iterations: u64 = 0;
-
-                self.env.push_scope();
-                loop {
-                    if iterations >= MAX_LOOP_ITERATIONS {
-                        self.env.pop_scope();
-                        return Err(FormCalcError::RuntimeError(
-                            "for loop iteration limit exceeded".to_string(),
-                        ));
-                    }
-                    if *ascending && i > end_val {
-                        break;
-                    }
-                    if !ascending && i < end_val {
-                        break;
-                    }
-                    self.env.declare(var, Value::Number(i));
-                    iterations += 1;
-
-                    match self.exec_block(body) {
-                        Ok(Signal::Value(v)) => result = v,
-                        Ok(Signal::Return(v)) => {
-                            self.env.pop_scope();
-                            return Ok(Signal::Return(v));
-                        }
-                        Ok(Signal::Break) => break,
-                        Ok(Signal::Continue) => {}
-                        Err(e) => {
-                            self.env.pop_scope();
-                            return Err(e);
-                        }
-                    }
-
-                    if *ascending {
-                        i += step_val;
-                    } else {
-                        i -= step_val;
-                    }
-                }
-                self.env.pop_scope();
-                Ok(Signal::Value(result))
-            }
-
-            Expr::Foreach { var, list, body } => {
-                // XFA Spec 3.3 §25.1 "ForeachExpression" (p1073) iterates over
-                // an argument list. Keep the legacy comma-split fallback for
-                // existing callers until full SOM accessor sets are implemented.
-                let items = match list.as_ref() {
-                    Expr::FuncCall { name, args } if name == "__foreach_list" => {
-                        let mut items = Vec::with_capacity(args.len());
-                        for arg in args {
-                            items.push(self.eval(arg)?);
-                        }
-                        items
-                    }
-                    _ => {
-                        let list_val = self.eval(list)?;
-                        list_val
-                            .to_string_val()
-                            .split(',')
-                            .map(|s| Value::String(s.trim().to_string()))
-                            .collect()
-                    }
-                };
-                let mut result = Value::Number(0.0);
-
-                self.env.push_scope();
-                for item in &items {
-                    self.env.declare(var, item.clone());
-                    match self.exec_block(body) {
-                        Ok(Signal::Value(v)) => result = v,
-                        Ok(Signal::Return(v)) => {
-                            self.env.pop_scope();
-                            return Ok(Signal::Return(v));
-                        }
-                        Ok(Signal::Break) => break,
-                        Ok(Signal::Continue) => continue,
-                        Err(e) => {
-                            self.env.pop_scope();
-                            return Err(e);
-                        }
-                    }
-                }
-                self.env.pop_scope();
-                Ok(Signal::Value(result))
-            }
-
-            Expr::FuncDecl { name, params, body } => {
-                self.env
-                    .functions
-                    .insert(name.clone(), (params.clone(), body.clone()));
-                Ok(Signal::Value(Value::Null))
-            }
-
-            Expr::VarDecl { name, init } => {
-                let val = match init {
-                    Some(expr) => self.eval(expr)?,
-                    None => Value::Null,
-                };
-                self.env.declare(name, val.clone());
-                Ok(Signal::Value(val))
-            }
-
-            Expr::Return(expr) => {
-                let val = match expr {
-                    Some(e) => self.eval(e)?,
-                    None => Value::Null,
-                };
-                Ok(Signal::Return(val))
-            }
-
+            } => self.eval_for(var, start, end, step.as_deref(), *ascending, body),
+            Expr::Foreach { var, list, body } => self.eval_foreach(var, list, body),
+            Expr::FuncDecl { name, params, body } => self.eval_func_decl(name, params, body),
+            Expr::VarDecl { name, init } => self.eval_var_decl(name, init.as_deref()),
+            Expr::Return(expr) => self.eval_return(expr.as_deref()),
             Expr::Break => Ok(Signal::Break),
             Expr::Continue => Ok(Signal::Continue),
         }
+    }
+
+    #[inline(never)]
+    fn eval_ident(&mut self, name: &str) -> Result<Signal> {
+        let val = self
+            .env
+            .get(name)
+            .cloned()
+            .or_else(|| self.resolve_som_value(name))
+            .unwrap_or(Value::Null);
+        Ok(Signal::Value(val))
+    }
+
+    /// Read `path` through the resolver when one is bound, else from the
+    /// environment. Shared by the three accessor forms.
+    #[inline(never)]
+    fn read_path(&mut self, path: &str) -> Signal {
+        let val = if self.som_resolver.is_some() {
+            self.resolve_som_value(path).unwrap_or(Value::Null)
+        } else {
+            self.env.get(path).cloned().unwrap_or(Value::Null)
+        };
+        Signal::Value(val)
+    }
+
+    #[inline(never)]
+    fn eval_member_access(&mut self, object: &Expr, member: &str) -> Result<Signal> {
+        let path = flatten_som_path(object, member);
+        Ok(self.read_path(&path))
+    }
+
+    #[inline(never)]
+    fn eval_index_access(&mut self, object: &Expr, index: &AccessIndex) -> Result<Signal> {
+        let path = flatten_index_path(object, index);
+        Ok(self.read_path(&path))
+    }
+
+    #[inline(never)]
+    fn eval_recursive_descent(&mut self, object: &Expr, member: &str) -> Result<Signal> {
+        let base = expr_to_accessor_path(object).unwrap_or_else(|| "<expr>".to_string());
+        let path = format!("{}..{}", base, member);
+        Ok(self.read_path(&path))
+    }
+
+    #[inline(never)]
+    fn eval_negate(&mut self, inner: &Expr) -> Result<Signal> {
+        let val = self.eval(inner)?;
+        if val.is_null() {
+            Ok(Signal::Value(Value::Null))
+        } else {
+            Ok(Signal::Value(Value::Number(-val.to_number())))
+        }
+    }
+
+    #[inline(never)]
+    fn eval_positive(&mut self, inner: &Expr) -> Result<Signal> {
+        let val = self.eval(inner)?;
+        if val.is_null() {
+            Ok(Signal::Value(Value::Null))
+        } else {
+            Ok(Signal::Value(Value::Number(val.to_number())))
+        }
+    }
+
+    #[inline(never)]
+    fn eval_not(&mut self, inner: &Expr) -> Result<Signal> {
+        let val = self.eval(inner)?;
+        Ok(Signal::Value(Value::Number(if val.to_bool() {
+            0.0
+        } else {
+            1.0
+        })))
+    }
+
+    /// Written without `?`: at opt-level 0 each `?` keeps some 250 bytes of
+    /// `ControlFlow` and residual temporaries in the frame, and this frame is
+    /// live once per level of every operator chain.
+    #[inline(never)]
+    #[allow(clippy::question_mark)]
+    fn eval_binary(&mut self, op: BinOp, left: &Expr, right: &Expr) -> Result<Signal> {
+        let lval = match self.eval(left) {
+            Ok(v) => v,
+            Err(e) => return Err(e),
+        };
+        let rval = match self.eval(right) {
+            Ok(v) => v,
+            Err(e) => return Err(e),
+        };
+        eval_binop(op, &lval, &rval).map(Signal::Value)
+    }
+
+    #[inline(never)]
+    fn eval_concat(&mut self, left: &Expr, right: &Expr) -> Result<Signal> {
+        let l = self.eval(left)?;
+        let r = self.eval(right)?;
+        Ok(Signal::Value(Value::String(
+            l.to_string_val() + &r.to_string_val(),
+        )))
+    }
+
+    #[inline(never)]
+    fn eval_assign(&mut self, target: &Expr, value: &Expr) -> Result<Signal> {
+        let val = self.eval(value)?;
+        match target {
+            Expr::Ident(name) => {
+                if self.env.get(name).is_some() || !self.assign_som_value(name, val.clone())? {
+                    self.env.set(name, val.clone());
+                }
+                Ok(Signal::Value(val))
+            }
+            Expr::MemberAccess { object, member } => {
+                let path = flatten_som_path(object, member);
+                self.write_path(&path, val.clone())?;
+                Ok(Signal::Value(val))
+            }
+            Expr::IndexAccess { object, index } => {
+                let path = flatten_index_path(object, index);
+                self.write_path(&path, val.clone())?;
+                Ok(Signal::Value(val))
+            }
+            _ => Err(FormCalcError::RuntimeError(
+                "invalid assignment target".to_string(),
+            )),
+        }
+    }
+
+    /// Write `path` through the resolver when one is bound, else into the
+    /// environment. The resolver's "was it assigned" answer is deliberately
+    /// dropped here, as it always was for accessor targets.
+    #[inline(never)]
+    fn write_path(&mut self, path: &str, val: Value) -> Result<()> {
+        if self.som_resolver.is_some() {
+            let _ = self.assign_som_value(path, val)?;
+        } else {
+            self.env.set(path, val);
+        }
+        Ok(())
+    }
+
+    /// Evaluate the arguments, then hand off. Split three ways because the
+    /// frames below stay live while a user function's body runs, and the
+    /// single function this was spent 3.3 KB of stack per call in a debug
+    /// build -- more than the 51 fixtures' whole evaluation.
+    #[inline(never)]
+    #[allow(clippy::question_mark)]
+    fn eval_func_call(&mut self, name: &str, args: &[Expr]) -> Result<Signal> {
+        if let Some(answer) = self.accessor_predicate(name, args) {
+            return answer.map(Signal::Value);
+        }
+        let mut arg_vals = Vec::with_capacity(args.len());
+        for arg in args {
+            match self.eval(arg) {
+                Ok(v) => arg_vals.push(v),
+                Err(e) => return Err(e),
+            }
+        }
+        self.invoke(name, arg_vals)
+    }
+
+    /// `Exists(path)` and `HasValue(path)` look at the accessor, not its value.
+    #[inline(never)]
+    fn accessor_predicate(&mut self, name: &str, args: &[Expr]) -> Option<Result<Value>> {
+        if args.len() != 1 || expr_to_accessor_path(&args[0]).is_none() {
+            return None;
+        }
+        if name.eq_ignore_ascii_case("Exists") {
+            Some(self.eval_exists_arg(&args[0]))
+        } else if name.eq_ignore_ascii_case("HasValue") {
+            Some(self.eval_has_value_arg(&args[0]))
+        } else {
+            None
+        }
+    }
+
+    /// SOM built-ins first when a resolver is bound, then the language's own,
+    /// then a user-defined function, then the host-method fallback.
+    #[inline(never)]
+    fn invoke(&mut self, name: &str, arg_vals: Vec<Value>) -> Result<Signal> {
+        match self.call_builtin(name, &arg_vals) {
+            Ok(Some(result)) => return Ok(Signal::Value(result)),
+            Ok(None) => {}
+            Err(e) => return Err(e),
+        }
+        if let Some((params, body)) = self.env.functions.get(name).cloned() {
+            return self.call_user_function(name, &params, &body, arg_vals);
+        }
+        // DOM method calls (dotted names like xfa.host.resetData) silently
+        // return Null — these are XFA host methods we don't implement.
+        if name.contains('.') {
+            Ok(Signal::Value(Value::Null))
+        } else {
+            Err(FormCalcError::UnknownFunction(name.to_string()))
+        }
+    }
+
+    /// A SOM built-in if a resolver is bound and knows the name, else a
+    /// language built-in; `None` when neither claims it.
+    #[inline(never)]
+    fn call_builtin(&mut self, name: &str, arg_vals: &[Value]) -> Result<Option<Value>> {
+        if let Some(resolver) = self.resolver_mut() {
+            if let Some(result) = som_bridge::call_som_builtin(resolver, name, arg_vals)? {
+                return Ok(Some(result));
+            }
+        }
+        builtins::call_builtin(name, arg_vals)
+    }
+
+    #[inline(never)]
+    fn call_user_function(
+        &mut self,
+        name: &str,
+        params: &[String],
+        body: &[Expr],
+        arg_vals: Vec<Value>,
+    ) -> Result<Signal> {
+        if params.len() != arg_vals.len() {
+            return Err(FormCalcError::ArityError {
+                name: name.to_string(),
+                expected: params.len().to_string(),
+                got: arg_vals.len(),
+            });
+        }
+        if self.call_depth >= MAX_CALL_DEPTH {
+            return Err(FormCalcError::CallDepthExceeded {
+                max_depth: MAX_CALL_DEPTH,
+            });
+        }
+        self.env.push_scope();
+        for (param, val) in params.iter().zip(arg_vals) {
+            self.env.declare(param, val);
+        }
+        self.call_depth += 1;
+        let result = self.exec(body);
+        self.call_depth -= 1;
+        self.env.pop_scope();
+        result.map(Signal::Value)
+    }
+
+    #[inline(never)]
+    fn eval_if(
+        &mut self,
+        condition: &Expr,
+        then_body: &[Expr],
+        elseif_clauses: &[(Expr, Vec<Expr>)],
+        else_body: Option<&[Expr]>,
+    ) -> Result<Signal> {
+        if self.eval(condition)?.to_bool() {
+            return self.exec_block(then_body);
+        }
+        for (cond, body) in elseif_clauses {
+            if self.eval(cond)?.to_bool() {
+                return self.exec_block(body);
+            }
+        }
+        if let Some(body) = else_body {
+            return self.exec_block(body);
+        }
+        Ok(Signal::Value(Value::Number(0.0)))
+    }
+
+    #[inline(never)]
+    fn eval_while(&mut self, condition: &Expr, body: &[Expr]) -> Result<Signal> {
+        let mut result = Value::Number(0.0);
+        let mut iterations: u64 = 0;
+        loop {
+            if iterations >= MAX_LOOP_ITERATIONS {
+                return Err(loop_limit("while"));
+            }
+            if !self.eval(condition)?.to_bool() {
+                break;
+            }
+            iterations += 1;
+            match self.exec_block(body)? {
+                Signal::Value(v) => result = v,
+                Signal::Return(v) => return Ok(Signal::Return(v)),
+                Signal::Break => break,
+                Signal::Continue => continue,
+            }
+        }
+        Ok(Signal::Value(result))
+    }
+
+    /// The bounds are evaluated in a helper whose frame is gone before the
+    /// body runs: this frame stays live under every iteration, and under a
+    /// user function that recurses from inside the loop.
+    #[inline(never)]
+    #[allow(clippy::question_mark)]
+    fn eval_for(
+        &mut self,
+        var: &str,
+        start: &Expr,
+        end: &Expr,
+        step: Option<&Expr>,
+        ascending: bool,
+        body: &[Expr],
+    ) -> Result<Signal> {
+        let (start_val, end_val, step_val) = match self.for_bounds(start, end, step) {
+            Ok(bounds) => bounds,
+            Err(e) => return Err(e),
+        };
+
+        let mut i = start_val;
+        let mut result = Value::Number(0.0);
+        let mut iterations: u64 = 0;
+
+        self.env.push_scope();
+        loop {
+            if iterations >= MAX_LOOP_ITERATIONS {
+                self.env.pop_scope();
+                return Err(loop_limit("for"));
+            }
+            if ascending && i > end_val {
+                break;
+            }
+            if !ascending && i < end_val {
+                break;
+            }
+            self.env.declare(var, Value::Number(i));
+            iterations += 1;
+
+            match self.exec_block(body) {
+                Ok(Signal::Value(v)) => result = v,
+                Ok(Signal::Return(v)) => {
+                    self.env.pop_scope();
+                    return Ok(Signal::Return(v));
+                }
+                Ok(Signal::Break) => break,
+                Ok(Signal::Continue) => {}
+                Err(e) => {
+                    self.env.pop_scope();
+                    return Err(e);
+                }
+            }
+
+            if ascending {
+                i += step_val;
+            } else {
+                i -= step_val;
+            }
+        }
+        self.env.pop_scope();
+        Ok(Signal::Value(result))
+    }
+
+    /// `start`, `end` and `step` of a `for`, as numbers; `step` defaults to 1.
+    #[inline(never)]
+    fn for_bounds(
+        &mut self,
+        start: &Expr,
+        end: &Expr,
+        step: Option<&Expr>,
+    ) -> Result<(f64, f64, f64)> {
+        let start_val = self.eval(start)?.to_number();
+        let end_val = self.eval(end)?.to_number();
+        let step_val = match step {
+            Some(s) => self.eval(s)?.to_number(),
+            None => 1.0,
+        };
+        Ok((start_val, end_val, step_val))
+    }
+
+    #[inline(never)]
+    fn eval_foreach(&mut self, var: &str, list: &Expr, body: &[Expr]) -> Result<Signal> {
+        // XFA Spec 3.3 §25.1 "ForeachExpression" (p1073) iterates over
+        // an argument list. Keep the legacy comma-split fallback for
+        // existing callers until full SOM accessor sets are implemented.
+        let items = match list {
+            Expr::FuncCall { name, args } if name == "__foreach_list" => {
+                let mut items = Vec::with_capacity(args.len());
+                for arg in args {
+                    items.push(self.eval(arg)?);
+                }
+                items
+            }
+            _ => {
+                let list_val = self.eval(list)?;
+                list_val
+                    .to_string_val()
+                    .split(',')
+                    .map(|s| Value::String(s.trim().to_string()))
+                    .collect()
+            }
+        };
+        let mut result = Value::Number(0.0);
+
+        self.env.push_scope();
+        for item in &items {
+            self.env.declare(var, item.clone());
+            match self.exec_block(body) {
+                Ok(Signal::Value(v)) => result = v,
+                Ok(Signal::Return(v)) => {
+                    self.env.pop_scope();
+                    return Ok(Signal::Return(v));
+                }
+                Ok(Signal::Break) => break,
+                Ok(Signal::Continue) => continue,
+                Err(e) => {
+                    self.env.pop_scope();
+                    return Err(e);
+                }
+            }
+        }
+        self.env.pop_scope();
+        Ok(Signal::Value(result))
+    }
+
+    #[inline(never)]
+    fn eval_func_decl(&mut self, name: &str, params: &[String], body: &[Expr]) -> Result<Signal> {
+        self.env
+            .functions
+            .insert(name.to_string(), (params.to_vec(), body.to_vec()));
+        Ok(Signal::Value(Value::Null))
+    }
+
+    #[inline(never)]
+    fn eval_var_decl(&mut self, name: &str, init: Option<&Expr>) -> Result<Signal> {
+        let val = match init {
+            Some(expr) => self.eval(expr)?,
+            None => Value::Null,
+        };
+        self.env.declare(name, val.clone());
+        Ok(Signal::Value(val))
+    }
+
+    #[inline(never)]
+    fn eval_return(&mut self, expr: Option<&Expr>) -> Result<Signal> {
+        let val = match expr {
+            Some(e) => self.eval(e)?,
+            None => Value::Null,
+        };
+        Ok(Signal::Return(val))
     }
 
     fn exec_block(&mut self, body: &[Expr]) -> Result<Signal> {
@@ -669,6 +886,35 @@ impl Interpreter {
         let value = self.eval(expr)?;
         Ok(Value::Number(if value.is_blankish() { 0.0 } else { 1.0 }))
     }
+}
+
+/// The value an expression produced, or the error for a signal that has no
+/// business outside a loop.
+#[inline(never)]
+fn value_of(signal: Signal) -> Result<Value> {
+    match signal {
+        Signal::Value(v) | Signal::Return(v) => Ok(v),
+        stray => Err(stray_signal(stray)),
+    }
+}
+
+/// A loop that ran `MAX_LOOP_ITERATIONS` times.
+#[cold]
+#[inline(never)]
+fn loop_limit(kind: &str) -> FormCalcError {
+    FormCalcError::RuntimeError(format!("{kind} loop iteration limit exceeded"))
+}
+
+/// `break` or `continue` where no loop is.
+#[cold]
+#[inline(never)]
+fn stray_signal(signal: Signal) -> FormCalcError {
+    let which = match signal {
+        Signal::Break => "break",
+        Signal::Continue => "continue",
+        Signal::Value(_) | Signal::Return(_) => "signal",
+    };
+    FormCalcError::RuntimeError(format!("{which} outside of loop"))
 }
 
 fn flatten_som_path(object: &Expr, member: &str) -> String {
@@ -965,43 +1211,182 @@ mod tests {
         );
     }
 
+    /// 63 nested user functions, each body carrying a `terms`-term expression.
+    ///
+    /// Both values are legal on their own -- 63 is under `MAX_CALL_DEPTH`, 60
+    /// is under the parser's expression bound -- and before the shared budget
+    /// evaluating them descended 3904 levels.
+    fn hostile_call_chain(frames: usize, terms: usize) -> String {
+        let chain = vec!["1"; terms].join(" + ");
+        let mut src = format!("func f0()\n  {chain}\nendfunc\n");
+        for k in 1..=frames {
+            src.push_str(&format!("func f{k}()\n  f{}() + {chain}\nendfunc\n", k - 1));
+        }
+        src.push_str(&format!("f{frames}()\n"));
+        src
+    }
+
+    /// Run `f` on a thread with exactly `bytes` of stack, and fail the test
+    /// if the thread does not come back -- which, for a stack overflow, it
+    /// does not: the process aborts.
+    fn on_a_stack_of<T: Send + 'static>(bytes: usize, f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(bytes)
+            .spawn(f)
+            .expect("spawn")
+            .join()
+            .expect("the thread must return: an overflow aborts the process instead")
+    }
+
     /// The two bounds used to multiply, and this is the shape that did it.
     ///
     /// 63 nested user functions, each body carrying a 60-term expression: both
     /// `MAX_CALL_DEPTH` (63 < 64) and the parser's expression bound (60 < 64)
-    /// are respected, and evaluation still descended 3904 levels. Measured, that
-    /// overflows a 1 MiB stack past 1342 — and 1 MiB is the wasm32 default,
-    /// where `flatten` runs inline with no thread of its own.
+    /// are respected, and evaluation still descended 3904 levels.
+    ///
+    /// Runs on a **1 MiB** thread, the wasm32 default and the smallest stack
+    /// the pipeline ships on (`flatten` runs inline there, with no thread of
+    /// its own). Either budget may be the one that refuses: a level costs
+    /// ~440 bytes in release and ~1.7 KB in debug, so `MAX_EVAL_DEPTH` is
+    /// reached first in both today, and the stack budget takes over the moment
+    /// a level grows past `STACK_BUDGET_BYTES / MAX_EVAL_DEPTH`. Before the
+    /// stack budget existed this test needed a 32 MB thread to pass in debug
+    /// -- a level cost 17 KB then -- which is to say the guarantee did not
+    /// hold in debug. Take both budgets out and this thread overflows.
     #[test]
     fn frames_and_expressions_share_one_budget() {
-        let chain = vec!["1"; 60].join(" + ");
-        let mut src = format!("func f0()\n  {chain}\nendfunc\n");
-        for k in 1..=63 {
-            src.push_str(&format!("func f{k}()\n  f{}() + {chain}\nendfunc\n", k - 1));
-        }
-        src.push_str("f63()\n");
-
-        // Run on a thread with room to spare, because reaching the bound means
-        // descending to it: a debug build costs ~17 KB of stack per level
-        // against release's ~780 B, so a default 2 MB test thread overflows
-        // around depth 122 -- before the budget at 256 can refuse anything. The
-        // bound is sized for the shipped configuration (release, and wasm32's
-        // 1 MiB default, where evaluation overflows past 1342); this stack is
-        // the test's own need, not the guard's.
-        let refused = std::thread::Builder::new()
-            .stack_size(32 * 1024 * 1024)
-            .spawn(move || {
-                matches!(
-                    run_result(&src),
-                    Err(FormCalcError::EvalDepthExceeded { .. })
-                )
-            })
-            .expect("spawn")
-            .join()
-            .expect("the budget must refuse this, not overflow the stack");
+        let src = hostile_call_chain(63, 60);
+        let result = on_a_stack_of(1 << 20, move || run_result(&src));
         assert!(
-            refused,
-            "63 frames x 60 terms must be refused, not descend 3904 levels"
+            matches!(
+                result,
+                Err(FormCalcError::EvalDepthExceeded { .. })
+                    | Err(FormCalcError::StackBudgetExceeded { .. })
+            ),
+            "63 frames x 60 terms must be refused by a budget, got {result:?}"
+        );
+    }
+
+    /// The count is a bound of its own, not a restatement of the stack budget.
+    ///
+    /// With stack to spare -- a 32 MB thread and an 8 MiB budget -- nothing but
+    /// the count can stop the hostile form, and it must, at exactly
+    /// `MAX_EVAL_DEPTH`. Take the count out and this arrives as a stack-budget
+    /// refusal instead, five thousand levels deeper than any script needs.
+    #[test]
+    fn the_count_refuses_on_its_own_when_stack_is_not_short() {
+        let src = hostile_call_chain(63, 60);
+        let (result, deepest) = on_a_stack_of(32 << 20, move || {
+            let tokens = crate::lexer::tokenize(&src).unwrap();
+            let ast = crate::parser::parse(tokens).unwrap();
+            let mut interp = Interpreter::new().with_stack_budget(8 << 20);
+            let result = interp.exec(&ast);
+            (result, interp.deepest_eval)
+        });
+        assert!(
+            matches!(result, Err(FormCalcError::EvalDepthExceeded { max_depth }) if max_depth == MAX_EVAL_DEPTH),
+            "expected the count to refuse, got {result:?}"
+        );
+        assert_eq!(deepest, MAX_EVAL_DEPTH, "the count must stop at its bound");
+    }
+
+    /// The stack budget is its own bound, not a restatement of the count.
+    ///
+    /// A host on a smaller stack says so with `with_stack_budget`, and the
+    /// refusal then arrives from the bytes before the count could reach 256 --
+    /// which is the mechanism that keeps a build whose levels cost more than
+    /// the count assumed from overflowing. Refused within one level of the
+    /// budget, and the interpreter is clean and usable afterwards.
+    #[test]
+    fn the_stack_budget_refuses_on_its_own_before_the_count() {
+        const SMALL: usize = 64 * 1024;
+        let src = hostile_call_chain(63, 60);
+        let tokens = crate::lexer::tokenize(&src).unwrap();
+        let ast = crate::parser::parse(tokens).unwrap();
+        let mut interp = Interpreter::new().with_stack_budget(SMALL);
+        let result = interp.exec(&ast);
+        assert!(
+            matches!(
+                result,
+                Err(FormCalcError::StackBudgetExceeded { max_bytes }) if max_bytes == SMALL
+            ),
+            "expected the stack budget to refuse, got {result:?}"
+        );
+        assert!(
+            interp.deepest_eval < MAX_EVAL_DEPTH,
+            "the count refused first at {}, so the stack budget was never tested",
+            interp.deepest_eval
+        );
+        assert!(
+            interp.deepest_stack > SMALL && interp.deepest_stack < SMALL + 32 * 1024,
+            "refusal must land within one level of the budget, not at {} bytes",
+            interp.deepest_stack
+        );
+        assert_eq!(interp.eval_depth, 0, "depth must unwind to zero");
+        assert!(interp.stack.is_none(), "the budget must be closed");
+        assert_eq!(
+            interp.env.scopes.len(),
+            1,
+            "scope stack must be clean after a stack-budget refusal"
+        );
+
+        let tokens = crate::lexer::tokenize("1 + 1").unwrap();
+        let ast = crate::parser::parse(tokens).unwrap();
+        assert_eq!(interp.exec(&ast).unwrap(), Value::Number(2.0));
+    }
+
+    /// The acceptance side on the smallest stack: scripts more generous than
+    /// any of the 51 fixtures evaluate on a 1 MiB thread, and the deepest of
+    /// them leaves most of `STACK_BUDGET_BYTES` unspent -- so the budget is
+    /// not sitting on top of real forms in this build profile.
+    #[test]
+    fn ordinary_scripts_fit_on_the_smallest_stack() {
+        let deepest_stack = on_a_stack_of(1 << 20, || {
+            let mut deepest_stack = 0;
+            let mut run_measured = |src: &str| -> Value {
+                let tokens = crate::lexer::tokenize(src).unwrap();
+                let ast = crate::parser::parse(tokens).unwrap();
+                let mut interp = Interpreter::new();
+                let value = interp.exec(&ast).expect("an ordinary script must evaluate");
+                deepest_stack = deepest_stack.max(interp.deepest_stack);
+                value
+            };
+
+            // ten chained helpers, each a frame carrying a small expression
+            let mut helpers = String::from("func h0()\n  1\nendfunc\n");
+            for k in 1..10 {
+                helpers.push_str(&format!("func h{k}()\n  h{}() + 1\nendfunc\n", k - 1));
+            }
+            helpers.push_str("h9()\n");
+            assert_eq!(run_measured(&helpers), Value::Number(10.0));
+
+            // a sixty-term sum: depth 61, the deepest realistic shape
+            assert_eq!(
+                run_measured(&vec!["1"; 60].join(" + ")),
+                Value::Number(60.0)
+            );
+
+            // two helpers each carrying a sixty-term sum: the hostile shape at
+            // a size a real form could have, twice as deep as any fixture's
+            assert_eq!(
+                run_measured(&hostile_call_chain(1, 60)),
+                Value::Number(120.0)
+            );
+
+            // twenty nested ifs
+            let mut nested = String::from("var x = 1\nx");
+            for _ in 0..20 {
+                nested = format!("if (1 > 0) then\n{nested}\nendif");
+            }
+            run_measured(&nested);
+
+            deepest_stack
+        });
+        assert!(
+            deepest_stack <= STACK_BUDGET_BYTES / 4 * 3,
+            "the deepest ordinary script spent {deepest_stack} bytes of a \
+             {STACK_BUDGET_BYTES}-byte budget; a level costs more than it did \
+             when the budget was sized"
         );
     }
 
@@ -1096,13 +1481,15 @@ mod tests {
         // Without the fix, each recursion level leaks one function-param scope
         // because the for-loop `?` propagation skips `pop_scope`.
         //
-        // Spawned with a large stack: for-loop recursion uses ~5 Rust frames per
-        // FormCalc level (eval_signal → exec → eval_signal(For) → exec_block →
-        // eval_signal(FuncCall)), vs ~3 for direct recursion. At MAX_CALL_DEPTH=64
-        // that is ~320 frames; the extra stack keeps the guard firing before any
-        // native overflow in debug builds.
+        // For-loop recursion is the most expensive shape per FormCalc level --
+        // some ten Rust frames from one `FuncCall` to the next -- so it is
+        // the shape that decides whether `MAX_CALL_DEPTH` or the stack budget
+        // speaks first: in release the frame bound, in debug either, and the
+        // subject here is the scope stack afterwards, not which budget spoke.
+        // A 1 MiB thread, the smallest stack the pipeline ships on; without
+        // the budgets this overflowed a 2 MB thread in debug.
         let handle = std::thread::Builder::new()
-            .stack_size(32 * 1024 * 1024)
+            .stack_size(1 << 20)
             .spawn(|| {
                 let mut interp = Interpreter::new();
                 let script =
@@ -1111,8 +1498,12 @@ mod tests {
                 let ast = crate::parser::parse(tokens).unwrap();
                 let result = interp.exec(&ast);
                 assert!(
-                    matches!(result, Err(FormCalcError::CallDepthExceeded { .. })),
-                    "expected CallDepthExceeded, got: {:?}",
+                    matches!(
+                        result,
+                        Err(FormCalcError::CallDepthExceeded { .. })
+                            | Err(FormCalcError::StackBudgetExceeded { .. })
+                    ),
+                    "expected a depth or stack refusal, got: {:?}",
                     result
                 );
                 assert_eq!(interp.call_depth, 0);
