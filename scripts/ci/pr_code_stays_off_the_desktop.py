@@ -114,9 +114,19 @@ def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
         runs_on = job.get("runs-on")
     labels = runs_on if isinstance(runs_on, list) else [runs_on]
     text = str(runs_on)
+    # An absent, empty, or all-blank `runs-on` names NO runner, and `all()` over
+    # nothing is True -- so those three shapes reported "every label is a hosted
+    # image" and passed on the strength of having said nothing. Vacuous green,
+    # the same shape as "empty is not a verdict" one function over. Which runner
+    # a job takes cannot be read off a field that is not there. (codex, #1649)
+    echte = [l for l in labels if isinstance(l, str) and l.strip()]
+    if not echte:
+        return [f"{key} has no readable `runs-on` ({runs_on!r}). Which runner it "
+                "takes cannot be established, and an empty field is not a hosted "
+                "runner -- it is an unanswered question."]
     # NOT `"self-hosted" in text`: a bare custom label like `xfa-fast` is a
     # self-hosted request without the word in it, and that skip was the hole.
-    hosted = all(isinstance(l, str) and GEHOST.match(l) for l in labels if l)
+    hosted = all(GEHOST.match(l) for l in echte)
     if hosted:
         return []
     if PER_GEBEURTENIS_VEILIG(text, events):
