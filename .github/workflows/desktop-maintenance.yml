@@ -81,6 +81,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # One place for "measure a directory that may contain entries this
+          # user cannot read". `du` exits 1 when it skipped something -- normal
+          # on a shared machine -- and 2+ for a real failure. As the last
+          # command of an `&&` list under `set -e`, an exit 1 kills the step:
+          # that is what broke run 33615944995 on four `systemd-private-*`
+          # directories, and guarding only the two calls that write to files
+          # left the one that actually died untouched. (peer review, #1664)
+          maat() {
+            du -x -h -s "$1" && return 0
+            rc=$?
+            [ "$rc" -le 1 ] || { echo "::error::du $1 failed with $rc"; return "$rc"; }
+            echo "  ($1: some entries unreadable; partial)"
+            return 0
+          }
+
           ROOT=$(cd "${RUNNER_WORKSPACE:-.}/../.." && pwd)
           # Written to a file first, then read. `du ... | sort | tail -30` under
           # `pipefail` dies with 141 the moment tail stops reading -- SIGPIPE --
@@ -117,7 +132,7 @@ jobs:
           for D in "${CARGO_TARGET_DIR:-}" "${CARGO_HOME:-}" \
                    /var/cache/cargo-target /var/cache/cargo-home \
                    "${HOME}/.cargo" "${HOME}/.rustup"; do
-            [ -n "$D" ] && [ -d "$D" ] && du -x -h -s "$D"
+            if [ -n "$D" ] && [ -d "$D" ]; then maat "$D"; fi
           done
           echo
           echo "## Every target/ on this filesystem, not only in this checkout"
@@ -129,7 +144,7 @@ jobs:
           [ "$rc" -eq 0 ] || echo "(find could not read every directory; partial)"
           echo "found $(wc -l < "$RUNNER_TEMP/targets.txt") target/ directories"
           head -60 "$RUNNER_TEMP/targets.txt" | while read -r T; do
-            [ -d "$T" ] && du -x -h -s "$T"
+            if [ -d "$T" ]; then maat "$T"; fi
           done
 
       # The place `disk_headroom.py` cannot see, because it looks for `target/`.
@@ -140,18 +155,46 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # One place for "measure a directory that may contain entries this
+          # user cannot read". `du` exits 1 when it skipped something -- normal
+          # on a shared machine -- and 2+ for a real failure. As the last
+          # command of an `&&` list under `set -e`, an exit 1 kills the step:
+          # that is what broke run 33615944995 on four `systemd-private-*`
+          # directories, and guarding only the two calls that write to files
+          # left the one that actually died untouched. (peer review, #1664)
+          maat() {
+            du -x -h -s "$1" && return 0
+            rc=$?
+            [ "$rc" -le 1 ] || { echo "::error::du $1 failed with $rc"; return "$rc"; }
+            echo "  ($1: some entries unreadable; partial)"
+            return 0
+          }
+
           for T in "${RUNNER_TEMP:-}" "${TMPDIR:-}" /tmp /var/tmp; do
             [ -n "$T" ] && [ -d "$T" ] || continue
             echo "-- $T: $(find "$T" -maxdepth 1 -name 'tmp*' -o -maxdepth 1 -name 'fixture-*' 2>/dev/null | wc -l) entries"
-            du -x -h -s "$T"
+            maat "$T"
           done
 
       - name: Docker, if it is here
         shell: bash
         run: |
           set -euo pipefail
-          if command -v docker >/dev/null; then docker system df; else echo "no docker"; fi
+          # `command -v` says the binary is installed, not that the daemon is
+          # up. On a machine where it is stopped, `docker system df` exits
+          # non-zero and would take the step with it -- and this is the one
+          # question the first run never got to ask.
+          if ! command -v docker >/dev/null; then
+            echo "no docker on this machine"
+          elif docker system df; then
+            :
+          else
+            echo "docker is installed but not answering (daemon stopped?)"
+          fi
 
+      # `always()`: the floor is the one number this job exists to report, and
+      # a failure in any measurement above is exactly when somebody wants it.
       - name: And the verdict
+        if: ${{ always() }}
         shell: bash
         run: python3 scripts/ci/disk_headroom.py

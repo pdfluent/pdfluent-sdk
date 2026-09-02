@@ -44,7 +44,7 @@ GUARD = pathlib.Path(__file__).resolve().parent / "disk_headroom.py"
 
 # FLOOR: cases run >= 20. A test that stops testing reports success in the same
 # words as one that passed.
-MINIMUM_CASES = 20
+MINIMUM_CASES = 22
 
 # TWO-WAY RATCHET. disk_headroom.DEFAULT_FLOOR_GB and this number must move
 # together, in either direction. Lowering the floor silently switches the guard
@@ -275,6 +275,16 @@ def main() -> int:
         expect("at a floor of 0 the verdict is a pass", r.returncode == 0, f"got {r.returncode}")
         r = run_env({}, "--repo", str(repo), "--floor-gb", "999999", "--heartbeat", str(beat))
         expect("at an unreachable floor the verdict is a failure", r.returncode == 2, f"got {r.returncode}")
+
+        # THE TWO NUMBERS. On a machine where the measured volume IS the
+        # repository's own, the sparse-image explanation must not appear -- it
+        # would be nonsense there, and the first version printed it because it
+        # compared a str with a Path and so was always "different".
+        r = run_env({}, "--repo", str(repo), "--floor-gb", "0", "--heartbeat", str(beat))
+        expect("no sparse-image note when the volumes are the same",
+               "maximum size of a sparse image" not in r.stdout, r.stdout[-200:])
+        expect("  and the measured path is still named on every run",
+               "measured:" in r.stdout, r.stdout[-200:])
 
     if cases < MINIMUM_CASES:  # FLOOR
         print(
