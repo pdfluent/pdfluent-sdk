@@ -1,0 +1,94 @@
+# Measure the persistent desktop's disk, then sweep only what is provably
+# rebuildable (#292).
+#
+# 02-09-2026: the runner reported 8.8 GB free of 222.6 GB against a floor of 35,
+# and `disk_headroom.py` exited 2 with "No target/ directories found -- the
+# space is going somewhere else". Every desktop job fails on that, so the
+# machine cannot be reached by the usual route: the desktop answers neither ping
+# nor ssh from outside, and the only thing still running on it is this runner.
+#
+# MEASURE FIRST. The failing guard's own message says the space is NOT in the
+# places we know how to clean, so a sweep written from a guess would delete
+# something that was not the problem and report success. Every step below either
+# prints or removes something whose absence costs rebuild time and nothing else.
+#
+# WHY THIS IS NOT DISPATCHED FROM A BRANCH
+#
+# `workflow_dispatch` would let this run before it is merged, which is convenient
+# and is exactly what scripts/ci/pr_code_stays_off_the_desktop.py forbids: a
+# dispatch lets the caller choose the ref, so the body that runs on the
+# persistent machine is whatever that branch says. Authoring it myself does not
+# change the rule -- a guard with a "unless I trust the author" clause is not a
+# guard. So it runs on a push to master, and on a schedule.
+name: Desktop maintenance
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/desktop-maintenance.yml'
+  schedule:
+    - cron: '17 4 * * *'
+
+concurrency:
+  group: desktop-maintenance
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  measure-and-sweep:
+    name: The desktop says where its disk went
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml
+
+      # --- measurement, in one place, before anything is removed -----------
+      - name: Where the disk went
+        if: ${{ !cancelled() }}
+        run: |
+          set -uo pipefail
+          echo "## Filesystems"
+          df -h || true
+          echo
+          echo "## The runner's work root"
+          WORK="${RUNNER_WORKSPACE:-}"
+          echo "RUNNER_WORKSPACE=${WORK}"
+          ROOT=$(cd "${WORK:-.}/../.." 2>/dev/null && pwd || echo /opt/actions-runner-github)
+          echo "root=${ROOT}"
+          du -x -h --max-depth=2 "${ROOT}" 2>/dev/null | sort -h | tail -40 || true
+          echo
+          echo "## Build output under the work root"
+          find "${ROOT}" -maxdepth 4 -type d -name target -prune -print 2>/dev/null | head -40 || true
+          echo
+          echo "## CARGO_TARGET_DIR / cargo home"
+          echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<unset>}"
+          du -x -h -s "${CARGO_TARGET_DIR:-/nonexistent}" 2>/dev/null || true
+          du -x -h -s "${HOME}/.cargo" "${HOME}/.rustup" 2>/dev/null || true
+          echo
+          echo "## Docker, if present"
+          command -v docker >/dev/null && docker system df || echo "no docker"
+          echo
+          echo "## Runner diagnostics"
+          du -x -h -s "${ROOT}/_diag" 2>/dev/null || true
+
+      # --- and only then, the sweep --------------------------------------
+      # The sweeper deletes `target/` directories in worktrees whose HEAD is on
+      # master and that hold no uncommitted change: rebuild time is the whole
+      # cost. Reporting run first, so the log says what it intends before it
+      # does it -- the two lines together are the record.
+      - name: What is reclaimable
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/sweep_merged_build_caches.py
+      - name: Reclaim it
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/sweep_merged_build_caches.py --sweep
+      - name: Headroom afterwards
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/disk_headroom.py
