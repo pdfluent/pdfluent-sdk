@@ -128,7 +128,41 @@ DESKTOP_GEBEURTENISSEN = frozenset({"push", "schedule"})
 _EVENT_NAAM = re.compile(r"github\.event_name\s*(==|!=)\s*'([a-z_]+)'")
 
 
-def per_gebeurtenis_veilig(runs_on: str, events: set[str] | None = None) -> bool:
+def desktop_toegestaan(triggers) -> frozenset[str]:
+    """Which desktop events THIS workflow's triggers actually make safe.
+
+    `push` is "code that is already on master" only when its branch filter says
+    so. `push: branches: ['**']` runs whatever is on any branch, which is the
+    pull-request case with the review left out -- and the canonical expression
+    would have called it safe, because the expression names the event and the
+    event was assumed to mean master. A tags-only push is no better: a tag can
+    point at a commit that never reached master.
+
+    `schedule` needs no filter. GitHub only ever runs a scheduled workflow from
+    the default branch, so there is no ref for a caller to choose. (codex, #1649)
+    """
+    if triggers is None:
+        return DESKTOP_GEBEURTENISSEN
+    if not isinstance(triggers, dict):
+        # `on: [push, pull_request]` carries no filters at all, so push is
+        # unrestricted. Naming an event is not the same as limiting it.
+        return DESKTOP_GEBEURTENISSEN - {"push"}
+    ok = set()
+    for naam in DESKTOP_GEBEURTENISSEN:
+        if naam not in triggers:
+            continue
+        blok = triggers.get(naam)
+        if naam != "push":
+            ok.add(naam)
+            continue
+        takken = blok.get("branches") if isinstance(blok, dict) else None
+        if takken and set(map(str, takken)) <= {"master"}:
+            ok.add("push")
+    return frozenset(ok)
+
+
+def per_gebeurtenis_veilig(runs_on: str, events: set[str] | None = None,
+                           toegestaan: frozenset[str] | None = None) -> bool:
     """Whether this runs-on can only reach the desktop on a merged-code event.
 
     A POSITIVE list, after three rounds of exclusions. `== 'push'` was widened to
@@ -147,15 +181,16 @@ def per_gebeurtenis_veilig(runs_on: str, events: set[str] | None = None) -> bool
     genoemd = _EVENT_NAAM.findall(runs_on)
     if not genoemd:
         return False
+    veilig = DESKTOP_GEBEURTENISSEN if toegestaan is None else toegestaan
     for operator, naam in genoemd:
         if operator == "!=":
             # An exclusion says nothing about what remains. It is safe only when
             # the workflow's own triggers happen to leave nothing dangerous, and
             # that is a fact about the workflow, not about the expression.
             rest = (events or set()) - {naam}
-            if not rest or not rest <= DESKTOP_GEBEURTENISSEN:
+            if not rest or not rest <= veilig:
                 return False
-        elif naam not in DESKTOP_GEBEURTENISSEN:
+        elif naam not in veilig:
             return False
     return True
 
@@ -248,7 +283,8 @@ def noemt_blijvende_runner(runs_on) -> bool:
     return any(l in str(runs_on) for l in PERSISTENT_LABELS)
 
 
-def op_blijvende_runner(runs_on, events: set[str] | None = None) -> bool:
+def op_blijvende_runner(runs_on, events: set[str] | None = None,
+                        triggers=None) -> bool:
     """Can UNMERGED code reach the desktop through this runner choice?
 
     ONE decision point. This used to answer it with the shape-match alone, and
@@ -264,7 +300,8 @@ def op_blijvende_runner(runs_on, events: set[str] | None = None) -> bool:
     """
     if not noemt_blijvende_runner(runs_on):
         return False
-    return not per_gebeurtenis_veilig(str(runs_on), events)
+    return not per_gebeurtenis_veilig(str(runs_on), events,
+                                     desktop_toegestaan(triggers))
 
 # Eight jobs that already had this exposure before the ephemeral workflows
 # existed. Recorded so the count cannot grow while they are dealt with
@@ -439,7 +476,7 @@ def main() -> int:
         if branch_locked(tr):
             continue
         for naam, job in (doc.get("jobs") or {}).items():
-            if not op_blijvende_runner(job.get("runs-on", ""), set(tr)):
+            if not op_blijvende_runner(job.get("runs-on", ""), set(tr), tr):
                 continue
             if REF_VASTGEZET.search(str(job.get("if", ""))):
                 # Pinned to the default branch: a dispatch from a feature branch
