@@ -99,6 +99,93 @@ def tip(work: Path) -> str:
     return run("log", "-1", "--format=%s", "feature", cwd=work, env=schone_omgeving()).stdout.strip()
 
 
+def een_geplant_object_wordt_niet_geaccepteerd() -> str | None:
+    """have_commit must judge the object, not the name at its path.
+
+    CACHE_ROOT is chosen by XDG_CACHE_HOME, so the cache is a location an
+    environment can point anywhere. Forging a commit at a register SHA needs a
+    SHA-1 collision, but planting an object at that SHA's path needs nothing --
+    and `git cat-file -e <sha>` (no peel) accepts the plant while
+    `git cat-file -e <sha>^{commit}` refuses it with "hash mismatch". Drop the
+    peel from have_commit and this check fails, which is the point of it.
+    """
+    import importlib.util
+
+    with tempfile.TemporaryDirectory() as raw:
+        return _geplant_object(Path(raw))
+
+
+def _geplant_object(tmp: Path) -> str | None:
+    import importlib.util
+
+    real = tmp / "planted-real"
+    run("init", "-q", str(real), cwd=tmp)
+    run("-c", "user.email=a@b", "-c", "user.name=a",
+        "commit", "-q", "--allow-empty", "-m", "genuine", cwd=real)
+    genuine = run("rev-parse", "HEAD", cwd=real).stdout.strip()
+    run("-c", "user.email=x@y", "-c", "user.name=x",
+        "commit", "-q", "--allow-empty", "-m", "PLANTED", cwd=real)
+    forged = run("rev-parse", "HEAD", cwd=real).stdout.strip()
+    body = subprocess.run(
+        ["/usr/bin/git", "cat-file", "commit", forged], cwd=real,
+        capture_output=True, env=schone_omgeving(), check=True,
+    ).stdout
+
+    cache = tmp / "planted-cache.git"
+    run("init", "-q", "--bare", str(cache), cwd=tmp)
+    import zlib
+    obj = b"commit %d\x00" % len(body) + body
+    d = cache / "objects" / genuine[:2]
+    d.mkdir(parents=True, exist_ok=True)
+    (d / genuine[2:]).write_bytes(zlib.compress(obj))
+
+    spec = importlib.util.spec_from_file_location(
+        "_register_guard", ROOT / "scripts" / "ci" / "the_fork_register_is_verifiable.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    if mod.have_commit(cache, genuine):
+        return ("have_commit accepted an object planted at a genuine SHA's path; "
+                "version_at would then read the planted content, because the read "
+                "path does not rehash either")
+    return None
+
+
+def een_volledige_cache_wordt_nog_steeds_ondervraagd() -> str | None:
+    """A cache holding every register commit is still checked for identity.
+
+    CACHE_ROOT follows XDG_CACHE_HOME, so the cache is a location the
+    environment picks. If the identity check only guarded the fetch, a cache
+    that already holds every commit -- including one that is really this
+    repository -- would be read without ever being questioned, and the register
+    would be verified against ourselves. Not damage, a false green.
+    """
+    import importlib.util
+
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        cache = tmp / "volledig.git"
+        run("init", "-q", str(cache), cwd=tmp)
+        run("-c", "user.email=a@b", "-c", "user.name=a",
+            "commit", "-q", "--allow-empty", "-m", "in de cache", cwd=cache)
+        sha = run("rev-parse", "HEAD", cwd=cache).stdout.strip()
+
+        spec = importlib.util.spec_from_file_location(
+            "_register_guard_2",
+            ROOT / "scripts" / "ci" / "the_fork_register_is_verifiable.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        # Every commit present, and no remote naming the upstream: the identity
+        # check must refuse before the completeness of the cache excuses it.
+        waarom = mod.refresh_for(cache, [sha], "https://github.com/LaurenzV/hayro")
+        if waarom is None:
+            return ("refresh_for read a cache holding every register commit without "
+                    "checking what that cache is; a cache location chosen by "
+                    "XDG_CACHE_HOME is then never questioned")
+    return None
+
+
 def main() -> int:
     if not (ROOT / "scripts/ci").is_dir():
         print(f"SKIPPED (not a pass): {ROOT}/scripts/ci is missing", file=sys.stderr)
@@ -455,6 +542,13 @@ def main() -> int:
                 "a branch that does not touch the register still built an upstream "
                 "cache -- the clone is being demanded before the question is asked"
             )
+
+    if (waarom := een_geplant_object_wordt_niet_geaccepteerd()) is not None:
+        failures.append(waarom)
+
+    if (waarom := een_volledige_cache_wordt_nog_steeds_ondervraagd()) is not None:
+        failures.append(waarom)
+
 
     if failures:
         print("[registerwachters] the guards can reach the real repository:\n", file=sys.stderr)
