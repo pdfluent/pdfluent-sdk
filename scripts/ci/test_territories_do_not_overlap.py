@@ -58,9 +58,26 @@ paden = ["scripts/ci/**"]
 """
 
 
-def build(map_text: str, branches: list[str], detach: bool):
-    """A repo with a master, one commit on top, and the branches asked for."""
-    td = tempfile.mkdtemp()
+_WEGWERP: list = []
+
+
+def build(map_text: str, branches: list[str], detach: bool,
+          commit_na_detach: bool = False):
+    """A repo with a master, one commit on top, and the branches asked for.
+
+    `commit_na_detach` makes one more commit AFTER detaching, so HEAD is a
+    commit no branch points at. Without it the "detached and nameless" case
+    cannot be built at all: this builder commits and then detaches, so `master`
+    still points at HEAD and `--points-at` always finds it. That is why the two
+    mutations in the SKIPPED path survived -- there was no fixture that could
+    reach it. (peer review, #1636)
+    """
+    # Held, not leaked: mkdtemp does not clean up, and this builder is called
+    # a dozen times a run. Third time today this leak has come back, twice in
+    # suites I wrote after measuring it.
+    _td = tempfile.TemporaryDirectory()
+    _WEGWERP.append(_td)
+    td = _td.name
     root = pathlib.Path(td) / "repo"
     (root / "scripts" / "ci").mkdir(parents=True)
     (root / ".claude").mkdir()
@@ -87,6 +104,9 @@ def build(map_text: str, branches: list[str], detach: bool):
         git("branch", b)
     if detach:
         git("checkout", "-q", "--detach", "HEAD")
+        if commit_na_detach:
+            (root / "scripts" / "ci" / "los.py").write_text("# no branch points here\n")
+            git("add", "-A"); git("commit", "-qm", "detached work")
     return root, env
 
 
@@ -215,7 +235,25 @@ expect("a branch named feature/<territory>/x does not become that territory",
 expect("  and it is judged as naming no territory",
        "no territory" in r.stderr, r.stderr[:250])
 
-MINIMUM_CASES = 20  # FLOOR
+# THE HEADLINE CASE OF THIS PULL REQUEST, and until now untested: detached,
+# no ref pointing here, nothing in the environment. Two mutations survived the
+# whole suite because of it -- turning the SKIPPED exit into 0, and deleting
+# the "SKIPPED (not a pass)" line itself -- which means the half of the guard
+# this PR is named after was never exercised.
+root, env = build(CLEAN, [], detach=True, commit_na_detach=True)
+schoon = {k: v for k, v in env.items()
+          if k not in ("GITHUB_HEAD_REF", "GITHUB_REF_NAME", "CI_COMMIT_REF_NAME",
+                       "TERRITORY_BRANCH")}
+r = subprocess.run([sys.executable, str(root / GUARD)], cwd=root,
+                   env=schoon, capture_output=True, text=True)
+expect("a nameless detached HEAD is SKIPPED, not a pass", r.returncode == 3,
+       f"exit={r.returncode}: {r.stderr[:200]}")
+expect("  and it says so in those words",
+       "SKIPPED (not a pass)" in r.stderr, r.stderr[:250])
+expect("  and states the map itself was checked",
+       "map" in r.stderr.lower(), r.stderr[:250])
+
+MINIMUM_CASES = 23  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
