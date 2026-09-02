@@ -199,6 +199,53 @@ r = run_with(lambda t: set_list(t, "allowed",
 expect("an unnamed WITH-exception does not admit strong copyleft",
        r.returncode == 1, f"exit={r.returncode}")
 
+# The second door. `allowed` was the only list checked for the family, so
+# `weak_copyleft` -- and any surface's own weak set -- let it back in with all
+# five licence guards green. license_gate builds the cargo weak set as the
+# UNION of every surface, so naming it on `editor` alone reaches all 786 cargo
+# packages. Measured before the fix; these are the three doors it opened.
+def naar_zwak(naam: str):
+    def f(text: str) -> str:
+        rest = [x for x in read_list(text, "forbidden") if x != naam]
+        text = set_list(text, "forbidden", rest)
+        return set_list(text, "weak_copyleft", read_list(text, "weak_copyleft") + [naam])
+    return f
+
+
+for naam in ("AGPL-3.0", "GPL-2.0-or-later"):
+    r = run_with(naar_zwak(naam))
+    expect(f"{naam} moved to weak_copyleft is refused",
+           r.returncode == 1 and naam in r.stderr, f"exit={r.returncode}")
+
+r = run_with(lambda t: t.replace('editor = { weak_copyleft = ["MPL-2.0"]',
+                                 'editor = { weak_copyleft = ["AGPL-3.0", "MPL-2.0"]', 1))
+expect("a surface's own weak set is checked too",
+       r.returncode == 1 and "surfaces.editor" in r.stderr, r.stderr[-200:])
+
+# The anchor. A licence field is an EXPRESSION, and `^` saw neither operand of
+# a disjunction nor a family name inside a LicenseRef.
+for naam in ("MIT OR GPL-3.0-only", "LicenseRef-AGPL-3.0"):
+    r = run_with(lambda t, n=naam: set_list(t, "allowed", read_list(t, "allowed") + [n]))
+    expect(f"{naam!r} in allowed is refused", r.returncode == 1, f"exit={r.returncode}")
+
+# And the lookbehind that keeps LGPL out of it: `LGPL-2.1-only` contains
+# `GPL-2`, and calling file-level copyleft strong would contradict the
+# deliberate decision to classify it per surface.
+expect("LGPL is not read as strong copyleft",
+       not guard.STERK_COPYLEFT.search("LGPL-2.1-only")
+       and bool(guard.BESTANDS_COPYLEFT.search("LGPL-2.1-only")))
+expect("an exception-bearing permissive licence is not read as strong",
+       not guard.STERK_COPYLEFT.search("Apache-2.0 WITH LLVM-exception"))
+
+# The floor now counts what the generated family does NOT: delete the
+# hand-curated entries and it must fail, which the old whole-list floor of 10
+# could not do while twenty family entries held it up.
+r = run_with(lambda t: set_list(t, "forbidden",
+                                [x for x in read_list(t, "forbidden")
+                                 if x in guard.MOET_GECLASSIFICEERD]))
+expect("deleting every non-family forbidden entry fails", r.returncode == 1,
+       f"exit={r.returncode}")
+
 # A guard that cannot read its input must not report a clean policy.
 with tempfile.TemporaryDirectory() as td:
     root = pathlib.Path(td) / "repo"
@@ -214,7 +261,7 @@ expect("a missing policy is FATAL, not a pass", r.returncode == 2, f"exit={r.ret
 # how the same floor failed in #1641: len(fails) counts only failures, so a
 # deleted case left the suite green while it shrank, and a floor below the real
 # count tolerated the shrinkage it existed to catch.
-MINIMUM_CASES = 32  # FLOOR
+MINIMUM_CASES = 50  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 if fails:
     for f in fails:
