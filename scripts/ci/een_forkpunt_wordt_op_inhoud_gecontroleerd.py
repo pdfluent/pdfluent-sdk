@@ -73,6 +73,13 @@ _EXPLICIT = os.environ.get("HAYRO_CLONE")
 CLONE = Path(_EXPLICIT) if _EXPLICIT else CACHE
 
 
+import importlib.util as _ilu, pathlib as _pl
+_spec = _ilu.spec_from_file_location(
+    "fixture_env", _pl.Path(__file__).resolve().parent / "fixture_env.py")
+_fx = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_fx)
+
+
 def de_fetch_gaat_naar_de_cache(clone, upstream_url: str = UPSTREAM_URL) -> str | None:
     """Refuse to fetch unless the target really is the cache.
 
@@ -243,22 +250,26 @@ def schone_omgeving() -> dict[str, str]:
 def verzegelde_omgeving() -> dict[str, str]:
     """A clean environment, and a git that cannot be redirected by config.
 
-    `schone_omgeving()` stops git reading the *repository* the caller is in. It
-    does nothing about the caller's *config*, and `url.<base>.insteadOf` rewrites
-    clone and fetch URLs silently.
+    Delegates to `fixture_env.sealed_env()`, which landed in #1647 doing exactly
+    this and two things more: it strips `GIT_*` from the inherited environment
+    with a prefix filter rather than by name, and it points
+    `GIT_CONFIG_GLOBAL` at an empty file instead of /dev/null, so a stray
+    `git config --global` write lands somewhere harmless instead of failing.
 
-    Measured: with a global config redirecting hayro's URL to a local decoy,
-    cloning the real URL produced the decoy's single commit while
-    `remote.origin.url` still read `https://github.com/LaurenzV/hayro.git`. The
-    origin check above reads exactly that field, so it would have approved --
-    and the register would then have been verified against substituted content
-    and reported green. A guard that can be aimed at a decoy is worse than no
-    guard, because it reports success.
+    Kept as a name here because the reason it exists is local to the register
+    guards, and it is not the same reason a fixture seals its environment:
+    `url.<base>.insteadOf` rewrites clone and fetch URLs silently. Measured with
+    a global config redirecting hayro's URL to a local decoy, cloning the real
+    URL produced the decoy's single commit while `remote.origin.url` still read
+    `https://github.com/LaurenzV/hayro.git` -- so the origin check would have
+    approved, and the register would have been verified against substituted
+    content and reported green. A guard that can be aimed at a decoy is worse
+    than no guard, because it reports success.
+
+    One helper for one job: two sealings that drift apart is how a guard ends up
+    protecting the version of the rule nobody reads. (#292)
     """
-    env = schone_omgeving()
-    env["GIT_CONFIG_NOSYSTEM"] = "1"
-    env["GIT_CONFIG_GLOBAL"] = os.devnull
-    return env
+    return _fx.sealed_env()
 
 
 def git_verzegeld(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
