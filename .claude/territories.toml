@@ -69,7 +69,8 @@ paden = [
   # ci.yml change if they want the step elsewhere.
   # `.github/workflows/ci.yml` and `scripts/ci/local_ci_gate.sh` were here too,
   # for #308. That landed and the issue is closed; t3 holds the two files now,
-  # for one step each (see t3), and hands them to t2 the same way.
+  # for one step each (see t3), and hands them to t2 the same way. The map
+  # compares patterns literally, so one literal spelling has one owner.
   "scripts/ci/test_de_registerwachters_raken_de_echte_repo_niet.py",
   # The commit-msg wiring, claimed 02-09-2026 because t2 was the bottleneck
   # (holdout, three re-reviews, two fixes, a PR) and this work is t1's finding:
@@ -139,6 +140,9 @@ uitgezonderd = [
   "scripts/ci/test_license_boundary.py",
   # t3: the document provenance register, claimed on #310.
   "scripts/ci/corpus_herkomst.py",
+  # t3: the guard that puts the three licence registers side by side (#304).
+  "scripts/ci/one_licence_three_registers.py",
+  "scripts/ci/test_one_licence_three_registers.py",
   # t1: guards whose subject is docs/UPSTREAM_FORKS.toml and the worktrees this
   # repository is checked out into. Same carve-out as the licence guards above.
   "scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py",
@@ -185,11 +189,16 @@ paden = [
   # test that proves it goes red.
   "scripts/ci/license_boundary.py",
   "scripts/ci/test_license_boundary.py",
+  # Claimed 02-09-2026 on #304. Three registers describe the licence of one
+  # crate and nothing compared all three; this guard does, and it is a
+  # publication question. Carved out of t2's scripts/ci/** like the others.
+  "scripts/ci/one_licence_three_registers.py",
+  "scripts/ci/test_one_licence_three_registers.py",
   # t1's claim for #308, taken over rather than duplicated: the overlap check
   # compares literal patterns, so the same path cannot sit in two lists. Held
-  # narrowly, for one step in each file that runs test_license_boundary.py next
-  # to the guard it tests -- the guard's own step, nothing else. t2 takes both
-  # back at its next edit of either file.
+  # narrowly, for one step in each file that runs the guards above next to the
+  # guards they test -- those steps, nothing else. t2 (or t1) takes both back at
+  # their next edit of either file; nothing else in them is t3's.
   ".github/workflows/ci.yml",
   "scripts/ci/local_ci_gate.sh",
   "crates/xfa-license/**",

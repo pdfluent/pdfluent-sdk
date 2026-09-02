@@ -5,7 +5,18 @@
 # Single source of truth for the license of every publish-eligible workspace
 # crate. The file is enforced by `scripts/release/license_registry_check.py`,
 # which runs as a gate in `scripts/ci/local_ci_gate.sh` (and therefore in the
-# pre-push hook + before every `cargo publish`).
+# pre-push hook + before every `cargo publish`), and compared with the other
+# two crate registers by `scripts/ci/one_licence_three_registers.py` (#304).
+#
+# THIS REGISTER COVERS THE CARGO CHANNEL ONLY, and that is a rule, not a gap.
+# A crate has a row here iff its Cargo.toml is publishable; the fifteen
+# `publish = false` crates have none, and the comparison guard fails when a row
+# and a publish flag disagree. The other channels -- npm (pdf-node, xfa-wasm),
+# PyPI (pdf-python), NuGet, Maven -- are not crates and have no `[[crate]]`
+# shape; they are declared per manifest in `docs/LICENSE_POLICY.toml` under
+# `[own_packages]` and `[channel_representation]`, read by
+# `scripts/ci/license_gate.py`, and carry the same canonical expression or a
+# recorded per-channel spelling of it with the reason.
 #
 # Why this registry exists
 # ------------------------
@@ -41,7 +52,10 @@
 # - published_name : the [package].name in Cargo.toml — the name that appears
 #                    on crates.io (renamed via `package = "..."` if needed).
 # - workspace_dir  : directory under `crates/` (basename only).
-# - license_kind   : "commercial" | "open-source-derivative".
+# - license_kind   : "agpl-or-commercial" | "open-source-derivative". Must
+#                    translate to the crate's `side` in docs/licensing/boundary.toml
+#                    (ours / forked); scripts/ci/one_licence_three_registers.py
+#                    compares the two, together with the manifest (#304).
 # - license_decl   : "license" or "license-file" — the Cargo.toml field name.
 # - license_value  : the exact value that must follow `=` in Cargo.toml.
 # - required_files : list of file basenames that MUST live in the crate root.
@@ -56,11 +70,13 @@ schema_version = "1"
 
 
 # =============================================================================
-# PDFluent-original crates (Commercial)
+# PDFluent-original crates (AGPL-3.0-only OR PDFluent Commercial)
 # =============================================================================
 # These crates contain only PDFluent-authored code. Reverse-license-audit
 # (grep for hayro/Stampfl/Laurenz attribution in src/) returns zero hits.
-# They MUST be published under the PDFluent Commercial License.
+# Since #257 they are published under ONE expression on every channel:
+# `AGPL-3.0-only OR LicenseRef-PDFluent-Commercial`. They are `ours` on the
+# licence boundary, and MUST NOT be published under a permissive licence.
 
 [[crate]]
 published_name = "xfa-dom-resolver"

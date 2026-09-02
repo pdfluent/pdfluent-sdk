@@ -92,13 +92,14 @@ resolver = "2"
 version = "1.0.0"
 edition = "2021"
 rust-version = "1.80.0"
-# Workspace default license = MIT. Used by INTERNAL crates only (CLI tools,
-# test runners, bindings, golden tests, etc.) that are NOT published to
-# crates.io. PUBLISHED PDFluent crates override this with either:
-#   - `license-file = "LICENSE"`           (proprietary, the SDK itself)
-#   - `license = "MIT OR Apache-2.0"`      (forked from upstream open-source)
-#   - `license = "MIT"`                    (forked from upstream MIT)
-# See NOTICE in repository root for the per-crate license matrix.
+# Workspace default license = MIT. Inherited by INTERNAL crates only (bench,
+# test runners, golden tests, the API server, the licence generator), every one
+# of them `publish = false`. Every other crate declares its own licence:
+#   - `license = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"`  (ours)
+#   - `license = "Apache-2.0 OR MIT"` / `"MIT"`      (forked from upstream)
+# Which crate is which is data, not this comment: docs/licensing/boundary.toml
+# (side) and docs/release/canonical_licenses.toml (published expression), held
+# to each other and to the manifests by scripts/ci/one_licence_three_registers.py.
 license = "MIT"
 repository = "https://github.com/pdfluent/pdfluent-sdk"
 homepage = "https://pdfluent.com"
