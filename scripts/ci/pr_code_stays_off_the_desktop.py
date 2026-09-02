@@ -85,7 +85,8 @@ GEHOST = re.compile(r"^(ubuntu|windows|macos)-(latest|\d[\w.-]*)$")
 MINIMUM_WORKFLOWS = 10  # FLOOR
 
 
-def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None) -> list[str]:
+def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
+           target_only: bool = False) -> list[str]:
     """Judge ONE runner choice for one job.
 
     Split out because a job can have several: a matrix supplies a list, and a
@@ -126,6 +127,18 @@ def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None) -> list[st
         return []
     checkouts = [st for st in (job.get("steps") or [])
                  if "actions/checkout" in str(st.get("uses", ""))]
+    if target_only:
+        # Under pull_request_target the safety is INVERTED: a checkout with no
+        # ref takes the base, which is the safe case, and naming the head is
+        # what puts the pull request's code on the machine. So "every checkout
+        # pinned to base.sha" is the wrong test here -- absence of a head ref is.
+        if all("head.sha" not in str((st.get("with") or {}).get("ref", ""))
+               for st in checkouts):
+            return []
+        return [f"{key} runs on {runs_on} under pull_request_target and checks "
+                "out the pull request's HEAD. That trigger runs with the "
+                "repository's secrets, so this is the pull_request case with "
+                "credentials attached."]
     if checkouts and all(
             "pull_request.base.sha" in str((st.get("with") or {}).get("ref", ""))
             for st in checkouts):
@@ -173,8 +186,17 @@ def main() -> int:
             events = set(on)
         else:
             events = set()
-        if "pull_request" not in events:
+        # `pull_request_target` is a pull-request trigger too, and a worse one:
+        # it also hands the job the repository's secrets. Its DEFAULT is safe --
+        # it runs the base ref, which is why the event exists -- but checking out
+        # the head is the most common thing written under it, since that is how
+        # you build a fork's code with a token. The rule ("no PR-authored code on
+        # the desktop") always covered this; only the event list did not.
+        # (T1 review, #1635)
+        pr_events = events & {"pull_request", "pull_request_target"}
+        if not pr_events:
             continue
+        target_only = pr_events == {"pull_request_target"}
         for name, job in (doc.get("jobs") or {}).items():
             runs_on = job.get("runs-on")
             checked += 1
@@ -214,7 +236,8 @@ def main() -> int:
             if key in KNOWN:
                 seen.add(key)
             for candidate in candidates:
-                problems.extend(_judge(key, job, f.name, name, candidate))
+                problems.extend(_judge(key, job, f.name, name, candidate,
+                                       target_only))
             continue
 
     present = {f.name for f in files}
