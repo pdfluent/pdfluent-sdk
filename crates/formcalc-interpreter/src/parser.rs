@@ -33,6 +33,13 @@ use crate::lexer::{Token, TokenKind};
 /// in this crate, deliberately: one number for "how deep is too deep".
 const MAX_DEPTH: usize = 64;
 
+/// How deep the recursive descent itself may go.
+///
+/// Distinct from `MAX_DEPTH`: parentheses collapse, so `((((1))))` recurses
+/// deeply while building a tree one node tall. Measured cost is ~3.7 KB of
+/// native stack per level, so 64 survives a 256 KB stack.
+const MAX_RECURSION: usize = 64;
+
 /// Parse a token stream into a list of expressions (a script).
 pub fn parse(tokens: Vec<Token>) -> Result<Vec<Expr>> {
     let mut parser = Parser::new(tokens);
@@ -47,7 +54,24 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<Expr>> {
     // the evaluator. So the tree is measured once, exactly, before it is handed
     // to anything that walks it recursively.
     let depth = ast_depth(&script);
+    // If this fires, construction under-counted: a node was built without being
+    // measured, and the backstop is covering for it. In release that is exactly
+    // what the backstop is for. In a test build it must be loud, because the
+    // construction bound is the only thing protecting the *error* path, where a
+    // syntax error unwinds and ordinary `Drop` walks whatever was built --
+    // there is no backstop there.
+    //
+    // Two leaks were found this way after a first attempt at testing them
+    // passed vacuously: the test asked whether a too-deep tree was refused, the
+    // backstop refused it, and the assertion was skipped.
+    debug_assert!(
+        depth <= MAX_DEPTH,
+        "construction built a tree {depth} deep while believing it was within \
+         {MAX_DEPTH}; some node is not being counted"
+    );
     if depth > MAX_DEPTH {
+        #[cfg(test)]
+        BACKSTOP_FIRED.with(|n| n.set(n.get() + 1));
         // Dropping it normally would recurse to the depth we just refused, so
         // the refusal would crash exactly where acceptance used to.
         dismantle(script);
@@ -62,6 +86,20 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<Expr>> {
 ///
 /// The match is exhaustive on purpose: a variant added later must not be
 /// scored as a leaf by a wildcard arm, which would silently reopen this hole.
+/// How often the backstop had to refuse a tree that construction accepted.
+///
+/// Test-only, and it exists because there is nothing else to observe. The
+/// backstop below refuses an under-counted tree in *both* profiles, so
+/// "accepted implies `ast_depth <= MAX_DEPTH`" is true no matter how badly
+/// construction miscounts -- an assertion on the returned tree cannot fail.
+/// Only the `debug_assert` told the two apart, and that is compiled out of the
+/// `cargo test --release` that nightly.yml runs. (T2 review, #1642)
+#[cfg(test)]
+thread_local! {
+    pub(crate) static BACKSTOP_FIRED: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 fn ast_depth(script: &[Expr]) -> usize {
     let mut max = 0;
     let mut work: Vec<(&Expr, usize)> = script.iter().map(|e| (e, 1)).collect();
@@ -218,12 +256,18 @@ fn dismantle(script: Vec<Expr>) {
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// Depth of the subtree most recently produced, in absolute terms.
+    ///
+    /// Every function that produces an `Expr` leaves this as
+    /// `outer + depth(subtree)`. See [`Parser::built`].
+    depth: usize,
+
     /// How deep the recursive descent currently is.
     ///
-    /// This bounds the parser's own stack only. It says nothing about how deep
-    /// the finished tree is -- `a+b+c+...` is built by a loop and costs no
-    /// recursion at all -- so `ast_depth` measures the tree separately.
-    depth: usize,
+    /// Separate from `depth`, and restored on the way out: it bounds the
+    /// parser's own native stack, which is a different question from how deep
+    /// the tree it builds is.
+    recursion: usize,
 }
 
 impl Parser {
@@ -232,22 +276,31 @@ impl Parser {
             tokens,
             pos: 0,
             depth: 0,
+            recursion: 0,
         }
     }
 
-    /// Descend one level, refusing rather than overflowing the native stack.
-    fn enter(&mut self) -> Result<()> {
-        if self.depth >= MAX_DEPTH {
+    /// Record that a node has just been built over children whose subtree
+    /// depths are already in `self.depth` form, and refuse if it is too deep.
+    ///
+    /// Every function that produces an `Expr` keeps one invariant: **on return,
+    /// `self.depth == outer + depth(returned subtree)`**, where `outer` is
+    /// `self.depth` on entry. That is what makes the bound compose. The earlier
+    /// version counted the path the parser was *holding* instead, and released
+    /// it on return -- so six precedence layers, each releasing its own links,
+    /// stacked a tree thousands of nodes deep while the counter read 62.
+    ///
+    /// `parts` are the children's absolute depths; the node sits one above the
+    /// deepest of them.
+    fn built(&mut self, outer: usize, parts: &[usize]) -> Result<()> {
+        let deepest = parts.iter().copied().max().unwrap_or(outer).max(outer);
+        if deepest + 1 > MAX_DEPTH {
             return Err(FormCalcError::ExpressionTooDeep {
                 max_depth: MAX_DEPTH,
             });
         }
-        self.depth += 1;
+        self.depth = deepest + 1;
         Ok(())
-    }
-
-    fn leave(&mut self, levels: usize) {
-        self.depth = self.depth.saturating_sub(levels);
     }
 
     fn peek(&self) -> &TokenKind {
@@ -303,23 +356,53 @@ impl Parser {
     }
 
     fn parse_script(&mut self) -> Result<Vec<Expr>> {
-        let mut exprs = Vec::new();
-        self.skip_newlines();
-        while self.peek() != &TokenKind::Eof {
-            exprs.push(self.parse_expr()?);
-            self.skip_newlines();
-        }
-        Ok(exprs)
+        self.parse_sequence(|p| p.peek() != &TokenKind::Eof)
     }
 
     fn parse_body(&mut self, terminators: &[TokenKind]) -> Result<Vec<Expr>> {
-        let mut body = Vec::new();
+        self.parse_sequence(|p| !terminators.contains(p.peek()) && p.peek() != &TokenKind::Eof)
+    }
+
+    /// Parse one child of a statement from the statement's own base, folding
+    /// its depth into `deepest`.
+    ///
+    /// Children of a statement are siblings: an `if` sits one level above the
+    /// deepest of its condition and its branches, not above their sum. Without
+    /// the reset the condition's depth leaks into the body, and fifty nested
+    /// `if`s -- fifty levels, well inside the bound -- were refused.
+    fn child<T>(
+        &mut self,
+        outer: usize,
+        deepest: &mut usize,
+        f: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        self.depth = outer;
+        let value = f(self)?;
+        *deepest = (*deepest).max(self.depth);
+        Ok(value)
+    }
+
+    /// Parse a sequence of statements, leaving `depth` at the deepest of them.
+    ///
+    /// Statements side by side are *breadth*, not depth: a script of a hundred
+    /// one-line assignments nests one level, not a hundred. `depth` carries the
+    /// last subtree's depth and is deliberately not released inside an
+    /// expression, so without resetting between siblings each statement would
+    /// start where the previous one ended, and a perfectly flat script was
+    /// refused at its fiftieth line.
+    fn parse_sequence(&mut self, mut more: impl FnMut(&Self) -> bool) -> Result<Vec<Expr>> {
+        let outer = self.depth;
+        let mut deepest = outer;
+        let mut out = Vec::new();
         self.skip_newlines();
-        while !terminators.contains(self.peek()) && self.peek() != &TokenKind::Eof {
-            body.push(self.parse_expr()?);
+        while more(self) {
+            self.depth = outer;
+            out.push(self.parse_expr()?);
+            deepest = deepest.max(self.depth);
             self.skip_newlines();
         }
-        Ok(body)
+        self.depth = deepest;
+        Ok(out)
     }
 
     /// Depth-guarded entry to expression parsing.
@@ -327,10 +410,20 @@ impl Parser {
     /// `?` inside the parser abandons the whole parse, so `leave` is only
     /// needed on the success path: an error discards the `Parser` with its
     /// counter. Siblings, which do share a counter, are restored here.
+    /// Depth-guarded entry to expression parsing.
+    ///
+    /// `recursion` bounds the parser's own native stack and is restored on the
+    /// way out; `depth` carries the built subtree's depth and is deliberately
+    /// *not* restored, because that is what makes the bound compose.
     fn parse_expr(&mut self) -> Result<Expr> {
-        self.enter()?;
+        if self.recursion >= MAX_RECURSION {
+            return Err(FormCalcError::ExpressionTooDeep {
+                max_depth: MAX_DEPTH,
+            });
+        }
+        self.recursion += 1;
         let expr = self.parse_expr_inner();
-        self.leave(1);
+        self.recursion -= 1;
         expr
     }
 
@@ -342,7 +435,13 @@ impl Parser {
             TokenKind::If
                 if self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::LParen) =>
             {
+                // Backtracking has to rewind the depth counter as well as the
+                // token position. It did not, so the abandoned `If(...)` attempt
+                // left its arguments' depth behind and every `if` statement cost
+                // two levels instead of one -- nesting was refused at 31.
                 let saved_pos = self.pos;
+                let outer = self.depth;
+                let mut deepest = outer;
                 self.advance(); // consume `if`
                 self.advance(); // consume `(`
                 let mut args = Vec::new();
@@ -350,8 +449,12 @@ impl Parser {
                 if self.peek() != &TokenKind::RParen {
                     loop {
                         self.skip_newlines();
+                        self.depth = outer;
                         match self.parse_or() {
-                            Ok(expr) => args.push(expr),
+                            Ok(expr) => {
+                                deepest = deepest.max(self.depth);
+                                args.push(expr);
+                            }
                             Err(_) => {
                                 ok = false;
                                 break;
@@ -365,12 +468,14 @@ impl Parser {
                 }
                 if ok && self.peek() == &TokenKind::RParen && args.len() >= 2 {
                     self.advance(); // consume `)`
+                    self.built(outer, &[deepest])?;
                     Ok(Expr::FuncCall {
                         name: "If".to_string(),
                         args,
                     })
                 } else {
                     self.pos = saved_pos;
+                    self.depth = outer;
                     self.parse_if()
                 }
             }
@@ -383,10 +488,16 @@ impl Parser {
             TokenKind::Return => self.parse_return(),
             TokenKind::Break => {
                 self.advance();
+                // Leaves, and they have to record it: a function that produces
+                // an `Expr` without setting `depth` leaves the previous
+                // subtree's value in place, so an enclosing node measured one
+                // level short whenever a `break` was its deepest child.
+                self.built(self.depth, &[])?;
                 Ok(Expr::Break)
             }
             TokenKind::Continue => {
                 self.advance();
+                self.built(self.depth, &[])?;
                 Ok(Expr::Continue)
             }
             _ => self.parse_assignment(),
@@ -394,20 +505,24 @@ impl Parser {
     }
 
     fn parse_if(&mut self) -> Result<Expr> {
+        let outer = self.depth;
+        let mut deepest = outer;
         self.expect(&TokenKind::If)?;
         self.skip_newlines();
         let condition = if self.peek() == &TokenKind::LParen {
             self.advance();
-            let condition = self.parse_or()?;
+            let condition = self.child(outer, &mut deepest, |p| p.parse_or())?;
             self.skip_newlines();
             self.expect(&TokenKind::RParen)?;
             condition
         } else {
-            self.parse_or()?
+            self.child(outer, &mut deepest, |p| p.parse_or())?
         };
         self.skip_newlines();
         self.expect(&TokenKind::Then)?;
-        let then_body = self.parse_body(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::EndIf])?;
+        let then_body = self.child(outer, &mut deepest, |p| {
+            p.parse_body(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::EndIf])
+        })?;
 
         let mut elseif_clauses = Vec::new();
         while self.peek() == &TokenKind::ElseIf {
@@ -415,16 +530,18 @@ impl Parser {
             self.skip_newlines();
             let cond = if self.peek() == &TokenKind::LParen {
                 self.advance();
-                let cond = self.parse_or()?;
+                let cond = self.child(outer, &mut deepest, |p| p.parse_or())?;
                 self.skip_newlines();
                 self.expect(&TokenKind::RParen)?;
                 cond
             } else {
-                self.parse_or()?
+                self.child(outer, &mut deepest, |p| p.parse_or())?
             };
             self.skip_newlines();
             self.expect(&TokenKind::Then)?;
-            let body = self.parse_body(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::EndIf])?;
+            let body = self.child(outer, &mut deepest, |p| {
+                p.parse_body(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::EndIf])
+            })?;
             elseif_clauses.push((cond, body));
         }
 
@@ -432,10 +549,10 @@ impl Parser {
             self.advance();
             // Handle `else if` as `elseif` (two-token variant)
             if self.peek() == &TokenKind::If {
-                let inner_if = self.parse_if()?;
+                let inner_if = self.child(outer, &mut deepest, |p| p.parse_if())?;
                 Some(vec![inner_if])
             } else {
-                Some(self.parse_body(&[TokenKind::EndIf])?)
+                Some(self.child(outer, &mut deepest, |p| p.parse_body(&[TokenKind::EndIf]))?)
             }
         } else {
             None
@@ -443,6 +560,7 @@ impl Parser {
 
         self.skip_newlines();
         self.expect(&TokenKind::EndIf)?;
+        self.built(outer, &[deepest])?;
         Ok(Expr::If {
             condition: Box::new(condition),
             then_body,
@@ -452,21 +570,26 @@ impl Parser {
     }
 
     fn parse_while(&mut self) -> Result<Expr> {
+        let outer = self.depth;
+        let mut deepest = outer;
         self.expect(&TokenKind::While)?;
         self.skip_newlines();
         let condition = if self.peek() == &TokenKind::LParen {
             self.advance();
-            let condition = self.parse_or()?;
+            let condition = self.child(outer, &mut deepest, |p| p.parse_or())?;
             self.skip_newlines();
             self.expect(&TokenKind::RParen)?;
             condition
         } else {
-            self.parse_or()?
+            self.child(outer, &mut deepest, |p| p.parse_or())?
         };
         self.skip_newlines();
         self.expect(&TokenKind::Do)?;
-        let body = self.parse_body(&[TokenKind::EndWhile])?;
+        let body = self.child(outer, &mut deepest, |p| {
+            p.parse_body(&[TokenKind::EndWhile])
+        })?;
         self.expect(&TokenKind::EndWhile)?;
+        self.built(outer, &[deepest])?;
         Ok(Expr::While {
             condition: Box::new(condition),
             body,
@@ -474,6 +597,8 @@ impl Parser {
     }
 
     fn parse_for(&mut self) -> Result<Expr> {
+        let outer = self.depth;
+        let mut deepest = outer;
         self.expect(&TokenKind::For)?;
         self.skip_newlines();
         if self.peek() == &TokenKind::Var {
@@ -490,7 +615,7 @@ impl Parser {
             }
         };
         self.expect(&TokenKind::Assign)?;
-        let start = self.parse_or()?;
+        let start = self.child(outer, &mut deepest, |p| p.parse_or())?;
 
         let ascending = match self.peek() {
             TokenKind::Upto => {
@@ -504,20 +629,21 @@ impl Parser {
             _ => return Err(self.error("expected 'upto' or 'downto' in for loop")),
         };
 
-        let end = self.parse_or()?;
+        let end = self.child(outer, &mut deepest, |p| p.parse_or())?;
 
         let step = if self.peek() == &TokenKind::Step {
             self.advance();
-            Some(Box::new(self.parse_or()?))
+            Some(Box::new(self.child(outer, &mut deepest, |p| p.parse_or())?))
         } else {
             None
         };
 
         self.skip_newlines();
         self.expect(&TokenKind::Do)?;
-        let body = self.parse_body(&[TokenKind::EndFor])?;
+        let body = self.child(outer, &mut deepest, |p| p.parse_body(&[TokenKind::EndFor]))?;
         self.expect(&TokenKind::EndFor)?;
 
+        self.built(outer, &[deepest])?;
         Ok(Expr::For {
             var,
             start: Box::new(start),
@@ -529,6 +655,8 @@ impl Parser {
     }
 
     fn parse_foreach(&mut self) -> Result<Expr> {
+        let outer = self.depth;
+        let mut deepest = outer;
         self.expect(&TokenKind::Foreach)?;
         self.skip_newlines();
         let var = match self.peek().clone() {
@@ -545,7 +673,7 @@ impl Parser {
             if self.peek() != &TokenKind::RParen {
                 loop {
                     self.skip_newlines();
-                    args.push(self.parse_or()?);
+                    args.push(self.child(outer, &mut deepest, |p| p.parse_or())?);
                     if self.peek() != &TokenKind::Comma {
                         break;
                     }
@@ -553,18 +681,25 @@ impl Parser {
                 }
             }
             self.expect(&TokenKind::RParen)?;
+            // A node like any other. It is synthetic -- the parenthesised list
+            // of a `foreach` is wrapped in a call that no one wrote -- but it
+            // sits in the tree, so leaving it uncounted made the guard report a
+            // depth one short of what it had built.
+            self.built(outer, &[deepest])?;
+            deepest = self.depth;
             Expr::FuncCall {
                 name: "__foreach_list".to_string(),
                 args,
             }
         } else {
-            self.parse_or()?
+            self.child(outer, &mut deepest, |p| p.parse_or())?
         };
         self.skip_newlines();
         self.expect(&TokenKind::Do)?;
-        let body = self.parse_body(&[TokenKind::EndFor])?;
+        let body = self.child(outer, &mut deepest, |p| p.parse_body(&[TokenKind::EndFor]))?;
         self.expect(&TokenKind::EndFor)?;
 
+        self.built(outer, &[deepest])?;
         Ok(Expr::Foreach {
             var,
             list: Box::new(list),
@@ -602,9 +737,12 @@ impl Parser {
         if self.peek() == &TokenKind::Do {
             self.advance();
         }
-        let body = self.parse_body(&[TokenKind::EndFunc])?;
+        let outer = self.depth;
+        let mut deepest = outer;
+        let body = self.child(outer, &mut deepest, |p| p.parse_body(&[TokenKind::EndFunc]))?;
         self.expect(&TokenKind::EndFunc)?;
 
+        self.built(outer, &[deepest])?;
         Ok(Expr::FuncDecl { name, params, body })
     }
 
@@ -617,79 +755,95 @@ impl Parser {
             }
             _ => return Err(self.error("expected variable name")),
         };
+        let outer = self.depth;
+        let mut deepest = outer;
         let init = if self.peek() == &TokenKind::Assign {
             self.advance();
-            Some(Box::new(self.parse_or()?))
+            Some(Box::new(self.child(outer, &mut deepest, |p| p.parse_or())?))
         } else {
             None
         };
+        self.built(outer, &[deepest])?;
         Ok(Expr::VarDecl { name, init })
     }
 
     fn parse_return(&mut self) -> Result<Expr> {
+        let outer = self.depth;
+        let mut deepest = outer;
         self.expect(&TokenKind::Return)?;
         if self.at_statement_end() {
+            self.built(outer, &[])?;
             Ok(Expr::Return(None))
         } else {
-            Ok(Expr::Return(Some(Box::new(self.parse_or()?))))
+            let value = self.child(outer, &mut deepest, |p| p.parse_or())?;
+            self.built(outer, &[deepest])?;
+            Ok(Expr::Return(Some(Box::new(value))))
         }
     }
 
     fn parse_assignment(&mut self) -> Result<Expr> {
-        let expr = self.parse_or()?;
+        let outer = self.depth;
+        let mut deepest = outer;
+        let expr = self.child(outer, &mut deepest, |p| p.parse_or())?;
         if self.peek() == &TokenKind::Assign {
             self.advance();
-            let value = self.parse_or()?;
+            let value = self.child(outer, &mut deepest, |p| p.parse_or())?;
+            self.built(outer, &[deepest])?;
             Ok(Expr::Assign {
                 target: Box::new(expr),
                 value: Box::new(value),
             })
         } else {
+            // Not an assignment after all: the depth is the operand's own.
+            self.depth = deepest;
             Ok(expr)
         }
     }
 
     fn parse_or(&mut self) -> Result<Expr> {
+        let outer = self.depth;
         let mut left = self.parse_and()?;
-        let mut links = 0;
+        let mut left_depth = self.depth;
         while self.peek() == &TokenKind::Or {
             self.advance();
             self.skip_newlines();
+            self.depth = outer;
             let right = self.parse_and()?;
-            self.enter()?;
-            links += 1;
+            self.built(outer, &[left_depth, self.depth])?;
+            left_depth = self.depth;
             left = Expr::BinaryOp {
                 op: BinOp::Or,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
-        self.leave(links);
         Ok(left)
     }
 
     fn parse_and(&mut self) -> Result<Expr> {
+        let outer = self.depth;
         let mut left = self.parse_equality()?;
-        let mut links = 0;
+        let mut left_depth = self.depth;
         while matches!(self.peek(), TokenKind::And | TokenKind::Amp) {
             self.advance();
             self.skip_newlines();
+            self.depth = outer;
             let right = self.parse_equality()?;
-            self.enter()?;
-            links += 1;
+            self.built(outer, &[left_depth, self.depth])?;
+            left_depth = self.depth;
             left = Expr::BinaryOp {
                 op: BinOp::And,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
-        self.leave(links);
         Ok(left)
     }
 
     fn parse_equality(&mut self) -> Result<Expr> {
+        let outer = self.depth;
         let mut left = self.parse_relational()?;
-        let mut links = 0;
+        let mut left_depth = self.depth;
         loop {
             let op = match self.peek() {
                 TokenKind::Eq => BinOp::Eq,
@@ -698,22 +852,23 @@ impl Parser {
             };
             self.advance();
             self.skip_newlines();
+            self.depth = outer;
             let right = self.parse_relational()?;
-            self.enter()?;
-            links += 1;
+            self.built(outer, &[left_depth, self.depth])?;
+            left_depth = self.depth;
             left = Expr::BinaryOp {
                 op,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
-        self.leave(links);
         Ok(left)
     }
 
     fn parse_relational(&mut self) -> Result<Expr> {
+        let outer = self.depth;
         let mut left = self.parse_additive()?;
-        let mut links = 0;
+        let mut left_depth = self.depth;
         loop {
             let op = match self.peek() {
                 TokenKind::Lt => BinOp::Lt,
@@ -724,22 +879,23 @@ impl Parser {
             };
             self.advance();
             self.skip_newlines();
+            self.depth = outer;
             let right = self.parse_additive()?;
-            self.enter()?;
-            links += 1;
+            self.built(outer, &[left_depth, self.depth])?;
+            left_depth = self.depth;
             left = Expr::BinaryOp {
                 op,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
-        self.leave(links);
         Ok(left)
     }
 
     fn parse_additive(&mut self) -> Result<Expr> {
+        let outer = self.depth;
         let mut left = self.parse_multiplicative()?;
-        let mut links = 0;
+        let mut left_depth = self.depth;
         loop {
             let op = match self.peek() {
                 TokenKind::Plus => BinOp::Add,
@@ -748,22 +904,23 @@ impl Parser {
             };
             self.advance();
             self.skip_newlines();
+            self.depth = outer;
             let right = self.parse_multiplicative()?;
-            self.enter()?;
-            links += 1;
+            self.built(outer, &[left_depth, self.depth])?;
+            left_depth = self.depth;
             left = Expr::BinaryOp {
                 op,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
-        self.leave(links);
         Ok(left)
     }
 
     fn parse_multiplicative(&mut self) -> Result<Expr> {
+        let outer = self.depth;
         let mut left = self.parse_unary()?;
-        let mut links = 0;
+        let mut left_depth = self.depth;
         loop {
             let op = match self.peek() {
                 TokenKind::Star => BinOp::Mul,
@@ -772,23 +929,28 @@ impl Parser {
             };
             self.advance();
             self.skip_newlines();
+            self.depth = outer;
             let right = self.parse_unary()?;
-            self.enter()?;
-            links += 1;
+            self.built(outer, &[left_depth, self.depth])?;
+            left_depth = self.depth;
             left = Expr::BinaryOp {
                 op,
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
-        self.leave(links);
         Ok(left)
     }
 
     fn parse_unary(&mut self) -> Result<Expr> {
-        self.enter()?;
+        if self.recursion >= MAX_RECURSION {
+            return Err(FormCalcError::ExpressionTooDeep {
+                max_depth: MAX_DEPTH,
+            });
+        }
+        self.recursion += 1;
         let expr = self.parse_unary_inner();
-        self.leave(1);
+        self.recursion -= 1;
         expr
     }
 
@@ -796,17 +958,23 @@ impl Parser {
         match self.peek() {
             TokenKind::Plus => {
                 self.advance();
+                let outer = self.depth;
                 let expr = self.parse_unary()?;
+                self.built(outer, &[self.depth])?;
                 Ok(Expr::Positive(Box::new(expr)))
             }
             TokenKind::Minus => {
                 self.advance();
+                let outer = self.depth;
                 let expr = self.parse_unary()?;
+                self.built(outer, &[self.depth])?;
                 Ok(Expr::Negate(Box::new(expr)))
             }
             TokenKind::Not => {
                 self.advance();
+                let outer = self.depth;
                 let expr = self.parse_unary()?;
+                self.built(outer, &[self.depth])?;
                 Ok(Expr::Not(Box::new(expr)))
             }
             _ => self.parse_primary(),
@@ -814,13 +982,16 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<Expr> {
+        let outer = self.depth;
         match self.peek().clone() {
             TokenKind::NumberLit(n) => {
                 self.advance();
+                self.built(outer, &[])?;
                 Ok(Expr::Number(n))
             }
             TokenKind::StringLit(s) => {
                 self.advance();
+                self.built(outer, &[])?;
                 Ok(Expr::StringLit(s))
             }
             TokenKind::Null
@@ -829,10 +1000,12 @@ impl Parser {
                 self.advance(); // consume `null`
                 self.advance(); // consume `(`
                 self.expect(&TokenKind::RParen)?;
+                self.built(outer, &[])?;
                 Ok(Expr::Null)
             }
             TokenKind::Null => {
                 self.advance();
+                self.built(outer, &[])?;
                 Ok(Expr::Null)
             }
             TokenKind::Ident(name) => {
@@ -841,10 +1014,16 @@ impl Parser {
                 if self.peek() == &TokenKind::LParen {
                     self.advance();
                     let mut args = Vec::new();
+                    // Each argument is measured from the same base, so the call
+                    // sits one above the deepest of them rather than above their
+                    // sum -- a wide call is not a deep one.
+                    let mut deepest = outer;
                     if self.peek() != &TokenKind::RParen {
                         loop {
                             self.skip_newlines();
+                            self.depth = outer;
                             args.push(self.parse_or()?);
+                            deepest = deepest.max(self.depth);
                             if self.peek() != &TokenKind::Comma {
                                 break;
                             }
@@ -852,16 +1031,19 @@ impl Parser {
                         }
                     }
                     self.expect(&TokenKind::RParen)?;
+                    self.built(outer, &[deepest])?;
                     Ok(Expr::FuncCall { name, args })
                 } else {
+                    self.built(outer, &[])?;
                     let mut expr = Expr::Ident(name);
-                    expr = self.parse_accessor_tail(expr)?;
+                    expr = self.parse_accessor_tail(expr, outer)?;
                     Ok(expr)
                 }
             }
             TokenKind::LParen => {
                 self.advance();
                 self.skip_newlines();
+                // Parentheses build no node, so the depth is the inner one.
                 let expr = self.parse_or()?;
                 self.skip_newlines();
                 self.expect(&TokenKind::RParen)?;
@@ -869,18 +1051,6 @@ impl Parser {
             }
             _ => Err(self.error(&format!("unexpected token: {:?}", self.peek()))),
         }
-    }
-
-    /// Depth-guarded entry to accessor chains.
-    ///
-    /// `a.b[0]..c` is built by a loop, so it costs no parser stack, but it
-    /// nests in the AST exactly as deep as the chain is long. Saving and
-    /// restoring `depth` covers this function's several exit paths at once.
-    fn parse_accessor_tail(&mut self, expr: Expr) -> Result<Expr> {
-        let outer = self.depth;
-        let out = self.parse_accessor_tail_inner(expr);
-        self.depth = outer;
-        out
     }
 
     /// Parse accessor tail: `.member`, `[index]`, `..member`, `.#name` chains.
@@ -891,7 +1061,16 @@ impl Parser {
     /// - `[*]`   — all occurrences
     /// - `..name` — recursive descent
     /// - `.#name` — class-based access
-    fn parse_accessor_tail_inner(&mut self, mut expr: Expr) -> Result<Expr> {
+    ///
+    /// `base` is the depth the whole expression started from, before the
+    /// receiver was built. Accessor links stack on top of the receiver, but a
+    /// method call does not: `expr_to_som_path` flattens the entire chain into
+    /// the call's *name*, so `a.b.c…m()` is one `FuncCall` node over its
+    /// arguments however long the path was. Measuring that from the current
+    /// depth charged it for a receiver that is not in the tree -- a 63-member
+    /// path was accepted, and the same path with `.m()` refused, though the
+    /// second builds the shallower tree.
+    fn parse_accessor_tail(&mut self, mut expr: Expr, base: usize) -> Result<Expr> {
         loop {
             match self.peek().clone() {
                 // `.member` or `.#member`
@@ -907,10 +1086,17 @@ impl Parser {
                                 if self.peek() == &TokenKind::LParen {
                                     self.advance(); // consume (
                                     let mut args = Vec::new();
+                                    // The receiver is flattened into the name,
+                                    // so this node sits on `base`, not on the
+                                    // depth the accessor chain reached.
+                                    let outer = base;
+                                    let mut deepest = outer;
                                     if self.peek() != &TokenKind::RParen {
                                         loop {
                                             self.skip_newlines();
-                                            args.push(self.parse_or()?);
+                                            args.push(
+                                                self.child(outer, &mut deepest, |p| p.parse_or())?,
+                                            );
                                             if self.peek() != &TokenKind::Comma {
                                                 break;
                                             }
@@ -918,13 +1104,14 @@ impl Parser {
                                         }
                                     }
                                     self.expect(&TokenKind::RParen)?;
+                                    self.built(outer, &[deepest])?;
                                     let path = expr_to_som_path(&expr);
                                     return Ok(Expr::FuncCall {
                                         name: format!("{}.{}", path, member),
                                         args,
                                     });
                                 }
-                                self.enter()?;
+                                self.built(self.depth, &[])?;
                                 expr = Expr::MemberAccess {
                                     object: Box::new(expr),
                                     member,
@@ -937,7 +1124,7 @@ impl Parser {
                             self.advance(); // consume hash
                             if let TokenKind::Ident(member) = self.peek().clone() {
                                 self.advance(); // consume member name
-                                self.enter()?;
+                                self.built(self.depth, &[])?;
                                 expr = Expr::MemberAccess {
                                     object: Box::new(expr),
                                     member: format!("#{}", member),
@@ -955,7 +1142,7 @@ impl Parser {
                     if let Some(TokenKind::Ident(member)) = next_kind {
                         self.advance(); // consume ..
                         self.advance(); // consume member
-                        self.enter()?;
+                        self.built(self.depth, &[])?;
                         expr = Expr::RecursiveDescent {
                             object: Box::new(expr),
                             member,
@@ -978,7 +1165,10 @@ impl Parser {
                         }
                         _ => {
                             // Expression index: evaluate to number
-                            let idx_expr = self.parse_or()?;
+                            let outer = self.depth;
+                            let mut deepest = outer;
+                            let idx_expr = self.child(outer, &mut deepest, |p| p.parse_or())?;
+                            self.depth = outer;
                             match idx_expr {
                                 Expr::Number(n) => AccessIndex::Numeric(n as i64),
                                 _ => AccessIndex::Numeric(0),
@@ -986,7 +1176,7 @@ impl Parser {
                         }
                     };
                     self.expect(&TokenKind::RBracket)?;
-                    self.enter()?;
+                    self.built(self.depth, &[])?;
                     expr = Expr::IndexAccess {
                         object: Box::new(expr),
                         index,
@@ -1297,6 +1487,265 @@ mod depth_bounds {
         }
         src.push_str(" +");
         assert!(refused(&src));
+    }
+
+    /// Depth composed across *precedence layers*, which the per-link counters
+    /// cannot see.
+    ///
+    /// Each of the six left-associative parsers releases its own `links` when
+    /// it returns, so one expression can accumulate multiplicative, additive,
+    /// relational, equality, `and` and `or` chains without any two of them
+    /// being held at once. 30 nested `Abs(...)` whose argument carries 30 links
+    /// of every precedence stays around 62 held levels while building a tree
+    /// over 5400 nodes deep — and a trailing operator then returns before
+    /// `ast_depth` runs, leaving that tree to unwinding.
+    ///
+    /// Found by review after the per-link counters were already in place. The
+    /// earlier estimate of the worst half-tree, about 1025, came from a search
+    /// that only used `+` chains: the method was right and the search space was
+    /// too narrow, for the third time in this fix.
+    #[test]
+    fn depth_composed_across_precedence_layers_is_still_dropped_safely() {
+        let k = 30;
+        let mut src = String::from("1");
+        for _ in 0..30 {
+            let mut arg = src;
+            for lit in [" * 1", " + 1", " < 1", " == 1", " and 1", " or 1"] {
+                for _ in 0..k {
+                    arg.push_str(lit);
+                }
+            }
+            src = format!("Abs({arg})");
+        }
+        src.push_str(" +");
+        // The refusal may be the depth bound or the syntax error, depending on
+        // which comes first; what this pins is that neither path overflows.
+        assert!(tokenize(&src).and_then(parse).is_err());
+    }
+
+    /// Statements side by side are breadth, not depth.
+    ///
+    /// The counter is deliberately not released inside an expression -- that is
+    /// what makes it compose -- so without a reset between siblings each
+    /// statement starts where the previous one ended. A perfectly flat script
+    /// was refused at its fiftieth line, which no hostile-input test would ever
+    /// have found: they all measure whether deep input is *rejected*, and this
+    /// is legitimate input being rejected.
+    #[test]
+    fn a_flat_script_of_many_statements_is_not_refused() {
+        let flat = (0..500)
+            .map(|i| format!("var v{i} = {i} + 1"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(accepted(&flat).len(), 500);
+
+        let sequential_ifs = (0..500)
+            .map(|i| format!("if (1 > 0) then\n  var x{i} = 1\nendif"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(accepted(&sequential_ifs).len(), 500);
+
+        // A wide call is not a deep one either.
+        let wide = format!("Sum({})", vec!["1"; 500].join(", "));
+        accepted(&wide);
+    }
+
+    /// Every statement form costs the same one level per nesting.
+    ///
+    /// `if (` is ambiguous -- it could be the `If(a,b,c)` function -- so the
+    /// parser tries the call, fails, and rewinds. The rewind restored the token
+    /// position but not the depth counter, leaving the abandoned attempt's
+    /// arguments on it, so an `if` cost two levels where a `while` cost one and
+    /// nesting was refused at 31 instead of 62. Backtracking has to rewind
+    /// everything it advanced.
+    #[test]
+    fn every_statement_form_costs_one_level_per_nesting() {
+        fn deepest_accepted(wrap: impl Fn(&str) -> String) -> usize {
+            let (mut lo, mut hi) = (0usize, 200usize);
+            while hi - lo > 1 {
+                let mid = (lo + hi) / 2;
+                let mut src = String::from("var x = 1");
+                for _ in 0..mid {
+                    src = wrap(&src);
+                }
+                if tokenize(&src).and_then(parse).is_ok() {
+                    lo = mid
+                } else {
+                    hi = mid
+                }
+            }
+            lo
+        }
+        let ifs = deepest_accepted(|s| format!("if (1) then\n{s}\nendif"));
+        let whiles = deepest_accepted(|s| format!("while (1) do\n{s}\nendwhile"));
+        assert_eq!(
+            ifs, whiles,
+            "`if` and `while` nest identically; a difference means one of them \
+             is being charged for something it did not build"
+        );
+        assert!(
+            ifs > 50,
+            "nesting {ifs} is far below the bound of {MAX_DEPTH}"
+        );
+    }
+
+    /// `ast_depth` is a backstop, and this is what it backs up.
+    ///
+    /// With the construction-time bound exact, no tree deeper than `MAX_DEPTH`
+    /// can be built, so disabling the post-parse check changes nothing that any
+    /// test can see -- its mutation stays green, and that is reported rather
+    /// than treated as proof it is dead code. What it exists for is the one
+    /// failure the invariant is exposed to: a construction site added later
+    /// that forgets to call `built`. This pins that the measurement itself is
+    /// right, so the backstop would fire if that ever happened.
+    #[test]
+    fn the_backstop_measures_depth_correctly() {
+        // Built by hand rather than parsed, which is precisely the case a
+        // missed construction site would produce.
+        let mut e = Expr::Number(1.0);
+        for _ in 0..(MAX_DEPTH + 10) {
+            e = Expr::Negate(Box::new(e));
+        }
+        let script = vec![e];
+        assert_eq!(ast_depth(&script), MAX_DEPTH + 11);
+        assert!(ast_depth(&script) > MAX_DEPTH);
+
+        // and it does not over-report breadth as depth
+        let wide = vec![Expr::FuncCall {
+            name: "Sum".into(),
+            args: (0..500).map(|_| Expr::Number(1.0)).collect(),
+        }];
+        assert_eq!(ast_depth(&wide), 2);
+    }
+
+    /// A method call after a long SOM path is not deep, and must not be refused
+    /// as if it were.
+    ///
+    /// `expr_to_som_path` flattens the whole receiver into the call's *name*,
+    /// so `a.b.c….m()` is a single `FuncCall` over its arguments no matter how
+    /// long the path is. Measuring it from the accessor-inflated depth charged
+    /// it for a receiver that is not in the tree: a 63-member path was accepted,
+    /// and the same path with `.m()` refused — the shallower of the two.
+    ///
+    /// The second half of this test is the point. Measuring from the base is
+    /// only correct because the receiver disappears; the arguments do not, and
+    /// they must still be bounded.
+    #[test]
+    fn a_method_call_is_measured_from_the_expression_base() {
+        let path = format!("a{}", ".b".repeat(63));
+        assert!(
+            tokenize(&path).and_then(parse).is_ok(),
+            "a 63-member path parses on its own"
+        );
+        let called = accepted(&format!("{path}.m()"));
+        assert_eq!(
+            ast_depth(&called),
+            1,
+            "the receiver is flattened into the name, so this is a single \
+             argument-less FuncCall node"
+        );
+
+        // and the hostile counterpart: deep *arguments* are still refused
+        let deep_arg = format!("{}1{}", "Abs(".repeat(200), ")".repeat(200));
+        assert!(refused(&format!("a.b.m({deep_arg})")));
+        let long_chain = vec!["1"; 200].join(" + ");
+        assert!(refused(&format!("a.b.m({long_chain})")));
+        // including on the error path, where the tree is dropped by unwinding
+        assert!(refused(&format!("a.b.m({long_chain} +)")));
+    }
+
+    /// Every node the parser builds must be counted, including the ones nobody
+    /// wrote and the ones with no children.
+    ///
+    /// Two leaks, both found by review, both with the same consequence: a tree
+    /// one level deeper than the guard believed. `ast_depth` catches that on a
+    /// successful parse, so nothing wrong is ever *accepted* — but the
+    /// construction bound is what protects the error path, where a syntax error
+    /// unwinds and ordinary `Drop` walks whatever was built. A bound that
+    /// under-reports has already lost that guarantee.
+    ///
+    /// The synthetic `__foreach_list` call wrapping a parenthesised list, and
+    /// `Break`/`Continue`, which returned an `Expr` without recording their own
+    /// depth and so left the previous subtree's value in place.
+    #[test]
+    fn synthetic_nodes_and_childless_leaves_are_counted() {
+        // This test asserts for itself rather than leaning on the
+        // `debug_assert` in `parse`. It used to do the latter and nothing else:
+        // no assertion in the body, so under `cargo test --release` -- which
+        // nightly.yml:70 runs -- the debug assertion is compiled out and the
+        // whole test passed in 0.00 s having checked nothing. A test that only
+        // holds in debug does not cover the build we ship. (T2 review, #1642)
+        //
+        // What it checks instead is the invariant itself: any tree the parser
+        // ACCEPTS measures within the bound. If construction under-counts, an
+        // accepted tree is deeper than `MAX_DEPTH`, which is exactly the state
+        // the error path cannot survive. Refusal is a fine answer too --
+        // building more than was counted is not.
+        BACKSTOP_FIRED.with(|n| n.set(0));
+        let mut gemeten = 0usize;
+        let mut controleer = |bron: &str| {
+            if let Ok(ast) = tokenize(bron).and_then(parse) {
+                assert!(
+                    ast_depth(&ast) <= MAX_DEPTH,
+                    "an accepted tree measured deeper than the bound"
+                );
+                gemeten += 1;
+            }
+        };
+
+        for n in 50..=64 {
+            let inner = format!("{}1{}", "Abs(".repeat(n), ")".repeat(n));
+            controleer(&format!("foreach v in ({inner}) do\n  1\nendfor"));
+            controleer(&format!("while (1) do\n  {inner}\n  break\nendwhile"));
+            controleer(&format!("while (1) do\n  break\n  {inner}\nendwhile"));
+        }
+
+        // `break` and `continue` are swept too, though no input here fails
+        // without their fix and that is worth saying rather than implying.
+        // Statement nesting costs one recursion level and one depth level
+        // together, so `MAX_RECURSION` refuses at exactly the point the
+        // miscount would start to matter: measured, the deepest accepted
+        // nested-`while` tree is 64 either way. The fix is kept because the
+        // invariant is what later changes will lean on -- a leaf that does not
+        // record its depth is a trap for the next node type added beside it --
+        // not because a test can currently tell the difference.
+        for n in 55..=64 {
+            let mut src = String::from("break");
+            for _ in 0..n {
+                src = format!("while (1) do\n{src}\nendwhile");
+            }
+            controleer(&src);
+
+            let mut cont = String::from("continue");
+            for _ in 0..n {
+                cont = format!("while (1) do\n{cont}\nendwhile");
+            }
+            controleer(&cont);
+        }
+
+        // A sweep that accepted nothing would assert nothing, and would say so
+        // by passing. The bound is 64 and the shallow end of each sweep is well
+        // inside it, so acceptances are expected.
+        assert!(
+            gemeten > 0,
+            "the sweep accepted no tree at all, so nothing above was measured"
+        );
+
+        // The assertion that actually distinguishes the two failures. Every
+        // refusal above must come from construction counting correctly and
+        // stopping; if the backstop had to catch anything, construction built
+        // more than it measured -- and on the error path, where a syntax error
+        // unwinds through whatever was built, there is no backstop to catch it.
+        let backstop = BACKSTOP_FIRED.with(|n| n.get());
+        assert_eq!(
+            backstop, 0,
+            "the backstop refused {backstop} tree(s) that construction had \
+             accepted; some node is built without being counted"
+        );
+
+        // and the plain statement forms still round-trip
+        accepted("while (1) do\n  break\nendwhile");
+        accepted("while (1) do\n  continue\nendwhile");
     }
 
     /// The other half: a bound low enough to break real forms is also a bug.
