@@ -191,7 +191,18 @@ def facade_methods() -> dict[str, bool]:
     out: dict[str, bool] = {}
     for m in re.finditer(r"pub fn (\w+)", src):
         name = m.group(1)
-        body = src[m.end() : m.end() + 900].split("\n    pub fn ")[0]
+        # End the body at whatever starts the NEXT item, not only at the next
+        # `pub fn`. A method's doc comment and attributes sit BEFORE its `pub
+        # fn`, so cutting at `pub fn` alone left them inside the previous
+        # method's window -- and a STUB_MARKER word in one method's doc comment
+        # condemned the method above it.
+        #
+        # The 900-character cap went with it: it silently truncated a long
+        # method, so whether a marker was seen depended on how far down the body
+        # it sat. A window that ends at the next item ends where the method does.
+        rest = src[m.end():]
+        eind = re.search(r"\n    (?:///|#\[|pub fn |fn )", rest)
+        body = rest[: eind.start()] if eind else rest
         stub = any(k in body for k in STUB_MARKERS)
         # A method with both a real arm and a wasm-stub arm counts as real.
         out[name] = out.get(name, True) and stub
