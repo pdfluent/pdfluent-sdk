@@ -641,10 +641,18 @@ jobs:
       - name: Did the fixture or its generator move?
         id: fixture-diff
         if: ${{ !cancelled() }}
+        # Through `env:`, not interpolated into the script. A `${{ }}` expansion
+        # is textual, so a caller-supplied value becomes part of the program
+        # rather than an argument to it. Both are shas today, which is why this
+        # read as harmless -- and harmless-today is what the guard checks the
+        # shape instead of.
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          BASE="${{ github.event.pull_request.base.sha }}"
-          if [ -z "$BASE" ]; then BASE="${{ github.event.before }}"; fi
+          BASE="$PR_BASE"
+          if [ -z "$BASE" ]; then BASE="$PUSH_BEFORE"; fi
           case "$BASE" in ""|0000000000000000000000000000000000000000)
               echo "moved=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
           esac
@@ -656,18 +664,29 @@ jobs:
           # through exactly the change that breaks it. Manifests and the lock
           # file are here for the same reason: a version bump changes the
           # writer. (codex, #1649)
-          if git diff --name-only "$BASE"..HEAD -- \
+          # `--quiet` and its exit code, NOT a pipe into grep. Under `pipefail`,
+          # `git diff --name-only ... | grep -q .` fails the whole pipeline with
+          # 141 as soon as grep stops reading and git takes SIGPIPE -- which is
+          # what happens when there are MANY matches, e.g. a bulk edit under
+          # crates/lopdf/. The `else` branch then wrote moved=false and skipped
+          # the fixture check precisely when the input it guards had changed
+          # most. A detector whose failure mode is "too much evidence" is not a
+          # detector. (codex, #1649)
+          #
+          # `git diff --quiet` exits 0 for no change, 1 for a change and 2 on
+          # error, so anything that is not a clean "nothing moved" runs the
+          # guard. It fails towards checking.
+          if git diff --quiet "$BASE"..HEAD -- \
                crates/pdf-manip/examples/java_binding_fixture.rs \
                crates/pdf-java/src/test/resources/binding-fixture.pdf \
                scripts/ci/the_java_fixture_is_the_one_we_generate.py \
                crates/lopdf/ \
                crates/pdf-manip/Cargo.toml \
                crates/pdf-java/Cargo.toml \
-               Cargo.toml Cargo.lock \
-             | grep -q .; then
-            echo "moved=true" >> "$GITHUB_OUTPUT"
-          else
+               Cargo.toml Cargo.lock; then
             echo "moved=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "moved=true" >> "$GITHUB_OUTPUT"
           fi
       - name: The Java binding fixture is the one we generate
         if: ${{ !cancelled() && steps.fixture-diff.outputs.moved == 'true' }}
