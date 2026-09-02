@@ -15,7 +15,7 @@ mine are not.
 - **13 of 13** advertised capabilities are implemented, reachable,
   tested, and covered by a CI job that actually runs the test.
 - **78** public methods on `pdfluent::prelude::PdfDocument`, of which
-  **5** fail at runtime.
+  **4** fail at runtime.
 - **3** published crates are
   absent from the facade's dependency graph;
   **13** are compiled in but
@@ -168,7 +168,7 @@ features were covered.
 | **Defined at** | `crates/pdf-engine/src/api.rs` · `crates/pdf-engine/src/document.rs` · `crates/pdfluent/src/document.rs` · `crates/xfa-wasm/src/lib.rs` |
 | **Reachable from facade** | yes |
 | **Exposed in bindings** | WASM (@pdfluent/sdk-wasm) · C ABI (voedt .NET/Java/Node) · Java (JNI) · Node (napi) |
-| **Tested by** | `crates/pdf-engine/src/document.rs` · `crates/pdf-engine/src/render.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/diagnostics.rs` · `crates/pdfluent/tests/ga_quality.rs` |
+| **Tested by** | `crates/pdf-engine/src/document.rs` · `crates/pdf-engine/src/render.rs` · `crates/pdf-engine/tests/xfa_hostile_script_does_not_crash.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/diagnostics.rs` |
 | **Run in CI by** | `quality:cargo-test` · `sanity:wasm-binding-smoke` |
 
 ### Redact PDF — `shipped`
@@ -241,7 +241,6 @@ The dangerous shape: the type system promises them, the runtime refuses, and
 a caller cannot discover the gap without running it.
 
 - `add_decoration()`
-- `embed_font()`
 - `flatten_forms()`
 - `form_mut()`
 - `linearize()`
@@ -261,7 +260,7 @@ a caller cannot discover the gap without running it.
 | `decrypt` | yes |
 | `diagnostics` | yes |
 | `dimensions` | yes |
-| `embed_font` | **stub** |
+| `embed_font` | yes |
 | `encrypt` | yes |
 | `extract_pages` | yes |
 | `extract_text` | yes |
@@ -338,32 +337,32 @@ delivered through it.
 
 | crate | version | in facade | test files | unit tests | run by |
 |---|---|---|---|---|---|
-| `formcalc-interpreter` | 1.0.0 | internal | 3 | 86 | `quality:cargo-test` |
+| `formcalc-interpreter` | 1.0.0 | internal | 3 | 105 | `quality:cargo-test` |
 | `pdf-annot` | 1.0.0 | direct | — | 38 | `quality:cargo-test` |
 | `pdf-compliance` | 1.0.0 | direct | — | 92 | `quality:cargo-test` |
 | `pdf-docx` | 1.0.0 | direct | — | 24 | `quality:cargo-test` |
-| `pdf-engine` | 1.0.0 | direct | 3 | 155 | `quality:cargo-test` |
+| `pdf-engine` | 1.0.0 | direct | 4 | 155 | `quality:cargo-test` |
 | `pdf-font` | 1.0.0-beta.5 | internal | — | 117 | `quality:cargo-test` |
 | `pdf-interpret` | 0.5.8 | direct | — | 123 | `quality:cargo-test` |
 | `pdf-invoice` | 1.0.0 | **absent** | — | 53 | `quality:cargo-test` |
-| `pdf-manip` | 1.0.0 | direct | 14 | 279 | `quality:cargo-test` |
+| `pdf-manip` | 1.0.0 | direct | 15 | 283 | `quality:cargo-test` |
 | `pdf-ocr` | 1.0.0 | **absent** | 1 | 70 | `quality:cargo-test` |
 | `pdf-pptx` | 1.0.0 | direct | — | 14 | `quality:cargo-test` |
 | `pdf-redact` | 1.0.0 | direct | 6 | 57 | `quality:cargo-test` |
 | `pdf-render` | 1.0.0 | direct | — | 7 | `quality:cargo-test` |
 | `pdf-standard-fonts` | 1.0.0 | internal | — | 9 | `quality:cargo-test` |
-| `pdf-syntax` | 0.5.6 | direct | — | 203 | `quality:cargo-test` |
+| `pdf-syntax` | 0.5.6 | direct | — | 233 | `quality:cargo-test` |
 | `pdf-text-format` | 1.0.0 | **absent** | — | 21 | `quality:cargo-test` |
 | `pdf-xfa` | 1.0.0 | internal | 48 | 383 | `quality:cargo-test` |
 | `pdf-xlsx` | 1.0.0 | direct | — | 19 | `quality:cargo-test` |
 | `pdfluent` | 1.0.0 | direct | 32 | 24 | `quality:cargo-test` |
-| `pdfluent-ccitt` | 0.2.2 | internal | — | 7 | `quality:cargo-test` |
+| `pdfluent-ccitt` | 0.2.2 | internal | — | 9 | `quality:cargo-test` |
 | `pdfluent-cff` | 0.2.1 | internal | — | 26 | `quality:cargo-test` |
 | `pdfluent-extract` | 1.0.0 | internal | — | 77 | `quality:cargo-test` |
 | `pdfluent-forms` | 1.0.0 | direct | 2 | 70 | `quality:cargo-test` |
-| `pdfluent-jbig2` | 0.2.3 | internal | — | 9 | `quality:cargo-test` |
+| `pdfluent-jbig2` | 0.2.3 | internal | 1 | 12 | `quality:cargo-test` |
 | `pdfluent-jpeg2000` | 0.4.0 | internal | — | 12 | `quality:cargo-test` |
-| `pdfluent-lopdf` | 0.39.5 | direct | 1 | 119 | `quality:cargo-test` |
+| `pdfluent-lopdf` | 0.39.5 | direct | 2 | 165 | `quality:cargo-test` |
 | `pdfluent-sign` | 1.0.0 | direct | 1 | 62 | `quality:cargo-test` |
 | `xfa-dom-resolver` | 1.0.0 | internal | 1 | 32 | `quality:cargo-test` |
 | `xfa-js-sandboxed` | 1.0.0 | internal | 5 | 8 | `quality:cargo-test` |
