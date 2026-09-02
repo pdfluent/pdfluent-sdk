@@ -111,7 +111,12 @@ uitgezonderd = [
   "scripts/ci/feature_gaps.toml",
   "scripts/ci/*licen*",
   "scripts/ci/*publicat*",
-  "scripts/ci/geen_interne_zaken.py",
+  # Claimed BACK by t2 on 02-09-2026, so no longer excepted here. T3's session
+  # ended and this guard has become CI wiring: it runs from the commit-msg hook
+  # and from the message-guard job, and #1660 gives it a base-revision route, so
+  # it is maintained where that wiring lives. It returns to t3 the moment there
+  # is a t3 again. Written down rather than left implicit, because this map says
+  # taking on work in another territory is a commit and not a silent edit.
   "scripts/ci/contributors.toml",
   "scripts/ci/repos_staan_zoals_bedoeld.py",
   # t1: guards whose subject is docs/UPSTREAM_FORKS.toml and the worktrees this
@@ -140,7 +145,6 @@ paden = [
   "docs/KWALITEITSSPOOR.md",
   "scripts/ci/*licen*",
   "scripts/ci/*publicat*",
-  "scripts/ci/geen_interne_zaken.py",
   "scripts/ci/contributors.toml",
   "scripts/ci/repos_staan_zoals_bedoeld.py",
   "crates/xfa-license/**",

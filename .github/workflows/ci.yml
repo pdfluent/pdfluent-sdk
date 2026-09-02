@@ -688,6 +688,9 @@ jobs:
       - name: No commit message names an internal matter
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/geen_interne_zaken.py --bereik origin/master..HEAD
+      - name: A hit does not publish the term it found
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_een_treffer_publiceert_de_term_niet.py
 
   commit-identity-guard:
     name: No commit publishes a personal address
