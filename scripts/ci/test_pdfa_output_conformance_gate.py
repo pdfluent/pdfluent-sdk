@@ -23,6 +23,13 @@ Costs nothing to run: it drives `judge()` with numbers, so it needs no veraPDF,
 no mutool, no cargo and no corpus. That is why it can sit in the cheap guard job
 that runs on every pull request, next to the expensive gate it vouches for.
 
+The last two cases run the whole script with a converter that copies, a
+veraPDF that says yes, and a mutool that is either absent or refuses one file.
+Absent must be the announced skip, exit 3. Refusing a file must be exit 1 with
+that file named: the first version returned 3 for both, and the workflow reads
+3 as "nothing to calibrate against", so an unreadable output shipped green
+(codex, #1617).
+
 Exit codes:
     0  the gate accepts what it should and rejects what it should
     1  the gate has stopped biting
@@ -30,7 +37,10 @@ Exit codes:
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -38,8 +48,86 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pdfa_output_conformance_gate import (  # noqa: E402
     FLOORS,
     MINIMUM_FIXTURES,
+    Onleesbaar,
     judge,
+    retentie,
 )
+
+GATE = Path(__file__).resolve().with_name("pdfa_output_conformance_gate.py")
+
+FAKE_CONVERTER = "#!/bin/sh\ncp \"$1\" \"$2\"\n"
+FAKE_VERAPDF = (
+    "#!/bin/sh\n"
+    "echo '{\"report\":{\"jobs\":[{\"validationResult\":[{\"compliant\":true}]}]}}'\n"
+)
+# `mutool draw -F txt <file>`: $4 is the file. Reads every source, refuses
+# every output the converter wrote.
+FAKE_MUTOOL_REFUSES_OUTPUT = (
+    "#!/bin/sh\n"
+    "case \"$4\" in *.pdfa.pdf) echo unreadable >&2; exit 1;; esac\n"
+    "echo some text\n"
+)
+
+
+def schrijf(dir_: Path, naam: str, inhoud: str) -> Path:
+    pad = dir_ / naam
+    pad.write_text(inhoud)
+    pad.chmod(0o755)
+    return pad
+
+
+def draai_gate(mutool: str) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        converter = schrijf(tmp, "converter", FAKE_CONVERTER)
+        verapdf = schrijf(tmp, "verapdf", FAKE_VERAPDF)
+        if mutool == "refuses-output":
+            mutool = str(schrijf(tmp, "mutool", FAKE_MUTOOL_REFUSES_OUTPUT))
+        return subprocess.run(
+            [sys.executable, str(GATE), "--converter", str(converter),
+             "--verapdf", str(verapdf), "--mutool", mutool, "--out", str(tmp / "out")],
+            capture_output=True, text=True, timeout=300,
+        )
+
+
+def unreadable_cases() -> list[bool]:
+    """mutool absent is a skip; mutool refusing a file is a failure naming it."""
+    goed: list[bool] = []
+
+    # The pure half, cheap: a reader that cannot read the output names it.
+    def lezer(p: Path):
+        return None if p.name.endswith(".pdfa.pdf") else b"abc"
+    try:
+        retentie(lezer, Path("a.pdf"), Path("a.pdfa.pdf"), {})
+        print("  FAIL  retentie() swallowed an unreadable output")
+        goed.append(False)
+    except Onleesbaar as e:
+        ok = e.path.name == "a.pdfa.pdf"
+        print(f"  {'ok  ' if ok else 'FAIL'}  retentie() names the side it could not read: {e.path.name}")
+        goed.append(ok)
+
+    if os.name == "nt":
+        print("SKIPPED (not a pass): the end-to-end cases use sh scripts as fake tools, "
+              "which do not run on Windows.", file=sys.stderr)
+        return goed
+
+    r = draai_gate("/nonexistent/mutool-for-this-test")
+    ok = r.returncode == 3 and "SKIPPED (not a pass): mutool" in r.stderr
+    print(f"  {'ok  ' if ok else 'FAIL'}  no mutool installed: exit {r.returncode}, "
+          f"expected 3 with the skip announced")
+    if not ok:
+        print(r.stdout + r.stderr)
+    goed.append(ok)
+
+    r = draai_gate("refuses-output")
+    ok = (r.returncode == 1 and "FATAL" in r.stderr
+          and "could not read" in r.stderr and ".pdfa.pdf" in r.stderr)
+    print(f"  {'ok  ' if ok else 'FAIL'}  mutool refuses an output: exit {r.returncode}, "
+          f"expected 1 naming the file")
+    if not ok:
+        print(r.stdout + r.stderr)
+    goed.append(ok)
+    return goed
 
 FLOOR = {"fixtures": 5, "converted": 5, "conformant": 5, "retained": 5}
 FLOORS_UNDER_TEST = {"linux": dict(FLOOR)}
@@ -128,6 +216,9 @@ def main() -> int:
         # tripwire.
         case("everything matches the floor", dict(FLOOR), "linux", 0),
     ]
+
+    print("[test-pdfa-output] unreadable is a failure, absent is a skip:")
+    goed += unreadable_cases()
 
     if MINIMUM_FIXTURES < 5:
         print(
