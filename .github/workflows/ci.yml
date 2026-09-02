@@ -332,6 +332,9 @@ jobs:
       - name: The build-cache sweeper fails safe
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_sweep_fails_safe.py
+      - name: The Java binding fixture is the one we generate
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_java_fixture_is_the_one_we_generate.py
       - name: A fixture cannot touch a real repository
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/a_fixture_cannot_touch_a_real_repo.py
