@@ -13,7 +13,7 @@
 //!    null`) preserved.
 //! 2. `form` top-level global — identity-equal alias of `xfa.form`.
 //!    Adobe Reader exposes both spellings; templates such as
-//!    `60df78fe_pdf_0012` reference bare `form.X`.
+//!    several corpus forms reference bare `form.X`.
 //! 3. `xfa.host.closeDoc(...)` — interactive thunk; safe default `undefined`,
 //!    bumps `js_unsupported_host_calls`.
 //! 4. `app.messageBox(...)` — Acrobat alias of `app.alert(...)`; safe default
@@ -369,7 +369,7 @@ fn event_name_defaults_to_empty_string() {
 
 /// The combination of stubs lets a realistic Adobe-style initializer run
 /// without any js_runtime_errors. Models the kind of preamble seen in
-/// `60df78fe_pdf_0012` and the Canadian IMM series: probe `form`, set
+/// the Canadian IMM series and similar forms: probe `form`, set
 /// viewer flags, call `app.alert` / `app.messageBox` / `app.closeDoc`,
 /// access `event.name`, all without TypeError.
 #[test]
