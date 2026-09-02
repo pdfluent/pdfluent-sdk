@@ -27,6 +27,7 @@ pass a clone where the hook never runs.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -55,6 +56,28 @@ def schone_omgeving() -> dict[str, str]:
 
 
 def main() -> int:
+    # WHICH LAYERS THE CALLER CAN JUDGE, stated by the caller.
+    #
+    # Layer 3 asks about `core.hooksPath` in THIS clone. A CI checkout is a
+    # fresh clone made by actions/checkout, so it never has it set and never
+    # can: the job was red on every pull request, for a reason that had nothing
+    # to do with the pull request. That is not a finding, it is a guard being
+    # asked a question its environment cannot answer -- and a red that means
+    # nothing teaches people to stop reading reds.
+    #
+    # Not sniffed from the environment. The caller says what it can judge, so
+    # the default is every layer and a new caller that says nothing gets the
+    # strictest reading rather than the most convenient one. Layer 3 keeps a
+    # home where it can fail: scripts/ci/local_ci_gate.sh runs this with no
+    # flag on the machines where a developer clone exists, which is the only
+    # place the answer is meaningful. (#1636 discussion, route 1)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--alleen-boom", action="store_true",
+                    help="judge layers 1 and 2 only: the caller is not a "
+                         "developer clone, so layer 3 (installation) has no "
+                         "answer here. The local gate judges it.")
+    args = ap.parse_args()
+
     problemen: list[str] = []
 
     # 1. the file
@@ -101,6 +124,16 @@ def main() -> int:
         return 1
 
     # 3. the installation, reported separately
+    if args.alleen_boom:
+        print("[commit-msg-wiring] OK: .githooks/commit-msg exists and calls "
+              f"{' and '.join(VEREIST)}.\n"
+              "  Layer 3 (core.hooksPath) NOT judged here: this is not a "
+              "developer clone, and a fresh checkout never has it set. It is "
+              "judged by scripts/ci/local_ci_gate.sh, on the machine where a "
+              "commit is actually written -- which is before the message this "
+              "hook guards exists at all.")
+        return 0
+
     uit = subprocess.run(["git", "config", "--get", "core.hooksPath"],
                          cwd=REPO, capture_output=True, text=True,
                          env=schone_omgeving(), check=False)

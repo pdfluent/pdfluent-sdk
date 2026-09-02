@@ -266,10 +266,16 @@ jobs:
       # wrongly, which is #290's dating bug in a different file.
       - name: Every commit written since the DCO carries a matching sign-off
         if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        # The base sha arrives through `env:` rather than pasted into the script.
+        # A ref is caller-supplied and a `${{ }}` expansion is textual: the value
+        # becomes part of the program instead of an argument to it. This one is a
+        # sha today, which is why it read as harmless -- and harmless-today is the
+        # reason the guard checks the shape rather than the current value.
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           CUTOFF=2c03659a
-          BASE='${{ github.event.pull_request.base.sha }}'
           if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
             git fetch --no-tags --quiet --unshallow || git fetch --no-tags --quiet --deepen=200 || true
           fi
@@ -479,13 +485,16 @@ jobs:
       # (codex, #1639)
       - name: Give the fork guards a history to compare against
         if: ${{ !cancelled() }}
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
           if [ -f .git/shallow ]; then
             git fetch -q --unshallow origin || git fetch -q --deepen=500 origin
           fi
-          BASE="${{ github.event.pull_request.base.sha }}"
-          if [ -z "$BASE" ]; then BASE="${{ github.event.before }}"; fi
+          BASE="$PR_BASE"
+          if [ -z "$BASE" ]; then BASE="$PUSH_BEFORE"; fi
           case "$BASE" in ""|0000000000000000000000000000000000000000)
               git fetch -q origin master
               git update-ref refs/remotes/origin/master "$(git rev-parse FETCH_HEAD)" ;;
@@ -674,9 +683,17 @@ jobs:
       # The wiring first. If the hook is missing or does not call both guards,
       # the two checks below still pass on this branch's own history while
       # nothing protects the next commit anyone writes.
+      # `--alleen-boom`: layers 1 and 2 (the hook file, and that it calls both
+      # guards) are properties of the tree and are judged here. Layer 3 asks
+      # whether `core.hooksPath` is set in THIS clone, and a checkout made by
+      # actions/checkout never has it -- so this job was red on every pull
+      # request for a reason that had nothing to do with the pull request.
+      # Layer 3 is judged by scripts/ci/local_ci_gate.sh on a developer machine,
+      # which is where a commit message is written and therefore the only place
+      # the answer means anything.
       - name: The commit-msg hook exists and calls both message guards
         if: ${{ !cancelled() }}
-        run: python3 scripts/ci/the_commit_msg_hook_is_wired.py
+        run: python3 scripts/ci/the_commit_msg_hook_is_wired.py --alleen-boom
       - name: No commit carries AI attribution
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_ai_attribution.py
@@ -685,6 +702,24 @@ jobs:
         run: python3 scripts/ci/test_no_ai_attribution.py
       # A message cannot be excluded by a manifest the way a file can, so this
       # is the last point before the messages are published.
+      # The list of customer and partner names is deliberately not in the tree:
+      # a forbidden-terms list that publishes its own terms leaks exactly what
+      # it exists to stop, and worse than the commit messages it screens -- a
+      # message can be rewritten, a published source file is in every clone.
+      # So it arrives as a secret and is written where only this job can read
+      # it. If the secret is absent the file is empty, the guard finds no terms
+      # and exits 1 with "SKIPPED (not a pass)" -- which is the right answer:
+      # nobody looked. Fork pull requests do not receive secrets, so when this
+      # repository stops being private the base-revision route from #1649 is
+      # what has to carry this.
+      - name: Provide the internal-terms list
+        if: ${{ !cancelled() }}
+        env:
+          TERMEN: ${{ secrets.PDFLUENT_INTERNE_TERMEN }}
+        run: |
+          printf '%s\n' "$TERMEN" > "$RUNNER_TEMP/interne-termen.txt"
+          echo "PDFLUENT_INTERNE_TERMEN=$RUNNER_TEMP/interne-termen.txt" >> "$GITHUB_ENV"
+          echo "::add-mask::$TERMEN"
       - name: No commit message names an internal matter
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/geen_interne_zaken.py --bereik origin/master..HEAD
