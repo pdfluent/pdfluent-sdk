@@ -15,7 +15,7 @@ mine are not.
 - **13 of 13** advertised capabilities are implemented, reachable,
   tested, and covered by a CI job that actually runs the test.
 - **78** public methods on `pdfluent::prelude::PdfDocument`, of which
-  **4** fail at runtime.
+  **3** fail at runtime.
 - **3** published crates are
   absent from the facade's dependency graph;
   **13** are compiled in but
@@ -242,7 +242,6 @@ a caller cannot discover the gap without running it.
 
 - `add_decoration()`
 - `flatten_forms()`
-- `form_mut()`
 - `linearize()`
 
 ### All public methods
@@ -269,7 +268,7 @@ a caller cannot discover the gap without running it.
 | `flatten_forms` | **stub** |
 | `form_fields` | yes |
 | `form_model` | yes |
-| `form_mut` | **stub** |
+| `form_mut` | yes |
 | `from_bytes` | yes |
 | `from_bytes_with` | yes |
 | `from_reader` | yes |
@@ -345,7 +344,7 @@ delivered through it.
 | `pdf-font` | 1.0.0-beta.5 | internal | — | 117 | `quality:cargo-test` |
 | `pdf-interpret` | 0.5.8 | direct | — | 123 | `quality:cargo-test` |
 | `pdf-invoice` | 1.0.0 | **absent** | — | 53 | `quality:cargo-test` |
-| `pdf-manip` | 1.0.0 | direct | 15 | 283 | `quality:cargo-test` |
+| `pdf-manip` | 1.0.0 | direct | 15 | 288 | `quality:cargo-test` |
 | `pdf-ocr` | 1.0.0 | **absent** | 1 | 70 | `quality:cargo-test` |
 | `pdf-pptx` | 1.0.0 | direct | — | 14 | `quality:cargo-test` |
 | `pdf-redact` | 1.0.0 | direct | 6 | 57 | `quality:cargo-test` |
