@@ -365,6 +365,25 @@ def ensure_clone(url: str) -> str | None:
 
 
 def have_commit(clone: Path, commit: str) -> bool:
+    """Whether the cache holds this commit, judged on the object, not a ref.
+
+    The ``^{commit}`` peel is load-bearing and must not be simplified away.
+    A commit SHA is a content hash, so an object with the register's SHA and a
+    different tree cannot be produced without a SHA-1 collision -- but an
+    object can be *planted* at that SHA's path, and the two spellings disagree
+    about it. Measured on a bare repo with a mismatched object planted at a
+    genuine SHA::
+
+        git cat-file -e <sha>^{commit}   ->  rc 128, "error: hash mismatch"
+        git cat-file -e <sha>            ->  rc 0
+        git show -s --format=%s <sha>    ->  the planted content
+
+    Without the peel the guard would accept the plant and version_at() would
+    then read it, because the read path does not rehash either. The peel is
+    what makes the cache location being environment-chosen (XDG_CACHE_HOME)
+    harmless here. Pinned by
+    `test_een_geplant_object_wordt_niet_geaccepteerd`.
+    """
     return git("cat-file", "-e", f"{commit}^{{commit}}", cwd=clone).returncode == 0
 
 
@@ -374,10 +393,16 @@ def refresh_for(clone: Path, commits: list[str], upstream_url: str) -> str | Non
     Only when needed: a fetch on every run is a network round-trip to learn
     nothing, and this check runs on every push.
     """
-    if all(have_commit(clone, c) for c in commits):
-        return None
+    # The identity check runs before the early return, not only on the fetch
+    # path. CACHE_ROOT is chosen by XDG_CACHE_HOME, so a cache that is really
+    # this repository would otherwise be read without ever being questioned:
+    # every commit present, early return, and the register then verified
+    # against ourselves instead of against upstream. That is a false green
+    # rather than damage, but it is the same door #308 closed on the fetch.
     if (waarom := de_fetch_gaat_naar_de_cache(clone, upstream_url)) is not None:
         return waarom
+    if all(have_commit(clone, c) for c in commits):
+        return None
     out = git_verzegeld("fetch", "--quiet", "--filter=blob:none", "origin",
               "+refs/heads/*:refs/heads/*", cwd=clone)
     if out.returncode != 0:
