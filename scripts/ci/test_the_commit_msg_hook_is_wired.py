@@ -107,13 +107,33 @@ expect("  and the comment naming it is not mistaken for the call",
        "geen_interne_zaken" in r.stderr, r.stderr[:200])
 
 # THE HOME. Layer 3 is skipped in CI only because somewhere else still asks it.
-poort = (REPO / "scripts" / "ci" / "local_ci_gate.sh").read_text()
-aanroepen = [r for r in poort.splitlines() if "the_commit_msg_hook_is_wired.py" in r]
-expect("the local gate still calls the guard", bool(aanroepen), poort[:0])
-expect("  and calls it with NO flag, so layer 3 keeps a place to fail",
-       all("--alleen-boom" not in r for r in aanroepen), str(aanroepen))
+#
+# Matched on the exact script ARGUMENT, not as a substring. The first version
+# asked whether "the_commit_msg_hook_is_wired.py" appeared anywhere in the
+# gate -- and `test_the_commit_msg_hook_is_wired.py`, the line that runs THIS
+# file, contains it. So deleting the guard's own invocation left the suite
+# green: the assertion that the skipped layer still had a home was satisfied by
+# the test asserting it. (codex, #1660)
+def gate_aanroepen(script: str) -> list[str]:
+    """Lines of the local gate that run exactly this script."""
+    uit = []
+    for regel in (REPO / "scripts" / "ci" / "local_ci_gate.sh").read_text().splitlines():
+        for stuk in regel.split():
+            if stuk.rsplit("/", 1)[-1] == script:
+                uit.append(regel)
+                break
+    return uit
 
-MINIMUM_CASES = 9  # FLOOR
+
+aanroepen = gate_aanroepen("the_commit_msg_hook_is_wired.py")
+expect("the local gate still calls the guard itself", len(aanroepen) == 1,
+       f"matched {len(aanroepen)} line(s): {aanroepen}")
+expect("  and calls it with NO flag, so layer 3 keeps a place to fail",
+       aanroepen and all("--alleen-boom" not in r for r in aanroepen), str(aanroepen))
+expect("  and the test is wired separately",
+       len(gate_aanroepen("test_the_commit_msg_hook_is_wired.py")) == 1)
+
+MINIMUM_CASES = 11  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")

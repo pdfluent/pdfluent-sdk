@@ -90,6 +90,13 @@ jobs:
       # The guard first, then its own test -- a guard whose parser stopped
       # understanding the files reports a clean tree in exactly the same words
       # as a clean tree.
+      # This job grew a PyYAML dependency the moment the baseline guard started
+      # reading `runs-on` from parsed YAML instead of scanning text, and the job
+      # was never told. `import yaml` then fails with ModuleNotFoundError on any
+      # runner without a preinstall. scripts/ci/a_job_has_what_its_scripts_import.py
+      # checks this for every job now, so the next script to grow the import does
+      # not have to be caught by a reviewer. (codex, #1660)
+      - run: pip install --quiet pyyaml
       - name: Every baseline names the machine it came from
         run: python3 scripts/ci/a_baseline_names_the_machine.py
       - name: The baseline-hardware guard still bites
