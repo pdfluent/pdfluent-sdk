@@ -186,6 +186,22 @@ def een_volledige_cache_wordt_nog_steeds_ondervraagd() -> str | None:
     return None
 
 
+def vendor_de_wacht(doel: Path) -> Path:
+    """Copy the register guard into `doel/scripts/ci`, with what it imports.
+
+    The guard seals its environment through `fixture_env.sealed_env()` and loads
+    it as a sibling file, so a copy of the guard alone is not the guard: it dies
+    on the import before it can refuse anything, and a fixture that dies is not
+    a fixture that passed. One place vendors both, because the first time this
+    was written twice one of the two was already wrong. (#292)
+    """
+    (doel / "scripts" / "ci").mkdir(parents=True, exist_ok=True)
+    for naam in ("the_fork_register_is_verifiable.py", "fixture_env.py"):
+        bron = ROOT / "scripts" / "ci" / naam
+        (doel / "scripts" / "ci" / naam).write_bytes(bron.read_bytes())
+    return doel / "scripts" / "ci" / "the_fork_register_is_verifiable.py"
+
+
 def main() -> int:
     if not (ROOT / "scripts/ci").is_dir():
         print(f"SKIPPED (not a pass): {ROOT}/scripts/ci is missing", file=sys.stderr)
@@ -279,8 +295,7 @@ def main() -> int:
         (vendored / "scripts" / "ci").mkdir(parents=True)
         run("init", "-q", str(vendored), cwd=tmp)
         run("remote", "add", "origin", "https://github.com/LaurenzV/hayro.git", cwd=vendored)
-        script = ROOT / "scripts/ci/the_fork_register_is_verifiable.py"
-        (vendored / "scripts/ci" / script.name).write_bytes(script.read_bytes())
+        script = vendor_de_wacht(vendored)
         spec_v = importlib.util.spec_from_file_location(
             "reg_vendored", vendored / "scripts/ci" / script.name
         )
@@ -322,7 +337,7 @@ def main() -> int:
         run("worktree", "add", "-q", str(zijtak), cwd=hoofd)
         # the guard lives in the worktree, and is asked about the main checkout
         (zijtak / "scripts" / "ci").mkdir(parents=True, exist_ok=True)
-        (zijtak / "scripts/ci" / script.name).write_bytes(script.read_bytes())
+        script = vendor_de_wacht(zijtak)
         spec_w = importlib.util.spec_from_file_location(
             "reg_worktree", zijtak / "scripts/ci" / script.name
         )
