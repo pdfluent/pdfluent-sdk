@@ -526,7 +526,15 @@ jobs:
             echo "::error::cargo is not runnable on this runner. \$HOME is $HOME; \$HOME/.cargo/bin is $([ -d "$HOME/.cargo/bin" ] && echo present || echo absent). Every step below that needs the toolchain will fail with a FileNotFoundError that says nothing about this." >&2
             exit 1
           fi
-          echo "cargo: $(cargo --version)"
+          # Status-checked, not `echo $(…)`: if cargo resolves but cannot run --
+          # a rustup shim with no toolchain installed -- the substitution fails,
+          # `echo` still returns 0, `set -e` sees nothing, and the step reports
+          # success with an empty version. The one case this check exists for
+          # would pass it. (codex, #1659)
+          cargo --version || {
+            echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: `command -v cargo` succeeds and every build fails." >&2
+            exit 1
+          }
       # In promise-guard because it is the job that already has cargo on PATH,
       # and DEBUG rather than --release: measured profile-independent, the
       # generator produces the same 1090 bytes either way, and debug shares
