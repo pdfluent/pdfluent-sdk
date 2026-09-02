@@ -459,6 +459,30 @@ jobs:
               fi
             done
             if [ "$FAIL" = "1" ]; then exit 1; fi
+      # The fork guards compare against the base, and actions/checkout is
+      # shallow: neither github/master nor origin/master nor master exists, so
+      # `merge-base` failed and the register-lines check returned "nothing
+      # moved" -- the answer that lets everything through. Measured: without a
+      # base ref the guard printed SKIPPED and exited 0 while a change to a
+      # `niet_mergen` entry passed underneath it. It is fatal now, so this fetch
+      # is what makes it able to answer rather than what hides it.
+      # (codex, #1639)
+      - name: Fetch the base these guards compare against
+        if: ${{ !cancelled() }}
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          BASE="${PR_BASE:-}"
+          if [ -z "$BASE" ]; then BASE="${PUSH_BEFORE:-}"; fi
+          case "$BASE" in ""|0000000000000000000000000000000000000000)
+              git fetch -q --depth=200 origin master || git fetch -q origin master
+              git update-ref refs/remotes/origin/master "$(git rev-parse FETCH_HEAD)"
+              exit 0 ;;
+          esac
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE"
+          git update-ref refs/remotes/origin/master "$BASE"
       - name: A fork declares where it forked from
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py
@@ -468,9 +492,6 @@ jobs:
       - name: The shared config does not break worktrees
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py
-      - name: Every self-hosted label has a runner that answers it
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/every_label_has_a_runner.py
 
 
   # --------------------------------------------------------------------------

@@ -92,6 +92,21 @@ REASONS = {"corpus", "runner", "covered-elsewhere", "credentials"}
 ALLOWED: dict[str, str] = {
     "every_guard_has_a_job.py": "this file itself; its own job does name it",
 
+    # Cannot work in a workflow, by its own measurement: /actions/runners needs
+    # `administration: read`, which GITHUB_TOKEN cannot be granted, and there is
+    # no `gh` on the runner. Wired into a job it printed SKIPPED and returned 0
+    # on every run -- a green tick for a check that never asked anything, while
+    # this file counted the filename in a `run:` and called it enforced.
+    #
+    # It runs in the local gate, where `gh` is authenticated, and it now exits 1
+    # rather than 0 when CI is set, so wiring it again fails loudly instead of
+    # quietly. A token for it is an owner decision (#290). (codex, #1639)
+    "every_label_has_a_runner.py": (
+        "needs `gh` with a keyring; GITHUB_TOKEN cannot be granted the scope "
+        "/actions/runners requires, so in a workflow it can only skip. Runs in "
+        "scripts/ci/local_ci_gate.sh"
+    ),
+
     # Not a guard. A shared helper the fixtures import; a job for it would run
     # a module with no verdict and report success for having imported it. It
     # arrived with #1647 and was counted here as an orphan on every run, which
