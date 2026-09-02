@@ -172,6 +172,12 @@ r = run(tree({}))
 expect("no pull_request job at all is FATAL, not a pass", r.returncode == 2,
        f"exit={r.returncode}")
 
+# The dormant-DYNAMIC rule is not exercised here: DYNAMIC names
+# ci-ephemeral.yml:workspace specifically, and these fixtures build synthetic
+# workflow trees that do not contain it. Proven against the real tree instead --
+# putting the pull_request trigger back on ci-ephemeral.yml turns the guard red
+# and names the entry. Said plainly rather than covered by an assertion that
+# only greps the source for the word.
 MINIMUM_CASES = 22  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:

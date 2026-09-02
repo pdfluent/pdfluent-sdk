@@ -52,6 +52,21 @@ FLOW = REPO / ".github" / "workflows"
 # about something else and this goes red.
 DYNAMIC: dict[str, dict] = {
     "ci-ephemeral.yml:workspace": {
+        # DORMANT since 02-09-2026: this branch removes ci-ephemeral.yml's
+        # pull_request trigger, so the job is no longer reachable from a pull
+        # request and this entry matches nothing today.
+        #
+        # Kept rather than deleted, and that is the opposite of what the KNOWN
+        # sweep below demands of a register -- deliberately. KNOWN records
+        # exceptions that must SHRINK; this records a claim someone has to read
+        # BEFORE they touch create-runner, and deleting it would take the
+        # warning away exactly when the trigger comes back.
+        #
+        # Guarded rather than trusted: a dormant entry whose job becomes
+        # pull_request-reachable again while still marked dormant is a failure,
+        # because the claim was written about a job nobody was running.
+        # (T1 review, #1649)
+        "dormant": True,
         "producer": "create-runner",
         "why": (
             "the one job that SHOULD run the pull request's own code: "
@@ -179,6 +194,7 @@ def main() -> int:
         return 2
 
     problems: list[str] = []
+    reachable: set[str] = set()
     stale: list[str] = []
     checked = 0
     seen: set[str] = set()
@@ -251,12 +267,22 @@ def main() -> int:
                         f"`matrix.{key}`, which this guard cannot resolve.")
                     continue
             key = f"{f.name}:{name}"
+            reachable.add(key)
             if key in KNOWN:
                 seen.add(key)
             for candidate in candidates:
                 problems.extend(_judge(key, job, f.name, name, candidate,
                                        target_only))
             continue
+
+    # A dormant DYNAMIC entry must stay unreachable. If its job turns up in the
+    # pull_request-reachable set again, the claim is live and unexamined.
+    for key, entry in sorted(DYNAMIC.items()):
+        if entry.get("dormant") and key in reachable:
+            stale.append(
+                f"{key} is marked dormant in DYNAMIC, and is reachable from "
+                "pull_request again. The claim was written about a job nobody "
+                "was running; re-read it before the trigger goes back.")
 
     present = {f.name for f in files}
     for key in sorted(set(KNOWN) - seen):
