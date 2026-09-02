@@ -31,12 +31,30 @@ const HOSTILE: &[u8] = include_bytes!("../../../fixtures/formcalc/hostile_deep_c
 /// fixture stopped rendering rather than the guard doing its job.
 const BENIGN: &[u8] = include_bytes!("../../../fixtures/formcalc/fc_01_arithmetic.pdf");
 
+/// The stacks `render_page` is called from. 256 KiB is the least an
+/// embedder's worker thread might have; 1 MiB is the wasm32 default; 2 MiB is
+/// Rust's default for a spawned thread and what most binding runtimes give a
+/// worker; 8 MiB is the main thread on macOS and Linux.
+const CALLER_STACKS: [usize; 4] = [256 * 1024, 1 << 20, 2 << 20, 8 << 20];
+
 fn renders(bytes: &[u8]) -> bool {
     let doc = match PdfDocument::open(bytes.to_vec()) {
         Ok(doc) => doc,
         Err(_) => return false,
     };
     doc.render_page(0, &RenderOptions::default()).is_ok()
+}
+
+/// Run `f` on a thread with exactly `bytes` of stack. A stack overflow does
+/// not come back through `join`: it aborts the process, and the test run
+/// with it.
+fn on_a_stack_of(bytes: usize, f: impl FnOnce() -> bool + Send + 'static) -> bool {
+    std::thread::Builder::new()
+        .stack_size(bytes)
+        .spawn(f)
+        .expect("spawn")
+        .join()
+        .expect("render_page must return, not abort")
 }
 
 #[test]
@@ -47,7 +65,32 @@ fn a_hostile_formcalc_script_does_not_abort_render_page() {
     let _ = renders(HOSTILE);
 }
 
+/// The issue's table: before the fix, SIGABRT at 256 KB, 2 MB and 8 MB alike,
+/// because the crash was on the thread `flatten` spawns and not the caller's.
+/// Now the answer is a `Result` on every caller stack -- and the caller's
+/// stack still does not matter, which is the point: the evaluator's budget is
+/// counted and measured inside the pipeline, not inherited from whoever calls.
+#[test]
+fn a_hostile_formcalc_script_returns_on_every_caller_stack() {
+    for stack in CALLER_STACKS {
+        let _ = on_a_stack_of(stack, || renders(HOSTILE));
+    }
+}
+
 #[test]
 fn the_ordinary_form_still_renders() {
     assert!(renders(BENIGN), "the benign control stopped rendering");
+}
+
+/// The acceptance side on the same stacks: a refusal that also stopped
+/// ordinary forms from rendering would be the other failure direction.
+#[test]
+fn the_ordinary_form_still_renders_on_every_caller_stack() {
+    for stack in CALLER_STACKS {
+        assert!(
+            on_a_stack_of(stack, || renders(BENIGN)),
+            "the benign control stopped rendering on a {} KiB caller stack",
+            stack / 1024
+        );
+    }
 }

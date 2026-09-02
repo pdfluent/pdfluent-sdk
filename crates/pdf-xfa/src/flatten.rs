@@ -4800,6 +4800,66 @@ fn flatten_xfa_to_pdf_simulate_reentrant(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
 
+    /// 63 nested FormCalc user functions, each carrying a 60-term expression:
+    /// legal by every bound on its own, ~3900 evaluation levels together.
+    const HOSTILE_FORMCALC: &[u8] =
+        include_bytes!("../../../fixtures/formcalc/hostile_deep_call_chain.pdf");
+
+    /// The same kind of form with the script it shipped with.
+    const BENIGN_FORMCALC: &[u8] =
+        include_bytes!("../../../fixtures/formcalc/fc_01_arithmetic.pdf");
+
+    /// `xfa_flatten_inner` as the wasm32 build runs it: no thread of its own,
+    /// on whatever stack the caller has.
+    fn flatten_inline(pdf_bytes: &'static [u8]) -> bool {
+        let packets = extract_xfa_from_bytes(pdf_bytes.to_vec()).expect("fixture carries XFA");
+        let template_xml = strip_undefined_xml_entities(packets.template().expect("template"));
+        let datasets_xml = packets.datasets().map(strip_undefined_xml_entities);
+        let form_xml = packets.get_packet("form").map(|s| s.to_string());
+        xfa_flatten_inner(
+            pdf_bytes,
+            &template_xml,
+            datasets_xml.as_deref(),
+            form_xml.as_deref(),
+            false,
+            XfaRenderingPolicy::default(),
+        )
+        .is_ok()
+    }
+
+    /// Run `f` on a thread with exactly `bytes` of stack. An overflow does not
+    /// come back through `join`; it aborts the process.
+    fn on_a_stack_of(bytes: usize, f: impl FnOnce() -> bool + Send + 'static) -> bool {
+        std::thread::Builder::new()
+            .stack_size(bytes)
+            .spawn(f)
+            .expect("spawn")
+            .join()
+            .expect("the pipeline must return, not overflow the stack")
+    }
+
+    /// On wasm32 there is no 32 MB worker: `flatten` runs the whole pipeline
+    /// inline on the host's stack, which is 1 MiB by default and set nowhere
+    /// in this tree. The native tests cannot see that path, because on native
+    /// the worker thread's stack hides whatever the evaluator costs. This runs
+    /// the same inner pipeline on a 1 MiB thread -- the shipped wasm32 shape,
+    /// on native -- against the form that descended ~3900 levels (#305).
+    #[test]
+    fn the_inline_pipeline_returns_for_the_hostile_form_on_a_1_mib_stack() {
+        // Any answer but an abort: refused script, static fallback, or an error.
+        let _ = on_a_stack_of(1 << 20, || flatten_inline(HOSTILE_FORMCALC));
+    }
+
+    /// The acceptance side of the same path: an ordinary FormCalc form still
+    /// flattens on the smallest stack the pipeline ships on.
+    #[test]
+    fn the_inline_pipeline_flattens_an_ordinary_form_on_a_1_mib_stack() {
+        assert!(
+            on_a_stack_of(1 << 20, || flatten_inline(BENIGN_FORMCALC)),
+            "the benign control stopped flattening on a 1 MiB stack"
+        );
+    }
+
     /// Build a minimal XFA PDF in memory (same as generate_xfa_layout_fixtures).
     fn build_xfa_pdf_with_content(xdp: &str, page_content: Vec<u8>) -> Vec<u8> {
         use lopdf::{dictionary, Document, Object, Stream};
