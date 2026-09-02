@@ -92,8 +92,153 @@ REF_VASTGEZET = re.compile(
     r"(format\('refs/heads/\{0\}',\s*github\.event\.repository\.default_branch\)"
     r"|'refs/heads/(master|main)')")
 
+# Two spellings, one meaning: a pull request lands on a hosted runner.
+#
+#   event_name == 'push'          && <self-hosted> || '<hosted>'
+#   event_name != 'pull_request'  && <self-hosted> || '<hosted>'
+#
+# The second is not a loosening -- it is the rule stated exactly. "is a push"
+# also sends schedule and workflow_dispatch to a hosted runner, which turned the
+# nightly security audit into paid minutes for work that ran free on the desktop
+# and had nothing to do with pull-request code (#1380). What must stay off that
+# machine is a PULL REQUEST, so that is what the condition should say.
+#
+# The inverse -- `== 'pull_request' && <self-hosted>` -- matches neither, which
+# is the whole point: it puts pull requests ON the desktop. (T1 review, #1649)
+# The SHAPE: some test on github.event_name choosing a runner, falling back to a
+# hosted one. Which events may take the self-hosted branch is decided by
+# per_gebeurtenis_veilig() below -- the regex says "this is a per-event choice",
+# not "this choice is safe". Keeping those two apart is what let the safe set
+# become a positive list without rewriting the pattern a fourth time.
 ALLEEN_BIJ_PUSH = re.compile(
-    r"github\.event_name\s*==\s*'push'\s*&&.*?\|\|\s*'[^']*ubuntu", re.S)
+    r"github\.event_name\s*[=!]=\s*'[a-z_]+'.*?\|\|\s*'[^']*ubuntu", re.S)
+
+
+# The events whose code is already merged and carries no external input. A job
+# may choose the persistent desktop for these and nothing else.
+#
+# `push` is code that is on master. `schedule` runs the default branch. Every
+# other event either carries a contributor's revision (pull_request,
+# pull_request_target) or lets the caller pick one (workflow_dispatch --
+# `gh workflow run --ref <branch>` runs that branch's checkout and actions on the
+# runner, so anyone with dispatch rights could put arbitrary branch code on the
+# desktop).
+DESKTOP_GEBEURTENISSEN = frozenset({"push", "schedule"})
+
+_EVENT_NAAM = re.compile(r"github\.event_name\s*(==|!=)\s*'([a-z_]+)'")
+
+
+def desktop_toegestaan(triggers) -> frozenset[str]:
+    """Which desktop events THIS workflow's triggers actually make safe.
+
+    `push` is "code that is already on master" only when its branch filter says
+    so. `push: branches: ['**']` runs whatever is on any branch, which is the
+    pull-request case with the review left out -- and the canonical expression
+    would have called it safe, because the expression names the event and the
+    event was assumed to mean master. A tags-only push is no better: a tag can
+    point at a commit that never reached master.
+
+    `schedule` needs no filter. GitHub only ever runs a scheduled workflow from
+    the default branch, so there is no ref for a caller to choose. (codex, #1649)
+    """
+    if triggers is None:
+        return DESKTOP_GEBEURTENISSEN
+    if not isinstance(triggers, dict):
+        # `on: [push, pull_request]` carries no filters at all, so a push named
+        # there is unrestricted -- naming an event is not the same as limiting
+        # it. A push NOT named there cannot happen, and unreachable is not
+        # unsafe, so it stays in the set.
+        genoemd = set(triggers) if isinstance(triggers, (list, tuple, set)) else set()
+        return DESKTOP_GEBEURTENISSEN - (genoemd & {"push"})
+    ok = set()
+    for naam in DESKTOP_GEBEURTENISSEN:
+        if naam not in triggers:
+            # NOT a trigger of this workflow, so `event_name == '<naam>'` can
+            # never be true and the desktop branch behind it is unreachable.
+            # Unreachable is not unsafe: refusing it flagged the canonical
+            # expression in a pull_request-only workflow, where the condition
+            # cannot select anything at all. A guard that cannot tell "this
+            # never happens" from "this is dangerous" spends its credibility on
+            # the first to protect against the second.
+            ok.add(naam)
+            continue
+        blok = triggers.get(naam)
+        if naam != "push":
+            ok.add(naam)
+            continue
+        takken = blok.get("branches") if isinstance(blok, dict) else None
+        if takken and set(map(str, takken)) <= {"master"}:
+            ok.add("push")
+    return frozenset(ok)
+
+
+# The whole expression, taken apart: `<condition> && <desktop> || <hosted>`.
+#
+# Finding the allowed comparison ANYWHERE in the string was not enough. In
+# `${{ event_name == 'push' || fromJSON('["self-hosted",...]') || 'ubuntu-latest' }}`
+# the comparison is present and the structure is inverted: on a pull request the
+# first operand is false, so the disjunction yields the ARRAY -- the desktop --
+# and the scan approved it because it had found the words it was looking for.
+# The operator between the condition and the runner is what decides, so the
+# operator is what gets read. (codex, #1649)
+_STRUCTUUR = re.compile(
+    r"\$\{\{\s*(?P<cond>.+?)\s*&&\s*(?P<desktop>.+?)\s*\|\|\s*(?P<gehost>.+?)\s*\}\}",
+    re.S)
+# What may appear in the condition: event comparisons, booleans, parentheses.
+# Anything else -- a function call, an array, a context lookup -- means the
+# condition is doing something this guard has not been taught to read, and an
+# unread condition is not a safe one.
+# NO `!`. Stripping it as punctuation made `!(github.event_name == 'push')`
+# read as an allowed push comparison -- the exact inverse of the rule, calling
+# every event EXCEPT push safe and putting pull requests and dispatches on the
+# desktop. A negation does not decorate a condition, it reverses it, so the
+# only conditions this guard accepts are the un-negated whitelist forms.
+# (codex, #1649)
+_COND_REST = re.compile(r"github\.event_name\s*==\s*'[a-z_]+'|&&|\|\||[()\s]")
+_NEGATIE = re.compile(r"!")
+
+
+def per_gebeurtenis_veilig(runs_on: str, events: set[str] | None = None,
+                           toegestaan: frozenset[str] | None = None) -> bool:
+    """Whether this runs-on can only reach the desktop on a merged-code event.
+
+    A POSITIVE list, after three rounds of exclusions. `== 'push'` was widened to
+    `!= 'pull_request'` so the nightly audit would stay free, and that let
+    pull_request_target through; excluding that let workflow_dispatch through.
+    Each round was a correct fix to the case in front of it, and each opened the
+    door beside it, because "everything except X" is a claim about an event list
+    that grows without asking.
+
+    So the condition has to NAME the events on which the desktop is chosen, and
+    every one of them has to be in DESKTOP_GEBEURTENISSEN. The next event GitHub
+    adds is then a refusal rather than a leak. (codex, #1649)
+    """
+    if not ALLEEN_BIJ_PUSH.search(runs_on):
+        return False
+    vorm = _STRUCTUUR.search(runs_on)
+    if not vorm:
+        return False
+    cond = vorm.group("cond")
+    # The condition must gate the DESKTOP branch, not sit beside it.
+    if _NEGATIE.search(cond) or _COND_REST.sub("", cond).strip():
+        return False
+    if "self-hosted" in cond or "self-hosted" in vorm.group("gehost"):
+        return False
+    genoemd = _EVENT_NAAM.findall(cond)
+    if not genoemd:
+        return False
+    veilig = DESKTOP_GEBEURTENISSEN if toegestaan is None else toegestaan
+    for operator, naam in genoemd:
+        if operator == "!=":
+            # An exclusion says nothing about what remains. It is safe only when
+            # the workflow's own triggers happen to leave nothing dangerous, and
+            # that is a fact about the workflow, not about the expression.
+            rest = (events or set()) - {naam}
+            if not rest or not rest <= veilig:
+                return False
+        elif naam not in veilig:
+            return False
+    return True
 
 
 # A job is heavy when it compiles the workspace. Those belong on a throwaway
@@ -108,6 +253,17 @@ ZWAAR = re.compile(r"\bcargo\s+(build|test|check|clippy|bench|doc)\b")
 # instance on every run. Recorded so the count cannot grow, and so that removing
 # one is a decision rather than a line that ages.
 ZWARE_BASELINE = {
+    # ci-ephemeral's create-runner and reap left on 02-09-2026: removing that
+    # workflow's pull_request trigger (#311) means they are no longer reachable
+    # from a pull request at all, so the rows described nothing. Third register
+    # to shrink in this series rather than grow.
+
+    # Seven entries left on 02-09-2026: #311 moved every ci.yml guard job and
+    # both security-audit jobs onto the canonical per-event runs-on, so their
+    # rows described nothing. Removed rather than kept, for the reason this
+    # guard already enforces -- a baseline that outlives its subject stops
+    # meaning anything, and the count is supposed to fall.
+
     ("bench.yml", "benchmark"),
     ("crash-guard.yml", "crash-guard"),
     ("gate-ci.yml", "gate"),
@@ -161,11 +317,48 @@ def compileert(job, wortel: pathlib.Path) -> bool:
     return False
 
 
-def op_blijvende_runner(runs_on) -> bool:
-    tekst = str(runs_on)
-    if not any(l in tekst for l in PERSISTENT_LABELS):
+def noemt_blijvende_runner(runs_on) -> bool:
+    """Does this job ask for the desktop at all, on any event?
+
+    The heavy-job rule asks this and nothing more: compiling the workspace
+    saturates that machine whether the run was reviewed or not, which is what
+    the comment at its call site has always said. It used to ask
+    op_blijvende_runner() instead and so quietly stopped counting every job
+    whose runner choice looked safe -- a different question's answer.
+    """
+    return any(l in str(runs_on) for l in PERSISTENT_LABELS)
+
+
+def op_blijvende_runner(runs_on, events: set[str] | None = None,
+                        triggers=None) -> bool:
+    """Can UNMERGED code reach the desktop through this runner choice?
+
+    ONE decision point. This used to answer it with the shape-match alone, and
+    the moment that shape widened to accept `!=` it began waving through
+    exactly the form workflow_dispatch reaches: `!= 'pull_request'` matched, so
+    the job was classified as not-on-the-desktop and never looked at again.
+    Two places deciding the same thing, and the newer one silenced the older.
+    Whether a per-event choice is safe is per_gebeurtenis_veilig's question,
+    here as everywhere. (codex, #1649)
+
+    events=None means the caller could not say which events reach the job.
+    per_gebeurtenis_veilig refuses to call that safe, so the job is judged.
+    """
+    if not noemt_blijvende_runner(runs_on):
         return False
-    return not ALLEEN_BIJ_PUSH.search(tekst)
+    veilig = desktop_toegestaan(triggers)
+    # Same rule as the sibling guard: a LIST demands every label, so a literal
+    # desktop label beside a per-event expression is asked for unconditionally
+    # and the expression excuses nothing. (T1 review, #1649)
+    if isinstance(runs_on, list):
+        letterlijk = [str(l) for l in runs_on if l and "${{" not in str(l)]
+        if any(l in PERSISTENT_LABELS for l in letterlijk):
+            return True
+        expressies = [str(l) for l in runs_on if l and "${{" in str(l)]
+        if expressies:
+            return not all(per_gebeurtenis_veilig(e, events, veilig)
+                           for e in expressies)
+    return not per_gebeurtenis_veilig(str(runs_on), events, veilig)
 
 # Eight jobs that already had this exposure before the ephemeral workflows
 # existed. Recorded so the count cannot grow while they are dealt with
@@ -203,15 +396,12 @@ BASELINE = {
     # working, so this is where the guards keep running at all. Seconds of file
     # scanning each; booting an instance would cost more than the work. Under
     # the same 28-08 decision about branch code on the desktop (#274).
-    ("ci.yml", "orchestration-guard"),
     # #288 moved thirteen guards off the GitLab mirror, where a failure stopped
     # nothing, into these two jobs. They land on the desktop for the same reason
     # orchestration-guard did: a spending limit disables hosted runners and
     # leaves self-hosted ones working, and a guard that stops on the day the
     # bill stops is worthless on the day it matters. Python file scans plus
     # `cargo metadata` and `cargo tree` -- no compilation, seconds of work.
-    ("ci.yml", "promise-guard"),
-    ("ci.yml", "measurement-guard"),
     # Same shape and same 28-08 decision: checkout, python, two file scans,
     # seconds. It is a second job rather than two more steps on the one above
     # because that job runs thirty-seven steps in sequence and aborts on the
@@ -219,26 +409,20 @@ BASELINE = {
     # last thirty runs on master, so the thirty-five guards below that step
     # were installed and not executing. A gate nobody can see pass is not a
     # gate (#283).
-    ("ci.yml", "baseline-hardware-guard"),
     # Same shape as orchestration-guard and there for the same reason, split off
     # only because it is the one job here that needs `fetch-depth: 0`: it reads
     # the author and committer address of the commits a change introduces, and
     # over a shallow clone that range is empty. It reads commit metadata and
     # nothing else -- seconds of `git log`, no compilation, no secrets (#261).
-    ("ci.yml", "commit-identity-guard"),
-    ("security-audit.yml", "cargo-audit"),
-    ("security-audit.yml", "cargo-deny-advisories"),
     # Orchestration for a pull request, under the 28-08 decision above: the
     # heavy build goes to a throwaway instance and the desktop only creates and
     # deletes it. A PR branch could change what those two jobs do; accepted
     # while this repository has one contributor. Only ci-ephemeral does this
     # now -- the others hand their work to the instance it creates (#275).
-    ("ci-ephemeral.yml", "create-runner"),
     # `reap` is the other half of `create-runner`: the same workflow deletes the
     # instance it made. It was left out when create-runner was written down, and
     # this check has been failing on it on master ever since -- which is what
     # #288 is about in miniature, since the failure was in a step nothing read.
-    ("ci-ephemeral.yml", "reap"),
     ("bench.yml", "benchmark"),
     # Found only after Codex pointed out that a pull_request branch filter names
     # the base, not the source. Runs on [self-hosted, xfa-corpus] -- a second
@@ -339,7 +523,7 @@ def main() -> int:
         # workspace on the persistent desktop saturates it whether the push was
         # reviewed or not.
         for naam, job in (doc.get("jobs") or {}).items():
-            if not op_blijvende_runner(job.get("runs-on", "")) or not compileert(job, WORTEL):
+            if not noemt_blijvende_runner(job.get("runs-on", "")) or not compileert(job, WORTEL):
                 continue
             if (pad.name, naam) in ZWARE_BASELINE:
                 zwaar_bekend.append((pad.name, naam))
@@ -349,7 +533,7 @@ def main() -> int:
         if branch_locked(tr):
             continue
         for naam, job in (doc.get("jobs") or {}).items():
-            if not op_blijvende_runner(job.get("runs-on", "")):
+            if not op_blijvende_runner(job.get("runs-on", ""), set(tr), tr):
                 continue
             if REF_VASTGEZET.search(str(job.get("if", ""))):
                 # Pinned to the default branch: a dispatch from a feature branch

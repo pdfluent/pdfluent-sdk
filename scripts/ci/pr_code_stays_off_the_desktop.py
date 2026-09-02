@@ -39,6 +39,8 @@ _spec = importlib.util.spec_from_file_location(
 _osh = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_osh)
 ALLEEN_BIJ_PUSH = _osh.ALLEEN_BIJ_PUSH
+PER_GEBEURTENIS_VEILIG = _osh.per_gebeurtenis_veilig
+DESKTOP_TOEGESTAAN = _osh.desktop_toegestaan
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 FLOW = REPO / ".github" / "workflows"
@@ -52,6 +54,21 @@ FLOW = REPO / ".github" / "workflows"
 # about something else and this goes red.
 DYNAMIC: dict[str, dict] = {
     "ci-ephemeral.yml:workspace": {
+        # DORMANT since 02-09-2026: this branch removes ci-ephemeral.yml's
+        # pull_request trigger, so the job is no longer reachable from a pull
+        # request and this entry matches nothing today.
+        #
+        # Kept rather than deleted, and that is the opposite of what the KNOWN
+        # sweep below demands of a register -- deliberately. KNOWN records
+        # exceptions that must SHRINK; this records a claim someone has to read
+        # BEFORE they touch create-runner, and deleting it would take the
+        # warning away exactly when the trigger comes back.
+        #
+        # Guarded rather than trusted: a dormant entry whose job becomes
+        # pull_request-reachable again while still marked dormant is a failure,
+        # because the claim was written about a job nobody was running.
+        # (T1 review, #1649)
+        "dormant": True,
         "producer": "create-runner",
         "why": (
             "the one job that SHOULD run the pull request's own code: "
@@ -65,15 +82,14 @@ DYNAMIC: dict[str, dict] = {
 }
 
 KNOWN: dict[str, str] = {
-    "ci-ephemeral.yml:create-runner": "starts the ephemeral runner PRs actually use; #311",
-    "ci-ephemeral.yml:reap": "tears that runner down; must survive a cancelled run; #311",
-    "ci.yml:baseline-hardware-guard": "predates this guard; #311",
-    "ci.yml:orchestration-guard": "predates this guard; #311",
-    "ci.yml:promise-guard": "predates this guard; #311",
-    "ci.yml:measurement-guard": "predates this guard; #311",
-    "ci.yml:commit-identity-guard": "predates this guard; #311",
-    "security-audit.yml:cargo-audit": "predates this guard; #311",
-    "security-audit.yml:cargo-deny-advisories": "predates this guard; #311",
+    # Empty, and it has to stay that way. When this guard was written it held
+    # nine jobs -- five in ci.yml, two in security-audit.yml, two in
+    # ci-ephemeral.yml -- recorded so the count could not quietly grow. #311
+    # moved all nine, so the register describes nothing and is gone.
+    #
+    # An entry that stops matching anything is itself a failure here, which is
+    # what forced this to be emptied in the same change rather than left as a
+    # list nobody revisits.
 }
 
 # Runner images GitHub hosts. Anything else -- including a bare custom label
@@ -86,7 +102,8 @@ MINIMUM_WORKFLOWS = 10  # FLOOR
 
 
 def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
-           target_only: bool = False) -> list[str]:
+           target_only: bool = False, events: set[str] | None = None,
+           triggers=None) -> list[str]:
     """Judge ONE runner choice for one job.
 
     Split out because a job can have several: a matrix supplies a list, and a
@@ -99,13 +116,50 @@ def _judge(key: str, job: dict, fname: str, jname: str, runs_on=None,
         runs_on = job.get("runs-on")
     labels = runs_on if isinstance(runs_on, list) else [runs_on]
     text = str(runs_on)
+    # An absent, empty, or all-blank `runs-on` names NO runner, and `all()` over
+    # nothing is True -- so those three shapes reported "every label is a hosted
+    # image" and passed on the strength of having said nothing. Vacuous green,
+    # the same shape as "empty is not a verdict" one function over. Which runner
+    # a job takes cannot be read off a field that is not there. (codex, #1649)
+    echte = [l for l in labels if isinstance(l, str) and l.strip()]
+    if not echte:
+        return [f"{key} has no readable `runs-on` ({runs_on!r}). Which runner it "
+                "takes cannot be established, and an empty field is not a hosted "
+                "runner -- it is an unanswered question."]
     # NOT `"self-hosted" in text`: a bare custom label like `xfa-fast` is a
     # self-hosted request without the word in it, and that skip was the hole.
-    hosted = all(isinstance(l, str) and GEHOST.match(l) for l in labels if l)
+    hosted = all(GEHOST.match(l) for l in echte)
     if hosted:
         return []
-    if ALLEEN_BIJ_PUSH.search(text):
-        return []
+    # A LIST demands EVERY label. `["${{ ...event_name == 'push'... }}",
+    # xfa-fast]` asks for xfa-fast on a pull request too -- the expression only
+    # decides what the OTHER element resolves to -- so a per-event condition
+    # sitting beside a literal desktop label excuses nothing. The check read
+    # `str(runs_on)`, found the condition anywhere in the repr of the whole
+    # list, and approved its neighbours with it.
+    #
+    # I looked for this shape after the first report and said it did not
+    # reproduce. It does; I built the fixture with a `fromJSON` expression,
+    # which GEHOST rejects, so the list was flagged for the wrong reason and I
+    # read that as the guard working. The leaking form is a BARE-STRING
+    # expression, which T1's fixture used. (T1 review, #1649)
+    letterlijk = [l for l in echte if "${{" not in l]
+    onvoorwaardelijk = [l for l in letterlijk if not GEHOST.match(l)]
+    expressies = [l for l in echte if "${{" in l]
+    if not (isinstance(runs_on, list) and onvoorwaardelijk):
+        # Judge the ELEMENTS, not the list's repr. Handing `str(["${{ ... }}"])`
+        # to the predicate asks it about brackets and escaped quotes, and it
+        # answered "not safe" about a runner choice that is.
+        kandidaten = expressies if expressies else [text]
+        # The caller's TRIGGER BLOCK, not only its event names. `push` is
+        # merged code when its branch filter says so, and passing the names
+        # alone let an unfiltered `push` count as safe -- including down the
+        # reusable-workflow path, where the inner job's canonical
+        # `event_name == 'push'` expression was then approved. Same finding as
+        # the branch-filter one, reached through the other door. (codex, #1649)
+        toegestaan = DESKTOP_TOEGESTAAN(triggers)
+        if all(PER_GEBEURTENIS_VEILIG(k, events, toegestaan) for k in kandidaten):
+            return []
     # A runner supplied by another job. This is the one shape where running the
     # pull request's own code is CORRECT -- ci-ephemeral's `workspace` is meant
     # to, on a throwaway machine. The guard cannot resolve the label, so it
@@ -180,6 +234,7 @@ def main() -> int:
         return 2
 
     problems: list[str] = []
+    reachable: set[str] = set()
     stale: list[str] = []
     checked = 0
     seen: set[str] = set()
@@ -229,9 +284,23 @@ def main() -> int:
                     called = FLOW.parent.parent / target[2:]
                     if called.is_file():
                         inner = yaml.safe_load(called.read_text()) or {}
+                        if not events:
+                            problems.append(
+                                f"{f.name}:{name} calls {target} and this guard "
+                                "could not determine the caller's events. An "
+                                "empty event set is not 'no risk'.")
+                            continue
                         for iname, ijob in (inner.get("jobs") or {}).items():
+                            # The CALLER's events, not the inner workflow's: a
+                            # reusable workflow runs under whatever triggered the
+                            # job that calls it, and passing nothing here let
+                            # _judge treat a pull_request_target caller as
+                            # eventless and approve it. (codex, #1649)
                             problems.extend(_judge(f"{called.name}:{iname}", ijob,
-                                                   called.name, iname))
+                                                   called.name, iname,
+                                                   target_only=target_only,
+                                                   events=events,
+                                                   triggers=on))
                         continue
                 problems.append(
                     f"{f.name}:{name} calls {job['uses']}, which this guard "
@@ -252,12 +321,22 @@ def main() -> int:
                         f"`matrix.{key}`, which this guard cannot resolve.")
                     continue
             key = f"{f.name}:{name}"
+            reachable.add(key)
             if key in KNOWN:
                 seen.add(key)
             for candidate in candidates:
                 problems.extend(_judge(key, job, f.name, name, candidate,
-                                       target_only))
+                                       target_only, events, triggers=on))
             continue
+
+    # A dormant DYNAMIC entry must stay unreachable. If its job turns up in the
+    # pull_request-reachable set again, the claim is live and unexamined.
+    for key, entry in sorted(DYNAMIC.items()):
+        if entry.get("dormant") and key in reachable:
+            stale.append(
+                f"{key} is marked dormant in DYNAMIC, and is reachable from "
+                "pull_request again. The claim was written about a job nobody "
+                "was running; re-read it before the trigger goes back.")
 
     present = {f.name for f in files}
     for key in sorted(set(KNOWN) - seen):
@@ -291,9 +370,12 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    print(f"[pr-runner] OK: {checked} pull_request-reachable job(s); none newly "
-          f"on a self-hosted runner. {len(KNOWN)} recorded from before this "
-          "guard, each still to be moved (#311).")
+    msg = (f"[pr-runner] OK: {checked} pull_request-reachable job(s); none runs "
+           "pull-request code on the persistent desktop.")
+    if KNOWN:
+        msg += (f" {len(KNOWN)} recorded from before this guard, each still to "
+                "be moved (#311).")
+    print(msg)
     return 0
 
 
