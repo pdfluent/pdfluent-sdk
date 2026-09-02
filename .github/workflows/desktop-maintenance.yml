@@ -72,7 +72,7 @@ jobs:
           python3 scripts/ci/disk_headroom.py || true   # its exit code IS the finding; recorded below
           echo
           echo "## The filesystem this job runs on (inside the vhdx)"
-          df -h -P . | tail -n +1
+          df -h -P .
           echo
           echo "## Filesystem types, to tell ext4 from the mounted host volume"
           df -PT | awk 'NR==1 || $2 ~ /ext4|9p|drvfs|virtiofs/ {print $2, $3, $4, $5, $6, $7}'
@@ -82,15 +82,29 @@ jobs:
         run: |
           set -euo pipefail
           ROOT=$(cd "${RUNNER_WORKSPACE:-.}/../.." && pwd)
+          # Written to a file first, then read. `du ... | sort | tail -30` under
+          # `pipefail` dies with 141 the moment tail stops reading -- SIGPIPE --
+          # and takes every step after it with it. That is the same failure I
+          # removed from the Java fixture check this morning and then wrote twice
+          # more here, in the job whose entire purpose is to survive a machine
+          # with too much of something. (peer review, #1662)
           echo "## Runner work root"
-          du -x -h --max-depth=2 "${ROOT}" 2>/dev/null | sort -h | tail -30
+          du -x -h --max-depth=2 "${ROOT}" > "$RUNNER_TEMP/work-root.txt" 2>/dev/null || true
+          sort -h "$RUNNER_TEMP/work-root.txt" | tail -30
           echo
           # The paths this host is actually CONFIGURED with, which are not the
-          # defaults and are not under the work root: scripts/ci/desktop_env.sh
-          # sets CARGO_TARGET_DIR=/var/cache/cargo-target and
-          # CARGO_HOME=/var/cache/cargo-home, and .gitlab-ci.yml sets the same
-          # two. A scan of the work root and ~/.cargo would have missed both,
-          # which is most of the point. (codex, #1662)
+          # defaults and are not under the work root: the desktop environment
+          # setup sets CARGO_TARGET_DIR=/var/cache/cargo-target and
+          # CARGO_HOME=/var/cache/cargo-home, and the GitLab pipeline sets the
+          # same two. A scan of the work root and ~/.cargo would have missed
+          # both, which is most of the point.
+          #
+          # Deliberately WITHOUT naming the shell script that does it:
+          # every_guard_has_a_job.py reads a script name appearing in a workflow
+          # file as "this runs in Actions", so mentioning it in a comment moved
+          # a mirror-only guard out of that column and tripped its ratchet. A
+          # comment is not wiring -- the same mistake the baseline guard made
+          # when it read a comment as a runner label. (peer review, #1662)
           echo "## Cargo, at the paths this machine is configured with"
           echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<unset>}  CARGO_HOME=${CARGO_HOME:-<unset>}"
           for D in "${CARGO_TARGET_DIR:-}" "${CARGO_HOME:-}" \
@@ -100,8 +114,10 @@ jobs:
           done
           echo
           echo "## Every target/ on this filesystem, not only in this checkout"
-          find / -xdev -type d -name target -prune 2>/dev/null | head -60 | while read -r T; do
-            du -x -h -s "$T"
+          find / -xdev -type d -name target -prune > "$RUNNER_TEMP/targets.txt" 2>/dev/null || true
+          echo "found $(wc -l < "$RUNNER_TEMP/targets.txt") target/ directories"
+          head -60 "$RUNNER_TEMP/targets.txt" | while read -r T; do
+            [ -d "$T" ] && du -x -h -s "$T"
           done
 
       # The place `disk_headroom.py` cannot see, because it looks for `target/`.
