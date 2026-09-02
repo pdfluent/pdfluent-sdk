@@ -17,7 +17,7 @@ import pathlib, os, shutil, subprocess, sys, tempfile
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts" / "ci"))
-from fixture_env import sealed_env  # noqa: E402
+from fixture_env import gate_aanroepen, sealed_env  # noqa: E402
 
 GUARD = "scripts/ci/the_commit_msg_hook_is_wired.py"
 GIT = "/usr/bin/git"
@@ -114,17 +114,6 @@ expect("  and the comment naming it is not mistaken for the call",
 # file, contains it. So deleting the guard's own invocation left the suite
 # green: the assertion that the skipped layer still had a home was satisfied by
 # the test asserting it. (codex, #1660)
-def gate_aanroepen(script: str) -> list[str]:
-    """Lines of the local gate that run exactly this script."""
-    uit = []
-    for regel in (REPO / "scripts" / "ci" / "local_ci_gate.sh").read_text().splitlines():
-        for stuk in regel.split():
-            if stuk.rsplit("/", 1)[-1] == script:
-                uit.append(regel)
-                break
-    return uit
-
-
 aanroepen = gate_aanroepen("the_commit_msg_hook_is_wired.py")
 expect("the local gate still calls the guard itself", len(aanroepen) == 1,
        f"matched {len(aanroepen)} line(s): {aanroepen}")
