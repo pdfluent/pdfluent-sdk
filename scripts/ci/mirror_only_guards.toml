@@ -152,6 +152,19 @@ advisory scan on every pull request. That workflow is the one from #287: it \
 existed and used a Docker action on a runner without docker, so the port is \
 only worth anything now that it runs the binary directly."""
 
+[[guard]]
+script = "tests_actually_ran.py"
+reason = "covered-elsewhere"
+issue = "#307"
+why = """Wraps a binding's test command and refuses to call zero tests a success. \
+Its only caller is capi-ephemeral.yml, which fires on workflow_dispatch alone, \
+so nothing it finds reaches a pull request -- it was counted as "has a job" \
+until every_guard_has_a_job.py started asking whether the job can run before a \
+merge (#1633). The part that can go wrong on its own, the five parsers, is held \
+before a merge by test_tests_actually_ran.py in ci.yml. Whether the binding \
+suites themselves should stand before a merge is a runner question (#276), not \
+this wrapper's."""
+
 # --- credentials -----------------------------------------------------------
 
 [[guard]]

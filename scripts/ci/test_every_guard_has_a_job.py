@@ -59,15 +59,25 @@ def build(
     register: str,
     ratchet: int,
     unreferenced: list[str] | None = None,
+    dispatch_only: list[str] | None = None,
+    parked: list[str] | None = None,
     min_scripts: int = 2,
 ) -> Path:
-    """A synthetic repository, and the path to the script inside it."""
+    """A synthetic repository, and the path to the script inside it.
+
+    `dispatch_only` guards get a `run:` in a workflow that fires on
+    workflow_dispatch alone; `parked` guards get one in the pull-request
+    workflow, in a job behind `needs: parked`. Both are the shape from #1633: a
+    real `run:` line that no pull request will ever execute.
+    """
     ci = tmp / "scripts" / "ci"
     ci.mkdir(parents=True)
     flows = tmp / ".github" / "workflows"
     flows.mkdir(parents=True)
 
-    for name in set(on_github) | set(on_gitlab) | set(unreferenced or []):
+    names = (set(on_github) | set(on_gitlab) | set(unreferenced or [])
+             | set(dispatch_only or []) | set(parked or []))
+    for name in names:
         (ci / name).write_text("#!/bin/sh\nexit 0\n")
 
     (tmp / ".gitlab-ci.yml").write_text(
@@ -78,10 +88,28 @@ def build(
         )
     )
     (flows / "ci.yml").write_text(
-        "name: CI\njobs:\n  guard:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "name: CI\non:\n  pull_request:\n  push:\n    branches: [master]\n"
+        "jobs:\n  guard:\n    runs-on: ubuntu-latest\n    steps:\n"
         + "".join(
             f"      - name: step {i}\n        run: python3 scripts/ci/{n}\n"
             for i, n in enumerate(on_github)
+        )
+        # The parked shape from crash-guard.yml and gate-ci.yml: a job that
+        # always fails, and a real job behind it that therefore never starts.
+        + "  parked:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - run: exit 1\n"
+        "  behind:\n    needs: parked\n    runs-on: ubuntu-latest\n    steps:\n"
+        + "".join(
+            f"      - name: parked step {i}\n        run: python3 scripts/ci/{n}\n"
+            for i, n in enumerate(parked or [])
+        )
+    )
+    (flows / "dispatch.yml").write_text(
+        "name: By hand\non:\n  workflow_dispatch:\n"
+        "jobs:\n  guard:\n    runs-on: ubuntu-latest\n    steps:\n"
+        + "".join(
+            f"      - name: step {i}\n        run: python3 scripts/ci/{n}\n"
+            for i, n in enumerate(dispatch_only or [])
         )
     )
     (ci / "mirror_only_guards.toml").write_text(register)
@@ -236,6 +264,31 @@ case(
     on_gitlab=["c.py"],
     register="[[guard]\nscript =\n",
     ratchet=1,
+)
+
+# The finding from #1633: a `run:` line in a job that no pull request ever
+# executes. Behind `needs: parked` the job never starts; in a dispatch-only
+# workflow it starts when somebody remembers. Either way the guard is counted
+# with the mirror guards -- declared, and inside the ratchet -- not as a job.
+case(
+    "a guard behind needs: parked is judged with the mirror guards",
+    0,
+    on_github=["a.py"],
+    on_gitlab=[],
+    parked=["d.py"],
+    register=ENTRY.format(name="d.py"),
+    ratchet=1,
+)
+
+case(
+    "a guard only in a dispatch-only workflow with no written reason fails",
+    1,
+    "dispatch-only or parked",
+    on_github=["a.py"],
+    on_gitlab=["c.py"],
+    dispatch_only=["d.py"],
+    register=ENTRY.format(name="c.py"),
+    ratchet=2,
 )
 
 # A guard nobody runs at all -- the older failure this file also covers.
