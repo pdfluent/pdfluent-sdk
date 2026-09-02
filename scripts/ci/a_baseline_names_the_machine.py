@@ -43,7 +43,10 @@ WHAT IT CHECKS
      kind of lie.
 
   4. A calibration expires. `calibrated = true` with a `calibrated_on` older
-     than `[meta] calibration_valid_days` counts as absent.
+     than `[meta] calibration_valid_days` counts as absent. So does one dated
+     in the future: a date nobody could have measured on is a typo or a
+     guess, and either way it would outlive every real calibration around it
+     (codex, #1622).
 
   5. A restored criterion baseline names the machine class in its cache key.
      `target/criterion` is the baseline: restoring it is the comparison. A key
@@ -139,6 +142,14 @@ def calibrated_classes(registry: dict, today: dt.date) -> tuple[list[str], list[
             when = dt.date.fromisoformat(stamp)
         except ValueError:
             expired.append(f"{name} (calibrated_on {stamp!r} is not a date)")
+            continue
+        if when > today:
+            # Not live, and not merely expired either: a calibration from the
+            # future has not happened. Left as live it would be the last one
+            # standing after every real one aged out.
+            expired.append(f"{name} (calibrated_on {stamp} is in the future -- "
+                           f"today is {today.isoformat()}, so nothing was "
+                           f"measured on that date)")
             continue
         if valid_days and (today - when).days > valid_days:
             expired.append(f"{name} (calibrated {(today - when).days} days ago, "

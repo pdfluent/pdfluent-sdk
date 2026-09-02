@@ -204,6 +204,19 @@ def calibration_that_expired(root: pathlib.Path) -> None:
     sla.write_text(sla.read_text().replace("UNCALIBRATED", "Baseline"))
 
 
+def calibration_dated_in_the_future(root: pathlib.Path) -> None:
+    """A date nobody could have measured on. It must be named as such: without
+    the check the entry counts as live, and the guard still goes red -- on the
+    floor -- so this case also asserts the reason (codex, #1622)."""
+    path = root / "benchmarks" / "BASELINE_HARDWARE.toml"
+    path.write_text(path.read_text().replace(
+        'runner_label = "xfa-fast"\nreachable = true\ncalibrated = false\ncalibrated_on = ""',
+        'runner_label = "xfa-fast"\nreachable = true\ncalibrated = true\n'
+        'calibrated_on = "2999-01-01"'))
+    sla = root / "BENCHMARKS_SLA.md"
+    sla.write_text(sla.read_text().replace("UNCALIBRATED", "Baseline"))
+
+
 def calibration_with_no_date(root: pathlib.Path) -> None:
     path = root / "benchmarks" / "BASELINE_HARDWARE.toml"
     path.write_text(path.read_text().replace(
@@ -241,6 +254,8 @@ CASES = [
     ("a class is calibrated without raising the floor", calibration_without_announcing_it),
     ("a calibration is older than the registry allows", calibration_that_expired),
     ("a calibration claims no date", calibration_with_no_date),
+    ("a calibration is dated in the future", calibration_dated_in_the_future,
+     "is in the future"),
     ("a criterion baseline is restored under a machine-blind key",
      criterion_key_forgets_the_machine),
     ("only the criterion fallback key loses the machine",
@@ -252,17 +267,25 @@ CASES = [
 def main() -> int:
     failures: list[str] = []
 
-    for description, mutate in CASES:
+    for description, mutate, *reason in CASES:
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             build(root)
             mutate(root)
             code, output = run(root)
-            verdict = "caught" if code != 0 else "MISSED"
+            # A case may name the reason it expects. Red for the wrong reason is
+            # not caught: the future-dated calibration trips the two-way floor
+            # whether or not the date is ever looked at.
+            named = reason[0] if reason else None
+            caught = code != 0 and (named is None or named in output)
+            verdict = "caught" if caught else "MISSED"
             print(f"  {verdict:7} exit={code}  {description}")
-            if code == 0:
+            if not caught:
                 failures.append(description)
-                print("          the guard reported a clean tree here:")
+                if code == 0:
+                    print("          the guard reported a clean tree here:")
+                else:
+                    print(f"          the guard went red, but never said {named!r}:")
                 for line in output.strip().splitlines():
                     print(f"          {line}")
 
