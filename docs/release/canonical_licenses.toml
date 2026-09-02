@@ -9,7 +9,7 @@
 # two crate registers by `scripts/ci/one_licence_three_registers.py` (#304).
 #
 # THIS REGISTER COVERS THE CARGO CHANNEL ONLY, and that is a rule, not a gap.
-# A crate has a row here iff its Cargo.toml is publishable; the fifteen
+# A crate has a row here iff its Cargo.toml is publishable; the sixteen
 # `publish = false` crates have none, and the comparison guard fails when a row
 # and a publish flag disagree. The other channels -- npm (pdf-node, xfa-wasm),
 # PyPI (pdf-python), NuGet, Maven -- are not crates and have no `[[crate]]`

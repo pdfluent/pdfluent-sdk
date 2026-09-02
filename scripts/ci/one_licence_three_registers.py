@@ -30,7 +30,7 @@ WHICH REGISTER IS THE TRUTH
 
   For WHICH SIDE a crate is on, and whether it is published at all:
   boundary.toml. It is the only register that covers every crate, including
-  the fifteen that never leave the workspace -- the canonical register has no
+  the sixteen that never leave the workspace -- the canonical register has no
   row for those on purpose, and this guard is what makes "no row" mean
   "not published" rather than "forgotten".
 
@@ -306,7 +306,24 @@ def main() -> int:
         canoniek[d] = rij
     grensrijen: dict[str, dict] = {}
     for rij in grens.get("crate", []):
-        d = str(rij.get("dir", "")).removeprefix("crates/")
+        rel = str(rij.get("dir", ""))
+        # Only the workspace crates under `crates/<name>/` are comparable here.
+        # Since #295 the boundary also books first-party packages that live
+        # elsewhere -- `tools/pdfluent-snippet-extract`, `fuzz`,
+        # `scripts/quality/lopdf_probe`, `pdfluent-examples/rust` and the
+        # per-fork `crates/<x>/fuzz` -- and none of those is a published crate
+        # with a row in canonical_licenses.toml, which is what this guard
+        # compares. `removeprefix("crates/")` folded them in anyway, so
+        # `tools/pdfluent-snippet-extract` became
+        # `crates/tools/pdfluent-snippet-extract` and was reported as a crate
+        # that is gone -- for a row that is correct.
+        #
+        # Skipping them leaves them guarded: license_boundary.py checks every
+        # one, which is the whole subject of #295.
+        segmenten = rel.split("/")
+        if len(segmenten) != 2 or segmenten[0] != "crates":
+            continue
+        d = segmenten[1]
         if d in grensrijen:
             problemen.append(f"crates/{d}: {R_GRENS} has two rows for one "
                              "directory, so it disagrees with itself")

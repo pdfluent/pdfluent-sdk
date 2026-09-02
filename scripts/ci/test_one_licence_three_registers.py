@@ -35,6 +35,22 @@ GRENS = "docs/licensing/boundary.toml"
 BELEID = "docs/LICENSE_POLICY.toml"
 ONZE = "AGPL-3.0-only OR LicenseRef-PDFluent-Commercial"
 
+def crates_in_de_werkruimte() -> int:
+    """How many crates the guard will find, counted the way the guard counts.
+
+    This assertion used to read `"48 crate(s)" in r.stdout`. It was the one
+    hardcoded number in 132 assertions, it had to be edited every time a crate
+    was added, and it failed looking like a licence problem when it was a
+    counting problem. Walking `crates/*/Cargo.toml` for a `[package]` table is
+    what `one_licence_three_registers.py` itself does, so the assertion still
+    says "it compared all of them" without saying how many that is today.
+    """
+    return sum(
+        1 for pad in sorted((REPO / "crates").glob("*/Cargo.toml"))
+        if re.search(r"^\s*\[package\]", pad.read_text(encoding="utf-8"), re.M)
+    )
+
+
 fails: list[str] = []
 ran = 0
 
@@ -107,7 +123,8 @@ print("one licence, three registers -- two-way")
 
 r = run_with(None)
 expect("the real tree passes unmutated", r.returncode == 0, r.stderr[-300:])
-expect("  and says how many crates it compared", "48 crate(s)" in r.stdout, r.stdout)
+expect(f"  and says it compared all {crates_in_de_werkruimte()} crates",
+       f"{crates_in_de_werkruimte()} crate(s)" in r.stdout, r.stdout)
 
 # --- a value changed in ONE register --------------------------------------
 OUD_ANNOT = 'published_name = "pdf-annot"\nworkspace_dir  = "pdf-annot"\nlicense_kind   = "agpl-or-commercial"\nlicense_decl   = "license"\nlicense_value  = "' + ONZE + '"'
