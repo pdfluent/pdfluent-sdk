@@ -73,9 +73,23 @@ jobs:
             ls -la target/debug/*.so 2>/dev/null || true
             exit 1
           }
-          for f in crates/pdf-java/java/com/xfa/pdf/PdfDocument.java \
-                   crates/pdf-java/java/com/xfa/pdf/PdfUtils.java \
-                   crates/pdf-java/src/test/java/com/pdfluent/PdfluentLicensing.java; do
+          # Derived, not listed. Three files stood here by hand while five in this
+          # crate call System.loadLibrary -- and two of the three uncovered ones
+          # arrived in the same change that added this check. A hand-kept list stops
+          # matching the tree the moment somebody adds a file, which is the failure
+          # this step exists to catch.
+          #
+          # Bounded to crates/pdf-java deliberately: bindings/java's NativeLoader
+          # calls System.loadLibrary(JNI_LIB_NAME) through a constant, so a literal
+          # grep would call it wrong when it is right.
+          mapfile -t loaders < <(grep -rl 'System\.loadLibrary' crates/pdf-java --include='*.java' | sort)
+          # A floor: an empty glob would walk the loop below zero times and pass
+          # without reading a single file.
+          if [ "${#loaders[@]}" -lt 5 ]; then
+            echo "::error::found ${#loaders[@]} System.loadLibrary caller(s) under crates/pdf-java, expected at least 5; the search is broken, not the tree" >&2
+            exit 1
+          fi
+          for f in "${loaders[@]}"; do
             grep -q 'System.loadLibrary("pdfluent_java")' "$f" || {
               echo "::error::$f does not load pdfluent_java" >&2; exit 1; }
           done
