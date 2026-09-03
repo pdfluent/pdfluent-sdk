@@ -39,7 +39,7 @@ The original copyright notices for these upstream projects are preserved
 in their respective source files and in the THIRD_PARTY_LICENSES.txt file.
 
 ============================================================================
-PDFLUENT'S OWN COMPONENTS (AGPL-3.0-only OR PDFluent Commercial Licence)
+DUAL-LICENSED COMPONENTS (AGPL-3.0-only OR PDFluent Commercial Licence)
 ============================================================================
 
 The following crates are PDFluent's own work and are available under two
@@ -74,7 +74,8 @@ that. See https://pdfluent.com/pricing.
 
 The Software, when used without a Valid License, may produce output that
 contains identifying markers (a Producer string in PDF metadata and a
-one-time stderr warning). This is by design. See LICENSE §2.
+one-time stderr warning). This is by design. See LICENSE-COMMERCIAL, which
+sets out what a commercial licence changes about it.
 
 ============================================================================
 EVALUATION AND TRIAL
