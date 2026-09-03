@@ -30,11 +30,25 @@ treated as wrong.
 from __future__ import annotations
 
 import os
+import pathlib
 import re
 import subprocess
 import sys
 
 MIN_COMMITS = 1
+
+# The cutoff is IMPORTED, not repeated. This file's comment promised that "the
+# gate applies to what arrives from here on" and then walked the whole range, so
+# on a long-lived branch it demanded a sign-off from every commit that branch
+# ever carried -- 340 on #1543, none written after the decision and none of them
+# this push's to certify. A promise a comment makes and the code does not keep is
+# worse than no promise: it reads as a bound.
+#
+# Copying the number would leave two answers to one question, which is the defect
+# the register guards exist to catch. every_commit_since_the_cutoff_is_signed.py
+# defines it; this reads it.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from every_commit_since_the_cutoff_is_signed import CUT_AT  # noqa: E402
 SIGNOFF = re.compile(r"^Signed-off-by:\s*(.+?)\s*<([^>]+)>\s*$", re.M | re.I)
 
 # Commits that predate the decision on 31-08-2026 are not rewritten for it; see
@@ -66,26 +80,45 @@ def _omgeving() -> dict[str, str]:
 
 def commits(bereik: str) -> list[tuple[str, str, str, str]]:
     uit = subprocess.run(
-        ["git", "log", "--format=%H%x00%an%x00%ae%x00%B%x1e", bereik],
+        # `--no-merges`: a merge carries a generated message and can never hold a
+        # sign-off, and on a pull_request event the checkout resolves HEAD to the
+        # synthetic merge GitHub builds -- demanding one of it makes the gate
+        # unsatisfiable rather than strict. Same shape #1635 repaired in the
+        # deletion guard and #1683 in the sign-off job.
+        #
+        # `%at` is the AUTHOR date. The committer date moves on every rebase, so
+        # using it would drag old commits across the cutoff and demand certification
+        # for work that predates the decision.
+        ["git", "log", "--no-merges",
+         "--format=%H%x00%at%x00%an%x00%ae%x00%B%x1e", bereik],
         capture_output=True, text=True, check=True, env=_omgeving()).stdout
     rijen = []
     for blok in uit.split("\x1e"):
         if not blok.strip():
             continue
-        sha, naam, adres, boodschap = blok.strip("\n").split("\x00", 3)
-        rijen.append((sha, naam, adres, boodschap))
+        sha, at, naam, adres, boodschap = blok.strip("\n").split("\x00", 4)
+        rijen.append((sha, int(at), naam, adres, boodschap))
     return rijen
 
 
 def main(argv: list[str]) -> int:
     bereik = argv[1] if len(argv) > 1 else _standaard_bereik()
-    rijen = commits(bereik)
-    if len(rijen) < MIN_COMMITS:
-        print(f"[signoff] FATAL: {bereik} holds {len(rijen)} commit(s). An empty "
+    alle = commits(bereik)
+    if len(alle) < MIN_COMMITS:
+        print(f"[signoff] FATAL: {bereik} holds {len(alle)} commit(s). An empty "
               "range passes without reading anything, which is not a clean range.",
               file=sys.stderr)
         return 1
-
+    
+    # The floor above is about the RANGE; this is about what the rule covers.
+    # Empty here is a real answer -- "this push adds nothing written after the
+    # decision" -- and must not be confused with a range that read nothing.
+    rijen = [(s, n, a, b) for s, at, n, a, b in alle if at > CUT_AT]
+    if not rijen:
+        print(f"[signoff] OK: {bereik} adds no commit written after the cutoff; "
+              "sign-off not required.")
+        return 0
+    
     fouten: list[str] = []
     for sha, naam, adres, boodschap in rijen:
         gevonden = SIGNOFF.findall(boodschap)

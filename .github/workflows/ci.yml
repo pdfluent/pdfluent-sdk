@@ -317,6 +317,12 @@ jobs:
       - name: The sign-off gate bites, in both directions
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_every_commit_since_the_cutoff_is_signed.py
+      # The other half of the same rule: licence_signoff.py promised a cutoff in
+      # its comment and walked the whole range, so a long-lived branch was asked
+      # to certify 329 commits nobody wrote after the decision.
+      - name: The sign-off gate leaves history before the cutoff alone
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_signoff_respects_the_cutoff.py
       - name: Every commit written since the DCO carries a matching sign-off
         if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         # The base sha arrives through `env:` rather than pasted into the script.
