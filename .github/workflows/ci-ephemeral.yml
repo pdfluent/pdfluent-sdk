@@ -364,7 +364,7 @@ jobs:
               # reissued every year, so a runner carrying THIS year's f1040.pdf would
               # otherwise satisfy a file-count check and be scored against thresholds
               # calibrated on a different document. The sha256 comes from the bytes
-              # the 0.94/35%% numbers were measured on, recovered from git history.
+              # the 0.94/35% numbers were measured on, recovered from git history.
               h = hashlib.sha256(p.read_bytes()).hexdigest()
               if x.get("sha256") and h != x["sha256"]:
                   verkeerd.append(x["file"])
@@ -384,7 +384,7 @@ jobs:
             echo "  repository; they were removed in 2e3d2052 on 26-05-2026 and the" >&2
             echo "  gate corpus fetched above contains none of them. No page was" >&2
             echo "  rendered and no SSIM was computed, so this is not a regression" >&2
-            echo "  and not a pass. The 0.94/35%% thresholds return with the corpus," >&2
+            echo "  and not a pass. The 0.94/35% thresholds return with the corpus," >&2
             echo "  not as lower numbers. (#276)" >&2
             exit 3
           fi
@@ -392,7 +392,7 @@ jobs:
             echo "SKIPPED (not a pass): $2/$3 pinned forms are present but are not the" >&2
             echo "  documents these thresholds were calibrated on: $verkeerd_namen" >&2
             echo "  IRS and USCIS reissue their forms, so a runner can carry a file of" >&2
-            echo "  the right name and the wrong year. Scoring 0.94 mean and 35%% fully" >&2
+            echo "  the right name and the wrong year. Scoring 0.94 mean and 35% fully" >&2
             echo "  correct against a different document is a number that has stopped" >&2
             echo "  meaning anything. Rebuild the snapshot from the pinned bytes. (#276)" >&2
             exit 3
