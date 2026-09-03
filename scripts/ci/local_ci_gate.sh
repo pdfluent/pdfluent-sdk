@@ -173,6 +173,7 @@ run errtests  cargo test -q -p pdfluent --test error_codes_stable --test process
 # passes here is what lands. #316.
 run signoff   python3 scripts/ci/every_commit_since_the_cutoff_is_signed.py
 run signofftst python3 scripts/ci/test_every_commit_since_the_cutoff_is_signed.py
+run signoffcut python3 scripts/ci/test_signoff_respects_the_cutoff.py
 run prstale   python3 scripts/ci/pr_staleness.py
 run prstaletst python3 scripts/ci/test_pr_staleness.py
 run sweep     python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
