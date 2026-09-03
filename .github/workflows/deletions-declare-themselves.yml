@@ -70,6 +70,12 @@ jobs:
       - name: The deletion guard bites in both directions
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_a_deletion_declares_itself.py
+      - name: The wiring guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_test_is_run.py
+      - name: Every test file is executed by something
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_test_is_run.py
       - name: Every deletion is declared by the commit that performs it
         if: ${{ !cancelled() }}
         env:
