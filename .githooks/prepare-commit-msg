@@ -14,8 +14,16 @@
 # pre-push-poort weigert ongetekende commits van na 03-09-2026 07:30:44Z, en
 # wie de config leest concludeert dat het geregeld is.
 #
-# `--if-exists add` maakt hem idempotent, zodat een `git commit --amend`
+# `--if-exists doNothing` maakt hem idempotent, zodat een `git commit --amend`
 # of een handmatige `-s` geen tweede regel oplevert.
+#
+# NIET `add`: dat is precies wat de naam suggereert en het voegt de trailer
+# telkens opnieuw toe -- gemeten 1 regel na de commit, 2 na een amend, 3 na twee.
+# Hier stond eerst `add` in dit commentaar terwijl de code `doNothing` deed. Dat
+# is gevaarlijker dan een verouderd commentaar: wie code en commentaar met elkaar
+# in overeenstemming brengt -- de voor de hand liggende reactie als ze elkaar
+# tegenspreken -- bouwt de fout in. De test hield het gedrag vast; niets hield
+# het commentaar vast.
 set -euo pipefail
 
 pad="$1"
