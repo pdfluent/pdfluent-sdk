@@ -15,6 +15,22 @@ use pdf_syntax::page::Resources;
 use pdf_syntax::xref::XRef;
 use std::collections::HashMap;
 
+/// How deep a document may nest one interpretation inside another.
+///
+/// A Form XObject may draw another XObject, a pattern may paint with a pattern,
+/// a Type 3 glyph is a content stream of its own. Nothing in a PDF stops any of
+/// those from referring to itself, and the interpreter recurses on the Rust
+/// stack -- so a self-referencing XObject exhausts it. Reproduced on a 639-byte
+/// file: `q /X1 Do Q` inside the XObject named `/X1`, rc=134, "has overflowed
+/// its stack". No XFA and no script; it reaches every binding that exports
+/// `render_page`.
+///
+/// 50 because upstream chose 50 (LaurenzV/hayro#1152) and because real documents
+/// do not come close: the deepest nesting in the corpus is single digits. The
+/// limit exists to convert a crash into a warning and a missing paint, not to
+/// judge how baroque a document is allowed to be.
+pub(crate) const MAX_NESTED_INTERPRETATION_DEPTH: u32 = 50;
+
 /// A context for interpreting PDF files.
 pub struct Context<'a> {
     states: Vec<State<'a>>,
@@ -29,6 +45,9 @@ pub struct Context<'a> {
     pub(crate) object_cache: Cache,
     pub(crate) xref: &'a XRef,
     pub(crate) ocg_state: OcgState,
+    /// How deep this interpretation already sits inside XObjects, patterns,
+    /// soft masks or Type 3 glyph procedures. See MAX_NESTED_INTERPRETATION_DEPTH.
+    nesting_depth: u32,
 }
 
 impl<'a> Context<'a> {
@@ -42,7 +61,7 @@ impl<'a> Context<'a> {
         let cache = settings.shared_cache.clone().unwrap_or_default();
         let state = State::new(initial_transform);
 
-        Self::new_with(initial_transform, bbox, cache, xref, settings, state)
+        Self::new_with(initial_transform, bbox, cache, xref, settings, state, 0)
     }
 
     pub(crate) fn new_with(
@@ -52,6 +71,7 @@ impl<'a> Context<'a> {
         xref: &'a XRef,
         settings: InterpreterSettings,
         state: State<'a>,
+        nesting_depth: u32,
     ) -> Self {
         let ocg_state = {
             let root_ref = xref.root_id();
@@ -61,6 +81,7 @@ impl<'a> Context<'a> {
         };
 
         Self {
+            nesting_depth,
             states: vec![state],
             settings,
             xref,
@@ -218,6 +239,32 @@ impl<'a> Context<'a> {
 
     pub(crate) fn clip_mut(&mut self) -> &mut Option<FillRule> {
         &mut self.clip
+    }
+
+    // A `nesting_depth()` accessor belongs here and is deliberately absent: it
+    // would have no caller until the parent depth is threaded into the three
+    // constructs that build a fresh Context (soft mask, Type 3 glyph, tiling
+    // pattern), and an unused accessor kept alive by an allow(dead_code) is the
+    // shape these guards exist to refuse. It comes back with that work (#318).
+
+    /// Claim one level of nesting, or refuse.
+    ///
+    /// Returns false at the limit; the caller must then not interpret. Pair with
+    /// `end_nested_interpretation`, which is why this is not a plain `+= 1`: a
+    /// page draws many XObjects in sequence, and a counter that only rises would
+    /// refuse the fifty-first sibling rather than the fifty-first ancestor.
+    pub(crate) fn begin_nested_interpretation(&mut self) -> bool {
+        if self.nesting_depth >= MAX_NESTED_INTERPRETATION_DEPTH {
+            return false;
+        }
+
+        self.nesting_depth += 1;
+
+        true
+    }
+
+    pub(crate) fn end_nested_interpretation(&mut self) {
+        self.nesting_depth = self.nesting_depth.saturating_sub(1);
     }
 
     pub(crate) fn get(&self) -> &State<'a> {

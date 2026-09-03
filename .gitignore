@@ -16,6 +16,8 @@ pdfluent-examples/dotnet/**/obj/
 !/fixtures/xfa-layout/*.pdf
 !/fixtures/xfa-data/*.pdf
 !/fixtures/scanned/*.pdf
+# Hostile PDFs: small, hand-built files that must not crash the renderer (#262).
+!/fixtures/pdf/*.pdf
 !/tests/corpus-mini/*.pdf
 !/crates/pdf-java/src/test/resources/*.pdf
 metadata.sqlite

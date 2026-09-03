@@ -168,7 +168,7 @@ features were covered.
 | **Defined at** | `crates/pdf-engine/src/api.rs` · `crates/pdf-engine/src/document.rs` · `crates/pdfluent/src/document.rs` · `crates/xfa-wasm/src/lib.rs` |
 | **Reachable from facade** | yes |
 | **Exposed in bindings** | WASM (@pdfluent/sdk-wasm) · C ABI (voedt .NET/Java/Node) · Java (JNI) · Node (napi) |
-| **Tested by** | `crates/pdf-engine/src/document.rs` · `crates/pdf-engine/src/render.rs` · `crates/pdf-engine/tests/xfa_hostile_script_does_not_crash.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/diagnostics.rs` |
+| **Tested by** | `crates/pdf-engine/src/document.rs` · `crates/pdf-engine/src/render.rs` · `crates/pdf-engine/tests/self_referencing_xobject_does_not_crash.rs` · `crates/pdf-engine/tests/xfa_hostile_script_does_not_crash.rs` · `crates/pdfluent/src/document.rs` |
 | **Run in CI by** | `quality:cargo-test` · `sanity:wasm-binding-smoke` |
 
 ### Redact PDF — `shipped`
@@ -341,7 +341,7 @@ delivered through it.
 | `pdf-annot` | 1.0.0 | direct | — | 38 | `quality:cargo-test` |
 | `pdf-compliance` | 1.0.0 | direct | — | 92 | `quality:cargo-test` |
 | `pdf-docx` | 1.0.0 | direct | — | 24 | `quality:cargo-test` |
-| `pdf-engine` | 1.0.0 | direct | 4 | 155 | `quality:cargo-test` |
+| `pdf-engine` | 1.0.0 | direct | 5 | 155 | `quality:cargo-test` |
 | `pdf-font` | 1.0.0-beta.5 | internal | — | 117 | `quality:cargo-test` |
 | `pdf-interpret` | 0.5.8 | direct | — | 123 | `quality:cargo-test` |
 | `pdf-invoice` | 1.0.0 | **absent** | — | 53 | `quality:cargo-test` |

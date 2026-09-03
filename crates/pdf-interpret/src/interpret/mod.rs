@@ -376,6 +376,23 @@ pub fn interpret<'a, 'b>(
     context: &mut Context<'a>,
     device: &mut impl Device<'a>,
 ) {
+    // One choke point for every nested interpretation, because every one of them
+    // arrives here: a Form XObject drawing another, a tiling pattern painting
+    // with a pattern, a soft mask, a Type 3 glyph procedure. Guarding the call
+    // sites instead would mean four guards and a fifth construct next year.
+    //
+    // Reproduced before the bound existed: a 639-byte file whose XObject `/X1`
+    // contains `q /X1 Do Q` aborts the process with a stack overflow, rc=134.
+    // No XFA and no script, so it reaches every binding exporting `render_page`.
+    if !context.begin_nested_interpretation() {
+        warn!(
+            "content stream nesting exceeds {}, stopping interpretation",
+            crate::context::MAX_NESTED_INTERPRETATION_DEPTH
+        );
+
+        return;
+    }
+
     let num_states = context.num_states();
     let max_operator_count = context.settings.max_operator_count.unwrap_or(u64::MAX);
     let mut operator_count = 0_u64;
@@ -914,6 +931,12 @@ pub fn interpret<'a, 'b>(
     while context.num_states() > num_states {
         context.restore_state(device);
     }
+
+    // Released here rather than on a guard object because every exit from this
+    // function is this line: the early `return` above happens before the claim.
+    // A counter that only rose would refuse the fifty-first XObject a page draws
+    // in sequence, which is not nesting at all.
+    context.end_nested_interpretation();
 }
 
 #[cfg(test)]
