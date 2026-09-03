@@ -27,11 +27,15 @@ import sys
 REPO = pathlib.Path(__file__).resolve().parents[2]
 MANIFEST = REPO / "corpus" / "SSIM_GATE_MANIFEST.json"
 SCRIPT = REPO / "scripts" / "infra" / "build_ci_snapshot.sh"
+WORKFLOW = REPO / ".github" / "workflows" / "build-ci-snapshot.yml"
 
 fouten: list[str] = []
+gedraaid = 0
 
 
 def expect(wat: str, ok: bool, detail: str = "") -> None:
+    global gedraaid
+    gedraaid += 1
     print(f"  {'ok  ' if ok else 'FAIL'}  {wat}" + ("" if ok else f" -- {detail[:200]}"))
     if not ok:
         fouten.append(wat)
@@ -108,7 +112,27 @@ def main() -> int:
            not re.search(r"(cp|rsync|scp)\s+[^\n]*ssim", bron, re.I),
            "a copy of a copy cannot be checked against the manifest")
 
-    print(f"\n  7 assertion(s) ran, {len(fouten)} failure(s)")
+    # The third-party action that provisions the machine must be pinned to a
+    # commit. Not a house style -- no other workflow here pins anything -- but
+    # this workflow bakes an image that later runs execute on, so an upstream
+    # change on a moving tag gets frozen in and outlives the run that pulled it.
+    # First-party actions/* are deliberately not covered: pinning those is a
+    # repo-wide question, not this workflow's.
+    expect("the snapshot workflow still exists to be checked",
+           WORKFLOW.is_file(), f"{WORKFLOW} is gone; this check would pass on nothing")
+    if WORKFLOW.is_file():
+        derden = [
+            u for u in re.findall(r"uses:\s*(\S+)", WORKFLOW.read_text())
+            if not u.startswith("actions/")
+        ]
+        expect("it still uses a third-party action, so this check has a subject",
+               bool(derden), "no third-party action found; delete this check or restore the pin")
+        for u in derden:
+            expect(f"{u.split('@')[0]} is pinned to a commit, not a moving tag",
+                   re.fullmatch(r"[0-9a-f]{40}", u.split("@")[-1]) is not None,
+                   f"pinned to {u.split('@')[-1]!r}; a tag can move under the image")
+
+    print(f"\n  {gedraaid} assertion(s) ran, {len(fouten)} failure(s)")
     return 1 if fouten else 0
 
 
