@@ -101,6 +101,73 @@ class Ambigu(Exception):
         self.namen = namen
 
 
+def sweep_uitzondering(base: str) -> tuple[set[str], str | None]:
+    """De paden die een door-een-wachter-gegenereerde sweep mag raken.
+
+    De regel staat in .claude/territories.toml. Hij bestaat omdat een verandering
+    als de licentiekop elk territorium tegelijk raakt, en achthonderd paden
+    claimen zou niets zeggen over wie wat bezit -- het zou alleen de kaart voor
+    zichzelf opzij schuiven.
+
+    Hier wordt hij afgedwongen in plaats van beloofd. Een commit die zich als
+    sweep aanmeldt met een `Generated-by:`-trailer krijgt alleen ruimte als:
+
+      1. het commando in de allowlist van de kaart staat (anders is dit een
+         manier om willekeurige code te laten draaien vanuit een commitbericht);
+      2. het opnieuw draaien van dat commando een lege diff geeft.
+
+    Voorwaarde 2 is de hele controle. Een met de hand aangebrachte wijziging
+    tussen de gegenereerde verschijnt als een diff die niet reproduceert.
+
+    Een vuile werkboom geeft (set(), reden): dan kan hier niets gemeten worden,
+    en dat is geen groen. Het alternatief -- toch draaien en daarna opruimen --
+    zou onopgeslagen werk weggooien.
+    """
+    with open(MAP, "rb") as fh:
+        toegestaan = set(tomllib.load(fh).get("sweeps", {}).get("toegestaan", []))
+    if not toegestaan:
+        return set(), None
+
+    log = subprocess.run([GIT, "log", "--format=%H%x00%B%x00", f"{base}..HEAD"],
+                         cwd=ROOT, capture_output=True, text=True)
+    if log.returncode != 0:
+        return set(), "kon de commits van deze tak niet lezen"
+
+    sweeps: list[tuple[str, str]] = []
+    velden = log.stdout.split("\0")
+    for i in range(0, len(velden) - 1, 2):
+        sha, bericht = velden[i].strip(), velden[i + 1]
+        for regel in bericht.splitlines():
+            if regel.startswith("Generated-by:"):
+                sweeps.append((sha, regel.split(":", 1)[1].strip()))
+    if not sweeps:
+        return set(), None
+
+    vuil = subprocess.run([GIT, "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True)
+    if vuil.returncode != 0 or vuil.stdout.strip():
+        return set(), ("de werkboom is niet schoon, dus de sweep kon niet worden "
+                       "herdraaid: SKIPPED (not a pass)")
+
+    vrij: set[str] = set()
+    for sha, commando in sweeps:
+        if commando not in toegestaan:
+            return set(), (f"commit {sha[:8]} meldt zich als sweep met `{commando}`, "
+                           "en dat commando staat niet in [sweeps].toegestaan")
+        uit = subprocess.run(commando.split(), cwd=ROOT,
+                             capture_output=True, text=True)
+        na = subprocess.run([GIT, "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True)
+        if na.stdout.strip():
+            subprocess.run([GIT, "checkout", "--", "."], cwd=ROOT, capture_output=True, text=True)
+            return set(), (f"`{commando}` opnieuw draaien geeft WEL een diff, dus "
+                           f"commit {sha[:8]} is niet puur machinaal")
+        if uit.returncode != 0:
+            return set(), f"`{commando}` gaf exitcode {uit.returncode}"
+        bestanden = subprocess.run([GIT, "show", "--name-only", "--format=", sha],
+                                   cwd=ROOT, capture_output=True, text=True)
+        vrij |= {r for r in bestanden.stdout.splitlines() if r}
+    return vrij, None
+
+
 def current_branch() -> str | None:
     """The branch this work is on, or None if it genuinely cannot be known.
 
@@ -252,6 +319,7 @@ def main() -> int:
     overgeslagen: str | None = None
     checked_files = 0
     unowned = 0
+    sweep_toegestaan = 0
     # Collected, not returned. The first version of this returned 2 right here
     # -- before the shared judgement below -- so a real overlap, found and
     # collected a few lines up, disappeared behind "could not tell whose branch
@@ -276,12 +344,21 @@ def main() -> int:
         else:
             files, base = result
             checked_files = len(files)
+            sweep_vrij, sweep_reden = sweep_uitzondering(base)
+            if sweep_reden:
+                problems.append(f"a commit declares itself a generated sweep, but "
+                                f"{sweep_reden}")
             for path in files:
                 # The map itself is deliberately editable from anywhere: taking
                 # on work in another territory is a commit, not a silent edit.
                 if path == ".claude/territories.toml":
                     continue
                 if owns(mine, path):
+                    continue
+                if path in sweep_vrij:
+                    # Machinaal, en dat is hier nagemeten en niet aangenomen:
+                    # het commando is opnieuw gedraaid en gaf een lege diff.
+                    sweep_toegestaan += 1
                     continue
                 other = [t["id"] for t in in_repo if owns(t, path)]
                 if not other:
@@ -363,6 +440,8 @@ def main() -> int:
     print(f"\u2713 {len(territories)} territories, no overlap"
           + (f"; branch stayed inside its own across {checked_files} changed file(s)"
              + (f" ({unowned} unclaimed)" if unowned else "")
+             + (f", {sweep_toegestaan} in a re-run generated sweep"
+                if sweep_toegestaan else "")
              if checked_files else ""))
     return 0
 

@@ -353,3 +353,13 @@ issues = [163, 164, 166, 167, 168, 169, 186, 187, 189, 192, 193, 194, 195, 205, 
 
 # Not a territory. #272 (the 1051-file branch) and #257/#258 (owner decisions)
 # cut across all of them and stay with the coordinating terminal.
+
+# De commando's die zich als machinale sweep mogen aanmelden.
+#
+# De wachter draait ze opnieuw en eist een lege diff; deze lijst bestaat zodat
+# een `Generated-by:`-trailer geen manier is om willekeurige code te laten
+# draaien vanuit een commitbericht.
+[sweeps]
+toegestaan = [
+  "python3 scripts/ci/header_sweep.py --write",
+]
