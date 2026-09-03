@@ -30,6 +30,14 @@ import tomllib
 REPO = pathlib.Path(__file__).resolve().parents[2]
 CI = REPO / ".gitlab-ci.yml"
 
+# GitHub is the pipeline; GitLab is a nightly copy that was 204 commits behind on
+# 03-09-2026 and blocks nothing. Reading only .gitlab-ci.yml meant the one way to
+# satisfy this guard was a job on that mirror -- so "every feature-gated test has
+# a job" could be true while no such job had ever run against a merge. The
+# workflows are read too, and they are where the claim becomes checkable the same
+# day. The mirror still counts; it is simply no longer the only thing that does.
+WORKFLOWS = REPO / ".github" / "workflows"
+
 # ONDERGRENS: gescande crates >= 30 — de workspace heeft er ruim veertig; vindt
 # deze controle er minder, dan is de boomwandeling stuk en niet de codebase leeg.
 MIN_CRATES = 30
@@ -173,8 +181,15 @@ def main() -> int:
     if not CI.exists():
         print(f"SKIPPED (not a pass): {CI} ontbreekt", file=sys.stderr)
         return 0
-    ci_tekst = CI.read_text(errors="replace")
-    gedekt, all_features = ci_dekking(ci_tekst)
+    bronnen = [CI.read_text(errors="replace")]
+    if WORKFLOWS.is_dir():
+        bronnen += [w.read_text(errors="replace")
+                    for w in sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml"))]
+    gedekt, all_features = set(), False
+    for tekst in bronnen:
+        paren, alles = ci_dekking(tekst)
+        gedekt |= paren
+        all_features = all_features or alles
 
     crates = sorted((REPO / "crates").glob("*/Cargo.toml"))
     if len(crates) < MIN_CRATES:
