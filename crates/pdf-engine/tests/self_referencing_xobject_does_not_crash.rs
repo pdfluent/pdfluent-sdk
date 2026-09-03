@@ -18,6 +18,9 @@
 //! killing the host. Asserting the pixels would pin an arbitrary choice.
 use pdf_engine::render::RenderOptions;
 use pdf_engine::PdfDocument;
+use pdf_render::pdf_interpret::InterpreterWarning;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// `/X1` is a Form XObject whose content stream is `q /X1 Do Q`.
 const SELF_REFERENCING: &[u8] =
@@ -72,8 +75,8 @@ fn a_pattern_soft_mask_cycle_returns_instead_of_aborting() {
     let doc = PdfDocument::open(CYCLE_ACROSS_CONSTRUCTS.to_vec())
         .expect("the file is structurally valid; only its pattern/mask pair is circular");
 
-    // Reaching the next line is the assertion, as above.
-    let _ = doc.render_page(0, &RenderOptions::default());
+    assert_eq!(doc.page_count(), 1, "the fixture has one page");
+    assert_bound_fired(doc);
 }
 
 /// The same alternation reached through a different pair of constructs (#318).
@@ -105,6 +108,43 @@ fn an_xobject_soft_mask_cycle_returns_instead_of_aborting() {
     let doc = PdfDocument::open(ALTERNATING_XOBJECT_SOFT_MASK.to_vec())
         .expect("the file is structurally valid; only its XObject/mask pair is circular");
 
-    // Reaching the next line is the assertion, as above.
+    assert_eq!(doc.page_count(), 1, "the fixture has one page");
+    assert_bound_fired(doc);
+}
+
+/// Render page 0 and require that the depth bound actually refused something.
+///
+/// WHY THE SURVIVAL IS NOT ENOUGH
+///
+/// A test whose only assertion is "we reached the next line" cannot tell a
+/// survived cycle from a fixture that stopped being a cycle. Asserting
+/// `page_count() == 1` does not fix that either, and this was measured rather
+/// than reasoned: a valid 456-byte one-page PDF drawing a grey box -- no
+/// XObject, no cycle, nothing to recurse on -- passes both the open and the
+/// page count, and all four tests stayed green with it in place. The same
+/// shape as an empty glob satisfying a loop.
+///
+/// So assert the thing only a real cycle can produce: `NestingTooDeep` in the
+/// warning sink. The inert fixture cannot emit it, because there is nothing to
+/// nest. That is also why the bound reports to the sink at all -- reaching the
+/// limit means paint is missing from the page, and a `warn!` line is invisible
+/// to a library caller. (Reviewer finding, #318.)
+fn assert_bound_fired(mut doc: PdfDocument) {
+    let fired = Arc::new(AtomicBool::new(false));
+    let zag = Arc::clone(&fired);
+    doc.set_warning_sink(Arc::new(move |w: InterpreterWarning| {
+        if matches!(w, InterpreterWarning::NestingTooDeep { .. }) {
+            zag.store(true, Ordering::SeqCst);
+        }
+    }));
+
+    // Reaching the next line is still half the assertion: before the bound, it
+    // aborted the process.
     let _ = doc.render_page(0, &RenderOptions::default());
+
+    assert!(
+        fired.load(Ordering::SeqCst),
+        "the depth bound never fired, so this fixture nests nothing and the \
+         test would pass with any valid one-page PDF in its place"
+    );
 }

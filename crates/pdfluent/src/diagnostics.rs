@@ -84,6 +84,9 @@ impl Diagnostic {
     pub const CODE_XREF_REBUILT: &'static str = "XREF_REBUILT";
     /// Stable code for an invalid page tree recovered by brute-force scan.
     pub const CODE_PAGE_TREE_REBUILT: &'static str = "PAGE_TREE_REBUILT";
+    /// Content stream nesting hit the interpreter's depth limit; the rest of
+    /// that branch was not drawn (#318).
+    pub const CODE_NESTING_TOO_DEEP: &'static str = "NESTING_TOO_DEEP";
     /// Stable code for a flate stream decoded via the pure-Rust fallback.
     pub const CODE_FLATE_BROKEN_FALLBACK: &'static str = "FLATE_BROKEN_FALLBACK";
     /// Stable code for a bad block header encountered in a flate stream.
@@ -172,6 +175,24 @@ impl Diagnostic {
                 page: None,
                 object: None,
                 source: Some(format!("observed={observed};limit={limit}")),
+            },
+            InterpreterWarning::NestingTooDeep { limit } => Diagnostic {
+                // Warning, not Error: unlike StreamTooLarge the page still
+                // renders and the rest of it is correct -- what is missing is
+                // one branch that referred to itself. A caller rasterising for
+                // archival wants to know; one drawing a thumbnail does not
+                // need the call to fail.
+                severity: Severity::Warning,
+                category: DiagnosticCategory::Limit,
+                code: Self::CODE_NESTING_TOO_DEEP,
+                message: format!(
+                    "Content stream nesting exceeded the limit of {limit}; the \
+                     nested content was not drawn, so paint may be missing from \
+                     the page."
+                ),
+                page: None,
+                object: None,
+                source: Some(format!("limit={limit}")),
             },
         }
     }
