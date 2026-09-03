@@ -118,12 +118,20 @@ def main() -> int:
     # other gates, and one pull request crossing thirty days would stop every
     # merge in the repository -- including the merges that would clear the
     # backlog. A guard against neglect that freezes the work is worse than the
-    # neglect. Set PR_STALENESS_BLOCKING=1 in the scheduled run, where failing
-    # costs nobody their afternoon.
+    # neglect. PR_STALENESS_BLOCKING=1 is set in the weekly run, where failing
+    # costs nobody their afternoon: nightly.yml's `stale-pull-requests` job,
+    # cron '0 2 * * 0'.
+    #
+    # That job is what makes this branch reachable. Until 03-09-2026 no scheduled
+    # run set the variable, so `return 1` below was dead code and the line above
+    # promised a run that did not exist -- a guard whose teeth were in a sentence.
+    # test_pr_staleness.py now asserts the wiring, so the promise and the workflow
+    # cannot drift apart again. (T1 review of #1679)
     blokkerend = os.environ.get("PR_STALENESS_BLOCKING") == "1"
     if faal and not blokkerend:
         print(f"[pr-staleness] {len(faal)} stale pull request(s); reported, not "
-              "blocking here. The scheduled run fails on these.")
+              "blocking here. The weekly run (nightly.yml, Sunday 02:00 UTC) "
+              "fails on these.")
         return 0
     if faal:
         print(file=sys.stderr)
