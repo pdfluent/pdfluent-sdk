@@ -33,7 +33,9 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import shutil
 import subprocess
+import tempfile
 import sys
 import tomllib
 from pathlib import Path
@@ -116,13 +118,16 @@ def sweep_uitzondering(base: str) -> tuple[set[str], str | None]:
          manier om willekeurige code te laten draaien vanuit een commitbericht);
       2. het opnieuw draaien van dat commando een lege diff geeft.
 
-    Voorwaarde 2 is de controle, en dit is precies hoe ver hij reikt: een met de
-    hand aangebrachte wijziging IN WAT DE GENERATOR BEHEERT verschijnt als een
-    diff die niet reproduceert. Iets wat de generator nooit aanraakt -- een
-    bestand dat hij niet kent -- glipt erdoor. Dat is de grens van "herdraaien
-    geeft een lege diff", niet een gat om te dichten, en de reviewer is wat er
-    voor die rest is. `test_sweep_uitzondering.py` legt het als geval vast, zodat
-    niemand het mechanisme sterker leest dan het is.
+    Voorwaarde 2 heeft twee helften, en de tweede is er omdat de eerste alleen
+    niet genoeg was. Herdraaien vangt handwerk IN WAT DE GENERATOR BEHEERT: dat
+    reproduceert niet. Een bestand dat de generator nooit aanraakt reproduceert
+    juist wel schoon en reed dus gewoon mee -- dat stond hier eerst als een
+    aanvaarde grens.
+
+    Ze is gesloten door de vrijstelling door te snijden met het BEREIK van de
+    generator: draai hem op de ouder van de sweepcommit en kijk wat hij daar
+    schrijft. Dat is per definitie alles wat hij ooit aanraakt. Wat de commit
+    daarbuiten raakt, is met de hand toegevoegd.
 
     Een vuile werkboom geeft (set(), reden): dan kan hier niets gemeten worden,
     en dat is geen groen. Het alternatief -- toch draaien en daarna opruimen --
@@ -200,7 +205,47 @@ def sweep_uitzondering(base: str) -> tuple[set[str], str | None]:
             return set(), f"`{commando}` gaf exitcode {uit.returncode}"
         bestanden = subprocess.run([GIT, "show", "--name-only", "--format=", sha],
                                    cwd=ROOT, capture_output=True, text=True)
-        vrij |= {r for r in bestanden.stdout.splitlines() if r}
+        van_commit = {r for r in bestanden.stdout.splitlines() if r}
+
+        # Doorsnijden met WAT DE GENERATOR SCHRIJFT, niet met wat de commit raakt.
+        #
+        # Herdraaien op HEAD bewijst dat het gegenereerde gegenereerd is. Het zegt
+        # niets over een bestand dat de generator nooit aanraakt: dat reproduceert
+        # schoon en reed gewoon mee. Dat stond hier eerst als een bekende grens.
+        #
+        # Ze is te sluiten: draai de generator op de OUDER van de sweepcommit en
+        # kijk wat hij daar schrijft. Dat is per definitie zijn bereik. Alles in de
+        # commit dat daarbuiten valt is met de hand toegevoegd, en de vrijstelling
+        # geldt er niet voor.
+        tijdelijk = tempfile.mkdtemp(prefix="sweepbereik-")
+        try:
+            gemaakt = subprocess.run([GIT, "worktree", "add", "--detach", "-q",
+                                      tijdelijk, f"{sha}^"], cwd=ROOT,
+                                     capture_output=True, text=True)
+            if gemaakt.returncode != 0:
+                return set(), ("kon de ouder van de sweepcommit niet uitchecken om "
+                               "het bereik van de generator te meten: SKIPPED "
+                               "(not a pass)")
+            subprocess.run(commando.split(), cwd=tijdelijk,
+                           capture_output=True, text=True)
+            geschreven = subprocess.run([GIT, "status", "--porcelain"],
+                                        cwd=tijdelijk, capture_output=True,
+                                        text=True).stdout
+            bereik_generator = {r[3:].strip().strip('"')
+                                for r in geschreven.splitlines() if r[3:].strip()}
+        finally:
+            subprocess.run([GIT, "worktree", "remove", "--force", tijdelijk],
+                           cwd=ROOT, capture_output=True, text=True)
+            shutil.rmtree(tijdelijk, ignore_errors=True)
+
+        # De kaart zelf mag altijd, overal: dat staat hieronder ook al.
+        buiten = {p for p in van_commit - bereik_generator
+                  if p != ".claude/territories.toml"}
+        if buiten:
+            return set(), (f"commit {sha[:8]} raakt {len(buiten)} bestand(en) die "
+                           f"`{commando}` niet schrijft, dus die zijn met de hand "
+                           "toegevoegd: " + ", ".join(sorted(buiten)[:5]))
+        vrij |= van_commit
     return vrij, None
 
 
