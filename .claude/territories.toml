@@ -120,6 +120,13 @@ paden = [
   "docs/ci/**",
 ]
 uitgezonderd = [
+  # Not t2's, added 03-09-2026 with #1682/#292. It checks that a `docs/...` path
+  # cited from scripts/ci names a file that exists -- a guard about documents,
+  # not about building, which is the line t3's block draws. Three citations this
+  # week pointed at nothing, and docs/KWALITEITSSPOOR.md (t3's, listed there) was
+  # the third. Listed in t3's paden as well; this entry is what keeps t2's
+  # `scripts/ci/**` from claiming it back by listing order.
+  "scripts/ci/docs_references_resolve.py",
   # Not t2's, on purpose. Declaring a feature-gated test as deliberately not
   # running used to mean editing a t2 python file, so on 01-09-2026 T1 removed
   # a feature flag rather than declare it. A guard whose only escape hatch is
@@ -145,6 +152,12 @@ uitgezonderd = [
   # taking on work in another territory is a commit and not a silent edit.
   "scripts/ci/contributors.toml",
   "scripts/ci/repos_staan_zoals_bedoeld.py",
+  # Added 03-09-2026. Checks that a `docs/...` path cited from scripts/ci is a
+  # file that exists -- the third such citation this week pointed at nothing
+  # (docs/HERKOMST.md, the register reference in notice_matches_the_registry.py,
+  # and docs/KWALITEITSSPOOR.md, which lived only on three never-landed
+  # branches). It is a guard about documents rather than about building, which
+  # is the line this block draws, and KWALITEITSSPOOR.md above is already t3's.
   # t3: the licence boundary and its test, claimed back on #295 (see t3).
   "scripts/ci/license_boundary.py",
   "scripts/ci/test_license_boundary.py",
@@ -183,6 +196,12 @@ Licence texts, the claims register, and the guards that decide what can go publi
 Shares scripts/ci/ with t2, so the filenames are carved out explicitly above --
 these are the guards about publication, not about building."""
 paden = [
+  # Added 03-09-2026. A `docs/...` path cited from scripts/ci must name a file
+  # that exists; three citations this week pointed at nothing, and
+  # docs/KWALITEITSSPOOR.md (t3's, below) was the third. A guard about
+  # documents, not about building -- the line this block draws. Excepted from
+  # t2's `scripts/ci/**` above, which is what makes this entry take effect.
+  "scripts/ci/docs_references_resolve.py",
   "LICENSE*",
   "NOTICE*",
   "THIRD_PARTY*",
