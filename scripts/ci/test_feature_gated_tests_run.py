@@ -24,6 +24,13 @@ dragen, en welke paren een pipelinejob daadwerkelijk aanzet.
 """
 import pathlib
 import re
+
+try:
+    import yaml
+except ModuleNotFoundError:
+    print("[featgate] FATAL: pyyaml is not installed, so which lines a job runs "
+          "cannot be established. That is not a pass.", file=__import__('sys').stderr)
+    raise SystemExit(2) from None
 import sys
 import tomllib
 
@@ -158,6 +165,46 @@ def gated_features_met_tests(tekst: str) -> set[str]:
     return gevonden
 
 
+# The keys whose values a pipeline actually executes. Everything else in a
+# workflow file is description: names, comments, `if` expressions, the prose in
+# between.
+UITVOERSLEUTELS = {"run", "script", "before_script", "after_script"}
+
+
+def uitvoerregels(tekst: str) -> list[str] | None:
+    """What this file RUNS, or None if it is not YAML.
+
+    `ci_dekking` used to scan every line of the raw text, so anything containing
+    `cargo test` and `--features x` counted -- including a comment and including
+    a job's `name`. Measured 03-09-2026: replacing the real step with `run: true`
+    and a `# was: cargo test -p pdf-ocr --features tesseract` line left the guard
+    green, so a job could be deleted and its epitaph kept the gate satisfied.
+    That is the defect this guard exists to name, in the guard itself. (T3, #1685)
+
+    Returning None rather than falling back to the raw text is the point: a file
+    that will not parse is a file whose jobs cannot be established, and guessing
+    from its bytes is how the hole got here.
+    """
+    try:
+        doc = yaml.safe_load(tekst)
+    except yaml.YAMLError:
+        return None
+    uit: list[str] = []
+
+    def loop(knoop, sleutel=None):
+        if isinstance(knoop, dict):
+            for k, v in knoop.items():
+                loop(v, k)
+        elif isinstance(knoop, list):
+            for v in knoop:
+                loop(v, sleutel)
+        elif isinstance(knoop, str) and sleutel in UITVOERSLEUTELS:
+            uit.append(knoop)
+
+    loop(doc)
+    return uit
+
+
 def ci_dekking(tekst: str) -> tuple[set[tuple[str, str]], bool]:
     """(pakket, feature)-paren die een job aanzet, en of iets --all-features draait."""
     paren: set[tuple[str, str]] = set()
@@ -181,13 +228,19 @@ def main() -> int:
     if not CI.exists():
         print(f"SKIPPED (not a pass): {CI} ontbreekt", file=sys.stderr)
         return 0
-    bronnen = [CI.read_text(errors="replace")]
+    bronnen = [(CI, CI.read_text(errors="replace"))]
     if WORKFLOWS.is_dir():
-        bronnen += [w.read_text(errors="replace")
+        bronnen += [(w, w.read_text(errors="replace"))
                     for w in sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml"))]
     gedekt, all_features = set(), False
-    for tekst in bronnen:
-        paren, alles = ci_dekking(tekst)
+    for pad, tekst in bronnen:
+        regels = uitvoerregels(tekst)
+        if regels is None:
+            print(f"[featgate] FATAL: {pad} is not valid YAML, so the commands it "
+                  "runs cannot be read. Refusing to judge coverage from its raw "
+                  "bytes.", file=sys.stderr)
+            return 2
+        paren, alles = ci_dekking("\n".join(regels))
         gedekt |= paren
         all_features = all_features or alles
 
