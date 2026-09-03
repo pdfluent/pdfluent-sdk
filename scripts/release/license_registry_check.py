@@ -255,6 +255,28 @@ def main() -> int:
             )
 
     # --- Report ---
+
+    # De .NET-binding verscheept zijn eigen NOTICE, en niets hield hem gelijk aan
+    # de root. Negen scripts lezen NOTICE; geen enkele las deze kopie. Twee
+    # bestanden die hetzelfde horen te zeggen en apart bewerkt worden, zeggen op
+    # termijn iets anders -- en de kopie die meegaat in het pakket is juist de
+    # versie die de klant leest. (T1-review, #1682.)
+    NOTICE_KOPIEEN = [Path("bindings/dotnet/src/PDFluent/NOTICE")]
+    wortel = repo_root / "NOTICE"
+    if not wortel.is_file():
+        all_failures.append("NOTICE is missing from the repository root")
+    else:
+        bron = wortel.read_bytes()
+        for rel in NOTICE_KOPIEEN:
+            kopie = repo_root / rel
+            if not kopie.is_file():
+                all_failures.append(f"{rel} is missing; it is shipped in a package "
+                                    "and has to carry the same NOTICE as the root")
+            elif kopie.read_bytes() != bron:
+                all_failures.append(f"{rel} differs from the root NOTICE. A shipped "
+                                    "copy that may differ is a second notice, and the "
+                                    "one the customer reads is this one")
+
     if all_failures:
         print()
         print(f"LICENSE_REGISTRY_CHECK: FAIL ({len(all_failures)} issue(s))")
