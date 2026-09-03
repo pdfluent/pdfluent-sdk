@@ -109,39 +109,38 @@ aanvaard_tot = "0.7.2"  # in uitvoering, #256
 waarom = """
 PDF object model and parser. Closest to upstream; still MIT OR Apache-2.0.
 
-Besluit 03-09-2026 (#262): NIET mergen, en ook niets te cherry-picken -- de
-gemeten reden staat hieronder, want "achterstand" is hier niet hetzelfde als
-"missende fixes".
+Decision 03-09-2026 (#262): do NOT merge, and there is nothing to cherry-pick
+either. The measured reason follows, because "behind" is not the same claim as
+"missing fixes".
 
-65 upstream-commits raken hayro-syntax sinds ons forkpunt 3bda7cbc3. Acht lezen
-als een correctie; per stuk nagelopen tegen onze boom:
+65 upstream commits touch hayro-syntax since our fork point 3bda7cbc3. Eight read
+as corrections; each checked against our tree:
 
-  4d751e11  OOB-paniek op /Length (#1271)   AANWEZIG, anders opgelost: upstream
-            weigert een te grote /Length, wij klemmen hem met `byte_length.min(16)`
-            in decryption_key_rev1234. Zelfde bescherming, ander beleid. De
-            rev5/6-tak krijgt byte_length niet eens mee.
-  20e49afa  CCITT-uitvoerbuffer (#1269)     AANWEZIG, bewust half overgenomen: de
-            checked_mul staat er, de preallocatie niet, omdat onze decoder zijn
-            uitvoer laat groeien in plaats van columns*height te reserveren. Dat
-            staat als comment bij de test die het vastlegt.
-  3bae23c0  overflow-hardening (#1194)      AANWEZIG: de 1..=32- en 1..=16-guards
-            in bit_reader.rs, de u32::MAX-arm in bit_mask, en checked_add in
-            byte_reader.rs, met tests.
-  1156e0c3  nul-lange sleutels (#1193)      AANWEZIG, en de comment noemt het
-            upstream-nummer.
-  66822085  circulaire /Prev-ketens (#1150) AANWEZIG: cyclusdetectie in xref.rs.
-  3f10717a  ongeldige CCITT-hoogtes (#1339) AANWEZIG: onze /Rows-vs-/Height-test.
-  972a6e49  strengere getalparsing (#1191)  AANWEZIG langs een andere weg. De
-            patch applyt schoon, maar met alleen zijn tests en zonder zijn
-            productiewijziging blijven ze groen: onze parser weigert `[8 0R]` al.
-            Niet overgenomen -- tests toevoegen die met en zonder de fix slagen
-            legt niets vast.
-  7b4e71ba  debug-weergave van dicts (#1268) NIET overgenomen: cosmetisch, raakt
-            geen invoer die wij niet beheersen.
+  4d751e11  OOB panic on /Length (#1271)   PRESENT, solved differently: upstream
+            rejects an out-of-range /Length, we clamp it with byte_length.min(16)
+            in decryption_key_rev1234. Same protection, different policy. The
+            rev5/6 path never receives byte_length at all.
+  20e49afa  CCITT output buffer (#1269)    PRESENT, deliberately half-ported: the
+            checked_mul is there, the preallocation is not, because our decoder
+            grows its output instead of reserving columns * height. Recorded in a
+            comment on the test that pins it.
+  3bae23c0  overflow hardening (#1194)     PRESENT: the 1..=32 and 1..=16 guards
+            in bit_reader.rs, the u32::MAX arm in bit_mask, and checked_add in
+            byte_reader.rs, each with tests.
+  1156e0c3  zero-length keys (#1193)       PRESENT, and the comment names the
+            upstream issue.
+  66822085  circular /Prev chains (#1150)  PRESENT: cycle detection in xref.rs.
+  3f10717a  invalid CCITT heights (#1339)  PRESENT: our /Rows-vs-/Height test.
+  972a6e49  stricter number parsing (#1191) PRESENT by another route. The patch
+            applies cleanly, but with only its tests and without its production
+            change they stay green: our parser already rejects `[8 0R]`. Not
+            taken -- adding tests that pass with and without the fix pins
+            nothing.
+  7b4e71ba  debug output for dicts (#1268) NOT taken: cosmetic, and it touches no
+            input we do not control.
 
-Dus: geen enkele van de benoemde beveiligingsfixes ontbreekt. De aanvaarde
-achterstand tot 0.7.2 is een versie-achterstand, geen gat in de hardening.
-Herzien zodra upstream voorbij 0.7.2 gaat.
+So none of the named security fixes is absent. The accepted lag to 0.7.2 is a
+version gap, not a hardening gap. Revisit when upstream moves past 0.7.2.
 """
 
 [[fork]]
@@ -168,46 +167,45 @@ aanvaard_tot = "0.7.0"  # in uitvoering, #256
 waarom = """
 Content-stream interpreter and font handling. Still MIT OR Apache-2.0.
 
-Besluit 03-09-2026 (#262): NIET mergen, WEL drie fixes overgenomen. Anders dan
-bij pdf-syntax was de achterstand hier een echt gat, en één ervan was een P1.
+Decision 03-09-2026 (#262): do NOT merge, but three fixes ARE taken. Unlike
+pdf-syntax the lag here was a real gap, and one of them was a P1.
 
-71 upstream-commits raken hayro-interpret sinds ons forkpunt 3bda7cbc3. Zes
-lezen als een correctie; per stuk tegen onze boom gemeten, niet uit de diff
-afgelezen:
+71 upstream commits touch hayro-interpret since fork point 3bda7cbc3. Six read as
+corrections; each measured against our tree rather than read off the diff:
 
-  f1e31dc8  cyclusgrens (#1152)          GAT -- OVERGENOMEN. Er stond geen
-            enkele nesting- of cyclusgrens in deze crate. Een Form XObject die
-            zichzelf tekent liet het proces crashen via render_page: 639 bytes,
-            rc=134, stack overflow, vanuit elke binding en zonder XFA. Eigen
-            issue #318. Aangebracht op één plek (`interpret`) in plaats van bij
-            de vier recursieve constructies, omdat ze daar allemaal langskomen.
-  73444672  strik-clip (#1338)           GAT -- OVERGENOMEN. `path_as_rect`
-            besliste op verzamelde hoeken van de bounding box; een zelfsnijdende
-            vierhoek raakt alle vier, dus een zandloper-clip werd zijn bounding
-            box en er werd getekend waar het document zegt te verbergen.
-            Gemeten: strik gold als rechthoek, nu niet meer.
-  f82cfea2  ongeldige /HiVal (#1120)     GAT -- OVERGENOMEN. `/HiVal` boven 255
-            werd als u8 gelezen, gaf None, en de `?` gooide de hele indexed
-            kleurruimte weg -- een afbeelding die hem gebruikt rendert dan als
-            niets. Nu klemmen op 255.
-  f7c44f58  luma fast path (#1044)       AANWEZIG. Onze conditie draagt de
-            `!is_image_mask`-term die upstream weghaalde al niet, en
-            `is_luma = is_image_mask || force_luma` staat expliciet in color.rs.
-  b9838eff  LUTs als vaste arrays (#1299) NIET VAN TOEPASSING. Verandert
-            `U8Lookup` van Vec naar Box<[T; 256]> in een color/-map met vijf
-            bestanden. Wij hebben geen U8Lookup en geen opgesplitste color-map;
-            er is niets om over te nemen, en er is geen gedrag dat verschilt.
-  08758857  reparatie van de vorige (#1168) NIET VAN TOEPASSING, zelfde reden.
+  f1e31dc8  cycle bound (#1152)            GAP -- TAKEN. There was no nesting or
+            cycle bound in this crate at all. A Form XObject drawing itself
+            aborted the process through render_page: 639 bytes, rc=134, from
+            every binding and without XFA. Filed as #318. Placed in `interpret`
+            rather than at the four recursive constructs, because they all pass
+            through it.
+  73444672  bowtie clip (#1338)            GAP -- TAKEN. `path_as_rect` decided
+            on which bounding-box corners the path touches; a self-intersecting
+            quadrilateral touches all four, so an hourglass-shaped clip became
+            its bounding box and content was drawn where the document says to
+            hide it. Measured: the bowtie counted as a rectangle, and no longer
+            does.
+  f82cfea2  invalid /HiVal (#1120)         GAP -- TAKEN. A /HiVal above 255 was
+            read as u8, gave None, and the caller's `?` discarded the whole
+            indexed colour space -- an image using it renders as nothing. Now
+            clamped to 255.
+  f7c44f58  luma fast path (#1044)         PRESENT. Our condition never carried
+            the `!is_image_mask` term upstream removed, and
+            `is_luma = is_image_mask || force_luma` is explicit in color.rs.
+  b9838eff  LUTs as fixed arrays (#1299)   NOT APPLICABLE. Changes `U8Lookup`
+            from Vec to Box<[T; 256]> inside a five-file color/ module. We have
+            neither the type nor the split module: nothing to port, and no
+            behaviour differs.
+  08758857  fix to the previous one (#1168) NOT APPLICABLE, same reason.
 
-Dus: het gat zat in de eerste drie, alle drie overgenomen met eigen tests en met
-mutaties die de oorspronkelijke fout reproduceren. De aanvaarde achterstand tot
-0.7.0 gaat nu over de resterende 65 niet-corrigerende commits.
+So the gap was in the first three, all taken with their own tests and with
+mutations that reproduce the original defect. The accepted lag to 0.7.0 now
+covers the remaining 65 non-corrective commits.
 
-Wat NIET is overgenomen en wel open staat: upstream draagt bij f1e31dc8 de
-ouderdiepte door TilingPattern, SoftMask en de Type 3-glyph, zodat een cyclus
-die tussen constructies wisselt ook begrensd is. Wij geven daar 0 mee. Dat staat
-als comment op alle drie de plekken en op #318; iemand moet die cyclus eerst
-bouwen en meten.
+What is NOT taken and remains open: for f1e31dc8 upstream threads the parent
+depth through TilingPattern, SoftMask and the Type 3 glyph so a cycle
+alternating between constructs is bounded too. That cycle was measured to be
+reachable (1082 bytes, rc=134) and is closed separately on #318.
 """
 
 [[fork]]
