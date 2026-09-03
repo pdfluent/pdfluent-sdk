@@ -85,6 +85,12 @@ def main() -> int:
         geval("a `#` starting a word is a comment",
               strip("run me   # not this").strip() == "run me",
               repr(strip("run me   # not this")))
+        geval("an escaped quote does not end the string, so the comment goes",
+              strip('echo "a\\"b"   # pip install').strip() == 'echo "a\\"b"',
+              repr(strip('echo "a\\"b"   # pip install')))
+        geval("a backslash inside single quotes is literal",
+              strip("echo 'a\\' # gone").strip() == "echo 'a\\'",
+              repr(strip("echo 'a\\' # gone")))
 
     # Wiring: the constant the function reads must still be the action list, so
     # a future edit cannot quietly reintroduce the concatenated blob.

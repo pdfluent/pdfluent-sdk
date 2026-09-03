@@ -96,8 +96,17 @@ def zonder_commentaar(regel: str) -> str:
     uit: list[str] = []
     quote: str | None = None
     vorige_was_spatie = True
+    ontsnapt = False
     for teken in regel:
-        if quote:
+        if ontsnapt:
+            # The character after a backslash is literal: `\"` does not close
+            # a double-quoted string and `\#` does not start a comment.
+            uit.append(teken)
+            ontsnapt = False
+        elif teken == "\\" and quote != "'":
+            uit.append(teken)
+            ontsnapt = True
+        elif quote:
             uit.append(teken)
             if teken == quote:
                 quote = None
