@@ -67,11 +67,17 @@ GUARD_JOBS = {
 
 # Steps that genuinely are prerequisites: if the checkout or the interpreter is
 # missing, every step below is meaningless rather than unmeasured. Aborting
-# there is correct, so they are exempt by name.
-PREREQUISITE_MARKERS = (
+# there is correct, so they are exempt.
+#
+# Split by WHERE the evidence lives, because the two are different questions.
+# An action is identified by its `uses:` id; a command by a line it actually
+# runs. Neither is identified by what a step is CALLED.
+PREREQUISITE_ACTIONS = (
     "actions/checkout",
     "actions/setup-python",
     "actions/setup-node",
+)
+PREREQUISITE_COMMANDS = (
     "pip install",
     "npm ci",
 )
@@ -79,9 +85,56 @@ PREREQUISITE_MARKERS = (
 RUNS_ANYWAY = ("!cancelled()", "always()", "success() || failure()")
 
 
+def zonder_commentaar(regel: str) -> str:
+    """A shell line with its trailing comment removed, quotes respected.
+
+    `#` only starts a comment at the start of a word, so `sha256#deadbeef` and
+    `echo "# not a comment"` survive. Cutting on every `#` would silently
+    shorten real commands, which is the same class of error as reading them
+    from the wrong field.
+    """
+    uit: list[str] = []
+    quote: str | None = None
+    vorige_was_spatie = True
+    for teken in regel:
+        if quote:
+            uit.append(teken)
+            if teken == quote:
+                quote = None
+        elif teken in ("'", '"'):
+            quote = teken
+            uit.append(teken)
+        elif teken == "#" and vorige_was_spatie:
+            break
+        else:
+            uit.append(teken)
+        vorige_was_spatie = teken.isspace()
+    return "".join(uit)
+
+
 def is_prerequisite(step: dict) -> bool:
-    blob = f"{step.get('uses', '')} {step.get('run', '')} {step.get('name', '')}"
-    return any(marker in blob for marker in PREREQUISITE_MARKERS)
+    """Whether this step is a genuine prerequisite, judged by what it DOES.
+
+    It used to concatenate `uses`, `run` AND `name` and look for substrings, so
+    a step CALLED "check that actions/checkout is pinned" exempted itself from
+    the rule this file exists to enforce, and so did a `# pip install ...`
+    comment inside an unrelated command. A guard that reads a label as if it
+    were behaviour cannot tell a check from the thing it checks -- the same
+    defect `ci_dekking` had before #1685, in the file that polices exactly this.
+    (#321)
+
+    So: an action is matched on its `uses:` id with the version stripped, a
+    command on a line it really runs, and `name:` is never consulted.
+    """
+    uses = (step.get("uses") or "").split("@", 1)[0].strip()
+    if uses and uses in PREREQUISITE_ACTIONS:
+        return True
+
+    for regel in (step.get("run") or "").splitlines():
+        code = zonder_commentaar(regel).strip()
+        if code and any(marker in code for marker in PREREQUISITE_COMMANDS):
+            return True
+    return False
 
 
 def main() -> int:
