@@ -20,7 +20,7 @@ INSTALL = WORTEL / "infra/reaper/install.sh"
 UNIT = WORTEL / "infra/reaper/pdfluent-reaper.service"
 
 LASTIG = [
-    ("/opt/xfa%foo", "%"),      # a systemd specifier
+    ("/opt/app%foo", "%"),      # a systemd specifier
     ("/opt/a&b/xfa", "&"),      # sed replacement backreference
     ("/opt/a|b/xfa", "|"),      # the delimiter a sed version used
 ]
