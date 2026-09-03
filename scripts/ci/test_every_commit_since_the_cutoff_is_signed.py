@@ -128,6 +128,83 @@ def main() -> int:
         geval("a merge commit after the cutoff does not fail the gate",
               r.returncode == 0, f"exit={r.returncode} {r.stdout}{r.stderr}")
 
+    # A REBASED BRANCH WHOSE UPSTREAM REF IS STALE.
+    #
+    # This is the case that made every rebased push unpushable on 03-09. The
+    # range used to be `@{u}..HEAD`; after a rebase the upstream ref still points
+    # at the pre-rebase head, so that range stops meaning "what this push adds"
+    # and starts meaning "everything the new base has that the old head did not"
+    # -- which is main's own history, unsigned commits and all.
+    #
+    # The fixture mirrors it exactly: a shared main carrying an UNSIGNED commit
+    # written after the cutoff (as master does), a feature branch pushed before
+    # that landed, then rebased onto it. The branch's own commit is signed, so
+    # the only thing that can fail this is the range.
+    with tempfile.TemporaryDirectory(prefix="signoff-rebase-") as raw:
+        tmp = Path(raw)
+        afstand = tmp / "remote.git"
+        git("init", "-q", "--bare", "-b", "main", str(afstand), cwd=tmp)
+
+        werk = tmp / "werk"
+        git("clone", "-q", afstand.as_uri(), str(werk), cwd=tmp)
+        (werk / "a.txt").write_text("een\n")
+        git("add", "a.txt", cwd=werk)
+        git("commit", "-q", "-m", "root, voor de cutoff",
+            cwd=werk, GIT_AUTHOR_DATE=f"{cut - 3600} +0000")
+        git("push", "-q", "origin", "main", cwd=werk)
+
+        git("checkout", "-q", "-b", "tak", cwd=werk)
+        (werk / "b.txt").write_text("twee\n")
+        git("add", "b.txt", cwd=werk)
+        git("commit", "-q", "-s", "-m", "eigen werk, getekend",
+            cwd=werk, GIT_AUTHOR_DATE=f"{cut + 60} +0000")
+        git("push", "-q", "-u", "origin", "tak", cwd=werk)
+
+        # Somebody else's unsigned commit lands on main, exactly as master's did
+        # before this gate existed.
+        git("checkout", "-q", "main", cwd=werk)
+        (werk / "c.txt").write_text("drie\n")
+        git("add", "c.txt", cwd=werk)
+        git("commit", "-q", "-m", "andermans werk, ongetekend",
+            cwd=werk, GIT_AUTHOR_DATE=f"{cut + 120} +0000")
+        git("push", "-q", "origin", "main", cwd=werk)
+
+        git("checkout", "-q", "tak", cwd=werk)
+        r = git("rebase", "origin/main", cwd=werk)
+        geval("the fixture's rebase succeeded, so the case is real",
+              r.returncode == 0, r.stdout + r.stderr)
+
+        # The premise, asserted rather than assumed: the old range really does
+        # sweep in the other commit. Without this the case below could pass
+        # because the fixture is wrong rather than because the guard is right.
+        oud = git("rev-list", "--count", "--no-merges", "origin/tak..HEAD", cwd=werk)
+        nieuw_bereik = git("rev-list", "--count", "--no-merges", "HEAD",
+                           "--not", "--remotes", cwd=werk)
+        geval("the stale upstream range holds more than the branch's own work",
+              oud.stdout.strip() == "2" and nieuw_bereik.stdout.strip() == "1",
+              f"origin/tak..HEAD={oud.stdout.strip()} on-no-remote={nieuw_bereik.stdout.strip()}")
+
+        r = draai(werk)
+        geval("a rebased branch is not asked to sign commits already on the remote",
+              r.returncode == 0,
+              f"exit={r.returncode} {r.stdout}{r.stderr}")
+        geval("and the refusal it used to give named somebody else's commit",
+              "andermans werk" not in (r.stdout + r.stderr),
+              (r.stdout + r.stderr)[:200])
+
+        # And the fix did not make it toothless: the branch's OWN unsigned
+        # commit after the cutoff must still be refused.
+        (werk / "d.txt").write_text("vier\n")
+        git("add", "d.txt", cwd=werk)
+        git("commit", "-q", "-m", "eigen werk, ongetekend",
+            cwd=werk, GIT_AUTHOR_DATE=f"{cut + 180} +0000")
+        r = draai(werk)
+        geval("an unsigned commit of the branch's own is still refused",
+              r.returncode == 1, f"exit={r.returncode} {r.stdout}{r.stderr}")
+        geval("and that refusal names it",
+              "eigen werk, ongetekend" in (r.stdout + r.stderr),
+              (r.stdout + r.stderr)[:200])
+
     mislukt = [n for n, ok in gevallen if not ok]
     print(f"\n  {len(gevallen)} assertion(s) ran, {len(mislukt)} failure(s)")
     return 1 if mislukt else 0
