@@ -1,0 +1,7 @@
+# A channel delta of 0, 1 or 2 passes; 3 fails. Fraction is in [0, 1], not percent.
+[default]
+channel = 2
+fraction = 0.0
+
+# No per-fixture exceptions. Any future override must explain its cause here.
+[fixtures]
