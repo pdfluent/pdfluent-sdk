@@ -5,9 +5,11 @@ description: How work is done in the PDFluent/XFA repositories, from the first c
 
 # The PDFluent way
 
-Six sections in the order the work happens. Each one exists because its
-absence cost real time this quarter; the incident is named so the rule is
-not read as taste.
+Six sections in the order the work happens. Most rules exist because their
+absence cost real time this quarter, and then the incident is named. Rules
+that are a decision rather than a measurement are marked **[agreed]** with
+who decided; treat those as policy you can argue, not as evidence you can
+check.
 
 ```
 0 KNOW  →  1 SPEC  →  2 TEST FIRST  →  3 BRANCH  →  4 DONE  →  5 PUSH & VERIFY  →  6 PREVENT
@@ -50,7 +52,7 @@ a brownfield codebase; do the same for any area the register does not cover
 before you plan work there.
 
 Skip for a one-line fix. For anything else, write the spec first and keep it
-short: a screen, not a document.
+short: a screen, not a document [agreed: longer specs stopped being read].
 
 1. **Objective** — what, why, for whom, and what "done" looks like in one
    observable sentence.
@@ -72,11 +74,14 @@ short: a screen, not a document.
    table with stable ids, one-way dependencies, build order. Ten lines the
    coordinator reviews before any module spec is written.
 
-Write requirements as Given/When/Then where behaviour is involved; edge
-cases and failure cases are requirements, not afterthoughts. The validation
+Write requirements as Given/When/Then where behaviour is involved [agreed:
+course practice, owner 03-09]; edge cases and failure cases are requirements,
+not afterthoughts. The validation
 section is the acceptance test list and nothing else passes for it.
 
-The spec lives in the tracker issue, not in a chat message. The implementer
+The spec lives in the tracker issue, not in a chat message [agreed: a chat
+is gone at the next restart; three sessions restarted from a stale block this
+week]. The implementer
 gets the spec, the constitution and the files the task touches, in one fresh
 worktree: not the chat history, not the whole tree. If the implementation
 fails against a clear spec, fix the code; if it fails because the spec was
@@ -85,8 +90,11 @@ needing rescue in chat is the defect.
 
 ## 2. Test first, watch it fail
 
-**No production code without a failing test first.** If you wrote code before
-the test, delete it and start from the test. Not "keep as reference": delete.
+**No production code without a failing test first** [agreed: owner, 03-09,
+after several deliveries that turned out not to do what was reported]. If you
+wrote code before the test, move it out of the tree and rebuild from the
+test; code kept in view gets the test fitted to it instead of the other way
+round.
 
 RED → verify it fails **for the right reason** → GREEN with the minimal code
 → verify all green → REFACTOR staying green → next.
@@ -96,7 +104,8 @@ RED → verify it fails **for the right reason** → GREEN with the minimal code
   aborting the process; a floor assertion fired before the named failure it
   was supposed to protect; a guard read only `beginbfchar` and never saw the
   `bfrange` case.
-- **One behaviour, real code, clear name.** No mocks unless unavoidable.
+- **One behaviour, real code, clear name.** No mocks unless unavoidable
+  [agreed: a mock tests the mock].
 - **Both directions.** Prove the test fails when the feature is removed *and*
   that it accepts what it must accept. A stricter clip-path test that returns
   `None` unconditionally passes the first half and breaks every rectangle.
@@ -121,13 +130,20 @@ RED → verify it fails **for the right reason** → GREEN with the minimal code
   prefix and push by refspec to the PR branch; the guard reads the local name
   and only after a twelve-minute build. Claims move, they do not duplicate;
   temporary moves carry the reason and the return condition.
-- **One worktree per push until the remote sha matches.** Switching branches
-  in a worktree with a background push makes the gate test a different tree.
+- **One worktree per push until the remote sha matches.** On 03-09 a
+  background push ran the gate over a worktree whose branch had been switched
+  for a review in the meantime; the gate judged a different tree than the
+  commit being pushed, and the push was reported as failed for a reason that
+  did not exist.
 - **Commits**: English, conventional prefix, `-s` sign-off (owner decision
   03-09), no `Co-Authored-By`, no internal hosts, machine names, partners,
   customers or prices. `git add <explicit paths>`, never `-A`. Verify what the
   commit *contains*, not that the command exited.
-- **Never `git stash`, never `git reset --hard`** without a recoverable ref.
+- **Never `git stash`**: the shared checkout carries 79 stashes from other
+  sessions, and on 18-08 a stash to unblock a checkout picked up someone
+  else's conflicted `pom.xml` and carried it into a commit. **Never `git
+  reset --hard`** without a recoverable ref [agreed: the mutation-restore
+  incident of 25-08 lost work the same way].
 - **Generated files are regenerated, not merged**: `capability_register.py`,
   `test_reachability.py`, `header_sweep.py --write`. An auto-merge produced a
   TOML with duplicate keys and a crate missing a function; "no conflict" says
@@ -155,8 +171,9 @@ Rules around the five:
 - **Skipping is allowed; silent skipping is not.** `SKIPPED (not a pass):
   <reason>` on stderr and a non-zero exit. Four corpus gates were "green" for
   months because they compared nothing.
-- **Slow is not an argument.** A fourteen-minute smoke test is cheaper than
-  one customer regression.
+- **Slow is not an argument** [agreed: owner, Definition of Done]. The WASM
+  smoke test takes 10 to 14 minutes on the runner; `convertToPdfa` was broken
+  for three months while that test existed and nothing ran it.
 - **Report outcomes faithfully**: what ran, what it printed, what was
   skipped. "Committed and pushed" without having read the push output is a
   claim, not a report.
@@ -170,9 +187,13 @@ Rules around the five:
 - **Push through the pre-push gate, always.** `PRE_PUSH_SKIP=1` is never
   allowed, not with a table, not when the red is "pre-existing". If the red is
   not yours, fix it or wait for its owner.
-- **Read the log, not the harness exit code.** `cmd > log; echo rc=$?`
-  reports the `echo`. Anchor on `^PUSH_EXIT=` and confirm the remote sha:
-  `git rev-parse github/<branch>` is the truth.
+- **Read the log, not the exit code you happen to see.** A redirection keeps
+  `$?`; a pipe replaces it with the status of its last stage and `||` binds to
+  that stage (`false | tee log; echo $?` prints 0); a background task's
+  reported exit is that of its last command, often an `echo`. Three pushes
+  were reported as done this way on 03-09 while the gate had refused them.
+  Capture the status before any pipe, anchor on `^PUSH_EXIT=` in the log, and
+  confirm the remote sha: `git rev-parse github/<branch>` is the truth.
 - **Then verify the pipeline yourself**: `gh run list --commit <full sha>`
   (short shas return nothing), wait for `completed`, read every non-green
   job. `canceled` is not `failed`. Known reds are listed in
