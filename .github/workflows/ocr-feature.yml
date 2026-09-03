@@ -7,6 +7,14 @@
 #
 # A separate file rather than a job in ci.yml: ci.yml is under change elsewhere,
 # and this needs system libraries no other job wants.
+#
+# THIS WORKFLOW IS MEANT TO MOVE. The moment the ephemeral snapshot carries
+# libtesseract-dev, libleptonica-dev and libclang-dev, this job belongs on that
+# instance in ci-ephemeral.yml, and it gains a push trigger there -- compiling
+# work belongs on a throwaway machine, which is the whole point of #267. It lives
+# here, hosted and pull-request-only, only because the snapshot does not carry
+# them yet. The requirement is recorded on #276 with the fifty SSIM documents,
+# and on #244. Delete this file when that lands. (#244, #276)
 name: OCR feature tests
 
 # Pull requests only, and that is the whole design rather than an omission --
@@ -56,6 +64,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             libtesseract-dev libleptonica-dev libclang-dev
+
+      # The owner's rule is zero GitHub cost, so this has to stay inside the
+      # free bundle. The cache is what keeps it there: without it every run
+      # rebuilds tesseract-sys and bindgen from scratch.
+      - uses: Swatinem/rust-cache@v2
 
       - name: The tests behind the tesseract feature
         run: cargo test -p pdf-ocr --features tesseract --locked
