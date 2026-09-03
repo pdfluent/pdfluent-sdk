@@ -41,9 +41,9 @@ COPY_NOTICE = REPO / "bindings/dotnet/src/PDFluent/NOTICE"
 PATH_LIKE = re.compile(r"(?<![\w/.-])((?:\.?[\w.-]+/)+[\w.-]+/?|[\w-]+\.[A-Za-z][\w.]*)")
 
 
-def paths(tekst: str, roots: set[str]) -> list[str]:
+def paths(text: str, roots: set[str]) -> list[str]:
     found = []
-    for line in tekst.splitlines():
+    for line in text.splitlines():
         # A URL is not a path in this tree.
         without_url = re.sub(r"https?://\S+", " ", line)
         for m in PATH_LIKE.finditer(without_url):

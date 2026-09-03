@@ -61,7 +61,7 @@ def build(tmp: pathlib.Path, with_hook: bool, signoff_config: bool = False,
 
 
 def main() -> int:
-    fouten: list[str] = []
+    failures: list[str] = []
 
     # A missing hook is a finding, not a traceback. Without this the test died
     # with FileNotFoundError, which reads as "the test is broken" when the answer
@@ -71,9 +71,9 @@ def main() -> int:
               "is nothing that writes the sign-off.", file=sys.stderr)
         return 1
 
-    def expect(wat: str, ok: bool, detail: str = "") -> None:
+    def expect(what: str, ok: bool, detail: str = "") -> None:
         if not ok:
-            fouten.append(f"{wat}{': ' + detail if detail else ''}")
+            failures.append(f"{what}{': ' + detail if detail else ''}")
 
     with tempfile.TemporaryDirectory() as d:
         tmp = pathlib.Path(d)
@@ -128,10 +128,10 @@ def main() -> int:
         expect("without user.name the hook does not fail", r.returncode == 0,
             f"exit {r.returncode}: {(r.stderr or '').strip()[:120]}")
 
-    if fouten:
+    if failures:
         print("test_prepare_commit_msg_signoff: the hook does not do what it promises.\n",
               file=sys.stderr)
-        for f in fouten:
+        for f in failures:
             print(f"  - {f}", file=sys.stderr)
         return 1
     print("test_prepare_commit_msg_signoff: OK -- 6 case(s); the hook writes the "

@@ -33,9 +33,9 @@ def tree(tmp: pathlib.Path, root_text: str, copy_text: str | None = None) -> pat
 
 
 def run_guard(r: pathlib.Path):
-    omg = dict(os.environ, PDFLUENT_NOTICE_ROOT=str(r))
+    env = dict(os.environ, PDFLUENT_NOTICE_ROOT=str(r))
     return subprocess.run([sys.executable, str(GUARD)], capture_output=True,
-                          text=True, env=omg)
+                          text=True, env=env)
 
 
 def case(label: str, ok: bool, why: str = "") -> bool:
