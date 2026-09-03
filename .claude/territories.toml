@@ -84,6 +84,26 @@ paden = [
   "scripts/ci/test_no_ai_attribution.py",
   "scripts/ci/the_commit_msg_hook_is_wired.py",
   "docs/HERKOMST.md",
+  # MOVED here for #316, not claimed twice: `.github/workflows/ci.yml` and
+  # `scripts/ci/local_ci_gate.sh` came out of t3's block and
+  # `scripts/ci/every_guard_has_a_job.py` out of t2's, because a path with two
+  # owners is the collision this map exists to prevent -- the local gate refused
+  # the first attempt, correctly. Same handling as #1675/#1676.
+  #
+  # The owner's decision on #316 moves the cutoff and makes the sign-off gate
+  # satisfiable, and both halves live here: ci.yml for the pull_request job,
+  # local_ci_gate.sh for the pre-push gate that is the real merge point, because
+  # master only takes fast-forwards. every_guard_has_a_job.py records why the new
+  # guard has no CI job of its own.
+  #
+  # Back to t3/t2 when this lands. T3 knows #1543 rebases onto it: one known
+  # conflict, once.
+  "scripts/ci/every_commit_since_the_cutoff_is_signed.py",
+  "scripts/ci/test_every_commit_since_the_cutoff_is_signed.py",
+  "scripts/ci/every_guard_has_a_job.py",
+  ".github/workflows/ci.yml",
+  "scripts/ci/local_ci_gate.sh",
+  "scripts/ci/test_een_treffer_publiceert_de_term_niet.py",
 ]
 # NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
 # parity tests are edited by this change but stay with whoever owns the SDK
@@ -232,8 +252,6 @@ paden = [
   # narrowly, for one step in each file that runs the guards above next to the
   # guards they test -- those steps, nothing else. t2 (or t1) takes both back at
   # their next edit of either file; nothing else in them is t3's.
-  ".github/workflows/ci.yml",
-  "scripts/ci/local_ci_gate.sh",
   "crates/xfa-license/**",
   "crates/xfa-license-gen/**",
   # Claimed 01-09-2026. This file decides what leaves the building, which is the

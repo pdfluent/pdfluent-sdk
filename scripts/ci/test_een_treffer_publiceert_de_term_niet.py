@@ -189,16 +189,21 @@ woorden = collections.Counter(
     w.lower() for w in _re.findall(r"[A-Za-z]{6,}", boodschappen))
 # Words the guard prints ANYWAY -- its banner says "commit", "repository",
 # "publiek" -- would make the absence check fail for a reason that has nothing
-# to do with redaction. Collected from a clean run rather than guessed at, so
-# the exclusion cannot go stale the way the hardcoded candidate list did.
-with tempfile.TemporaryDirectory() as _td:
-    _leeg = pathlib.Path(_td) / "geen.txt"
-    _leeg.write_text("zzqnietbestaandeterm\n")
-    _basis = subprocess.run([sys.executable, str(GUARD), "--bereik", bereik],
-                            cwd=REPO, capture_output=True, text=True,
-                            env=dict(os.environ, CI="true",
-                                     PDFLUENT_INTERNE_TERMEN=str(_leeg)))
-_eigen = set(_re.findall(r"[A-Za-z]{6,}", (_basis.stdout + _basis.stderr).lower()))
+# to do with redaction.
+#
+# These come from the guard's SOURCE, not from a run of it. A run only exercises
+# one path, and the previous version took a clean run: its output is the success
+# line `OK: <bereik> bevat geen interne zaken.`, which shares almost no
+# vocabulary with the failure text this assertion actually reads. The word
+# `commit` appears four times in that failure text -- "horen niet in een
+# commitboodschap" -- and was therefore never excluded. It only had to become
+# the most frequent word in HEAD~3..HEAD for the test to fail on a repository
+# where nothing was wrong: a commit about commits and sign-offs did it (#316).
+#
+# The comment this replaces said the exclusion "cannot go stale the way the
+# hardcoded candidate list did". It could, in one specific way: a baseline that
+# samples only the success path ages on the failure path.
+_eigen = set(_re.findall(r"[A-Za-z]{6,}", GUARD.read_text().lower()))
 kandidaten = [w for w, _ in woorden.most_common() if w.isalpha() and w not in _eigen]
 assert kandidaten, (
     f"no word of six letters or more in {bereik}: the fixture cannot guarantee "
@@ -225,6 +230,27 @@ with tempfile.TemporaryDirectory() as td:
            TREFFER.lower() not in uitvoer, uitvoer[:250])
     expect("  while the run still fails, so nobody has to read the log to know",
            r.returncode == 1, f"exit={r.returncode}")
+
+# The case that made this test fail on a repository where nothing was wrong.
+#
+# The candidate term is the most frequent word in HEAD~3..HEAD. When a commit is
+# ABOUT commits -- a sign-off gate, say (#316) -- the winner is `commit`, and the
+# guard prints that word in its own failure banner. The old exclusion list came
+# from a clean run, whose output never contains the failure text, so `commit` was
+# offered as the term and then published by the guard reporting it.
+#
+# Asserted against the source rather than by rebuilding the situation, because
+# the situation depends on what the last three commit messages happen to say --
+# which is exactly the fragility being fixed.
+_faaltekst_woorden = {w for w in _re.findall(r"[A-Za-z]{6,}", GUARD.read_text().lower())}
+for _woord in ("commit", "commitboodschap", "repository", "publiek"):
+    expect(f"  a word the guard itself can print ({_woord!r}) is never offered as the term",
+           _woord not in kandidaten,
+           f"{_woord!r} is candidate #{kandidaten.index(_woord)}" if _woord in kandidaten else "")
+
+expect("  the exclusion covers the failure text, not only the success line",
+       "commitboodschap" in _faaltekst_woorden or "commit" in _eigen,
+       "the guard's failure vocabulary is not in the exclusion set")
 
 # END TO END THROUGH `--boom`, because the two assertions above pass with the
 # fix removed. They exercise `_toonbaar` on a hand-made tuple and the regex on

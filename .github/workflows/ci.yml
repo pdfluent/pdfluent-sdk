@@ -311,6 +311,12 @@ jobs:
       # The checkout is shallow, so the base commit is fetched before the range
       # means anything: `git log` on a depth-1 clone answers confidently and
       # wrongly, which is #290's dating bug in a different file.
+      # The gate that decides is the pre-push one -- master only takes
+      # fast-forwards -- so its test runs here, where a broken gate is visible
+      # to somebody other than the person who broke it.
+      - name: The sign-off gate bites, in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_commit_since_the_cutoff_is_signed.py
       - name: Every commit written since the DCO carries a matching sign-off
         if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         # The base sha arrives through `env:` rather than pasted into the script.
@@ -322,19 +328,42 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          CUTOFF=2c03659a
+          # The cutoff is a MOMENT, not a commit, and that removes a failure
+          # mode of its own: the old form named a SHA and derived this timestamp
+          # from it, so a checkout without that SHA could not establish what the
+          # rule covered and exited 1 -- a gate failing for want of history
+          # rather than for want of a sign-off.
+          #
+          # The moment is the author date of the commit carrying out the owner's
+          # decision on #316. The comparison is strictly `>`, so that commit is
+          # itself exempt and nothing before it is certified retroactively --
+          # which is what the decision says. Everything written after it needs
+          # the trailer.
+          CUT_AT=1788420644
           if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
             git fetch --no-tags --quiet --unshallow || git fetch --no-tags --quiet --deepen=200 || true
           fi
-          if ! git cat-file -e "${CUTOFF}^{commit}" 2>/dev/null; then
-            echo "SKIPPED (not a pass): the cutoff ${CUTOFF} is not in this checkout," >&2
-            echo "  so which commits the rule covers cannot be established." >&2
-            exit 1
-          fi
-          CUT_AT=$(git log -1 --format=%at "${CUTOFF}")
+          # `--no-merges` is not a nicety here. On a pull_request event the
+          # checkout action resolves HEAD to the SYNTHETIC merge commit GitHub
+          # builds from base and head -- confirmed on #1678: 426d36dff, two
+          # parents, message "Merge 707f254a7 into 29654ec9". That commit has a
+          # generated message and can never carry a sign-off, so the gate
+          # demanded one from a commit nobody wrote and could not be made green
+          # by anyone. Same shape #1635 repaired in the deletion guard.
+          #
+          # Written as "the checkout action" rather than by its `uses:` name on
+          # purpose. guards_do_not_hide_behind_each_other.py decides SETUP vs
+          # GUARD by looking for the setup actions' names as substrings of the
+          # whole step -- `uses`, `run` and `name` concatenated -- so a comment
+          # that merely mentions one classifies the step as scaffolding, and a
+          # guard read as scaffolding is reported as sitting below a guard.
+          # Spelling the name out here did exactly that to this step, twice:
+          # once in the explanation above, once in the explanation of the
+          # explanation.
+          #
           # `git log --since` filters on committer date, which is the thing we
           # are deliberately not using, so the selection is done here.
-          NA=$(git log --format='%H %at' "${BASE}..HEAD" \
+          NA=$(git log --no-merges --format='%H %at' "${BASE}..HEAD" \
                | awk -v c="${CUT_AT}" '$2 > c {print $1}')
           if [ -z "${NA}" ]; then
             echo "::notice::No commit in this pull request was written after the DCO landed; sign-off not required."

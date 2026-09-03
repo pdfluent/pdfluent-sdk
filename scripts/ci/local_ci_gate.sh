@@ -169,6 +169,10 @@ run licregs   python3 scripts/ci/one_licence_three_registers.py
 run licregtst python3 scripts/ci/test_one_licence_three_registers.py
 run errdocs   python3 scripts/ci/error_codes_have_an_anchor.py
 run errtests  cargo test -q -p pdfluent --test error_codes_stable --test processing_limits
+# The merge point, not a formality: master only takes fast-forwards, so what
+# passes here is what lands. #316.
+run signoff   python3 scripts/ci/every_commit_since_the_cutoff_is_signed.py
+run signofftst python3 scripts/ci/test_every_commit_since_the_cutoff_is_signed.py
 run prstale   python3 scripts/ci/pr_staleness.py
 run prstaletst python3 scripts/ci/test_pr_staleness.py
 run sweep     python3 scripts/ci/test_sweep_spares_the_claimed_instance.py
