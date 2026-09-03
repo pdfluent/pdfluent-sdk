@@ -559,6 +559,9 @@ jobs:
       - name: The never-green gate still bites
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_a_gate_that_never_went_green.py
+      - name: The Java library-name check reads every caller
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_library_name_check_reads_every_caller.py
       # Without the token `gh api` cannot read a private repository's run
       # history, and this guard would announce SKIPPED (not a pass) on every
       # run -- honest, but not a gate. Same plumbing as pr_staleness.py above.
