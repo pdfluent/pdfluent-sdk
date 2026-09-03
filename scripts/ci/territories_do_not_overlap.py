@@ -103,150 +103,149 @@ class Ambigu(Exception):
         self.namen = namen
 
 
-def sweep_uitzondering(base: str) -> tuple[set[str], str | None]:
-    """De paden die een door-een-wachter-gegenereerde sweep mag raken.
+def sweep_exemption(base: str) -> tuple[set[str], str | None]:
+    """The paths a guard-generated sweep may touch.
 
-    De regel staat in .claude/territories.toml. Hij bestaat omdat een verandering
-    als de licentiekop elk territorium tegelijk raakt, en achthonderd paden
-    claimen zou niets zeggen over wie wat bezit -- het zou alleen de kaart voor
-    zichzelf opzij schuiven.
+    The rule is in .claude/territories.toml. It exists because a change like the
+    licence header touches every territory at once, and claiming eight hundred
+    paths would say nothing about who owns what -- it would only be the map
+    getting out of its own way.
 
-    Hier wordt hij afgedwongen in plaats van beloofd. Een commit die zich als
-    sweep aanmeldt met een `Generated-by:`-trailer krijgt alleen ruimte als:
+    Here it is enforced rather than promised. A commit that declares itself a
+    sweep with a `Generated-by:` trailer is given room only when:
 
-      1. het commando in de allowlist van de kaart staat (anders is dit een
-         manier om willekeurige code te laten draaien vanuit een commitbericht);
-      2. het opnieuw draaien van dat commando een lege diff geeft.
+      1. the command is in the map's allowlist (otherwise this is a way to run
+         arbitrary code from a commit message);
+      2. re-running that command produces an empty diff.
 
-    Voorwaarde 2 heeft twee helften, en de tweede is er omdat de eerste alleen
-    niet genoeg was. Herdraaien vangt handwerk IN WAT DE GENERATOR BEHEERT: dat
-    reproduceert niet. Een bestand dat de generator nooit aanraakt reproduceert
-    juist wel schoon en reed dus gewoon mee -- dat stond hier eerst als een
-    aanvaarde grens.
+    Condition 2 has two halves, and the second is there because the first alone
+    was not enough. Re-running catches a hand edit IN WHAT THE GENERATOR MANAGES:
+    that does not reproduce. A file the generator never touches reproduces
+    cleanly and simply rode along -- which stood here as an accepted limit.
 
-    Ze is gesloten door de vrijstelling door te snijden met het BEREIK van de
-    generator: draai hem op de ouder van de sweepcommit en kijk wat hij daar
-    schrijft. Dat is per definitie alles wat hij ooit aanraakt. Wat de commit
-    daarbuiten raakt, is met de hand toegevoegd.
+    It is closed by intersecting the exemption with the generator's REACH: run it
+    on the parent of the sweep commit and see what it writes there. That is by
+    definition everything it ever touches. What the commit touches outside that
+    was added by hand.
 
-    Een vuile werkboom geeft (set(), reden): dan kan hier niets gemeten worden,
-    en dat is geen groen. Het alternatief -- toch draaien en daarna opruimen --
-    zou onopgeslagen werk weggooien.
+    A dirty worktree returns (set(), reason): nothing can be measured then, and
+    that is not green. The alternative -- run anyway and clean up afterwards --
+    would throw away unsaved work.
     """
-    # De allowlist komt uit de BASIS, niet uit de werkboom.
+    # The allowlist comes from the BASE, not from the worktree.
     #
-    # Uit de werkboom lezen maakt de controle rond: een tak zet zijn eigen
-    # commando in `[sweeps].toegestaan`, meldt zich met de bijbehorende trailer,
-    # en heeft zichzelf gemachtigd. Deze wachter draait vóór elke review, dus
-    # "de reviewer ziet die regel er ook bij staan" komt te laat.
+    # Reading it from the worktree makes the check circular: a branch puts its own
+    # command in `[sweeps].toegestaan`, declares the matching trailer, and has
+    # authorised itself. This guard runs before every review, so "the reviewer
+    # sees that line too" comes too late.
     #
-    # Prijs: een nieuw sweepcommando moet eerst op de basis landen voordat een
-    # tak hem mag gebruiken. Dat is de bedoeling -- machtiging hoort uit iets te
-    # komen dat al beoordeeld is, niet uit de tak die om toestemming vraagt.
-    basis = subprocess.run([GIT, "show", f"{base}:.claude/territories.toml"],
-                           cwd=ROOT, capture_output=True, text=True)
-    if basis.returncode != 0:
-        return set(), f"kon .claude/territories.toml op {base} niet lezen"
-    toegestaan = set(tomllib.loads(basis.stdout).get("sweeps", {})
-                     .get("toegestaan", []))
-    if not toegestaan:
+    # The price: a new sweep command has to land on the base before a branch may
+    # use it. That is the point -- authorisation should come from something
+    # already reviewed, not from the branch asking for permission.
+    base_map = subprocess.run([GIT, "show", f"{base}:.claude/territories.toml"],
+                              cwd=ROOT, capture_output=True, text=True)
+    if base_map.returncode != 0:
+        return set(), f"could not read .claude/territories.toml at {base}"
+    allowed = set(tomllib.loads(base_map.stdout).get("sweeps", {})
+                  .get("toegestaan", []))
+    if not allowed:
         return set(), None
 
     log = subprocess.run([GIT, "log", "--format=%H%x00%B%x00", f"{base}..HEAD"],
                          cwd=ROOT, capture_output=True, text=True)
     if log.returncode != 0:
-        return set(), "kon de commits van deze tak niet lezen"
+        return set(), "could not read the commits on this branch"
 
     sweeps: list[tuple[str, str]] = []
-    velden = log.stdout.split("\0")
-    for i in range(0, len(velden) - 1, 2):
-        sha, bericht = velden[i].strip(), velden[i + 1]
-        for regel in bericht.splitlines():
-            if regel.startswith("Generated-by:"):
-                sweeps.append((sha, regel.split(":", 1)[1].strip()))
+    fields = log.stdout.split("\0")
+    for i in range(0, len(fields) - 1, 2):
+        sha, message = fields[i].strip(), fields[i + 1]
+        for line in message.splitlines():
+            if line.startswith("Generated-by:"):
+                sweeps.append((sha, line.split(":", 1)[1].strip()))
     if not sweeps:
         return set(), None
 
-    # `--untracked-files=no`: het risico is dat het herdraaien een gewijzigd
-    # GEVOLGD bestand overschrijft, en dat `git checkout -- .` het daarna
-    # wegpoetst. Een ongevolgd bestand loopt geen van beide gevaar, en het
-    # meetellen zou elke werkboom met een kladbestand of een __pycache__
-    # laten overslaan -- een controle die bijna nooit kijkt.
-    vuil = subprocess.run([GIT, "status", "--porcelain", "--untracked-files=no"],
-                          cwd=ROOT, capture_output=True, text=True)
-    if vuil.returncode != 0 or vuil.stdout.strip():
-        return set(), ("de werkboom is niet schoon, dus de sweep kon niet worden "
-                       "herdraaid: SKIPPED (not a pass)")
+    # `--untracked-files=no`: the risk is that re-running overwrites a modified
+    # TRACKED file and `git checkout -- .` then wipes it. An untracked file is in
+    # neither danger, and counting it would make every worktree with a scratch
+    # file or a __pycache__ skip -- a check that almost never looks.
+    dirty = subprocess.run([GIT, "status", "--porcelain", "--untracked-files=no"],
+                           cwd=ROOT, capture_output=True, text=True)
+    if dirty.returncode != 0 or dirty.stdout.strip():
+        return set(), ("the worktree is not clean, so the sweep could not be "
+                       "re-run: SKIPPED (not a pass)")
 
-    vrij: set[str] = set()
-    for sha, commando in sweeps:
-        if commando not in toegestaan:
-            return set(), (f"commit {sha[:8]} meldt zich als sweep met `{commando}`, "
-                           "en dat commando staat niet in [sweeps].toegestaan")
-        # Vóór en ná vergelijken, niet "is er iets" ná.
+    freed: set[str] = set()
+    for sha, command in sweeps:
+        if command not in allowed:
+            return set(), (f"commit {sha[:8]} declares itself a sweep with "
+                           f"`{command}`, and that command is not in "
+                           "[sweeps].toegestaan")
+
+        # Compare before and after, not "is anything dirty" afterwards.
         #
-        # De na-meting moet ongevolgde bestanden WEL zien -- een sweep die een
-        # nieuw bestand aanmaakt verandert de boom -- maar dan telt ook de ruis
-        # mee die er al stond: een kladbestand, een __pycache__. Door dezelfde
-        # momentopname te vergelijken is wat er al was neutraal en is alleen
-        # wat het commando toevoegde een verschil.
-        voor = subprocess.run([GIT, "status", "--porcelain"], cwd=ROOT,
-                              capture_output=True, text=True).stdout
-        uit = subprocess.run(commando.split(), cwd=ROOT,
+        # The after-measurement must see untracked files -- a sweep that creates a
+        # new file changes the tree -- but then it also counts noise that was
+        # already there: a scratch file, a __pycache__. Comparing the same
+        # snapshot makes what was already there neutral and only what the command
+        # added a difference.
+        before = subprocess.run([GIT, "status", "--porcelain"], cwd=ROOT,
+                                capture_output=True, text=True).stdout
+        out = subprocess.run(command.split(), cwd=ROOT,
                              capture_output=True, text=True)
-        na = subprocess.run([GIT, "status", "--porcelain"], cwd=ROOT,
-                            capture_output=True, text=True).stdout
-        if na != voor:
+        after = subprocess.run([GIT, "status", "--porcelain"], cwd=ROOT,
+                               capture_output=True, text=True).stdout
+        if after != before:
             subprocess.run([GIT, "checkout", "--", "."], cwd=ROOT,
                            capture_output=True, text=True)
-            return set(), (f"`{commando}` opnieuw draaien geeft WEL een diff, dus "
-                           f"commit {sha[:8]} is niet puur machinaal")
-        if uit.returncode != 0:
-            return set(), f"`{commando}` gaf exitcode {uit.returncode}"
-        bestanden = subprocess.run([GIT, "show", "--name-only", "--format=", sha],
-                                   cwd=ROOT, capture_output=True, text=True)
-        van_commit = {r for r in bestanden.stdout.splitlines() if r}
+            return set(), (f"re-running `{command}` DOES produce a diff, so commit "
+                           f"{sha[:8]} is not purely mechanical")
+        if out.returncode != 0:
+            return set(), f"`{command}` exited with {out.returncode}"
 
-        # Doorsnijden met WAT DE GENERATOR SCHRIJFT, niet met wat de commit raakt.
+        files = subprocess.run([GIT, "show", "--name-only", "--format=", sha],
+                               cwd=ROOT, capture_output=True, text=True)
+        from_commit = {r for r in files.stdout.splitlines() if r}
+
+        # Intersect with WHAT THE GENERATOR WRITES, not with what the commit
+        # touches. Re-running on HEAD proves the generated parts are generated. It
+        # says nothing about a file the generator never touches: that reproduces
+        # cleanly and simply rode along.
         #
-        # Herdraaien op HEAD bewijst dat het gegenereerde gegenereerd is. Het zegt
-        # niets over een bestand dat de generator nooit aanraakt: dat reproduceert
-        # schoon en reed gewoon mee. Dat stond hier eerst als een bekende grens.
-        #
-        # Ze is te sluiten: draai de generator op de OUDER van de sweepcommit en
-        # kijk wat hij daar schrijft. Dat is per definitie zijn bereik. Alles in de
-        # commit dat daarbuiten valt is met de hand toegevoegd, en de vrijstelling
-        # geldt er niet voor.
-        tijdelijk = tempfile.mkdtemp(prefix="sweepbereik-")
+        # Measurable: run the generator on the PARENT of the sweep commit and see
+        # what it writes there. That is its reach by definition. Anything in the
+        # commit outside that set was added by hand, and the exemption does not
+        # cover it.
+        scratch = tempfile.mkdtemp(prefix="sweep-reach-")
         try:
-            gemaakt = subprocess.run([GIT, "worktree", "add", "--detach", "-q",
-                                      tijdelijk, f"{sha}^"], cwd=ROOT,
-                                     capture_output=True, text=True)
-            if gemaakt.returncode != 0:
-                return set(), ("kon de ouder van de sweepcommit niet uitchecken om "
-                               "het bereik van de generator te meten: SKIPPED "
-                               "(not a pass)")
-            subprocess.run(commando.split(), cwd=tijdelijk,
+            made = subprocess.run([GIT, "worktree", "add", "--detach", "-q",
+                                   scratch, f"{sha}^"], cwd=ROOT,
+                                  capture_output=True, text=True)
+            if made.returncode != 0:
+                return set(), ("could not check out the sweep commit's parent to "
+                               "measure the generator's reach: SKIPPED (not a pass)")
+            subprocess.run(command.split(), cwd=scratch,
                            capture_output=True, text=True)
-            geschreven = subprocess.run([GIT, "status", "--porcelain"],
-                                        cwd=tijdelijk, capture_output=True,
-                                        text=True).stdout
-            bereik_generator = {r[3:].strip().strip('"')
-                                for r in geschreven.splitlines() if r[3:].strip()}
+            written = subprocess.run([GIT, "status", "--porcelain"],
+                                     cwd=scratch, capture_output=True,
+                                     text=True).stdout
+            reach = {r[3:].strip().strip('"')
+                     for r in written.splitlines() if r[3:].strip()}
         finally:
-            subprocess.run([GIT, "worktree", "remove", "--force", tijdelijk],
+            subprocess.run([GIT, "worktree", "remove", "--force", scratch],
                            cwd=ROOT, capture_output=True, text=True)
-            shutil.rmtree(tijdelijk, ignore_errors=True)
+            shutil.rmtree(scratch, ignore_errors=True)
 
-        # De kaart zelf mag altijd, overal: dat staat hieronder ook al.
-        buiten = {p for p in van_commit - bereik_generator
-                  if p != ".claude/territories.toml"}
-        if buiten:
-            return set(), (f"commit {sha[:8]} raakt {len(buiten)} bestand(en) die "
-                           f"`{commando}` niet schrijft, dus die zijn met de hand "
-                           "toegevoegd: " + ", ".join(sorted(buiten)[:5]))
-        vrij |= van_commit
-    return vrij, None
+        # The map itself is editable from anywhere; the check below says so too.
+        outside = {p for p in from_commit - reach
+                   if p != ".claude/territories.toml"}
+        if outside:
+            return set(), (f"commit {sha[:8]} touches {len(outside)} file(s) that "
+                           f"`{command}` does not write, so those were added by "
+                           "hand: " + ", ".join(sorted(outside)[:5]))
+        freed |= from_commit
+    return freed, None
 
 
 def current_branch() -> str | None:
@@ -400,7 +399,7 @@ def main() -> int:
     overgeslagen: str | None = None
     checked_files = 0
     unowned = 0
-    sweep_toegestaan = 0
+    sweep_allowed = 0
     # Collected, not returned. The first version of this returned 2 right here
     # -- before the shared judgement below -- so a real overlap, found and
     # collected a few lines up, disappeared behind "could not tell whose branch
@@ -425,10 +424,10 @@ def main() -> int:
         else:
             files, base = result
             checked_files = len(files)
-            sweep_vrij, sweep_reden = sweep_uitzondering(base)
-            if sweep_reden:
+            sweep_freed, sweep_reason = sweep_exemption(base)
+            if sweep_reason:
                 problems.append(f"a commit declares itself a generated sweep, but "
-                                f"{sweep_reden}")
+                                f"{sweep_reason}")
             for path in files:
                 # The map itself is deliberately editable from anywhere: taking
                 # on work in another territory is a commit, not a silent edit.
@@ -436,10 +435,10 @@ def main() -> int:
                     continue
                 if owns(mine, path):
                     continue
-                if path in sweep_vrij:
-                    # Machinaal, en dat is hier nagemeten en niet aangenomen:
-                    # het commando is opnieuw gedraaid en gaf een lege diff.
-                    sweep_toegestaan += 1
+                if path in sweep_freed:
+                    # Mechanical, and measured here rather than assumed: the
+                    # command was re-run and produced an empty diff.
+                    sweep_allowed += 1
                     continue
                 other = [t["id"] for t in in_repo if owns(t, path)]
                 if not other:
@@ -521,8 +520,8 @@ def main() -> int:
     print(f"\u2713 {len(territories)} territories, no overlap"
           + (f"; branch stayed inside its own across {checked_files} changed file(s)"
              + (f" ({unowned} unclaimed)" if unowned else "")
-             + (f", {sweep_toegestaan} in a re-run generated sweep"
-                if sweep_toegestaan else "")
+             + (f", {sweep_allowed} in a re-run generated sweep"
+                if sweep_allowed else "")
              if checked_files else ""))
     return 0
 
