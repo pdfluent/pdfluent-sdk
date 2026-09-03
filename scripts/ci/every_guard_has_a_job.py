@@ -147,6 +147,16 @@ ALLOWED: dict[str, str] = {
     ),
     # The other three measure the tree as it stands and could be wired today; they
     # are held back only so they land and are reviewed as one set.
+    # Pre-push only, and that is where it decides: master takes fast-forwards
+    # only, so the local gate IS the merge point. Its CI counterpart is the
+    # inline "Every commit written since the DCO carries a matching sign-off"
+    # step in the same workflow, which asks the same question of a pull
+    # request's own commits; a second job running this script would ask it
+    # twice. Its test IS wired, in orchestration-guard. (#316)
+    "every_commit_since_the_cutoff_is_signed.py": (
+        "the pre-push half of the #316 sign-off gate; CI asks the same question "
+        "in orchestration-guard's inline step, and this script's test runs there"
+    ),
     "geen_interne_zaken.py": "wired with the other publication guards after #1543",
     "internal_stays_internal.py": "wired with the other publication guards after #1543",
     "simulate_public_tree.py": "wired with the other publication guards after #1543",
