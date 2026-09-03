@@ -48,5 +48,27 @@ r = run("comparefail", with_gh=True)
 expect("compare call fails: the PR line carries the reason",
        "#4242 could not be compared" in r.stdout and RATE in r.stdout, r.stdout + r.stderr)
 expect("  and the guard itself does not crash", r.returncode in (0, 1), str(r.returncode))
-print(f"\n  5 assertion(s) ran, {len(fails)} failure(s)")
+
+# The blocking half has to be reachable from somewhere, or `return 1` is dead
+# code and the non-blocking message promises a run nobody scheduled. That is
+# exactly what it was until 03-09-2026. Asserted here rather than trusted,
+# because the promise lives in one file and the run that keeps it in another.
+# (T1 review of #1679)
+import pathlib as _pl
+import re as _re
+
+_nightly = _pl.Path(__file__).resolve().parents[2] / ".github/workflows/nightly.yml"
+if not _nightly.is_file():
+    print("  FAIL  nightly.yml is missing, so the blocking mode has no scheduled run")
+    fails.append("nightly.yml missing")
+else:
+    _t = _nightly.read_text(encoding="utf-8")
+    expect("nightly.yml runs pr_staleness.py",
+           "scripts/ci/pr_staleness.py" in _t, "no such run step")
+    expect("  with PR_STALENESS_BLOCKING=1, so `return 1` is reachable",
+           _re.search(r"PR_STALENESS_BLOCKING:\s*'?1'?", _t) is not None, "variable not set")
+    expect("  on a schedule, so it is the run the message names",
+           _re.search(r"cron:\s*'0 2 \* \* 0'", _t) is not None, "no weekly cron")
+
+print(f"\n  8 assertion(s) ran, {len(fails)} failure(s)")
 raise SystemExit(1 if fails else 0)

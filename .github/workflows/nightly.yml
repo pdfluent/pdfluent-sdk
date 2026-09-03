@@ -234,6 +234,48 @@ jobs:
           cargo test --package pdf-xlsx
           cargo test --package pdf-pptx
 
+  # The blocking half of scripts/ci/pr_staleness.py, which until now was a
+  # promise. On a pull request the guard reports and returns 0, because one stale
+  # branch would otherwise stop every merge including the ones that would clear
+  # the backlog -- and its message said "the scheduled run fails on these" while
+  # no scheduled run ran it. `return 1` was unreachable code and the sentence was
+  # about something that did not exist. (T1 review of #1679)
+  #
+  # This is that run: weekly, Sunday 02:00 UTC, where failing costs nobody their
+  # afternoon.
+  #
+  # On the desktop rather than the ephemeral instance, and with no `needs`. The
+  # instance carries cargo and rustc, not `gh`, and this asks GitHub about pull
+  # requests -- it has nothing to do with the corpus and should still run on a
+  # night the instance fails to come up. `schedule` is one of the two events
+  # orchestration_stays_hosted.py allows on the persistent runner, because the
+  # body comes from master and not from a caller's ref.
+  #
+  # If `gh` is absent or unauthenticated there, this job goes red quoting gh's
+  # own line rather than passing: not being able to look at the queue is the
+  # state the guard exists to refuse.
+  stale-pull-requests:
+    name: No pull request has been left to rot (blocking)
+    # Pinned to the default branch, because this workflow is dispatchable and
+    # this job runs code from the checkout. `gh workflow run --ref <branch>`
+    # would otherwise put a branch's version of pr_staleness.py on the machine
+    # that holds the corpus, the warm cache and the runner token, with GH_TOKEN
+    # in its environment. A dispatch from a feature branch now skips this job
+    # entirely; the weekly schedule runs on master, where there is no unmerged
+    # code to carry.
+    #
+    # scripts/ci/orchestration_stays_hosted.py refused this job without the pin,
+    # which is how the line got here rather than by anyone remembering.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stale pull requests fail the weekly run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_STALENESS_BLOCKING: '1'
+        run: python3 scripts/ci/pr_staleness.py
+
   delete-runner:
     # Two jobs left this list, both behind `if: false`, both measuring nothing
     # while reading as coverage.
