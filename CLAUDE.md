@@ -37,6 +37,24 @@ Claude must be fully self-sufficient:
 - Consult the XFA spec PDF directly for architectural decisions
 - Never require human intervention for verification
 
+## Communication style
+
+`caveman` (level full) is the default for **status output and messages between
+terminals**. The skill is vendored at `.claude/skills/caveman`.
+
+It applies to: status lines, progress reports, and cross-session messages.
+
+It does **not** apply to: PR and issue text, anything presenting evidence or a
+measurement, commit messages, code, comments, documentation, and CI output.
+Those stay in normal English.
+
+The split is deliberate. Terse is safe where the reader only needs the state.
+It is not safe where the reader needs the reasoning: this repository's guards
+keep failing in ways that only a full sentence catches -- a check that cannot
+fail, a register that outlives its subject, a SKIPPED reported as a pass. The
+argument is the deliverable there, and compressing it removes the part that does
+the work.
+
 ## Git Workflow
 - `master` branch for stable code
 - Feature branches: `epic-N/description` (e.g., `epic-1/som-path-resolver`)
