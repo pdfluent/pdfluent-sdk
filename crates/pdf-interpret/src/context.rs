@@ -332,41 +332,84 @@ impl<'a> Context<'a> {
 }
 
 pub(crate) fn path_as_rect(path: &BezPath) -> Option<Rect> {
-    // One MoveTo, three LineTo, one ClosePath
-    if path.elements().len() != 5 {
-        return None;
-    }
-
-    let bbox = path.fast_bounding_box();
-    let (min_x, min_y, max_x, max_y) = (bbox.min_x(), bbox.min_y(), bbox.max_x(), bbox.max_y());
-    let mut corners = [false; 4];
-
-    let mut check_point = |p: Point| {
-        corners[0] |= p.x.is_nearly_equal(min_x) && p.y.is_nearly_equal(min_y);
-        corners[1] |= p.x.is_nearly_equal(min_x) && p.y.is_nearly_equal(max_y);
-        corners[2] |= p.x.is_nearly_equal(max_x) && p.y.is_nearly_equal(min_y);
-        corners[3] |= p.x.is_nearly_equal(max_x) && p.y.is_nearly_equal(max_y);
+    let points = match path.elements() {
+        [
+            PathEl::MoveTo(first),
+            PathEl::LineTo(second),
+            PathEl::LineTo(third),
+            PathEl::LineTo(fourth),
+            PathEl::ClosePath,
+        ] => [*first, *second, *third, *fourth, *first],
+        [
+            PathEl::MoveTo(first),
+            PathEl::LineTo(second),
+            PathEl::LineTo(third),
+            PathEl::LineTo(fourth),
+            PathEl::LineTo(last),
+        ] if first.x.is_nearly_equal(last.x) && first.y.is_nearly_equal(last.y) => {
+            [*first, *second, *third, *fourth, *last]
+        }
+        _ => return None,
     };
 
-    for (idx, el) in path.elements().iter().enumerate() {
-        match el {
-            PathEl::MoveTo(p) => {
-                if idx != 0 {
-                    return None;
-                }
-
-                check_point(*p);
-            }
-            PathEl::LineTo(l) => check_point(*l),
-            PathEl::QuadTo(_, _) => return None,
-            PathEl::CurveTo(_, _, _) => return None,
-            PathEl::ClosePath => {}
+    let mut previous_axis = None;
+    for edge in points.windows(2) {
+        let same_x = edge[0].x.is_nearly_equal(edge[1].x);
+        let same_y = edge[0].y.is_nearly_equal(edge[1].y);
+        if same_x == same_y || previous_axis == Some(same_x) {
+            return None;
         }
+        previous_axis = Some(same_x);
     }
 
-    if corners[0] && corners[1] && corners[2] && corners[3] {
-        Some(bbox)
-    } else {
-        None
+    Some(path.fast_bounding_box())
+}
+
+#[cfg(test)]
+mod clip_path_shape {
+    use super::*;
+
+    /// A bowtie is not a rectangle, however many of its corners are.
+    ///
+    /// The version this replaces decided by collecting which corners of the
+    /// bounding box the path touches. A self-intersecting quadrilateral touches
+    /// all four, so it was accepted and a clip shaped like an hourglass became
+    /// its bounding box -- content drawn where the document said to hide it.
+    /// Ported from LaurenzV/hayro#1338; measured here before and after, the same
+    /// path answered `true` and now answers `false`.
+    #[test]
+    fn a_bowtie_is_not_a_rect() {
+        let mut bowtie = BezPath::new();
+        bowtie.move_to((0.0, 0.0));
+        bowtie.line_to((10.0, 10.0));
+        bowtie.line_to((10.0, 0.0));
+        bowtie.line_to((0.0, 10.0));
+        bowtie.close_path();
+
+        assert!(
+            path_as_rect(&bowtie).is_none(),
+            "a self-intersecting quadrilateral was accepted as a rectangle, so a \
+             clip would cover its bounding box instead of its actual shape"
+        );
+    }
+
+    /// The other half: the fix must not refuse ordinary rectangles.
+    ///
+    /// Without this, returning `None` unconditionally would pass the test above
+    /// and turn every rectangular clip into a general path -- slower, and a
+    /// silent behaviour change nobody asked for.
+    #[test]
+    fn an_ordinary_rectangle_still_is_one() {
+        let mut rect = BezPath::new();
+        rect.move_to((0.0, 0.0));
+        rect.line_to((10.0, 0.0));
+        rect.line_to((10.0, 10.0));
+        rect.line_to((0.0, 10.0));
+        rect.close_path();
+
+        assert!(
+            path_as_rect(&rect).is_some(),
+            "a plain rectangle stopped being recognised as one"
+        );
     }
 }
