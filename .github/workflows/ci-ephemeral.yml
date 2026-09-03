@@ -352,21 +352,49 @@ jobs:
           # documents, and a threshold carried over to a different corpus is a
           # number that has stopped meaning anything. The gate returns with its
           # own corpus, in the ephemeral snapshot. (#276)
-          ontbreekt=$(python3 - <<'PY'
-          import json, pathlib
+          staat=$(python3 - <<'PY'
+          import json, pathlib, hashlib
           e = json.load(open("corpus/SSIM_GATE_MANIFEST.json"))["entries"]
-          print(sum(1 for x in e if not pathlib.Path(x["source"]).is_file()), len(e))
+          weg, verkeerd = [], []
+          for x in e:
+              p = pathlib.Path(x["source"])
+              if not p.is_file():
+                  weg.append(x["file"]); continue
+              # Presence is not identity. These are IRS and USCIS forms and they are
+              # reissued every year, so a runner carrying THIS year's f1040.pdf would
+              # otherwise satisfy a file-count check and be scored against thresholds
+              # calibrated on a different document. The sha256 comes from the bytes
+              # the 0.94/35%% numbers were measured on, recovered from git history.
+              h = hashlib.sha256(p.read_bytes()).hexdigest()
+              if x.get("sha256") and h != x["sha256"]:
+                  verkeerd.append(x["file"])
+          print(len(weg), len(verkeerd), len(e))
+          print(" ".join(weg[:5]))
+          print(" ".join(verkeerd[:5]))
           PY
           )
-          set -- $ontbreekt
+          aantal=$(printf '%s\n' "$staat" | sed -n 1p)
+          weg_namen=$(printf '%s\n' "$staat" | sed -n 2p)
+          verkeerd_namen=$(printf '%s\n' "$staat" | sed -n 3p)
+          set -- $aantal
           if [ "$1" -gt 0 ]; then
-            echo "SKIPPED (not a pass): $1/$2 pinned forms not on this runner." >&2
+            echo "SKIPPED (not a pass): $1/$3 pinned forms not on this runner." >&2
+            echo "  first missing: $weg_namen" >&2
             echo "  corpus/SSIM_GATE_MANIFEST.json names them as paths inside the" >&2
             echo "  repository; they were removed in 2e3d2052 on 26-05-2026 and the" >&2
             echo "  gate corpus fetched above contains none of them. No page was" >&2
             echo "  rendered and no SSIM was computed, so this is not a regression" >&2
-            echo "  and not a pass. The 0.94/35% thresholds return with the corpus," >&2
+            echo "  and not a pass. The 0.94/35%% thresholds return with the corpus," >&2
             echo "  not as lower numbers. (#276)" >&2
+            exit 3
+          fi
+          if [ "$2" -gt 0 ]; then
+            echo "SKIPPED (not a pass): $2/$3 pinned forms are present but are not the" >&2
+            echo "  documents these thresholds were calibrated on: $verkeerd_namen" >&2
+            echo "  IRS and USCIS reissue their forms, so a runner can carry a file of" >&2
+            echo "  the right name and the wrong year. Scoring 0.94 mean and 35%% fully" >&2
+            echo "  correct against a different document is a number that has stopped" >&2
+            echo "  meaning anything. Rebuild the snapshot from the pinned bytes. (#276)" >&2
             exit 3
           fi
           cargo build --release -p xfa-cli --bin pdfluent
