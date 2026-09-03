@@ -241,11 +241,16 @@ impl<'a> Context<'a> {
         &mut self.clip
     }
 
-    // A `nesting_depth()` accessor belongs here and is deliberately absent: it
-    // would have no caller until the parent depth is threaded into the three
-    // constructs that build a fresh Context (soft mask, Type 3 glyph, tiling
-    // pattern), and an unused accessor kept alive by an allow(dead_code) is the
-    // shape these guards exist to refuse. It comes back with that work (#318).
+    /// The depth this interpretation sits at.
+    ///
+    /// Read by the constructs that build a FRESH `Context` — tiling patterns,
+    /// soft masks, Type 3 glyphs — so the child starts where the parent left off
+    /// instead of at zero. Without that, a cycle alternating between two of them
+    /// never reaches the limit: measured on a 1082-byte file whose pattern cell
+    /// sets a soft mask whose group paints with that pattern, rc=134 (#318).
+    pub(crate) fn nesting_depth(&self) -> u32 {
+        self.nesting_depth
+    }
 
     /// Claim one level of nesting, or refuse.
     ///

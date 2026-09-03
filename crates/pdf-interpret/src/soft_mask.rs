@@ -49,6 +49,10 @@ impl TransferFunction {
 }
 
 struct Repr<'a> {
+    /// The depth the parent interpretation sat at (#318): a fresh Context
+    /// would otherwise restart the bound at zero, and a cycle alternating
+    /// between constructs would never reach it.
+    nesting_depth: u32,
     obj_id: ObjectIdentifier,
     group: FormXObject<'a>,
     mask_type: MaskType,
@@ -131,6 +135,7 @@ impl<'a> SoftMask<'a> {
         };
 
         Some(Self(Arc::new(Repr {
+            nesting_depth: context.nesting_depth(),
             obj_id,
             group,
             mask_type,
@@ -155,11 +160,11 @@ impl<'a> SoftMask<'a> {
             self.0.xref,
             self.0.settings.clone(),
             state,
-            // Starts a fresh Context, so the bound in `interpret` would restart
-            // at zero for a soft mask's group. 0 is deliberate and NOT sufficient on its
-            // own: it bounds recursion WITHIN this construct, not a cycle that
-            // alternates between constructs. See the note on #262.
-            0,
+            // The parent's depth, not zero: a fresh Context would restart the
+            // bound and a cycle alternating between constructs would never reach
+            // it. Measured before this: rc=134 on a 1082-byte pattern/soft-mask
+            // cycle (#318).
+            self.0.nesting_depth + 1,
         );
         draw_form_xobject(&self.0.parent_resources, &self.0.group, &mut ctx, device);
     }

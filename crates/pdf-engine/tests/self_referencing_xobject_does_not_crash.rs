@@ -51,3 +51,27 @@ fn an_ordinary_document_still_renders() {
         rendered.err()
     );
 }
+
+/// The cycle that alternates BETWEEN constructs, which the XObject bound alone
+/// does not catch (#318).
+///
+/// A tiling pattern whose cell sets a soft mask, whose group paints with that
+/// same pattern. Each construct builds a fresh `Context`, so a depth counter
+/// that starts at zero for each one never reaches its limit however deep the
+/// alternation goes.
+///
+/// Measured with only the XObject bound in place: rc=134, stack overflow. The
+/// identical file with the cycle broken — one stream painting grey instead of
+/// the pattern — renders normally, which is how we know it is the cycle and not
+/// the file.
+const CYCLE_ACROSS_CONSTRUCTS: &[u8] =
+    include_bytes!("../../../fixtures/pdf/cycle_pattern_softmask.pdf");
+
+#[test]
+fn a_pattern_soft_mask_cycle_returns_instead_of_aborting() {
+    let doc = PdfDocument::open(CYCLE_ACROSS_CONSTRUCTS.to_vec())
+        .expect("the file is structurally valid; only its pattern/mask pair is circular");
+
+    // Reaching the next line is the assertion, as above.
+    let _ = doc.render_page(0, &RenderOptions::default());
+}
