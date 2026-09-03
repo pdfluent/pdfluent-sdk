@@ -13,7 +13,7 @@ downloads every pick once and records its SHA-256.
 
 Why a manifest of URLs instead of a directory of PDFs:
 
-  * The corpus these gates used to read lived at /opt/xfa-corpus on one
+  * The corpus these gates used to read lived on a private mount on one
     machine, and `corpus/CI_CORPUS_MANIFEST.json` still points every one of its
     500 entries at that path. The disk behind it stopped answering reads. The
     file names in that manifest (`0052.pdf`, `xfa-curated-20k__16387__...`) were
