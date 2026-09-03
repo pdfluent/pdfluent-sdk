@@ -136,6 +136,10 @@ impl CacheKey for ShadingPattern {
 /// A tiling pattern.
 #[derive(Clone)]
 pub struct TilingPattern<'a> {
+    /// The depth the parent interpretation sat at (#318): a fresh Context
+    /// would otherwise restart the bound at zero, and a cycle alternating
+    /// between constructs would never reach it.
+    nesting_depth: u32,
     cache_key: u128,
     ctx_bbox: Rect,
     /// The bbox of the tiling pattern.
@@ -225,6 +229,7 @@ impl<'a> TilingPattern<'a> {
         let opacity = non_stroke_alpha;
 
         Some(Self {
+            nesting_depth: ctx.nesting_depth(),
             cache_key,
             bbox,
             x_step,
@@ -260,11 +265,11 @@ impl<'a> TilingPattern<'a> {
             self.xref,
             self.settings.clone(),
             state,
-            // Starts a fresh Context, so the bound in `interpret` would restart
-            // at zero for a tiling pattern's cell. 0 is deliberate and NOT sufficient on its
-            // own: it bounds recursion WITHIN this construct, not a cycle that
-            // alternates between constructs. See the note on #262.
-            0,
+            // The parent's depth, not zero: a fresh Context would restart the
+            // bound and a cycle alternating between constructs would never reach
+            // it. Measured before this: rc=134 on a 1082-byte pattern/soft-mask
+            // cycle (#318).
+            self.nesting_depth + 1,
         );
 
         let decoded = decode_or_warn(&self.stream, &self.settings.warning_sink)?;

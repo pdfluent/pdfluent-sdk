@@ -218,6 +218,11 @@ pub struct Type3Glyph<'a> {
     pub(crate) xref: &'a XRef,
     pub(crate) settings: InterpreterSettings,
     pub(crate) char_code: u32,
+    /// The depth the interpretation sat at when this glyph was reached (#318).
+    /// A Type 3 glyph is a content stream, so it can name a pattern whose cell
+    /// draws text in this same font — a fresh Context starting at zero would
+    /// never reach the bound.
+    pub(crate) nesting_depth: u32,
 }
 
 /// A glyph defined by PDF drawing instructions.
@@ -363,6 +368,7 @@ impl<'a> Font<'a> {
             }
             FontType::Type3(t) => {
                 let shape_glyph = Type3Glyph {
+                    nesting_depth: ctx.nesting_depth(),
                     font: t.clone(),
                     glyph_id: glyph,
                     state: ctx.get().clone(),
