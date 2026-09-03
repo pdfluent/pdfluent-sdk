@@ -116,15 +116,34 @@ def sweep_uitzondering(base: str) -> tuple[set[str], str | None]:
          manier om willekeurige code te laten draaien vanuit een commitbericht);
       2. het opnieuw draaien van dat commando een lege diff geeft.
 
-    Voorwaarde 2 is de hele controle. Een met de hand aangebrachte wijziging
-    tussen de gegenereerde verschijnt als een diff die niet reproduceert.
+    Voorwaarde 2 is de controle, en dit is precies hoe ver hij reikt: een met de
+    hand aangebrachte wijziging IN WAT DE GENERATOR BEHEERT verschijnt als een
+    diff die niet reproduceert. Iets wat de generator nooit aanraakt -- een
+    bestand dat hij niet kent -- glipt erdoor. Dat is de grens van "herdraaien
+    geeft een lege diff", niet een gat om te dichten, en de reviewer is wat er
+    voor die rest is. `test_sweep_uitzondering.py` legt het als geval vast, zodat
+    niemand het mechanisme sterker leest dan het is.
 
     Een vuile werkboom geeft (set(), reden): dan kan hier niets gemeten worden,
     en dat is geen groen. Het alternatief -- toch draaien en daarna opruimen --
     zou onopgeslagen werk weggooien.
     """
-    with open(MAP, "rb") as fh:
-        toegestaan = set(tomllib.load(fh).get("sweeps", {}).get("toegestaan", []))
+    # De allowlist komt uit de BASIS, niet uit de werkboom.
+    #
+    # Uit de werkboom lezen maakt de controle rond: een tak zet zijn eigen
+    # commando in `[sweeps].toegestaan`, meldt zich met de bijbehorende trailer,
+    # en heeft zichzelf gemachtigd. Deze wachter draait vóór elke review, dus
+    # "de reviewer ziet die regel er ook bij staan" komt te laat.
+    #
+    # Prijs: een nieuw sweepcommando moet eerst op de basis landen voordat een
+    # tak hem mag gebruiken. Dat is de bedoeling -- machtiging hoort uit iets te
+    # komen dat al beoordeeld is, niet uit de tak die om toestemming vraagt.
+    basis = subprocess.run([GIT, "show", f"{base}:.claude/territories.toml"],
+                           cwd=ROOT, capture_output=True, text=True)
+    if basis.returncode != 0:
+        return set(), f"kon .claude/territories.toml op {base} niet lezen"
+    toegestaan = set(tomllib.loads(basis.stdout).get("sweeps", {})
+                     .get("toegestaan", []))
     if not toegestaan:
         return set(), None
 
@@ -143,7 +162,13 @@ def sweep_uitzondering(base: str) -> tuple[set[str], str | None]:
     if not sweeps:
         return set(), None
 
-    vuil = subprocess.run([GIT, "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True)
+    # `--untracked-files=no`: het risico is dat het herdraaien een gewijzigd
+    # GEVOLGD bestand overschrijft, en dat `git checkout -- .` het daarna
+    # wegpoetst. Een ongevolgd bestand loopt geen van beide gevaar, en het
+    # meetellen zou elke werkboom met een kladbestand of een __pycache__
+    # laten overslaan -- een controle die bijna nooit kijkt.
+    vuil = subprocess.run([GIT, "status", "--porcelain", "--untracked-files=no"],
+                          cwd=ROOT, capture_output=True, text=True)
     if vuil.returncode != 0 or vuil.stdout.strip():
         return set(), ("de werkboom is niet schoon, dus de sweep kon niet worden "
                        "herdraaid: SKIPPED (not a pass)")
@@ -153,11 +178,22 @@ def sweep_uitzondering(base: str) -> tuple[set[str], str | None]:
         if commando not in toegestaan:
             return set(), (f"commit {sha[:8]} meldt zich als sweep met `{commando}`, "
                            "en dat commando staat niet in [sweeps].toegestaan")
+        # Vóór en ná vergelijken, niet "is er iets" ná.
+        #
+        # De na-meting moet ongevolgde bestanden WEL zien -- een sweep die een
+        # nieuw bestand aanmaakt verandert de boom -- maar dan telt ook de ruis
+        # mee die er al stond: een kladbestand, een __pycache__. Door dezelfde
+        # momentopname te vergelijken is wat er al was neutraal en is alleen
+        # wat het commando toevoegde een verschil.
+        voor = subprocess.run([GIT, "status", "--porcelain"], cwd=ROOT,
+                              capture_output=True, text=True).stdout
         uit = subprocess.run(commando.split(), cwd=ROOT,
                              capture_output=True, text=True)
-        na = subprocess.run([GIT, "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True)
-        if na.stdout.strip():
-            subprocess.run([GIT, "checkout", "--", "."], cwd=ROOT, capture_output=True, text=True)
+        na = subprocess.run([GIT, "status", "--porcelain"], cwd=ROOT,
+                            capture_output=True, text=True).stdout
+        if na != voor:
+            subprocess.run([GIT, "checkout", "--", "."], cwd=ROOT,
+                           capture_output=True, text=True)
             return set(), (f"`{commando}` opnieuw draaien geeft WEL een diff, dus "
                            f"commit {sha[:8]} is niet puur machinaal")
         if uit.returncode != 0:
