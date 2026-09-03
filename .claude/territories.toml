@@ -165,7 +165,8 @@ uitgezonderd = [
   "scripts/ci/test_prepare_commit_msg_signoff.py",
   "scripts/ci/territories_do_not_overlap.py",
   "scripts/ci/test_sweep_uitzondering.py",
-  # #301: de licentiekop hoort bij t3. Terug bij het landen.
+  # #301: the licence header is t3's subject, so its guard is too. Back when
+  # this lands.
   "scripts/ci/header_sweep.py",
   "scripts/ci/test_header_sweep.py",
   # Not t2's, added 03-09-2026 with #1682/#292. It checks that a `docs/...` path
@@ -320,12 +321,6 @@ paden = [
   "scripts/ci/test_header_sweep.py",
   "scripts/ci/test_sweep_uitzondering.py",
   "scripts/ci/territories_do_not_overlap.py",
-  # Ook geclaimd op t3/dco-signoff-hook2, voor dezelfde eigenaar en om dezelfde
-  # reden die t1 er zelf bij schreef: "Back to t3/t2 when this lands", en #316
-  # is geland. Wie van de twee als tweede landt krijgt hier een conflict van
-  # een regel. Dat is bekend en eenmalig; het alternatief was een test die
-  # nergens draait.
-  "scripts/ci/local_ci_gate.sh",
 ]
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
 
@@ -364,11 +359,12 @@ issues = [163, 164, 166, 167, 168, 169, 186, 187, 189, 192, 193, 194, 195, 205, 
 # Not a territory. #272 (the 1051-file branch) and #257/#258 (owner decisions)
 # cut across all of them and stay with the coordinating terminal.
 
-# De commando's die zich als machinale sweep mogen aanmelden.
+# The commands allowed to declare themselves a mechanical sweep.
 #
-# De wachter draait ze opnieuw en eist een lege diff; deze lijst bestaat zodat
-# een `Generated-by:`-trailer geen manier is om willekeurige code te laten
-# draaien vanuit een commitbericht.
+# The guard re-runs them and requires an empty diff. This list exists so that a
+# `Generated-by:` trailer is not a way to run arbitrary code from a commit
+# message: the command has to be here first, and it is read from the BASE, not
+# from the branch asking for permission.
 [sweeps]
 toegestaan = [
   "python3 scripts/ci/header_sweep.py --write",
