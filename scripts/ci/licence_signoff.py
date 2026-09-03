@@ -109,7 +109,7 @@ def main(argv: list[str]) -> int:
               "range passes without reading anything, which is not a clean range.",
               file=sys.stderr)
         return 1
-    
+
     # The floor above is about the RANGE; this is about what the rule covers.
     # Empty here is a real answer -- "this push adds nothing written after the
     # decision" -- and must not be confused with a range that read nothing.
@@ -118,7 +118,7 @@ def main(argv: list[str]) -> int:
         print(f"[signoff] OK: {bereik} adds no commit written after the cutoff; "
               "sign-off not required.")
         return 0
-    
+
     fouten: list[str] = []
     for sha, naam, adres, boodschap in rijen:
         gevonden = SIGNOFF.findall(boodschap)
