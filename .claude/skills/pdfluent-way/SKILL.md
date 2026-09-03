@@ -196,8 +196,9 @@ Rules around the five:
   confirm the remote sha: `git rev-parse github/<branch>` is the truth.
 - **Then verify the pipeline yourself**: `gh run list --commit <full sha>`
   (short shas return nothing), wait for `completed`, read every non-green
-  job. `canceled` is not `failed`. Known reds are listed in
-  PROMPTS_HERSTART.md; anything else is yours.
+  job. `canceled` is not `failed`. Known reds are listed in the coordinator's
+  hand-over file (`PROMPTS_HERSTART.md` in the PDFluent working directory,
+  outside this repository); anything else is yours.
 - **Merging** is a local fast-forward of a head reviewed by a non-author at
   zero open findings, after a completed PR run: rebase in a fresh worktree,
   check the patch-id over the whole branch range, push `HEAD:refs/heads/master`,
