@@ -165,7 +165,50 @@ upstream = "hayro-interpret"
 gelijk_met = "0.5.0"
 forkpunt = "3bda7cbc3"  # commit in LaurenzV/hayro, 2026-03-05
 aanvaard_tot = "0.7.0"  # in uitvoering, #256
-waarom = "Content-stream interpreter and font handling. Still MIT OR Apache-2.0."
+waarom = """
+Content-stream interpreter and font handling. Still MIT OR Apache-2.0.
+
+Besluit 03-09-2026 (#262): NIET mergen, WEL drie fixes overgenomen. Anders dan
+bij pdf-syntax was de achterstand hier een echt gat, en één ervan was een P1.
+
+71 upstream-commits raken hayro-interpret sinds ons forkpunt 3bda7cbc3. Zes
+lezen als een correctie; per stuk tegen onze boom gemeten, niet uit de diff
+afgelezen:
+
+  f1e31dc8  cyclusgrens (#1152)          GAT -- OVERGENOMEN. Er stond geen
+            enkele nesting- of cyclusgrens in deze crate. Een Form XObject die
+            zichzelf tekent liet het proces crashen via render_page: 639 bytes,
+            rc=134, stack overflow, vanuit elke binding en zonder XFA. Eigen
+            issue #318. Aangebracht op één plek (`interpret`) in plaats van bij
+            de vier recursieve constructies, omdat ze daar allemaal langskomen.
+  73444672  strik-clip (#1338)           GAT -- OVERGENOMEN. `path_as_rect`
+            besliste op verzamelde hoeken van de bounding box; een zelfsnijdende
+            vierhoek raakt alle vier, dus een zandloper-clip werd zijn bounding
+            box en er werd getekend waar het document zegt te verbergen.
+            Gemeten: strik gold als rechthoek, nu niet meer.
+  f82cfea2  ongeldige /HiVal (#1120)     GAT -- OVERGENOMEN. `/HiVal` boven 255
+            werd als u8 gelezen, gaf None, en de `?` gooide de hele indexed
+            kleurruimte weg -- een afbeelding die hem gebruikt rendert dan als
+            niets. Nu klemmen op 255.
+  f7c44f58  luma fast path (#1044)       AANWEZIG. Onze conditie draagt de
+            `!is_image_mask`-term die upstream weghaalde al niet, en
+            `is_luma = is_image_mask || force_luma` staat expliciet in color.rs.
+  b9838eff  LUTs als vaste arrays (#1299) NIET VAN TOEPASSING. Verandert
+            `U8Lookup` van Vec naar Box<[T; 256]> in een color/-map met vijf
+            bestanden. Wij hebben geen U8Lookup en geen opgesplitste color-map;
+            er is niets om over te nemen, en er is geen gedrag dat verschilt.
+  08758857  reparatie van de vorige (#1168) NIET VAN TOEPASSING, zelfde reden.
+
+Dus: het gat zat in de eerste drie, alle drie overgenomen met eigen tests en met
+mutaties die de oorspronkelijke fout reproduceren. De aanvaarde achterstand tot
+0.7.0 gaat nu over de resterende 65 niet-corrigerende commits.
+
+Wat NIET is overgenomen en wel open staat: upstream draagt bij f1e31dc8 de
+ouderdiepte door TilingPattern, SoftMask en de Type 3-glyph, zodat een cyclus
+die tussen constructies wisselt ook begrensd is. Wij geven daar 0 mee. Dat staat
+als comment op alle drie de plekken en op #318; iemand moet die cyclus eerst
+bouwen en meten.
+"""
 
 [[fork]]
 onze_crate = "pdf-font"
