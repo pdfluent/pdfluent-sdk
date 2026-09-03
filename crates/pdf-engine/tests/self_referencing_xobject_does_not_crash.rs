@@ -75,3 +75,36 @@ fn a_pattern_soft_mask_cycle_returns_instead_of_aborting() {
     // Reaching the next line is the assertion, as above.
     let _ = doc.render_page(0, &RenderOptions::default());
 }
+
+/// The same alternation reached through a different pair of constructs (#318).
+///
+/// A Form XObject whose `ExtGState` carries a luminosity `/SMask` whose group
+/// redraws that same XObject: XObject -> soft mask -> XObject -> soft mask.
+/// The test above alternates pattern/soft-mask; this one alternates
+/// XObject/soft-mask, so a fix that threads the depth through one pair and not
+/// the other passes one test and fails this one.
+///
+/// Contributed by the reviewer of the narrower fix, and measured on three
+/// binaries rather than assumed:
+///
+/// ```text
+///                                   master   narrow fix   this branch
+///   self_referencing_xobject.pdf     rc=134     rc=0         rc=0
+///   cycle_pattern_softmask.pdf       rc=134       -          rc=0
+///   alternating XObject <-> SMask    rc=134     rc=134       rc=0
+/// ```
+///
+/// The middle column is why the narrow fix lands as "narrows the class" rather
+/// than "fixes it". That every fixture aborts on master is what makes the zeros
+/// meaningful: the method demonstrably detects the crash it reports absent.
+const ALTERNATING_XOBJECT_SOFT_MASK: &[u8] =
+    include_bytes!("../../../fixtures/pdf/alternating_smask_xobject.pdf");
+
+#[test]
+fn an_xobject_soft_mask_cycle_returns_instead_of_aborting() {
+    let doc = PdfDocument::open(ALTERNATING_XOBJECT_SOFT_MASK.to_vec())
+        .expect("the file is structurally valid; only its XObject/mask pair is circular");
+
+    // Reaching the next line is the assertion, as above.
+    let _ = doc.render_page(0, &RenderOptions::default());
+}
