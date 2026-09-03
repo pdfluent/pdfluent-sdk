@@ -412,6 +412,12 @@ jobs:
       - name: A fork behind on patch releases is behind
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_upstream_gap_counts_patches.py
+      # The snapshot the ephemeral runners boot from carries the fifty SSIM
+      # documents. They go in by hash, and this is what proves they still can:
+      # discovering otherwise on the instance costs a server and a build.
+      - name: The snapshot can still recover the pinned fifty
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_snapshot_recovers_the_fifty.py
       - name: Every feature-gated test has a job that enables it
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_feature_gated_tests_run.py
