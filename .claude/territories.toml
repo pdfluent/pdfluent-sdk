@@ -169,6 +169,8 @@ uitgezonderd = [
   # this lands.
   "scripts/ci/header_sweep.py",
   "scripts/ci/test_header_sweep.py",
+  "scripts/ci/notice_names_what_exists.py",
+  "scripts/ci/test_notice_names_what_exists.py",
   # Not t2's, added 03-09-2026 with #1682/#292. It checks that a `docs/...` path
   # cited from scripts/ci names a file that exists -- a guard about documents,
   # not about building, which is the line t3's block draws. Three citations this
@@ -312,6 +314,9 @@ paden = [
   # this file independently and would otherwise each carry the same one-line
   # conflict. `.github/workflows/ci.yml` stays with t1: that half is the
   # pull_request job, and it is not mine to hand back on their behalf.
+  # NOTICE is t3, so the guard on it is too.
+  "scripts/ci/notice_names_what_exists.py",
+  "scripts/ci/test_notice_names_what_exists.py",
   "scripts/ci/local_ci_gate.sh",
   # Claimed for #301, temporarily, back when it lands. The licence header is
   # t3's subject and this guard is the only thing that enforces it; leaving it
