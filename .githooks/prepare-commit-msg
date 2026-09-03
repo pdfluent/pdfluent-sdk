@@ -14,7 +14,7 @@
 # pre-push-poort weigert ongetekende commits van na 03-09-2026 07:30:44Z, en
 # wie de config leest concludeert dat het geregeld is.
 #
-# `--if-exists doNothing` maakt hem idempotent, zodat een `git commit --amend`
+# `--if-exists add` maakt hem idempotent, zodat een `git commit --amend`
 # of een handmatige `-s` geen tweede regel oplevert.
 set -euo pipefail
 
