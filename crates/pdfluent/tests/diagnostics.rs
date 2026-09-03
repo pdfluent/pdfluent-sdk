@@ -285,3 +285,30 @@ fn unsupported_font_substitution_is_reported() {
         "expected FONT_UNSUPPORTED; got {diags:?}"
     );
 }
+
+/// A caller sees the depth bound as a diagnostic, not just as a log line (#318).
+///
+/// The engine-level test proves the bound fires; this proves the fact survives
+/// the translation to the public surface, which is the only place an embedder
+/// can observe it. Without this the bound is a silent omission of paint: the
+/// render succeeds, the page is missing a branch, and nothing says so.
+#[test]
+fn a_nesting_cycle_reports_a_public_diagnostic() {
+    let pad = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/pdf/alternating_smask_xobject.pdf");
+    let doc = PdfDocument::open_with(pad, OpenOptions::new().with_license_key("tier:enterprise"))
+        .expect("the fixture is structurally valid; only its XObject/mask pair is circular");
+
+    // Succeeds: the bound turns the crash into a missing paint, not a failure.
+    let _ = doc.render_page(1, 150, ImageFormat::Png);
+
+    let diags = doc.diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == Diagnostic::CODE_NESTING_TOO_DEEP
+                && d.severity == Severity::Warning
+                && d.category == DiagnosticCategory::Limit),
+        "expected a NESTING_TOO_DEEP warning; got {diags:?}"
+    );
+}

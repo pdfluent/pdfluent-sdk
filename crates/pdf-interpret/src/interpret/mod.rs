@@ -215,6 +215,18 @@ pub enum InterpreterWarning {
         /// Configured limit in bytes.
         limit: u64,
     },
+    /// Content stream nesting hit `MAX_NESTED_INTERPRETATION_DEPTH` and the
+    /// rest of that branch was not interpreted (#318).
+    ///
+    /// Reaching this means paint is MISSING from the page: a caller that
+    /// renders a thumbnail may not care, one that rasterises for archival
+    /// should. It was a `warn!` line only, which a library embedder never sees
+    /// -- the depth bound turns a crash into a silent omission, and a silent
+    /// omission is exactly what a warning channel is for.
+    NestingTooDeep {
+        /// The limit that was hit.
+        limit: u32,
+    },
 }
 
 /// Resolve the normal (`/N`) appearance stream of an annotation.
@@ -385,10 +397,11 @@ pub fn interpret<'a, 'b>(
     // contains `q /X1 Do Q` aborts the process with a stack overflow, rc=134.
     // No XFA and no script, so it reaches every binding exporting `render_page`.
     if !context.begin_nested_interpretation() {
-        warn!(
-            "content stream nesting exceeds {}, stopping interpretation",
-            crate::context::MAX_NESTED_INTERPRETATION_DEPTH
-        );
+        let limit = crate::context::MAX_NESTED_INTERPRETATION_DEPTH;
+        warn!("content stream nesting exceeds {limit}, stopping interpretation");
+        // Also to the sink, because the log line is invisible to a library
+        // caller and this is a silent loss of paint, not a diagnostic.
+        (context.settings.warning_sink)(InterpreterWarning::NestingTooDeep { limit });
 
         return;
     }
