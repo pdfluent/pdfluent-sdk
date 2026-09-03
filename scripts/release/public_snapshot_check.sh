@@ -52,10 +52,28 @@ PATROON='/Users/[a-z]|/home/[a-z]|/opt/xfa|/private/tmp/|/var/folders/'
 TREFFERS="$WERK/paths.txt"
 : > "$TREFFERS"
 
+# Files ALLOWED to contain the pattern, because quoting it is their job. The
+# publish protocol, the release gate contract and the WASM checklist define the
+# leak rules -- they list `/Users/`, `/home/`, `/opt/xfa` precisely so a human
+# and a grep can both find them. "Fixing" those mentions would delete the rule
+# and leave the file looking clean: a guard that reads its own explanation,
+# which is the exact defect this check exists to catch elsewhere.
+#
+# cabi_packaging.md is allowed for a different reason: it records that an
+# UPSTREAM crate ships /Users/runner/... paths inside its artefacts. That is a
+# fact about someone else's build, and it is why we scan at all.
+#
+# Every entry needs a reason. "Inconvenient to fix" is not one.
+TOEGESTAAN='^(docs/agent_skills/publish_protocol/SKILL\.md|docs/release/PUBLISH_PROTOCOL\.md|docs/release/release_gate_contract\.md|docs/release/checklists/wasm\.md|docs/release/cabi_packaging\.md|scripts/ci/no_dead_host_in_a_connecting_script\.py|scripts/release/public_snapshot_check\.sh)$'
+
 while IFS= read -r -d '' f; do
     case "$f" in
         *.pdf|*.png|*.jpg|*.jpeg|*.woff|*.woff2|*.ttf|*.otf|*.zip|*.gz|*.wasm|*.bin|*.pack|*.idx) continue ;;
     esac
+    rel="${f#"$KLOON"/}"
+    if printf '%s' "$rel" | grep -qE "$TOEGESTAAN"; then
+        continue
+    fi
     if LC_ALL=C grep -nEI "$PATROON" "$f" >/dev/null 2>&1; then
         n=$(LC_ALL=C grep -cEI "$PATROON" "$f" 2>/dev/null || echo 0)
         printf '%8s  %s\n' "$n" "${f#"$KLOON"/}" >> "$TREFFERS"
