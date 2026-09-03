@@ -149,6 +149,8 @@ run snapfifty python3 scripts/ci/test_the_snapshot_recovers_the_fifty.py
 # a territory line and nothing local said so. (codex P1, #296)
 run territory python3 scripts/ci/territories_do_not_overlap.py
 run sweepexem python3 scripts/ci/test_sweep_exemption.py
+run notice    python3 scripts/ci/notice_names_what_exists.py
+run noticetst python3 scripts/ci/test_notice_names_what_exists.py
 run territst  python3 scripts/ci/test_territories_do_not_overlap.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
