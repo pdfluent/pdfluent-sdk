@@ -163,6 +163,8 @@ uitgezonderd = [
   # which is the DCO mechanism -- t3 ground. It lives here because that is
   # where the gate finds tests, not because it is CI wiring.
   "scripts/ci/test_prepare_commit_msg_signoff.py",
+  "scripts/ci/territories_do_not_overlap.py",
+  "scripts/ci/test_sweep_uitzondering.py",
   # #301: de licentiekop hoort bij t3. Terug bij het landen.
   "scripts/ci/header_sweep.py",
   "scripts/ci/test_header_sweep.py",
@@ -316,6 +318,14 @@ paden = [
   # somebody else's queue.
   "scripts/ci/header_sweep.py",
   "scripts/ci/test_header_sweep.py",
+  "scripts/ci/test_sweep_uitzondering.py",
+  "scripts/ci/territories_do_not_overlap.py",
+  # Ook geclaimd op t3/dco-signoff-hook2, voor dezelfde eigenaar en om dezelfde
+  # reden die t1 er zelf bij schreef: "Back to t3/t2 when this lands", en #316
+  # is geland. Wie van de twee als tweede landt krijgt hier een conflict van
+  # een regel. Dat is bekend en eenmalig; het alternatief was een test die
+  # nergens draait.
+  "scripts/ci/local_ci_gate.sh",
 ]
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
 

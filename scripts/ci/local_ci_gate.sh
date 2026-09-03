@@ -147,6 +147,7 @@ run featgatesrc python3 scripts/ci/test_coverage_reads_only_what_runs.py
 # that guards every push -- it was only in ci.yml, which means a push could cross
 # a territory line and nothing local said so. (codex P1, #296)
 run territory python3 scripts/ci/territories_do_not_overlap.py
+run sweepuitz python3 scripts/ci/test_sweep_uitzondering.py
 run territst  python3 scripts/ci/test_territories_do_not_overlap.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
