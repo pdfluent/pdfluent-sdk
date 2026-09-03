@@ -66,6 +66,7 @@ members = [
 
     # --- Test infrastructure ---
     "crates/xfa-test-runner",
+    "crates/visual-regression",
     "crates/xfa-pdfrest-compare",
 
     # --- Benchmarks ---

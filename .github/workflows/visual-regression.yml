@@ -1,0 +1,27 @@
+name: Visual regression
+on:
+  pull_request:
+  push:
+    branches: [master]
+permissions:
+  contents: read
+jobs:
+  visual-regression:
+    runs-on: [self-hosted, xfa-fast]
+    timeout-minutes: 30
+    env:
+      UPDATE_VISUAL_BASELINE: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check persistent build directory
+        run: bash scripts/ci/cargo_target_health.sh
+      - name: Compare generated fixtures against committed baselines
+        run: cargo test -p visual-regression --release
+      - name: Upload visual differences
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-differences
+          path: target/visual-regression/**
+          retention-days: 14
+          if-no-files-found: error

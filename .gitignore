@@ -20,6 +20,7 @@ pdfluent-examples/dotnet/**/obj/
 !/fixtures/pdf/*.pdf
 !/tests/corpus-mini/*.pdf
 !/crates/pdf-java/src/test/resources/*.pdf
+!/crates/visual-regression/fixtures/*.pdf
 metadata.sqlite
 /reports/
 /renders/

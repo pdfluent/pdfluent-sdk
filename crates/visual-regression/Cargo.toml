@@ -1,0 +1,34 @@
+[package]
+name = "visual-regression"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Deterministic self-referential PDF rendering regression suite"
+
+[dependencies]
+lopdf.workspace = true
+pdf-engine.workspace = true
+pdf-manip.workspace = true
+pdf-compliance.workspace = true
+pdf-syntax.workspace = true
+pdf-standard-fonts = { path = "../pdf-standard-fonts" }
+png = "0.17.16"
+image = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+toml = "0.9.12"
+aes = "0.8.4"
+cbc = { version = "0.1.2", features = ["alloc"] }
+sha2 = "0.10.9"
+
+# Keep tool binaries out of cargo test's release graph. The engine emits an
+# unhashed cdylib/rlib; mixing panic=abort tools with panic=unwind tests would
+# compile two engine variants to the same filenames.
+[features]
+generate-fixtures = []
+
+[[bin]]
+name = "generate"
+required-features = ["generate-fixtures"]
+test = false
+bench = false
