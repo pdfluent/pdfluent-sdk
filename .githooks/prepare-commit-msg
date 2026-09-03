@@ -1,48 +1,47 @@
 #!/usr/bin/env bash
-# Zet de DCO-sign-off onder elke commit, want `format.signoff` doet dat niet.
+# Put the DCO sign-off on every commit, because `format.signoff` does not.
 #
-# Dat is de val die dit bestand bestaat om te sluiten. `git config format.signoff
-# true` stond hier al aan en las als "sign-offs staan aan", maar die instelling
-# geldt alleen voor `git format-patch`. `git commit` kijkt er niet naar: zonder
-# `-s` komt er geen trailer, en dat is te toetsen --
+# That is the trap this file exists to close. `git config format.signoff true`
+# was already set here and reads as "sign-offs are on", but that setting only
+# applies to `git format-patch`. `git commit` does not look at it: without `-s`
+# no trailer appears, and that is testable --
 #
 #   git init t && cd t && git config format.signoff true
-#   git commit --allow-empty -m x   ->  geen Signed-off-by
-#   git commit --allow-empty -s -m x ->  wel
+#   git commit --allow-empty -m x   ->  no Signed-off-by
+#   git commit --allow-empty -s -m x ->  one
 #
-# Een instelling die aanstaat en niets doet is erger dan een die uitstaat: de
-# pre-push-poort weigert ongetekende commits van na 03-09-2026 07:30:44Z, en
-# wie de config leest concludeert dat het geregeld is.
+# A setting that is on and does nothing is worse than one that is off: the
+# pre-push gate refuses unsigned commits written after 03-09-2026 07:30:44Z, and
+# whoever reads the config concludes it is handled.
 #
-# `--if-exists doNothing` maakt hem idempotent, zodat een `git commit --amend`
-# of een handmatige `-s` geen tweede regel oplevert.
+# `--if-exists doNothing` makes this idempotent, so a `git commit --amend` or a
+# manual `-s` does not produce a second line.
 #
-# NIET `add`: dat is precies wat de naam suggereert en het voegt de trailer
-# telkens opnieuw toe -- gemeten 1 regel na de commit, 2 na een amend, 3 na twee.
-# Hier stond eerst `add` in dit commentaar terwijl de code `doNothing` deed. Dat
-# is gevaarlijker dan een verouderd commentaar: wie code en commentaar met elkaar
-# in overeenstemming brengt -- de voor de hand liggende reactie als ze elkaar
-# tegenspreken -- bouwt de fout in. De test hield het gedrag vast; niets hield
-# het commentaar vast.
+# NOT `add`: that is exactly what the name suggests, and it appends the trailer
+# every time -- measured as 1 line after the commit, 2 after an amend, 3 after
+# two. This comment used to say `add` while the code did `doNothing`. That is
+# more dangerous than a stale comment: reconciling code and comment -- the
+# obvious move when they disagree -- builds the bug in. The test held the
+# behaviour; nothing held the comment.
 set -euo pipefail
 
-pad="$1"
-bron="${2:-}"
+msg_file="$1"
+msg_source="${2:-}"
 
-# Bij een merge of een squash schrijft git de boodschap zelf; een sign-off hoort
-# daar van de persoon te komen die hem uitvoert, en die krijgt hem via deze hook
-# op zijn eigen commit. Alleen `message`, `template` en een lege bron krijgen er
-# een: dat zijn de gevallen waarin er werkelijk iets nieuws wordt vastgelegd.
-case "$bron" in
+# On a merge or a squash git writes the message itself. A sign-off there should
+# come from the person performing it, and they get one on their own commit
+# through this same hook. Only `message`, `template` and an empty source get one:
+# those are the cases where something new is actually being recorded.
+case "$msg_source" in
   merge|squash) exit 0 ;;
 esac
 
-naam=$(git config user.name || true)
-mail=$(git config user.email || true)
-if [ -z "$naam" ] || [ -z "$mail" ]; then
-  echo "prepare-commit-msg: user.name of user.email ontbreekt, geen sign-off gezet" >&2
+name=$(git config user.name || true)
+email=$(git config user.email || true)
+if [ -z "$name" ] || [ -z "$email" ]; then
+  echo "prepare-commit-msg: user.name or user.email missing, no sign-off written" >&2
   exit 0
 fi
 
 git interpret-trailers --in-place --if-exists doNothing \
-  --trailer "Signed-off-by: $naam <$mail>" "$pad"
+  --trailer "Signed-off-by: $name <$email>" "$msg_file"

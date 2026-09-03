@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""De haak zet de sign-off, en `format.signoff` doet dat niet.
+"""The hook writes the sign-off, and `format.signoff` does not.
 
-Fixtures in plaats van beweringen over de broncode, want het onderwerp is wat
-git DOET. Dit bestaat omdat een instelling waar iedereen in geloofde niets deed:
-`git config format.signoff true` stond hier al aan en geldt alleen voor
-`git format-patch`. `git commit` kijkt er niet naar.
+Fixtures rather than assertions about the source, because the subject is what
+git DOES. This exists because a setting everyone believed in did nothing:
+`git config format.signoff true` was already set here and applies only to
+`git format-patch`. `git commit` does not look at it.
 
-Die tweede zaak is de reden dat de haak er is, en zonder deze test staat dat
-alleen in een commitboodschap -- waar niets hem tegenhoudt als iemand de haak
-ooit vervangt door de config waarvan hij aanneemt dat die werkt. (T1-review.)
+That second case is the reason the hook exists, and without this test it lives
+only in a commit message -- where nothing stops someone who later replaces the
+hook with the config they assume works. (T1 review.)
 """
 from __future__ import annotations
 import os, pathlib, subprocess, sys, tempfile
@@ -16,45 +16,45 @@ import os, pathlib, subprocess, sys, tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from fixture_env import sealed_env  # noqa: E402
 
-HAAK = pathlib.Path(__file__).resolve().parents[2] / ".githooks" / "prepare-commit-msg"
+HOOK = pathlib.Path(__file__).resolve().parents[2] / ".githooks" / "prepare-commit-msg"
 
 
-def schoon(cwd=None) -> dict[str, str]:
-    """De verzegelde omgeving voor een fixture die een repository bouwt.
+def sealed(cwd=None) -> dict[str, str]:
+    """The sealed environment for a fixture that builds a repository.
 
-    GIT_* strippen is niet genoeg: de globale en de systeemconfig blijven dan in
-    het spel, en `git config user.email` in een fixture schrijft alsnog ergens
-    echt. sealed_env sluit alle drie de vlakken en zet met `cwd` het plafond,
-    zodat git geen echte repository vindt door omhoog te lopen. Die tweede helft
-    is de bevinding uit #1647, en ze geldt net zo goed voor deze test als voor
-    de fixtures waar ik haar aanwees.
+    Stripping GIT_* is not enough: the global and system config stay in play, and
+    `git config user.email` inside a fixture still writes somewhere real.
+    sealed_env closes all three surfaces and uses `cwd` as the ceiling, so git
+    cannot find a real repository by walking upwards. That second half is the
+    finding from #1647, and it applies to this test exactly as it applied to the
+    fixtures I pointed it out on.
     """
     return sealed_env(cwd=cwd)
 
 
 def git(*a: str, cwd: pathlib.Path) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *a], cwd=str(cwd), capture_output=True,
-                          text=True, env=schoon(cwd=cwd))
+                          text=True, env=sealed(cwd=cwd))
 
 
 def trailers(repo: pathlib.Path) -> int:
-    uit = git("log", "-1", "--format=%B", cwd=repo).stdout
-    return sum(1 for r in uit.splitlines() if r.startswith("Signed-off-by:"))
+    out = git("log", "-1", "--format=%B", cwd=repo).stdout
+    return sum(1 for r in out.splitlines() if r.startswith("Signed-off-by:"))
 
 
-def bouw(tmp: pathlib.Path, met_haak: bool, signoff_config: bool = False,
-         naam: str = "") -> pathlib.Path:
-    repo = tmp / (naam or ("met" if met_haak else "zonder"))
+def build(tmp: pathlib.Path, with_hook: bool, signoff_config: bool = False,
+         name: str = "") -> pathlib.Path:
+    repo = tmp / (name or ("with" if with_hook else "without"))
     repo.mkdir()
     git("init", "-q", ".", cwd=repo)
     git("config", "user.name", "proef", cwd=repo)
     git("config", "user.email", "proef@invalid", cwd=repo)
     if signoff_config:
         git("config", "format.signoff", "true", cwd=repo)
-    if met_haak:
+    if with_hook:
         d = repo / ".githooks"
         d.mkdir()
-        (d / "prepare-commit-msg").write_bytes(HAAK.read_bytes())
+        (d / "prepare-commit-msg").write_bytes(HOOK.read_bytes())
         (d / "prepare-commit-msg").chmod(0o755)
         git("config", "core.hooksPath", ".githooks", cwd=repo)
     return repo
@@ -63,79 +63,79 @@ def bouw(tmp: pathlib.Path, met_haak: bool, signoff_config: bool = False,
 def main() -> int:
     fouten: list[str] = []
 
-    # Een ontbrekende haak is een bevinding, geen traceback. Zonder dit viel de
-    # test om met FileNotFoundError, en dat leest als "de test is stuk" terwijl
-    # het antwoord juist is dat het onderwerp weg is.
-    if not HAAK.is_file():
-        print(f"test_prepare_commit_msg_signoff: {HAAK} bestaat niet, dus er is "
-              "niets dat de sign-off zet.", file=sys.stderr)
+    # A missing hook is a finding, not a traceback. Without this the test died
+    # with FileNotFoundError, which reads as "the test is broken" when the answer
+    # is that its subject is gone.
+    if not HOOK.is_file():
+        print(f"test_prepare_commit_msg_signoff: {HOOK} does not exist, so there "
+              "is nothing that writes the sign-off.", file=sys.stderr)
         return 1
 
-    def eis(wat: str, ok: bool, detail: str = "") -> None:
+    def expect(wat: str, ok: bool, detail: str = "") -> None:
         if not ok:
             fouten.append(f"{wat}{': ' + detail if detail else ''}")
 
     with tempfile.TemporaryDirectory() as d:
         tmp = pathlib.Path(d)
 
-        # 1. Zonder haak: geen trailer. Zo weet je dat de haak het doet en niet
-        #    iets anders in de omgeving.
-        zonder = bouw(tmp, met_haak=False)
-        git("commit", "-q", "--allow-empty", "-m", "x", cwd=zonder)
-        eis("zonder haak hoort er geen sign-off te staan", trailers(zonder) == 0,
-            f"{trailers(zonder)} gevonden")
+        # 1. Without the hook: no trailer. That is how you know the hook does
+        #    it and not something else in the environment.
+        without = build(tmp, with_hook=False)
+        git("commit", "-q", "--allow-empty", "-m", "x", cwd=without)
+        expect("without the hook there should be no sign-off", trailers(without) == 0,
+            f"{trailers(without)} found")
 
-        # 2. `format.signoff` alleen: nog steeds geen trailer. DIT is de reden
-        #    dat de haak bestaat, en de enige controle die dat vastlegt.
-        alleen_config = bouw(tmp, met_haak=False, signoff_config=True, naam="alleenconfig")
-        (alleen_config / "f").write_text("x")
-        git("add", "f", cwd=alleen_config)
-        git("commit", "-q", "-m", "x", cwd=alleen_config)
-        eis("format.signoff alleen voegt niets toe aan `git commit`",
-            trailers(alleen_config) == 0,
-            f"{trailers(alleen_config)} gevonden -- als dit ooit 1 wordt, is de "
-            "haak overbodig geworden en hoort hij weg, niet te blijven staan")
+        # 2. `format.signoff` alone: still no trailer. THIS is why the hook
+        #    exists, and the only assertion that records it.
+        config_only = build(tmp, with_hook=False, signoff_config=True, name="alleenconfig")
+        (config_only / "f").write_text("x")
+        git("add", "f", cwd=config_only)
+        git("commit", "-q", "-m", "x", cwd=config_only)
+        expect("format.signoff alleen voegt niets toe aan `git commit`",
+            trailers(config_only) == 0,
+            f"{trailers(config_only)} found -- if this ever becomes 1, the hook "
+            "has become redundant and should go, not linger")
 
-        # 3. Met haak: precies een.
-        met = bouw(tmp, met_haak=True)
-        git("commit", "-q", "--allow-empty", "-m", "x", cwd=met)
-        eis("met de haak staat er een sign-off", trailers(met) == 1,
-            f"{trailers(met)} gevonden")
+        # 3. With the hook: exactly one.
+        with_hook_repo = build(tmp, with_hook=True)
+        git("commit", "-q", "--allow-empty", "-m", "x", cwd=with_hook_repo)
+        expect("with the hook there is one sign-off", trailers(with_hook_repo) == 1,
+            f"{trailers(with_hook_repo)} found")
 
-        # 4. Idempotent: amenden en een expliciete -s verdubbelen niets.
-        git("commit", "-q", "--amend", "--allow-empty", "--no-edit", cwd=met)
-        eis("een --amend verdubbelt de sign-off niet", trailers(met) == 1,
-            f"{trailers(met)} gevonden")
-        git("commit", "-q", "--allow-empty", "-s", "-m", "met -s", cwd=met)
-        eis("een expliciete -s verdubbelt de sign-off niet", trailers(met) == 1,
-            f"{trailers(met)} gevonden")
+        # 4. Idempotent: an amend and an explicit -s double nothing.
+        git("commit", "-q", "--amend", "--allow-empty", "--no-edit", cwd=with_hook_repo)
+        expect("an --amend does not double the sign-off", trailers(with_hook_repo) == 1,
+            f"{trailers(with_hook_repo)} found")
+        git("commit", "-q", "--allow-empty", "-s", "-m", "with -s", cwd=with_hook_repo)
+        expect("an explicit -s does not double the sign-off", trailers(with_hook_repo) == 1,
+            f"{trailers(with_hook_repo)} found")
 
-        # 5. Zonder identiteit: geen crash. `set -e` plus een kale
-        #    `$(git config user.name)` doodt de haak, en git meldt dan alleen
-        #    "hook failed" -- de eigen uitleg bereikt de gebruiker nooit. (T1.)
-        kaal = tmp / "kaal"
-        kaal.mkdir()
-        git("init", "-q", ".", cwd=kaal)
-        d2 = kaal / ".githooks"
+        # 5. Without an identity: no crash. `set -e` plus a bare
+        #    `$(git config user.name)` kills the hook, and git then reports only
+        #    "hook failed" -- its own explanation never reaches the user. (T1.)
+        bare = tmp / "bare"
+        bare.mkdir()
+        git("init", "-q", ".", cwd=bare)
+        d2 = bare / ".githooks"
         d2.mkdir()
-        (d2 / "prepare-commit-msg").write_bytes(HAAK.read_bytes())
+        (d2 / "prepare-commit-msg").write_bytes(HOOK.read_bytes())
         (d2 / "prepare-commit-msg").chmod(0o755)
-        git("config", "core.hooksPath", ".githooks", cwd=kaal)
+        git("config", "core.hooksPath", ".githooks", cwd=bare)
         r = subprocess.run(["git", "commit", "--allow-empty", "-m", "x"],
-                           cwd=str(kaal), capture_output=True, text=True,
-                           env=dict(schoon(cwd=kaal), GIT_AUTHOR_NAME="a", GIT_AUTHOR_EMAIL="a@b",
+                           cwd=str(bare), capture_output=True, text=True,
+                           env=dict(sealed(cwd=bare), GIT_AUTHOR_NAME="a", GIT_AUTHOR_EMAIL="a@b",
                                     GIT_COMMITTER_NAME="a", GIT_COMMITTER_EMAIL="a@b"))
-        eis("zonder user.name faalt de haak niet", r.returncode == 0,
+        expect("without user.name the hook does not fail", r.returncode == 0,
             f"exit {r.returncode}: {(r.stderr or '').strip()[:120]}")
 
     if fouten:
-        print("test_prepare_commit_msg_signoff: de haak doet niet wat hij belooft.\n",
+        print("test_prepare_commit_msg_signoff: the hook does not do what it promises.\n",
               file=sys.stderr)
         for f in fouten:
             print(f"  - {f}", file=sys.stderr)
         return 1
-    print("test_prepare_commit_msg_signoff: OK -- 6 geval(len); de haak zet de "
-          "sign-off, format.signoff niet.")
+    print("test_prepare_commit_msg_signoff: OK -- 6 case(s); the hook writes the "
+          "sign-off, format.signoff does not.")
     return 0
 
 
