@@ -8,9 +8,9 @@ Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .
 
 **76 van 662 publieke functies** (11.5%).
 
-Daarvan dragen er **37** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export), 7 zijn een omhulsel dat niets doet dan doorgeven aan een variant die wél getest wordt, en 14 dragen een gemeten besluit in hun eigen doc-commentaar.
+Daarvan dragen er **38** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export), 7 zijn een omhulsel dat niets doet dan doorgeven aan een variant die wél getest wordt, en 15 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **39** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **38** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
@@ -45,7 +45,7 @@ De overige **39** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 
 - `call_dom_builtin`  — *(geen reden opgegeven)*
 - `call_som_builtin`  — *(geen reden opgegeven)*
-- `stack_position`  — *(geen reden opgegeven)*
+- `stack_position`  — *gemeten besluit*
 
 ## hayro-jpeg2000
 

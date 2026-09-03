@@ -36,6 +36,10 @@ pub const STACK_BUDGET_BYTES: usize = 512 * 1024;
 /// Only differences between two readings mean anything, and they mean bytes of
 /// stack between the two points. Not inlined, so every reading is taken from a
 /// frame of the same shape and the differences stay comparable.
+///
+/// Public on purpose: it is the probe `StackBudget` reads, and the tests
+/// `deeper_frames_read_as_more_stack` and `a_zero_budget_is_exhausted_one_frame_down`
+/// exercise it through the budget, where its readings are measured, not assumed.
 #[inline(never)]
 pub fn stack_position() -> usize {
     let probe = 0u8;
