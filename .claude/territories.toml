@@ -139,6 +139,10 @@ paden = [
   "docs/ci/**",
 ]
 uitgezonderd = [
+  # Not t2's, added 03-09-2026. Fixture test for .githooks/prepare-commit-msg,
+  # which is the DCO mechanism -- t3 ground. It lives here because that is
+  # where the gate finds tests, not because it is CI wiring.
+  "scripts/ci/test_prepare_commit_msg_signoff.py",
   # Not t2's, added 03-09-2026 with #1682/#292. It checks that a `docs/...` path
   # cited from scripts/ci names a file that exists -- a guard about documents,
   # not about building, which is the line t3's block draws. Three citations this
@@ -215,6 +219,11 @@ Licence texts, the claims register, and the guards that decide what can go publi
 Shares scripts/ci/ with t2, so the filenames are carved out explicitly above --
 these are the guards about publication, not about building."""
 paden = [
+  # The DCO sign-off mechanism and its test, added 03-09-2026 on the owner's
+  # instruction. Excepted from t2's `scripts/ci/**` above, which is what makes
+  # this entry take effect.
+  "scripts/ci/test_prepare_commit_msg_signoff.py",
+  ".githooks/prepare-commit-msg",
   # Added 03-09-2026. A `docs/...` path cited from scripts/ci must name a file
   # that exists; three citations this week pointed at nothing, and
   # docs/KWALITEITSSPOOR.md (t3's, below) was the third. A guard about
