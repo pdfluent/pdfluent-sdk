@@ -916,17 +916,25 @@ Comprehensive documentation and example code for all bindings (#340).
 | `pdfium-ffi-bridge` | render_oracle | Full (feature-gated) |
 | `lopdf` | content_roundtrip, manipulation, pdfa_convert | Full |
 
-### 15.2 Test Infrastructure (VPS)
+### 15.2 Test Infrastructure
+
+The measurement corpus is not part of this repository, and the machine that
+used to host it no longer exists: the Hetzner VPS was cancelled on 24-08-2026
+and its address has since been reassigned. The address is deliberately not
+repeated here -- it now answers for somebody else, and a reader who copies it
+out of an architecture document points traffic at a stranger. `scripts/ci/`
+carries a guard that refuses to let a connecting script name a literal host
+for the same reason.
+
+The corpus itself is described by shape rather than by mount point, so this
+table stays true wherever it is hosted:
 
 | Component | Details |
 |-----------|---------|
-| **Server** | Hetzner CX53 (46.225.223.175) |
-| **User** | `xfa` service user |
-| **Main corpus** | ~181K PDFs at `/opt/xfa-corpus` |
-| **Stressful corpus** | 32,574 SafeDocs PDFs at `/opt/xfa-corpus/stressful` |
-| **veraPDF suite** | `/opt/xfa-corpus/tagged/verapdf` |
-| **Storage** | CIFS mount at `/mnt/storagebox` (5 TB, ~52 GB used) |
-| **Skip list** | `scripts/corpus-skip.txt` (18 entries) |
+| **Main corpus** | ~181K PDFs |
+| **Stressful corpus** | 32,574 SafeDocs PDFs |
+| **veraPDF suite** | the tagged veraPDF conformance set |
+| **Skip list** | 18 entries, in the internal tree |
 
 ### 15.3 SafeDocs Stressful Corpus Results (#273)
 

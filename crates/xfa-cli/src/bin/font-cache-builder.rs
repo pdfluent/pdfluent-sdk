@@ -1,7 +1,7 @@
 //! Extract embedded font programs from oracle PDFs and cache them for reuse.
 //!
 //! Usage:
-//!   font-cache-builder -i /opt/xfa-golden-set/flattened -i /opt/xfa-golden-set/originals -o /opt/xfa-font-cache
+//!   font-cache-builder -i <flattened-dir> -i <originals-dir> -o <cache-dir>
 //!
 //! Reads all PDFs in the input directories, extracts TrueType/CFF font programs,
 //! and writes them to the output directory keyed by PostScript name.

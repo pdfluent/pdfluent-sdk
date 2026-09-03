@@ -5,7 +5,7 @@
 //! metadata fields propagated through [`pdf_xfa::DynamicScriptOutcome`].
 //!
 //! These tests use synthesised `FormTree` instances to keep the
-//! suite hermetic — no `/opt/xfa-golden/` access, no fixture PDFs.
+//! suite hermetic — no corpus access, no fixture PDFs.
 
 use pdf_xfa::dynamic::{
     apply_dynamic_scripts, apply_dynamic_scripts_with_mode, apply_dynamic_scripts_with_runtime,
