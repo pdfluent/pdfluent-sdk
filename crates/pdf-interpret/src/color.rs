@@ -785,7 +785,12 @@ impl Indexed {
         // Skip name
         let _ = iter.next::<Name>()?;
         let base_color_space = ColorSpace::new(iter.next::<Object<'_>>()?, cache, warning_sink)?;
-        let hival = iter.next::<u8>()?;
+        // `/HiVal` above 255 is malformed, and refusing it here dropped the whole
+        // indexed colour space -- `?` returns None and the image renders as
+        // nothing. Clamping renders what the file almost certainly meant.
+        // Measured: `[/Indexed /DeviceRGB 300 <00>]` parses as u8 -> None, as
+        // u32 -> Some(300) -> 255. Ported from LaurenzV/hayro#1120.
+        let hival = iter.next::<u32>()?.min(u8::MAX as u32) as u8;
 
         let values = {
             let data = iter
@@ -1335,5 +1340,50 @@ mod tests {
             0,
             "Separation/None ink must be fully transparent"
         );
+    }
+}
+
+#[cfg(test)]
+mod indexed_hival {
+    use super::*;
+    use pdf_syntax::object::FromBytes;
+    use pdf_syntax::object::array::Array;
+
+    /// `[/Indexed /DeviceGray <hival> <palette>]` with a palette of exactly the
+    /// length the entries require -- `(clamped hival + 1) * 1` byte for Gray.
+    /// Too short and the lookup fails for a reason that has nothing to do with
+    /// the hival, which is how the first version of this test failed on BOTH
+    /// cases and briefly looked like the fix was wrong.
+    fn colour_space(hival: u32, palette_len: usize) -> Option<ColorSpace> {
+        let hex: String = "00".repeat(palette_len);
+        let src = format!("[/Indexed /DeviceGray {hival} <{hex}>]");
+        let array = Array::from_bytes(src.as_bytes())?;
+        ColorSpace::new(
+            pdf_syntax::object::Object::Array(array),
+            &Cache::default(),
+            &(std::sync::Arc::new(|_: crate::InterpreterWarning| {}) as WarningSinkFn),
+        )
+    }
+
+    /// A `/HiVal` above 255 must clamp, not discard the colour space.
+    ///
+    /// Read as `u8` it parsed to `None`, and the caller's `?` dropped everything
+    /// after it -- so an image using that space rendered as nothing at all.
+    /// Measured before the fix: `next::<u8>()` on 300 gives None, `next::<u32>()`
+    /// gives Some(300), which clamps to 255.
+    #[test]
+    fn an_out_of_range_hival_clamps_instead_of_dropping_the_space() {
+        assert!(
+            colour_space(300, 256).is_some(),
+            "an out-of-range /HiVal discarded the indexed colour space, so the \
+             image it belongs to renders as nothing"
+        );
+    }
+
+    /// The ordinary case must keep working, or the clamp has bought tolerance
+    /// for malformed files by breaking well-formed ones.
+    #[test]
+    fn an_ordinary_hival_still_builds_the_space() {
+        assert!(colour_space(1, 2).is_some());
     }
 }
