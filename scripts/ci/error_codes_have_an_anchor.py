@@ -28,9 +28,9 @@ PAGINA = "https://pdfluent.com/errors/"
 # Recorded rather than removed: error.rs states an append-only policy for codes
 # ("You must never: Remove a code"), so the fix belongs on the website side.
 # Named individually so the list cannot grow without somebody deciding to.
-GEEN_ANKER = {
-    "E-LICENSE-FEATURE-NOT-IN-TIER": "#253 — no section published yet",
-    "E-LICENSE-CAPABILITY-NOT-COMPILED": "#253 — no section published yet",
+GEEN_ANKER: dict[str, str] = {
+    # Empty since 03-09-2026: both licence codes got their section (#320).
+    # A code goes in here only with the issue that will publish its section.
 }
 
 
