@@ -142,6 +142,7 @@ run forkpunt  python3 scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py
 run wtconfig  python3 scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py
 run forkmerge python3 scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py
 run featgate  python3 scripts/ci/test_feature_gated_tests_run.py
+run featgatesrc python3 scripts/ci/test_coverage_reads_only_what_runs.py
 # The guard that enforces the whole multi-terminal model did not run in the gate
 # that guards every push -- it was only in ci.yml, which means a push could cross
 # a territory line and nothing local said so. (codex P1, #296)
