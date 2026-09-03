@@ -17,7 +17,7 @@ bash scripts/competitive-benchmark.sh [CORPUS_DIR]
 | | |
 |---|---|
 | Machine | Hetzner CX53 (8 vCPUs, 16 GB RAM, Ubuntu 24.04) |
-| XFA-Native | `xfa-cli 0.1.0` (release build, `/opt/xfa/target/release/`) |
+| XFA-Native | `xfa-cli 0.1.0` (release build) |
 | PDFBox | 3.0.4 (`pdfbox-app-3.0.4.jar`) |
 | MuPDF | `mutool 1.23.10` |
 | Poppler | `pdftotext 24.02.0` |

@@ -9,7 +9,7 @@ real-world corpus. Micro-benchmarks of individual APIs are in
 | | |
 |---|---|
 | Machine | Hetzner CX53 (8 vCPUs, 16 GB RAM, Ubuntu 22.04) |
-| XFA SDK | `xfa-cli 0.1.0` (`/opt/xfa/target/release/`) |
+| XFA SDK | `xfa-cli 0.1.0` (release build) |
 | MuPDF | `mutool 1.23.10` |
 | Poppler | `pdftotext 24.02.0` |
 | Corpus | 10 PDFs sampled from `curated-20k` (4 KB – 2.3 MB) |

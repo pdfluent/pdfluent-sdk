@@ -4,7 +4,7 @@
 
 | Parameter | Value |
 |-----------|-------|
-| Corpus | `/opt/xfa-corpus/general` |
+| Corpus | the general corpus set |
 | PDFs | 50.000 |
 | Tier | Standard (11 tests) |
 | Workers | 6 |

@@ -98,7 +98,7 @@ cargo build --release -p xfa-cli
 
 # Run benchmark suite
 BENCH_MACHINE_CLASS=<class> ./scripts/run_benchmarks.sh \
-  --corpus-dir /opt/xfa-corpus/curated-1k \
+  --corpus-dir <corpus>/curated-1k \
   --warmup-seconds 2 \
   --measure-seconds 10
 

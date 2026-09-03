@@ -12,7 +12,7 @@ Reviewed files:
 - `crates/formcalc-interpreter/src/som_bridge.rs`
 
 Verification:
-- `cargo test -p formcalc-interpreter` with `CARGO_TARGET_DIR=/Users/jasperdewinter/Documents/XFA/target-cx`
+- `cargo test -p formcalc-interpreter` with `CARGO_TARGET_DIR=<workspace>/target-cx`
 - `cargo clippy -p formcalc-interpreter --all-targets -- -D warnings` with the same target dir
 
 ## BUILT-IN FUNCTIES MATRIX
