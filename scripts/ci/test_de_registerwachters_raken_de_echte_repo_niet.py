@@ -586,7 +586,28 @@ def main() -> int:
                 "a branch that does not touch the register did not pass cleanly: "
                 f"exit {uitkomst.returncode}, {uitkomst.stderr.strip()[:160]}"
             )
-        if (leeg / "pdfluent").exists():
+        # Which assertion applies depends on the branch this runs on, so it is
+        # decided rather than assumed. The previous version asserted "no cache"
+        # unconditionally and therefore only held while nobody edited the
+        # register -- it failed on the first branch that did (#262's decision
+        # entry), reporting the guard as broken when the guard was right.
+        #
+        # A case whose premise the environment controls has to test the premise.
+        register_gewijzigd = subprocess.run(
+            [GIT, "diff", "--name-only", "github/master...HEAD", "--",
+             "docs/UPSTREAM_FORKS.toml"],
+            cwd=ROOT, capture_output=True, text=True, check=False,
+            env=schone_omgeving(),
+        ).stdout.strip()
+
+        cache_gebouwd = (leeg / "pdfluent").exists()
+        if register_gewijzigd and not cache_gebouwd:
+            failures.append(
+                "this branch DOES change docs/UPSTREAM_FORKS.toml and no upstream "
+                "cache was built, so the fork points were never checked against "
+                "upstream -- the guard passed without asking the question"
+            )
+        if not register_gewijzigd and cache_gebouwd:
             failures.append(
                 "a branch that does not touch the register still built an upstream "
                 "cache -- the clone is being demanded before the question is asked"
