@@ -48,9 +48,11 @@ UPDATE_VISUAL_BASELINE=1 cargo test -p visual-regression
 cargo test -p visual-regression --release
 ```
 
-The update path writes baseline PNGs and then reads and compares them in the
-same test. It removes obsolete PNGs so deliberate page-count changes can be
-accepted. It never updates source PDFs implicitly. Without the environment
+The update path first checks every source PDF, render and declared page count.
+Only when that preflight succeeds does it write baseline PNGs and then read and
+compare them in the same test. A render failure or unexpected page count leaves
+all baseline files intact. It removes obsolete PNGs so deliberate page-count
+changes can be accepted. It never updates source PDFs implicitly. Without the environment
 variable, a missing fixture, extra fixture, missing/extra baseline page,
 unreadable PNG, failed render or unexpected page count fails the suite.
 
@@ -188,7 +190,8 @@ tolerance. The PR records test timings, exact sizes and temporary mutation
 results. All three renderer mutations are reverted before the final diff.
 
 This crate supersedes `scripts/run-avrt.sh`, `scripts/avrt-report.sh` and
-`avrt-config.json`; those files remain for removal in a separate change.
+`avrt-config.json`; those files remain for removal in a separate change tracked
+in [the AVRT cleanup follow-up](https://github.com/pdfluent/pdfluent-internal/issues/327).
 
 ## Initial validation
 
@@ -206,3 +209,12 @@ occupy 109,167 bytes and the 42 PNGs 192,664 bytes: 301,831 bytes combined.
 Each experiment ran the full debug suite and failed the visual test while the
 other three tests passed. All mutations were reverted. The final debug and
 release suites both passed the five-run byte-identity audit with no exceptions.
+
+All 42 initial baseline images were visually inspected. Text, annotations,
+clipping, rotated/cropped shapes, image gradients, masks, shading, patterns and
+strokes are visibly present. This inspection preserves current renderer output;
+it is not the independent peer review required before landing.
+
+The baseline-update preflight was also fault-tested with a temporary injected
+render error. The update command failed as required and all 42 baseline filenames
+and SHA-256 hashes remained unchanged. The injection was removed afterwards.

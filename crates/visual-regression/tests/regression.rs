@@ -25,6 +25,9 @@ fn visual_baseline() -> Result<()> {
     let mut expected_names = Vec::new();
     let mut failures = Vec::new();
     let mut page_count = 0;
+    let mut documents = Vec::new();
+    // Preflight every fixture before the first baseline write. A failed render
+    // must not make a partial update or delete that fixture's reference pages.
     for fixture in &fixtures {
         // Updating baselines never silently regenerates source PDFs.
         assert_eq!(
@@ -52,6 +55,10 @@ fn visual_baseline() -> Result<()> {
                 pages.len()
             ));
         }
+        documents.push((fixture, pages));
+    }
+    let update = update && failures.is_empty();
+    for (fixture, pages) in &documents {
         for (i, actual) in pages.iter().enumerate() {
             page_count += 1;
             let name = format!("{}-p{}", fixture.name, i + 1);
