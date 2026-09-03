@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Zet de DCO-sign-off onder elke commit, want `format.signoff` doet dat niet.
+#
+# Dat is de val die dit bestand bestaat om te sluiten. `git config format.signoff
+# true` stond hier al aan en las als "sign-offs staan aan", maar die instelling
+# geldt alleen voor `git format-patch`. `git commit` kijkt er niet naar: zonder
+# `-s` komt er geen trailer, en dat is te toetsen --
+#
+#   git init t && cd t && git config format.signoff true
+#   git commit --allow-empty -m x   ->  geen Signed-off-by
+#   git commit --allow-empty -s -m x ->  wel
+#
+# Een instelling die aanstaat en niets doet is erger dan een die uitstaat: de
+# pre-push-poort weigert ongetekende commits van na 03-09-2026 07:30:44Z, en
+# wie de config leest concludeert dat het geregeld is.
+#
+# `--if-exists doNothing` maakt hem idempotent, zodat een `git commit --amend`
+# of een handmatige `-s` geen tweede regel oplevert.
+set -euo pipefail
+
+pad="$1"
+bron="${2:-}"
+
+# Bij een merge of een squash schrijft git de boodschap zelf; een sign-off hoort
+# daar van de persoon te komen die hem uitvoert, en die krijgt hem via deze hook
+# op zijn eigen commit. Alleen `message`, `template` en een lege bron krijgen er
+# een: dat zijn de gevallen waarin er werkelijk iets nieuws wordt vastgelegd.
+case "$bron" in
+  merge|squash) exit 0 ;;
+esac
+
+naam=$(git config user.name || true)
+mail=$(git config user.email || true)
+if [ -z "$naam" ] || [ -z "$mail" ]; then
+  echo "prepare-commit-msg: user.name of user.email ontbreekt, geen sign-off gezet" >&2
+  exit 0
+fi
+
+git interpret-trailers --in-place --if-exists doNothing \
+  --trailer "Signed-off-by: $naam <$mail>" "$pad"
