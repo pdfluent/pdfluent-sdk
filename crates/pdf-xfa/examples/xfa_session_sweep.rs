@@ -5,7 +5,7 @@
 //! reopen, and verify the marker came back from the datasets packet.
 //!
 //! ```bash
-//! cargo run -p pdf-xfa --release --example xfa_session_sweep -- /opt/xfa-golden/inputs
+//! cargo run -p pdf-xfa --release --example xfa_session_sweep -- <directory of XFA PDFs>
 //! ```
 //!
 //! Output: one TSV line per document

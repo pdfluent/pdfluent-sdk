@@ -256,7 +256,7 @@ fallback).
   dependency source paths from the build machine are replaced by neutral
   prefixes (`/registry`, `/git`, `/src`) in the published `.wasm` binary.
   Beta.10 contained 493 embedded private filesystem paths
-  (`/Users/jasperdewinter/.cargo/registry/...`); beta.11 contains zero.
+  (`/Users/<developer>/.cargo/registry/...`); beta.11 contains zero.
 
 - **wasm-opt -O3 enabled** (B3). Cold init -13.3%, median key-op -7.9%,
   raw `.wasm` -7.0%. Wire size slightly larger (+3% gzip) as expected for
