@@ -220,6 +220,11 @@ impl<'a> Type3<'a> {
             glyph.xref,
             glyph.settings.clone(),
             state,
+            // Starts a fresh Context, so the bound in `interpret` would restart
+            // at zero for a Type 3 glyph procedure. 0 is deliberate and NOT sufficient on its
+            // own: it bounds recursion WITHIN this construct, not a cycle that
+            // alternates between constructs. See the note on #262.
+            0,
         );
 
         let mut resources = Resources::from_parent(

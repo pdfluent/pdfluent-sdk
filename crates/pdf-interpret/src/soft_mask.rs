@@ -155,6 +155,11 @@ impl<'a> SoftMask<'a> {
             self.0.xref,
             self.0.settings.clone(),
             state,
+            // Starts a fresh Context, so the bound in `interpret` would restart
+            // at zero for a soft mask's group. 0 is deliberate and NOT sufficient on its
+            // own: it bounds recursion WITHIN this construct, not a cycle that
+            // alternates between constructs. See the note on #262.
+            0,
         );
         draw_form_xobject(&self.0.parent_resources, &self.0.group, &mut ctx, device);
     }
