@@ -1,0 +1,1 @@
+- **Vergelijk met de remote, niet met je tracking-ref** (T2, 03-09): `git ls-remote github <ref>` mét een controle-ref in dezelfde query; een tak zonder upstream is altijd "gelijk aan zichzelf". Twee "gepushte" takken bleken nergens te staan.
