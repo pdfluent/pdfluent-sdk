@@ -103,6 +103,16 @@ paden = [
   # all until today. A map that covers the guard but not the thing it reads
   # leaves the argument about which is authoritative to whoever notices first.
   "docs/LICENSE_POLICY.toml",
+  # Claimed 03-09-2026 for #276, and it is a loan rather than a move. This file
+  # says which fifty documents the SSIM gate is calibrated on; the gate is CI
+  # wiring and the fifty are being recovered into the runner snapshot, so the
+  # manifest and the step that reads it move together or not at all.
+  #
+  # It fell to t4 and t5 only through their `**`, and neither session exists --
+  # which is not the same as unclaimed, so it is claimed here in writing instead
+  # of edited quietly. It returns to whoever owns `corpus/` the moment there is
+  # a t4 or t5 again.
+  "corpus/SSIM_GATE_MANIFEST.json",
   ".claude/**",
   ".github/workflows/**",
   ".gitlab-ci.yml",
