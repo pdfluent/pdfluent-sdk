@@ -49,11 +49,6 @@ feature = "serde"
 waarom  = "#285 -- 279 tests pass locally, no job runs them"
 
 [[gap]]
-pakket  = "pdf-ocr"
-feature = "tesseract"
-waarom  = "#244 -- libtesseract is not on the runner"
-
-[[gap]]
 pakket  = "pdf-xfa"
 feature = "xfa-js-sandboxed"
 waarom  = "#285 -- no job enables it"
