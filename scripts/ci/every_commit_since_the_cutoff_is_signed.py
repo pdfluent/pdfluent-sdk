@@ -7,20 +7,42 @@ the same name runs on a pull_request event, where GitHub hands the checkout a
 synthetic merge commit and the range is the pull request's own commits -- useful,
 but not the thing that gates the merge.
 
-WHY THE RANGE IS `@{u}..HEAD` AND NOT THE CUTOFF TO HEAD
+WHY THE RANGE IS "ON NO REMOTE REF" AND NOT `@{u}..HEAD`
 
 The rule covers commits written after the cutoff, and this push only introduces
-the ones the upstream branch does not have. Asking about the rest would report
+the ones the remote does not already have. Asking about the rest would report
 somebody else's unsigned commit as this push's problem, and the decision on #316
 is explicit that history before the cutoff stays uncertified rather than being
 signed retroactively.
 
-WHY A MISSING UPSTREAM IS NOT A PASS
+`@{u}..HEAD` looked like that question and was not. After a rebase the upstream
+ref still points at the PRE-rebase head, so the range stops meaning "what this
+push adds" and starts meaning "everything the new base has that the old head did
+not" -- which is master's own recent history. Measured on a branch that was
+master+2: `@{u}..HEAD` held 10 commits and the gate refused 7, six of which were
+already on master, verified one by one with `git merge-base --is-ancestor`. A
+push cannot be answerable for commits that are already in the repository.
 
-A branch with no upstream has no range, and "no range" is indistinguishable from
-"nothing to check" -- which is how a gate reports success over an empty
-question. Here it falls back to the cutoff, so a first push of a new branch is
-covered rather than waved through.
+It does not clear on its own either: master carries commits written after the
+cutoff that predate the gate, so every branch rebased onto master inherits them
+into that range. On 03-09 that was 8 of the last 300 non-merge commits, which
+made every rebased push unpushable at once.
+
+Asking "which commits are on no remote ref" is the question that was meant. It
+survives a rebase, and it does not depend on a branch NAME -- the other way this
+repository has been misled today, where querying one name returned "absent" for
+a branch that was present under a different one.
+
+A stale remote-tracking ref makes this stricter, never laxer: an unfetched ref
+means a commit looks new when it is not, which asks for a sign-off that is
+already there. The failure direction of a missing fetch is a demand, not a pass.
+
+WHY NO REMOTE REFS AT ALL IS NOT A PASS
+
+"No refs to measure against" is indistinguishable from "nothing to check" --
+which is how a gate reports success over an empty question. It falls back to the
+whole branch, so a first push into an empty remote is covered rather than waved
+through.
 """
 from __future__ import annotations
 
@@ -66,39 +88,35 @@ def git(*args: str) -> subprocess.CompletedProcess[str]:
 def main() -> int:
     global REPO
     REPO = _repo()
-    boven = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
-    if boven.returncode == 0 and boven.stdout.strip():
-        bereik = f"{boven.stdout.strip()}..HEAD"
+    # Every remote-tracking ref, not one branch's upstream and not a name we
+    # guessed. A commit reachable from any of them is published already, so this
+    # push is not what introduces it.
+    refs = git("for-each-ref", "--format=%(refname)", "refs/remotes/")
+    if refs.returncode == 0 and refs.stdout.strip():
+        argumenten = ["HEAD", "--not", "--remotes"]
+        bereik = "commits on no remote ref"
     else:
-        # No upstream: this is a branch nobody has seen. Everything on it that
-        # is not on master is what the push introduces.
-        bereik = ""
-        for ref in ("github/master", "origin/master"):
-            basis = git("merge-base", "HEAD", ref)
-            if basis.returncode == 0 and basis.stdout.strip():
-                bereik = f"{basis.stdout.strip()}..HEAD"
-                break
-        if not bereik:
-            # No upstream and no master to measure against: everything this
-            # branch contains is what a push would introduce. That is the honest
-            # range rather than a refusal -- and it is the case a brand-new
-            # repository is in, which is also the case every fixture is in.
-            bereik = "HEAD"
+        # Nothing published to compare against -- a fresh remote, or a fixture.
+        # Everything the branch holds is what a push would introduce. The honest
+        # range, rather than a refusal or a wave-through.
+        argumenten = ["HEAD"]
+        bereik = "the whole branch (no remote refs to measure against)"
 
     # `--no-merges` for the reason ci.yml carries at length: a merge commit has
     # a generated message and cannot carry a sign-off, so demanding one of it
     # makes the gate unsatisfiable rather than strict.
-    uit = git("log", "--no-merges", "--format=%H %at", bereik)
+    uit = git("log", "--no-merges", "--format=%H %at", *argumenten)
     if uit.returncode != 0:
-        print(f"[signoff-push] SKIPPED (not a pass): `git log {bereik}` failed:\n"
+        print(f"[signoff-push] SKIPPED (not a pass): `git log {' '.join(argumenten)}` "
+              f"failed:\n"
               f"  {uit.stderr.strip()[:200]}", file=sys.stderr)
         return 1
 
     na_cutoff = [r.split()[0] for r in uit.stdout.splitlines()
                  if r.strip() and int(r.split()[1]) > CUT_AT]
     if not na_cutoff:
-        print(f"[signoff-push] OK: {bereik} adds no commit written after the "
-              "cutoff; sign-off not required.")
+        print(f"[signoff-push] OK: {bereik} -- none written after the cutoff; "
+              "sign-off not required.")
         return 0
 
     ongetekend = []
