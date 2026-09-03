@@ -164,7 +164,7 @@ uitgezonderd = [
   # where the gate finds tests, not because it is CI wiring.
   "scripts/ci/test_prepare_commit_msg_signoff.py",
   "scripts/ci/territories_do_not_overlap.py",
-  "scripts/ci/test_sweep_uitzondering.py",
+  "scripts/ci/test_sweep_exemption.py",
   # #301: the licence header is t3's subject, so its guard is too. Back when
   # this lands.
   "scripts/ci/header_sweep.py",
@@ -319,7 +319,7 @@ paden = [
   # somebody else's queue.
   "scripts/ci/header_sweep.py",
   "scripts/ci/test_header_sweep.py",
-  "scripts/ci/test_sweep_uitzondering.py",
+  "scripts/ci/test_sweep_exemption.py",
   "scripts/ci/territories_do_not_overlap.py",
 ]
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
