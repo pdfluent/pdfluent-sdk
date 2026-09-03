@@ -102,7 +102,6 @@ paden = [
   "scripts/ci/test_every_commit_since_the_cutoff_is_signed.py",
   "scripts/ci/every_guard_has_a_job.py",
   ".github/workflows/ci.yml",
-  "scripts/ci/local_ci_gate.sh",
   "scripts/ci/test_een_treffer_publiceert_de_term_niet.py",
 ]
 # NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
@@ -270,6 +269,15 @@ paden = [
   "scripts/ci/every_document_is_registered.py",
   "scripts/ci/test_every_document_is_registered.py",
   ".github/workflows/document-register.yml",
+  # Back from t1 to t3 on 03-09-2026, on the condition t1 wrote into this file
+  # when they took it for #316: "Back to t3/t2 when this lands." #316 has landed
+  # -- every_commit_since_the_cutoff_is_signed.py is on master and its gate runs.
+  #
+  # On its own, with nothing else in the commit, because four t3 branches claimed
+  # this file independently and would otherwise each carry the same one-line
+  # conflict. `.github/workflows/ci.yml` stays with t1: that half is the
+  # pull_request job, and it is not mine to hand back on their behalf.
+  "scripts/ci/local_ci_gate.sh",
 ]
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
 
