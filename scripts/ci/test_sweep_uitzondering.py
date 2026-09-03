@@ -154,18 +154,21 @@ def main() -> int:
         goed &= geval("het onopgeslagen werk is niet weggepoetst",
                       (r / "mijn" / "eigen.txt").read_text().startswith("werk dat"), "")
 
-    # De grens, expliciet vastgelegd in plaats van stilzwijgend aangenomen.
+    # Dit WAS de bekende grens: "herdraaien geeft een lege diff" bewijst dat het
+    # gegenereerde gegenereerd is, maar niet dat er niets anders meereed. Een
+    # bestand dat de generator nooit aanraakt reproduceert immers schoon.
     #
-    # "Herdraaien geeft een lege diff" bewijst dat wat de generator beheert
-    # gegenereerd is. Het bewijst NIET dat er niets anders in dezelfde commit is
-    # meegereden. Dat is wat de reviewer doet, en het hoort hier te staan zodat
-    # niemand het mechanisme sterker leest dan het is.
+    # T2 wees op #1700 aan dat die grens te sluiten is door de vrijstelling door
+    # te snijden met wat de generator SCHRIJFT -- gemeten door hem op de ouder van
+    # de sweepcommit te draaien. Dat is nu gedrag in plaats van een voetnoot, en
+    # dit geval bewaakt het.
     with tempfile.TemporaryDirectory() as d:
         r = repo(pathlib.Path(d), met_allowlist_op_basis=True)
         sweep_commit(r, "python3 scripts/sweep.py", met_handwerk="ongeraakt")
         vrij, reden = vraag(r)
-        goed &= geval("BEKENDE GRENS: handwerk buiten wat de generator beheert glipt erdoor",
-                      reden is None and len(vrij) == 4, f"{len(vrij)} vrij, reden={reden}")
+        goed &= geval("handwerk buiten het bereik van de generator wordt gevangen",
+                      not vrij and reden and "met de hand" in reden,
+                      f"{len(vrij)} vrij, reden={reden}")
 
     print("test_sweep_uitzondering: " + ("OK" if goed else "GEFAALD"))
     return 0 if goed else 1
