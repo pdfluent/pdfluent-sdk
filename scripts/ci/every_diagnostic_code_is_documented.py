@@ -27,10 +27,22 @@ this guard's business.
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+
+def clean_environment() -> dict[str, str]:
+    """The caller's environment with every GIT_* variable removed.
+
+    A pre-push hook exports GIT_DIR and GIT_INDEX_FILE, and a subprocess that
+    inherits them talks to the real repository whatever directory it is given.
+    On 25-08-2026 a test set `core.bare = true` on the real repository that way.
+    Same helper as scripts/ci/mr_staleness.py.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
 def repository_root() -> Path:
@@ -41,7 +53,7 @@ def repository_root() -> Path:
     """
     out = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, check=False, env=clean_environment(),
     )
     if out.returncode != 0 or not out.stdout.strip():
         print("[diagnostics] SKIPPED (not a pass): not inside a git repository",
