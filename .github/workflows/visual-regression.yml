@@ -1,6 +1,5 @@
 name: Visual regression
 on:
-  pull_request:
   push:
     branches: [master]
 permissions:
