@@ -57,12 +57,15 @@ ROOT = Path(__file__).resolve().parents[2]
 # says nothing about whether the next one would pass, so the next one must run.
 GUARD_JOBS = {
     ("ci.yml", "orchestration-guard"),
-    # #288 ported thirteen guards off the GitLab mirror into these two jobs.
-    # They are the same shape as orchestration-guard -- a series of independent
-    # checks -- so they carry the same risk: one failure would hide the rest,
-    # and a step that never ran looks exactly like a step that passed.
-    ("ci.yml", "promise-guard"),
-    ("ci.yml", "measurement-guard"),
+    # #288 ported thirteen guards off the GitLab mirror into `promise-guard`
+    # and `measurement-guard`. #328 merged those two, and four more light jobs,
+    # into a single `guards` job: eight checkouts and eight minimum-minute
+    # roundings for work that is seconds of file scanning. The shape did not
+    # change -- a series of independent checks, where one failure would hide the
+    # rest and a step that never ran looks exactly like a step that passed -- so
+    # the requirement follows the steps into their new job, and now covers the
+    # four that were never named here.
+    ("ci.yml", "guards"),
 }
 
 # Steps that genuinely are prerequisites: if the checkout or the interpreter is
