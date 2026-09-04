@@ -118,9 +118,14 @@ paden = [
   #
   # Back to t3/t2 when this lands. T3 knows #1543 rebases onto it: one known
   # conflict, once.
-  "scripts/ci/every_commit_since_the_cutoff_is_signed.py",
-  "scripts/ci/test_every_commit_since_the_cutoff_is_signed.py",
-  "scripts/ci/every_guard_has_a_job.py",
+  #
+  # RETURNED 04-09: #316 has landed, so the loan is over and the two sign-off
+  # guards are in t2's block below -- scripts/ci is t2's, and the range fix that
+  # made every rebased push satisfiable again came from there.
+  #
+  # `every_guard_has_a_job.py` follows on the same reasoning; it came out of t2's
+  # block for #316 and the block above says so. `local_ci_gate.sh` went back to
+  # t3 already. `ci.yml` stays here: it is t1's own, not a loan.
   ".github/workflows/ci.yml",
   "scripts/ci/test_een_treffer_publiceert_de_term_niet.py",
 ]
@@ -137,6 +142,12 @@ waarom = """
 Workflows and the guard scripts. The one place where a careless edit stops every
 other terminal from being able to verify anything, so it gets a single owner."""
 paden = [
+  # Returned from t1 on 04-09-2026, when #316 landed and the loan that moved
+  # them there ended. scripts/ci is t2's; the block that took them says "back to
+  # t3/t2 when this lands", and this is that.
+  "scripts/ci/every_commit_since_the_cutoff_is_signed.py",
+  "scripts/ci/test_every_commit_since_the_cutoff_is_signed.py",
+  "scripts/ci/every_guard_has_a_job.py",
   # The policy itself. `docs/licen*` is t3's and is lowercase, so this file --
   # the one the whole licence policy is written in -- matched no territory at
   # all until today. A map that covers the guard but not the thing it reads
