@@ -51,6 +51,15 @@ paden = [
   "crates/lopdf/**",
   "docs/UPSTREAM_FORKS.toml",
   "docs/FORKDIVERGENTIE.md",
+
+  # Claimed 04-09-2026 with #326. The visual regression suite is a renderer
+  # instrument: it decides whether a change to pdf-interpret or pdf-render
+  # altered a pixel, so it belongs with the crates it measures. Only the crate
+  # and its workflow -- the registrations it needs in corpus_herkomst.py,
+  # persistent_builds_check_their_build_dir.py and docs/licensing/boundary.toml
+  # stay with t3, who owns those files.
+  "crates/visual-regression/**",
+  ".github/workflows/visual-regression.yml",
   # Claimed 01-09-2026 for `embed_font` (#292). The owner decision was to turn
   # lopdf's `font_embedding` on and wire it through to `PdfDocument::embed_font`.
   # lopdf is t1, the two crates the wiring passes through are not, and splitting
