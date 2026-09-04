@@ -74,12 +74,38 @@ def main() -> int:
           not guard.geparkeerd(doc, job(needs="bestaat-niet")))
 
     # --- the guard on the real tree ------------------------------------------
+    # THE GUARD CANNOT RUN EVERYWHERE, AND THIS TEST HAS TO SAY SO.
+    #
+    # `every_label_has_a_runner` reads the runner list through
+    # `gh api /actions/runners`, which needs `administration: read` -- a scope
+    # GITHUB_TOKEN cannot be granted. Its own docstring says so. Without that
+    # list it prints `SKIPPED (not a pass)` and returns 0.
+    #
+    # The first version of this test asserted the comparison regardless. Wired
+    # into a GitHub Actions workflow it failed three cases, turned `A deletion
+    # declares itself` red on every pull request, and -- because
+    # `a_gate_that_never_went_green.py` refuses a push while a changed workflow
+    # has never been green -- closed master for all three terminals until #1719
+    # reopened it. The test was right about the code and wrong about where it
+    # could run, and the second mistake was the expensive one.
+    #
+    # So: one failure naming the cause and the remedy, not three describing
+    # symptoms. A failure and not a silent pass, because this test is wired in
+    # local_ci_gate.sh where `gh` is authenticated -- a skip there means the
+    # environment is broken, and calling that green is the shape this
+    # repository keeps finding.
     clean = subprocess.run([sys.executable, str(GUARD)], capture_output=True, text=True)
-    case("the repository as it stands passes", clean.returncode == 0,
-          (clean.stdout + clean.stderr)[-300:])
-    case("and it says the graph derives the same set as the baseline",
-          "needs-graph derives the same" in clean.stdout,
-          clean.stdout[-200:])
+    could_not_read = "could not read the runner list" in clean.stderr
+    case("the guard could read the runner list", not could_not_read,
+         "`gh api /actions/runners` answered nothing. This test belongs in "
+         "local_ci_gate.sh, where gh is authenticated; it cannot run in GitHub "
+         "Actions, because that endpoint needs `administration: read`.")
+    if not could_not_read:
+        case("the repository as it stands passes", clean.returncode == 0,
+             (clean.stdout + clean.stderr)[-300:])
+        case("and it says the graph derives the same set as the baseline",
+             "needs-graph derives the same" in clean.stdout,
+             clean.stdout[-200:])
 
     # --- THE MUTATION --------------------------------------------------------
     # Break `parked` and the cross-check must notice. Without this the agreement
@@ -92,11 +118,15 @@ def main() -> int:
     try:
         tmp_path.write_text(broken)
         red = subprocess.run([sys.executable, str(tmp_path)], capture_output=True, text=True)
-        case("with `parked` always False the guard goes red", red.returncode == 1,
-              f"exit={red.returncode} {(red.stdout + red.stderr)[-200:]}")
-        case("and it names the disagreement rather than a count",
-              "is excused by BEKEND but nothing ahead of it refuses" in red.stderr,
-              red.stderr[-300:])
+        # Same dependency as above: with no runner list the mutant skips before
+        # it can disagree with anything, so asserting here would fail for the
+        # environment rather than for the mutation.
+        if not could_not_read:
+            case("with `geparkeerd` always False the guard goes red", red.returncode == 1,
+                 f"exit={red.returncode} {(red.stdout + red.stderr)[-200:]}")
+            case("and it names the disagreement rather than a count",
+                 "is excused by BEKEND but nothing ahead of it refuses" in red.stderr,
+                 red.stderr[-300:])
     finally:
         tmp_path.unlink(missing_ok=True)
 
