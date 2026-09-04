@@ -18,6 +18,12 @@
 //! on (x86_64, aarch64, wasm32's shadow stack), and the number it produces is
 //! the number the platform charges, whatever the build profile.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// How much stack evaluation may consume, from the point the interpreter is
 /// entered to the deepest frame it reaches.
 ///

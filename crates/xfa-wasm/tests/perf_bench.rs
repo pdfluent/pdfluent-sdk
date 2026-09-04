@@ -7,6 +7,12 @@
 //! transfer directly to WASM because both paths use the same underlying
 //! Rust crates.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::time::Instant;

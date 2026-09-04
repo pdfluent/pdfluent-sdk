@@ -3,6 +3,12 @@
 //! Reduces embedded font data to only the glyphs actually used in the document,
 //! using the `subsetter` crate for OpenType/TrueType subsetting.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::error::{ManipError, Result};
 use crate::flate_decode::decode_zlib;
 use flate2::write::ZlibEncoder;

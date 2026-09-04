@@ -1,4 +1,10 @@
 //! XFA packet extraction from PDF via pdf-syntax.
+
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
 use crate::error::{Result, XfaError};
 use pdf_syntax::object::dict::keys::{ACRO_FORM, XFA};
 use pdf_syntax::object::{Array, Dict, Object, Stream};

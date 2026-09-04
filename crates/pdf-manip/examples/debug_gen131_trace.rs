@@ -1,3 +1,9 @@
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// Trace gen-131 AvantGarde-Book code 129 through each pipeline step.
 fn main() {
     let data = std::fs::read("/tmp/pdf-test-6.2.11.5/gen-131_131159.pdf").unwrap();

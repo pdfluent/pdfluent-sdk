@@ -1,9 +1,8 @@
-// Copyright (c) 2026 Innovation Trigger B.V. All rights reserved.
+// Copyright (c) 2026 Innovation Trigger B.V.
 //
-// This software is proprietary. The PDFluent application is free to use,
-// including for commercial purposes. Redistribution, or extraction or reuse
-// of its components (including the embedded PDF engine), requires a licence.
-// See https://pdfluent.com/license for terms.
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
 
 //! Wall-clock time that works on every target we ship to.
 //!

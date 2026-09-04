@@ -28,6 +28,12 @@
 //! and `g` operators.  CMYK (`k`) is not yet tracked by the state machine;
 //! if the original color was set only by `k`, the snapshot will be `[0,0,0]`.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use lopdf::content::Operation;
 use lopdf::{Document, Object};
 use pdf_manip::content_editor::{editor_for_page, write_editor_to_page, ContentEditor};

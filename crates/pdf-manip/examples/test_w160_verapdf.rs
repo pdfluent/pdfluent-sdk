@@ -1,4 +1,10 @@
 //! Test which width value for code 160 makes veraPDF pass on gen-571.
+
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
 use lopdf::{Document, Object};
 
 fn set_font_width(doc: &mut Document, font_name: &str, code: u32, new_w: i64) -> bool {

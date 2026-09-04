@@ -1,5 +1,11 @@
 //! Default Appearance (DA) parsing and appearance stream generation (B.6).
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::button::{button_kind, ButtonKind};
 use crate::choice::choice_kind;
 use crate::text::text_field_kind;

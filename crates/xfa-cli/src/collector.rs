@@ -1,5 +1,11 @@
 //! XFA PDF collector — download, detect, and classify XFA PDFs for the test corpus.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use pdf_xfa::extract::{extract_xfa_from_bytes, XfaPackets};
 use serde::{Deserialize, Serialize};
 use std::fs;

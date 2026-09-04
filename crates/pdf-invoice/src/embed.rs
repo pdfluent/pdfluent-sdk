@@ -3,6 +3,12 @@
 //! Provides functions to embed CII XML as an Associated File in a PDF
 //! document (PDF/A-3 §6.8) and to extract previously embedded invoice XML.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::error::{InvoiceError, Result};
 use crate::zugferd::ZugferdProfile;
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream, StringFormat};

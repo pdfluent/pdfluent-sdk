@@ -1,5 +1,11 @@
 //! Dump per-doc JSON for the chunking retrieval benchmark:
 //! {doc, logical, chunks:[{path,title,body}]}. Run: chunk_dump <pdf>
+
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
 use pdf_engine::PdfDocument;
 fn js(s: &str) -> String {
     let mut o = String::from("\"");

@@ -3,6 +3,12 @@
 //! Supports RSA PKCS#1 v1.5 (SHA-1/256/384/512), RSA-PSS (SHA-256/384/512),
 //! ECDSA P-256 (SHA-256), and ECDSA P-384 (SHA-384).
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::cms::{parse_context_explicit, parse_tlv};
 
 /// Signature algorithm identified from the SignerInfo or SPKI.

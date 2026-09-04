@@ -10,6 +10,12 @@
 //! XFA Spec 3.3 §2.7 — Z-Order: objects are rendered in document order.
 //! Later objects appear on top of earlier objects (painter's algorithm).
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::error::Result;
 use crate::font_bridge::font_variant_key;
 use std::collections::HashMap;

@@ -13,6 +13,12 @@
 //! The distinction between 1 and 2 is what lets the gate separate "we broke it"
 //! from "it was already broken", which otherwise turns both numbers to mush.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use pdf_manip::text_edit::{
     begin_text_edit, DocumentRevision, FontFallback, ReplaceOptions, TextQuery,
 };

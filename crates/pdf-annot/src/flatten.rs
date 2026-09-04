@@ -4,6 +4,12 @@
 //! Flattens non-widget, non-link annotations containing appearance streams (/AP /N)
 //! directly into the page content stream.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use lopdf::{dictionary, Object, ObjectId, Stream};
 use std::collections::HashSet;
 

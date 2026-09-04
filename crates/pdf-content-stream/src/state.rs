@@ -3,6 +3,12 @@
 //! Tracks state changes driven by G3 operators.  The state machine is
 //! **read-only** — it never modifies the content stream.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::ops::{ContentOp, Matrix, TjItem};
 
 /// An RGB, gray, or CMYK color value.

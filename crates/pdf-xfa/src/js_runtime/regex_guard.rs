@@ -56,6 +56,12 @@
 //!   parent flatten path running; the error is recoverable per
 //!   `crates/pdf-xfa/src/dynamic.rs`.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::js_runtime::SandboxError;
 
 /// Verdict returned by [`scan_script_for_redos`]. A `Reject` variant carries

@@ -4,6 +4,12 @@
 //! document language, MarkInfo/Marked, page tab order, basic paragraph/image
 //! tagging, missing figure alt text, and simple heading hierarchy gaps.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::content_editor::{editor_for_page, write_editor_to_page};
 use crate::error::{ManipError, Result};
 use crate::text_run::extract_page_text_runs;

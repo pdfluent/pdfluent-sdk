@@ -5,6 +5,12 @@
 //! range limits, and every locator is fully revalidated against the live
 //! document before use.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use sha2::{Digest, Sha256};
 
 use super::{StaleReason, TextEditError};

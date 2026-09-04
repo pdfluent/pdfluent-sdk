@@ -10,6 +10,12 @@
 //! production hot-path feature. Output goes to the file named by
 //! `XFA_FLATTEN_TRACE_PATH`, or, if that is unset, a one-line summary to stderr.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use std::fmt::Write as _;
 
 use xfa_layout_engine::form::{DrawContent, FormNodeId, FormNodeType, FormTree, Presence};

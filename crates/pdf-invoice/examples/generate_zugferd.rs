@@ -7,6 +7,12 @@
 //!   zugferd-minimum.pdf, zugferd-basicwl.pdf, zugferd-basic.pdf,
 //!   zugferd-en16931.pdf, zugferd-extended.pdf
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use chrono::NaiveDate;
 use lopdf::{Dictionary, Document, Object};
 use pdf_invoice::embed::{embed_xml_attachment, AfRelationship};

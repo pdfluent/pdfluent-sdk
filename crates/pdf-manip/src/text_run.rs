@@ -3,6 +3,12 @@
 //! Walks content stream operations, tracks font/text state, and decodes
 //! text bytes to Unicode using ToUnicode CMaps extracted from font resources.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::content_editor::{as_number, multiply_matrix, ContentEditor};
 use crate::encoding_utils::build_font_encoding;
 use crate::error::{ManipError, Result};

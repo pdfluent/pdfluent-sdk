@@ -3,6 +3,12 @@
 //! Adds text content to page margins with support for dynamic variables
 //! and Bates numbering sequences.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::error::{ManipError, Result};
 use crate::watermark::{
     add_content_to_page, ensure_page_font, get_page_dimensions, resolve_page_selection, Layer,

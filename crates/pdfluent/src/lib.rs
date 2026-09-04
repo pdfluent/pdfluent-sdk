@@ -42,6 +42,12 @@
 //! The public API is frozen per RFC 0001 (see `docs/rfc/0001-sdk-core-api.md`).
 //! Breaking changes require a new RFC.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]

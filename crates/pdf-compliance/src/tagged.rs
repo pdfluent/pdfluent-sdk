@@ -4,6 +4,12 @@
 //! resolves role mappings, extracts reading order, alt text, and
 //! table/list structure.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use pdf_syntax::object::dict::keys;
 use pdf_syntax::object::{Dict, Name, Object, ObjectIdentifier};
 use pdf_syntax::Pdf;

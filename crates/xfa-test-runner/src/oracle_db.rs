@@ -4,6 +4,12 @@
 //! keyed by `(pdf_hash, oracle_tool, oracle_version)`. This DB survives across
 //! corpus runs and is shared between machines.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use rusqlite::{params, Connection};
 use std::path::Path;
 

@@ -1,5 +1,11 @@
 //! PDF string to Rust string conversion utilities.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// Convert a PDF string (possibly UTF-16BE with BOM) to a Rust `String`.
 pub fn pdf_string_to_string(s: &pdf_syntax::object::String) -> String {
     let bytes = s.as_bytes();

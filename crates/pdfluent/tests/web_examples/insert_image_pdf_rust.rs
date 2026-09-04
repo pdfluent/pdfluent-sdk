@@ -5,6 +5,12 @@
 //! Compile-test + runtime coverage for the 3C-2 `insert_image()` surface.
 //! Auto-extractor replaces this file once the website page ships.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use pdfluent::prelude::*;
 
 /// Fixture: minimal 1×1 JPEG shipped with the SDK tests. The website

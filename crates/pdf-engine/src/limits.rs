@@ -18,6 +18,12 @@
 //! | XFA template nesting depth | 50 levels |
 //! | FormCalc recursion depth | 200 levels |
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// Resource limits for a single PDF processing operation.
 ///
 /// Construct via [`ProcessingLimits::default()`] for standard limits,

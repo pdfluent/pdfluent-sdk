@@ -8,6 +8,12 @@
 //! Lives under `tests/common/` so cargo does NOT compile it as its own test
 //! binary; consumers pull it in with `#[path = "common/acroform_fixtures.rs"]`.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 #![allow(dead_code)] // each consumer uses a different subset
 
 use lopdf::{dictionary, Document, Object, ObjectId, Stream, StringFormat};

@@ -18,6 +18,12 @@
 //! - Content is not recognisable as XML
 //! - Neither CII nor ZUGFeRD v1 namespace found (not ZUGFeRD-conformant)
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use std::collections::HashMap;
 use std::path::Path;
 

@@ -30,6 +30,12 @@
 //! console.log(s.active, s.tier);
 //! ```
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 #![allow(dead_code)]
 
 use std::sync::atomic::{AtomicU8, Ordering};

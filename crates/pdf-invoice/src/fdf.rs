@@ -4,6 +4,12 @@
 //! data.  This module can parse FDF files, generate them, and apply/extract
 //! field data to/from `lopdf::Document` instances.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::error::{InvoiceError, Result};
 use lopdf::{Dictionary, Document, Object, ObjectId, StringFormat};
 

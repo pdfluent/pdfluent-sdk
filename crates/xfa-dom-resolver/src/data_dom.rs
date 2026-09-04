@@ -4,6 +4,12 @@
 //! - `DataGroup`: grouping elements (contain child elements)
 //! - `DataValue`: leaf elements and attributes (contain text/data)
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::error::{Result, XfaDomError};
 
 /// Unique identifier for a node in the Data DOM arena.

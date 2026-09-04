@@ -9,6 +9,12 @@
 //! SOM-based field resolution, presence toggling) lives in
 //! `pdf-xfa/src/dynamic.rs` which uses the full FormTree SOM resolver.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use std::sync::{atomic::AtomicBool, Arc};
 
 use crate::form::{FormNodeId, FormNodeType, FormTree};

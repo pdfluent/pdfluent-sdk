@@ -19,6 +19,12 @@
 //! appearance generation and set `/NeedAppearances true` instead, the same
 //! degradation pdf.js uses. `/V` itself is always lossless via UTF-16BE.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// Decode PDF text-string bytes (ISO 32000-1 §7.9.2.2): UTF-16BE with BOM,
 /// UTF-8 with BOM (PDF 2.0), else PDFDocEncoding.
 ///

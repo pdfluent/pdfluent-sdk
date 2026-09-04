@@ -7,6 +7,12 @@
 //! `ITextOracle::call` returns `None` when the script is absent, the process
 //! fails to start, or the output cannot be parsed.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use std::path::Path;
 
 /// Result returned by the iText XFA oracle script.

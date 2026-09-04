@@ -10,6 +10,12 @@
 //! serialization-agnostic; the struct and the `From` conversion are always
 //! available, so non-serde bindings (e.g. napi) consume the same source.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::text::{FontMetrics, TextSpan, WidthSource};
 
 /// A positioned text span in PDF user space (origin bottom-left, y up).

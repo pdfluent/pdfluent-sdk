@@ -12,6 +12,12 @@
 //! public XFA building blocks. Full admission behaviour on real docs requires
 //! VPS measurement (see D12_PREP_6_FULL_D12_HANDOFF.md).
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use pdf_xfa::{
     flatten_xfa_to_pdf, flatten_xfa_to_pdf_with_policy_and_metadata, XfaRenderingPolicy,
 };

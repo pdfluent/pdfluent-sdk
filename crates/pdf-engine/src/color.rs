@@ -1,5 +1,11 @@
 //! Color helpers for render output conversion.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// Preserve the original DeviceCMYK components as 8-bit output.
 pub fn preserve_device_cmyk(c: f32, m: f32, y: f32, k: f32) -> [u8; 4] {
     [

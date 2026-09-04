@@ -1,3 +1,9 @@
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::state::{render_page_png, render_thumbnail_png, AppState, OpenDocument};
 use base64::Engine;
 use pdf_annot::builder::{

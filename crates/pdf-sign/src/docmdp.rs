@@ -1,5 +1,11 @@
 //! DocMDP and FieldMDP permission handling (ISO 32000-2 §12.8.4).
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use pdf_syntax::object::dict::keys::*;
 use pdf_syntax::object::{Array, Dict, Name};
 use pdf_syntax::Pdf;

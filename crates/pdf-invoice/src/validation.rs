@@ -3,6 +3,12 @@
 //! This validator focuses on the core structural and arithmetic rules that can
 //! be enforced from the current invoice data model.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::iso_codes::{is_valid_country, is_valid_currency};
 use crate::zugferd::{TaxCategory, ZugferdInvoice, ZugferdProfile};
 use chrono::NaiveDate;

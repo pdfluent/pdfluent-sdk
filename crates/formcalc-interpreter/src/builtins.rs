@@ -3,6 +3,12 @@
 //! Implements the currently supported subset of the XFA 3.3 §25 built-in library.
 //! Functions are case-insensitive (caller normalizes via lookup).
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::error::{FormCalcError, Result};
 use crate::value::Value;
 use std::sync::atomic::{AtomicU64, Ordering};

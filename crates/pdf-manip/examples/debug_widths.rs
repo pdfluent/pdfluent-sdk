@@ -1,6 +1,12 @@
 //! Debug width computation for a specific font object
 //! Usage: cargo run -p pdf-manip --example debug_widths -- <pdf> <font_obj_id>
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {

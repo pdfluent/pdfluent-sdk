@@ -4,6 +4,12 @@
 //! No real corpus PDFs are required — the goal is to verify that `flatten_xfa_to_pdf`
 //! does not panic and produces non-empty output across a wide variety of edge cases.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use lopdf::{dictionary, Document, Object, Stream};
 use pdf_xfa::flatten_xfa_to_pdf;
 

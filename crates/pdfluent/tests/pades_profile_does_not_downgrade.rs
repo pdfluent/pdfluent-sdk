@@ -8,6 +8,12 @@
 //! less: the point of B-LT is that a verifier can still check it years later,
 //! and a B-B signature dressed as B-LT fails that check silently.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use pdfluent::signer::{PadesProfile, SignOptions};
 
 #[test]

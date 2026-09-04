@@ -3,6 +3,12 @@
 //! Generates a `FormSchema` describing the form's field structure,
 //! types, validation rules, and repetition constraints.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::types::{FieldSchema, FieldType, FormSchema};
 use indexmap::IndexMap;
 use xfa_layout_engine::form::{FormNodeId, FormNodeType, FormTree};

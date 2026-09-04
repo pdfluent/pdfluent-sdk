@@ -5,6 +5,12 @@
 //! 2. PDF with incremental updates (multiple object generations)
 //! 3. Redaction on text in Form XObjects
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use lopdf::Document;
 use pdf_redact::search_redact::{search_and_redact, RedactSearchOptions};
 use std::io::Write;

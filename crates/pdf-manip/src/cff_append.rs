@@ -32,6 +32,12 @@
 //! `None`, which it does for CID-keyed fonts, predefined charsets, an offset
 //! that will not fit the operand it replaces, or any post-check failure.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// Standard CFF SID for the glyph name `space`.
 const SID_SPACE: u16 = 1;
 

@@ -5,6 +5,12 @@
 //! `/NeedAppearances` only when a value cannot be drawn with the Standard-14
 //! WinAnsi fonts.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use anyhow::{Context, Result};
 use pdf_forms::{apply_field_value, WriteValue, WritebackError};
 use std::path::Path;

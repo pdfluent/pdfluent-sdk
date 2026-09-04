@@ -20,6 +20,12 @@
 //! genuinely native-only path, gate it on `#[cfg(not(target_arch = "wasm32"))]`
 //! and add it to the allowlist below with the reason.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use std::path::{Path, PathBuf};
 
 /// Crates whose source ends up inside the WASM bundle.

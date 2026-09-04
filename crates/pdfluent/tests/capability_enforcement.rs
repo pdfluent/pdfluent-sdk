@@ -12,6 +12,12 @@
 //! `set_license_key` directly — that would make test ordering matter. Instead
 //! they exercise the pure parse + capability-set machinery.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 // Note: we use fully-qualified paths throughout rather than `use
 // pdfluent::prelude::*;` because these tests exercise enum/tier/capability
 // types directly without touching PdfDocument, and the prelude glob

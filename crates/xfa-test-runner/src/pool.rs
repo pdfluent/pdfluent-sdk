@@ -9,6 +9,12 @@
 //! the same SQLite schema as the thread-based `Runner`.  Crashed / OOM / timed-out
 //! children are recorded as `skip` rows with an explanatory error message.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
