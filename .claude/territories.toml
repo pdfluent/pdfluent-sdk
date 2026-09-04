@@ -159,6 +159,7 @@ paden = [
   "docs/ci/**",
 ]
 uitgezonderd = [
+  "scripts/ci/public_snapshot_audit.sh",
   # Not t2's, added 03-09-2026. Fixture test for .githooks/prepare-commit-msg,
   # which is the DCO mechanism -- t3 ground. It lives here because that is
   # where the gate finds tests, not because it is CI wiring.
@@ -365,6 +366,11 @@ Blocked behind CLAIMS.md rather than behind other terminals."""
 paden = [
   "docs/marketing/**",
   "docs/seo/**",
+  # #222: the snapshot audit and its wrapper. Publication policy is t3, and
+  # `scripts/release/public_snapshot_check.sh` came over from t1 when that
+  # terminal stopped.
+  "scripts/ci/public_snapshot_audit.sh",
+  "scripts/release/public_snapshot_check.sh",
 ]
 issues = [163, 164, 166, 167, 168, 169, 186, 187, 189, 192, 193, 194, 195, 205, 206]
 

@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 Innovation Trigger B.V. All rights reserved.
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
 #
 # Build the public snapshot the way a stranger would, and fail if it needs
 # anything only we have (#222, step 3).
@@ -21,9 +25,27 @@
 # check's reason for existing, not a hypothetical.
 set -euo pipefail
 
+# `--audit-only` runs the path audit and stops before the build.
+#
+# The two halves cost very differently. Measured on this tree: assembling the
+# snapshot and grepping it takes 154 seconds, which is real but small next to the
+# cold `cargo build` in a fresh clone with an empty HOME that follows it -- that
+# one is minutes and gigabytes. Running the whole thing on every push would make
+# the pre-push gate unusable; running neither is how #222 got to 139 files.
+#
+# So the audit runs locally on every push and the build runs in CI. The audit is
+# also the half that catches the regression this exists for: a build failure
+# means the snapshot cannot be built, a path hit means it was published with our
+# machines in it.
+AUDIT_ONLY=0
+if [ "${1-}" = "--audit-only" ]; then
+    AUDIT_ONLY=1
+    shift
+fi
+
 BOOM="${1-}"
 if [ -z "$BOOM" ]; then
-    echo "usage: public_snapshot_check.sh <directory-or-tarball>" >&2
+    echo "usage: public_snapshot_check.sh [--audit-only] <directory-or-tarball>" >&2
     exit 2
 fi
 
@@ -64,7 +86,20 @@ TREFFERS="$WERK/paths.txt"
 # fact about someone else's build, and it is why we scan at all.
 #
 # Every entry needs a reason. "Inconvenient to fix" is not one.
-TOEGESTAAN='^(docs/agent_skills/publish_protocol/SKILL\.md|docs/release/PUBLISH_PROTOCOL\.md|docs/release/release_gate_contract\.md|docs/release/checklists/wasm\.md|docs/release/cabi_packaging\.md|scripts/ci/no_dead_host_in_a_connecting_script\.py|scripts/release/public_snapshot_check\.sh)$'
+#
+# .cargo/config.toml is allowed for a third reason, and it is worth stating
+# because "just take it out" is wrong twice over. Its --remap-path-prefix lines
+# name the owner's home precisely so that home does NOT end up inside compiled
+# artefacts; deleting them would put it back in every published binary, which is
+# the thing #222 exists to prevent. And the file is not only remapping: it also
+# carries the wasm32 target features (+simd128,+bulk-memory) and the musl and
+# mingw linkers, so excluding the file from the published tree would break a
+# reader's WASM and cross builds.
+#
+# The remaps could move to CI environment (RUSTFLAGS) instead of a tracked file.
+# That touches release reproducibility, so it is an owner decision rather than
+# something to slip into a leak audit.
+TOEGESTAAN='^(docs/agent_skills/publish_protocol/SKILL\.md|docs/release/PUBLISH_PROTOCOL\.md|docs/release/release_gate_contract\.md|docs/release/checklists/wasm\.md|docs/release/cabi_packaging\.md|scripts/ci/no_dead_host_in_a_connecting_script\.py|scripts/release/public_snapshot_check\.sh|\.cargo/config\.toml)$'
 
 while IFS= read -r -d '' f; do
     case "$f" in
@@ -90,6 +125,12 @@ if [ -s "$TREFFERS" ]; then
     echo "  they do not have. Exclude the file in docs/PUBLIC_TREE.toml if it is" >&2
     echo "  internal, or make the path relative if the file has to ship." >&2
     exit 1
+fi
+
+if [ "$AUDIT_ONLY" = "1" ]; then
+    echo "[snapshot] OK: the published tree names no path outside itself"
+    echo "  (--audit-only: the build half was not run)"
+    exit 0
 fi
 
 # ------------------------------------------------------------------- build ----
