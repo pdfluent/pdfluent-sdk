@@ -4,7 +4,11 @@
 // the PDFluent Commercial Licence. See the LICENSE file in this repository --
 // that file travels with the copy you received, which a URL does not.
 
-use std::{fs, path::PathBuf, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::{Command, Output},
+};
 use visual_regression::{
     compare, fixtures, inventory, png_bytes, read_png, render, root, tolerances, write_failure,
     Page, Result, Tolerance,
@@ -235,8 +239,17 @@ fn five_run_determinism() -> Result<()> {
     // Three complete runs here, then two fresh copies of this test executable.
     // Every child renders the entire set; no helper test is skipped or ignored.
     snapshot(&dir.join("same-process"), 3)?;
+    let child_exe = sealed_copy(&std::env::current_exe()?, &dir)?;
+    // Here rather than only in sealed_copy's own test: what closed #329 is that
+    // the CALL SITE stopped spawning `current_exe()`, and a helper can keep its
+    // promise while nobody calls it any more.
+    assert_ne!(
+        child_exe,
+        std::env::current_exe()?,
+        "the children must run from a copy a concurrent build cannot relink (#329)"
+    );
     for (name, single) in [("single-thread", true), ("default-threads", false)] {
-        let mut command = Command::new(std::env::current_exe()?);
+        let mut command = Command::new(&child_exe);
         command
             .args(["--exact", "five_run_determinism", "--nocapture"])
             .env("VISUAL_REGRESSION_SNAPSHOT", dir.join(name))
@@ -251,9 +264,8 @@ fn five_run_determinism() -> Result<()> {
         let output = command.output()?;
         assert!(
             output.status.success(),
-            "{name}: {}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+            "{}",
+            child_report(name, &child_exe, &output)
         );
         println!("{name}: {}", String::from_utf8_lossy(&output.stdout));
     }
@@ -276,6 +288,164 @@ fn five_run_determinism() -> Result<()> {
         }
     }
     fs::remove_dir_all(dir)?;
+    Ok(())
+}
+
+/// The executable the child processes run from: a copy of this test binary,
+/// placed inside the determinism directory.
+///
+/// A copy, not `current_exe()` itself. On 04-09-2026 this audit failed once,
+/// while a second pre-push gate was building the same workspace on the same
+/// machine, and the panic said `default-threads: ` and nothing more: the child
+/// wrote nothing on either stream, so it never reached the suite (#329). Cargo
+/// replaces a test executable at its own path when it relinks, and a `Command`
+/// spawned from `current_exe()` execs whatever is at that path at that instant
+/// -- a half-written file, or a fresh binary that is not the one being tested.
+/// A copy taken before the first spawn cannot be replaced underneath us.
+fn sealed_copy(source: &Path, into: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(into)?;
+    // Windows refuses to exec a file without the extension, and Unix does not
+    // care, so carrying the source's extension over is free correctness.
+    let mut name = String::from("determinism-child");
+    if let Some(extension) = source.extension().and_then(|e| e.to_str()) {
+        name.push('.');
+        name.push_str(extension);
+    }
+    let target = into.join(name);
+    // Remove before writing: copying onto a file that is being executed fails
+    // with ETXTBSY, and a partially overwritten copy would be the very race
+    // this exists to close.
+    if target.exists() {
+        fs::remove_file(&target)?;
+    }
+    fs::copy(source, &target)?;
+    Ok(target)
+}
+
+/// What a failed child is worth saying about it.
+///
+/// The failure on #329 printed the two output streams and nothing else, and
+/// both were empty, so the panic message carried no information at all: not the
+/// exit status, not which executable ran, not even the fact that the streams
+/// were empty rather than unprinted. All four are here, because the next
+/// occurrence of a once-in-hundreds failure has to be diagnosable from the log
+/// somebody scrolls back to, not from a re-run that will not reproduce it.
+///
+/// The status is the part that decides between the two candidates and was the
+/// part that was missing. Two full gates render this suite on one machine at
+/// once; a child the kernel kills under that memory pressure exits on a signal
+/// with both streams empty, and so does one that was handed a broken
+/// executable. `ExitStatus` prints the signal, so the next occurrence says
+/// which.
+fn child_report(name: &str, exe: &Path, output: &Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut report = format!(
+        "{name}: the child did not pass -- {}\n  ran: {}\n  stdout ({} bytes): {stdout}\n  stderr ({} bytes): {stderr}",
+        output.status,
+        exe.display(),
+        output.stdout.len(),
+        output.stderr.len(),
+    );
+    if output.stdout.is_empty() && output.stderr.is_empty() {
+        report.push_str(
+            "\n  Both streams are empty, so the child never reached the suite: it was \
+             killed, or the executable it ran was replaced while it started. (#329)",
+        );
+    }
+    report
+}
+
+#[test]
+fn a_failed_child_is_diagnosable_from_its_report() -> Result<()> {
+    // A real process, so the exit status is a real one on this platform; a
+    // hand-built ExitStatus is only constructible on Unix.
+    let mut output = Command::new(std::env::current_exe()?)
+        .arg("--a-flag-libtest-does-not-have")
+        .output()?;
+    assert!(!output.status.success(), "the stand-in child should fail");
+    assert!(
+        !output.stderr.is_empty(),
+        "libtest should complain on stderr"
+    );
+
+    let exe = PathBuf::from("/nowhere/determinism-child");
+    let loud = child_report("default-threads", &exe, &output);
+    assert!(
+        loud.contains(&output.status.to_string()),
+        "the report must name the exit status: {loud}"
+    );
+    assert!(
+        loud.contains("/nowhere/determinism-child"),
+        "the report must name the executable that ran: {loud}"
+    );
+    assert!(
+        loud.contains(String::from_utf8_lossy(&output.stderr).trim()),
+        "the report must carry the child's stderr: {loud}"
+    );
+    assert!(
+        !loud.contains("Both streams are empty"),
+        "a child that spoke is not a silent one: {loud}"
+    );
+
+    // The #329 shape: a child that failed without writing a byte.
+    output.stdout.clear();
+    output.stderr.clear();
+    let silent = child_report("default-threads", &exe, &output);
+    assert!(
+        silent.contains("Both streams are empty") && silent.contains("#329"),
+        "an empty child must say so, and say where to read about it: {silent}"
+    );
+    assert!(
+        silent.contains(&output.status.to_string()),
+        "the status is the only evidence left when both streams are empty: {silent}"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_child_copy_survives_its_source_being_replaced() -> Result<()> {
+    let dir = artifacts().join("sealed-copy");
+    if dir.exists() {
+        fs::remove_dir_all(&dir)?;
+    }
+    fs::create_dir_all(&dir)?;
+    let source = dir.join("source");
+    let original = b"#!/bin/sh\nexit 0\n";
+    fs::write(&source, original)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755))?;
+    }
+
+    let copy = sealed_copy(&source, &dir)?;
+    assert_ne!(copy, source, "the child must not run from the source path");
+
+    // What a concurrent `cargo build` does to a test executable, in miniature.
+    fs::remove_file(&source)?;
+    fs::write(&source, b"replaced by another build\n")?;
+
+    assert_eq!(
+        fs::read(&copy)?,
+        original,
+        "the copy must still be the executable the test was compiled as"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert!(
+            fs::metadata(&copy)?.permissions().mode() & 0o111 != 0,
+            "a copy that cannot be executed is not a copy of an executable"
+        );
+    }
+    // Twice in a row: the second call overwrites a copy that may still be held
+    // open by a child from the first, which is the ETXTBSY case.
+    let again = sealed_copy(&source, &dir)?;
+    assert_eq!(again, copy);
+    assert_eq!(fs::read(&again)?, b"replaced by another build\n");
+
+    fs::remove_dir_all(&dir)?;
     Ok(())
 }
 
