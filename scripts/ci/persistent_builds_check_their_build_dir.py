@@ -68,7 +68,7 @@ MINIMUM_WORKFLOWS = 10
 # headroom with everything else. That is a decision about where the risk lives,
 # and it should be made rather than noticed six weeks later. Either direction:
 # edit this line, and say why in the commit.
-EXPECTED_BUILD_JOBS = 7
+EXPECTED_BUILD_JOBS = 6
 
 CHECK = "scripts/ci/cargo_target_health.sh"
 
