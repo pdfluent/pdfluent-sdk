@@ -349,6 +349,20 @@ jobs:
       - name: The pre-push hook picks its lane and names its refusals
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_the_pre_push_gate_picks_its_lane.py
+      # Two guards whose GUARD cannot run on a pull request but whose TEST can,
+      # the same shape as the pre-push line above. `every_label_has_a_runner.py`
+      # needs a PAT nobody has issued (see the note in orchestration-guard) and
+      # `register_exemption` reads a push range that a pull request does not
+      # have; both are excused in
+      # docs/GATES_REACHABLE_FROM_A_PULL_REQUEST.toml. Their fixture tests need
+      # nothing but Python, so leaving them pre-push-only left the mechanism
+      # uncovered for exactly the outside contributor #232 is about.
+      - name: The runner-label guard's own test
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_label_has_a_runner.py
+      - name: The register-exemption guard's own test
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_register_exemption.py
       - name: No commit carries AI attribution
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_ai_attribution.py
