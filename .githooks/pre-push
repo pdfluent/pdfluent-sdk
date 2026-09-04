@@ -27,8 +27,37 @@ if [ -f scripts/ci/geen_interne_zaken.py ]; then
   # messages, and CI judges the branch once it exists remotely.
 fi
 
-echo "[pre-push] running local CI gate (sanity + lint)…"
-bash scripts/ci/local_ci_gate.sh || {
+# WHICH LANE, and git already knows. A pre-push hook is handed one line per ref
+# on stdin -- `<local ref> <local sha> <remote ref> <remote sha>` -- so the
+# destination is a fact here, not a guess from the branch name. A branch called
+# master that is being pushed somewhere else is not a landing, and a detached
+# HEAD pushed to refs/heads/master is.
+#
+# stdin is consumed by reading it, and anything below that wanted those lines
+# would silently get none. Nothing below does; if that changes, keep the lines.
+BAAN=--fast
+while read -r _lokaal_ref _lokaal_sha verre_ref _verre_sha; do
+  case "$verre_ref" in refs/heads/master) BAAN=--full ;; esac
+done
+if [ "$BAAN" = --full ]; then
+  echo "[pre-push] pushing to master — running the FULL local CI gate (this compiles)…"
+else
+  echo "[pre-push] running the fast local CI gate; the compiling gates run on the push to master…"
+fi
+
+bash scripts/ci/local_ci_gate.sh "$BAAN"
+rc=$?
+if [ $rc -eq 3 ]; then
+  # Its own message, because these two states are not the same thing and used to
+  # print the same sentence. A gate that fails has judged your code; a disk below
+  # the floor has judged nothing at all, and telling the reader "the gate failed"
+  # sends them to look for a defect that does not exist.
+  echo "[pre-push] BLOCKED: not enough disk to measure anything — see the headroom" >&2
+  echo "  report above for what can be swept. NOTHING WAS CHECKED: this is not a" >&2
+  echo "  verdict on your code. PRE_PUSH_SKIP=1 would push code no gate has read." >&2
+  exit 1
+fi
+if [ $rc -ne 0 ]; then
   echo "[pre-push] BLOCKED: local CI gate failed. Fix, or 'PRE_PUSH_SKIP=1 git push' to override." >&2
   exit 1
-}
+fi

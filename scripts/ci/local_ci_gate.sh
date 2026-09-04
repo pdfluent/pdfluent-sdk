@@ -30,7 +30,7 @@ case "${1:-}" in
   --fast|"")  FULL=0 ;;
   *) echo "usage: local_ci_gate.sh [--fast|--full]" >&2; exit 2 ;;
 esac
-fail=0; pass=0
+fail=0; pass=0; uitgesteld=0; gevallen=""
 
 # A DIRECTORY PER RUN, not a fixed /tmp/lcg_<name>.log.
 #
@@ -55,7 +55,21 @@ trap '[ "$fail" -eq 0 ] && rm -rf "$LOGDIR"' EXIT
 run() { local name="$1"; shift
   printf '=== %-9s' "$name"
   if "$@" >"${LOGDIR}/${name}.log" 2>&1; then echo " PASS"; pass=$((pass+1))
-  else echo " FAIL — see ${LOGDIR}/${name}.log"; tail -15 "${LOGDIR}/${name}.log" | sed 's/^/    /'; fail=$((fail+1)); fi
+  else echo " FAIL — see ${LOGDIR}/${name}.log"; tail -15 "${LOGDIR}/${name}.log" | sed 's/^/    /'; fail=$((fail+1)); gevallen="$gevallen $name"; fi
+}
+# The gates that compile. Together they are the twenty minutes and the twelve
+# gigabytes a push costs, and on an ordinary branch they duplicate what CI runs
+# on that same branch minutes later. On master they do not duplicate anything:
+# master takes only fast-forwards, so what passes here is what lands.
+#
+# DEFERRED IS NOT PASSED, and the summary counts it separately for that reason.
+# A lane that quietly folded eight gates into the pass count would read exactly
+# like a full run to anyone who did not know the lanes existed -- which is the
+# shape of every measurement this repository has had to withdraw.
+zwaar() { local name="$1"; shift
+  if [ "$FULL" = 1 ]; then run "$name" "$@"
+  else printf '=== %-9s DEFERRED (not a pass) — runs in the full lane, on a push to master\n' "$name"
+       uitgesteld=$((uitgesteld+1)); fi
 }
 # DISK FIRST, before anything compiles.
 #
@@ -75,12 +89,16 @@ run() { local name="$1"; shift
 _dh_uit="$(python3 scripts/ci/disk_headroom.py 2>&1)"; _dh=$?
 printf '%s\n' "$_dh_uit" | sed 's/^/  /'
 if [ $_dh -ne 0 ]; then
+  # EXIT 3, not 1, and the hook prints its own line for it. Both states used to
+  # leave the same sentence on screen -- "local CI gate failed" -- so a full disk
+  # read as broken code, and the reader went looking for a gate that had never
+  # run. A refusal that names the wrong cause costs more than no refusal.
   echo "LOCAL_CI_GATE: disk-headroom FAILED — stopping here." >&2
   echo "  Nothing below this point can be trusted: a build the kernel kills reports" >&2
   echo "  as a failing gate while having judged nothing. Sweep what is listed above" >&2
   echo "  and run again. Do not reach for PRE_PUSH_SKIP=1 — that skips every gate," >&2
   echo "  not the ones that died." >&2
-  exit 1
+  exit 3
 fi
 
 # The workflow gates run here, above the branch/merge-request check, because
@@ -96,7 +114,7 @@ run groentest python3 scripts/ci/test_a_gate_that_never_went_green.py
 # release build. t1 added this line and took it out again in the same branch:
 # local_ci_gate.sh was t2/t3's, and a t1 branch may not edit it. It comes back
 # here because the crate is on loan to t3 for #326.
-run visreg    cargo test -p visual-regression --release
+zwaar visreg  cargo test -p visual-regression --release
 
 # Clean-tree advisory (the CI audit job requires it; auto-generated gen/schemas
 # churn is a known false-positive — see docs).
@@ -120,7 +138,7 @@ printf '%s\n' "$_bm_uit" | sed 's/^/  /'
 # forty-nine where they were.
 if [ $_bm -ne 0 ]; then
     echo "=== branch-mr  FAIL — see the lines above"
-    fail=$((fail+1))
+    fail=$((fail+1)); gevallen="$gevallen branch-mr"
 fi
 run kosten   python3 scripts/ci/no_hosted_minutes_on_a_push.py
 run instances python3 scripts/ci/one_instance_per_event.py
@@ -156,10 +174,22 @@ run forkmerge python3 scripts/ci/een_fork_zonder_forkpunt_wordt_niet_gemerged.py
 run featgate  python3 scripts/ci/test_feature_gated_tests_run.py
 run featgatesrc python3 scripts/ci/test_coverage_reads_only_what_runs.py
 run snapfifty python3 scripts/ci/test_the_snapshot_recovers_the_fifty.py
-# The guard that enforces the whole multi-terminal model did not run in the gate
-# that guards every push -- it was only in ci.yml, which means a push could cross
-# a territory line and nothing local said so. (codex P1, #296)
-run territory python3 scripts/ci/territories_do_not_overlap.py
+# ADVISORY here, blocking in ci.yml (line 167). It says what it sees and does not
+# refuse the push.
+#
+# Why it moved: the map is committed, so a change that legitimately spans two
+# territories cannot be pushed until the claim for it is already in the tree --
+# and the claim travels in the same commit. That circle produced the loan lines,
+# which are a claim written to get past a guard rather than to describe the work,
+# and a register full of those describes nothing.
+#
+# What is given up is real and worth naming: a push can now cross a line with
+# only a warning on screen, and a warning in a run that prints hundreds of lines
+# is a warning that can be missed. What is not given up is the refusal -- ci.yml
+# still fails the pull request, before anything merges, where a person reads it.
+# This trades the moment of the refusal, not the refusal.
+echo "--- territory (advisory; ci.yml refuses) ---"
+python3 scripts/ci/territories_do_not_overlap.py 2>&1 | sed 's/^/  /' || true
 run regexem   python3 scripts/ci/test_register_exemption.py
 run sweepexem python3 scripts/ci/test_sweep_exemption.py
 run notice    python3 scripts/ci/notice_names_what_exists.py
@@ -170,7 +200,7 @@ run snapaudit bash scripts/ci/public_snapshot_audit.sh
 run territst  python3 scripts/ci/test_territories_do_not_overlap.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
-run examples  cargo build -q --examples -p pdfluent
+zwaar examples cargo build -q --examples -p pdfluent
 run matrix    python3 scripts/ci/capability_matrix_matches_coverage.py
 run wordsep   python3 scripts/ci/never_delete_the_word_separator.py
 run gitenv    python3 scripts/ci/test_no_test_can_touch_the_real_repo.py
@@ -188,7 +218,7 @@ run licpoltst python3 scripts/ci/test_the_licence_policy_says_what_it_must.py
 run licregs   python3 scripts/ci/one_licence_three_registers.py
 run licregtst python3 scripts/ci/test_one_licence_three_registers.py
 run errdocs   python3 scripts/ci/error_codes_have_an_anchor.py
-run errtests  cargo test -q -p pdfluent --test error_codes_stable --test processing_limits
+zwaar errtests cargo test -q -p pdfluent --test error_codes_stable --test processing_limits
 # The merge point, not a formality: master only takes fast-forwards, so what
 # passes here is what lands. #316.
 run signoff   python3 scripts/ci/every_commit_since_the_cutoff_is_signed.py
@@ -223,6 +253,7 @@ run identity  python3 scripts/ci/commits_use_the_noreply_alias.py
 #   noai     : catches attribution the hook could not reach -- a clone that
 #              never installed it, a rebase, a cherry-pick, --no-verify.
 #   msgclean : the same for internal matters, over the messages on this branch.
+run lanetest  python3 scripts/ci/test_the_pre_push_gate_picks_its_lane.py
 run hookwire  python3 scripts/ci/the_commit_msg_hook_is_wired.py
 run hookwiretst python3 scripts/ci/test_the_commit_msg_hook_is_wired.py
 run jobimports python3 scripts/ci/a_job_has_what_its_scripts_import.py
@@ -244,8 +275,8 @@ run ci-yaml  python3 scripts/ci/ci_config_lint.py
 run hangclass python3 scripts/ci/test_classify_render_outcome.py
 run metadata cargo metadata --no-deps --format-version 1
 run fmt      cargo fmt --all -- --check
-run build    bash scripts/ci/run_build.sh
-run clippy   bash scripts/ci/run_clippy.sh
+zwaar build  bash scripts/ci/run_build.sh
+zwaar clippy bash scripts/ci/run_clippy.sh
 run licenses python3 scripts/release/license_registry_check.py
 run advlists  python3 scripts/ci/the_advisory_lists_agree.py
 run advliststst python3 scripts/ci/test_the_advisory_lists_agree.py
@@ -256,5 +287,14 @@ if [ "$FULL" = 1 ]; then
   run audit bash scripts/ci/run_audit.sh
 fi
 echo "----------------------------------------"
-if [ "$fail" = 0 ]; then echo "LOCAL_CI_GATE: PASS ($pass gates)"; exit 0
-else echo "LOCAL_CI_GATE: FAIL ($fail of $((pass+fail)) gates failed)"; exit 1; fi
+_lane="fast"; [ "$FULL" = 1 ] && _lane="full"
+_uit=""; [ "$uitgesteld" -gt 0 ] && _uit=", $uitgesteld deferred to the full lane"
+if [ "$fail" = 0 ]; then echo "LOCAL_CI_GATE: PASS ($pass gates, $_lane lane$_uit)"; exit 0
+else
+  # The names again, at the bottom. They were printed when each one failed, but a
+  # run prints hundreds of lines and the caller often shows only the tail -- so
+  # the one thing the reader needs was the most likely thing to be cut off.
+  echo "LOCAL_CI_GATE: FAIL ($fail of $((pass+fail)) gates failed, $_lane lane$_uit)"
+  echo "failed: ${gevallen# }"
+  exit 1
+fi
