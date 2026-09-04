@@ -166,6 +166,7 @@ run territst  python3 scripts/ci/test_territories_do_not_overlap.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
 run examples  cargo build -q --examples -p pdfluent
+run visreg cargo test -p visual-regression --release
 run matrix    python3 scripts/ci/capability_matrix_matches_coverage.py
 run wordsep   python3 scripts/ci/never_delete_the_word_separator.py
 run gitenv    python3 scripts/ci/test_no_test_can_touch_the_real_repo.py
