@@ -92,6 +92,11 @@ run startbaar python3 scripts/ci/every_workflow_can_start.py
 run startbaartest python3 scripts/ci/test_every_workflow_can_start.py
 run groen     python3 scripts/ci/a_gate_that_never_went_green.py
 run groentest python3 scripts/ci/test_a_gate_that_never_went_green.py
+# The visual suite renders and compares against a baseline, so it needs a
+# release build. t1 added this line and took it out again in the same branch:
+# local_ci_gate.sh was t2/t3's, and a t1 branch may not edit it. It comes back
+# here because the crate is on loan to t3 for #326.
+run visreg    cargo test -p visual-regression --release
 
 # Clean-tree advisory (the CI audit job requires it; auto-generated gen/schemas
 # churn is a known false-positive — see docs).
