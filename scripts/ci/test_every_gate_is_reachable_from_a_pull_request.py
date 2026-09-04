@@ -127,6 +127,27 @@ def main() -> int:
                        u.returncode == 1 and "does reach it" in u.stderr,
                        (u.stdout + u.stderr)[:250])
 
+    # The heavy lane. `zwaar` defers a gate to the push-to-master run; it does
+    # not drop it. Reading only `run` lines hid every compiling gate from this
+    # guard, and the first symptom was their exemption rows being reported as
+    # excusing a gate nobody runs.
+    with tempfile.TemporaryDirectory() as d:
+        root = tree(pathlib.Path(d), gate_lines=["zwaar beta   bash scripts/ci/beta.sh"],
+                    workflows={}, exemptions=EMPTY)
+        u = run_guard(root)
+        ok_all &= case("a zwaar gate no pull request reaches is red",
+                       u.returncode == 1 and "beta.sh" in u.stderr,
+                       (u.stdout + u.stderr)[:250])
+
+    with tempfile.TemporaryDirectory() as d:
+        root = tree(pathlib.Path(d), gate_lines=["zwaar beta   bash scripts/ci/beta.sh"],
+                    workflows={},
+                    exemptions='[[exempt]]\ngate = "beta.sh"\nwhy = "ci.yml compiles it in its own step"\n')
+        u = run_guard(root)
+        ok_all &= case("a zwaar gate counts as run, so its exemption is not stale",
+                       u.returncode == 0 and "does not run it any more" not in u.stderr,
+                       (u.stdout + u.stderr)[:250])
+
     # The floor: a parse that yields nothing must not read as nothing wrong.
     with tempfile.TemporaryDirectory() as d:
         root = tree(pathlib.Path(d), gate_lines=[], workflows={}, exemptions=EMPTY)

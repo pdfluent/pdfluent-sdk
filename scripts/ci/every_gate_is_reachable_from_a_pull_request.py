@@ -48,7 +48,12 @@ WORKFLOWS = REPO / ".github" / "workflows"
 EXEMPTIONS = REPO / "docs" / "GATES_REACHABLE_FROM_A_PULL_REQUEST.toml"
 
 SCRIPT = re.compile(r"scripts/ci/([a-z_0-9]+\.(?:py|sh))")
-RUN_LINE = re.compile(r"^run\s+(\S+)\s+(.*)$", re.M)
+# `zwaar` is the heavy lane's wrapper around `run`: the gate is deferred on an
+# ordinary push and runs on a push to master. Deferred is not dropped, so a
+# `zwaar` gate is as much a gate as a `run` one -- and reading only `run` lines
+# made the compiling gates invisible here, which turned their two exemption rows
+# into "excused but nobody runs it" the day the lanes were introduced.
+RUN_LINE = re.compile(r"^(?:run|zwaar)\s+(\S+)\s+(.*)$", re.M)
 
 # A floor on what was examined. A gate file that yields nothing means the parse
 # broke, and reporting OK over zero gates is the failure this whole family of
