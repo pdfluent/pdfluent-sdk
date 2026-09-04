@@ -412,4 +412,47 @@ mod clip_path_shape {
             "a plain rectangle stopped being recognised as one"
         );
     }
+
+    /// The unclosed arm: `MoveTo + 4 LineTo` is accepted only when the last
+    /// point returns to the first.
+    ///
+    /// This is a separate acceptance path from the `ClosePath` form, and it is
+    /// also a tightening -- the version it replaces took that shape whether or
+    /// not it closed. Without a test, deleting the arm's guard or inverting it
+    /// changes nothing that goes red, and it is the arm most likely to be
+    /// "simplified" later by someone who sees two arms doing the same thing.
+    #[test]
+    fn four_lines_that_do_not_return_to_the_start_are_not_a_rect() {
+        let mut open = BezPath::new();
+        open.move_to((0.0, 0.0));
+        open.line_to((10.0, 0.0));
+        open.line_to((10.0, 10.0));
+        open.line_to((0.0, 10.0));
+        open.line_to((0.0, 5.0)); // back down the left edge, but not to the start
+
+        assert!(
+            path_as_rect(&open).is_none(),
+            "an unclosed four-line path was accepted as a rectangle, so a clip \
+             would cover the closed shape the path never drew"
+        );
+    }
+
+    /// And the same arm must still accept the shape it exists for.
+    ///
+    /// Paired with the test above so that neither "always None" nor "always
+    /// Some" passes both.
+    #[test]
+    fn four_lines_that_do_return_to_the_start_are_a_rect() {
+        let mut closed = BezPath::new();
+        closed.move_to((0.0, 0.0));
+        closed.line_to((10.0, 0.0));
+        closed.line_to((10.0, 10.0));
+        closed.line_to((0.0, 10.0));
+        closed.line_to((0.0, 0.0));
+
+        assert!(
+            path_as_rect(&closed).is_some(),
+            "a four-line rectangle that returns to its start stopped being one"
+        );
+    }
 }

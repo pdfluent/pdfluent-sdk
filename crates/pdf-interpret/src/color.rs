@@ -1365,6 +1365,41 @@ mod indexed_hival {
         )
     }
 
+    /// The clamp lands on 255 specifically, not merely somewhere.
+    ///
+    /// `colour_space(300, 256).is_some()` -- the assertion this joins -- passes
+    /// for a clamp to 255, and equally for a clamp to 12 or to 0: a 256-byte
+    /// palette satisfies any of them, because surplus entries are ignored. It
+    /// states "the space still gets built", which is the bug that was fixed,
+    /// but not "hival became 255", which is the behaviour chosen. Only the
+    /// commit message said that.
+    ///
+    /// So look up the entry that exists only if hival really is 255. The
+    /// palette is black everywhere except its last entry, which is white:
+    /// index 255 resolves to white under a clamp to 255, and to black under any
+    /// smaller clamp, because the lookup is then out of range.
+    #[test]
+    fn the_clamp_lands_on_255_and_not_merely_somewhere() {
+        let mut hex = "00".repeat(255);
+        hex.push_str("ff");
+        let src = format!("[/Indexed /DeviceGray 300 <{hex}>]");
+        let array = Array::from_bytes(src.as_bytes()).expect("a well-formed array");
+        let space = ColorSpace::new(
+            pdf_syntax::object::Object::Array(array),
+            &Cache::default(),
+            &(std::sync::Arc::new(|_: crate::InterpreterWarning| {}) as WarningSinkFn),
+        )
+        .expect("the space is built; that is the other test");
+
+        let top = space.to_rgba(&[255.0], 1.0, false).to_rgba8();
+        assert_eq!(
+            [top[0], top[1], top[2]],
+            [255, 255, 255],
+            "index 255 did not resolve to the last palette entry, so /HiVal was \
+             clamped below 255 and the top of the palette is unreachable"
+        );
+    }
+
     /// A `/HiVal` above 255 must clamp, not discard the colour space.
     ///
     /// Read as `u8` it parsed to `None`, and the caller's `?` dropped everything
