@@ -4,7 +4,8 @@ name: Security Audit
 # fails if any RustSec advisory matches a transitive dependency.
 #
 # Triggers:
-# - Every PR to master (path-filtered to dependency-affecting files).
+# - Every push to master (path-filtered to dependency-affecting files).
+#   No `pull_request` trigger since 04-09-2026; see the note under `on:`.
 # - Weekly schedule (Mondays 04:00 UTC) — catches advisories that are
 #   published *after* a PR lands.
 # - `workflow_dispatch` for ad-hoc audits.
@@ -16,14 +17,12 @@ name: Security Audit
 # decision is made at the milestone-review level, not here.
 
 on:
-  pull_request:
-    branches: [master]
-    paths:
-      - '**/Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/security-audit.yml'
-      - '.cargo/audit.toml'
-      - 'deny.toml'
+  # No `pull_request` trigger since 04-09-2026 (#328). It ran 48 times between
+  # 01-09 and 04-09 at about seven minutes a run, on a hosted runner, while the
+  # account sat at 90% of its minutes -- and every one of those runs audited a
+  # dependency set that the push-to-master run below audits again a few minutes
+  # later. What is given up is the few minutes between opening a pull request
+  # and merging it; what is kept is the weekly schedule and every merge.
   push:
     branches: [master]
     paths:

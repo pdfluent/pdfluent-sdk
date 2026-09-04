@@ -84,36 +84,339 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
-  baseline-hardware-guard:
-    name: Every baseline names the machine it came from
-    # Its own job, not two more steps on `orchestration-guard`. That job runs
-    # thirty-seven steps in sequence and aborts on the first failure, so a step
-    # near the end reports nothing at all about itself -- it reports the health
-    # of everything above it. On 31-08-2026 it had failed at step two for the
-    # last thirty runs on master, which left thirty-five guards installed and
-    # not executing. A gate that cannot be seen passing is the same shape as the
-    # defect this one exists to catch (#283).
+  guards:
+    name: The light guards, in one job
+    # Eight jobs became three on 04-09-2026, because eight jobs cost eight
+    # checkouts, eight Python setups and eight minimum-minute roundings for work
+    # that is seconds of file scanning. Measured on one real pull_request run:
+    # step durations of 8s, 10s, 13s, 17s, 21s, 29s, 45s and 48s, billed as
+    # eight minutes. The account was at 90% of its hosted minutes with 200+ such
+    # runs since 01-09. (#328)
+    #
+    # WHY MERGING DOES NOT REINTRODUCE #283
+    #
+    # `baseline-hardware-guard` used to say, right here, that it was its own job
+    # so as not to be "two more steps on orchestration-guard" -- that job aborted
+    # at step two for thirty runs and left thirty-five guards installed and not
+    # executing. That hazard is real and it is now answered per step instead of
+    # per job: every guard step below carries `if: ${{ !cancelled() }}`, so a
+    # failure stops nothing after it. 116 of the 134 steps in this file already
+    # had that condition before the merge; the two that did not were the two
+    # baseline steps, and they have it now.
+    #
+    # The setup steps deliberately do NOT carry it. A checkout or a pip install
+    # that fails should stop the job: every guard after it would report on a
+    # tree that is not there.
+    #
+    # WHY TWO GUARDS ARE NOT IN HERE
+    #
+    # `orchestration-guard` and `commit-identity-guard` stay separate jobs
+    # because scripts/cos/ff3.sh -- the landing script -- filters expected-red
+    # jobs BY NAME, and those two are the two that are permanently red. Merge
+    # them in and the merged job is permanently red, ff3 has to excuse it, and
+    # from then on no guard failure of any kind blocks a landing. That trades a
+    # gate that works for a few minutes a run. They join this job on the day
+    # they are green.
     runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+    permissions:
+      contents: read
     steps:
+      # One checkout for all of them, with full history: two of the merged
+      # guards diff the branch against master and report SKIPPED on a shallow
+      # clone, which is a guard reporting without measuring (#290).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      # The guard first, then its own test -- a guard whose parser stopped
-      # understanding the files reports a clean tree in exactly the same words
-      # as a clean tree.
-      # This job grew a PyYAML dependency the moment the baseline guard started
-      # reading `runs-on` from parsed YAML instead of scanning text, and the job
-      # was never told. `import yaml` then fails with ModuleNotFoundError on any
-      # runner without a preinstall. scripts/ci/a_job_has_what_its_scripts_import.py
-      # checks this for every job now, so the next script to grow the import does
-      # not have to be caught by a reviewer. (codex, #1660)
       - run: pip install --quiet pyyaml
+      # ---- from baseline-hardware-guard ----
       - name: Every baseline names the machine it came from
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/a_baseline_names_the_machine.py
       - name: The baseline-hardware guard still bites
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_a_baseline_names_the_machine.py
+      # ---- from licence-registry-guard ----
+      - name: Every crate's licence matches the canonical register
+        if: ${{ !cancelled() }}
+        run: python3 scripts/release/license_registry_check.py
+
+      # ---- from promise-guard ----
+      - name: Cargo on PATH
+        if: ${{ !cancelled() }}
+        run: |
+          # `$HOME` for the runner service is not necessarily where cargo was
+          # installed, so adding the directory is not the same as making cargo
+          # runnable. Source the env file when it is there, and then CHECK --
+          # measured on master 02-09-2026, this step ran and a later guard still
+          # died on `FileNotFoundError: [Errno 2] No such file or directory:
+          # 'cargo'`, which is a confusing way to learn that the toolchain is not
+          # on PATH. (#292)
+          set -euo pipefail
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
+          export PATH="$HOME/.cargo/bin:$PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "::error::cargo is not runnable on this runner. \$HOME is $HOME; \$HOME/.cargo/bin is $([ -d "$HOME/.cargo/bin" ] && echo present || echo absent). Every step below that needs the toolchain will fail with a FileNotFoundError that says nothing about this." >&2
+            exit 1
+          fi
+          # Status-checked, not `echo $(…)`: if cargo resolves but cannot run --
+          # a rustup shim with no toolchain installed -- the substitution fails,
+          # `echo` still returns 0, `set -e` sees nothing, and the step reports
+          # success with an empty version. The one case this check exists for
+          # would pass it. (codex, #1659)
+          cargo --version || {
+            echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: `command -v cargo` succeeds and every build fails." >&2
+            exit 1
+          }
+      # In promise-guard because it is the job that already has cargo on PATH,
+      # and DEBUG rather than --release: measured profile-independent, the
+      # generator produces the same 1090 bytes either way, and debug shares
+      # whatever this job has already built.
+      #
+      # It was briefly in bindings.yml, which builds for the Java binding this
+      # fixture belongs to -- and which runs only on `push: tags`. That made the
+      # guard release-time-only: drift between generator and committed file
+      # would have been caught after the merge, in the publication run. I checked
+      # whether that job builds and not whether it RUNS, which is the question I
+      # have asked of every other guard this week. (T1 review, #1654)
+      # Only when the two things it compares can have moved.
+      #
+      # This job goes to a hosted runner for pull requests (below), so the step
+      # would otherwise be a cold debug build of pdf-manip on every PR to compare
+      # 1090 bytes. The guard asks one question: do the committed bytes still
+      # match what the generator produces. If neither the generator nor the
+      # committed file is in the diff, the answer cannot have changed, and
+      # rebuilding to re-confirm it is paying for a fact already established.
+      #
+      # `dorny/paths-filter` rather than a workflow-level `paths:` because this
+      # is one step in a job that must keep running for everything else it does.
+      # (T1 review, #1649)
+      - name: Did the fixture or its generator move?
+        id: fixture-diff
+        if: ${{ !cancelled() }}
+        # Through `env:`, not interpolated into the script. A `${{ }}` expansion
+        # is textual, so a caller-supplied value becomes part of the program
+        # rather than an argument to it. Both are shas today, which is why this
+        # read as harmless -- and harmless-today is what the guard checks the
+        # shape instead of.
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          BASE="$PR_BASE"
+          if [ -z "$BASE" ]; then BASE="$PUSH_BEFORE"; fi
+          case "$BASE" in ""|0000000000000000000000000000000000000000)
+              echo "moved=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE"
+          # Everything the generated bytes can depend on, not only the three
+          # files the guard names. The generator writes a PDF through lopdf, so
+          # a change to serialisation there moves the output while none of the
+          # three has moved -- the check would report moved=false and sleep
+          # through exactly the change that breaks it. Manifests and the lock
+          # file are here for the same reason: a version bump changes the
+          # writer. (codex, #1649)
+          # `--quiet` and its exit code, NOT a pipe into grep. Under `pipefail`,
+          # `git diff --name-only ... | grep -q .` fails the whole pipeline with
+          # 141 as soon as grep stops reading and git takes SIGPIPE -- which is
+          # what happens when there are MANY matches, e.g. a bulk edit under
+          # crates/lopdf/. The `else` branch then wrote moved=false and skipped
+          # the fixture check precisely when the input it guards had changed
+          # most. A detector whose failure mode is "too much evidence" is not a
+          # detector. (codex, #1649)
+          #
+          # `git diff --quiet` exits 0 for no change, 1 for a change and 2 on
+          # error, so anything that is not a clean "nothing moved" runs the
+          # guard. It fails towards checking.
+          if git diff --quiet "$BASE"..HEAD -- \
+               crates/pdf-manip/examples/java_binding_fixture.rs \
+               crates/pdf-java/src/test/resources/binding-fixture.pdf \
+               scripts/ci/the_java_fixture_is_the_one_we_generate.py \
+               crates/lopdf/ \
+               crates/pdf-manip/Cargo.toml \
+               crates/pdf-java/Cargo.toml \
+               Cargo.toml Cargo.lock; then
+            echo "moved=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "moved=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: The Java binding fixture is the one we generate
+        if: ${{ !cancelled() && steps.fixture-diff.outputs.moved == 'true' }}
+        run: python3 scripts/ci/the_java_fixture_is_the_one_we_generate.py
+      # Which exported symbols does no test call? A floor, not a percentage:
+      # 198 of 262 is not 100, and a soft job at that number is one everybody
+      # scrolls past -- so the floor passes at today's count and fails on a drop.
+      - name: Every exported symbol a test calls, still called
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/api_coverage.py
+      # The product question rather than the binding one: does every capability
+      # the website and the editor advertise map to a test, and is it reachable
+      # from the pdfluent facade at all? OCR, Excel and PowerPoint each had tests
+      # in a crate the facade did not depend on.
+      - name: Every advertised capability has a test and a route to it
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/feature_promises.py
+      # Three hand-written descriptions of what this codebase can do were four
+      # months stale at the same time, and each still read as authoritative.
+      - name: The capability register matches the code
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/capability_register.py --check
+      # crates/pdf-python sits outside the workspace on purpose; a second
+      # Cargo.lock drifting on its own was never the decision. It had 35 packages
+      # pinned older than the workspace.
+      - name: The Python binding resolves the versions we ship
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/lockfile_agreement.py
+      # A ratchet in both directions: a new public function without a test turns
+      # it red, and so does one that gains coverage without the file shrinking.
+      - name: Test reachability has not slipped
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_reachability.py --check
+      - name: The reachability guard can still tell delegation apart
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_reachability_unit.py
+
+  # The offline half of the corpus gates. The measurements themselves need the
+  # corpus machine and stay on the mirror with their reason in
+  # scripts/ci/mirror_only_guards.toml -- but the arithmetic, the argument
+  # handling and the reporting are plain Python, and those are where the two
+  # failures in #286 actually lived.
+      # ---- from measurement-guard ----
+      - name: No test bails out in silence
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_skip_lint.py
+      # Same family, one layer down: `timeout 30 ... || true` threw the exit
+      # code away, so a render the timeout killed -- which writes nothing to
+      # stderr -- was scored as a clean page by the crash guard.
+      - name: A hang is a crash, not a clean render
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_classify_render_outcome.py
+      # Counting characters scored a wrecked document at 80.1%: every letter had
+      # become an 'x'. This measure counts which of the source's words come back.
+      - name: Text retention is measured in words, not characters
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_text_fidelity.py
+      # A print function that quietly does nothing leaves the gate saying OK with
+      # no figure at all -- and the figure then gets fetched by hand from
+      # somewhere else, which is how a wrong one stays on a website for months.
+      - name: The retention gate still prints its distribution
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_retention_report.py
+      # #286: measured.json wrote "govdocs (fixed 300-document sample)" while
+      # sample_size said 1000. A conformance figure has to name the sample it
+      # came from, and the two gates have to be tellable apart.
+      - name: A conformance figure names the sample it came from
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_pdfa_gate_label.py
+      # The corpus job handed the text-replacement gate an argument it did not
+      # have. It failed on argument parsing in under a second, for months, and
+      # the measurement it exists to produce had therefore never run.
+      - name: The text-replacement gate accepts what its job passes
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_text_replace_gate.py
+      # A cache in front of a validator is the one place where fast quietly turns
+      # into wrong, so these check that it declines to answer far more often than
+      # that it answers quickly.
+      - name: The veraPDF verdict cache declines when it should
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_verapdf_cached.py
+      # The corpus disk threw read errors for five hours while its mount stayed
+      # in place. `test -d` passed on a cached dentry, and a corpus job ran 68
+      # minutes without a line of output.
+      - name: The corpus preflight can tell a dead disk from a missing one
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_corpus_preflight.py
+      - name: The test fixtures are still well formed
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_fixtures_are_wellformed.py
+
+      # ---- from message-guard-wiring ----
+      - name: The commit-msg hook exists and calls both message guards
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_commit_msg_hook_is_wired.py --alleen-boom
+      - name: The hook guard's layers are told apart
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_commit_msg_hook_is_wired.py
+      - name: No commit carries AI attribution
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_ai_attribution.py
+      - name: The attribution guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_ai_attribution.py
+      # A message cannot be excluded by a manifest the way a file can, so this
+      # is the last point before the messages are published.
+      # Master's, kept: my rebase resolution dropped it, and
+      # every_guard_has_a_job named it within the minute. A guard nothing runs
+      # is a comment, and a rebase is exactly where one goes missing without a
+      # line being deleted on purpose.
+      - name: A hit does not publish the term it found
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_een_treffer_publiceert_de_term_niet.py
+      # The range selection of the internal-matter guard lives with the other
+      # message-guard tests, NOT inside internal-matter-guard: that job holds a
+      # secret and runs exactly one step of its own, so nothing that a pull
+      # request controls runs before it (#1660).
+      - name: The range selection answers or refuses
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_internal_matter_range.py
+
+
+      # ---- from internal-matter-guard ----
+      - name: No commit message names an internal matter
+        if: ${{ !cancelled() }}
+        env:
+          TERMEN: ${{ secrets.PDFLUENT_INTERNE_TERMEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+          LIJST="$RUNNER_TEMP/interne-termen.txt"
+          trap 'rm -f "$LIJST" "$LIJST.raw"' EXIT
+          # Masking FIRST, and PER LINE. `::add-mask::` is line-oriented: given a
+          # multi-line value it masks line 1 and prints the rest as ordinary log
+          # lines. The list is one term per line by design, so the normal case
+          # would have published every partner name but the first.
+          # `\r` and stray spaces are not part of a term, and masking is exact:
+          # a list saved with CRLF would have masked "acme\r" while the guard
+          # matched "acme". Trimmed before masking and before writing.
+          printf '%s\n' "$TERMEN" | tr -d '\r' > "$LIJST.raw"
+          while IFS= read -r term; do
+            term="$(printf '%s' "$term" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            if [ -n "$term" ]; then echo "::add-mask::$term"; fi
+          done < "$LIJST.raw"
+          sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$LIJST.raw" > "$LIJST"
+          WACHT="scripts/ci/geen_interne_zaken.py"
+          if [ -n "${BASE_SHA:-}" ]; then
+            mkdir -p "$RUNNER_TEMP/base"
+            git archive "$BASE_SHA" scripts/ci | tar -x -C "$RUNNER_TEMP/base"
+            WACHT="$RUNNER_TEMP/base/scripts/ci/geen_interne_zaken.py"
+            echo "guard taken from base revision ${BASE_SHA}"
+          fi
+          # Belt and braces even in a clean job: an absolute interpreter and an
+          # emptied PYTHONPATH, so neither PATH nor the import path can be
+          # steered by anything that ran before.
+          PY=$(command -v python3)
+          case "$PY" in /*) ;; *) echo "::error::python3 is not an absolute path"; exit 1 ;; esac
+          # Which commits this run vouches for is decided by
+          # internal_matter_range.sh (pull_request: the branch; push: what the
+          # push added; anything else: not a pass). Until 02-09-2026 that was
+          # an inline `origin/master..HEAD` for every event, which on a push to
+          # master is empty -- the guard refused it, correctly, and this job was
+          # red on every master push from the day it landed (6f656f6d,
+          # 59fea093). On a pull request the selection, like the guard, is
+          # taken from the base revision, so a pull request cannot pick its
+          # own range. Its test runs as the step before this one.
+          KEUZE="scripts/ci/internal_matter_range.sh"
+          if [ -n "${BASE_SHA:-}" ]; then KEUZE="$RUNNER_TEMP/base/scripts/ci/internal_matter_range.sh"; fi
+          BEREIK="$(sh "$KEUZE")" || exit 1
+          PYTHONPATH= PDFLUENT_INTERNE_TERMEN="$LIJST" "$PY" "$WACHT" --bereik "$BEREIK"
+
   orchestration-guard:
     name: No ref-dispatchable job on the persistent runner
     # The repository's default workflow token is "read", which grants
@@ -647,324 +950,6 @@ jobs:
   #
   # Nothing here is continue-on-error. Each one stands in front of a product
   # promise, and a soft gate recreates exactly the situation this issue is about.
-  licence-registry-guard:
-    name: The licence registry is enforced somewhere that cannot be skipped
-    # Its own job because every existing job in this file is self-hosted, and a
-    # pull_request must not run PR-authored code on the persistent desktop
-    # (#311). The header above still says artifact-guard and
-    # license-metadata-guard stay on ubuntu-latest; measured 02-09-2026, no job
-    # here is hosted any more. The boundary drifted while the comment describing
-    # it did not.
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      # Measured 02-09-2026: this ran in NO CI file. Its only enforcement was
-      # local_ci_gate.sh, and a local gate is skippable -- demonstrably, since a
-      # branch passed a push that evening while this check returned 1. A gate
-      # that can be stepped over is a convention, not a gate. (#304)
-      - name: Every crate's licence matches the canonical register
-        if: ${{ !cancelled() }}
-        run: python3 scripts/release/license_registry_check.py
-
-  promise-guard:
-    name: Every promise has a test that reaches it
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install --quiet pyyaml
-      - name: Cargo on PATH
-        if: ${{ !cancelled() }}
-        run: |
-          # `$HOME` for the runner service is not necessarily where cargo was
-          # installed, so adding the directory is not the same as making cargo
-          # runnable. Source the env file when it is there, and then CHECK --
-          # measured on master 02-09-2026, this step ran and a later guard still
-          # died on `FileNotFoundError: [Errno 2] No such file or directory:
-          # 'cargo'`, which is a confusing way to learn that the toolchain is not
-          # on PATH. (#292)
-          set -euo pipefail
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
-          export PATH="$HOME/.cargo/bin:$PATH"
-          if ! command -v cargo >/dev/null 2>&1; then
-            echo "::error::cargo is not runnable on this runner. \$HOME is $HOME; \$HOME/.cargo/bin is $([ -d "$HOME/.cargo/bin" ] && echo present || echo absent). Every step below that needs the toolchain will fail with a FileNotFoundError that says nothing about this." >&2
-            exit 1
-          fi
-          # Status-checked, not `echo $(…)`: if cargo resolves but cannot run --
-          # a rustup shim with no toolchain installed -- the substitution fails,
-          # `echo` still returns 0, `set -e` sees nothing, and the step reports
-          # success with an empty version. The one case this check exists for
-          # would pass it. (codex, #1659)
-          cargo --version || {
-            echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: `command -v cargo` succeeds and every build fails." >&2
-            exit 1
-          }
-      # In promise-guard because it is the job that already has cargo on PATH,
-      # and DEBUG rather than --release: measured profile-independent, the
-      # generator produces the same 1090 bytes either way, and debug shares
-      # whatever this job has already built.
-      #
-      # It was briefly in bindings.yml, which builds for the Java binding this
-      # fixture belongs to -- and which runs only on `push: tags`. That made the
-      # guard release-time-only: drift between generator and committed file
-      # would have been caught after the merge, in the publication run. I checked
-      # whether that job builds and not whether it RUNS, which is the question I
-      # have asked of every other guard this week. (T1 review, #1654)
-      # Only when the two things it compares can have moved.
-      #
-      # This job goes to a hosted runner for pull requests (below), so the step
-      # would otherwise be a cold debug build of pdf-manip on every PR to compare
-      # 1090 bytes. The guard asks one question: do the committed bytes still
-      # match what the generator produces. If neither the generator nor the
-      # committed file is in the diff, the answer cannot have changed, and
-      # rebuilding to re-confirm it is paying for a fact already established.
-      #
-      # `dorny/paths-filter` rather than a workflow-level `paths:` because this
-      # is one step in a job that must keep running for everything else it does.
-      # (T1 review, #1649)
-      - name: Did the fixture or its generator move?
-        id: fixture-diff
-        if: ${{ !cancelled() }}
-        # Through `env:`, not interpolated into the script. A `${{ }}` expansion
-        # is textual, so a caller-supplied value becomes part of the program
-        # rather than an argument to it. Both are shas today, which is why this
-        # read as harmless -- and harmless-today is what the guard checks the
-        # shape instead of.
-        env:
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
-        run: |
-          set -euo pipefail
-          BASE="$PR_BASE"
-          if [ -z "$BASE" ]; then BASE="$PUSH_BEFORE"; fi
-          case "$BASE" in ""|0000000000000000000000000000000000000000)
-              echo "moved=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
-          esac
-          git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE"
-          # Everything the generated bytes can depend on, not only the three
-          # files the guard names. The generator writes a PDF through lopdf, so
-          # a change to serialisation there moves the output while none of the
-          # three has moved -- the check would report moved=false and sleep
-          # through exactly the change that breaks it. Manifests and the lock
-          # file are here for the same reason: a version bump changes the
-          # writer. (codex, #1649)
-          # `--quiet` and its exit code, NOT a pipe into grep. Under `pipefail`,
-          # `git diff --name-only ... | grep -q .` fails the whole pipeline with
-          # 141 as soon as grep stops reading and git takes SIGPIPE -- which is
-          # what happens when there are MANY matches, e.g. a bulk edit under
-          # crates/lopdf/. The `else` branch then wrote moved=false and skipped
-          # the fixture check precisely when the input it guards had changed
-          # most. A detector whose failure mode is "too much evidence" is not a
-          # detector. (codex, #1649)
-          #
-          # `git diff --quiet` exits 0 for no change, 1 for a change and 2 on
-          # error, so anything that is not a clean "nothing moved" runs the
-          # guard. It fails towards checking.
-          if git diff --quiet "$BASE"..HEAD -- \
-               crates/pdf-manip/examples/java_binding_fixture.rs \
-               crates/pdf-java/src/test/resources/binding-fixture.pdf \
-               scripts/ci/the_java_fixture_is_the_one_we_generate.py \
-               crates/lopdf/ \
-               crates/pdf-manip/Cargo.toml \
-               crates/pdf-java/Cargo.toml \
-               Cargo.toml Cargo.lock; then
-            echo "moved=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "moved=true" >> "$GITHUB_OUTPUT"
-          fi
-      - name: The Java binding fixture is the one we generate
-        if: ${{ !cancelled() && steps.fixture-diff.outputs.moved == 'true' }}
-        run: python3 scripts/ci/the_java_fixture_is_the_one_we_generate.py
-      # Which exported symbols does no test call? A floor, not a percentage:
-      # 198 of 262 is not 100, and a soft job at that number is one everybody
-      # scrolls past -- so the floor passes at today's count and fails on a drop.
-      - name: Every exported symbol a test calls, still called
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/api_coverage.py
-      # The product question rather than the binding one: does every capability
-      # the website and the editor advertise map to a test, and is it reachable
-      # from the pdfluent facade at all? OCR, Excel and PowerPoint each had tests
-      # in a crate the facade did not depend on.
-      - name: Every advertised capability has a test and a route to it
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/feature_promises.py
-      # Three hand-written descriptions of what this codebase can do were four
-      # months stale at the same time, and each still read as authoritative.
-      - name: The capability register matches the code
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/capability_register.py --check
-      # crates/pdf-python sits outside the workspace on purpose; a second
-      # Cargo.lock drifting on its own was never the decision. It had 35 packages
-      # pinned older than the workspace.
-      - name: The Python binding resolves the versions we ship
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/lockfile_agreement.py
-      # A ratchet in both directions: a new public function without a test turns
-      # it red, and so does one that gains coverage without the file shrinking.
-      - name: Test reachability has not slipped
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_reachability.py --check
-      - name: The reachability guard can still tell delegation apart
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_reachability_unit.py
-
-  # The offline half of the corpus gates. The measurements themselves need the
-  # corpus machine and stay on the mirror with their reason in
-  # scripts/ci/mirror_only_guards.toml -- but the arithmetic, the argument
-  # handling and the reporting are plain Python, and those are where the two
-  # failures in #286 actually lived.
-  measurement-guard:
-    name: The published measurements still measure what they say
-    # These eight came back from commit-identity-guard, where they had been
-    # since c3b4b08b. Nothing moved them on purpose: that commit inserted a new
-    # job BETWEEN this one's checkout and its remaining steps, so everything
-    # from `Set up Python` onward silently changed owner. The diff was +29/-1,
-    # a pure addition -- no line deleted, no step text altered -- which is why
-    # no reviewer, no `git log -S` and no `-G` could see it. Found by parsing
-    # the YAML at each commit and counting run-steps per job. (#292)
-    #
-    # What was lost was not the checks. It was the NAME that says what is being
-    # checked: a job called "The published measurements still measure what they
-    # say" that measured nothing and ticked green on every pull request, while
-    # "No commit publishes a personal address" quietly ran eight measurement
-    # guards and reported their failures under its own subject.
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install --quiet pyyaml
-      # A test that returns early without saying so is indistinguishable from a
-      # passing one. That is how a doubled /ToUnicode survived a fully green suite.
-      - name: No test bails out in silence
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_skip_lint.py
-      # Same family, one layer down: `timeout 30 ... || true` threw the exit
-      # code away, so a render the timeout killed -- which writes nothing to
-      # stderr -- was scored as a clean page by the crash guard.
-      - name: A hang is a crash, not a clean render
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_classify_render_outcome.py
-      # Counting characters scored a wrecked document at 80.1%: every letter had
-      # become an 'x'. This measure counts which of the source's words come back.
-      - name: Text retention is measured in words, not characters
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_text_fidelity.py
-      # A print function that quietly does nothing leaves the gate saying OK with
-      # no figure at all -- and the figure then gets fetched by hand from
-      # somewhere else, which is how a wrong one stays on a website for months.
-      - name: The retention gate still prints its distribution
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_retention_report.py
-      # #286: measured.json wrote "govdocs (fixed 300-document sample)" while
-      # sample_size said 1000. A conformance figure has to name the sample it
-      # came from, and the two gates have to be tellable apart.
-      - name: A conformance figure names the sample it came from
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_pdfa_gate_label.py
-      # The corpus job handed the text-replacement gate an argument it did not
-      # have. It failed on argument parsing in under a second, for months, and
-      # the measurement it exists to produce had therefore never run.
-      - name: The text-replacement gate accepts what its job passes
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_text_replace_gate.py
-      # A cache in front of a validator is the one place where fast quietly turns
-      # into wrong, so these check that it declines to answer far more often than
-      # that it answers quickly.
-      - name: The veraPDF verdict cache declines when it should
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_verapdf_cached.py
-      # The corpus disk threw read errors for five hours while its mount stayed
-      # in place. `test -d` passed on a cached dentry, and a corpus job ran 68
-      # minutes without a line of output.
-      - name: The corpus preflight can tell a dead disk from a missing one
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_corpus_preflight.py
-      - name: The test fixtures are still well formed
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_fixtures_are_wellformed.py
-
-  message-guard-wiring:
-    name: The message guards are wired, and run
-    # Its own job, and it checks out the full history for the same reason
-    # commit-identity-guard does: `geen_interne_zaken.py` reads a range of
-    # commit messages, and over a shallow clone that range is empty -- which is
-    # the state it exists to refuse, dressed as a pass.
-    #
-    # Why this job exists at all: `docs/HERKOMST.md` claimed a commit-msg hook
-    # from 26-08-2026 onward. Measured 02-09-2026, `core.hooksPath` pointed at
-    # `.githooks`, that directory held pre-commit and pre-push and no
-    # commit-msg, and the guard the document named sat on a branch that never
-    # merged. A rule described in prose and enforced nowhere is not a rule, and
-    # this is the layer that makes the description checkable.
-    #
-    # Hosted on a pull request, per scripts/ci/pr_code_stays_off_the_desktop.py:
-    # these steps run scripts out of the checkout, and on a pull request those
-    # scripts are whatever the pull request says they are.
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      # Each step carries `if: ${{ !cancelled() }}`: a failure in one says
-      # nothing about the next, and a step that never ran looks like one that
-      # passed (#288).
-      #
-      # The wiring first. If the hook is missing or does not call both guards,
-      # the two checks below still pass on this branch's own history while
-      # nothing protects the next commit anyone writes.
-      # `--alleen-boom`: layers 1 and 2 (the hook file, and that it calls both
-      # guards) are properties of the tree and are judged here. Layer 3 asks
-      # whether `core.hooksPath` is set in THIS clone, and a checkout made by
-      # actions/checkout never has it -- so this job was red on every pull
-      # request for a reason that had nothing to do with the pull request.
-      # Layer 3 is judged by scripts/ci/local_ci_gate.sh on a developer machine,
-      # which is where a commit message is written and therefore the only place
-      # the answer means anything.
-      - name: The commit-msg hook exists and calls both message guards
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/the_commit_msg_hook_is_wired.py --alleen-boom
-      - name: The hook guard's layers are told apart
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_the_commit_msg_hook_is_wired.py
-      - name: No commit carries AI attribution
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/no_ai_attribution.py
-      - name: The attribution guard bites in both directions
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_no_ai_attribution.py
-      # A message cannot be excluded by a manifest the way a file can, so this
-      # is the last point before the messages are published.
-      # Master's, kept: my rebase resolution dropped it, and
-      # every_guard_has_a_job named it within the minute. A guard nothing runs
-      # is a comment, and a rebase is exactly where one goes missing without a
-      # line being deleted on purpose.
-      - name: A hit does not publish the term it found
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_een_treffer_publiceert_de_term_niet.py
-      # The range selection of the internal-matter guard lives with the other
-      # message-guard tests, NOT inside internal-matter-guard: that job holds a
-      # secret and runs exactly one step of its own, so nothing that a pull
-      # request controls runs before it (#1660).
-      - name: The range selection answers or refuses
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_internal_matter_range.py
-
-
   commit-identity-guard:
     name: No commit publishes a personal address
     # Its own job, and the only one here that checks out the whole history.
@@ -1016,103 +1001,3 @@ jobs:
       - name: No tracked file carries an address we decided not to publish
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_personal_address_in_the_tree.py
-
-  internal-matter-guard:
-    name: No commit message names an internal matter
-    # ITS OWN JOB, and that is the point of it.
-    #
-    # The base-revision route pins the SCRIPT. It does not pin the interpreter.
-    # In `message-guard-wiring` four earlier steps run scripts out of the pull
-    # request's checkout, and any of them can append to `$GITHUB_PATH` or
-    # `$GITHUB_ENV` -- a `python3` shim ahead on PATH, or `PYTHONPATH=/tmp/x`
-    # with an `os.py` in it -- so the pinned guard would have run attacker-chosen
-    # code with the terms secret in its environment. Pinning the file while the
-    # thing that executes the file is still chosen by the pull request is half a
-    # boundary. (peer review, #1660)
-    #
-    # So: a fresh checkout, no pull-request code before it, one step, and the
-    # secret gone before the job ends.
-    # The plain form, not `(push || schedule)`: ci.yml has no schedule trigger,
-    # so naming one would be a condition that can never be true, and the
-    # recogniser on master reads only this shape until #1649 lands. Writing the
-    # wider form here would have been a guard failure in exchange for nothing.
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      # ONE step: the secret is written, used, and removed without ever being
-      # visible to another step.
-      #
-      # The list of customer and partner names is deliberately not in the tree:
-      # a forbidden-terms list that publishes its own terms leaks exactly what
-      # it exists to stop, and worse than the commit messages it screens -- a
-      # message can be rewritten, a published source file is in every clone.
-      #
-      # AND THE SCRIPT COMES FROM THE BASE REVISION. On a same-repo pull request
-      # this job would otherwise run PR-authored code with a secret in reach:
-      # anyone who can push a branch but cannot read secrets could edit
-      # geen_interne_zaken.py to print the list base64-encoded, and per-term
-      # masking does not stop encoded exfiltration. That is the boundary #1649
-      # guards, one level over: not the desktop this time, but the secrets.
-      # `git archive <base>` gives the reviewed copy; the pull request's commits
-      # are what it reads, as DATA. (codex, #1660)
-      #
-      # If the secret is absent the file is empty, the guard finds no terms and
-      # exits 1 with "SKIPPED (not a pass)" -- the right answer: nobody looked.
-      # Fork pull requests receive no secrets at all, so when this repository
-      # stops being private that same base-revision route is what has to carry
-      # it, with the fork case failing closed as it does today.
-      - name: No commit message names an internal matter
-        if: ${{ !cancelled() }}
-        env:
-          TERMEN: ${{ secrets.PDFLUENT_INTERNE_TERMEN }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          EVENT: ${{ github.event_name }}
-          PUSH_BEFORE: ${{ github.event.before }}
-        run: |
-          set -uo pipefail
-          LIJST="$RUNNER_TEMP/interne-termen.txt"
-          trap 'rm -f "$LIJST" "$LIJST.raw"' EXIT
-          # Masking FIRST, and PER LINE. `::add-mask::` is line-oriented: given a
-          # multi-line value it masks line 1 and prints the rest as ordinary log
-          # lines. The list is one term per line by design, so the normal case
-          # would have published every partner name but the first.
-          # `\r` and stray spaces are not part of a term, and masking is exact:
-          # a list saved with CRLF would have masked "acme\r" while the guard
-          # matched "acme". Trimmed before masking and before writing.
-          printf '%s\n' "$TERMEN" | tr -d '\r' > "$LIJST.raw"
-          while IFS= read -r term; do
-            term="$(printf '%s' "$term" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-            if [ -n "$term" ]; then echo "::add-mask::$term"; fi
-          done < "$LIJST.raw"
-          sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$LIJST.raw" > "$LIJST"
-          WACHT="scripts/ci/geen_interne_zaken.py"
-          if [ -n "${BASE_SHA:-}" ]; then
-            mkdir -p "$RUNNER_TEMP/base"
-            git archive "$BASE_SHA" scripts/ci | tar -x -C "$RUNNER_TEMP/base"
-            WACHT="$RUNNER_TEMP/base/scripts/ci/geen_interne_zaken.py"
-            echo "guard taken from base revision ${BASE_SHA}"
-          fi
-          # Belt and braces even in a clean job: an absolute interpreter and an
-          # emptied PYTHONPATH, so neither PATH nor the import path can be
-          # steered by anything that ran before.
-          PY=$(command -v python3)
-          case "$PY" in /*) ;; *) echo "::error::python3 is not an absolute path"; exit 1 ;; esac
-          # Which commits this run vouches for is decided by
-          # internal_matter_range.sh (pull_request: the branch; push: what the
-          # push added; anything else: not a pass). Until 02-09-2026 that was
-          # an inline `origin/master..HEAD` for every event, which on a push to
-          # master is empty -- the guard refused it, correctly, and this job was
-          # red on every master push from the day it landed (6f656f6d,
-          # 59fea093). On a pull request the selection, like the guard, is
-          # taken from the base revision, so a pull request cannot pick its
-          # own range. Its test runs as the step before this one.
-          KEUZE="scripts/ci/internal_matter_range.sh"
-          if [ -n "${BASE_SHA:-}" ]; then KEUZE="$RUNNER_TEMP/base/scripts/ci/internal_matter_range.sh"; fi
-          BEREIK="$(sh "$KEUZE")" || exit 1
-          PYTHONPATH= PDFLUENT_INTERNE_TERMEN="$LIJST" "$PY" "$WACHT" --bereik "$BEREIK"
