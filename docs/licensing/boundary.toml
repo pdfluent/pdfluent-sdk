@@ -450,3 +450,9 @@ side = "example"
 [[package]]
 manifest = "pdfluent-examples/dotnet/StrictApi/StrictApi.csproj"
 side = "example"
+
+[[crate]]
+name = "visual-regression"
+dir = "crates/visual-regression"
+side = "internal"
+publish_false = true
