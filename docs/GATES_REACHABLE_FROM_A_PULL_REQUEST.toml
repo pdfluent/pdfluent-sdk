@@ -1,0 +1,54 @@
+# Gates the pre-push gate runs that no pull-request workflow reaches, and why
+# (#232).
+#
+# WHY THIS FILE EXISTS
+#
+# scripts/ci/local_ci_gate.sh runs on the machine of whoever pushes. An outside
+# contributor never touches it: they open a pull request, and whatever runs there
+# is the whole of what stands between their change and master. A guard that lives
+# only in the pre-push gate is a guard that exists and does not run at the moment
+# it counts -- with a stranger watching, which is exactly when it is needed.
+#
+# So the rule is: every gate is reachable from a pull request, or it is listed
+# here with a reason. "Not got round to it" is not a reason; each entry says what
+# the gate needs that a pull-request runner does not have.
+
+[[exempt]]
+gate = "no_withdrawn_object.py"
+why = """
+Reads the list of withdrawn objects from ~/.config/pdfluent, deliberately outside
+the tree (#260: publishing the blocklist would publish where the withdrawn thing
+can still be fetched). A hosted runner has no such file, so the guard would
+report SKIPPED (not a pass) on every pull request -- a permanent red that teaches
+people to ignore it. Its TEST does run there, so the mechanism stays covered.
+"""
+
+[[exempt]]
+gate = "every_commit_since_the_cutoff_is_signed.py"
+why = """
+Judges the commits a PUSH adds, from the upstream ref. On a pull request that
+range is a different question with a different answer, and ci.yml already carries
+a sign-off job shaped for that event. Two gates answering the same question
+differently is worse than one.
+"""
+
+[[exempt]]
+gate = "every_label_has_a_runner.py"
+why = """
+Asks the GitHub API which self-hosted runners carry which labels. That needs a
+token with runner scope, which a pull request from a fork must never have.
+"""
+
+[[exempt]]
+gate = "run_build.sh"
+why = """
+ci.yml builds the workspace in its own step under its own name. This wrapper
+exists to give the pre-push gate one command; it is the same build.
+"""
+
+[[exempt]]
+gate = "run_clippy.sh"
+why = """
+Same as run_build.sh: ci.yml runs clippy in its own step. The wrapper is a
+pre-push convenience, not a separate check.
+"""

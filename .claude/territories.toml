@@ -243,6 +243,9 @@ uitgezonderd = [
   "scripts/ci/local_ci_gate.sh",
   ".github/workflows/visual-regression.yml",
   "scripts/ci/persistent_builds_check_their_build_dir.py",
+  "scripts/ci/every_gate_is_reachable_from_a_pull_request.py",
+  "scripts/ci/test_every_gate_is_reachable_from_a_pull_request.py",
+  ".github/workflows/publication-guards.yml",
   "scripts/ci/every_fetched_asset_is_registered.py",
   "scripts/ci/test_every_fetched_asset_is_registered.py",
   # Not t2's, added 03-09-2026. Fixture test for .githooks/prepare-commit-msg,
@@ -456,6 +459,13 @@ paden = [
   "docs/FETCHED_ASSETS.toml",
   "scripts/ci/every_fetched_asset_is_registered.py",
   "scripts/ci/test_every_fetched_asset_is_registered.py",
+  # #232: the register of gates a pull request cannot reach, its guard, and
+  # the workflow that makes the publication guards reachable. Publication
+  # policy is t3.
+  "docs/GATES_REACHABLE_FROM_A_PULL_REQUEST.toml",
+  "scripts/ci/every_gate_is_reachable_from_a_pull_request.py",
+  "scripts/ci/test_every_gate_is_reachable_from_a_pull_request.py",
+  ".github/workflows/publication-guards.yml",
 ]
 uitgezonderd = ["docs/licensing/boundary.toml"] # #326 internal-crate registration
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]

@@ -1,0 +1,81 @@
+# The publication and licence guards, on every pull request (#232).
+#
+# The gap #232 names: a guard exists and nothing runs it at the moment it counts,
+# with a stranger watching. Measured before this file: of the 90 gates in
+# scripts/ci/local_ci_gate.sh, 13 were reachable from no pull-request workflow at
+# all. The pre-push gate runs on a machine an outside contributor never touches.
+#
+# These eight are the ones that can run anywhere: they read files, compare
+# strings and build their own fixtures. No corpus, no tokens, no warm cache.
+#
+# Their own workflow rather than steps in ci.yml, for the reason
+# document-register.yml carries: ci.yml has a workflow-wide `paths-ignore:
+# '**.md'`, and half of what these guards watch IS Markdown and TOML.
+name: Publication guards
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publication-guards-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  publication-guards:
+    name: Publication and licence guards
+    # Hosted, and free on a public repository. On a pull request the scripts run
+    # are PR-authored code, which stays off the persistent desktop
+    # (scripts/ci/pr_code_stays_off_the_desktop.py).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The sweep-exemption test and the sign-off hook test build git
+          # repositories and read history; a shallow clone would make them
+          # measure a tree that is not the one under review.
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Every step runs whatever the others did. A red test must not hide a red
+      # tree, and a red tree must not hide a second one.
+      - name: The NOTICE guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_notice_names_what_exists.py
+      - name: NOTICE matches the tree and its second copy
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/notice_names_what_exists.py
+      - name: The fetched-asset guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_fetched_asset_is_registered.py
+      - name: Every downloaded asset is registered
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_fetched_asset_is_registered.py
+      - name: Every docs path cited from scripts/ci resolves
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/docs_references_resolve.py
+      - name: The withdrawn-object guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_withdrawn_object.py
+      - name: The sweep exemption cannot be self-granted
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_sweep_exemption.py
+      - name: The sign-off hook writes what format.signoff does not
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_prepare_commit_msg_signoff.py
+      - name: The reachability guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_gate_is_reachable_from_a_pull_request.py
+      # This one asks whether every gate is reachable from a pull request, so it
+      # had better be reachable from a pull request itself. It said so: the first
+      # run after wiring it flagged its own two lines.
+      - name: Every gate is reachable from a pull request
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_gate_is_reachable_from_a_pull_request.py
