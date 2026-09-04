@@ -115,13 +115,23 @@ mod tests {
         assert!(!budget.exhausted());
     }
 
+    /// A zero budget is exhausted one frame down.
+    ///
+    /// The frame has to cost something. `#[inline(never)]` keeps the call, but
+    /// a callee holding no locals needs no stack of its own, so in a release
+    /// build `used()` read 0, `0 > 0` was false, and this test failed on master
+    /// in release while passing in debug -- where the unoptimised frame happened
+    /// to be large enough. The padding is what the test always meant: a frame
+    /// that occupies stack, like every frame the budget exists to measure.
     #[test]
     fn a_zero_budget_is_exhausted_one_frame_down() {
         #[inline(never)]
-        fn one_frame_down(budget: &StackBudget) -> bool {
-            budget.exhausted()
+        fn one_frame_down(budget: &StackBudget, pad: [u8; 256]) -> bool {
+            let spent = budget.exhausted();
+            std::hint::black_box(pad);
+            spent
         }
         let budget = StackBudget::start(0);
-        assert!(one_frame_down(&budget));
+        assert!(one_frame_down(&budget, std::hint::black_box([0u8; 256])));
     }
 }

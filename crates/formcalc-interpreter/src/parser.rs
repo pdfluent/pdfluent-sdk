@@ -13,6 +13,7 @@
 //! 9. Primary (literals, idents, function calls, parenthesized exprs)
 
 use crate::ast::{AccessIndex, BinOp, Expr};
+use crate::budget::{StackBudget, STACK_BUDGET_BYTES};
 use crate::error::{FormCalcError, Result};
 use crate::lexer::{Token, TokenKind};
 
@@ -262,6 +263,17 @@ struct Parser {
     /// `outer + depth(subtree)`. See [`Parser::built`].
     depth: usize,
 
+    /// The stack the descent may spend, measured in bytes (#299).
+    ///
+    /// `MAX_RECURSION` is the semantic bound and this is the physical one, the
+    /// same pairing `budget.rs` already gives the evaluator. A count protects
+    /// the stack only while each level's cost is known: the 3.7 KB above was
+    /// measured on a native release build, and the evaluator's equivalent
+    /// number moved by more than 20x between release and debug. That is what
+    /// made a counted bound insufficient there, and the parser had only the
+    /// count.
+    stack: StackBudget,
+
     /// How deep the recursive descent currently is.
     ///
     /// Separate from `depth`, and restored on the way out: it bounds the
@@ -276,6 +288,7 @@ impl Parser {
             tokens,
             pos: 0,
             depth: 0,
+            stack: StackBudget::start(STACK_BUDGET_BYTES),
             recursion: 0,
         }
     }
@@ -416,6 +429,14 @@ impl Parser {
     /// way out; `depth` carries the built subtree's depth and is deliberately
     /// *not* restored, because that is what makes the bound compose.
     fn parse_expr(&mut self) -> Result<Expr> {
+        // Physical bound first: whichever runs out sooner should stop the
+        // descent, and on a build where a level costs more than it did when
+        // MAX_RECURSION was sized, this one does.
+        if self.stack.exhausted() {
+            return Err(FormCalcError::StackBudgetExceeded {
+                max_bytes: self.stack.limit(),
+            });
+        }
         if self.recursion >= MAX_RECURSION {
             return Err(FormCalcError::ExpressionTooDeep {
                 max_depth: MAX_DEPTH,
@@ -1558,10 +1579,67 @@ mod depth_bounds {
     /// arguments on it, so an `if` cost two levels where a `while` cost one and
     /// nesting was refused at 31 instead of 62. Backtracking has to rewind
     /// everything it advanced.
+    /// The parser has a physical stack bound, not only a counted one (#299).
+    ///
+    /// `MAX_RECURSION` is sized from a measurement: ~3.7 KB of native stack per
+    /// level on a release build, so 64 levels fit a 256 KB stack. A count is
+    /// only as good as that measurement, and the evaluator is where this
+    /// repository already learned that the number moves: `budget.rs` exists
+    /// because the same per-level cost was ~780 bytes in release and ~17 KB in
+    /// debug, so one `MAX_EVAL_DEPTH` protected one profile and not the other.
+    /// The parser had the count and no budget.
+    ///
+    /// Measured here, with the budget in place, binary-searching the deepest
+    /// accepted nesting:
+    ///
+    ///     debug     if 55 (StackBudgetExceeded)   while 62 (ExpressionTooDeep)
+    ///     release   if 62 (ExpressionTooDeep)     while 62 (ExpressionTooDeep)
+    ///
+    /// So in a debug build 64 levels of `if` do NOT fit the 512 KB budget, and
+    /// before this the parser would have kept descending on the count alone.
+    /// That is the whole claim, and it is why this test asserts the *reason* a
+    /// deep script is refused rather than only that it is refused.
+    #[test]
+    fn a_deep_script_that_outruns_the_stack_is_refused_by_the_budget() {
+        // Past BOTH bounds in every profile. A depth chosen to sit between
+        // them (60 works in debug) passes here and fails in release, because
+        // which bound is reached first is exactly what varies -- the first
+        // version of this test did that and was caught by running it in both
+        // profiles rather than one.
+        let mut src = String::from("var x = 1");
+        for _ in 0..200 {
+            src = format!("if (1) then\n{src}\nendif");
+        }
+        let refusal = tokenize(&src).and_then(parse);
+
+        assert!(refusal.is_err(), "a 200-deep script was accepted");
+
+        // Which bound stopped it depends on the profile, and both are correct
+        // answers. What must never happen is neither.
+        let err = refusal.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                FormCalcError::StackBudgetExceeded { .. } | FormCalcError::ExpressionTooDeep { .. }
+            ),
+            "refused for an unrelated reason: {err:?}"
+        );
+    }
+
     #[test]
     fn every_statement_form_costs_one_level_per_nesting() {
+        // `hi` stops below the stack budget on purpose (#299). Since the
+        // parser gained a physical bound beside the counted one, the deepest
+        // ACCEPTED nesting is whichever bound is reached first, and in a debug
+        // build that is the stack: measured, `if` exhausts 512 KB at 55 levels
+        // while `while` still reaches 62. Binary-searching to 200 therefore
+        // compares two different questions and reports the profile, not the
+        // accounting.
+        //
+        // 50 is under both bounds in both profiles, so what is compared here is
+        // what this test is about: that the two forms cost the same DEPTH.
         fn deepest_accepted(wrap: impl Fn(&str) -> String) -> usize {
-            let (mut lo, mut hi) = (0usize, 200usize);
+            let (mut lo, mut hi) = (0usize, 50usize);
             while hi - lo > 1 {
                 let mid = (lo + hi) / 2;
                 let mut src = String::from("var x = 1");
@@ -1584,7 +1662,7 @@ mod depth_bounds {
              is being charged for something it did not build"
         );
         assert!(
-            ifs > 50,
+            ifs >= 49,
             "nesting {ifs} is far below the bound of {MAX_DEPTH}"
         );
     }
