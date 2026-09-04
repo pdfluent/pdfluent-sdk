@@ -123,7 +123,7 @@ jobs:
       #
       # `rustup component add` with no toolchain argument acts on the active
       # one, which is the pinned one, which is the one that will run.
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
         with:
           toolchain: stable
       - name: Add rustfmt and clippy to the pinned toolchain

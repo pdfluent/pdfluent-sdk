@@ -159,6 +159,8 @@ fi
 run kosten   python3 scripts/ci/no_hosted_minutes_on_a_push.py
 run instances python3 scripts/ci/one_instance_per_event.py
 run jobsexist python3 scripts/ci/workflow_jobs_exist.py
+run pintest   python3 scripts/ci/test_every_action_is_pinned_or_recorded.py
+run pinned    python3 scripts/ci/every_action_is_pinned_or_recorded.py
 run labels    python3 scripts/ci/every_label_has_a_runner.py
 # Its test belongs here and not in a workflow, for the reason the guard states
 # itself: it asks the GitHub API which runners carry which labels, and that
