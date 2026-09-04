@@ -175,6 +175,7 @@ uitgezonderd = [
   "scripts/ci/test_register_exemption.py",
   "scripts/ci/public_snapshot_audit.sh",
   # Narrow workflow and job registration claim for #326.
+  "scripts/ci/local_ci_gate.sh",
   ".github/workflows/visual-regression.yml",
   "scripts/ci/persistent_builds_check_their_build_dir.py",
   # Not t2's, added 03-09-2026. Fixture test for .githooks/prepare-commit-msg,
