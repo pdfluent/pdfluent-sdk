@@ -1,0 +1,53 @@
+# Third-party assets this software fetches over the network, and what may be
+# done with them (#214).
+#
+# WHY THIS FILE EXISTS
+#
+# `license_gate.py` reads manifests: Cargo.toml, package.json, pom.xml, csproj,
+# pyproject. A model downloaded at run time appears in none of them, so the whole
+# ecosystem sweep steps over it -- and a set of model weights is exactly the kind
+# of third-party work whose licence is not the same as the licence of the code
+# that fetches it.
+#
+# The knowledge was already written down, in prose, in
+# docs/OSS_INVENTORY_MISSING_FEATURES.md and docs/GAP_INVENTORY_1_0.md. Prose is
+# not a check: nothing failed when the fetch was added, and nothing would fail if
+# a second one were added tomorrow. This file is the register the guard reads.
+#
+# WHAT A ROW MEANS
+#
+# `licence` is what the SOURCE states, not what we would like it to be. Where the
+# source states nothing, that is what the row says, and `decision` records what
+# the owner has decided to do about it. The guard checks that every fetch has a
+# row; it does not decide whether a licence is acceptable. That is not a
+# machine's judgement.
+
+[[asset]]
+url_prefix = "https://huggingface.co/monkt/paddleocr-onnx/resolve/main"
+what = "PaddleOCR ONNX weights (detection, classification, recognition)"
+used_by = "crates/pdf-ocr/src/paddle/models.rs"
+licence = "Apache-2.0"
+licence_source = "stated on the model repository page"
+verified = "2026-09-04"
+decision = "usable; Apache-2.0 is on the allow-list in docs/LICENSE_POLICY.toml"
+
+[[asset]]
+url_prefix = "https://ocrs-models.s3-accelerate.amazonaws.com"
+what = "ocrs text-detection and text-recognition models (.rten)"
+used_by = "crates/pdf-engine/src/ocr.rs"
+licence = "none stated"
+licence_source = """
+robertknight/ocrs-models carries no LICENSE file and GitHub's own detection
+reports none, so the default position is all rights reserved. The repository does
+say the models are trained exclusively on open datasets, currently HierText,
+which is CC-BY-SA 4.0 -- share-alike. Whether trained weights are a derivative of
+their training data is legally unsettled.
+"""
+verified = "2026-09-04"
+decision = """
+OPEN -- owner decision, recorded at length in
+docs/OSS_INVENTORY_MISSING_FEATURES.md with three ways forward: ask the author to
+state a licence, train our own models, or keep OCR out of the facade until one of
+those lands. This row exists so the question cannot be forgotten; it does not
+answer it, and a guard is the wrong thing to answer it with.
+"""
