@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -43,6 +44,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MAP = ROOT / ".claude/territories.toml"
 GIT = "/usr/bin/git"
+
+
+def _sealed() -> dict[str, str]:
+    """The caller's environment without the GIT_* variables.
+
+    A pre-push hook exports GIT_DIR and GIT_WORK_TREE pointing at the real
+    repository, and a git command that inherits them answers about that
+    repository instead of the one it was pointed at. The same guard then passes
+    by hand and fails in the gate, with a message about the wrong thing.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
 def load() -> list[dict]:
@@ -248,6 +260,80 @@ def sweep_exemption(base: str) -> tuple[set[str], str | None]:
     return freed, None
 
 
+def register_exemption(base: str) -> tuple[set[str], str | None]:
+    """Shared registration files a branch may edit from outside its territory.
+
+    THE PROBLEM
+
+    Some files are registers the whole tree writes into: corpus_herkomst.py says
+    where every document came from, docs/licensing/boundary.toml which side of
+    the licence line each crate is on, and so on. They live in one territory, but
+    every territory has to add a row to them -- a t1 branch that adds a fixture
+    needs a provenance line, and that line is in a t3 file.
+
+    Without an exemption the map forces a two-pull-request dance for every new
+    fixture: one to register it, one to add it. Worse, the order is fixed and
+    unpleasant either way. Register first and the document guard refuses, because
+    a registration naming a file that is not there is exactly what it exists to
+    catch. Add first and the register guard refuses, for the mirror reason.
+
+    THE RULE, AND WHY IT IS SAFE
+
+    A branch may edit a shared register from outside its territory when the same
+    diff adds the file that the new registration names. That is checkable rather
+    than promised: the added line carries a path, and the path has to be among
+    the files this branch adds.
+
+    So the exemption cannot be used to edit a register for something else. It
+    opens exactly the case it was opened for -- registering what you are adding --
+    and nothing beyond it.
+
+    WHICH FILES, READ FROM THE BASE
+
+    From `[registers].gedeeld` in the map, taken from the BASE and not the
+    worktree, for the reason the sweep allowlist is read that way: a branch that
+    could declare its own target shared would be granting itself permission, and
+    this guard runs before any review.
+    """
+    base_map = subprocess.run([GIT, "show", f"{base}:.claude/territories.toml"],
+                              cwd=ROOT, capture_output=True, text=True,
+                              env=_sealed())
+    if base_map.returncode != 0:
+        return set(), f"could not read .claude/territories.toml at {base}"
+    shared = set(tomllib.loads(base_map.stdout).get("registers", {})
+                 .get("gedeeld", []))
+    if not shared:
+        return set(), None
+
+    added = subprocess.run([GIT, "diff", "--diff-filter=A", "--name-only",
+                            f"{base}...HEAD"], cwd=ROOT, capture_output=True,
+                           text=True, env=_sealed())
+    if added.returncode != 0:
+        return set(), "could not read which files this branch adds"
+    toegevoegd = {r for r in added.stdout.splitlines() if r}
+    if not toegevoegd:
+        return set(), None
+
+    # A path inside an added line of the register. Quoted or bare, but it has to
+    # look like a path in this tree: a bare word is a comment, not a registration.
+    PAD = re.compile(r"[\w./-]+/[\w./-]+\.[A-Za-z0-9]+")
+
+    vrij: set[str] = set()
+    for register in sorted(shared):
+        diff = subprocess.run([GIT, "diff", f"{base}...HEAD", "--", register],
+                              cwd=ROOT, capture_output=True, text=True,
+                              env=_sealed())
+        if diff.returncode != 0:
+            continue
+        genoemd: set[str] = set()
+        for regel in diff.stdout.splitlines():
+            if regel.startswith("+") and not regel.startswith("+++"):
+                genoemd.update(PAD.findall(regel))
+        if genoemd & toegevoegd:
+            vrij.add(register)
+    return vrij, None
+
+
 def current_branch() -> str | None:
     """The branch this work is on, or None if it genuinely cannot be known.
 
@@ -400,6 +486,7 @@ def main() -> int:
     checked_files = 0
     unowned = 0
     sweep_allowed = 0
+    register_allowed = 0
     # Collected, not returned. The first version of this returned 2 right here
     # -- before the shared judgement below -- so a real overlap, found and
     # collected a few lines up, disappeared behind "could not tell whose branch
@@ -428,12 +515,22 @@ def main() -> int:
             if sweep_reason:
                 problems.append(f"a commit declares itself a generated sweep, but "
                                 f"{sweep_reason}")
+            register_freed, register_reason = register_exemption(base)
+            if register_reason:
+                problems.append("a shared register was checked, but "
+                                f"{register_reason}")
             for path in files:
                 # The map itself is deliberately editable from anywhere: taking
                 # on work in another territory is a commit, not a silent edit.
                 if path == ".claude/territories.toml":
                     continue
                 if owns(mine, path):
+                    continue
+                if path in register_freed:
+                    # A shared register, edited alongside the file the new row
+                    # names. Measured, not asserted: the added line carries a
+                    # path and that path is one this branch adds.
+                    register_allowed += 1
                     continue
                 if path in sweep_freed:
                     # Mechanical, and measured here rather than assumed: the
@@ -522,6 +619,8 @@ def main() -> int:
              + (f" ({unowned} unclaimed)" if unowned else "")
              + (f", {sweep_allowed} in a re-run generated sweep"
                 if sweep_allowed else "")
+             + (f", {register_allowed} shared register(s) edited with what they name"
+                if register_allowed else "")
              if checked_files else ""))
     return 0
 
