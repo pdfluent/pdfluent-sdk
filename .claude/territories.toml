@@ -243,6 +243,8 @@ uitgezonderd = [
   "scripts/ci/local_ci_gate.sh",
   ".github/workflows/visual-regression.yml",
   "scripts/ci/persistent_builds_check_their_build_dir.py",
+  "scripts/ci/every_fetched_asset_is_registered.py",
+  "scripts/ci/test_every_fetched_asset_is_registered.py",
   # Not t2's, added 03-09-2026. Fixture test for .githooks/prepare-commit-msg,
   # which is the DCO mechanism -- t3 ground. It lives here because that is
   # where the gate finds tests, not because it is CI wiring.
@@ -448,6 +450,12 @@ paden = [
   # and for the same reason: the loan named #326 landing as its end. The
   # heavy-job register is read by every workflow that picks a runner, so it
   # belongs where the runners are decided.
+  # #214: the register of assets we download, and its guard. Licence policy
+  # is t3, and a model fetched at run time has no manifest for license_gate
+  # to read.
+  "docs/FETCHED_ASSETS.toml",
+  "scripts/ci/every_fetched_asset_is_registered.py",
+  "scripts/ci/test_every_fetched_asset_is_registered.py",
 ]
 uitgezonderd = ["docs/licensing/boundary.toml"] # #326 internal-crate registration
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
