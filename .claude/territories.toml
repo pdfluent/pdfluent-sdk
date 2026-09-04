@@ -174,6 +174,9 @@ uitgezonderd = [
   ".github/workflows/deletions-declare-themselves.yml",
   "scripts/ci/test_register_exemption.py",
   "scripts/ci/public_snapshot_audit.sh",
+  # Narrow workflow and job registration claim for #326.
+  ".github/workflows/visual-regression.yml",
+  "scripts/ci/persistent_builds_check_their_build_dir.py",
   # Not t2's, added 03-09-2026. Fixture test for .githooks/prepare-commit-msg,
   # which is the DCO mechanism -- t3 ground. It lives here because that is
   # where the gate finds tests, not because it is CI wiring.
@@ -287,7 +290,7 @@ paden = [
   # Claimed 02-09-2026 on #310. The provenance register answers one question --
   # may this document leave the building -- which is this territory's question,
   # not a build concern. Same carve-out as the licence guards above.
-  "scripts/ci/corpus_herkomst.py",
+  # scripts/ci/corpus_herkomst.py is claimed below for the narrow #326 integration.
   # Claimed back 02-09-2026 on #295. The boundary guard decides which licence
   # every first-party manifest may carry -- this territory's question, and the
   # one the carve-out above ("the guards about publication") was written for.
@@ -339,7 +342,7 @@ paden = [
   # push adds. Publication policy is t3.
   "scripts/ci/no_withdrawn_object.py",
   "scripts/ci/test_no_withdrawn_object.py",
-  "scripts/ci/local_ci_gate.sh",
+  # scripts/ci/local_ci_gate.sh is claimed below for the narrow #326 integration.
   # Claimed for #301, temporarily, back when it lands. The licence header is
   # t3's subject and this guard is the only thing that enforces it; leaving it
   # with t2 would put the contradiction between a header and LICENSE in
@@ -363,6 +366,7 @@ paden = [
   "scripts/ci/a_gate_that_never_went_green.py",
   "scripts/ci/test_register_exemption.py",
 ]
+uitgezonderd = ["docs/licensing/boundary.toml"] # #326 internal-crate registration
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
 
 [[territory]]
@@ -434,3 +438,21 @@ gedeeld = [
   "docs/PUBLIC_TREE.toml",
   "docs/FETCHED_ASSETS.toml",
 ]
+[[territory]]
+id = "codex"
+name = "Visual regression suite"
+waarom = """
+Issue #326 adds one internal test crate. The owner authorized the required
+registrations and exactly one local-gate line. These exact integration paths
+are held with the crate for review; existing owners retain their other paths.
+The persistent-build file changes only its required job-count registration."""
+paden = [
+  "crates/visual-regression/**",
+  ".github/workflows/visual-regression.yml",
+  "scripts/ci/local_ci_gate.sh",
+  "scripts/ci/corpus_herkomst.py",
+  "scripts/ci/persistent_builds_check_their_build_dir.py",
+  "docs/licensing/boundary.toml",
+  "docs/CORPUS_HERKOMST.md",
+]
+issues = [326]
