@@ -85,6 +85,20 @@ BEKEND = {
     # guard, which is the reason they are one issue and not four.
     "enterprise-acceptance.yml": "`Install system dependencies` fails; needs one re-run for the message (#294)",
     "fuzz.yml": "every fuzz job passes; `delete-runner` gets 422 runner-still-busy and leaks the instance (#294)",
+    # Temporary, and the removal condition is written here rather than
+    # remembered: this entry comes out the moment the first run after the
+    # fix is green. #1709 wired test_every_label_has_a_runner.py into this
+    # workflow; that test asserts the repository passes, and its subject
+    # returns SKIPPED (not a pass) in Actions because it needs a
+    # runner-scoped token a fork must never have. The workflow went red on
+    # every run and the pre-push gate then refused every push, including
+    # the ones that would fix it.
+    #
+    # The row is needed because this guard dates against the DEFAULT
+    # branch on purpose -- so a workflow cannot be lifted out of its sight
+    # by touching it on a branch. That is right, and it means the repair
+    # cannot make its own gate green before landing. (#1709)
+    "deletions-declare-themselves.yml": "test_every_label_has_a_runner.py cannot pass in Actions; moved to the local gate in this PR, entry comes out when the first run after it is green (#1709)",
     "node-bindings.yml": "Node 24 red on all three platforms; logs expired, needs a re-run (#294)",
     # Measured 02-09-2026, and two layers deep. `rust-toolchain.toml` overrode
     # dtolnay/rust-toolchain@stable on every cargo call: cargo-audit died on

@@ -82,9 +82,6 @@ jobs:
       - name: Every test file is executed by something
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/every_test_is_run.py
-      - name: Parked is derived from the needs-graph
-        if: ${{ !cancelled() }}
-        run: python3 scripts/ci/test_every_label_has_a_runner.py
       - name: Every deletion is declared by the commit that performs it
         if: ${{ !cancelled() }}
         env:
