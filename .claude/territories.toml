@@ -133,6 +133,19 @@ paden = [
   # `every_guard_has_a_job.py` follows on the same reasoning; it came out of t2's
   # block for #316 and the block above says so. `local_ci_gate.sh` went back to
   # t3 already. `ci.yml` stays here: it is t1's own, not a loan.
+  # ON LOAN from t2 for #328, back when that ticket closes. The hosted-minutes
+  # work removes this workflow's `pull_request` trigger: it ran 48 times in three
+  # days at ~7 minutes each, auditing a dependency set that the push-to-master
+  # run audits again minutes later. One trigger line, in the same change that
+  # measures why -- splitting it across two PRs would put the reason in one and
+  # the edit in the other.
+  ".github/workflows/security-audit.yml",
+  # ON LOAN from t2 for #328, back when that ticket closes. The same merge makes
+  # this guard's job list stale: it names `promise-guard` and `measurement-guard`
+  # by hand, and those two jobs are now steps inside `guards`. Left alone the
+  # guard fails on its own premise rather than on a real finding, so the list
+  # follows the steps into their new job in the same commit that moves them.
+  "scripts/ci/guards_do_not_hide_behind_each_other.py",
   ".github/workflows/ci.yml",
   "scripts/ci/test_een_treffer_publiceert_de_term_niet.py",
 ]
