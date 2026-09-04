@@ -8,12 +8,24 @@ cases build the failure instead of describing it.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 GUARD = Path(__file__).resolve().parent / "every_diagnostic_code_is_documented.py"
+
+
+def clean_environment() -> dict[str, str]:
+    """The caller's environment without GIT_*.
+
+    This matters more here than in the guard: these cases build fixture
+    repositories and run `git init` in them. Inheriting GIT_DIR from a pre-push
+    hook would point every one of those commands at the real repository -- the
+    fixture would not merely read the wrong tree, it would write to it.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 CASES: list[tuple[str, bool]] = []
 
@@ -41,14 +53,16 @@ def build(root: Path, codes: list[str], rows: list[str]) -> None:
 
 def run(root: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run([sys.executable, str(GUARD)], cwd=root,
-                          capture_output=True, text=True)
+                          capture_output=True, text=True,
+                          env=clean_environment())
 
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "repo"
         root.mkdir()
-        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run(["git", "init", "-q", str(root)], check=True,
+                       env=clean_environment())
 
         build(root, ["ALPHA", "BETA"], ["ALPHA", "BETA"])
         r = run(root)
