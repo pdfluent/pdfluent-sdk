@@ -81,7 +81,7 @@ _LOSSE_STRING = re.compile(r"""(?<!\.)'([A-Za-z0-9][A-Za-z0-9._-]*)'""")
 GEHOST = re.compile(r"^(ubuntu|windows|macos)-(latest|\d[\w.-]*)$")
 
 
-def _refuses(step) -> bool:
+def _weigert(step) -> bool:
     """A step that cannot succeed: a `run:` whose last command is a non-zero exit.
 
     An `if:` on the step disqualifies it -- a condition that is false makes the
@@ -103,10 +103,10 @@ def _refuses(step) -> bool:
     return False
 
 
-def parked(doc, job) -> bool:
+def geparkeerd(doc, job) -> bool:
     """Is this job queued behind a job that cannot pass?
 
-    Not "does it say parked in a comment" -- a comment does not stop a run.
+    Not "does it say geparkeerd in a comment" -- a comment does not stop a run.
 
     Two escapes are honoured. A blocker with `continue-on-error: true` does not
     actually block, and a blocker carrying an `if:` is a switch somebody can
@@ -124,7 +124,7 @@ def parked(doc, job) -> bool:
             continue
         if blocker.get("continue-on-error") is True or "if" in blocker:
             continue
-        if any(_refuses(s) for s in blocker.get("steps") or []):
+        if any(_weigert(s) for s in blocker.get("steps") or []):
             return True
     return False
 
@@ -242,13 +242,13 @@ def main() -> int:
                 if label == "__onleesbaar__":
                     ontbreekt.append((pad.name, naam,
                                       "an unreadable fromJSON() argument", vanzelf,
-                                      parked(doc, job)))
+                                      geparkeerd(doc, job)))
                     continue
                 if GEHOST.match(label):
                     continue
                 if label not in online:
                     ontbreekt.append((pad.name, naam, label, vanzelf,
-                                      parked(doc, job)))
+                                      geparkeerd(doc, job)))
 
     print(f"[labels] online labels: {', '.join(sorted(online)) or 'none'}")
     if not ontbreekt:
@@ -312,7 +312,7 @@ def main() -> int:
         return 1
 
     # The graph against the list. `715e4121` answered this structurally and the
-    # #1543 reconciliation dropped it, leaving the distinction between "parked
+    # #1543 reconciliation dropped it, leaving the distinction between "geparkeerd
     # on purpose" and "blocked because something ahead of it broke" resting on a
     # list somebody maintains (#319).
     #
@@ -328,7 +328,7 @@ def main() -> int:
               "jobs cannot start.", file=sys.stderr)
         for w, j in sorted(niet_geparkeerd):
             print(f"  {w} :: {j} is excused by BEKEND but nothing ahead of it refuses. "
-                  "It is waiting for a runner, not parked.", file=sys.stderr)
+                  "It is waiting for a runner, not geparkeerd.", file=sys.stderr)
         for w, j in sorted(niet_gelijst):
             print(f"  {w} :: {j} is queued behind a job that cannot pass, and is not in "
                   "BEKEND. Add it, or unblock it.", file=sys.stderr)
