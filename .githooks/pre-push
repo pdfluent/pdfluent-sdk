@@ -3,6 +3,53 @@
 # Enable once per clone:   git config core.hooksPath .githooks
 # Bypass intentionally:    PRE_PUSH_SKIP=1 git push ...   (or git push --no-verify)
 [ "${PRE_PUSH_SKIP:-0}" = "1" ] && { echo "[pre-push] skipped (PRE_PUSH_SKIP=1)"; exit 0; }
+# WHICH LANE, and git already knows. A pre-push hook is handed one line per ref
+# on stdin -- `<local ref> <local sha> <remote ref> <remote sha>` -- so the
+# destination is a fact here, not a guess from the branch name. A branch called
+# master that is being pushed somewhere else is not a landing, and a detached
+# HEAD pushed to refs/heads/master is.
+#
+# stdin is consumed by reading it, and anything below that wanted those lines
+# would silently get none. Nothing below does; if that changes, keep the lines.
+#
+# The same pass answers the second question, WHAT IS BEING PUSHED. A deletion is
+# written with a local sha that names no object -- `git push --delete x`, or
+# `:refs/heads/x` -- and a push that adds nothing changes nothing the compiling
+# gates measure. Deleting one dead branch cost over two minutes of build before
+# it was killed, and the 82 in #314 were batched into a single push to pay that
+# once rather than 82 times. (#325)
+BAAN=--fast
+refs=0
+deletions_only=1
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  refs=$((refs + 1))
+  # NOT a comparison with forty zeros, and not a prefix test. Every hash width
+  # spells "no object" as all zeros -- a sha-256 repository writes sixty-four --
+  # while a real sha may well begin with a zero. So: empty, or holding any
+  # character that is not a zero, means this ref carries objects.
+  case "$local_sha" in ''|*[!0]*) deletions_only=0 ;; esac
+  case "$remote_ref" in refs/heads/master) BAAN=--full ;; esac
+done
+# NO LINES IS NOT A DELETE-ONLY PUSH. An empty stdin means the hook was invoked
+# in a way this cannot read -- by hand, or by a git that changed its contract --
+# and answering "deletions only" there would skip every gate on a push that may
+# carry anything. Not understanding the input has to cost more work, never less.
+if [ "$refs" -gt 0 ] && [ "$deletions_only" = 1 ]; then
+  # The one guard a deletion can fail. Nothing else here has an input: no commit
+  # is published, no tree changes, and the message guard below would judge the
+  # commits of whatever branch happens to be checked out -- which are not the
+  # ones being pushed. master is another matter, because master takes only
+  # fast-forwards and there is no fast-forward back from a deleted branch.
+  if [ "$BAAN" = --full ]; then
+    echo "[pre-push] BLOCKED: this push deletes refs/heads/master." >&2
+    echo "  Nothing about that is routine, and no gate below can judge it, so it" >&2
+    echo "  is refused here. PRE_PUSH_SKIP=1 if you truly mean it." >&2
+    exit 1
+  fi
+  echo "[pre-push] deletions only ($refs ref(s)) — nothing is added, so nothing the"
+  echo "  gates measure has changed. Skipping the local CI gate; the build does not run."
+  exit 0
+fi
 # The commit-msg hook only sees messages written in a clone that has it
 # installed. Everything else arrives with its message already fixed: commits
 # from before the hook existed, a rebase, a cherry-pick, `--no-verify`, or a
@@ -27,18 +74,6 @@ if [ -f scripts/ci/geen_interne_zaken.py ]; then
   # messages, and CI judges the branch once it exists remotely.
 fi
 
-# WHICH LANE, and git already knows. A pre-push hook is handed one line per ref
-# on stdin -- `<local ref> <local sha> <remote ref> <remote sha>` -- so the
-# destination is a fact here, not a guess from the branch name. A branch called
-# master that is being pushed somewhere else is not a landing, and a detached
-# HEAD pushed to refs/heads/master is.
-#
-# stdin is consumed by reading it, and anything below that wanted those lines
-# would silently get none. Nothing below does; if that changes, keep the lines.
-BAAN=--fast
-while read -r _lokaal_ref _lokaal_sha verre_ref _verre_sha; do
-  case "$verre_ref" in refs/heads/master) BAAN=--full ;; esac
-done
 if [ "$BAAN" = --full ]; then
   echo "[pre-push] pushing to master — running the FULL local CI gate (this compiles)…"
 else

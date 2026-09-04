@@ -106,7 +106,8 @@ paden = [
   # the hook HERKOMST.md has claimed since 26-08 does not exist. t2 reviews it.
   # Hand back with the rest of the CI wiring.
   ".githooks/commit-msg",
-  ".githooks/pre-push",
+  # `.githooks/pre-push` was here, on the same loan. It is in t2's block now, for
+  # #325, on the return condition written there.
   "scripts/git-hooks/commit-msg",
   "scripts/git-hooks/install.sh",
   "scripts/ci/no_ai_attribution.py",
@@ -211,6 +212,19 @@ paden = [
   # of edited quietly. It returns to whoever owns `corpus/` the moment there is
   # a t4 or t5 again.
   "corpus/SSIM_GATE_MANIFEST.json",
+  # ON LOAN from t1 for #325, back when that ticket closes -- t1's own entry for
+  # it says "hand back with the rest of the CI wiring", and this is one line of
+  # that wiring rather than the whole of it.
+  #
+  # The hook is where the decision has to live. A push whose refspec only deletes
+  # remote refs ran the complete gate, build and clippy included, although
+  # nothing those gates measure had changed: deleting one dead branch cost over
+  # two minutes of compiling, and the 82 in #314 were batched into a single push
+  # to pay that once instead of 82 times. Only the hook is handed the refspecs,
+  # so only the hook can tell a deletion from an update -- putting the decision
+  # anywhere downstream would mean guessing from the branch name, which is the
+  # mistake the lane choice one line above already avoids.
+  ".githooks/pre-push",
   ".claude/**",
   ".github/workflows/**",
   ".gitlab-ci.yml",
