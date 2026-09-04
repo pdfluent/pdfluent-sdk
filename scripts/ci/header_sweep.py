@@ -152,9 +152,33 @@ def vervang_hash_kop(tekst: str) -> str | None:
     begin = next((i for i, r in enumerate(regels[:60]) if MERK in r), None)
     if begin is None:
         return None
-    eind = begin
-    while eind < len(regels) and regels[eind].lstrip().startswith("#"):
-        eind += 1
+
+    # Alleen de licentie-uitspraak, niet het commentaarblok waarin hij staat.
+    #
+    # De eerste versie liep door zolang er `#` stond en at daarmee het proza op
+    # dat er direct onder hoort: 13 bestanden verloren samen ongeveer 400 regels
+    # uitleg, `why_not_writable.sh` alleen al 44. De herdraai-wachter zag daar
+    # niets van, want een generator reproduceert zijn eigen schrapping -- de
+    # tweede run haalt precies weg wat de eerste al weg had, dus de diff is leeg.
+    #
+    # De kop is te herkennen aan zijn einde: hij sluit af met de verwijzing naar
+    # de licentievoorwaarden. Gemeten over alle 90 getroffen bestanden is die kop
+    # exact zes regels en overal identiek, dus dit is geen aanname over vorm.
+    EINDE = ("pdfluent.com/license", "Unauthorised copying")
+    eind = None
+    for i in range(begin, min(begin + 12, len(regels))):
+        if not regels[i].lstrip().startswith("#"):
+            break
+        if any(m in regels[i] for m in EINDE):
+            eind = i + 1
+            break
+    if eind is None:
+        # Geen herkenbaar einde: vervang alleen de merkregel en een eventuele
+        # lege `#`-regel eronder. Liever te weinig weghalen dan proza dat
+        # niemand terugvindt.
+        eind = begin + 1
+        if eind < len(regels) and regels[eind].strip() == "#":
+            eind += 1
     return "".join(regels[:begin]) + HEADER_HASH + "".join(regels[eind:])
 
 

@@ -1,0 +1,50 @@
+# Every source file carries the dual licence header (#301).
+#
+# Its own workflow rather than a step in ci.yml, for the reason
+# document-register.yml carries at length: ci.yml has a workflow-wide
+# `paths-ignore: '**.md'`, and a change that adds a source file alongside only
+# Markdown would never start it. A header guard that does not run on the commit
+# that adds a file is a header guard that arrives one commit too late.
+#
+# Nothing is filtered here. It reads the tree and two constants; running it on
+# every event costs seconds.
+name: Licence headers
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  # A push gets its own group and is never cancelled; two pushes to master in
+  # quick succession must each be judged. Same shape as document-register.yml.
+  group: licence-headers-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  licence-header-guard:
+    name: Every source file carries the dual header
+    # Hosted, and on both events. The guard reads files and compares strings; it
+    # needs no corpus and no warm cache, so the persistent desktop adds nothing
+    # -- and on a pull request the script it runs is PR-authored code, which
+    # stays off that machine (scripts/ci/pr_code_stays_off_the_desktop.py).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The test first, so a guard that has stopped recognising anything is
+      # caught before its verdict on the tree is read. Both steps run whatever
+      # the other did, so a red test never hides a red tree.
+      - name: The header guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_header_sweep.py
+      - name: Every source file carries the dual header
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/header_sweep.py

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Innovation Trigger B.V. All rights reserved.
+# Copyright (c) 2026 Innovation Trigger B.V.
 #
-# This software is proprietary. The PDFluent application is free to use,
-# including for commercial purposes. Redistribution, or extraction or reuse
-# of its components (including the embedded PDF engine), requires a licence.
-# See https://pdfluent.com/license for terms.
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
 """Several terminals, one repository, no collisions -- enforced rather than agreed.
 
 Allocating issues is not enough. Two terminals can hold different issues and
@@ -53,6 +52,11 @@ def _sealed() -> dict[str, str]:
     repository, and a git command that inherits them answers about that
     repository instead of the one it was pointed at. The same guard then passes
     by hand and fails in the gate, with a message about the wrong thing.
+
+    Found the hard way: the sweep exemption was green when run by hand and
+    freed nothing inside the hook, so the same commit passed locally and was
+    refused on push -- with a message about eighty-four files that had nothing
+    wrong with them.
     """
     return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
@@ -75,7 +79,8 @@ def load() -> list[dict]:
     what it is supposed to be checking. (peer review, #1636)
     """
     uit = subprocess.run([GIT, "show", f"HEAD:{MAP.relative_to(ROOT)}"],
-                         cwd=ROOT, capture_output=True, text=True, check=False)
+                         cwd=ROOT, capture_output=True, text=True, check=False,
+                         env=_sealed())
     tekst = uit.stdout if uit.returncode == 0 else MAP.read_text()
     return tomllib.loads(tekst).get("territory", [])
 
@@ -97,11 +102,11 @@ def changed_files() -> tuple[list[str], str] | None:
     """
     for base in ("github/master", "origin/master"):
         exists = subprocess.run([GIT, "rev-parse", "--verify", "--quiet", base],
-                                cwd=ROOT, capture_output=True, text=True, check=False)
+                                cwd=ROOT, capture_output=True, text=True, check=False, env=_sealed())
         if exists.returncode != 0:
             continue
         out = subprocess.run([GIT, "diff", "--name-only", f"{base}...HEAD"],
-                             cwd=ROOT, capture_output=True, text=True, check=False)
+                             cwd=ROOT, capture_output=True, text=True, check=False, env=_sealed())
         if out.returncode == 0:
             return [line for line in out.stdout.splitlines() if line], base
     return None
@@ -155,7 +160,7 @@ def sweep_exemption(base: str) -> tuple[set[str], str | None]:
     # use it. That is the point -- authorisation should come from something
     # already reviewed, not from the branch asking for permission.
     base_map = subprocess.run([GIT, "show", f"{base}:.claude/territories.toml"],
-                              cwd=ROOT, capture_output=True, text=True)
+                              cwd=ROOT, capture_output=True, text=True, env=_sealed())
     if base_map.returncode != 0:
         return set(), f"could not read .claude/territories.toml at {base}"
     allowed = set(tomllib.loads(base_map.stdout).get("sweeps", {})
@@ -164,7 +169,7 @@ def sweep_exemption(base: str) -> tuple[set[str], str | None]:
         return set(), None
 
     log = subprocess.run([GIT, "log", "--format=%H%x00%B%x00", f"{base}..HEAD"],
-                         cwd=ROOT, capture_output=True, text=True)
+                         cwd=ROOT, capture_output=True, text=True, env=_sealed())
     if log.returncode != 0:
         return set(), "could not read the commits on this branch"
 
@@ -183,7 +188,7 @@ def sweep_exemption(base: str) -> tuple[set[str], str | None]:
     # neither danger, and counting it would make every worktree with a scratch
     # file or a __pycache__ skip -- a check that almost never looks.
     dirty = subprocess.run([GIT, "status", "--porcelain", "--untracked-files=no"],
-                           cwd=ROOT, capture_output=True, text=True)
+                           cwd=ROOT, capture_output=True, text=True, env=_sealed())
     if dirty.returncode != 0 or dirty.stdout.strip():
         return set(), ("the worktree is not clean, so the sweep could not be "
                        "re-run: SKIPPED (not a pass)")
@@ -203,21 +208,21 @@ def sweep_exemption(base: str) -> tuple[set[str], str | None]:
         # snapshot makes what was already there neutral and only what the command
         # added a difference.
         before = subprocess.run([GIT, "status", "--porcelain"], cwd=ROOT,
-                                capture_output=True, text=True).stdout
-        out = subprocess.run(command.split(), cwd=ROOT,
+                                capture_output=True, text=True, env=_sealed()).stdout
+        out = subprocess.run(command.split(), cwd=ROOT, env=_sealed(),
                              capture_output=True, text=True)
         after = subprocess.run([GIT, "status", "--porcelain"], cwd=ROOT,
-                               capture_output=True, text=True).stdout
+                               capture_output=True, text=True, env=_sealed()).stdout
         if after != before:
             subprocess.run([GIT, "checkout", "--", "."], cwd=ROOT,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, env=_sealed())
             return set(), (f"re-running `{command}` DOES produce a diff, so commit "
                            f"{sha[:8]} is not purely mechanical")
         if out.returncode != 0:
             return set(), f"`{command}` exited with {out.returncode}"
 
         files = subprocess.run([GIT, "show", "--name-only", "--format=", sha],
-                               cwd=ROOT, capture_output=True, text=True)
+                               cwd=ROOT, capture_output=True, text=True, env=_sealed())
         from_commit = {r for r in files.stdout.splitlines() if r}
 
         # Intersect with WHAT THE GENERATOR WRITES, not with what the commit
@@ -233,20 +238,20 @@ def sweep_exemption(base: str) -> tuple[set[str], str | None]:
         try:
             made = subprocess.run([GIT, "worktree", "add", "--detach", "-q",
                                    scratch, f"{sha}^"], cwd=ROOT,
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, env=_sealed())
             if made.returncode != 0:
                 return set(), ("could not check out the sweep commit's parent to "
                                "measure the generator's reach: SKIPPED (not a pass)")
-            subprocess.run(command.split(), cwd=scratch,
+            subprocess.run(command.split(), cwd=scratch, env=_sealed(),
                            capture_output=True, text=True)
             written = subprocess.run([GIT, "status", "--porcelain"],
                                      cwd=scratch, capture_output=True,
-                                     text=True).stdout
+                                     text=True, env=_sealed()).stdout
             reach = {r[3:].strip().strip('"')
                      for r in written.splitlines() if r[3:].strip()}
         finally:
             subprocess.run([GIT, "worktree", "remove", "--force", scratch],
-                           cwd=ROOT, capture_output=True, text=True)
+                           cwd=ROOT, capture_output=True, text=True, env=_sealed())
             shutil.rmtree(scratch, ignore_errors=True)
 
         # The map itself is editable from anywhere; the check below says so too.
