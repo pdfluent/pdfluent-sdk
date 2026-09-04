@@ -155,34 +155,19 @@ validation and identification, not a conversion API. The converted fixture uses
 the actual conversion pipeline and checks PDF/A identification with
 `pdf-compliance`. This visual suite does not claim independent PDF/A validation.
 
-The internal crate is registered in `docs/licensing/boundary.toml` and the
-capability register is regenerated using its existing tool. The following
-constraints conflict with the current repository guards:
+The internal crate is registered in `docs/licensing/boundary.toml`. Generated
+PDF provenance is registered in `scripts/ci/corpus_herkomst.py`, and the generated
+document and capability registers are refreshed with their existing tools.
+The territory map explicitly claims the crate and its narrow integration paths.
+The persistent-build guard registers the additional build job.
 
-- `scripts/ci/corpus_herkomst.py` accepts generated PDF provenance only through
-  its hard-coded `GEGENEREERD` mapping. Registering
-  `crates/visual-regression/fixtures` with generator
-  `crates/visual-regression/src/fixtures.rs` requires editing that protected
-  script. The generator and byte-equality assertion establish provenance, but
-  the existing document-registration guard cannot recognize it without that
-  registration. No guard has been modified or bypassed.
-- `scripts/ci/pr_code_stays_off_the_desktop.py` rejects unconditional
-  `[self-hosted, xfa-fast]` jobs on `pull_request`. The workflow uses the runner
-  and events required for this task; making it pass that guard requires a
-  decision to change either the requested runner policy or the repository rule.
-
-- The persistent-build guard requires its protected `EXPECTED_BUILD_JOBS`
-  registration to increase from six to seven for this workflow. The workflow
-  already invokes the required build-directory health check before testing.
-- `scripts/ci/territories_do_not_overlap.py` rejects the required `codex/` branch
-  for the CI and licensing paths. Its branch/ownership mechanism requires a
-  reviewed change to `.claude/territories.toml`, which is also protected here.
-- The DCO guard requires an identity-bearing `Signed-off-by` trailer, conflicting
-  with the task's prohibition on names in commit messages. No trailer was added.
-
-The publication attempt was rejected by the pre-push gate. It also encountered
-an existing scanner issue: the connecting-script guard excludes every file when
-an ancestor directory is named `.worktrees`. No hook or guard was bypassed.
+The workflow runs only on pushes to `master`, on `[self-hosted, xfa-fast]`.
+It has no pull-request, dispatch or scheduled trigger and uses no hosted runner.
+Pull-request coverage comes from the required local pre-push gate, whose
+`visreg` step runs `cargo test -p visual-regression --release`. A failure rejects
+the push; inspect local artifacts before retrying. After landing, a failed
+workflow uploads those artifacts for 14 days. Commits carry the authorized DCO
+sign-off, and baseline changes still require independent image review.
 
 The initial byte-identity evidence covers the local architecture and thread
 counts; cross-architecture equality needs a runner measurement, not an assumed
