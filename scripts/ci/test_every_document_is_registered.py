@@ -159,6 +159,22 @@ def main() -> int:
     expect("a fully registered tree passes", r.returncode == 0, tail(r))
     expect("and it reports what it counted", "4 tracked documents" in r.stdout, tail(r))
 
+    # --- #215: a binary in the test-material directories counts as a document
+    # A suffix list only catches the extensions somebody thought of. #215 asks
+    # the gate to fail on any new binary test file without a registration, and a
+    # document does not become safe by being called `.bin`.
+    r = case(tracked={**GREEN_TRACKED, "fixtures/thing.bin": b"\x00\x01binary"},
+             provenance=GREEN_PROVENANCE, manifest_text=GREEN_MANIFEST)
+    expect("an unregistered binary under fixtures/ fails", r.returncode == 1, tail(r))
+    expect("and it names the file", "fixtures/thing.bin" in r.stderr, tail(r))
+
+    # And the other direction, which is what keeps the rule usable: a text file
+    # in the same directory is not a document. Without this the rule would drag
+    # in every .txt and .json fixture and nobody would keep it.
+    r = case(tracked={**GREEN_TRACKED, "fixtures/thing.txt": b"just text\n"},
+             provenance=GREEN_PROVENANCE, manifest_text=GREEN_MANIFEST)
+    expect("a text file under fixtures/ is not a document", r.returncode == 0, tail(r))
+
     # --- the failure this file exists for: a registration naming nothing --
     # Seven of these stood on master. The entry is under [internal].files, the
     # file is not tracked, and the guard has to say which one.
