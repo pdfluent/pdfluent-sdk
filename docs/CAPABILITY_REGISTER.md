@@ -343,7 +343,7 @@ delivered through it.
 | `pdf-docx` | 1.0.0 | direct | — | 24 | `quality:cargo-test` |
 | `pdf-engine` | 1.0.0 | direct | 5 | 155 | `quality:cargo-test` |
 | `pdf-font` | 1.0.0-beta.5 | internal | — | 117 | `quality:cargo-test` |
-| `pdf-interpret` | 0.5.8 | direct | — | 123 | `quality:cargo-test` |
+| `pdf-interpret` | 0.5.8 | direct | — | 130 | `quality:cargo-test` |
 | `pdf-invoice` | 1.0.0 | **absent** | — | 53 | `quality:cargo-test` |
 | `pdf-manip` | 1.0.0 | direct | 15 | 288 | `quality:cargo-test` |
 | `pdf-ocr` | 1.0.0 | **absent** | 1 | 70 | `quality:cargo-test` |
