@@ -121,6 +121,13 @@ run kosten   python3 scripts/ci/no_hosted_minutes_on_a_push.py
 run instances python3 scripts/ci/one_instance_per_event.py
 run jobsexist python3 scripts/ci/workflow_jobs_exist.py
 run labels    python3 scripts/ci/every_label_has_a_runner.py
+# Its test belongs here and not in a workflow, for the reason the guard states
+# itself: it asks the GitHub API which runners carry which labels, and that
+# needs a token a pull request from a fork must never have. In Actions the
+# guard returns SKIPPED (not a pass) -- so the test, which asserts that the
+# repository as it stands passes, cannot succeed there. #1709 wired it into
+# deletions-declare-themselves.yml and made that workflow red on every run.
+run labelstest python3 scripts/ci/test_every_label_has_a_runner.py
 run crons     python3 scripts/ci/schedule_guards_match_their_cron.py
 run mirror    python3 scripts/ci/test_mirror_has_not_drifted.py
 run infra     python3 scripts/ci/test_infra_health.py
