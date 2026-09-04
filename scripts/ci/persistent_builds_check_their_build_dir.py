@@ -68,7 +68,13 @@ MINIMUM_WORKFLOWS = 10
 # headroom with everything else. That is a decision about where the risk lives,
 # and it should be made rather than noticed six weeks later. Either direction:
 # edit this line, and say why in the commit.
-EXPECTED_BUILD_JOBS = 7
+# 7 -> 8 on 04-09-2026: java-bindings.yml's `jni-tests` moved onto the desktop.
+# It compiles, so it counts, and this is the upward direction the comment above
+# calls the more likely one -- made rather than noticed. The reason it is not a
+# throwaway instance: the job is one crate plus `mvn test`, which would pay a
+# Hetzner boot and a cold cargo cache for a build the warm desktop cache already
+# has, and it runs once per landing rather than once per push. (#1672)
+EXPECTED_BUILD_JOBS = 8
 
 CHECK = "scripts/ci/cargo_target_health.sh"
 

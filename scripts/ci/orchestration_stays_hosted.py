@@ -258,6 +258,27 @@ ZWARE_BASELINE = {
     # from a pull request at all, so the rows described nothing. Third register
     # to shrink in this series rather than grow.
 
+    # ADDED 04-09-2026, and it is the first addition in a register whose own
+    # comment says the count is supposed to fall. The reason it is defensible,
+    # and the condition that removes it again:
+    #
+    # The JNI suite is a cargo build plus `mvn test`. It has to run somewhere,
+    # and the two other places are worse. On hosted minutes it would be the
+    # single most expensive job in the repository, on an account that stood at
+    # 90% of its allowance on 04-09. On a throwaway instance it would pay a
+    # Hetzner boot and a cold cargo cache for a one-crate build -- the corpus
+    # gates below earn that because they need the corpus; this does not.
+    #
+    # It is also the narrowest possible version of itself: push on master only,
+    # no pull_request trigger, so it runs once per landing rather than once per
+    # push to every branch.
+    #
+    # REMOVE THIS ROW when a compiling job on xfa-fast exists that this suite can
+    # be a step of. Measured 04-09: there is none -- ci.yml has eight jobs and
+    # none of them builds the workspace, which is why the "fold it into the
+    # existing build" route was checked and rejected rather than assumed.
+    ("java-bindings.yml", "jni-tests"),
+
     # Seven entries left on 02-09-2026: #311 moved every ci.yml guard job and
     # both security-audit jobs onto the canonical per-event runs-on, so their
     # rows described nothing. Removed rather than kept, for the reason this
