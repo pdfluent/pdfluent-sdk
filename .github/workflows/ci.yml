@@ -342,6 +342,13 @@ jobs:
       - name: The hook guard's layers are told apart
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_the_commit_msg_hook_is_wired.py
+      # The pre-push hook is not reachable from a pull request -- it runs on a
+      # developer's machine or nowhere -- so what can be judged here is that its
+      # lane choice and its two refusals still behave. The test runs the hook
+      # itself against fabricated stdin rather than reading it for strings.
+      - name: The pre-push hook picks its lane and names its refusals
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_pre_push_gate_picks_its_lane.py
       - name: No commit carries AI attribution
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_ai_attribution.py
