@@ -46,151 +46,151 @@ GATE = CI / "local_ci_gate.sh"
 # A search that finds nothing is broken, not clean. Well below the 54 present
 # on 03-09-2026, so ordinary deletion does not trip it, but far enough above
 # zero to catch a glob that stopped matching.
-VLOER = 25
+FLOOR = 25
 
-UITVOERSLEUTELS = ("run", "script", "before_script", "after_script")
+RUN_KEYS = ("run", "script", "before_script", "after_script")
 
 
-def uitvoerregels(tekst: str) -> list[str] | None:
+def command_lines(text: str) -> list[str] | None:
     """What a workflow RUNS, or None if it will not parse.
 
     Returning None rather than falling back to the raw text is the point: a file
     whose jobs cannot be established is not a file whose jobs are empty.
     """
     try:
-        doc = yaml.safe_load(tekst)
+        doc = yaml.safe_load(text)
     except yaml.YAMLError:
         return None
-    uit: list[str] = []
+    out: list[str] = []
 
-    def loop(knoop, sleutel=None):
-        if isinstance(knoop, dict):
-            for k, v in knoop.items():
-                loop(v, k)
-        elif isinstance(knoop, list):
-            for v in knoop:
-                loop(v, sleutel)
-        elif isinstance(knoop, str) and sleutel in UITVOERSLEUTELS:
-            uit.append(knoop)
+    def walk(node, key=None):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, k)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, key)
+        elif isinstance(node, str) and key in RUN_KEYS:
+            out.append(node)
 
-    loop(doc)
-    return uit
+    walk(doc)
+    return out
 
 
-def zonder_commentaar(regel: str) -> str:
+def without_comment(line: str) -> str:
     """A shell line with its trailing comment removed, quotes respected.
 
     `#` only starts a comment at a word boundary, so `sha#deadbeef` and
     `echo "# hi"` survive. Same reader as the one in
     guards_do_not_hide_behind_each_other.py, and for the same reason (#321).
     """
-    uit: list[str] = []
+    out: list[str] = []
     quote: str | None = None
-    na_spatie = True
-    for teken in regel:
+    after_space = True
+    for ch in line:
         if quote:
-            uit.append(teken)
-            if teken == quote:
+            out.append(ch)
+            if ch == quote:
                 quote = None
-        elif teken in ("'", '"'):
-            quote = teken
-            uit.append(teken)
-        elif teken == "#" and na_spatie:
+        elif ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+        elif ch == "#" and after_space:
             break
         else:
-            uit.append(teken)
-        na_spatie = teken.isspace()
-    return "".join(uit)
+            out.append(ch)
+        after_space = ch.isspace()
+    return "".join(out)
 
 
-def draait(naam: str, blob: str) -> bool:
-    """Does `naam` appear as a whole path, not as the tail of a longer one?
+def runs(name: str, blob: str) -> bool:
+    """Does `name` appear as a whole path, not as the tail of a longer one?
 
     `test_infra_health.py` contains `infra_health.py`, so a plain substring
     match would report a guard as covered because its namesake runs. The same
     regex as `every_guard_has_a_job._runs`, for the same reason.
     """
-    patroon = r"(?<![\w.\-])(?:[\w./\-]*/)?" + re.escape(naam) + r"(?![\w.\-])"
-    return re.search(patroon, blob) is not None
+    pattern = r"(?<![\w.\-])(?:[\w./\-]*/)?" + re.escape(name) + r"(?![\w.\-])"
+    return re.search(pattern, blob) is not None
 
 
-def uitgezonderd() -> dict[str, str]:
+def recorded_exceptions() -> dict[str, str]:
     """The exceptions already recorded in every_guard_has_a_job.py."""
     sys.path.insert(0, str(CI))
     try:
         from every_guard_has_a_job import ALLOWED
-    except Exception as fout:  # pragma: no cover - the import is the check
+    except Exception as err:  # pragma: no cover - the import is the check
         print(f"[tests-run] SKIPPED (not a pass): could not read the register in "
-              f"every_guard_has_a_job.py, so no exception could be honoured: {fout}",
+              f"every_guard_has_a_job.py, so no exception could be honoured: {err}",
               file=sys.stderr)
         raise SystemExit(1)
     return dict(ALLOWED)
 
 
 def main() -> int:
-    bestanden = sorted(p.name for p in CI.glob("test_*.py"))
-    if len(bestanden) < VLOER:
-        print(f"[tests-run] FAIL: found {len(bestanden)} test file(s) under "
-              f"{CI.relative_to(REPO)}, expected at least {VLOER}. The search is "
+    files = sorted(p.name for p in CI.glob("test_*.py"))
+    if len(files) < FLOOR:
+        print(f"[tests-run] FAIL: found {len(files)} test file(s) under "
+              f"{CI.relative_to(REPO)}, expected at least {FLOOR}. The search is "
               "broken, not the tree.", file=sys.stderr)
         return 1
 
-    commando: list[str] = []
+    commands: list[str] = []
     for wf in sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml")):
-        regels = uitvoerregels(wf.read_text())
-        if regels is None:
+        lines = command_lines(wf.read_text())
+        if lines is None:
             print(f"[tests-run] FAIL: {wf.relative_to(REPO)} does not parse as YAML, "
                   "so what it runs cannot be established.", file=sys.stderr)
             return 1
-        commando.extend(regels)
+        commands.extend(lines)
 
     if GITLAB.exists():
-        regels = uitvoerregels(GITLAB.read_text())
-        if regels is None:
+        lines = command_lines(GITLAB.read_text())
+        if lines is None:
             print(f"[tests-run] FAIL: {GITLAB.relative_to(REPO)} does not parse as YAML.",
                   file=sys.stderr)
             return 1
-        commando.extend(regels)
+        commands.extend(lines)
 
     if GATE.exists():
-        commando.extend(zonder_commentaar(r) for r in GATE.read_text().splitlines())
+        commands.extend(without_comment(r) for r in GATE.read_text().splitlines())
 
-    blob = "\n".join(commando)
-    uitzondering = uitgezonderd()
+    blob = "\n".join(commands)
+    uitzondering = recorded_exceptions()
 
-    ongedekt: list[str] = []
-    met_reden: list[tuple[str, str]] = []
-    for naam in bestanden:
-        if draait(naam, blob):
+    uncovered: list[str] = []
+    with_reason: list[tuple[str, str]] = []
+    for name in files:
+        if runs(name, blob):
             continue
-        if naam in uitzondering:
-            met_reden.append((naam, uitzondering[naam]))
+        if name in uitzondering:
+            with_reason.append((name, uitzondering[name]))
             continue
-        ongedekt.append(naam)
+        uncovered.append(name)
 
     # An exception that is no longer needed is a register entry that outlives
     # its subject -- the shape this repository keeps finding. Say so.
-    achterhaald = [n for n, _ in met_reden if draait(n, blob)]
-    for naam in sorted(uitzondering):
-        if naam.startswith("test_") and naam in bestanden and draait(naam, blob):
-            achterhaald.append(naam)
+    stale = [n for n, _ in with_reason if runs(n, blob)]
+    for name in sorted(uitzondering):
+        if name.startswith("test_") and name in files and runs(name, blob):
+            stale.append(name)
 
-    print(f"[tests-run] {len(bestanden)} test file(s), "
-          f"{len(bestanden) - len(ongedekt) - len(met_reden)} run by a workflow or the "
-          f"local gate, {len(met_reden)} recorded as not running")
+    print(f"[tests-run] {len(files)} test file(s), "
+          f"{len(files) - len(uncovered) - len(with_reason)} run by a workflow or the "
+          f"local gate, {len(with_reason)} recorded as not running")
 
-    if achterhaald:
-        print(f"\nFAIL: {len(achterhaald)} file(s) run now and are still recorded as not "
-              f"running: {', '.join(sorted(set(achterhaald)))}. Remove the entry from "
+    if stale:
+        print(f"\nFAIL: {len(stale)} file(s) run now and are still recorded as not "
+              f"running: {', '.join(sorted(set(stale)))}. Remove the entry from "
               "ALLOWED in every_guard_has_a_job.py so the next one that stops running "
               "is noticed.", file=sys.stderr)
         return 1
 
-    if ongedekt:
-        print(f"\nFAIL: {len(ongedekt)} test file(s) are executed by nothing:\n",
+    if uncovered:
+        print(f"\nFAIL: {len(uncovered)} test file(s) are executed by nothing:\n",
               file=sys.stderr)
-        for naam in ongedekt:
-            print(f"  - {naam}", file=sys.stderr)
+        for name in uncovered:
+            print(f"  - {name}", file=sys.stderr)
         print("\n  A test no job runs is indistinguishable from a test that passes.\n"
               "  Add a `run:` line in .github/workflows/, a line in local_ci_gate.sh,\n"
               "  or -- if it genuinely cannot run yet -- an entry in ALLOWED in\n"
@@ -198,8 +198,8 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    for naam, reden in met_reden:
-        print(f"  recorded as not running: {naam} -- {reden}")
+    for name, reason in with_reason:
+        print(f"  recorded as not running: {name} -- {reason}")
     print("[tests-run] OK: every test file is executed by something, or says why not.")
     return 0
 
