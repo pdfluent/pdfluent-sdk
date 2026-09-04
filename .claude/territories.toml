@@ -331,6 +331,7 @@ uitgezonderd = [
   "scripts/ci/every_document_is_registered.py",
   "scripts/ci/test_every_document_is_registered.py",
   ".github/workflows/document-register.yml",
+  ".github/workflows/licence-headers.yml",
   # Taken back by t2 on 02-09-2026, as t3's own note said it would be: the
   # commit that retires the ALLOWED entry (a2ee809d) is on master, so the narrow
   # claim has done what it was for. Left standing it would be a register that
@@ -407,6 +408,10 @@ paden = [
   "scripts/ci/every_document_is_registered.py",
   "scripts/ci/test_every_document_is_registered.py",
   ".github/workflows/document-register.yml",
+  # #301: the licence header guard has its own workflow for the reason the
+  # register guard does -- ci.yml skips Markdown-only changes, so a commit
+  # adding a source file next to Markdown would never start it.
+  ".github/workflows/licence-headers.yml",
   # Back from t1 to t3 on 03-09-2026, on the condition t1 wrote into this file
   # when they took it for #316: "Back to t3/t2 when this lands." #316 has landed
   # -- every_commit_since_the_cutoff_is_signed.py is on master and its gate runs.

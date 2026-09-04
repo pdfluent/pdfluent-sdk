@@ -144,6 +144,30 @@ def main() -> int:
 
         ok_all &= case("after --write the tree is green", run_sweep(tmp).returncode == 0, "")
 
+        # THE regression this cost 400 lines to learn: replace the header, not
+        # the comment block it sits in.
+        #
+        # The first version walked forward while the line started with `#`, so it
+        # swallowed the prose underneath -- 13 files lost about 400 lines of
+        # explanation between them. The re-run guard saw nothing, because a
+        # generator reproduces its own deletion: the second run removes exactly
+        # what the first already removed, so the diff is empty. A check that
+        # compares a generator against itself cannot see what the generator is
+        # wrong about.
+        (tmp / "scripts" / "prose.sh").write_text(
+            "#!/bin/sh\n" + PROP_HEADER_HASH
+            + "#\n# Why this script exists, at length.\n#\n"
+              "# A second paragraph that must survive.\n\ntrue\n",
+            encoding="utf-8")
+        run_sweep(tmp, "--write")
+        prose = (tmp / "scripts" / "prose.sh").read_text(encoding="utf-8")
+        ok_all &= case("the prose under a replaced header survives",
+                       "Why this script exists" in prose
+                       and "A second paragraph that must survive" in prose,
+                       prose[:300])
+        ok_all &= case("and the old header is gone",
+                       PROP not in prose and DUAL_LINE in prose, prose[:300])
+
         # The mutation: put the proprietary header back and the guard must go
         # red. Without this case a test survives the removal of the very thing it
         # guards.
