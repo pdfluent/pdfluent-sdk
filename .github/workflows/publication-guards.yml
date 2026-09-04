@@ -79,3 +79,6 @@ jobs:
       - name: Every gate is reachable from a pull request
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/every_gate_is_reachable_from_a_pull_request.py
+      - name: The public seeding removes trailers and changes no content
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_seed_public_repo.py
