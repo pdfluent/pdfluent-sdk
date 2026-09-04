@@ -1065,6 +1065,24 @@ impl ICCProfile {
         for intent in intents_to_try {
             let options = TransformOptions {
                 rendering_intent: intent,
+                // moxcms defaults to its fixed-point (Q2.13) pipeline, and that
+                // pipeline is not the same code on every architecture: x86 has
+                // SSE4.1/AVX2 implementations, aarch64 falls back to the generic
+                // scalar one for 8-bit, and they do not agree. Measured on the
+                // visual-regression fixture's own sRGB profile, transforming
+                // (16, 0, 239): aarch64 returns (7, 0, 255) and x86_64 (7, 0,
+                // 239) -- the blue channel clipping to white on one platform and
+                // passing through on the other, for a transform that is nearly
+                // an identity. The float pipeline returns the same bytes on both,
+                // for all 256 sample pixels, and it is the accurate one: x86's
+                // fixed-point output is close to it and aarch64's is not.
+                //
+                // Deterministic output matters more here than the difference in
+                // speed, which is about 10% on this transform (20M pixels in
+                // 29.7ms fixed against 32.7ms float, same machine): a renderer
+                // whose colours depend on the CPU it runs on cannot have a
+                // pixel baseline at all. (#330)
+                prefer_fixed_point: false,
                 ..TransformOptions::default()
             };
             let u8_ok = src_profile
