@@ -135,7 +135,10 @@ paden = [
   #
   # `every_guard_has_a_job.py` follows on the same reasoning; it came out of t2's
   # block for #316 and the block above says so. `local_ci_gate.sh` went back to
-  # t3 already. `ci.yml` stays here: it is t1's own, not a loan.
+  # t3 already. `ci.yml` is t1's own rather than a loan -- and it is ON LOAN TO
+  # t2 for #323, which is why the literal is in t2's block below and not here.
+  # Two steps in `orchestration-guard`, nothing else in the file; back the
+  # moment that ticket lands.
   # ON LOAN from t2 for #328, back when that ticket closes. The hosted-minutes
   # work removes this workflow's `pull_request` trigger: it ran 48 times in three
   # days at ~7 minutes each, auditing a dependency set that the push-to-master
@@ -175,7 +178,6 @@ paden = [
   # EXPIRY: back to t2 the moment this lands. The loan covers the removal of the
   # visual-regression.yml row and nothing else in the file.
   "scripts/ci/a_gate_that_never_went_green.py",
-  ".github/workflows/ci.yml",
   "scripts/ci/test_een_treffer_publiceert_de_term_niet.py",
 ]
 # NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
@@ -226,6 +228,18 @@ paden = [
   # mistake the lane choice one line above already avoids.
   ".githooks/pre-push",
   ".claude/**",
+  # ON LOAN from t1 for #323, back when that ticket closes. Two steps in
+  # `orchestration-guard` and nothing else in the file: the guard that refuses a
+  # new action on a moving ref, and its test.
+  #
+  # The map's own route rather than a quiet edit, and it is taken rather than
+  # requested because the alternative is worse than the loan. The guard reads
+  # `.github/workflows`, so wiring it anywhere else would mean a second
+  # pull_request job -- eight new hosted minutes a run for seconds of file
+  # scanning, days after #328 merged six jobs into one to stop exactly that. And
+  # leaving it pre-push only would put it in `every_guard_has_a_job.py`'s ALLOWED
+  # list as debt, which is the shape this repository keeps having to pay off.
+  ".github/workflows/ci.yml",
   ".github/workflows/**",
   ".gitlab-ci.yml",
   "scripts/ci/**",

@@ -586,6 +586,22 @@ jobs:
       - name: Every workflow can start at all
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/every_workflow_can_start.py
+      # An action runs on the runner that holds the PyPI token, the crates.io
+      # token and the signing key, and `@v4` names a tag its owner can move onto
+      # anything. Seven call sites rode `@master`, a branch that can change
+      # between two runs of the same workflow with nothing released anywhere;
+      # those are pinned now, and this refuses the next one that arrives
+      # unpinned rather than leaving the surface free to widen (#323).
+      #
+      # The test first, like the pair above it: a scanner that has stopped
+      # recognising `uses:` reports a clean repository in the same words as a
+      # clean repository.
+      - name: The action-pinning register still bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_action_is_pinned_or_recorded.py
+      - name: Every action is pinned to a commit or recorded with its reason
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_action_is_pinned_or_recorded.py
       - name: The never-green gate still bites
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_a_gate_that_never_went_green.py

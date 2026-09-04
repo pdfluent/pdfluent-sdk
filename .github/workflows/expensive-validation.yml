@@ -126,7 +126,7 @@ jobs:
         id: pin
         run: echo "channel=$(grep '^channel' rust-toolchain.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 03-09-2026
         with:
           toolchain: ${{ steps.pin.outputs.channel }}
           targets: wasm32-unknown-unknown
