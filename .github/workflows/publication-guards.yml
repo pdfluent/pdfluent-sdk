@@ -82,3 +82,10 @@ jobs:
       - name: The public seeding removes trailers and changes no content
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_seed_public_repo.py
+      # 154 seconds, measured: it assembles the published tree and greps it. That
+      # is real but small on a hosted runner, and it is the check #222 rests on --
+      # the whole point of #1696 was that nothing ran it. The build half stays out
+      # of here; it is minutes and gigabytes.
+      - name: The published tree names no path outside itself
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/public_snapshot_audit.sh
