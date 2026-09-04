@@ -235,6 +235,13 @@ run licregs   python3 scripts/ci/one_licence_three_registers.py
 run licregtst python3 scripts/ci/test_one_licence_three_registers.py
 run errdocs   python3 scripts/ci/error_codes_have_an_anchor.py
 zwaar errtests cargo test -q -p pdfluent --test error_codes_stable --test processing_limits
+# The two lines t1 wrote and then reverted on #324, because this file was not
+# theirs and they said so: "the wiring belongs in a PR by an owner of that file".
+# Until it arrived the guard and its test ran nowhere, which is the state
+# every_test_is_run.py is built to refuse -- and it has been refusing it on every
+# pull request since, for a reason no author of one could fix. This is that PR.
+run diagcat   python3 scripts/ci/every_diagnostic_code_is_documented.py
+run diagcattst python3 scripts/ci/test_every_diagnostic_code_is_documented.py
 # The merge point, not a formality: master only takes fast-forwards, so what
 # passes here is what lands. #316.
 run signoff   python3 scripts/ci/every_commit_since_the_cutoff_is_signed.py
