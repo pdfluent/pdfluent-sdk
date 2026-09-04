@@ -93,13 +93,38 @@ def getrackt() -> list[str]:
     return [r for r in uit.stdout.split("\0") if r]
 
 
+# The three directories where test material lives. Inside them a suffix list is
+# not enough: #215 asks the gate to fail on any new binary test file without a
+# registration, and a document does not become safe by being called `.bin`.
+#
+# Measured when this was added: those directories held 163 PDFs and zero other
+# binary files, so nothing existing had to be registered to turn this on. The
+# rule guards the next one rather than papering over the last one.
+TESTMATERIAAL = ("fixtures/", "test-data/", "corpus/")
+
+
+def _is_binair(pad: str) -> bool:
+    """A NUL byte in the first 4 KB -- the same test git uses to call a file binary.
+
+    Not a suffix list: the point is the extension nobody thought of.
+    """
+    try:
+        with open(REPO / pad, "rb") as fh:
+            return b"\0" in fh.read(4096)
+    except OSError:
+        return False
+
+
 def is_document(pad: str) -> bool:
     naam = pad.rsplit("/", 1)[-1]
     # Word's owner file: two bytes of metadata and the name of whoever had the
     # document open. It is never a fixture and never wanted.
     if naam.startswith("~$"):
         return True
-    return pad.lower().endswith(DOCUMENT_SUFFIXEN)
+    if pad.lower().endswith(DOCUMENT_SUFFIXEN):
+        return True
+    # Anything binary under the test-material directories, whatever it is called.
+    return pad.startswith(TESTMATERIAAL) and _is_binair(pad)
 
 
 def haalt_de_publieke_boom(pad: str, m: dict) -> bool:
