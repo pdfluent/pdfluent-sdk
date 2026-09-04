@@ -187,11 +187,21 @@ fn convert_inner(image: &Image<'_>, buf: &mut [u8]) -> ImageResult<()> {
             }
         };
 
+        // Same reason as pdf-interpret's ICC transform: moxcms' fixed-point
+        // pipeline is a different implementation per architecture and the
+        // implementations disagree, so an embedded JPEG 2000 profile would
+        // decode to different bytes on x86 and aarch64. A deliberate
+        // divergence from upstream hayro, noted on this crate's entry in
+        // docs/UPSTREAM_FORKS.toml so a future merge does not read it as
+        // upstream work we dropped. (#330)
         let transform = src_profile.create_transform_8bit(
             src_layout,
             &dest_profile,
             dest_layout,
-            TransformOptions::default(),
+            TransformOptions {
+                prefer_fixed_point: false,
+                ..TransformOptions::default()
+            },
         )?;
 
         let mut transformed = vec![0; (width * height * out_channels) as usize];

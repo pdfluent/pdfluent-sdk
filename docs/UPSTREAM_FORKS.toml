@@ -332,6 +332,12 @@ gelijk_met = "0.4.0"
 # blob-comparing every source file against every upstream revision -- the
 # version alone cannot catch this class.
 forkpunt = "5a5f0e2"  # LaurenzV/hayro HEAD on 2026-08-24
+# Divergence from upstream, on purpose, 04-09-2026 (#330): integration.rs asks
+# moxcms for the float transform instead of its fixed-point default. The
+# fixed-point pipeline is a different implementation per architecture and the
+# implementations disagree -- measured at up to 9 of 255 per channel on our own
+# sRGB profile -- so an embedded profile would decode to different bytes on x86
+# and aarch64. Do not drop it on the next merge.
 waarom = "JPEG 2000 image codec."
 
 [[fork]]
