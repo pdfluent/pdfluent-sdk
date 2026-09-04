@@ -41,6 +41,12 @@
 //! BSD-3-Clause licence in `LICENSE-FOXIT`. That licence requires the copyright
 //! notice to travel with binary redistributions, so it ships in the crate.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// One of the PDF Standard 14 fonts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StandardFont {

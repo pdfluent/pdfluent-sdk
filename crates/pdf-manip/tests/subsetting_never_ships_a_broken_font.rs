@@ -13,6 +13,12 @@
 //! write when tables went missing. This tests the comparison directly, because
 //! the corpus that produced the original finding is not on this machine.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 // The upstream version of this test used a Liberation face from
 // pdf-substitute-fonts, a crate that does not exist here. Building the table
 // directory by hand tests the same predicate and needs no fixture.

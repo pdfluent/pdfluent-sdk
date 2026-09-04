@@ -7,6 +7,12 @@
 //! text field, first checkbox and first radio group. Exit code 0 unless the
 //! document cannot be opened at all (parse-level failure).
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use pdfluent_forms::{
     apply_field_value, build_form_model, parse_acroform, FormFieldKind, WriteValue,
 };

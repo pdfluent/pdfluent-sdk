@@ -14,6 +14,12 @@
 //! "no panic + typed outcome + wrong/missing password never yields the
 //! plaintext". Skips if `qpdf` is unavailable (CI provides it).
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

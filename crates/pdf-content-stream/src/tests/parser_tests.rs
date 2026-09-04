@@ -1,5 +1,11 @@
 //! Parser unit tests — covers the G3 operator list and round-trip guarantee.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::{
     verify_round_trip, ContentOp, ContentStreamError, ContentStreamParser, RawOperand, TjItem,
 };

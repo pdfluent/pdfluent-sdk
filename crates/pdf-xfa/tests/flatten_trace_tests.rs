@@ -8,6 +8,12 @@
 //! All env manipulation lives in a SINGLE test function so the parallel test
 //! runner cannot race on the process-global env vars.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use lopdf::{dictionary, Document, Object, Stream};
 use pdf_xfa::flatten_xfa_to_pdf;
 

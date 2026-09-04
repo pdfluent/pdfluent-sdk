@@ -6,6 +6,12 @@
 //! leading whitespace — from right after the previous operator to right after
 //! this operator's keyword.  Adjacent ops are contiguous in the input.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::parser::ParsedOp;
 
 /// Reconstruct a byte-identical copy of the content stream from the original

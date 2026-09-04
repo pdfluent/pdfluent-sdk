@@ -3,6 +3,12 @@
 //! These represent the merged Form DOM nodes that the layout engine processes.
 //! In a full implementation, these would come from xfa-dom-resolver's merge step.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use std::collections::HashMap;
 
 use crate::text::FontMetrics;

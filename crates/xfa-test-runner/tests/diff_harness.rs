@@ -4,6 +4,12 @@
 //! no corpus files, no API keys required. They exercise the report data model
 //! and summary logic through the public `pdf_diff` API.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use pdf_diff::{
     build_report, build_summary, compute_baseline_delta, DifferentialReport, DifferentialVerdict,
     DocDifferential, TextVerdict,

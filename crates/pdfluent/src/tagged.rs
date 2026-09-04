@@ -6,6 +6,12 @@
 //! [`crate::PdfDocument::structure_tree`] surfaces that tree; this module owns
 //! the public data model and the conversion from the internal parser output.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use pdf_compliance::tagged::{StructElement, StructureTree};
 
 /// The logical structure of a tagged PDF.

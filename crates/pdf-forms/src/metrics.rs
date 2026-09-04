@@ -9,6 +9,12 @@
 //! constant instead of a table. Unknown faces fall back to Helvetica, the
 //! `/DA` default in practice (Acrobat's own fallback per ISO 32000 §12.7.3.3).
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// Fixed advance width for all four Courier faces (font units / 1000 em).
 const COURIER_WIDTH: u16 = 600;
 

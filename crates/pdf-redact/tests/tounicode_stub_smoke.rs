@@ -10,6 +10,12 @@
 //! The test runs BEFORE any production code for #1339 is wired up, so it
 //! acts as the verify-before-code gate.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use pdf_font::cmap::{BfString, CMap};
 
 /// Stub /ToUnicode CMap for a 2-byte (Type0/CID-keyed) font: every code in

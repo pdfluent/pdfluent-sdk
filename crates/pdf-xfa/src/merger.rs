@@ -15,6 +15,12 @@
 //! - §4.4 p195: exclusion group short/long format not implemented
 //! - §4.4 p199: setProperty/bindItems not implemented
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// XFA Spec 3.3 §4.4 p176 — Merge mode controlling how data is bound to template.
 ///
 /// - `ConsumeData` (default): walk the template tree top-down, binding each

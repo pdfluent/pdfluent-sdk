@@ -15,6 +15,12 @@
 //! See `benchmarks/runs/M3B_RUNTIME_SECURITY_MODEL.md` for the 18
 //! invariants the adapter must respect (S-1..S-18).
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 pub mod host;
 pub mod null;
 pub mod regex_guard;

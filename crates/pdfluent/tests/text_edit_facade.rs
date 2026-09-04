@@ -2,6 +2,12 @@
 //! (find_text / replace_text / replace_text_matches) including capability
 //! gating and revision continuity across commits.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use lopdf::content::{Content, Operation};
 use lopdf::{dictionary, Document, Object, Stream, StringFormat};
 use pdfluent::text_edit::{ReplaceOptions, TextQuery};

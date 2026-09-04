@@ -2,6 +2,12 @@
 //! in the target font's FirstChar..LastChar range resolve to a real glyph
 //! (via Differences/base -> (3,1) cmap -> gid with outline) after each pass.
 //! Crude but decisive for "rendering broke somewhere" hunts.
+
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
 use lopdf::{Document, Object};
 
 fn state(doc: &Document, base_font: &str) -> String {

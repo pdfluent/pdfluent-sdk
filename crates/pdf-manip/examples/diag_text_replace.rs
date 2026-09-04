@@ -1,4 +1,10 @@
 //! Diagnostic: simulate the text_replace test to understand failures.
+
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
 use pdf_manip::text_replace::replace_text;
 use pdf_manip::text_run::FontMap;
 

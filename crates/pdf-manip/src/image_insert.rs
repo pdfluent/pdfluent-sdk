@@ -3,6 +3,12 @@
 //! - JPEG: passthrough (raw bytes as DCTDecode stream, no re-encoding)
 //! - PNG: decode to raw pixels, FlateDecode stream + SMask for alpha channel
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::error::{ManipError, Result};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;

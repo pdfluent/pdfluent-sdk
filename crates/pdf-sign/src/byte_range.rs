@@ -3,6 +3,12 @@
 //! Computes the message digest over the signed byte ranges of the PDF
 //! and compares it against the digest embedded in the CMS signature.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use digest::Digest;
 use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};

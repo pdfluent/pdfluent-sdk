@@ -2,6 +2,12 @@
 //!
 //! Uses sorted arrays with binary search for O(log n) lookup.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// Check whether `code` is a valid ISO 4217 currency code.
 pub fn is_valid_currency(code: &str) -> bool {
     CURRENCY_CODES.binary_search(&code).is_ok()

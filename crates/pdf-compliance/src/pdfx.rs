@@ -2,6 +2,12 @@
 //!
 //! Checks conformance to PDF/X-1a:2003, PDF/X-3:2003, and PDF/X-4.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::check::{self, catalog, error, error_at, warning};
 use crate::{ComplianceReport, PdfXLevel};
 use pdf_syntax::object::{Array, Dict, MaybeRef, Name, Object};

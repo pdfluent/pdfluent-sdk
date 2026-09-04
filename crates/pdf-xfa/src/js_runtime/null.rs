@@ -10,6 +10,12 @@
 //! path (`js_skipped += 1`, `js_runtime_errors += 1`) without changing
 //! pipeline behaviour.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use super::{RuntimeMetadata, RuntimeOutcome, SandboxError, XfaJsRuntime};
 
 /// Stub runtime that refuses every script call.

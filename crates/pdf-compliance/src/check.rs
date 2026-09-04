@@ -5,6 +5,11 @@
 //! `pdfa.rs` actually calls. The non-cached variants are kept for completeness
 //! and potential future use in tests or tooling.
 #![allow(dead_code)]
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
 
 use crate::{ComplianceIssue, ComplianceReport, PdfALevel, Severity};
 use pdf_syntax::object::dict::keys;

@@ -1,5 +1,10 @@
 #![cfg(feature = "pdfa-convert")]
 #![allow(unused_imports, unused_variables, dead_code, unused_parens)]
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
 
 /// Step-by-step pipeline test to identify which step crashes on a given PDF.
 /// Run with: cargo test -p pdf-manip --features pdfa-convert --test debug_convert debug_step_by_step -- --ignored --nocapture

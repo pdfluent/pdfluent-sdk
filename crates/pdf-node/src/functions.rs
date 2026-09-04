@@ -1,3 +1,9 @@
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 // Test-mode dead_code: these `pub fn`s are used by the Node binding via
 // the `#[napi]` macro, but `cargo test` compiles without that macro
 // generating callers, so the symbols look "never used".

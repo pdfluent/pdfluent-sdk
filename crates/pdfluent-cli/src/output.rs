@@ -3,6 +3,12 @@
 //! Every `--json` output uses a stable envelope; every error maps to a
 //! documented exit code. Human output is concise; JSON output is machine-stable.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use serde_json::{json, Value};
 
 /// Stable CLI version string (RC line).

@@ -6,6 +6,12 @@
 //! - PDF/A-3a, PDF/A-3b, PDF/A-3u (ISO 19005-3)
 //! - PDF/A-4, PDF/A-4f, PDF/A-4e (ISO 19005-4)
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::check;
 use crate::{ComplianceReport, PdfALevel};
 use pdf_syntax::object::dict::keys;

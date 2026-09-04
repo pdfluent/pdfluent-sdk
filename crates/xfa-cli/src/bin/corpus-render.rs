@@ -6,6 +6,12 @@
 //! Usage:
 //!   cargo run --release --bin corpus-render -- --corpus corpus/ --output renders/
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 // TODO: migrate from pdfium-ffi-bridge (#622)
 // This binary depended on pdfium-ffi-bridge for:
 //   - xfa_extract::scan_pdf_for_xfa

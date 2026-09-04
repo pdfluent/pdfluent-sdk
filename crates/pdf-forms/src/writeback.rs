@@ -28,6 +28,12 @@
 //! no UI layer, so set-time enforcement is the only place the contract can
 //! live.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::appearance::{parse_da, DefaultAppearance};
 use crate::encoding::{encode_winansi, escape_string_bytes};
 use crate::metrics::StandardFace;

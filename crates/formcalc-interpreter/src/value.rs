@@ -3,6 +3,12 @@
 //! FormCalc has three value types: Number, String, and Null.
 //! Values are automatically coerced between types as needed.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use std::fmt;
 
 /// A FormCalc runtime value.

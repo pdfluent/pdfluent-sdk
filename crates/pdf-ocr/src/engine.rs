@@ -3,6 +3,12 @@
 //! Provides the `OcrEngine` trait for integrating different OCR backends,
 //! and a `NoOpEngine` for testing.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// A single word recognized by OCR.
 #[derive(Debug, Clone)]
 pub struct OcrWord {

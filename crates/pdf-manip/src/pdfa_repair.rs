@@ -10,6 +10,12 @@
 //! from cheapest to most invasive, and each returns `None`/`false` rather
 //! than guessing when it cannot make a confident repair.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 /// Accept a loaded Document only if it has at least 1 object.
 /// lopdf sometimes "succeeds" loading corrupt data but finds 0 objects.
 pub(crate) fn accept_doc(doc: lopdf::Document) -> Option<lopdf::Document> {

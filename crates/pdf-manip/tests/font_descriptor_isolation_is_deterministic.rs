@@ -13,6 +13,12 @@
 //! a hundred `HashMap`s in the font code, and auditing them by hand is how you
 //! miss the hundred-and-first.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use lopdf::{dictionary, Document, Object};
 
 /// Several descriptors, each shared by several fonts.

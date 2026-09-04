@@ -5,6 +5,12 @@
 //! certificate chain verification, DocMDP/FieldMDP permission handling,
 //! and LTV (Long Term Validation) support per ISO 32000-2 §12.8.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 mod appearance;
 mod byte_range;
 mod chain;

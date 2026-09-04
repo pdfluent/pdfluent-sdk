@@ -50,6 +50,12 @@
 //! - CID-to-Unicode mapping (ToUnicode CMap) is not yet parsed
 //! - System font fallback may have different metrics than the PDF's embedded font
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use lopdf::{
     dictionary, Dictionary, Document, LoadOptions, Object, ObjectId, Stream, StringFormat,
 };

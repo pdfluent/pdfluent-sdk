@@ -1,4 +1,10 @@
 //! Trace total text-showing bytes across all content streams per font pass.
+
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
 use lopdf::{Document, Object};
 
 /// Sum the lengths of all literal (…) strings and hex <…> strings that are

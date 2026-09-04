@@ -1,4 +1,9 @@
 #![cfg(feature = "xfa-js-sandboxed")]
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
 
 //! G-W3A — Wave 3-A REDOS-01 mitigation: adversarial regression tests.
 //!

@@ -49,6 +49,12 @@
 //! [`parse_acroform`] is the single parser entry point. It returns `None` when
 //! the document has no `/AcroForm` dictionary.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 pub mod actions;
 pub mod appearance;
 pub mod button;

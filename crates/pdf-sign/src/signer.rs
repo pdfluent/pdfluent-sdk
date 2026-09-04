@@ -4,6 +4,12 @@
 //! [`Pkcs12Signer`] which loads a `.p12` / `.pfx` identity and signs
 //! using RSA PKCS#1 v1.5 or ECDSA (P-256 / P-384).
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use crate::byte_range::DigestAlgorithm;
 use crate::cms::parse_tlv;
 use thiserror::Error;

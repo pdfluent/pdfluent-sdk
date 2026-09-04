@@ -1,6 +1,12 @@
 //! XFA Phase-1 fill API through the `pdfluent` facade: capability gating,
 //! model enumeration, value writes, and the save → reopen roundtrip.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use lopdf::{dictionary, Object, Stream};
 use pdfluent::prelude::*;
 

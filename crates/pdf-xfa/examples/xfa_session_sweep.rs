@@ -14,6 +14,12 @@
 //! `NO_PERSIST` (set ok, marker missing after reopen), `SET_FAIL`,
 //! `SAVE_FAIL`, `REOPEN_FAIL`, `OPEN_FAIL`, `NOT_XFA`.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 use pdf_xfa::session::{XfaFieldType, XfaSession, XfaWriteValue};
 
 const MARKER: &str = "XFA-PHASE1-SWEEP";

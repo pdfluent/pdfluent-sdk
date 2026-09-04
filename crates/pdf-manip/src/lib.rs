@@ -52,6 +52,12 @@
 //! | [`text_replace`] | Search-and-replace in content streams |
 //! | [`header_footer`] | Add headers and footers to pages |
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 pub mod bookmarks;
 pub mod cff_append;
 /// Wall-clock time that is safe on wasm32, where `SystemTime::now()` panics.

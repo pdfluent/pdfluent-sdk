@@ -10,6 +10,12 @@
 //! Any time Epic 2 wires an additional method, the corresponding
 //! `#[ignore]` attribute is removed in the same PR.
 
+// Copyright (c) 2026 Innovation Trigger B.V.
+//
+// PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+// the PDFluent Commercial Licence. See the LICENSE file in this repository --
+// that file travels with the copy you received, which a URL does not.
+
 mod encrypt_pdf_rust;
 mod extract_text_pdf_rust;
 mod fill_pdf_form_rust;
