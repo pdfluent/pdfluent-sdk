@@ -73,6 +73,12 @@ jobs:
       - name: The wiring guard bites in both directions
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_every_test_is_run.py
+      - name: The step classifier bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_guards_do_not_hide_behind_each_other.py
+      - name: The header sweep bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_header_sweep.py
       - name: Every test file is executed by something
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/every_test_is_run.py
