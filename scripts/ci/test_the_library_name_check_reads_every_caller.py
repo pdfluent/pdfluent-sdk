@@ -23,22 +23,22 @@ import tempfile
 
 import yaml
 
-WORTEL = pathlib.Path(__file__).resolve().parents[2]
-WORKFLOW = WORTEL / ".github/workflows/java-bindings.yml"
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+WORKFLOW = ROOT / ".github/workflows/java-bindings.yml"
 CRATE = "crates/pdf-java"
-NAAM = "pdfluent_java"
+LIB_NAME = "pdfluent_java"
 # Five today. A floor, not an equality: adding a caller is normal, and the
 # check is meant to cover it rather than to forbid it.
-VLOER = 5
+FLOOR = 5
 
-fouten: list[str] = []
-
-
-def mis(regel: str) -> None:
-    fouten.append(regel)
+failures: list[str] = []
 
 
-def staplichaam() -> str | None:
+def fail(line: str) -> None:
+    failures.append(line)
+
+
+def step_body() -> str | None:
     """The shipped text of the name-checking step, or None if it is gone.
 
     Recognised by its subject -- a run body that mentions System.loadLibrary --
@@ -47,128 +47,128 @@ def staplichaam() -> str | None:
     returning hand-list below would never run.
     """
     doc = yaml.safe_load(WORKFLOW.read_text())
-    kandidaten = [
+    candidates = [
         stap["run"]
         for job in doc.get("jobs", {}).values()
         for stap in (job.get("steps", []) or [])
         if "System.loadLibrary" in (stap.get("run") or "")
     ]
-    if len(kandidaten) > 1:
-        mis(f"{len(kandidaten)} steps check the loaded library name; this test "
+    if len(candidates) > 1:
+        fail(f"{len(candidates)} steps check the loaded library name; this test "
             "reads one of them and would miss a regression in the others")
-    return kandidaten[0] if kandidaten else None
+    return candidates[0] if candidates else None
 
 
-def bouw_boom(basis: pathlib.Path, bestanden: dict[str, str]) -> None:
+def build_tree(base: pathlib.Path, files: dict[str, str]) -> None:
     """A tree the step can run in: the sources, plus the .so it tests for."""
-    gebouwd = basis / "target/debug"
-    gebouwd.mkdir(parents=True, exist_ok=True)
-    (gebouwd / f"lib{NAAM}.so").write_bytes(b"")
-    for pad, inhoud in bestanden.items():
-        doel = basis / pad
-        doel.parent.mkdir(parents=True, exist_ok=True)
-        doel.write_text(inhoud)
+    built = base / "target/debug"
+    built.mkdir(parents=True, exist_ok=True)
+    (built / f"lib{LIB_NAME}.so").write_bytes(b"")
+    for path, content in files.items():
+        target = base / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
 
 
-def draai(lichaam: str, bestanden: dict[str, str]) -> subprocess.CompletedProcess:
+def run_step(lichaam: str, files: dict[str, str]) -> subprocess.CompletedProcess:
     with tempfile.TemporaryDirectory() as tmp:
-        basis = pathlib.Path(tmp)
-        bouw_boom(basis, bestanden)
+        base = pathlib.Path(tmp)
+        build_tree(base, files)
         return subprocess.run(
             ["bash", "-c", lichaam],
-            cwd=basis,
+            cwd=base,
             capture_output=True,
             text=True,
         )
 
 
-def echte_bronnen() -> dict[str, str]:
+def real_sources() -> dict[str, str]:
     """Every .java file under the crate, as it stands in the repository."""
     return {
-        str(p.relative_to(WORTEL)): p.read_text()
-        for p in sorted((WORTEL / CRATE).rglob("*.java"))
+        str(p.relative_to(ROOT)): p.read_text()
+        for p in sorted((ROOT / CRATE).rglob("*.java"))
     }
 
 
 def main() -> int:
     if not WORKFLOW.exists():
-        print(f"[java-naam] FAIL: {WORKFLOW.relative_to(WORTEL)} is gone")
+        print(f"[java-name] FAIL: {WORKFLOW.relative_to(ROOT)} is gone")
         return 1
 
-    lichaam = staplichaam()
+    lichaam = step_body()
     if lichaam is None:
-        print("[java-naam] FAIL: no step in java-bindings.yml checks the loaded "
+        print("[java-name] FAIL: no step in java-bindings.yml checks the loaded "
               "library name; the name went out of step once already")
         return 1
 
     # 1. The list is derived, not typed. A `for f in .../Foo.java \` list is
     #    the thing being removed; catching its return is the point.
     if re.search(r"for f in\s+\S*/\S+\.java", lichaam):
-        mis("the step enumerates .java paths by hand again; derive them with a "
+        fail("the step enumerates .java paths by hand again; derive them with a "
             "glob over the crate instead")
     if f"{CRATE} --include" not in lichaam and f"{CRATE}' --include" not in lichaam:
-        mis(f"the step does not glob over {CRATE}")
+        fail(f"the step does not glob over {CRATE}")
 
-    bronnen = echte_bronnen()
-    aanroepers = {p: t for p, t in bronnen.items() if "System.loadLibrary" in t}
+    bronnen = real_sources()
+    callers = {p: t for p, t in bronnen.items() if "System.loadLibrary" in t}
 
     # 2. The premise: there really are more callers than the old list named.
-    if len(aanroepers) < VLOER:
-        mis(f"expected at least {VLOER} System.loadLibrary callers under "
-            f"{CRATE}, found {len(aanroepers)}: {sorted(aanroepers)}")
+    if len(callers) < FLOOR:
+        fail(f"expected at least {FLOOR} System.loadLibrary callers under "
+            f"{CRATE}, found {len(callers)}: {sorted(callers)}")
 
     # 3. The tree as it stands passes. Without this the red runs below prove
     #    only that the step can fail, not that it can tell the cases apart.
-    schoon = draai(lichaam, bronnen)
-    if schoon.returncode != 0:
-        mis(f"the step fails on the repository as it stands (rc="
-            f"{schoon.returncode}): {schoon.stderr.strip()[:400]}")
+    clean = run_step(lichaam, bronnen)
+    if clean.returncode != 0:
+        fail(f"the step fails on the repository as it stands (rc="
+            f"{clean.returncode}): {clean.stderr.strip()[:400]}")
 
     # 4. The mutation, one caller at a time. Every one of them must be able to
     #    turn the step red on its own -- that is what "reads every caller"
     #    means, and it is exactly what the hand-kept list did not do.
-    for pad in sorted(aanroepers):
-        gemuteerd = dict(bronnen)
-        gemuteerd[pad] = aanroepers[pad].replace(
-            f'System.loadLibrary("{NAAM}")', 'System.loadLibrary("pdf_java")'
+    for path in sorted(callers):
+        mutated = dict(bronnen)
+        mutated[path] = callers[path].replace(
+            f'System.loadLibrary("{LIB_NAME}")', 'System.loadLibrary("pdf_java")'
         )
-        if gemuteerd[pad] == aanroepers[pad]:
-            mis(f"{pad} does not load {NAAM} as a literal, so this test cannot "
+        if mutated[path] == callers[path]:
+            fail(f"{path} does not load {LIB_NAME} as a literal, so this test cannot "
                 "mutate it; check whether the step can")
             continue
-        rood = draai(lichaam, gemuteerd)
-        if rood.returncode == 0:
-            mis(f"renaming the library in {pad} left the step green; that call "
+        red = run_step(lichaam, mutated)
+        if red.returncode == 0:
+            fail(f"renaming the library in {path} left the step green; that call "
                 "is not covered")
-        elif pad not in rood.stderr:
-            mis(f"the step went red for {pad} but its message does not name the "
-                f"file: {rood.stderr.strip()[:200]}")
+        elif path not in red.stderr:
+            fail(f"the step went red for {path} but its message does not name the "
+                f"file: {red.stderr.strip()[:200]}")
 
     # 5. The floor. An empty glob walks the loop zero times and would otherwise
     #    report a pass while reading nothing at all.
-    leeg = draai(lichaam, {})
-    if leeg.returncode == 0:
-        mis("with no Java sources at all the step passes; an empty glob must be "
+    empty = run_step(lichaam, {})
+    if empty.returncode == 0:
+        fail("with no Java sources at all the step passes; an empty glob must be "
             "an error, not a green loop over nothing")
 
     # 6. bindings/java is out of bounds on purpose: its NativeLoader calls
     #    System.loadLibrary(JNI_LIB_NAME) through a constant, and a literal
     #    grep would report that correct code as wrong.
-    lader = WORTEL / "bindings/java/src/main/java/com/pdfluent/NativeLoader.java"
-    if lader.exists():
-        met_lader = dict(bronnen)
-        met_lader[str(lader.relative_to(WORTEL))] = lader.read_text()
-        uit = draai(lichaam, met_lader)
-        if uit.returncode != 0:
-            mis("the step trips over bindings/java's NativeLoader, which loads "
+    loader = ROOT / "bindings/java/src/main/java/com/pdfluent/NativeLoader.java"
+    if loader.exists():
+        with_loader = dict(bronnen)
+        with_loader[str(loader.relative_to(ROOT))] = loader.read_text()
+        out = run_step(lichaam, with_loader)
+        if out.returncode != 0:
+            fail("the step trips over bindings/java's NativeLoader, which loads "
                 "through a constant; bound the glob to the crate")
 
-    if fouten:
-        print("[java-naam] FAIL")
-        for f in fouten:
+    if failures:
+        print("[java-name] FAIL")
+        for f in failures:
             print(f"  - {f}")
         return 1
-    print(f"[java-naam] OK: the step reads all {len(aanroepers)} callers under "
+    print(f"[java-name] OK: the step reads all {len(callers)} callers under "
           f"{CRATE}; renaming any one of them turns it red, an empty tree is an "
           "error, and NativeLoader's constant is not mistaken for a wrong name.")
     return 0
