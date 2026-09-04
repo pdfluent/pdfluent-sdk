@@ -243,6 +243,7 @@ uitgezonderd = [
   "scripts/ci/local_ci_gate.sh",
   ".github/workflows/visual-regression.yml",
   "scripts/ci/persistent_builds_check_their_build_dir.py",
+  "scripts/ci/test_seed_public_repo.py",
   "scripts/ci/every_gate_is_reachable_from_a_pull_request.py",
   "scripts/ci/test_every_gate_is_reachable_from_a_pull_request.py",
   ".github/workflows/publication-guards.yml",
@@ -466,6 +467,9 @@ paden = [
   "scripts/ci/every_gate_is_reachable_from_a_pull_request.py",
   "scripts/ci/test_every_gate_is_reachable_from_a_pull_request.py",
   ".github/workflows/publication-guards.yml",
+  # #229 layer 3 / #222: the one-time seeding of the public repository.
+  "scripts/release/seed_public_repo.sh",
+  "scripts/ci/test_seed_public_repo.py",
 ]
 uitgezonderd = ["docs/licensing/boundary.toml"] # #326 internal-crate registration
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
