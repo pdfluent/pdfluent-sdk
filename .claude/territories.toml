@@ -181,6 +181,7 @@ uitgezonderd = [
   ".github/workflows/deletions-declare-themselves.yml",
   "scripts/ci/test_register_exemption.py",
   "scripts/ci/public_snapshot_audit.sh",
+  "scripts/ci/orchestration_stays_hosted.py",
   # Narrow workflow and job registration claim for #326.
   "scripts/ci/local_ci_gate.sh",
   ".github/workflows/visual-regression.yml",
@@ -379,6 +380,10 @@ paden = [
   # count -- are t3 files.
   "crates/visual-regression/**",
   ".github/workflows/visual-regression.yml",
+  # On loan with the suite for #326: registering the visual job as a known
+  # heavy lane is the same hand-over, and this file is where that register
+  # lives. Back to t2 when this lands.
+  "scripts/ci/orchestration_stays_hosted.py",
 ]
 uitgezonderd = ["docs/licensing/boundary.toml"] # #326 internal-crate registration
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
@@ -452,21 +457,3 @@ gedeeld = [
   "docs/PUBLIC_TREE.toml",
   "docs/FETCHED_ASSETS.toml",
 ]
-[[territory]]
-id = "codex"
-name = "Visual regression suite"
-waarom = """
-Issue #326 adds one internal test crate. The owner authorized the required
-registrations and exactly one local-gate line. These exact integration paths
-are held with the crate for review; existing owners retain their other paths.
-The persistent-build file changes only its required job-count registration."""
-paden = [
-  "crates/visual-regression/**",
-  ".github/workflows/visual-regression.yml",
-  "scripts/ci/local_ci_gate.sh",
-  "scripts/ci/corpus_herkomst.py",
-  "scripts/ci/persistent_builds_check_their_build_dir.py",
-  "docs/licensing/boundary.toml",
-  "docs/CORPUS_HERKOMST.md",
-]
-issues = [326]
