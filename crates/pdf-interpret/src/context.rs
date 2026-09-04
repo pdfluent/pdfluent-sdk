@@ -25,10 +25,32 @@ use std::collections::HashMap;
 /// its stack". No XFA and no script; it reaches every binding that exports
 /// `render_page`.
 ///
-/// 50 because upstream chose 50 (LaurenzV/hayro#1152) and because real documents
-/// do not come close: the deepest nesting in the corpus is single digits. The
-/// limit exists to convert a crash into a warning and a missing paint, not to
-/// judge how baroque a document is allowed to be.
+/// 50 because upstream chose 50 (LaurenzV/hayro#1152) and because real
+/// documents do not come close. The limit exists to convert a crash into a
+/// warning and a missing paint, not to judge how baroque a document is allowed
+/// to be.
+///
+/// WHAT "DO NOT COME CLOSE" IS MEASURED AGAINST
+///
+/// This counter changed meaning in #318, so an older figure would describe a
+/// quantity that no longer exists. Before, each construct that builds a fresh
+/// `Context` restarted at zero, and a chain XObject -> pattern -> soft mask ->
+/// glyph counted as four independent depths of 1. It now counts as one depth
+/// of 4. The number has to be re-measured under the new accounting to mean
+/// anything, and this is the change that moved it.
+///
+/// Re-measured on every PDF in this repository (164 documents, deepest page of
+/// each), instrumented at this function:
+///
+///   depth 2   tests/fixtures/belastingdienst_betalingsregeling.pdf
+///   depth 1   every other real document
+///   depth 49-50  the three cycle fixtures, which recurse on purpose
+///
+/// So 50 leaves a factor of 25 over the deepest real document reachable here.
+/// That is a floor, not the corpus maximum: the 181K-document corpus is not on
+/// this machine, and nothing here re-measures it. If that matters later, the
+/// instrument is four lines at the increment above -- a static max plus an
+/// eprintln -- and the scan takes a minute.
 pub(crate) const MAX_NESTED_INTERPRETATION_DEPTH: u32 = 50;
 
 /// A context for interpreting PDF files.
