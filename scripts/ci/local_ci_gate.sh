@@ -155,6 +155,7 @@ run snapfifty python3 scripts/ci/test_the_snapshot_recovers_the_fifty.py
 # that guards every push -- it was only in ci.yml, which means a push could cross
 # a territory line and nothing local said so. (codex P1, #296)
 run territory python3 scripts/ci/territories_do_not_overlap.py
+run regexem   python3 scripts/ci/test_register_exemption.py
 run sweepexem python3 scripts/ci/test_sweep_exemption.py
 run notice    python3 scripts/ci/notice_names_what_exists.py
 run noticetst python3 scripts/ci/test_notice_names_what_exists.py

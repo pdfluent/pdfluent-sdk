@@ -172,6 +172,7 @@ paden = [
 uitgezonderd = [
   "scripts/ci/a_gate_that_never_went_green.py",
   ".github/workflows/deletions-declare-themselves.yml",
+  "scripts/ci/test_register_exemption.py",
   "scripts/ci/public_snapshot_audit.sh",
   # Not t2's, added 03-09-2026. Fixture test for .githooks/prepare-commit-msg,
   # which is the DCO mechanism -- t3 ground. It lives here because that is
@@ -360,6 +361,7 @@ paden = [
   # lives here, and it comes out again when the first run is green. Back to
   # t2 with the workflow.
   "scripts/ci/a_gate_that_never_went_green.py",
+  "scripts/ci/test_register_exemption.py",
 ]
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
 
@@ -407,4 +409,28 @@ issues = [163, 164, 166, 167, 168, 169, 186, 187, 189, 192, 193, 194, 195, 205, 
 [sweeps]
 toegestaan = [
   "python3 scripts/ci/header_sweep.py --write",
+]
+
+# Registers the whole tree writes into.
+#
+# These files live in one territory and every territory has to add rows to them:
+# a t1 branch that adds a fixture needs a provenance line, and that line is in a
+# t3 file. Without an exemption the map forces a two-pull-request dance for every
+# new document, and the order is unpleasant either way -- register first and the
+# document guard refuses (a row naming a file that is not there), add first and
+# the register guard refuses (a file with no row).
+#
+# So a branch may edit one of these from outside its territory when the same diff
+# adds the file the new row names. That is checked, not promised: the added line
+# carries a path, and the path has to be among the files the branch adds. The
+# exemption therefore opens exactly the case it was opened for and nothing else.
+#
+# Read from the base, like [sweeps].toegestaan: a branch that could declare its
+# own target shared would be granting itself permission.
+[registers]
+gedeeld = [
+  "scripts/ci/corpus_herkomst.py",
+  "docs/licensing/boundary.toml",
+  "docs/PUBLIC_TREE.toml",
+  "docs/FETCHED_ASSETS.toml",
 ]
