@@ -154,6 +154,31 @@ def main() -> int:
         ok_all &= case("the unsaved work has not been wiped",
                       (r / "mine" / "own.txt").read_text().startswith("work that"), "")
 
+    # A sweep that DELETES rather than replaces. The re-run cannot catch this --
+    # the generator reproduces its own deletion and the diff comes back empty --
+    # so the exemption has to weigh the commit itself.
+    with tempfile.TemporaryDirectory() as d:
+        r = repo(pathlib.Path(d), allowlist_on_base=True)
+        # A generator that strips every line after the header, and is perfectly
+        # idempotent about it.
+        (r / "scripts" / "sweep.py").write_text(
+            "#!/usr/bin/env python3\n"
+            "import pathlib\n"
+            "for f in sorted(pathlib.Path('owned').glob('*.txt')):\n"
+            "    t = f.read_text()\n"
+            "    if not t.startswith('# header\\n'):\n"
+            "        f.write_text('# header\\n')\n",
+            encoding="utf-8")
+        for i in range(3):
+            (r / "owned" / f"a{i}.txt").write_text(
+                "prose line\n" * 30, encoding="utf-8")
+        git("add", "-A", cwd=r); git("commit", "-q", "-m", "prose", cwd=r)
+        sweep_commit(r, "python3 scripts/sweep.py")
+        freed, reason = ask_guard(r)
+        ok_all &= case("a sweep that deletes prose is refused, though it re-runs clean",
+                       not freed and reason and "lose more than" in reason,
+                       f"{len(freed)} freed, reason={reason}")
+
     # This WAS the known limit: "re-running gives an empty diff" proves the
     # generated parts are generated, but not that nothing else rode along -- a
     # file the generator never touches reproduces cleanly.

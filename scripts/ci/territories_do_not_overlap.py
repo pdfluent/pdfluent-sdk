@@ -225,6 +225,42 @@ def sweep_exemption(base: str) -> tuple[set[str], str | None]:
                                cwd=ROOT, capture_output=True, text=True, env=_sealed())
         from_commit = {r for r in files.stdout.splitlines() if r}
 
+        # A mechanical sweep replaces; it does not delete.
+        #
+        # This is the check the re-run cannot make. A generator reproduces its own
+        # deletion: if it removes something it should not, the second run removes
+        # exactly the same thing, the diff is empty, and the sweep verifies clean.
+        # Comparing a generator against itself cannot see what the generator is
+        # wrong about.
+        #
+        # It cost 400 lines to learn. The #301 header sweep walked forward while
+        # a line began with `#` and swallowed the prose under the licence header
+        # -- 13 files, `why_not_writable.sh` alone losing 44 lines of explanation.
+        # Everything downstream said OK.
+        #
+        # So: a file in a generated sweep may not lose more lines than it gains,
+        # beyond a small margin. A header swap is a few lines either way; a file
+        # that is 40 lines shorter afterwards is not having its header replaced.
+        VERLIES = 10
+        cijfers = subprocess.run([GIT, "show", "--numstat", "--format=", sha],
+                                 cwd=ROOT, capture_output=True, text=True,
+                                 env=_sealed())
+        te_veel: list[str] = []
+        for regel in cijfers.stdout.splitlines():
+            velden = regel.split("\t")
+            if len(velden) != 3 or velden[0] == "-":
+                continue
+            erbij, eraf, naam = int(velden[0]), int(velden[1]), velden[2]
+            if eraf - erbij > VERLIES:
+                te_veel.append(f"{naam} (-{eraf} +{erbij})")
+        if te_veel:
+            return set(), (
+                f"commit {sha[:8]} calls itself a generated sweep, but "
+                f"{len(te_veel)} file(s) lose more than {VERLIES} lines net. A "
+                "sweep replaces; deleting is a different operation and the re-run "
+                "check cannot see it, because the generator reproduces its own "
+                "deletion: " + ", ".join(sorted(te_veel)[:5]))
+
         # Intersect with WHAT THE GENERATOR WRITES, not with what the commit
         # touches. Re-running on HEAD proves the generated parts are generated. It
         # says nothing about a file the generator never touches: that reproduces
