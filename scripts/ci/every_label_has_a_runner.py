@@ -81,6 +81,54 @@ _LOSSE_STRING = re.compile(r"""(?<!\.)'([A-Za-z0-9][A-Za-z0-9._-]*)'""")
 GEHOST = re.compile(r"^(ubuntu|windows|macos)-(latest|\d[\w.-]*)$")
 
 
+def _refuses(step) -> bool:
+    """A step that cannot succeed: a `run:` whose last command is a non-zero exit.
+
+    An `if:` on the step disqualifies it -- a condition that is false makes the
+    step a no-op and the job green, which is a queue entry with extra steps.
+
+    Restored from 715e4121, which the #1543 reconciliation dropped (#319).
+    """
+    if not isinstance(step, dict) or "if" in step:
+        return False
+    script = step.get("run")
+    if not isinstance(script, str):
+        return False
+    for line in reversed(script.strip().splitlines()):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.fullmatch(r"exit\s+([0-9]+)", line)
+        return bool(m) and m.group(1) != "0"
+    return False
+
+
+def parked(doc, job) -> bool:
+    """Is this job queued behind a job that cannot pass?
+
+    Not "does it say parked in a comment" -- a comment does not stop a run.
+
+    Two escapes are honoured. A blocker with `continue-on-error: true` does not
+    actually block, and a blocker carrying an `if:` is a switch somebody can
+    flip without touching this file; neither makes the dependant unstartable.
+    """
+    needs = job.get("needs")
+    if isinstance(needs, str):
+        needs = [needs]
+    if not isinstance(needs, list):
+        return False
+    jobs = doc.get("jobs") or {}
+    for name in needs:
+        blocker = jobs.get(name)
+        if not isinstance(blocker, dict):
+            continue
+        if blocker.get("continue-on-error") is True or "if" in blocker:
+            continue
+        if any(_refuses(s) for s in blocker.get("steps") or []):
+            return True
+    return False
+
+
 def gevraagd(job) -> list[str]:
     ro = job.get("runs-on")
     if isinstance(ro, list):
@@ -193,12 +241,14 @@ def main() -> int:
                 # self-hosted label nobody answers. (T3 review, #1648)
                 if label == "__onleesbaar__":
                     ontbreekt.append((pad.name, naam,
-                                      "an unreadable fromJSON() argument", vanzelf))
+                                      "an unreadable fromJSON() argument", vanzelf,
+                                      parked(doc, job)))
                     continue
                 if GEHOST.match(label):
                     continue
                 if label not in online:
-                    ontbreekt.append((pad.name, naam, label, vanzelf))
+                    ontbreekt.append((pad.name, naam, label, vanzelf,
+                                      parked(doc, job)))
 
     print(f"[labels] online labels: {', '.join(sorted(online)) or 'none'}")
     if not ontbreekt:
@@ -220,11 +270,15 @@ def main() -> int:
     # the failure this guard exists for -- so the trigger list is part of what
     # is excused, not something the baseline may drop.
     HANDMATIG = {"workflow_dispatch", "workflow_call", "repository_dispatch"}
-    handmatig_stuk = {(w, j, l) for w, j, l, t in ontbreekt if set(t or []) <= HANDMATIG}
+    handmatig_stuk = {(w, j, l) for w, j, l, t, _ in ontbreekt if set(t or []) <= HANDMATIG}
     automatisch = [r for r in ontbreekt if not set(r[3] or []) <= HANDMATIG]
+    # DERIVED, not listed. `BEKEND` says which jobs may wait; the needs-graph
+    # says which ones actually cannot start. The two must agree, or the list
+    # is a hand-kept answer to a question the tree already answers (#319).
+    geparkeerd_stuk = {(w, j, l) for w, j, l, _, gp in ontbreekt if gp}
 
     def uitleg(rijen) -> None:
-        for workflow, job, label, triggers in rijen:
+        for workflow, job, label, triggers, *_ in rijen:
             print(f"  {workflow} :: {job} wants `{label}` on {triggers}", file=sys.stderr)
         print(
             "\nThose runs queue until GitHub abandons them about a day later. A queued "
@@ -257,8 +311,32 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    print(f"[labels] OK: {len(BEKEND)} job(s) still wait on a corpus runner (#276); "
-          "no new label is unanswered.")
+    # The graph against the list. `715e4121` answered this structurally and the
+    # #1543 reconciliation dropped it, leaving the distinction between "parked
+    # on purpose" and "blocked because something ahead of it broke" resting on a
+    # list somebody maintains (#319).
+    #
+    # Measured on 04-09-2026: the four in BEKEND are exactly the four the graph
+    # derives. The list is right; nothing was keeping it right.
+    namen_bekend = {(w, j) for w, j, _ in BEKEND}
+    namen_graaf = {(w, j) for w, j, _ in geparkeerd_stuk}
+    niet_geparkeerd = namen_bekend - namen_graaf
+    niet_gelijst = namen_graaf - namen_bekend
+    if niet_geparkeerd or niet_gelijst:
+        print(file=sys.stderr)
+        print("[labels] FATAL: the baseline and the needs-graph disagree about which "
+              "jobs cannot start.", file=sys.stderr)
+        for w, j in sorted(niet_geparkeerd):
+            print(f"  {w} :: {j} is excused by BEKEND but nothing ahead of it refuses. "
+                  "It is waiting for a runner, not parked.", file=sys.stderr)
+        for w, j in sorted(niet_gelijst):
+            print(f"  {w} :: {j} is queued behind a job that cannot pass, and is not in "
+                  "BEKEND. Add it, or unblock it.", file=sys.stderr)
+        return 1
+
+    print(f"[labels] OK: {len(BEKEND)} job(s) still wait on a corpus runner (#276), "
+          f"and the needs-graph derives the same {len(namen_graaf)}; no new label is "
+          "unanswered.")
     return 0
 
 
