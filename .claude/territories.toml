@@ -58,8 +58,6 @@ paden = [
   # and its workflow -- the registrations it needs in corpus_herkomst.py,
   # persistent_builds_check_their_build_dir.py and docs/licensing/boundary.toml
   # stay with t3, who owns those files.
-  "crates/visual-regression/**",
-  ".github/workflows/visual-regression.yml",
   # Claimed 01-09-2026 for `embed_font` (#292). The owner decision was to turn
   # lopdf's `font_embedding` on and wire it through to `PdfDocument::embed_font`.
   # lopdf is t1, the two crates the wiring passes through are not, and splitting
@@ -375,6 +373,12 @@ paden = [
   # t2 with the workflow.
   "scripts/ci/a_gate_that_never_went_green.py",
   "scripts/ci/test_register_exemption.py",
+  # On loan for #326, back to t1 when this lands. The suite is t1's subject;
+  # it sits here only because t1's session stopped and the registrations it
+  # needs -- the licence boundary, the document register and the build-job
+  # count -- are t3 files.
+  "crates/visual-regression/**",
+  ".github/workflows/visual-regression.yml",
 ]
 uitgezonderd = ["docs/licensing/boundary.toml"] # #326 internal-crate registration
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
