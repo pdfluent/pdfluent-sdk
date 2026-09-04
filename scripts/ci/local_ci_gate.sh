@@ -191,6 +191,8 @@ run errdocs   python3 scripts/ci/error_codes_have_an_anchor.py
 run errtests  cargo test -q -p pdfluent --test error_codes_stable --test processing_limits
 # The merge point, not a formality: master only takes fast-forwards, so what
 # passes here is what lands. #316.
+run diagcat   python3 scripts/ci/every_diagnostic_code_is_documented.py
+run diagcattst python3 scripts/ci/test_every_diagnostic_code_is_documented.py
 run signoff   python3 scripts/ci/every_commit_since_the_cutoff_is_signed.py
 run signofftst python3 scripts/ci/test_every_commit_since_the_cutoff_is_signed.py
 run signoffcut python3 scripts/ci/test_signoff_respects_the_cutoff.py
