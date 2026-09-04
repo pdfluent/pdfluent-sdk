@@ -282,6 +282,18 @@ ZWARE_BASELINE = {
     # as preflight -- release path, no way to rehearse a change to it without
     # publishing. (Codex, #1541)
     ("publish-crates.yml", "publish"),
+    # The visual suite (#326). Not the corpus: crates/visual-regression/README.md
+    # says the renderer uses no system font and no external command, so on paper
+    # it should run anywhere. On paper is the point -- the committed baselines
+    # were rendered on this machine, and nobody has yet compared a render from a
+    # hosted runner against them. Moving it blind risks a red master on a pixel
+    # difference that is not a regression, which is the failure that teaches
+    # people to ignore a visual gate.
+    #
+    # So it stays here for now, deliberately and not by omission, and the move is
+    # its own piece of work: render the baselines somewhere else once and compare.
+    # Same handling as publish-crates above.
+    ("visual-regression.yml", "visual-regression"),
 }
 
 
