@@ -49,6 +49,8 @@ paden = [
   "crates/pdf-render/**",
   "crates/pdf-font/**",
   "crates/lopdf/**",
+  "scripts/ci/every_diagnostic_code_is_documented.py",
+  "scripts/ci/test_every_diagnostic_code_is_documented.py",
   "docs/UPSTREAM_FORKS.toml",
   "docs/FORKDIVERGENTIE.md",
 
@@ -223,6 +225,14 @@ uitgezonderd = [
   # which is the DCO mechanism -- t3 ground. It lives here because that is
   # where the gate finds tests, not because it is CI wiring.
   "scripts/ci/test_prepare_commit_msg_signoff.py",
+  # Not t2's, added 04-09-2026 with #324. The diagnostic catalogue guard is
+  # about the engine's public diagnostic codes: it reads the CODE_ constants in
+  # crates/pdfluent and the catalogue that documents them, and it changes
+  # whenever a code is added. It sits in scripts/ci because that is where the
+  # gate finds guards, not because it is CI wiring -- the same reason as the
+  # line above.
+  "scripts/ci/every_diagnostic_code_is_documented.py",
+  "scripts/ci/test_every_diagnostic_code_is_documented.py",
   "scripts/ci/territories_do_not_overlap.py",
   "scripts/ci/test_sweep_exemption.py",
   # #301: the licence header is t3's subject, so its guard is too. Back when
