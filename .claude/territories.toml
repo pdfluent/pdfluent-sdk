@@ -146,6 +146,26 @@ paden = [
   # guard fails on its own premise rather than on a real finding, so the list
   # follows the steps into their new job in the same commit that moves them.
   "scripts/ci/guards_do_not_hide_behind_each_other.py",
+  # BACK FROM t3, on the return condition t3's own entry names: "on loan for
+  # #326, back to t1 when this lands". #326 landed on 04-09, so both halves come
+  # home -- the suite is t1's subject, and it sat in t3's block only because a
+  # t1 session had stopped.
+  #
+  # It comes back on a red: the workflow has never been green. Three master runs
+  # on 04-09 (967d86c1, 0abe72fa, 50608b91) all died on `cargo: command not
+  # found`, exit 127, because the job runs on xfa-fast without the `Cargo on
+  # PATH` step ci.yml already carries.
+  "crates/visual-regression/**",
+  ".github/workflows/visual-regression.yml",
+  # ON LOAN from t2 (its exclusion list already carries this path; t3 held the
+  # loan until 04-09 and gave it back when its own BEKEND row went green).
+  # Back the moment the workflow goes green once -- which that
+  # guard enforces itself, by failing on a BEKEND entry that has recovered. The
+  # entry is needed to land the fix at all: the guard dates the file on the
+  # DEFAULT branch, so an unpushed fix moves nothing, and 3 runs at 0 green is
+  # exactly its threshold. Every push to master is blocked until the entry is
+  # in.
+  "scripts/ci/a_gate_that_never_went_green.py",
   ".github/workflows/ci.yml",
   "scripts/ci/test_een_treffer_publiceert_de_term_niet.py",
 ]
@@ -382,17 +402,15 @@ paden = [
   # cannot pass in Actions, and it has blocked every push since. Back to t2
   # when this lands.
   ".github/workflows/deletions-declare-themselves.yml",
-  # On loan with the workflow above: the BEKEND row that lets the repair land
-  # lives here, and it comes out again when the first run is green. Back to
-  # t2 with the workflow.
-  "scripts/ci/a_gate_that_never_went_green.py",
+  # RETURNED 04-09: the BEKEND row for deletions-declare-themselves.yml is out
+  # of the list -- the run went green -- which is the condition this entry named
+  # for giving the file back. It goes to t1 rather than to t2 because t1 needs
+  # the same mechanism for visual-regression.yml right now; t2's exclusion above
+  # already keeps it out of t2's block either way.
   "scripts/ci/test_register_exemption.py",
-  # On loan for #326, back to t1 when this lands. The suite is t1's subject;
-  # it sits here only because t1's session stopped and the registrations it
-  # needs -- the licence boundary, the document register and the build-job
-  # count -- are t3 files.
-  "crates/visual-regression/**",
-  ".github/workflows/visual-regression.yml",
+  # RETURNED 04-09: #326 landed, so the two visual-regression paths went back to
+  # t1 as this entry said they would. The registrations that needed t3 files --
+  # the licence boundary, the document register, the build-job count -- are in.
   # On loan with the suite for #326: registering the visual job as a known
   # heavy lane is the same hand-over, and this file is where that register
   # lives. Back to t2 when this lands.

@@ -12,6 +12,30 @@ jobs:
       UPDATE_VISUAL_BASELINE: "0"
     steps:
       - uses: actions/checkout@v4
+      # The same check as ci.yml's `Cargo on PATH`. `$HOME` for the runner
+      # service is not necessarily where cargo was installed, so adding the
+      # directory is not the same as making cargo runnable -- source the env
+      # file when it is there, and then CHECK, because a later step dying on
+      # `command not found` is a confusing way to learn the toolchain is
+      # missing. That is exactly how this workflow failed. (#292)
+      - name: Cargo on PATH
+        run: |
+          set -euo pipefail
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
+          export PATH="$HOME/.cargo/bin:$PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "::error::cargo is not runnable on this runner. \$HOME is $HOME; \$HOME/.cargo/bin is $([ -d "$HOME/.cargo/bin" ] && echo present || echo absent). Every step below that needs the toolchain will fail with a message that says nothing about this." >&2
+            exit 1
+          fi
+          # Status-checked, not `echo $(…)`: if cargo resolves but cannot run --
+          # a rustup shim with no toolchain installed -- the substitution fails,
+          # `echo` still returns 0, `set -e` sees nothing, and the step reports
+          # success with an empty version. (codex, #1659)
+          cargo --version || {
+            echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: command -v cargo succeeds and every build fails." >&2
+            exit 1
+          }
       - name: Check persistent build directory
         run: bash scripts/ci/cargo_target_health.sh
       - name: Compare generated fixtures against committed baselines
