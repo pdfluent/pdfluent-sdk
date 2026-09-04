@@ -160,12 +160,20 @@ paden = [
   "crates/visual-regression/**",
   ".github/workflows/visual-regression.yml",
   # scripts/ci/a_gate_that_never_went_green.py went home to t2 on 04-09, hours
-  # after this loan was written, and the BEKEND row it was borrowed for is
-  # untouched by that: the row landed with the visual-regression fix and stays
-  # until the workflow goes green once. Retiring it then is a change to the
-  # guard, so it falls to the guard's owner rather than requiring a second loan.
-  # Recorded here because the loan is what this block promised, and a promise
-  # that quietly stops being true is worse than one that is answered.
+  # after this loan was written, and the BEKEND row it was borrowed for was
+  # untouched by that: the row landed with the visual-regression fix and stood
+  # until the workflow went green once.
+  #
+  # It went green that evening (run 33917827961), and the guard's recovery check
+  # then turned the healed row into a FATAL that refused EVERY push to master,
+  # for every terminal -- so the promise "retiring it falls to the guard's owner"
+  # became a promise that nobody could keep in time. Borrowed back for that one
+  # deletion, under the standing rule for a guard that blocks everyone on
+  # something outside the pull request: repair on loan and land, do not wait.
+  #
+  # EXPIRY: back to t2 the moment this lands. The loan covers the removal of the
+  # visual-regression.yml row and nothing else in the file.
+  "scripts/ci/a_gate_that_never_went_green.py",
   ".github/workflows/ci.yml",
   "scripts/ci/test_een_treffer_publiceert_de_term_niet.py",
 ]

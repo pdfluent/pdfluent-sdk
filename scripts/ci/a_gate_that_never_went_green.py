@@ -96,20 +96,12 @@ BEKEND = {
     # twenty unmaintained crates; run 33648792780) that are the next pull
     # request. Red for the right
     # reason now, still red.
-    # Added 04-09-2026 in the same commit that fixes it, because without the
-    # entry the fix cannot be pushed: this guard dates a workflow file on the
-    # DEFAULT branch, so an unpushed change moves nothing, and visual-regression
-    # sits at exactly GENOEG -- 3 runs, 0 green -- which blocks every push to
-    # master for every terminal.
-    #
-    # Cause is not a pixel difference: 967d86c1, 0abe72fa and 50608b91 all die
-    # with `cargo: command not found`, exit 127, before the suite starts. The
-    # job runs on xfa-fast without the `Cargo on PATH` step ci.yml carries; that
-    # step is in the workflow now.
-    #
-    # Out of this list the moment it goes green, which the recovery check below
-    # enforces rather than trusting anyone to remember.
-    "visual-regression.yml": "never green: cargo was not on PATH on xfa-fast, exit 127 before the suite ran; the `Cargo on PATH` step lands with this entry (#329)",
+    # visual-regression.yml was here from 04-09-2026, added in the commit that
+    # put the `Cargo on PATH` step in the workflow. It went green on master the
+    # same evening (run 33917827961, f8855ffd), and this list is only allowed to
+    # hold what is still dead -- the recovery check below turns a healed entry
+    # into a FATAL that refuses every push to master, which is what it did. Out,
+    # so the next workflow to die is still news. (#329)
     "security-audit.yml": "toolchain fixed (RUSTUP_TOOLCHAIN=stable); now red on real advisories -- lopdf, quick-xml, quinn-proto, crossbeam-epoch, anyhow, 20 unmaintained -- next PR (#287, #294)",
 }
 
