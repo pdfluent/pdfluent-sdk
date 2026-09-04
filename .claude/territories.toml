@@ -334,6 +334,11 @@ paden = [
   "scripts/ci/test_header_sweep.py",
   "scripts/ci/test_sweep_exemption.py",
   "scripts/ci/territories_do_not_overlap.py",
+  # #222: the snapshot audit and its wrapper. Publication policy is t3, and
+  # `scripts/release/public_snapshot_check.sh` came over from t1 when that
+  # terminal stopped.
+  "scripts/ci/public_snapshot_audit.sh",
+  "scripts/release/public_snapshot_check.sh",
 ]
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
 
@@ -366,11 +371,6 @@ Blocked behind CLAIMS.md rather than behind other terminals."""
 paden = [
   "docs/marketing/**",
   "docs/seo/**",
-  # #222: the snapshot audit and its wrapper. Publication policy is t3, and
-  # `scripts/release/public_snapshot_check.sh` came over from t1 when that
-  # terminal stopped.
-  "scripts/ci/public_snapshot_audit.sh",
-  "scripts/release/public_snapshot_check.sh",
 ]
 issues = [163, 164, 166, 167, 168, 169, 186, 187, 189, 192, 193, 194, 195, 205, 206]
 
