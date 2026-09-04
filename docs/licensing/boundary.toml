@@ -226,6 +226,12 @@ dir = "crates/xfa-pdfrest-compare"
 side = "ours"
 publish_false = true
 
+[[crate]]
+name = "visual-regression"
+dir = "crates/visual-regression"
+side = "internal"
+publish_false = true
+
 
 # --- forked from upstream: stays permissive, no commercial licence needed ---
 
