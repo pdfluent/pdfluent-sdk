@@ -153,6 +153,7 @@ run notice    python3 scripts/ci/notice_names_what_exists.py
 run noticetst python3 scripts/ci/test_notice_names_what_exists.py
 run withdrawn python3 scripts/ci/no_withdrawn_object.py
 run withdrawnt python3 scripts/ci/test_no_withdrawn_object.py
+run snapaudit bash scripts/ci/public_snapshot_audit.sh
 run territst  python3 scripts/ci/test_territories_do_not_overlap.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
