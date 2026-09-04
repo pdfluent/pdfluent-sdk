@@ -22,17 +22,29 @@ name: Java Bindings
 # check job. The pom defaults to target/release for a local release build; the
 # override below points Surefire's forked JVM at target/debug instead.
 
+# PUSH ON MASTER ONLY, AND THAT IS THE WHOLE COST DECISION.
+#
+# This job is a cargo build plus a Maven run -- one of the more expensive things
+# this repository can ask of a runner. On `pull_request` it would bill hosted
+# minutes on every push to every branch, and on 04-09-2026 the account stood at
+# 90% of its allowance. A pull_request trigger here is the single most expensive
+# line this file could carry.
+#
+# What master takes is a fast-forward of a commit whose content the landing
+# script has already patch-id checked, so verifying on master verifies the thing
+# that ships. (#1672)
 on:
-  pull_request:
-    branches: [master]
   push:
     branches: [master]
 
 concurrency:
   # Same shape as ci.yml: a pull request supersedes itself, a push to master
   # gets its own group per commit and is never cancelled by the next merge.
-  group: java-bindings-${{ github.event_name == 'push' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # One group per commit, and never cancelled: with only a push trigger there is
+  # no pull request to supersede itself, and a merge must not cancel the run that
+  # is checking the merge before it.
+  group: java-bindings-${{ github.sha }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -41,20 +53,76 @@ env:
 jobs:
   jni-tests:
     name: JNI tests (mvn test)
-    runs-on: ubuntu-latest
+    # Hosted minutes are for pull requests only. A push to master repeats work a
+    # pull request has already done, and this job is a cargo build plus a Maven
+    # run -- one of the more expensive things this repository asks a hosted
+    # runner for. The desktop runner carries it instead. (#1672)
+    # Plain, not the per-event expression the guard jobs use: this workflow has
+    # one trigger, so a conditional would name a branch that cannot be reached.
+    runs-on: [self-hosted, xfa-fast]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # First, and before any cargo call. The desktop keeps its build directory
+      # between jobs, so this job lands in whatever the previous one left --
+      # which is the whole reason persistent_builds_check_their_build_dir.py
+      # requires this step of every compiling job on this runner. (#264)
+      - name: Check persistent build directory
+        run: bash scripts/ci/cargo_target_health.sh
 
-      - uses: Swatinem/rust-cache@v2
+      # Not dtolnay/rust-toolchain and not Swatinem/rust-cache. Both are for a
+      # hosted runner that starts empty: one installs a toolchain, the other
+      # restores a target directory. This machine has its own toolchain and its
+      # own warm target directory, and restoring a cache over it is the state
+      # cargo_target_health.sh exists to catch.
+      #
+      # What it does need is the same step ci.yml carries, for a reason measured
+      # today: visual-regression.yml runs on this runner without it and every run
+      # since 04-09-2026 has died on `cargo: command not found`, exit 127. The
+      # runner service's PATH does not carry ~/.cargo/bin. (#292)
+      - name: Cargo on PATH
+        run: |
+          # `$HOME` for the runner service is not necessarily where cargo was
+          # installed, so adding the directory is not the same as making cargo
+          # runnable. Source the env file when it is there, and then CHECK.
+          set -euo pipefail
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true
+          export PATH="$HOME/.cargo/bin:$PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "::error::cargo is not runnable on this runner. \$HOME is $HOME; \$HOME/.cargo/bin is $([ -d "$HOME/.cargo/bin" ] && echo present || echo absent). Every step below that needs the toolchain will fail with a FileNotFoundError that says nothing about this." >&2
+            exit 1
+          fi
+          # Status-checked, not `echo $(...)`: if cargo resolves but cannot run --
+          # a rustup shim with no toolchain installed -- the substitution fails,
+          # `echo` still returns 0, `set -e` sees nothing, and the step reports
+          # success with an empty version.
+          cargo --version || {
+            echo "::error::cargo is on PATH but does not run. A rustup shim without an installed toolchain does this: command -v cargo succeeds and every build fails." >&2
+            exit 1
+          }
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: maven
+      # No actions/setup-java here. The desktop has its own JDK and Maven, and
+      # installing a second toolchain over them would test something other than
+      # what a developer on that machine runs.
+      # NOT an assumption. On 04-09-2026 the desktop carried openjdk 17.0.20 and
+      # Apache Maven 3.9.12, measured rather than expected -- but a runner is a
+      # machine somebody maintains, and a job that silently does something else
+      # after a reinstall is worse than one that stops. This says which of the
+      # two is missing instead of failing later inside `mvn`.
+      - name: The runner has a JDK and Maven
+        run: |
+          set -euo pipefail
+          missing=""
+          command -v java >/dev/null 2>&1 || missing="java"
+          command -v mvn  >/dev/null 2>&1 || missing="${missing:+$missing and }mvn"
+          if [ -n "$missing" ]; then
+            echo "::error::$missing not on PATH for this runner. The JNI suite needs a JDK 17+ and Maven; install them or point this job back at a hosted runner." >&2
+            exit 1
+          fi
+          java -version
+          mvn --version | head -1
 
       - name: Build the JNI library
         run: cargo build -p pdf-java --locked
