@@ -207,6 +207,8 @@ run snapfifty python3 scripts/ci/test_the_snapshot_recovers_the_fifty.py
 echo "--- territory (advisory; ci.yml refuses) ---"
 python3 scripts/ci/territories_do_not_overlap.py 2>&1 | sed 's/^/  /' || true
 run regexem   python3 scripts/ci/test_register_exemption.py
+run prreach   python3 scripts/ci/every_gate_is_reachable_from_a_pull_request.py
+run prreacht  python3 scripts/ci/test_every_gate_is_reachable_from_a_pull_request.py
 run sweepexem python3 scripts/ci/test_sweep_exemption.py
 run notice    python3 scripts/ci/notice_names_what_exists.py
 run noticetst python3 scripts/ci/test_notice_names_what_exists.py
