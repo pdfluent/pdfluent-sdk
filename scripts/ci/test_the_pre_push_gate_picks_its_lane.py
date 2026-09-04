@@ -134,6 +134,36 @@ def main() -> int:
         expect("the summary names the lane it ran",
                '$_lane lane' in tekst)
 
+        # The guards that read the outside world are advisory in the fast lane.
+        # This is a STRUCTURE check, not a behaviour one: it reads where the
+        # invocation sits rather than running the gate, so it would not catch a
+        # branch that is present and unreachable. What it does catch is the
+        # regression that matters -- the invocation quietly moving back out of
+        # the lane test, which is how the previous advisory lines were lost.
+        regels = tekst.splitlines()
+        try:
+            i = next(n for n, r in enumerate(regels)
+                     if r.strip().startswith("run groen ")
+                     or r.strip().startswith("run groen\t"))
+        except StopIteration:
+            i = None
+        onder_full = False
+        if i is not None:
+            for r in reversed(regels[:i]):
+                if r.startswith('if [ "$FULL" = 1 ]'):
+                    onder_full = True
+                    break
+                if r.startswith("run ") or r.startswith("zwaar "):
+                    break
+        expect("the never-green guard refuses only in the full lane",
+               i is not None and onder_full, f"regel {i}")
+        expect("and warns in the fast lane instead",
+               "advisory in the fast lane" in tekst)
+        # Its test is not advisory anywhere: it is local and deterministic, it
+        # asks no API, and it is what proves the guard can go red at all.
+        expect("its own test stays blocking in both lanes",
+               any(r.startswith("run groentest") for r in regels))
+
     print(f"[test-lane] {ran - len(fails)}/{ran} case(s) ok")
     if fails:
         print("[test-lane] FAIL: " + "; ".join(fails))
