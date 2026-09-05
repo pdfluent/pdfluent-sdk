@@ -969,7 +969,7 @@ impl PdfDocument {
         let raw = self.inner.pdf().data().as_ref().to_vec();
         convert(&raw)
             .map(Buffer::from)
-            .map_err(|e| napi::Error::from_reason(e))
+            .map_err(napi::Error::from_reason)
     }
 }
 
