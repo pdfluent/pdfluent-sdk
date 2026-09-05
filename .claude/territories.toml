@@ -179,6 +179,17 @@ paden = [
   # visual-regression.yml row and nothing else in the file.
   "scripts/ci/a_gate_that_never_went_green.py",
   "scripts/ci/test_een_treffer_publiceert_de_term_niet.py",
+  # ON LOAN from t3, 05-09-2026, under the same standing rule as the row above:
+  # a guard that blocks everyone on something outside the pull request gets
+  # repaired on loan, not waited on. `publication-guards.yml` had been red on
+  # every run since 05-09, so the never-green guard refused every landing for
+  # every terminal -- and the cause was this fixture building an empty
+  # repository, not the seeding script it appeared to accuse. (#331)
+  #
+  # EXPIRY: back to t3 the moment this lands. The loan covers the fixture's own
+  # identity and the raise that makes a broken fixture say so, and nothing else
+  # in scripts/ci.
+  "scripts/ci/test_seed_public_repo.py",
 ]
 # NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
 # parity tests are edited by this change but stay with whoever owns the SDK
@@ -488,7 +499,10 @@ paden = [
   ".github/workflows/publication-guards.yml",
   # #229 layer 3 / #222: the one-time seeding of the public repository.
   "scripts/release/seed_public_repo.sh",
-  "scripts/ci/test_seed_public_repo.py",
+  # `scripts/ci/test_seed_public_repo.py` is ON LOAN to t1 on 05-09-2026 and is
+  # claimed in t1's block, not here: two owners for one path is exactly what
+  # this map exists to prevent. It comes back the moment #331 lands. The script
+  # itself stays here -- the loan is about the fixture, not about seeding.
 ]
 uitgezonderd = ["docs/licensing/boundary.toml"] # #326 internal-crate registration
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
