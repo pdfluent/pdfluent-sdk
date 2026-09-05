@@ -16282,6 +16282,14 @@ fn add_encoding_tounicode(doc: &mut Document, before_encoding_repair: bool) -> u
                     }
                 }
                 None => {
+                    if before_encoding_repair {
+                        // An explicit but unknown glyph name overrides the
+                        // base encoding. Its byte code is not Unicode: low
+                        // codes could become controls and disappear in text
+                        // extraction. Leave its meaning unresolved.
+                        code_to_unicode[*code as usize] = None;
+                        continue;
+                    }
                     let cp = *code as u32;
                     if cp > 0 && cp <= 0xFFFF {
                         code_to_unicode[*code as usize] = Some(cp as u16);
@@ -27925,6 +27933,21 @@ mod round2_font_tests {
         let text = String::from_utf8_lossy(content);
         assert!(text.contains("<01> <0041>"), "{text}");
         assert!(text.contains("<02> <0020>"));
+    }
+
+    #[test]
+    fn unknown_symbolic_glyph_names_do_not_become_unicode_controls_or_base_letters() {
+        let mut doc = Document::with_version("1.7");
+        let descriptor = doc.add_object(dictionary! {"Type"=>"FontDescriptor", "Flags"=>4});
+        let encoding = doc.add_object(dictionary! {"BaseEncoding"=>"WinAnsiEncoding", "Differences"=>vec![1.into(),Object::Name(b"unknownCircle".to_vec()),65.into(),Object::Name(b"unknownArrow".to_vec()),Object::Name(b"B".to_vec())]});
+        let font = doc.add_object(dictionary! {"Type"=>"Font", "Subtype"=>"TrueType", "BaseFont"=>"OwnedSymbols", "FontDescriptor"=>descriptor,"Encoding"=>encoding});
+        assert_eq!(preserve_symbolic_text_mapping(&mut doc), 1);
+        doc.get_dictionary_mut(font).unwrap().remove(b"Encoding");
+        fix_incomplete_tounicode_from_encoding(&mut doc);
+        let map = read_font_to_unicode_map(&doc, doc.get_dictionary(font).unwrap());
+        assert!(!map.contains_key(&1));
+        assert!(!map.contains_key(&65));
+        assert_eq!(map.get(&66), Some(&'B'));
     }
 
     #[test]
