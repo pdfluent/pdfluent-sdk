@@ -227,6 +227,15 @@ run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snip
 zwaar examples cargo build -q --examples -p pdfluent
 run matrix    python3 scripts/ci/capability_matrix_matches_coverage.py
 run wordsep   python3 scripts/ci/never_delete_the_word_separator.py
+# The PDF/A comparison harness, which is how #189's Ghostscript numbers were
+# produced. Its arithmetic is what a published comparison rests on, and every
+# case in the test is a mistake that was made while measuring and came back as
+# a number that looked like a result -- veraPDF's `validationResult` read as an
+# object instead of a list (everything 0%), documents the converter refused
+# dropped from the sample, a page rendered at another size called "not
+# comparable" and skipped. It needs `node`, which this directory needs anyway:
+# reproduce.mjs and compare.mjs are what it holds.
+run pdfacomp  node --test benchmarks/pdfa/reproduce/compare.test.mjs
 run gitenv    python3 scripts/ci/test_no_test_can_touch_the_real_repo.py
 run prrunner  python3 scripts/ci/pr_code_stays_off_the_desktop.py
 run prruntst  python3 scripts/ci/test_pr_code_stays_off_the_desktop.py
