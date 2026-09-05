@@ -1146,4 +1146,109 @@ EI";
         let obj = _direct_object(crate::reader::MAX_NESTING_DEPTH)(test_span(input));
         assert!(obj.is_ok());
     }
+    // ---- binary_mark and indirect_object (#152) ----
+    //
+    // Both sat in docs/TEST_REACHABILITY.md with no reason given. They are
+    // parser functions, and there it counts double: a parser that accepts too
+    // much or too little produces no error, it produces a wrong document.
+
+    #[test]
+    fn binary_mark_reads_the_binary_marker() {
+        // Line two of nearly every PDF: a comment line with four bytes above
+        // 127, telling tools the file is binary and must not be passed on as
+        // text. Lose it and an FTP transfer in ASCII mode destroys the
+        // document.
+        let out = binary_mark(test_span(b"%\xE2\xE3\xCF\xD3\n"));
+        assert_eq!(
+            out.as_deref(),
+            Some(&b"\xE2\xE3\xCF\xD3"[..]),
+            "the marker bytes do not come through unchanged"
+        );
+    }
+
+    #[test]
+    fn binary_mark_requires_a_percent_sign() {
+        // Without `%` it is not a comment line. Were this to pass, the parser
+        // would read arbitrary bytes as the marker and shift everything after
+        // it.
+        assert_eq!(binary_mark(test_span(b"\xE2\xE3\xCF\xD3\n")), None);
+    }
+
+    #[test]
+    fn binary_mark_stops_at_the_line_break() {
+        // The marker runs to the end of the line and no further. If it ran on,
+        // the first object would disappear into the comment.
+        let out = binary_mark(test_span(b"%\xE2\xE3\n1 0 obj\n"));
+        assert!(
+            out.is_none() || out.as_deref() == Some(&b"\xE2\xE3"[..]),
+            "the marker swallowed the line after it: {out:?}"
+        );
+    }
+
+    #[test]
+    fn binary_mark_accepts_an_empty_marker() {
+        // `%` followed by nothing is a valid empty comment line.
+        assert_eq!(binary_mark(test_span(b"%\n")).as_deref(), Some(&b""[..]));
+    }
+
+    /// A minimal `Reader` over loose bytes.
+    ///
+    /// `indirect_object` needs one to be able to follow references. For the
+    /// cases below it has nothing to look up: the object is entirely in the
+    /// input.
+    fn reader_over(bytes: &[u8]) -> Reader<'_> {
+        Reader {
+            buffer: bytes,
+            document: crate::Document::new(),
+            encryption_state: None,
+            raw_objects: Default::default(),
+            password: None,
+            options: Default::default(),
+        }
+    }
+
+    #[test]
+    fn indirect_object_reads_number_generation_and_content() {
+        let bytes = b"1 0 obj\n42\nendobj\n";
+        let r = reader_over(bytes);
+        let mut seen = HashSet::new();
+        let (id, obj) =
+            indirect_object(test_span(bytes), 0, None, &r, &mut seen).expect("a valid indirect object was refused");
+        assert_eq!(id, (1, 0), "object number or generation is wrong");
+        assert_eq!(obj.as_i64().ok(), Some(42));
+    }
+
+    #[test]
+    fn indirect_object_refuses_a_number_other_than_the_expected_one() {
+        // The xref says where object 5 lives. If object 1 is there instead, the
+        // table or the file is broken -- and accepting that quietly gives a
+        // document whose references point at the wrong object.
+        let bytes = b"1 0 obj\n42\nendobj\n";
+        let r = reader_over(bytes);
+        let mut seen = HashSet::new();
+        let out = indirect_object(test_span(bytes), 0, Some((5, 0)), &r, &mut seen);
+        assert!(out.is_err(), "an object with the wrong number was accepted");
+    }
+
+    #[test]
+    fn indirect_object_reads_from_the_given_offset() {
+        // The xref gives byte positions. Ignore the offset and the parser
+        // always reads the first object, and the whole document is wrong.
+        let bytes = b"%PDF-1.7\n1 0 obj\n7\nendobj\n";
+        let offset = bytes.windows(7).position(|w| w == b"1 0 obj").unwrap();
+        let r = reader_over(bytes);
+        let mut seen = HashSet::new();
+        let (id, obj) =
+            indirect_object(test_span(bytes), offset, None, &r, &mut seen).expect("reading from an offset failed");
+        assert_eq!(id, (1, 0));
+        assert_eq!(obj.as_i64().ok(), Some(7));
+    }
+
+    #[test]
+    fn indirect_object_refuses_what_is_not_an_object() {
+        let bytes = b"this is not an object\n";
+        let r = reader_over(bytes);
+        let mut seen = HashSet::new();
+        assert!(indirect_object(test_span(bytes), 0, None, &r, &mut seen).is_err());
+    }
 }
