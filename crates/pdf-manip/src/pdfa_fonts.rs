@@ -615,7 +615,9 @@ fn find_non_embedded_fonts_detailed(doc: &Document) -> Vec<NonEmbeddedFont> {
         }
         let subtype = get_name(dict, b"Subtype").unwrap_or_default();
         if subtype == "Type0" {
-            if let Ok(Object::Array(arr)) = dict.get(b"DescendantFonts") {
+            if let Some(Object::Array(arr)) =
+                dict.get(b"DescendantFonts").ok().map(|o| deref(doc, o))
+            {
                 for item in arr {
                     if let Object::Reference(id) = item {
                         descendant_ids.insert(*id);
@@ -758,7 +760,11 @@ fn get_descendant_embed_info(
     doc: &Document,
     type0_dict: &lopdf::Dictionary,
 ) -> Option<(ObjectId, bool)> {
-    let descendants = match type0_dict.get(b"DescendantFonts").ok() {
+    let descendants = match type0_dict
+        .get(b"DescendantFonts")
+        .ok()
+        .map(|o| deref(doc, o))
+    {
         Some(Object::Array(arr)) => arr,
         _ => return None,
     };
@@ -771,16 +777,7 @@ fn get_descendant_embed_info(
         let Some(Object::Dictionary(desc)) = doc.objects.get(&desc_id) else {
             continue;
         };
-        let embedded = match desc.get(b"FontDescriptor").ok() {
-            Some(Object::Reference(fd_id)) => {
-                if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_id) {
-                    has_valid_font_file(doc, fd)
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        };
+        let embedded = has_embedded_font_program(doc, desc);
         return Some((desc_id, embedded));
     }
 
@@ -861,99 +858,66 @@ fn repair_invalid_font_names(doc: &mut Document, info: &NonEmbeddedFont, fd_id: 
 ///
 /// Returns the number of inline font dicts promoted.
 pub fn promote_inline_font_dicts(doc: &mut Document) -> usize {
-    // Collect (owner_id, path, font_alias, font_dict) for inline font entries.
-    // "path" is whether the /Font dict was found directly or via /Resources.
-    // Structure: Vec<(object_id_to_mutate, via_resources, font_alias, font_dict)>
-    let mut to_promote: Vec<(ObjectId, bool, Vec<u8>, lopdf::Dictionary)> = Vec::new();
-
-    for (id, obj) in &doc.objects {
-        let Object::Dictionary(d) = obj else { continue };
-
-        // Case 1: object has /Font directly (e.g., XObject Form, Type3 font).
-        if let Ok(Object::Dictionary(fonts_dict)) = d.get(b"Font") {
-            let fonts_dict = fonts_dict.clone();
-            for (alias, font_val) in fonts_dict.iter() {
-                if let Object::Dictionary(fd) = font_val {
-                    to_promote.push((*id, false, alias.to_vec(), fd.clone()));
-                }
+    fn promote_map(
+        fonts: &mut lopdf::Dictionary,
+        next: &mut u32,
+        added: &mut Vec<(ObjectId, Object)>,
+    ) {
+        for (_, font) in fonts.iter_mut() {
+            if font.as_dict().is_ok_and(is_font_dict) {
+                *next += 1;
+                let id = (*next, 0);
+                added.push((id, std::mem::replace(font, Object::Reference(id))));
             }
         }
-
-        // Case 2: object has /Resources → /Font (e.g., Page, ContentStream).
-        // Resources may be inline or an indirect reference.
-        let res_dict = match d.get(b"Resources") {
-            Ok(Object::Dictionary(res)) => Some((res.clone(), false)),
-            Ok(Object::Reference(res_ref)) => {
-                if let Some(Object::Dictionary(res)) = doc.objects.get(res_ref) {
-                    Some((res.clone(), true))
-                } else {
-                    None
+    }
+    fn visit(
+        object: &mut Object,
+        next: &mut u32,
+        added: &mut Vec<(ObjectId, Object)>,
+        maps: &mut std::collections::BTreeSet<ObjectId>,
+    ) {
+        let dict = match object {
+            Object::Dictionary(d) => Some(d),
+            Object::Stream(s) => Some(&mut s.dict),
+            Object::Array(a) => {
+                for o in a {
+                    visit(o, next, added, maps);
                 }
+                None
             }
             _ => None,
         };
-        if let Some((res, res_is_indirect)) = res_dict {
-            // Font dict inside Resources may also be inline or indirect.
-            let fonts_dict = match res.get(b"Font") {
-                Ok(Object::Dictionary(fd)) => Some((fd.clone(), false)),
-                Ok(Object::Reference(fd_ref)) => {
-                    if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_ref) {
-                        Some((fd.clone(), true))
-                    } else {
-                        None
-                    }
+        if let Some(d) = dict {
+            // Visit nested resources (including Type3 CharProcs and appearance
+            // streams) before moving an inline font into its own object.
+            for (_, o) in d.iter_mut() {
+                visit(o, next, added, maps);
+            }
+            match d.get_mut(b"Font") {
+                Ok(Object::Dictionary(fonts)) => promote_map(fonts, next, added),
+                Ok(Object::Reference(id)) => {
+                    maps.insert(*id);
                 }
-                _ => None,
-            };
-            if let Some((fonts_dict, fonts_is_indirect)) = fonts_dict {
-                for (alias, font_val) in fonts_dict.iter() {
-                    if let Object::Dictionary(fd) = font_val {
-                        // Store the object that owns the Font dict for mutation.
-                        // If Resources is indirect, mutate the Resources object.
-                        // If Font dict is indirect, mutate the Font dict object.
-                        let (owner, via_res) = if fonts_is_indirect {
-                            // Font dict is a separate object — no need to promote,
-                            // the font entries inside it might be inline though.
-                            // We need the Font dict's reference to mutate it.
-                            if let Ok(Object::Reference(fd_ref)) = res.get(b"Font") {
-                                (*fd_ref, false)
-                            } else {
-                                continue;
-                            }
-                        } else if res_is_indirect {
-                            if let Ok(Object::Reference(res_ref)) = d.get(b"Resources") {
-                                (*res_ref, true)
-                            } else {
-                                continue;
-                            }
-                        } else {
-                            (*id, true)
-                        };
-                        to_promote.push((owner, via_res, alias.to_vec(), fd.clone()));
-                    }
-                }
+                _ => {} // ExtGState /Font is an array, not a resource map.
             }
         }
     }
-
-    let mut promoted = 0usize;
-    for (owner_id, via_resources, alias, font_dict) in to_promote {
-        let new_id = doc.add_object(Object::Dictionary(font_dict));
-        if let Some(Object::Dictionary(owner)) = doc.objects.get_mut(&owner_id) {
-            if via_resources {
-                if let Ok(Object::Dictionary(res)) = owner.get_mut(b"Resources") {
-                    if let Ok(Object::Dictionary(fonts)) = res.get_mut(b"Font") {
-                        fonts.set(alias.as_slice(), Object::Reference(new_id));
-                        promoted += 1;
-                    }
-                }
-            } else if let Ok(Object::Dictionary(fonts)) = owner.get_mut(b"Font") {
-                fonts.set(alias.as_slice(), Object::Reference(new_id));
-                promoted += 1;
-            }
+    let mut next = doc.max_id;
+    let mut added = Vec::new();
+    let mut maps = std::collections::BTreeSet::new();
+    for object in doc.objects.values_mut() {
+        visit(object, &mut next, &mut added, &mut maps);
+    }
+    for id in maps {
+        if let Ok(fonts) = doc.get_dictionary_mut(id) {
+            promote_map(fonts, &mut next, &mut added);
         }
     }
-    promoted
+    let count = added.len();
+    doc.objects.extend(added);
+    doc.max_id = next;
+    count
 }
 
 /// Embed fonts from system font files into the document.
@@ -2695,7 +2659,7 @@ fn update_simple_widths_cff_symbolic(
 }
 
 /// Map a character code to a Unicode character based on PDF encoding name.
-fn encoding_to_char(code: u32, encoding_name: &str) -> char {
+pub(crate) fn encoding_to_char(code: u32, encoding_name: &str) -> char {
     match encoding_name {
         "WinAnsiEncoding" => winansi_to_char(code),
         "MacRomanEncoding" => macroman_to_char(code),
@@ -10522,7 +10486,7 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
 /// Get encoding information for a simple font.
 /// Returns (encoding_name, differences_map).
 /// The differences_map maps character code -> glyph name from Encoding/Differences.
-fn get_simple_encoding_info(
+pub(crate) fn get_simple_encoding_info(
     doc: &Document,
     font_dict: &lopdf::Dictionary,
 ) -> (String, std::collections::HashMap<u32, String>) {
@@ -11835,7 +11799,7 @@ fn read_font_to_unicode_map(
     parse_tounicode_map_bytes(&s.content)
 }
 
-fn glyph_name_to_unicode(name: &str) -> Option<char> {
+pub(crate) fn glyph_name_to_unicode(name: &str) -> Option<char> {
     // Handle "uniXXXX" format.
     if name.starts_with("uni") && name.len() == 7 {
         if let Ok(cp) = u32::from_str_radix(&name[3..], 16) {
@@ -16100,6 +16064,96 @@ fn type1_enc_from_dict(enc_dict: &lopdf::Dictionary) -> (String, Vec<(u8, String
     (base_enc, differences)
 }
 
+/// Make a custom CFF program's built-in code mapping explicit before repairs
+/// that otherwise assume StandardEncoding. Low bytes in these fonts are real
+/// glyph codes, including mathematical symbols, not control characters.
+pub(crate) fn preserve_custom_cff_encoding(doc: &mut Document) -> usize {
+    let mut updates = Vec::new();
+    for (&id, object) in &doc.objects {
+        let Ok(font) = object.as_dict() else { continue };
+        if !matches!(
+            get_name(font, b"Subtype").as_deref(),
+            Some("Type1" | "MMType1")
+        ) {
+            continue;
+        }
+        let (base, mut differences) = get_simple_encoding_info(doc, font);
+        if !base.is_empty() {
+            continue;
+        }
+        let Some(fd) = font
+            .get(b"FontDescriptor")
+            .ok()
+            .map(|o| deref(doc, o))
+            .and_then(|o| o.as_dict().ok())
+        else {
+            continue;
+        };
+        let Some(stream) = fd
+            .get(b"FontFile3")
+            .ok()
+            .map(|o| deref(doc, o))
+            .and_then(|o| o.as_stream().ok())
+        else {
+            continue;
+        };
+        if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Type1C") {
+            continue;
+        }
+        let Ok(data) = stream.get_plain_content() else {
+            continue;
+        };
+        let Some(cff) = cff_parser::Table::parse(&data) else {
+            continue;
+        };
+        if !matches!(
+            cff.encoding.kind,
+            cff_parser::EncodingKind::Format0(_) | cff_parser::EncodingKind::Format1(_)
+        ) {
+            continue;
+        }
+        let original = differences.len();
+        for code in 0..=255u8 {
+            if differences.contains_key(&(code as u32)) {
+                continue;
+            }
+            if let Some(gid) = cff
+                .encoding
+                .code_to_gid(&cff.charset, code)
+                .filter(|g| g.0 > 0)
+            {
+                if let Some(name) = cff.glyph_name(gid).filter(|name| *name != ".notdef") {
+                    differences.insert(code as u32, name.to_owned());
+                }
+            }
+        }
+        if differences.len() == original {
+            continue;
+        }
+        let sorted: std::collections::BTreeMap<_, _> = differences.into_iter().collect();
+        let values: Vec<_> = sorted
+            .into_iter()
+            .flat_map(|(code, name)| {
+                [
+                    Object::Integer(code.into()),
+                    Object::Name(name.into_bytes()),
+                ]
+            })
+            .collect();
+        updates.push((
+            id,
+            Object::Dictionary(dictionary! {"Type"=>"Encoding","Differences"=>values}),
+        ));
+    }
+    let count = updates.len();
+    for (id, encoding) in updates {
+        if let Some(Object::Dictionary(font)) = doc.objects.get_mut(&id) {
+            font.set("Encoding", encoding);
+        }
+    }
+    count
+}
+
 /// Add /ToUnicode CMap streams to simple fonts (Type1, MMType1, TrueType)
 /// that lack them but have a standard encoding (WinAnsiEncoding /
 /// MacRomanEncoding) or a Differences-based Encoding dictionary.
@@ -16107,6 +16161,18 @@ fn type1_enc_from_dict(enc_dict: &lopdf::Dictionary) -> (String, Vec<(u8, String
 /// ISO 19005-2 §6.2.11.7.2 requires every non-CID font in PDF/A-2/3 to
 /// carry a /ToUnicode CMap. Fixes #483.
 pub fn fix_type1_tounicode_from_encoding(doc: &mut Document) -> usize {
+    add_encoding_tounicode(doc, false)
+}
+
+/// Capture the author's character meaning before the PDF/A symbolic-font
+/// repair removes /Encoding. The rendering cmap and the text extraction map
+/// serve different purposes: keeping a symbolic rendering cmap does not make
+/// an identity ToUnicode correct for remapped character codes.
+pub(crate) fn preserve_symbolic_text_mapping(doc: &mut Document) -> usize {
+    add_encoding_tounicode(doc, true)
+}
+
+fn add_encoding_tounicode(doc: &mut Document, before_encoding_repair: bool) -> usize {
     use crate::encoding_utils::glyph_name_to_char;
 
     // First pass (immutable): collect fonts that need a ToUnicode CMap.
@@ -16127,6 +16193,17 @@ pub fn fix_type1_tounicode_from_encoding(doc: &mut Document) -> usize {
         // Skip fonts that already have a ToUnicode entry.
         if dict.get(b"ToUnicode").is_ok() {
             continue;
+        }
+        if before_encoding_repair {
+            let explicit_differences = dict
+                .get(b"Encoding")
+                .ok()
+                .map(|e| deref(doc, e))
+                .and_then(|e| e.as_dict().ok())
+                .is_some_and(|e| e.has(b"Differences"));
+            if subtype != "TrueType" || !is_font_symbolic(doc, dict) || !explicit_differences {
+                continue;
+            }
         }
         let enc_info: (String, Vec<(u8, String)>) = match dict.get(b"Encoding").ok() {
             Some(Object::Name(n)) => {
@@ -19705,6 +19782,237 @@ struct WhitespaceCids {
     space: Option<u16>,
 }
 
+/// A one-character symbol subset can draw a real outline at .notdef. Give that
+/// exact outline a named glyph before the generic low-byte cleanup runs.
+pub(crate) fn preserve_single_cff_zero(doc: &mut Document) -> usize {
+    let ids: Vec<_> = doc.objects.keys().copied().collect();
+    let mut fixed = 0;
+    for id in ids {
+        let Ok(font) = doc.get_dictionary(id) else {
+            continue;
+        };
+        if get_name(font, b"Subtype").as_deref() != Some("Type1")
+            || font.get(b"FirstChar").and_then(Object::as_i64).ok() != Some(0)
+            || font.get(b"LastChar").and_then(Object::as_i64).ok() != Some(0)
+        {
+            continue;
+        }
+        let Some(fd) = font
+            .get(b"FontDescriptor")
+            .ok()
+            .map(|o| deref(doc, o))
+            .and_then(|o| o.as_dict().ok())
+        else {
+            continue;
+        };
+        let Some(stream) = fd
+            .get(b"FontFile3")
+            .ok()
+            .map(|o| deref(doc, o))
+            .and_then(|o| o.as_stream().ok())
+        else {
+            continue;
+        };
+        if get_name(&stream.dict, b"Subtype").as_deref() != Some("Type1C") {
+            continue;
+        }
+        let data = if stream.dict.has(b"Filter") {
+            match stream.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => continue,
+            }
+        } else {
+            stream.content.clone()
+        };
+        let Some(replacement) = crate::cff_append::duplicate_single_notdef(&data) else {
+            continue;
+        };
+        let mut fd = fd.clone();
+        let mut stream = stream.clone();
+        stream.set_plain_content(replacement);
+        let stream = doc.add_object(stream);
+        fd.set("FontFile3", stream);
+        // The descriptor is private too: another font can share this program.
+        let fd = doc.add_object(fd);
+        let font = doc.get_dictionary_mut(id).unwrap();
+        font.set("FontDescriptor", fd);
+        font.set("Encoding",dictionary! {"Type"=>"Encoding", "Differences"=>vec![Object::Integer(0),Object::Name(b"pdfaGlyphZero".to_vec())]});
+        fixed += 1;
+    }
+    fixed
+}
+
+/// Preserve a declared CID-zero space while giving it a real non-.notdef glyph.
+/// The content bytes and ToUnicode remain unchanged: a private encoding CMap
+/// routes character 0000 to a duplicate of the original blank charstring.
+pub(crate) fn fix_blank_cid_zero(doc: &mut Document) -> usize {
+    let ids: Vec<_> = doc.objects.keys().copied().collect();
+    let mut fixed = 0;
+    let mut cache = std::collections::HashMap::new();
+    let mut repaired_descendants = std::collections::HashSet::new();
+    for id in ids {
+        let Some(Object::Dictionary(font)) = doc.objects.get(&id) else {
+            continue;
+        };
+        if get_name(font, b"Subtype").as_deref() != Some("Type0")
+            || !tounicode_blank_cids(doc, font).contains(&0)
+        {
+            continue;
+        }
+        let vertical = match get_name(font, b"Encoding").as_deref() {
+            Some("Identity-H") => false,
+            Some("Identity-V") => continue, // W2 needs its own advance treatment.
+            _ => continue,
+        };
+        let Some(descendant) = font
+            .get(b"DescendantFonts")
+            .ok()
+            .map(|o| deref(doc, o))
+            .and_then(|o| o.as_array().ok())
+            .and_then(|a| a.first())
+            .and_then(|o| o.as_reference().ok())
+        else {
+            continue;
+        };
+        let Some(Object::Dictionary(cid)) = doc.objects.get(&descendant) else {
+            continue;
+        };
+        if get_name(cid, b"Subtype").as_deref() != Some("CIDFontType0") {
+            continue;
+        }
+        let Some(fd_id) = cid
+            .get(b"FontDescriptor")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
+        else {
+            continue;
+        };
+        let Some(Object::Dictionary(fd)) = doc.objects.get(&fd_id) else {
+            continue;
+        };
+        let Some(ff_id) = fd
+            .get(b"FontFile3")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
+        else {
+            continue;
+        };
+        let Some(info) = cid
+            .get(b"CIDSystemInfo")
+            .ok()
+            .map(|o| deref(doc, o))
+            .and_then(|o| o.as_dict().ok())
+            .cloned()
+        else {
+            continue;
+        };
+        // Require a direct W array (or no W); otherwise preserve rather than
+        // inventing a new width representation while repairing a different issue.
+        let mut widths = match cid.get(b"W") {
+            Ok(Object::Array(w)) => w.clone(),
+            Err(_) => vec![],
+            _ => continue,
+        };
+        // Existing W definitions must not overlap the new CID.
+        let mut at = 0;
+        let mut max_cid = 0i64;
+        let mut valid = true;
+        while at < widths.len() {
+            let Ok(start) = widths[at].as_i64() else {
+                valid = false;
+                break;
+            };
+            match widths.get(at + 1) {
+                Some(Object::Array(w)) => {
+                    max_cid = max_cid.max(start + w.len() as i64 - 1);
+                    at += 2;
+                }
+                Some(Object::Integer(end)) if at + 2 < widths.len() => {
+                    max_cid = max_cid.max(*end);
+                    at += 3;
+                }
+                _ => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if !valid || max_cid >= u16::MAX as i64 {
+            continue;
+        }
+        let (new_cid, width, replacement) = if let Some(&(new_cid, width)) = cache.get(&ff_id) {
+            (new_cid, width, None)
+        } else {
+            let Some(data) = read_embedded_font_data(doc, fd_id) else {
+                continue;
+            };
+            let Some(cff) = cff_parser::Table::parse(&data) else {
+                continue;
+            };
+            let Some(width) = cff
+                .glyph_width_f64_verapdf(cff_parser::GlyphId(0))
+                .map(|w| {
+                    (w * cff_matrix_scale(cff.glyph_fd_matrix(cff_parser::GlyphId(0)).sx)).round()
+                        as i64
+                })
+            else {
+                continue;
+            };
+            let Some((bytes, new_cid)) =
+                crate::cff_append::duplicate_blank_cid_zero(&data, (max_cid + 1) as u16)
+            else {
+                continue;
+            };
+            (new_cid, width, Some(bytes))
+        };
+        if !check_cid_widths_match(doc, descendant, &[(0, width)]) {
+            continue;
+        }
+        let already_repaired = repaired_descendants.contains(&descendant);
+        if !valid || (max_cid >= new_cid as i64 && !already_repaired) {
+            continue;
+        }
+        let cmap_name = format!("PdfABlankZero{}", id.0);
+        let info_def = lopdf::content::Content {
+            operations: vec![lopdf::content::Operation::new(
+                "def",
+                vec![
+                    Object::Name(b"CIDSystemInfo".to_vec()),
+                    Object::Dictionary(info.clone()),
+                ],
+            )],
+        }
+        .encode();
+        let Ok(info_def) = info_def else { continue };
+        let mut cmap = b"/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n".to_vec();
+        cmap.extend_from_slice(&info_def);
+        cmap.extend_from_slice(format!("\n/CMapName /{cmap_name} def\n/CMapType 1 def\n/WMode {} def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n2 begincidrange\n<0000> <0000> {new_cid}\n<0001> <FFFF> 1\nendcidrange\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n", i32::from(vertical)).as_bytes());
+        let encoding = doc.add_object(Stream::new(dictionary! {"Type" => "CMap", "CMapName" => Object::Name(cmap_name.into_bytes()), "CIDSystemInfo" => info, "WMode" => 0}, cmap));
+        if let Some(bytes) = replacement {
+            if let Some(Object::Stream(s)) = doc.objects.get_mut(&ff_id) {
+                s.set_plain_content(bytes);
+            }
+            cache.insert(ff_id, (new_cid, width));
+        }
+        if !already_repaired {
+            widths.extend([
+                Object::Integer(new_cid as i64),
+                Object::Array(vec![Object::Integer(width)]),
+            ]);
+            doc.get_dictionary_mut(descendant).unwrap().set("W", widths);
+            repaired_descendants.insert(descendant);
+        }
+        doc.get_dictionary_mut(id)
+            .unwrap()
+            .set("Encoding", encoding);
+        fixed += 1;
+    }
+    if fixed > 0 {
+        fix_cidset(doc);
+    }
+    fixed
+}
+
 /// The whitespace CIDs only, for callers that do not need the space itself.
 fn tounicode_blank_cids(
     doc: &Document,
@@ -22547,222 +22855,6 @@ fn fix_notdef_in_truetype(
     )
 }
 
-/// Fallback for fixing .notdef references when CFF parsing fails
-/// (i.e., PFB Type1 fonts or corrupt CFF data).
-///
-/// Two strategies:
-/// 1. Remap control characters (0-31) in Encoding/Differences to "space"
-///    so they don't resolve to .notdef through missing glyphs.
-/// 2. Remove control character bytes from content stream text strings.
-fn fix_notdef_control_chars_fallback(
-    doc: &mut Document,
-    font_id: ObjectId,
-    enc_info: &EncodingInfo,
-    first_char: u32,
-    _last_char: u32,
-) -> bool {
-    if first_char > 31 {
-        return false;
-    }
-
-    // Strategy 1: Remap control characters in Encoding/Differences to "space".
-    // For PFB fonts we can't determine available glyphs, but remapping control
-    // codes to "space" is always safe since they are non-printing.
-    let mut differences = enc_info.differences.clone();
-    let mut base_encoding = enc_info.base_encoding.clone();
-    let enc_ref = enc_info.enc_ref;
-
-    if let Some(ref_id) = enc_ref {
-        if let Some(Object::Dictionary(enc_dict)) = doc.objects.get(&ref_id) {
-            if base_encoding.is_empty() {
-                base_encoding = get_name(enc_dict, b"BaseEncoding").unwrap_or_default();
-            }
-            differences =
-                parse_differences_to_vec_from_object(doc, enc_dict.get(b"Differences").ok());
-        } else if let Some(Object::Name(n)) = doc.objects.get(&ref_id) {
-            base_encoding = String::from_utf8(n.clone()).unwrap_or_default();
-        }
-    }
-
-    if base_encoding.is_empty() {
-        base_encoding = "StandardEncoding".to_string();
-    }
-
-    // Remap existing Differences for control codes (0-31) to "space".
-    let replacements: Vec<(u32, String)> = differences
-        .iter()
-        .filter(|(code, name)| *code < 32 && name != "space" && name != ".notdef")
-        .map(|(code, _)| (*code, "space".to_string()))
-        .collect();
-
-    // Add new Differences for control codes not yet in the array.
-    let existing_codes: std::collections::HashSet<u32> =
-        differences.iter().map(|(c, _)| *c).collect();
-    let new_diffs: Vec<(u32, String)> = (first_char..32)
-        .filter(|c| !existing_codes.contains(c))
-        .map(|c| (c, "space".to_string()))
-        .collect();
-
-    let encoding_fixed = if !replacements.is_empty() || !new_diffs.is_empty() {
-        apply_encoding_fixes(
-            doc,
-            font_id,
-            &base_encoding,
-            &differences,
-            &replacements,
-            &new_diffs,
-            enc_ref,
-        )
-    } else {
-        false
-    };
-
-    // Strategy 2: Remove control character bytes from content streams.
-    let mut font_key: Option<Vec<u8>> = None;
-    let page_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
-    for pid in &page_ids {
-        let Some(Object::Dictionary(page)) = doc.objects.get(pid) else {
-            continue;
-        };
-        if get_name(page, b"Type").as_deref() != Some("Page") {
-            continue;
-        }
-        let resources = match page.get(b"Resources").ok() {
-            Some(Object::Dictionary(d)) => d.clone(),
-            Some(Object::Reference(r)) => match doc.get_object(*r) {
-                Ok(Object::Dictionary(d)) => d.clone(),
-                _ => continue,
-            },
-            _ => continue,
-        };
-        let fonts = match resources.get(b"Font").ok() {
-            Some(Object::Dictionary(d)) => d.clone(),
-            Some(Object::Reference(r)) => match doc.get_object(*r) {
-                Ok(Object::Dictionary(d)) => d.clone(),
-                _ => continue,
-            },
-            _ => continue,
-        };
-        for (key, val) in fonts.iter() {
-            if let Object::Reference(r) = val {
-                if *r == font_id {
-                    font_key = Some(key.clone());
-                    break;
-                }
-            }
-        }
-        if font_key.is_some() {
-            break;
-        }
-    }
-
-    let Some(fk) = font_key else {
-        return encoding_fixed;
-    };
-    let font_key_str = format!("/{}", String::from_utf8_lossy(&fk));
-
-    let mut stream_fixed = false;
-    let content_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
-    for cid in content_ids {
-        let is_stream = matches!(doc.objects.get(&cid), Some(Object::Stream(_)));
-        if !is_stream {
-            continue;
-        }
-        let content = {
-            let Some(Object::Stream(ref stream)) = doc.objects.get(&cid) else {
-                continue;
-            };
-            match stream.decompressed_content() {
-                Ok(data) => data,
-                Err(_) => continue,
-            }
-        };
-
-        let font_key_bytes = font_key_str.as_bytes();
-        if !content
-            .windows(font_key_bytes.len())
-            .any(|w| w == font_key_bytes)
-        {
-            continue;
-        }
-
-        // Check for any control character in string literals.
-        let has_control = content.windows(2).any(|w| w[0] == b'(' && w[1] < 32)
-            || content.iter().enumerate().any(|(i, &b)| {
-                b < 32
-                    && b != b'\n'
-                    && b != b'\r'
-                    && b != b'\t'
-                    && i > 0
-                    && content[..i]
-                        .iter()
-                        .rev()
-                        .take_while(|&&c| c != b'(' && c != b')')
-                        .count()
-                        < content[..i]
-                            .iter()
-                            .rev()
-                            .position(|&c| c == b'(')
-                            .unwrap_or(usize::MAX)
-            });
-        if !has_control {
-            continue;
-        }
-
-        // Remove all control characters (0-31) from PDF string literals in
-        // the content stream.
-        let mut new_content = Vec::with_capacity(content.len());
-        let mut i = 0;
-        let mut in_string = false;
-        let mut modified = false;
-        while i < content.len() {
-            if content[i] == b'(' && !in_string {
-                in_string = true;
-                new_content.push(content[i]);
-                i += 1;
-                continue;
-            }
-            if content[i] == b')' && in_string {
-                in_string = false;
-                new_content.push(content[i]);
-                i += 1;
-                continue;
-            }
-            if content[i] == b'\\' && in_string {
-                new_content.push(content[i]);
-                i += 1;
-                if i < content.len() {
-                    new_content.push(content[i]);
-                    i += 1;
-                }
-                continue;
-            }
-            if in_string && content[i] < 32 {
-                // Skip control character.
-                modified = true;
-                i += 1;
-                continue;
-            }
-            new_content.push(content[i]);
-            i += 1;
-        }
-
-        if modified {
-            let len = new_content.len() as i64;
-            let new_stream = lopdf::Stream::new(
-                lopdf::dictionary! {
-                    "Length" => len,
-                },
-                new_content,
-            );
-            doc.objects.insert(cid, Object::Stream(new_stream));
-            stream_fixed = true;
-        }
-    }
-
-    encoding_fixed || stream_fixed
-}
-
 /// Fix .notdef references in a Type1 (CFF) font.
 fn fix_notdef_in_type1(
     doc: &mut Document,
@@ -22790,17 +22882,17 @@ fn fix_notdef_in_type1(
     };
 
     if has_fontfile1 && looks_like_type1_fontfile(font_data) {
-        if fix_notdef_in_type1_fontfile(
+        // False means no repair was needed as well as unsupported input.
+        // Byte values below 32 are ordinary glyph codes in subset fonts;
+        // neither case authorizes replacing those glyphs with spaces.
+        return fix_notdef_in_type1_fontfile(
             doc, font_id, font_data, enc_info, first_char, last_char, is_subset,
-        ) {
-            return true;
-        }
-        return fix_notdef_control_chars_fallback(doc, font_id, enc_info, first_char, last_char);
+        );
     }
 
     let cff = cff_parser::Table::parse(font_data);
-    // If CFF parsing fails but we have control characters (0-31) in the range,
-    // still add Differences to remap them away from .notdef.
+    // Without a parseable program there is no evidence that a low byte is
+    // invalid. Preserve it rather than deleting potentially visible text.
     if cff.is_none() {
         if has_fontfile1
             && looks_like_type1_fontfile(font_data)
@@ -22810,7 +22902,7 @@ fn fix_notdef_in_type1(
         {
             return true;
         }
-        return fix_notdef_control_chars_fallback(doc, font_id, enc_info, first_char, last_char);
+        return false;
     }
     // SAFETY: the `cff.is_none()` branch returns early before this point.
     let cff = cff.expect("cff.is_none() branch returns above");
@@ -22830,7 +22922,7 @@ fn fix_notdef_in_type1(
     // If CFF has no usable glyphs (only .notdef), we can't remap via
     // Differences — fall back to content stream modification.
     if available_glyphs.is_empty() {
-        return fix_notdef_control_chars_fallback(doc, font_id, enc_info, first_char, last_char);
+        return false;
     }
 
     // Also handle referenced encoding dicts.
@@ -27697,5 +27789,286 @@ mod storage_regression_tests {
             "stream dictionary changes the interpretation of the program"
         );
         assert!(doc.objects.contains_key(&special));
+    }
+}
+
+#[cfg(test)]
+mod round2_font_tests {
+    use super::*;
+
+    #[test]
+    fn single_cff_zero_keeps_code_and_shared_program_private() {
+        let data = crate::cff_append::tests::synth_cff(&[], 0);
+        let mut doc = Document::with_version("1.4");
+        let stream = doc.add_object(Stream::new(dictionary! {"Subtype"=>"Type1C"}, data.clone()));
+        let fd = doc.add_object(dictionary! {"Type"=>"FontDescriptor", "FontFile3"=>stream});
+        let f = doc.add_object(dictionary! {"Type"=>"Font", "Subtype"=>"Type1", "FirstChar"=>0, "LastChar"=>0, "Widths"=>vec![0.into()], "Encoding"=>"WinAnsiEncoding", "FontDescriptor"=>fd});
+        assert_eq!(preserve_single_cff_zero(&mut doc), 1);
+        let font = doc.get_dictionary(f).unwrap();
+        assert_ne!(
+            font.get(b"FontDescriptor").unwrap().as_reference().unwrap(),
+            fd
+        );
+        assert!(control_codes_to_preserve(&doc, font, "Type1", true).contains(&0));
+        assert_eq!(
+            doc.get_object(stream).unwrap().as_stream().unwrap().content,
+            data
+        );
+        assert_eq!(preserve_single_cff_zero(&mut doc), 0);
+    }
+
+    #[test]
+    fn valid_low_byte_type1_glyph_is_not_a_control_character() {
+        let mut key = 4330u16;
+        let charstring: Vec<u8> = [0, 0, 0, 0, 139, 248, 136, 13, 14]
+            .iter()
+            .map(|p| {
+                let c = p ^ (key >> 8) as u8;
+                key = (c as u16)
+                    .wrapping_add(key)
+                    .wrapping_mul(52845)
+                    .wrapping_add(22719);
+                c
+            })
+            .collect();
+        let mut private = b"dup /Private 8 dict dup begin\n/lenIV 4 def\n/CharStrings 2 dict dup begin\n/alpha 9 RD ".to_vec();
+        private.extend_from_slice(&charstring);
+        private.extend_from_slice(b" ND\n/.notdef 9 RD ");
+        private.extend_from_slice(&charstring);
+        private.extend_from_slice(b" ND\nend end\n");
+        let mut data = b"%!PS-AdobeFont-1.0: Owned 1.0\n/FontMatrix [0.001 0 0 0.001 0 0] def\n/Encoding 256 array dup 11 /alpha put def\ncurrentfile eexec\n".to_vec();
+        data.extend_from_slice(&type1_binary_eexec_encrypt(&private, 0xAA));
+        assert!(parse_type1_program(&data)
+            .unwrap()
+            .charstring_widths
+            .contains_key("alpha"));
+        let mut doc = Document::with_version("1.7");
+        let program = doc.add_object(Stream::new(dictionary! {}, data.clone()));
+        let descriptor = doc.add_object(
+            dictionary! {"Type" => "FontDescriptor", "FontFile" => program, "Flags" => 4},
+        );
+        let encoding = doc.add_object(dictionary! {"Differences" => vec![Object::Integer(11), Object::Name(b"alpha".to_vec())]});
+        let font = doc.add_object(dictionary! {"Type" => "Font", "Subtype" => "Type1", "BaseFont" => "ABCDEF+Owned", "FirstChar" => 11, "LastChar" => 11, "FontDescriptor" => descriptor, "Encoding" => encoding});
+        let info = extract_encoding_info(&doc, doc.get_dictionary(font).unwrap());
+        let before = doc.objects.clone();
+        assert!(!fix_notdef_in_type1(
+            &mut doc, font, &data, &info, 11, 11, true
+        ));
+        assert_eq!(doc.objects, before);
+    }
+
+    #[test]
+    fn cid_zero_aliases_keep_advances_unicode_and_existing_glyphs() {
+        let mut doc = Document::with_version("1.7");
+        let program = doc.add_object(Stream::new(
+            dictionary! {"Subtype" => "CIDFontType0C"},
+            crate::cff_append::tests::synth_cid_cff(),
+        ));
+        let descriptor =
+            doc.add_object(dictionary! {"Type" => "FontDescriptor", "FontFile3" => program});
+        let cid = doc.add_object(dictionary! {"Type" => "Font", "Subtype" => "CIDFontType0", "FontDescriptor" => descriptor, "DW" => 500, "CIDSystemInfo" => dictionary! {"Registry" => Object::string_literal("Adobe"), "Ordering" => Object::string_literal("Identity"), "Supplement" => 0}});
+        let unicode = doc.add_object(Stream::new(
+            dictionary! {},
+            b"1 beginbfchar\n<0000> <0020>\nendbfchar\n".to_vec(),
+        ));
+        let fonts: Vec<_> = (0..2).map(|_| doc.add_object(dictionary! {"Type" => "Font", "Subtype" => "Type0", "Encoding" => "Identity-H", "DescendantFonts" => vec![Object::Reference(cid)], "ToUnicode" => unicode})).collect();
+        assert_eq!(fix_blank_cid_zero(&mut doc), 2);
+        for font in fonts {
+            let font = doc.get_dictionary(font).unwrap();
+            assert_eq!(
+                font.get(b"ToUnicode").unwrap().as_reference().unwrap(),
+                unicode
+            );
+            let encoding = doc
+                .get_object(font.get(b"Encoding").unwrap().as_reference().unwrap())
+                .unwrap()
+                .as_stream()
+                .unwrap();
+            assert!(String::from_utf8_lossy(&encoding.content).contains("<0000> <0000> 2"));
+        }
+        assert!(check_cid_widths_match(&doc, cid, &[(0, 500), (2, 500)]));
+        assert_eq!(
+            doc.get_dictionary(cid)
+                .unwrap()
+                .get(b"W")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let bytes = read_embedded_font_data(&doc, descriptor).unwrap();
+        assert_eq!(
+            cff_parser::Table::parse(&bytes).unwrap().number_of_glyphs(),
+            3
+        );
+        assert_eq!(fix_blank_cid_zero(&mut doc), 0);
+    }
+
+    #[test]
+    fn captures_character_meaning_before_symbolic_encoding_is_removed() {
+        let mut doc = Document::with_version("1.7");
+        let descriptor = doc.add_object(dictionary! {"Type" => "FontDescriptor", "Flags" => 4});
+        let encoding = doc.add_object(dictionary! {"Type" => "Encoding", "BaseEncoding" => "WinAnsiEncoding", "Differences" => vec![Object::Integer(1), Object::Name(b"A".to_vec()), Object::Name(b"space".to_vec())]});
+        let font = doc.add_object(dictionary! {"Type" => "Font", "Subtype" => "TrueType", "BaseFont" => "Owned", "FontDescriptor" => descriptor, "Encoding" => encoding});
+        assert_eq!(preserve_symbolic_text_mapping(&mut doc), 1);
+        doc.get_dictionary_mut(font).unwrap().remove(b"Encoding");
+        assert_eq!(fix_type1_tounicode_from_encoding(&mut doc), 0);
+        let map = doc
+            .get_dictionary(font)
+            .unwrap()
+            .get(b"ToUnicode")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let content = &doc.get_object(map).unwrap().as_stream().unwrap().content;
+        let text = String::from_utf8_lossy(content);
+        assert!(text.contains("<01> <0041>"), "{text}");
+        assert!(text.contains("<02> <0020>"));
+    }
+
+    #[test]
+    fn indirect_descendant_array_does_not_trigger_a_second_font_embedding() {
+        let mut doc = Document::with_version("1.7");
+        let data = super::symbolic_subset_fixtures::build_symbolic_subset_ttf(0);
+        let program = doc.add_object(Stream::new(dictionary! {}, data));
+        let descriptor = doc.add_object(
+            dictionary! {"Type" => "FontDescriptor", "FontName" => "Owned", "FontFile2" => program},
+        );
+        let descendant = doc.add_object(dictionary! {"Type" => "Font", "Subtype" => "CIDFontType2", "FontDescriptor" => descriptor, "BaseFont" => "Owned"});
+        let descendants = doc.add_object(vec![Object::Reference(descendant)]);
+        let font = doc.add_object(dictionary! {"Type" => "Font", "Subtype" => "Type0", "BaseFont" => "Owned", "DescendantFonts" => descendants});
+        assert!(find_non_embedded_fonts(&doc).is_empty());
+        assert!(!doc.get_dictionary(font).unwrap().has(b"FontDescriptor"));
+    }
+
+    #[test]
+    fn promotes_fonts_inside_forms_and_indirect_resource_maps_without_orphans() {
+        let mut doc = Document::with_version("1.7");
+        let fonts = doc.add_object(dictionary! {"F1" => dictionary! {"Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Courier"}});
+        let resources = doc.add_object(dictionary! {"Font" => fonts});
+        let form = doc.add_object(Stream::new(
+            dictionary! {"Type" => "XObject", "Subtype" => "Form", "Resources" => resources},
+            vec![],
+        ));
+        let nested = doc.add_object(Stream::new(dictionary! {"Type" => "XObject", "Subtype" => "Form", "Resources" => dictionary! {"Font" => dictionary! {"F2" => dictionary! {"Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"}}}}, vec![]));
+        let count = doc.objects.len();
+        assert_eq!(promote_inline_font_dicts(&mut doc), 2);
+        assert_eq!(doc.objects.len(), count + 2);
+        assert_eq!(promote_inline_font_dicts(&mut doc), 0);
+        assert!(doc
+            .get_dictionary(fonts)
+            .unwrap()
+            .get(b"F1")
+            .unwrap()
+            .as_reference()
+            .is_ok());
+        let r = doc
+            .get_object(nested)
+            .unwrap()
+            .as_stream()
+            .unwrap()
+            .dict
+            .get(b"Resources")
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        assert!(r
+            .get(b"Font")
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"F2")
+            .unwrap()
+            .as_reference()
+            .is_ok());
+        assert!(doc.get_object(form).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod native_cff_encoding_tests {
+    use super::*;
+
+    #[test]
+    fn mathematical_cff_names_produce_unicode_instead_of_character_code_identity() {
+        let names = [
+            ("circleplus", '\u{2295}'),
+            ("prime", '\u{2032}'),
+            ("asteriskmath", '\u{2217}'),
+        ];
+        let glyph_names: Vec<_> = names.iter().map(|(name, _)| *name).collect();
+        let data = crate::cff_append::tests::synth_named_cff(&glyph_names, &[1, 2, 32]);
+        let mut doc = Document::with_version("1.7");
+        let program = doc.add_object(Stream::new(dictionary! {"Subtype"=>"Type1C"}, data));
+        let descriptor = doc.add_object(dictionary! {"FontFile3"=>program});
+        let font = doc.add_object(
+            dictionary! {"Type"=>"Font","Subtype"=>"Type1","FontDescriptor"=>descriptor},
+        );
+        preserve_custom_cff_encoding(&mut doc);
+        fix_type1_tounicode_from_encoding(&mut doc);
+        let mapping =
+            read_font_to_unicode_map(&doc, doc.get_object(font).unwrap().as_dict().unwrap());
+        for ((_, expected), code) in names.iter().zip([1, 2, 32]) {
+            assert_eq!(mapping.get(&code), Some(expected));
+        }
+        assert_eq!(mapping.get(&161), Some(&'\u{2217}'));
+    }
+
+    #[test]
+    fn native_codes_survive_notdef_and_control_repairs_without_rewriting_shared_encoding() {
+        let data = crate::cff_append::tests::synth_cff_with_supplement(
+            &[34, 35, 36],
+            &[1, 65, 32],
+            (161, 36),
+        );
+        let mut doc = Document::with_version("1.7");
+        let program = doc.add_object(Stream::new(dictionary! {"Subtype"=>"Type1C"}, data.clone()));
+        let descriptor=doc.add_object(dictionary! {"Type"=>"FontDescriptor","FontName"=>"ABCDEF+Owned","Flags"=>32,"FontFile3"=>program});
+        let encoding = doc
+            .add_object(dictionary! {"Differences"=>vec![65.into(),Object::Name(b"C".to_vec())]});
+        let font=doc.add_object(dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"ABCDEF+Owned","FontDescriptor"=>descriptor,"Encoding"=>encoding,"FirstChar"=>1,"LastChar"=>161,"Widths"=>vec![Object::Integer(0);161]});
+        let pages = doc.new_object_id();
+        let tokens = b"BT /F 12 Tf <014120A1> Tj ET".to_vec();
+        let content = doc.add_object(Stream::new(dictionary! {}, tokens.clone()));
+        let page=doc.add_object(dictionary! {"Type"=>"Page","Parent"=>pages,"Contents"=>content,"Resources"=>dictionary! {"Font"=>dictionary! {"F"=>font}}});
+        doc.objects.insert(
+            pages,
+            Object::Dictionary(
+                dictionary! {"Type"=>"Pages","Kids"=>vec![Object::Reference(page)],"Count"=>1},
+            ),
+        );
+        let root = doc.add_object(dictionary! {"Type"=>"Catalog","Pages"=>pages});
+        doc.trailer.set("Root", root);
+        let original_encoding = doc.get_object(encoding).unwrap().clone();
+        assert_eq!(preserve_custom_cff_encoding(&mut doc), 1);
+        assert_eq!(preserve_custom_cff_encoding(&mut doc), 0);
+        fix_notdef_glyph_refs(&mut doc);
+        fix_simple_font_streams(&mut doc);
+        let font = doc.get_object(font).unwrap().as_dict().unwrap();
+        let (_, differences) = get_simple_encoding_info(&doc, font);
+        assert_eq!(differences.get(&1).map(String::as_str), Some("A"));
+        assert_eq!(differences.get(&65).map(String::as_str), Some("C"));
+        assert_eq!(differences.get(&32).map(String::as_str), Some("C"));
+        assert_eq!(differences.get(&161).map(String::as_str), Some("C"));
+        assert_eq!(doc.get_object(encoding).unwrap(), &original_encoding);
+        assert_eq!(
+            doc.get_object(program)
+                .unwrap()
+                .as_stream()
+                .unwrap()
+                .get_plain_content()
+                .unwrap(),
+            data
+        );
+        assert_eq!(
+            doc.get_object(content)
+                .unwrap()
+                .as_stream()
+                .unwrap()
+                .get_plain_content()
+                .unwrap(),
+            tokens
+        );
     }
 }

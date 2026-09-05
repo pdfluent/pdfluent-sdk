@@ -107,60 +107,6 @@ pub fn has_pdfa_output_intent(doc: &Document) -> bool {
     })
 }
 
-/// Check if the existing OutputIntent already uses a CMYK ICC profile.
-fn existing_output_intent_is_cmyk(doc: &Document) -> bool {
-    existing_output_intent_has_n(doc, 4)
-}
-
-/// Check if the existing OutputIntent already uses an RGB (sRGB) ICC profile.
-fn existing_output_intent_has_srgb(doc: &Document) -> bool {
-    existing_output_intent_has_n(doc, 3)
-}
-
-/// Check if any OutputIntent has an ICC profile with the given N value.
-fn existing_output_intent_has_n(doc: &Document, expected_n: i64) -> bool {
-    let catalog = match get_catalog(doc) {
-        Some(c) => c,
-        None => return false,
-    };
-
-    let intents = match catalog.get(b"OutputIntents").ok() {
-        Some(Object::Array(arr)) => arr,
-        Some(Object::Reference(id)) => {
-            if let Some(Object::Array(arr)) = doc.objects.get(id) {
-                arr
-            } else {
-                return false;
-            }
-        }
-        _ => return false,
-    };
-
-    for item in intents {
-        let dict = match item {
-            Object::Reference(id) => {
-                if let Some(Object::Dictionary(d)) = doc.objects.get(id) {
-                    d
-                } else {
-                    continue;
-                }
-            }
-            Object::Dictionary(d) => d,
-            _ => continue,
-        };
-        if let Ok(Object::Reference(icc_id)) = dict.get(b"DestOutputProfile") {
-            if let Some(Object::Stream(icc_stream)) = doc.objects.get(icc_id) {
-                if let Ok(Object::Integer(n)) = icc_stream.dict.get(b"N") {
-                    if *n == expected_n {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
 /// Find the DestOutputProfile indirect reference of any OutputIntent
 /// already present in the document, regardless of colour space.
 ///
@@ -171,8 +117,8 @@ fn existing_output_intent_has_n(doc: &Document, expected_n: i64) -> bool {
 /// CMYK doc with an existing FOGRA/CMYK OutputIntent; adding a *second*,
 /// sRGB one used to violate 6.2.3:2 on essentially every such document,
 /// and vice versa for CMYK-adding on an RGB source). Both
-/// `add_srgb_output_intent` and `add_cmyk_output_intent` must reuse
-/// whatever is already there instead of minting a new ICC stream.
+/// `add_srgb_output_intent` reuses an existing characterization instead of
+/// minting a different ICC stream.
 fn find_existing_dest_output_profile(doc: &Document) -> Option<lopdf::ObjectId> {
     let catalog = get_catalog(doc);
     catalog.and_then(|cat| {
@@ -267,35 +213,15 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
             .collect()
     };
 
-    // Also scan for DeviceCMYK usage in content streams and image XObjects.
-    let has_cmyk =
-        unique_names.iter().any(|n| n.contains("DeviceCMYK")) || has_device_cmyk_in_objects(doc);
-    let has_rgb =
-        unique_names.iter().any(|n| n.contains("DeviceRGB")) || has_device_rgb_in_streams(doc);
-
-    // Ensure an OutputIntent exists for each device-dependent color space used.
-    // PDF/A-2 allows multiple OutputIntent entries (one per color space).
-    // When both DeviceRGB and DeviceCMYK are present, we need both an sRGB
-    // and a CMYK OutputIntent to avoid veraPDF 6.2.4.3 failures. (#648)
+    // One archival output condition is sufficient. Device spaces are
+    // characterized by the Default* profiles below. The compact CMYK profile
+    // is an input characterization (scnr), not a valid PDF/A output profile.
+    // Preserve any existing output condition and otherwise use sRGB (mntr).
     let output_intent_added = if !had_output_intent {
-        if has_cmyk {
-            add_cmyk_output_intent(doc)?;
-        }
-        if has_rgb || !has_cmyk {
-            add_srgb_output_intent(doc)?;
-        }
+        add_srgb_output_intent(doc)?;
         true
     } else {
-        let mut added = false;
-        if has_cmyk && !existing_output_intent_is_cmyk(doc) {
-            add_cmyk_output_intent(doc)?;
-            added = true;
-        }
-        if (has_rgb || !has_cmyk) && !existing_output_intent_has_srgb(doc) {
-            add_srgb_output_intent(doc)?;
-            added = true;
-        }
-        added
+        false
     };
 
     // Always add Default{CMYK,RGB,Gray} to all pages — even if we don't detect
@@ -333,203 +259,7 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
     })
 }
 
-/// Check if any object in the document uses DeviceCMYK.
-/// Detects DeviceCMYK in:
-/// - Image XObject dict /ColorSpace
-/// - Shading dict /ColorSpace (/ShadingType present)
-/// - Pattern dict /ColorSpace (/PatternType present)
-/// - Separation/DeviceN/NChannel alternate colorspace (index 2)
-/// - DeviceN Process/ColorSpace attribute
-/// - Inline images in content streams (BI ... /CS /CMYK ... ID ... EI)
-/// - ICCBased streams with /N 4
-/// - Content stream CMYK operators (k/K)
-fn has_device_cmyk_in_objects(doc: &Document) -> bool {
-    let mut visited: std::collections::HashSet<ObjectId> = std::collections::HashSet::new();
-    let mut stack: Vec<&Object> = doc.objects.values().collect();
-    while let Some(obj) = stack.pop() {
-        match obj {
-            Object::Dictionary(dict) => {
-                if get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
-                    return true;
-                }
-                if dict.get(b"ShadingType").is_ok()
-                    && get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK")
-                {
-                    return true;
-                }
-                if dict.get(b"PatternType").ok().and_then(|o| o.as_i64().ok()) == Some(2) {
-                    if let Ok(Object::Dictionary(shading)) = dict.get(b"Shading") {
-                        if get_name(shading, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
-                            return true;
-                        }
-                        for (_, val) in shading.iter() {
-                            match val {
-                                Object::Reference(ref_id) => {
-                                    if visited.insert(*ref_id) {
-                                        if let Some(resolved) = doc.objects.get(ref_id) {
-                                            stack.push(resolved);
-                                        }
-                                    }
-                                }
-                                _ => stack.push(val),
-                            }
-                        }
-                    }
-                }
-                if (dict.get(b"PatternType").is_ok()
-                    || get_name(dict, b"Type").as_deref() == Some("Pattern"))
-                    && get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK")
-                {
-                    return true;
-                }
-                for (_, val) in dict.iter() {
-                    match val {
-                        Object::Reference(ref_id) => {
-                            if visited.insert(*ref_id) {
-                                if let Some(resolved) = doc.objects.get(ref_id) {
-                                    stack.push(resolved);
-                                }
-                            }
-                        }
-                        _ => stack.push(val),
-                    }
-                }
-            }
-            Object::Stream(stream) => {
-                if get_name(&stream.dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
-                    return true;
-                }
-                if stream.dict.get(b"ShadingType").is_ok()
-                    && get_name(&stream.dict, b"ColorSpace").as_deref() == Some("DeviceCMYK")
-                {
-                    return true;
-                }
-                if stream
-                    .dict
-                    .get(b"PatternType")
-                    .ok()
-                    .and_then(|o| o.as_i64().ok())
-                    == Some(2)
-                {
-                    if let Ok(Object::Dictionary(shading)) = stream.dict.get(b"Shading") {
-                        if get_name(shading, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
-                            return true;
-                        }
-                    }
-                }
-                let is_pattern = stream.dict.get(b"PatternType").is_ok()
-                    || get_name(&stream.dict, b"Type").as_deref() == Some("Pattern");
-                if is_pattern
-                    && get_name(&stream.dict, b"ColorSpace").as_deref() == Some("DeviceCMYK")
-                {
-                    return true;
-                }
-                if stream.dict.get(b"N").is_ok() {
-                    if let Ok(Object::Integer(n)) = stream.dict.get(b"N") {
-                        if *n == 4 {
-                            return true;
-                        }
-                    }
-                }
-                if (get_name(&stream.dict, b"Type").as_deref() == Some("XObject")
-                    || stream.dict.get(b"Type").is_err())
-                    && content_has_cmyk(&stream.content)
-                {
-                    return true;
-                }
-                for (_, val) in stream.dict.iter() {
-                    match val {
-                        Object::Reference(ref_id) => {
-                            if visited.insert(*ref_id) {
-                                if let Some(resolved) = doc.objects.get(ref_id) {
-                                    stack.push(resolved);
-                                }
-                            }
-                        }
-                        _ => stack.push(val),
-                    }
-                }
-            }
-            Object::Array(arr) => {
-                if arr.len() >= 4 {
-                    if let Object::Name(cs_type) = &arr[0] {
-                        if cs_type == b"Separation"
-                            || cs_type == b"DeviceN"
-                            || cs_type == b"NChannel"
-                            || cs_type == b"DeviceCMYK"
-                        {
-                            match &arr[2] {
-                                Object::Name(n) if n == b"DeviceCMYK" => return true,
-                                Object::Reference(ref_id) => {
-                                    if let Some(Object::Name(n)) = doc.objects.get(ref_id) {
-                                        if n == b"DeviceCMYK" {
-                                            return true;
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    if let Object::Name(name) = &arr[0] {
-                        if (name == b"DeviceN" || name == b"NChannel") && arr.len() > 4 {
-                            if let Some(Object::Dictionary(attrs)) = arr.get(4) {
-                                if let Ok(Object::Dictionary(process)) = attrs.get(b"Process") {
-                                    match process.get(b"ColorSpace").ok() {
-                                        Some(Object::Name(n)) if n == b"DeviceCMYK" => {
-                                            return true;
-                                        }
-                                        Some(Object::Reference(ref_id)) => {
-                                            if let Some(Object::Name(n)) = doc.objects.get(ref_id) {
-                                                if n == b"DeviceCMYK" {
-                                                    return true;
-                                                }
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                for item in arr {
-                    match item {
-                        Object::Reference(ref_id) => {
-                            if visited.insert(*ref_id) {
-                                if let Some(resolved) = doc.objects.get(ref_id) {
-                                    stack.push(resolved);
-                                }
-                            }
-                        }
-                        _ => stack.push(item),
-                    }
-                }
-            }
-            Object::Reference(ref_id) if visited.insert(*ref_id) => {
-                if let Some(resolved) = doc.objects.get(ref_id) {
-                    stack.push(resolved);
-                }
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-/// Whether the document uses an RGB colour space anywhere a name-level scan
-/// cannot see it: an inline image (`BI … /CS /DeviceRGB … ID … EI`), which
-/// lives inside a content stream and is not an object at all, or a
-/// three-component ICCBased profile, which is RGB by definition.
-///
-/// Needed because the object-level DeviceRGB XObjects are converted to
-/// ICCBased before this pass runs, so by the time the OutputIntent decision is
-/// made an inline image can be the only RGB usage left — and without an sRGB
-/// OutputIntent that document is not conformant (govdocs holdout 104_104177).
-///
-/// Errs towards finding RGB: a false positive only adds an sRGB OutputIntent
-/// beside the CMYK one, which PDF/A-2 explicitly allows (one per colour
-/// space), while a false negative is a validation failure.
+#[cfg(test)]
 fn has_device_rgb_in_streams(doc: &Document) -> bool {
     doc.objects.values().any(|obj| {
         let Object::Stream(stream) = obj else {
@@ -550,6 +280,7 @@ fn has_device_rgb_in_streams(doc: &Document) -> bool {
 }
 
 /// PostScript whitespace, as the content-stream lexer sees it.
+#[cfg(test)]
 fn is_cs_space(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0x0c | 0)
 }
@@ -566,6 +297,7 @@ fn is_cs_space(b: u8) -> bool {
 /// anywhere, 29 inline RGB images, and 58 §6.2.4.3:2 failures because the
 /// document had been given a CMYK output intent on the strength of a byte
 /// pair in image data).
+#[cfg(test)]
 fn has_cmyk_operator(content: &[u8]) -> bool {
     let is_num = |b: u8| b.is_ascii_digit() || b == b'.' || b == b'-' || b == b'+';
 
@@ -609,222 +341,20 @@ fn has_cmyk_operator(content: &[u8]) -> bool {
     false
 }
 
-fn content_has_cmyk(content: &[u8]) -> bool {
-    if has_cmyk_operator(content) {
-        return true;
-    }
-    let content_str = String::from_utf8_lossy(content);
-    let bi_start = match content_str.find("BI") {
-        Some(pos) => pos,
-        None => return false,
-    };
-    let after_bi = &content_str[bi_start..];
-    let ei_idx = match after_bi.find("EI") {
-        Some(pos) => pos,
-        None => return false,
-    };
-    let inline_img = &after_bi[..ei_idx];
-    if inline_img.contains("/CS /CMYK")
-        || inline_img.contains("/CS/CMYK")
-        || inline_img.contains("/CS /DeviceCMYK")
-        || inline_img.contains("/CS/DeviceCMYK")
-        || inline_img.contains("/ColorSpace /CMYK")
-        || inline_img.contains("/ColorSpace/DeviceCMYK")
-    {
-        return true;
-    }
-    false
-}
-
-/// Add a CMYK OutputIntent to the document for PDF/A compliance.
-///
-/// See [`find_existing_dest_output_profile`] for why an existing
-/// DestOutputProfile (of any colour space) is reused when present.
-fn add_cmyk_output_intent(doc: &mut Document) -> Result<()> {
-    let icc_id = match find_existing_dest_output_profile(doc) {
-        Some(id) => id,
-        None => {
-            let icc_bytes = cmyk_icc_profile_bytes();
-            let icc_dict = dictionary! {
-                "N" => Object::Integer(4),
-                "Alternate" => Object::Name(b"DeviceCMYK".to_vec()),
-            };
-            let icc_stream = Stream::new(icc_dict, icc_bytes);
-            doc.add_object(Object::Stream(icc_stream))
-        }
-    };
-
-    let intent = dictionary! {
-        "Type" => Object::Name(b"OutputIntent".to_vec()),
-        "S" => Object::Name(b"GTS_PDFA1".to_vec()),
-        "OutputConditionIdentifier" => Object::String(
-            b"FOGRA39".to_vec(),
-            lopdf::StringFormat::Literal,
-        ),
-        "RegistryName" => Object::String(
-            b"http://www.color.org".to_vec(),
-            lopdf::StringFormat::Literal,
-        ),
-        "Info" => Object::String(
-            b"Coated FOGRA39 (ISO 12647-2:2004)".to_vec(),
-            lopdf::StringFormat::Literal,
-        ),
-        "DestOutputProfile" => Object::Reference(icc_id),
-    };
-    let intent_id = doc.add_object(Object::Dictionary(intent));
-
-    let catalog_id = get_catalog_id(doc)?;
-    if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
-        let mut existing = match catalog.get(b"OutputIntents") {
-            Ok(Object::Array(arr)) => arr.clone(),
-            _ => Vec::new(),
-        };
-        existing.push(Object::Reference(intent_id));
-        catalog.set("OutputIntents", Object::Array(existing));
-    }
-
-    Ok(())
-}
-
-/// Minimal CMYK ICC v2 profile (4-component).
-/// Based on FOGRA39 (coated) with identity CMYK→Lab transform.
+/// The same complete CMYK characterization already used by the renderer.
+/// The previous 416-byte placeholder omitted the LUT input/output tables and
+/// color lookup grid; readers could not perform a valid ICC transformation.
 fn cmyk_icc_profile_bytes() -> Vec<u8> {
-    // Layout:
-    //   0..128   header
-    //   128..132 tag count (5)
-    //   132..192 5 tag entries (12 bytes each)
-    //   192..290 desc tag data (98 bytes)
-    //   290..292 padding (2 bytes for 4-byte alignment)
-    //   292..304 cprt tag data (12 bytes)
-    //   304..324 wtpt tag data (20 bytes)
-    //   324..370 A2B0 tag (46 bytes: lut8Type with identity)
-    //   370..416 B2A0 tag (46 bytes: lut8Type with identity)
-    //
-    // Simplified: we use a minimal valid structure.
-    let total_size: u32 = 416;
-    let mut p = Vec::with_capacity(total_size as usize);
-
-    // === Header (128 bytes) ===
-    p.extend_from_slice(&total_size.to_be_bytes());
-    p.extend_from_slice(b"\0\0\0\0"); // preferred CMM
-    p.extend_from_slice(&[2, 0x10, 0, 0]); // version 2.1.0
-    p.extend_from_slice(b"prtr"); // device class: output (printer)
-    p.extend_from_slice(b"CMYK"); // color space
-    p.extend_from_slice(b"Lab "); // PCS
-    p.extend_from_slice(&[0u8; 12]); // date/time
-    p.extend_from_slice(b"acsp"); // signature
-    p.extend_from_slice(&[0u8; 4]); // platform
-    p.extend_from_slice(&[0u8; 4]); // flags
-    p.extend_from_slice(&[0u8; 4]); // manufacturer
-    p.extend_from_slice(&[0u8; 4]); // model
-    p.extend_from_slice(&[0u8; 8]); // device attributes
-    p.extend_from_slice(&[0u8; 4]); // rendering intent
-                                    // PCS illuminant D50
-    p.extend_from_slice(&0x0000F6D6_u32.to_be_bytes());
-    p.extend_from_slice(&0x00010000_u32.to_be_bytes());
-    p.extend_from_slice(&0x0000D32D_u32.to_be_bytes());
-    p.extend_from_slice(&[0u8; 4]); // creator
-    p.extend_from_slice(&[0u8; 16]); // profile ID
-    p.extend_from_slice(&[0u8; 128 - 100]); // reserved
-    debug_assert_eq!(p.len(), 128);
-
-    // === Tag table ===
-    p.extend_from_slice(&5_u32.to_be_bytes()); // 5 tags
-
-    let tags: &[(&[u8; 4], u32, u32)] = &[
-        (b"desc", 192, 98),
-        (b"cprt", 292, 12),
-        (b"wtpt", 304, 20),
-        (b"A2B0", 324, 46),
-        (b"B2A0", 370, 46),
-    ];
-    for (sig, offset, size) in tags {
-        p.extend_from_slice(*sig);
-        p.extend_from_slice(&offset.to_be_bytes());
-        p.extend_from_slice(&size.to_be_bytes());
-    }
-    debug_assert_eq!(p.len(), 192);
-
-    // === desc tag (textDescriptionType) — 95 bytes + 1 pad = 96 ===
-    p.extend_from_slice(b"desc");
-    p.extend_from_slice(&[0u8; 4]); // reserved
-    p.extend_from_slice(&8_u32.to_be_bytes()); // ASCII length
-    p.extend_from_slice(b"FOGRA39\0");
-    p.extend_from_slice(&[0u8; 4]); // Unicode language
-    p.extend_from_slice(&[0u8; 4]); // Unicode count
-    p.extend_from_slice(&[0u8; 2]); // ScriptCode code
-    p.push(0); // ScriptCode count
-    p.extend_from_slice(&[0u8; 67]); // ScriptCode string
-    debug_assert_eq!(p.len(), 290);
-    // Pad to 4-byte alignment for next tag at offset 292.
-    while p.len() < 292 {
-        p.push(0);
-    }
-    debug_assert_eq!(p.len(), 292);
-
-    // === cprt tag ===
-    p.extend_from_slice(b"text");
-    p.extend_from_slice(&[0u8; 4]);
-    p.extend_from_slice(b"CC0\0");
-    debug_assert_eq!(p.len(), 304);
-
-    // === wtpt (XYZType) ===
-    p.extend_from_slice(b"XYZ ");
-    p.extend_from_slice(&[0u8; 4]);
-    p.extend_from_slice(&0x0000F351_i32.to_be_bytes());
-    p.extend_from_slice(&0x00010000_i32.to_be_bytes());
-    p.extend_from_slice(&0x000116CC_i32.to_be_bytes());
-    debug_assert_eq!(p.len(), 324);
-
-    // === A2B0 tag (lut8Type) — CMYK→Lab identity-ish mapping ===
-    // Minimal lut8Type: 4 input, 3 output, 2 grid points
-    p.extend_from_slice(b"mft1"); // lut8Type signature
-    p.extend_from_slice(&[0u8; 4]); // reserved
-    p.push(4); // input channels
-    p.push(3); // output channels
-    p.push(2); // grid points
-    p.push(0); // padding
-               // 3x3 identity-ish matrix (fixed point s15.16) — for Lab PCS this is ignored
-               // but must be present: 9 * 4 = 36 bytes
-    let identity_row = [0x00010000_u32, 0, 0]; // [1.0, 0, 0]
-    for i in 0..3 {
-        for j in 0..3 {
-            let val = if i == j { identity_row[0] } else { 0u32 };
-            p.extend_from_slice(&val.to_be_bytes());
-        }
-    }
-    while p.len() < 370 {
-        p.push(0);
-    }
-
-    // === B2A0 tag (same structure) ===
-    p.extend_from_slice(b"mft1");
-    p.extend_from_slice(&[0u8; 4]);
-    p.push(3); // input channels (Lab)
-    p.push(4); // output channels (CMYK)
-    p.push(2); // grid points
-    p.push(0);
-    for i in 0..3 {
-        for j in 0..3 {
-            let val = if i == j { 0x00010000_u32 } else { 0u32 };
-            p.extend_from_slice(&val.to_be_bytes());
-        }
-    }
-    while p.len() < 416 {
-        p.push(0);
-    }
-
-    // Fix the profile size in header
-    let size_bytes = (p.len() as u32).to_be_bytes();
-    p[0..4].copy_from_slice(&size_bytes);
-
-    p
+    include_bytes!("../assets/CGATS001Compat-v2-micro.icc").to_vec()
 }
 
 /// sRGB ICC v2.1 profile with all required tags for PDF/A compliance.
 ///
 /// Contains 9 tags: desc, cprt, wtpt, rXYZ, gXYZ, bXYZ, rTRC, gTRC, bTRC.
-/// Uses D50-adapted sRGB primaries and gamma 2.2 TRC.
+/// Uses D50-adapted primaries and the IEC sRGB piecewise transfer curve.
+/// ICC v2 encodes that curve as a sampled curveType (4096 samples), rather
+/// than mislabeling a simple gamma-2.2 approximation as sRGB.
+/// Reference: https://registry.color.org/rgb-registry/files/sRGB.pdf
 fn srgb_icc_profile_bytes() -> Vec<u8> {
     // Layout:
     //   0..128   header
@@ -836,8 +366,8 @@ fn srgb_icc_profile_bytes() -> Vec<u8> {
     //   368..388 rXYZ tag data (20 bytes)
     //   388..408 gXYZ tag data (20 bytes)
     //   408..428 bXYZ tag data (20 bytes)
-    //   428..444 shared curv tag data (14 bytes + 2 pad)
-    let total_size: u32 = 444;
+    //   428..8632 shared curv tag data (12 + 4096 * 2 bytes)
+    let total_size: u32 = 8632;
     let mut p = Vec::with_capacity(total_size as usize);
 
     // === Header (128 bytes) ===
@@ -875,9 +405,9 @@ fn srgb_icc_profile_bytes() -> Vec<u8> {
         (b"rXYZ", 368, 20),
         (b"gXYZ", 388, 20),
         (b"bXYZ", 408, 20),
-        (b"rTRC", 428, 14),
-        (b"gTRC", 428, 14), // shared with rTRC
-        (b"bTRC", 428, 14), // shared with rTRC
+        (b"rTRC", 428, 8204),
+        (b"gTRC", 428, 8204), // shared with rTRC
+        (b"bTRC", 428, 8204), // shared with rTRC
     ];
     for (sig, offset, size) in tags {
         p.extend_from_slice(*sig);
@@ -915,8 +445,8 @@ fn srgb_icc_profile_bytes() -> Vec<u8> {
         p.extend_from_slice(&z.to_be_bytes());
     }
 
-    // wtpt — D50 media white point (X=0.9505, Y=1.0, Z=1.0891)
-    write_xyz(&mut p, 0x0000F351, 0x00010000, 0x000116CC);
+    // wtpt — D50, consistent with the adapted primaries and PCS.
+    write_xyz(&mut p, 0x0000F6D6, 0x00010000, 0x0000D32D);
     debug_assert_eq!(p.len(), 368);
 
     // rXYZ — Red primary (X=0.4361, Y=0.2225, Z=0.0139)
@@ -931,13 +461,21 @@ fn srgb_icc_profile_bytes() -> Vec<u8> {
     write_xyz(&mut p, 0x000024A1, 0x00000F85, 0x0000B6D4);
     debug_assert_eq!(p.len(), 428);
 
-    // === Shared curv tag (curveType with gamma 2.2) — 14 bytes + 2 pad ===
-    p.extend_from_slice(b"curv"); // type signature
-    p.extend_from_slice(&[0u8; 4]); // reserved
-    p.extend_from_slice(&1_u32.to_be_bytes()); // count=1 means gamma value
-    p.extend_from_slice(&[0x02, 0x33]); // u8Fixed8Number: gamma 2.19922 ≈ 2.2
-    p.extend_from_slice(&[0u8; 2]); // pad to 4-byte alignment
-    debug_assert_eq!(p.len(), 444);
+    // The linear toe matters: gamma 2.2 darkens neutral shades in readers
+    // that use real sRGB as their output space.
+    p.extend_from_slice(b"curv");
+    p.extend_from_slice(&[0u8; 4]);
+    p.extend_from_slice(&4096_u32.to_be_bytes());
+    for sample in 0..4096 {
+        let encoded = f64::from(sample) / 4095.0;
+        let linear = if encoded <= 0.04045 {
+            encoded / 12.92
+        } else {
+            ((encoded + 0.055) / 1.055).powf(2.4)
+        };
+        p.extend_from_slice(&((linear * 65535.0).round() as u16).to_be_bytes());
+    }
+    debug_assert_eq!(p.len(), total_size as usize);
 
     p
 }
@@ -2958,20 +2496,78 @@ mod tests {
     #[test]
     fn test_icc_profile_structure() {
         let profile = srgb_icc_profile_bytes();
-        assert_eq!(profile.len(), 444);
+        assert_eq!(profile.len(), 8632);
         // Header checks
         assert_eq!(&profile[36..40], b"acsp");
         assert_eq!(&profile[16..20], b"RGB ");
         assert_eq!(&profile[12..16], b"mntr");
         // Size field
         let size = u32::from_be_bytes([profile[0], profile[1], profile[2], profile[3]]);
-        assert_eq!(size, 444);
+        assert_eq!(size as usize, profile.len());
         // 9 tags
         let tag_count =
             u32::from_be_bytes([profile[128], profile[129], profile[130], profile[131]]);
         assert_eq!(tag_count, 9);
         // desc tag signature at first entry
         assert_eq!(&profile[132..136], b"desc");
+    }
+
+    #[test]
+    fn srgb_profile_uses_linear_toe_and_d50_adapted_white() {
+        let p = srgb_icc_profile_bytes();
+        assert_eq!(&p[356..368], &p[68..80]);
+        assert_eq!(u32::from_be_bytes(p[436..440].try_into().unwrap()), 4096);
+        let sample = |i: usize| {
+            f64::from(u16::from_be_bytes(
+                p[440 + 2 * i..442 + 2 * i].try_into().unwrap(),
+            )) / 65535.0
+        };
+        assert_eq!(sample(0), 0.0);
+        assert_eq!(sample(4095), 1.0);
+        assert!((sample(100) - (100.0 / 4095.0 / 12.92)).abs() < 1.0 / 65535.0);
+        assert!((sample(2048) - 0.214154).abs() < 0.00002);
+        for i in 1..4096 {
+            assert!(sample(i) >= sample(i - 1));
+        }
+    }
+
+    #[test]
+    fn cmyk_profile_contains_complete_color_transform_tables() {
+        let profile = cmyk_icc_profile_bytes();
+        let u32_at = |p: usize| u32::from_be_bytes(profile[p..p + 4].try_into().unwrap()) as usize;
+        assert_eq!(u32_at(0), profile.len());
+        assert_eq!(&profile[16..20], b"CMYK");
+        let mut found = false;
+        for i in 0..u32_at(128) {
+            let at = 132 + i * 12;
+            if &profile[at..at + 4] != b"A2B0" {
+                continue;
+            }
+            found = true;
+            let offset = u32_at(at + 4);
+            let length = u32_at(at + 8);
+            assert!(offset + length <= profile.len());
+            let tag = &profile[offset..offset + length];
+            let inputs = tag[8] as usize;
+            let outputs = tag[9] as usize;
+            assert_eq!(inputs, 4);
+            assert_eq!(outputs, 3);
+            let grid = tag[10] as usize;
+            let required = match &tag[..4] {
+                b"mft1" => 48 + inputs * 256 + grid.pow(inputs as u32) * outputs + outputs * 256,
+                b"mft2" => {
+                    let ni = u16::from_be_bytes(tag[48..50].try_into().unwrap()) as usize;
+                    let no = u16::from_be_bytes(tag[50..52].try_into().unwrap()) as usize;
+                    52 + 2 * (inputs * ni + grid.pow(inputs as u32) * outputs + outputs * no)
+                }
+                other => panic!("unexpected LUT signature {other:?}"),
+            };
+            assert!(
+                length >= required,
+                "a LUT header without its samples is not a usable transform"
+            );
+        }
+        assert!(found, "missing forward CMYK transform");
     }
 
     #[test]

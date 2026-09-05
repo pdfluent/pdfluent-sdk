@@ -1,0 +1,171 @@
+{
+  "description": "Confirmatory set frozen after serialization fixes, before evaluating this set. Excludes all 300, established 500/SSIM50 and first 93 evaluation hashes and known source paths. Unknown historical usage outside this checkout is not asserted.",
+  "selection": "Target 20 per source; sorted PDF paths at the same pinned commits, 1 KB\u20132 MB, shuffle seed 3392026090502; first 180 candidates per source; first 20 downloadable hash-disjoint inputs retained, before any output evaluation.",
+  "sources": {
+    "pdfjs": {
+      "repo": "mozilla/pdf.js",
+      "commit": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "licence": "Apache-2.0",
+      "provenance": "Mozilla pdf.js test suite (test/pdfs/), redistributed by Mozilla under Apache-2.0. Fetched by URL at the pinned commit; never committed to this repository.",
+      "raw_base": "https://raw.githubusercontent.com/mozilla/pdf.js/a815e4f8f0f25ab305ee21752ccf832156f7ab58/"
+    },
+    "pdfbox": {
+      "repo": "apache/pdfbox",
+      "commit": "b9de8299ef80efc8bd7f3fddb5c8a3c63ee07a5c",
+      "licence": "Apache-2.0",
+      "provenance": "Apache PDFBox test resources, redistributed by the Apache Software Foundation under Apache-2.0. Fetched by URL at the pinned commit; never committed to this repository.",
+      "raw_base": "https://raw.githubusercontent.com/apache/pdfbox/b9de8299ef80efc8bd7f3fddb5c8a3c63ee07a5c/"
+    }
+  },
+  "total": 21,
+  "entries": [
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue925.pdf",
+      "sha256": "c6ffc08443e46174b5a8b2d71adc7ecc4454a7fabcedbf24cdfb9b96f1822603",
+      "bytes": 80185,
+      "name": "pdfjs__test_pdfs_issue925.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bitmap-p32-eof.pdf",
+      "sha256": "6c959401b0a43e94b4abc580d95b8373adcea87cb13612a3b9eece18767de576",
+      "bytes": 1490,
+      "name": "pdfjs__test_pdfs_bitmap-p32-eof.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bitmap-symbol-empty.pdf",
+      "sha256": "adf661486871b31773fc85750372dbd3051db664b17128791e1bf667becde7e2",
+      "bytes": 1133,
+      "name": "pdfjs__test_pdfs_bitmap-symbol-empty.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/pdfkit_compressed.pdf",
+      "sha256": "920b8491769e72567e5c40ef9249f1e9fccacad244a82264c28b97fc97d5ef73",
+      "bytes": 8286,
+      "name": "pdfjs__test_pdfs_pdfkit_compressed.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue8697.pdf",
+      "sha256": "82e38e1d1edb6bfb5d79f54c0aa4cf8ee82e2b7c266394314b3eee3e1516eff9",
+      "bytes": 1400,
+      "name": "pdfjs__test_pdfs_issue8697.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bitmap-symbol.pdf",
+      "sha256": "39bf73b128947979f9a6080791ad03e206ea5756f4b4d37b6609e154d4f875b2",
+      "bytes": 1109,
+      "name": "pdfjs__test_pdfs_bitmap-symbol.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue17671.pdf",
+      "sha256": "dd4261babb58f609f9719079424d5104712e20d6847ae6eb571b4a1da8a613f8",
+      "bytes": 20490,
+      "name": "pdfjs__test_pdfs_issue17671.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue19484_2.pdf",
+      "sha256": "247215f0ca711ec552289c3076cc7ee38f117c3e0d9c83bfc136ff99f2627216",
+      "bytes": 47196,
+      "name": "pdfjs__test_pdfs_issue19484_2.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue8234.pdf",
+      "sha256": "5c0f01979272d8d690f13232b66c77ee3b27eb8d5b96807cd46f390b02b5f2e8",
+      "bytes": 13704,
+      "name": "pdfjs__test_pdfs_issue8234.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue1350.pdf",
+      "sha256": "bea02a5e94be1ffb526a98f3dd6c5e50fd53a3b14f0c70cb13be04868ffd0cb3",
+      "bytes": 118396,
+      "name": "pdfjs__test_pdfs_issue1350.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/freetexts.pdf",
+      "sha256": "fe9585ddd465da48ca94866bcbd15a25672c58962fca30953f07df0974aaec75",
+      "bytes": 44273,
+      "name": "pdfjs__test_pdfs_freetexts.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue2391-2.pdf",
+      "sha256": "91b83b33a1d996be26caa5cde81cd0b5d58cdfed004853a24c569f5c338e93a4",
+      "bytes": 2754,
+      "name": "pdfjs__test_pdfs_issue2391-2.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue16021.pdf",
+      "sha256": "0664e85bb2c46624e26b9afa6f133c4cdd232bb9006156677d4b009d24b45f22",
+      "bytes": 5865,
+      "name": "pdfjs__test_pdfs_issue16021.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bug816075.pdf",
+      "sha256": "dbf00808ab28ab2f1d8b5ffac06059a01d85da4aefd842da0b6ca95803f72f9d",
+      "bytes": 21049,
+      "name": "pdfjs__test_pdfs_bug816075.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue11473.pdf",
+      "sha256": "0a5b41aea451778065d1d4aff11bdc6537fb25ca956019f02b64c0f8ffcf1b34",
+      "bytes": 15028,
+      "name": "pdfjs__test_pdfs_issue11473.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue20489.pdf",
+      "sha256": "b4f9dcbad293b7c8b886b680011467c3bbccbcea0207dffa08852585a7a14956",
+      "bytes": 7337,
+      "name": "pdfjs__test_pdfs_issue20489.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bitmap-symbol-textrefine-negative-delta-width.pdf",
+      "sha256": "53fa2b3ccef2999986369ea19c245dbada17c17f959e0c0d98f926e2fdf2fb1a",
+      "bytes": 1130,
+      "name": "pdfjs__test_pdfs_bitmap-symbol-textrefine-negative-delta-width.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue12120_reduced.pdf",
+      "sha256": "138df0558cfb5ca190a789a98049003c594f7772e9011e40277b57a6e1c47c82",
+      "bytes": 21859,
+      "name": "pdfjs__test_pdfs_issue12120_reduced.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bug1027533.pdf",
+      "sha256": "80d5111dda8dd3f63297d278b83cce0325c44274b3efabe60f88539db0aa329d",
+      "bytes": 8900,
+      "name": "pdfjs__test_pdfs_bug1027533.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bug903856.pdf",
+      "sha256": "799c57d103916a621fde4390594bd1b32aea2dccb7908e7a53bdc02daa1e990c",
+      "bytes": 8439,
+      "name": "pdfjs__test_pdfs_bug903856.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/pdmodel/interactive/form/PDFBOX-3656-SF1199AEG (Complete).pdf",
+      "sha256": "61d5dd9542b40b7dcff2e23f217e12d7c930ca2fb7a62cfdd4177711f5b47567",
+      "bytes": 79004,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_pdmodel_interactive_form_PDFBOX-3656-SF1199AEG (Complete).pdf"
+    }
+  ],
+  "fetch_errors": []
+}

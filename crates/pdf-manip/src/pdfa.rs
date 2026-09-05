@@ -70,6 +70,10 @@ pub enum PdfAConvertError {
     #[error("load failed (all repair strategies exhausted)")]
     LoadFailed,
 
+    /// No real page tree could be recovered; no placeholder output was made.
+    #[error("no pages could be recovered from the input")]
+    NoPages,
+
     /// The document is encrypted and the empty user password did not open it.
     #[error("encrypted PDF (decryption failed)")]
     Encrypted,
@@ -155,6 +159,11 @@ pub struct PdfAConvertReport {
     pub output_intent_added: bool,
     /// Whether a page tree had to be repaired or synthesized before conversion.
     pub page_tree_repaired: bool,
+    /// Conservative font subsetting result, when the feature is enabled.
+    #[cfg(feature = "font-subset")]
+    pub subsets: crate::pdfa_subset::SubsetReport,
+    /// Best-effort failures that require caller attention and external validation.
+    pub warnings: Vec<String>,
 }
 
 /// Convert raw PDF bytes to PDF/A.
@@ -162,24 +171,66 @@ pub struct PdfAConvertReport {
 /// Handles loading, repair of damaged xref/page trees, empty-password
 /// decryption, the conversion pipeline, and serialization.
 ///
-/// This does not check whether the input is already PDF/A. Conversion is
-/// idempotent, so running it on a conformant file is wasted work but not
-/// harmful; callers that want to skip should test with `pdf_compliance`.
+/// This does not validate that the result conforms to PDF/A. Use
+/// [`convert_bytes_with_report`] for repair diagnostics and validate the output
+/// separately. Repeated Free Tier conversions can add another watermark.
 pub fn convert_bytes(
     data: &[u8],
     opts: &PdfAConvertOptions<'_>,
 ) -> Result<Vec<u8>, PdfAConvertError> {
+    convert_bytes_with_report(data, opts).map(|(bytes, _)| bytes)
+}
+
+/// Convert through the same shipping pipeline and retain its repair report.
+/// A report describes attempted repairs; it is not a conformance verdict.
+pub fn convert_bytes_with_report(
+    data: &[u8],
+    opts: &PdfAConvertOptions<'_>,
+) -> Result<(Vec<u8>, PdfAConvertReport), PdfAConvertError> {
     let mut doc = load_for_conversion(data, opts)?;
-    convert_document(&mut doc, opts)?;
+    let report = convert_document(&mut doc, opts)?;
 
     opts.step("save");
+    // Normalize before offsets are computed. Adding a binary-comment line
+    // after serialization shifts every xref offset when the source marker
+    // has fewer than four high bytes.
+    doc.binary_mark = vec![0xe2, 0xe3, 0xcf, 0xd3];
+    // A loaded xref-stream dictionary also serves as the trailer. Its old
+    // stream filters/offsets do not describe the newly written xref stream;
+    // an indirect DecodeParms can even require resolving objects before the
+    // reader has bootstrapped its object table.
+    for key in [
+        b"Filter".as_slice(),
+        b"DecodeParms",
+        b"F",
+        b"FFilter",
+        b"FDecodeParms",
+        b"Length",
+        b"DL",
+        b"Type",
+        b"W",
+        b"Index",
+        b"Prev",
+        b"XRefStm",
+    ] {
+        doc.trailer.remove(key);
+    }
+    crate::optimize::remove_unused_objects(&mut doc);
     let mut saved = Vec::new();
-    doc.save_to(&mut saved)
-        .map_err(|e| PdfAConvertError::Save(e.to_string()))?;
+    if opts.conformance.part() == 1 {
+        doc.version = "1.4".into();
+        doc.reference_table.cross_reference_type = lopdf::xref::XrefType::CrossReferenceTable;
+        doc.save_to(&mut saved)
+    } else {
+        doc.version = "1.7".into();
+        doc.save_modern(&mut saved)
+    }
+    .map_err(|e| PdfAConvertError::Save(e.to_string()))?;
 
-    crate::pdfa_cleanup::fix_pdf_header(&mut saved);
-    crate::pdfa_cleanup::fix_startxref(&mut saved);
-    Ok(saved)
+    // The writer already supplies the correct offset. The legacy byte repair
+    // searches for literal "xref" inside streams, so must not run on a valid
+    // modern serialization (an embedded file may itself contain that token).
+    Ok((saved, report))
 }
 
 /// Load a document for conversion, repairing and decrypting as needed.
@@ -219,6 +270,10 @@ pub fn load_for_conversion(
 
     recover_page_tree(&mut doc, data);
 
+    if doc.get_pages().is_empty() && !doc.trailer.has(b"Encrypt") {
+        return Err(PdfAConvertError::NoPages);
+    }
+
     if doc.trailer.get(b"Encrypt").is_ok() {
         match doc.decrypt("") {
             Ok(()) => {
@@ -248,7 +303,7 @@ fn external_repair_doc(data: &[u8], opts: &PdfAConvertOptions<'_>) -> Option<Doc
 }
 
 /// Bring a damaged page tree back to something with pages in it, escalating
-/// from cheap normalization to synthesizing a placeholder page.
+/// from cheap normalization to rebuilding real page objects from the input.
 fn recover_page_tree(doc: &mut Document, original: &[u8]) -> bool {
     repair::fix_wrong_root(doc);
     let _ = repair::normalize_page_tree_types(doc);
@@ -270,13 +325,6 @@ fn recover_page_tree(doc: &mut Document, original: &[u8]) -> bool {
         }
     }
 
-    if doc.get_pages().is_empty() {
-        // A document with no page tree at all cannot be validated by anything
-        // downstream. One empty page is a worse document than the original but
-        // a parseable one, which is the only state a conversion can report on.
-        let _ = repair::ensure_placeholder_page_tree(doc);
-    }
-
     true
 }
 
@@ -289,7 +337,7 @@ pub fn convert_document(
     opts: &PdfAConvertOptions<'_>,
 ) -> Result<PdfAConvertReport, PdfAConvertError> {
     let mut report = PdfAConvertReport::default();
-    let is_pdfa1 = matches!(opts.conformance, PdfAConformance::A1b);
+    let is_pdfa1 = opts.conformance.part() == 1;
 
     opts.step("cleanup");
     let cleanup = required(opts, "cleanup_for_pdfa", || {
@@ -302,6 +350,22 @@ pub fn convert_document(
     if doc.get_pages().is_empty() {
         report.page_tree_repaired = recover_page_tree(doc, &[]);
     }
+    if doc.get_pages().is_empty() {
+        return Err(PdfAConvertError::NoPages);
+    }
+
+    best_effort(opts, "preserve_single_cff_zero", &mut report, || {
+        crate::pdfa_fonts::preserve_single_cff_zero(doc)
+    });
+
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::inline_image::editing_warnings(doc)
+    })) {
+        Ok(warnings) => report.warnings.extend(warnings),
+        Err(_) => report.warnings.push(
+            "inline image inspection failed; safe content editing could not be established".into(),
+        ),
+    }
 
     run_font_steps(doc, opts, &mut report);
 
@@ -313,13 +377,15 @@ pub fn convert_document(
     report.output_intent_added = cs.output_intent_added;
 
     opts.step("fixups");
-    best_effort(opts, "run_fixups", || crate::pdfa_fixups::run_fixups(doc));
+    best_effort(opts, "run_fixups", &mut report, || {
+        crate::pdfa_fixups::run_fixups(doc)
+    });
 
     // Appends a blank glyph carrying the width the font dictionary declares, so
     // it has to run after every width pass — reading that width earlier bakes in
     // a stale value and creates the 6.2.11.5 mismatch it was meant to avoid.
     opts.step("cff_missing_space");
-    best_effort(opts, "fix_cff_subset_missing_space", || {
+    best_effort(opts, "fix_cff_subset_missing_space", &mut report, || {
         crate::pdfa_fonts::fix_cff_subset_missing_space(doc)
     });
 
@@ -336,10 +402,40 @@ pub fn convert_document(
         crate::pdfa_xmp::repair_xmp_metadata(doc, opts.conformance, None)
     })?;
 
+    best_effort(opts, "blank_cid_zero", &mut report, || {
+        crate::pdfa_fonts::fix_blank_cid_zero(doc)
+    });
+
     // Repairs can replace streams or leave newly embedded programs raw. Do
     // this last: later font passes must never mutate a program we just shared.
     opts.step("compact_storage");
     compact_storage(doc);
+    #[cfg(feature = "font-subset")]
+    {
+        opts.step("subset_fonts");
+        report.subsets = crate::pdfa_subset::subset_fonts(doc);
+        // Different source programs may now contain the same retained glyphs.
+        compact_storage(doc);
+    }
+    if !is_pdfa1 {
+        for obj in doc.objects.values_mut() {
+            if let lopdf::Object::Stream(stream) = obj {
+                if stream
+                    .dict
+                    .get(b"Type")
+                    .and_then(lopdf::Object::as_name)
+                    .ok()
+                    == Some(b"Metadata")
+                    && stream.allows_compression
+                    && !stream.dict.has(b"Filter")
+                    && !stream.dict.has(b"DecodeParms")
+                    && !stream.dict.has(b"F")
+                {
+                    let _ = stream.compress();
+                }
+            }
+        }
+    }
 
     report.page_count = doc.get_pages().len();
     Ok(report)
@@ -372,7 +468,13 @@ pub(crate) fn compact_storage(doc: &mut Document) {
     }
 
     crate::optimize::remove_unused_objects(doc);
-    let keys: [&[u8]; 3] = [b"FontFile", b"FontFile2", b"FontFile3"];
+    let keys: [&[u8]; 5] = [
+        b"FontFile",
+        b"FontFile2",
+        b"FontFile3",
+        b"ToUnicode",
+        b"DestOutputProfile",
+    ];
     let mut programs = BTreeSet::new();
     let mut metadata = BTreeSet::new();
     for obj in doc.objects.values_mut() {
@@ -415,7 +517,9 @@ pub(crate) fn compact_storage(doc: &mut Document) {
         let _ = s.compress();
     }
 
-    // Scope sharing to immutable font programs. Equal bytes alone are not
+    // Scope sharing to immutable font programs, ToUnicode and output profiles.
+    // Content/Form/Image streams can carry context-dependent semantics or be
+    // edited independently on subsequent conversion. Equal bytes alone are not
     // sufficient: FontFile3 Subtype and Type1 Length1/2/3 also interpret them.
     // Keep every FontDescriptor, Encoding, Widths and ToUnicode independent.
     let mut candidates: BTreeMap<[u8; 32], Vec<ObjectId>> = BTreeMap::new();
@@ -464,7 +568,7 @@ fn run_font_steps(
     macro_rules! font_step {
         ($label:literal, $call:expr) => {
             opts.step($label);
-            best_effort(opts, $label, || $call);
+            best_effort(opts, $label, report, || $call);
         };
     }
 
@@ -475,11 +579,36 @@ fn run_font_steps(
         crate::pdfa_fonts::promote_inline_font_dicts(doc)
     );
 
+    font_step!(
+        "preserve_custom_cff_encoding",
+        crate::pdfa_fonts::preserve_custom_cff_encoding(doc)
+    );
+
+    font_step!(
+        "preserve_symbolic_text",
+        crate::pdfa_fonts::preserve_symbolic_text_mapping(doc)
+    );
+
     opts.step("font_embed");
-    if let Ok(Ok(r)) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         crate::pdfa_fonts::embed_fonts(doc)
     })) {
-        report.fonts = Some(r);
+        Ok(Ok(r)) => {
+            if r.non_embedded_found > 0 {
+                report.warnings.push(format!(
+                    "{} source fonts had no embedded program; resolved or fallback fonts may change glyph shapes and text geometry",
+                    r.non_embedded_found
+                ));
+            }
+            for (font, reason) in &r.failed {
+                report
+                    .warnings
+                    .push(format!("font embedding failed for {font}: {reason}"));
+            }
+            report.fonts = Some(r);
+        }
+        Ok(Err(e)) => report.warnings.push(format!("font embedding failed: {e}")),
+        Err(_) => report.warnings.push("font embedding panicked".into()),
     }
 
     font_step!("pfb_streams", crate::pdfa_fonts::fix_pfb_font_streams(doc));
@@ -531,6 +660,12 @@ fn run_font_steps(
         crate::pdfa_fonts::fix_truetype_unicode_cmap(doc)
     );
 
+    // A font's own CFF encoding is authoritative when the PDF has no
+    // explicit encoding. Resolve it before the generic ASCII fallback.
+    font_step!(
+        "cff_tounicode",
+        crate::pdfa_fonts::fix_type1_tounicode_from_cff(doc)
+    );
     font_step!(
         "type1_tounicode",
         crate::pdfa_fonts::fix_type1_tounicode_from_encoding(doc)
@@ -538,10 +673,6 @@ fn run_font_steps(
     font_step!(
         "type0_tounicode",
         crate::pdfa_fonts::fix_type0_tounicode(doc)
-    );
-    font_step!(
-        "cff_tounicode",
-        crate::pdfa_fonts::fix_type1_tounicode_from_cff(doc)
     );
     font_step!(
         "tounicode_forbidden",
@@ -651,9 +782,18 @@ fn required<T>(
 /// Run a step that repairs one defect class and does nothing when that defect
 /// is absent. A panic here is contained: a malformed font program cannot take
 /// down a batch conversion.
-fn best_effort<T>(opts: &PdfAConvertOptions<'_>, step: &'static str, f: impl FnOnce() -> T) {
-    let _ = (opts, step);
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+fn best_effort<T>(
+    opts: &PdfAConvertOptions<'_>,
+    step: &'static str,
+    report: &mut PdfAConvertReport,
+    f: impl FnOnce() -> T,
+) {
+    let _ = opts;
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err() {
+        report
+            .warnings
+            .push(format!("{step} panicked; repair may be incomplete"));
+    }
 }
 
 #[cfg(test)]
@@ -693,6 +833,31 @@ mod tests {
     }
 
     #[test]
+    fn modern_writer_offsets_survive_short_markers_and_old_xref_parameters() {
+        let mut input = Document::load_mem(&minimal_pdf()).unwrap();
+        input.binary_mark = vec![0xb5, 0xb6];
+        let parameters = input.add_object(dictionary! {"Predictor" => 12, "Columns" => 4});
+        input.trailer.set("DecodeParms", parameters);
+        let mut raw = Vec::new();
+        input.save_to(&mut raw).unwrap();
+        let output = convert_bytes(&raw, &PdfAConvertOptions::default()).unwrap();
+        assert!(output.starts_with(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n"));
+        let parsed = Document::load_mem(&output).unwrap();
+        assert!(!parsed.trailer.has(b"DecodeParms"));
+        assert!(!parsed.trailer.has(b"Prev"));
+        assert_eq!(parsed.get_pages().len(), 1);
+        for (id, entry) in &parsed.reference_table.entries {
+            if let lopdf::xref::XrefEntry::Normal { offset, generation } = entry {
+                assert!(
+                    output[*offset as usize..]
+                        .starts_with(format!("{id} {generation} obj").as_bytes()),
+                    "incorrect offset for object {id}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn rejects_non_pdf_input() {
         let err = convert_bytes(b"not a pdf at all", &PdfAConvertOptions::default()).unwrap_err();
         assert!(matches!(err, PdfAConvertError::NotAPdf));
@@ -724,7 +889,7 @@ mod tests {
     }
 
     #[test]
-    fn converted_icc_is_compressed_but_metadata_is_not() {
+    fn converted_icc_and_pdfa2_metadata_are_compressed() {
         let converted = convert_bytes(&minimal_pdf(), &PdfAConvertOptions::default()).unwrap();
         let output = Document::load_mem(&converted).unwrap();
         let intent = output
@@ -756,13 +921,71 @@ mod tests {
             .unwrap()
             .as_reference()
             .unwrap();
-        assert!(!output
+        assert!(output
             .get_object(metadata)
             .unwrap()
             .as_stream()
             .unwrap()
             .dict
             .has(b"Filter"));
+    }
+
+    #[test]
+    fn pdfa1_storage_uses_classic_xref_and_unfiltered_metadata() {
+        for conformance in [PdfAConformance::A1a, PdfAConformance::A1b] {
+            let bytes = convert_bytes(
+                &minimal_pdf(),
+                &PdfAConvertOptions {
+                    conformance,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert!(bytes.starts_with(b"%PDF-1.4"));
+            let output = Document::load_mem(&bytes).unwrap();
+            assert!(matches!(
+                output.reference_table.cross_reference_type,
+                lopdf::xref::XrefType::CrossReferenceTable
+            ));
+            for o in output.objects.values() {
+                if let lopdf::Object::Stream(s) = o {
+                    let kind = s.dict.get(b"Type").and_then(lopdf::Object::as_name).ok();
+                    assert_ne!(kind, Some(b"ObjStm".as_slice()));
+                    if kind == Some(b"Metadata") {
+                        assert!(!s.dict.has(b"Filter"));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_page_recovery_does_not_claim_success_with_a_blank_placeholder() {
+        let mut doc = Document::with_version("1.7");
+        let pages = doc.add_object(
+            dictionary! {"Type" => "Pages", "Kids" => Vec::<lopdf::Object>::new(), "Count" => 0},
+        );
+        let root = doc.add_object(dictionary! {"Type" => "Catalog", "Pages" => pages});
+        doc.trailer.set("Root", root);
+        assert!(matches!(
+            convert_document(&mut doc, &PdfAConvertOptions::default()),
+            Err(PdfAConvertError::NoPages)
+        ));
+    }
+
+    #[test]
+    fn best_effort_panics_are_reported() {
+        let mut report = PdfAConvertReport::default();
+        best_effort(
+            &PdfAConvertOptions::default(),
+            "owned_test",
+            &mut report,
+            || panic!("synthetic malformed input"),
+        );
+        assert_eq!(
+            report.warnings,
+            ["owned_test panicked; repair may be incomplete"]
+        );
     }
 
     #[test]
@@ -789,6 +1012,23 @@ mod tests {
             once.len(),
             twice.len()
         );
+    }
+
+    #[test]
+    fn caller_metadata_compression_opt_out_survives_conversion() {
+        let mut doc = Document::load_mem(&minimal_pdf()).unwrap();
+        let metadata = doc.add_object(
+            lopdf::Stream::new(
+                dictionary! {"Type"=>"Metadata", "Subtype"=>"XML"},
+                b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>".to_vec(),
+            )
+            .with_compression(false),
+        );
+        doc.catalog_mut().unwrap().set("Metadata", metadata);
+        convert_document(&mut doc, &PdfAConvertOptions::default()).unwrap();
+        let stream = doc.get_object(metadata).unwrap().as_stream().unwrap();
+        assert!(!stream.allows_compression);
+        assert!(!stream.dict.has(b"Filter"));
     }
 
     #[test]
@@ -834,9 +1074,23 @@ mod tests {
         assert!(out.starts_with(b"%PDF-"));
         // XMP metadata and an OutputIntent are the two things every PDF/A file
         // must carry; both are absent from the input.
-        let text = String::from_utf8_lossy(&out);
-        assert!(text.contains("OutputIntent"), "no OutputIntent in output");
-        assert!(text.contains("pdfaid"), "no PDF/A XMP identifier in output");
+        let doc = Document::load_mem(&out).unwrap();
+        let catalog = doc.catalog().unwrap();
+        assert!(!catalog
+            .get(b"OutputIntents")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let id = catalog.get(b"Metadata").unwrap().as_reference().unwrap();
+        let xml = doc
+            .get_object(id)
+            .unwrap()
+            .as_stream()
+            .unwrap()
+            .decompressed_content()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&xml).contains("pdfaid"));
     }
 
     #[test]
@@ -895,7 +1149,21 @@ mod tests {
                 ..Default::default()
             };
             let out = convert_bytes(&minimal_pdf(), &opts).unwrap();
-            let text = String::from_utf8_lossy(&out);
+            let doc = Document::load_mem(&out).unwrap();
+            let metadata = doc
+                .catalog()
+                .unwrap()
+                .get(b"Metadata")
+                .unwrap()
+                .as_reference()
+                .unwrap();
+            let stream = doc.get_object(metadata).unwrap().as_stream().unwrap();
+            let xml = if stream.dict.has(b"Filter") {
+                stream.decompressed_content().unwrap()
+            } else {
+                stream.content.clone()
+            };
+            let text = String::from_utf8_lossy(&xml);
             assert!(text.contains(marker), "{level:?} did not produce {marker}");
         }
     }

@@ -35,7 +35,7 @@ const MAX_CONTENT_ARRAY_DEPTH: usize = 64;
 
 /// Check whether a raw content stream byte slice has excessive array nesting.
 /// Returns `true` when the stream should be rejected (nesting too deep).
-fn content_stream_too_deeply_nested(stream: &[u8]) -> bool {
+pub(crate) fn content_stream_too_deeply_nested(stream: &[u8]) -> bool {
     let mut depth: usize = 0;
     for &b in stream {
         match b {
@@ -61,16 +61,7 @@ impl ContentEditor {
     /// `MAX_CONTENT_ARRAY_DEPTH`) to avoid a stack overflow in lopdf's
     /// recursive array parser. All callers handle `Err` gracefully (skip/continue).
     pub fn from_stream(stream: &[u8]) -> Result<Self> {
-        // Guard against adversarial content streams with thousands of nested `[`
-        // that cause lopdf's recursive array parser to overflow the call stack.
-        // Fixes stack overflow on poppler fuzzing corpus PDFs (e.g. poppler-43279-0.pdf).
-        if content_stream_too_deeply_nested(stream) {
-            return Err(ManipError::Other(
-                "content stream rejected: array nesting too deep".into(),
-            ));
-        }
-        let content = Content::decode(stream)
-            .map_err(|e| ManipError::Other(format!("content decode: {e}")))?;
+        let content = crate::inline_image::decode(stream)?;
         Ok(Self {
             operations: content.operations,
         })
@@ -191,21 +182,21 @@ impl ContentEditor {
                     buf.extend_from_slice(b"BI\n");
                     for (key, val) in &stream.dict {
                         // Skip internal Stream keys not part of inline image dict
-                        if key == b"Length" || key == b"Filter" || key == b"DecodeParms" {
+                        if key == b"Length" {
                             continue;
                         }
-                        buf.push(b'/');
-                        buf.extend_from_slice(key);
+                        write_inline_value(&mut buf, &Object::Name(key.clone()))?;
                         buf.push(b' ');
-                        write_inline_value(&mut buf, val);
+                        write_inline_value(&mut buf, val)?;
                         buf.push(b'\n');
                     }
                     buf.extend_from_slice(b"ID ");
                     buf.extend_from_slice(&stream.content);
                     buf.extend_from_slice(b"\nEI");
                 } else {
-                    // Not a valid inline image op structure; fall back to standard encoding.
-                    segment.push(op.clone());
+                    return Err(ManipError::Other(
+                        "inline image operation has no payload".into(),
+                    ));
                 }
             } else {
                 segment.push(op.clone());
@@ -680,43 +671,19 @@ pub(crate) fn multiply_matrix(m1: &[f64; 6], m2: &[f64; 6]) -> [f64; 6] {
 }
 
 /// Write a PDF object value in inline image dictionary format.
-fn write_inline_value(buf: &mut Vec<u8>, obj: &Object) {
-    match obj {
-        Object::Integer(n) => buf.extend_from_slice(n.to_string().as_bytes()),
-        Object::Real(n) => {
-            // Use compact float formatting
-            let s = if n.fract() == 0.0 {
-                format!("{n:.1}")
-            } else {
-                format!("{n}")
-            };
-            buf.extend_from_slice(s.as_bytes());
-        }
-        Object::Boolean(b) => {
-            buf.extend_from_slice(if *b { b"true" } else { b"false" });
-        }
-        Object::Name(name) => {
-            buf.push(b'/');
-            buf.extend_from_slice(name);
-        }
-        Object::String(s, _) => {
-            buf.push(b'(');
-            buf.extend_from_slice(s);
-            buf.push(b')');
-        }
-        Object::Array(arr) => {
-            buf.push(b'[');
-            for (i, item) in arr.iter().enumerate() {
-                if i > 0 {
-                    buf.push(b' ');
-                }
-                write_inline_value(buf, item);
-            }
-            buf.push(b']');
-        }
-        Object::Null => buf.extend_from_slice(b"null"),
-        _ => buf.extend_from_slice(b"null"),
-    }
+fn write_inline_value(buf: &mut Vec<u8>, obj: &Object) -> Result<()> {
+    // Use the PDF writer for nested predictor dictionaries, literal strings,
+    // references and escaped names. The former small match wrote dictionaries
+    // as null and copied unescaped string/name bytes.
+    let content = Content {
+        operations: vec![Operation::new("", vec![obj.clone()])],
+    };
+    let mut encoded = content
+        .encode()
+        .map_err(|e| ManipError::Other(format!("inline image value encode: {e}")))?;
+    encoded.pop(); // Content::encode appends one operand separator.
+    buf.extend_from_slice(&encoded);
+    Ok(())
 }
 
 /// Strip `BI … EI` inline-image blocks from a content stream.

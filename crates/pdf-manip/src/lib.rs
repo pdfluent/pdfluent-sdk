@@ -75,6 +75,7 @@ pub mod font_subset;
 pub mod header_footer;
 #[cfg(feature = "image-insert")]
 pub mod image_insert;
+mod inline_image;
 pub mod optimize;
 pub mod pages;
 #[cfg(feature = "pdfa-convert")]
@@ -91,6 +92,8 @@ pub mod pdfa_fonts;
 pub(crate) mod pdfa_repair;
 #[cfg(feature = "pdfa-convert")]
 pub mod pdfa_structure;
+#[cfg(all(feature = "pdfa-convert", feature = "font-subset"))]
+pub mod pdfa_subset;
 #[cfg(feature = "pdfa-convert")]
 pub mod pdfa_xmp;
 pub mod pdfua;

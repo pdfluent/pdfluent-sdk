@@ -1,0 +1,681 @@
+{
+  "description": "Round-2 holdout, selected before evaluating candidate output; excludes known corpus paths, basenames and byte hashes. No claim about unknown historical use outside this checkout.",
+  "selection": "Target 50 per source; path order shuffled with seed 33920260905; candidates 1 KB to 2 MB; first hash-disjoint downloads retained. Frozen available set: 50 pdf.js + 43 PDFBox = 93. No output-based exclusions.",
+  "sources": {
+    "pdfjs": {
+      "repo": "mozilla/pdf.js",
+      "commit": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
+      "licence": "Apache-2.0",
+      "provenance": "Mozilla pdf.js test suite (test/pdfs/), redistributed by Mozilla under Apache-2.0. Fetched by URL at the pinned commit; never committed to this repository.",
+      "raw_base": "https://raw.githubusercontent.com/mozilla/pdf.js/a815e4f8f0f25ab305ee21752ccf832156f7ab58/"
+    },
+    "pdfbox": {
+      "repo": "apache/pdfbox",
+      "commit": "b9de8299ef80efc8bd7f3fddb5c8a3c63ee07a5c",
+      "licence": "Apache-2.0",
+      "provenance": "Apache PDFBox test resources, redistributed by the Apache Software Foundation under Apache-2.0. Fetched by URL at the pinned commit; never committed to this repository.",
+      "raw_base": "https://raw.githubusercontent.com/apache/pdfbox/b9de8299ef80efc8bd7f3fddb5c8a3c63ee07a5c/"
+    }
+  },
+  "total": 93,
+  "entries": [
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/annotation-tx.pdf",
+      "sha256": "c7be52654eaede8a9f33757168957f938f56e73fcd4c53539db5672dee426208",
+      "bytes": 11672,
+      "name": "pdfjs__test_pdfs_annotation-tx.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/large_jpeg_downscale.pdf",
+      "sha256": "876d768b597e5176afb2bb35119916414f03851d544bc4589467a2491f8c86f5",
+      "bytes": 121794,
+      "name": "pdfjs__test_pdfs_large_jpeg_downscale.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue6179_reduced.pdf",
+      "sha256": "182dc1637a54238c600c1692329215dd3850c0fa5b99fd70ad09891c5ebcea95",
+      "bytes": 16136,
+      "name": "pdfjs__test_pdfs_issue6179_reduced.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bug1755507.pdf",
+      "sha256": "27dbaa9de89b5fd7c948639152b38f4ef1baeb574d48a294c5afc92835b94f8c",
+      "bytes": 498287,
+      "name": "pdfjs__test_pdfs_bug1755507.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/pr12828.pdf",
+      "sha256": "767d1f8f5ee32a05c98dca799d99e4c8ae556bbda001d1c0acf5e3bc3d362f45",
+      "bytes": 16711,
+      "name": "pdfjs__test_pdfs_pr12828.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bug2025674.pdf",
+      "sha256": "66a3c3202c4539c4648108bffa6654bf4ae079333bf297ce26cfb79a719819e7",
+      "bytes": 25998,
+      "name": "pdfjs__test_pdfs_bug2025674.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/cmykjpeg.pdf",
+      "sha256": "659d6b19912f63db988b0b26b9bde0e6d8100667ef162051a4a84ea8e5b90272",
+      "bytes": 374080,
+      "name": "pdfjs__test_pdfs_cmykjpeg.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/devicen.pdf",
+      "sha256": "1fbaf094e1c714513aea19258e74269b6b5365ea769e288a8e142773f6cf2b94",
+      "bytes": 15751,
+      "name": "pdfjs__test_pdfs_devicen.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/PDFJS-7562-reduced.pdf",
+      "sha256": "86fc03927aa3e1b216910de7b98c51aa42bab9baa359219ff4f422133188ed98",
+      "bytes": 13653,
+      "name": "pdfjs__test_pdfs_PDFJS-7562-reduced.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue10402.pdf",
+      "sha256": "f19aa17aae85e18e441363ce927d8d793d41eb59ea811d0332ebbb536f0c58f9",
+      "bytes": 20955,
+      "name": "pdfjs__test_pdfs_issue10402.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/image-rotated-black-white-ratio.pdf",
+      "sha256": "dd884a5f5676d5e32cd70590f793238faddedbd6d135918735c0c99b89e28279",
+      "bytes": 1954,
+      "name": "pdfjs__test_pdfs_image-rotated-black-white-ratio.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue11878_reduced.pdf",
+      "sha256": "7a0811004dce1f71044681082fc67f743d3a275eca07403a11178b83a78bea20",
+      "bytes": 2051,
+      "name": "pdfjs__test_pdfs_issue11878_reduced.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue20930.pdf",
+      "sha256": "3a99c5b58d38e5e4c79f279e1a76062cd1b3085201bd9a1a780462c1c1f3705e",
+      "bytes": 141480,
+      "name": "pdfjs__test_pdfs_issue20930.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue17730.pdf",
+      "sha256": "d1d3be1674f4756d82630d68f08a8088f5b912c58f3379f45eb63b025ad99b14",
+      "bytes": 102596,
+      "name": "pdfjs__test_pdfs_issue17730.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue18529.pdf",
+      "sha256": "6ec9516a0e15a65d8a9547da747efe66ad0d4dd7d185d8624cfa6ae1a2847962",
+      "bytes": 4218,
+      "name": "pdfjs__test_pdfs_issue18529.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bug1146106.pdf",
+      "sha256": "63bdac77b56f72a04e654440e624e50d77e420632a03f97dca971616658acdbc",
+      "bytes": 4517,
+      "name": "pdfjs__test_pdfs_bug1146106.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue14462_reduced.pdf",
+      "sha256": "8524a00cc4fe9f2bece570525f24b3bdac45af51a521dfc886e226f94484dc61",
+      "bytes": 15793,
+      "name": "pdfjs__test_pdfs_issue14462_reduced.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/visibility_expressions.pdf",
+      "sha256": "5bfe308439d012f9ea734dec8e12a4af943d83a135a33887698362e5a537d2b9",
+      "bytes": 3921,
+      "name": "pdfjs__test_pdfs_visibility_expressions.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/annotation-text-without-popup.pdf",
+      "sha256": "2e0c788c795ab08178c12d26f73bebb6e18455a885568005770e8b6b947c4ceb",
+      "bytes": 24281,
+      "name": "pdfjs__test_pdfs_annotation-text-without-popup.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue5540.pdf",
+      "sha256": "6103400d6361905d55c62948b75c091542362c7cb575548accb1d5aef873241c",
+      "bytes": 17459,
+      "name": "pdfjs__test_pdfs_issue5540.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue17065.pdf",
+      "sha256": "e36c533a459551308f608586e13cf706cdb8419e4388441c6e0c4843f908e5df",
+      "bytes": 3707,
+      "name": "pdfjs__test_pdfs_issue17065.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue17998.pdf",
+      "sha256": "6a608a89e311137d4797bc250ebecc032f41b4dc7cb1ad859130c5a6a56a1357",
+      "bytes": 7762,
+      "name": "pdfjs__test_pdfs_issue17998.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/inks_basic.pdf",
+      "sha256": "4ec505003de71e57f4c24f33b92ab2d63461c34c9165243c12bd8dd64c1add9d",
+      "bytes": 7483,
+      "name": "pdfjs__test_pdfs_inks_basic.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bitmap-symbol-textbottomleft.pdf",
+      "sha256": "0bc02085b750d0413fa3360825cc23b5e5a449b2e3f08fa084c3b00b64e03683",
+      "bytes": 1112,
+      "name": "pdfjs__test_pdfs_bitmap-symbol-textbottomleft.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/TrueType_without_cmap.pdf",
+      "sha256": "3e111eef52ce9c0d0b1da043290df4b49a5670c89891fcb3db6962edb12e35aa",
+      "bytes": 3989,
+      "name": "pdfjs__test_pdfs_TrueType_without_cmap.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue14565.pdf",
+      "sha256": "f581aa0d2b86289b2e20f8c78c30ac329626c6a46670633028b89a6c4a93f080",
+      "bytes": 16569,
+      "name": "pdfjs__test_pdfs_issue14565.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/smask_luminosity_oob_transfer.pdf",
+      "sha256": "c691fb3206b5163d0af4d02a1471c0e96f78d9f63804d8ba85867dbdc1c0e740",
+      "bytes": 1093,
+      "name": "pdfjs__test_pdfs_smask_luminosity_oob_transfer.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bug1675139.pdf",
+      "sha256": "13208f75b47ec152acb103392f11e4fcc07ea1bc0489a28a0b9695c0987e1730",
+      "bytes": 14835,
+      "name": "pdfjs__test_pdfs_bug1675139.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue11131_reduced.pdf",
+      "sha256": "d4d492c6b5dbf6b635f87656210372bd2e3860710d33b9f5c9b7eed841588b06",
+      "bytes": 28267,
+      "name": "pdfjs__test_pdfs_issue11131_reduced.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue11144_reduced.pdf",
+      "sha256": "3342fa04cb3bd01bed1be5ee26256951f7b9ef900132ee2dd2b20a2621b22a2d",
+      "bytes": 98144,
+      "name": "pdfjs__test_pdfs_issue11144_reduced.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/opt_demo.pdf",
+      "sha256": "7afec50b428da02826c85816d7eba9049761002e6d36f7ca5be6f933109f7af4",
+      "bytes": 5642,
+      "name": "pdfjs__test_pdfs_opt_demo.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/annotation-choice-widget.pdf",
+      "sha256": "2fcab2aed82afe9775359c1d166fb7aae77e99d25fe03be177e233d02d572538",
+      "bytes": 91556,
+      "name": "pdfjs__test_pdfs_annotation-choice-widget.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bitmap-halftone-template3.pdf",
+      "sha256": "4f249e0d12ad232b96de05592c250498dd3fc661607a8fcbd721bdb5a79eb425",
+      "bytes": 1300,
+      "name": "pdfjs__test_pdfs_bitmap-halftone-template3.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue14023.pdf",
+      "sha256": "ba4f745b074f716a28b780d17333dfcccfe1d0c04e6e2d5b3e4ae4888d7ac472",
+      "bytes": 12962,
+      "name": "pdfjs__test_pdfs_issue14023.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/cff_bluescale_small_zones.pdf",
+      "sha256": "82eb3d45411342f622e5a785280821abdadefaade3a3789f2906bda2b22a5d8f",
+      "bytes": 9708,
+      "name": "pdfjs__test_pdfs_cff_bluescale_small_zones.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bug1669097.pdf",
+      "sha256": "e2577bb34154c077a24c3ad9d7b9bd2642969bd73e7c6f93262a68b07c4e409d",
+      "bytes": 6497,
+      "name": "pdfjs__test_pdfs_bug1669097.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue3263r.pdf",
+      "sha256": "beb3b7d23b37a63310184c9ee9be62895e67c06ad78c6e0ea51b50401ff7d3cf",
+      "bytes": 31592,
+      "name": "pdfjs__test_pdfs_issue3263r.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/poppler-937-0-fuzzed.pdf",
+      "sha256": "732311f7b606c6360121644b9b7709dc8d369f37157704dc16e6791a4ca6e680",
+      "bytes": 1666,
+      "name": "pdfjs__test_pdfs_poppler-937-0-fuzzed.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bug1708040.pdf",
+      "sha256": "32e57cb1f32b4a23af78feaddd5c8c9841a907b28821cd574832760302bd0fc2",
+      "bytes": 70324,
+      "name": "pdfjs__test_pdfs_bug1708040.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue16742.pdf",
+      "sha256": "873721f1f0c1092fc5da06b4489471a4ec0ef5b6d69204d4cc4669d9b8237b4e",
+      "bytes": 2580,
+      "name": "pdfjs__test_pdfs_issue16742.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue15516_reduced.pdf",
+      "sha256": "52e65f522805d7c3baa69f3f5fbcad41d7a3922146a3bd591f4ae5bd84359aad",
+      "bytes": 35146,
+      "name": "pdfjs__test_pdfs_issue15516_reduced.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bug1863910.pdf",
+      "sha256": "7b1ec211dd564622cab4329f610ac6060cdade2b8ba4e8e7dd7b6b96ee87f5ff",
+      "bytes": 6796,
+      "name": "pdfjs__test_pdfs_bug1863910.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/function_based_shading_cmyk.pdf",
+      "sha256": "c624d33b595af80746dd96f6440d335a30b1bee3e484d9b0b2cfb0cd54c62be3",
+      "bytes": 3266,
+      "name": "pdfjs__test_pdfs_function_based_shading_cmyk.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue5994.pdf",
+      "sha256": "aa366a359bfca79f8b842d8e393ad299ff534ed5c057cd9c50899bc230eefe8b",
+      "bytes": 1248986,
+      "name": "pdfjs__test_pdfs_issue5994.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue16500.pdf",
+      "sha256": "213b277a367d792139910ed724831d3579e787192a2fa1db14d375af5cb3599b",
+      "bytes": 22022,
+      "name": "pdfjs__test_pdfs_issue16500.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue10084_reduced.pdf",
+      "sha256": "7920065ec84e4b2fa3224736ce9f1dd35623be1d147a0204512a65a1ac78fb5e",
+      "bytes": 15165,
+      "name": "pdfjs__test_pdfs_issue10084_reduced.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/bitmap-refine-page.pdf",
+      "sha256": "7dbeb64018e183c77333996eeb5c2b9bcc90caaca8381ad42fb98a64c14025eb",
+      "bytes": 1127,
+      "name": "pdfjs__test_pdfs_bitmap-refine-page.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/outlines_for_editor.pdf",
+      "sha256": "084e3b2eb28f5d512f12cd3871bb8b161226f5ee43c82f89c7c5ee0987f58d1e",
+      "bytes": 2982,
+      "name": "pdfjs__test_pdfs_outlines_for_editor.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue2761.pdf",
+      "sha256": "73984619bd5fc699aa87118abe8608904b3aab762045326c96950716d3ce11e3",
+      "bytes": 12142,
+      "name": "pdfjs__test_pdfs_issue2761.pdf"
+    },
+    {
+      "source": "pdfjs",
+      "path": "test/pdfs/issue12750.pdf",
+      "sha256": "8a82cd894de56f090bbc1218bbf5eb0ef606907422b901fdbba7bd45692ed612",
+      "bytes": 26802,
+      "name": "pdfjs__test_pdfs_issue12750.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/FC60_Times.pdf",
+      "sha256": "1616a1fc70fb70812f9865e4e6648736b218ab0d44775380adaf668e4300cc0d",
+      "bytes": 25815,
+      "name": "pdfbox__pdfbox_src_test_resources_input_FC60_Times.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/pdmodel/interactive/annotation/Annotations.pdf",
+      "sha256": "44750527e51022ca06c7e9fac0af4cf90f1cb341b6511544409b0a2f5eb2fa12",
+      "bytes": 222690,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_pdmodel_interactive_annotation_Annotations.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "tools/src/test/resources/input/ImageIOUtil/JBIG2Image.pdf",
+      "sha256": "1773390e74c6344740fcccfe34dbf5737f73c0640bbc89cd1c161d03335150c4",
+      "bytes": 8989,
+      "name": "pdfbox__tools_src_test_resources_input_ImageIOUtil_JBIG2Image.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/PDFBOX-3498-Y5TLCWTIAE3FYDVJTV2TXRZGXLEDUNSW.pdf",
+      "sha256": "44c23b08f4da2db659ab4f98ea098f0fc2b9f9bb532624e99d4efebae7ab4685",
+      "bytes": 44136,
+      "name": "pdfbox__pdfbox_src_test_resources_input_PDFBOX-3498-Y5TLCWTIAE3FYDVJTV2TXRZGXLEDUNSW.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/pdmodel/common/testPDF_multiFormatEmbFiles.pdf",
+      "sha256": "5a72046defac7b5718dd499bcce6911c712878e0fcd3263477f8d893aea30d03",
+      "bytes": 2662,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_pdmodel_common_testPDF_multiFormatEmbFiles.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/encryption/AESkeylength256.pdf",
+      "sha256": "a6701f87b613013d960c740efe52ca7fb2ae61e52a109b0bbaee4affffe26d72",
+      "bytes": 11180,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_encryption_AESkeylength256.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/pdmodel/interactive/form/ControlCharacters.pdf",
+      "sha256": "539bb9383b16734b6ef9fdd84b2ab9ca7048dc0ca5a5ee786e7e482f5ce64d65",
+      "bytes": 43916,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_pdmodel_interactive_form_ControlCharacters.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/merge/PDFBOX-5809-509329.pdf",
+      "sha256": "4416dd00c8ebd9abce47c7465f8efbba4a7b289d2a097f09990b95af0409102f",
+      "bytes": 43516,
+      "name": "pdfbox__pdfbox_src_test_resources_input_merge_PDFBOX-5809-509329.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/sampleForSpec.pdf",
+      "sha256": "bef74b4a96b426b56a87e7646d6e7b4e03e20793226df95af40d31ec68dfa8ec",
+      "bytes": 9364,
+      "name": "pdfbox__pdfbox_src_test_resources_input_sampleForSpec.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/PDFBOX-3025.pdf",
+      "sha256": "602816bd821db5116ba9fd59d8c81a7d63058f6d21a302e190e19c0eddf76b15",
+      "bytes": 42418,
+      "name": "pdfbox__pdfbox_src_test_resources_input_PDFBOX-3025.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/PDFBOX-3062-005717-p1.pdf",
+      "sha256": "f0bd011b78841db29376f648e455663600aab1685c196251f293f995162dae08",
+      "bytes": 11976,
+      "name": "pdfbox__pdfbox_src_test_resources_input_PDFBOX-3062-005717-p1.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/multipdf/AcroFormForMerge-TextFieldsOnly.pdf",
+      "sha256": "a2f4284754834436512fb35848f4fc1df55bb5e0ac3ce2e07d54fe8dd1137abc",
+      "bytes": 5705,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_multipdf_AcroFormForMerge-TextFieldsOnly.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/compression/unencrypted.pdf",
+      "sha256": "a0fb09bae86c0e93b80309f4f86b1a9262bd5210eca3c0bdad0ef52094624fa8",
+      "bytes": 71020,
+      "name": "pdfbox__pdfbox_src_test_resources_input_compression_unencrypted.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/PDFBOX-3110-poems-beads.pdf",
+      "sha256": "9d715ce4e964f6ccbf50e1d1c42ca5f01425a079a5c39a9581c876c56afca1b3",
+      "bytes": 45598,
+      "name": "pdfbox__pdfbox_src_test_resources_input_PDFBOX-3110-poems-beads.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/multipdf/AcrobatMerge-DifferentOptions.pdf",
+      "sha256": "fc339f65ba9e05a75c1d92cc2f626242fce305ea5864f5607c2dfb6702e7d306",
+      "bytes": 36255,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_multipdf_AcrobatMerge-DifferentOptions.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox-layout-awt/src/test/resources/pdf/GlyphLayoutBidi.pdf",
+      "sha256": "3139601afdb18c0686607d718469f4a10ed9500380e923aa9fd3aaa7ba0e2af5",
+      "bytes": 9899,
+      "name": "pdfbox__pdfbox-layout-awt_src_test_resources_pdf_GlyphLayoutBidi.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/encryption/AES128ExposedMeta.pdf",
+      "sha256": "998e95a72db2ae5c89dcec07be00530cc4ad75df1ae82e27357f8ce735be690f",
+      "bytes": 18885,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_encryption_AES128ExposedMeta.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox-layout-fop/src/test/resources/pdf/GlyphLayoutLigaturesAndKerning.pdf",
+      "sha256": "f72d97748c3d5106c68f20ff6d94f20dfcfd0f1efc63a80987ac98a70a79dbd2",
+      "bytes": 37152,
+      "name": "pdfbox__pdfbox-layout-fop_src_test_resources_pdf_GlyphLayoutLigaturesAndKerning.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "tools/src/test/resources/input/ImageIOUtil/JPXTestRGB.pdf",
+      "sha256": "bb605c1ce58f85ac1cce9cd2b2293bebb066d6c8e0de1488b63b13116a4fd4db",
+      "bytes": 457637,
+      "name": "pdfbox__tools_src_test_resources_input_ImageIOUtil_JPXTestRGB.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/rendering/4PP-Highlighting.pdf",
+      "sha256": "38c5add7f2ab569d67bce57191686d27ff3cd67f694cebad753121b0d22af7e9",
+      "bytes": 2497,
+      "name": "pdfbox__pdfbox_src_test_resources_input_rendering_4PP-Highlighting.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/encryption/PasswordSample-40bit.pdf",
+      "sha256": "7dac5439bed47d4630866f2acb75fd22386069649c2dcb88236c2ed5f020b05b",
+      "bytes": 8374,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_encryption_PasswordSample-40bit.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/multipdf/Overlayed-with-rot270.pdf",
+      "sha256": "834c08650473596baea6e08a86b134297fbb8f4debc58955a1c9c7f87190b386",
+      "bytes": 1664,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_multipdf_Overlayed-with-rot270.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/PDFBOX-4531-bidi-ligature-1.pdf",
+      "sha256": "05449b36c6b147652ef3c0b5404ae84b9d8c4352a43f96ec27cef8714f99b13f",
+      "bytes": 5622,
+      "name": "pdfbox__pdfbox_src_test_resources_input_PDFBOX-4531-bidi-ligature-1.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/eu-001.pdf",
+      "sha256": "ef7a64967276181a563e781bab46ea52dd376155ad2287c4e1303781203f91d8",
+      "bytes": 68143,
+      "name": "pdfbox__pdfbox_src_test_resources_input_eu-001.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox-layout-awt/src/test/resources/pdf/GlyphLayoutLigaturesAndKerning.pdf",
+      "sha256": "b00f9d515e0ba59180432fa51be96343085492bc66cbdb5fcdef8782f3a609be",
+      "bytes": 36551,
+      "name": "pdfbox__pdfbox-layout-awt_src_test_resources_pdf_GlyphLayoutLigaturesAndKerning.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "examples/src/test/resources/org/apache/pdfbox/examples/signature/sign_me.pdf",
+      "sha256": "fab877985a860606e06e7af7e15ddab4ced89e0c90b705edada964e34dc9b472",
+      "bytes": 18159,
+      "name": "pdfbox__examples_src_test_resources_org_apache_pdfbox_examples_signature_sign_me.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/multipdf/AcroFormForMerge-DifferentExportValues.pdf",
+      "sha256": "9d67be58355ca32c654bed3222ab3536202ac614c1840b7491e4b63f34bd591b",
+      "bytes": 18590,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_multipdf_AcroFormForMerge-DifferentExportValues.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/multipdf/AcrobatMerge-DifferentFieldType-WasMaster.pdf",
+      "sha256": "90c348cdee4fa8b6d47f7028684110e5a4040090f6413dd7cc34689b3619a48c",
+      "bytes": 35564,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_multipdf_AcrobatMerge-DifferentFieldType-WasMaster.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox-layout-fop/src/test/resources/pdf/GlyphLayoutBidi.pdf",
+      "sha256": "a34ef11a51e6ae7f4ff81c548d0397a46da95717dff2457df5706b29f952327b",
+      "bytes": 9630,
+      "name": "pdfbox__pdfbox-layout-fop_src_test_resources_pdf_GlyphLayoutBidi.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/merge/PDFBOX-4417-054080.pdf",
+      "sha256": "97664b7ee67fbd45e7cb660f5cd5dc9ff033f84ba6352c89499ad2bdb272bcb2",
+      "bytes": 48925,
+      "name": "pdfbox__pdfbox_src_test_resources_input_merge_PDFBOX-4417-054080.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/PDFBOX-5350-JX57O5E5YG6XM4FZABPULQGTW4OXPCWA-p1-reduced.pdf",
+      "sha256": "ad13a85449c62b7665d552e3702be867de213efb0defd8742a1d5a3d748fbfc9",
+      "bytes": 48143,
+      "name": "pdfbox__pdfbox_src_test_resources_input_PDFBOX-5350-JX57O5E5YG6XM4FZABPULQGTW4OXPCWA-p1-reduced.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/pdmodel/interactive/form/PDFBOX3812-acrobat-multiline-auto.pdf",
+      "sha256": "9163eaa4127d61be26e67e16c38bad7a712d7bfc32404348ed23ba92ccfc0ac5",
+      "bytes": 29737,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_pdmodel_interactive_form_PDFBOX3812-acrobat-multiline-auto.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/pdfparser/PDFBOX-6041-example.pdf",
+      "sha256": "070d35db701f6ccb5ed5e15de2048fe4ad6f4f97ccc7bdfd8687af362377b6ab",
+      "bytes": 21420,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_pdfparser_PDFBOX-6041-example.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/rendering/test-landscape2.pdf",
+      "sha256": "1c37c29237d4ba247acbe155f7a1957ffe55b0e2795d25fe0a7c2e4f9158669d",
+      "bytes": 10381,
+      "name": "pdfbox__pdfbox_src_test_resources_input_rendering_test-landscape2.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/merge/PDFBox.GlobalResourceMergeTest.Doc01.decoded.pdf",
+      "sha256": "3556721bc9a72f9d30d0871c6c2ff79939c44da2ee3b3ba1949d4b2ed437b4cf",
+      "bytes": 14336,
+      "name": "pdfbox__pdfbox_src_test_resources_input_merge_PDFBox.GlobalResourceMergeTest.Doc01.decoded.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/PDFBOX-5920-4MQTG6ZXOYSMTQ444KGQOVC6ZFQHWFNY-spaces-reduced.pdf",
+      "sha256": "5d817c599e1d0e12d2568b75598d34df4a376a694465f14e94bbd73304754d47",
+      "bytes": 5821,
+      "name": "pdfbox__pdfbox_src_test_resources_input_PDFBOX-5920-4MQTG6ZXOYSMTQ444KGQOVC6ZFQHWFNY-spaces-reduced.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "tools/src/test/resources/org/apache/pdfbox/testPDFPackage.pdf",
+      "sha256": "9676f28b3a11d339309f5d18eb1aaf51458c3cbf422183650d577b74bd8e823c",
+      "bytes": 92359,
+      "name": "pdfbox__tools_src_test_resources_org_apache_pdfbox_testPDFPackage.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "tools/src/test/resources/input/ImageIOUtil/raw_image_demo.pdf",
+      "sha256": "7dcd741fae28eea6de5b2306fff608e8a3be9da7609b4b884e7de5d1433659b4",
+      "bytes": 5796,
+      "name": "pdfbox__tools_src_test_resources_input_ImageIOUtil_raw_image_demo.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/PDFBOX-3053-reduced.pdf",
+      "sha256": "de02fe12323bb7b8cdcf375715c91ecd72628483f9bef75aede850efa8ff110e",
+      "bytes": 50134,
+      "name": "pdfbox__pdfbox_src_test_resources_input_PDFBOX-3053-reduced.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/input/merge/jpegrgb.pdf",
+      "sha256": "e4777c29ec90646d4e3c98f260926050badba2d19dc26f9cff565e47927f2565",
+      "bytes": 41204,
+      "name": "pdfbox__pdfbox_src_test_resources_input_merge_jpegrgb.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/pdmodel/interactive/form/AcroFormsBasicFields.pdf",
+      "sha256": "73d05cfd3a3c30ee919f0cc112f331ff874f4a4dec8ba9792877c81c312b226d",
+      "bytes": 170599,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_pdmodel_interactive_form_AcroFormsBasicFields.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/multipdf/PDFBOX-6049-Source.pdf",
+      "sha256": "57a3efd42ca8511cf041560f9704d941f6b803f3bc681e6fb0a0a9ba51ea2ef9",
+      "bytes": 2017,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_multipdf_PDFBOX-6049-Source.pdf"
+    },
+    {
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/pdmodel/test.unc.pdf",
+      "sha256": "7d452d667b62ee0c1d12e6e5ba71145a87c78f3ea0e755d3d3ad8a9d5c513ccf",
+      "bytes": 110437,
+      "name": "pdfbox__pdfbox_src_test_resources_org_apache_pdfbox_pdmodel_test.unc.pdf"
+    }
+  ],
+  "fetch_errors": [
+    {
+      "error": "fetch failed",
+      "source": "pdfbox",
+      "path": "pdfbox/src/test/resources/org/apache/pdfbox/pdmodel/interactive/form/PDFBOX-3656-SF1199AEG (Complete).pdf"
+    }
+  ]
+}
