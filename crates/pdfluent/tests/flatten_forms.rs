@@ -52,7 +52,9 @@ fn flattening_removes_the_form_and_keeps_the_content() {
 fn a_document_without_a_form_flattens_to_nothing_rather_than_failing() {
     licensed();
     let mut doc = PdfDocument::from_bytes(PLAIN_PDF).expect("open simple.pdf");
-    let report = doc.flatten_forms().expect("flatten on a plain PDF must not fail");
+    let report = doc
+        .flatten_forms()
+        .expect("flatten on a plain PDF must not fail");
     assert_eq!(report.fields_flattened, 0);
     assert!(report.is_complete(), "nothing to skip, yet {report:?}");
 }
@@ -95,7 +97,5 @@ fn flattening_takes_the_values_written_through_form_mut() {
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack
-        .windows(needle.len())
-        .any(|w| w == needle)
+    haystack.windows(needle.len()).any(|w| w == needle)
 }

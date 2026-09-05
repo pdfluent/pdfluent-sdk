@@ -1188,6 +1188,49 @@ impl PdfDocument {
         })
     }
 
+    /// Flatten this document's XFA content into a static PDF.
+    ///
+    /// An XFA form is a template plus data that a viewer renders on the fly.
+    /// Most readers other than Acrobat show nothing at all, so an archived XFA
+    /// form is a document nobody can read. Flattening renders it once and keeps
+    /// the result.
+    ///
+    /// Returns the flattened bytes; this document is left unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::XfaFailed`] on parse, layout or render failure, and a
+    /// capability error when [`Capability::XfaFlatten`] is not available.
+    ///
+    /// # Note
+    ///
+    /// This method did not exist until 24-08-2026 while `Capability::XfaFlatten`
+    /// was already on the tier table -- a capability a customer buys, with no
+    /// route to reach it from the facade. See #198.
+    pub fn flatten_xfa(&self) -> Result<Vec<u8>> {
+        self.require_capability(Capability::XfaFlatten)?;
+        pdf_engine::xfa::flatten(&self.engine).map_err(crate::xfa::map_xfa_err)
+    }
+
+    /// Flatten an encrypted XFA document, using `password` to open it.
+    ///
+    /// [`flatten_xfa`](Self::flatten_xfa) tries the empty password only, which
+    /// covers owner-only encryption and nothing else -- on a business corpus
+    /// that leaves 3 to 5% of documents unreadable with no way to tell whether
+    /// the fault is the document or us.
+    ///
+    /// An empty `password` behaves exactly like [`flatten_xfa`](Self::flatten_xfa).
+    ///
+    /// # Errors
+    ///
+    /// As [`flatten_xfa`](Self::flatten_xfa), plus a needs-password error when
+    /// neither this password nor the empty one opens the document.
+    pub fn flatten_xfa_with_password(&self, password: &str) -> Result<Vec<u8>> {
+        self.require_capability(Capability::XfaFlatten)?;
+        pdf_engine::xfa::flatten_with_password(&self.engine, password)
+            .map_err(crate::xfa::map_xfa_err)
+    }
+
     /// Build the cached XFA session from the document's current bytes.
     fn ensure_xfa_session(&mut self) -> Result<()> {
         if self.xfa_session.is_none() {

@@ -41,3 +41,11 @@ pub fn has_xfa(document: &PdfDocument) -> bool {
 pub fn flatten(document: &PdfDocument) -> Result<Vec<u8>, XfaError> {
     pdf_xfa::flatten_xfa_to_pdf(document.pdf().data().as_ref())
 }
+
+/// Flatten an encrypted XFA document, using `password` to open it.
+///
+/// [`flatten`] tries the empty password only, which covers owner-only
+/// encryption and nothing else. See #149.
+pub fn flatten_with_password(document: &PdfDocument, password: &str) -> Result<Vec<u8>, XfaError> {
+    pdf_xfa::flatten::flatten_xfa_to_pdf_with_password(document.pdf().data().as_ref(), password)
+}

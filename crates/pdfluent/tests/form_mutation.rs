@@ -643,7 +643,10 @@ fn flatten_forms_names_the_fields_it_could_not_flatten() {
     // they believe is final is still editable.
     let report = doc.flatten_forms().expect("flatten_forms");
     assert_eq!(report.fields_flattened, 0);
-    assert!(!report.is_complete(), "skipped fields were reported as complete");
+    assert!(
+        !report.is_complete(),
+        "skipped fields were reported as complete"
+    );
     assert!(
         report.skipped.contains(&"first_name".to_string()),
         "the skipped field is not named: {:?}",
