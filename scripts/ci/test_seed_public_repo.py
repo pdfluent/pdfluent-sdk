@@ -21,25 +21,60 @@ from fixture_env import sealed_env  # noqa: E402
 SCRIPT = CI.parent / "release" / "seed_public_repo.sh"
 
 
-def git(*a, cwd):
-    return subprocess.run(["git", *a], cwd=str(cwd), capture_output=True,
-                          text=True, env=sealed_env(cwd=cwd))
+def git(*a, cwd, env=None):
+    """A fixture git call that must succeed.
+
+    Raising is the point. This swallowed a non-zero exit, so a fixture that
+    built nothing produced an empty source repository and every case below
+    failed on `git filter-branch` saying "You must specify a ref to rewrite" --
+    a message about the script under test, pointing away from the fixture that
+    was actually broken. (#132)
+    """
+    r = subprocess.run(["git", *a], cwd=str(cwd), capture_output=True,
+                       text=True, env=env if env is not None else sealed_env(cwd=cwd))
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"fixture setup failed: git {' '.join(a)} in {cwd} "
+            f"exited {r.returncode}\n{r.stdout}{r.stderr}")
+    return r
 
 
-def source_repo(tmp: pathlib.Path) -> pathlib.Path:
+def init_repo(r: pathlib.Path, env=None) -> None:
+    """An empty repository that can commit without borrowing an identity.
+
+    `sealed_env` hands git an empty global config, so the fixture had no
+    `user.email` and `git commit` fell back to whatever the machine could
+    auto-detect. A developer's machine lends one; a GitHub runner, whose
+    hostname yields no usable address, refuses -- so the three commits below
+    were never made there. Green here, red there, from 05-09-2026 on. The
+    identity goes in the sandbox repository rather than the environment,
+    because an env-level one overrides identities other fixtures configure on
+    purpose (see fixture_env.sealed_env).
+    """
+    git("init", "-q", "-b", "master", cwd=r, env=env)
+    git("config", "user.name", "fixture", cwd=r, env=env)
+    git("config", "user.email", "fixture@invalid", cwd=r, env=env)
+
+
+def source_repo(tmp: pathlib.Path, env=None) -> pathlib.Path:
     r = tmp / "source"
     r.mkdir()
-    git("init", "-q", "-b", "master", cwd=r)
+    init_repo(r, env=env)
     (r / "a.txt").write_text("first\n", encoding="utf-8")
-    git("add", "-A", cwd=r)
-    git("commit", "-q", "-m", "first\n\nCo-Authored-By: Someone <s@example.invalid>", cwd=r)
+    git("add", "-A", cwd=r, env=env)
+    git("commit", "-q", "-m", "first\n\nCo-Authored-By: Someone <s@example.invalid>", cwd=r, env=env)
     (r / "b.txt").write_text("second\n", encoding="utf-8")
-    git("add", "-A", cwd=r)
-    git("commit", "-q", "-m", "second\n\nAssisted-by: Another <a@example.invalid>", cwd=r)
+    git("add", "-A", cwd=r, env=env)
+    git("commit", "-q", "-m", "second\n\nAssisted-by: Another <a@example.invalid>", cwd=r, env=env)
     (r / "c.txt").write_text("third\n", encoding="utf-8")
-    git("add", "-A", cwd=r)
-    git("commit", "-q", "-m", "third, with no trailer", cwd=r)
-    git("tag", "v1.0.0", cwd=r)
+    git("add", "-A", cwd=r, env=env)
+    git("commit", "-q", "-m", "third, with no trailer", cwd=r, env=env)
+    git("tag", "v1.0.0", cwd=r, env=env)
+    # The fixture says what it built. An empty source repository makes every
+    # case below fail for a reason that has nothing to do with the script.
+    commits = git("rev-list", "--count", "HEAD", cwd=r, env=env).stdout.strip()
+    if commits != "3":
+        raise RuntimeError(f"fixture source repo holds {commits} commit(s), expected 3")
     return r
 
 
@@ -89,7 +124,7 @@ def main() -> int:
         tmp = pathlib.Path(d)
         r = tmp / "clean"
         r.mkdir()
-        git("init", "-q", "-b", "master", cwd=r)
+        init_repo(r)
         (r / "a.txt").write_text("only\n", encoding="utf-8")
         git("add", "-A", cwd=r)
         git("commit", "-q", "-m", "no trailer here", cwd=r)
@@ -113,6 +148,28 @@ def main() -> int:
         out = u.stdout + u.stderr
         ok_all &= case("it refuses to seed over an existing history",
                        u.returncode == 1 and "already has branches" in out, out[-300:])
+
+    # THE CASE THAT WOULD HAVE CAUGHT IT. A machine that lends git an identity
+    # hides this entirely, which is why the suite was green here and red on the
+    # runner. `useConfigOnly` takes that loan away, so the fixture has to carry
+    # its own identity or build nothing at all.
+    #
+    # One key of the seal is deliberately replaced here, and only here: this
+    # case is ABOUT the config git reads, so it has to name the file.
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "no-identity.gitconfig"
+        cfg.write_text("[user]\n\tuseConfigOnly = true\n", encoding="utf-8")
+        env = sealed_env(cwd=tmp)
+        env["GIT_CONFIG_GLOBAL"] = str(cfg)
+        try:
+            src = source_repo(tmp, env=env)
+            built = git("rev-list", "--count", "HEAD", cwd=src, env=env).stdout.strip()
+            ok_all &= case("the fixture commits without borrowing the machine's identity",
+                           built == "3", f"the source repo holds {built} commit(s)")
+        except RuntimeError as e:
+            ok_all &= case("the fixture commits without borrowing the machine's identity",
+                           False, str(e)[:300])
 
     print("test_seed_public_repo: " + ("OK" if ok_all else "FAILED"))
     return 0 if ok_all else 1
