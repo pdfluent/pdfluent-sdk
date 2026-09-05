@@ -183,6 +183,13 @@ fn main() {
             "Draw elements with left, center, right, and justify alignment",
             build_para_alignment(),
         ),
+        // Case 31 is appended, not inserted. The index below drives the
+        // filename, so anything placed earlier renumbers every fixture after it.
+        (
+            "dynamic_multipage_overflow",
+            "Dynamic XFA: 1-page shell, 50 data-bound fields flattening to 3 pages",
+            build_dynamic_multipage_overflow(),
+        ),
     ];
 
     for (i, (suffix, desc, xdp)) in cases.iter().enumerate() {
@@ -1324,6 +1331,110 @@ fn build_para_alignment() -> String {
 // ---------------------------------------------------------------------------
 // PDF builder (same as formcalc generator)
 // ---------------------------------------------------------------------------
+
+/// Dynamic XFA that genuinely paginates, with data-bound fields (#259).
+///
+/// This exists because the editor lost its only dynamic-XFA test coverage. Those
+/// tests ran against a third-party immigration form whose redistribution terms
+/// were never established, so the file was purged. Restoring them needs a
+/// document we own that behaves the same way: a one-page shell PDF whose XFA
+/// layout flattens to more than one page.
+///
+/// WHY THE OTHER OVERFLOW CASES DO NOT PAGINATE
+///
+/// `build_multipage`, `build_hundred_fields` and `build_large_table_overflow`
+/// all declare far more content than fits -- a hundred fields at 0.25in in a
+/// 10in content area is 25 inches of content -- and all three flatten to a
+/// single page. Measured, not assumed:
+///
+///     xl_03_multipage.pdf             1 page
+///     xl_21_hundred_fields.pdf        1 page
+///     xl_23_many_sections_overflow    1 page
+///     xl_25_large_table_overflow      1 page
+///
+/// The height was never the problem. All four use the two-pageArea shape --
+/// a `Page1` plus a separate `PageN` to overflow into -- and the layout engine
+/// does not currently continue onto that second area. What does paginate is a
+/// *single* pageArea carrying `<occur max="-1"/>`: a page that repeats itself.
+/// Both shapes are legal XFA and Acrobat honours both, so the two-pageArea case
+/// looks like a real gap in the engine rather than a mistake in those fixtures.
+/// It is left alone here: this function needs a fixture that paginates, and
+/// changing the engine is a separate question with its own blast radius.
+///
+/// WHY 50 FIELDS
+///
+/// Measured with `cargo run -p pdf-xfa --example flatten_xfa`:
+///
+///     25 fields -> 2 pages      46 fields -> 3 pages
+///     40 fields -> 2 pages      50 fields -> 3 pages
+///                               60 fields -> 3 pages
+///                               70 fields -> 4 pages
+///
+/// 50 sits in the middle of the 46..60 band that yields three pages, so a small
+/// change in metrics moves the layout without flipping the page count and
+/// breaking a test for a reason that has nothing to do with what it checks.
+///
+/// WHY THERE IS A DATASETS PACKET
+///
+/// The fill and commit tests need a field that is bound to data -- `bind_none`
+/// false, which is any field without `<bind match="none"/>` -- and they need
+/// somewhere for the written value to land on save. A template-only XDP, which
+/// is what `xdp_wrap` emits, gives them nowhere. So this case carries its own
+/// envelope with an `<xfa:datasets>` packet whose element names mirror the
+/// field names, which is how XFA's implicit binding connects the two.
+fn build_dynamic_multipage_overflow() -> String {
+    const FIELD_COUNT: usize = 50;
+
+    let mut fields = String::new();
+    let mut data = String::new();
+    for i in 1..=FIELD_COUNT {
+        fields.push_str(&format!(
+            r#"      <field name="item{i:02}" w="7in" h="0.45in">
+        <caption><value><text>Item {i:02}</text></value></caption>
+        <ui><textEdit/></ui>
+        <value><text/></value>
+      </field>
+"#
+        ));
+        data.push_str(&format!("        <item{i:02}/>\n"));
+    }
+
+    // Not `xdp_wrap`: that emits a template packet only, and this case needs the
+    // datasets packet alongside it.
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <desc>
+    <text name="description">Dynamic XFA overflowing a repeating page area</text>
+  </desc>
+  <subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <!-- One page area that repeats itself. The Page1/PageN pair used by the
+           other overflow fixtures does not paginate here; see this function's
+           documentation. -->
+      <pageArea name="Page1" id="Page1" w="8.5in" h="11in">
+        <occur min="1" max="-1"/>
+        <contentArea name="ca1" x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="detail" layout="tb" w="7.5in">
+{fields}    </subform>
+  </subform>
+</template>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form1>
+      <detail>
+{data}      </detail>
+    </form1>
+  </xfa:data>
+</xfa:datasets>
+</xdp:xdp>
+"#
+    )
+}
 
 fn build_pdf(xdp: String) -> Vec<u8> {
     let mut doc = Document::with_version("1.4");
