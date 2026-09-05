@@ -182,6 +182,80 @@ fn group_into_lines(blocks: &[TextBlock]) -> Vec<Line> {
     lines
 }
 
+/// A column is an x-position that recurs on several lines.
+///
+/// Not every distinct x. That was the bug: `col_count` was the number of
+/// distinct x-positions across the whole block set, and in a real PDF almost
+/// every word starts at its own x. A line of twenty words therefore produced
+/// twenty columns -- roughly one word per cell, which leaves the file valid and
+/// unusable. See #161.
+///
+/// What distinguishes a column from an accidental word position is recurrence:
+/// text beginning at (nearly) the same x on several lines. An x that appears on
+/// one line only is a word.
+const MIN_COLUMN_LINES: usize = 2;
+const MIN_COLUMN_SUPPORT_PERCENT: usize = 30;
+
+/// The x-positions that behave as a column, ordered left to right.
+fn column_positions(lines: &[Line]) -> Vec<f64> {
+    // Per candidate x: on how many distinct lines does text start there?
+    let mut candidates: Vec<(f64, usize)> = Vec::new();
+    for line in lines {
+        let mut counted: Vec<usize> = Vec::new();
+        for block in &line.blocks {
+            let x = block.bbox[0];
+            match candidates
+                .iter()
+                .position(|&(px, _)| (px - x).abs() < TABLE_X_TOLERANCE)
+            {
+                Some(i) => {
+                    // One line counts at most once for the same column;
+                    // otherwise a line with five words at the same x invents a
+                    // column that is not there.
+                    if !counted.contains(&i) {
+                        candidates[i].1 += 1;
+                        counted.push(i);
+                    }
+                }
+                None => {
+                    candidates.push((x, 1));
+                    counted.push(candidates.len() - 1);
+                }
+            }
+        }
+    }
+
+    let threshold = std::cmp::max(
+        MIN_COLUMN_LINES,
+        lines.len() * MIN_COLUMN_SUPPORT_PERCENT / 100,
+    );
+    let mut positions: Vec<f64> = candidates
+        .into_iter()
+        .filter(|&(_, support)| support >= threshold)
+        .map(|(x, _)| x)
+        .collect();
+    positions.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    positions
+}
+
+/// The column this block belongs to: the nearest column that does not sit to
+/// the right of the block.
+///
+/// Previously everything that did not start exactly on a column fell back to
+/// column 0 (`unwrap_or(0)`), which dumped unaligned text from the whole line
+/// into the first cell. Text belongs to the column it sits under.
+fn column_for(x: f64, positions: &[f64]) -> usize {
+    let mut best = 0;
+    for (i, &px) in positions.iter().enumerate() {
+        if px <= x + TABLE_X_TOLERANCE {
+            best = i;
+        } else {
+            break;
+        }
+    }
+    best
+}
+
 /// Try to detect a table from aligned text lines.
 ///
 /// A table is detected when multiple lines share the same column structure
@@ -191,40 +265,21 @@ fn try_detect_table(lines: &[Line]) -> Option<Table> {
         return None;
     }
 
-    // Collect all unique x-positions across all lines.
-    let mut x_positions: Vec<f64> = Vec::new();
-    for line in lines {
-        for block in &line.blocks {
-            let x = block.bbox[0];
-            if !x_positions
-                .iter()
-                .any(|&px| (px - x).abs() < TABLE_X_TOLERANCE)
-            {
-                x_positions.push(x);
-            }
-        }
-    }
-    x_positions.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
+    let x_positions = column_positions(lines);
     if x_positions.len() < 2 {
         return None;
     }
 
-    // Check if most lines have blocks at multiple column positions.
+    // Do most lines carry text in more than one column?
     let multi_col_lines = lines
         .iter()
         .filter(|line| {
-            let unique_cols = line
-                .blocks
+            line.blocks
                 .iter()
-                .map(|b| {
-                    x_positions
-                        .iter()
-                        .position(|&px| (px - b.bbox[0]).abs() < TABLE_X_TOLERANCE)
-                        .unwrap_or(0)
-                })
-                .collect::<std::collections::HashSet<_>>();
-            unique_cols.len() >= 2
+                .map(|b| column_for(b.bbox[0], &x_positions))
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                >= 2
         })
         .count();
 
@@ -239,10 +294,7 @@ fn try_detect_table(lines: &[Line]) -> Option<Table> {
     for line in lines {
         let mut row = vec![String::new(); col_count];
         for block in &line.blocks {
-            let col_idx = x_positions
-                .iter()
-                .position(|&px| (px - block.bbox[0]).abs() < TABLE_X_TOLERANCE)
-                .unwrap_or(0);
+            let col_idx = column_for(block.bbox[0], &x_positions);
             if !row[col_idx].is_empty() {
                 row[col_idx].push(' ');
             }
@@ -415,5 +467,81 @@ mod tests {
     fn empty_blocks_returns_empty() {
         let elements = analyze_page(&[]);
         assert!(elements.is_empty());
+    }
+
+    // ---- column detection (#161) ----
+
+    #[test]
+    fn a_sentence_does_not_become_a_table_with_a_column_per_word() {
+        // The symptom from #161, reduced to its core: ordinary lines of text in
+        // which every word has its own x. Previously every distinct x became a
+        // column, so you got roughly one word per cell -- a valid .docx nobody
+        // can use.
+        let mut blocks = Vec::new();
+        for (row, y) in [(0, 700.0), (1, 684.0), (2, 668.0)] {
+            // Words at ever-different x-positions, as in flowing text.
+            for w in 0..8 {
+                let x = 72.0 + (w as f64) * 37.0 + (row as f64) * 11.0;
+                blocks.push(make_block("word", x, y, 12.0));
+            }
+        }
+        let elements = analyze_page(&blocks);
+        for el in &elements {
+            if let PageElement::Tbl(t) = el {
+                assert!(
+                    t.col_count <= 4,
+                    "flowing text became a table of {} columns; that is the \
+                     symptom from #161",
+                    t.col_count
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_real_table_keeps_its_columns() {
+        // The counter-test. Were the new requirement too strict, tables that do
+        // exist would disappear -- a worse failure than too many columns, since
+        // then the structure is gone entirely.
+        let mut blocks = Vec::new();
+        for y in [700.0_f64, 684.0, 668.0, 652.0] {
+            blocks.push(make_block("left", 72.0, y, 12.0));
+            blocks.push(make_block("middle", 200.0, y, 12.0));
+            blocks.push(make_block("right", 340.0, y, 12.0));
+        }
+        let elements = analyze_page(&blocks);
+        let table = elements.iter().find_map(|e| match e {
+            PageElement::Tbl(t) => Some(t),
+            _ => None,
+        });
+        let t = table.expect("an aligned three-column table was not detected");
+        assert_eq!(t.col_count, 3, "columns: {:?}", t.rows.first());
+        assert_eq!(t.rows.len(), 4);
+    }
+
+    #[test]
+    fn text_without_a_column_of_its_own_does_not_land_in_the_first_cell() {
+        // Previously everything that did not start exactly on a column ended up
+        // in column 0 (`unwrap_or(0)`), so loose text from the whole line landed
+        // in the first cell. Text belongs to the column it sits under.
+        let mut blocks = Vec::new();
+        for y in [700.0_f64, 684.0, 668.0] {
+            blocks.push(make_block("A", 72.0, y, 12.0));
+            blocks.push(make_block("B", 300.0, y, 12.0));
+        }
+        // One block that forms no column anywhere, but does sit on the right.
+        blocks.push(make_block("loose", 310.0, 652.0, 12.0));
+        blocks.push(make_block("A", 72.0, 652.0, 12.0));
+
+        let elements = analyze_page(&blocks);
+        if let Some(PageElement::Tbl(t)) =
+            elements.iter().find(|e| matches!(e, PageElement::Tbl(_)))
+        {
+            let last = t.rows.last().expect("no rows");
+            assert!(
+                !last[0].contains("loose"),
+                "unaligned text was dumped into the first cell: {last:?}"
+            );
+        }
     }
 }
