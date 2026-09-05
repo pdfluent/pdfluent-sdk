@@ -31,6 +31,47 @@ use xfa_wasm::{PdfDoc, XfaEngine};
 static SAMPLE_PDF: &[u8] = include_bytes!("../../../tests/corpus-mini/simple.pdf");
 static MULTI_PDF: &[u8] = include_bytes!("../../../tests/corpus-mini/multi-page.pdf");
 
+// ---------- Office export: the capability the browser SDK never had ----------
+
+/// An OOXML package is a ZIP with a known entry. The binding could return
+/// bytes and still be useless; checking the entry is what separates the two.
+fn assert_ooxml(bytes: &[u8], entry: &str, what: &str) {
+    assert!(!bytes.is_empty(), "{what}: empty");
+    assert_eq!(&bytes[..2], b"PK", "{what}: not a ZIP");
+    let readable = String::from_utf8_lossy(bytes);
+    assert!(readable.contains(entry), "{what}: no {entry} inside");
+}
+
+#[wasm_bindgen_test]
+fn to_docx_runs_in_wasm() {
+    let _ = pdfluent::set_license_key("tier:business");
+    let doc = PdfDoc::open(SAMPLE_PDF).expect("open sample.pdf");
+    let out = doc
+        .to_docx()
+        .expect("toDocx must not trap in the wasm build");
+    assert_ooxml(&out, "word/document.xml", "docx");
+}
+
+#[wasm_bindgen_test]
+fn to_xlsx_runs_in_wasm() {
+    let _ = pdfluent::set_license_key("tier:business");
+    let doc = PdfDoc::open(SAMPLE_PDF).expect("open sample.pdf");
+    let out = doc
+        .to_xlsx()
+        .expect("toXlsx must not trap in the wasm build");
+    assert_ooxml(&out, "xl/workbook.xml", "xlsx");
+}
+
+#[wasm_bindgen_test]
+fn to_pptx_runs_in_wasm() {
+    let _ = pdfluent::set_license_key("tier:business");
+    let doc = PdfDoc::open(MULTI_PDF).expect("open multi-page.pdf");
+    let out = doc
+        .to_pptx()
+        .expect("toPptx must not trap in the wasm build");
+    assert_ooxml(&out, "ppt/presentation.xml", "pptx");
+}
+
 // ---------- The regression that started all this ----------
 
 #[wasm_bindgen_test]

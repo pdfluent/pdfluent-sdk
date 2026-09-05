@@ -16,6 +16,12 @@ crate-type = ["cdylib", "rlib"]
 napi = { version = "2", features = ["async", "serde-json", "napi9"] }
 napi-derive = "2"
 pdfluent = { path = "../pdfluent", version = "=1.0.0" }
+# Office export. Same three crates the C ABI and wasm use; the node binding
+# holds a pdf_engine document, not a facade one, so it calls them directly and
+# takes the capability check from pdfluent::require_capability.
+pdf-docx = { path = "../pdf-docx", version = "=1.0.0" }
+pdf-xlsx = { path = "../pdf-xlsx", version = "=1.0.0" }
+pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0" }
 pdf-engine = { path = "../pdf-engine", version = "=1.0.0" }
 pdf-forms = { package = "pdfluent-forms", path = "../pdf-forms", version = "=1.0.0" }
 pdf-annot = { path = "../pdf-annot", version = "=1.0.0" }

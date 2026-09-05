@@ -42,6 +42,15 @@ pdf-forms = { workspace = true }
 pdfluent = { path = "../pdfluent", version = "=1.0.0" }
 pdf-text-format = { path = "../pdf-text-format", version = "=1.0.0" }
 
+# Office export in the browser. These three build for wasm32 -- they touch no
+# filesystem and depend only on pdf-extract, quick-xml, zip and log. They were
+# excluded by a comment that applied to pdf-render (vello), which meant the
+# browser SDK could not export to Word, Excel or PowerPoint at all while the
+# feature page sold it.
+pdf-docx = { path = "../pdf-docx", version = "=1.0.0" }
+pdf-xlsx = { path = "../pdf-xlsx", version = "=1.0.0" }
+pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0" }
+
 # lopdf: required for text extraction; annotate uses lopdf for mutation.
 # Direct path (not workspace = true) to allow per-target default-features override.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

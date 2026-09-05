@@ -438,6 +438,21 @@ export declare class PdfDocument {
    * Level is specified as a string: "1a", "1b", "2a", "2b", "2u", "3a", "3b", "3u".
    */
   validatePdfa(level: string): ComplianceReportInfo
+  /**
+   * Convert the document to a Word `.docx` package.
+   *
+   * Requires a Business licence or higher. Without one the call throws,
+   * and the message points at the free 30-day evaluation key rather than
+   * the price list.
+   */
+  toDocx(): Buffer
+  /** Convert the document to an Excel `.xlsx` workbook. See `toDocx`. */
+  toXlsx(): Buffer
+  /**
+   * Convert the document to a PowerPoint `.pptx` deck, one slide per page.
+   * See `toDocx`.
+   */
+  toPptx(): Buffer
 }
 /** A handle to a single page within a PDF document. */
 export declare class PdfPage {
