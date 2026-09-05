@@ -175,6 +175,53 @@ namespace PDFluent
             return new PageBox(x0, y0, x1, y1);
         }
 
+        // ---- Office export ----
+
+        /// <summary>Converts this document to a Word <c>.docx</c> package.</summary>
+        /// <remarks>
+        /// Requires a Business licence or higher. Without one this throws with
+        /// the engine's own message, which points at the free 30-day
+        /// evaluation key before the price list.
+        /// </remarks>
+        /// <returns>The <c>.docx</c> bytes.</returns>
+        /// <exception cref="PdfluentException">If the tier does not include Office export, or the conversion fails.</exception>
+        /// <exception cref="ObjectDisposedException">If the document has been disposed.</exception>
+        public byte[] ToDocx() => OfficeExport(NativeMethods.pdf_document_to_docx, "docx");
+
+        /// <summary>Converts this document to an Excel <c>.xlsx</c> workbook.</summary>
+        /// <returns>The <c>.xlsx</c> bytes.</returns>
+        /// <seealso cref="ToDocx"/>
+        public byte[] ToXlsx() => OfficeExport(NativeMethods.pdf_document_to_xlsx, "xlsx");
+
+        /// <summary>Converts this document to a PowerPoint <c>.pptx</c> deck, one slide per page.</summary>
+        /// <returns>The <c>.pptx</c> bytes.</returns>
+        /// <seealso cref="ToDocx"/>
+        public byte[] ToPptx() => OfficeExport(NativeMethods.pdf_document_to_pptx, "pptx");
+
+        private delegate PdfStatus OfficeCall(IntPtr doc, out IntPtr outData, out UIntPtr outLen);
+
+        private byte[] OfficeExport(OfficeCall call, string what)
+        {
+            ThrowIfDisposed();
+            PdfStatus status = call(_handle.DangerousGetHandle(), out IntPtr data, out UIntPtr len);
+            if (status != PdfStatus.Ok)
+                throw ThrowForStatus(status, $"{what} conversion failed");
+
+            int size = checked((int)len.ToUInt64());
+            try
+            {
+                // Copy before freeing: the array handed to the caller has to
+                // outlive the native allocation.
+                byte[] managed = new byte[size];
+                Marshal.Copy(data, managed, 0, size);
+                return managed;
+            }
+            finally
+            {
+                NativeMethods.pdf_bytes_free(data, len);
+            }
+        }
+
         // ---- Text extraction ----
 
         /// <summary>

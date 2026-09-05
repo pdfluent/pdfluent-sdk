@@ -77,6 +77,29 @@ namespace PDFluent
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void pdf_pixels_free(IntPtr pixels, UIntPtr len);
 
+        // ---- Office export ----
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdf_document_to_docx(
+            IntPtr doc,
+            out IntPtr outData,
+            out UIntPtr outLen);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdf_document_to_xlsx(
+            IntPtr doc,
+            out IntPtr outData,
+            out UIntPtr outLen);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern PdfStatus pdf_document_to_pptx(
+            IntPtr doc,
+            out IntPtr outData,
+            out UIntPtr outLen);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void pdf_bytes_free(IntPtr data, UIntPtr len);
+
         // ---- Text extraction ----
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]

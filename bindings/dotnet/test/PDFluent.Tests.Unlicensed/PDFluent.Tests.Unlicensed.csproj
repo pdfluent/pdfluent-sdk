@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
+    <PackageReference Include="xunit" Version="2.7.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PDFluent\PDFluent.csproj" />
+  </ItemGroup>
+
+  <!--
+    Copy the native library next to the test binary so the
+    [DllImport("pdf_capi")] resolver finds it in the app base directory.
+    DYLD_LIBRARY_PATH / LD_LIBRARY_PATH cannot be relied upon: macOS SIP
+    strips DYLD_* from the spawned test-host process.
+
+    The loaded dylib MUST match the test-host architecture. We therefore
+    select by the SDK's portable RID ($(NETCoreSdkPortableRuntimeIdentifier)):
+      1. Prefer the freshly-built workspace artifact in target/release when its
+         architecture matches the host (covers same-arch CI/dev machines).
+      2. Otherwise fall back to the RID-matched native asset bundled in the
+         PDFluent package project (runtimes/<rid>/native/...), which always
+         carries an arch-correct build for the four shipped RIDs.
+    target/release is four levels up from this project
+    (bindings/dotnet/test/PDFluent.Tests).
+  -->
+  <PropertyGroup>
+    <PdfluentHostRid>$(NETCoreSdkPortableRuntimeIdentifier)</PdfluentHostRid>
+    <PdfluentReleaseDir>$(MSBuildProjectDirectory)\..\..\..\..\target\release</PdfluentReleaseDir>
+    <PdfluentRuntimesDir>$(MSBuildProjectDirectory)\..\..\src\PDFluent\runtimes\$(PdfluentHostRid)\native</PdfluentRuntimesDir>
+
+    <!-- Native file name + the workspace build's RID, per host OS. -->
+    <PdfluentNativeFile Condition="$(PdfluentHostRid.StartsWith('osx'))">libpdf_capi.dylib</PdfluentNativeFile>
+    <PdfluentNativeFile Condition="$(PdfluentHostRid.StartsWith('linux'))">libpdf_capi.so</PdfluentNativeFile>
+    <PdfluentNativeFile Condition="$(PdfluentHostRid.StartsWith('win'))">pdf_capi.dll</PdfluentNativeFile>
+
+    <!-- The workspace target/release artifact is built for the dev machine's
+         own arch; only adopt it when that equals the test-host RID. On this
+         x64-Homebrew-dotnet / arm64-hardware setup they differ, so the bundled
+         osx-x64 asset is used instead. -->
+    <PdfluentReleaseArch Condition="$([MSBuild]::IsOSPlatform('OSX')) and '$(OS)' != 'Windows_NT'">$(PdfluentReleaseDir)</PdfluentReleaseArch>
+    <PdfluentReleaseFull>$(PdfluentReleaseDir)\$(PdfluentNativeFile)</PdfluentReleaseFull>
+    <PdfluentRuntimesFull>$(PdfluentRuntimesDir)\$(PdfluentNativeFile)</PdfluentRuntimesFull>
+
+    <!-- Resolve to the first existing arch-correct source. The RID-matched
+         runtimes asset is the safe default; target/release wins only when the
+         host RID is the dev-machine arch (osx-arm64 here). -->
+    <PdfluentNativeSource Condition="Exists('$(PdfluentRuntimesFull)')">$(PdfluentRuntimesFull)</PdfluentNativeSource>
+    <PdfluentNativeSource Condition="'$(PdfluentHostRid)' == 'osx-arm64' and Exists('$(PdfluentReleaseFull)')">$(PdfluentReleaseFull)</PdfluentNativeSource>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(PdfluentNativeSource)' != ''">
+    <None Include="$(PdfluentNativeSource)">
+      <Link>$(PdfluentNativeFile)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>
