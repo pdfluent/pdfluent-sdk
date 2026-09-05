@@ -198,21 +198,23 @@ fn tier_to_str(tier: Tier) -> &'static str {
 fn pdfluent_license_err_to_py(e: pdfluent::Error) -> PyErr {
     // Canonical C8 code from the Rust core (see crates/pdfluent/src/error.rs).
     let code = e.code();
+    // The core's Display text, captured before the match moves `e`. Some arms
+    // reuse it rather than paraphrase: see FeatureNotInTier below.
+    let display = e.to_string();
     let (py_err, message) = match e {
         pdfluent::Error::InvalidLicense { reason } => {
             let msg = format!("invalid license: {reason}");
             (PdfluentLicenseError::new_err(msg.clone()), msg)
         }
-        pdfluent::Error::FeatureNotInTier {
-            capability,
-            current_tier,
-            required_tier,
-        } => {
-            let msg = format!(
-                "capability {capability:?} not available in {current_tier:?}; requires {required_tier:?}"
-            );
-            (PdfluentLicenseError::new_err(msg.clone()), msg)
-        }
+        // Reuse the core's own text here instead of paraphrasing it. That text
+        // carries the route to a key -- a free evaluation link on Trial, the
+        // pricing page otherwise -- and the paraphrase dropped it, so a Python
+        // caller was told what they could not do and nothing about how to fix
+        // it. Every other binding forwards the Display text; this one did not.
+        pdfluent::Error::FeatureNotInTier { .. } => (
+            PdfluentLicenseError::new_err(display.clone()),
+            display.clone(),
+        ),
         pdfluent::Error::CapabilityNotCompiled {
             capability,
             feature_flag,
@@ -310,6 +312,43 @@ struct PyDocument {
     /// Lazily-initialised mutable document for write operations.
     /// None until the first mutation (form fill, annotation, redact, …).
     lopdf: Mutex<Option<LopdfDocument>>,
+}
+
+/// Plumbing for the Office exporters. Kept out of `#[pymethods]` so PyO3 does
+/// not expose it to Python.
+impl PyDocument {
+    /// The bytes as they stand now, mutations included.
+    ///
+    /// Same rule as `save()`: once anything has written through the lopdf
+    /// handle, the original bytes no longer describe the document, and an
+    /// export that ignored that would silently convert the pre-edit version.
+    fn current_bytes(&self) -> PyResult<Vec<u8>> {
+        let mut guard = self.lopdf.lock().unwrap();
+        match *guard {
+            Some(ref mut doc) => {
+                let mut buf = Vec::new();
+                doc.save_to(&mut buf)
+                    .map_err(|e| PdfluentIoError::new_err(format!("serialise failed: {e}")))?;
+                Ok(buf)
+            }
+            None => Ok(self.raw_bytes.as_ref().clone()),
+        }
+    }
+
+    /// Route Office export through the facade rather than calling the
+    /// converter crates directly. The capability gate lives on
+    /// `pdfluent::PdfDocument`; duplicating it here would mean two places to
+    /// keep in step, and the one that drifts is the one nobody tests.
+    fn office_export<'py>(
+        &self,
+        py: Python<'py>,
+        convert: fn(&pdfluent::PdfDocument) -> pdfluent::Result<Vec<u8>>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let raw = self.current_bytes()?;
+        let doc = pdfluent::PdfDocument::from_bytes(&raw).map_err(pdfluent_license_err_to_py)?;
+        let out = convert(&doc).map_err(pdfluent_license_err_to_py)?;
+        Ok(PyBytes::new(py, &out))
+    }
 }
 
 #[pymethods]
@@ -474,6 +513,32 @@ impl PyDocument {
             std::fs::write(path, self.raw_bytes.as_ref())
                 .map_err(|e| PdfluentIoError::new_err(e.to_string()))
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Office export
+    // ------------------------------------------------------------------
+
+    /// Convert to a Word document (``.docx``) and return the bytes.
+    ///
+    /// Requires a Business licence or higher. Without one this raises
+    /// ``PdfluentLicenseError`` carrying the link to a free evaluation key.
+    fn to_docx<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        self.office_export(py, |d| d.to_docx_bytes())
+    }
+
+    /// Convert to an Excel workbook (``.xlsx``) and return the bytes.
+    ///
+    /// Requires a Business licence or higher.
+    fn to_xlsx<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        self.office_export(py, |d| d.to_xlsx_bytes())
+    }
+
+    /// Convert to a PowerPoint deck (``.pptx``) and return the bytes.
+    ///
+    /// Requires a Business licence or higher.
+    fn to_pptx<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        self.office_export(py, |d| d.to_pptx_bytes())
     }
 
     // ------------------------------------------------------------------
