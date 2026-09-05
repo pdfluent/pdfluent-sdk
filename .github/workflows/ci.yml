@@ -811,6 +811,18 @@ jobs:
       - name: Site snippets match the code that compiles them
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
+      # The compiling half of this pair -- site_blocks_compile.py, which builds
+      # every Rust block on the site -- is a cargo build of five hundred small
+      # programs, so it runs in the full local lane on a push to master and not
+      # here (#333: no hosted minutes while the repository is private). What runs
+      # here is the half that needs no compiler: the exception register, read in
+      # both directions, and the hand-over digest the website refuses to build
+      # against. Seconds, and it catches the failure that costs the most --
+      # an entry excusing a block that has compiled for months, or an export that
+      # has drifted away from the site it claims to describe.
+      - name: The site-blocks register and hand-over still hold
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_site_blocks_register.py
       - name: The capability matrix and the coverage report agree
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/capability_matrix_matches_coverage.py
