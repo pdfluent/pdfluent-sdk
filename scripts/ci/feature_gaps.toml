@@ -13,10 +13,6 @@
 # The guard checks both directions: a pair that starts running in CI and stays
 # listed here fails too, so this cannot quietly become a list of excuses.
 
-[[gap]]
-pakket  = "pdf-annot"
-feature = "write"
-waarom  = "#285 -- 38 tests pass locally, no job runs them"
 
 [[gap]]
 pakket  = "pdf-engine"
@@ -38,50 +34,26 @@ pakket  = "pdf-engine"
 feature = "ocr-mistral"
 waarom  = "#285 -- cloud OCR, no job enables it"
 
-[[gap]]
-pakket  = "pdf-font"
-feature = "embed-cmaps"
-waarom  = "#285 -- 117 tests pass locally, no job runs them"
 
-[[gap]]
-pakket  = "pdf-manip"
-feature = "serde"
-waarom  = "#285 -- 279 tests pass locally, no job runs them"
 
 [[gap]]
 pakket  = "pdf-xfa"
 feature = "xfa-js-sandboxed"
 waarom  = "#285 -- no job enables it"
 
-[[gap]]
-pakket  = "pdfluent"
-feature = "pdfa"
-waarom  = "#285 -- 24 tests pass locally, no job runs them"
 
 [[gap]]
 pakket  = "pdfluent-lopdf"
 feature = "async"
 waarom  = "#285 -- no job enables it"
 
-[[gap]]
-pakket  = "pdfluent-lopdf"
-feature = "chrono"
-waarom  = "#285 -- no job enables it"
 
 [[gap]]
 pakket  = "pdfluent-lopdf"
 feature = "embed_image"
 waarom  = "#285 -- no job enables it"
 
-[[gap]]
-pakket  = "pdfluent-lopdf"
-feature = "jiff"
-waarom  = "#285 -- no job enables it"
 
-[[gap]]
-pakket  = "pdfluent-lopdf"
-feature = "time"
-waarom  = "#285 -- no job enables it"
 
 [[gap]]
 pakket  = "pdfluent-sign"
@@ -92,3 +64,8 @@ waarom  = "#285 -- one test FAILS here; fix before enabling"
 pakket  = "xfa-license"
 feature = "signing"
 waarom  = "#285 -- 26 tests pass locally, no job runs them"
+
+[[gap]]
+pakket  = "pdf-engine"
+feature = "serde"
+waarom  = "#276 -- tests/text_span_info_contract.rs does not COMPILE: TextSpan grew bounds_source, geometry_mode, glyph_advances and two more fields since anything last built it. Measured 05-09-2026. It was invisible until the crate-level #![cfg] blind spot was closed; fixing the initialiser is engine work, not a job"

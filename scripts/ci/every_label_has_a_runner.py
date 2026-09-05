@@ -165,9 +165,133 @@ def gevraagd(job) -> list[str]:
     return uit
 
 
+# THE DECISION, 05-09-2026 (#276). These four are manual and stay manual.
+#
+# The issue offered two ways out and asked for one answer. Both were measured
+# before this was written down:
+#
+#   1. Register `xfa-corpus` on the desktop that already answers `xfa-fast`.
+#      A runner is not a corpus. All 500 entries in CI_CORPUS_MANIFEST.json
+#      name an absolute path on the external disk that now enumerates and
+#      refuses every read (#264), and 498 of those 500 filenames have never
+#      existed in this repository's history -- so the label would resolve and
+#      the four would then fall into their own mini-mode, comparing two in-repo
+#      fixtures against a pass rate calibrated on 500 documents. A gate that
+#      measures two files and reports on five hundred is worse than one that
+#      says it cannot run.
+#   2. Ship the corpus to the ephemeral instance. There is nothing to ship,
+#      for the same reason: no machine this repository can reach holds those
+#      500 files, and the manifest records no origin to fetch them from.
+#
+# So neither is executable, and "parked until a runner exists" was never the
+# right sentence -- the runner was never the missing part. What is missing is a
+# corpus with a recorded origin, the way corpus/GATE_CORPUS_MANIFEST.json
+# records one: a named suite, a commit, a path inside it and a SHA-256, which is
+# why ci-ephemeral can fetch its 500 on every pull request while these four
+# cannot fetch a single one of theirs.
+#
+# Each row therefore carries its reason, and the reason carries the condition
+# that removes the row. The condition is not left to a reader: it is measured
+# against the tree on every run by `de_corpusreden_geldt_nog` below.
+_WAAROM_CORPUS = (
+    "manual by decision (#276): its corpus is 500 entries in "
+    "corpus/CI_CORPUS_MANIFEST.json that name a path on a dead disk and no "
+    "origin to fetch from, so neither a runner on the corpus machine nor the "
+    "corpus on a runner is available. Un-park this row when that manifest "
+    "records where its documents come from, the way GATE_CORPUS_MANIFEST.json "
+    "does."
+)
+
+REGISTER = {
+    ("bench.yml", "benchmark", "xfa-corpus"): _WAAROM_CORPUS,
+    ("crash-guard.yml", "crash-guard", "xfa-corpus"): _WAAROM_CORPUS,
+    ("gate-ci.yml", "gate", "xfa-corpus"): _WAAROM_CORPUS,
+    ("wasm-gate.yml", "wasm-gate", "xfa-corpus"): _WAAROM_CORPUS,
+}
+
+CORPUS_MANIFEST = pathlib.Path("corpus/CI_CORPUS_MANIFEST.json")
+# What a recorded origin looks like: something a second machine could act on.
+# A path beginning with `/` is a fact about one host and nobody else.
+_TE_HALEN = re.compile(r"^(https?|git|ssh)://", re.I)
+
+
+def de_corpusreden_geldt_nog(pad: pathlib.Path | None = None):
+    """Is the reason those four rows give still true of the tree?
+
+    A register whose rows explain themselves is still a register somebody has to
+    re-read. This one states a fact about a file -- "that manifest records no
+    origin" -- and a fact about a file can be checked, so it is, every run.
+
+    Returns (True, detail) while every entry names only a machine path;
+    (False, detail) as soon as one records an origin another machine could use,
+    which is the day these gates can come back; and (None, detail) when the
+    manifest cannot be read at all, because "I could not check" is not "still
+    true" and must not be reported as one.
+    """
+    pad = pad or CORPUS_MANIFEST
+    if not pad.is_file():
+        return None, f"{pad} is missing, so the register's reason cannot be checked"
+    try:
+        doc = json.loads(pad.read_text())
+    except (json.JSONDecodeError, OSError) as fout:
+        return None, f"{pad} cannot be read: {fout}"
+    entries = doc.get("entries") if isinstance(doc, dict) else None
+    if not isinstance(entries, list) or not entries:
+        return None, f"{pad} lists no entries, so there is nothing to judge"
+    machinepad, herkomst = 0, []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        bron = str(e.get("source") or "")
+        if _TE_HALEN.match(bron):
+            herkomst.append(bron)
+        elif bron.startswith("/"):
+            machinepad += 1
+        elif bron and (pad.parent.parent / bron).is_file():
+            # A repo-relative source that resolves is the corpus arriving in the
+            # tree, which is the other way this reason can expire.
+            herkomst.append(bron)
+    if herkomst:
+        return False, (f"{len(herkomst)} of {len(entries)} entries now record an "
+                       f"origin (first: {herkomst[0]}); the corpus is reachable")
+    return True, (f"{machinepad} of {len(entries)} entries still name only a path "
+                  "on a machine")
+
+
 def main() -> int:
     if not FLOWS.is_dir():
         return 1
+
+    # The register first, and deliberately before the runner list. Whether the
+    # exemption is still earned is a question about files in this tree, so it
+    # can be answered in GitHub Actions -- where the label comparison below
+    # cannot run at all, because /actions/runners needs a scope GITHUB_TOKEN is
+    # not allowed to have. Putting this after the early return would have made
+    # the one half that CI can check the half CI never reaches.
+    zonder_reden = sorted(k for k, v in REGISTER.items() if not str(v or "").strip())
+    if zonder_reden:
+        print("[labels] FATAL: a row in the register carries no reason, which makes "
+              "it a name on a list again:", file=sys.stderr)
+        for w, j, l in zonder_reden:
+            print(f"  {w} :: {j} wants `{l}` and says nothing about why that is "
+                  "acceptable", file=sys.stderr)
+        return 1
+
+    geldt, hoezo = de_corpusreden_geldt_nog()
+    if geldt is None:
+        print(f"[labels] FATAL: {hoezo}. The four rows below are excused on a claim "
+              "about that file; unable to check it, this cannot report a pass.",
+              file=sys.stderr)
+        return 1
+    if not geldt:
+        print("[labels] FATAL: the register's reason has expired -- " + hoezo + ".",
+              file=sys.stderr)
+        for w, j, l in sorted(REGISTER):
+            print(f"  {w} :: {j} is parked because that corpus could not be "
+                  f"reached. It can now. Un-park it, or rewrite its reason.",
+                  file=sys.stderr)
+        return 1
+    print(f"[labels] register: {len(REGISTER)} row(s), reason holds -- {hoezo}.")
 
     online = geregistreerd()
     if online is None:
@@ -254,16 +378,13 @@ def main() -> int:
         print("[labels] OK: every self-hosted label any job asks for has a runner.")
         return 0
 
-    # Known and tracked in #276: four dispatch-only jobs want a corpus runner
-    # that was never provisioned. Named individually so the list cannot quietly
-    # grow, and checked in both directions so it cannot quietly shrink either --
-    # a baseline that only fails upward stops being a baseline.
-    BEKEND = {
-        ("bench.yml", "benchmark", "xfa-corpus"),
-        ("crash-guard.yml", "crash-guard", "xfa-corpus"),
-        ("gate-ci.yml", "gate", "xfa-corpus"),
-        ("wasm-gate.yml", "wasm-gate", "xfa-corpus"),
-    }
+    # The four corpus gates, and WHY each is manual rather than merely listed.
+    # Named individually so the register cannot quietly grow, and checked in
+    # both directions so it cannot quietly shrink either -- a baseline that only
+    # fails upward stops being a baseline. The reasons are enforced twice over:
+    # a row without one is refused, and the fact they all rest on is measured
+    # against the tree by `de_corpusreden_geldt_nog` on every run.
+    BEKEND = set(REGISTER)
     # The exemption is for jobs nobody can start by accident. If one of these
     # workflows re-enables push or schedule it queues on every commit, which is
     # the failure this guard exists for -- so the trigger list is part of what
@@ -333,9 +454,9 @@ def main() -> int:
                   "BEKEND. Add it, or unblock it.", file=sys.stderr)
         return 1
 
-    print(f"[labels] OK: {len(BEKEND)} job(s) still wait on a corpus runner (#276), "
-          f"and the needs-graph derives the same {len(namen_graaf)}; no new label is "
-          "unanswered.")
+    print(f"[labels] OK: {len(BEKEND)} job(s) are manual by decision (#276), each "
+          f"with its reason, and the needs-graph derives the same {len(namen_graaf)}; "
+          "no new label is unanswered.")
     return 0
 
 

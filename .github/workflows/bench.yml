@@ -12,9 +12,33 @@ on:
   # the queue until GitHub gave up on it a day later, holding a slot and making
   # the pipeline look permanently busy -- while testing nothing.
   #
-  # Dispatch-only until there is a runner that can pick it up, or until the
-  # corpus reaches a machine that already has one (#276). Better an honest gap
-  # than a queue entry that pretends to be a gate.
+  # MANUAL BY DECISION, 05-09-2026 (#276) -- not "parked until a runner
+  # appears". The runner was never the missing part.
+  #
+  # #276 asked for one of two answers: register `xfa-corpus` on the machine
+  # holding the corpus, or ship the corpus to the ephemeral instance. Both were
+  # measured, and neither is available:
+  #
+  #   * A runner is not a corpus. All 500 entries in
+  #     corpus/CI_CORPUS_MANIFEST.json name an absolute path on the external
+  #     disk that now enumerates and refuses every read (#264), and 498 of those
+  #     500 filenames have never existed in this repository's history. Give the
+  #     desktop the label and this workflow resolves it, finds nothing, and
+  #     falls back to comparing the two in-repo fixtures against a rate
+  #     calibrated on five hundred documents.
+  #   * There is nothing to ship to an instance either, for the same reason:
+  #     the manifest records no origin for a single one of its 500 files.
+  #
+  # So this stays dispatch-only, and it stays that way until a corpus exists
+  # with a recorded origin -- the shape corpus/GATE_CORPUS_MANIFEST.json already
+  # has, which is why ci-ephemeral fetches its 500 on every pull request while
+  # this workflow cannot fetch one of its own. Better an honest gap than a queue
+  # entry that pretends to be a gate.
+  #
+  # The reason above is not left to a reader: the row for this job in
+  # scripts/ci/every_label_has_a_runner.py carries it, and that guard measures
+  # the manifest on every run. The day it records an origin, the guard goes red
+  # and names this workflow.
   workflow_dispatch:
 
 permissions:
@@ -31,7 +55,9 @@ jobs:
   # permanently non-empty queue switches the instance sweep off entirely.
   #
   # This gate turns that silence into an immediate, legible failure. Delete it
-  # the day the corpus runner exists.
+  # the day the corpus has a recorded origin -- not the day a runner carries the
+  # label, because a runner without the corpus fails this job's input rather
+  # than its subject (#276).
   parked:
     # Hosted, not the persistent desktop. workflow_dispatch lets the caller pick
     # any ref, so this job's body comes from that ref -- a branch could replace
