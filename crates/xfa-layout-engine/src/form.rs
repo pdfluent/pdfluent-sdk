@@ -478,6 +478,15 @@ pub struct FormNodeMeta {
     pub overflow_leader: Option<String>,
     /// Overflow trailer reference name.
     pub overflow_trailer: Option<String>,
+    /// Bookend leader reference name (XFA 3.3 §17).
+    ///
+    /// Where `overflow` serves the continuation pages, `bookend` serves the
+    /// outer two: the leader goes on the **first** page of this subform, the
+    /// trailer on the **last**. Before this, a `<bookend>` in a template was
+    /// silently ignored -- see #150.
+    pub bookend_leader: Option<String>,
+    /// Bookend trailer reference name.
+    pub bookend_trailer: Option<String>,
     /// Keep with next content area.
     pub keep_next_content_area: bool,
     /// Keep with previous content area.

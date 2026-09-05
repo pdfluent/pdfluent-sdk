@@ -490,6 +490,31 @@ impl<'a> LayoutEngine<'a> {
         (leader, trailer)
     }
 
+    /// The same resolution as [`Self::resolve_overflow_refs`], for `<bookend>`.
+    ///
+    /// XFA 3.3 §17 has two mechanisms that look alike and serve different
+    /// pages. `overflow` covers the **continuation** pages: when content does
+    /// not fit, the leader appears above every following page. `bookend` covers
+    /// the **outer** two: the leader on the first page of this subform, the
+    /// trailer on the last.
+    ///
+    /// The name lookup is identical, so it is reused.
+    fn resolve_bookend_refs(
+        &self,
+        node_id: FormNodeId,
+    ) -> (Option<FormNodeId>, Option<FormNodeId>) {
+        let meta = self.form.meta(node_id);
+        let leader = meta
+            .bookend_leader
+            .as_deref()
+            .and_then(|name| self.lookup_overflow_target(node_id, name));
+        let trailer = meta
+            .bookend_trailer
+            .as_deref()
+            .and_then(|name| self.lookup_overflow_target(node_id, name));
+        (leader, trailer)
+    }
+
     /// Return a `ContentArea` clone with overflow leader/trailer applied.
     /// `refs` take precedence over any existing `leader`/`trailer` already
     /// declared on the area (this is the overflow-page path; the base area
@@ -527,6 +552,23 @@ impl<'a> LayoutEngine<'a> {
         for (idx, _node) in self.form.nodes.iter().enumerate() {
             let node_id = FormNodeId(idx);
             let meta = self.form.meta(node_id);
+            // #150 — bookend refs belong here just as much. A subform named as
+            // a bookend leader has to leave the ordinary content flow: leave it
+            // in and it appears on every page where it happens to fit, not only
+            // on the first.
+            for name in [
+                meta.bookend_leader.as_deref(),
+                meta.bookend_trailer.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if let Some(target) = self.lookup_overflow_target(node_id, name) {
+                    if !ids.contains(&target) {
+                        ids.push(target);
+                    }
+                }
+            }
             if meta.overflow_leader.is_none() && meta.overflow_trailer.is_none() {
                 continue;
             }
@@ -810,6 +852,10 @@ impl<'a> LayoutEngine<'a> {
         // overflow continuation pages can render the declared leader at the
         // top of the content area and the trailer at the bottom.
         let root_overflow_refs = self.resolve_overflow_refs(root);
+        // #150 — bookend serves the first and the last page, where overflow
+        // serves the continuation pages. Both are resolved here; which of the
+        // two counts depends on which page is being laid out.
+        let root_bookend_refs = self.resolve_bookend_refs(root);
 
         let (page_areas, raw_content_nodes) = self.extract_page_structure(root_node)?;
         self.trace_vertical_state(
@@ -868,6 +914,7 @@ impl<'a> LayoutEngine<'a> {
                 // subform that declares its own overflow.  The continuation
                 // area is recomputed per-page since the active subform may
                 // change as pagination advances.
+                let mut bookend_trailer_placed = false;
                 while !remaining.is_empty() {
                     if pages.len() >= page_limit {
                         eprintln!(
@@ -881,8 +928,15 @@ impl<'a> LayoutEngine<'a> {
                         root_overflow_refs,
                     );
                     let overflow_area = Self::content_area_with_overflow(&area, active_refs);
+                    // #150 — the first page of this subform gets the bookend
+                    // leader, not the overflow leader. Overflow is about what
+                    // comes after the first page; bookend about the outer two.
+                    // With no bookend declared this area equals `area` and
+                    // nothing changes.
+                    let bookend_first_area =
+                        Self::content_area_with_overflow(&area, (root_bookend_refs.0, None));
                     let area_for_page = if pages.is_empty() {
-                        &area
+                        &bookend_first_area
                     } else {
                         &overflow_area
                     };
@@ -946,8 +1000,56 @@ impl<'a> LayoutEngine<'a> {
                         {
                             profile.pages.push(page_profile);
                         }
+                        // #150 — the bookend trailer belongs on the last page,
+                        // and only here is it known that this is the last one:
+                        // `rest` is empty.
+                        //
+                        // The page is laid out again with the trailer included
+                        // and kept only when nothing spills. If the trailer
+                        // pushes content off the page, this was not the last
+                        // page after all and the trailer does not belong here
+                        // -- it gets a page of its own after the loop.
+                        let page = if rest.is_empty() && root_bookend_refs.1.is_some() {
+                            let trailer_area = Self::content_area_with_overflow(
+                                area_for_page,
+                                (None, root_bookend_refs.1),
+                            );
+                            match self.layout_content_fitting(
+                                &trailer_area,
+                                &remaining,
+                                page_w,
+                                page_h,
+                                false,
+                            ) {
+                                Ok((with_trailer, spilled, _, _, _)) if spilled.is_empty() => {
+                                    bookend_trailer_placed = true;
+                                    with_trailer
+                                }
+                                _ => page,
+                            }
+                        } else {
+                            page
+                        };
                         pages.push(page);
                         remaining = rest;
+                    }
+                }
+
+                // The trailer fitted on no page beside the content. Then it
+                // gets a last page of its own: a bookend trailer that vanishes
+                // because the form happens to be full is not a bookend trailer.
+                if let Some(trailer) = root_bookend_refs.1 {
+                    if !bookend_trailer_placed && pages.len() < page_limit {
+                        let trailer_only = self.layout_content_on_page(
+                            &area,
+                            page_w,
+                            page_h,
+                            &[trailer],
+                            root_node.layout,
+                        )?;
+                        if !trailer_only.nodes.is_empty() {
+                            pages.push(trailer_only);
+                        }
                     }
                 }
             } else {

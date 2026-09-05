@@ -2051,6 +2051,7 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
     let (keep_next_content_area, keep_previous_content_area, keep_intact_content_area) =
         parse_keep(elem);
     let (overflow_leader, overflow_trailer) = parse_overflow(elem);
+    let (bookend_leader, bookend_trailer) = parse_bookend(elem);
 
     let group_kind = if tag == "exclGroup" {
         GroupKind::ExclusiveChoice
@@ -2091,6 +2092,8 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
         content_area_break,
         overflow_leader,
         overflow_trailer,
+        bookend_leader,
+        bookend_trailer,
         keep_next_content_area,
         keep_previous_content_area,
         keep_intact_content_area,
@@ -2235,6 +2238,22 @@ fn parse_keep(elem: Node<'_, '_>) -> (bool, bool, bool) {
         (next, prev, intact)
     } else {
         (false, false, false)
+    }
+}
+
+/// `<bookend leader trailer>` (XFA 3.3 §17).
+///
+/// Word for word the same shape as `parse_overflow` below, and like that one a
+/// second copy of what also stands in `template_parser.rs`. That duplication is
+/// older than this function; it is carried here so the two routes cannot drift
+/// apart, and #208 tracks merging them.
+fn parse_bookend(elem: Node<'_, '_>) -> (Option<String>, Option<String>) {
+    match find_first_child_by_name(elem, "bookend") {
+        Some(bookend) => (
+            attr(bookend, "leader").map(|s| s.to_string()),
+            attr(bookend, "trailer").map(|s| s.to_string()),
+        ),
+        None => (None, None),
     }
 }
 
