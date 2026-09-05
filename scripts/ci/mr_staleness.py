@@ -78,10 +78,34 @@ def schone_omgeving() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
-def behind(branch: str) -> int | None:
-    """Commits on master that this branch does not have."""
-    for ref in (f"origin/{branch}", branch):
-        r = subprocess.run(["git", "rev-list", "--count", f"{ref}..origin/master"],
+def master_ref() -> str | None:
+    """The source's master, whatever it is called here.
+
+    It used to be spelled `origin/master` and nothing else, and until 05-09-2026
+    `origin` in this checkout was the GitLab BACKUP -- which ran 348 commits
+    behind GitHub. Every number this script printed was then how far a branch had
+    fallen behind a copy, presented as how far it had fallen behind master. The
+    remote was renamed for #291 and this now asks for the ref by role instead of
+    by a name that had quietly changed meaning.
+    """
+    for ref in ("origin/master", "github/master", "master"):
+        r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", ref],
+                           capture_output=True, text=True, env=schone_omgeving())
+        if r.returncode == 0:
+            return ref
+    return None
+
+
+def behind(branch: str, master: str) -> int | None:
+    """Commits on master that this branch does not have.
+
+    The branch of a GitLab merge request lives on GitLab, so `gitlab/` is asked
+    as well as the source: the two remotes are different repositories now, and
+    looking for a merge request's branch only under the source finds nothing for
+    every branch that was never pushed to GitHub.
+    """
+    for ref in (f"origin/{branch}", f"gitlab/{branch}", branch):
+        r = subprocess.run(["git", "rev-list", "--count", f"{ref}..{master}"],
                            capture_output=True, text=True, env=schone_omgeving())
         if r.returncode == 0 and r.stdout.strip().isdigit():
             return int(r.stdout.strip())
@@ -106,8 +130,15 @@ def main() -> None:
         print(f"[mr_staleness] FATAL: could not read the merge requests: {e}", file=sys.stderr)
         sys.exit(2)
 
-    subprocess.run(["git", "fetch", "-q", "origin"], capture_output=True,
-                   env=schone_omgeving())
+    for remote in ("origin", "gitlab"):
+        subprocess.run(["git", "fetch", "-q", remote], capture_output=True,
+                       env=schone_omgeving())
+    master = master_ref()
+    if master is None:
+        print("[mr_staleness] FATAL: no master ref here (tried origin/master, "
+              "github/master, master), so 'behind' could not be measured against "
+              "anything. Exiting 2, not 0.", file=sys.stderr)
+        sys.exit(2)
     now = datetime.datetime.now(datetime.timezone.utc)
 
     rows = []
@@ -116,7 +147,7 @@ def main() -> None:
         rows.append({
             "iid": m["iid"],
             "days": (now - created).days,
-            "behind": behind(m["source_branch"]),
+            "behind": behind(m["source_branch"], master),
             "branch": m["source_branch"],
             "status": m.get("detailed_merge_status", "?"),
         })

@@ -75,9 +75,33 @@ so a new block cannot reach a reader before the compiler here has seen it.
 """
 
 [[exempt]]
+gate = "origin_is_the_source_in_every_checkout.py"
+why = """
+Its subject is the machine, not the change. It asks which repository `origin`
+resolves to here and how many checkouts of this repository sit on the disk beside
+it -- and an Actions workspace has one remote and one checkout by construction,
+so there it can only agree with itself. The drift it looks for is not expressible
+in a pull request.
+
+It is not a new excuse either. `origin` in the working copy pointed at the GitLab
+backup while GitHub had been the source since 25-08-2026, so every guard that
+falls back to `origin/master` was comparing against a repository 348 commits
+behind: territories_do_not_overlap.py called 62 files a branch's own work when
+none of them were, and mr_staleness.py reported how far a branch had fallen
+behind the copy. Nothing failed; the answers were confident and wrong.
+
+It runs in the full lane of scripts/ci/local_ci_gate.sh, which is the landing and
+the machine that has the copies. What a pull request reaches is
+test_origin_is_the_source_in_every_checkout.py, in the guards job: seven cases on
+throwaway repositories, including the one that decides whether the guard is
+usable -- a worktree is not a second checkout, and there are 190 of them here.
+Added 05-09-2026 with #291.
+"""
+
+[[exempt]]
 gate = "mirror_has_not_drifted.py"
 why = """
-Compares `github/master` with `origin/master`, so it needs both remotes in one
+Compares `origin/master` with `gitlab/master`, so it needs both remotes in one
 checkout. An Actions workspace has exactly one, and there the guard announces
 SKIPPED (not a pass) and compares nothing -- a permanent skip that reports the
 same green as a check. The one checkout that carries both is the working copy,

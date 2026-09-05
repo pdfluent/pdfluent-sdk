@@ -65,17 +65,30 @@ holds this table and that guard to saying the same thing.
 
 | Repository | Git remote | Role |
 |---|---|---|
-| `github.com/jasperdew/xfa-native-rust` | `github` | **source** — code, issues, pull requests, releases, and the branch every landing fast-forwards |
-| `github.com/pdfluent/PDFluent-project` | `origin` | **backup** — a copy of the source and nothing else |
+| `github.com/jasperdew/xfa-native-rust` | `origin` | **source** — code, issues, pull requests, releases, and the branch every landing fast-forwards |
+| `github.com/pdfluent/PDFluent-project` | `gitlab` | **backup** — a copy of the source and nothing else |
 | `github.com/pdfluent/pdfluent-internal` | — | tracker: the issues this work is filed under. It still holds an old copy of the editor source, which is #291's to remove |
 | `github.com/pdfluent/pdfluent` | — | the editor, public, its own history since 26-08-2026 (deliberately no common ancestor with the tracker repo) |
 | `github.com/pdfluent/pdfluent-playground` | — | the website |
 
 Two things this table exists to stop drifting:
 
-**`origin` is the backup, not the source.** In this checkout `origin` points at
-the mirror, so a bare `git push` goes to the copy. Landings name `github`
-explicitly for that reason.
+**`origin` is the source.** It pointed at the mirror until 05-09-2026, and a
+name that reads primary while resolving to a copy is not untidiness: every guard
+that falls back to `origin/master` was comparing against a repository that ran
+348 commits behind, so `territories_do_not_overlap.py` reported 62 files as a
+branch's own work when none of them were, and `mr_staleness.py` measured how far
+a branch had fallen behind the copy (#291). `github` stays as a second name for
+the same URL because the landing scripts outside this repository name it;
+`scripts/ci/origin_is_the_source_in_every_checkout.py` holds `origin` to the
+source row of this table and refuses the backup under any name but `gitlab`.
+
+**One checkout per repository on this machine.** Two checkouts are two answers
+to every question, and the one you are standing in is not necessarily the one
+that gets pushed — that is how a finished `lopdf` upgrade was found stranded in
+a second copy. The same guard counts them: for this repository it refuses, for
+the other rows it warns, because a landing here cannot fix a duplicate of the
+website.
 
 **GitLab stopped being a CI executor on 28-08-2026.** Two CI systems on one
 four-core desktop kept each other busy, so the automatic GitLab pipelines were

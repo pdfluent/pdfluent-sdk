@@ -55,8 +55,8 @@ def schone_omgeving() -> dict[str, str]:
 ACHTER_COMMITS = 50
 ACHTER_DAGEN = 2
 
-BRON = os.environ.get("MIRROR_SOURCE", "github/master")
-SPIEGEL = os.environ.get("MIRROR_TARGET", "origin/master")
+BRON = os.environ.get("MIRROR_SOURCE", "origin/master")
+SPIEGEL = os.environ.get("MIRROR_TARGET", "gitlab/master")
 
 
 def git(*args: str) -> str | None:

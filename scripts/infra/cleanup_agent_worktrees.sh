@@ -45,7 +45,8 @@ GITLAB_REMOTE="$(git -C "$MAIN_REPO" remote -v 2>/dev/null \
 if [[ -z "$GITLAB_REMOTE" ]]; then
   echo "WARN: no gitlab.com remote found — no worktrees will be cleaned." >&2
 fi
-gitlab_branches="$(git -C "$MAIN_REPO" ls-remote --heads "${GITLAB_REMOTE:-origin}" 2>/dev/null \
+gitlab_branches=""
+[[ -n "${GITLAB_REMOTE:-}" ]] && gitlab_branches="$(git -C "$MAIN_REPO" ls-remote --heads "${GITLAB_REMOTE}" 2>/dev/null \
   | awk '{print $2}' | sed 's@^refs/heads/@@' || true)"
 
 # Walk every worktree EXCEPT the main one.

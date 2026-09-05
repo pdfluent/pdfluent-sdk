@@ -42,8 +42,8 @@
 # through this file.
 set -uo pipefail
 
-SOURCE_REMOTE="${MIRROR_SOURCE_REMOTE:-github}"
-TARGET_REMOTE="${MIRROR_TARGET_REMOTE:-origin}"
+SOURCE_REMOTE="${MIRROR_SOURCE_REMOTE:-origin}"
+TARGET_REMOTE="${MIRROR_TARGET_REMOTE:-gitlab}"
 BRANCH="${MIRROR_BRANCH:-master}"
 
 ARCHIVE=0
