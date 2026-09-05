@@ -117,9 +117,13 @@ def ssim(args):
         path.write_text(json.dumps(result, indent=2) + '\n')
         verdict = subprocess.run([sys.executable, str(ROOT / 'scripts/check_ssim_gate.py'), '--result', str(path), '--summary-json', str(a.out / f'{stage}-gate.json')], capture_output=True, text=True)
         (a.out / f'{stage}-gate.txt').write_text(verdict.stdout + verdict.stderr)
+    # A count alone hides a swap: one document may regress while another
+    # improves. Judge every document against its own baseline score.
+    regressed = [r['file'] for r in rows if r.get('after_ssim', 0) < r.get('before_ssim', 0)]
     summary = {
         'documents': len(rows),
         'errors': sum('error' in r for r in rows),
+        'regressed': regressed,
         'before_changed': sum(r.get('before_ssim', 0) < 0.95 for r in rows),
         'after_changed': sum(r.get('after_ssim', 0) < 0.95 for r in rows),
         'pixels_identical': sum(r.get('pixels_identical', False) for r in rows),
@@ -128,7 +132,7 @@ def ssim(args):
     }
     (a.out / 'comparison.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps({k: v for k, v in summary.items() if k != 'rows'}, indent=2))
-    if summary['errors'] or summary['after_changed'] > summary['before_changed'] or summary['text_identical'] != len(rows):
+    if summary['errors'] or regressed or summary['after_changed'] > summary['before_changed'] or summary['text_identical'] != len(rows):
         return 1
     return 0
 
