@@ -1169,3 +1169,44 @@ jobs:
       - name: No tracked file carries an address we decided not to publish
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_personal_address_in_the_tree.py
+
+  public-snapshot-build:
+    name: The published tree builds from a clean clone
+    # #222's own gate, written into that issue as "somebody who clones the
+    # repository can build the SDK and run the smoke tests, without access to
+    # anything private -- test that by actually doing it".
+    #
+    # WHY IT WAS RUNNING NOWHERE, AND WHY THAT IS NOT A REASON TO LEAVE IT THERE
+    #
+    # `public_snapshot_check.sh` has two halves. The path audit is 154 seconds and
+    # runs in the pre-push gate and in publication-guards.yml. The build half --
+    # assemble the published tree, copy it into an empty directory, give it a
+    # fresh HOME with no keychain, no gitconfig and no corpus mount, and compile
+    # it -- is minutes and gigabytes, and that is written down in the script as
+    # the reason it does not run on every push. Measured 05-09-2026: it had never
+    # run in any job at all, and the only evidence for the criterion was a person
+    # running it by hand that morning.
+    #
+    # Minutes and gigabytes is an argument about WHERE, not about WHETHER. Here it
+    # is: on the push to master, once per merge, on the machine that already
+    # compiles this workspace.
+    #
+    # NOT ON HOSTED MINUTES (#333). The 2,000 included minutes were spent on
+    # 05-09 and the account had begun billing; a cold `cargo build --workspace` on
+    # ubuntu-latest is the single most expensive thing this repository could put
+    # there. The desktop runner's minutes are free however long it takes, and a
+    # push to master is merged code, so the rule in
+    # pr_code_stays_off_the_desktop.py is satisfied by the event and not by an
+    # exception.
+    runs-on: [self-hosted, xfa-fast]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # One step and not two: the audit runs first inside the same script, so a
+      # tree that names our machines fails before the slow half starts. A build
+      # failure would otherwise bury the finding that actually matters.
+      - name: Assemble the published tree, then build it with an empty HOME
+        run: bash scripts/ci/public_snapshot_audit.sh --with-build

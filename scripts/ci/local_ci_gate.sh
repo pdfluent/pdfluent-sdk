@@ -357,6 +357,14 @@ run jobimports python3 scripts/ci/a_job_has_what_its_scripts_import.py
 run jobdoes   python3 scripts/ci/every_job_does_something.py
 run jobdoestst python3 scripts/ci/test_every_job_does_something.py
 run noai      python3 scripts/ci/no_ai_attribution.py
+# 76 seconds, measured, and it is the most expensive Python gate here. It runs
+# `seed_public_repo.sh` end to end six times over a four-commit fixture, because
+# the properties that matter -- an internal path dropped, a withdrawn blob gone
+# under any name, a personal address rewritten, a surviving file unchanged -- are
+# properties of the repository that would be PUBLISHED, and none of them can be
+# read off what the script prints. It stays in the fast lane rather than moving
+# to `zwaar`: this is the one operation in this repository that cannot be undone,
+# and finding out on master that its filter broke is finding out too late.
 run seedtest  python3 scripts/ci/test_seed_public_repo.py
 run noaitest  python3 scripts/ci/test_no_ai_attribution.py
 run msgclean  python3 scripts/ci/geen_interne_zaken.py --bereik github/master..HEAD

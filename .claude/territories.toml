@@ -191,7 +191,11 @@ paden = [
   # EXPIRY: back to t3 the moment this lands. The loan covers each fixture's
   # own identity and the raise that makes a broken fixture say so, and nothing
   # else in scripts/ci.
-  "scripts/ci/test_seed_public_repo.py",
+  #
+  # TAKEN BACK 05-09-2026: `scripts/ci/test_seed_public_repo.py` is in t3's block
+  # below. The loan's expiry has fired -- the fixture-identity fix it covered is
+  # on master -- and the block above says the next editor takes it back by moving
+  # the literal. The other two stay here; nothing has edited them since.
   "scripts/ci/test_no_withdrawn_object.py",
   "scripts/ci/test_sweep_exemption.py",
 ]
@@ -545,10 +549,18 @@ paden = [
   ".github/workflows/publication-guards.yml",
   # #229 layer 3 / #222: the one-time seeding of the public repository.
   "scripts/release/seed_public_repo.sh",
-  # `scripts/ci/test_seed_public_repo.py` is ON LOAN to t1 on 05-09-2026 and is
-  # claimed in t1's block, not here: two owners for one path is exactly what
-  # this map exists to prevent. It comes back the moment #331 lands. The script
-  # itself stays here -- the loan is about the fixture, not about seeding.
+  # Its filter, added 05-09-2026. Same subject and the same one decision -- what
+  # may leave this repository for good -- so it is claimed beside the script that
+  # calls it rather than left to fall through `**` to a session that does not
+  # exist.
+  "scripts/release/seed_history_filter.py",
+  # And the test that drives both. Back from t1's #331 loan, whose expiry
+  # ("back to t3 the moment this lands") has fired: what this file asserts is
+  # what may be published, which is this territory's question and not a CI one.
+  "scripts/ci/test_seed_public_repo.py",
+  # `scripts/ci/test_seed_public_repo.py` was ON LOAN to t1 for #331; that loan
+  # ended when the fixture-identity fix landed, and the path is claimed in this
+  # territory's `paden` above, beside the script it drives.
 ]
 uitgezonderd = [
   "docs/licensing/boundary.toml", # #326 internal-crate registration
