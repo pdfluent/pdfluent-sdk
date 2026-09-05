@@ -24,7 +24,7 @@ name: A deletion declares itself
 # reaches the remote at all. So the second run bought nothing and was billed.
 #
 # THE PUBLIC PHASE, written down so this is a decision and not a habit: when
-# `jasperdew/xfa-native-rust` (or its public successor) accepts a pull request
+# `pdfluent/engine` (or its public successor) accepts a pull request
 # from anyone but the owner, that pull request IS the review boundary, the local
 # gate no longer covers it, and these triggers come back -- with the placement
 # rules in orchestration_stays_hosted.py deciding where they run.

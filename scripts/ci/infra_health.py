@@ -35,7 +35,7 @@ import subprocess
 import sys
 import urllib.request
 
-REPO = os.environ.get("PDFLUENT_REPO", "jasperdew/xfa-native-rust")
+REPO = os.environ.get("PDFLUENT_REPO", "pdfluent/engine")
 # A server older than this has outlived any plausible job.
 OUD_MINUTEN = 45
 # Where the workflows provision. A type that is cheaper but absent here is not

@@ -111,7 +111,7 @@ BEKEND = {
 STIL_NA_DAGEN = 30
 
 
-REPO = "jasperdew/xfa-native-rust"
+REPO = "pdfluent/engine"
 STANDAARDTAK = "master"
 
 # GitHub Actions and GitLab both set CI. Used the same way T3 uses it for the

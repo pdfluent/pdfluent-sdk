@@ -59,9 +59,17 @@ name: pdf-capi (ephemeral Hetzner)
 # Proof-of-concept for the "one base snapshot, thin per-binding layers"
 # design: the base snapshot (xfa-base-capi-1.94.0-cedf6522, id 425017420) has
 # the host-triple + wasm32 dependency graph prebuilt at the exact path
-# actions/checkout uses (/actions-runner/_work/xfa-native-rust/xfa-native-rust),
-# so actions/checkout does an incremental fetch+reset here instead of a full
-# clone, and cargo only rebuilds what actually changed since the bake.
+# actions/checkout uses, so actions/checkout does an incremental fetch+reset here
+# instead of a full clone, and cargo only rebuilds what actually changed since
+# the bake.
+#
+# THAT PATH IS THE REPOSITORY NAME, so the rename on 05-09-2026 moved it:
+# /actions-runner/_work/xfa-native-rust/xfa-native-rust was where the snapshot
+# was baked, and a run today checks out into /actions-runner/_work/engine/engine.
+# The prebuilt graph is then beside the checkout rather than under it, cargo sees
+# an empty target directory, and the job still passes -- at cold-build cost, with
+# nothing in the log saying the snapshot missed. Rebake at the new path to get
+# the warm build back (#341).
 #
 # Measured (cedf6522, CPX42): cold host-triple build 2m56s -> warm (no
 # change) 1.5s; warm after a real content change in a shared crate

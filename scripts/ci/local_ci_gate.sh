@@ -390,6 +390,8 @@ run msgredact python3 scripts/ci/test_een_treffer_publiceert_de_term_niet.py
 
 run treetest  python3 scripts/ci/test_no_personal_address_in_the_tree.py
 run treeaddr  python3 scripts/ci/no_personal_address_in_the_tree.py
+run oldreptest python3 scripts/ci/test_no_tracked_file_names_the_old_repository.py
+run oldrepo   python3 scripts/ci/no_tracked_file_names_the_old_repository.py
 # Advisory, never blocking. It reports on live machines -- a queue, a busy
 # runner, a server someone is still using -- and none of that is a reason to
 # refuse a commit. The three-hourly run is where its exit code matters.

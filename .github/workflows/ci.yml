@@ -56,7 +56,7 @@ name: CI
 # reaches the remote at all. So the second run bought nothing and was billed.
 #
 # THE PUBLIC PHASE, written down so this is a decision and not a habit: when
-# `jasperdew/xfa-native-rust` (or its public successor) accepts a pull request
+# `pdfluent/engine` (or its public successor) accepts a pull request
 # from anyone but the owner, that pull request IS the review boundary, the local
 # gate no longer covers it, and these triggers come back -- with the placement
 # rules in orchestration_stays_hosted.py deciding where they run.
@@ -1169,6 +1169,17 @@ jobs:
       - name: No tracked file carries an address we decided not to publish
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_personal_address_in_the_tree.py
+      # Same shape, different subject: a name the tree has stopped being
+      # entitled to. The transfer to the organisation left 28 tracked files
+      # naming the old path, all of them working because GitHub redirects it,
+      # and one guard comparing remotes against a table that had not moved --
+      # which closed every landing on the machine for four hours (#341).
+      - name: The retired-name guard finds a planted path and spares lookalikes
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_no_tracked_file_names_the_old_repository.py
+      - name: No tracked file names a repository path we have retired
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/no_tracked_file_names_the_old_repository.py
 
   public-snapshot-build:
     name: The published tree builds from a clean clone

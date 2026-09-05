@@ -814,7 +814,7 @@ interleave with the publish, one crate at a time, in the order in
 ### To finish the release
 
 1. **PyPI** — add a trusted publisher on the `pdfluent` project: owner
-   `jasperdew`, repository `xfa-native-rust`, workflow `build-wheels.yml`,
+   `pdfluent`, repository `engine`, workflow `build-wheels.yml`,
    environment `pypi`. Then `gh workflow run build-wheels.yml -f publish=true`.
 2. **crates.io** — either refresh the local token (`cargo login`) and run
    `scripts/publish_ordered.sh --live`, or bring the self-hosted runner back

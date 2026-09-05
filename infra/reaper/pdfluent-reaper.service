@@ -8,7 +8,7 @@ Type=oneshot
 # Same lock the provisioning script takes, so claiming and reaping cannot
 # interleave (#280). The script re-execs under it; this is belt and braces.
 Environment=PDFLUENT_INSTANCE_LOCK=/var/tmp/pdfluent-instances.lock
-Environment=GITHUB_REPOSITORY=jasperdew/xfa-native-rust
+Environment=GITHUB_REPOSITORY=pdfluent/engine
 EnvironmentFile=/etc/pdfluent/reaper.env
 # Filled in by install.sh from the checkout it was run from. A hard-coded
 # path here would either fail every 15 minutes or, worse, quietly run a

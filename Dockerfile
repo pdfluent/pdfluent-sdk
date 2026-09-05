@@ -17,7 +17,7 @@ RUN case "${TARGETARCH}" in \
       *) ARCH=${TARGETARCH} ;; \
     esac && \
     curl -L --proto '=https' --tlsv1.2 -sSf \
-      "https://github.com/jasperdew/xfa-native-rust/releases/latest/download/xfa-cli-${ARCH}-unknown-linux-musl.tar.gz" \
+      "https://github.com/pdfluent/engine/releases/latest/download/xfa-cli-${ARCH}-unknown-linux-musl.tar.gz" \
     | tar -xz -C /usr/local/bin/ xfa-cli && \
     chmod +x /usr/local/bin/xfa-cli
 

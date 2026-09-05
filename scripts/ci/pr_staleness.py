@@ -24,7 +24,7 @@ import os
 import subprocess
 import sys
 
-REPO = os.environ.get("PDFLUENT_REPO", "jasperdew/xfa-native-rust")
+REPO = os.environ.get("PDFLUENT_REPO", "pdfluent/engine")
 # The thresholds already written down for GitLab. Same numbers on purpose:
 # two rules with different limits is how one of them gets ignored.
 WAARSCHUW_DAGEN, FAAL_DAGEN = 14, 30

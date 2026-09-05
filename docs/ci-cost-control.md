@@ -97,7 +97,7 @@ failure.
 ### Posting a summary back to a PR
 
 ```bash
-gh pr comment 1234 --repo jasperdew/xfa-native-rust \
+gh pr comment 1234 --repo pdfluent/engine \
   --body "$(printf 'VPS validation result\n\n```\n%s\n```\n' \
               "$(cat validation-reports/origin_my-branch/<ts>/summary.txt)")"
 ```
@@ -112,7 +112,7 @@ incurs Actions cost.
 
 ```bash
 gh workflow run expensive-validation.yml \
-  --repo jasperdew/xfa-native-rust \
+  --repo pdfluent/engine \
   -f ref=my-branch \
   -f phases=wasm,corpus
 ```

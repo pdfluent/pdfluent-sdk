@@ -159,7 +159,7 @@ def ocr_openrouter(image_path: str, api_key: str, model: str) -> str:
         "https://openrouter.ai/api/v1/chat/completions",
         api_key,
         payload,
-        extra_headers={"HTTP-Referer": "https://github.com/jasperdew/xfa-native-rust"},
+        extra_headers={"HTTP-Referer": "https://github.com/pdfluent/engine"},
     )
     return response["choices"][0]["message"]["content"].strip()
 
