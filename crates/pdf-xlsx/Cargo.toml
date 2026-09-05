@@ -14,6 +14,18 @@ thiserror.workspace = true
 pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0" }
 rust_xlsxwriter = "0.94"
 
+# rust_xlsxwriter builds a workbook's DocProperties with ExcelDateTime::utc_now(),
+# which calls SystemTime::now(). On wasm32-unknown-unknown that compiles against
+# std's `unsupported` stub and panics at runtime with "time not implemented on
+# this platform" — the same fault that took convertToPdfa down for three months.
+# The crate ships a `wasm` feature that routes the clock through JS; without it
+# `Workbook::new()` traps before a single cell is written.
+#
+# Found 23-08-2026 by a wasm test calling toXlsx. `cargo check --target wasm32`
+# had been green throughout: compiling and running are different questions.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+rust_xlsxwriter = { version = "0.94", features = ["wasm"] }
+
 [dev-dependencies]
 tempfile = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }

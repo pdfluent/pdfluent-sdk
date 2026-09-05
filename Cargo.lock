@@ -4503,10 +4503,13 @@ dependencies = [
  "napi-derive",
  "pdf-annot",
  "pdf-compliance",
+ "pdf-docx",
  "pdf-engine",
  "pdf-manip",
+ "pdf-pptx",
  "pdf-redact",
  "pdf-syntax",
+ "pdf-xlsx",
  "pdfluent",
  "pdfluent-forms",
  "pdfluent-lopdf",
@@ -5999,6 +6002,8 @@ version = "0.94.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b61e4bcbf5d8d3d2149ffa462e1cec5259108e59f03af9e4e4ddebe6cd7c67f7"
 dependencies = [
+ "js-sys",
+ "wasm-bindgen",
  "zip 7.2.0",
 ]
 
@@ -9222,12 +9227,15 @@ dependencies = [
  "kurbo 0.13.1",
  "pdf-annot",
  "pdf-compliance",
+ "pdf-docx",
  "pdf-engine",
  "pdf-manip",
+ "pdf-pptx",
  "pdf-redact",
  "pdf-render",
  "pdf-syntax",
  "pdf-text-format",
+ "pdf-xlsx",
  "pdfluent",
  "pdfluent-forms",
  "pdfluent-lopdf",

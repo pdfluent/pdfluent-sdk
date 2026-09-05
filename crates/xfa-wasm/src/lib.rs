@@ -1141,6 +1141,56 @@ impl PdfDoc {
         Ok(buf)
     }
 
+    /// Convert this PDF to a Word `.docx` package.
+    ///
+    /// Returns the package as a `Uint8Array`. Requires a Business licence or
+    /// higher; without one the call throws `CAPABILITY_NOT_LICENSED` rather
+    /// than returning a document the caller has not paid for.
+    ///
+    /// The browser SDK could not do this until 23-08-2026: the conversion
+    /// crates were excluded from wasm32 by a comment that applied to the
+    /// renderer, not to them.
+    #[wasm_bindgen(js_name = "toDocx")]
+    pub fn to_docx(&self) -> Result<Vec<u8>, JsValue> {
+        self.office_export(pdfluent::Capability::DocxExport, |b| {
+            pdf_docx::convert_pdf_bytes_to_docx(b).map_err(|e| e.to_string())
+        })
+    }
+
+    /// Convert this PDF to an Excel `.xlsx` workbook. See [`Self::to_docx`].
+    #[wasm_bindgen(js_name = "toXlsx")]
+    pub fn to_xlsx(&self) -> Result<Vec<u8>, JsValue> {
+        self.office_export(pdfluent::Capability::XlsxExport, |b| {
+            pdf_xlsx::convert_pdf_bytes_to_xlsx(b).map_err(|e| e.to_string())
+        })
+    }
+
+    /// Convert this PDF to a PowerPoint `.pptx` deck, one slide per page.
+    /// See [`Self::to_docx`].
+    #[wasm_bindgen(js_name = "toPptx")]
+    pub fn to_pptx(&self) -> Result<Vec<u8>, JsValue> {
+        self.office_export(pdfluent::Capability::PptxExport, |b| {
+            pdf_pptx::convert_pdf_bytes_to_pptx(b).map_err(|e| e.to_string())
+        })
+    }
+
+    /// Shared body for the three Office exports.
+    ///
+    /// The capability check comes from `pdfluent::require_capability` rather
+    /// than a tier comparison here, so the rule lives in one place. Note that
+    /// this is currently the only capability wasm enforces — see B7 on the
+    /// roadmap.
+    fn office_export(
+        &self,
+        cap: pdfluent::Capability,
+        convert: fn(&[u8]) -> Result<Vec<u8>, String>,
+    ) -> Result<Vec<u8>, JsValue> {
+        if let Err(e) = pdfluent::require_capability(cap) {
+            return Err(wasm_err_simple("CAPABILITY_NOT_LICENSED", &e.to_string()));
+        }
+        convert(self.pdf.data().as_ref()).map_err(|e| wasm_err_simple("OPERATION_FAILED", &e))
+    }
+
     /// Convert this PDF to PDF/A-1b, PDF/A-2b, or PDF/A-3b.
     ///
     /// `level` must be "1b", "2b", or "3b".

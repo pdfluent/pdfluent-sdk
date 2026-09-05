@@ -27,11 +27,45 @@ const MAX_PPTX_PAGES: u32 = 500;
 /// Conversion timeout in seconds.
 const PPTX_TIMEOUT_SECS: u64 = 120;
 
+/// Seconds elapsed since `start`, or 0 where the platform has no clock.
+///
+/// `Instant::now()` compiles for wasm32-unknown-unknown against std's
+/// `unsupported` stub and then panics at runtime with "time not implemented on
+/// this platform". Under `panic = "abort"` that reaches JavaScript as a bare
+/// `RuntimeError: unreachable` — no message, no location.
+///
+/// That is the same fault that took `convertToPdfa` down for three months
+/// (see `pdf-manip/src/clock.rs`). It surfaced here on 23-08-2026 the first
+/// time a wasm test called `pdf_to_pptx`; `cargo check --target wasm32` had
+/// been green all along, because compiling and running are different
+/// questions.
+///
+/// On wasm the timeout is simply not enforced: the browser tab is not a
+/// server, a runaway conversion is the caller's own page, and a wrong-but-
+/// present answer beats a trap.
+#[cfg(not(target_arch = "wasm32"))]
+fn seconds_since(start: &std::time::Instant) -> u64 {
+    start.elapsed().as_secs()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn seconds_since(_start: &()) -> u64 {
+    0
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn clock_start() -> std::time::Instant {
+    std::time::Instant::now()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn clock_start() {}
+
 /// Convert a PDF document to PPTX format.
 ///
 /// Returns the PPTX file contents as bytes.
 pub fn pdf_to_pptx(doc: &Document) -> Result<Vec<u8>> {
-    let start = std::time::Instant::now();
+    let start = clock_start();
     let pages = doc.get_pages();
     let total_pages = pages.len() as u32;
 
@@ -48,7 +82,7 @@ pub fn pdf_to_pptx(doc: &Document) -> Result<Vec<u8>> {
 
     for page_num in 1..=total_pages {
         // Periodic timeout check.
-        if start.elapsed().as_secs() > PPTX_TIMEOUT_SECS {
+        if seconds_since(&start) > PPTX_TIMEOUT_SECS {
             return Err(PptxError::Other("PPTX conversion timed out".into()));
         }
 
