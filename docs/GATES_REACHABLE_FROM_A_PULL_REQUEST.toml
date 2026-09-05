@@ -71,3 +71,19 @@ months, or an export that has drifted away from the site it claims to describe -
 and it takes seconds. The website refuses its own build against that same digest,
 so a new block cannot reach a reader before the compiler here has seen it.
 """
+
+[[exempt]]
+gate = "mirror_has_not_drifted.py"
+why = """
+Compares `github/master` with `origin/master`, so it needs both remotes in one
+checkout. An Actions workspace has exactly one, and there the guard announces
+SKIPPED (not a pass) and compares nothing -- a permanent skip that reports the
+same green as a check. The one checkout that carries both is the working copy,
+which is where the pre-push gate runs; it is deferred there in the fast lane and
+refuses in the full one, which is the landing on master.
+
+Added 05-09-2026 with #231, and the row is the second half of a repair rather
+than a new excuse: the guard had been booked as running "on the machine that
+mirrors" and was in fact called by nothing, for months. The backup was 348
+commits behind and 8 commits ahead at the same time before anybody looked.
+"""

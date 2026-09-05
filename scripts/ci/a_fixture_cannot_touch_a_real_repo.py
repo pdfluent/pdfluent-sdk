@@ -54,6 +54,17 @@ ALLOWED: dict[str, str] = {
     ),
     "fixture_env.py": "it is the helper; the keys are what it sets",
     "a_fixture_cannot_touch_a_real_repo.py": "this file; the keys are what it looks for",
+    "mirror_has_not_drifted.py": (
+        "its subject IS this clone's two remotes: `--fetch` asks git for "
+        "`remote.<name>.url` and then refreshes that ref. Sealing the config "
+        "surface would point GIT_CONFIG_GLOBAL at an empty file, which removes "
+        "the credential helper the fetch needs and turns every run into an "
+        "unreachable remote -- the guard would then always warn and never "
+        "compare, which is the permanent skip this whole family refuses. It "
+        "builds nothing: one `config --get`, one `fetch`, no init and no commit, "
+        "and it already drops every GIT_* variable so a hook's GIT_DIR cannot "
+        "redirect it (#231)"
+    ),
     "the_commit_msg_hook_is_wired.py": (
         "its subject IS this clone: it asks whether core.hooksPath points at "
         ".githooks here. A sandbox check would refuse the only repository it "

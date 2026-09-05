@@ -23,6 +23,13 @@ The direction matters as much as the distance. GitLab being behind is the mirror
 lagging. GitLab being *ahead* means someone is still working there, which is the
 thing the switchover on 28-08 was meant to end -- so any amount of that fails.
 
+With `--fetch` it refreshes both refs first, because the refs on disk answer a
+question about the last time somebody fetched -- and on 05-09-2026 that was three
+days old, longer than the staleness this file is here to catch. A remote it
+cannot reach then downgrades the run to a warning rather than a refusal: the
+drift is real either way, but a network nobody at the keyboard can fix is not a
+reason to close master.
+
 # NO-FLOOR: it compares two refs. There is nothing here it could find less of;
 # a ref it cannot read is announced, never counted as agreement.
 """
@@ -61,7 +68,33 @@ def git(*args: str) -> str | None:
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def haal_op(ref: str) -> str | None:
+    """Fetch the remote half of `<remote>/<branch>`; the reason on failure.
+
+    Without this the guard compares whatever the refs on disk say, which is an
+    answer about the last time somebody fetched. On 05-09-2026 that was three
+    days earlier, and three days is longer than the staleness threshold this
+    file enforces -- so the check could have reported agreement precisely when
+    the mirror had stopped.
+    """
+    remote, _, branch = ref.partition("/")
+    if not branch:
+        return f"{ref} is not a <remote>/<branch> ref, so there is nothing to fetch"
+    if git("config", "--get", f"remote.{remote}.url") is None:
+        return f"there is no remote called '{remote}' in this checkout"
+    if git("fetch", "--quiet", remote, branch) is None:
+        return f"`git fetch {remote} {branch}` failed"
+    return None
+
+
 def main() -> int:
+    ongelezen: list[str] = []
+    if "--fetch" in sys.argv[1:]:
+        for ref in (BRON, SPIEGEL):
+            reden = haal_op(ref)
+            if reden:
+                ongelezen.append(reden)
+
     for ref in (BRON, SPIEGEL):
         if git("rev-parse", "--verify", "--quiet", ref) is None:
             print(f"SKIPPED (not a pass): {ref} cannot be read here, so nothing was "
@@ -110,14 +143,36 @@ def main() -> int:
         print("[mirror] OK: the backup is a backup.")
         return 0
 
+    # A COMPARISON OF UNKNOWN AGE DOES NOT REFUSE ANYTHING.
+    #
+    # With --fetch, a remote that could not be reached leaves the refs on disk
+    # as the only evidence, and their age is exactly what is unknown. Failing on
+    # that would stop whoever is landing over a network they cannot fix -- the
+    # class of refusal that closed master four times in 24 hours (04-09-2026) --
+    # and it would blame them for someone else's mirror. So the findings are
+    # printed in full and the exit code is 0: the drift is announced, not
+    # enforced, until both sides can be read.
+    if ongelezen:
+        print(file=sys.stderr)
+        print("[mirror] WARNING (not a verdict): the refs could not be refreshed, "
+              "so what follows is about whenever they were last fetched:", file=sys.stderr)
+        for r in ongelezen:
+            print(f"  - {r}", file=sys.stderr)
+        for k in klachten:
+            print(f"  - {k}", file=sys.stderr)
+        return 0
+
     print(file=sys.stderr)
     print(f"[mirror] FATAL: {len(klachten)} problem(s) with the mirror:", file=sys.stderr)
     for k in klachten:
         print(f"  - {k}", file=sys.stderr)
     print(
         "\nGitHub is the source and GitLab is a copy of it, which only means something "
-        "while the two agree. Push the source to the mirror, or say on #231 why the "
-        "direction changed.",
+        "while the two agree.\n\n    bash scripts/infra/mirror_to_gitlab.sh\n\n"
+        "That script refuses while the mirror is ahead and keeps those commits under a "
+        "tag\nbefore overwriting anything -- read docs/ci/mirror.md before reaching for "
+        "--archive.\nIf the direction itself has changed, say so on #231 and change "
+        "CLAUDE.md with it.",
         file=sys.stderr,
     )
     return 1

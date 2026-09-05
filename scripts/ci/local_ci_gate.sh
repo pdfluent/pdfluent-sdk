@@ -174,6 +174,25 @@ run labels    python3 scripts/ci/every_label_has_a_runner.py
 run labelstest python3 scripts/ci/test_every_label_has_a_runner.py
 run crons     python3 scripts/ci/schedule_guards_match_their_cron.py
 run mirror    python3 scripts/ci/test_mirror_has_not_drifted.py
+run mirrorsync python3 scripts/ci/test_mirror_to_gitlab.py
+run topology  python3 scripts/ci/the_topology_agrees_with_the_mirror_gate.py
+run topologyt python3 scripts/ci/test_the_topology_agrees_with_the_mirror_gate.py
+# THE MIRROR GATE ITSELF, and this is the only place in the repository where it
+# can run: it compares `github/master` with `origin/master`, and a checkout with
+# both remotes in it is the working copy, not an Actions workspace. Registered as
+# running here since 31-08-2026 and in fact called by nothing -- so between
+# 02-09 and 05-09 the backup fell 348 commits behind and 8 commits ahead at the
+# same time, for three days, in silence. That is the exact failure the guard was
+# written to end, happening behind the guard. (#231)
+#
+# DEFERRED IN THE FAST LANE, refusing in the full one. The full lane is the
+# landing, and a mirror that has stopped is fixable on the spot by whoever is
+# landing -- `bash scripts/infra/mirror_to_gitlab.sh` -- which is what separates
+# this from the refusals that closed master four times in one day over other
+# people's workflows. An unreachable GitLab does not refuse anything: with
+# --fetch the guard downgrades to a warning when it cannot read both sides,
+# because the drift is then of unknown age.
+zwaar mirrordrift python3 scripts/ci/mirror_has_not_drifted.py --fetch
 run infra     python3 scripts/ci/test_infra_health.py
 run waitfit   python3 scripts/ci/wait_fits_in_the_job_timeout.py
 run onelock   python3 scripts/ci/one_lock_guards_the_instances.py
