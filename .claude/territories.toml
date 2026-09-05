@@ -80,12 +80,10 @@ paden = [
   "scripts/ci/de_gedeelde_config_breekt_geen_worktrees.py",
   "scripts/ci/the_fork_register_is_verifiable.py",
   "scripts/ci/een_forkpunt_wordt_op_inhoud_gecontroleerd.py",
-  # T3's file, held by t1 only to carry the fix for two findings t1 raised in
-  # review of #1650. The T3 session ended 02-09-2026 around 00:55Z with the
-  # findings open, and a review finding nobody can act on is not a review. The
-  # commit changes nothing else: the suffix allowlist becomes a binary skiplist,
-  # and the read becomes encoding-aware. Hand back on T3's return.
-  "scripts/ci/internal_stays_internal.py",
+  # HANDED BACK 05-09-2026. `scripts/ci/internal_stays_internal.py` was held
+  # here only to carry a fix for two findings t1 raised in review of #1650,
+  # with "hand back on T3's return" written into the loan. T3 returned and
+  # wired the guard (#222); the literal is now in t3's block below.
   # Claimed 02-09-2026, narrowly and visibly, for #308. The register guards'
   # safety regression (`test_de_registerwachters_raken_de_echte_repo_niet.py`)
   # is t1's, and a guard that runs nowhere is worse than no guard: it leaves
@@ -292,6 +290,11 @@ uitgezonderd = [
   ".github/workflows/visual-regression.yml",
   "scripts/ci/persistent_builds_check_their_build_dir.py",
   "scripts/ci/test_seed_public_repo.py",
+  # Same reason and the same ticket: the publication guard and its test are
+  # t3's, and they live under scripts/ci because that is where the gate finds
+  # guards, not because they are CI wiring. (#222)
+  "scripts/ci/internal_stays_internal.py",
+  "scripts/ci/test_internal_stays_internal.py",
   "scripts/ci/test_every_gate_is_reachable_from_a_pull_request.py",
   "scripts/ci/every_fetched_asset_is_registered.py",
   "scripts/ci/test_every_fetched_asset_is_registered.py",
@@ -547,6 +550,13 @@ paden = [
   "scripts/ci/every_gate_is_reachable_from_a_pull_request.py",
   "scripts/ci/test_every_gate_is_reachable_from_a_pull_request.py",
   ".github/workflows/publication-guards.yml",
+  # #222: the guard that answers whether the tree that would be published names
+  # a document we may not redistribute, and the test that holds it to biting.
+  # Back from t1, whose loan said "hand back on T3's return"; the test is new
+  # with the wiring and has never had another owner. What they decide is what
+  # may be published, which is this territory's question and not a CI one.
+  "scripts/ci/internal_stays_internal.py",
+  "scripts/ci/test_internal_stays_internal.py",
   # #229 layer 3 / #222: the one-time seeding of the public repository.
   "scripts/release/seed_public_repo.sh",
   # Its filter, added 05-09-2026. Same subject and the same one decision -- what
@@ -585,7 +595,11 @@ uitgezonderd = [
   ".github/workflows/deletions-declare-themselves.yml",
   ".github/workflows/document-register.yml",
   ".github/workflows/licence-headers.yml",
-  ".github/workflows/publication-guards.yml",
+  # TAKEN BACK 05-09-2026: `.github/workflows/publication-guards.yml`. The loan
+  # above says "back the moment #333 lands"; #333 landed (af1c85b1) and the
+  # expiry has fired. The literal is gone from this list, so the claim in
+  # `paden` takes effect again. The other three stay until their next editor
+  # moves them, which is the convention the block above records.
   "scripts/ci/every_gate_is_reachable_from_a_pull_request.py",
 ]
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
