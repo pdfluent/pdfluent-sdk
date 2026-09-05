@@ -363,6 +363,15 @@ jobs:
       - name: The register-exemption guard's own test
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_register_exemption.py
+      # Wired into the pre-push gate on master as "the guard runs where its
+      # owner asked it to". Both need nothing but Python and the tree, so the
+      # pull request is where an outside contributor meets them.
+      - name: Every diagnostic code is documented
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/every_diagnostic_code_is_documented.py
+      - name: The diagnostic-catalogue guard bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_every_diagnostic_code_is_documented.py
       - name: No commit carries AI attribution
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/no_ai_attribution.py
