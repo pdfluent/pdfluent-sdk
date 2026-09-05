@@ -786,6 +786,22 @@ jobs:
       - name: The mirror-drift gate still bites
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_mirror_has_not_drifted.py
+      # The gate itself cannot run here -- an Actions checkout has one remote and
+      # the comparison needs two (#231, and the reason is in
+      # mirror_only_guards.toml's neighbour, every_guard_has_a_job.py's ALLOWED
+      # list). What CAN run here is everything about it that is a file: whether
+      # the sync script still refuses to overwrite a mirror that is ahead, and
+      # whether the written topology still names the same source the gate
+      # enforces.
+      - name: The mirror sync refuses to destroy work on the backup
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_mirror_to_gitlab.py
+      - name: The written topology and the mirror gate say the same thing
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_topology_agrees_with_the_mirror_gate.py
+      - name: The topology guard still bites
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_topology_agrees_with_the_mirror_gate.py
       - name: The age alarm can tell a working machine from a leaked one
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_infra_health.py

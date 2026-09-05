@@ -61,6 +61,8 @@ def build(
     dispatch_only: list[str] | None = None,
     parked: list[str] | None = None,
     min_scripts: int = 2,
+    excused_to_the_gate: str | None = None,
+    in_the_gate: list[str] | None = None,
 ) -> Path:
     """A synthetic repository, and the path to the script inside it.
 
@@ -113,15 +115,35 @@ def build(
     )
     (ci / "mirror_only_guards.toml").write_text(register)
 
+    # The local gate as a fixture. `excused_to_the_gate` is a guard whose ALLOWED
+    # reason claims the gate runs it; `in_the_gate` is what the gate actually
+    # calls. Splitting the two is the point -- the entry for
+    # mirror_has_not_drifted.py claimed a place for months and the gate had never
+    # named it (#231).
+    if in_the_gate is not None:
+        (ci / "local_ci_gate.sh").write_text(
+            "#!/usr/bin/env bash\n"
+            + "".join(f"run x{i} python3 scripts/ci/{n}\n"
+                      for i, n in enumerate(in_the_gate))
+        )
+
     source = REAL.read_text()
     source = re.sub(r"^SPIEGEL_RATEL = \d+$", f"SPIEGEL_RATEL = {ratchet}", source, flags=re.M)
     source = re.sub(r"^MIN_SCRIPTS = \d+$", f"MIN_SCRIPTS = {min_scripts}", source, flags=re.M)
     # The fixture carries none of the real repository's hand-run tools -- only
     # the copy of the script itself, which is in ALLOWED for the same reason it
     # is in the real one.
+    allowed = {"every_guard_has_a_job.py": "this file itself"}
+    if in_the_gate is not None:
+        # The gate is not a guard, and in the real repository it is excused for
+        # exactly that reason. Without this line the fixture's own gate file
+        # reads as an orphan and the case fails on something it is not about.
+        allowed["local_ci_gate.sh"] = "the gate itself"
+    if excused_to_the_gate:
+        allowed[excused_to_the_gate] = "runs in scripts/ci/local_ci_gate.sh"
     source = re.sub(
         r"^ALLOWED: dict\[str, str\] = \{.*?^\}$",
-        'ALLOWED: dict[str, str] = {"every_guard_has_a_job.py": "this file itself"}',
+        f"ALLOWED: dict[str, str] = {allowed!r}",
         source,
         flags=re.M | re.S,
     )
@@ -313,6 +335,35 @@ case(
     register="",
     ratchet=0,
     min_scripts=99,
+)
+
+# THE EXEMPTION THAT NAMES A PLACE. Between them these two are the whole of #231:
+# a guard excused to the local gate that the gate does not call is exactly the
+# state mirror_has_not_drifted.py was in for months, booked as placed.
+case(
+    "an exemption that names the local gate, and the gate does not run it",
+    1,
+    "and it does not",
+    on_github=["a.py", "b.py"],
+    on_gitlab=[],
+    unreferenced=["byhand.py"],
+    excused_to_the_gate="byhand.py",
+    in_the_gate=["a.py"],
+    register="",
+    ratchet=0,
+)
+
+case(
+    "the same exemption passes once the gate really calls it",
+    0,
+    None,
+    on_github=["a.py", "b.py"],
+    on_gitlab=["c.py"],
+    unreferenced=["byhand.py"],
+    excused_to_the_gate="byhand.py",
+    in_the_gate=["byhand.py"],
+    register=ENTRY.format(name="c.py"),
+    ratchet=1,
 )
 
 print()

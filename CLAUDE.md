@@ -55,6 +55,39 @@ fail, a register that outlives its subject, a SKIPPED reported as a pass. The
 argument is the deliverable there, and compressing it removes the part that does
 the work.
 
+## Repository topology
+
+One source, and a copy that says when it has stopped being one. The roles are
+here because `scripts/ci/mirror_has_not_drifted.py` enforces a direction, and a
+direction nobody wrote down is a setting somebody can change rather than a
+decision that comes past review. `scripts/ci/the_topology_agrees_with_the_mirror_gate.py`
+holds this table and that guard to saying the same thing.
+
+| Repository | Git remote | Role |
+|---|---|---|
+| `github.com/jasperdew/xfa-native-rust` | `github` | **source** — code, issues, pull requests, releases, and the branch every landing fast-forwards |
+| `github.com/pdfluent/PDFluent-project` | `origin` | **backup** — a copy of the source and nothing else |
+| `github.com/pdfluent/pdfluent-internal` | — | tracker: the issues this work is filed under. It still holds an old copy of the editor source, which is #291's to remove |
+| `github.com/pdfluent/pdfluent` | — | the editor, public, its own history since 26-08-2026 (deliberately no common ancestor with the tracker repo) |
+| `github.com/pdfluent/pdfluent-playground` | — | the website |
+
+Two things this table exists to stop drifting:
+
+**`origin` is the backup, not the source.** In this checkout `origin` points at
+the mirror, so a bare `git push` goes to the copy. Landings name `github`
+explicitly for that reason.
+
+**GitLab stopped being a CI executor on 28-08-2026.** Two CI systems on one
+four-core desktop kept each other busy, so the automatic GitLab pipelines were
+switched off and the heavy work moved to ephemeral instances driven from GitHub.
+The table said "CI executor + nightly backup" for three days after that was no
+longer true, which is the reason a guard now reads this section: prose has no way
+to be wrong out loud.
+
+The nightly mirror cron is gone with the machine it ran on. What replaces it is
+`scripts/infra/mirror_to_gitlab.sh`, run by hand, in front of a gate that refuses
+a landing while the two have come apart — see `docs/ci/mirror.md`.
+
 ## Git Workflow
 - `master` branch for stable code
 - Feature branches: `epic-N/description` (e.g., `epic-1/som-path-resolver`)

@@ -67,9 +67,10 @@ def bouw(map_: pathlib.Path, bron_extra: int, spiegel_extra: int) -> None:
         git(map_, "checkout", "-q", "main")
 
 
-def draai(map_: pathlib.Path, bron: str, doel: str) -> subprocess.CompletedProcess[str]:
+def draai(map_: pathlib.Path, bron: str, doel: str,
+          *vlaggen: str) -> subprocess.CompletedProcess[str]:
     omgeving = dict(SCHOON_VOOR(map_), MIRROR_SOURCE=bron, MIRROR_TARGET=doel)
-    return subprocess.run([sys.executable, str(BEWAKER)], cwd=map_,
+    return subprocess.run([sys.executable, str(BEWAKER), *vlaggen], cwd=map_,
                           capture_output=True, text=True, env=omgeving, check=False)
 
 
@@ -84,7 +85,10 @@ def main() -> int:
         if r.returncode != 0:
             fouten.append(f"3 behind should pass: {r.stdout}{r.stderr}")
 
-    # 2. Far behind is a snapshot of something else.
+    # 2. Far behind is a snapshot of something else -- and the same repository
+    #    answers the two --fetch questions below, because building sixty commits
+    #    three times over turned this file into two minutes of a gate that runs
+    #    on every push.
     with tempfile.TemporaryDirectory() as d:
         m = pathlib.Path(d)
         bouw(m, bron_extra=60, spiegel_extra=0)
@@ -93,6 +97,19 @@ def main() -> int:
             fouten.append("60 commits behind is accepted")
         elif "behind" not in r.stderr:
             fouten.append(f"60 behind is not named as such: {r.stderr[:160]}")
+
+        # 2b. --fetch where the refs cannot be refreshed: these are plain branch
+        #     names, so there is no remote to read them from. The drift is real
+        #     and must still be printed, but it may not refuse -- a landing
+        #     stopped by a network nobody at the keyboard can fix blames the
+        #     wrong person, and that is how master closed four times in one day.
+        r = draai(m, "main", "spiegel", "--fetch")
+        if r.returncode != 0:
+            fouten.append("an unrefreshable ref refused instead of warning")
+        if "WARNING (not a verdict)" not in r.stderr:
+            fouten.append(f"the downgrade is not announced: {r.stderr[:200]}")
+        if "behind" not in r.stderr:
+            fouten.append(f"the drift is not reported at all: {r.stderr[:200]}")
 
     # 3. Ahead at all: someone is working on the backup.
     with tempfile.TemporaryDirectory() as d:
@@ -117,7 +134,8 @@ def main() -> int:
         for f in fouten:
             print(f"  {f}", file=sys.stderr)
         return 1
-    print("[test-mirror] OK: behind, far behind, ahead, and an unreadable ref.")
+    print("[test-mirror] OK: behind, far behind, ahead, an unreadable ref, "
+          "and a refresh that could not happen.")
     return 0
 
 

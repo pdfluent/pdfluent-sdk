@@ -38,8 +38,9 @@ generator -- is listed below with its reason.
 
 Exit codes:
   0  every guard is accounted for
-  1  a guard runs nowhere, runs only on the mirror without a reason, or the
-     count moved in either direction
+  1  a guard runs nowhere, runs only on the mirror without a reason, the count
+     moved in either direction, or an exemption names the local gate as its
+     place and the local gate does not call it
 """
 from __future__ import annotations
 
@@ -52,6 +53,7 @@ CI = REPO / ".gitlab-ci.yml"
 WORKFLOWS = REPO / ".github" / "workflows"
 MAP = REPO / "scripts" / "ci"
 REGISTER = MAP / "mirror_only_guards.toml"
+GATE = MAP / "local_ci_gate.sh"
 
 # FLOOR: scripts found >= 25 -- the directory holds around eighty. If this
 # script finds fewer, the search is broken and the directory is not empty; an
@@ -286,14 +288,22 @@ ALLOWED: dict[str, str] = {
         "holds it to telling a working machine from a leaked one. OPEN: this "
         "belongs on a schedule (#288)"
     ),
+    # CORRECTED 05-09-2026 (#231). What stood here said "It runs on the machine
+    # that mirrors, where both remotes exist" -- and no job, schedule or hook
+    # called it anywhere. The backup then fell 348 commits behind and 8 ahead at
+    # the same time and stayed that way for three days, behind a guard this file
+    # was booking as placed. A reason that names a place is now checked against
+    # that place, below, so this cannot be written again without being true.
     "mirror_has_not_drifted.py": (
         "compares github/master with origin/master and therefore needs both "
         "remotes in one checkout; an Actions checkout knows only its own, and "
         "then it announces SKIPPED instead of comparing anything -- permanently "
-        "skipped is not a gate. It runs on the machine that mirrors, where both "
-        "remotes exist. test_mirror_has_not_drifted.py runs in "
-        "orchestration-guard and holds it to still biting. OPEN: a schedule with "
-        "a GitLab read token could put this before a merge (#288)"
+        "skipped is not a gate. It runs in scripts/ci/local_ci_gate.sh, in the "
+        "full lane, which is the landing on master and the one checkout that has "
+        "both remotes. test_mirror_has_not_drifted.py runs in "
+        "orchestration-guard and holds it to still biting; "
+        "the_topology_agrees_with_the_mirror_gate.py holds the direction it "
+        "enforces to the roles written in CLAUDE.md"
     ),
     "branches_have_a_merge_request.py": (
         "asks about the checked-out branch, and an Actions checkout is a "
@@ -520,6 +530,37 @@ def main() -> int:
         return 1
 
     problems = 0
+
+    # A REASON THAT NAMES A PLACE IS CHECKED AGAINST THAT PLACE.
+    #
+    # An ALLOWED entry is prose, and prose cannot be wrong out loud. The entry
+    # for mirror_has_not_drifted.py said it ran "on the machine that mirrors" and
+    # nothing ran it at all -- for months, until the backup drifted 348 commits
+    # and somebody went looking (#231). The reason was plausible, booked, and
+    # false, which is worse than an orphan: an orphan is reported every run.
+    #
+    # So: an entry that claims the local gate runs it has to be true. This cannot
+    # judge a reason that names a machine or a person, and does not try; it makes
+    # the one claim that IS mechanical stop being free.
+    claiming = [n for n, why in ALLOWED.items() if "local_ci_gate.sh" in why]
+    gate_text = GATE.read_text(errors="replace") if GATE.is_file() else ""
+    if claiming and not gate_text:
+        problems += 1
+        print(f"{GATE.relative_to(REPO)} could not be read, and {len(claiming)} "
+              "exemption(s) name it as the place they run. SKIPPED (not a pass).",
+              file=sys.stderr)
+    elif claiming:
+        untrue = [n for n in claiming if not _runs(n, gate_text)]
+        if untrue:
+            problems += 1
+            print("\nALLOWED entries that say the local gate runs them, and it "
+                  "does not:\n", file=sys.stderr)
+            for n in untrue:
+                print(f"  scripts/ci/{n}", file=sys.stderr)
+            print("\nEither wire it into scripts/ci/local_ci_gate.sh or say where it "
+                  "\nreally runs. A reason nobody checks is how a guard goes three "
+                  "days\nwithout running while a register calls it placed (#231).",
+                  file=sys.stderr)
 
     orphans = [
         p.name for p in scripts
