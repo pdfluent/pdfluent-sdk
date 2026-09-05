@@ -421,6 +421,10 @@ manifest = "bindings/dotnet/test/PDFluent.Tests/PDFluent.Tests.csproj"
 side = "internal"
 
 [[package]]
+manifest = "bindings/dotnet/test/PDFluent.Tests.Unlicensed/PDFluent.Tests.Unlicensed.csproj"
+side = "internal"
+
+[[package]]
 manifest = "crates/xfa-test-runner/oracle/itext-xfa-oracle/pom.xml"
 side = "internal"
 
