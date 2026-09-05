@@ -1190,6 +1190,51 @@ impl PdfDocument {
 
     // ---------- Parity methods (Epic 3 #1224) ----------
 
+    /// Convert the document to `.docx` and return the bytes.
+    ///
+    /// The byte-returning form is the one every binding needs: WASM has no
+    /// filesystem, and the C ABI hands buffers across the boundary rather than
+    /// paths. [`Self::to_docx`] writes these same bytes to disk.
+    ///
+    /// Works on every target, wasm32 included — `pdf-docx` touches no
+    /// filesystem.
+    ///
+    /// # Capability
+    ///
+    /// Requires [`Capability::DocxExport`].
+    pub fn to_docx_bytes(&self) -> Result<Vec<u8>> {
+        self.require_capability(Capability::DocxExport)?;
+        let pdf_bytes = self.to_bytes()?;
+        pdf_docx::convert_pdf_bytes_to_docx(&pdf_bytes)
+            .map_err(|e| internal_error(format!("docx conversion failed: {e}")))
+    }
+
+    /// Convert the document to `.xlsx` and return the bytes. See
+    /// [`Self::to_docx_bytes`] for why the byte form exists.
+    ///
+    /// # Capability
+    ///
+    /// Requires [`Capability::XlsxExport`].
+    pub fn to_xlsx_bytes(&self) -> Result<Vec<u8>> {
+        self.require_capability(Capability::XlsxExport)?;
+        let pdf_bytes = self.to_bytes()?;
+        pdf_xlsx::convert_pdf_bytes_to_xlsx(&pdf_bytes)
+            .map_err(|e| internal_error(format!("xlsx conversion failed: {e}")))
+    }
+
+    /// Convert the document to `.pptx` and return the bytes, one slide per
+    /// page. See [`Self::to_docx_bytes`] for why the byte form exists.
+    ///
+    /// # Capability
+    ///
+    /// Requires [`Capability::PptxExport`].
+    pub fn to_pptx_bytes(&self) -> Result<Vec<u8>> {
+        self.require_capability(Capability::PptxExport)?;
+        let pdf_bytes = self.to_bytes()?;
+        pdf_pptx::convert_pdf_bytes_to_pptx(&pdf_bytes)
+            .map_err(|e| internal_error(format!("pptx conversion failed: {e}")))
+    }
+
     /// Convert the document to a `.docx` file on disk.
     ///
     /// Routes to [`pdf_docx::convert_pdf_bytes_to_docx`], which runs a

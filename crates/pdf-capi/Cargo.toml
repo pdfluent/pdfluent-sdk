@@ -22,6 +22,14 @@ pdf-redact = { path = "../pdf-redact", version = "=1.0.0" }
 pdf-sign = { package = "pdfluent-sign", path = "../pdf-sign", version = "=1.0.0" }
 pdf-extract = { package = "pdfluent-extract", path = "../pdf-extract", version = "=1.0.0" }
 pdfluent = { path = "../pdfluent", version = "=1.0.0" }
+# Office export. The conversion crates themselves, not via the facade: the C ABI
+# wraps `pdf_engine::PdfDocument`, which has no `to_docx_bytes`. The capability
+# check still comes from the facade (`pdfluent::require_capability`) so the tier
+# rule lives in one place.
+pdf-docx = { path = "../pdf-docx", version = "=1.0.0" }
+pdf-xlsx = { path = "../pdf-xlsx", version = "=1.0.0" }
+pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0" }
+
 serde = { workspace = true }
 serde_json = { workspace = true }
 lopdf = { package = "pdfluent-lopdf", path = "../lopdf", version = "=0.39.5" }

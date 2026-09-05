@@ -74,18 +74,24 @@ xfa-license = { path = "../xfa-license", version = "=1.0.0" }
 tokio = { version = "1", features = ["rt", "fs"], optional = true }
 tracing = { version = "0.1", optional = true }
 
-# Epic 3 #1224 parity methods — native-only. `to_docx` and `to_images`
-# back onto pdf-docx and pdf-render; both pull in filesystem / zip /
-# vello stacks we do not compile on wasm32. On wasm32 the methods
-# surface as [`Error::UnsupportedOnWasm`].
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Office export works on every target, wasm32 included.
+#
+# These three used to sit in the non-wasm block beside pdf-render, under a
+# comment about "filesystem / zip / vello stacks we do not compile on wasm32".
+# That reason is true of pdf-render (vello) and was never true of these: they
+# touch no filesystem and depend only on pdf-extract, quick-xml, zip (deflate)
+# and log — all of which build for wasm32. Checked 23-08-2026 by building all
+# three for wasm32-unknown-unknown.
+#
+# The cost of the mistake was not theoretical: the browser SDK could not export
+# to Word, Excel or PowerPoint, and the facade returned UnsupportedOnWasm for a
+# capability the /features/ page sells.
 pdf-docx = { path = "../pdf-docx", version = "=1.0.0" }
-# Excel and PowerPoint, for the same reason as docx: the /features/ page and the
-# SDK listing present them as SDK capabilities, and until now the facade did not
-# depend on them at all — `xlsx-export` and `pptx-export` were empty feature
-# flags, so a customer enabling one got a no-op. Same non-wasm gating as docx.
 pdf-xlsx = { path = "../pdf-xlsx", version = "=1.0.0" }
 pdf-pptx = { path = "../pdf-pptx", version = "=1.0.0" }
+
+# pdf-render stays native-only: vello does not compile for wasm32.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pdf-render = { path = "../pdf-render", version = "=1.0.0" }
 # Image encoding for `to_images` — PNG via the `png` crate, JPEG via
 # `image`'s JpegEncoder. Both are already transitively present via

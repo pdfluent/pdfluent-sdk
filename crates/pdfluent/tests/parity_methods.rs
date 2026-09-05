@@ -30,6 +30,73 @@ fn business_doc(path: &str) -> PdfDocument {
 }
 
 // ---------------------------------------------------------------------------
+// to_docx_bytes / to_xlsx_bytes / to_pptx_bytes — the form every binding uses
+// ---------------------------------------------------------------------------
+
+/// A `.docx` is a ZIP. Checking the magic bytes and one required entry is the
+/// difference between "the call returned something" and "the call returned a
+/// file Word will open".
+fn is_ooxml(bytes: &[u8], verwachte_ingang: &str) -> bool {
+    if bytes.len() < 4 || &bytes[..2] != b"PK" {
+        return false;
+    }
+    let leesbaar = String::from_utf8_lossy(bytes);
+    leesbaar.contains(verwachte_ingang)
+}
+
+#[test]
+fn to_docx_bytes_returns_an_openable_package() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    let bytes = doc.to_docx_bytes().expect("to_docx_bytes");
+    assert!(
+        is_ooxml(&bytes, "word/document.xml"),
+        "expected a ZIP containing word/document.xml, got {} bytes starting {:?}",
+        bytes.len(),
+        &bytes[..bytes.len().min(4)]
+    );
+}
+
+#[test]
+fn to_xlsx_bytes_returns_an_openable_package() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    let bytes = doc.to_xlsx_bytes().expect("to_xlsx_bytes");
+    assert!(
+        is_ooxml(&bytes, "xl/workbook.xml"),
+        "expected a ZIP containing xl/workbook.xml, got {} bytes",
+        bytes.len()
+    );
+}
+
+#[test]
+fn to_pptx_bytes_returns_an_openable_package() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    let bytes = doc.to_pptx_bytes().expect("to_pptx_bytes");
+    assert!(
+        is_ooxml(&bytes, "ppt/presentation.xml"),
+        "expected a ZIP containing ppt/presentation.xml, got {} bytes",
+        bytes.len()
+    );
+}
+
+/// The byte form and the file form must not drift apart: `to_docx` is
+/// documented as writing exactly what `to_docx_bytes` returns.
+#[test]
+fn the_file_form_writes_what_the_byte_form_returns() {
+    let doc = business_doc("tests/fixtures/sample.pdf");
+    let uit = std::env::temp_dir().join("pdfluent-bytes-parity.docx");
+    let _ = std::fs::remove_file(&uit);
+    doc.to_docx(&uit).expect("to_docx");
+    let van_schijf = std::fs::read(&uit).expect("read back");
+    let van_bytes = doc.to_docx_bytes().expect("to_docx_bytes");
+    assert_eq!(
+        van_schijf.len(),
+        van_bytes.len(),
+        "the two forms produced different packages"
+    );
+    let _ = std::fs::remove_file(&uit);
+}
+
+// ---------------------------------------------------------------------------
 // to_docx
 // ---------------------------------------------------------------------------
 

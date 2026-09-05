@@ -101,7 +101,8 @@ pub use crate::encrypt::{EncryptOptions, EncryptionAlgorithm, Permissions};
 pub use crate::error::{Error, ResourceLimitKind, Result};
 pub use crate::form::{FieldType, FormField, PdfFormMut};
 pub use crate::license::{
-    license_info, set_license_key, set_license_payload, set_license_public_key, LicenseInfo,
+    license_info, require_capability, set_license_key, set_license_payload, set_license_public_key,
+    LicenseInfo,
 };
 pub use crate::merger::{BookmarkMergeStrategy, MergeOptions, PdfMerger};
 pub use crate::metadata::{Metadata, MetadataMut};

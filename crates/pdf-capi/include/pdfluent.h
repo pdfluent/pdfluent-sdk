@@ -70,6 +70,7 @@ extern "C" {
  * |  18   | PDF_STATUS_ERROR_LICENSE_FILE               | ErrorLicenseFile             |
  * |  19   | PDF_STATUS_ERROR_LICENSE_EXPIRED            | ErrorLicenseExpired          |
  * |  20   | PDF_STATUS_ERROR_LICENSE_INVALID_SIGNATURE  | ErrorLicenseInvalidSignature |
+ * |  22   | PDF_STATUS_ERROR_CAPABILITY_NOT_LICENSED    | ErrorCapabilityNotLicensed   |
  * |  99   | PDF_STATUS_ERROR_UNKNOWN                    | ErrorUnknown                 |
  *
  * See @c docs/c_abi_stability.md §3 for the full error catalogue with
@@ -247,6 +248,15 @@ typedef enum {
      */
     PDF_STATUS_ERROR_LICENSE_INVALID_SIGNATURE  = 20,
 
+    /**
+     * The licence is valid but its tier does not include the requested
+     * capability — Office export below Business, for instance.
+     *
+     * Deliberately distinct from @c PDF_STATUS_ERROR_INVALID_LICENSE: "your
+     * key is bad" and "your plan does not cover this" send a caller to
+     * different places.
+     */
+    PDF_STATUS_ERROR_CAPABILITY_NOT_LICENSED = 22,
     /**
      * An internal error with no specific code.  Always accompanied by a
      * message from @ref pdf_get_last_error.
@@ -1018,6 +1028,54 @@ PdfStatus pdf_page_extract_image(
     int32_t image_index,
     uint32_t *out_width,
     uint32_t *out_height,
+    uint8_t **out_data,
+    size_t *out_len);
+
+/* =========================================================================
+ * Office export
+ * =========================================================================
+ */
+
+/**
+ * @brief Convert the document to a Word (.docx) package.
+ *
+ * @par Ownership: CALLER FREES @c *out_data via @ref pdf_bytes_free.
+ *
+ * @param doc       Document handle.
+ * @param out_data  Receives a pointer to the .docx bytes.
+ * @param out_len   Receives the byte length of @c *out_data.
+ * @return PDF_STATUS_OK, PDF_STATUS_ERROR_INVALID_ARG,
+ *         PDF_STATUS_ERROR_CAPABILITY_NOT_LICENSED, or
+ *         PDF_STATUS_ERROR_CONVERT.
+ */
+PdfStatus pdf_document_to_docx(
+    const PdfDocument *doc,
+    uint8_t **out_data,
+    size_t *out_len);
+
+/**
+ * @brief Convert the document to an Excel (.xlsx) package.
+ *
+ * Tables are detected from the page layout; a PDF without tabular structure
+ * yields a workbook with the text it could place.
+ *
+ * @par Ownership: CALLER FREES @c *out_data via @ref pdf_bytes_free.
+ * @see pdf_document_to_docx
+ */
+PdfStatus pdf_document_to_xlsx(
+    const PdfDocument *doc,
+    uint8_t **out_data,
+    size_t *out_len);
+
+/**
+ * @brief Convert the document to a PowerPoint (.pptx) package, one slide per
+ *        page.
+ *
+ * @par Ownership: CALLER FREES @c *out_data via @ref pdf_bytes_free.
+ * @see pdf_document_to_docx
+ */
+PdfStatus pdf_document_to_pptx(
+    const PdfDocument *doc,
     uint8_t **out_data,
     size_t *out_len);
 
