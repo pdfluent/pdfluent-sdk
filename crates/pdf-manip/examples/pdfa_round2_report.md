@@ -6,7 +6,7 @@ This is the internal implementation and evidence handoff for independent review.
 
 Baseline: `ca312ba638e811594ea5611efb7d3b9cc16582fc`. Measured implementation: **`3aa9a7001661fed44f96b26414dc8d1fa79325b7`**. Frozen converter SHA-256: `ccec5fd31c7e1e40b588678321b4e5fb0fa9ff75722344922a19fee345a18ff9`. The later evidence commit does not alter converter behavior. The shipping route is `pdfa::convert_bytes_with_report` (also used by `convert_bytes`) through `pdfa_convert_real`, PDF/A-2b, with the existing Free Tier watermark intact.
 
-The original round-1 report and JSON remain unchanged. This report is accompanied by `pdfa_round2_results.json` (all four sets, hashes, diagnostics, attribution, tests and timing), `pdfa_round2_causes.json` (108 original tail cases), and `pdfa_round2_all_pages.json` (every original page).
+The original round-1 report and JSON remain unchanged. The three bulk result files this work produced -- full per-set results, the 108 original tail cases and every original page -- are **not committed**: together they are roughly 9 MB of per-row measurements that no test or script reads, and the repository is not their archive. Every table below carries the totals, and `Commands to reproduce` regenerates the rows in full; `pdfa_round2_eval.py`, `pdfa_round2_causes.py` and `pdfa_round2_identity.py` are committed for exactly that.
 
 ## Byte attribution before
 

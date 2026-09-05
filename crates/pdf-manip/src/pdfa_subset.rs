@@ -503,6 +503,66 @@ mod tests {
         panic!("missing table");
     }
 
+    // The shipping pipeline must actually call this pass. Its own unit tests
+    // hold `retain_glyphs` to its contract, but they stay green when
+    // `convert_document` stops invoking it, which is the way the saving is
+    // lost in practice.
+    #[test]
+    fn conversion_subsets_an_embedded_simple_truetype_program() {
+        use lopdf::dictionary;
+        let source = font(false);
+        let mut doc = Document::with_version("1.7");
+        let program = doc.add_object(lopdf::Stream::new(
+            dictionary! { "Length1" => source.len() as i64 },
+            source.clone(),
+        ));
+        let descriptor = doc.add_object(dictionary! {
+            "Type" => "FontDescriptor", "FontName" => "Owned", "Flags" => 32,
+            "FontFile2" => program,
+        });
+        let font = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "TrueType", "BaseFont" => "Owned",
+            "FirstChar" => 65, "LastChar" => 65, "Widths" => vec![500.into()],
+            "FontDescriptor" => descriptor,
+        });
+        let contents = doc.add_object(lopdf::Stream::new(
+            dictionary! {},
+            b"BT /F1 12 Tf 10 10 Td (A) Tj ET".to_vec(),
+        ));
+        let pages_id = doc.new_object_id();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages_id, "Contents" => contents,
+            "MediaBox" => vec![0.into(), 0.into(), 200.into(), 200.into()],
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+        });
+        doc.objects.insert(
+            pages_id,
+            dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }.into(),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+
+        let report = crate::pdfa::convert_document(&mut doc, &Default::default()).unwrap();
+        assert_eq!(report.subsets.programs_subsetted, 1);
+        let stored = doc
+            .get_object(program)
+            .unwrap()
+            .as_stream()
+            .unwrap()
+            .decompressed_content()
+            .unwrap();
+        assert!(
+            stored.len() * 4 < source.len() * 3,
+            "program not subsetted: {} of {} bytes",
+            stored.len(),
+            source.len()
+        );
+        // Subsetting empties outlines; it never renumbers. Glyph ids and the
+        // metrics addressed through them have to survive the pipeline.
+        assert_eq!(u16_at(table(&stored, b"maxp"), 4).unwrap(), 512);
+        assert_eq!(table(&stored, b"hmtx"), table(&source, b"hmtx"));
+    }
+
     #[test]
     fn retains_composite_components_ids_metrics_cmaps_and_hints() {
         for long in [false, true] {

@@ -1187,6 +1187,50 @@ mod tests {
         assert!(!stream.dict.has(b"Filter"));
     }
 
+    // A page may split one instruction across its content fragments. The
+    // repairs that run after this point are stream-local, so they must never
+    // see half an array. `join_content_fragments` has no coverage of its own
+    // that notices when `convert_document` stops calling it.
+    #[test]
+    fn conversion_joins_content_fragments_that_split_an_instruction() {
+        let mut doc = Document::load_mem(&minimal_pdf()).unwrap();
+        let page = *doc.get_pages().values().next().unwrap();
+        let head = doc.add_object(lopdf::Stream::new(
+            dictionary! {},
+            b"BT /F1 12 Tf 10 10 Td [(A) -100".to_vec(),
+        ));
+        let tail = doc.add_object(lopdf::Stream::new(dictionary! {}, b"(B)] TJ ET".to_vec()));
+        doc.get_dictionary_mut(page).unwrap().set(
+            "Contents",
+            lopdf::Object::Array(vec![head.into(), tail.into()]),
+        );
+        convert_document(&mut doc, &PdfAConvertOptions::default()).unwrap();
+        // Free Tier appends its watermark as a further stream, so the page
+        // legitimately keeps an array. What matters is that the two halves of
+        // the instruction ended up in ONE stream, not two.
+        let bytes: Vec<Vec<u8>> = crate::content_editor::get_content_stream_ids(&doc, page)
+            .into_iter()
+            .map(|id| {
+                doc.get_object(id)
+                    .unwrap()
+                    .as_stream()
+                    .unwrap()
+                    .decompressed_content()
+                    .unwrap()
+            })
+            .collect();
+        let joined = bytes
+            .iter()
+            .find(|b| b.windows(9).any(|w| w == b"[(A) -100"))
+            .expect("the instruction disappeared");
+        let text = String::from_utf8_lossy(joined).into_owned();
+        assert!(
+            text.contains("(B)] TJ"),
+            "the fragments were repaired separately: {text}"
+        );
+        assert!(lopdf::content::Content::decode_strict(joined).is_ok());
+    }
+
     #[test]
     fn storage_compaction_leaves_streams_that_refuse_compression_alone() {
         use lopdf::{Object, Stream};
