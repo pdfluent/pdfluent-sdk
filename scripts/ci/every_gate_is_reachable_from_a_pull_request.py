@@ -53,7 +53,17 @@ SCRIPT = re.compile(r"scripts/ci/([a-z_0-9]+\.(?:py|sh))")
 # `zwaar` gate is as much a gate as a `run` one -- and reading only `run` lines
 # made the compiling gates invisible here, which turned their two exemption rows
 # into "excused but nobody runs it" the day the lanes were introduced.
-RUN_LINE = re.compile(r"^(?:run|zwaar)\s+(\S+)\s+(.*)$", re.M)
+#
+# `scoped` and `crate_gate` are the same argument one lane further (#343): they
+# run on a push to master over the crates that landing touches. A gate that runs
+# for some landings and not others is still a gate the pre-push hook can run, and
+# this file asks whether a stranger's pull request would reach it -- a question
+# whose answer does not depend on which crates today's landing changed.
+#
+# `crate_gate` takes the crate before the command, so the second word is skipped
+# for that spelling and for that spelling only.
+RUN_LINE = re.compile(
+    r"^(?:run|zwaar|scoped)\s+(\S+)\s+(.*)$|^crate_gate\s+(\S+)\s+\S+\s+(.*)$", re.M)
 
 # A floor on what was examined. A gate file that yields nothing means the parse
 # broke, and reporting OK over zero gates is the failure this whole family of
@@ -129,7 +139,9 @@ def main() -> int:
     grens, reachable = de_grens()
 
     gates: dict[str, str] = {}
-    for name, command in RUN_LINE.findall(GATE.read_text(encoding="utf-8")):
+    for run_name, run_cmd, crate_name, crate_cmd in RUN_LINE.findall(
+            GATE.read_text(encoding="utf-8")):
+        name, command = (run_name, run_cmd) if run_name else (crate_name, crate_cmd)
         for script in SCRIPT.findall(command):
             gates[script] = name
 

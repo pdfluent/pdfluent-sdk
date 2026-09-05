@@ -19,10 +19,21 @@ remote refs adds nothing, so nothing the gates measure has changed -- and until
 permissive direction skips the build on a real push, so every input that is NOT
 a deletion is asserted here as carefully as the one that is.
 
+There are three lanes since #343, and the middle one is the landing: a push to
+master builds and tests the crates that landing touches, not the workspace. That
+adds a fourth silent decision -- WHICH BASE the selection is measured against --
+and the hook is the only place that knows it, because git hands the remote's sha
+on the same line it hands the destination. A wrong base compiles the wrong
+crates and says so in a summary that looks entirely ordinary, so it is observed
+here through the stub rather than read out of the hook.
+
 So the cases here run the real hook against fabricated stdin, with the gate
 replaced by a stub that records its argument. Reading the source for the string
 `--full` would pass a hook that computes the lane correctly and then never uses
-it, which is the failure mode worth catching.
+it, which is the failure mode worth catching. The cases at the end are the
+exception and say so: they read the GATE for the lane it accepts, because a hook
+that passes `--landing` to a gate that rejects it refuses every landing, and no
+stub can see that.
 """
 from __future__ import annotations
 import os
@@ -56,7 +67,8 @@ def expect(what: str, ok: bool, detail: str = "") -> None:
 
 
 def hook_met(stdin: str, gate_exit: int = 0, tmp: pathlib.Path | None = None,
-             message_guard: bool = False) -> tuple[int, str, str]:
+             message_guard: bool = False,
+             extra_env: dict[str, str] | None = None) -> tuple[int, str, str]:
     """Run the real hook in a sandbox whose local_ci_gate.sh is a stub.
 
     The stub writes its argument to a file and exits with `gate_exit`, so the
@@ -77,6 +89,10 @@ def hook_met(stdin: str, gate_exit: int = 0, tmp: pathlib.Path | None = None,
     (tmp / "scripts" / "ci" / "local_ci_gate.sh").write_text(
         "#!/usr/bin/env bash\n"
         f'printf "%s" "${{1:-<geen>}}" > "{tmp}/baan.txt"\n'
+        # The base the hook hands over, written whether or not it was set, so
+        # "nothing was exported" and "the wrong sha was exported" are different
+        # files rather than the same absence.
+        f'printf "%s" "${{LANDING_BASE:-<none>}}" > "{tmp}/basis.txt"\n'
         f"exit {gate_exit}\n"
     )
     # The guard the hook runs before the gate reads a revision range against an
@@ -84,6 +100,7 @@ def hook_met(stdin: str, gate_exit: int = 0, tmp: pathlib.Path | None = None,
     # skips that half. Removing the file keeps this test on its own subject.
     env = sealed_env(cwd=tmp)
     env["PATH"] = os.environ["PATH"]
+    env.update(extra_env or {})
     subprocess.run(["git", "init", "-q", "."], cwd=tmp, env=env, check=True)
     if message_guard:
         (tmp / "scripts" / "ci" / "geen_interne_zaken.py").write_text(
@@ -112,17 +129,48 @@ def hook_met(stdin: str, gate_exit: int = 0, tmp: pathlib.Path | None = None,
     return r.returncode, baan, r.stdout + r.stderr
 
 
+def basis(tmp: pathlib.Path) -> str:
+    """The LANDING_BASE the hook exported for that run, or NOT_CALLED."""
+    path = tmp / "basis.txt"
+    return path.read_text() if path.exists() else NOT_CALLED
+
+
 def main() -> int:
     import tempfile
 
     with tempfile.TemporaryDirectory(prefix="lane-") as d:
         tmp = pathlib.Path(d)
 
-        # A push to master takes the full lane.
+        # A push to master takes the LANDING lane (#343): every gate that does
+        # not compile, plus a build and test of the crates that landing touches.
+        # The whole workspace runs on master, on the runner.
         rc, baan, uit = hook_met(
             "refs/heads/t3/iets abc123 refs/heads/master def456\n", tmp=tmp / "a")
-        expect("a push to master runs the full lane", baan == "--full", baan)
-        expect("and says so before it starts", "FULL local CI gate" in uit, uit[:120])
+        expect("a push to master runs the landing lane", baan == "--landing", baan)
+        expect("and says so before it starts",
+               "LANDING local CI gate" in uit, uit[:200])
+        # THE BASE IS THE REMOTE'S SHA, not a guess and not the branch's own
+        # merge base. Observed through the stub: what the gate is handed decides
+        # which files the selection reads, so a wrong base silently compiles the
+        # wrong crates.
+        expect("and hands the gate the sha master is at",
+               basis(tmp / "a") == "def456", basis(tmp / "a"))
+
+        # LANE=full is the on-demand half of the decision, and the one override
+        # that costs MORE work rather than less.
+        rc, baan, uit = hook_met(
+            "refs/heads/t3/iets abc123 refs/heads/master def456\n", tmp=tmp / "a2",
+            extra_env={"LANE": "full"})
+        expect("LANE=full takes the landing back to the whole workspace",
+               baan == "--full", baan)
+        expect("and says FULL rather than LANDING",
+               "FULL local CI gate" in uit, uit[:200])
+        # Only on a landing: LANE=full does not turn an ordinary branch push
+        # into a compile nobody asked for on that branch.
+        rc, baan, uit = hook_met(
+            "refs/heads/t3/iets abc123 refs/heads/t3/iets def456\n", tmp=tmp / "a3",
+            extra_env={"LANE": "full"})
+        expect("LANE=full leaves a branch push in the fast lane", baan == "--fast", baan)
 
         # A push to any other ref does not.
         rc, baan, uit = hook_met(
@@ -138,12 +186,32 @@ def main() -> int:
         # And a detached HEAD landing on master is one, which is how ff3 pushes.
         rc, baan, uit = hook_met(
             "HEAD abc123 refs/heads/master def456\n", tmp=tmp / "d")
-        expect("a detached HEAD pushed to master runs the full lane", baan == "--full", baan)
+        expect("a detached HEAD pushed to master runs the landing lane",
+               baan == "--landing", baan)
 
         # Several refs at once: one of them landing on master is enough.
         rc, baan, uit = hook_met(
             "refs/heads/a 1 refs/heads/a 2\nrefs/heads/b 3 refs/heads/master 4\n", tmp=tmp / "e")
-        expect("one master ref among several picks the full lane", baan == "--full", baan)
+        expect("one master ref among several picks the landing lane",
+               baan == "--landing", baan)
+        expect("and the base comes from the master line, not the first one",
+               basis(tmp / "e") == "4", basis(tmp / "e"))
+
+        # A master that does not exist yet writes a zero sha. That names no
+        # object, so handing it on would make every gate below diff against
+        # nothing; the gate finds its own base instead.
+        rc, baan, uit = hook_met(
+            f"HEAD {SHA} refs/heads/master {ZERO}\n", tmp=tmp / "e2")
+        expect("a master that does not exist yet hands over no base",
+               basis(tmp / "e2") == "<none>", basis(tmp / "e2"))
+        expect("and the lane is still the landing one", baan == "--landing", baan)
+
+        # A branch push hands over no base either: there is no landing to
+        # measure, and a stale export would scope a later run to the wrong files.
+        rc, baan, uit = hook_met(
+            "refs/heads/t3/iets abc123 refs/heads/t3/iets def456\n", tmp=tmp / "e3")
+        expect("a branch push hands over no base", basis(tmp / "e3") == "<none>",
+               basis(tmp / "e3"))
 
         # A DELETE-ONLY PUSH STARTS NOTHING. git writes a local sha that names
         # no object for a deletion, so the gate is never invoked at all -- and
@@ -231,15 +299,38 @@ def main() -> int:
                "local CI gate failed" in uit, uit[-160:])
 
         # And the lanes are not empty on either side: the deferred gates have to
-        # exist in the file, or "deferred to the full lane" defers nothing.
+        # exist in the file, or "deferred to the landing lane" defers nothing.
         tekst = GATE.read_text()
-        zwaar = [r for r in tekst.splitlines() if r.startswith("zwaar ")]
-        expect("the gate file defers at least four compiling gates",
+        zwaar = [r for r in tekst.splitlines()
+                 if r.startswith(("zwaar ", "scoped ", "crate_gate "))]
+        expect("the gate file defers at least four heavy gates",
                len(zwaar) >= 4, f"{len(zwaar)}")
         expect("a deferred gate is not counted as a pass",
                "DEFERRED (not a pass)" in tekst)
+        expect("nor is a gate skipped for touching no crate",
+               "SKIPPED (not a pass)" in tekst)
         expect("the summary names the lane it ran",
                '$_lane lane' in tekst)
+        # THE LANE EXISTS IN THE GATE, not only in the hook. The hook passing
+        # `--landing` to a gate that rejects it would refuse every landing, and
+        # the case above cannot see that: it runs against a stub.
+        expect("the gate accepts the lane the hook passes it",
+               "--landing)" in tekst, "")
+        expect("and LANE=full overrides it there too",
+               'if [ "${LANE:-}" = full ]' in tekst)
+        # The three that take the crate list. A `scoped` line that lost its
+        # crates would compile the whole workspace again, silently and slowly;
+        # one that lost its command would compile nothing at all.
+        for gate in ("scoped build", "scoped clippy", "scoped test"):
+            expect(f"`{gate}` runs over the selection",
+                   any(r.startswith(gate) for r in tekst.splitlines()), gate)
+        expect("the selection comes from touched_crates.py",
+               "scripts/ci/touched_crates.py" in tekst)
+        # AND ITS FAILURE IS A REFUSAL TO NARROW, not a quiet narrowing. If the
+        # selection cannot be made, the lane has to widen to the whole
+        # workspace -- the direction that costs time rather than certainty.
+        expect("a selection that cannot be made builds everything",
+               "FULL=1; LANDING=0" in tekst)
 
         # The never-green guard is advisory in BOTH local lanes since #331: the
         # full lane IS the landing, so leaving it hard there meant a workflow

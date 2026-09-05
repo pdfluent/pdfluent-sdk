@@ -220,7 +220,12 @@ paden = [
   # which is t3's question and not a CI one. The rest of the sign-off mechanism
   # (the hook and its test) has been t3's since 03-09, so the guards were the
   # half that answered to a different owner than the rule they enforce.
-  "scripts/ci/every_guard_has_a_job.py",
+  #
+  # `scripts/ci/every_guard_has_a_job.py` stood on this line. It is LENT TO t3
+  # for #343 and the literal is in `uitgezonderd` below for the length of that
+  # loan: the same literal in both lists of one territory is a state nothing
+  # checks, and one owner per spelling is this map's own rule. It comes back
+  # here when #343 lands.
   # The policy itself. `docs/licen*` is t3's and is lowercase, so this file --
   # the one the whole licence policy is written in -- matched no territory at
   # all until today. A map that covers the guard but not the thing it reads
@@ -385,6 +390,21 @@ uitgezonderd = [
   # outlives its subject -- the class this map keeps catching elsewhere -- and it
   # would block t2's own next edit of the file, which is what it did today
   # (SPIEGEL_RATEL 13 -> 14 for classify_render_outcome.sh, #276).
+  # ---- LENT TO t3, 06-09-2026, for #343; the reason is in t3's block ---------
+  # The landing lane: the hook that knows a push is a landing and which sha
+  # master is at, the three run scripts that hold the cargo flags, the selection
+  # and its test, and the runbook table that says what a push costs. Back the
+  # moment #343 lands, which is the same push that adds them.
+  ".githooks/pre-push",
+  "scripts/ci/run_build.sh",
+  "scripts/ci/run_clippy.sh",
+  "scripts/ci/run_test.sh",
+  "scripts/ci/test_the_pre_push_gate_picks_its_lane.py",
+  "scripts/ci/touched_crates.py",
+  "scripts/ci/test_touched_crates.py",
+  "scripts/ci/every_guard_has_a_job.py",
+  "scripts/ci/mirror_only_guards.toml",
+  "docs/ci/CI_RUNNER_OPERATING_RUNBOOK.md",
 ]
 issues = [288, 286, 290, 276, 283, 264]
 
@@ -571,6 +591,44 @@ paden = [
   # `scripts/ci/test_seed_public_repo.py` was ON LOAN to t1 for #331; that loan
   # ended when the fixture-identity fix landed, and the path is claimed in this
   # territory's `paden` above, beside the script it drives.
+  #
+  # ---- ON LOAN FROM t2, 06-09-2026, for #343 and nothing else ----------------
+  #
+  # The landing lane. Every landing compiled and tested all forty-nine crates in
+  # the landing worktree whatever the change was -- 45 to 77 minutes each,
+  # serialised behind one lock, so the machine landed at most one pull request an
+  # hour however many were ready. The owner decision is that a landing builds
+  # only the crates it touches, and that the whole workspace runs on master, on
+  # the runner.
+  #
+  # WHY IT IS ONE BRANCH AND NOT A HAND-OVER. The decision is a single mechanism
+  # spread across two owners' files: the hook is the only place that knows a push
+  # is a landing AND which sha master is at (t2), the gate is where the lane is
+  # spent, the three run scripts are where the cargo flags live so the scoped and
+  # workspace shapes cannot drift apart, and `.github/workflows/ci.yml` -- t3's --
+  # is where the workspace job that makes this a trade rather than a loss has to
+  # go. Landing half of it would narrow what a landing compiles while nothing yet
+  # compiles the rest, and that is the one state this change must not pass
+  # through.
+  #
+  # EXPIRY: back to t2 the moment #343 lands, which is the same push that adds
+  # them. Whoever next edits these takes them back by moving the literals, and
+  # needs no permission to.
+  ".githooks/pre-push",
+  "scripts/ci/run_build.sh",
+  "scripts/ci/run_clippy.sh",
+  "scripts/ci/run_test.sh",
+  "scripts/ci/test_the_pre_push_gate_picks_its_lane.py",
+  "scripts/ci/touched_crates.py",
+  "scripts/ci/test_touched_crates.py",
+  # The two registers the workspace job moves an entry in. Three guards stopped
+  # being mirror-only the moment ci.yml ran them, and a ratchet that is not
+  # updated in the same commit reports the win as a fault on every run.
+  "scripts/ci/every_guard_has_a_job.py",
+  "scripts/ci/mirror_only_guards.toml",
+  # The runbook says which lane a push takes and what it costs, so its table is
+  # part of the change rather than a note about it.
+  "docs/ci/CI_RUNNER_OPERATING_RUNBOOK.md",
 ]
 uitgezonderd = [
   "docs/licensing/boundary.toml", # #326 internal-crate registration
@@ -600,7 +658,15 @@ uitgezonderd = [
   # expiry has fired. The literal is gone from this list, so the claim in
   # `paden` takes effect again. The other three stay until their next editor
   # moves them, which is the convention the block above records.
-  "scripts/ci/every_gate_is_reachable_from_a_pull_request.py",
+  #
+  # TAKEN BACK 06-09-2026: `scripts/ci/every_gate_is_reachable_from_a_pull_request.py`,
+  # on that same convention. #333 landed on 05-09 and its expiry has fired, and
+  # #343 is the next edit of this guard -- it teaches it the two lane spellings
+  # the landing lane adds, so a gate that runs for some landings and not others
+  # is still counted as a gate a stranger's pull request must be able to reach.
+  # Left standing, the literal made this territory exclude a path it also claims,
+  # which is a state nothing checks and which handed the file back to t2 in
+  # silence.
 ]
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
 

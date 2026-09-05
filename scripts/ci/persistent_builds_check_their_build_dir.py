@@ -73,13 +73,29 @@ MINIMUM_WORKFLOWS = 10
 # throwaway instance: the job is one crate plus `mvn test`, which would pay a
 # Hetzner boot and a cold cargo cache for a build the warm desktop cache already
 # has, and it runs once per landing rather than once per push. (#1672)
-EXPECTED_BUILD_JOBS = 8
+# 8 -> 9 on 06-09-2026: ci.yml's `workspace` job. It is the whole workspace --
+# check, clippy and test -- on a push to master, and it exists because the
+# landing lane stopped doing that on the pusher's machine (#343). Upward, and
+# made rather than noticed: this is a lane moving ONTO the machine that keeps
+# its state, which is the direction the comment above calls the more likely one.
+# It is affordable there only because that state is warm, which is the same
+# reason it must check the build directory before it starts.
+EXPECTED_BUILD_JOBS = 9
 
 CHECK = "scripts/ci/cargo_target_health.sh"
 
 # `cargo fmt` and `cargo --version` write nothing to the build directory, so a
 # job that only runs those has nothing to protect.
-COMPILES = re.compile(r"\bcargo\s+(\+\S+\s+)?(build|test|check|clippy|run|bench|install|doc)\b")
+#
+# The wrappers count as well, and that is not a convenience: a job that calls
+# `bash scripts/ci/run_test.sh` compiles exactly as much as one that spells the
+# cargo line out, and reading only the spelled-out form let ci.yml's `workspace`
+# job compile the entire workspace on the persistent runner while this guard
+# reported nine jobs as eight. A scan that cannot see a build reports a clean
+# pipeline in the same words as one that found nothing wrong. (#343)
+COMPILES = re.compile(
+    r"\bcargo\s+(\+\S+\s+)?(build|test|check|clippy|run|bench|install|doc)\b"
+    r"|\bscripts/ci/run_(build|clippy|test)\.sh\b")
 
 
 def runs_on_persistent(job: dict) -> bool:
