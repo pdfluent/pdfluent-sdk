@@ -108,6 +108,17 @@ jobs:
       - name: The public seeding removes trailers and changes no content
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_seed_public_repo.py
+      # Wired 05-09-2026 (#222): booked in every_guard_has_a_job.py as "wired
+      # with the other publication guards after #1543" until #1543 landed and
+      # nothing wired it. It is the one guard that answers whether the tree
+      # that would be published names a document we may not redistribute, and
+      # it was red on master the day it was finally run.
+      - name: The internal-document guard bites in both directions
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_internal_stays_internal.py
+      - name: No internal path or document name reaches the published tree
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/internal_stays_internal.py
       # 154 seconds, measured: it assembles the published tree and greps it. That
       # is real but small on a hosted runner, and it is the check #222 rests on --
       # the whole point of #1696 was that nothing ran it. The build half stays out

@@ -157,10 +157,6 @@ def tracked() -> list[str]:
     return [f for f in out.stdout.split("\0") if f]
 
 
-def is_internal(path: str) -> bool:
-    return path.startswith(INTERNAL_PATHS) or path in INTERNAL_FILES
-
-
 def main() -> int:
     m = manifest()
     paden = tuple(m["internal"]["paths"])

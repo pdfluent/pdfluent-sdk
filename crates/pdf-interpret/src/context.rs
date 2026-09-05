@@ -42,9 +42,13 @@ use std::collections::HashMap;
 /// Re-measured on every PDF in this repository (164 documents, deepest page of
 /// each), instrumented at this function:
 ///
-///   depth 2   tests/fixtures/belastingdienst_betalingsregeling.pdf
+///   depth 2   one real government form, the deepest of the 164
 ///   depth 1   every other real document
 ///   depth 49-50  the three cycle fixtures, which recurse on purpose
+///
+/// Which document that was is not written here: it is one of the corpus files
+/// this repository holds and may not redistribute, and a name is a description
+/// of the corpus even where the corpus is absent (docs/PUBLIC_TREE.toml).
 ///
 /// So 50 leaves a factor of 25 over the deepest real document reachable here.
 /// That is a floor, not the corpus maximum: the 181K-document corpus is not on

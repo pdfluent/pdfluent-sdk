@@ -253,6 +253,18 @@ run noticetst python3 scripts/ci/test_notice_names_what_exists.py
 run withdrawn python3 scripts/ci/no_withdrawn_object.py
 run withdrawnt python3 scripts/ci/test_no_withdrawn_object.py
 run snapaudit bash scripts/ci/public_snapshot_audit.sh
+# Wired 05-09-2026 (#222). It answers "does the tree that would be published
+# name a document we may not redistribute", it had run in no job since it was
+# written, and on the day it was wired it was red -- on a doc comment in
+# pdf-interpret and on a facade test that embedded a golden by path.
+#
+# The guard is 1.3 seconds and belongs in the fast lane: what it watches is
+# ordinary source, so any push can break it. Its test builds twenty-six git
+# repositories and is 31 seconds, which is the full lane's kind of cost, and
+# what it watches is the guard itself -- which only a change to scripts/ci can
+# break, and that change lands through the full lane on master.
+run internal  python3 scripts/ci/internal_stays_internal.py
+zwaar interntst python3 scripts/ci/test_internal_stays_internal.py
 run territst  python3 scripts/ci/test_territories_do_not_overlap.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json

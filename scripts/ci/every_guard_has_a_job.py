@@ -191,7 +191,6 @@ ALLOWED: dict[str, str] = {
         "in orchestration-guard's inline step, and this script's test runs there"
     ),
     "geen_interne_zaken.py": "wired with the other publication guards after #1543",
-    "internal_stays_internal.py": "wired with the other publication guards after #1543",
     "simulate_public_tree.py": "wired with the other publication guards after #1543",
     "herkomsttabel.py": (
         "generates docs/HERKOMST.md and is imported by header_sweep for the list "
