@@ -73,6 +73,62 @@ def main() -> int:
     case("an unknown blocker name is not parked",
           not guard.geparkeerd(doc, job(needs="bestaat-niet")))
 
+    # --- the register carries reasons, and the reasons are measured ----------
+    #
+    # #276 asked for a decision, not a holding pattern: either the four corpus
+    # gates get a runner, or they are manual and say why. They are manual. What
+    # keeps that from ageing into a line nobody dares delete is that the reason
+    # is a claim about a file -- "that manifest records no origin" -- and this
+    # is where the claim is checked in both directions.
+    case("every row in the register carries a reason",
+         all(str(v or "").strip() for v in guard.REGISTER.values()),
+         f"{sorted(k for k, v in guard.REGISTER.items() if not str(v or '').strip())}")
+    case("and the reason names the condition that removes the row",
+         all("Un-park" in v for v in guard.REGISTER.values()),
+         "a reason without an exit is a permanent excuse")
+
+    machinepaden = HERE.parent.parent / "corpus" / "CI_CORPUS_MANIFEST.json"
+    geldt, hoezo = guard.de_corpusreden_geldt_nog(machinepaden)
+    case("the tree still says what the register says it says", geldt is True, hoezo)
+
+    import json as _json
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        machine = tmp / "machine.json"
+        # A stand-in prefix rather than the real one. What is being exercised is
+        # "the source is an absolute path on some machine", and the published
+        # tree is audited for the actual mount name -- a fixture is not a reason
+        # to put a pointer into somebody's filesystem in a file that ships.
+        machine.write_text(_json.dumps({"entries": [
+            {"file": "0052.pdf", "source": "/srv/corpus/curated-1k/0052.pdf"}]}))
+        case("a manifest of machine paths keeps the exemption",
+             guard.de_corpusreden_geldt_nog(machine)[0] is True)
+
+        # THE POINT OF THE WHOLE ROW. The day somebody records where those 500
+        # documents come from -- a suite and a commit, the way
+        # GATE_CORPUS_MANIFEST.json does -- these four can run again, and this
+        # is what says so instead of waiting for a reader to notice.
+        herkomst = tmp / "herkomst.json"
+        herkomst.write_text(_json.dumps({"entries": [
+            {"file": "0052.pdf", "source": "https://example.invalid/0052.pdf"}]}))
+        expired, waarom = guard.de_corpusreden_geldt_nog(herkomst)
+        case("a manifest that records an origin expires the exemption",
+             expired is False, waarom)
+
+        # "I could not check" is not "still true", and reporting it as one is
+        # how a register survives its own subject.
+        case("an unreadable manifest is neither -- it refuses",
+             guard.de_corpusreden_geldt_nog(tmp / "weg.json")[0] is None)
+        stuk = tmp / "stuk.json"
+        stuk.write_text("{ not json")
+        case("and so does one that will not parse",
+             guard.de_corpusreden_geldt_nog(stuk)[0] is None)
+        leeg = tmp / "leeg.json"
+        leeg.write_text(_json.dumps({"entries": []}))
+        case("and so does one with no entries at all",
+             guard.de_corpusreden_geldt_nog(leeg)[0] is None)
+
     # --- the guard on the real tree ------------------------------------------
     # THE GUARD CANNOT RUN EVERYWHERE, AND THIS TEST HAS TO SAY SO.
     #
@@ -129,6 +185,31 @@ def main() -> int:
                  red.stderr[-300:])
     finally:
         tmp_path.unlink(missing_ok=True)
+
+    # --- AND THE SECOND MUTATION ---------------------------------------------
+    # The unit cases above prove the measurement. This proves the guard asks it.
+    # A function that returns the right answer into nothing is the shape this
+    # repository keeps finding, and it is indistinguishable from a working check
+    # until the day the answer changes.
+    #
+    # Deliberately not behind `could_not_read`: the register is checked before
+    # the runner list is fetched, precisely so this half still works in GitHub
+    # Actions, where /actions/runners cannot be read at all.
+    verlopen = source.replace(
+        '    pad = pad or CORPUS_MANIFEST\n',
+        '    return False, "an origin is recorded"\n', 1)
+    case("the expiry mutation could be applied", verlopen != source)
+    mutant = HERE / "_every_label_expired.py"
+    try:
+        mutant.write_text(verlopen)
+        rood = subprocess.run([sys.executable, str(mutant)], capture_output=True, text=True)
+        case("with the corpus reachable the guard refuses to keep the four parked",
+             rood.returncode == 1, f"exit={rood.returncode} {(rood.stdout + rood.stderr)[-200:]}")
+        case("and it names each workflow rather than the count",
+             rood.stderr.count("Un-park it, or rewrite its reason") == len(guard.REGISTER),
+             rood.stderr[-400:])
+    finally:
+        mutant.unlink(missing_ok=True)
 
     print(f"\n  {ran} assertion(s) ran, {len(failures)} failure(s)")
     return 1 if failures else 0

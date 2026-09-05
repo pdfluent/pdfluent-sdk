@@ -182,6 +182,37 @@ jobs:
       - name: test
         run: cargo test --workspace --exclude pdf-desktop --no-fail-fast
 
+      # `--workspace` compiles every crate with its DEFAULT features, so a test
+      # behind a non-default flag is not in the line above -- it does not fail
+      # there, it is not there at all.
+      #
+      # These four prove that constructing an OCR engine never fetches ~84 MB of
+      # ONNX weights from a third party unasked, which it did until 19-08-2026.
+      # Their only job was on the GitLab mirror, 204 commits behind and blocking
+      # nothing, and they were invisible to the guard that counts feature-gated
+      # tests as well: the file gates itself with `#![cfg(feature = "paddle")]`
+      # at the top, and that guard only read attributes touching a `#[test]`.
+      # Both halves are fixed; this is the job the second half asks for.
+      #
+      # Here rather than on a hosted runner because it compiles, and this
+      # instance is already up with the workspace built. `ort` is configured
+      # `load-dynamic`, so nothing is downloaded to build it and the tests need
+      # no network -- deliberately, since a test needing the internet to prove
+      # we avoid the internet would be skipped on an offline runner. (#276)
+      - name: the tests behind the paddle feature
+        if: ${{ !cancelled() }}
+        run: cargo test -p pdf-ocr --features paddle --locked
+
+      # Same shape, same reason: `crates/pdf-engine/tests/
+      # xfa_hostile_script_does_not_crash.rs` gates its whole file on `xfa`, a
+      # non-default feature, so `--workspace` above has never compiled it. Four
+      # tests, and what they hold is that a hostile XFA script cannot take the
+      # renderer down -- measured 05-09-2026: they pass, and nothing was running
+      # them. (#276)
+      - name: the tests behind the xfa feature
+        if: ${{ !cancelled() }}
+        run: cargo test -p pdf-engine --features xfa --locked
+
       # PDF/A, on the pipeline that blocks a merge (#286).
       #
       # `verapdf.yml` used to do this on ubuntu-latest and it measured nothing:

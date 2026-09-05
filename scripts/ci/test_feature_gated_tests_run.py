@@ -34,15 +34,38 @@ import sys
 import tomllib
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-CI = REPO / ".gitlab-ci.yml"
 
-# GitHub is the pipeline; GitLab is a nightly copy that was 204 commits behind on
-# 03-09-2026 and blocks nothing. Reading only .gitlab-ci.yml meant the one way to
-# satisfy this guard was a job on that mirror -- so "every feature-gated test has
-# a job" could be true while no such job had ever run against a merge. The
-# workflows are read too, and they are where the claim becomes checkable the same
-# day. The mirror still counts; it is simply no longer the only thing that does.
+# Coverage is a job a change cannot get past. Two things used to count that are
+# not that, and both are gone (#276).
+#
+# `.gitlab-ci.yml` was the first, and for a while the only, source. It is a
+# nightly copy that was 204 commits behind GitHub on 03-09-2026 and blocks
+# nothing -- so "every feature-gated test has a job" could be true while no such
+# job had ever run against a merge. An earlier pass added the workflows beside
+# it and left the mirror counting; this removes it, which is what the mirror
+# being a mirror has meant all along.
+#
+# The second is subtler and is why this sits on #276: a workflow that only runs
+# when somebody types the dispatch is not a gate either. The four corpus
+# workflows are exactly that shape -- manual by decision, queued behind a job
+# that exits non-zero -- and a `cargo test --features x` line inside one of them
+# would have satisfied this guard while never running at all. That is the same
+# claim as the mirror's, made by a file in the right repository.
+#
+# So the sources are the workflows a change actually passes through.
 WORKFLOWS = REPO / ".github" / "workflows"
+
+# The events a change cannot avoid. `schedule` is deliberately absent: a nightly
+# runs after the fact, on master, and tells a pull request nothing. `workflow_
+# dispatch` is absent for the reason above.
+BLOKKERENDE_GEBEURTENISSEN = {"push", "pull_request", "pull_request_target",
+                              "merge_group"}
+
+# ONDERGRENS: workflows read >= 10. This repository has thirty-odd; finding a
+# handful means the glob broke, and a coverage set assembled from a broken glob
+# reports gaps that are not there -- or, once the gaps are declared, no gaps at
+# all.
+MIN_WORKFLOWS = 10
 
 # ONDERGRENS: gescande crates >= 30 — de workspace heeft er ruim veertig; vindt
 # deze controle er minder, dan is de boomwandeling stuk en niet de codebase leeg.
@@ -109,6 +132,37 @@ def pakketnaam(cargo_toml: pathlib.Path) -> str | None:
     return None
 
 
+def standaardfeatures(cargo_toml: pathlib.Path) -> set[str]:
+    """The crate's own features that a plain `cargo test` turns on.
+
+    A test behind a DEFAULT feature compiles in any ordinary run, so counting it
+    as uncovered is a gap that does not exist -- and a guard that reports gaps
+    that do not exist is one somebody switches off. `pdf-manip`'s `pdfa-convert`
+    and `serde` are both defaults; the second was even carrying a declared
+    excuse in feature_gaps.toml for tests that have been running all along.
+
+    The closure, not the literal list: `default = ["a"]` with `a = ["b"]` turns
+    on `b` as well. `dep:x` and `other-crate/x` are not this crate's features and
+    are skipped -- a feature this guard cannot resolve is one it must not claim.
+    """
+    try:
+        doc = tomllib.loads(cargo_toml.read_text(errors="replace"))
+    except (tomllib.TOMLDecodeError, OSError):
+        return set()
+    tabel = doc.get("features")
+    if not isinstance(tabel, dict):
+        return set()
+    uit: set[str] = set()
+    werk = [f for f in tabel.get("default", []) if isinstance(f, str)]
+    while werk:
+        naam = werk.pop()
+        if "/" in naam or naam.startswith("dep:") or naam in uit:
+            continue
+        uit.add(naam)
+        werk += [f for f in tabel.get(naam, []) if isinstance(f, str)]
+    return uit
+
+
 def gated_features_met_tests(tekst: str) -> set[str]:
     """Features die minstens één `#[test]` afschermen.
 
@@ -119,6 +173,30 @@ def gated_features_met_tests(tekst: str) -> set[str]:
     """
     regels = tekst.splitlines()
     gevonden: set[str] = set()
+
+    # Vorm 0: `#![cfg(feature = "x")]` at the top of the file, which gates every
+    # test in it.
+    #
+    # CFG_FEATURE was widened to match an inner attribute, but both walks below
+    # only read attribute lines TOUCHING a `#[test]` -- and a crate-level gate
+    # sits at the top of the file, thirty lines above the first test. So the
+    # pattern matched something nothing ever showed it.
+    #
+    # Measured 05-09-2026: `crates/pdf-ocr/tests/model_fetch_is_opt_in.rs` gates
+    # its whole file this way, and this function returned an empty set for it.
+    # Its four tests prove that constructing an OCR engine never fetches 84 MB of
+    # weights over the network unasked -- and the guard whose job is to notice a
+    # test nobody runs could not see them. An inner attribute is only legal
+    # before the first item, so scanning the file for one is the whole of it.
+    # (#276)
+    if TEST_ATTRIBUUT.search(tekst):
+        for regel in regels:
+            kaal = regel.lstrip()
+            if not kaal.startswith("#!["):
+                continue
+            m = CFG_FEATURE.search(regel)
+            if m and not CFG_NOT_FEATURE.search(regel):
+                gevonden.add(m.group(1))
 
     # Vorm 1: attribuutblok direct boven `#[test]`.
     for i, regel in enumerate(regels):
@@ -204,6 +282,27 @@ def uitvoerregels(tekst: str) -> list[str] | None:
     return uit
 
 
+def standaardbouw(tekst: str) -> tuple[set[str], bool]:
+    """Which packages a job compiles with their default features on.
+
+    Measured, not assumed. `cargo test --workspace` in a blocking workflow is
+    what makes a default feature covered; if that job ever goes away, the
+    defaults stop being covered and this returns the smaller set rather than
+    keeping an answer that was true last month.
+    """
+    pakketten: set[str] = set()
+    hele_workspace = False
+    for regel in tekst.splitlines():
+        if "cargo test" not in regel and "cargo nextest" not in regel:
+            continue
+        if "--no-default-features" in regel:
+            continue
+        if "--workspace" in regel or "--all" in regel:
+            hele_workspace = True
+        pakketten.update(re.findall(r"(?:-p|--package)[= ]([A-Za-z0-9_-]+)", regel))
+    return pakketten, hele_workspace
+
+
 def ci_dekking(tekst: str) -> tuple[set[tuple[str, str]], bool]:
     """(pakket, feature)-paren die een job aanzet, en of iets --all-features draait."""
     paren: set[tuple[str, str]] = set()
@@ -223,25 +322,72 @@ def ci_dekking(tekst: str) -> tuple[set[tuple[str, str]], bool]:
     return paren, alles
 
 
+def triggers(doc) -> set[str]:
+    """The events this workflow answers to.
+
+    PyYAML reads a bare `on:` key as the boolean True, which is why every reader
+    in this repository asks for both.
+    """
+    on = doc.get(True) or doc.get("on") or {}
+    if isinstance(on, dict):
+        return set(on)
+    if isinstance(on, (list, tuple, set)):
+        return {str(x) for x in on}
+    return {str(on)}
+
+
+def blokkeert_een_wijziging(doc) -> bool:
+    """Does a change have to pass this workflow?
+
+    A dispatch-only workflow runs when somebody types it and not otherwise, so a
+    test named in one is a test that has never been run against the change in
+    front of it. That is the mirror's defect with a different address (#276).
+    """
+    return bool(triggers(doc) & BLOKKERENDE_GEBEURTENISSEN)
+
+
 def main() -> int:
-    if not CI.exists():
-        print(f"SKIPPED (not a pass): {CI} ontbreekt", file=sys.stderr)
-        return 0
-    bronnen = [(CI, CI.read_text(errors="replace"))]
-    if WORKFLOWS.is_dir():
-        bronnen += [(w, w.read_text(errors="replace"))
-                    for w in sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml"))]
+    if not WORKFLOWS.is_dir():
+        print(f"[featgate] FATAL: {WORKFLOWS} ontbreekt, so no job can be read at "
+              "all. That is not a pass.", file=sys.stderr)
+        return 2
+    alle = sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml"))
+    if len(alle) < MIN_WORKFLOWS:
+        print(f"ONDERGRENS: {len(alle)} workflows gevonden, verwacht >= "
+              f"{MIN_WORKFLOWS}. De glob is stuk -- dit is geen groen.",
+              file=sys.stderr)
+        return 1
     gedekt, all_features = set(), False
-    for pad, tekst in bronnen:
+    standaard_pakketten: set[str] = set()
+    hele_workspace = False
+    overgeslagen: list[str] = []
+    for pad in alle:
+        tekst = pad.read_text(errors="replace")
+        try:
+            doc = yaml.safe_load(tekst)
+        except yaml.YAMLError:
+            doc = None
+        if not isinstance(doc, dict):
+            print(f"[featgate] FATAL: {pad} is not valid YAML, so the commands it "
+                  "runs cannot be read. Refusing to judge coverage from its raw "
+                  "bytes.", file=sys.stderr)
+            return 2
+        if not blokkeert_een_wijziging(doc):
+            overgeslagen.append(pad.name)
+            continue
         regels = uitvoerregels(tekst)
         if regels is None:
             print(f"[featgate] FATAL: {pad} is not valid YAML, so the commands it "
                   "runs cannot be read. Refusing to judge coverage from its raw "
                   "bytes.", file=sys.stderr)
             return 2
-        paren, alles = ci_dekking("\n".join(regels))
+        samen = "\n".join(regels)
+        paren, alles = ci_dekking(samen)
         gedekt |= paren
         all_features = all_features or alles
+        pkt, hele = standaardbouw(samen)
+        standaard_pakketten |= pkt
+        hele_workspace = hele_workspace or hele
 
     crates = sorted((REPO / "crates").glob("*/Cargo.toml"))
     if len(crates) < MIN_CRATES:
@@ -262,7 +408,17 @@ def main() -> int:
             (cargo.parent / "tests").rglob("*.rs")
         ):
             features |= gated_features_met_tests(bron.read_text(errors="replace"))
+        standaard = standaardfeatures(cargo)
+        gebouwd = hele_workspace or pkg in standaard_pakketten
         for f in sorted(features):
+            # On by default and something builds this package plainly, so these
+            # tests compile in that job whether or not any line names the flag.
+            # Established BEFORE the declared gaps are consulted, so that a row
+            # excusing a default feature shows up as the stale excuse it is
+            # rather than being quietly honoured.
+            if gebouwd and f in standaard:
+                gedekt.add((pkg, f))
+                continue
             if (pkg, f) in TOEGESTAAN:
                 continue
             if (pkg, f) in gedekt:
@@ -270,6 +426,24 @@ def main() -> int:
             gaten.append(
                 f"  {pkg} --features {f}: tests achter deze vlag, geen job die hem aanzet"
             )
+
+    # The other direction, which feature_gaps.toml has claimed in writing since
+    # it was created and nothing enforced: a declared gap that starts running is
+    # a stale excuse, and a table of stale excuses is where the next real gap
+    # hides. Measured 05-09-2026: `pdf-manip --features serde` was listed as "279
+    # tests pass locally, no job runs them" while `serde` is one of that crate's
+    # DEFAULT features -- every workspace run had been compiling them.
+    verlopen = []
+    for (pkt, feat), waarom in sorted(TOEGESTAAN.items()):
+        if (pkt, feat) in gedekt:
+            verlopen.append(f"  {pkt} --features {feat}: a job runs this now, "
+                            f"but the table still says {waarom!r}")
+    if verlopen:
+        print("Declared gaps that are no longer gaps. Remove them from "
+              f"{GAPS.name}; a list of excuses that never shrinks stops being "
+              "read.\n", file=sys.stderr)
+        print("\n".join(verlopen), file=sys.stderr)
+        return 1
 
     if gaten:
         print(
@@ -285,7 +459,10 @@ def main() -> int:
             )
         return 1
 
-    print(f"OK: {len(crates)} crates gescand, elke feature-gated test heeft een job.")
+    print(f"OK: {len(crates)} crates gescand tegen "
+          f"{len(alle) - len(overgeslagen)} blokkerende workflow(s); elke "
+          f"feature-gated test heeft een job. ({len(overgeslagen)} workflow(s) "
+          "run only on request and count for nothing.)")
     return 0
 
 
