@@ -224,6 +224,17 @@ run snapaudit bash scripts/ci/public_snapshot_audit.sh
 run territst  python3 scripts/ci/test_territories_do_not_overlap.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
+run siteblkreg python3 scripts/ci/test_site_blocks_register.py
+# The site's own Rust, compiled. Heavy, because it builds five hundred small
+# programs against the real facade -- so it sits in the full lane, where it runs
+# on a push to master, and not in the fast one on every branch push.
+#
+# It is the only thing that catches a real name in a shape that does not exist.
+# `use pdfluent::Sdk;` was on the documentation page for weeks with the name
+# check green: `Sdk` is not lowercase so it is not a module path, and nothing
+# follows the `::` so it is not a type use. The most common way to be wrong fell
+# exactly between the two patterns (#164, #247).
+zwaar siteblocks python3 scripts/ci/site_blocks_compile.py --check
 zwaar examples cargo build -q --examples -p pdfluent
 run matrix    python3 scripts/ci/capability_matrix_matches_coverage.py
 run wordsep   python3 scripts/ci/never_delete_the_word_separator.py

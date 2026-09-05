@@ -106,6 +106,38 @@ REASONS = {"corpus", "runner", "covered-elsewhere", "credentials"}
 ALLOWED: dict[str, str] = {
     "every_guard_has_a_job.py": "this file itself; its own job does name it",
 
+    # A cargo build of five hundred small programs -- every Rust block on
+    # pdfluent.com, compiled against the real facade. It belongs in the full
+    # local lane, which runs on a push to master, and not in a hosted job whose
+    # minutes #333 is trying to get to zero while the repository is private.
+    #
+    # It is not unguarded for that. The half of it that needs no compiler --
+    # the exception register read in both directions, and the hand-over digest
+    # the website refuses its own build against -- runs on every pull request as
+    # test_site_blocks_register.py, in seconds. docs/GATES_REACHABLE_FROM_A_PULL_REQUEST.toml
+    # carries the same reason from the other side (#247).
+    "site_blocks_compile.py": (
+        "a cargo build of every Rust block on the site; runs in the full lane "
+        "of scripts/ci/local_ci_gate.sh, on a push to master. Its register and "
+        "hand-over half runs on every pull request as test_site_blocks_register.py"
+    ),
+
+    # ON LOAN (#247, from #260/#331). Not this file's owner's change: the entry
+    # was simply never mirrored here, so this guard has stood red on master for
+    # everyone, on a reason that is already written down one register over.
+    #
+    # It reads the withdrawn-object list from ~/.config/pdfluent, deliberately
+    # outside the tree -- publishing the blocklist would publish where the
+    # withdrawn thing can still be fetched. A hosted runner has no such file, so
+    # in a workflow it can only skip, and a green tick for a check that asked
+    # nothing is worse than the red. Its TEST does run, in publication-guards.yml.
+    # The same reason stands in docs/GATES_REACHABLE_FROM_A_PULL_REQUEST.toml.
+    "no_withdrawn_object.py": (
+        "reads ~/.config/pdfluent, outside the tree by decision (#260), so a "
+        "hosted runner can only skip it. Runs in scripts/ci/local_ci_gate.sh; "
+        "test_no_withdrawn_object.py runs in publication-guards.yml"
+    ),
+
     # Cannot work in a workflow, by its own measurement: /actions/runners needs
     # `administration: read`, which GITHUB_TOKEN cannot be granted, and there is
     # no `gh` on the runner. Wired into a job it printed SKIPPED and returned 0

@@ -72,6 +72,13 @@ NEDERLANDSE_WOORDEN = (
     "de", "het", "een", "van", "voor", "naam", "regel", "pagina",
     "tekst", "veld", "volledige", "invullen", "leesvolgorde", "waarde",
     "bestand", "wordt", "niet", "met", "zonder", "elke", "geen",
+    # Toegevoegd 05-09-2026 (#247): `validate-pdfa` stond met `let rapport` en
+    # `for schending in` op de Engelse site. Geen van beide woorden stond in de
+    # lijst, dus de controle liet ze door -- en het blok compileert prima, dus
+    # niets anders keek ernaar. Elk van deze woorden is eenduidig Nederlands en
+    # komt in Engelse code of Engels proza niet voor.
+    "rapport", "schending", "gegevens", "aantal", "sleutel", "invoer",
+    "uitvoer", "handtekening", "bladzijde", "voorbeeld", "blok",
 )
 
 
