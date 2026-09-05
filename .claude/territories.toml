@@ -183,13 +183,17 @@ paden = [
   # a guard that blocks everyone on something outside the pull request gets
   # repaired on loan, not waited on. `publication-guards.yml` had been red on
   # every run since 05-09, so the never-green guard refused every landing for
-  # every terminal -- and the cause was this fixture building an empty
-  # repository, not the seeding script it appeared to accuse. (#331)
+  # every terminal -- and the cause was in these three fixtures, not in the
+  # guards they appeared to accuse: each builds a repository with `git commit`
+  # and none of them gave git an identity, so on a runner they committed
+  # nothing and handed their subject a repository with no HEAD. (#331)
   #
-  # EXPIRY: back to t3 the moment this lands. The loan covers the fixture's own
-  # identity and the raise that makes a broken fixture say so, and nothing else
-  # in scripts/ci.
+  # EXPIRY: back to t3 the moment this lands. The loan covers each fixture's
+  # own identity and the raise that makes a broken fixture say so, and nothing
+  # else in scripts/ci.
   "scripts/ci/test_seed_public_repo.py",
+  "scripts/ci/test_no_withdrawn_object.py",
+  "scripts/ci/test_sweep_exemption.py",
 ]
 # NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
 # parity tests are edited by this change but stay with whoever owns the SDK
@@ -451,7 +455,9 @@ paden = [
   # #260: the guard that refuses a withdrawn object by SHA, over every commit a
   # push adds. Publication policy is t3.
   "scripts/ci/no_withdrawn_object.py",
-  "scripts/ci/test_no_withdrawn_object.py",
+  # `scripts/ci/test_no_withdrawn_object.py` is ON LOAN to t1 for #331 and is
+  # claimed in t1's block. The guard itself stays here; the loan is the
+  # fixture's identity only.
   # scripts/ci/local_ci_gate.sh is claimed below for the narrow #326 integration.
   # Claimed for #301, temporarily, back when it lands. The licence header is
   # t3's subject and this guard is the only thing that enforces it; leaving it
@@ -459,7 +465,8 @@ paden = [
   # somebody else's queue.
   "scripts/ci/header_sweep.py",
   "scripts/ci/test_header_sweep.py",
-  "scripts/ci/test_sweep_exemption.py",
+  # `scripts/ci/test_sweep_exemption.py` is ON LOAN to t1 for #331, same as the
+  # two above it, and is claimed in t1's block.
   "scripts/ci/territories_do_not_overlap.py",
   # #222: the snapshot audit and its wrapper. Publication policy is t3, and
   # `scripts/release/public_snapshot_check.sh` came over from t1 when that

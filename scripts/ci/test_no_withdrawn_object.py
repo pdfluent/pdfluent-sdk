@@ -21,8 +21,24 @@ CONTENT = b"the withdrawn document, a few bytes in this test\n"
 
 
 def git(*a, cwd):
-    return subprocess.run(["git", *a], cwd=str(cwd), capture_output=True,
-                          text=True, env=sealed_env(cwd=cwd))
+    """A fixture git call that must succeed.
+
+    Raising, and the identity, are one fix. `sealed_env` hands git an empty
+    global config, so `git commit` had no `user.email` and fell back to what
+    the machine could auto-detect. A developer's machine lends one; a GitHub
+    runner, whose hostname yields no usable address, refuses. The fixture's
+    commits were therefore never made there and the guard was handed a
+    repository with no HEAD -- which it reported as its own failure. Swallowing
+    the non-zero exit is what let that read as a finding about the subject
+    instead of about the fixture. (#331, #132)
+    """
+    r = subprocess.run(["git", *a], cwd=str(cwd), capture_output=True,
+                       text=True, env=sealed_env(cwd=cwd))
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"fixture setup failed: git {' '.join(a)} in {cwd} "
+            f"exited {r.returncode}\n{r.stdout}{r.stderr}")
+    return r
 
 
 def build(tmp: pathlib.Path) -> tuple[pathlib.Path, str]:
@@ -32,6 +48,11 @@ def build(tmp: pathlib.Path) -> tuple[pathlib.Path, str]:
     shutil.copy(GUARD, r / "scripts" / "ci" / GUARD.name)
     (r / "leesmij.md").write_text("base\n", encoding="utf-8")
     git("init", "-q", "-b", "master", cwd=r)
+    # The identity lives in the sandbox repository, not the environment: an
+    # env-level one overrides identities other fixtures configure on purpose
+    # (see fixture_env.sealed_env).
+    git("config", "user.name", "fixture", cwd=r)
+    git("config", "user.email", "fixture@invalid", cwd=r)
     git("add", "-A", cwd=r)
     git("commit", "-q", "-m", "base", cwd=r)
     # A real bare remote, the way the sign-off fixture does it too. Without
