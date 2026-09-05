@@ -153,6 +153,17 @@ namespace PDFluent
         /// container, encoding failure, signed document refused, …).</summary>
         ErrorTextEdit = 21,
 
+        /// <summary>
+        /// The licence is valid but its tier does not include the requested
+        /// capability — Office export below Business, for instance.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately distinct from <see cref="ErrorInvalidLicense"/>: "your
+        /// key is bad" and "your plan does not cover this" send a caller to
+        /// different places.
+        /// </remarks>
+        ErrorCapabilityNotLicensed = 22,
+
         ErrorUnknown = 99,
     }
 }
