@@ -1,5 +1,49 @@
 # Contributing to PDFluent
 
+## Sign off every commit
+
+```
+git commit -s
+```
+
+That adds one line, `Signed-off-by: Your Name <your@address>`, and by adding it
+you certify the Developer Certificate of Origin in `docs/contribution/DCO.txt`:
+that the work is yours to give.
+
+**This is not policy, and here is what breaks without it.** PDFluent is licensed
+twice — AGPLv3 for everyone, and a commercial licence for buyers who cannot
+publish their own source (`LICENSE`). That construction rests on one thing: the
+rights to both halves sit with one party. A contribution merged without the
+right to relicense it does not stop the AGPL half. It stops the *commercial*
+half, permanently, because the tree then holds code we may ship under one
+licence and not the other.
+
+It breaks **at the merge, not at the build.** No job goes red, no test fails,
+nothing appears in a log. The first person to notice is a buyer's lawyer asking
+who owns what, and by then the commit is months down with other work on top of
+it. Undoing it means finding an author who signed nothing and has no reason to
+reply.
+
+Two gates enforce it, and they run where the merge happens rather than only in
+CI: `scripts/ci/every_commit_since_the_cutoff_is_signed.py` before a push, and
+`scripts/ci/licence_signoff.py` on the pull request. Both apply from the cutoff
+recorded in those files — history written before the decision is not signed
+retroactively.
+
+**If you wrote it with somebody else,** the `Co-authored-by:` trailer names them
+and certifies nothing on their behalf. They add their own `Signed-off-by:` line;
+both gates refuse a co-author who signed off on nothing, because a co-author is
+recorded in that trailer and in no field git otherwise exposes.
+
+### What a sign-off does not do
+
+It certifies provenance. It does **not** assign us the right to relicense your
+contribution commercially. So a contribution to a crate on PDFluent's side of
+`docs/licensing/boundary.toml` needs a CLA, and there is no CLA yet — until
+there is, such a contribution cannot be merged. The reasoning, and the condition
+that ends it, are in `docs/contribution/why-a-dco-and-not-a-cla.md`.
+
+
 ## Fix & Retest Workflow
 
 When fixing bugs discovered by the corpus test runner, follow this process:

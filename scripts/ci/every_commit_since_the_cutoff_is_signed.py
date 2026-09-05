@@ -43,13 +43,34 @@ WHY NO REMOTE REFS AT ALL IS NOT A PASS
 which is how a gate reports success over an empty question. It falls back to the
 whole branch, so a first push into an empty remote is covered rather than waved
 through.
+
+WHY A CO-AUTHOR IS CHECKED AND NOT ONLY THE AUTHOR
+
+#223 asks for a gate that refuses a commit whose "author or CO-AUTHOR" is not
+covered. `Co-authored-by:` names a second person who wrote part of the change,
+and git records them nowhere else: they are not the author field, not the
+committer field, and invisible to `git log --format=%ae`. A commit signed off by
+its author alone therefore certifies one of the two people who wrote it, and the
+other one granted nothing.
+
+That is the whole exposure the DCO exists to close, arriving through the one
+trailer nothing was reading. So every address in a `Co-authored-by:` trailer
+must also appear in a `Signed-off-by:` trailer of the same commit. Adding the
+second sign-off is what a co-author does to certify their own half; dropping the
+trailer is what you do when it was not true.
 """
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
+
+# Both trailers, read per line and case-insensitively: a trailer in the middle
+# of a body still names an author, and git itself does not care about the case.
+COAUTHOR = re.compile(r"^\s*co-authored-by:.*?<([^>]+)>\s*$", re.I | re.M)
+SIGNOFF = re.compile(r"^\s*signed-off-by:.*?<([^>]+)>\s*$", re.I | re.M)
 
 # The repository this runs IN, not the one this file lives in. A guard that
 # derives its target from its own location always inspects its own checkout: it
@@ -120,21 +141,42 @@ def main() -> int:
         return 0
 
     ongetekend = []
+    onbedekt = []
     for sha in na_cutoff:
         body = git("log", "-1", "--format=%B", sha).stdout
-        if "signed-off-by:" not in body.lower():
-            onderwerp = git("log", "-1", "--format=%s", sha).stdout.strip()
+        onderwerp = git("log", "-1", "--format=%s", sha).stdout.strip()
+        getekend = {a.strip().lower() for a in SIGNOFF.findall(body)}
+        if not getekend:
             ongetekend.append((sha[:9], onderwerp))
+            continue
+        for mede in COAUTHOR.findall(body):
+            if mede.strip().lower() not in getekend:
+                onbedekt.append((sha[:9], onderwerp, mede.strip()))
 
-    if not ongetekend:
+    if not ongetekend and not onbedekt:
         print(f"[signoff-push] OK: {len(na_cutoff)} commit(s) after the cutoff, "
-              "each carrying a sign-off")
+              "each carrying a sign-off that covers everyone it names")
         return 0
+
+    if onbedekt and not ongetekend:
+        print(f"[signoff-push] {len(onbedekt)} co-author(s) in this push certified "
+              "nothing:\n", file=sys.stderr)
+        for sha, onderwerp, mede in onbedekt:
+            print(f"  - {sha}  {onderwerp[:50]}\n      co-authored by {mede}, who "
+                  "signed off on nothing", file=sys.stderr)
+        print("\n  A `Co-authored-by:` trailer names somebody who wrote part of\n"
+              "  this commit. Their own `Signed-off-by:` line is what certifies\n"
+              "  their half; the author's certifies only the author's. Add theirs,\n"
+              "  or remove the trailer if it was not true.", file=sys.stderr)
+        return 1
 
     print(f"[signoff-push] {len(ongetekend)} of {len(na_cutoff)} commit(s) this "
           "push adds since the cutoff carry no sign-off:\n", file=sys.stderr)
     for sha, onderwerp in ongetekend:
         print(f"  - {sha}  {onderwerp[:70]}", file=sys.stderr)
+    for sha, onderwerp, mede in onbedekt:
+        print(f"  - {sha}  {onderwerp[:50]} -- co-authored by {mede}, who signed "
+              "off on nothing", file=sys.stderr)
     print("\n  Add it with `git commit -s --amend` on the last one, or for a\n"
           "  range: git rebase <base> --exec 'git commit --amend --no-edit -s'\n"
           "\n  By adding it you certify docs/contribution/DCO.txt. The decision on\n"

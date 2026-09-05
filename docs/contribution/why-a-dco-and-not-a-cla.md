@@ -32,10 +32,19 @@ history other work is built on. Removing it means finding the author, and an
 author who signed nothing has no reason to reply.
 
 So the risk is real and the exposure today is zero, for one reason that is
-measurable: there are **no outside contributors**. Verified 31-08-2026 —
-`scripts/ci/contributors.toml` records ten identities across five repositories,
-every one of them the owner, automation he controls, or a tool that holds no
-rights; and the four public repositories have zero forks and zero pull requests.
+measurable: there are **no outside contributors**. Measured 31-08-2026 over ten
+identities across five repositories — every one of them the owner, automation he
+controls, or a tool that holds no rights — and the four public repositories had
+zero forks and zero pull requests.
+
+That measurement was made with a register and a guard,
+`scripts/ci/contributors.toml` and `scripts/ci/contribution_rights_are_covered.py`,
+written on 31-08 in commit `4e63143f`. **Neither is on master** (checked
+05-09-2026): the commit sits on `chore/test-reachability-gate` and on two other
+branches, and its guard imports two modules that never landed either. So the ten
+identities are a measurement that was taken and not a check that runs. Landing it
+is the work `docs/decisions/contribution-rights-coverage.md` describes, and it is
+not done.
 
 A CLA costs money we do not have, for a population of zero. A DCO costs nothing
 and closes the provenance half now.
@@ -55,13 +64,22 @@ event".
 - The CLA text, legally checked.
 - A signing and recording process.
 - The gate that refuses a commit whose author is not covered by a signed CLA —
-  as opposed to today's gate, which checks that every identity is *recorded*.
+  as opposed to a gate that checks that every identity is *recorded*.
+- The register that gate would read, and the guard over it: written, measured,
+  and still not on master (see above).
 
-`scripts/ci/contribution_rights_are_covered.py` already fails on an identity it
-has never been told about, which is the mechanism the CLA gate would reuse. It
-is worth being honest that today that gate **cannot fail for the reason it
-exists**: there is one contributor and he is in the register. It is a gate that
-will matter later, running now so that it is not new on the day it matters.
+What master does enforce is the sign-off itself, in both places a commit can
+arrive: `every_commit_since_the_cutoff_is_signed.py` before a push, and
+`licence_signoff.py` on the pull request, the second matching each sign-off
+against the commit's own author. Since 05-09-2026 both also refuse a
+`Co-authored-by:` address that appears in no sign-off — the case #223 names as
+"author or co-author", and the one that was invisible, because a co-author is in
+that trailer and in no field git exposes.
+
+It is worth being honest that the identity half **cannot fail for the reason it
+exists** while there is one contributor and he is the owner. That is an argument
+for having it run before the day it matters, not for calling the day it matters
+covered.
 
 ## How to contribute under the DCO
 
@@ -73,6 +91,12 @@ Signed-off-by: Your Name <your.email@example.com>
 
 `git commit -s` adds it. By adding it you certify the DCO in
 `docs/contribution/DCO.txt`, which is the Linux Foundation's text, verbatim.
+`CONTRIBUTING.md` says the same thing where a contributor will actually look.
+
+A commit written by two people carries a `Co-authored-by:` line for the second
+one. That trailer certifies nothing on their behalf, so they add their own
+`Signed-off-by:` line beside the author's; both gates refuse a co-author who
+signed off on nothing.
 
 Sign-off is about provenance. It is not an assignment, and it does not give
 PDFluent the right to relicense your contribution commercially. If a

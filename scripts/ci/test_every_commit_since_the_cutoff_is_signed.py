@@ -114,6 +114,36 @@ def main() -> int:
         geval("the same commit with a sign-off passes", r.returncode == 0,
               f"exit={r.returncode} {r.stdout}{r.stderr}")
 
+        # A CO-AUTHOR WHO CERTIFIED NOTHING (#223).
+        #
+        # Signed off by its author, so green under every version of this gate
+        # before today -- and the second person who wrote it granted nothing. A
+        # co-author lives in this trailer and in no field git exposes, which is
+        # why a gate reading %ae cannot see them at all.
+        (repo / "co.txt").write_text("vier\n")
+        git("add", "co.txt", cwd=repo)
+        git("commit", "-q", "-m",
+            "na de cutoff, door twee mensen, door een getekend\n\n"
+            "Co-authored-by: Someone Else <else@invalid>\n"
+            "Signed-off-by: Fixture <fixture@invalid>\n",
+            cwd=repo, GIT_AUTHOR_DATE=f"{cut + 90} +0000")
+        r = draai(repo)
+        geval("a co-author who signed off on nothing is refused", r.returncode == 1,
+              f"exit={r.returncode} {r.stdout}{r.stderr}")
+        geval("the refusal names that co-author",
+              "else@invalid" in (r.stdout + r.stderr), (r.stdout + r.stderr)[:200])
+
+        # Their own line certifies their half. With it, green again.
+        git("commit", "-q", "--amend", "-m",
+            "na de cutoff, door twee mensen, door beiden getekend\n\n"
+            "Co-authored-by: Someone Else <else@invalid>\n"
+            "Signed-off-by: Fixture <fixture@invalid>\n"
+            "Signed-off-by: Someone Else <else@invalid>\n",
+            cwd=repo, GIT_AUTHOR_DATE=f"{cut + 90} +0000")
+        r = draai(repo)
+        geval("and passes once the co-author signs their own half", r.returncode == 0,
+              f"exit={r.returncode} {r.stdout}{r.stderr}")
+
         # A merge commit after the cutoff: must pass. It cannot carry a trailer,
         # and demanding one is what made the CI job unsatisfiable (#316).
         git("checkout", "-q", "-b", "zijtak", "HEAD~1", cwd=repo)
