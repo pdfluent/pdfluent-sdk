@@ -17,6 +17,19 @@ the committer's own identity, so a mismatch is either a rebase that rewrote
 authorship or a trailer pasted from another commit -- and both are exactly the
 case where "who had the right to submit this" stops being answered.
 
+WHY A CO-AUTHOR IS ASKED THE SAME QUESTION
+
+#223 asks for a gate that refuses a commit whose "author or CO-AUTHOR" is not
+covered, and a co-author is recorded in one place only: a `Co-authored-by:`
+trailer. It is not the author field and not the committer field, so a gate that
+reads `%ae` sees one of the two people who wrote the change and certifies that
+one. The other wrote part of an AGPL crate and granted nothing, which is exactly
+the state the DCO exists to make impossible.
+
+So every address in a `Co-authored-by:` trailer must appear in a
+`Signed-off-by:` trailer of the same commit. A co-author who did write it adds
+their own line; a trailer nobody will sign for was not true.
+
 The address is compared case-insensitively and nothing else about it is checked.
 This gate is about provenance, not identity verification, and pretending
 otherwise would be theatre.
@@ -50,6 +63,9 @@ MIN_COMMITS = 1
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from every_commit_since_the_cutoff_is_signed import CUT_AT  # noqa: E402
 SIGNOFF = re.compile(r"^Signed-off-by:\s*(.+?)\s*<([^>]+)>\s*$", re.M | re.I)
+# Read per line and case-insensitively, like the sign-off above it: a trailer in
+# the middle of a body still names an author.
+COAUTHOR = re.compile(r"^\s*Co-authored-by:\s*(.+?)\s*<([^>]+)>\s*$", re.M | re.I)
 
 # Commits that predate the decision on 31-08-2026 are not rewritten for it; see
 # #261 and #230 on why this history is not being rewritten casually. The gate
@@ -126,16 +142,24 @@ def main(argv: list[str]) -> int:
             fouten.append(f"{sha[:9]} has no Signed-off-by. `git commit -s --amend` "
                           "adds one; by adding it you certify docs/contribution/DCO.txt")
             continue
-        if not any(a.strip().lower() == adres.strip().lower() for _, a in gevonden):
+        ondertekend = {a.strip().lower() for _, a in gevonden}
+        if adres.strip().lower() not in ondertekend:
             ondertekenaars = ", ".join(a for _, a in gevonden)
             fouten.append(
                 f"{sha[:9]} is authored by {adres} and signed off by "
                 f"{ondertekenaars}. A sign-off naming somebody else certifies "
                 "nothing about who had the right to submit this")
+        for _, mede in COAUTHOR.findall(boodschap):
+            if mede.strip().lower() not in ondertekend:
+                fouten.append(
+                    f"{sha[:9]} is co-authored by {mede}, who signed off on "
+                    "nothing. Their `Signed-off-by:` line certifies their half; "
+                    "the author's certifies only the author's -- add theirs, or "
+                    "drop the trailer if it was not true")
 
     if not fouten:
         print(f"[signoff] {len(rijen)} commit(s) in {bereik}; every one is signed off "
-              "by its own author")
+              "by its own author, and by every co-author it names")
         return 0
     print(f"[signoff] {len(fouten)} commit(s) in {bereik} are not certified:",
           file=sys.stderr)

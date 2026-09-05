@@ -28,9 +28,12 @@ sys.path.insert(0, str(HIER))
 from fixture_env import sealed_env  # noqa: E402
 
 fouten: list[str] = []
+gedaan = 0
 
 
 def expect(wat: str, ok: bool, detail: str = "") -> None:
+    global gedaan
+    gedaan += 1
     print(f"  {'ok  ' if ok else 'FAIL'}  {wat}" + ("" if ok else f" -- {detail[:200]}"))
     if not ok:
         fouten.append(wat)
@@ -78,6 +81,11 @@ def bouw(tmp: pathlib.Path, cut: int) -> None:
     git("commit", "-q", "-m", "after the cutoff, unsigned", f"--date=@{cut + 86400} +0000")
 
 
+def git(tmp: pathlib.Path, *a: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *a], cwd=tmp, capture_output=True, text=True,
+                          env=sealed_env(cwd=tmp), check=False)
+
+
 def draai(tmp: pathlib.Path, bereik: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, str(GUARD), bereik],
                           cwd=tmp, capture_output=True, text=True, env=sealed_env(cwd=tmp))
@@ -115,6 +123,37 @@ def main() -> int:
                "adds no commit written after the cutoff" in r2.stdout,
                r2.stdout[-160:])
 
+        # THE CO-AUTHOR, which is the half #223 names and nothing was reading.
+        #
+        # This commit is signed off by its author and is therefore green under
+        # every version of this gate before today -- while the second person who
+        # wrote it certified nothing. A co-author is recorded in this trailer and
+        # nowhere else: not in %ae, not in %ce.
+        (tmp / "c.txt").write_text("co\n")
+        git(tmp, "add", "c.txt")
+        git(tmp, "commit", "-q", "-m",
+            "after the cutoff, signed by one of its two authors\n\n"
+            "Co-authored-by: Someone Else <else@example.invalid>\n"
+            "Signed-off-by: Fixture <fixture@example.invalid>\n",
+            f"--date=@{cut + 90000} +0000")
+        r3 = draai(tmp, "HEAD~1..HEAD")
+        expect("a co-author who signed off on nothing is refused",
+               r3.returncode == 1, (r3.stdout + r3.stderr)[-300:])
+        expect("  and the refusal names that co-author",
+               "else@example.invalid" in (r3.stdout + r3.stderr),
+               (r3.stdout + r3.stderr)[-300:])
+
+        # Their own line is what certifies their half. With it, green.
+        git(tmp, "commit", "-q", "--amend", "-m",
+            "after the cutoff, signed by both of its authors\n\n"
+            "Co-authored-by: Someone Else <else@example.invalid>\n"
+            "Signed-off-by: Fixture <fixture@example.invalid>\n"
+            "Signed-off-by: Someone Else <else@example.invalid>\n",
+            f"--date=@{cut + 90000} +0000")
+        r4 = draai(tmp, "HEAD~1..HEAD")
+        expect("  and passes once the co-author signs their own half",
+               r4.returncode == 0, (r4.stdout + r4.stderr)[-300:])
+
     bron = GUARD.read_text()
     expect("the cutoff is imported, not copied",
            "from every_commit_since_the_cutoff_is_signed import CUT_AT" in bron,
@@ -126,7 +165,7 @@ def main() -> int:
            "%at" in bron and "committer date" in bron,
            "the committer date moves on rebase and would drag old commits across")
 
-    print(f"\n  6 assertion(s) ran, {len(fouten)} failure(s)")
+    print(f"\n  {gedaan} assertion(s) ran, {len(fouten)} failure(s)")
     return 1 if fouten else 0
 
 
