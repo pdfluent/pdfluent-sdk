@@ -1634,6 +1634,8 @@ struct InheritedStyle {
     text_color: Option<(u8, u8, u8)>,
     underline: bool,
     line_through: bool,
+    /// See [`RichTextSpan::baseline_shift`]. A fraction of the font size.
+    baseline_shift: f64,
 }
 
 impl InheritedStyle {
@@ -1679,6 +1681,15 @@ impl InheritedStyle {
                     child.underline = false;
                     child.line_through = false;
                 }
+            } else if let Some(val) = strip_css_prop(part, "vertical-align") {
+                // Keywords only; a length in pt would be an absolute measure
+                // and then the shift would not scale with the font size.
+                match val {
+                    "super" => child.baseline_shift = 0.33,
+                    "sub" => child.baseline_shift = -0.20,
+                    "baseline" => child.baseline_shift = 0.0,
+                    _ => {}
+                }
             } else if let Some(val) = strip_css_prop(part, "color") {
                 if let Some(rgb) = parse_css_color(val) {
                     child.text_color = Some(rgb);
@@ -1698,6 +1709,7 @@ impl InheritedStyle {
             text_color: self.text_color,
             underline: self.underline,
             line_through: self.line_through,
+            baseline_shift: self.baseline_shift,
         }
     }
 }
@@ -1734,6 +1746,7 @@ fn parse_exdata_rich_text_spans(elem: Node<'_, '_>) -> Option<Vec<RichTextSpan>>
                     text_color: None,
                     underline: false,
                     line_through: false,
+                    baseline_shift: 0.0,
                 });
             }
             first_para = false;
@@ -1794,6 +1807,7 @@ fn collect_inline_spans(
                         text_color: None,
                         underline: false,
                         line_through: false,
+                        baseline_shift: 0.0,
                     });
                 }
                 "span" => {
@@ -1825,6 +1839,29 @@ fn collect_inline_spans(
                 "i" | "em" => {
                     let mut s = inherited.clone();
                     s.font_style = Some("italic".to_string());
+                    if let Some(css) = child.attribute("style") {
+                        s = s.merge_with_css(css);
+                    }
+                    collect_inline_spans(child, &s, spans);
+                }
+                // In XHTML rich text `<sup>` carries footnote markers and
+                // units, `<sub>` carries indices. CSS spells this
+                // `vertical-align`, and the values below are a browser's:
+                // 0.33 em up, 0.20 em down, characters at about 0.83 of the
+                // surrounding size.
+                "sup" => {
+                    let mut s = inherited.clone();
+                    s.baseline_shift = 0.33;
+                    s.font_size = s.font_size.map(|fs| fs * 0.83);
+                    if let Some(css) = child.attribute("style") {
+                        s = s.merge_with_css(css);
+                    }
+                    collect_inline_spans(child, &s, spans);
+                }
+                "sub" => {
+                    let mut s = inherited.clone();
+                    s.baseline_shift = -0.20;
+                    s.font_size = s.font_size.map(|fs| fs * 0.83);
                     if let Some(css) = child.attribute("style") {
                         s = s.merge_with_css(css);
                     }
@@ -4378,5 +4415,74 @@ mod tests {
             .unwrap();
         assert_eq!(tree.meta(row_id).presence, Presence::Hidden);
         assert!(tree.meta(row_id).is_zero_instance_prototype);
+    }
+
+    // ---- <sub> and <sup> (#151) ----
+
+    fn spans_of(html: &str) -> Vec<xfa_layout_engine::form::RichTextSpan> {
+        let xml = format!(r#"<body xmlns="http://www.w3.org/1999/xhtml">{html}</body>"#);
+        let doc = roxmltree::Document::parse(&xml).expect("xhtml does not parse");
+        let mut spans = Vec::new();
+        collect_inline_spans(doc.root_element(), &InheritedStyle::default(), &mut spans);
+        spans
+    }
+
+    #[test]
+    fn sup_shifts_up_and_shrinks() {
+        // `<sub>` and `<sup>` were silently ignored: the text stayed, the
+        // meaning went. In a legal form that is the difference between a
+        // footnote marker and a number.
+        let spans = spans_of("plain<sup>1</sup>");
+        let sup = spans
+            .iter()
+            .find(|s| s.text.contains('1'))
+            .expect("no span for the superscript");
+        assert!(
+            sup.baseline_shift > 0.0,
+            "superscript does not shift up: {}",
+            sup.baseline_shift
+        );
+        let plain = spans.iter().find(|s| s.text.contains("plain")).unwrap();
+        assert_eq!(plain.baseline_shift, 0.0, "the plain text shifted along");
+    }
+
+    #[test]
+    fn sub_shifts_down() {
+        let spans = spans_of("H<sub>2</sub>O");
+        let sub = spans
+            .iter()
+            .find(|s| s.text.contains('2'))
+            .expect("no span");
+        assert!(sub.baseline_shift < 0.0, "subscript does not shift down");
+        // And the text around it stays on the baseline -- otherwise the whole
+        // formula sinks.
+        for s in spans.iter().filter(|s| !s.text.contains('2')) {
+            assert_eq!(s.baseline_shift, 0.0, "{:?} shifted along", s.text);
+        }
+    }
+
+    #[test]
+    fn vertical_align_in_css_works_too() {
+        // XFA templates written by an editor use CSS more often than semantic
+        // tags.
+        let spans = spans_of(r#"<span style="vertical-align: super">x</span>"#);
+        let s = spans
+            .iter()
+            .find(|s| s.text.contains('x'))
+            .expect("no span");
+        assert!(s.baseline_shift > 0.0, "vertical-align: super did nothing");
+    }
+
+    #[test]
+    fn a_shift_does_not_inherit_to_siblings() {
+        // The shift belongs to the span, not to the rest of the paragraph.
+        let spans = spans_of("a<sup>b</sup>c");
+        let c = spans.iter().find(|s| s.text.contains('c'));
+        if let Some(c) = c {
+            assert_eq!(
+                c.baseline_shift, 0.0,
+                "the text after the superscript shifted along"
+            );
+        }
     }
 }
