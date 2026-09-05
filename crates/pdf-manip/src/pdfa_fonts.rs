@@ -19695,11 +19695,26 @@ fn strip_control_bytes(
 /// U+00A0) with zero contours. Treating it as missing replaced every space with
 /// the lowest CID that did have an outline — ')' — so the page read
 /// "SWAT)SC)Working)Group" and word retention sat at 78.3%.
+///
+/// `blank` is every whitespace CID; `space` is the lowest one that maps to
+/// U+0020 exactly. The second field exists because a substitute has to *be* a
+/// space to be a repair -- see the caller.
+#[derive(Default)]
+struct WhitespaceCids {
+    blank: std::collections::HashSet<u16>,
+    space: Option<u16>,
+}
+
+/// The whitespace CIDs only, for callers that do not need the space itself.
 fn tounicode_blank_cids(
     doc: &Document,
     font_dict: &lopdf::Dictionary,
 ) -> std::collections::HashSet<u16> {
-    let mut uit = std::collections::HashSet::new();
+    tounicode_whitespace_cids(doc, font_dict).blank
+}
+
+fn tounicode_whitespace_cids(doc: &Document, font_dict: &lopdf::Dictionary) -> WhitespaceCids {
+    let mut uit = WhitespaceCids::default();
     let Ok(Object::Reference(id)) = font_dict.get(b"ToUnicode") else {
         return uit;
     };
@@ -19740,7 +19755,10 @@ fn tounicode_blank_cids(
             continue;
         };
         if !doel.is_empty() && doel.chars().all(|c| c.is_whitespace() || c == '\u{00A0}') {
-            uit.insert(cid);
+            uit.blank.insert(cid);
+            if doel == " " && uit.space.is_none_or(|earlier| cid < earlier) {
+                uit.space = Some(cid);
+            }
         }
     }
     uit
@@ -20212,15 +20230,30 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                 }
             }
 
-            // If no space glyph found by name, use the first valid CID.
-            if !clear_unparseable_text && space_cid == 0 && predefined_ranges.is_none() {
-                // Deterministic: HashSet iteration order varies per process,
-                // and this fallback lands in the output bytes (measured on
-                // govdocs 000_000338, where three runs gave three outputs).
-                if let Some(&first_valid) = valid_cids.iter().min() {
-                    space_cid = first_valid;
-                }
+            // A CID the document declares whitespace is not .notdef, whatever
+            // the font program looks like. Leaving it out of the valid set is
+            // how every space on the page became a printing letter (#182, #210).
+            let whitespace = tounicode_whitespace_cids(doc, font_dict);
+            if !clear_unparseable_text {
+                valid_cids.extend(whitespace.blank.iter().copied());
             }
+
+            // If the font program named no space glyph, the /ToUnicode may
+            // still point at one. It has to be a CID we accept, or we would be
+            // substituting a code we reject on the next pass.
+            if !clear_unparseable_text && space_cid == 0 {
+                space_cid = whitespace
+                    .space
+                    .filter(|cid| *cid > 0 && valid_cids.contains(cid))
+                    .unwrap_or(0);
+            }
+            // What used to stand here: `space_cid = valid_cids.iter().min()`.
+            // The lowest surviving CID of a subset is whatever glyph the
+            // subsetter happened to put first -- `$`, `(`, `&`. Writing it in
+            // place of a space keeps the character count, keeps conformance,
+            // keeps the page looking almost right, and destroys the text for
+            // searching and copying. An earlier round made that fallback
+            // deterministic (#182); deterministic was never the problem.
 
             // Add font to the map. If the valid set is empty (font has only
             // .notdef, e.g. HiddenHorzOCR stub fonts), we still add it so text
