@@ -6,11 +6,11 @@ class Pdfluent < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/jasperdew/xfa-native-rust/releases/download/v#{version}/xfa-cli-aarch64-apple-darwin-v#{version}.tar.gz"
+      url "https://github.com/pdfluent/engine/releases/download/v#{version}/xfa-cli-aarch64-apple-darwin-v#{version}.tar.gz"
       sha256 "PLACEHOLDER"
     end
     on_intel do
-      url "https://github.com/jasperdew/xfa-native-rust/releases/download/v#{version}/xfa-cli-x86_64-apple-darwin-v#{version}.tar.gz"
+      url "https://github.com/pdfluent/engine/releases/download/v#{version}/xfa-cli-x86_64-apple-darwin-v#{version}.tar.gz"
       sha256 "PLACEHOLDER"
     end
   end
