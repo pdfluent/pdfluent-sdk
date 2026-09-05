@@ -36,10 +36,16 @@ fn a_watermark_is_added_and_the_page_content_is_kept() {
         .expect("add_watermark");
 
     let text = text_of(&doc);
-    assert!(text.contains("CONCEPT"), "the watermark text is not in the document");
+    assert!(
+        text.contains("CONCEPT"),
+        "the watermark text is not in the document"
+    );
     // Both halves. A watermark that replaces the page is not a watermark, and
     // a page that is unchanged did not get one.
-    assert!(text.contains(NEEDLE), "watermarking removed the page content");
+    assert!(
+        text.contains(NEEDLE),
+        "watermarking removed the page content"
+    );
 }
 
 #[test]
@@ -79,6 +85,9 @@ fn watermarking_twice_leaves_both_marks() {
         .expect("second");
 
     let text = text_of(&doc);
-    assert!(text.contains("EERSTE"), "the first watermark was overwritten");
+    assert!(
+        text.contains("EERSTE"),
+        "the first watermark was overwritten"
+    );
     assert!(text.contains("TWEEDE"), "the second watermark is missing");
 }
