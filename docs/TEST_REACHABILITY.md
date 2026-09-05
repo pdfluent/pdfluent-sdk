@@ -6,7 +6,7 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**69 van 674 publieke functies** (10.2%).
+**69 van 676 publieke functies** (10.2%).
 
 Daarvan dragen er **38** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export), 7 zijn een omhulsel dat niets doet dan doorgeven aan een variant die wél getest wordt, en 15 dragen een gemeten besluit in hun eigen doc-commentaar.
 
@@ -23,7 +23,7 @@ De overige **31** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 | `cff-parser` | 3 | 8 |
 | `lopdf` | 3 | 28 |
 | `pdf-node` | 3 | 12 |
-| `pdf-engine` | 2 | 9 |
+| `pdf-engine` | 2 | 10 |
 | `formcalc-interpreter` | 1 | 6 |
 | `hayro-jpeg2000` | 1 | 1 |
 | `pdf-annot` | 1 | 4 |
