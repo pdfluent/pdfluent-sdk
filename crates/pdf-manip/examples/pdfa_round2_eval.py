@@ -88,7 +88,8 @@ def main():
                     if old_identity == fingerprint(a.after / name):
                         row = json.loads(json.dumps(previous))
                         row['reused_from'] = {'result_sha256': sha(a.reuse_result.read_bytes()),
-                                              'measured_after_sha256': previous['after_sha256'],
+                                              'prior_after_sha256': previous['after_sha256'],
+                                              'prior_reuse': previous.get('reused_from'),
                                               'object_identity_sha256': old_identity,
                                               'note': 'Prior metrics and diagnostic exit codes; complete Root/Info graph verified identical'}
                         row['after_sha256'] = sha((a.after / name).read_bytes())
