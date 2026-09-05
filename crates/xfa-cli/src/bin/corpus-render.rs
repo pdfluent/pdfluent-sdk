@@ -1,7 +1,9 @@
 //! Render all XFA PDFs in the corpus to PNG images.
 //!
-//! This is used by the AVRT (Automated Visual Regression Testing) pipeline
-//! to generate engine renders that are compared against Adobe gold masters.
+//! Generates engine renders for comparison against Adobe gold masters. The AVRT
+//! shell pipeline that used to drive it was removed with #327; the visual
+//! regression suite that replaced it is `crates/visual-regression`, which
+//! renders its own fixtures and does not call this binary.
 //!
 //! Usage:
 //!   cargo run --release --bin corpus-render -- --corpus corpus/ --output renders/
