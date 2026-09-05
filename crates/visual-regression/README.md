@@ -174,9 +174,13 @@ counts; cross-architecture equality needs a runner measurement, not an assumed
 tolerance. The PR records test timings, exact sizes and temporary mutation
 results. All three renderer mutations are reverted before the final diff.
 
-This crate supersedes `scripts/run-avrt.sh`, `scripts/avrt-report.sh` and
-`avrt-config.json`; those files remain for removal in a separate change tracked
-in [the AVRT cleanup follow-up](https://github.com/pdfluent/pdfluent-internal/issues/327).
+This crate supersedes the AVRT shell pipeline -- `scripts/run-avrt.sh`,
+`scripts/avrt-report.sh` and `avrt-config.json` -- which was removed once this
+suite had landed and gone green on master, in
+[the AVRT cleanup follow-up](https://github.com/pdfluent/pdfluent-internal/issues/327).
+`tests/superseded_pipeline_stays_gone.rs` fails if any of the three returns:
+two visual regression pipelines with one name is how the dead one gets invoked
+and believed.
 
 ## Initial validation
 
