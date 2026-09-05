@@ -4295,9 +4295,12 @@ name = "pdf-capi"
 version = "1.0.0"
 dependencies = [
  "pdf-compliance",
+ "pdf-docx",
  "pdf-engine",
  "pdf-manip",
+ "pdf-pptx",
  "pdf-redact",
+ "pdf-xlsx",
  "pdfluent",
  "pdfluent-extract",
  "pdfluent-forms",

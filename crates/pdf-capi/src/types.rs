@@ -65,6 +65,15 @@ pub enum PdfStatus {
     /// encoding failure, signed document refused, …). The detail is available
     /// via `pdf_last_error_message`.
     ErrorTextEdit = 21,
+    /// The licence is valid but its tier does not include the requested
+    /// capability — Office export on a tier below Business, for instance.
+    ///
+    /// Distinct from `ErrorInvalidLicense` (16) on purpose: "your key is bad"
+    /// and "your plan does not cover this" send a caller to different places,
+    /// and collapsing them into one code costs a support conversation every
+    /// time. Added 23-08-2026 with the Office exports; appended rather than
+    /// inserted so every existing number keeps its meaning.
+    ErrorCapabilityNotLicensed = 22,
     ErrorUnknown = 99,
 }
 

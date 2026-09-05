@@ -463,8 +463,16 @@ pub(crate) fn require_capability_with_override(
     })
 }
 
-/// Backwards-compatible entry for call-sites without a per-document
-/// override (e.g. associated constructors that don't have `&self`).
-pub(crate) fn require_capability(cap: Capability) -> Result<()> {
+/// Whether the process-wide licence tier allows `cap`.
+///
+/// Used by call-sites without a per-document override: associated constructors
+/// that have no `&self`, and the C ABI, which wraps `pdf_engine::PdfDocument`
+/// and therefore has no facade document to ask.
+///
+/// Public since 23-08-2026 so bindings can enforce capabilities without
+/// re-deriving them. A binding that decides for itself that Office export is
+/// "Business and up" is a binding that will disagree with this file the first
+/// time a tier moves.
+pub fn require_capability(cap: Capability) -> Result<()> {
     require_capability_with_override(cap, None)
 }

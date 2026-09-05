@@ -1193,6 +1193,123 @@ pub unsafe extern "C" fn pdf_page_extract_image(
     PdfStatus::Ok
 }
 
+// ---- Office export -------------------------------------------------------
+//
+// Byte-in, byte-out. The C ABI feeds .NET, Java and Node, so three channels
+// reach Word/Excel/PowerPoint through these three exports. Until 23-08-2026
+// none of the five bindings could convert to Office at all, while the feature
+// page sold it — the Rust crates existed and stopped at the language boundary.
+//
+// The capability check comes from `pdfluent::require_capability`, not from a
+// tier comparison here. A binding that decides for itself that Office export is
+// "Business and up" will disagree with the licence module the first time a tier
+// moves.
+
+/// Shared body for the three Office exports.
+///
+/// # Safety
+/// `doc` must be valid; `out_data` and `out_len` must be non-null and writable.
+unsafe fn office_export(
+    doc: *const PdfDocument,
+    out_data: *mut *mut u8,
+    out_len: *mut usize,
+    cap: pdfluent::Capability,
+    convert: fn(&[u8]) -> std::result::Result<Vec<u8>, String>,
+) -> PdfStatus {
+    if doc.is_null() || out_data.is_null() || out_len.is_null() {
+        error::set_last_error_str("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    if let Err(e) = pdfluent::require_capability(cap) {
+        error::set_last_error_str(&e.to_string());
+        return PdfStatus::ErrorCapabilityNotLicensed;
+    }
+    let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    match convert(&raw) {
+        Ok(bytes) => {
+            let mut boxed = bytes.into_boxed_slice();
+            let len = boxed.len();
+            unsafe {
+                *out_data = boxed.as_mut_ptr();
+                *out_len = len;
+            }
+            std::mem::forget(boxed);
+            PdfStatus::Ok
+        }
+        Err(e) => {
+            error::set_last_error_str(&e);
+            PdfStatus::ErrorConvert
+        }
+    }
+}
+
+/// Convert the document to a `.docx` package.
+///
+/// Writes a heap buffer to `*out_data` with its length in `*out_len`. Free it
+/// with `pdf_bytes_free(*out_data, *out_len)`.
+///
+/// # Safety
+/// `doc` must be valid. Both output pointers must be non-null and writable.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_to_docx(
+    doc: *const PdfDocument,
+    out_data: *mut *mut u8,
+    out_len: *mut usize,
+) -> PdfStatus {
+    unsafe {
+        office_export(
+            doc,
+            out_data,
+            out_len,
+            pdfluent::Capability::DocxExport,
+            |b| pdf_docx::convert_pdf_bytes_to_docx(b).map_err(|e| e.to_string()),
+        )
+    }
+}
+
+/// Convert the document to an `.xlsx` package. See [`pdf_document_to_docx`].
+///
+/// # Safety
+/// `doc` must be valid. Both output pointers must be non-null and writable.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_to_xlsx(
+    doc: *const PdfDocument,
+    out_data: *mut *mut u8,
+    out_len: *mut usize,
+) -> PdfStatus {
+    unsafe {
+        office_export(
+            doc,
+            out_data,
+            out_len,
+            pdfluent::Capability::XlsxExport,
+            |b| pdf_xlsx::convert_pdf_bytes_to_xlsx(b).map_err(|e| e.to_string()),
+        )
+    }
+}
+
+/// Convert the document to a `.pptx` package, one slide per page. See
+/// [`pdf_document_to_docx`].
+///
+/// # Safety
+/// `doc` must be valid. Both output pointers must be non-null and writable.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_to_pptx(
+    doc: *const PdfDocument,
+    out_data: *mut *mut u8,
+    out_len: *mut usize,
+) -> PdfStatus {
+    unsafe {
+        office_export(
+            doc,
+            out_data,
+            out_len,
+            pdfluent::Capability::PptxExport,
+            |b| pdf_pptx::convert_pdf_bytes_to_pptx(b).map_err(|e| e.to_string()),
+        )
+    }
+}
+
 /// Free a byte buffer returned by `pdf_page_extract_image`. Null is safe (no-op).
 ///
 /// # Safety
