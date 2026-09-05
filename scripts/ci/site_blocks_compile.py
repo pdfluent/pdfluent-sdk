@@ -13,19 +13,30 @@ blocks on the site read `doc.compress().add_watermark("DRAFT")
 .convert_to_pdfa("PDF/A-1b")` -- three real method names, none of them with that
 shape. Only a compiler sees that.
 
-Every block is wrapped in a module of its own and built against the real facade.
-It is a ratchet: `docs/SITE_BLOCKS.md` records how many fail today and that
-number may only go down. So it does not have to be finished in one go, and it
-cannot quietly go back up either.
+A page section is one program -- `primaryCode` and the steps under it, which is
+how the page reads -- wrapped in a module of its own and built against the real
+facade. It is a ratchet: `docs/SITE_BLOCKS.md` records how many fail today and
+that number may only go down. So it does not have to be finished in one go, and
+it cannot quietly go back up either.
+
+WHAT THE COUNT WAS MEASURING
+
+On 05-09-2026 the report said 238 of 527, and 88 of those 238 were not on the
+site at all. The export cut a how-to page into one unit per step and the
+wrapper nested each unit in its own `fn main`, so step three could not see the
+document step one opened; rustc said `cannot find value \`doc\`` and the report
+called it documentation debt. Repairing both -- one program per page section
+there, one shared scope here -- took the number to 94 without touching a word
+of the site. A number nobody can work off is worse than no number: it is the
+shape that makes a guard get switched off.
 
 EVERY BLOCK COMPILES, OR IT IS WRITTEN DOWN BY NAME AND REASON
 
-One number answers the wrong question. On 30-08-2026 it stood at 364 of 551,
-and 49 of those 364 were not documentation faults: 42 were steps two through
-five of a numbered list, with their `use` lines in step one, and 7 were Lambda
-and WebAssembly recipes needing crates this harness deliberately does not link.
-Compiled on their own those can never pass. They counted as debt that cannot be
-repaid, on top of the blocks that really are wrong.
+One number still answers the wrong question. Ten programs are cloud and browser
+recipes on `tokio`, `reqwest`, `aws_sdk_*`, `lambda_runtime` and `wasm_bindgen`
+-- crates this harness deliberately does not link, so they can never pass here.
+They counted as debt that cannot be repaid, on top of the blocks that really
+are wrong.
 
 Hence the rule: a published block compiles, or it is named in
 `docs/site/blocks_exceptions.toml` with what it is and why. The ratchet counts
@@ -62,28 +73,54 @@ REPORT = REPO / "docs" / "SITE_BLOCKS.md"
 EXCEPTIONS = REPO / "docs" / "site" / "blocks_exceptions.toml"
 EXPORT = REPO / "docs" / "site-rust-blocks.json"
 
-# FLOOR: programs >= 250 -- the site has well over five hundred (817 separate
-# blocks, grouped per section). Find fewer and the export is broken, not the
-# site empty.
-MIN_BLOCKS = 250
+# FLOOR: programs >= 200, and the blocks they are made of >= 600.
+#
+# Two floors, because the first one alone measures the grouping rather than the
+# site. Until 05-09-2026 the export cut a how-to page into one unit per step,
+# which gave 527 units; grouping a page into the one program it actually is
+# gives 241 of the same material. A single floor at 250 would have read that
+# repair as a broken export and refused it, and a floor that a correct change
+# trips is a floor that gets lowered without being thought about.
+#
+# So the floor that matters counts the blocks on the site (`onderdelen`), which
+# no regrouping changes: 744 today. The unit count keeps a floor of its own for
+# the case where grouping collapses everything into a handful of programs.
+MIN_BLOCKS = 200
+MIN_SOURCE_BLOCKS = 600
 
-# FLOOR: blocks that do compile >= 150 -- measured 200 of 551 on 30-08-2026.
-# The ratchet does not cover this. Shrink the export to a third, or break
-# `wrap` so every block turns into a single parse error, and the number of
-# failures *falls* -- which the ratchet reads as progress and lets through as
-# soon as somebody updates the report. A floor on what passes is the half of
-# the measurement the ratchet cannot see.
-MIN_COMPILING = 150
+# FLOOR: the blocks behind the programs that do compile >= 350 -- measured 421
+# of 744 on 05-09-2026.
+#
+# The ratchet does not cover this. Shrink the export to a third, or break `wrap`
+# so every block turns into a single parse error, and the number of failures
+# *falls* -- which the ratchet reads as progress and lets through as soon as
+# somebody updates the report. A floor on what passes is the half of the
+# measurement the ratchet cannot see.
+#
+# In blocks and not in programs, for the same reason as the floors above: how
+# many programs there are is a matter of grouping, how many blocks there are is
+# a matter of the site. The first version of this floor stood at 150 programs
+# out of 551 units and had to be moved the moment the grouping was repaired --
+# which is how a floor gets lowered on autopilot instead of being thought about.
+MIN_COMPILING_BLOCKS = 350
 
 # The register must not become the answer. At 49 of 551 it sits below a tenth;
 # at a fifth this gate approves more than it checks, and then the honest move is
 # to repair the export (#247) rather than to add entries to it.
 MAX_EXCEPTION_SHARE = 0.20
 
-# Four kinds, and no fifth. Every reason a block cannot build on its own is one
-# of these; an invented API is none of them, and that is exactly what this
-# closed list holds back.
-KINDS = {"fragment", "external-crate", "not-rust", "harness-bundle"}
+# Two kinds, and no third. Every reason a block cannot build on its own is one
+# of these; an invented API is neither, and that is exactly what this closed
+# list holds back.
+#
+# There were four. `fragment` (a block continuing an earlier one) and
+# `harness-bundle` (two blocks in one unit defining the same item) were both
+# artefacts of how the export cut the site up, and both are gone since it groups
+# a page section into the one program it is (#164): 39 entries of the first kind
+# and every entry of the second lapsed on the same day. They are out of this set
+# rather than left standing unused -- a kind nothing can legitimately claim is
+# an excuse waiting for a bad afternoon.
+KINDS = {"external-crate", "not-rust"}
 
 # rustc error codes, grouped by what the reader has to do about them.
 # Mechanical, not by eye: the code is in the output and means one thing.
@@ -118,6 +155,73 @@ def digest_of(blocks: list[dict]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+# `fn main() { ... }` opened by a block, and its declared error type.
+# Anchored at the start of the line: a nested `fn main` does not exist, and a
+# `fn main` inside a string does not start a line.
+MAIN_OPEN = re.compile(
+    r"^(\s*)(?:pub\s+)?(?:async\s+)?fn\s+main\s*\(\s*\)\s*(?:->\s*(?P<ret>.+?)\s*)?\{\s*$"
+)
+TRAILING_OK = re.compile(r"\s*Ok\(\(\)\)\s*;?\s*$")
+
+
+def unfold_main(lines: list[str]) -> tuple[list[str], str | None]:
+    """Lift the body of every `fn main` out of its function, into one scope.
+
+    The single largest class of failures this gate reported was not a fault on
+    the site at all. 88 of the 238 read
+
+        expected value, found built-in attribute `doc`
+
+    which is rustc saying `doc` is not bound. It is bound: the section's first
+    block is a whole program that opens the document, and the steps after it are
+    loose statements that go on using it -- which is exactly how the page reads.
+    Nesting the first block's `fn main` inside the wrapper hid its bindings from
+    the statements that followed, so the harness invented an error the reader
+    never sees. Counting that as documentation debt buries the blocks that are
+    genuinely wrong under noise nobody can work off.
+
+    So the bodies come out and share one scope, in page order. What is being
+    measured is unchanged: every name and every shape still meets the real
+    facade. Only the wrapper stops being visible to the code inside it.
+
+    The closing brace is found by its exact line (`}` at the opening indent),
+    not by counting braces: a `{` inside a string literal would move the count
+    and a wrong cut invents errors instead of removing them -- the same trap
+    that keeps the export from being split back apart here. A `fn main` whose
+    close cannot be found that way is left exactly as it stands.
+
+    Returns the lines, and the error type of the first `fn main` seen. The
+    wrapper adopts it, so a block promising `pdfluent::Result<()>` is still held
+    to it -- `std::fs::write(..)?` in such a block does not convert, and that is
+    a real defect in a copied example, not an artefact of this harness.
+    """
+    out: list[str] = []
+    declared: str | None = None
+    i = 0
+    while i < len(lines):
+        m = MAIN_OPEN.match(lines[i])
+        if not m:
+            out.append(lines[i])
+            i += 1
+            continue
+        close = m.group(1) + "}"
+        end = next((j for j in range(i + 1, len(lines)) if lines[j].rstrip() == close), None)
+        if end is None:
+            out.append(lines[i])
+            i += 1
+            continue
+        if declared is None and m.group("ret"):
+            declared = m.group("ret")
+        body = lines[i + 1 : end]
+        while body and not body[-1].strip():
+            body.pop()
+        if body and TRAILING_OK.fullmatch(body[-1]):
+            body.pop()
+        out.extend(ln[4:] if ln.startswith("    ") else ln for ln in body)
+        i = end + 1
+    return out, declared
+
+
 def wrap(index: int, code: str) -> str:
     """Put a block in a module of its own so it can be compiled separately.
 
@@ -145,9 +249,10 @@ def wrap(index: int, code: str) -> str:
             continue
         rest.append(line)
 
-    # 89 of the 551 units bundle a whole section: the export concatenates the
-    # code blocks of a section and puts the count in the path
-    # (`.sections[0] (5 blokken)`). The site therefore carries 817 blocks, not 551.
+    # Most units bundle a whole section: the export concatenates the code blocks
+    # of a section and puts the count in the path (`.sections[0] (5 blokken)`,
+    # or `(page) (4 blokken)` for a page that has no sections). 241 programs,
+    # made of the 744 blocks a reader sees.
     #
     # Without de-duplication that counts as broken what is not. Five blocks each
     # starting with `use pdfluent::PdfDocument;` yield, after hoisting, five
@@ -156,13 +261,8 @@ def wrap(index: int, code: str) -> str:
     #     the name `PdfDocument` is defined multiple times
     #
     # Eighteen of the fifty reported errors were that, and not one of them is on
-    # the site. The same goes for the `fn main` each block brings along.
-    #
-    # The real fix belongs in the export: one unit per block. The count in the
-    # path proves it knows the boundaries. Splitting back apart here cannot be
-    # done reliably -- not every block starts with `use` and some are loose
-    # fragments without `fn main` -- and a wrong split invents errors instead of
-    # removing them.
+    # the site. The `fn main` each block brings along was the same kind of
+    # phantom, and `unfold_main` above deals with it.
     #
     # De-duplication is by name, not by line. The five blocks of annotations.json
     # import `Annotation` in four different spellings --
@@ -198,6 +298,8 @@ def wrap(index: int, code: str) -> str:
     uses = [f"use {p}::{{{', '.join(n)}}};" if len(n) > 1 else f"use {p}::{n[0]};"
             for p, n in per_prefix.items()] + other
 
+    rest, declared = unfold_main(rest)
+
     renamed, counters = [], {}
     for line in rest:
         m = re.match(r"(\s*)(?:pub )?fn (\w+)\(", line)
@@ -210,10 +312,16 @@ def wrap(index: int, code: str) -> str:
     rest = renamed
     body = "\n".join("        " + r for r in rest)
     head = "\n".join("    " + u for u in uses)
+    # The block's own promise, where it makes one. A block that says
+    # `pdfluent::Result<()>` is held to it; one that says
+    # `Result<(), Box<dyn Error>>` is held to that. Imposing one of the two on
+    # every block would either wave through a `?` that does not convert or
+    # report one that does.
+    ret = declared or "pdfluent::Result<()>"
     return (
         f"#[allow(unused, clippy::all)]\nmod blok_{index} {{\n"
         + head
-        + "\n    pub fn draai() -> pdfluent::Result<()> {\n"
+        + f"\n    pub fn draai() -> {ret} {{\n"
         + body
         + "\n        Ok(())\n    }\n}\n"
     )
@@ -337,6 +445,40 @@ def judge(
     return complaints
 
 
+def ratchet(recorded: list[int], now: list[int]) -> tuple[bool, list[str]]:
+    """Whether the two counts may pass, and what to say about them.
+
+    Apart from the build, like `judge()`, so that
+    `test_site_blocks_register.py` can hold both directions to account in
+    milliseconds instead of three quarters of an hour. A ratchet that only ever
+    runs inside a cargo build is a ratchet nobody has tried to defeat.
+
+    A rise refuses. A fall passes and says so.
+
+    It used to refuse both ways, on the reasoning that progress nobody records
+    drops out of sight. In practice that made every landing that followed
+    another landing fail: master moves between the measurement and the push,
+    some unrelated commit makes one more block compile, and the gate refuses a
+    tree that is strictly better than the one it accepted an hour earlier.
+    #1738 died on exactly that, 88 against 87. A guard that refuses good news is
+    a guard that gets pushed past with `PRE_PUSH_SKIP=1`, and then nothing is
+    checked at all.
+
+    The ceiling still holds, and it holds at the *recorded* number -- so leaving
+    a fall unrecorded buys no room for a later rise. It only leaves the report
+    overstating the debt, which the message says out loud.
+    """
+    names = ("programs", "blocks on the site")
+    stale = []
+    for name, before, after in zip(names, recorded, now):
+        if after > before:
+            return False, [f"The number of non-compiling {name} rose from "
+                           f"{before} to {after}."]
+        if after < before:
+            stale.append(f"{name}: {before} recorded, {after} actual")
+    return True, stale
+
+
 def kind_of(codes: set[str]) -> str:
     """What a failing block asks for, read off the rustc codes."""
     if codes & UNKNOWN:
@@ -360,8 +502,17 @@ def main() -> int:
     blocks = raw["blocks"] if isinstance(raw, dict) else raw
     if len(blocks) < MIN_BLOCKS:
         print(
-            f"FLOOR: {len(blocks)} blocks, expected >= {MIN_BLOCKS}. "
+            f"FLOOR: {len(blocks)} programs, expected >= {MIN_BLOCKS}. "
             "The export is broken -- this is not a green.",
+            file=sys.stderr,
+        )
+        return 1
+    source_blocks = sum(len(b.get("onderdelen") or [b["pad"]]) for b in blocks)
+    if source_blocks < MIN_SOURCE_BLOCKS:
+        print(
+            f"FLOOR: those programs are made of {source_blocks} blocks on the "
+            f"site, expected >= {MIN_SOURCE_BLOCKS}. Grouping may change how "
+            "the blocks are cut up; it may not make them disappear.",
             file=sys.stderr,
         )
         return 1
@@ -413,9 +564,24 @@ def main() -> int:
     lock = REPO / "Cargo.lock"
     if lock.exists():
         (workdir / "Cargo.lock").write_bytes(lock.read_bytes())
+    # The crates a recipe may lean on, besides the facade.
+    #
+    # Not linking these was hiding the thing being measured. A block that opens
+    # with `use anyhow::Result;` failed on that line and rustc never reached the
+    # pdfluent names below it -- 28 blocks whose real content was never checked,
+    # written off as "needs a crate this harness does not link". A reader
+    # copying such a recipe adds the crate to their own manifest and gets on
+    # with it; refusing to do the same here measures the harness, not the page.
+    #
+    # These four and no more: all four are already in this workspace, so
+    # `--offline` resolves them from the lockfile that is copied in above and
+    # nothing reaches the network. `aws_sdk_*`, `lambda_runtime` and
+    # `wasm_bindgen` stay out -- they carry a crate graph nobody here maintains,
+    # and those recipes remain named in the register with their reason.
     (workdir / "Cargo.toml").write_text(
         "[package]\nname = \"siteblocks\"\nversion = \"0.0.0\"\nedition = \"2021\"\n"
         f"[dependencies]\npdfluent = {{ path = \"{REPO / 'crates' / 'pdfluent'}\" }}\n"
+        "anyhow = \"1\"\nbase64 = \"0.22\"\nserde_json = \"1\"\nrayon = \"1\"\n"
         "[workspace]\n"
     )
 
@@ -477,6 +643,18 @@ def main() -> int:
     unexplained = [m for m in failed if (m["bestand"], m["pad"]) not in register]
     count = len(unexplained)
 
+    # The same debt, counted in blocks on the site.
+    #
+    # A ratchet on programs alone is one regrouping away from meaningless: put
+    # two pages in one unit and the count halves without a line of the site
+    # changing. `onderdelen` says which blocks a program was assembled from, so
+    # this number moves only when a block is repaired or leaves the site -- and
+    # both numbers are held to the ratchet, so neither can be traded for the
+    # other.
+    parts = {(b["bestand"], b["pad"]): len(b.get("onderdelen") or [b["pad"]])
+             for b in blocks}
+    debt_blocks = sum(parts[(m["bestand"], m["pad"])] for m in unexplained)
+
     # A build that fails as a whole counts as zero -- and that reads as perfect.
     #
     # Blocks are only counted as failing when an error can be attributed to a
@@ -497,11 +675,16 @@ def main() -> int:
             print(f"  {ln[:120]}", file=sys.stderr)
         return 1
 
-    if compiling < MIN_COMPILING:
+    compiling_blocks = source_blocks - sum(
+        parts[k] for k in failing if k in parts
+    )
+    if compiling_blocks < MIN_COMPILING_BLOCKS:
         print(
-            f"FLOOR: {compiling} of {len(blocks)} blocks compile, expected >= "
-            f"{MIN_COMPILING}. A ratchet that only counts failures reads a "
-            f"shrunken or broken measurement as progress -- this is not a green.",
+            f"FLOOR: {compiling} of {len(blocks)} programs compile, carrying "
+            f"{compiling_blocks} of {source_blocks} blocks, expected >= "
+            f"{MIN_COMPILING_BLOCKS}. A ratchet that only counts failures reads "
+            f"a shrunken or broken measurement as progress -- this is not a "
+            f"green.",
             file=sys.stderr,
         )
         return 1
@@ -524,9 +707,10 @@ def main() -> int:
         per_kind[s] = per_kind.get(s, 0) + 1
 
     print(
-        f"{compiling} of {len(blocks)} blocks compile. "
+        f"{compiling} of {len(blocks)} programs compile. "
         f"{len(failing)} do not, of which {len(register)} with a reason in "
-        f"{EXCEPTIONS.relative_to(REPO)} and {count} without."
+        f"{EXCEPTIONS.relative_to(REPO)} and {count} without "
+        f"({debt_blocks} of {source_blocks} blocks on the site)."
     )
     for s, n in sorted(per_kind.items(), key=lambda x: -x[1]):
         print(f"  {n:4}  {s}")
@@ -535,21 +719,30 @@ def main() -> int:
         if not REPORT.exists():
             print(f"{REPORT} is missing; run without --check first.", file=sys.stderr)
             return 1
-        m = re.search(r"\*\*(\d+) of (\d+)\*\*", REPORT.read_text())
-        before = int(m.group(1)) if m else 10**9
-        if count > before:
+        text = REPORT.read_text()
+        recorded = [int(x) for x in re.findall(r"\*\*(\d+) of \d+\*\*", text)]
+        # FLOOR: two numbers in the report, or the ratchet is holding one of
+        # them and not the other. A missing number reads as "nothing to check".
+        if len(recorded) < 2:
             print(
-                f"The number of non-compiling blocks rose from {before} to {count}.",
+                f"{REPORT.name} records {len(recorded)} of the two counts "
+                "(programs, and the blocks behind them). Run without --check.",
                 file=sys.stderr,
             )
             return 1
-        if count < before:
-            print(
-                f"The number fell from {before} to {count}. Update {REPORT.name} and "
-                "commit it, or the progress drops out of sight.",
-                file=sys.stderr,
-            )
+        ok, notes = ratchet(recorded[:2], [count, debt_blocks])
+        if not ok:
+            for line in notes:
+                print(line, file=sys.stderr)
             return 1
+        if notes:
+            print(
+                f"{REPORT.name} overstates the debt and may be regenerated:\n  "
+                + "\n  ".join(notes)
+                + f"\nRun `python3 {pathlib.Path(__file__).relative_to(REPO)}` "
+                "without --check and commit the result. Not a failure: the "
+                "ceiling is what this gate holds, and it is still held."
+            )
         return 0
 
     per_file: dict[str, int] = {}
@@ -561,16 +754,23 @@ def main() -> int:
         "",
         "Generated by `scripts/ci/site_blocks_compile.py`. Do not edit by hand.",
         "",
-        f"**{count} of {len(blocks)}** Rust blocks on the English site do not build against",
-        "the real facade, and have no reason recorded for it.",
+        f"**{count} of {len(blocks)}** Rust programs on the English site do not build",
+        "against the real facade, and have no reason recorded for it. Counted in the",
+        f"blocks a reader sees, that is **{debt_blocks} of {source_blocks}**.",
         "",
-        f"{compiling} do build. The remaining {len(register)} are named with a kind and a",
-        "reason in `docs/site/blocks_exceptions.toml`: fragments continuing an earlier block",
-        "on the same page, and recipes needing a crate this harness does not link. Those",
-        "cannot build on their own, so they do not count as debt -- and they are written",
-        "down one by one, not as a category.",
+        "Both numbers, because one of them alone is a regrouping away from meaningless:",
+        "a program is a page section -- `primaryCode` and the steps under it, which is",
+        "how the page reads -- so merging two pages into one unit would halve the first",
+        "number without repairing anything. The second moves only when a block is fixed",
+        "or leaves the site. The ratchet holds both.",
         "",
-        "This number may only go down. A name check catches an invented type; only a",
+        f"{compiling} programs do build. The remaining {len(register)} are named with a kind and a",
+        "reason in `docs/site/blocks_exceptions.toml`: cloud and browser recipes needing a",
+        "crate this harness deliberately does not link. Those cannot build here at all, so",
+        "they do not count as debt -- and they are written down one by one, with the crate",
+        "named, not as a category.",
+        "",
+        "Neither number may go up. A name check catches an invented type; only a",
         "compiler catches a real name in a shape that does not exist -- and that was exactly",
         "the mistake a language model made twice while writing replacement examples.",
         "",

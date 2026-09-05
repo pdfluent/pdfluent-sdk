@@ -4,19 +4,15 @@
 # the PDFluent Commercial Licence. See the LICENSE file in this repository --
 # that file travels with the copy you received, which a URL does not.
 #
-# Rust blocks on pdfluent.com that cannot compile on their own, each with the
-# reason.
+# Rust blocks on pdfluent.com that cannot compile here, each with the reason.
 #
 # WHY THIS FILE EXISTS
 #
-# `site_blocks_compile.py` compiles every Rust block the site shows and counts
-# the ones that fail. A single count answers the wrong question. On 30-08-2026
-# it stood at 364 of 551, and 49 of those 364 were not a documentation defect
-# at all: 42 were steps two through five of a numbered list, whose `use` lines
-# and bindings sit in step one, and 7 were AWS Lambda and WebAssembly recipes
-# built on crates the harness deliberately does not link. Compiled one at a
-# time, in isolation, they cannot pass -- and counting them as debt hides the
-# blocks that really are wrong behind noise that can never be worked off.
+# `site_blocks_compile.py` compiles every Rust program the site shows and counts
+# the ones that fail. A single count answers the wrong question: some blocks
+# cannot pass in this harness for a reason that has nothing to do with the
+# documentation, and counting those as debt hides the blocks that really are
+# wrong behind noise nobody can work off.
 #
 # So the rule is: **a published block either compiles, or it is named here.**
 # Not a category, not a glob -- one entry per block, with what it is and why.
@@ -29,31 +25,32 @@
 #   * a block that fails to compile and is not named here;
 #   * a block named here that compiles -- the reason is gone, so is the entry;
 #   * an entry naming a block the export no longer carries;
-#   * a `kind` outside the four below, or an entry missing `why`.
+#   * a `kind` outside the two below, or an entry missing `why`.
 #
-# The second is the one that matters. Without it this file silently accumulates
-# blocks that were fixed years ago, and the count it excuses stops meaning
-# anything -- the same failure mode as a test that no longer asserts.
+# The second is the one that matters, and on 05-09-2026 it earned its keep: all
+# four entries that survived the regrouping had started compiling, and the gate
+# said so instead of quietly excusing them.
 #
-# THE FOUR KINDS, AND NOTHING ELSE
+# THE TWO KINDS, AND NOTHING ELSE
 #
-#   fragment        The block continues an earlier block on the same page. Its
-#                   imports or its bindings are there. #247 removes this whole
-#                   class: once the site pulls code by key out of
-#                   `crates/pdfluent/examples/site_snippets.rs`, a page is one
-#                   compiling program and a step is a slice of it.
 #   external-crate  The block needs a third-party crate the harness does not
-#                   link (`tokio`, `aws_sdk_s3`, `wasm_bindgen`). Linking them
-#                   would make this gate depend on the network and on a crate
-#                   graph nobody here maintains.
+#                   link. Four common ones are linked (`anyhow`, `serde_json`,
+#                   `base64`, `rayon`): they are already in this workspace, so
+#                   `--offline` resolves them and a reader who copies such a
+#                   recipe does the same in their own manifest. What stays out
+#                   is the cloud and browser graph -- `tokio`, `reqwest`,
+#                   `aws_sdk_*`, `lambda_runtime`, `wasm_bindgen` -- which
+#                   nobody here maintains and which would tie this gate to the
+#                   network.
 #   not-rust        The block is tagged Rust and is not.
-#   harness-bundle  The export bundles a whole section into one unit and two
-#                   blocks in it define the same item. A defect in the export,
-#                   not in the site.
 #
-# `fragment` and `harness-bundle` are debts, not verdicts. Both disappear when
-# the export gives one unit per block and the site carries keys rather than
-# prose. Neither is a reason to leave a block wrong.
+# There were four kinds. `fragment` -- a block continuing an earlier one on the
+# same page -- and `harness-bundle` -- two blocks in one unit defining the same
+# item -- were both artefacts of how the export cut the site up. The export now
+# groups a page section into the one program it is, so a step can see what the
+# block above it opened, and both kinds lapsed on the same day: 39 entries and
+# 88 uncounted failures with them. They are out of the closed list rather than
+# left standing unused.
 #
 # NOT A PLACE TO PUT A BROKEN EXAMPLE
 #
@@ -64,323 +61,71 @@
 # capped in the script.
 
 [[block]]
-bestand = "public/content/en/errors/pdf-signature-invalid.json"
-pad     = ".fixes[1].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument`, `SignatureStatus` are introduced there, not here"
+bestand = "public/content/en/comparison/vs-pdf-rs.json"
+pad     = "(page) (2 blokken)"
+kind    = "external-crate"
+issue   = "164"
+why     = "the comparison shows the same task in the `pdf` crate, which this harness does not link -- linking a competitor to compile its example is not a dependency this repository should carry"
 
 [[block]]
-bestand = "public/content/en/how-to/add-image-watermark-pdf-rust.json"
-pad     = ".steps[2].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `watermark` is introduced there, not here"
+bestand = "public/content/en/how-to-guides/ocr.json"
+pad     = ".sections[0] (6 blokken)"
+kind    = "external-crate"
+issue   = "164"
+why     = "AWS Textract recipe on `aws_sdk_textract` and `tokio`: a cloud client graph this gate deliberately does not link, because it would tie the check to the network"
 
 [[block]]
-bestand = "public/content/en/how-to/add-text-watermark-pdf-rust.json"
-pad     = ".steps[2].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `WatermarkOptions` is introduced there, not here"
+bestand = "public/content/en/how-to-guides/ocr.json"
+pad     = ".sections[1] (5 blokken)"
+kind    = "external-crate"
+issue   = "164"
+why     = "cloud OCR recipe on `reqwest` and `tokio`: an HTTP client and an async runtime this gate deliberately does not link"
 
 [[block]]
-bestand = "public/content/en/how-to/add-xmp-metadata-pdf-rust.json"
-pad     = ".steps[3].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `xmp` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/batch-process-pdfs-rust.json"
-pad     = ".steps[4].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `files`, `process_file` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/check-missing-fonts-pdf-rust.json"
-pad     = ".steps[0].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/check-pdf-is-linearized-rust.json"
-pad     = ".steps[0].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/compare-pdf-text-content-rust.json"
-pad     = ".steps[0].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/compare-pdf-text-content-rust.json"
-pad     = ".steps[1].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `doc_a`, `doc_b` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/compare-pdf-text-content-rust.json"
-pad     = ".steps[4].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `text_a`, `text_b`, `doc_a`, `doc_b` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/compress-pdf-rust.json"
-pad     = ".steps[1].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `CompressOptions` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/decrypt-pdf-rust.json"
-pad     = ".steps[4].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/embed-image-in-pdf-rust.json"
-pad     = ".steps[2].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `bytes` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/encrypt-pdf-rust.json"
-pad     = ".steps[1].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `EncryptOptions` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/encrypt-pdf-rust.json"
-pad     = ".steps[2].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `opts` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/encrypt-pdf-rust.json"
-pad     = ".steps[3].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `Permissions`, `opts` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/extract-tables-pdf-rust.json"
-pad     = ".steps[1].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `page` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/fix-pdf-a-validation-errors-rust.json"
-pad     = ".steps[0].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/fix-pdf-a-validation-errors-rust.json"
-pad     = ".steps[2].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `opts`, `PdfDocument` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/generate-pdf-from-html-rust.json"
-pad     = ".steps[1].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument`, `WatermarkOptions`, `CompressOptions`, `PdfAProfile` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/generate-pdf-thumbnails-rust.json"
-pad     = ".steps[1].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `ToImagesOptions`, `ImageFormat` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/get-pdf-page-count-rust.json"
-pad     = ".steps[3].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/get-pdf-page-dimensions-rust.json"
-pad     = ".steps[4].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `page` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/merge-pdfs-rust.json"
-pad     = ".steps[2].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `a`, `b`, `c`, `PdfMerger` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/merge-pdfs-rust.json"
-pad     = ".steps[3].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `merger`, `BookmarkMergeStrategy` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/merge-pdfs-rust.json"
-pad     = ".steps[4].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `merger` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/merge-pdfs-with-toc-rust.json"
-pad     = ".steps[1].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `merger`, `BookmarkMergeStrategy` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/n-up-pdf-rust.json"
-pad     = ".steps[0].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/pades-ltv-signature-rust.json"
-pad     = ".steps[2].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `signer`, `SignOptions`, `PadesProfile`, `PdfDocument` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/parse-xfa-data-rust.json"
-pad     = ".steps[1].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `xfa` is introduced there, not here"
+bestand = "public/content/en/how-to-guides/ocr.json"
+pad     = ".sections[2] (5 blokken)"
+kind    = "external-crate"
+issue   = "164"
+why     = "cloud OCR recipe on `reqwest` and `tokio`: an HTTP client and an async runtime this gate deliberately does not link"
 
 [[block]]
 bestand = "public/content/en/how-to/pdf-ocr-aws-textract-rust.json"
-pad     = ".steps[2].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
+pad     = "(page) (6 blokken)"
+kind    = "external-crate"
+issue   = "164"
+why     = "AWS Textract recipe on `aws_sdk_textract` and `tokio`, the same cloud client graph as the OCR guide it belongs to"
 
 [[block]]
 bestand = "public/content/en/how-to/pdf-ocr-azure-document-intelligence-rust.json"
-pad     = ".steps[2].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
+pad     = "(page) (5 blokken)"
+kind    = "external-crate"
+issue   = "164"
+why     = "Azure Document Intelligence recipe on `reqwest` and `tokio`: an HTTP client and an async runtime this gate deliberately does not link"
 
 [[block]]
 bestand = "public/content/en/how-to/pdf-ocr-google-cloud-vision-rust.json"
-pad     = ".steps[2].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/read-pdf-signature-info-rust.json"
-pad     = ".steps[0].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/render-pdf-to-jpeg-rust.json"
-pad     = ".steps[1].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `ToImagesOptions`, `ImageFormat` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/render-pdf-to-png-rust.json"
-pad     = ".steps[1].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `ToImagesOptions`, `ImageFormat` are introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/render-pdf-to-png-rust.json"
-pad     = ".steps[2].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `ToImagesOptions` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/reorder-pdf-pages-rust.json"
-pad     = ".steps[0].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/set-pdf-password-rust.json"
-pad     = ".steps[4].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to/validate-pdf-a-conformance-rust.json"
-pad     = ".steps[0].code"
-kind    = "fragment"
-issue   = "247"
-why     = "continues an earlier block on the same page: `PdfDocument` is introduced there, not here"
-
-[[block]]
-bestand = "public/content/en/how-to-guides/deploy.json"
-pad     = ".sections[0] (2 blokken)"
+pad     = "(page) (5 blokken)"
 kind    = "external-crate"
-issue   = "247"
-why     = "a deployment recipe built on `lambda_runtime`, `serde_json`, `aws_sdk_s3`, `tokio`, `aws_config`; the harness links only `pdfluent`"
-
-[[block]]
-bestand = "public/content/en/how-to-guides/deploy.json"
-pad     = ".sections[2] (2 blokken)"
-kind    = "external-crate"
-issue   = "247"
-why     = "a deployment recipe built on `wasm_bindgen`; the harness links only `pdfluent`"
+issue   = "164"
+why     = "Google Cloud Vision recipe on `reqwest` and `tokio`: an HTTP client and an async runtime this gate deliberately does not link"
 
 [[block]]
 bestand = "public/content/en/how-to/pdf-processing-wasm-rust.json"
-pad     = ".primaryCode"
+pad     = "(page) (2 blokken)"
 kind    = "external-crate"
-issue   = "247"
-why     = "a deployment recipe built on `wasm_bindgen`; the harness links only `pdfluent`"
-
-[[block]]
-bestand = "public/content/en/how-to/pdf-processing-wasm-rust.json"
-pad     = ".steps[1].code"
-kind    = "external-crate"
-issue   = "247"
-why     = "a deployment recipe built on `wasm_bindgen`; the harness links only `pdfluent`"
+issue   = "164"
+why     = "browser recipe on `wasm_bindgen`, which needs the wasm32 target and a toolchain this harness does not build for"
 
 [[block]]
 bestand = "public/content/en/how-to/process-pdfs-aws-lambda-rust.json"
-pad     = ".primaryCode"
+pad     = "(page) (2 blokken)"
 kind    = "external-crate"
-issue   = "247"
-why     = "a deployment recipe built on `lambda_runtime`, `serde_json`, `aws_sdk_s3`, `tokio`, `aws_config`; the harness links only `pdfluent`"
+issue   = "164"
+why     = "Lambda handler on `lambda_runtime`, `aws_config` and `aws_sdk_s3`: a cloud client graph this gate deliberately does not link"
 
 [[block]]
-bestand = "public/content/en/solutions/serverless-pdf.json"
-pad     = ".primaryCode"
+bestand = "public/content/en/solutions-guides/scale.json"
+pad     = ".sections[5].primaryCode"
 kind    = "external-crate"
-issue   = "247"
-why     = "a deployment recipe built on `lambda_runtime`, `serde`, `tokio`, `base64`; the harness links only `pdfluent`"
+issue   = "164"
+why     = "Lambda handler on `lambda_runtime` and `serde` derive, the same cloud graph as the how-to page it summarises"

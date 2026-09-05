@@ -26,6 +26,14 @@ its cap, and every entry naming a block the export still carries. That half
 needs no compiler either, so a stale entry costs one round to find rather than
 one build.
 
+The same goes for `wrap()`, which decides what rustc is shown. A section on the
+site is one program: the first block opens the document, the steps after it go
+on using it. Leave each block inside its own `fn main` and those steps lose
+their bindings, and the gate reports 88 documentation faults that are not on the
+page. Nothing about that failure is visible in the count -- it looks like work
+to do -- so the shape of the wrapper is checked here, on synthetic input, in
+milliseconds.
+
 Mutation-tested, which is the only reason to believe it. Each of the checks
 below was removed from `site_blocks_compile.py` one at a time, and each time
 this file went red. If it stays green while the gate is broken, it tests
@@ -83,7 +91,7 @@ def cases(sbc) -> list[tuple[str, bool, str]]:
     #    complaint. It has to reach the ratchet, and `beoordeel` must stay
     #    quiet about it -- a false complaint here would push whoever reads it
     #    towards adding an entry, which is the wrong repair.
-    reg, form = register_from(sbc, [("a.json", ".x", "fragment", REASON)])
+    reg, form = register_from(sbc, [("a.json", ".x", "external-crate", REASON)])
     said = sbc.judge(every, {("a.json", ".x"), ("b.json", ".y")}, reg)
     out.append((
         "a failing block with no entry raises no register complaint",
@@ -92,7 +100,7 @@ def cases(sbc) -> list[tuple[str, bool, str]]:
     ))
 
     # 2. THE DIRECTION THAT GOES MISSING: named here, and it compiles.
-    reg, _ = register_from(sbc, [("a.json", ".x", "fragment", REASON)])
+    reg, _ = register_from(sbc, [("a.json", ".x", "external-crate", REASON)])
     said = sbc.judge(every, set(), reg)
     out.append((
         "an entry for a block that compiles is an error",
@@ -101,7 +109,7 @@ def cases(sbc) -> list[tuple[str, bool, str]]:
     ))
 
     # 3. An entry pointing at a block the export no longer carries.
-    reg, _ = register_from(sbc, [("gone.json", ".x", "fragment", REASON)])
+    reg, _ = register_from(sbc, [("gone.json", ".x", "external-crate", REASON)])
     said = sbc.judge(every, {("gone.json", ".x")}, reg)
     out.append((
         "an entry for a block that no longer exists is an error",
@@ -120,7 +128,7 @@ def cases(sbc) -> list[tuple[str, bool, str]]:
 
     # 5. Three words is not a reason. The next reader has to be able to judge
     #    whether it still holds.
-    _, form = register_from(sbc, [("a.json", ".x", "fragment", "fragment, skip")])
+    _, form = register_from(sbc, [("a.json", ".x", "external-crate", "needs a crate, skip")])
     out.append((
         "a two-word reason is refused",
         len(form) == 1 and "says too little" in form[0],
@@ -128,7 +136,7 @@ def cases(sbc) -> list[tuple[str, bool, str]]:
     ))
 
     # 6. A missing field.
-    _, form = register_from(sbc, [("a.json", ".x", "fragment", "")])
+    _, form = register_from(sbc, [("a.json", ".x", "external-crate", "")])
     out.append((
         "an entry without a reason is refused",
         len(form) == 1 and "why" in form[0],
@@ -137,8 +145,8 @@ def cases(sbc) -> list[tuple[str, bool, str]]:
 
     # 7. The same block twice, which is how a register silently disagrees with
     #    itself about why something is excused.
-    _, form = register_from(sbc, [("a.json", ".x", "fragment", REASON),
-                                  ("a.json", ".x", "fragment", REASON)])
+    _, form = register_from(sbc, [("a.json", ".x", "external-crate", REASON),
+                                  ("a.json", ".x", "external-crate", REASON)])
     out.append((
         "the same block twice is refused",
         len(form) == 1 and "twice" in form[0],
@@ -172,6 +180,137 @@ def cases(sbc) -> list[tuple[str, bool, str]]:
         str(getattr(sbc, "MAX_EXCEPTION_SHARE", None)),
     ))
 
+    return out
+
+
+def the_ratchet(sbc) -> list[tuple[str, bool, str]]:
+    """Which way the two counts may move.
+
+    The ceiling is the point of the whole gate, and it is one line: a rise
+    refuses. The other direction is not symmetrical and used to be, which cost
+    a landing (#1738): master moves between measuring and pushing, an unrelated
+    commit makes one more block compile, and a gate that demands equality
+    refuses a tree that is strictly better than the one it accepted an hour
+    before. A guard that refuses good news gets overridden, and an overridden
+    guard checks nothing.
+    """
+    out = []
+    ok, notes = sbc.ratchet([87, 286], [88, 286])
+    out.append(("a rise in the programs refuses", not ok, "; ".join(notes)))
+
+    ok, notes = sbc.ratchet([87, 286], [87, 287])
+    out.append((
+        "a rise in the blocks refuses, even when the programs hold",
+        not ok,
+        "; ".join(notes),
+    ))
+
+    ok, notes = sbc.ratchet([87, 286], [87, 286])
+    out.append(("standing still passes, and says nothing", ok and not notes,
+                "; ".join(notes) or "silent"))
+
+    ok, notes = sbc.ratchet([87, 286], [85, 280])
+    out.append((
+        "a fall passes, and does not pass in silence",
+        ok and len(notes) == 2,
+        "; ".join(notes) or "silent",
+    ))
+    return out
+
+
+def the_wrapper(sbc) -> list[tuple[str, bool, str]]:
+    """What `wrap()` hands to rustc.
+
+    Two properties, and both were wrong once.
+
+    A page is one program. `sections[0].primaryCode` opens the document and
+    `steps[1]` goes on using it, which is how a reader reads it. Compile the
+    steps inside the first block's `fn main` and they cannot see `doc`; rustc
+    answers "expected value, found built-in attribute `doc`", and on 05-09-2026
+    that was 88 of the 238 blocks the report called debt. Not one of them is
+    wrong on the site.
+
+    And a block's own promise is kept. A block that declares
+    `fn main() -> pdfluent::Result<()>` and then calls `std::fs::write(..)?` does
+    not compile, because that error does not convert -- a real defect in an
+    example somebody copies. Wrapping every block in `Result<(), Box<dyn Error>>`
+    would wave it through; wrapping every block in `pdfluent::Result<()>` would
+    invent the same complaint against blocks that promised `Box<dyn Error>` and
+    are right. So the wrapper adopts what the block says.
+    """
+    out = []
+
+    page = (
+        "use pdfluent::PdfDocument;\n"
+        "\n"
+        "fn main() -> pdfluent::Result<()> {\n"
+        "    let doc = PdfDocument::open(\"a.pdf\")?;\n"
+        "    doc.save(\"b.pdf\")?;\n"
+        "    Ok(())\n"
+        "}\n"
+        "\n"
+        "let n = doc.page_count();\n"
+    )
+    wrapped = sbc.wrap(0, page)
+    out.append((
+        "a section is one scope: the steps can see what the first block opened",
+        "fn main" not in wrapped and "let doc = PdfDocument::open" in wrapped
+        and "let n = doc.page_count();" in wrapped,
+        wrapped,
+    ))
+    out.append((
+        "the block's own error type is what it is held to",
+        "pub fn draai() -> pdfluent::Result<()> {" in wrapped,
+        wrapped,
+    ))
+
+    boxed = (
+        "fn main() -> Result<(), Box<dyn std::error::Error>> {\n"
+        "    let bytes = std::fs::read(\"a.png\")?;\n"
+        "    Ok(())\n"
+        "}\n"
+    )
+    out.append((
+        "a block promising Box<dyn Error> is not held to pdfluent::Result",
+        "pub fn draai() -> Result<(), Box<dyn std::error::Error>> {"
+        in sbc.wrap(0, boxed),
+        sbc.wrap(0, boxed),
+    ))
+
+    # A block without a `fn main` is a loose fragment. Nothing to unfold, and
+    # the default promise stays what it was.
+    loose = "let text = doc.extract_text()?;\n"
+    out.append((
+        "a block without a fn main keeps the default promise",
+        "pub fn draai() -> pdfluent::Result<()> {" in sbc.wrap(0, loose),
+        sbc.wrap(0, loose),
+    ))
+
+    # Unbalanced: the closing brace is not where the shape says it is. Cutting
+    # anyway would invent errors, which is the one thing this gate must not do,
+    # so the block is left exactly as it stands.
+    truncated = "fn main() -> pdfluent::Result<()> {\n    let doc = open()?;\n"
+    out.append((
+        "a fn main whose close cannot be found is left alone",
+        "fn main" in sbc.wrap(0, truncated),
+        sbc.wrap(0, truncated),
+    ))
+
+    # The `use` lines still come out, from inside the unfolded body as well:
+    # they may not sit in a function.
+    inner_use = (
+        "fn main() -> pdfluent::Result<()> {\n"
+        "    use pdfluent::PdfDocument;\n"
+        "    let doc = PdfDocument::open(\"a.pdf\")?;\n"
+        "    Ok(())\n"
+        "}\n"
+    )
+    w = sbc.wrap(0, inner_use)
+    out.append((
+        "use lines are hoisted out of the unfolded body",
+        w.index("use pdfluent::PdfDocument;") < w.index("pub fn draai"),
+        w,
+    ))
     return out
 
 
@@ -329,7 +468,8 @@ def main() -> int:
         return 1
 
     sbc = load()
-    results = cases(sbc) + the_real_register(sbc) + the_handover(sbc)
+    results = (cases(sbc) + the_ratchet(sbc) + the_wrapper(sbc)
+               + the_real_register(sbc) + the_handover(sbc))
 
     # FLOOR: cases >= 20 -- this file builds its own cases, so an empty or
     # halved list is not a clean tree but a gutted file, and zero cases that
