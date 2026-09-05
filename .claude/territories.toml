@@ -265,7 +265,6 @@ uitgezonderd = [
   # this list on 04-09-2026. Neither is a new claim: both were lent to t3 with a
   # written return condition, and both conditions have fired -- the BEKEND row
   # is retired and #326 has landed. The loans said "back to t2"; this is that.
-  ".github/workflows/deletions-declare-themselves.yml",
   "scripts/ci/test_register_exemption.py",
   "scripts/ci/public_snapshot_audit.sh",
   # Narrow workflow and job registration claim for #326.
@@ -273,9 +272,7 @@ uitgezonderd = [
   ".github/workflows/visual-regression.yml",
   "scripts/ci/persistent_builds_check_their_build_dir.py",
   "scripts/ci/test_seed_public_repo.py",
-  "scripts/ci/every_gate_is_reachable_from_a_pull_request.py",
   "scripts/ci/test_every_gate_is_reachable_from_a_pull_request.py",
-  ".github/workflows/publication-guards.yml",
   "scripts/ci/every_fetched_asset_is_registered.py",
   "scripts/ci/test_every_fetched_asset_is_registered.py",
   # Not t2's, added 03-09-2026. Fixture test for .githooks/prepare-commit-msg,
@@ -359,8 +356,6 @@ uitgezonderd = [
   # 02-09-2026 (see t3 below).
   "scripts/ci/every_document_is_registered.py",
   "scripts/ci/test_every_document_is_registered.py",
-  ".github/workflows/document-register.yml",
-  ".github/workflows/licence-headers.yml",
   # Taken back by t2 on 02-09-2026, as t3's own note said it would be: the
   # commit that retires the ALLOWED entry (a2ee809d) is on master, so the narrow
   # claim has done what it was for. Left standing it would be a register that
@@ -511,7 +506,32 @@ paden = [
   # this map exists to prevent. It comes back the moment #331 lands. The script
   # itself stays here -- the loan is about the fixture, not about seeding.
 ]
-uitgezonderd = ["docs/licensing/boundary.toml"] # #326 internal-crate registration
+uitgezonderd = [
+  "docs/licensing/boundary.toml", # #326 internal-crate registration
+  # ON LOAN TO t2, 05-09-2026, for #333 and nothing else. These five came off
+  # this exclusion list so that one branch could make one change across them.
+  #
+  # The included Actions minutes were spent and the account had begun billing.
+  # The cause is a single shape repeated: a guard triggered by BOTH
+  # `pull_request` and `push`, so every change paid for the same scan twice, on
+  # hosted Linux, over work `scripts/ci/local_ci_gate.sh` had already refused to
+  # let out. Four of these are t3's workflows and the fifth is the guard whose
+  # premise the change removes -- there is no version of this that stops at the
+  # t2 boundary, because the bill does not.
+  #
+  # Same standing rule as the loans in t1's block: a cost or a block that lands
+  # on everyone is repaired on loan and landed, not queued behind its owner.
+  #
+  # EXPIRY: these five lines come back here the moment #333 lands. The loan
+  # covers exactly two edits per workflow -- the `pull_request` trigger out,
+  # `runs-on` onto [self-hosted, xfa-fast] -- and, in the guard, teaching it to
+  # name which boundary it measured instead of assuming a pull request exists.
+  ".github/workflows/deletions-declare-themselves.yml",
+  ".github/workflows/document-register.yml",
+  ".github/workflows/licence-headers.yml",
+  ".github/workflows/publication-guards.yml",
+  "scripts/ci/every_gate_is_reachable_from_a_pull_request.py",
+]
 issues = [212, 214, 215, 220, 222, 223, 226, 227, 228, 229, 230, 231, 232, 233, 261, 260]
 
 [[territory]]

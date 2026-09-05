@@ -237,6 +237,10 @@ def main() -> int:
     reachable: set[str] = set()
     stale: list[str] = []
     checked = 0
+    # Workflows that carry a pull-request trigger at all, counted separately
+    # from the jobs behind one. The difference between "the policy removed them"
+    # and "the reader stopped reading" is exactly this number.
+    pr_triggers = 0
     seen: set[str] = set()
     for f in files:
         try:
@@ -270,6 +274,7 @@ def main() -> int:
         pr_events = events & {"pull_request", "pull_request_target"}
         if not pr_events:
             continue
+        pr_triggers += 1
         target_only = pr_events == {"pull_request_target"}
         for name, job in (doc.get("jobs") or {}).items():
             runs_on = job.get("runs-on")
@@ -347,8 +352,35 @@ def main() -> int:
                      "outlives what it describes starts protecting nothing.")
 
     if checked == 0:
-        print("[pr-runner] FATAL: no pull_request-triggered job was found at all.",
-              file=sys.stderr)
+        # ZERO IS THE POLICY NOW, AND IT IS STILL NOT A SILENT PASS.
+        #
+        # Until 05-09-2026 nothing found here meant the scan had lost its glob:
+        # there were pull-request jobs, so finding none was a broken reader.
+        # #333 removed every `pull_request` trigger while this repository is
+        # private -- the included Actions minutes were spent and the account had
+        # started billing, and each guard was running twice, once for the pull
+        # request and once for the push behind it, over work the local pre-push
+        # gate had already refused to let out.
+        #
+        # So zero is now the state this guard is asking for, and the honest
+        # answer is to say which of the two it is. It distinguishes them by
+        # looking: a repository whose workflows carry no pull_request trigger at
+        # all is the policy; one that has them and yields no job is a reader
+        # that stopped reading.
+        #
+        # THE PUBLIC PHASE: when a pull request can come from somebody other
+        # than the owner, the triggers come back and so does the count. The rule
+        # in this file does not change -- there is simply nothing to apply it to
+        # today, which is a different sentence from "nothing broke it".
+        if pr_triggers == 0:
+            print("[pr-runner] no pull_request trigger exists in any workflow, "
+                  "so no job can run pull-request code anywhere -- the private "
+                  "phase of #333. Nothing was compared; that is the policy, not "
+                  "a clean scan.")
+            return 0
+        print("[pr-runner] FATAL: workflows carry a pull_request trigger and yet "
+              "no job was found behind one. That is a reader that stopped "
+              "reading, not a clean tree.", file=sys.stderr)
         return 2
 
     if problems or stale:
