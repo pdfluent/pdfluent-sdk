@@ -369,8 +369,14 @@ run jobimports python3 scripts/ci/a_job_has_what_its_scripts_import.py
 run jobdoes   python3 scripts/ci/every_job_does_something.py
 run jobdoestst python3 scripts/ci/test_every_job_does_something.py
 run noai      python3 scripts/ci/no_ai_attribution.py
-# 76 seconds, measured, and it is the most expensive Python gate here. It runs
-# `seed_public_repo.sh` end to end six times over a four-commit fixture, because
+# 170 seconds, measured 05-09-2026, and it is the most expensive Python gate
+# here. It was 76 before the replacement list (#222) added six more cases, four
+# of which run the script end to end again -- the ones that prove a term is gone
+# from every commit of the repository that would be published, and that the list
+# cannot be used to rewrite anything a rule does not call internal.
+#
+# It runs `seed_public_repo.sh` end to end ten times over a four-commit fixture,
+# because
 # the properties that matter -- an internal path dropped, a withdrawn blob gone
 # under any name, a personal address rewritten, a surviving file unchanged -- are
 # properties of the repository that would be PUBLISHED, and none of them can be

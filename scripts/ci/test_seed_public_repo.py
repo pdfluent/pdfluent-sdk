@@ -143,6 +143,12 @@ def seed_env(cwd: pathlib.Path, terms: pathlib.Path | None = None) -> dict:
     """
     env = sealed_env(cwd=cwd)
     env["PDFLUENT_INTERNE_TERMEN"] = str(terms) if terms else str(cwd / "terms.txt")
+    # And the replacement list, sealed the same way and for a sharper reason: its
+    # default is a file in the operator's home. A case that fell through to it
+    # would be testing whatever redactions that machine happens to have written,
+    # and would pass or fail differently on the runner -- while the cases that
+    # mean to exercise the list pass their own through `extra`.
+    env["PDFLUENT_SEED_VERVANGINGEN"] = str(cwd / "no-replacements.txt")
     return env
 
 
@@ -219,7 +225,7 @@ def main() -> int:
         # on purpose. It is the narrower and still sufficient one: of the files
         # that stay, every one is the same blob.
         ok_all &= case("and it verifies that no surviving file changed",
-                       "every publishable path still holds the same blob" in out,
+                       "every publishable path holds the blob it held" in out,
                        out[-300:])
         ok_all &= case("tags come along", "2 ref(s) ready" in out or "ref(s) ready" in out,
                        out[-300:])
@@ -329,10 +335,145 @@ def main() -> int:
         git("commit", "-q", "-m", "a readme", cwd=src)
         u = run_seed(src, env=seed_env(src, termen))
         out = u.stdout + u.stderr
+        # With no replacement list the answer is a refusal, and it comes BEFORE
+        # the rewrite rather than after it: the blob scan that would build the
+        # replacements is the scan that finds the term, and telling the operator
+        # an hour of filter-branch later that the check was always going to fail
+        # is telling them nothing they can act on sooner.
         ok_all &= case("an internal term in a file that would be published is a "
-                       "refusal",
-                       u.returncode != 0 and "internal term(s) in file content" in out,
+                       "refusal when no replacement covers it",
+                       u.returncode != 0
+                       and "still carry an internal term" in out
+                       and "does not guess at a redaction" in out,
                        out[-400:])
+
+    # ---------------------------------------------------------------------
+    # THE REPLACEMENT LIST (#222). The path filter cannot reach a term inside a
+    # file that has to go out. Each case reads the repository that would have
+    # been PUBLISHED.
+    # ---------------------------------------------------------------------
+
+    def with_terms_everywhere(tmp: pathlib.Path) -> pathlib.Path:
+        """A source whose term is in file content, in a message, and in history."""
+        src = source_repo(tmp)
+        (src / "README.md").write_text(f"written for {FIXTURE_TERM}\n", encoding="utf-8")
+        git("add", "-A", cwd=src)
+        git("commit", "-q", "-m", f"a readme, for {FIXTURE_TERM}", cwd=src)
+        # And a later commit that takes it out of the TREE. The tip is then clean
+        # and the history is not, which is the state the real repository is in:
+        # every content hit measured on master on 05-09-2026 was in an old blob.
+        (src / "README.md").write_text("written for a customer\n", encoding="utf-8")
+        git("add", "-A", cwd=src)
+        git("commit", "-q", "-m", "take the name out of the readme", cwd=src)
+        return src
+
+    def replacement_list(tmp: pathlib.Path, text: str) -> pathlib.Path:
+        f = tmp / "replacements.txt"
+        f.write_text(text, encoding="utf-8")
+        return f
+
+    def seed_env_with(cwd, terms, repl):
+        env = seed_env(cwd, terms)
+        env["PDFLUENT_SEED_VERVANGINGEN"] = str(repl)
+        return env
+
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = with_terms_everywhere(tmp)
+        repl = replacement_list(tmp, f"# reviewed\n{FIXTURE_TERM}==>a customer\n")
+        dest = tmp / "dest.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(dest)],
+                       capture_output=True, env=sealed_env(cwd=tmp), check=True)
+        u = subprocess.run(["bash", str(SCRIPT), str(src), str(dest), "--push"],
+                           capture_output=True, text=True,
+                           env=seed_env_with(src, termen, repl), timeout=600)
+        out = u.stdout + u.stderr
+        ok_all &= case("with a reviewed replacement the seeding completes",
+                       u.returncode == 0 and "done" in out, out[-500:])
+        # The property that matters, and it cannot be read off what the script
+        # printed: the term is in NO object of the published repository, at any
+        # commit, under any name.
+        alles = subprocess.run(
+            ["git", "-C", str(dest), "grep", "-h", FIXTURE_TERM, "--all-match", "--", "."],
+            capture_output=True, text=True, env=sealed_env(cwd=dest)).stdout
+        rev = subprocess.run(["git", "-C", str(dest), "rev-list", "--all"],
+                             capture_output=True, text=True,
+                             env=sealed_env(cwd=dest)).stdout.split()
+        inhoud = vervangen = ""
+        for sha in rev:
+            inhoud += subprocess.run(
+                ["git", "-C", str(dest), "grep", "-h", FIXTURE_TERM, sha],
+                capture_output=True, text=True, env=sealed_env(cwd=dest)).stdout
+            vervangen += subprocess.run(
+                ["git", "-C", str(dest), "grep", "-h", "a customer", sha],
+                capture_output=True, text=True, env=sealed_env(cwd=dest)).stdout
+        ok_all &= case("the term is in no published blob, at any commit",
+                       FIXTURE_TERM not in alles and FIXTURE_TERM not in inhoud,
+                       (alles + inhoud)[:300])
+        berichten = subprocess.run(["git", "-C", str(dest), "log", "--all", "--format=%B"],
+                                   capture_output=True, text=True,
+                                   env=sealed_env(cwd=dest)).stdout
+        ok_all &= case("the term is in no published commit message",
+                       FIXTURE_TERM not in berichten, berichten[:300])
+        # Not only "the term is gone": a filter that dropped the file would
+        # satisfy that too. The replacement has to be standing there, in the old
+        # commit as well as in the message.
+        ok_all &= case("and the replacement is what stands in its place",
+                       "a customer" in vervangen and "a customer" in berichten,
+                       (vervangen + berichten)[:300])
+        # A rewrite that changes a neighbour is worse than the term it removed.
+        gebleven = subprocess.run(["git", "-C", str(dest), "show", "master:a.txt"],
+                                  capture_output=True, text=True,
+                                  env=sealed_env(cwd=dest)).stdout
+        ok_all &= case("a file carrying no term is byte for byte what it was",
+                       gebleven == "first\n", repr(gebleven))
+
+    # The list may only replace what a rule calls internal. Anything else would
+    # make the seeding a general rewriting facility over published content,
+    # operated by whoever edits a file outside the tree.
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = with_terms_everywhere(tmp)
+        repl = replacement_list(tmp, "AGPL-3.0-only==>MIT\n")
+        u = subprocess.run(["bash", str(SCRIPT), str(src)], capture_output=True,
+                           text=True, env=seed_env_with(src, termen, repl), timeout=600)
+        out = u.stdout + u.stderr
+        ok_all &= case("a replacement of something no rule calls internal is refused",
+                       u.returncode != 0 and "no rule in geen_interne_zaken" in out,
+                       out[-400:])
+
+    # And the other direction: a substitution that carries a term of its own
+    # would move the exposure rather than end it.
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = with_terms_everywhere(tmp)
+        # The fixture's own term on the right-hand side, rather than something
+        # in the shape of a hostname or a revenue word: any literal that matches
+        # a rule would do, and every one of those except this one would put a
+        # string the guards call internal into a tracked file.
+        repl = replacement_list(tmp, f"{FIXTURE_TERM}==>a note about {FIXTURE_TERM}\n")
+        u = subprocess.run(["bash", str(SCRIPT), str(src)], capture_output=True,
+                           text=True, env=seed_env_with(src, termen, repl), timeout=600)
+        out = u.stdout + u.stderr
+        ok_all &= case("a replacement that carries an internal term is refused",
+                       u.returncode != 0 and "also calls internal" in out, out[-400:])
+
+    # A line that is neither a comment nor `literal==>replacement` has no
+    # readable intention, and guessing at one rewrites published history.
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = with_terms_everywhere(tmp)
+        repl = replacement_list(tmp, f"{FIXTURE_TERM}\n")
+        u = subprocess.run(["bash", str(SCRIPT), str(src)], capture_output=True,
+                           text=True, env=seed_env_with(src, termen, repl), timeout=600)
+        out = u.stdout + u.stderr
+        ok_all &= case("a malformed replacement line is refused, before the rewrite",
+                       u.returncode != 0 and "carries no `==>`" in out
+                       and "trailer lines after the rewrite" not in out, out[-400:])
 
     with tempfile.TemporaryDirectory() as d:
         tmp = pathlib.Path(d)
