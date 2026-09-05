@@ -67,6 +67,37 @@
 # With --push it still refuses unless the destination is empty, because seeding
 # over an existing history is a different operation that nobody asked for.
 #
+# THE RUN THAT VERIFIES AND THE RUN THAT PUBLISHES ARE THE SAME RUN
+#
+# `--keep <dir>` writes the verified mirror out instead of deleting it, and
+# `--publish <dir> <destination>` pushes that mirror after verifying it again.
+# The two exist because #222 asks for the seeded result to be checked by hand
+# before it is published, and there were only two other ways to arrange that:
+# check the dry run and then push a SECOND rewrite -- which is not the artefact
+# anybody looked at -- or push first and read afterwards, which is the one order
+# that cannot be undone. Measured on this history the rewrite is about two and a
+# half hours, so "just run it twice" is also how the checking stops happening.
+#
+# `--publish` re-runs the verification rather than trusting the directory. A
+# mirror on disk between two commands is a mirror somebody can edit, and the
+# check is cheap next to what it guards.
+#
+# --branch: THE SEEDED BRANCH IS NOT ALWAYS THE SOURCE'S BRANCH
+#
+# This history's branch is `master` and the public repository's default branch is
+# `main` (#222). `git push --mirror` would create `master` there and leave `main`
+# a default pointing at nothing -- a repository whose front page is empty. The
+# rename is a decision, so it is an argument and not a default.
+#
+# --replace: A DESTINATION THAT IS NOT EMPTY
+#
+# The refusal above is the right default and stays it. `pdfluent/pdfluent-sdk`
+# holds an eight-commit placeholder (a README, a LICENSE from before #220, and
+# five scripts), and GitHub does not let its default branch be deleted, so there
+# is no way to hand this script an empty destination there. #222 decided that
+# placeholder is replaced by the seeding. `--replace` says so out loud, prints
+# what is about to be overwritten, and is the only way past the refusal.
+#
 # IT NEEDS PYTHON, AND THAT IS NEW
 #
 # The previous version said it must run where only git is installed. It no longer
@@ -83,25 +114,106 @@ BRON=""
 DOEL=""
 PUSH=0
 ALIAS=""
+BEWAAR=""
+TAK=""
+PUBLICEER=0
+VERVANG=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --push)  PUSH=1 ;;
+        --publish) PUBLICEER=1 ;;
+        --replace) VERVANG=1 ;;
         --alias) ALIAS="${2-}"; shift ;;
         --alias=*) ALIAS="${1#--alias=}" ;;
+        --keep)  BEWAAR="${2-}"; shift ;;
+        --keep=*) BEWAAR="${1#--keep=}" ;;
+        --branch) TAK="${2-}"; shift ;;
+        --branch=*) TAK="${1#--branch=}" ;;
         -*)      echo "[seed] unknown option: $1" >&2; exit 2 ;;
         *)       if [ -z "$BRON" ]; then BRON="$1"; else DOEL="$1"; fi ;;
     esac
     shift
 done
 
+GEBRUIK="usage: seed_public_repo.sh <source-repo-or-url> [<destination-url>] \
+[--alias <addr>] [--branch <name>] [--keep <dir>] [--push]
+   or: seed_public_repo.sh --publish <kept-mirror-dir> <destination-url> [--replace]"
+
 if [ -z "$BRON" ]; then
-    echo "usage: seed_public_repo.sh <source-repo-or-url> [<destination-url>] [--alias <addr>] [--push]" >&2
+    echo "$GEBRUIK" >&2
     exit 2
 fi
+
+# The list of object ids that must not be reachable, written beside a kept mirror
+# so `--publish` verifies against the same list the rewrite was planned with.
+# Regenerating it from the rewritten mirror would answer a different question:
+# the rewrite removed those paths, so the plan would come back empty and the
+# check would pass by having nothing to look for.
+INGETROKKEN_NAAST="withdrawn-oids.txt"
 
 if [ ! -f "$FILTER" ]; then
     echo "[seed] REFUSED: $FILTER is missing, so the history would be published" >&2
     echo "  unfiltered. That is the one failure here that cannot be undone." >&2
+    exit 1
+fi
+
+# Seeding over an existing history is a different operation, and not this one.
+# `--replace` is the one way past it, and it says what it is overwriting first --
+# a count read off the destination and not off the operator's memory of it.
+doel_is_bruikbaar() {
+    _doel="$1"
+    _bestaand="$(git ls-remote --heads "$_doel" 2>/dev/null || true)"
+    if [ -z "$_bestaand" ]; then
+        return 0
+    fi
+    if [ "$VERVANG" != "1" ]; then
+        echo "[seed] REFUSED: $_doel already has branches." >&2
+        echo "  This script seeds an empty repository. Overwriting a published" >&2
+        echo "  history is a decision somebody has to make on purpose -- say so" >&2
+        echo "  with --replace." >&2
+        return 1
+    fi
+    echo "[seed] --replace: $_doel is not empty and will be overwritten. What is"
+    echo "  there now:"
+    printf '%s\n' "$_bestaand" | sed 's/^/    /'
+    return 0
+}
+
+if [ "$PUBLICEER" = "1" ]; then
+    # BRON is the kept mirror, DOEL the destination. Nothing is rewritten here:
+    # this publishes bytes that already exist, and its whole job is to prove they
+    # are still the bytes that were verified before it pushes them.
+    if [ -z "$DOEL" ]; then
+        echo "[seed] --publish needs a destination." >&2
+        exit 2
+    fi
+    if [ ! -d "$BRON" ] || [ ! -e "$BRON/HEAD" ]; then
+        echo "[seed] REFUSED: $BRON is not a bare repository, so there is nothing" >&2
+        echo "  verified to publish. Run the seeding with --keep first." >&2
+        exit 1
+    fi
+    LIJST="$BRON/$INGETROKKEN_NAAST"
+    if [ ! -s "$LIJST" ]; then
+        echo "[seed] REFUSED: $LIJST is missing or empty, so the withdrawn objects" >&2
+        echo "  cannot be checked. A mirror kept by this script carries that list;" >&2
+        echo "  one that does not is not a mirror this script verified." >&2
+        exit 1
+    fi
+    echo "[seed] re-verifying $BRON before publishing it"
+    if ! python3 "$FILTER" verify "$BRON" --withdrawn "$LIJST"; then
+        echo "[seed] FAILED: the kept mirror is not publishable. Nothing was pushed." >&2
+        exit 1
+    fi
+    doel_is_bruikbaar "$DOEL" || exit 1
+    echo "[seed] pushing to $DOEL"
+    git -C "$BRON" push --mirror "$DOEL"
+    echo "[seed] done"
+    exit 0
+fi
+
+if [ -n "$BEWAAR" ] && [ -e "$BEWAAR" ]; then
+    echo "[seed] REFUSED: --keep $BEWAAR already exists. Publishing the wrong" >&2
+    echo "  mirror is exactly the mistake an overwrite here would cause." >&2
     exit 1
 fi
 
@@ -291,8 +403,37 @@ if ! python3 "$FILTER" verify "$SPIEGEL" --withdrawn "$INGETROKKEN"; then
     exit 1
 fi
 
+# The rename, and here rather than earlier: `trees` prints the ref name in every
+# row, so renaming before the before/after comparison would make every row differ
+# and the script would report that the rewrite changed every file it kept.
+# Nothing above this line reads a branch by name.
+if [ -n "$TAK" ]; then
+    HUIDIG="$(git -C "$SPIEGEL" symbolic-ref --quiet --short HEAD || true)"
+    if [ -z "$HUIDIG" ]; then
+        echo "[seed] REFUSED: the mirror has no current branch, so there is nothing" >&2
+        echo "  --branch could rename. Seed from a source whose HEAD is a branch." >&2
+        exit 1
+    fi
+    if [ "$HUIDIG" != "$TAK" ]; then
+        # `branch -m` moves HEAD with the ref, which is what makes the destination
+        # default branch land on something that exists.
+        git -C "$SPIEGEL" branch -m "$HUIDIG" "$TAK"
+        echo "[seed] branch $HUIDIG renamed to $TAK, and HEAD points at it"
+    fi
+fi
+
 REFS="$(git -C "$SPIEGEL" for-each-ref --format='%(refname)' 'refs/heads/*' 'refs/tags/*' | wc -l | tr -d ' ')"
 echo "[seed] $REFS ref(s) ready, $VOOR trailer line(s) and $AANTAL_UIT internal path(s) removed"
+
+# Kept before the push and not after it, so a mirror exists to look at even when
+# the push is the thing that fails.
+if [ -n "$BEWAAR" ]; then
+    mkdir -p "$(dirname "$BEWAAR")"
+    cp -R "$SPIEGEL" "$BEWAAR"
+    cp "$INGETROKKEN" "$BEWAAR/$INGETROKKEN_NAAST"
+    echo "[seed] verified mirror kept at $BEWAAR"
+    echo "  publish it with: seed_public_repo.sh --publish $BEWAAR <destination>"
+fi
 
 if [ "$PUSH" != "1" ]; then
     echo "[seed] not pushing. Re-run with a destination and --push to publish."
@@ -304,13 +445,7 @@ if [ -z "$DOEL" ]; then
     exit 2
 fi
 
-# Seeding over an existing history is a different operation, and not this one.
-if [ -n "$(git ls-remote --heads "$DOEL" 2>/dev/null)" ]; then
-    echo "[seed] REFUSED: $DOEL already has branches." >&2
-    echo "  This script seeds an empty repository. Overwriting a published" >&2
-    echo "  history is a decision somebody has to make on purpose." >&2
-    exit 1
-fi
+doel_is_bruikbaar "$DOEL" || exit 1
 
 echo "[seed] pushing to $DOEL"
 git -C "$SPIEGEL" push --mirror "$DOEL"
