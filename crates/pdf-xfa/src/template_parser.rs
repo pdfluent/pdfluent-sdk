@@ -22,7 +22,7 @@
 use roxmltree::Node;
 
 use xfa_layout_engine::form::{
-    AnchorType, ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId,
+    Access, AnchorType, ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId,
     FormNodeMeta, FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence,
     ScriptLanguage,
 };
@@ -542,9 +542,23 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
     let (data_bind_ref, data_bind_none) = parse_bind(elem);
     let anchor_type = parse_anchor_type(elem);
 
+    // (k) Access, multiline and required. The merger's reader has always read
+    // these three off the same element; this one left them at their defaults,
+    // and `session.rs` resolves an absent `access` to `Access::Open`. So a
+    // field the template declares `access="readOnly"` was protected on one
+    // route and editable on the other, from the same file (#208). The two
+    // helpers come from `merger.rs` rather than being written again here --
+    // a second copy is the defect, not the fix.
+    let access = attr(elem, "access").map(Access::parse);
+    let multiline = crate::merger::parse_multiline(elem);
+    let required = crate::merger::parse_required(elem);
+
     FormNodeMeta {
         xfa_id,
         presence,
+        access,
+        multiline,
+        required,
         page_break_before,
         page_break_after,
         break_target,

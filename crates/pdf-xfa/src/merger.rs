@@ -2321,7 +2321,10 @@ fn parse_items_lists(elem: Node<'_, '_>) -> (Vec<String>, Vec<String>) {
 
 /// XFA 3.3 §6.1 — a field is multiline when its `<ui><textEdit>` declares
 /// `multiLine="1"` (or the non-canonical `"true"` some producers emit).
-fn parse_multiline(elem: Node<'_, '_>) -> bool {
+///
+/// `pub(crate)` because `template_parser.rs` reads the same element and must
+/// reach the same answer; a second copy there is what #208 is about.
+pub(crate) fn parse_multiline(elem: Node<'_, '_>) -> bool {
     let Some(ui) = find_first_child_by_name(elem, "ui") else {
         return false;
     };
@@ -2332,7 +2335,9 @@ fn parse_multiline(elem: Node<'_, '_>) -> bool {
 }
 
 /// XFA 3.3 §6.3 — `<validate nullTest="error">` marks a mandatory field.
-fn parse_required(elem: Node<'_, '_>) -> bool {
+///
+/// `pub(crate)` for the same reason as `parse_multiline`.
+pub(crate) fn parse_required(elem: Node<'_, '_>) -> bool {
     find_first_child_by_name(elem, "validate")
         .and_then(|v| attr(v, "nullTest"))
         .map(|s| s == "error")
