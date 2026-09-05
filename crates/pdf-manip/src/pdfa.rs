@@ -392,7 +392,11 @@ pub(crate) fn compact_storage(doc: &mut Document) {
         // PDF/A-1 metadata must remain unfiltered. Keep it so for every level.
         // Do not add a filter to external-file streams or activate previously
         // inactive DecodeParms. Existing image codecs/filters stay untouched.
-        if metadata.contains(id)
+        // A caller of the public `convert_document` can mark a stream as one
+        // that compression would corrupt; honour that flag as lopdf's own
+        // `Document::compress` does.
+        if !s.allows_compression
+            || metadata.contains(id)
             || s.dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"Metadata")
             || [
                 b"Filter".as_slice(),
@@ -785,6 +789,19 @@ mod tests {
             once.len(),
             twice.len()
         );
+    }
+
+    #[test]
+    fn storage_compaction_leaves_streams_that_refuse_compression_alone() {
+        use lopdf::{Object, Stream};
+        let mut doc = Document::load_mem(&minimal_pdf()).unwrap();
+        let raw = Stream::new(dictionary! {}, vec![42; 4096]).with_compression(false);
+        let id = doc.add_object(raw.clone());
+        doc.catalog_mut()
+            .unwrap()
+            .set("Preserve", Object::Reference(id));
+        compact_storage(&mut doc);
+        assert_eq!(doc.get_object(id).unwrap().as_stream().unwrap(), &raw);
     }
 
     #[test]
