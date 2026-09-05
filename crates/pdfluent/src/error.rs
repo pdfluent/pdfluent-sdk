@@ -429,11 +429,23 @@ impl std::fmt::Display for Error {
                 capability,
                 current_tier,
                 required_tier,
-            } => write!(
-                f,
-                "Capability {capability:?} requires tier {required_tier:?}; current tier is {current_tier:?}.\n  Upgrade: https://pdfluent.com/pricing\n  Docs: {}",
-                self.docs_url()
-            ),
+            } => {
+                // On Trial the useful next step is a free evaluation key, not a
+                // price list. Sending an evaluating developer to /pricing when
+                // they can have the feature working in a minute for nothing is
+                // the most expensive sentence in the funnel. Above Trial the
+                // key already exists, so the price list is the right pointer.
+                let next_step = if *current_tier == Tier::Trial {
+                    "  Free 30-day evaluation key, no card: https://pdfluent.com/sdk\n  Pricing: https://pdfluent.com/pricing"
+                } else {
+                    "  Upgrade: https://pdfluent.com/pricing"
+                };
+                write!(
+                    f,
+                    "Capability {capability:?} requires tier {required_tier:?}; current tier is {current_tier:?}.\n{next_step}\n  Docs: {}",
+                    self.docs_url()
+                )
+            }
             Error::CapabilityNotCompiled {
                 capability,
                 feature_flag,
@@ -631,6 +643,53 @@ impl From<pdf_redact::RedactError> for Error {
 
 #[cfg(test)]
 mod tests {
+    /// A tier refusal must always name a way out.
+    ///
+    /// This is the promise the bindings inherit: the message says what is not
+    /// available *and* where to get a key. Two bindings had quietly broken it
+    /// by paraphrasing this text into their own sentence -- Python dropped the
+    /// link entirely, Node never carried one -- so the caller learned only
+    /// that they were blocked. Assert it here, at the source, because that is
+    /// the one place all five bindings read from.
+    #[test]
+    fn a_tier_refusal_always_names_a_route_to_a_key() {
+        for (current, required, expect) in [
+            (Tier::Trial, Tier::Business, "https://pdfluent.com/sdk"),
+            (
+                Tier::Developer,
+                Tier::Business,
+                "https://pdfluent.com/pricing",
+            ),
+            (Tier::Team, Tier::Enterprise, "https://pdfluent.com/pricing"),
+        ] {
+            let text = Error::FeatureNotInTier {
+                capability: Capability::DocxExport,
+                current_tier: current,
+                required_tier: required,
+            }
+            .to_string();
+            assert!(
+                text.contains(expect),
+                "{current:?} -> {required:?} does not point at {expect}: {text}"
+            );
+        }
+    }
+
+    /// On Trial the route must be the free key, not the price list. Someone
+    /// evaluating the SDK has not decided to buy yet; sending them to pricing
+    /// asks for a decision they cannot make and hides the thing that would let
+    /// them try it.
+    #[test]
+    fn trial_is_offered_a_free_key_rather_than_a_price_list() {
+        let text = Error::FeatureNotInTier {
+            capability: Capability::DocxExport,
+            current_tier: Tier::Trial,
+            required_tier: Tier::Business,
+        }
+        .to_string();
+        assert!(text.contains("evaluation"), "no free-key offer: {text}");
+    }
+
     use super::*;
     use std::collections::HashSet;
 
