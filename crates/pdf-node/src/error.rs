@@ -71,13 +71,15 @@ pub fn pdfluent_err_to_napi(err: pdfluent::Error, operation: &str) -> napi::Erro
     // can render it but typed callers branch on `code` instead.
     let (message, cause): (&'static str, String) = match &err {
         pdfluent::Error::InvalidLicense { reason } => ("license key is invalid", reason.clone()),
-        pdfluent::Error::FeatureNotInTier {
-            capability,
-            current_tier,
-            required_tier,
-        } => (
+        // The cause carries the core's own text, not a paraphrase. That text
+        // ends with a route to a key -- a free-evaluation link on Trial, the
+        // pricing page otherwise -- and the paraphrase dropped it, leaving a
+        // Node caller told what they could not do and nothing about how to fix
+        // it. The stable `message` stays constant so typed callers can keep
+        // matching on it.
+        pdfluent::Error::FeatureNotInTier { .. } => (
             "feature not available in current license tier",
-            format!("{capability:?} requires {required_tier:?}; current tier is {current_tier:?}"),
+            err.to_string(),
         ),
         pdfluent::Error::CapabilityNotCompiled {
             capability,
