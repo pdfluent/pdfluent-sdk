@@ -22,7 +22,7 @@
 //! - §8.7 Content Splitting:                      ✅ text-line splitting + container splitting
 //! - §8.8 Pagination Strategies:                  ✅ orderedOccurrence (sequential by default)
 //! - §8.9 Adhesion (keep):                        ✅ keep-chain look-ahead (keep.next/previous)
-//! - §8.10 Leaders/Trailers:                      ✅ per-page leader/trailer; ⚠️ overflow/bookend
+//! - §8.10 Leaders/Trailers:                      ✅ per-page + overflow (SOM-refs); ⚠️ break/bookend
 //! - §8.11 Tables:                                ✅ columnWidths, colSpan, row equalization
 //! - Appendix A: Coordinate algorithms:           ✅ anchorType (all 9 variants)
 //! - Appendix B: Layout Objects:                  ✅ area, exclGroup, subformSet
@@ -2182,12 +2182,20 @@ impl<'a> LayoutEngine<'a> {
         // trailer (placed at bottom) on every page that uses the content area,
         // including overflow pages.
         //
-        // Not yet implemented:
-        //   - ⚠️ break leaders/trailers (appear only on page-break pages)
-        //   - ⚠️ bookend leaders/trailers (appear on first/last occurrence pages)
-        //   - ⚠️ overflow leaders/trailers with occurrence limits and inheritance
-        //   - ⚠️ the `<overflow leader="..." trailer="...">` SOM-reference form
-        //     (currently leaders/trailers must be set on ContentArea directly)
+        // Ook geïmplementeerd, sinds deze lijst is geschreven: de
+        // `<overflow leader="..." trailer="...">` SOM-verwijzingsvorm. Zie
+        // `resolve_overflow_refs`, `lookup_overflow_target` en
+        // `content_area_with_overflow`; die worden aangeroepen op de
+        // overloop-paden. De regel hieronder beweerde tot 24-08-2026 dat
+        // leaders alleen rechtstreeks op de ContentArea konden staan, en dat
+        // was al een tijd niet meer waar.
+        //
+        // Niet geïmplementeerd:
+        //   - ⚠️ break leaders/trailers (alleen op pagina's met een paginabreuk)
+        //   - ⚠️ bookend leaders/trailers (op de eerste en laatste pagina van
+        //     een subform). `bookend` komt nergens in de codebase voor: niet in
+        //     de parser, niet hier. Zie #150.
+        //   - ⚠️ overflow leaders/trailers met occurrence-limieten en overerving
         let mut leader_height = 0.0;
         let mut trailer_height = 0.0;
 
