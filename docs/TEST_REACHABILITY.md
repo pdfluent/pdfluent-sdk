@@ -6,11 +6,11 @@ Een ondergrens, geen dekkingscijfer: dit zegt of een functie tijdens de tests oo
 
 Niet meegeteld als test: bindingtests buiten de Rust-boom (Python, Node, Java, .NET, WASM), en `examples/`. `pdf-desktop`-commando's worden vanuit de frontend aangeroepen en horen hier dus thuis zonder dat het een bevinding is.
 
-**76 van 673 publieke functies** (11.3%).
+**69 van 673 publieke functies** (10.3%).
 
 Daarvan dragen er **38** een uitleg: 16 worden per constructie van buiten Rust aangeroepen (`#[tauri::command]`, een binding-attribuut, een C-ABI-export), 7 zijn een omhulsel dat niets doet dan doorgeven aan een variant die wél getest wordt, en 15 dragen een gemeten besluit in hun eigen doc-commentaar.
 
-De overige **38** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
+De overige **31** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, en het is geen verzameling besluiten maar een lijst gaten: niemand heeft ze getest en niemand heeft opgeschreven waarom niet. Een functie die hier bij komt verschijnt in de diff als `(geen reden opgegeven)` — precies waar een reviewer kijkt.
 
 | crate | onbereikt | publiek |
 |---|---:|---:|
@@ -19,13 +19,12 @@ De overige **38** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 | `pdf-manip` | 6 | 111 |
 | `pdf-ocr` | 6 | 26 |
 | `pdf-sign` | 6 | 23 |
-| `pdf-xfa` | 5 | 60 |
 | `xfa-test-runner` | 4 | 26 |
 | `cff-parser` | 3 | 8 |
-| `formcalc-interpreter` | 3 | 6 |
 | `lopdf` | 3 | 28 |
 | `pdf-node` | 3 | 12 |
 | `pdf-engine` | 2 | 9 |
+| `formcalc-interpreter` | 1 | 6 |
 | `hayro-jpeg2000` | 1 | 1 |
 | `pdf-annot` | 1 | 4 |
 | `pdf-bench` | 1 | 1 |
@@ -43,8 +42,6 @@ De overige **38** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 
 ## formcalc-interpreter
 
-- `call_dom_builtin`  — *(geen reden opgegeven)*
-- `call_som_builtin`  — *(geen reden opgegeven)*
 - `stack_position`  — *gemeten besluit*
 
 ## hayro-jpeg2000
@@ -143,14 +140,6 @@ De overige **38** staan hier zonder uitleg. Dat is het getal dat omlaag hoort, e
 - `request_timestamp`  — *gemeten besluit*
 - `sign_pdf_ltv`  — *gemeten besluit*
 - `verify_certificate_chain`  — *gemeten besluit*
-
-## pdf-xfa
-
-- `draw_appearance`  — *(geen reden opgegeven)*
-- `execute_commands`  — *(geen reden opgegeven)*
-- `flatten_xfa_to_pdf_with_layout_dump_and_metadata`  — *(geen reden opgegeven)*
-- `generate_appearances`  — *(geen reden opgegeven)*
-- `multiline_appearance`  — *(geen reden opgegeven)*
 
 ## xfa-cli
 
