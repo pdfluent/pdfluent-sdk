@@ -508,6 +508,7 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
 
     // (e) Overflow leader/trailer.
     let (overflow_leader, overflow_trailer) = parse_overflow(elem);
+    let (bookend_leader, bookend_trailer) = parse_bookend(elem);
 
     // (f) Group kind: exclGroup → ExclusiveChoice.
     let group_kind = if tag == "exclGroup" {
@@ -550,6 +551,8 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
         content_area_break,
         overflow_leader,
         overflow_trailer,
+        bookend_leader,
+        bookend_trailer,
         keep_next_content_area,
         keep_previous_content_area,
         keep_intact_content_area,
@@ -1191,6 +1194,22 @@ fn parse_keep(elem: Node<'_, '_>) -> (bool, bool, bool) {
 // XFA Spec 3.3 §17 "overflow" (p804-805) — Overflow leader/trailer for pagination:
 // leader: reference to element to render before overflow content
 // trailer: reference to element to render after overflow content
+/// `<bookend leader="..." trailer="...">` (XFA 3.3 §17).
+///
+/// Same shape as `<overflow>`, different pages: the leader belongs on the
+/// first page of this subform, the trailer on the last. Until #150 this
+/// element was read nowhere -- a `<bookend>` in a template disappeared
+/// without a word.
+fn parse_bookend(elem: Node<'_, '_>) -> (Option<String>, Option<String>) {
+    match find_first_child_by_name(elem, "bookend") {
+        Some(bookend) => (
+            attr(bookend, "leader").map(|s| s.to_string()),
+            attr(bookend, "trailer").map(|s| s.to_string()),
+        ),
+        None => (None, None),
+    }
+}
+
 fn parse_overflow(elem: Node<'_, '_>) -> (Option<String>, Option<String>) {
     if let Some(overflow) = find_first_child_by_name(elem, "overflow") {
         let leader = attr(overflow, "leader").map(|s| s.to_string());
@@ -2838,5 +2857,83 @@ mod tests {
 
         assert_eq!(style.border_width_pt, Some(1.0));
         assert_eq!(style.border_widths, Some([1.0, 2.0, 3.0, 4.0]));
+    }
+}
+
+#[cfg(test)]
+mod bookend_parser_tests {
+    //! `<bookend>` has to come out of the template, not out of an assumption.
+    //!
+    //! Without these tests the rest of #150 rests on a parser that may read
+    //! nothing -- and then everything works except the beginning.
+
+    use roxmltree::Document;
+
+    fn first_subform(xml: &str) -> String {
+        let doc = Document::parse(xml).expect("valid XML");
+        let subform = doc
+            .descendants()
+            .find(|n| n.has_tag_name("subform"))
+            .expect("a subform");
+        let (leader, trailer) = super::parse_bookend(subform);
+        format!("{leader:?}/{trailer:?}")
+    }
+
+    #[test]
+    fn reads_leader_and_trailer() {
+        let xml = r#"<template><subform name="a">
+            <bookend leader="Head" trailer="Foot"/>
+        </subform></template>"#;
+        assert_eq!(first_subform(xml), r#"Some("Head")/Some("Foot")"#);
+    }
+
+    #[test]
+    fn either_of_the_two_may_be_absent() {
+        let xml = r#"<template><subform name="a">
+            <bookend leader="Head"/>
+        </subform></template>"#;
+        assert_eq!(first_subform(xml), r#"Some("Head")/None"#);
+    }
+
+    #[test]
+    fn without_a_bookend_nothing() {
+        let xml = r#"<template><subform name="a"/></template>"#;
+        assert_eq!(first_subform(xml), "None/None");
+    }
+
+    /// The easiest mistake to make: reading `<overflow>` where `<bookend>`
+    /// stands, or the other way round. They carry the same attributes and
+    /// serve different pages.
+    #[test]
+    fn overflow_is_not_a_bookend() {
+        let xml = r#"<template><subform name="a">
+            <overflow leader="OverflowHead" trailer="OverflowFoot"/>
+        </subform></template>"#;
+        assert_eq!(
+            first_subform(xml),
+            "None/None",
+            "parse_bookend reads an <overflow> as though it were a <bookend>"
+        );
+    }
+
+    #[test]
+    fn the_two_side_by_side_stay_separate() {
+        let xml = r#"<template><subform name="a">
+            <overflow leader="OHead" trailer="OFoot"/>
+            <bookend leader="BHead" trailer="BFoot"/>
+        </subform></template>"#;
+        let doc = Document::parse(xml).unwrap();
+        let subform = doc
+            .descendants()
+            .find(|n| n.has_tag_name("subform"))
+            .unwrap();
+        assert_eq!(
+            super::parse_bookend(subform),
+            (Some("BHead".into()), Some("BFoot".into()))
+        );
+        assert_eq!(
+            super::parse_overflow(subform),
+            (Some("OHead".into()), Some("OFoot".into()))
+        );
     }
 }
