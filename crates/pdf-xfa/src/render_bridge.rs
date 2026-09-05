@@ -2970,6 +2970,8 @@ fn render_rich_multiline(
 
     let mut cur_font_ref = base_font_ref;
     let mut cur_fs = font_size;
+    // Text rise (`Ts`) starts at zero; see the span loop below.
+    let mut cur_rise: f64 = 0.0;
     let mut cur_tc = base_tc;
     write_ops(
         ops,
@@ -3027,6 +3029,20 @@ fn render_rich_multiline(
                     cur_font_ref = span_font_ref;
                     cur_fs = span_fs;
                 }
+                // Baseline shift for `<sub>` and `<sup>` (#151).
+                //
+                // `Ts` is the text rise of ISO 32000-2 §9.3.1: it holds from
+                // here until it is set again, so we write it only on a change
+                // and put it back to zero at the end. Without that last step
+                // every line after a superscript would ride up too.
+                //
+                // The shift is a fraction of the font size, so a superscript in
+                // 8pt text does not sit as high as one in 24pt.
+                let span_rise = span.baseline_shift * span_fs;
+                if (span_rise - cur_rise).abs() > 0.01 {
+                    write_ops(ops, format_args!("{span_rise:.2} Ts\n"));
+                    cur_rise = span_rise;
+                }
                 if (span_tc[0] - cur_tc[0]).abs() > 0.001
                     || (span_tc[1] - cur_tc[1]).abs() > 0.001
                     || (span_tc[2] - cur_tc[2]).abs() > 0.001
@@ -3062,6 +3078,12 @@ fn render_rich_multiline(
         }
     }
     reset_text_style_ops(node_style, ops);
+    // `Ts` belongs to the text state and outlives `ET`. Without this reset
+    // all text after a superscript rides up -- across the whole page, not just
+    // this field.
+    if cur_rise.abs() > 0.01 {
+        ops.extend_from_slice(b"0 Ts\n");
+    }
     ops.extend_from_slice(b"ET\n");
 }
 
@@ -4409,6 +4431,7 @@ mod tests {
                 text_color: None,
                 underline: false,
                 line_through: false,
+                baseline_shift: 0.0,
             },
             RichTextSpan {
                 text: "This form is for your use.".to_string(),
@@ -4419,6 +4442,7 @@ mod tests {
                 text_color: None,
                 underline: false,
                 line_through: false,
+                baseline_shift: 0.0,
             },
         ];
         let lines = vec!["Instructions: This form is for your use.".to_string()];
@@ -4447,6 +4471,7 @@ mod tests {
                 text_color: None,
                 underline: false,
                 line_through: false,
+                baseline_shift: 0.0,
             },
             RichTextSpan {
                 text: "This form is for your use.".to_string(),
@@ -4457,6 +4482,7 @@ mod tests {
                 text_color: None,
                 underline: false,
                 line_through: false,
+                baseline_shift: 0.0,
             },
             RichTextSpan {
                 text: "\u{00A0}\u{00A0}".to_string(),
@@ -4467,6 +4493,7 @@ mod tests {
                 text_color: None,
                 underline: false,
                 line_through: false,
+                baseline_shift: 0.0,
             },
             RichTextSpan {
                 text: "Mail in at least 14 days before".to_string(),
@@ -4477,6 +4504,7 @@ mod tests {
                 text_color: None,
                 underline: false,
                 line_through: false,
+                baseline_shift: 0.0,
             },
         ];
         let lines = vec![

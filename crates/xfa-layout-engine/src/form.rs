@@ -674,6 +674,17 @@ pub struct RichTextSpan {
     pub underline: bool,
     /// Line-through flag.
     pub line_through: bool,
+    /// Vertical shift of the baseline, as a fraction of the font size.
+    ///
+    /// Positive is up (`<sup>`), negative is down (`<sub>`), `0.0` is plain.
+    /// A fraction rather than an absolute measure, so the shift scales with the
+    /// font size -- otherwise a superscript in 8pt text would sit as high as one
+    /// in 24pt text.
+    ///
+    /// Added for #151: `<sub>` and `<sup>` were silently ignored. The text
+    /// stayed, the meaning went -- and in legal and scientific forms that is the
+    /// difference between a footnote marker and an ordinary number.
+    pub baseline_shift: f64,
 }
 
 /// Visual style properties for a form node.
