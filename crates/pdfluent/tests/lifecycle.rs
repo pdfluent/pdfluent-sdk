@@ -356,14 +356,27 @@ fn open_with_memory_limit_rejects_before_reading_large_file() {
 }
 
 #[test]
-fn save_with_linearize_is_noop_in_1_0() {
-    // Per RFC §14 v1.3 + SaveOptions::with_linearize rustdoc: linearize is
-    // accepted but a no-op in 1.0. Assert this behaviour is stable so
-    // users can opt in for forward-compat without runtime surprises.
-    let tmp = std::env::temp_dir().join("pdfluent-test-linearize-noop.pdf");
+fn save_with_linearize_is_refused_rather_than_ignored() {
+    let doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let tmp = std::env::temp_dir().join("pdfluent-test-linearize-refused.pdf");
     let _ = std::fs::remove_file(&tmp);
-    let doc = PdfDocument::open(FIXTURE_PATH).expect("open");
-    doc.save_with(&tmp, pdfluent::SaveOptions::new().with_linearize(true))
-        .expect("save_with linearize=true must not error in 1.0");
-    let _ = std::fs::remove_file(&tmp);
+
+    // Until 23-08-2026 this asserted the opposite: that asking for
+    // linearization succeeded and quietly produced an ordinary file. The flag
+    // was set, stored and read by nothing. A caller who asks for fast web view
+    // has someone downstream depending on it, so silence is the worst answer
+    // of the three available.
+    let err = doc
+        .save_with(
+            &tmp,
+            pdfluent::SaveOptions::new()
+                .with_linearize(true)
+                .with_overwrite(true),
+        )
+        .expect_err("a flag that does nothing must not report success");
+    assert_eq!(err.code(), "E-UNSUPPORTED");
+    assert!(
+        !tmp.exists(),
+        "the refusal still wrote a file, so the caller has an unlinearized PDF anyway"
+    );
 }

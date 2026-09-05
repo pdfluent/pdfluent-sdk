@@ -88,10 +88,10 @@ fn to_images_native_succeeds_on_sample() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn linearize_returns_missing_dependency_on_both_targets() {
+fn linearize_reports_unsupported_rather_than_a_missing_package() {
     let mut doc = enterprise_doc("tests/fixtures/sample.pdf");
     let err = doc.linearize().expect_err("deferred");
-    assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
+    assert_eq!(err.code(), "E-UNSUPPORTED");
 }
 
 #[test]
@@ -102,15 +102,23 @@ fn embed_font_rejects_data_that_is_not_a_font_on_both_targets() {
 }
 
 #[test]
-fn add_decoration_returns_missing_dependency_on_both_targets() {
+fn add_decoration_watermarks_on_both_targets() {
     let mut doc = enterprise_doc("tests/fixtures/sample.pdf");
-    let err = doc
-        .add_decoration(PageDecoration::watermark(
-            "DRAFT",
-            WatermarkOptions::centered(),
-        ))
-        .expect_err("deferred");
-    assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
+
+    // This asserted a failure until 23-08-2026. The watermark runtime it was
+    // waiting for was already in pdf-manip and already reachable from the C
+    // ABI; only the facade refused. Both targets must now do the work, because
+    // "wasm can't" is a claim that needs to be true when it is made.
+    doc.add_decoration(PageDecoration::watermark(
+        "DRAFT",
+        WatermarkOptions::centered(),
+    ))
+    .expect("add_decoration");
+
+    assert!(
+        doc.extract_text().expect("extract_text").contains("DRAFT"),
+        "the watermark is not in the document"
+    );
 }
 
 // ---------------------------------------------------------------------------

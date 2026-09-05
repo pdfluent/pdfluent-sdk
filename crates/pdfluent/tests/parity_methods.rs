@@ -305,10 +305,10 @@ fn insert_image_rejects_out_of_range_page() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn linearize_returns_missing_dependency() {
+fn linearize_reports_unsupported() {
     let mut doc = business_doc("tests/fixtures/sample.pdf");
     let err = doc.linearize().expect_err("linearize should be deferred");
-    assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
+    assert_eq!(err.code(), "E-UNSUPPORTED");
     let msg = format!("{err}");
     assert!(
         msg.contains("linearization"),

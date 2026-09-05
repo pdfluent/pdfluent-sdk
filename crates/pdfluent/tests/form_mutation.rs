@@ -627,15 +627,26 @@ fn set_multi_select_requires_fill_capability() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn flatten_forms_returns_missing_dependency_not_panic() {
+fn flatten_forms_names_the_fields_it_could_not_flatten() {
     let bytes = build_full_form_pdf();
     let mut doc = dev_doc(&bytes);
 
-    let err = doc.flatten_forms().expect_err("flatten deferred");
-    assert_eq!(err.code(), "E-ENV-MISSING-DEPENDENCY");
-    let msg = format!("{err}");
+    // Until 23-08-2026 this asserted that the call failed with
+    // E-ENV-MISSING-DEPENDENCY and a note pointing at issue #1223. The runtime
+    // was never deferred -- pdf-forms implements the whole pipeline -- so the
+    // note went stale and this test kept the stale state pinned in place.
+    //
+    // These fields are bare field dictionaries with no /Rect: there is nowhere
+    // on the page to draw them, so skipping is right. What matters is that the
+    // report says so by name. "Flattened 0 of 4" and "flattened 0" are
+    // different facts, and only one of them tells a caller that the document
+    // they believe is final is still editable.
+    let report = doc.flatten_forms().expect("flatten_forms");
+    assert_eq!(report.fields_flattened, 0);
+    assert!(!report.is_complete(), "skipped fields were reported as complete");
     assert!(
-        msg.contains("flatten") || msg.contains("1223"),
-        "error should explain the deferred-runtime state, got: {msg}",
+        report.skipped.contains(&"first_name".to_string()),
+        "the skipped field is not named: {:?}",
+        report.skipped
     );
 }
