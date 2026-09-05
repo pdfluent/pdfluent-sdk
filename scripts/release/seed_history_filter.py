@@ -56,12 +56,49 @@ inside a published file is exactly as public as one in a published file NAME, an
 the tree exporter already learned that lesson (`geen_interne_zaken --boom` reads
 content because reading names alone let `docs/ZZQBETA-notes.md` through).
 
+A TERM IS NOT A PATH, AND NEITHER IS A MESSAGE
+=============================================
+The path filter cannot reach the last class. Measured on `github/master`
+05-09-2026: 63 internal terms in file content and 24 in commit messages SURVIVED
+it, because the files carrying them are files that have to go out -- an old
+`pom.xml` naming the private group URL, a design note naming a partner. There is
+no path to exclude; the string itself has to go, over the range that carries it.
+
+So there is a second list, and it is a list of REPLACEMENTS rather than of
+paths: `literal==>replacement`, one per line, read from outside the tree for the
+same reason the term list is (`geen_interne_zaken.py`: a denylist that ships its
+own terms publishes exactly what it forbids). Default
+`~/.config/pdfluent/seed-replacements.txt`, overridable with
+`PDFLUENT_SEED_VERVANGINGEN`.
+
+Two invariants make the list a repair rather than a way to silence the check,
+and both are enforced here rather than trusted:
+
+    a literal must itself be an internal term   -- so the list cannot be used to
+                                                   rewrite arbitrary published
+                                                   content on the way out
+    a replacement must contain no internal term -- so a substitution cannot smuggle
+                                                   one term in under another
+
+WITHOUT THE LIST NOTHING CHANGES. No file is read differently, no message is
+touched, and the seeding refuses on the terms exactly as it did before. An
+absent list is the old behaviour, not a silent pass -- the refusal is what asks
+for eyes, and the list is what a person writes after using them.
+
 Subcommands:
     plan <mirror> --paths <f> --withdrawn <f>
                         the paths that must not travel (NUL-separated) and the
                         object ids that must not travel, from one walk
     preflight <mirror>  everything the rewrite needs, asked before the rewrite
-    trees <mirror>      ref, blob id and path for every file that MAY travel
+    replacements <mirror> --map <f> --sed <f>
+                        for every surviving blob that carries an internal term,
+                        the rewritten blob (written into the mirror) as an
+                        `<old> <new>` map, plus the message redaction as a sed
+                        script. Refuses when a term survives its own replacement.
+    trees <mirror> [--map <f>]
+                        ref, blob id and path for every file that MAY travel,
+                        with --map naming the blob the rewrite is EXPECTED to
+                        leave there
     alias <mirror>      the noreply alias non-alias identities are rewritten to
     allowed <mirror>    every address in this history that may stay as it is
     verify <mirror> --withdrawn <file>
@@ -75,7 +112,9 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import pathlib
+import re
 import subprocess
 import sys
 import tomllib
@@ -214,6 +253,15 @@ def cmd_preflight(a) -> int:
     """
     _module("geen_interne_zaken").alle_regels()
     print("[seed-preflight] OK: the private term list is readable")
+    # A malformed replacement list must be reported now, not after a rewrite
+    # over thousands of commits -- the same reason the term list is read here.
+    paren = vervangingen()
+    if paren:
+        print(f"[seed-preflight] OK: {len(paren)} reviewed replacement(s), each one a "
+              "term a rule calls internal")
+    else:
+        print("[seed-preflight] no replacement list; the seeding will REFUSE on any "
+              "internal term it finds rather than redact it")
     return 0
 
 
@@ -227,6 +275,17 @@ def cmd_trees(a) -> int:
     rewrite and after it, and diffed.
     """
     stp, m = manifest()
+    # With --map, the blob printed for a path is the one the rewrite is EXPECTED
+    # to leave there. Without it the check would read a redaction as "the rewrite
+    # changed a file that was supposed to stay" -- true, and the wrong verdict:
+    # the content rewrite changes surviving files on purpose, and what has to be
+    # proved is that it changes exactly those and no others.
+    kaart: dict[str, str] = {}
+    if getattr(a, "map", None) and a.map.is_file():
+        for regel in a.map.read_text(encoding="utf-8").split("\n"):
+            deel = regel.split()
+            if len(deel) == 2:
+                kaart[deel[0]] = deel[1]
     refs = _git(a.mirror, "for-each-ref", "--format=%(refname)",
                 "refs/heads/*", "refs/tags/*").stdout.split()
     for ref in refs:
@@ -256,7 +315,7 @@ def cmd_trees(a) -> int:
             kop, _, pad = regel.partition("\t")
             oid = kop.split()[-1]
             if pad and stp.wordt_gepubliceerd(pad, m):
-                print(f"{ref}\t{oid}\t{pad}")
+                print(f"{ref}\t{kaart.get(oid, oid)}\t{pad}")
     return 0
 
 
@@ -274,6 +333,191 @@ def cmd_withdrawn(a) -> int:
     # header is the next one.
     for oid in sorted(ingetrokken - gepubliceerd):
         print(oid)
+    return 0
+
+
+# --------------------------------------------------------------- replacements --
+#
+# The list lives outside the tree, next to the term list and for its reason: half
+# of what it has to name ARE the terms, and a file in the published tree that
+# spells them publishes exactly what the seeding removes.
+VERVANGINGEN_PAD = os.environ.get(
+    "PDFLUENT_SEED_VERVANGINGEN",
+    os.path.expanduser("~/.config/pdfluent/seed-replacements.txt"),
+)
+
+SCHEIDING = "==>"
+
+
+def vervangingen() -> list[tuple[str, str, bool]]:
+    """The reviewed replacement list, checked against the rules it serves.
+
+    Each entry is (literal, replacement, case-insensitive), and the third field
+    is READ OFF THE RULE that recognises the literal rather than chosen here. The
+    partner rule is `re.I` because a name is spelled however the writer felt like
+    it; the commercial rule is deliberately case-SENSITIVE because `arr` is an
+    ordinary variable name and `ARR` is a revenue term. A blanket
+    case-insensitive replacement would have rewritten every `arr` in the history.
+
+    Returns [] when the file is absent, and that is deliberately not an error:
+    an absent list means the seeding behaves exactly as it did before this
+    existed -- it refuses on the terms. A list is what somebody writes after
+    looking at what the refusal reported; it is not a prerequisite for looking.
+    """
+    try:
+        with open(VERVANGINGEN_PAD, encoding="utf-8") as f:
+            regels = [r.rstrip("\n") for r in f]
+    except OSError:
+        return []
+
+    gi = _module("geen_interne_zaken")
+    rules = gi.alle_regels()
+    paren: list[tuple[str, str]] = []
+    for n, regel in enumerate(regels, 1):
+        if not regel.strip() or regel.lstrip().startswith("#"):
+            continue
+        if SCHEIDING not in regel:
+            raise SystemExit(
+                f"[seed-replace] {VERVANGINGEN_PAD}:{n} carries no `{SCHEIDING}`. "
+                "Each line is `literal==>replacement`; a line that is neither that "
+                "nor a comment is a line whose intention cannot be read, and "
+                "guessing it would rewrite published content.")
+        links, _, rechts = regel.partition(SCHEIDING)
+        if not links:
+            raise SystemExit(f"[seed-replace] {VERVANGINGEN_PAD}:{n} replaces the empty "
+                             "string, which matches everywhere.")
+        # A literal that is not itself an internal term would make this list a
+        # general rewriting facility over published content. It is not one: what
+        # it may change is exactly what the guards refuse to publish.
+        raakt = [(naam, rx) for naam, rx in rules if rx.search(links)]
+        if not raakt:
+            raise SystemExit(
+                f"[seed-replace] {VERVANGINGEN_PAD}:{n} names something no rule in "
+                "geen_interne_zaken calls internal. This list may only replace terms "
+                "that would otherwise refuse the seeding; anything else is an edit to "
+                "published history under the name of a redaction.")
+        # And the other direction: a replacement that carries a term would move
+        # the problem rather than fix it, and the run afterwards would still be red.
+        for naam, rx in rules:
+            if rx.search(rechts):
+                raise SystemExit(
+                    f"[seed-replace] {VERVANGINGEN_PAD}:{n} replaces one internal term "
+                    f"with something the [{naam}] rule also calls internal.")
+        negeer = all(rx.flags & re.IGNORECASE for _, rx in raakt)
+        paren.append((links, rechts, negeer))
+    # Longest first: a term that contains a shorter one must be replaced as the
+    # long form, or the short replacement leaves the tail of the long one behind.
+    paren.sort(key=lambda pr: len(pr[0]), reverse=True)
+    return paren
+
+
+def toepassen(tekst: str, paren: list[tuple[str, str]]) -> str:
+    """Case-insensitively, because the rules it serves are.
+
+    `str.replace` was the first version and it left two blobs behind on the real
+    history: an operator runbook and a publish plan that spell a partner name
+    with different capitalisation from the term list. The partner rule is
+    `re.I` on purpose -- "the terms are names and a commit message spells them
+    however it feels like" -- so a case-sensitive replacement is a list that is
+    incomplete by construction, and the incompleteness shows up as a refusal on
+    a file nobody would think to look at.
+    """
+    for links, rechts, negeer in paren:
+        tekst = re.sub(re.escape(links), rechts.replace("\\", "\\\\"), tekst,
+                       flags=re.IGNORECASE if negeer else 0)
+    return tekst
+
+
+def _sed_script(paren: list[tuple[str, str]]) -> str:
+    """The same replacements as a sed script, for the message filter.
+
+    A python process per commit is 4072 of them on this history, and the message
+    filter already runs inside a shell that forks per commit. sed is the cheap
+    half; the escaping is the part worth getting right, so it is generated here
+    rather than written by hand: `|` as the delimiter with every literal `|`,
+    `\\` and regex metacharacter escaped, and `&` escaped on the right where it
+    would otherwise mean "the whole match".
+    """
+    uit = []
+    for links, rechts, negeer in paren:
+        # Case-insensitively, matching `toepassen`, and spelled as character
+        # classes rather than with sed's `I` flag: that flag is a GNU and a
+        # BSD extension with different spellings, and this script runs on both
+        # a developer's macOS and the Linux runner. `[Aa]` is portable to
+        # every sed there is.
+        l = ""
+        for teken in links:
+            if teken.isalpha() and negeer:
+                l += f"[{teken.upper()}{teken.lower()}]"
+            elif teken in ".^$*+?()[]{}|\\/":
+                l += "\\" + teken
+            else:
+                l += teken
+        r = rechts.replace("\\", "\\\\").replace("&", "\\&").replace("|", "\\|")
+        uit.append(f"s|{l}|{r}|g")
+    return "\n".join(uit) + ("\n" if uit else "")
+
+
+def cmd_replacements(a) -> int:
+    """Rewrite every surviving blob that carries a term, and report what is left.
+
+    The new blobs are written into the mirror here, before filter-branch starts,
+    so the rewrite itself only has to swap an object id in the index -- which is
+    a table lookup rather than a checkout, and is the difference between minutes
+    and hours over a history this size.
+
+    Nothing is printed that a term could be read out of: the count travels, the
+    string does not, exactly as in `geen_interne_zaken._toonbaar`.
+    """
+    paren = vervangingen()
+    gi = _module("geen_interne_zaken")
+    rules = gi.alle_regels()
+
+    mag, _ = gesplitst(a.mirror)
+    paden_van_oid: dict[str, set[str]] = {}
+    for pad, oids in mag.items():
+        for oid in oids:
+            paden_van_oid.setdefault(oid, set()).add(pad)
+    geforkt = _fork_uitzondering(paden_van_oid)
+
+    regels_uit: list[str] = []
+    onopgelost: list[str] = []
+    gelezen = 0
+    for oid, tekst in _tekstblobs(a.mirror, sorted(paden_van_oid)):
+        gelezen += 1
+        paden_hier = paden_van_oid.get(oid) or set()
+        if paden_hier and paden_hier <= gi.EIGEN_BESTANDEN:
+            continue
+        fork = geforkt(oid)
+        van_toepassing = [(naam, rx) for naam, rx in rules
+                          if not (fork and naam == "commercieel")]
+        if not any(rx.search(tekst) for _, rx in van_toepassing):
+            continue
+        nieuw = toepassen(tekst, paren)
+        rest = [naam for naam, rx in van_toepassing if rx.search(nieuw)]
+        if rest:
+            waar, _ = gi._toonbaar(rest[0], sorted(paden_hier)[0], "")
+            onopgelost.append(f"[{rest[0]}] -- {waar}")
+            continue
+        r = subprocess.run(["git", "-C", str(a.mirror), "hash-object", "-w",
+                            "--stdin"], input=nieuw.encode("utf-8"),
+                           capture_output=True, check=True)
+        regels_uit.append(f"{oid} {r.stdout.decode().strip()}")
+
+    a.map.write_text("".join(r + "\n" for r in regels_uit), encoding="utf-8")
+    a.sed.write_text(_sed_script(paren), encoding="utf-8")
+    a.sed.chmod(0o600)
+
+    print(f"[seed-replace] {len(paren)} reviewed replacement(s), {gelezen} readable "
+          f"blob(s), {len(regels_uit)} rewritten")
+    if onopgelost:
+        print(f"[seed-replace] {len(onopgelost)} blob(s) still carry an internal term "
+              "after the list was applied:", file=sys.stderr)
+        for r in onopgelost[:20]:
+            print(f"  {r}", file=sys.stderr)
+        print("  Add the term to the replacement list, or take the string out of the "
+              "file. The seeding does not guess at a redaction.", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -491,12 +735,18 @@ def main(argv: list[str]) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     for naam, fn in (("plan", cmd_plan), ("preflight", cmd_preflight),
                      ("trees", cmd_trees), ("alias", cmd_alias),
-                     ("allowed", cmd_allowed), ("verify", cmd_verify)):
+                     ("allowed", cmd_allowed), ("verify", cmd_verify),
+                     ("replacements", cmd_replacements)):
         s = sub.add_parser(naam)
         s.add_argument("mirror", type=pathlib.Path)
         s.set_defaults(fn=fn)
         if naam == "verify":
             s.add_argument("--withdrawn", type=pathlib.Path, default=None)
+        if naam == "trees":
+            s.add_argument("--map", type=pathlib.Path, default=None)
+        if naam == "replacements":
+            s.add_argument("--map", type=pathlib.Path, required=True)
+            s.add_argument("--sed", type=pathlib.Path, required=True)
         if naam == "plan":
             s.add_argument("--paths", type=pathlib.Path, required=True)
             s.add_argument("--withdrawn", type=pathlib.Path, required=True)

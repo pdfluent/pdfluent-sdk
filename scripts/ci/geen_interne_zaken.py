@@ -254,7 +254,14 @@ MIN_BESTANDEN = 1
 # handelswoordenschat, die publiceren lekt niets. Het enige dat wel geheim was
 # -- de klant- en partnernamen -- staat niet meer in de boom maar in
 # PRIVATE_PAD. De uitzondering onderdrukt dus niets dat ertoe doet meer.
-EIGEN_BESTANDEN = {"scripts/ci/geen_interne_zaken.py"}
+# En sinds 05-09-2026 het bestand een laag verderop, om precies dezelfde reden:
+# `seed_history_filter.py` schrijft `MRR` en `prijsstrategie` op waar het uitlegt
+# waarom die twee in een geforkte crate geen omzetbegrip zijn en waarom deze
+# uitzondering bestaat. Gemeten: zonder deze regel weigerde de zaai op de
+# broncode van haar eigen filter, terwijl `--boom` op datzelfde bestand groen
+# stond -- één regel met twee antwoorden.
+EIGEN_BESTANDEN = {"scripts/ci/geen_interne_zaken.py",
+                   "scripts/release/seed_history_filter.py"}
 
 
 def _is_tekst(pad):

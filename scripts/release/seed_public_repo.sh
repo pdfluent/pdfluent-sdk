@@ -22,6 +22,8 @@
 #      and not only the tip
 #   3. every personal address in an author or committer field, rewritten to the
 #      noreply alias this history already carries
+#   4. every internal term named in the reviewed replacement list, in file content
+#      and in commit messages alike
 #
 # (2) is why this file was rewritten on 05-09-2026. Until then it applied no path
 # filter at all: `git push --mirror` of the complete history, with the messages
@@ -31,6 +33,16 @@
 # that would actually have run. Every exclusion #222 rests on would have been
 # undone by it, permanently, because a published object stays fetchable by id to
 # anyone who has it (#260 measured that four days after a rewrite meant to end it).
+#
+# (4) is the class (2) cannot reach. Measured over `github/master` on 05-09-2026,
+# after the path filter had done its work: 63 internal terms left in file content
+# and 24 in commit messages -- an old `pom.xml` naming the private group URL, a
+# design note naming a partner, a build note naming the desktop's hostname. There
+# is no path to exclude, because those files have to go out; the string itself has
+# to go. The list of what may be replaced with what is reviewed by a person and
+# read from outside the tree (`seed_history_filter.py`, "A TERM IS NOT A PATH").
+# Without a list nothing is rewritten and the seeding refuses on the terms, which
+# is what it did before and is the behaviour that asks for eyes.
 #
 # (3) is the same argument applied to the identity fields. 6746 commits here carry
 # the owner's personal address. #261 decided to leave the addresses in the history
@@ -146,6 +158,36 @@ if [ "$AANTAL_UIT" = "0" ]; then
     exit 1
 fi
 
+# ------------------------------------------------------ what content changes --
+#
+# Done BEFORE filter-branch starts: the rewritten blobs are written into the
+# mirror here, so the rewrite itself only swaps an object id in the index. A
+# per-commit content rewrite over this history is hours; a table lookup is not.
+KAART="$WERK/blob-map.txt"
+REDACT="$WERK/redact.sed"
+python3 "$FILTER" replacements "$SPIEGEL" --map "$KAART" --sed "$REDACT"
+
+# The index filter, in a file rather than in a quoted one-liner. It runs once per
+# commit, it has to contain an awk program, and a program that has been escaped
+# twice through a double-quoted shell string is a program nobody can read or
+# check -- which is not the property to want in the one step here that cannot be
+# undone.
+INDEXFILTER="$WERK/index-filter.sh"
+cat > "$INDEXFILTER" <<INDEXEOF
+git rm -r --cached --quiet --ignore-unmatch \
+    --pathspec-from-file='$UITSLUIT' --pathspec-file-nul || true
+# Swap every blob the replacement stage rewrote, wherever it stands in this
+# commit's index. \`ls-files -s\` prints "<mode> <oid> <stage>\t<path>", which is
+# exactly what \`update-index --index-info\` reads back, so only the id changes.
+if [ -s '$KAART' ]; then
+    git ls-files -s | awk -F'\t' -v kaart='$KAART' '
+        BEGIN { while ((getline r < kaart) > 0) { split(r, a, " "); m[a[1]] = a[2] } }
+        { split(\$1, h, " ")
+          if (h[2] in m) printf "%s %s %s\t%s\n", h[1], m[h[2]], h[3], \$2 }
+    ' | git update-index --index-info
+fi
+INDEXEOF
+
 # ------------------------------------------------------- what identity stays --
 if [ -z "$ALIAS" ]; then
     ALIAS="$(python3 "$FILTER" alias "$SPIEGEL")"
@@ -184,12 +226,16 @@ echo "[seed] rewriting: messages, internal paths, identities"
 # Not `--prune-empty`: a commit that only touched internal paths becomes empty,
 # and filter-branch's pruning is unreliable across merges. An empty commit
 # publishes nothing; a mangled merge graph publishes a history nobody can read.
-python3 "$FILTER" trees "$SPIEGEL" | sort > "$WERK/trees-before.txt"
+#
+# `--map`: the blob a path is EXPECTED to hold afterwards. The content rewrite
+# changes surviving files on purpose, so the claim is narrowed once more rather
+# than dropped -- every publishable path holds either the blob it held, or that
+# blob's reviewed replacement, and nothing else.
+python3 "$FILTER" trees "$SPIEGEL" --map "$KAART" | sort > "$WERK/trees-before.txt"
 
 FILTER_BRANCH_SQUELCH_WARNING=1 git -C "$SPIEGEL" filter-branch --force \
-    --index-filter "git rm -r --cached --quiet --ignore-unmatch \
-        --pathspec-from-file='$UITSLUIT' --pathspec-file-nul || true" \
-    --msg-filter "grep -vE '$TRAILERS' || true" \
+    --index-filter "sh '$INDEXFILTER'" \
+    --msg-filter "grep -vE '$TRAILERS' | LC_ALL=C sed -E -f '$REDACT'" \
     --env-filter "
         case \"$TOEGESTAAN\" in
             *\"|\$GIT_AUTHOR_EMAIL|\"*) ;;
@@ -228,12 +274,14 @@ fi
 # THE CHECK THAT MATTERS: of the files that stay, content is untouched.
 python3 "$FILTER" trees "$SPIEGEL" | sort > "$WERK/trees-after.txt"
 if ! diff -q "$WERK/trees-before.txt" "$WERK/trees-after.txt" >/dev/null; then
-    echo "[seed] FAILED: the rewrite changed a file that was supposed to stay." >&2
+    echo "[seed] FAILED: the rewrite changed a file in a way the replacement list" >&2
+    echo "  does not account for." >&2
     echo "  Lines that differ (blob id and path, per ref):" >&2
     diff "$WERK/trees-before.txt" "$WERK/trees-after.txt" | head -20 >&2
     exit 1
 fi
-echo "[seed] verified: every publishable path still holds the same blob"
+echo "[seed] verified: every publishable path holds the blob it held, or its"
+echo "  reviewed replacement, and nothing else"
 
 # THE CHECK THAT CANNOT BE UNDONE IF IT IS WRONG: no internal path, no withdrawn
 # object under any name, no personal address, no internal term.
