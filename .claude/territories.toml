@@ -211,8 +211,13 @@ paden = [
   # Returned from t1 on 04-09-2026, when #316 landed and the loan that moved
   # them there ended. scripts/ci is t2's; the block that took them says "back to
   # t3/t2 when this lands", and this is that.
-  "scripts/ci/every_commit_since_the_cutoff_is_signed.py",
-  "scripts/ci/test_every_commit_since_the_cutoff_is_signed.py",
+  #
+  # ON LOAN TO t3, 05-09-2026, for #223 -- which is why the two sign-off guards
+  # that stood here are in t3's block below and not here. #223 is the CLA/DCO
+  # ticket: what these two decide is whether a contribution may be relicensed,
+  # which is t3's question and not a CI one. The rest of the sign-off mechanism
+  # (the hook and its test) has been t3's since 03-09, so the guards were the
+  # half that answered to a different owner than the rule they enforce.
   "scripts/ci/every_guard_has_a_job.py",
   # The policy itself. `docs/licen*` is t3's and is lowercase, so this file --
   # the one the whole licence policy is written in -- matched no territory at
@@ -254,7 +259,18 @@ paden = [
   # scanning, days after #328 merged six jobs into one to stop exactly that. And
   # leaving it pre-push only would put it in `every_guard_has_a_job.py`'s ALLOWED
   # list as debt, which is the shape this repository keeps having to pay off.
-  ".github/workflows/ci.yml",
+  #
+  # PASSED ON to t3, 05-09-2026, for #220: the literal is in t3's block below
+  # and out of this one, so the map keeps one owner per path. Two steps in
+  # `orchestration-guard` -- the order-form guard and its test -- and nothing
+  # else in the file. Same reasoning as the paragraph above it: every workflow
+  # file is in this territory, so a new guard cannot be made reachable from any
+  # job without this loan, and the alternative is an exemption row recording
+  # that the guard runs nowhere.
+  #
+  # EXPIRY: back to t2 the moment #220 lands, which is the same push that adds
+  # the two steps. Whoever next edits this file takes it back by moving the
+  # literal, and needs no permission to.
   ".github/workflows/**",
   ".gitlab-ci.yml",
   "scripts/ci/**",
@@ -378,6 +394,34 @@ paden = [
   # this entry take effect.
   "scripts/ci/test_prepare_commit_msg_signoff.py",
   ".githooks/prepare-commit-msg",
+  # The rest of that mechanism, taken from t2 on 05-09-2026 for #223. The hook
+  # that writes the sign-off was already here while the two guards that JUDGE it
+  # answered to another owner, so the rule and its enforcement had different
+  # owners. What these decide is whether a contribution may be relicensed --
+  # #223's question, and the condition the commercial half rests on -- rather
+  # than how CI runs. Excepted from t2's `scripts/ci/**`, which is what makes
+  # these entries take effect.
+  "scripts/ci/every_commit_since_the_cutoff_is_signed.py",
+  "scripts/ci/test_every_commit_since_the_cutoff_is_signed.py",
+  "scripts/ci/licence_signoff.py",
+  "scripts/ci/test_signoff_respects_the_cutoff.py",
+  # The order form is half of the commercial licence: LICENSE-COMMERCIAL §10
+  # says the agreement is that text plus a signed form and that the form
+  # prevails. The guard that keeps the two from drifting apart is a licence
+  # question, not a build one (#220).
+  "scripts/ci/the_order_form_agrees_with_the_licence.py",
+  "scripts/ci/test_the_order_form_agrees_with_the_licence.py",
+  # ON LOAN from t2, 05-09-2026, for #220. Two steps in `orchestration-guard`,
+  # nothing else in the file: the order-form guard and its test. Every workflow
+  # file is t2's, so a new guard cannot be made reachable from any job without
+  # this; the alternative is an exemption row recording that the guard runs
+  # nowhere, which is the debt this repository keeps paying off. (#333 landed
+  # hours before this and left ci.yml triggering on the push to master only, so
+  # "reachable" is that job now, not a pull-request one.)
+  #
+  # EXPIRY: back to t2 the moment this lands. t2 holds #333 in this file and
+  # takes it back by moving the literal, without asking.
+  ".github/workflows/ci.yml",
   # Added 03-09-2026. A `docs/...` path cited from scripts/ci must name a file
   # that exists; three citations this week pointed at nothing, and
   # docs/KWALITEITSSPOOR.md (t3's, below) was the third. A guard about

@@ -664,6 +664,26 @@ jobs:
       - name: The boundary goes red where it must
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_license_boundary.py
+      # The other half of the same boundary, one document further out (#220).
+      # LICENSE-COMMERCIAL §10 does not contain the agreement: it says the
+      # agreement is that text plus a signed order form, and that where the two
+      # conflict THE ORDER FORM WINS. So a grant added to §2 with no row on the
+      # form is a right the licensee is never asked about, and a row with no
+      # grant behind it is a right we sell out of a licence that cannot deliver
+      # it. Neither breaks a build; the first reader who notices is a lawyer
+      # holding both documents after the money moved.
+      #
+      # The test first: the guard's good day is a day it finds nothing, which
+      # reads exactly like a guard that reads neither file.
+      #
+      # This file is t2's and is on loan for these two steps (#220); the loan and
+      # its expiry are written in .claude/territories.toml.
+      - name: The order-form guard goes red where it must
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_the_order_form_agrees_with_the_licence.py
+      - name: The order form and the commercial licence still agree
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/the_order_form_agrees_with_the_licence.py
       # The other orphan. Blocking, with the cutoff at 2c03659a -- the commit
       # that introduced the DCO this morning (#223). The rule applies from the
       # moment the rule exists, so no history is rewritten.
