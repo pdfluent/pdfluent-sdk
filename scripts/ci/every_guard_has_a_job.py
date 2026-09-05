@@ -295,7 +295,7 @@ ALLOWED: dict[str, str] = {
     # was booking as placed. A reason that names a place is now checked against
     # that place, below, so this cannot be written again without being true.
     "mirror_has_not_drifted.py": (
-        "compares github/master with origin/master and therefore needs both "
+        "compares origin/master with gitlab/master and therefore needs both "
         "remotes in one checkout; an Actions checkout knows only its own, and "
         "then it announces SKIPPED instead of comparing anything -- permanently "
         "skipped is not a gate. It runs in scripts/ci/local_ci_gate.sh, in the "
@@ -304,6 +304,17 @@ ALLOWED: dict[str, str] = {
         "orchestration-guard and holds it to still biting; "
         "the_topology_agrees_with_the_mirror_gate.py holds the direction it "
         "enforces to the roles written in CLAUDE.md"
+    ),
+    "origin_is_the_source_in_every_checkout.py": (
+        "its subject IS this machine: which repository `origin` resolves to here, "
+        "and how many checkouts of this repository sit on the disk. An Actions "
+        "workspace has one remote and one checkout by construction, so there the "
+        "guard can only agree with itself -- the drift it looks for is not "
+        "expressible there. It runs in scripts/ci/local_ci_gate.sh, in the full "
+        "lane, which is the landing and the machine that has the copies; "
+        "test_origin_is_the_source_in_every_checkout.py runs in the guards job on "
+        "GitHub and holds it to refusing each of the four shapes on fixtures "
+        "(#291)"
     ),
     "branches_have_a_merge_request.py": (
         "asks about the checked-out branch, and an Actions checkout is a "

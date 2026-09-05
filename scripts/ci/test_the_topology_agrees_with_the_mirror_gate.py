@@ -69,27 +69,43 @@ def case(name: str, mutate, expect_fail: bool, must_say: str = "") -> list[str]:
     return []
 
 
+def edit(text: str, old: str, new: str) -> str:
+    """Replace, and refuse to do nothing.
+
+    A mutation that no longer matches its target changes nothing, the guard
+    passes the untouched tree, and the case reports "accepted (exit 0)" -- which
+    reads as the guard being broken when it is the test that went stale. That
+    happened here when the remotes were renamed for #291: three of the four
+    mutations silently stopped mutating.
+    """
+    if old not in text:
+        raise SystemExit(
+            f"[test-topology] FATAL: this test no longer matches what it mutates -- "
+            f"{old!r} is not in the file it was copied from. Nothing was tested.")
+    return text.replace(old, new, 1)
+
+
 def swap_roles(topology: pathlib.Path, _gate: pathlib.Path) -> None:
     t = topology.read_text()
-    t = t.replace("| `github` | **source**", "| `github` | **backup**", 1)
-    t = t.replace("| `origin` | **backup**", "| `origin` | **source**", 1)
+    t = edit(t, "| `origin` | **source**", "| `origin` | **backup**")
+    t = edit(t, "| `gitlab` | **backup**", "| `gitlab` | **source**")
     topology.write_text(t)
 
 
 def gitlab_as_ci(topology: pathlib.Path, _gate: pathlib.Path) -> None:
     t = topology.read_text()
-    t = t.replace("| `origin` | **backup** — a copy of the source and nothing else |",
-                  "| `origin` | **backup** — CI executor for the heavy work, and a "
-                  "nightly backup |", 1)
+    t = edit(t, "| `gitlab` | **backup** — a copy of the source and nothing else |",
+             "| `gitlab` | **backup** — CI executor for the heavy work, and a "
+             "nightly backup |")
     topology.write_text(t)
 
 
 def flip_the_gate(_topology: pathlib.Path, gate: pathlib.Path) -> None:
     t = gate.read_text()
-    t = t.replace('os.environ.get("MIRROR_SOURCE", "github/master")',
-                  'os.environ.get("MIRROR_SOURCE", "origin/master")', 1)
-    t = t.replace('os.environ.get("MIRROR_TARGET", "origin/master")',
-                  'os.environ.get("MIRROR_TARGET", "github/master")', 1)
+    t = edit(t, 'os.environ.get("MIRROR_SOURCE", "origin/master")',
+             'os.environ.get("MIRROR_SOURCE", "gitlab/master")')
+    t = edit(t, 'os.environ.get("MIRROR_TARGET", "gitlab/master")',
+             'os.environ.get("MIRROR_TARGET", "origin/master")')
     gate.write_text(t)
 
 

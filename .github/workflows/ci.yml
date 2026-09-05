@@ -354,6 +354,16 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_fixtures_are_wellformed.py
 
+      # Where the code lives. The guard itself asks this machine which
+      # repository `origin` resolves to and how many checkouts of it are on the
+      # disk -- neither is expressible in a workspace with one remote and one
+      # checkout, so it runs in the local gate's full lane. What runs here is its
+      # test, on throwaway repositories, which is where the four refusals and the
+      # worktree exemption are held. (#291)
+      - name: origin means the source, and one checkout per repository
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_origin_is_the_source_in_every_checkout.py
+
       # ---- from message-guard-wiring ----
       - name: The commit-msg hook exists and calls both message guards
         if: ${{ !cancelled() }}

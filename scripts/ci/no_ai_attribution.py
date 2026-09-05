@@ -142,7 +142,7 @@ def main() -> int:
 
     bereik = a.range
     if not bereik:
-        for basis in ("origin/master", "master"):
+        for basis in ("origin/master", "github/master", "master"):
             r = subprocess.run(["git", "merge-base", basis, "HEAD"],
                                env=_git_env(), capture_output=True, text=True)
             if r.returncode == 0:
