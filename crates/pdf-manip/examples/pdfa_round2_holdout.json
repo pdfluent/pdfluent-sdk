@@ -1,20 +1,20 @@
 {
-  "description": "Round-2 holdout, selected before evaluating candidate output; excludes known corpus paths, basenames and byte hashes. No claim about unknown historical use outside this checkout.",
+  "description": "Round-2 development set, initially selected before evaluating candidate output; excludes known corpus paths, basenames and byte hashes. Used for subsequent writer repairs. No claim about unknown historical use outside this checkout.",
   "selection": "Target 50 per source; path order shuffled with seed 33920260905; candidates 1 KB to 2 MB; first hash-disjoint downloads retained. Frozen available set: 50 pdf.js + 43 PDFBox = 93. No output-based exclusions.",
   "sources": {
     "pdfjs": {
       "repo": "mozilla/pdf.js",
       "commit": "a815e4f8f0f25ab305ee21752ccf832156f7ab58",
-      "licence": "Apache-2.0",
-      "provenance": "Mozilla pdf.js test suite (test/pdfs/), redistributed by Mozilla under Apache-2.0. Fetched by URL at the pinned commit; never committed to this repository.",
-      "raw_base": "https://raw.githubusercontent.com/mozilla/pdf.js/a815e4f8f0f25ab305ee21752ccf832156f7ab58/"
+      "provenance": "Test resources fetched from the repository at the pinned commit; corpus PDFs are not committed here. The repository licence is recorded separately and is not an assertion that every third-party test PDF has that licence.",
+      "raw_base": "https://raw.githubusercontent.com/mozilla/pdf.js/a815e4f8f0f25ab305ee21752ccf832156f7ab58/",
+      "repository_licence": "Apache-2.0"
     },
     "pdfbox": {
       "repo": "apache/pdfbox",
       "commit": "b9de8299ef80efc8bd7f3fddb5c8a3c63ee07a5c",
-      "licence": "Apache-2.0",
-      "provenance": "Apache PDFBox test resources, redistributed by the Apache Software Foundation under Apache-2.0. Fetched by URL at the pinned commit; never committed to this repository.",
-      "raw_base": "https://raw.githubusercontent.com/apache/pdfbox/b9de8299ef80efc8bd7f3fddb5c8a3c63ee07a5c/"
+      "provenance": "Test resources fetched from the repository at the pinned commit; corpus PDFs are not committed here. The repository licence is recorded separately and is not an assertion that every third-party test PDF has that licence.",
+      "raw_base": "https://raw.githubusercontent.com/apache/pdfbox/b9de8299ef80efc8bd7f3fddb5c8a3c63ee07a5c/",
+      "repository_licence": "Apache-2.0"
     }
   },
   "total": 93,
@@ -677,5 +677,6 @@
       "source": "pdfbox",
       "path": "pdfbox/src/test/resources/org/apache/pdfbox/pdmodel/interactive/form/PDFBOX-3656-SF1199AEG (Complete).pdf"
     }
-  ]
+  ],
+  "evaluation_status": "Development set: used to repair writer defects after initial evaluation; no longer an untouched holdout."
 }

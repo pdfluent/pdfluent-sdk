@@ -47,8 +47,12 @@ def fingerprint(path):
 
     roots = normalize({k: reader.trailer.get(k) for k in ['/Root', '/Info']})
     rows = []
-    while pending - visited:
-        key = min(pending - visited)
+    # Traversal order is immaterial: rows are sorted before hashing. Pop work
+    # once instead of repeatedly subtracting/sorting an entire large graph.
+    while pending:
+        key = pending.pop()
+        if key in visited:
+            continue
         visited.add(key)
         obj = reader.get_object(IndirectObject(*key, reader))
         rows.append([*key, normalize(obj)])
