@@ -41,6 +41,292 @@
 /// Standard CFF SID for the glyph name `space`.
 const SID_SPACE: u16 = 1;
 
+/// Give a blank CID .notdef charstring a real nonzero CID without changing any
+/// existing charstring, private dictionary or subroutine offset. Returns the
+/// new CID. The caller must remap the original character code and preserve its
+/// declared advance; this function alone does not repair a PDF font.
+pub(crate) fn duplicate_blank_cid_zero(data: &[u8], minimum_cid: u16) -> Option<(Vec<u8>, u16)> {
+    let names = parse_index(data, *data.get(2)? as usize)?;
+    let top = parse_index(data, names.end)?;
+    if top.entries.len() != 1 {
+        return None;
+    }
+    let off_size = read_u8(data, names.end + 2)?;
+    let dict_start = names.end + 3 + 2 * off_size as usize;
+    let entries = parse_dict(&top.entries[0])?;
+    if !entries.iter().any(|e| e.operator == [12, 30]) {
+        return None;
+    }
+    let mut spans = std::collections::BTreeMap::new();
+    let mut cursor = dict_start;
+    for entry in &entries {
+        spans.insert(
+            entry.operator.clone(),
+            (
+                OperandSpan {
+                    start: cursor,
+                    len: entry.operands.len(),
+                },
+                decode_operands(&entry.operands),
+            ),
+        );
+        cursor += entry.operands.len() + entry.operator.len();
+    }
+    let (charset_span, charset_args) = spans.get(&vec![15])?;
+    let (charstrings_span, charstrings_args) = spans.get(&vec![17])?;
+    let (fdselect_span, fdselect_args) = spans.get(&vec![12, 37])?;
+    let chars = parse_index(data, *charstrings_args.first()? as usize)?;
+    let n = chars.entries.len();
+    if n == 0 || n >= 65535 {
+        return None;
+    }
+    let zero = &chars.entries[0];
+    // Copy the original charstring verbatim, including any hint/subroutine
+    // instructions. Its FD selector is copied too, so all interpretation
+    // context and appearance are retained. The caller has established that
+    // the document assigns this character whitespace meaning.
+    if zero.is_empty() {
+        return None;
+    }
+    let mut cids = parse_charset(data, *charset_args.first()? as usize, n)?;
+    let new_cid = cids
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)?
+        .max(minimum_cid);
+    let fd_pos = *fdselect_args.first()? as usize;
+    let mut selectors = match read_u8(data, fd_pos)? {
+        0 => data.get(fd_pos + 1..fd_pos + 1 + n)?.to_vec(),
+        3 => {
+            let ranges = read_u16(data, fd_pos + 1)? as usize;
+            if ranges == 0 {
+                return None;
+            }
+            let mut selected = Vec::new();
+            for i in 0..ranges {
+                let at = fd_pos + 3 + i * 3;
+                let first = read_u16(data, at)? as usize;
+                let fd = read_u8(data, at + 2)?;
+                let end = read_u16(data, at + 3)? as usize;
+                if first != selected.len() || end < first || end > n {
+                    return None;
+                }
+                selected.resize(end, fd);
+            }
+            if selected.len() != n {
+                return None;
+            }
+            selected
+        }
+        _ => return None,
+    };
+    selectors.push(*selectors.first()?);
+    cids.push(new_cid);
+    let mut new_chars = chars.entries.clone();
+    new_chars.push(zero.clone());
+    let mut out = data.to_vec();
+    let charset_off = out.len();
+    out.extend_from_slice(&write_charset(&cids));
+    let chars_off = out.len();
+    out.extend_from_slice(&write_index(&new_chars));
+    let fd_off = out.len();
+    out.push(0);
+    out.extend_from_slice(&selectors);
+    let in_place = (|| {
+        patch_operand_in_place(&mut out, charset_span, i32::try_from(charset_off).ok()?)?;
+        patch_operand_in_place(&mut out, charstrings_span, i32::try_from(chars_off).ok()?)?;
+        patch_operand_in_place(&mut out, fdselect_span, i32::try_from(fd_off).ok()?)?;
+        if let Some((span, args)) = spans.get(&vec![12, 34]) {
+            if *args.first()? <= new_cid as i32 {
+                patch_operand_in_place(&mut out, span, new_cid as i32 + 1)?;
+            }
+        }
+        Some(())
+    })();
+    if in_place.is_none() {
+        out = rebuild_cid_with_blocks(data, &cids, &new_chars, &selectors, new_cid)?;
+    }
+    let before = cff_parser::Table::parse(data)?;
+    let after = cff_parser::Table::parse(&out)?;
+    if after.number_of_glyphs() as usize != n + 1
+        || after.glyph_cid(cff_parser::GlyphId(n as u16)) != Some(new_cid)
+        || after.glyph_width_f64(cff_parser::GlyphId(n as u16))
+            != before.glyph_width_f64(cff_parser::GlyphId(0))
+    {
+        return None;
+    }
+    Some((out, new_cid))
+}
+
+// CID fonts add one layer of absolute offsets: each FDArray entry's Private
+// dictionary. Relocate those in a replacement FDArray as well as the Top DICT.
+// The original tail is copied byte-for-byte, so private Subrs offsets (relative
+// to their Private dictionaries) and all charstring bytes remain valid.
+fn rebuild_cid_with_blocks(
+    data: &[u8],
+    cids: &[u16],
+    chars: &[Vec<u8>],
+    selectors: &[u8],
+    new_cid: u16,
+) -> Option<Vec<u8>> {
+    let names = parse_index(data, *data.get(2)? as usize)?;
+    let top = parse_index(data, names.end)?;
+    let entries = parse_dict(top.entries.first()?)?;
+    let fd_offset = entries
+        .iter()
+        .find(|e| e.operator == [12, 36])
+        .and_then(|e| decode_operands(&e.operands).first().copied())?;
+    let fd_array = parse_index(data, usize::try_from(fd_offset).ok()?)?;
+    let charset = write_charset(cids);
+    let charstrings = write_index(chars);
+    let build_top = |delta: usize,
+                     charset_at: usize,
+                     chars_at: usize,
+                     select_at: usize,
+                     array_at: usize|
+     -> Option<Vec<u8>> {
+        let mut d = Vec::new();
+        for e in &entries {
+            let args = decode_operands(&e.operands);
+            match e.operator.as_slice() {
+                [15] => d.extend_from_slice(&wide_int(i32::try_from(charset_at).ok()?)),
+                [17] => d.extend_from_slice(&wide_int(i32::try_from(chars_at).ok()?)),
+                [12, 37] => d.extend_from_slice(&wide_int(i32::try_from(select_at).ok()?)),
+                [12, 36] => d.extend_from_slice(&wide_int(i32::try_from(array_at).ok()?)),
+                [12, 34] => {
+                    d.extend_from_slice(&wide_int((*args.first()?).max(new_cid as i32 + 1)))
+                }
+                [16] => {
+                    let old = *args.first()?;
+                    d.extend_from_slice(&wide_int(if old <= 1 {
+                        old
+                    } else {
+                        old.checked_add(i32::try_from(delta).ok()?)?
+                    }));
+                }
+                [18] => {
+                    d.extend_from_slice(&wide_int(*args.first()?));
+                    d.extend_from_slice(&wide_int(
+                        args.get(1)?.checked_add(i32::try_from(delta).ok()?)?,
+                    ));
+                }
+                _ => d.extend_from_slice(&e.operands),
+            }
+            d.extend_from_slice(&e.operator);
+        }
+        Some(d)
+    };
+    let prototype = write_index(&[build_top(0, 0, 0, 0, 0)?]);
+    let delta = prototype.len().checked_sub(top.end - names.end)?;
+    let charset_at = data.len().checked_add(delta)?;
+    let chars_at = charset_at.checked_add(charset.len())?;
+    let select_at = chars_at.checked_add(charstrings.len())?;
+    let array_at = select_at.checked_add(1 + selectors.len())?;
+    let mut new_fds = Vec::new();
+    for fd in &fd_array.entries {
+        let mut d = Vec::new();
+        for e in parse_dict(fd)? {
+            if e.operator == [18] {
+                let args = decode_operands(&e.operands);
+                d.extend_from_slice(&wide_int(*args.first()?));
+                d.extend_from_slice(&wide_int(
+                    args.get(1)?.checked_add(i32::try_from(delta).ok()?)?,
+                ));
+            } else {
+                d.extend_from_slice(&e.operands);
+            }
+            d.extend_from_slice(&e.operator);
+        }
+        new_fds.push(d);
+    }
+    let mut out = data[..names.end].to_vec();
+    out.extend_from_slice(&write_index(&[build_top(
+        delta, charset_at, chars_at, select_at, array_at,
+    )?]));
+    out.extend_from_slice(&data[top.end..]);
+    out.extend_from_slice(&charset);
+    out.extend_from_slice(&charstrings);
+    out.push(0);
+    out.extend_from_slice(selectors);
+    out.extend_from_slice(&write_index(&new_fds));
+    Some(out)
+}
+
+/// Duplicate the sole .notdef glyph under a private, non-semantic name.
+/// Some symbol subsets intentionally draw their only shape at GID zero.
+/// Preserve its charstring and private/subroutine context rather than blanking it.
+pub(crate) fn duplicate_single_notdef(data: &[u8]) -> Option<Vec<u8>> {
+    let names = parse_index(data, *data.get(2)? as usize)?;
+    let top = parse_index(data, names.end)?;
+    if top.entries.len() != 1 {
+        return None;
+    }
+    let entries = parse_dict(&top.entries[0])?;
+    if entries.iter().any(|e| e.operator == [12, 30]) {
+        return None;
+    }
+    let chars_at = entries
+        .iter()
+        .find(|e| e.operator == [17])
+        .and_then(|e| decode_operands(&e.operands).first().copied())?;
+    let chars = parse_index(data, usize::try_from(chars_at).ok()?)?;
+    if chars.entries.len() != 1 || chars.entries[0].is_empty() {
+        return None;
+    }
+    let strings = parse_index(data, top.end)?;
+    let sid = u16::try_from(391 + strings.entries.len()).ok()?;
+    let mut new_strings = strings.entries.clone();
+    new_strings.push(b"pdfaGlyphZero".to_vec());
+    let new_strings = write_index(&new_strings);
+    let charset = write_charset(&[sid]);
+    let charstrings = write_index(&[chars.entries[0].clone(), chars.entries[0].clone()]);
+    let build = |delta: usize, charset_at: usize, chars_at: usize| -> Option<Vec<u8>> {
+        let mut d = Vec::new();
+        for e in &entries {
+            match e.operator.as_slice() {
+                [15] | [16] | [17] => continue,
+                [18] => {
+                    let args = decode_operands(&e.operands);
+                    d.extend_from_slice(&wide_int(*args.first()?));
+                    d.extend_from_slice(&wide_int(
+                        args.get(1)?.checked_add(i32::try_from(delta).ok()?)?,
+                    ));
+                }
+                _ => d.extend_from_slice(&e.operands),
+            }
+            d.extend_from_slice(&e.operator);
+        }
+        d.extend_from_slice(&wide_int(i32::try_from(charset_at).ok()?));
+        d.push(15);
+        d.extend_from_slice(&wide_int(i32::try_from(chars_at).ok()?));
+        d.push(17);
+        Some(d)
+    };
+    let proto = write_index(&[build(0, 0, 0)?]);
+    let old_prefix = strings.end - names.end;
+    let delta = (proto.len() + new_strings.len()).checked_sub(old_prefix)?;
+    let charset_at = data.len().checked_add(delta)?;
+    let mut out = data[..names.end].to_vec();
+    out.extend_from_slice(&write_index(&[build(
+        delta,
+        charset_at,
+        charset_at + charset.len(),
+    )?]));
+    out.extend_from_slice(&new_strings);
+    out.extend_from_slice(&data[strings.end..]);
+    out.extend_from_slice(&charset);
+    out.extend_from_slice(&charstrings);
+    let check = cff_parser::Table::parse(&out)?;
+    if check.number_of_glyphs() != 2
+        || check.glyph_name(cff_parser::GlyphId(1)) != Some("pdfaGlyphZero")
+    {
+        return None;
+    }
+    Some(out)
+}
+
 /// A parsed CFF INDEX: the raw entries plus the byte range it occupied.
 struct Index {
     entries: Vec<Vec<u8>>,
@@ -925,6 +1211,104 @@ fn patch_operand_in_place(buf: &mut [u8], span: &OperandSpan, value: i32) -> Opt
 
 #[cfg(test)]
 pub(crate) mod tests {
+    pub(crate) fn synth_cid_cff() -> Vec<u8> {
+        use super::*;
+        let mut charset_at = 0;
+        let mut chars_at = 0;
+        let mut select_at = 0;
+        let mut array_at = 0;
+        let mut private_at = 0;
+        let mut private = t2_int(500);
+        private.push(20);
+        private.extend_from_slice(&[139, 21]);
+        let mut data = Vec::new();
+        for _ in 0..12 {
+            let mut top = Vec::new();
+            for v in [391, 392, 0] {
+                top.extend_from_slice(&t2_int(v));
+            }
+            top.extend_from_slice(&[12, 30]);
+            top.extend_from_slice(&[141, 12, 34]); // CIDCount 2
+            for (offset, op) in [
+                (charset_at, vec![15]),
+                (chars_at, vec![17]),
+                (select_at, vec![12, 37]),
+                (array_at, vec![12, 36]),
+            ] {
+                top.extend_from_slice(&t2_int(offset));
+                top.extend_from_slice(&op);
+            }
+            data = vec![1, 0, 4, 4];
+            data.extend_from_slice(&write_index(&[b"OwnedCID".to_vec()]));
+            data.extend_from_slice(&write_index(&[top]));
+            data.extend_from_slice(&write_index(&[b"Adobe".to_vec(), b"Identity".to_vec()]));
+            data.extend_from_slice(&[0, 0]);
+            charset_at = data.len() as i32;
+            data.extend_from_slice(&[0, 0, 1]);
+            select_at = data.len() as i32;
+            data.extend_from_slice(&[0, 0, 0]);
+            chars_at = data.len() as i32;
+            data.extend_from_slice(&write_index(&[
+                vec![14],
+                vec![139, 139, 21, 239, 139, 5, 14],
+            ]));
+            array_at = data.len() as i32;
+            let mut fd = wide_int(private.len() as i32).to_vec();
+            fd.extend_from_slice(&wide_int(private_at));
+            fd.push(18);
+            data.extend_from_slice(&write_index(&[fd]));
+            private_at = data.len() as i32;
+            data.extend_from_slice(&private);
+            data.extend_from_slice(&[0; 1600]); // Forces narrow Top DICT offsets to widen.
+        }
+        data
+    }
+
+    #[test]
+    fn single_notdef_clone_keeps_outline_and_private_width() {
+        let original = synth_cff(&[], 0);
+        let (_, _, _, chars_at) = top_dict_spans(&original).unwrap();
+        let index = parse_index(&original, chars_at).unwrap();
+        // Owned rectangle: width 0, origin 0,0; four relative sides.
+        let shape = vec![
+            139, 139, 21, 239, 139, 5, 139, 239, 5, 39, 139, 5, 139, 39, 5, 14,
+        ];
+        let data = rebuild_with_wide_offsets(&original, &[], std::slice::from_ref(&shape)).unwrap();
+        assert_eq!(index.entries.len(), 1);
+        let output = duplicate_single_notdef(&data).unwrap();
+        let (_, _, _, chars_at) = top_dict_spans(&output).unwrap();
+        let chars = parse_index(&output, chars_at).unwrap();
+        assert_eq!(chars.entries, vec![shape.clone(), shape]);
+        assert_eq!(private_widths(&data), private_widths(&output));
+        assert!(duplicate_single_notdef(&output).is_none());
+        assert!(duplicate_single_notdef(&data[..15]).is_none());
+    }
+
+    #[test]
+    fn cid_blank_clone_relocates_private_dictionaries_and_preserves_glyphs() {
+        let data = synth_cid_cff();
+        let original = cff_parser::Table::parse(&data).unwrap();
+        assert_eq!(
+            original.glyph_width_f64(cff_parser::GlyphId(0)),
+            Some(500.0)
+        );
+        let (out, cid) = duplicate_blank_cid_zero(&data, 0).expect("CID blank clone");
+        let updated = cff_parser::Table::parse(&out).unwrap();
+        assert_eq!(cid, 2);
+        assert_eq!(updated.number_of_glyphs(), 3);
+        for gid in 0..2 {
+            assert_eq!(
+                updated.glyph_cid(cff_parser::GlyphId(gid)),
+                original.glyph_cid(cff_parser::GlyphId(gid))
+            );
+            assert_eq!(
+                updated.glyph_width_f64(cff_parser::GlyphId(gid)),
+                original.glyph_width_f64(cff_parser::GlyphId(gid))
+            );
+        }
+        assert_eq!(updated.glyph_width_f64(cff_parser::GlyphId(2)), Some(500.0));
+        assert!(duplicate_blank_cid_zero(&data[..20], 0).is_none());
+    }
     use super::*;
 
     /// Build a minimal but structurally real CFF: header, Name INDEX, Top DICT
@@ -983,10 +1367,25 @@ pub(crate) mod tests {
 
     /// A CFF with a custom encoding whose supplement section maps `supp.0`
     /// to `supp.1` (a SID). `main_codes[i]` is the code for gid i+1.
-    fn synth_cff_with_supplement(
+    pub(crate) fn synth_cff_with_supplement(
         glyph_names: &[u16],
         main_codes: &[u8],
         supp: (u8, u16),
+    ) -> Vec<u8> {
+        synth_cff_with_strings(glyph_names, main_codes, supp, &[])
+    }
+
+    pub(crate) fn synth_named_cff(names: &[&str], codes: &[u8]) -> Vec<u8> {
+        let sids: Vec<_> = (0..names.len()).map(|i| 391 + i as u16).collect();
+        let strings: Vec<_> = names.iter().map(|name| name.as_bytes().to_vec()).collect();
+        synth_cff_with_strings(&sids, codes, (161, *sids.last().unwrap()), &strings)
+    }
+
+    fn synth_cff_with_strings(
+        glyph_names: &[u16],
+        main_codes: &[u8],
+        supp: (u8, u16),
+        strings: &[Vec<u8>],
     ) -> Vec<u8> {
         let mut charset_off = 0usize;
         let mut charstrings_off = 0usize;
@@ -1007,7 +1406,7 @@ pub(crate) mod tests {
             dict.extend_from_slice(&t2_int(private_off as i32));
             dict.push(18);
             out.extend_from_slice(&write_index(&[dict]));
-            out.extend_from_slice(&write_index(&[]));
+            out.extend_from_slice(&write_index(strings));
             out.extend_from_slice(&write_index(&[]));
             charset_off = out.len();
             out.extend_from_slice(&write_charset(glyph_names));

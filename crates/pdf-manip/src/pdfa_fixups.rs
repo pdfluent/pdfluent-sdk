@@ -1850,6 +1850,9 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
                 continue;
             };
             // Check /A (Action) dict
+            if crate::pdfa_cleanup::is_structure_element(dict) {
+                continue;
+            }
             let action = match dict.get(b"A").ok() {
                 Some(Object::Dictionary(a)) => Some(a.clone()),
                 Some(Object::Reference(r)) => {
@@ -1903,20 +1906,29 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
     // Strategy 2: Find action OBJECTS that are forbidden and replace their
     // /S and /N with an allowed action type. This catches actions referenced
     // via indirect references from annotations that our Strategy 1 missed.
-    // Non-action dict types that also have /S (SMask dicts, transparency
-    // groups, etc.) must be excluded to avoid corrupting them.
-    const NON_ACTION_TYPES: &[&[u8]] = &[
-        b"Mask",  // SMask dict (/S = Alpha | Luminosity)
-        b"Group", // Transparency group (/S = Transparency)
-        b"Catalog",
-        b"Page",
-        b"Pages",
-        b"Font",
-        b"FontDescriptor",
-        b"XObject",
-        b"XRef",
-        b"ObjStm",
-        b"Sig",
+    // /S is also used by structure elements, soft masks, page labels and
+    // transparency groups, often without /Type. An exclusion list cannot
+    // establish that an arbitrary dictionary is an action. Require a positive
+    // action identifier here; contextual /A slots are handled above/below.
+    const ACTION_TYPES: &[&[u8]] = &[
+        b"GoTo",
+        b"GoToR",
+        b"GoToE",
+        b"Thread",
+        b"URI",
+        b"Named",
+        b"Launch",
+        b"Sound",
+        b"Movie",
+        b"SubmitForm",
+        b"ResetForm",
+        b"ImportData",
+        b"Hide",
+        b"SetOCGState",
+        b"Rendition",
+        b"Trans",
+        b"GoTo3DView",
+        b"JavaScript",
     ];
     let ids2: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids2 {
@@ -1924,18 +1936,25 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
             let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
                 continue;
             };
-            // Skip dicts whose /Type is a known non-action type.
-            if let Ok(Object::Name(ref t)) = dict.get(b"Type") {
-                if NON_ACTION_TYPES.iter().any(|nt| t == *nt) {
-                    continue;
-                }
+            if crate::pdfa_cleanup::is_structure_element(dict) {
+                continue;
             }
-            let has_s = dict.has(b"S");
+            if dict
+                .get(b"Type")
+                .and_then(Object::as_name)
+                .is_ok_and(|t| t != b"Action")
+            {
+                continue;
+            }
             let has_type_action = matches!(
                 dict.get(b"Type").ok(),
                 Some(Object::Name(ref n)) if n == b"Action"
             );
-            if !has_s && !has_type_action {
+            let known_action = dict
+                .get(b"S")
+                .and_then(Object::as_name)
+                .is_ok_and(|s| ACTION_TYPES.contains(&s));
+            if !known_action && !has_type_action {
                 continue;
             }
             let s = dict.get(b"S").ok().and_then(|o| {
@@ -7740,6 +7759,38 @@ mod tests {
     use super::rewrite_concatenated_operators;
 
     #[test]
+    fn action_repairs_preserve_structure_attributes_and_untyped_graphics() {
+        use lopdf::{dictionary, Document, Object};
+        let mut doc = Document::with_version("1.7");
+        let attributes = doc.add_object(dictionary! {"O" => "Layout", "SpaceBefore" => 12});
+        let parent = doc.new_object_id();
+        let structure = doc.add_object(dictionary! {
+            "Type" => "StructElem", "S" => "P", "P" => parent, "A" => attributes,
+        });
+        let untyped = doc.add_object(dictionary! {"S" => "Span", "P" => parent, "A" => attributes});
+        let mask = doc.add_object(dictionary! {"S" => "Luminosity", "G" => parent});
+        let label = doc.add_object(dictionary! {"S" => "D", "St" => 1});
+        let expected: Vec<_> = [structure, untyped, mask, label]
+            .into_iter()
+            .map(|id| (id, doc.objects[&id].clone()))
+            .collect();
+        // Both stages used to mistake structure attributes for actions.
+        crate::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false).unwrap();
+        super::fix_forbidden_actions(&mut doc);
+        for (id, original) in expected {
+            assert_eq!(doc.objects[&id], original);
+        }
+        let action = doc.add_object(dictionary! {"Type" => "Action", "S" => "Launch"});
+        let annot = doc.add_object(dictionary! {"Type" => "Annot", "A" => action});
+        super::fix_forbidden_actions(&mut doc);
+        assert!(!doc.get_dictionary(annot).unwrap().has(b"A"));
+        assert_eq!(
+            doc.get_dictionary(action).unwrap().get(b"S").unwrap(),
+            &Object::Name(b"GoTo".to_vec())
+        );
+    }
+
+    #[test]
     fn concatenated_operator_fix_skips_literal_strings() {
         let data = b"(see ref. 17) Tj";
         assert!(rewrite_concatenated_operators(data).is_none());
@@ -8265,6 +8316,81 @@ pub fn fix_binary_inline_image_ei(doc: &mut Document) -> usize {
     count
 }
 
+/// Wrap a complete Flate inline-image payload in ASCIIHex without changing
+/// its compressed bytes or predictor parameters. The zlib end marker, not a
+/// coincidental EI token in binary data, establishes the payload boundary.
+fn protect_flate_inline_image(dict_bytes: &[u8], data: &[u8]) -> Option<(Vec<u8>, usize)> {
+    use lopdf::content::{Content, Operation};
+    let mut header = b"<<".to_vec();
+    header.extend_from_slice(dict_bytes);
+    header.extend_from_slice(b">> PdfAInlineHeader");
+    let parsed = Content::decode_strict(&header).ok()?;
+    let mut dict = parsed
+        .operations
+        .first()?
+        .operands
+        .first()?
+        .as_dict()
+        .ok()?
+        .clone();
+    let filter = dict.get(b"F").or_else(|_| dict.get(b"Filter")).ok()?;
+    let filter = match filter {
+        Object::Array(a) if a.len() == 1 => &a[0],
+        other => other,
+    };
+    if !matches!(filter.as_name().ok(), Some(b"Fl" | b"FlateDecode")) {
+        return None;
+    }
+    let consumed = crate::inline_image::flate_frame_length(data)?;
+    let mut end = consumed;
+    while data.get(end).is_some_and(u8::is_ascii_whitespace) {
+        end += 1;
+    }
+    if data.get(end..end + 2) != Some(b"EI")
+        || data
+            .get(end + 2)
+            .is_some_and(|b| !is_pdf_delimiter_or_ws(*b))
+    {
+        return None;
+    }
+    end += 2;
+    let parameters = dict
+        .get(b"DP")
+        .or_else(|_| dict.get(b"DecodeParms"))
+        .ok()
+        .cloned();
+    for key in [b"F".as_slice(), b"Filter", b"DP", b"DecodeParms"] {
+        dict.remove(key);
+    }
+    dict.set(
+        "F",
+        vec![Object::Name(b"AHx".to_vec()), Object::Name(b"Fl".to_vec())],
+    );
+    if let Some(parameters) = parameters {
+        let parameters = match parameters {
+            Object::Array(mut a) if a.len() == 1 => a.remove(0),
+            Object::Dictionary(_) | Object::Null => parameters,
+            _ => return None,
+        };
+        dict.set("DP", vec![Object::Null, parameters]);
+    }
+    let encoded = Content {
+        operations: vec![Operation::new("", vec![Object::Dictionary(dict)])],
+    }
+    .encode()
+    .ok()?;
+    let header = encoded.strip_prefix(b"<<")?.strip_suffix(b">> ")?;
+    let mut out = b"BI ".to_vec();
+    out.extend_from_slice(header);
+    out.extend_from_slice(b"\nID ");
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    for b in &data[..consumed] {
+        out.extend_from_slice(&[HEX[(b >> 4) as usize], HEX[(b & 15) as usize]]);
+    }
+    out.extend_from_slice(b">\nEI");
+    Some((out, end))
+}
+
 /// Scan a content stream for unfiltered inline images whose raw pixel data
 /// contains the EI termination pattern.  For those images, add `/F /Fl` to the
 /// dict and FlateDecode-compress the image data.
@@ -8308,11 +8434,25 @@ fn compress_binary_inline_images_with_ei(data: &[u8]) -> Option<Vec<u8>> {
 
             let dict_bytes = &data[bi_content_start..id_pos];
 
-            // Skip images that already have a filter — only unfiltered ones
-            // have predictable data lengths and are susceptible to the EI issue.
+            // Protect complete Flate frames before raw content repairs can
+            // mistake their binary bytes for PDF strings or operators.
             let has_filter = dict_bytes.windows(2).any(|w| w == b"/F")
                 || dict_bytes.windows(7).any(|w| w == b"/Filter");
             if has_filter {
+                let mut data_start = id_pos + 3;
+                if data.get(data_start..data_start + 2) == Some(b"\r\n") {
+                    data_start += 2;
+                } else if data.get(data_start).is_some_and(u8::is_ascii_whitespace) {
+                    data_start += 1;
+                }
+                if let Some((protected, consumed)) =
+                    protect_flate_inline_image(dict_bytes, &data[data_start..])
+                {
+                    out.extend_from_slice(&protected);
+                    i = data_start + consumed;
+                    modified = true;
+                    continue;
+                }
                 // Pass through as-is until EI
                 let after_id = id_pos + 3; // skip " ID"
                 out.extend_from_slice(&data[bi_start..after_id]);
@@ -10166,6 +10306,17 @@ fn fix_long_strings_in_streams(doc: &mut Document) -> usize {
             continue;
         }
 
+        if decompressed.windows(2).any(|w| w == b"BI") {
+            let repaired = crate::inline_image::truncate_image_stream_strings(&decompressed);
+            if repaired != decompressed {
+                if let Some(Object::Stream(stream)) = doc.objects.get_mut(&id) {
+                    stream.set_plain_content(repaired);
+                    count += 1;
+                }
+            }
+            continue;
+        }
+
         let mut new_content = Vec::with_capacity(decompressed.len());
         let mut i = 0;
         let mut fixed_any = false;
@@ -11323,5 +11474,66 @@ mod tests_transparency_groups {
         assert_eq!(grp.get(b"S").unwrap().as_name().unwrap(), b"Transparency");
         let cs = grp.get(b"CS").unwrap().as_array().unwrap();
         assert_eq!(cs[1].as_reference().unwrap(), icc_id);
+    }
+}
+
+#[cfg(test)]
+mod round2_inline_tests {
+    use super::*;
+    #[test]
+    fn fixup_does_not_truncate_unsupported_image_payload_or_page_tail() {
+        let mut content = b"q BI /IM true /W 1 /H 1 /F /CCF ID (".to_vec();
+        content.extend(std::iter::repeat_n(b'X', 40000));
+        content.extend_from_slice(b")\nEI Q BT (tail) Tj ET");
+        let mut doc = Document::with_version("1.7");
+        let stream = doc.add_object(lopdf::Stream::new(
+            dictionary! {"Type"=>"XObject","Subtype"=>"Form"},
+            content.clone(),
+        ));
+        assert_eq!(fix_long_strings_in_streams(&mut doc), 0);
+        assert_eq!(
+            doc.get_object(stream).unwrap().as_stream().unwrap().content,
+            content
+        );
+    }
+
+    #[test]
+    fn flate_binary_markers_and_predictors_survive_the_shipping_pipeline() {
+        use flate2::{write::ZlibEncoder, Compression};
+        let pixels = b"\nEI\n(BI)\x00\xff";
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::none());
+        encoder.write_all(pixels).unwrap();
+        let compressed = encoder.finish().unwrap();
+        assert!(compressed.windows(4).any(|w| w == b"\nEI\n"));
+        let dict = b"/W 10 /H 1 /BPC 8 /CS /G /F /Fl /DP << /Predictor 1 >>";
+        let mut payload = compressed.clone();
+        payload.extend_from_slice(b"\nEI Q");
+        let (protected, consumed) = protect_flate_inline_image(dict, &payload).unwrap();
+        assert_eq!(consumed, compressed.len() + 3);
+        let hex: String = compressed.iter().map(|b| format!("{b:02X}")).collect();
+        assert!(protected.windows(hex.len()).any(|w| w == hex.as_bytes()));
+        assert!(String::from_utf8_lossy(&protected).contains("/DP[null<</Predictor 1>>]"));
+        assert!(protect_flate_inline_image(dict, &payload[..compressed.len() - 1]).is_none());
+        let mut content = b"q 10 0 0 1 0 0 cm BI ".to_vec();
+        content.extend_from_slice(dict);
+        content.extend_from_slice(b"\nID ");
+        content.extend_from_slice(&payload);
+        let mut doc = Document::with_version("1.4");
+        let pages = doc.new_object_id();
+        let stream = doc.add_object(lopdf::Stream::new(dictionary! {}, content));
+        let page = doc.add_object(dictionary! {"Type" => "Page", "Parent" => pages, "Resources" => dictionary! {}, "MediaBox" => vec![0.into(),0.into(),100.into(),100.into()], "Contents" => stream});
+        doc.objects.insert(pages, Object::Dictionary(dictionary! {"Type" => "Pages", "Kids" => vec![Object::Reference(page)], "Count" => 1}));
+        let root = doc.add_object(dictionary! {"Type" => "Catalog", "Pages" => pages});
+        doc.trailer.set("Root", root);
+        let mut raw = Vec::new();
+        doc.save_to(&mut raw).unwrap();
+        let output = crate::pdfa::convert_bytes(&raw, &Default::default()).unwrap();
+        let output = Document::load_mem(&output).unwrap();
+        let page = *output.get_pages().values().next().unwrap();
+        let content = output.get_page_content(page);
+        assert!(
+            content.windows(hex.len()).any(|w| w == hex.as_bytes()),
+            "binary image was changed or dropped"
+        );
     }
 }

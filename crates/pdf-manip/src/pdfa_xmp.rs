@@ -264,7 +264,8 @@ pub fn repair_xmp_metadata(
     };
 
     // Create or update the metadata stream.
-    // PDF/A §6.7.2: metadata stream must NOT be compressed.
+    // PDF/A-1 metadata must remain unfiltered. Later parts permit
+    // lossless compression, while preserving an explicit caller opt-out.
     let mut metadata_stream = Stream::new(
         dictionary! {
             "Type" => "Metadata",
@@ -273,7 +274,11 @@ pub fn repair_xmp_metadata(
         },
         xmp_bytes,
     );
-    metadata_stream.allows_compression = false;
+    metadata_stream.allows_compression = conformance.part() != 1
+        && existing_metadata_id
+            .and_then(|id| doc.get_object(id).ok())
+            .and_then(|o| o.as_stream().ok())
+            .is_none_or(|stream| stream.allows_compression);
 
     if let Some(meta_id) = existing_metadata_id {
         doc.objects.insert(meta_id, Object::Stream(metadata_stream));
@@ -334,7 +339,7 @@ fn sanitize_metadata_stream(doc: &mut Document) {
     stream
         .dict
         .set("Length", Object::Integer(stream.content.len() as i64));
-    stream.allows_compression = false;
+    // Keep the level/caller-specific compression preference set by repair.
 }
 
 /// Generate XMP metadata bytes using xmp-writer.

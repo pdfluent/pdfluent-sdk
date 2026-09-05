@@ -1227,6 +1227,13 @@ fn is_action_forbidden(dict: &lopdf::Dictionary) -> bool {
     false
 }
 
+/// A structure element's /A is an attribute object, not an action. /Type is
+/// optional on structure elements; /S with /P also identifies that context.
+pub(crate) fn is_structure_element(dict: &lopdf::Dictionary) -> bool {
+    dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"StructElem")
+        || (dict.has(b"S") && dict.has(b"P") && !dict.has(b"Subtype"))
+}
+
 /// Remove forbidden action types for PDF/A (6.5.1).
 ///
 /// Handles both top-level action objects AND inline action dicts
@@ -1255,6 +1262,9 @@ fn remove_forbidden_actions(doc: &mut Document) {
     for id in ids {
         let remove_a = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                if is_structure_element(dict) {
+                    continue;
+                }
                 match dict.get(b"A").ok() {
                     Some(Object::Dictionary(action)) => is_action_forbidden(action),
                     _ => false,
@@ -1291,6 +1301,9 @@ fn remove_forbidden_actions(doc: &mut Document) {
     for id in ids {
         let remove_a = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                if is_structure_element(dict) {
+                    continue;
+                }
                 match dict.get(b"A").ok() {
                     Some(Object::Reference(action_id)) => {
                         match doc.objects.get(action_id) {
@@ -5046,6 +5059,9 @@ fn fix_long_strings_in_content_streams(doc: &mut Document) -> usize {
 /// content is then copied through untouched: leaving a possibly over-long
 /// string in place is a validation finding, cutting the page is data loss.
 fn truncate_long_strings_in_content(content: &[u8]) -> Vec<u8> {
+    if content.windows(2).any(|w| w == b"BI") {
+        return crate::inline_image::truncate_image_stream_strings(content);
+    }
     const MAX_STRING_LEN: usize = 32767;
     let mut result = Vec::with_capacity(content.len());
     let mut i = 0;
@@ -5840,6 +5856,14 @@ mod tests {
     /// The guard that actually stopped the data loss: without it, a scan that
     /// runs off the end reports a length over the limit and the branch above
     /// keeps 32767 bytes and drops the rest.
+    #[test]
+    fn inline_binary_parentheses_are_not_long_strings() {
+        let mut content = b"q BI /IM true /W 1 /H 1 /F /CCF ID (".to_vec();
+        content.extend(std::iter::repeat_n(b'X', 40000));
+        content.extend_from_slice(b")\nEI Q BT (tail) Tj ET");
+        assert_eq!(super::truncate_long_strings_in_content(&content), content);
+    }
+
     #[test]
     fn an_unterminated_string_leaves_the_content_alone() {
         let mut content = Vec::new();
