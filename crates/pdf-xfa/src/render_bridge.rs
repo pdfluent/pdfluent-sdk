@@ -2570,11 +2570,38 @@ fn render_signature(
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
-    // Adobe behavior: empty signatures are invisible
+    let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
+
+    // An empty signature field draws no content, but it does keep the border
+    // its own template declares.
+    //
+    // This opened with `if value.is_empty() { return; }`, commented "Adobe
+    // behavior: empty signatures are invisible". That is right about the
+    // *content* -- nothing was signed, so there is nothing to show. It also
+    // threw away the border the form's author had specified.
+    //
+    // After flattening the interactivity is gone. If the box goes with it, a
+    // reader can no longer see that a signature was expected -- and the
+    // template said so. `draw_borders` comes from `effective_border_width` on
+    // this field's own style: where there is none we still draw nothing and the
+    // behaviour is exactly what it was. See #148.
     if value.is_empty() {
+        if config.draw_borders && config.border_width > 0.0 {
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} w\n{:.3} {:.3} {:.3} RG\n",
+                    config.border_width,
+                    config.border_color[0],
+                    config.border_color[1],
+                    config.border_color[2],
+                ),
+            );
+            emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+            ops.extend_from_slice(b"S\n");
+        }
         return;
     }
-    let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
 
     if let Some(bg) = &config.background_color {
         write_ops(
@@ -5086,6 +5113,63 @@ mod tests {
             border_width: if border { 1.0 } else { 0.0 },
             ..XfaRenderConfig::default()
         }
+    }
+
+    #[test]
+    fn an_empty_signature_draws_the_border_its_template_declares() {
+        // This used to yield nothing: `if value.is_empty() { return; }` sat in
+        // front of everything, so the border the author had specified went with
+        // the content. After flattening a reader then cannot see that a
+        // signature was expected at all.
+        let mut ops = Vec::new();
+        render_signature(
+            10.0,
+            20.0,
+            100.0,
+            30.0,
+            "",
+            &FormNodeStyle::default(),
+            &config_with_border(true),
+            &mut ops,
+        );
+        let out = String::from_utf8_lossy(&ops);
+        assert!(
+            !ops.is_empty(),
+            "an empty signature field with a border drew nothing"
+        );
+        assert!(
+            out.contains(" RG"),
+            "no stroke colour set, so no border is drawn: {out}"
+        );
+        assert!(
+            out.trim_end().ends_with('S'),
+            "the path is never stroked (no S operator): {out}"
+        );
+    }
+
+    #[test]
+    fn without_a_declared_border_nothing_changes() {
+        // The counter-proof, and at the same time what protects the number:
+        // where the template declares no border we still draw nothing. Without
+        // this test "always draw a box" would pass too, and that would move
+        // SSIM against the oracle on every form with a deliberately invisible
+        // signature field.
+        let mut ops = Vec::new();
+        render_signature(
+            10.0,
+            20.0,
+            100.0,
+            30.0,
+            "",
+            &FormNodeStyle::default(),
+            &config_with_border(false),
+            &mut ops,
+        );
+        assert!(
+            ops.is_empty(),
+            "something was drawn while the template declares no border: {}",
+            String::from_utf8_lossy(&ops)
+        );
     }
 
     #[test]
