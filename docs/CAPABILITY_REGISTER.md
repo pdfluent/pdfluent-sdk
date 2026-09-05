@@ -207,7 +207,7 @@ features were covered.
 | **Defined at** | `crates/pdf-compliance/src/lib.rs` · `crates/pdf-manip/src/pdfa.rs` · `crates/pdfluent/src/document.rs` · `crates/xfa-wasm/src/lib.rs` |
 | **Reachable from facade** | yes |
 | **Exposed in bindings** | WASM (@pdfluent/sdk-wasm) · C ABI (voedt .NET/Java/Node) · Java (JNI) · Node (napi) |
-| **Tested by** | `crates/pdf-compliance/src/lib.rs` · `crates/pdf-compliance/src/xmp.rs` · `crates/pdf-manip/src/pdfa.rs` · `crates/pdf-manip/tests/conversion_keeps_the_word_separator.rs` · `crates/pdf-manip/tests/debug_convert.rs` |
+| **Tested by** | `crates/pdf-compliance/src/lib.rs` · `crates/pdf-compliance/src/xmp.rs` · `crates/pdf-manip/src/pdfa.rs` · `crates/pdf-manip/tests/content_stream_names_survive.rs` · `crates/pdf-manip/tests/conversion_is_deterministic.rs` |
 | **Run in CI by** | `quality:cargo-test` · `sanity:verapdf-on-our-own-output` · `sanity:wasm-binding-smoke` |
 
 ## Gaps worth acting on
@@ -337,7 +337,7 @@ delivered through it.
 
 | crate | version | in facade | test files | unit tests | run by |
 |---|---|---|---|---|---|
-| `formcalc-interpreter` | 1.0.0 | internal | 4 | 113 | `quality:cargo-test` |
+| `formcalc-interpreter` | 1.0.0 | internal | 5 | 113 | `quality:cargo-test` |
 | `pdf-annot` | 1.0.0 | direct | — | 38 | `quality:cargo-test` |
 | `pdf-compliance` | 1.0.0 | direct | — | 92 | `quality:cargo-test` |
 | `pdf-docx` | 1.0.0 | direct | — | 24 | `quality:cargo-test` |
@@ -345,7 +345,7 @@ delivered through it.
 | `pdf-font` | 1.0.0-beta.5 | internal | — | 117 | `quality:cargo-test` |
 | `pdf-interpret` | 0.5.8 | direct | — | 130 | `quality:cargo-test` |
 | `pdf-invoice` | 1.0.0 | **absent** | — | 53 | `quality:cargo-test` |
-| `pdf-manip` | 1.0.0 | direct | 15 | 288 | `quality:cargo-test` |
+| `pdf-manip` | 1.0.0 | direct | 17 | 288 | `quality:cargo-test` |
 | `pdf-ocr` | 1.0.0 | **absent** | 1 | 70 | `quality:cargo-test` |
 | `pdf-pptx` | 1.0.0 | direct | — | 14 | `quality:cargo-test` |
 | `pdf-redact` | 1.0.0 | direct | 6 | 57 | `quality:cargo-test` |
@@ -353,7 +353,7 @@ delivered through it.
 | `pdf-standard-fonts` | 1.0.0 | internal | — | 9 | `quality:cargo-test` |
 | `pdf-syntax` | 0.5.6 | direct | — | 233 | `quality:cargo-test` |
 | `pdf-text-format` | 1.0.0 | **absent** | — | 21 | `quality:cargo-test` |
-| `pdf-xfa` | 1.0.0 | internal | 48 | 385 | `quality:cargo-test` |
+| `pdf-xfa` | 1.0.0 | internal | 52 | 392 | `quality:cargo-test` |
 | `pdf-xlsx` | 1.0.0 | direct | — | 19 | `quality:cargo-test` |
 | `pdfluent` | 1.0.0 | direct | 32 | 24 | `quality:cargo-test` |
 | `pdfluent-ccitt` | 0.2.2 | internal | — | 9 | `quality:cargo-test` |
@@ -367,7 +367,7 @@ delivered through it.
 | `xfa-dom-resolver` | 1.0.0 | internal | 1 | 32 | `quality:cargo-test` |
 | `xfa-js-sandboxed` | 1.0.0 | internal | 5 | 8 | `quality:cargo-test` |
 | `xfa-json` | 1.0.0 | internal | — | 26 | `quality:cargo-test` |
-| `xfa-layout-engine` | 1.0.0 | internal | 8 | 123 | `quality:cargo-test` |
+| `xfa-layout-engine` | 1.0.0 | internal | 9 | 123 | `quality:cargo-test` |
 | `xfa-license` | 1.0.0 | direct | — | 26 | `quality:cargo-test` |
 
 ## Feature flags that enable nothing
