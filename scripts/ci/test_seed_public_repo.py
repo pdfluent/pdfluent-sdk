@@ -502,6 +502,189 @@ def main() -> int:
                        u.returncode == 0 and "no internal path, no withdrawn object" in out,
                        out[-400:])
 
+    # ---------------------------------------------------------------------
+    # KEEPING THE VERIFIED MIRROR, AND PUBLISHING THAT ONE (#222). The run that
+    # is checked has to be the run that is published: a second rewrite is not
+    # the artefact anybody looked at, and checking after the push is the one
+    # order that cannot be undone.
+    # ---------------------------------------------------------------------
+
+    def kept_mirror(tmp: pathlib.Path, src: pathlib.Path, termen: pathlib.Path,
+                    *extra: str):
+        houd = tmp / "kept.git"
+        u = run_seed(src, "--keep", str(houd), *extra,
+                     env=seed_env(src, termen))
+        return u, houd
+
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = source_repo(tmp)
+        u, houd = kept_mirror(tmp, src, termen, "--branch", "main")
+        out = u.stdout + u.stderr
+        ok_all &= case("--keep leaves the verified mirror behind",
+                       u.returncode == 0 and houd.is_dir()
+                       and (houd / "HEAD").is_file(), out[-400:])
+        # The withdrawn list travels with it. Regenerating it from the rewritten
+        # mirror would answer a different question -- the paths are gone, so a
+        # fresh plan is empty and the check passes by having nothing to look for.
+        ok_all &= case("and the withdrawn-object list travels with it",
+                       (houd / "withdrawn-oids.txt").is_file()
+                       and (houd / "withdrawn-oids.txt").stat().st_size > 0)
+        # The kept mirror is the PUBLISHED history and not the source: the same
+        # property every case above asserts, read one step earlier.
+        ok_all &= case("and the kept mirror is already filtered",
+                       not any(p.startswith("test-data") for p in paths_in(houd)),
+                       f"paths: {sorted(paths_in(houd))[:10]}")
+        # --branch, because this history's branch is `master` and the public
+        # repository's default is `main`. A mirror push without it leaves the
+        # default pointing at nothing.
+        takken = subprocess.run(
+            ["git", "-C", str(houd), "for-each-ref", "--format=%(refname:short)",
+             "refs/heads/*"], capture_output=True, text=True,
+            env=sealed_env(cwd=houd)).stdout.split()
+        kop = subprocess.run(["git", "-C", str(houd), "symbolic-ref", "--short", "HEAD"],
+                             capture_output=True, text=True,
+                             env=sealed_env(cwd=houd)).stdout.strip()
+        ok_all &= case("--branch renames the seeded branch and HEAD follows it",
+                       takken == ["main"] and kop == "main",
+                       f"branches {takken}, HEAD {kop!r}")
+        # And the tag still came along under its own name.
+        tags = subprocess.run(
+            ["git", "-C", str(houd), "for-each-ref", "--format=%(refname:short)",
+             "refs/tags/*"], capture_output=True, text=True,
+            env=sealed_env(cwd=houd)).stdout.split()
+        ok_all &= case("and the tags are not renamed with it", tags == ["v1.0.0"],
+                       f"tags {tags}")
+
+        # Publishing the kept mirror into an empty destination.
+        dest = tmp / "dest.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(dest)],
+                       capture_output=True, env=sealed_env(cwd=tmp), check=True)
+        v = subprocess.run(["bash", str(SCRIPT), "--publish", str(houd), str(dest)],
+                           capture_output=True, text=True,
+                           env=seed_env(src, termen), timeout=600)
+        vout = v.stdout + v.stderr
+        ok_all &= case("--publish pushes the mirror that was kept",
+                       v.returncode == 0 and "done" in vout, vout[-400:])
+        ok_all &= case("and it re-verifies rather than trusting the directory",
+                       "re-verifying" in vout and "no internal path, no withdrawn "
+                       "object" in vout, vout[-400:])
+        ok_all &= case("and what arrives carries no internal path",
+                       not any(p.startswith("test-data") for p in paths_in(dest)),
+                       f"paths: {sorted(paths_in(dest))[:10]}")
+        ok_all &= case("and no personal address",
+                       "someone@example.invalid" not in addresses_in(dest),
+                       f"addresses: {sorted(addresses_in(dest))}")
+
+    # THE CASE --publish EXISTS FOR. A mirror sitting on disk between two
+    # commands is a mirror somebody can change, so the verification is run again
+    # against the bytes that are about to leave -- not against a memory of a run
+    # that happened hours earlier.
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = source_repo(tmp)
+        u, houd = kept_mirror(tmp, src, termen)
+        werk = tmp / "tamper"
+        git("clone", "-q", str(houd), str(werk), cwd=tmp)
+        git("config", "user.name", "fixture", cwd=werk)
+        git("config", "user.email", "someone@example.invalid", cwd=werk)
+        (werk / "extra.txt").write_text("added after the verification\n",
+                                        encoding="utf-8")
+        git("add", "-A", cwd=werk)
+        git("commit", "-q", "-m", "added after the verification", cwd=werk)
+        git("push", "-q", "origin", "HEAD:refs/heads/tampered", cwd=werk)
+        dest = tmp / "dest.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(dest)],
+                       capture_output=True, env=sealed_env(cwd=tmp), check=True)
+        v = subprocess.run(["bash", str(SCRIPT), "--publish", str(houd), str(dest)],
+                           capture_output=True, text=True,
+                           env=seed_env(src, termen), timeout=600)
+        vout = v.stdout + v.stderr
+        ok_all &= case("a mirror changed after it was kept is refused, not pushed",
+                       v.returncode != 0 and "not publishable" in vout, vout[-400:])
+        ok_all &= case("and nothing reached the destination",
+                       not paths_in(dest), f"paths: {sorted(paths_in(dest))[:10]}")
+
+    # A mirror this script did not keep has no withdrawn list beside it, and a
+    # withdrawn check that cannot look is not a withdrawn check that passed.
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = source_repo(tmp)
+        vreemd = tmp / "elsewhere.git"
+        git("clone", "-q", "--mirror", str(src), str(vreemd), cwd=tmp)
+        dest = tmp / "dest.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(dest)],
+                       capture_output=True, env=sealed_env(cwd=tmp), check=True)
+        v = subprocess.run(["bash", str(SCRIPT), "--publish", str(vreemd), str(dest)],
+                           capture_output=True, text=True,
+                           env=seed_env(src, termen), timeout=600)
+        vout = v.stdout + v.stderr
+        ok_all &= case("--publish refuses a mirror it did not verify",
+                       v.returncode != 0 and "withdrawn-oids.txt" in vout, vout[-400:])
+
+    # The destination that is not empty. The refusal is the default and stays it;
+    # #222's placeholder is the case that needs the way past, and the way past
+    # has to be said out loud.
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = source_repo(tmp)
+        u, houd = kept_mirror(tmp, src, termen, "--branch", "main")
+        dest = tmp / "dest.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(dest)],
+                       capture_output=True, env=sealed_env(cwd=tmp), check=True)
+        # A placeholder standing where the seeding is going.
+        plaats = tmp / "placeholder"
+        plaats.mkdir()
+        init_repo(plaats)
+        (plaats / "README.md").write_text("placeholder\n", encoding="utf-8")
+        git("add", "-A", cwd=plaats)
+        git("commit", "-q", "-m", "placeholder", cwd=plaats)
+        git("push", "-q", str(dest), "master:main", cwd=plaats)
+        v = subprocess.run(["bash", str(SCRIPT), "--publish", str(houd), str(dest)],
+                           capture_output=True, text=True,
+                           env=seed_env(src, termen), timeout=600)
+        vout = v.stdout + v.stderr
+        ok_all &= case("--publish refuses a destination that already has branches",
+                       v.returncode != 0 and "already has branches" in vout,
+                       vout[-400:])
+        # And the placeholder is still there: a refusal that half-published would
+        # be worse than no refusal at all.
+        heeft = subprocess.run(["git", "-C", str(dest), "show", "main:README.md"],
+                               capture_output=True, text=True,
+                               env=sealed_env(cwd=dest)).stdout
+        ok_all &= case("and it left the destination alone", heeft == "placeholder\n",
+                       repr(heeft))
+        w = subprocess.run(["bash", str(SCRIPT), "--publish", str(houd), str(dest),
+                            "--replace"], capture_output=True, text=True,
+                           env=seed_env(src, termen), timeout=600)
+        wout = w.stdout + w.stderr
+        ok_all &= case("--replace says what it is overwriting and then does it",
+                       w.returncode == 0 and "will be overwritten" in wout
+                       and "done" in wout, wout[-400:])
+        heeft = subprocess.run(["git", "-C", str(dest), "show", "main:a.txt"],
+                               capture_output=True, text=True,
+                               env=sealed_env(cwd=dest)).stdout
+        ok_all &= case("and the placeholder is gone, replaced by the seeded history",
+                       heeft == "first\n", repr(heeft))
+
+    # --keep into a directory that exists would publish whichever mirror won the
+    # race, and the operator would have no way to tell which.
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        termen = terms_file(tmp)
+        src = source_repo(tmp)
+        bezet = tmp / "occupied"
+        bezet.mkdir()
+        u = run_seed(src, "--keep", str(bezet), env=seed_env(src, termen))
+        out = u.stdout + u.stderr
+        ok_all &= case("--keep refuses a directory that already exists",
+                       u.returncode != 0 and "already exists" in out
+                       and "trailer lines after the rewrite" not in out, out[-400:])
+
     # Without the private list the partner rule cannot be judged, and a seeding
     # that cannot be judged is not a seeding that passed.
     with tempfile.TemporaryDirectory() as d:
