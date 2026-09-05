@@ -27581,3 +27581,121 @@ mod woordscheiding_tests {
         assert_eq!(text, vec![0x00, 0x08, 0x00, 0x08]);
     }
 }
+
+#[cfg(test)]
+mod storage_regression_tests {
+    use super::symbolic_subset_fixtures as fx;
+    use lopdf::{dictionary, Document, Object};
+
+    fn repeated_programs() -> (Document, Vec<lopdf::ObjectId>, Vec<u8>) {
+        let bytes = fx::build_symbolic_subset_ttf(0);
+        let mut doc = fx::make_symbolic_subset_doc(bytes.clone(), vec![500, 500]);
+        let descriptor = doc
+            .objects
+            .values()
+            .find_map(|o| {
+                let d = o.as_dict().ok()?;
+                d.has(b"FontFile2").then_some(d.clone())
+            })
+            .unwrap();
+        let program = descriptor
+            .get(b"FontFile2")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let stream = doc.get_object(program).unwrap().clone();
+        let mut descriptors = Vec::new();
+        for i in 0..12 {
+            let id = doc.add_object(stream.clone());
+            let mut fd = descriptor.clone();
+            fd.set("FontFile2", id);
+            fd.set("Ascent", 700 + i);
+            descriptors.push(doc.add_object(fd));
+        }
+        // Reachable independent descriptors; the test need not repeat pages
+        // just to exercise references and identical embedded font programs.
+        doc.catalog_mut().unwrap().set(
+            "TestDescriptors",
+            Object::Array(
+                descriptors
+                    .iter()
+                    .map(|id| Object::Reference(*id))
+                    .collect(),
+            ),
+        );
+        (doc, descriptors, bytes)
+    }
+
+    #[test]
+    fn converted_embedded_fonts_share_compressed_programs() {
+        let (mut doc, descriptors, _) = repeated_programs();
+        crate::pdfa::convert_document(&mut doc, &Default::default()).unwrap();
+        let programs: Vec<_> = descriptors
+            .iter()
+            .map(|id| {
+                doc.get_dictionary(*id)
+                    .unwrap()
+                    .get(b"FontFile2")
+                    .unwrap()
+                    .as_reference()
+                    .unwrap()
+            })
+            .collect();
+        assert!(
+            programs.iter().all(|id| *id == programs[0]),
+            "identical programs still embedded repeatedly"
+        );
+        let stream = doc.get_object(programs[0]).unwrap().as_stream().unwrap();
+        assert!(
+            stream.dict.has(b"Filter"),
+            "font program still uncompressed"
+        );
+    }
+
+    #[test]
+    fn sharing_preserves_font_bytes_and_distinct_descriptor_metrics() {
+        let (mut doc, descriptors, bytes) = repeated_programs();
+        crate::pdfa::compact_storage(&mut doc);
+        for (i, id) in descriptors.iter().enumerate() {
+            let fd = doc.get_dictionary(*id).unwrap();
+            assert_eq!(fd.get(b"Ascent").unwrap().as_i64().unwrap(), 700 + i as i64);
+            let program = fd.get(b"FontFile2").unwrap().as_reference().unwrap();
+            let stream = doc.get_object(program).unwrap().as_stream().unwrap();
+            assert_eq!(stream.decompressed_content().unwrap(), bytes);
+        }
+        let objects = doc.objects.clone();
+        crate::pdfa::compact_storage(&mut doc);
+        assert_eq!(doc.objects, objects, "storage cleanup must be idempotent");
+    }
+
+    #[test]
+    fn equal_font_bytes_with_different_stream_dictionaries_are_not_shared() {
+        let (mut doc, descriptors, bytes) = repeated_programs();
+        let special = doc.add_object(lopdf::Stream::new(
+            dictionary! { "Length1" => bytes.len() as i64 },
+            bytes,
+        ));
+        doc.get_object_mut(descriptors[0])
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("FontFile2", special);
+        crate::pdfa::compact_storage(&mut doc);
+        let refs: Vec<_> = descriptors
+            .iter()
+            .map(|id| {
+                doc.get_dictionary(*id)
+                    .unwrap()
+                    .get(b"FontFile2")
+                    .unwrap()
+                    .as_reference()
+                    .unwrap()
+            })
+            .collect();
+        assert_ne!(
+            refs[0], refs[1],
+            "stream dictionary changes the interpretation of the program"
+        );
+        assert!(doc.objects.contains_key(&special));
+    }
+}

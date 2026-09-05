@@ -336,8 +336,116 @@ pub fn convert_document(
         crate::pdfa_xmp::repair_xmp_metadata(doc, opts.conformance, None)
     })?;
 
+    // Repairs can replace streams or leave newly embedded programs raw. Do
+    // this last: later font passes must never mutate a program we just shared.
+    opts.step("compact_storage");
+    compact_storage(doc);
+
     report.page_count = doc.get_pages().len();
     Ok(report)
+}
+
+/// Lossless storage cleanup, without changing glyphs, pixels or content tokens.
+pub(crate) fn compact_storage(doc: &mut Document) {
+    use lopdf::{Dictionary, Object, ObjectId};
+    use sha2::{Digest, Sha256};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    // Include nested direct dictionaries (not just standalone descriptors).
+    fn visit_dicts(obj: &mut Object, visit: &mut impl FnMut(&mut Dictionary)) {
+        match obj {
+            Object::Dictionary(d) => {
+                visit(d);
+                for (_, value) in d.iter_mut() {
+                    visit_dicts(value, visit);
+                }
+            }
+            Object::Stream(s) => {
+                visit(&mut s.dict);
+                for (_, value) in s.dict.iter_mut() {
+                    visit_dicts(value, visit);
+                }
+            }
+            Object::Array(a) => a.iter_mut().for_each(|o| visit_dicts(o, visit)),
+            _ => {}
+        }
+    }
+
+    crate::optimize::remove_unused_objects(doc);
+    let keys: [&[u8]; 3] = [b"FontFile", b"FontFile2", b"FontFile3"];
+    let mut programs = BTreeSet::new();
+    let mut metadata = BTreeSet::new();
+    for obj in doc.objects.values_mut() {
+        visit_dicts(obj, &mut |d| {
+            for key in keys {
+                if let Ok(id) = d.get(key).and_then(Object::as_reference) {
+                    programs.insert(id);
+                }
+            }
+            if let Ok(id) = d.get(b"Metadata").and_then(Object::as_reference) {
+                metadata.insert(id);
+            }
+        });
+    }
+    for (id, obj) in &mut doc.objects {
+        let Object::Stream(s) = obj else { continue };
+        // PDF/A-1 metadata must remain unfiltered. Keep it so for every level.
+        // Do not add a filter to external-file streams or activate previously
+        // inactive DecodeParms. Existing image codecs/filters stay untouched.
+        if metadata.contains(id)
+            || s.dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"Metadata")
+            || [
+                b"Filter".as_slice(),
+                b"DecodeParms",
+                b"F",
+                b"FFilter",
+                b"FDecodeParms",
+            ]
+            .iter()
+            .any(|key| s.dict.has(key))
+        {
+            continue;
+        }
+        // compress() changes the stream only after successful encoding and
+        // only if the payload saving exceeds the added filter overhead.
+        let _ = s.compress();
+    }
+
+    // Scope sharing to immutable font programs. Equal bytes alone are not
+    // sufficient: FontFile3 Subtype and Type1 Length1/2/3 also interpret them.
+    // Keep every FontDescriptor, Encoding, Widths and ToUnicode independent.
+    let mut candidates: BTreeMap<[u8; 32], Vec<ObjectId>> = BTreeMap::new();
+    let mut replacements = BTreeMap::new();
+    for id in programs {
+        let Ok(stream) = doc.get_object(id).and_then(Object::as_stream) else {
+            continue;
+        };
+        let hash: [u8; 32] = Sha256::digest(&stream.content).into();
+        let bucket = candidates.entry(hash).or_default();
+        if let Some(canonical) = bucket.iter().copied().find(|other| {
+            doc.get_object(*other)
+                .and_then(Object::as_stream)
+                .is_ok_and(|s| s.dict == stream.dict && s.content == stream.content)
+        }) {
+            replacements.insert(id, canonical);
+        } else {
+            bucket.push(id);
+        }
+    }
+    for obj in doc.objects.values_mut() {
+        visit_dicts(obj, &mut |d| {
+            for key in keys {
+                if let Ok(old) = d.get(key).and_then(Object::as_reference) {
+                    if let Some(&canonical) = replacements.get(&old) {
+                        d.set(key, Object::Reference(canonical));
+                    }
+                }
+            }
+        });
+    }
+    // A duplicate could have a non-font reference too; reachability, rather
+    // than blindly deleting the duplicate IDs, preserves such references.
+    crate::optimize::remove_unused_objects(doc);
 }
 
 /// The font repairs, in the order that measured best on the govdocs corpus.
@@ -584,6 +692,122 @@ mod tests {
     fn rejects_non_pdf_input() {
         let err = convert_bytes(b"not a pdf at all", &PdfAConvertOptions::default()).unwrap_err();
         assert!(matches!(err, PdfAConvertError::NotAPdf));
+    }
+
+    #[test]
+    fn converted_content_is_compressed_without_changing_tokens() {
+        let mut doc = Document::load_mem(&minimal_pdf()).unwrap();
+        let page = *doc.get_pages().values().next().unwrap();
+        let content = doc
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Contents")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let tokens = b"q 0 0 10 10 re f Q\n".repeat(4096);
+        doc.objects.insert(
+            content,
+            lopdf::Stream::new(dictionary! {}, tokens.clone()).into(),
+        );
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let converted = convert_bytes(&bytes, &PdfAConvertOptions::default()).unwrap();
+        let output = Document::load_mem(&converted).unwrap();
+        let stream = output.get_object(content).unwrap().as_stream().unwrap();
+        assert_eq!(stream.decompressed_content().unwrap(), tokens);
+        assert!(stream.content.len() < tokens.len() / 10);
+    }
+
+    #[test]
+    fn converted_icc_is_compressed_but_metadata_is_not() {
+        let converted = convert_bytes(&minimal_pdf(), &PdfAConvertOptions::default()).unwrap();
+        let output = Document::load_mem(&converted).unwrap();
+        let intent = output
+            .catalog()
+            .unwrap()
+            .get(b"OutputIntents")
+            .unwrap()
+            .as_array()
+            .unwrap()[0]
+            .as_reference()
+            .unwrap();
+        let profile = output
+            .get_dictionary(intent)
+            .unwrap()
+            .get(b"DestOutputProfile")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let stream = output.get_object(profile).unwrap().as_stream().unwrap();
+        assert!(
+            stream.dict.has(b"Filter"),
+            "new output profiles must be compressed"
+        );
+        assert!(stream.content.len() < stream.decompressed_content().unwrap().len());
+        let metadata = output
+            .catalog()
+            .unwrap()
+            .get(b"Metadata")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        assert!(!output
+            .get_object(metadata)
+            .unwrap()
+            .as_stream()
+            .unwrap()
+            .dict
+            .has(b"Filter"));
+    }
+
+    #[test]
+    fn conversion_drops_unreachable_cycles_and_old_metadata() {
+        let mut doc = Document::load_mem(&minimal_pdf()).unwrap();
+        let a = doc.new_object_id();
+        let b = doc.add_object(dictionary! { "Next" => a });
+        doc.objects.insert(
+            a,
+            lopdf::Stream::new(dictionary! { "Next" => b }, vec![42; 65536]).into(),
+        );
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let once = convert_bytes(&bytes, &PdfAConvertOptions::default()).unwrap();
+        let twice = convert_bytes(&once, &PdfAConvertOptions::default()).unwrap();
+        let output = Document::load_mem(&once).unwrap();
+        assert!(!output.objects.contains_key(&a));
+        assert!(!output.objects.contains_key(&b));
+        assert!(
+            // Free-tier conversion adds another watermark on every call. That
+            // pre-existing behaviour is separate from unreachable storage.
+            twice.len() <= once.len() + 1024,
+            "second conversion accumulated storage: {} -> {}",
+            once.len(),
+            twice.len()
+        );
+    }
+
+    #[test]
+    fn storage_compaction_preserves_existing_codecs_and_decode_parameters() {
+        use lopdf::{Object, Stream};
+        let mut doc = Document::load_mem(&minimal_pdf()).unwrap();
+        let streams = [
+            Stream::new(dictionary! { "Filter" => "DCTDecode" }, vec![42; 4096]),
+            Stream::new(
+                dictionary! { "DecodeParms" => dictionary! { "Predictor" => 12 } },
+                vec![42; 4096],
+            ),
+            Stream::new(dictionary! { "Type" => "Metadata" }, vec![42; 4096]),
+        ];
+        let ids: Vec<_> = streams.iter().map(|s| doc.add_object(s.clone())).collect();
+        doc.catalog_mut().unwrap().set(
+            "Preserve",
+            Object::Array(ids.iter().map(|id| Object::Reference(*id)).collect()),
+        );
+        compact_storage(&mut doc);
+        for (id, expected) in ids.iter().zip(streams) {
+            assert_eq!(doc.get_object(*id).unwrap().as_stream().unwrap(), &expected);
+        }
     }
 
     #[test]
