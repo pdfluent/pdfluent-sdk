@@ -14,8 +14,8 @@ mine are not.
 
 - **13 of 13** advertised capabilities are implemented, reachable,
   tested, and covered by a CI job that actually runs the test.
-- **78** public methods on `pdfluent::prelude::PdfDocument`, of which
-  **4** fail at runtime.
+- **84** public methods on `pdfluent::prelude::PdfDocument`, of which
+  **1** fail at runtime.
 - **3** published crates are
   absent from the facade's dependency graph;
   **13** are compiled in but
@@ -116,7 +116,7 @@ features were covered.
 | **Defined at** | `crates/pdfluent/src/decoration.rs` · `crates/pdfluent/src/document.rs` |
 | **Reachable from facade** | yes |
 | **Exposed in bindings** | WASM (@pdfluent/sdk-wasm) · C ABI (voedt .NET/Java/Node) |
-| **Tested by** | `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/dx_consolidation.rs` · `crates/pdfluent/tests/wasm_surface.rs` |
+| **Tested by** | `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/dx_consolidation.rs` · `crates/pdfluent/tests/wasm_surface.rs` · `crates/pdfluent/tests/watermark.rs` |
 | **Run in CI by** | `quality:cargo-test` |
 
 ### PDF to Word — `shipped`
@@ -128,7 +128,7 @@ features were covered.
 | **Implemented in** | `pdf-docx`, `pdfluent` |
 | **Defined at** | `crates/pdf-docx/src/lib.rs` · `crates/pdfluent/src/document.rs` |
 | **Reachable from facade** | yes |
-| **Exposed in bindings** | **Rust only** |
+| **Exposed in bindings** | WASM (@pdfluent/sdk-wasm) · C ABI (voedt .NET/Java/Node) · Node (napi) |
 | **Tested by** | `crates/pdf-docx/src/lib.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/parity_methods.rs` · `crates/pdfluent/tests/wasm_surface.rs` |
 | **Run in CI by** | `quality:cargo-test` |
 
@@ -141,7 +141,7 @@ features were covered.
 | **Implemented in** | `pdf-xlsx`, `pdfluent` |
 | **Defined at** | `crates/pdf-xlsx/src/lib.rs` · `crates/pdfluent/src/document.rs` |
 | **Reachable from facade** | yes |
-| **Exposed in bindings** | **Rust only** |
+| **Exposed in bindings** | WASM (@pdfluent/sdk-wasm) · C ABI (voedt .NET/Java/Node) · Node (napi) |
 | **Tested by** | `crates/pdf-xlsx/src/lib.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/parity_methods.rs` |
 | **Run in CI by** | `quality:cargo-test` |
 
@@ -154,7 +154,7 @@ features were covered.
 | **Implemented in** | `pdf-pptx`, `pdfluent` |
 | **Defined at** | `crates/pdf-pptx/src/lib.rs` · `crates/pdfluent/src/document.rs` |
 | **Reachable from facade** | yes |
-| **Exposed in bindings** | **Rust only** |
+| **Exposed in bindings** | WASM (@pdfluent/sdk-wasm) · C ABI (voedt .NET/Java/Node) · Node (napi) |
 | **Tested by** | `crates/pdf-pptx/src/lib.rs` · `crates/pdfluent/src/document.rs` · `crates/pdfluent/tests/parity_methods.rs` |
 | **Run in CI by** | `quality:cargo-test` |
 
@@ -215,17 +215,6 @@ features were covered.
 Everything below is derived, so this list shortens only when the code changes
 -- not when someone decides it is fine.
 
-### Advertised in the SDK, available only in Rust
-
-No binding exports these, so a Python, Node, Java, .NET or WASM customer
-cannot call them at all. The Rust tests pass, the facade reaches them, and
-the register would still say `shipped` -- which is why this list is
-separate from the state column rather than folded into it.
-
-- PDF to Word
-- PDF to Excel
-- PDF to PowerPoint
-
 ### Published crates absent from the facade entirely
 
 Not merely unexposed — not in the dependency graph at all. Each is either a
@@ -240,17 +229,14 @@ deliberate split or a capability we imply we ship and never wired up.
 The dangerous shape: the type system promises them, the runtime refuses, and
 a caller cannot discover the gap without running it.
 
-- `add_decoration()`
-- `add_watermark()`
-- `flatten_forms()`
 - `linearize()`
 
 ### All public methods
 
 | method | works |
 |---|---|
-| `add_decoration` | **stub** |
-| `add_watermark` | **stub** |
+| `add_decoration` | yes |
+| `add_watermark` | yes |
 | `annotations` | yes |
 | `attachment_bytes` | yes |
 | `attachments` | yes |
@@ -266,7 +252,9 @@ a caller cannot discover the gap without running it.
 | `extract_text` | yes |
 | `find_text` | yes |
 | `flatten_annotations` | yes |
-| `flatten_forms` | **stub** |
+| `flatten_forms` | yes |
+| `flatten_xfa` | yes |
+| `flatten_xfa_with_password` | yes |
 | `form_fields` | yes |
 | `form_model` | yes |
 | `form_mut` | yes |
@@ -275,6 +263,7 @@ a caller cannot discover the gap without running it.
 | `from_reader` | yes |
 | `has_xfa_form` | yes |
 | `insert_image` | yes |
+| `is_complete` | yes |
 | `linearize` | **stub** |
 | `metadata` | yes |
 | `metadata_mut` | yes |
@@ -311,10 +300,13 @@ a caller cannot discover the gap without running it.
 | `text_with_layout` | yes |
 | `to_bytes` | yes |
 | `to_docx` | yes |
+| `to_docx_bytes` | yes |
 | `to_images` | yes |
 | `to_incremental_bytes` | yes |
 | `to_pptx` | yes |
+| `to_pptx_bytes` | yes |
 | `to_xlsx` | yes |
+| `to_xlsx_bytes` | yes |
 | `validate_pdfa` | yes |
 | `verify_signatures` | yes |
 | `version` | yes |
@@ -340,12 +332,12 @@ delivered through it.
 | `formcalc-interpreter` | 1.0.0 | internal | 5 | 113 | `quality:cargo-test` |
 | `pdf-annot` | 1.0.0 | direct | — | 38 | `quality:cargo-test` |
 | `pdf-compliance` | 1.0.0 | direct | — | 92 | `quality:cargo-test` |
-| `pdf-docx` | 1.0.0 | direct | — | 24 | `quality:cargo-test` |
+| `pdf-docx` | 1.0.0 | direct | — | 27 | `quality:cargo-test` |
 | `pdf-engine` | 1.0.0 | direct | 5 | 155 | `quality:cargo-test` |
 | `pdf-font` | 1.0.0-beta.5 | internal | — | 117 | `quality:cargo-test` |
 | `pdf-interpret` | 0.5.8 | direct | — | 130 | `quality:cargo-test` |
 | `pdf-invoice` | 1.0.0 | **absent** | — | 53 | `quality:cargo-test` |
-| `pdf-manip` | 1.0.0 | direct | 17 | 288 | `quality:cargo-test` |
+| `pdf-manip` | 1.0.0 | direct | 18 | 288 | `quality:cargo-test` |
 | `pdf-ocr` | 1.0.0 | **absent** | 1 | 70 | `quality:cargo-test` |
 | `pdf-pptx` | 1.0.0 | direct | — | 14 | `quality:cargo-test` |
 | `pdf-redact` | 1.0.0 | direct | 6 | 57 | `quality:cargo-test` |
@@ -353,9 +345,9 @@ delivered through it.
 | `pdf-standard-fonts` | 1.0.0 | internal | — | 9 | `quality:cargo-test` |
 | `pdf-syntax` | 0.5.6 | direct | — | 233 | `quality:cargo-test` |
 | `pdf-text-format` | 1.0.0 | **absent** | — | 21 | `quality:cargo-test` |
-| `pdf-xfa` | 1.0.0 | internal | 52 | 392 | `quality:cargo-test` |
+| `pdf-xfa` | 1.0.0 | internal | 53 | 396 | `quality:cargo-test` |
 | `pdf-xlsx` | 1.0.0 | direct | — | 19 | `quality:cargo-test` |
-| `pdfluent` | 1.0.0 | direct | 32 | 24 | `quality:cargo-test` |
+| `pdfluent` | 1.0.0 | direct | 35 | 24 | `quality:cargo-test` |
 | `pdfluent-ccitt` | 0.2.2 | internal | — | 9 | `quality:cargo-test` |
 | `pdfluent-cff` | 0.2.1 | internal | — | 26 | `quality:cargo-test` |
 | `pdfluent-extract` | 1.0.0 | internal | — | 77 | `quality:cargo-test` |
