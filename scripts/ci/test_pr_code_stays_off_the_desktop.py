@@ -168,9 +168,28 @@ r = run(tree({"prt.yml": PRT_BASE}))
 expect("pull_request_target without a ref passes (it takes the base)",
        r.returncode == 0, f"exit={r.returncode} {r.stderr[-160:]}")
 
+# ZERO IS TWO DIFFERENT ANSWERS, AND THE GUARD HAS TO SAY WHICH.
+#
+# Until 05-09-2026 finding no pull-request job could only mean a broken reader,
+# because there were pull-request jobs. #333 removed every `pull_request`
+# trigger while this repository is private -- the included Actions minutes were
+# spent and each guard was running twice for the same change -- so "none" is now
+# also the policy. A tree with no such trigger anywhere passes and says so; a
+# tree that HAS one and yields no job behind it is still the reader that stopped
+# reading, and still exit 2.
 r = run(tree({}))
-expect("no pull_request job at all is FATAL, not a pass", r.returncode == 2,
-       f"exit={r.returncode}")
+expect("no pull_request trigger anywhere is the policy, and passes",
+       r.returncode == 0, f"exit={r.returncode} {r.stderr[-160:]}")
+
+GEEN_JOBS = """
+on:
+  pull_request:
+    branches: [master]
+jobs: {}
+"""
+r = run(tree({"leeg.yml": GEEN_JOBS}))
+expect("a pull_request trigger with nothing behind it is still FATAL",
+       r.returncode == 2, f"exit={r.returncode} {r.stderr[-160:]}")
 
 # A LIST demands every label, so a per-event expression standing beside a
 # literal desktop label excuses nothing -- the expression only decides what the

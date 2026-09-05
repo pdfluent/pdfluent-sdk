@@ -74,8 +74,18 @@ GEVALLEN = [
     ("macos on tags plus branches-ignore",
      "  push:\n    tags: ['v*']\n    branches-ignore: ['wip/**']\n", "macos-latest", True),
     ("macos on dispatch", "  workflow_dispatch: null\n", "macos-latest", False),
-    # Linux is counted, not refused.
-    ("ubuntu on push-to-branch", "  push:\n    branches: [master]\n", "ubuntu-latest", False),
+    # Linux is REFUSED now, not counted. It was counted until 05-09-2026, on the
+    # reasoning that it is the cheap tier -- and the bill that arrived was the
+    # cheap tier: about 180 jobs in fourteen hours, each billed as a whole
+    # minute, most of them one guard running twice for one change. Cheap per
+    # minute is not cheap per hundred-and-eighty. (#333)
+    ("ubuntu on push-to-branch", "  push:\n    branches: [master]\n", "ubuntu-latest", True),
+    ("ubuntu on a pull request", "  pull_request:\n    branches: [master]\n",
+     "ubuntu-latest", True),
+    # A tag is a release and a dispatch is a decision. Both may still cost, and
+    # refusing them would stop the release path this guard is not about.
+    ("ubuntu on a tag push", "  push:\n    tags: ['v*']\n", "ubuntu-latest", False),
+    ("ubuntu on dispatch", "  workflow_dispatch: null\n", "ubuntu-latest", False),
     # Our own machines cost nothing.
     ("self-hosted on push", "  push:\n    branches: [master]\n", "[self-hosted, xfa-fast]", False),
 ]

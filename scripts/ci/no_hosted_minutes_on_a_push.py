@@ -54,6 +54,18 @@ DUUR = {"macos": 10, "windows": 2}
 # argument someone makes in writing.
 TOEGESTAAN: dict[tuple[str, str], str] = {}
 
+# The same, for the hosted LINUX tier, which this guard counted and did not
+# refuse until 05-09-2026. Empty for the same reason and on the same terms: a
+# row here is an argument somebody makes in writing, not a convenience.
+#
+# THE PUBLIC PHASE. When this repository accepts a pull request from somebody
+# other than the owner, that pull request cannot run on the persistent desktop
+# -- `pr_code_stays_off_the_desktop.py` is the rule and it does not bend -- so
+# hosted Linux comes back for exactly those jobs, and rows land here with that
+# reason. What must not come back is what #333 removed: the same guard billed
+# twice for one change, once on the pull request and once on the push behind it.
+LINUX_TOEGESTAAN: dict[tuple[str, str], str] = {}
+
 
 def vanzelf_actief(on) -> bool:
     """True when this workflow can start without a person choosing to."""
@@ -135,7 +147,7 @@ def main() -> int:
 
     paden = sorted(FLOWS.glob("*.yml")) + sorted(FLOWS.glob("*.yaml"))
     gelezen = 0
-    duur, goedkoop = [], 0
+    duur, goedkoop = [], []
 
     for pad in paden:
         try:
@@ -159,7 +171,8 @@ def main() -> int:
                     duurste = gevonden
             if duurste is None:
                 if any("ubuntu" in i and "self-hosted" not in i for i in ingangen):
-                    goedkoop += 1
+                    if (pad.name, naam) not in LINUX_TOEGESTAAN:
+                        goedkoop.append((pad.name, naam))
                 continue
             if (pad.name, naam) in TOEGESTAAN:
                 continue
@@ -175,12 +188,35 @@ def main() -> int:
         return 1
 
     print(
-        f"[hosted-minutes] {gelezen} workflow(s); {goedkoop} ubuntu job(s) on automatic "
-        f"triggers, {len(duur)} expensive one(s)"
+        f"[hosted-minutes] {gelezen} workflow(s); {len(goedkoop)} ubuntu job(s) on "
+        f"automatic triggers, {len(duur)} expensive one(s)"
     )
 
+    if goedkoop:
+        print(file=sys.stderr)
+        print(f"[hosted-minutes] FATAL: {len(goedkoop)} job(s) use a hosted Linux "
+              "runner on a trigger that fires by itself:", file=sys.stderr)
+        for workflow, job in sorted(goedkoop):
+            print(f"  {workflow} :: {job}", file=sys.stderr)
+        print(
+            "\nubuntu-latest used to be counted here and not refused, on the "
+            "reasoning that Linux is the cheap tier and some of it is seconds of "
+            "guard work. Measured 05-09-2026: the 2,000 included minutes were "
+            "gone and the account had begun billing an Actions budget, and the "
+            "cause was the cheap tier -- about 180 jobs in fourteen hours, each "
+            "billed as at least a whole minute, most of them a guard running "
+            "twice for the same change. Cheap per minute is not cheap per "
+            "hundred-and-eighty. (#333)\n\n"
+            "  Move it to [self-hosted, xfa-fast] if it does not compile, or to "
+            "the ephemeral instance in ci-ephemeral.yml if it does. A tag is a "
+            "release and a dispatch is a decision; both may still cost.",
+            file=sys.stderr,
+        )
+        return 1
+
     if not duur:
-        print("[hosted-minutes] nothing that fires by itself reaches for macOS or Windows")
+        print("[hosted-minutes] nothing that fires by itself reaches a hosted runner "
+              "at all, on any tier")
         return 0
 
     print(file=sys.stderr)

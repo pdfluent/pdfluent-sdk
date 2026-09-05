@@ -10,9 +10,25 @@
 # every event costs seconds.
 name: Licence headers
 
+# NO PULL_REQUEST TRIGGER WHILE THIS REPOSITORY IS PRIVATE (#333).
+#
+# Measured 05-09-2026 08:00: the 2,000 included minutes were gone and the account
+# had begun billing an Actions budget. In the fourteen hours after #328 landed,
+# this repository still started about 180 hosted jobs -- almost all of them a
+# guard running twice, once for the pull request and once for the push that
+# followed it, on work the local pre-push gate had already refused to let out.
+#
+# A pull request here is not a review boundary: there is one contributor, master
+# only ever receives fast-forwards of heads that already passed `scripts/ci/
+# local_ci_gate.sh`, and that gate runs these same guards before the branch
+# reaches the remote at all. So the second run bought nothing and was billed.
+#
+# THE PUBLIC PHASE, written down so this is a decision and not a habit: when
+# `jasperdew/xfa-native-rust` (or its public successor) accepts a pull request
+# from anyone but the owner, that pull request IS the review boundary, the local
+# gate no longer covers it, and these triggers come back -- with the placement
+# rules in orchestration_stays_hosted.py deciding where they run.
 on:
-  pull_request:
-    branches: [master]
   push:
     branches: [master]
 
@@ -32,7 +48,17 @@ jobs:
     # needs no corpus and no warm cache, so the persistent desktop adds nothing
     # -- and on a pull request the script it runs is PR-authored code, which
     # stays off that machine (scripts/ci/pr_code_stays_off_the_desktop.py).
-    runs-on: ubuntu-latest
+    # The desktop runner, plainly. The per-event expression that used to stand
+    # here chose a hosted runner for a pull request; with no pull_request
+    # trigger left (#333) its condition can only be true, so the expression
+    # described a branch that no longer exists. An expression nobody can reach
+    # reads as a rule and enforces nothing.
+    #
+    # Python file scans, seconds of work, no compilation. The persistent-runner
+    # rule in orchestration_stays_hosted.py is about code a caller chooses --
+    # a pull request's head or a dispatch ref -- and a push to master is neither:
+    # it is already merged.
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python

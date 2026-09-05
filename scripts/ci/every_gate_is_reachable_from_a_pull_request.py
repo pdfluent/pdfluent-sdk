@@ -71,15 +71,52 @@ def exemptions() -> dict[str, str]:
     return {r["gate"]: r.get("why", "").strip() for r in rows if r.get("gate")}
 
 
-def on_pull_request() -> set[str]:
-    """Scripts named by a workflow that a pull request triggers."""
+def _genoemd_door(trigger: str) -> set[str]:
+    """Scripts named by a workflow this trigger starts."""
     found: set[str] = set()
     for f in sorted(WORKFLOWS.glob("*.yml")):
         text = f.read_text(errors="replace")
         head = text.split("jobs:", 1)[0]
-        if re.search(r"^\s*pull_request:", head, re.M):
+        if re.search(rf"^\s*{trigger}:", head, re.M):
             found.update(SCRIPT.findall(text))
     return found
+
+
+def de_grens() -> tuple[str, set[str]]:
+    """The boundary that exists today, and the scripts behind it.
+
+    THE QUESTION THIS FILE ASKS IS NOT "IS THERE A PULL REQUEST".
+
+    It is: when a change crosses into master, does every gate the pre-push gate
+    ran also run somewhere the person pushing does not control? The pull request
+    was that place, and while an outside contributor can open one it is the only
+    place -- which is the whole of #232 and does not change.
+
+    On 05-09-2026 #333 removed every `pull_request` trigger while this repository
+    is private: the included Actions minutes were spent, the account had begun
+    billing, and each guard was running twice -- once for the pull request and
+    once for the push behind it -- over work `scripts/ci/local_ci_gate.sh` had
+    already refused to let out. With one contributor and a master that only ever
+    takes fast-forwards of heads that passed that gate, the pull-request run was
+    a second opinion from the same machine.
+
+    So the boundary is now the push to master: ci.yml and its siblings run on the
+    merge, on the desktop runner, out of the code that landed. It is a weaker
+    boundary than a pull request and it is the one that exists; saying which was
+    measured is the difference between a check and a word.
+
+    THE PUBLIC PHASE: the moment any workflow carries a `pull_request` trigger
+    again, that is the boundary and this returns to it without an edit -- because
+    it is chosen by looking, not by a flag somebody has to remember to flip.
+    """
+    op_pr = _genoemd_door("pull_request")
+    heeft_pr = any(
+        re.search(r"^\s*pull_request:", f.read_text(errors="replace").split("jobs:", 1)[0], re.M)
+        for f in sorted(WORKFLOWS.glob("*.yml"))
+    )
+    if heeft_pr:
+        return "a pull request", op_pr
+    return "the push to master", _genoemd_door("push")
 
 
 def main() -> int:
@@ -89,7 +126,7 @@ def main() -> int:
         return 1
 
     excused = exemptions()
-    reachable = on_pull_request()
+    grens, reachable = de_grens()
 
     gates: dict[str, str] = {}
     for name, command in RUN_LINE.findall(GATE.read_text(encoding="utf-8")):
@@ -107,8 +144,8 @@ def main() -> int:
         if script in reachable:
             continue
         if script not in excused:
-            problems.append(f"`{gate_name}` runs {script}, which no pull-request "
-                            "workflow reaches and no row excuses")
+            problems.append(f"`{gate_name}` runs {script}, which no workflow on "
+                            f"{grens} reaches and no row excuses")
         elif not excused[script]:
             problems.append(f"{script} is excused with an empty reason")
 
@@ -119,7 +156,7 @@ def main() -> int:
             problems.append(f"{script} is excused but the pre-push gate does not "
                             "run it any more")
         elif script in reachable:
-            problems.append(f"{script} is excused but a pull-request workflow does "
+            problems.append(f"{script} is excused but a workflow on {grens} does "
                             "reach it; drop the row")
 
     if problems:
@@ -133,7 +170,7 @@ def main() -> int:
         return 1
 
     print(f"[pr-reachable] OK: {len(gates)} gate(s) in the pre-push gate, "
-          f"{len(gates) - len(excused)} reachable from a pull request, "
+          f"{len(gates) - len(excused)} reachable from {grens}, "
           f"{len(excused)} excused with a reason.")
     return 0
 

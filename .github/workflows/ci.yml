@@ -42,16 +42,25 @@ name: CI
 # installed on github-hosted runners; desktop validation also runs
 # off-CI per the policy above.
 
+# NO PULL_REQUEST TRIGGER WHILE THIS REPOSITORY IS PRIVATE (#333).
+#
+# Measured 05-09-2026 08:00: the 2,000 included minutes were gone and the account
+# had begun billing an Actions budget. In the fourteen hours after #328 landed,
+# this repository still started about 180 hosted jobs -- almost all of them a
+# guard running twice, once for the pull request and once for the push that
+# followed it, on work the local pre-push gate had already refused to let out.
+#
+# A pull request here is not a review boundary: there is one contributor, master
+# only ever receives fast-forwards of heads that already passed `scripts/ci/
+# local_ci_gate.sh`, and that gate runs these same guards before the branch
+# reaches the remote at all. So the second run bought nothing and was billed.
+#
+# THE PUBLIC PHASE, written down so this is a decision and not a habit: when
+# `jasperdew/xfa-native-rust` (or its public successor) accepts a pull request
+# from anyone but the owner, that pull request IS the review boundary, the local
+# gate no longer covers it, and these triggers come back -- with the placement
+# rules in orchestration_stays_hosted.py deciding where they run.
 on:
-  pull_request:
-    branches: [master]
-    paths-ignore:
-      - '**.md'
-      # docs/** is deliberately NOT ignored: docs/UPSTREAM_FORKS.toml is the
-      # input to two gates in this workflow, so ignoring it meant a change to
-      # that file was the one change they could not see.
-      - 'CHANGELOG.md'
-      - '.github/**.md'
   push:
     branches: [master]
 
@@ -117,7 +126,17 @@ jobs:
     # from then on no guard failure of any kind blocks a landing. That trades a
     # gate that works for a few minutes a run. They join this job on the day
     # they are green.
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+    # The desktop runner, plainly. The per-event expression that used to stand
+    # here chose a hosted runner for a pull request; with no pull_request
+    # trigger left (#333) its condition can only be true, so the expression
+    # described a branch that no longer exists. An expression nobody can reach
+    # reads as a rule and enforces nothing.
+    #
+    # Python file scans, seconds of work, no compilation. The persistent-runner
+    # rule in orchestration_stays_hosted.py is about code a caller chooses --
+    # a pull request's head or a dispatch ref -- and a push to master is neither:
+    # it is already merged.
+    runs-on: [self-hosted, xfa-fast]
     permissions:
       contents: read
     steps:
@@ -461,7 +480,17 @@ jobs:
       contents: read
       actions: read
       pull-requests: read
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+    # The desktop runner, plainly. The per-event expression that used to stand
+    # here chose a hosted runner for a pull request; with no pull_request
+    # trigger left (#333) its condition can only be true, so the expression
+    # described a branch that no longer exists. An expression nobody can reach
+    # reads as a rule and enforces nothing.
+    #
+    # Python file scans, seconds of work, no compilation. The persistent-runner
+    # rule in orchestration_stays_hosted.py is about code a caller chooses --
+    # a pull request's head or a dispatch ref -- and a push to master is neither:
+    # it is already merged.
+    runs-on: [self-hosted, xfa-fast]
     steps:
       # Full history, because half of what this job checks needs a base to
       # compare against. `territories_do_not_overlap` diffs the branch against
@@ -1012,7 +1041,17 @@ jobs:
     # On the persistent desktop like orchestration-guard, and for the same
     # reason: a spending limit disables hosted runners, and a check that stops
     # running exactly when the bill does is not a check.
-    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","xfa-fast"]') || 'ubuntu-latest' }}
+    # The desktop runner, plainly. The per-event expression that used to stand
+    # here chose a hosted runner for a pull request; with no pull_request
+    # trigger left (#333) its condition can only be true, so the expression
+    # described a branch that no longer exists. An expression nobody can reach
+    # reads as a rule and enforces nothing.
+    #
+    # Python file scans, seconds of work, no compilation. The persistent-runner
+    # rule in orchestration_stays_hosted.py is about code a caller chooses --
+    # a pull request's head or a dispatch ref -- and a push to master is neither:
+    # it is already merged.
+    runs-on: [self-hosted, xfa-fast]
     steps:
       - uses: actions/checkout@v4
         with:

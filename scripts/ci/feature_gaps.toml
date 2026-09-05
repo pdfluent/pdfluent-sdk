@@ -69,3 +69,8 @@ waarom  = "#285 -- 26 tests pass locally, no job runs them"
 pakket  = "pdf-engine"
 feature = "serde"
 waarom  = "#276 -- tests/text_span_info_contract.rs does not COMPILE: TextSpan grew bounds_source, geometry_mode, glyph_advances and two more fields since anything last built it. Measured 05-09-2026. It was invisible until the crate-level #![cfg] blind spot was closed; fixing the initialiser is engine work, not a job"
+
+[[gap]]
+pakket  = "pdf-ocr"
+feature = "tesseract"
+waarom  = "#333 -- its job was ocr-feature.yml: ubuntu-latest, pull_request-only, and it COMPILES. Both halves are refused while this repository is private: no pull_request trigger, and no hosted minutes. It cannot move to ci-ephemeral yet either, because that snapshot does not carry libtesseract-dev, libleptonica-dev and libclang-dev (#244) -- and it must not move to the desktop, which is what orchestration_stays_hosted.py refuses for a compiling job. Remove this row when the snapshot carries those three: 28 tests pass with them"
