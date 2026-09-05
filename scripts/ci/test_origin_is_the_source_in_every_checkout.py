@@ -43,7 +43,7 @@ TOPOLOGY_GUARD = pathlib.Path(__file__).with_name(
 GATE = pathlib.Path(__file__).with_name("mirror_has_not_drifted.py")
 TABLE = REPO / "CLAUDE.md"
 
-SOURCE = "https://github.com/jasperdew/xfa-native-rust.git"
+SOURCE = "https://github.com/pdfluent/engine.git"
 BACKUP = "https://github.com/pdfluent/PDFluent-project.git"
 OTHER = "https://github.com/pdfluent/pdfluent-playground.git"
 

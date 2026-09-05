@@ -65,7 +65,7 @@ holds this table and that guard to saying the same thing.
 
 | Repository | Git remote | Role |
 |---|---|---|
-| `github.com/jasperdew/xfa-native-rust` | `origin` | **source** — code, issues, pull requests, releases, and the branch every landing fast-forwards |
+| `github.com/pdfluent/engine` | `origin` | **source** — code, issues, pull requests, releases, and the branch every landing fast-forwards |
 | `github.com/pdfluent/PDFluent-project` | `gitlab` | **backup** — a copy of the source and nothing else |
 | `github.com/pdfluent/pdfluent-internal` | — | tracker: the issues this work is filed under. It still holds an old copy of the editor source, which is #291's to remove |
 | `github.com/pdfluent/pdfluent` | — | the editor, public, its own history since 26-08-2026 (deliberately no common ancestor with the tracker repo) |
