@@ -3,8 +3,15 @@
 #
 # Calls the SAME scripts the pipeline calls (scripts/ci/run_*.sh) so this
 # gate can never drift from CI. Run it before every push:
-#     bash scripts/ci/local_ci_gate.sh           # sanity + lint (fast)
-#     bash scripts/ci/local_ci_gate.sh --full     # + test + audit (slow)
+#     bash scripts/ci/local_ci_gate.sh            # sanity + lint (fast)
+#     bash scripts/ci/local_ci_gate.sh --landing  # + the crates this change touches
+#     bash scripts/ci/local_ci_gate.sh --full     # + the whole workspace, and the audit
+#
+# The hook picks the lane: a branch push takes the fast one, a push to master the
+# landing one. LANE=full in the environment upgrades any of them to the full
+# lane. The landing lane builds and tests only the crates the landing touches
+# (scripts/ci/touched_crates.py); ci.yml's `workspace` job does all of them, on
+# master, on the runner. (#343)
 #
 # Exit 0 only if every gate passes. Mirrors:
 #   ci-yaml  : scripts/ci/ci_config_lint.py
@@ -20,17 +27,23 @@
 #              Enforces docs/release/canonical_licenses.toml. Catches any
 #              accidental relicensing of PDFluent IP under open source, or
 #              any open-source-derivative fork being relabelled as commercial.
-#   test     : scripts/ci/run_test.sh    (--full only)
-#   audit    : scripts/ci/run_audit.sh   (--full only; needs clean tree)
+#   test     : scripts/ci/run_test.sh    (landing lane: the touched crates)
+#   audit    : scripts/ci/run_audit.sh   (landing and full lanes; needs clean tree)
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
-FULL=0
+FULL=0; LANDING=0
 case "${1:-}" in
   --full)     FULL=1 ;;
+  --landing)  LANDING=1 ;;
   --fast|"")  FULL=0 ;;
-  *) echo "usage: local_ci_gate.sh [--fast|--full]" >&2; exit 2 ;;
+  *) echo "usage: local_ci_gate.sh [--fast|--landing|--full]" >&2; exit 2 ;;
 esac
-fail=0; pass=0; uitgesteld=0; gevallen=""
+# LANE=full, from the environment, upgrades any lane to the whole workspace.
+# It is the "on demand" half of the owner decision on #343 and the one escape
+# that costs MORE work rather than less -- unlike PRE_PUSH_SKIP=1, which is the
+# only other way to change what a push runs.
+if [ "${LANE:-}" = full ]; then FULL=1; LANDING=0; fi
+fail=0; pass=0; uitgesteld=0; ongeraakt=0; gevallen=""
 
 # A DIRECTORY PER RUN, not a fixed /tmp/lcg_<name>.log.
 #
@@ -57,18 +70,54 @@ run() { local name="$1"; shift
   if "$@" >"${LOGDIR}/${name}.log" 2>&1; then echo " PASS"; pass=$((pass+1))
   else echo " FAIL — see ${LOGDIR}/${name}.log"; tail -15 "${LOGDIR}/${name}.log" | sed 's/^/    /'; fail=$((fail+1)); gevallen="$gevallen $name"; fi
 }
-# The gates that compile. Together they are the twenty minutes and the twelve
-# gigabytes a push costs, and on an ordinary branch they duplicate what CI runs
-# on that same branch minutes later. On master they do not duplicate anything:
-# master takes only fast-forwards, so what passes here is what lands.
+# The gates that cost minutes rather than seconds and only a landing needs. They
+# run in the landing lane and in the full one; an ordinary branch push defers
+# them, because CI runs on that same branch minutes later. On master nothing
+# duplicates them: master takes only fast-forwards, so what passes here is what
+# lands.
 #
 # DEFERRED IS NOT PASSED, and the summary counts it separately for that reason.
 # A lane that quietly folded eight gates into the pass count would read exactly
 # like a full run to anyone who did not know the lanes existed -- which is the
 # shape of every measurement this repository has had to withdraw.
 zwaar() { local name="$1"; shift
+  if [ "$FULL" = 1 ] || [ "$LANDING" = 1 ]; then run "$name" "$@"
+  else printf '=== %-9s DEFERRED (not a pass) — runs in the landing lane, on a push to master\n' "$name"
+       uitgesteld=$((uitgesteld+1)); fi
+}
+# A gate that only says something about ONE crate. It runs when that crate is in
+# the selection, and is SKIPPED -- counted apart from both passes and deferrals --
+# when it is not. Three counters and not two, because "we did not need to" and
+# "it passed" are different sentences and this file has been burned by pretending
+# otherwise.
+crate_gate() { local name="$1" crate="$2"; shift 2
   if [ "$FULL" = 1 ]; then run "$name" "$@"
-  else printf '=== %-9s DEFERRED (not a pass) — runs in the full lane, on a push to master\n' "$name"
+  elif [ "$LANDING" = 1 ]; then
+    case " $CRATES " in
+      *" $crate "*) run "$name" "$@" ;;
+      *) printf '=== %-9s SKIPPED (not a pass) — %s is not in this landing\n' "$name" "$crate"
+         ongeraakt=$((ongeraakt+1)) ;;
+    esac
+  else printf '=== %-9s DEFERRED (not a pass) — runs in the landing lane, on a push to master\n' "$name"
+       uitgesteld=$((uitgesteld+1)); fi
+}
+# The three that take the selection as an argument list rather than a single
+# crate. With no crates at all they have nothing to compile, and that is a real
+# answer: a change to scripts/ci or docs touches no crate, and building
+# forty-nine of them proves nothing about it.
+scoped() { local name="$1"; shift
+  if [ "$FULL" = 1 ]; then run "$name" "$@"
+  elif [ "$LANDING" = 1 ]; then
+    if [ -z "$CRATES" ]; then
+      printf '=== %-9s SKIPPED (not a pass) — this landing touches no crate\n' "$name"
+      ongeraakt=$((ongeraakt+1))
+    else
+      # Word splitting on CRATES is the point: each name becomes its own
+      # argument. Crate names carry no spaces -- cargo refuses them.
+      # shellcheck disable=SC2086
+      run "$name" "$@" $CRATES
+    fi
+  else printf '=== %-9s DEFERRED (not a pass) — runs in the landing lane, on a push to master\n' "$name"
        uitgesteld=$((uitgesteld+1)); fi
 }
 # DISK FIRST, before anything compiles.
@@ -99,6 +148,41 @@ if [ $_dh -ne 0 ]; then
   echo "  and run again. Do not reach for PRE_PUSH_SKIP=1 — that skips every gate," >&2
   echo "  not the ones that died." >&2
   exit 3
+fi
+
+# THE CRATES THIS LANDING TOUCHES, and nothing else. (#343)
+#
+# Measured 05-09-2026 over that day's landings: 45 to 77 minutes each, one at a
+# time, because the full lane compiles and tests all forty-nine crates in the
+# landing worktree whatever the change was. A change to scripts/ci compiled the
+# engine to prove nothing about itself.
+#
+# The owner decision was speed over a little certainty, and the certainty given
+# up is named rather than implied: a crate outside the selection is not built or
+# tested HERE. It is built and tested on the push to master, by the `workspace`
+# job in .github/workflows/ci.yml, on the runner -- so a landing that broke
+# something outside its own crates turns master red there instead of being
+# refused here. That is the whole of the trade, and it holds only while that job
+# exists. `LANE=full` restores the old behaviour for one run.
+#
+# SELECTED ONCE, before anything compiles, so a failure to decide is a refusal
+# rather than a quiet fallback: touched_crates.py exits 3 when it cannot read the
+# workspace, and the answer to "I do not know" is the whole workspace.
+CRATES=""; SELECTION="the whole workspace"
+if [ "$LANDING" = 1 ]; then
+  _tc_uit="$(python3 scripts/ci/touched_crates.py 2>&1 >"${LOGDIR}/touched.txt")"; _tc=$?
+  printf '%s\n' "$_tc_uit" | sed 's/^/  /'
+  if [ $_tc -ne 0 ]; then
+    echo "  touched_crates.py could not decide, so this run builds everything."
+    FULL=1; LANDING=0
+  elif [ "$(cat "${LOGDIR}/touched.txt")" = "*" ]; then
+    echo "  a workspace-wide file changed, so this run builds everything."
+    FULL=1; LANDING=0
+  else
+    CRATES="$(tr '\n' ' ' < "${LOGDIR}/touched.txt")"
+    SELECTION="$(wc -w <<<"$CRATES" | tr -d ' ') crate(s): ${CRATES:-none}"
+    echo "  landing lane: ${SELECTION}"
+  fi
 fi
 
 # The workflow gates run here, above the branch/merge-request check, because
@@ -133,7 +217,7 @@ run groentest python3 scripts/ci/test_a_gate_that_never_went_green.py
 # release build. t1 added this line and took it out again in the same branch:
 # local_ci_gate.sh was t2/t3's, and a t1 branch may not edit it. It comes back
 # here because the crate is on loan to t3 for #326.
-zwaar visreg  cargo test -p visual-regression --release
+crate_gate visreg visual-regression cargo test -p visual-regression --release
 
 # Clean-tree advisory (the CI audit job requires it; auto-generated gen/schemas
 # churn is a known false-positive — see docs).
@@ -278,8 +362,8 @@ run siteblkreg python3 scripts/ci/test_site_blocks_register.py
 # check green: `Sdk` is not lowercase so it is not a module path, and nothing
 # follows the `::` so it is not a type use. The most common way to be wrong fell
 # exactly between the two patterns (#164, #247).
-zwaar siteblocks python3 scripts/ci/site_blocks_compile.py --check
-zwaar examples cargo build -q --examples -p pdfluent
+crate_gate siteblocks pdfluent python3 scripts/ci/site_blocks_compile.py --check
+crate_gate examples pdfluent cargo build -q --examples -p pdfluent
 run matrix    python3 scripts/ci/capability_matrix_matches_coverage.py
 run wordsep   python3 scripts/ci/never_delete_the_word_separator.py
 # The PDF/A comparison harness, which is how #189's Ghostscript numbers were
@@ -314,7 +398,7 @@ run licpoltst python3 scripts/ci/test_the_licence_policy_says_what_it_must.py
 run licregs   python3 scripts/ci/one_licence_three_registers.py
 run licregtst python3 scripts/ci/test_one_licence_three_registers.py
 run errdocs   python3 scripts/ci/error_codes_have_an_anchor.py
-zwaar errtests cargo test -q -p pdfluent --test error_codes_stable --test processing_limits
+crate_gate errtests pdfluent cargo test -q -p pdfluent --test error_codes_stable --test processing_limits
 # The two lines t1 wrote and then reverted on #324, because this file was not
 # theirs and they said so: "the wiring belongs in a PR by an owner of that file".
 # Until it arrived the guard and its test ran nowhere, which is the state
@@ -363,6 +447,15 @@ run archtags  python3 scripts/ci/an_archive_tag_pins_no_personal_address.py
 #              never installed it, a rebase, a cherry-pick, --no-verify.
 #   msgclean : the same for internal matters, over the messages on this branch.
 run lanetest  python3 scripts/ci/test_the_pre_push_gate_picks_its_lane.py
+# The crate selection the landing lane above is built on, and the one place
+# scripts/ci/touched_crates.py is run as a check rather than as a helper: it
+# answers the same question every landing asks, over fabricated workspaces
+# whose answers are known. A selection that silently returned too little
+# would leave a crate unbuilt on the machine AND unnamed in the summary.
+run touchedtst python3 scripts/ci/test_touched_crates.py
+# And the one mechanical claim the selection makes about somewhere else: the
+# crates it must never name are the crates the run scripts exclude.
+run touchedexcl python3 scripts/ci/touched_crates.py --check-excludes
 run hookwire  python3 scripts/ci/the_commit_msg_hook_is_wired.py
 run hookwiretst python3 scripts/ci/test_the_commit_msg_hook_is_wired.py
 run jobimports python3 scripts/ci/a_job_has_what_its_scripts_import.py
@@ -401,20 +494,27 @@ run ci-yaml  python3 scripts/ci/ci_config_lint.py
 run hangclass python3 scripts/ci/test_classify_render_outcome.py
 run metadata cargo metadata --no-deps --format-version 1
 run fmt      cargo fmt --all -- --check
-zwaar build  bash scripts/ci/run_build.sh
-zwaar clippy bash scripts/ci/run_clippy.sh
+scoped build  bash scripts/ci/run_build.sh
+scoped clippy bash scripts/ci/run_clippy.sh
 run licenses python3 scripts/release/license_registry_check.py
 run advlists  python3 scripts/ci/the_advisory_lists_agree.py
 run advliststst python3 scripts/ci/test_the_advisory_lists_agree.py
 run docsrefs python3 scripts/ci/docs_references_resolve.py
 run dcohook   python3 scripts/ci/test_prepare_commit_msg_signoff.py
-if [ "$FULL" = 1 ]; then
-  run test  bash scripts/ci/run_test.sh
-  run audit bash scripts/ci/run_audit.sh
-fi
+scoped test  bash scripts/ci/run_test.sh
+# The publish audit, which is about the packages this repository ships rather
+# than about one crate. It stays whole in both landing lanes: it packages the
+# release channels and reads their manifests, so scoping it to a crate list
+# would answer a different question than the one it was written for.
+zwaar audit bash scripts/ci/run_audit.sh
 echo "----------------------------------------"
-_lane="fast"; [ "$FULL" = 1 ] && _lane="full"
-_uit=""; [ "$uitgesteld" -gt 0 ] && _uit=", $uitgesteld deferred to the full lane"
+_lane="fast"; [ "$FULL" = 1 ] && _lane="full"; [ "$LANDING" = 1 ] && _lane="landing"
+_uit=""; [ "$uitgesteld" -gt 0 ] && _uit=", $uitgesteld deferred to the landing lane"
+# Named separately from the deferrals, and never folded into the pass count: a
+# gate that was skipped because its crate is not in this landing has judged
+# nothing, and the crates it would have judged are named on the line above.
+[ "$ongeraakt" -gt 0 ] && _uit="$_uit, $ongeraakt skipped (crate not touched)"
+[ "$LANDING" = 1 ] && _uit="$_uit; scope: $SELECTION"
 if [ "$fail" = 0 ]; then echo "LOCAL_CI_GATE: PASS ($pass gates, $_lane lane$_uit)"; exit 0
 else
   # The names again, at the bottom. They were printed when each one failed, but a

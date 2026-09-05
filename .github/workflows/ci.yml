@@ -378,6 +378,18 @@ jobs:
       - name: The pre-push hook picks its lane and names its refusals
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_the_pre_push_gate_picks_its_lane.py
+      # The crate selection the landing lane rests on (#343). Both halves are
+      # here rather than in the pre-push gate alone, for the reason the line
+      # above them is: a stranger's pull request must be able to reach the check
+      # that decides how little their landing will compile. Neither needs a
+      # compiler -- one builds fabricated workspaces in a temporary directory,
+      # the other reads three shell scripts.
+      - name: The crate selection picks what a landing touches, and its dependents
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_touched_crates.py
+      - name: The crates the scoped lane leaves out are the ones CI excludes
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/touched_crates.py --check-excludes
       # Two guards whose GUARD cannot run on a pull request but whose TEST can,
       # the same shape as the pre-push line above. `every_label_has_a_runner.py`
       # needs a PAT nobody has issued (see the note in orchestration-guard) and
@@ -1221,3 +1233,66 @@ jobs:
       # failure would otherwise bury the finding that actually matters.
       - name: Assemble the published tree, then build it with an empty HOME
         run: bash scripts/ci/public_snapshot_audit.sh --with-build
+
+  workspace:
+    name: The whole workspace, on master
+    # THE OTHER HALF OF #343, and the reason that ticket is a trade rather than
+    # a loss.
+    #
+    # The landing lane compiles and tests only the crates a landing touches. That
+    # is only safe if something compiles and tests ALL of them afterwards, and on
+    # 05-09-2026 nothing did: `ci-ephemeral.yml` held the workspace build for a
+    # push to master, its Hetzner provider was cancelled on 24-08, and the
+    # workflow was disabled by hand -- so between then and here `cargo test
+    # --workspace` ran in exactly one place on this planet, the pre-push gate of
+    # whoever was landing. Measured before this job was written: no run of any
+    # workflow had built the workspace on master since 02-09.
+    #
+    # So the sentence "the runner already does the whole workspace on master" was
+    # false when #343 was written, and making it true is part of the same change.
+    # Without this job the landing lane would not be trading where a finding
+    # appears; it would be dropping the finding.
+    #
+    # ON THE DESKTOP, NOT ON HOSTED MINUTES (#333): a cold workspace build is the
+    # most expensive thing this repository could put on ubuntu-latest, and the
+    # desktop's minutes are free. A push to master is merged code, so the rule in
+    # pr_code_stays_off_the_desktop.py is satisfied by the event and not by an
+    # exception. The persistent build directory is what makes this affordable at
+    # all: the workspace is warm here, so an ordinary landing recompiles its own
+    # crates and links, rather than paying the cold 45 minutes the landing lane
+    # was paying per landing.
+    #
+    # NOT CANCELLED BY THE NEXT LANDING. ci.yml's concurrency group is the SHA for
+    # a push, and this job keeps it: on 02-09 every master run was cancelled by
+    # the merge behind it, so a result was observed only when nobody landed for
+    # the length of a run. A queue that drains is a delay; a queue that cancels
+    # itself is no gate at all.
+    runs-on: [self-hosted, xfa-fast]
+    # Long enough for a cold build after a toolchain bump, which is the case that
+    # would otherwise fail at the default and look like a broken workspace.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      # The persistent runner hands every job the state the last one left. Which
+      # of the three it is -- gone, dead or unwritable -- before a build spends
+      # forty minutes finding out. (#264)
+      - name: A mount, a dead disk and a rights problem are told apart
+        run: bash scripts/ci/shared_build_dir_is_there.sh
+      - name: The shared build directory is there and undamaged
+        run: bash scripts/ci/cargo_target_health.sh
+      # The same three scripts the landing lane runs, with no crate list -- which
+      # is what makes them the whole workspace. One source for the flags, so the
+      # scoped lane and this job cannot drift into testing different things.
+      #
+      # Each step carries `if: ${{ !cancelled() }}`: clippy says nothing about
+      # whether the tests pass, and a landing that broke two things should be
+      # told about both rather than one a day.
+      - name: check
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/run_build.sh
+      - name: clippy
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/run_clippy.sh
+      - name: test
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/run_test.sh

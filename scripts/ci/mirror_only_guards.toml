@@ -117,30 +117,18 @@ nothing to run and nothing to protect on a hosted runner."""
 # script would add a second way to ask a question already being asked before a
 # merge.
 
-[[guard]]
-script = "run_build.sh"
-reason = "covered-elsewhere"
-issue = "#288"
-why = """Two lines around `cargo test --no-run --workspace`. ci-ephemeral.yml \
-runs `cargo check --workspace --exclude pdf-desktop` on every pull request, \
-which answers the same question -- does this branch compile -- before a merge."""
-
-[[guard]]
-script = "run_clippy.sh"
-reason = "covered-elsewhere"
-issue = "#288"
-why = """A one-line wrapper around clippy. ci-ephemeral.yml runs \
-`cargo clippy --workspace --exclude pdf-desktop -- -D warnings` on every pull \
-request."""
-
-[[guard]]
-script = "run_test.sh"
-reason = "covered-elsewhere"
-issue = "#288"
-why = """A one-line wrapper around the workspace test run. ci-ephemeral.yml runs \
-`cargo test --workspace --exclude pdf-desktop --no-fail-fast` on every pull \
-request, on an ephemeral instance rather than the persistent desktop -- which \
-is the arrangement #1535 settled on for pre-merge code."""
+# run_build.sh, run_clippy.sh and run_test.sh stood here until 06-09-2026, each
+# excused as "covered-elsewhere" because ci-ephemeral.yml ran the same three
+# cargo lines. That workflow's Hetzner provider was cancelled on 24-08 and the
+# workflow was disabled by hand; its last run of any kind was 02-09, and every
+# one of the last forty was cancelled. So the place these three were covered had
+# stopped existing, and the register went on saying they were covered -- which is
+# the exact shape #231 found on the mirror gate.
+#
+# ci.yml's `workspace` job now runs these three scripts themselves on every push
+# to master (#343), so they stand before a merge on GitHub and are no longer
+# mirror-only. That is also what makes the landing lane a trade: it compiles only
+# the crates a landing touches, and this is where the rest is compiled.
 
 [[guard]]
 script = "run_audit.sh"

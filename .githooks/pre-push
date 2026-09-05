@@ -18,7 +18,15 @@
 # gates measure. Deleting one dead branch cost over two minutes of build before
 # it was killed, and the 82 in #314 were batched into a single push to pay that
 # once rather than 82 times. (#325)
+# Three lanes since #343, and master takes the middle one: the gates that do not
+# compile, plus a build and a test of the crates this landing actually changes.
+# What the landing lane does NOT build is built on master by ci.yml's `workspace`
+# job, on the runner. `LANE=full` here forces the old behaviour -- the whole
+# workspace, in this gate, before the push -- and is the one override that costs
+# more work rather than less.
 BAAN=--fast
+LANDING=--landing
+[ "${LANE:-}" = full ] && LANDING=--full
 refs=0
 deletions_only=1
 while read -r _local_ref local_sha remote_ref _remote_sha; do
@@ -28,7 +36,18 @@ while read -r _local_ref local_sha remote_ref _remote_sha; do
   # while a real sha may well begin with a zero. So: empty, or holding any
   # character that is not a zero, means this ref carries objects.
   case "$local_sha" in ''|*[!0]*) deletions_only=0 ;; esac
-  case "$remote_ref" in refs/heads/master) BAAN=--full ;; esac
+  case "$remote_ref" in refs/heads/master)
+    BAAN="$LANDING"
+    # WHAT THE LANDING IS MEASURED AGAINST, handed over by git rather than
+    # guessed. The remote sha on this line is master as the remote has it right
+    # now, which is exactly the base a fast-forward is measured from -- and it is
+    # a fact here and nowhere downstream, the same reason the lane itself is
+    # decided in this file. A zero sha (a master that does not exist yet) names
+    # no object, so it is not passed on and the gate falls back to its own
+    # search for a base.
+    case "$_remote_sha" in ''|*[!0]*) export LANDING_BASE="$_remote_sha" ;; esac
+    ;;
+  esac
 done
 # NO LINES IS NOT A DELETE-ONLY PUSH. An empty stdin means the hook was invoked
 # in a way this cannot read -- by hand, or by a git that changed its contract --
@@ -40,7 +59,7 @@ if [ "$refs" -gt 0 ] && [ "$deletions_only" = 1 ]; then
   # commits of whatever branch happens to be checked out -- which are not the
   # ones being pushed. master is another matter, because master takes only
   # fast-forwards and there is no fast-forward back from a deleted branch.
-  if [ "$BAAN" = --full ]; then
+  if [ "$BAAN" != --fast ]; then
     echo "[pre-push] BLOCKED: this push deletes refs/heads/master." >&2
     echo "  Nothing about that is routine, and no gate below can judge it, so it" >&2
     echo "  is refused here. PRE_PUSH_SKIP=1 if you truly mean it." >&2
@@ -76,6 +95,10 @@ fi
 
 if [ "$BAAN" = --full ]; then
   echo "[pre-push] pushing to master — running the FULL local CI gate (this compiles)…"
+elif [ "$BAAN" = --landing ]; then
+  echo "[pre-push] pushing to master — running the LANDING local CI gate: every gate that"
+  echo "  does not compile, and a build and test of the crates this landing touches."
+  echo "  The whole workspace runs on master, on the runner. LANE=full to compile it all here."
 else
   echo "[pre-push] running the fast local CI gate; the compiling gates run on the push to master…"
 fi

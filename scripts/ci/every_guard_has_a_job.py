@@ -97,7 +97,14 @@ MIN_SCRIPTS = 25
 # The GitHub remote of this repository is private, so none of these guards
 # touches a pull request from outside today. That is the gap in #232, and this
 # number does not measure it -- it measures the step towards it.
-SPIEGEL_RATEL = 14
+# 06-09-2026 (#343): 14 -> 11. Three guards stopped standing before no merge:
+# run_build.sh, run_clippy.sh and run_test.sh. They were excused as
+# "covered-elsewhere" on ci-ephemeral.yml, whose provider was cancelled on 24-08
+# and whose workflow has been disabled by hand since -- so the place that covered
+# them had stopped existing while the register went on saying it did. ci.yml's
+# `workspace` job runs those three scripts on every push to master now, which is
+# what lets the landing lane compile only the crates a landing touches.
+SPIEGEL_RATEL = 11
 
 # The reasons that can justify a place on the mirror. Free text would approve
 # every reason, including "later".
