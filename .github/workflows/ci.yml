@@ -869,6 +869,17 @@ jobs:
       - name: The site-blocks register and hand-over still hold
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_site_blocks_register.py
+      # The list pdfluent.com checks its documentation against is generated
+      # from this workspace, and the site's own gate only measures how old the
+      # copy is. Nothing measured whether the generator still agreed with the
+      # code -- the previous copy named a generator that had never reached
+      # master, so it could not be rebuilt at all (#245, #248).
+      - name: The public API export still matches the code
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/export_public_api.py --check
+      - name: The public API export says what it read
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_public_api_export.py
       - name: The capability matrix and the coverage report agree
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/capability_matrix_matches_coverage.py
