@@ -581,6 +581,25 @@ impl From<pdf_engine::EngineError> for Error {
     }
 }
 
+/// `std::fs` inside a function returning [`Result`].
+///
+/// Every recipe that reads bytes, writes the result, or lists a directory does
+/// this, and without the conversion `?` refuses. Ten Rust examples on
+/// pdfluent.com failed to compile for this reason alone and no other — a
+/// visitor who copied `let bytes = std::fs::read("in.pdf")?;` next to a
+/// `PdfDocument::open` got a trait-bound error as their first impression of
+/// the SDK (#245).
+///
+/// The variant was already here and already carries `std::io::Error` as its
+/// `source`; only the `From` was missing. `path` is `None` because
+/// `std::io::Error` does not carry one — the call sites that know the path
+/// build `Error::Io` directly and keep it.
+impl From<std::io::Error> for Error {
+    fn from(source: std::io::Error) -> Self {
+        Error::Io { source, path: None }
+    }
+}
+
 impl From<lopdf::Error> for Error {
     fn from(e: lopdf::Error) -> Self {
         Error::InvalidPdf {

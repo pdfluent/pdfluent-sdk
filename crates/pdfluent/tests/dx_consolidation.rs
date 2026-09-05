@@ -144,3 +144,49 @@ fn prelude_star_import_exposes_new_types_without_collision() {
     takes_output(ImageFormat::Jpeg);
     takes_input(InsertImageFormat::Jpeg);
 }
+
+// ---------------------------------------------------------------------------
+// std::fs next to pdfluent, in one function
+// ---------------------------------------------------------------------------
+//
+// Landed here rather than in `the_api_contract_holds.rs`, where it was written
+// on 30-08-2026: that file is not on master and the repair it carried never got
+// there either, while docs/KWALITEITSSPOOR.md records it as done and counts the
+// blocks it fixed. Four examples on pdfluent.com were still failing on it on
+// 05-09-2026 (#164).
+
+/// `std::fs` next to `pdfluent` in the same function.
+///
+/// Every recipe that reads bytes, writes the result, or lists a directory sits
+/// in a function returning `pdfluent::Result`, and reaches for `?` on both
+/// kinds of error. Without `From<std::io::Error>` the second one refuses. Ten
+/// Rust examples on pdfluent.com failed to compile for that reason and no
+/// other, which is a trait-bound error as a visitor's first impression of the
+/// SDK (#245).
+///
+/// Written as a function that is compiled rather than run: the assertion is
+/// that `?` accepts an `std::io::Error` here, and that is a question for the
+/// compiler. The body is executed anyway so the mapping is checked too — a
+/// `From` that panics or picks the wrong variant would pass a compile-only
+/// test.
+#[test]
+fn an_io_error_reaches_the_facade_error() {
+    fn reads_and_opens() -> pdfluent::Result<usize> {
+        let bytes = std::fs::read("/nonexistent/pdfluent-api-contract.pdf")?;
+        Ok(bytes.len())
+    }
+
+    let err = reads_and_opens().expect_err("the path does not exist");
+    assert!(
+        matches!(err, pdfluent::Error::Io { .. }),
+        "an std::io::Error must land in Error::Io, not in a catch-all: {err:?}"
+    );
+    // The chain stays intact: `source()` still hands back the std error, which
+    // is what a caller matches on to tell "file missing" from "permission
+    // denied".
+    let source = std::error::Error::source(&err).expect("Error::Io chains its source");
+    assert!(
+        source.downcast_ref::<std::io::Error>().is_some(),
+        "the source of Error::Io must still be the std::io::Error"
+    );
+}

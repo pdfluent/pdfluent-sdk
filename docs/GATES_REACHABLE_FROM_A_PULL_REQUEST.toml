@@ -56,16 +56,18 @@ pre-push convenience, not a separate check.
 [[exempt]]
 gate = "site_blocks_compile.py"
 why = """
-Builds five hundred small Rust programs -- every code block on pdfluent.com --
-against the real facade, in a throwaway crate with its own target directory. It
+Builds two hundred-odd small Rust programs -- every code block on pdfluent.com,
+grouped per page section -- against the real facade, in a throwaway crate with its own target directory. It
 is a cargo build, not a check, and a hosted pull-request runner would pay for it
 from the minutes #333 is trying to get to zero while the repository is private.
 It runs in the full local lane, on a push to master, which is the lane the heavy
 gates already live in.
 
 What a pull request does reach is the half that needs no compiler:
-test_site_blocks_register.py reads the exception register in both directions and
-holds the hand-over digest against the export. That is where the failure that
+test_site_blocks_register.py reads the exception register in both directions,
+holds the hand-over digest against the export, and checks the shape of the
+wrapper the blocks are compiled in -- which on 05-09-2026 was inventing 88 of
+the 238 failures the report called debt (#164). That is where the failure that
 costs the most shows up -- an entry excusing a block that has compiled for
 months, or an export that has drifted away from the site it claims to describe --
 and it takes seconds. The website refuses its own build against that same digest,
