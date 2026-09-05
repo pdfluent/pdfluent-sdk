@@ -392,6 +392,26 @@ fn load_lopdf_from_shared_bytes(
     }
 }
 
+/// What [`PdfDocument::flatten_forms`] did.
+///
+/// Carries the skipped fields as well as the count. "Flattened 3 of 5" and
+/// "flattened 3" are different facts, and only one of them tells a caller
+/// that two fields are still editable in a document they believe is final.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlattenReport {
+    /// Number of fields turned into static page content.
+    pub fields_flattened: usize,
+    /// Fully-qualified names of fields that could not be flattened.
+    pub skipped: Vec<String>,
+}
+
+impl FlattenReport {
+    /// Whether every field in the document was flattened.
+    pub fn is_complete(&self) -> bool {
+        self.skipped.is_empty()
+    }
+}
+
 impl PdfDocument {
     // ---------- Constructors ----------
 
@@ -1027,20 +1047,53 @@ impl PdfDocument {
 
     /// Flatten all AcroForm fields to static content.
     ///
-    /// # 1.0 status — deferred runtime
+    /// Generates each field's appearance stream, removes the widget
+    /// annotations and drops the `/AcroForm` dictionary, leaving a document
+    /// that shows the same thing but can no longer be edited as a form.
     ///
-    /// The flatten pipeline (widget appearance stream rendering +
-    /// acroform removal + /Annots pruning) is tracked on #1223 and
-    /// lands post-freeze. Calling this method at 1.0 returns
-    /// [`Error::MissingDependency`] — no panic. Users MUST check the
-    /// result; see [STABILITY.md §3.3](../STABILITY.md) for the
-    /// full deferred-items register.
-    pub fn flatten_forms(&mut self) -> Result<()> {
+    /// The field tree is parsed from the document's *current* state, not from
+    /// the bytes it was opened with, so filling a form and then flattening
+    /// flattens the values just written.
+    ///
+    /// Returns what happened. A field can be skipped -- an unsupported type,
+    /// a widget with no rectangle -- and the report names those rather than
+    /// reporting a success that quietly left them editable. Fields that were
+    /// flattened stay flattened even when others were skipped.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::FeatureNotInTier`] without [`Capability::AcroFormFlatten`].
+    pub fn flatten_forms(&mut self) -> Result<FlattenReport> {
         self.require_capability(Capability::AcroFormFlatten)?;
-        Err(Error::MissingDependency {
-            dep: "pdf-manip::flatten_forms",
-            install_hint: "AcroForm flatten runtime tracked on #1223; lands in a 1.x MINOR. Use \
-                 pdf_manip::flatten_forms directly for now if you need the raw pipeline.",
+
+        // Round-trip through bytes because the parser reads a `Pdf` while the
+        // flattener writes to the `lopdf` handle, and only the latter carries
+        // mutations made through `form_mut`. Parsing the original bytes would
+        // flatten the form as it was opened.
+        let bytes = self.to_bytes()?;
+        let pdf = pdf_syntax::Pdf::new(bytes).map_err(|e| Error::InvalidPdf {
+            byte_offset: None,
+            reason: format!("re-parsing for flatten failed: {e:?}"),
+        })?;
+
+        let Some(tree) = pdf_forms::parse::parse_acroform(&pdf) else {
+            // No AcroForm at all. Nothing to flatten is not a failure -- a
+            // caller flattening every document in a batch should not have to
+            // special-case the ones without forms.
+            return Ok(FlattenReport {
+                fields_flattened: 0,
+                skipped: Vec::new(),
+            });
+        };
+
+        let result = pdf_forms::flatten::flatten_form(
+            &mut self.lopdf,
+            &tree,
+            &pdf_forms::flatten::FlattenConfig::default(),
+        );
+        Ok(FlattenReport {
+            fields_flattened: result.fields_flattened,
+            skipped: result.skipped,
         })
     }
 
@@ -1169,14 +1222,52 @@ impl PdfDocument {
     pub fn add_decoration(&mut self, decoration: PageDecoration) -> Result<()> {
         self.require_capability(Capability::PdfWrite)?;
         match decoration {
-            PageDecoration::Watermark {
-                text: _,
-                options: _,
-            } => Err(Error::MissingDependency {
-                dep: "pdf-manip::watermark",
-                install_hint:
-                    "watermark runtime lands with Epic 2 #1223; consolidated surface is in place",
-            }),
+            PageDecoration::Watermark { text, options } => {
+                use pdf_manip::watermark as wm;
+
+                // The runtime this method described as "landing with Epic 2"
+                // has been present the whole time -- the C ABI has been
+                // calling apply_text_watermark since before the note was
+                // written. Only the facade was still refusing.
+                let watermark = wm::TextWatermark {
+                    text,
+                    font_size: options.font_size,
+                    rotation: options.rotation_degrees,
+                    opacity: options.opacity,
+                    color: wm::Color::Rgb(
+                        options.color_rgb.0,
+                        options.color_rgb.1,
+                        options.color_rgb.2,
+                    ),
+                    // Both enums carry the same six variants. Mapped by hand
+                    // rather than with a wildcard arm, so adding a variant to
+                    // either side is a compile error instead of a watermark
+                    // that silently lands in the middle of the page.
+                    position: match options.position {
+                        crate::watermark::Position::Center => wm::Position::Center,
+                        crate::watermark::Position::TopLeft(x, y) => wm::Position::TopLeft(x, y),
+                        crate::watermark::Position::TopRight(x, y) => wm::Position::TopRight(x, y),
+                        crate::watermark::Position::BottomLeft(x, y) => {
+                            wm::Position::BottomLeft(x, y)
+                        }
+                        crate::watermark::Position::BottomRight(x, y) => {
+                            wm::Position::BottomRight(x, y)
+                        }
+                        crate::watermark::Position::Exact(x, y) => wm::Position::Exact(x, y),
+                    },
+                    layer: match options.layer {
+                        crate::watermark::Layer::Foreground => wm::Layer::Foreground,
+                        crate::watermark::Layer::Background => wm::Layer::Background,
+                    },
+                };
+                wm::apply_text_watermark(&mut self.lopdf, &watermark, &wm::PageSelection::All)
+                    .map_err(|e| Error::InvalidPdf {
+                        byte_offset: None,
+                        reason: format!("watermark failed: {e}"),
+                    })?;
+                self.sync_engine()?;
+                Ok(())
+            }
         }
     }
 
@@ -1629,11 +1720,17 @@ impl PdfDocument {
     /// **Truth-gap**: users MUST check the result; silent no-op would
     /// violate the "no fake support" rule.
     pub fn linearize(&mut self) -> Result<()> {
-        self.require_capability(Capability::PdfWrite)?;
-        Err(Error::MissingDependency {
-            dep: "pdf-manip::linearize",
-            install_hint: "linearization not yet implemented; tracked as a 1.1 follow-up to #1224",
-        })
+        // Not MissingDependency. That error carries an install_hint and its
+        // code is E-ENV-MISSING-DEPENDENCY, which sends a reader looking for
+        // a package to install and a support engineer looking at the
+        // environment. There is nothing to install: this is simply not built.
+        Err(Error::Unsupported(
+            "linearization (fast web view) is not implemented. It requires \
+             reordering objects and writing a hint table, and is tracked for a \
+             1.x MINOR. There is no workaround in this crate; qpdf --linearize \
+             does it as a post-processing step."
+                .to_string(),
+        ))
     }
 
     /// Subset every embedded font to only the glyphs actually used.
@@ -2490,6 +2587,22 @@ impl PdfDocument {
     )]
     pub fn save_with<P: AsRef<Path>>(&self, path: P, opts: SaveOptions) -> Result<()> {
         self.require_capability(Capability::PdfWrite)?;
+
+        // Refuse rather than quietly ignore. Until 23-08-2026 this flag was
+        // set, stored and never read by anything: a caller asked for a
+        // linearized file, got Ok, and got an ordinary one. That is the silent
+        // skip this project bans everywhere else, and it is worse here because
+        // the whole point of asking is that someone downstream is relying on
+        // fast web view.
+        if opts.linearize {
+            return Err(Error::Unsupported(
+                "SaveOptions::with_linearize(true): linearization is not \
+                 implemented and this flag has never had an effect. Save \
+                 without it, or run qpdf --linearize afterwards."
+                    .to_string(),
+            ));
+        }
+
         let path_ref = path.as_ref();
         if !opts.overwrite && path_ref.exists() {
             return Err(Error::Io {

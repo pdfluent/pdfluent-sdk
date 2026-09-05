@@ -54,11 +54,6 @@ pub enum Position {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct WatermarkOptions {
-    // Captured at construction; read by the `PdfDocument::add_watermark`
-    // body when wired in Epic 2 #1223 (and later consolidated via
-    // `PageDecoration` in #1225). Marked with an explicit allow so the
-    // scaffold phase does not fail `-D warnings`.
-    #[allow(dead_code)]
     pub(crate) position: Position,
     pub(crate) rotation_degrees: f32,
     pub(crate) opacity: f32,
@@ -84,6 +79,17 @@ impl WatermarkOptions {
     /// A centred watermark with default styling.
     pub fn centered() -> Self {
         Self::default()
+    }
+
+    /// Place the watermark somewhere other than the centre.
+    ///
+    /// `Position` has six variants and `centered()` was the only way to set
+    /// any of them, so five were public and unreachable. Coordinates are in
+    /// PDF points; for the corner variants they are the inset from that
+    /// corner, for `Exact` they are measured from the bottom-left.
+    pub fn at(mut self, position: Position) -> Self {
+        self.position = position;
+        self
     }
 
     /// Rotate the watermark by the given angle in degrees.

@@ -79,22 +79,30 @@ fn compress_with_strict_preset_runs_end_to_end() {
 
 #[test]
 fn add_watermark_delegates_to_add_decoration() {
-    let mut doc = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    let _ = pdfluent::set_license_key("tier:business");
 
-    // Both entry points must produce the same error (truth-gap:
-    // watermark runtime tracked under #1223).
-    let via_method = doc
+    // Both entry points must reach the same runtime. Until 23-08-2026 this
+    // asserted that both failed identically, because the facade refused while
+    // the watermark runtime it claimed to be waiting for was already there and
+    // already reachable from the C ABI.
+    let mut via_method = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    via_method
         .add_watermark("DRAFT", WatermarkOptions::centered())
-        .expect_err("unwired runtime");
-    let via_enum = doc
+        .expect("add_watermark");
+
+    let mut via_enum = PdfDocument::open("tests/fixtures/sample.pdf").expect("open sample");
+    via_enum
         .add_decoration(PageDecoration::watermark(
             "DRAFT",
             WatermarkOptions::centered(),
         ))
-        .expect_err("unwired runtime");
+        .expect("add_decoration");
 
-    assert_eq!(via_method.code(), via_enum.code());
-    assert_eq!(via_method.code(), "E-ENV-MISSING-DEPENDENCY");
+    assert_eq!(
+        via_method.to_bytes().expect("serialise method"),
+        via_enum.to_bytes().expect("serialise enum"),
+        "the convenience wrapper and the enum produced different documents"
+    );
 }
 
 #[test]
