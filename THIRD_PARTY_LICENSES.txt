@@ -97,10 +97,10 @@ are distributed under the Foxit license included in:
   crates/pdf-interpret/assets/LICENSE_FOXIT
 
 ================================================================================
-Embedded ICC Profiles (pdf-interpret, hayro-jpeg2000)
+Embedded ICC Profiles (pdf-interpret, hayro-jpeg2000, pdf-manip)
 ================================================================================
 
-Five profile files are embedded, three distinct profiles across two crates:
+Six profile files are embedded, three distinct profiles across three crates:
 
   CGATS001Compat-v2-micro.icc   CGATS.001 compatible CMYK, from
                                 github.com/saucecontrol/Compact-ICC-Profiles
@@ -109,8 +109,13 @@ Five profile files are embedded, three distinct profiles across two crates:
                                 CC0-1.0
   LAB.icc                       generated with LCMS2; no third-party rights
 
+PDF/A conversion embeds its own byte-identical copy of the CGATS profile so
+that pdf-manip stays self-contained; CC0 carries no attribution condition, but
+a second copy in the tree is a second thing to name here.
+
 Upstream licence texts:
   crates/pdf-interpret/assets/CGATS_LICENSE.txt
+  crates/pdf-manip/assets/CGATS_LICENSE.txt   (same text, same profile)
   crates/hayro-jpeg2000/assets/LICENSE.txt  (CC0 1.0 Universal, full text)
 
 ProPhoto was previously absent from this file while being present in the tree
