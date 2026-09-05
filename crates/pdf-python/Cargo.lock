@@ -2562,6 +2562,8 @@ version = "0.94.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b61e4bcbf5d8d3d2149ffa462e1cec5259108e59f03af9e4e4ddebe6cd7c67f7"
 dependencies = [
+ "js-sys",
+ "wasm-bindgen",
  "zip 7.2.0",
 ]
 
