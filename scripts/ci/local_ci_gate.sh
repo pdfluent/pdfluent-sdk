@@ -108,23 +108,26 @@ fi
 # checks that would have judged it were disqualifying each other. (codex, #1610)
 run startbaar python3 scripts/ci/every_workflow_can_start.py
 run startbaartest python3 scripts/ci/test_every_workflow_can_start.py
-# ADVISORY IN THE FAST LANE, refusing on master and in ci.yml. It reads run
+# ADVISORY IN BOTH LOCAL LANES, refusing only in ci.yml on master. It reads run
 # history from the API, so what it reports is the state of the runners and of
 # everyone else's workflows -- and on 04-09-2026 it blocked every push from every
 # terminal three times over `cargo: command not found` on a runner. Nobody being
 # refused could fix that, and a refusal you cannot act on is a stopped queue.
 #
+# It was advisory in the fast lane and hard in the full one from that day. That
+# split does not survive contact: the full lane IS the landing, so a workflow
+# somebody else broke this morning still closes master for everybody, and it did
+# so a fourth time within 24 hours on publication-guards.yml -- new with #1712,
+# red on all four of its runs, and nothing to do with whoever was landing. The
+# owner decision is on #331.
+#
 # What this costs, said plainly because it is the same guard that was right twice
-# today: a workflow that dies after this lands is no longer noticed at the moment
-# someone pushes, only on master and in the pull request. That is one link fewer
-# on the guard built to find exactly that kind of silent death. The hard refusal
-# stays where it decides whether something merges.
-if [ "$FULL" = 1 ]; then
-  run groen   python3 scripts/ci/a_gate_that_never_went_green.py
-else
-  echo "--- groen (advisory in the fast lane; refuses on master and in ci.yml) ---"
-  python3 scripts/ci/a_gate_that_never_went_green.py 2>&1 | sed 's/^/  /' || true
-fi
+# on the day it was written: a workflow that dies after this lands is no longer
+# noticed at the moment someone pushes or lands, only in ci.yml's own run on
+# master. That is one link fewer on the guard built to find exactly that kind of
+# silent death, and it is the link that was refusing work nobody could act on.
+echo "--- groen (advisory in both local lanes; refuses in ci.yml on master) ---"
+python3 scripts/ci/a_gate_that_never_went_green.py 2>&1 | sed 's/^/  /' || true
 run groentest python3 scripts/ci/test_a_gate_that_never_went_green.py
 # The visual suite renders and compares against a baseline, so it needs a
 # release build. t1 added this line and took it out again in the same branch:

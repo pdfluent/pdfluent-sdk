@@ -241,12 +241,18 @@ def main() -> int:
         expect("the summary names the lane it ran",
                '$_lane lane' in tekst)
 
-        # The guards that read the outside world are advisory in the fast lane.
+        # The never-green guard is advisory in BOTH local lanes since #331: the
+        # full lane IS the landing, so leaving it hard there meant a workflow
+        # somebody else broke this morning closed master for everyone -- four
+        # times in 24 hours, the last on publication-guards.yml. It refuses only
+        # in ci.yml's own run on master, where it decides nothing about whether
+        # another terminal can land.
+        #
         # This is a STRUCTURE check, not a behaviour one: it reads where the
         # invocation sits rather than running the gate, so it would not catch a
         # branch that is present and unreachable. What it does catch is the
-        # regression that matters -- the invocation quietly moving back out of
-        # the lane test, which is how the previous advisory lines were lost.
+        # regression that matters -- the invocation quietly becoming a `run` line
+        # again, which is how the previous advisory lines were lost.
         regels = tekst.splitlines()
         try:
             i = next(n for n, r in enumerate(regels)
@@ -254,18 +260,12 @@ def main() -> int:
                      or r.strip().startswith("run groen\t"))
         except StopIteration:
             i = None
-        onder_full = False
-        if i is not None:
-            for r in reversed(regels[:i]):
-                if r.startswith('if [ "$FULL" = 1 ]'):
-                    onder_full = True
-                    break
-                if r.startswith("run ") or r.startswith("zwaar "):
-                    break
-        expect("the never-green guard refuses only in the full lane",
-               i is not None and onder_full, f"regel {i}")
-        expect("and warns in the fast lane instead",
-               "advisory in the fast lane" in tekst)
+        expect("the never-green guard refuses in neither local lane",
+               i is None, f"regel {i}")
+        expect("and warns in both lanes instead",
+               "advisory in both local lanes" in tekst
+               and any(r.startswith("python3 scripts/ci/a_gate_that_never_went_green.py")
+                       and r.rstrip().endswith("|| true") for r in regels))
         # Its test is not advisory anywhere: it is local and deterministic, it
         # asks no API, and it is what proves the guard can go red at all.
         expect("its own test stays blocking in both lanes",
