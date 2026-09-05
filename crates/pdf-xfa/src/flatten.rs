@@ -327,9 +327,20 @@ enum DecryptResult {
     NeedsPassword,
 }
 
-/// Try to handle encryption: if not encrypted return as-is, if encrypted try
-/// empty password (owner-only encryption), otherwise report needs-password.
-fn try_decrypt_pdf(pdf_bytes: &[u8]) -> DecryptResult {
+/// Try to handle encryption: if not encrypted return as-is, otherwise try the
+/// caller's password and then the empty one, and report needs-password if
+/// neither opens it.
+///
+/// `password` is `None` when the caller has none. Until 24-08-2026 that was the
+/// only possibility: the XFA route tried the empty password and nothing else,
+/// so a protected form always dropped out. On a business corpus that is 3 to 5%
+/// of the documents you cannot process without knowing why. See #149.
+///
+/// The order is deliberate: the supplied password first, then the empty one.
+/// The other way round, an owner-only encrypted document would open on the
+/// empty password while the caller had supplied a user password -- that works,
+/// but it hands them fewer rights than they have.
+fn try_decrypt_pdf(pdf_bytes: &[u8], password: Option<&str>) -> DecryptResult {
     let mut doc = match Document::load_mem(pdf_bytes) {
         Ok(d) => d,
         Err(_) => return DecryptResult::NotEncrypted, // Can't parse — let downstream handle it
@@ -348,6 +359,19 @@ fn try_decrypt_pdf(pdf_bytes: &[u8]) -> DecryptResult {
     }
 
     if doc.trailer.get(b"Encrypt").is_ok() {
+        // The caller's password first, if they supplied one.
+        if let Some(pw) = password.filter(|p| !p.is_empty()) {
+            if let Ok(mut decrypted) =
+                Document::load_mem_with_options(pdf_bytes, LoadOptions::with_password(pw))
+            {
+                decrypted.trailer.remove(b"Encrypt");
+                let mut buf = Vec::new();
+                if decrypted.save_to(&mut buf).is_ok() {
+                    return DecryptResult::Decrypted(buf);
+                }
+                return DecryptResult::NeedsPassword;
+            }
+        }
         // /Encrypt present but lopdf couldn't auto-decrypt — try explicit empty password.
         match Document::load_mem_with_options(pdf_bytes, LoadOptions::with_password("")) {
             Ok(mut decrypted_doc) => {
@@ -759,8 +783,13 @@ fn compute_suppression_diags(
 /// See `scripts/generate_xfa_reference.sh` and `docs/XFA_SUCCESS_CRITERIA.md`.
 #[must_use = "flattened PDF bytes must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
-    flatten_xfa_to_pdf_internal(pdf_bytes, false, XfaRenderingPolicy::SavedStateFaithful)
-        .map(|out| out.pdf_bytes)
+    flatten_xfa_to_pdf_internal(
+        pdf_bytes,
+        false,
+        XfaRenderingPolicy::SavedStateFaithful,
+        None,
+    )
+    .map(|out| out.pdf_bytes)
 }
 /// Flatten XFA content and return the PDF bytes together with a per-page layout dump.
 ///
@@ -772,7 +801,12 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
 /// Returns [`XfaError`] on parse, layout, or render failures.
 #[must_use = "flattened PDF bytes and layout dump must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_layout_dump(pdf_bytes: &[u8]) -> Result<(Vec<u8>, LayoutDump)> {
-    let out = flatten_xfa_to_pdf_internal(pdf_bytes, true, XfaRenderingPolicy::SavedStateFaithful)?;
+    let out = flatten_xfa_to_pdf_internal(
+        pdf_bytes,
+        true,
+        XfaRenderingPolicy::SavedStateFaithful,
+        None,
+    )?;
     Ok((out.pdf_bytes, out.layout_dump))
 }
 
@@ -785,8 +819,12 @@ pub fn flatten_xfa_to_pdf_with_layout_dump(pdf_bytes: &[u8]) -> Result<(Vec<u8>,
 /// Returns [`XfaError`] on parse, layout, or render failures.
 #[must_use = "flattened PDF bytes and metadata must be used; discarding them loses output"]
 pub fn flatten_xfa_to_pdf_with_metadata(pdf_bytes: &[u8]) -> Result<(Vec<u8>, FlattenMetadata)> {
-    let out =
-        flatten_xfa_to_pdf_internal(pdf_bytes, false, XfaRenderingPolicy::SavedStateFaithful)?;
+    let out = flatten_xfa_to_pdf_internal(
+        pdf_bytes,
+        false,
+        XfaRenderingPolicy::SavedStateFaithful,
+        None,
+    )?;
     Ok((out.pdf_bytes, out.metadata))
 }
 
@@ -802,7 +840,12 @@ pub fn flatten_xfa_to_pdf_with_metadata(pdf_bytes: &[u8]) -> Result<(Vec<u8>, Fl
 pub fn flatten_xfa_to_pdf_with_layout_dump_and_metadata(
     pdf_bytes: &[u8],
 ) -> Result<(Vec<u8>, LayoutDump, FlattenMetadata)> {
-    let out = flatten_xfa_to_pdf_internal(pdf_bytes, true, XfaRenderingPolicy::SavedStateFaithful)?;
+    let out = flatten_xfa_to_pdf_internal(
+        pdf_bytes,
+        true,
+        XfaRenderingPolicy::SavedStateFaithful,
+        None,
+    )?;
     Ok((out.pdf_bytes, out.layout_dump, out.metadata))
 }
 
@@ -838,16 +881,42 @@ pub fn flatten_xfa_to_pdf_with_policy_and_metadata(
     policy: XfaRenderingPolicy,
 ) -> Result<(Vec<u8>, FlattenMetadata)> {
     // D12: FreshMergeExperimental is now plumbed through the pipeline.
-    let out = flatten_xfa_to_pdf_internal(pdf_bytes, false, policy)?;
+    let out = flatten_xfa_to_pdf_internal(pdf_bytes, false, policy, None)?;
     let mut metadata = out.metadata;
     metadata.rendering_policy = policy;
     Ok((out.pdf_bytes, metadata))
+}
+
+/// Flatten XFA content in an encrypted document, using `password` to open it.
+///
+/// Added 24-08-2026 (#149). The other entry points try the empty password and
+/// nothing else, which works for owner-only encryption and no further. On a
+/// business corpus that drops 3 to 5% of the documents, and the caller cannot
+/// tell whether that is the document's fault or ours.
+///
+/// An empty `password` behaves like [`flatten_xfa_to_pdf`].
+///
+/// # Errors
+///
+/// Returns [`XfaError`] on parse, layout, or render failures, and
+/// [`XfaError::Encrypted`] when neither this password nor the empty one opens
+/// the document.
+#[must_use = "flattened PDF bytes must be used; discarding them loses output"]
+pub fn flatten_xfa_to_pdf_with_password(pdf_bytes: &[u8], password: &str) -> Result<Vec<u8>> {
+    flatten_xfa_to_pdf_internal(
+        pdf_bytes,
+        false,
+        XfaRenderingPolicy::SavedStateFaithful,
+        Some(password),
+    )
+    .map(|out| out.pdf_bytes)
 }
 
 fn flatten_xfa_to_pdf_internal(
     pdf_bytes: &[u8],
     collect_layout_dump: bool,
     policy: XfaRenderingPolicy,
+    password: Option<&str>,
 ) -> Result<FlattenOutput> {
     // GL-QA36: Re-entrance guard.  If this function is entered while already
     // running on this thread (depth ≥ 1), a recursive call has occurred —
@@ -885,7 +954,7 @@ fn flatten_xfa_to_pdf_internal(
     // 0b. Handle encrypted PDFs: try empty-password decrypt (owner-only encryption),
     //     otherwise reject early — encrypted content produces garbage output.
     let decrypted;
-    let pdf_bytes = match try_decrypt_pdf(pdf_bytes) {
+    let pdf_bytes = match try_decrypt_pdf(pdf_bytes, password) {
         DecryptResult::NotEncrypted => pdf_bytes,
         DecryptResult::Decrypted(bytes) => {
             decrypted = bytes;
