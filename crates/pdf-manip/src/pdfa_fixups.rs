@@ -6045,17 +6045,7 @@ fn fix_content_stream_operator_spacing(doc: &mut Document) -> usize {
             .any(|w| w == b">>BDC" || w == b">>BMC")
             || decompressed.windows(4).any(|w| w == b">>DP");
 
-        // Also check for standalone >> without matching << (corrupted BDC/BMC).
-        // Check both spaced (">> BDC") and unspaced (">>BDC") since the first
-        // pass will add the space — re-evaluated after first pass below.
-        let has_standalone_issue = decompressed
-            .windows(6)
-            .any(|w| w == b">> BDC" || w == b">> BMC")
-            || decompressed
-                .windows(5)
-                .any(|w| w == b">>BDC" || w == b">>BMC");
-
-        if !has_spacing_issue && !has_standalone_issue {
+        if !has_spacing_issue {
             continue;
         }
 
@@ -6084,58 +6074,9 @@ fn fix_content_stream_operator_spacing(doc: &mut Document) -> usize {
             i += 1;
         }
 
-        // Second pass: fix standalone >> in BDC/BMC without matching <<.
-        // Pattern: " N >> BDC" → " <</MCID N >> BDC"
-        // Re-evaluate after first pass: >>BDC may have become >> BDC.
-        let has_standalone_issue = new_content
-            .windows(6)
-            .any(|w| w == b">> BDC" || w == b">> BMC");
-        if has_standalone_issue {
-            let text = new_content.clone();
-            new_content.clear();
-            let lines: Vec<&[u8]> = text.split(|&b| b == b'\n').collect();
-            for (idx, line) in lines.iter().enumerate() {
-                if idx > 0 {
-                    new_content.push(b'\n');
-                }
-                if (line.windows(6).any(|w| w == b">> BDC" || w == b">> BMC"))
-                    && !line.windows(2).any(|w| w == b"<<")
-                {
-                    // Find ">>" position and extract the number before it.
-                    if let Some(gg) = line.windows(2).position(|w| w == b">>") {
-                        // Walk backwards from >> skipping whitespace to find
-                        // the number.
-                        let before = &line[..gg];
-                        let trimmed_end = before
-                            .iter()
-                            .rposition(|b| !b.is_ascii_whitespace())
-                            .map(|p| p + 1)
-                            .unwrap_or(0);
-                        let num_start = before[..trimmed_end]
-                            .iter()
-                            .rposition(|b| !b.is_ascii_digit())
-                            .map(|p| p + 1)
-                            .unwrap_or(0);
-                        if num_start < trimmed_end {
-                            let prefix = &line[..num_start];
-                            let num = &line[num_start..trimmed_end];
-                            let suffix_start = gg + 2; // after >>
-                            let suffix = &line[suffix_start..];
-                            new_content.extend_from_slice(prefix);
-                            new_content.extend_from_slice(b"<</MCID ");
-                            new_content.extend_from_slice(num);
-                            new_content.extend_from_slice(b">>");
-                            new_content.extend_from_slice(suffix);
-                            count += 1;
-                            continue;
-                        }
-                    }
-                    new_content.extend_from_slice(line);
-                } else {
-                    new_content.extend_from_slice(line);
-                }
-            }
-        }
+        // PDF dictionaries may span lines. A closing delimiter without an
+        // opening delimiter on the same line is not evidence of missing MCID
+        // structure. Never fabricate a property dictionary from that heuristic.
 
         // Store decompressed+fixed content; remove Filter so lopdf writes it raw.
         if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
@@ -11480,6 +11421,44 @@ mod tests_transparency_groups {
 #[cfg(test)]
 mod round2_inline_tests {
     use super::*;
+    #[test]
+    fn multiline_marked_content_dictionaries_are_not_repaired_into_nested_mcid_values() {
+        for content in [
+            b"/Span <</MCID \n44 >>BDC BT (tail) Tj ET EMC".as_slice(),
+            b"/P << \n/MCID 9 >> BDC BT (tail) Tj ET EMC",
+        ] {
+            let mut doc = Document::with_version("1.7");
+            let id = doc.add_object(lopdf::Stream::new(
+                dictionary! {"Type"=>"XObject","Subtype"=>"Form"},
+                content.to_vec(),
+            ));
+            fix_content_stream_operator_spacing(&mut doc);
+            let bytes = doc
+                .get_object(id)
+                .unwrap()
+                .as_stream()
+                .unwrap()
+                .get_plain_content()
+                .unwrap();
+            let parsed = lopdf::content::Content::decode_strict(&bytes).unwrap();
+            assert_eq!(parsed.operations[0].operator, "BDC");
+            let dictionary = parsed.operations[0].operands[1].as_dict().unwrap();
+            assert!(matches!(
+                dictionary.get(b"MCID"),
+                Ok(Object::Integer(44 | 9))
+            ));
+            assert_eq!(
+                parsed
+                    .operations
+                    .iter()
+                    .filter(|o| o.operator == "Tj")
+                    .count(),
+                1
+            );
+            assert_eq!(bytes.windows(2).filter(|w| *w == b"<<").count(), 1);
+        }
+    }
+
     #[test]
     fn fixup_does_not_truncate_unsupported_image_payload_or_page_tail() {
         let mut content = b"q BI /IM true /W 1 /H 1 /F /CCF ID (".to_vec();

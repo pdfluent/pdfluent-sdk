@@ -339,6 +339,9 @@ pub fn convert_document(
     let mut report = PdfAConvertReport::default();
     let is_pdfa1 = opts.conformance.part() == 1;
 
+    opts.step("join_content_fragments");
+    report.warnings.extend(join_content_fragments(doc));
+
     opts.step("cleanup");
     let cleanup = required(opts, "cleanup_for_pdfa", || {
         crate::pdfa_cleanup::cleanup_for_pdfa(doc, is_pdfa1)
@@ -439,6 +442,91 @@ pub fn convert_document(
 
     report.page_count = doc.get_pages().len();
     Ok(report)
+}
+
+/// A page's Contents array is one logical program. A producer may split an
+/// array, dictionary or operand sequence between streams; parsing each fragment
+/// independently can drop delimiters and text. Join only arrays containing a
+/// fragment that is not a complete standalone content program.
+fn join_content_fragments(doc: &mut Document) -> Vec<String> {
+    use lopdf::{Object, Stream};
+    let mut warnings = Vec::new();
+    let pages: Vec<_> = doc.get_pages().values().copied().collect();
+    let mut cache = std::collections::BTreeMap::new();
+    for page in pages {
+        let ids = crate::content_editor::get_content_stream_ids(doc, page);
+        if ids.len() < 2 {
+            continue;
+        }
+        let complete_array = doc
+            .get_object(page)
+            .ok()
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|d| d.get(b"Contents").ok())
+            .and_then(|o| doc.dereference(o).ok())
+            .and_then(|(_, o)| o.as_array().ok())
+            .is_some_and(|a| {
+                a.len() == ids.len() && a.iter().all(|o| matches!(o, Object::Reference(_)))
+            });
+        if !complete_array {
+            warnings.push(format!(
+                "page {} {} has unsupported content-array entries; fragments left intact",
+                page.0, page.1
+            ));
+            continue;
+        }
+        if let Some(&joined) = cache.get(&ids) {
+            if let Ok(dictionary) = doc.get_object_mut(page).and_then(Object::as_dict_mut) {
+                dictionary.set("Contents", joined);
+            }
+            continue;
+        }
+        let mut data = Vec::new();
+        let mut incomplete = false;
+        let mut allow_compression = true;
+        let mut unavailable = false;
+        for id in &ids {
+            let Ok(stream) = doc.get_object(*id).and_then(Object::as_stream) else {
+                unavailable = true;
+                break;
+            };
+            let Ok(bytes) = stream.get_plain_content() else {
+                unavailable = true;
+                break;
+            };
+            if data.len().saturating_add(bytes.len()).saturating_add(1)
+                > crate::flate_decode::MAX_DEFLATE_BYTES as usize
+            {
+                unavailable = true;
+                break;
+            }
+            incomplete |= crate::content_editor::content_stream_too_deeply_nested(&bytes)
+                || lopdf::content::Content::decode_strict(&bytes).is_err();
+            if !data.is_empty() {
+                data.push(b'\n');
+            }
+            data.extend_from_slice(&bytes);
+            allow_compression &= stream.allows_compression;
+        }
+        if unavailable {
+            warnings.push(format!(
+                "page {} {} content fragments could not be joined safely",
+                page.0, page.1
+            ));
+            continue;
+        }
+        if !incomplete {
+            continue;
+        }
+        let joined = doc.add_object(
+            Stream::new(lopdf::Dictionary::new(), data).with_compression(allow_compression),
+        );
+        cache.insert(ids, joined);
+        if let Ok(dictionary) = doc.get_object_mut(page).and_then(Object::as_dict_mut) {
+            dictionary.set("Contents", joined);
+        }
+    }
+    warnings
 }
 
 /// Lossless storage cleanup, without changing glyphs, pixels or content tokens.
@@ -596,7 +684,7 @@ fn run_font_steps(
         Ok(Ok(r)) => {
             if r.non_embedded_found > 0 {
                 report.warnings.push(format!(
-                    "{} source fonts had no embedded program; resolved or fallback fonts may change glyph shapes and text geometry",
+                    "{} fonts required embedding during conversion (including generated resources); resolved or fallback fonts may change glyph shapes and text geometry",
                     r.non_embedded_found
                 ));
             }
@@ -830,6 +918,74 @@ mod tests {
         let mut out = Vec::new();
         doc.save_to(&mut out).unwrap();
         out
+    }
+
+    #[test]
+    fn split_content_arrays_and_dictionaries_are_joined_before_individual_stream_repairs() {
+        let mut doc = lopdf::Document::with_version("1.7");
+        let first = b"/Span << /MCID ".to_vec();
+        let second = b"7 >> BDC BT /F 12 Tf [".to_vec();
+        let third = b"(kept) 20 ( text)] TJ ET EMC".to_vec();
+        let ids: Vec<_> = [first.clone(), second.clone(), third.clone()]
+            .into_iter()
+            .map(|data| {
+                doc.add_object(lopdf::Stream::new(dictionary! {}, data).with_compression(false))
+            })
+            .collect();
+        let array = doc.add_object(lopdf::Object::Array(
+            ids.iter().copied().map(lopdf::Object::Reference).collect(),
+        ));
+        let pages = doc.new_object_id();
+        let page = doc.add_object(dictionary! {"Type"=>"Page","Parent"=>pages,"Contents"=>array});
+        let other = doc.add_object(dictionary! {"Type"=>"Page","Parent"=>pages,"Contents"=>array});
+        doc.objects.insert(pages,lopdf::Object::Dictionary(dictionary! {"Type"=>"Pages","Kids"=>vec![lopdf::Object::Reference(page),lopdf::Object::Reference(other)],"Count"=>2}));
+        let root = doc.add_object(dictionary! {"Type"=>"Catalog","Pages"=>pages});
+        doc.trailer.set("Root", root);
+        assert!(join_content_fragments(&mut doc).is_empty());
+        let joined = doc
+            .get_object(page)
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"Contents")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        assert_eq!(
+            doc.get_object(other)
+                .unwrap()
+                .as_dict()
+                .unwrap()
+                .get(b"Contents")
+                .unwrap()
+                .as_reference()
+                .unwrap(),
+            joined
+        );
+        let stream = doc.get_object(joined).unwrap().as_stream().unwrap();
+        assert!(!stream.allows_compression);
+        let expected = [first.clone(), second, third].join(&b'\n');
+        assert_eq!(stream.content, expected);
+        let parsed = lopdf::content::Content::decode_strict(&stream.content).unwrap();
+        assert_eq!(
+            parsed.operations[0].operands[1]
+                .as_dict()
+                .unwrap()
+                .get(b"MCID")
+                .unwrap()
+                .as_i64()
+                .unwrap(),
+            7
+        );
+        assert!(parsed
+            .operations
+            .iter()
+            .any(|o| o.operator == "TJ" && o.operands[0].as_array().unwrap().len() == 3));
+        assert_eq!(
+            doc.get_object(ids[0]).unwrap().as_stream().unwrap().content,
+            first
+        );
+        assert!(join_content_fragments(&mut doc).is_empty());
     }
 
     #[test]

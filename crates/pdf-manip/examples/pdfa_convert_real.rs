@@ -47,7 +47,7 @@ fn main() {
                     "output_intent_added": report.output_intent_added,
                     "font_embedding": report.fonts.as_ref().map(|fonts| serde_json::json!({
                         "inspected": fonts.fonts_inspected,
-                        "not_embedded_in_source": fonts.non_embedded_found,
+                        "requiring_embedding": fonts.non_embedded_found,
                         "embedded": fonts.fonts_embedded,
                         "failed": fonts.failed,
                     })),
