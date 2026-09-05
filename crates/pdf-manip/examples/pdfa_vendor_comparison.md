@@ -31,7 +31,8 @@ recorded for the measured version. These settings describe standard conversion;
 they do not pretend to be a separately tuned vendor optimizer comparison.
 
 Run each SDK in a fresh output directory, on the identical 300-file list and the
-hash-pinned `pdfa_round2_holdout.json` set. For example, from the repository root:
+hash-pinned development and confirmation sets in `pdfa_round2_holdout.json` and
+`pdfa_round2_confirmatory.json`. For example, from the repository root:
 
 ```sh
 node benchmarks/pdfa/reproduce/compare.mjs \
@@ -42,7 +43,8 @@ node benchmarks/pdfa/reproduce/compare.mjs \
 ```
 
 Repeat with `nutrient` and a separate directory; repeat both on the frozen
-holdout. Use the exact same veraPDF, MuPDF, fonts, DPI, timeout, and metric
+manifest inputs. The 93-file set has been used for repairs and the 21-file set
+re-evaluated after general fixes; neither is an untouched final blind holdout. Use the exact same veraPDF, MuPDF, fonts, DPI, timeout, and metric
 versions as the internal run. Feed saved outputs into `pdfa_round2_eval.py` for
 all-page and ordered-text measurements, with round-2 outputs as `--before`.
 Every requested input remains in the denominator, including adapter failures,
