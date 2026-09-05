@@ -59,6 +59,19 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
+
+def _sealed() -> dict[str, str]:
+    """The caller's environment without the GIT_* variables.
+
+    This runs inside a pre-push hook, and a hook exports GIT_DIR and
+    GIT_WORK_TREE. A git command that inherits them answers about the repository
+    the hook belongs to and ignores the directory it was pointed at -- so the
+    selection would be read off the wrong checkout, and it would still print a
+    list of crates that looked entirely ordinary. Same helper, same reason, as
+    territories_do_not_overlap.py.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
 # The whole workspace, spelled as one token so a caller can tell it from a crate
 # name. A crate may not be called this, and cargo would refuse the name anyway.
 ALL = "*"
@@ -223,7 +236,8 @@ def changed_files(base: str, cwd: pathlib.Path | None = None) -> list[str] | Non
     """
     out = subprocess.run([
         "git", "diff", "--name-only", f"{base}..HEAD"],
-        cwd=str(cwd or ROOT), capture_output=True, text=True, check=False)
+        cwd=str(cwd or ROOT), capture_output=True, text=True, check=False,
+        env=_sealed())
     if out.returncode != 0:
         print("[touched-crates] could not diff against "
               f"{base}: {out.stderr.strip()}", file=sys.stderr)
@@ -273,7 +287,8 @@ def main() -> int:
         if not base:
             for candidate in ("github/master", "origin/master"):
                 found = subprocess.run(["git", "rev-parse", "--verify", "-q", candidate],
-                                       cwd=str(ROOT), capture_output=True, text=True)
+                                       cwd=str(ROOT), capture_output=True, text=True,
+                                       env=_sealed())
                 if found.returncode == 0:
                     base = candidate
                     break

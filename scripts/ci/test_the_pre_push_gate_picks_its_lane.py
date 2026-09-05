@@ -100,6 +100,13 @@ def hook_met(stdin: str, gate_exit: int = 0, tmp: pathlib.Path | None = None,
     # skips that half. Removing the file keeps this test on its own subject.
     env = sealed_env(cwd=tmp)
     env["PATH"] = os.environ["PATH"]
+    # LANDING_BASE and LANE are the hook's own OUTPUT and INPUT, and both are
+    # exported by whoever is landing. Inheriting either would test the caller's
+    # shell rather than the hook: a run started with LANDING_BASE already set
+    # made "the hook exported nothing" indistinguishable from "the hook exported
+    # the right thing", which is how this pair of cases first went red.
+    for leaked in ("LANDING_BASE", "LANE"):
+        env.pop(leaked, None)
     env.update(extra_env or {})
     subprocess.run(["git", "init", "-q", "."], cwd=tmp, env=env, check=True)
     if message_guard:
