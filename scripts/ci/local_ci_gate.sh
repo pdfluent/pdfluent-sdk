@@ -275,6 +275,12 @@ run diskguard python3 scripts/ci/test_disk_headroom.py
 # core.hooksPath set, let through -- before it reaches a remote.
 run identtest python3 scripts/ci/test_commits_use_the_noreply_alias.py
 run identity  python3 scripts/ci/commits_use_the_noreply_alias.py
+# The same rule where it lasts longest. Archiving a branch as a `keep/` tag
+# converts commits on a name somebody will delete into commits nothing deletes,
+# and the history-rewrite plan carries tags across -- so a tag over a personal
+# address is a promise to keep publishing it (#314).
+run tagtest   python3 scripts/ci/test_an_archive_tag_pins_no_personal_address.py
+run archtags  python3 scripts/ci/an_archive_tag_pins_no_personal_address.py
 # And the same address in the tree rather than in a commit field, which is the
 # half a guard on author/committer cannot see.
 # The message guards, and the wiring that makes them run at all.

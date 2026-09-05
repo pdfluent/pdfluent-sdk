@@ -1041,6 +1041,17 @@ jobs:
       - name: Every commit this change adds is authored by the noreply alias
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/commits_use_the_noreply_alias.py
+      # Same address, longest-lived carrier. A branch is a name somebody will
+      # delete; a `keep/` tag is written so nothing does, and the history-rewrite
+      # plan carries tags over -- so archiving a branch that way turns an address
+      # we may drop into one we have promised to keep. The test first, for the
+      # reason above it: this guard finds nothing most days (#314).
+      - name: The archive-tag guard refuses a tag it should
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_an_archive_tag_pins_no_personal_address.py
+      - name: No archive tag pins an address we decided not to publish
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/an_archive_tag_pins_no_personal_address.py
       # The commit fields are half of it. The tree is the other half, and the
       # easier one to leak into: eight tracked files on master carried the
       # address as ordinary text while the identity guard was already green.
