@@ -255,6 +255,12 @@ run fetched   python3 scripts/ci/every_fetched_asset_is_registered.py
 run fetchedt  python3 scripts/ci/test_every_fetched_asset_is_registered.py
 run licbound  python3 scripts/ci/license_boundary.py
 run licbtest  python3 scripts/ci/test_license_boundary.py
+# The document the licence hands the last word to. LICENSE-COMMERCIAL §10 says
+# the agreement is that text plus a signed order form, and that the form
+# prevails -- so the form and §2 drifting apart sells or withholds a right that
+# neither document admits to (#220).
+run orderform python3 scripts/ci/the_order_form_agrees_with_the_licence.py
+run orderftst python3 scripts/ci/test_the_order_form_agrees_with_the_licence.py
 run lictest   python3 scripts/ci/test_license_gate.py
 run javafix   python3 scripts/ci/the_java_fixture_is_the_one_we_generate.py
 run fixenv    python3 scripts/ci/a_fixture_cannot_touch_a_real_repo.py
