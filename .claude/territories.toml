@@ -252,6 +252,10 @@ uitgezonderd = [
   # And one test file, because the skip lint was red on it before this branch
   # touched anything: a directory walk that returned in silence.
   "crates/visual-regression/tests/superseded_pipeline_stays_gone.rs",
+  # And the redaction test of the internal-terms guard, which gained the case
+  # for a term carrying a regex metacharacter -- the crash that refused every
+  # commit on this machine on 06-09-2026.
+  "scripts/ci/test_een_treffer_publiceert_de_term_niet.py",
 ]
 # NOT claimed, and worth saying so: `crates/pdfluent/src/document.rs` and the two
 # parity tests are edited by this change but stay with whoever owns the SDK
@@ -498,6 +502,8 @@ uitgezonderd = [
   "scripts/ci/test_every_fork_names_its_upstream.py",
   "scripts/ci/a_closed_story_names_a_landed_sha.py",
   "scripts/ci/test_a_closed_story_names_a_landed_sha.py",
+  "scripts/ci/test_fixtures_are_wellformed.py",
+  "scripts/ci/test_een_treffer_publiceert_de_term_niet.py",
 ]
 issues = [288, 286, 290, 276, 283, 264]
 
@@ -772,7 +778,10 @@ paden = [
   "scripts/ci/test_every_fork_names_its_upstream.py",
   "scripts/ci/a_closed_story_names_a_landed_sha.py",
   "scripts/ci/test_a_closed_story_names_a_landed_sha.py",
+  "scripts/ci/test_fixtures_are_wellformed.py",
+  "scripts/ci/test_een_treffer_publiceert_de_term_niet.py",
   "docs/FORK_DIVERGENCE.md",
+  "docs/API_CONTRACT.md",
   # From t1: the READMEs of the forked crates. LC7 is about what a reader sees
   # first, and what crates.io and GitHub show is the README -- so the fork line
   # has to sit there and nowhere else. The crate sources are untouched.

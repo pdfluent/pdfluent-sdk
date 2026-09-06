@@ -350,6 +350,14 @@ jobs:
       - name: The divergence measurement says when it did not measure
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_fork_divergence.py
+      # The tracker guard's own test, over a repository and a `gh` built in a
+      # temporary directory. The guard itself cannot run here -- it needs a
+      # tracker token and this repository's history -- and stands in the local
+      # gate; what runs here is the case that looks right: a real commit, in the
+      # repository, that master never took.
+      - name: A closed story is told from a sha master never took
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_a_closed_story_names_a_landed_sha.py
       # Same family, one layer down: `timeout 30 ... || true` threw the exit
       # code away, so a render the timeout killed -- which writes nothing to
       # stderr -- was scored as a clean page by the crash guard.
