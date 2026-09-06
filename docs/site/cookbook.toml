@@ -1,0 +1,126 @@
+# The cookbook on pdfluent.com, and the two links that make it findable.
+#
+# WHY THIS FILE EXISTS
+#
+# #247 settled where the code on the site comes from: `// site:<name>` blocks in
+# `crates/pdfluent/examples/site_snippets.rs`, which CI compiles. What it did not
+# settle is what a reader who lands on the repository is told, and what a reader
+# who lands on the site is pointed at. Both halves existed and neither linked to
+# the other, so each was a dead end (#167).
+#
+# This register is the seam. It names, for every recipe the cookbook shows,
+# which compiled block it is -- so the page cannot carry code that never met a
+# compiler -- and it carries the two URLs the cross-links use. The site reads it
+# through `docs/site/cookbook.json`, which `scripts/ci/cookbook_recipes.py`
+# writes from this file.
+#
+# TO ADD A RECIPE: add the block to site_snippets.rs behind its marker, then add
+# a `[[recipe]]` here naming that marker. A marker with neither a recipe nor a
+# line in [not_a_recipe] fails the guard, so a new example cannot quietly miss
+# the cookbook.
+
+[source]
+# The one file the recipes come from, repo-relative. The guard refuses a path
+# `docs/PUBLIC_TREE.toml` calls internal: the site links a reader straight at
+# this file in the published repository, and a link into a path the seeding
+# strips is a 404 nobody would notice until a visitor hit it.
+path = "crates/pdfluent/examples/site_snippets.rs"
+
+# Where that file is readable to the public. The engine repository is private;
+# `scripts/release/seed_public_repo.sh` publishes this history to the repository
+# below at the same paths, so this is the address a visitor can open.
+#
+# TODO (#167): the seeded tree is not there yet -- pdfluent/pdfluent-sdk still
+# holds the eight-commit placeholder, so this URL 404s until the seeding of #222
+# runs. The guard checks what it can check offline: that the path exists here and
+# survives publication. Nothing checks the URL resolves, because nothing in this
+# pipeline is allowed to reach the network.
+public_repo = "https://github.com/pdfluent/pdfluent-sdk"
+public_branch = "main"
+
+# The page these recipes are shown on, and the link the README carries back to
+# it. The guard reads README.md and fails if it is missing: the return half of a
+# cross-link is the half that goes stale silently.
+site_url = "https://pdfluent.com/cookbook/"
+
+[[recipe]]
+slug = "extract-text"
+category = "reading"
+title = "Extract the text of a document"
+intent = "Open a document and print its text, first as one string in reading order and then page by page."
+block = "open-and-extract"
+
+[[recipe]]
+slug = "render-pages-to-png"
+category = "reading"
+title = "Render every page to PNG"
+intent = "Rasterise each page to a PNG at a chosen resolution; to_images writes the files and returns their paths."
+block = "render-pages-to-png"
+
+[[recipe]]
+slug = "text-with-layout-and-merge"
+category = "pages"
+title = "Read text with its position, then merge two documents"
+intent = "Walk each text block with its bounding box, then combine two documents into a single output."
+block = "text-and-merge"
+
+[[recipe]]
+slug = "after-a-chrome-export"
+category = "pages"
+title = "Work on a PDF that headless Chrome produced"
+intent = "Watermark, compress and archive an exported document; PDFluent does not convert HTML itself."
+block = "after-chrome"
+
+[[recipe]]
+slug = "read-an-xfa-form"
+category = "forms"
+title = "Read an XFA form and write one field"
+intent = "List the logical fields of an XFA form and set one of them by its SOM path."
+block = "fill-xfa"
+
+[[recipe]]
+slug = "fill-an-xfa-form-and-save"
+category = "forms"
+title = "Fill an XFA form and save it"
+intent = "Set a field, confirm it reached the datasets packet, and save the filled document."
+block = "xfa-fill-and-flatten"
+
+[[recipe]]
+slug = "validate-pdfa"
+category = "compliance"
+title = "Check a document against PDF/A-2b"
+intent = "Run the PDF/A-2b check and print every violation it reports."
+block = "validate-pdfa"
+
+[[recipe]]
+slug = "validate-and-convert-to-pdfa"
+category = "compliance"
+title = "Check first, then convert to PDF/A"
+intent = "Read the findings before converting; convert_to_pdfa hands back a new document instead of changing this one."
+block = "pdfa-validate-and-convert"
+
+[[recipe]]
+slug = "sign-with-a-pkcs12-file"
+category = "signatures"
+title = "Sign with a PKCS#12 certificate"
+intent = "Sign a document from a .p12 file, choosing the PAdES profile this build can honour."
+block = "sign-pkcs12"
+
+[[recipe]]
+slug = "verify-signatures"
+category = "signatures"
+title = "Verify the signatures on a document"
+intent = "Walk the validations of a signed document and handle each status, including ones this build does not know."
+block = "verify-signatures"
+
+# Blocks that are compiled and shown on the site, but are not cookbook recipes.
+#
+# Each is a shorter or combined form of a recipe above, shown on one specific
+# page. Repeating them in the cookbook would give the same code two addresses,
+# which is what #277 spent a day undoing. The reason is required and is read:
+# a block with no line here and no recipe fails the guard.
+[not_a_recipe]
+smoke-page-count = "the install page's complete does-it-work program, the same two calls as open-and-count"
+open-and-count = "the download page's fragment form of that same does-it-work program"
+quickstart-extract-text = "the SDK page's whole-program form of the extract-text recipe above"
+sign-and-verify = "the feature tour's combined block, both signature recipes in one listing"

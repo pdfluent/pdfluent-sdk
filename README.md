@@ -7,6 +7,15 @@ Pure Rust PDF/A SDK with WASM bindings and experimental, feature-gated XFA suppo
 
 See [SETUP.md](SETUP.md) for contributor onboarding.
 
+## Cookbook
+
+Ten recipes with the explanation around them: <https://pdfluent.com/cookbook/>.
+
+Every block on that page is one of the `// site:<name>` markers in
+[`crates/pdfluent/examples/site_snippets.rs`](crates/pdfluent/examples/site_snippets.rs),
+which CI compiles, and each recipe links back to it. An example that stops
+building breaks the build rather than a reader's first attempt (#164, #247).
+
 ```rust
 use pdfluent::prelude::*;
 

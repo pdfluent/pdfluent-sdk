@@ -353,6 +353,13 @@ run territst  python3 scripts/ci/test_territories_do_not_overlap.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
 run siteblkreg python3 scripts/ci/test_site_blocks_register.py
+# The cookbook and the two cross-links of #167. Same family as the two above and
+# the same cost -- no compiler, so both halves sit in the fast lane. What only
+# this one watches is the seam between the repositories: the site links a reader
+# straight at site_snippets.rs in the PUBLISHED repository, and a path the
+# seeding strips would 404 there while everything here stayed green.
+run cookbook  python3 scripts/ci/cookbook_recipes.py --check
+run cookbooktst python3 scripts/ci/test_cookbook_recipes.py
 # The site's own Rust, compiled. Heavy, because it builds five hundred small
 # programs against the real facade -- so it sits in the full lane, where it runs
 # on a push to master, and not in the fast one on every branch push.

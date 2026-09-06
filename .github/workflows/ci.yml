@@ -881,6 +881,16 @@ jobs:
       - name: The site-blocks register and hand-over still hold
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_site_blocks_register.py
+      # #167's half of the same seam: the cookbook may only show code that
+      # compiled, every compiled block has to reach the cookbook or say why not,
+      # and both cross-links -- the README to the site, the site to this file --
+      # have to still point somewhere. Seconds, no compiler.
+      - name: The cookbook register and both cross-links still hold
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/cookbook_recipes.py --check
+      - name: The cookbook register is read in every direction
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_cookbook_recipes.py
       # The list pdfluent.com checks its documentation against is generated
       # from this workspace, and the site's own gate only measures how old the
       # copy is. Nothing measured whether the generator still agreed with the
