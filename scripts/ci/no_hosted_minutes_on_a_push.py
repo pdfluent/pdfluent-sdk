@@ -64,7 +64,19 @@ TOEGESTAAN: dict[tuple[str, str], str] = {}
 # hosted Linux comes back for exactly those jobs, and rows land here with that
 # reason. What must not come back is what #333 removed: the same guard billed
 # twice for one change, once on the pull request and once on the push behind it.
-LINUX_TOEGESTAAN: dict[tuple[str, str], str] = {}
+#
+# THE PUBLIC PHASE, ARRIVED. Both rows are the same case: the two jobs a
+# stranger's pull request runs on `pdfluent/pdfluent-sdk`, gated on the
+# repository being public so this private one is billed nothing. What #333
+# removed was a guard billed twice for one change; this is billed zero times
+# here and is the whole of what stands between an outside change and `main`
+# there.
+LINUX_TOEGESTAAN: dict[tuple[str, str], str] = {
+    ("public-pull-request.yml", "commit-identity"): (
+        "hosted Linux is free on a public repository, and this workflow only runs on one: both jobs carry `if: github.event.repository.private == false`, which is false here for as long as pdfluent/engine is private. It is the only pull-request-triggered workflow in the tree, and it exists because a required status check has to be produced by something (#232, #233)."),
+    ("public-pull-request.yml", "sign-off"): (
+        "hosted Linux is free on a public repository, and this workflow only runs on one: both jobs carry `if: github.event.repository.private == false`, which is false here for as long as pdfluent/engine is private. It is the only pull-request-triggered workflow in the tree, and it exists because a required status check has to be produced by something (#232, #233)."),
+}
 
 
 def vanzelf_actief(on) -> bool:

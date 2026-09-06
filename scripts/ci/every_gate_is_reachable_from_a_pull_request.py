@@ -42,6 +42,8 @@ import re
 import sys
 import tomllib
 
+import yaml
+
 REPO = pathlib.Path(__file__).resolve().parents[2]
 GATE = REPO / "scripts" / "ci" / "local_ci_gate.sh"
 WORKFLOWS = REPO / ".github" / "workflows"
@@ -81,14 +83,48 @@ def exemptions() -> dict[str, str]:
     return {r["gate"]: r.get("why", "").strip() for r in rows if r.get("gate")}
 
 
+# A job condition that is FALSE in this repository for as long as it is private.
+# `.github/workflows/public-pull-request.yml` carries it on every one of its
+# jobs: those two checks exist for the public repository this tree seeds, they
+# are what a stranger's pull request there runs, and here they are skipped so no
+# hosted minute is billed (#333, #233).
+ALLEEN_PUBLIEK = "github.event.repository.private == false"
+
+
+def _draait_hier(pad: pathlib.Path) -> bool:
+    """True when at least one job of this workflow can actually run here.
+
+    A workflow every job of which is gated on the repository being public
+    declares no boundary in a private repository -- it declares one somewhere
+    else. Without this, adding the first such workflow would flip the boundary
+    below to "a pull request" and report 115 gates as unreachable, on the
+    strength of two jobs that are skipped on every run.
+
+    A file that does not parse is left out rather than counted either way;
+    `every_workflow_can_start.py` owns that failure and says so in its own
+    words.
+    """
+    try:
+        doc = yaml.safe_load(pad.read_text(errors="replace")) or {}
+    except yaml.YAMLError:
+        return False
+    jobs = (doc.get("jobs") or {}) if isinstance(doc, dict) else {}
+    return any(ALLEEN_PUBLIEK not in str(job.get("if", ""))
+               for job in jobs.values() if isinstance(job, dict))
+
+
+def _start_bij(pad: pathlib.Path, trigger: str) -> bool:
+    text = pad.read_text(errors="replace")
+    head = text.split("jobs:", 1)[0]
+    return bool(re.search(rf"^\s*{trigger}:", head, re.M))
+
+
 def _genoemd_door(trigger: str) -> set[str]:
-    """Scripts named by a workflow this trigger starts."""
+    """Scripts named by a workflow this trigger starts, here."""
     found: set[str] = set()
     for f in sorted(WORKFLOWS.glob("*.yml")):
-        text = f.read_text(errors="replace")
-        head = text.split("jobs:", 1)[0]
-        if re.search(rf"^\s*{trigger}:", head, re.M):
-            found.update(SCRIPT.findall(text))
+        if _start_bij(f, trigger) and _draait_hier(f):
+            found.update(SCRIPT.findall(f.read_text(errors="replace")))
     return found
 
 
@@ -118,12 +154,18 @@ def de_grens() -> tuple[str, set[str]]:
     THE PUBLIC PHASE: the moment any workflow carries a `pull_request` trigger
     again, that is the boundary and this returns to it without an edit -- because
     it is chosen by looking, not by a flag somebody has to remember to flip.
+
+    "Carries a trigger" is not enough on its own, and #233 is where that showed.
+    `public-pull-request.yml` is triggered by a pull request and produces the
+    checks the PUBLIC repository requires, and every one of its jobs is gated on
+    the repository being public -- so here it starts and does nothing. Counting
+    it would have moved the boundary on the strength of jobs that never run, and
+    reported 115 gates as unreachable the day it was added. So the question is
+    whether a job can run here, not whether a trigger is written down.
     """
     op_pr = _genoemd_door("pull_request")
-    heeft_pr = any(
-        re.search(r"^\s*pull_request:", f.read_text(errors="replace").split("jobs:", 1)[0], re.M)
-        for f in sorted(WORKFLOWS.glob("*.yml"))
-    )
+    heeft_pr = any(_start_bij(f, "pull_request") and _draait_hier(f)
+                   for f in sorted(WORKFLOWS.glob("*.yml")))
     if heeft_pr:
         return "a pull request", op_pr
     return "the push to master", _genoemd_door("push")

@@ -1,0 +1,118 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+#
+# What must be true of every public repository's default branch (#233).
+#
+# ONE FILE, TWO READERS, AND THAT IS THE POINT
+#
+# `scripts/ci/public_repos_are_protected.py` reads it to judge what GitHub
+# reports, and the same script with `--apply` reads it to set what GitHub
+# reports. A second hand-kept list of contexts would drift from the first, and
+# the one that drifts is the one nobody runs.
+#
+# WHY A REQUIRED CHECK IS NOT FREE
+#
+# A required status check that no workflow produces blocks every pull request
+# permanently: the branch waits for a report that will never arrive, and the
+# merge button never lights up. So a context may be named here only if it is
+# either
+#
+#   * a job `name` in a workflow in THIS tree that a pull request triggers
+#     (`from_this_tree = true`), which the guard checks offline, or
+#   * a check that repository has already reported, which the guard checks
+#     against the API before it will require it.
+#
+# Measured 06-09-2026 -- every context below was `success` on that repository's
+# head commit on that date.
+#
+# WHY EVERY ROW IS STILL `pending`
+#
+# Setting a requirement is a change to a public repository, and #222 seeds
+# `pdfluent/pdfluent-sdk` from this tree in an operation that replaces its
+# history: the workflow producing two of the contexts below arrives with that
+# push and not before. So the rows are written now, applied after, and until
+# they are applied this file is a measurement rather than a rule -- the guard
+# reports the gap and does not fail on it. What it does fail on is the reverse:
+# a row that is still `pending` after the requirement has actually been set. A
+# reason that no longer applies has to be removed by the change that repairs it,
+# or the register outlives its subject.
+
+[[repo]]
+name = "pdfluent/pdfluent-sdk"
+branch = "main"
+from_this_tree = true
+contexts = [
+    "No commit publishes a personal address",
+    "Every commit carries a sign-off",
+]
+pending = """
+The SDK repository holds an eight-commit placeholder until #222 seeds it, and
+the seeding replaces that history wholesale -- including the `commit-identity.yml`
+that reports the first context there today. Both contexts come from
+`.github/workflows/public-pull-request.yml` in this tree after the seeding, and
+requiring them before it would block every pull request on a repository whose
+checks do not exist yet.
+"""
+why = """
+The two things a stranger's first pull request can get wrong that nothing else
+catches: an address that publishes a person, and a commit nobody certified they
+had the right to give (#223). Both are cheap, both run anywhere, and both are
+the reason the branch is protected at all.
+"""
+
+[[repo]]
+name = "pdfluent/pdfluent"
+branch = "main"
+from_this_tree = false
+contexts = [
+    "No commit publishes a personal address",
+    "sources",
+    "test",
+    "third-party",
+]
+pending = """
+Setting these is an owner action on a public repository, not a merge on this
+one. They are measured and named here so the setting is one command rather than
+four decisions.
+"""
+why = """
+The editor's own four workflows, minus `README.md` which is not one. None of the
+three carries a path filter, so each reports on every pull request -- a required
+check that only fires for some changes is the permanent-block trap in a slower
+form.
+"""
+
+[[repo]]
+name = "pdfluent/examples"
+branch = "main"
+from_this_tree = false
+contexts = [
+    "No commit publishes a personal address",
+    "rust",
+]
+pending = """
+Owner action, as above.
+"""
+why = """
+`rust` is the weekly `cargo check --examples` plus the smoke test against the
+published package. Every file in that repository exists to be copied, so an
+example that stops compiling is the whole of what that repository can get wrong.
+"""
+
+[[repo]]
+name = "pdfluent/.github"
+branch = "main"
+from_this_tree = false
+contexts = [
+    "No commit publishes a personal address",
+]
+pending = """
+Owner action, as above.
+"""
+why = """
+It carries the org-wide CONTRIBUTING, CODE_OF_CONDUCT and SECURITY and no code,
+so identity is the only check it produces and the only one worth requiring.
+"""

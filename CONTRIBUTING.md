@@ -1,5 +1,42 @@
 # Contributing to PDFluent
 
+## How a change gets in
+
+Fork, branch, open a pull request against the default branch — `main` on the
+public repository, `master` on the private engine this tree is seeded from.
+There is no other route: it takes fast-forwards only, force-pushes to it are
+refused, and the
+protection is set from `docs/PUBLIC_BRANCH_PROTECTION.toml` rather than by hand,
+so what is required of your pull request is written down in this repository and
+not only in a settings page you cannot see.
+
+**Two checks run on it, and both must pass.**
+
+| Check | What it refuses |
+|---|---|
+| No commit publishes a personal address | a commit authored from an address that maps to no account, so the work counts towards nobody and publishes somebody's inbox |
+| Every commit carries a sign-off | a commit written since the DCO landed without a matching `Signed-off-by` — see below |
+
+Both live in `.github/workflows/public-pull-request.yml`, both run on a hosted
+runner, and both run their own tests first: a guard that has not proved it can
+go red says nothing when it is green.
+
+**Before you open it**, run what the checks run:
+
+```
+cargo fmt --all --check
+cargo clippy --workspace -- -D warnings
+cargo test -p pdfluent
+```
+
+One fix per pull request. A fix without a regression test is not finished — the
+rule this repository holds itself to is that nothing is done if no test that
+runs in CI covers it.
+
+**A vulnerability does not go in a pull request or a public issue.**
+[SECURITY.md](SECURITY.md) says where it goes.
+
+
 ## Sign off every commit
 
 ```

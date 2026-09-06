@@ -370,6 +370,17 @@ run snapaudit bash scripts/ci/public_snapshot_audit.sh
 # break, and that change lands through the full lane on master.
 run internal  python3 scripts/ci/internal_stays_internal.py
 zwaar interntst python3 scripts/ci/test_internal_stays_internal.py
+# The four public repositories, read through the API (#233). This is the half
+# no runner can do: `administration:read` is not a scope GITHUB_TOKEN can hold,
+# so on a hosted runner the guard can only announce SKIPPED -- here `gh` has a
+# keyring and it genuinely reads what GitHub reports. Same reason
+# every_label_has_a_runner.py lives in this file and not in a workflow.
+#
+# It costs about ten seconds of API calls and it is allowed to find nothing for
+# months; what it exists for is the fifth repository, created unprotected, which
+# nothing else in this tree would ever look at.
+run protectst python3 scripts/ci/test_public_repos_are_protected.py
+run protected python3 scripts/ci/public_repos_are_protected.py
 run territst  python3 scripts/ci/test_territories_do_not_overlap.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json

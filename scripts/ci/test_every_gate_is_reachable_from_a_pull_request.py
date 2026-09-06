@@ -40,6 +40,21 @@ jobs:
 """
 
 
+PUBLIEK_ALLEEN_IF = "    if: ${{ github.event.repository.private == false }}\n"
+
+# A workflow a pull request starts whose jobs may or may not be able to run in
+# this repository -- the difference the guard has to see.
+PUBLIC_PR_WORKFLOW = """name: Public pull request
+on:
+  pull_request:
+jobs:
+  public:
+{conditie}    runs-on: ubuntu-latest
+    steps:
+      - run: python3 scripts/ci/gamma.py
+"""
+
+
 def tree(tmp: pathlib.Path, *, gate_lines: list[str], workflows: dict[str, str],
          exemptions: str) -> pathlib.Path:
     root = tmp / "repo"
@@ -147,6 +162,29 @@ def main() -> int:
         ok_all &= case("a zwaar gate counts as run, so its exemption is not stale",
                        u.returncode == 0 and "does not run it any more" not in u.stderr,
                        (u.stdout + u.stderr)[:250])
+
+    # A pull-request workflow whose every job is skipped here declares no
+    # boundary here (#233). Both fixtures carry the same gates and the same push
+    # workflow, which reaches all of them; the only difference is whether the
+    # pull-request workflow's jobs can run in this repository. If the guard
+    # stops asking that, the first case goes red -- on the gates the push run
+    # covers and a skipped pull request does not.
+    push_alles = PUSH_ONLY_WORKFLOW + "".join(
+        f"      - run: python3 scripts/ci/f{i:03d}.py\n" for i in range(45))
+    for label, conditie, verwacht in (
+            ("a pull-request workflow gated on the repository being public "
+             "does not move the boundary", PUBLIEK_ALLEEN_IF, 0),
+            ("and one whose jobs do run here moves it back", "", 1)):
+        with tempfile.TemporaryDirectory() as d:
+            root = tree(pathlib.Path(d),
+                        gate_lines=["run beta   python3 scripts/ci/beta.py"],
+                        workflows={"guards.yml": PUBLIC_PR_WORKFLOW.format(
+                                       conditie=conditie),
+                                   "nightly.yml": push_alles},
+                        exemptions=EMPTY)
+            u = run_guard(root)
+            ok_all &= case(label, u.returncode == verwacht,
+                           (u.stdout + u.stderr)[:250])
 
     # The floor: a parse that yields nothing must not read as nothing wrong.
     with tempfile.TemporaryDirectory() as d:
