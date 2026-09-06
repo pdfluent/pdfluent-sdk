@@ -115,6 +115,16 @@ REASONS = {"corpus", "runner", "covered-elsewhere", "credentials"}
 ALLOWED: dict[str, str] = {
     "every_guard_has_a_job.py": "this file itself; its own job does name it",
 
+    # Deliberately by hand, and the reason is the whole design (#237). A job
+    # would ask "does this already exist?" after the work was done, which is the
+    # one moment at which the answer is worthless. It belongs at the start of a
+    # story, in a pair of hands, and CLAUDE.md puts it there as step zero. Its
+    # TEST does run, on every pull request, over a fake `gh`.
+    "does_this_already_exist.py": (
+        "asked by a person before starting a story, not by a job afterwards; "
+        "step zero in CLAUDE.md, and test_does_this_already_exist.py runs in CI"
+    ),
+
     # A cargo build of five hundred small programs -- every Rust block on
     # pdfluent.com, compiled against the real facade. It belongs in the full
     # local lane, which runs on a push to master, and not in a hosted job whose

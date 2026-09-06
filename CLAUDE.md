@@ -23,6 +23,29 @@ Cargo workspace with 6 crates:
 - `pdfium-render` for PDF rendering via PDFium
 - `thiserror` for error types
 
+## Step zero: does it already exist?
+
+Before writing a line for a story, ask whether the work is already sitting in an
+open pull request:
+
+```
+python3 scripts/ci/does_this_already_exist.py <path>
+python3 scripts/ci/does_this_already_exist.py --symbol <name>
+```
+
+On 25-08-2026 five JNI entry points were wired up again that had been open since
+23 August -- half a day, done twice, because the work existed in a request and
+not in master. The same day, three infrastructure fixes stood independently on
+four branches. That is a measurement problem rather than carelessness: nobody
+could see that the work already existed.
+
+Deliberately not a CI job. A job asks the question after the work is done, which
+is the one moment at which the answer is worthless.
+
+And the other half of the same rule: infrastructure changes -- CI, gates,
+generated documents -- go to master, not onto a feature branch. Those are what
+end up rebuilt three times.
+
 ## Coding Conventions
 - Use `cargo fmt` before every commit
 - Use `cargo clippy -- -D warnings` — no warnings allowed
