@@ -1,0 +1,63 @@
+# Copyright (c) 2026 Innovation Trigger B.V.
+#
+# PDFluent is available under two licences, at your option: the GNU AGPLv3, or
+# the PDFluent Commercial Licence. See the LICENSE file in this repository --
+# that file travels with the copy you received, which a URL does not.
+#
+# The desktop release the package manifests in this directory describe (#192).
+#
+# WHY A RECORD AND NOT THREE MANIFESTS
+#
+# Homebrew, winget and Chocolatey each carry the version, the download URL and
+# the checksum in their own spelling -- Ruby, YAML, XML and PowerShell. Bumping
+# a release means changing the same three facts in four files, and the failure
+# is silent in the worst way: a manifest that still names last release's
+# checksum does not fail here, it fails on a stranger's machine with a hash
+# mismatch, or it installs the OLD build and reports the new version.
+#
+# So the facts live once, here, and
+# `scripts/ci/every_package_manifest_names_the_same_release.py` reads every
+# manifest back and refuses any that disagrees.
+#
+# `verified` is the day somebody downloaded the artefact and computed the
+# checksum below -- not the day the row was typed.
+
+version = "1.0.0-beta.21"
+
+# A pre-release. The community repositories -- winget-pkgs and the Chocolatey
+# feed -- take stable releases; these manifests are the template that gets a new
+# version, URL and checksum at the first stable one. Our own Homebrew tap has no
+# such rule and can carry this build today.
+pre_release = true
+
+[[artifact]]
+platform = "macos-universal"
+file = "PDFluent_1.0.0-beta.21_universal.dmg"
+url = "https://pdfluent.com/releases/1.0.0-beta.21/PDFluent_1.0.0-beta.21_universal.dmg"
+size = 36154454
+sha256 = "afb72601c7ede6e2359db58478c2fe49e8f86d61d91c9c15972421f5e738b807"
+# `lipo -archs` on the bundle executable: x86_64 arm64.
+app_bundle = "PDFluent.app"
+bundle_id = "com.pdfluent.app"
+# `codesign -dv`: Developer ID Application: Innovation Trigger B.V., with the
+# notarisation ticket stapled. `spctl -a -t install`: accepted.
+team_id = "58Z6SVW7CN"
+notarised = true
+verified = "2026-09-06"
+
+[[artifact]]
+platform = "windows-x64"
+file = "PDFluent_1.0.0-beta.21_x64_en-US.msi"
+url = "https://pdfluent.com/releases/1.0.0-beta.21/PDFluent_1.0.0-beta.21_x64_en-US.msi"
+size = 20119552
+sha256 = "F6262AC4EF35920F0B6D2992DD9BF4701A21751309A85B1E938533AF10364F12"
+# From the MSI's own Property and Upgrade tables (`msiinfo export`), not from a
+# Windows machine's registry -- which is why they could be filled in from macOS.
+product_code = "{AEE448FB-9AC3-4519-956E-60B7A232CDA8}"
+upgrade_code = "{8AE94143-984E-5CE4-893C-ED1723406728}"
+# ALLUSERS=1 in the Property table.
+scope = "machine"
+# ProductVersion in the same table. It does not move between betas, so it is not
+# the release version and the manifests have to say so separately.
+product_version = "1.0.0"
+verified = "2026-09-06"

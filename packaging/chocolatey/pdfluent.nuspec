@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>pdfluent</id>
+    <version>1.0.0-beta.21</version>
+    <packageSourceUrl>https://pdfluent.com/</packageSourceUrl>
+    <owners>Innovation Trigger B.V.</owners>
+    <title>PDFluent</title>
+    <authors>Innovation Trigger B.V.</authors>
+    <projectUrl>https://pdfluent.com/</projectUrl>
+    <iconUrl>https://pdfluent.com/icon-512.png</iconUrl>
+    <copyright>Copyright (c) 2026 Innovation Trigger B.V.</copyright>
+    <licenseUrl>https://pdfluent.com/license/</licenseUrl>
+    <requireLicenseAcceptance>true</requireLicenseAcceptance>
+    <docsUrl>https://pdfluent.com/docs/</docsUrl>
+    <bugTrackerUrl>https://pdfluent.com/contact/</bugTrackerUrl>
+    <releaseNotes>https://pdfluent.com/changelog/</releaseNotes>
+    <tags>pdf pdf-editor pdf-converter editor office document offline privacy admin</tags>
+    <summary>A PDF editor that processes documents on your own machine.</summary>
+    <description>
+PDFluent is a desktop PDF editor. It opens, edits, converts, signs and redacts
+PDF files, and it does that work on the machine it is installed on rather than
+on a server.
+
+The application is free to use, including commercially. There is no account to
+create and no licence key to enter. Crash reports are off unless you turn them
+on.
+
+The PDF engine is written in Rust with no C or C++ dependencies.
+
+This package downloads the signed MSI from pdfluent.com and verifies it against
+the checksum recorded in tools/VERIFICATION.txt.
+    </description>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>
