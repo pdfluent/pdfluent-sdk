@@ -394,6 +394,13 @@ run cookbooktst python3 scripts/ci/test_cookbook_recipes.py
 crate_gate siteblocks pdfluent python3 scripts/ci/site_blocks_compile.py --check
 crate_gate examples pdfluent cargo build -q --examples -p pdfluent
 run matrix    python3 scripts/ci/capability_matrix_matches_coverage.py
+# The benchmark programme's published figures, and the guard over them. Both are
+# file scanning and both belong in the fast lane: what they watch is a markdown
+# table and a directory of run files, so any push can break them. The programme
+# itself is not run here -- measuring is minutes of converting and validating,
+# and it happens on the runner, on a calendar (#169).
+run pubfig    python3 scripts/ci/a_published_number_names_its_run.py
+run pubfigtst python3 scripts/ci/test_a_published_number_names_its_run.py
 run wordsep   python3 scripts/ci/never_delete_the_word_separator.py
 # The PDF/A comparison harness, which is how #189's Ghostscript numbers were
 # produced. Its arithmetic is what a published comparison rests on, and every

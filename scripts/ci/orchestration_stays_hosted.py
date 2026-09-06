@@ -314,6 +314,30 @@ ZWARE_BASELINE = {
     # its own piece of work: render the baselines somewhere else once and compare.
     # Same handling as publish-crates above.
     ("visual-regression.yml", "visual-regression"),
+
+    # ON LOAN (#169, from #343). Not this ticket's change: `workspace` arrived
+    # with the landing lane and no row, so this guard has stood red on master
+    # for everyone since -- and a guard that is red for a reason no branch can
+    # fix is a guard people learn to scroll past.
+    #
+    # The reason it belongs here rather than on an instance: the landing lane
+    # compiles only the crates a landing touches, and it can only do that
+    # against the warm target directory this machine keeps. A throwaway instance
+    # starts cold, so the job that exists to stop compiling the whole workspace
+    # would compile the whole workspace. Push on master only.
+    ("ci.yml", "workspace"),
+
+    # The benchmark programme (#169). It builds two examples and then measures
+    # three axes over the gate corpus, and it wants exactly what makes this
+    # machine the wrong place for a pull request: the same hardware every time.
+    # A throwaway instance is a different machine on every run, which is the
+    # defect benchmarks/BASELINE_HARDWARE.toml exists to name -- and the class
+    # `desktop-xfa-fast` says in that file what it is good for (ratios) and what
+    # it is not (absolute milliseconds).
+    #
+    # Narrow by construction: no push and no pull_request trigger, so it runs on
+    # a weekly cron and on a deliberate dispatch from the default branch.
+    ("v7-benchmark.yml", "measure"),
 }
 
 
