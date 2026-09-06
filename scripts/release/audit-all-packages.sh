@@ -132,7 +132,15 @@ require_cmd() {
 gate_clean_tree() {
     log "Gate 0: clean tree check"
     cd "${REPO_ROOT}"
-    DIRTY=$(git status --porcelain 2>/dev/null || true)
+    # NOT THE FILES THIS SCRIPT ITSELF WRITES. `.e1_gaps.txt` is truncated a few
+    # lines above this gate and is tracked, and `gen/schemas` regenerates on any
+    # cargo invocation -- so a run that had done nothing wrong could refuse
+    # itself, and did: a landing on 06-09-2026 was blocked by this gate over the
+    # five lines its own previous run had left behind. The filter is the one
+    # topological_cratesio_dry_run.py already applies for the same two paths, and
+    # the one scripts/ci/local_ci_gate.sh names in its clean-tree advisory; a
+    # third spelling of it would be the drift, not this.
+    DIRTY=$(git status --porcelain 2>/dev/null | grep -vE 'gen/schemas|\.e1_gaps' || true)
     if [[ -n "${DIRTY}" ]]; then
         fail "Gate 0 FAILED: working tree is dirty. Commit or stash before running the audit."
         echo "${DIRTY}" >&2
