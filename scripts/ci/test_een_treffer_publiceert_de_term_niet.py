@@ -282,7 +282,35 @@ with tempfile.TemporaryDirectory() as td:
     expect("  while locally the same run does name it",
            NAAM_TERM.lower() in uit2.lower(), uit2[:250])
 
-MINIMUM_CASES = 19  # FLOOR
+# A term is a name, not a pattern.
+#
+# On 06-09-2026 a term arrived carrying a regex metacharacter. The bounded
+# pattern joined the terms unescaped, `re.compile` raised `nothing to repeat`,
+# and the commit-msg hook refused every commit on the machine with a traceback.
+# A guard that cannot compile its own list has judged nothing, and a crash is not
+# a verdict -- it is the absence of one wearing the costume of a refusal.
+#
+# The mutation is the historical one: drop `re.escape` from the bounded pattern
+# and this case stops finding the term, because the guard never runs at all.
+with tempfile.TemporaryDirectory() as td:
+    lijst = pathlib.Path(td) / "termen.txt"
+    # A literal name that happens to start with `+`. Nothing in this repository,
+    # so the only thing it can prove is that the list compiled.
+    #
+    # The leading `+` is the point, and picking it took two tries: `C++` was the
+    # obvious candidate and it compiles -- Python 3.11 reads `++` as a possessive
+    # quantifier -- so the first version of this case ran the mutation and passed
+    # anyway. A mutation that does not land looks exactly like one that survived.
+    METATERM = "+Aurora [north]"
+    lijst.write_text(METATERM + "\n")
+    env = dict(os.environ, CI="true", PDFLUENT_INTERNE_TERMEN=str(lijst))
+    r = subprocess.run([sys.executable, str(GUARD), "--bereik", "HEAD~1..HEAD"],
+                       cwd=REPO, capture_output=True, text=True, env=env)
+    expect("a term holding regex metacharacters does not crash the guard",
+           "Traceback" not in (r.stdout + r.stderr) and r.returncode in (0, 1),
+           f"exit={r.returncode}: {(r.stdout + r.stderr)[-300:]}")
+
+MINIMUM_CASES = 20  # FLOOR
 print(f"\n  {ran} assertion(s) ran, {len(fails)} failure(s)")
 for f in fails:
     print(f"    - {f}")
