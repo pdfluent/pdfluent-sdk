@@ -772,6 +772,20 @@ jobs:
       - name: The order form and the commercial licence still agree
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/the_order_form_agrees_with_the_licence.py
+      # The prices, the term and the OEM rule, across all four documents that
+      # state them (#227, built in #349). The pair above holds the rights
+      # together; this pair holds the offer together. The offer moved on
+      # 6 September 2026 and nineteen files did not follow, because nothing was
+      # comparing them. Test first, same reason as every pair on this list.
+      #
+      # These two steps are on the same loan of this file as the two above
+      # (#220); the loan and its expiry are written in .claude/territories.toml.
+      - name: The one-offer guard goes red where it must
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_one_offer_in_every_document.py
+      - name: Every document states the same offer
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/one_offer_in_every_document.py
       # And the same licence read against the binary rather than against the
       # other document (#226). §5 says as a statement of fact that nothing in
       # the software reads a key, refuses a capability or marks output. The

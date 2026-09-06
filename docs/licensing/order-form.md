@@ -5,13 +5,20 @@ form signed by both parties". The licence text says what the rights are; this
 form says who holds them, over which versions, for how long, and for how much.
 Neither is the agreement on its own.
 
+**This is not the ordinary way to buy a licence.** Since 6 September 2026 the
+four commercial licences are self-service: they are bought at
+https://pdfluent.com/sdk/pricing, and what a buyer receives is the order
+confirmation and the licence document named in `LICENSE-COMMERCIAL` §5. That is
+the agreement, and no form is signed. This template exists for the licensee
+whose procurement requires a signed order form, and it changes nothing about the
+rights — the prices and scopes below are the ones on the page.
+
 **This file is a template.** It is filled in per licensee, signed, and kept with
-the invoice and the register entry named in `LICENSE-COMMERCIAL` §5. Nothing in
-this repository records an executed order form, and nothing should: an executed
-form carries a customer's name.
+the invoice. Nothing in this repository records an executed order form, and
+nothing should: an executed form carries a customer's name.
 
 Licensor: Innovation Trigger B.V., trading as PDFluent, Netherlands.
-Licence: PDFluent Commercial Licence, version 2.0 — 31 August 2026 (`LICENSE-COMMERCIAL`).
+Licence: PDFluent Commercial Licence, version 3.0 — 6 September 2026 (`LICENSE-COMMERCIAL`).
 
 ---
 
@@ -35,20 +42,17 @@ licence with it on the date it leaves.
 | | |
 |---|---|
 | Software | PDFluent, the components on PDFluent's side of `docs/licensing/boundary.toml` |
-| Versions licensed | _________________________________________ |
+| Versions licensed | every version released during the term in section 5 |
 | Delivery | source and published packages, as released; nothing is withheld from a licensee |
 
-Two ways to fill in "versions licensed", and the difference matters more than
-the fee does:
+The term bounds which releases the licence covers, not how long the software may
+be run: nothing in it checks a date or reads this form. What ends with the term
+is the right to convey or operate later releases under this licence rather than
+under the AGPL, and anything shipped during the term is unaffected
+(`LICENSE-COMMERCIAL` §8).
 
-- **A named version and everything released before it.** The rights are perpetual
-  over exactly that set. A later release is a new order form.
-- **Every version released during the support term in section 5.** The rights
-  over each version stay perpetual once released — the term bounds which
-  versions arrive, never how long the ones already delivered may be used.
-
-Leave neither blank. A form that does not say which versions it covers is a form
-that will be read two ways on the day it matters.
+A licence granted under version 2.0 or earlier of the licence was perpetual for
+the versions it named and stays so. Do not rewrite one onto this form.
 
 ## 3. Licensed scope
 
@@ -75,23 +79,40 @@ restriction.
 
 ## 4. Fee
 
+Tick the licence bought. The prices are the published ones
+(`LICENSE-COMMERCIAL` §2a) and this form does not vary them.
+
+| | Licence | Yearly fee, excl. VAT | Bought |
+|---|---|---|---|
+| | Commercial — one organisation, unlimited developers | € 999 | ☐ |
+| | OEM Startup — one product, organisation revenue below € 1,000,000 | € 2,499 | ☐ |
+| | OEM — one product | € 9,999 | ☐ |
+| | Priority support — add-on, not a licence | € 4,999 | ☐ |
+
 | | |
 |---|---|
-| Fee | € ___________ , excluding VAT |
-| Payment | ☐ one-off ☐ annually in advance, per section 5 |
+| Named product (OEM only) | _________________________________________ |
+| Revenue declaration (OEM Startup only) | the licensee declares its organisation's revenue is below € 1,000,000 ☐ |
 | Invoice reference | _________________________________________ |
+| Payment | annually in advance |
 | Payment term | 30 days from the invoice date, unless stated otherwise here: _______ |
+
+`LICENSE-COMMERCIAL` §2a decides which of the first three applies: if the
+licensee's customers pay it for PDF functionality that PDFluent provides — a
+conversion API, a PDF/A service, an OCR service, hosted PDF tooling — that is
+OEM, not Commercial.
 
 ## 5. Term
 
-The licence granted in section 3 is **perpetual** for the versions in section 2
-and does not end with this section. What this section bounds is the support and
-the release stream, not the right to use what was delivered.
+The licence runs for one year and renews yearly until cancelled
+(`LICENSE-COMMERCIAL` §8).
 
 | | |
 |---|---|
-| Support and updates | ☐ none ☐ from _______ to _______ ☐ annual, renewing unless cancelled _______ before renewal |
-| Response times | ☐ none agreed ☐ as set out in a separate services agreement dated _______ |
+| Term begins | _______ |
+| Renewal | yearly, unless cancelled before the end of the current term |
+| Support | ☐ none beyond `LICENSE-COMMERCIAL` §6 ☐ priority support, per section 4 |
+| Response times | ☐ none agreed ☐ within one working day, where priority support is bought |
 
 Where support is agreed here, this section prevails over `LICENSE-COMMERCIAL` §6,
 which says the licence promises none.
@@ -141,6 +162,6 @@ correspondence and out of the form.
 
 ---
 
-*Template version 1.0, 5 September 2026. Drawn against `LICENSE-COMMERCIAL`
-version 2.0 of 31 August 2026. `scripts/ci/the_order_form_agrees_with_the_licence.py`
+*Template version 2.0, 6 September 2026. Drawn against `LICENSE-COMMERCIAL`
+version 3.0 of 6 September 2026. `scripts/ci/the_order_form_agrees_with_the_licence.py`
 fails when this form and that licence stop agreeing.*
