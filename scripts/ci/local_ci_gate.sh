@@ -64,7 +64,28 @@ export LOGDIR
 # runs are normal "the log" is not a location. Removed on a clean exit, kept on
 # a failure -- the run that failed is the one whose evidence is wanted.
 echo "logs: ${LOGDIR}"
-trap '[ "$fail" -eq 0 ] && rm -rf "$LOGDIR"' EXIT
+# AND THE ONES THAT WERE KEPT, which nobody was ever going to remove by hand.
+#
+# The line above keeps the logs of a run that failed, on purpose: that is the
+# evidence somebody wants. What it never said is who throws them away
+# afterwards, and the answer was nobody -- they were still standing weeks
+# later, next to the two-gigabyte build directories of the site-blocks gate
+# that filled this disk on 05-09-2026 (#344). These are kilobytes rather than
+# gigabytes, so this is tidiness and not a disk floor; a directory nobody
+# removes is still a directory nobody removes.
+#
+# A day old, and only when this run itself is clean. No gate here takes a day
+# -- the longest lane is under an hour -- so an `lcg.` directory that old
+# belongs to no live run, and this can never take the evidence of one of the
+# other two terminals while it is still being read.
+sweep_logs() {
+  [ "$fail" -eq 0 ] || return 0
+  rm -rf "$LOGDIR"
+  find "${TMPDIR:-/tmp}" -maxdepth 1 -type d -name 'lcg.*' -mtime +1 \
+    -exec rm -rf {} + 2>/dev/null
+  return 0
+}
+trap sweep_logs EXIT
 run() { local name="$1"; shift
   printf '=== %-9s' "$name"
   if "$@" >"${LOGDIR}/${name}.log" 2>&1; then echo " PASS"; pass=$((pass+1))
@@ -353,6 +374,7 @@ run territst  python3 scripts/ci/test_territories_do_not_overlap.py
 run deadhost  python3 scripts/ci/no_dead_host_in_a_connecting_script.py
 run snippets  python3 scripts/ci/extract_site_snippets.py --check docs/site/snippets.json
 run siteblkreg python3 scripts/ci/test_site_blocks_register.py
+run gatelogs   python3 scripts/ci/test_gate_logs_do_not_pile_up.py
 # The cookbook and the two cross-links of #167. Same family as the two above and
 # the same cost -- no compiler, so both halves sit in the fast lane. What only
 # this one watches is the seam between the repositories: the site links a reader

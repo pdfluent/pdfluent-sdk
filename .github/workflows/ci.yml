@@ -881,6 +881,15 @@ jobs:
       - name: The site-blocks register and hand-over still hold
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/test_site_blocks_register.py
+      # The same lane's own housekeeping. The gate keeps the logs of a run
+      # that failed and removes them when the run is clean, and until #344
+      # nobody removed the kept ones -- they stood next to the two-gigabyte
+      # build directories that filled this machine. Milliseconds, and both of
+      # its mistakes are silent: sweeping too little leaves the pile, sweeping
+      # too much takes the logs another terminal is reading.
+      - name: The gate's log directories do not pile up
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/test_gate_logs_do_not_pile_up.py
       # #167's half of the same seam: the cookbook may only show code that
       # compiled, every compiled block has to reach the cookbook or say why not,
       # and both cross-links -- the README to the site, the site to this file --

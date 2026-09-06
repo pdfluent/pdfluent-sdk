@@ -99,6 +99,30 @@ paden = [
   # for one step each (see t3), and hands them to t2 the same way. The map
   # compares patterns literally, so one literal spelling has one owner.
   "scripts/ci/test_de_registerwachters_raken_de_echte_repo_niet.py",
+  # ON LOAN from t2 for #344, back when that ticket closes. The site-blocks
+  # gate leaked a two-gigabyte build directory into $TMPDIR on every run and
+  # took this machine from 72 GB free to 35 GB in three hours, which stopped
+  # every push in the house at the pre-push floor. #344 assigns the repair to
+  # t1 as the owner of the guard, so the guard, its test and the test of the
+  # gate's own log clean-up are claimed here rather than left in a diff that
+  # the map refuses.
+  #
+  # `.github/workflows/ci.yml` comes with them, for one step and nothing else.
+  # Not a preference: `every_gate_is_reachable_from_a_pull_request.py` refuses a
+  # gate that only the local lane runs, and the only honest alternative is an
+  # exemption row saying what the gate needs that a runner does not have -- this
+  # one needs nothing, it is milliseconds of Python. Writing a reason that is
+  # not true to avoid editing somebody else's file is the trade this repository
+  # has already paid for once.
+  #
+  # The literal was in t3's block on a loan for #220 that expired when #220
+  # landed, and the block above this one records that ci.yml is t1's own file
+  # rather than a loan in the first place. Same handling either way: t2 takes it
+  # back by moving the literal, without asking.
+  ".github/workflows/ci.yml",
+  "scripts/ci/site_blocks_compile.py",
+  "scripts/ci/test_site_blocks_register.py",
+  "scripts/ci/test_gate_logs_do_not_pile_up.py",
   # The commit-msg wiring, claimed 02-09-2026 because t2 was the bottleneck
   # (holdout, three re-reviews, two fixes, a PR) and this work is t1's finding:
   # the hook HERKOMST.md has claimed since 26-08 does not exist. t2 reviews it.
@@ -439,17 +463,11 @@ paden = [
   # question, not a build one (#220).
   "scripts/ci/the_order_form_agrees_with_the_licence.py",
   "scripts/ci/test_the_order_form_agrees_with_the_licence.py",
-  # ON LOAN from t2, 05-09-2026, for #220. Two steps in `orchestration-guard`,
-  # nothing else in the file: the order-form guard and its test. Every workflow
-  # file is t2's, so a new guard cannot be made reachable from any job without
-  # this; the alternative is an exemption row recording that the guard runs
-  # nowhere, which is the debt this repository keeps paying off. (#333 landed
-  # hours before this and left ci.yml triggering on the push to master only, so
-  # "reachable" is that job now, not a pull-request one.)
-  #
-  # EXPIRY: back to t2 the moment this lands. t2 holds #333 in this file and
-  # takes it back by moving the literal, without asking.
-  ".github/workflows/ci.yml",
+  # `.github/workflows/ci.yml` was here, on loan for #220. That loan carried its
+  # own expiry -- "back to t2 the moment this lands" -- and #220 landed on
+  # 05-09-2026, so it is spent. The literal has moved on to t1's block for #344
+  # rather than being left standing here, because a lapsed loan reads exactly
+  # like a live one.
   # Added 03-09-2026. A `docs/...` path cited from scripts/ci must name a file
   # that exists; three citations this week pointed at nothing, and
   # docs/KWALITEITSSPOOR.md (t3's, below) was the third. A guard about

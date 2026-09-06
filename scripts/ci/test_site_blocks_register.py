@@ -41,7 +41,9 @@ nothing.
 """
 
 import importlib.util
+import inspect
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -314,6 +316,133 @@ def the_wrapper(sbc) -> list[tuple[str, bool, str]]:
     return out
 
 
+def the_build_directory(sbc) -> list[tuple[str, bool, str]]:
+    """Where this gate builds, and what it leaves behind.
+
+    A leak that costs nothing per run is invisible until it is somebody else's
+    failure. This one built the throwaway crate in a fresh `mkdtemp` and never
+    removed it: two gigabytes each, forty-five of them in $TMPDIR by
+    05-09-2026, free disk from 72 GB to 35 GB in three hours, and every push in
+    the house stopped at the pre-push floor (#344). Nothing was red anywhere.
+
+    So the property is stated the way the fault was found: after this gate has
+    run, $TMPDIR holds exactly what it held before. Both paths are exercised --
+    the warm directory in the checkout, and the fallback for a checkout that
+    cannot be written to -- and the fallback is exercised twice, because the
+    return path and the raising path are different code and only one of them
+    used to be written down.
+
+    $TMPDIR is pointed at a private directory for the duration. Three terminals
+    share this machine and write temporary files while this runs; comparing the
+    real one before and after would be a coin toss, and a flaky guard is a
+    guard that gets switched off.
+    """
+    out = []
+
+    def with_private_tmp(work):
+        """Run `work(private)`, with $TMPDIR pointed at a directory of our own."""
+        keep_dir, keep_env = tempfile.tempdir, os.environ.get("TMPDIR")
+        private = Path(tempfile.mkdtemp(prefix="siteblocks-test-"))
+        try:
+            tempfile.tempdir = str(private)
+            os.environ["TMPDIR"] = str(private)
+            return work(private)
+        finally:
+            tempfile.tempdir = keep_dir
+            if keep_env is None:
+                os.environ.pop("TMPDIR", None)
+            else:
+                os.environ["TMPDIR"] = keep_env
+            for child in private.rglob("*"):
+                if child.is_file():
+                    child.unlink()
+            for child in sorted(private.rglob("*"), reverse=True):
+                if child.is_dir():
+                    child.rmdir()
+            private.rmdir()
+
+    # 1 and 2. The warm directory: in the checkout being measured, and the same
+    #          one every time. Not merely tidy -- five hundred blocks against a
+    #          cold facade is tens of minutes, and that is the whole reason a
+    #          per-run directory was expensive as well as leaky.
+    def warm_case(private):
+        repo = private / "checkout"
+        repo.mkdir()
+        with sbc.build_workdir(repo) as first:
+            (first / "cached").write_text("a build")
+            first_seen = first
+        after_first = sorted(os.listdir(private))
+        with sbc.build_workdir(repo) as second:
+            reused = second == first_seen and (second / "cached").is_file()
+        return first_seen, after_first, reused
+
+    first_seen, after_first, reused = with_private_tmp(warm_case)
+    out.append((
+        "the build directory sits in the checkout, not in $TMPDIR",
+        first_seen.parts[-2:] == ("target", "site-blocks")
+        and after_first == ["checkout"],
+        f"{first_seen} left {after_first} in $TMPDIR",
+    ))
+    out.append((
+        "the same checkout gets the same directory back, still warm",
+        reused,
+        f"reused={reused}",
+    ))
+
+    # 3 and 4. The fallback, for a checkout that cannot be written to. It is
+    #          the old behaviour, and it has to disappear again -- on the way
+    #          out through a return and on the way out through an exception.
+    #          `main()` has eight ways to return one, which is how the removal
+    #          got left off in the first place.
+    def fallback_case(private):
+        before = sorted(os.listdir(private))
+        with sbc.build_workdir(Path(os.devnull)) as temp:
+            inside, name = temp.is_dir(), temp.name
+        return before, sorted(os.listdir(private)), inside, name, temp
+
+    before, after, inside, name, temp = with_private_tmp(fallback_case)
+    out.append((
+        "a checkout that cannot be written to falls back to a temp directory",
+        inside and name.startswith("siteblocks-"),
+        f"{name} existed={inside}",
+    ))
+    out.append((
+        "the fallback leaves $TMPDIR as it found it when the gate returns",
+        before == after and not temp.exists(),
+        f"before={before} after={after} still there={temp.exists()}",
+    ))
+
+    def raising_case(private):
+        before = sorted(os.listdir(private))
+        held = None
+        raised = False
+        try:
+            with sbc.build_workdir(Path(os.devnull)) as temp:
+                held = temp
+                raise RuntimeError("cargo fell over")
+        except RuntimeError:
+            raised = True
+        return before, sorted(os.listdir(private)), held, raised
+
+    before, after, held, raised = with_private_tmp(raising_case)
+    out.append((
+        "the fallback leaves $TMPDIR as it found it when the gate raises",
+        raised and before == after and held is not None and not held.exists(),
+        f"raised={raised} before={before} after={after}",
+    ))
+
+    # 5. And the gate goes through it. Building a directory of its own next to
+    #    the context manager would pass every case above and leak exactly as
+    #    before, so the two functions that do the work are held to using it.
+    source = inspect.getsource(sbc.main) + inspect.getsource(sbc.compile_the_blocks)
+    out.append((
+        "the gate itself takes its build directory from build_workdir",
+        "mkdtemp" not in source and "build_workdir(" in source,
+        source[:200],
+    ))
+    return out
+
+
 def the_real_register(sbc) -> list[tuple[str, bool, str]]:
     """The register as it is checked in, against the export as it is checked in.
 
@@ -469,7 +598,8 @@ def main() -> int:
 
     sbc = load()
     results = (cases(sbc) + the_ratchet(sbc) + the_wrapper(sbc)
-               + the_real_register(sbc) + the_handover(sbc))
+               + the_build_directory(sbc) + the_real_register(sbc)
+               + the_handover(sbc))
 
     # FLOOR: cases >= 20 -- this file builds its own cases, so an empty or
     # halved list is not a clean tree but a gutted file, and zero cases that
