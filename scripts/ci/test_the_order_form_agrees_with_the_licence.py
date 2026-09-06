@@ -105,9 +105,11 @@ with tempfile.TemporaryDirectory(prefix="orderform-") as _td:
     # half is sold on the form; a right that never appears there is one the
     # licensee is never asked about and therefore never buys.
     r = geval(td, basis, "grant e added",
-              herschrijf(LICENCE, "\n\nPerpetual means",
+              # The anchor is the first line after the §2 grant list. It was
+              # "Perpetual means ..." until licence v3.0 made the term yearly.
+              herschrijf(LICENCE, "\n\nThe scope of one licence",
                          "\n  e. Redistribution of the source under the licensee's own terms.\n"
-                         "\nPerpetual means"))
+                         "\nThe scope of one licence"))
     rood("a grant the form has no row for", r, "no scope row for", "(e)")
 
     # --- 3. the opposite, and the more dangerous direction: the form is the
@@ -135,8 +137,8 @@ with tempfile.TemporaryDirectory(prefix="orderform-") as _td:
     # --- 6. the licence is revised and the form still quotes the old one. v1.0
     # described licence keys and a 30-day expiry; neither exists.
     r = geval(td, basis, "version moved",
-              herschrijf(LICENCE, "Version 2.0 — 31 August 2026",
-                         "Version 3.0 — 1 October 2026"))
+              herschrijf(LICENCE, "Version 3.0 — 6 September 2026",
+                         "Version 4.0 — 1 October 2026"))
     rood("the licence version moves and the form does not", r, "version", "date")
 
     # --- 7/8. the rule between the two documents, on each side in turn
@@ -146,7 +148,7 @@ with tempfile.TemporaryDirectory(prefix="orderform-") as _td:
     rood("the form no longer says it prevails", r, "prevails")
 
     r = geval(td, basis, "licence drops precedence",
-              herschrijf(LICENCE, "Where they conflict, the order form prevails.",
+              herschrijf(LICENCE, "Where they\nconflict, the order form prevails.",
                          "The documents are read together."))
     rood("the licence no longer says the form prevails", r, "10")
 

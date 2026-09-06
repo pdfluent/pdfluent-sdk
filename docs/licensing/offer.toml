@@ -1,0 +1,62 @@
+# The commercial offer, once.
+#
+# Owner decision 06-09-2026 (#227), built in #349. Four self-service prices,
+# yearly, bought at https://pdfluent.com/sdk/pricing. This file is what
+# `scripts/ci/one_offer_in_every_document.py` reads the prose against, so that
+# LICENSE-COMMERCIAL, docs/licensing.md, the order form and NOTICE cannot drift
+# apart the way the previous offer did — nineteen copies of four numbers, none
+# of which moved when the numbers did.
+#
+# THE OTHER HALF OF THE SEAM
+#
+# The website repository holds `src/config/plans.ts`, which the pricing page,
+# the checkout, the Stripe catalogue and the licence document all read. This
+# file and that one are the two ends of the same offer, and no guard can span
+# both repositories. What both sides can do is be single: change one, change
+# the other in the same day, and the guard on each side catches its own prose.
+#
+# Prices are written the way the documents write them, including the currency
+# and the thousands separator, so the guard compares strings a reader would
+# recognise rather than integers a reader never sees.
+
+effective = "2026-09-06"
+issue = "#349"
+decision = "#227"
+website_source_of_truth = "src/config/plans.ts (pdfluent-website)"
+
+# The count the parser must find. A parser that silently returns nothing agrees
+# with every document; this is what makes that loud.
+buttons = 4
+
+[[button]]
+id = "commercial"
+name = "Commercial"
+price_eur_written = "999"
+metering = "per organisation"
+
+[[button]]
+id = "oem_startup"
+name = "OEM Startup"
+price_eur_written = "2,499"
+metering = "per product, organisation revenue below EUR 1,000,000"
+
+[[button]]
+id = "oem"
+name = "OEM"
+price_eur_written = "9,999"
+metering = "per product"
+
+[[button]]
+id = "priority_support"
+name = "Priority support"
+price_eur_written = "4,999"
+metering = "add-on, not a licence"
+
+# The sentence that decides which licence a buyer needed. It appears verbatim
+# in LICENSE-COMMERCIAL §2a, in docs/licensing.md, on the pricing page and in
+# every licence document issued. A paraphrase of it is a different rule.
+oem_rule = """
+If your customers pay you for PDF functionality that PDFluent provides — a
+conversion API, a PDF/A service, an OCR service, hosted PDF tooling — that is
+OEM, not Commercial.
+"""

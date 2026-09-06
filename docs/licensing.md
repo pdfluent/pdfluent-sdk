@@ -26,23 +26,45 @@ buying the right not to publish your own source.
 
 ## How to buy
 
-The commercial route is a signed order form, and nothing else:
+Four prices, all yearly, all excluding VAT, all self-service at
+<https://pdfluent.com/sdk/pricing>. Decided on 6 September 2026 (#227) and built
+in #349.
 
-1. Write to **sales@pdfluent.com** with the legal entity, the versions you want
-   covered, and which of the four `LICENSE-COMMERCIAL` §2 grants you need.
-2. You receive the order form — the template is
-   [`docs/licensing/order-form.md`](licensing/order-form.md) — filled in for
-   your case.
-3. Both parties sign it. `LICENSE-COMMERCIAL` §10 says the agreement is that
-   licence text plus this form, and that **the form prevails** where the two
-   conflict.
-4. You receive a countersigned agreement, an invoice, and an entry in
-   PDFluent's licence register. Those three are the deliverables named in
-   `LICENSE-COMMERCIAL` §5, and they are all of them.
+| Licence | Price | Covers |
+|---|---|---|
+| Commercial | € 999 / year | One organisation, unlimited developers. Closed-source use, and SaaS where PDF functionality is a part of your own product. |
+| OEM Startup | € 2,499 / year | One named product, for an organisation with revenue below € 1,000,000 (declared at purchase). Redistribution, and offering PDF functionality itself as a service. |
+| OEM | € 9,999 / year | One named product. The same rights, every other organisation. |
+| Priority support | € 4,999 / year | Not a licence. A reply within one working day, on any paid licence. |
 
-There is no self-service checkout on pdfluent.com today. A page that offers one
-would be describing something that does not exist, which is the failure #226
-was opened about: buttons reading "Buy now" that led to a contact form.
+The rule that decides Commercial from OEM:
+
+> If your customers pay you for PDF functionality that PDFluent provides — a
+> conversion API, a PDF/A service, an OCR service, hosted PDF tooling — that is
+> OEM, not Commercial.
+
+Building PDF handling into your own product is Commercial. Selling PDF handling
+to your customers is OEM.
+
+What a buyer receives is the order confirmation and a licence document naming
+the licensee, the licence, the product where one applies, and the term. Those
+two together are the licence — `LICENSE-COMMERCIAL` §5 and §10 say so. There is
+nothing to install and nothing to activate.
+
+The subscription renews yearly and is cancelled in the billing portal, reachable
+from the pricing page. Cancelling breaks nothing: no release stops working and
+nothing already shipped is affected. What ends is the right to convey or operate
+later releases under this licence rather than under the AGPL
+(`LICENSE-COMMERCIAL` §8).
+
+A licensee whose procurement requires a signed order form can have one — the
+template is [`docs/licensing/order-form.md`](licensing/order-form.md) — but it
+is not the ordinary route and it changes none of the rights. Write to
+**sales@pdfluent.com**.
+
+Licences bought before 6 September 2026 were perpetual for the versions they
+named and stay perpetual. Nothing in the current model withdraws or replaces
+them, and there is nothing to migrate.
 
 ## What a licensee receives, and what changes in the software
 

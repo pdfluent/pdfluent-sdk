@@ -436,6 +436,13 @@ run licbtest  python3 scripts/ci/test_license_boundary.py
 # neither document admits to (#220).
 run orderform python3 scripts/ci/the_order_form_agrees_with_the_licence.py
 run orderftst python3 scripts/ci/test_the_order_form_agrees_with_the_licence.py
+# The same two documents, plus docs/licensing.md and NOTICE, read against the
+# offer they all state (#227, built in #349). The order-form guard above holds
+# the *rights* together; this one holds the *prices, the term and the OEM rule*
+# together. They came apart before: the site sold a retired price for weeks
+# after the model changed, in nineteen files, and nothing compared them.
+run oneoffer  python3 scripts/ci/one_offer_in_every_document.py
+run oneofftst python3 scripts/ci/test_one_offer_in_every_document.py
 # The same licence, read against the binary instead of against the other
 # document. LICENSE-COMMERCIAL §5 now states as a fact that nothing in the
 # software reads a key, refuses a capability or marks output (#226) -- and the
